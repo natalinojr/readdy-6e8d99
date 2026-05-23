@@ -1,0 +1,999 @@
+import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
+import { useSessao } from '@/contexts/SessaoContext';
+import { useSystemSettings } from '@/hooks/useSystemSettings';
+import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade, KDSPagamento } from '../types/kds';
+import type { CarrinhoItem, DestinoInfo } from './PDVContext';
+
+/* ─── DB Row Types ─── */
+
+interface DBOrderItemOption {
+  group_name: string;
+  option_name: string;
+  additional_price?: number;
+}
+
+interface DBOrderItemObservation {
+  id?: string;
+  text: string;
+  is_checked?: boolean;
+}
+
+interface DBObsCheck {
+  observation_index: number;
+  observation_text: string;
+  checked_by_name?: string | null;
+  checked_at?: string | null;
+}
+
+interface DBOrderItemUnit {
+  id: string;
+  unit_number: number;
+  status?: string | null;
+  operator_id?: string | null;
+  operator_name?: string | null;
+  delivered_by_user_id?: string | null;
+  delivered_by_name?: string | null;
+  entered_kds_at?: string | null;
+  started_preparing_at?: string | null;
+  ready_at?: string | null;
+  delivered_at?: string | null;
+}
+
+interface DBComboChild {
+  item_name: string;
+  quantity: number;
+  unit_price?: number | null;
+}
+
+interface DBOrderItem {
+  id: string;
+  /** Referência ao menu_items.id — necessário para lookup de ficha técnica e baixa de estoque */
+  item_id?: string | null;
+  item_name: string;
+  category_name?: string | null;
+  quantity: number;
+  item_price?: number | null;
+  station_id?: string | null;
+  skip_kds?: boolean | null;
+  combo_id?: string | null;
+  combo_children?: DBComboChild[] | null;
+  status?: string | null;
+  entered_kds_at?: string | null;
+  started_preparing_at?: string | null;
+  ready_at?: string | null;
+  delivered_at?: string | null;
+  operator_name?: string | null;
+  delivered_by_name?: string | null;
+  notes?: string | null;
+  options?: DBOrderItemOption[] | null;
+  observations?: DBOrderItemObservation[] | null;
+  /** BUG 3.10 HYDRATE FIX: checks persistidos no banco — vindos de order_item_observation_checks */
+  obs_checks?: DBObsCheck[] | null;
+  units?: DBOrderItemUnit[] | null;
+}
+
+interface DBPayment {
+  id: string;
+  amount: number;
+  change_amount: number;
+  is_refunded: boolean;
+  payment_method_id?: string | null;
+  payment_method_name?: string | null;
+  payment_method_type?: string | null;
+  operator_name?: string | null;
+  cash_register_name?: string | null;
+  cash_register_id?: string | null;
+  origin_type?: string | null;
+}
+
+interface DBOrder {
+  id: string;
+  number?: string | null;
+  destination_type?: string | null;
+  destination_name?: string | null;
+  table_number?: number | null;
+  customer_name?: string | null;
+  waiter_name?: string | null;
+  origin_type?: string | null;
+  created_at: string;
+  total_amount?: number | null;
+  is_paid?: boolean | null;
+  is_training?: boolean | null;
+  status?: string | null;
+  cancel_reason?: string | null;
+  // BUG 3.8: customer contact fields
+  destination_phone?: string | null;
+  customer_cpf?: string | null;
+  customer_email?: string | null;
+  items?: DBOrderItem[];
+  // BUG 3.4: payments array from RPC join
+  payments?: DBPayment[] | null;
+}
+
+interface DBStation {
+  id: string;
+  name: string;
+  sla_minutes?: number | null;
+}
+
+/* ─── DB → Frontend mappers ─── */
+const DB_STATUS: Record<string, KDSItemStatus> = {
+  new: 'novo', preparing: 'preparo', ready: 'pronto', delivered: 'entregue',
+};
+const DB_DEST: Record<string, KDSPedido['destino']> = {
+  immediate: 'hora', table: 'mesa', delivery: 'delivery', name: 'nome', password: 'senha',
+  // Mapeamentos em português (valores que podem vir do frontend/edge function)
+  hora: 'hora', mesa: 'mesa', nome: 'nome', senha: 'senha',
+};
+const DB_ORIGIN: Record<string, KDSPedido['origem']> = {
+  cashier: 'caixa', waiter: 'garcom', table: 'mesa', self_service: 'autoatendimento',
+  delivery: 'delivery',
+};
+
+// Station map: station_id → { name, sla_minutes }
+type StationMap = Map<string, { name: string; sla: number }>;
+
+function dbItemToKDS(oi: DBOrderItem, stationMap: StationMap): KDSItem {
+  const opts = oi.options ?? [];
+  const obs = oi.observations ?? [];
+  const isSkipKds = !!(oi.skip_kds);
+  const rawStatus = DB_STATUS[oi.status ?? ''] ?? 'novo';
+  const status: KDSItemStatus = isSkipKds && (rawStatus === 'novo' || rawStatus === 'preparo') ? 'pronto' : rawStatus;
+  const entroKdsEm = oi.entered_kds_at ? new Date(oi.entered_kds_at).getTime() : Date.now();
+
+  const stationId = oi.station_id ?? null;
+  const stationInfo = stationId ? stationMap.get(stationId) : null;
+  const estacaoNome = stationInfo?.name ?? 'Cozinha';
+  const slaMinutos = stationInfo?.sla ?? 12;
+
+  // Filtra observações internas (ex: "Pagamento na entrega: X") — essas são metadados
+  // extraídos no nível do pedido (paymentMethodName) e não devem aparecer como obs de item
+  const rawObsTexts = obs
+    .map((o) => o.text)
+    .filter((t): t is string => !!t && !/^Pagamento na entrega:/i.test(t));
+  const notesText = oi.notes ?? '';
+  if (notesText && !rawObsTexts.includes(notesText) && !/^Pagamento na entrega:/i.test(notesText)) {
+    rawObsTexts.push(notesText);
+  }
+
+  // ── Separar obs específicas de unidade ("Un.1: texto", "Un.2: texto", ...) ──
+  // Essas obs são criadas quando o cozinheiro/PDV adiciona obs por unidade.
+  // Devem ser exibidas apenas na unidade correspondente, NÃO globalmente.
+  const unitObsPattern = /^Un\.?(\d+):\s*(.+)$/i;
+  // Mapa: unitNumber → texto da obs
+  const unitObsMap = new Map<number, string>();
+  const obsTexts: string[] = [];
+  for (const t of rawObsTexts) {
+    const match = t.match(unitObsPattern);
+    if (match) {
+      const unitNum = parseInt(match[1], 10);
+      const obsText = match[2].trim();
+      // Se tiver pipe separando várias unidades na mesma string ("Un.1: x | Un.2: y")
+      // já foram splitadas pelo filtro acima — mas caso venha junto:
+      if (obsText.includes(' | ')) {
+        // tenta parsear multi-unidade em linha única
+        const parts = t.split(' | ');
+        for (const part of parts) {
+          const pm = part.trim().match(unitObsPattern);
+          if (pm) unitObsMap.set(parseInt(pm[1], 10), pm[2].trim());
+          else if (part.trim()) obsTexts.push(part.trim());
+        }
+      } else {
+        unitObsMap.set(unitNum, obsText);
+      }
+    } else {
+      // Verifica se é uma string com múltiplas unidades concatenadas com " | "
+      if (t.includes(' | ') && t.match(/Un\.?\d+:/i)) {
+        const parts = t.split(' | ');
+        for (const part of parts) {
+          const pm = part.trim().match(unitObsPattern);
+          if (pm) unitObsMap.set(parseInt(pm[1], 10), pm[2].trim());
+          else if (part.trim()) obsTexts.push(part.trim());
+        }
+      } else {
+        obsTexts.push(t);
+      }
+    }
+  }
+
+  // Mapear unidades do banco (order_item_units) com todos os timestamps
+  // Isso garante que ao recarregar a página os status individuais são preservados
+  const dbUnits = oi.units ?? [];
+  let unidades: KDSUnidade[] | undefined;
+
+  if (oi.quantity > 1) {
+    if (dbUnits.length > 0) {
+      // Banco tem registros de unidades — usar status e timestamps reais
+      unidades = Array.from({ length: oi.quantity }, (_, idx) => {
+        const unitNum = idx + 1;
+        const dbUnit = dbUnits.find((u) => u.unit_number === unitNum);
+        if (dbUnit) {
+          const uRawStatus = DB_STATUS[dbUnit.status ?? ''] ?? status;
+          const uStatus: KDSItemStatus = isSkipKds && (uRawStatus === 'novo' || uRawStatus === 'preparo') ? 'pronto' : uRawStatus;
+          return {
+            id: `${oi.id}-u${unitNum}`,
+            numero: unitNum,
+            status: uStatus,
+            operadorPreparo: dbUnit.operator_name ?? undefined,
+            quemEntregou: dbUnit.delivered_by_name ?? undefined,
+            iniciouPreparoEm: dbUnit.started_preparing_at
+              ? new Date(dbUnit.started_preparing_at).getTime()
+              : undefined,
+            ficouProntoEm: dbUnit.ready_at
+              ? new Date(dbUnit.ready_at).getTime()
+              : undefined,
+            entregueEm: dbUnit.delivered_at
+              ? new Date(dbUnit.delivered_at).getTime()
+              : undefined,
+            // Obs específica desta unidade (parseada do formato "Un.N: texto")
+            observacao: unitObsMap.get(unitNum),
+          } as KDSUnidade;
+        }
+        // Unidade sem registro no banco ainda — usa status agregado do item
+        return {
+          id: `${oi.id}-u${unitNum}`,
+          numero: unitNum,
+          status,
+          observacao: unitObsMap.get(unitNum),
+        } as KDSUnidade;
+      });
+    } else {
+      // Sem registros no banco — cria unidades com status agregado (merge vai preservar local)
+      unidades = Array.from({ length: oi.quantity }, (_, idx) => ({
+        id: `${oi.id}-u${idx + 1}`,
+        numero: idx + 1,
+        status,
+        observacao: unitObsMap.get(idx + 1),
+      } as KDSUnidade));
+    }
+  }
+
+  // BUG 3.10 HYDRATE FIX: Hidratar observacoesChecadas a partir dos checks persistidos no banco.
+  // Mapeia cada registro de obs_checks para o texto da observação correspondente no array obsTexts.
+  // Usa tanto observation_text quanto observation_index como fallback para máxima robustez.
+  const obsChecks = oi.obs_checks ?? [];
+  const observacoesChecadas: string[] = [];
+  if (obsChecks.length > 0) {
+    for (const ck of obsChecks) {
+      // Tenta resolver pelo texto exato primeiro
+      const byText = obsTexts.find((t) => t === ck.observation_text);
+      if (byText) {
+        if (!observacoesChecadas.includes(byText)) observacoesChecadas.push(byText);
+      } else {
+        // Fallback: usa o índice no array de obsTexts
+        const byIndex = obsTexts[ck.observation_index];
+        if (byIndex && !observacoesChecadas.includes(byIndex)) {
+          observacoesChecadas.push(byIndex);
+        }
+      }
+    }
+  }
+
+  // BUG 3.3 FIX: mapear filhos do combo para renderização indentada no KDS
+  const comboChildren = oi.combo_children && oi.combo_children.length > 0
+    ? oi.combo_children.map((c) => ({
+        nome: c.item_name,
+        quantidade: c.quantity,
+        unitPrice: c.unit_price ?? undefined,
+      }))
+    : undefined;
+
+  return {
+    id: oi.id,
+    menuItemId: oi.item_id ?? undefined,
+    nome: oi.item_name,
+    categoriaNome: oi.category_name ?? undefined,
+    quantidade: oi.quantity,
+    item_price: oi.item_price ?? 0,
+    estacao: estacaoNome,
+    slaMinutos,
+    status,
+    skip_kds: oi.skip_kds ?? false,
+    semPreparo: oi.skip_kds ?? false,
+    // BUG 3.3: combo fields
+    comboId: oi.combo_id ?? undefined,
+    comboChildren,
+    // BUG 3.2 FIX: preservar additional_price no mapeamento
+    opcoes: opts.map((o) => ({
+      grupoNome: o.group_name,
+      opcaoNome: o.option_name,
+      additional_price: (o as { additional_price?: number }).additional_price ?? 0,
+    })),
+    observacoes: obsTexts,
+    // BUG 3.10 HYDRATE FIX: checks do banco → hidrata estado inicial sem necessitar de interação
+    observacoesChecadas: observacoesChecadas.length > 0 ? observacoesChecadas : undefined,
+    entroKdsEm,
+    iniciouPreparoEm: oi.started_preparing_at ? new Date(oi.started_preparing_at).getTime() : undefined,
+    ficouProntoEm: oi.ready_at ? new Date(oi.ready_at).getTime() : undefined,
+    entregueEm: oi.delivered_at ? new Date(oi.delivered_at).getTime() : undefined,
+    operadorPreparo: oi.operator_name ?? undefined,
+    quemEntregou: oi.delivered_by_name ?? undefined,
+    unidades,
+  } as KDSItem & { item_price: number };
+}
+
+function dbOrderToKDS(o: DBOrder, stationMap: StationMap): KDSPedido {
+  const rawItems = o.items ?? [];
+  const itens = rawItems.map((item) => dbItemToKDS(item, stationMap));
+
+  const kitchenItens = itens.filter((i) => !i.semPreparo && !i.skip_kds);
+  const allItens = itens;
+
+  // Status derivado dos itens (source of truth = items)
+  let statusDerived: KDSPedido['status'] = 'novo';
+
+  if (allItens.length === 0) {
+    statusDerived = 'novo';
+  } else if (allItens.every((i) => i.status === 'entregue')) {
+    statusDerived = 'entregue';
+  } else if (kitchenItens.length === 0) {
+    if (allItens.every((i) => i.status === 'pronto' || i.status === 'entregue')) {
+      statusDerived = 'pronto';
+    } else {
+      statusDerived = 'novo';
+    }
+  } else if (kitchenItens.every((i) => i.status === 'pronto' || i.status === 'entregue')) {
+    statusDerived = 'pronto';
+  } else if (kitchenItens.some((i) => i.status === 'preparo' || i.status === 'pronto')) {
+    statusDerived = 'preparo';
+  } else {
+    statusDerived = 'novo';
+  }
+
+  // Use o status do banco como fallback se for mais avançado que o derivado dos itens.
+  // Isso garante que pedidos marcados como 'delivered' no banco apareçam como entregues
+  // mesmo que os itens ainda não estejam sincronizados localmente.
+  const DB_ORDER_STATUS_MAP: Record<string, KDSPedido['status']> = {
+    new: 'novo', preparing: 'preparo', ready: 'pronto', delivered: 'entregue',
+  };
+  const DB_STATUS_RANK: Record<string, number> = { novo: 0, preparo: 1, pronto: 2, entregue: 3 };
+  const dbOrderStatusFrontend: KDSPedido['status'] = DB_ORDER_STATUS_MAP[o.status ?? ''] ?? 'novo';
+  const status: KDSPedido['status'] =
+    DB_STATUS_RANK[dbOrderStatusFrontend as string] > DB_STATUS_RANK[statusDerived as string]
+      ? dbOrderStatusFrontend
+      : statusDerived;
+
+  const numeroStr = o.number ?? '';
+  const numeroSeq = parseInt(numeroStr.replace(/\D/g, '').slice(-4), 10) || 0;
+
+  const destType = o.destination_type ?? '';
+  let mesaNumero: number | undefined;
+  let nomeCliente: string | undefined;
+  let senha: string | undefined;
+
+  // Defensivo: se destination_type estiver ausente mas destination_name existir,
+  // tenta inferir o tipo pelo conteúdo para não perder a identificação do cliente
+  let effectiveDestType = destType;
+  if (!effectiveDestType && o.destination_name) {
+    // Se parece senha (ex: P-10, A-01, 123), trata como senha
+    if (/^[A-Z]-\d+$/i.test(o.destination_name.trim()) || /^\d+$/.test(o.destination_name.trim())) {
+      effectiveDestType = 'password';
+    } else {
+      effectiveDestType = 'name';
+    }
+  }
+
+  if (effectiveDestType === 'table') {
+    // BUG 3.6 FIX: sempre usar table_number do banco, nunca parsear string
+    if (o.table_number != null) {
+      mesaNumero = o.table_number;
+    }
+    // nomeCliente: usar destination_name se não for apenas "Mesa N"
+    const rawDestName = o.destination_name ?? '';
+    if (rawDestName && !/^Mesa\s*\d*$/i.test(rawDestName.trim())) {
+      nomeCliente = rawDestName;
+    }
+  } else if (effectiveDestType === 'password') {
+    senha = o.destination_name ?? undefined;
+    nomeCliente = undefined;
+  } else if (effectiveDestType === 'name' || effectiveDestType === 'delivery') {
+    nomeCliente = o.destination_name ?? undefined;
+  } else {
+    nomeCliente = o.destination_name ?? undefined;
+  }
+
+  const garcomNome = o.waiter_name ?? undefined;
+
+  // Extrai forma de pagamento das observações (pedidos de autoatendimento com "pagar na entrega")
+  let paymentMethodName: string | undefined;
+  if (o.origin_type === 'self_service') {
+    for (const item of rawItems) {
+      const obs = item.observations ?? [];
+      for (const ob of obs) {
+        const match = ob.text?.match(/^Pagamento na entrega:\s*(.+)$/i);
+        if (match) { paymentMethodName = match[1].trim(); break; }
+      }
+      if (paymentMethodName) break;
+    }
+  }
+
+  // BUG 3.5 FIX: Nunca deixar totalAmount = 0 quando o banco tem valor real.
+  const totalAmount = typeof o.total_amount === 'number'
+    ? o.total_amount
+    : o.total_amount != null ? Number(o.total_amount) : 0;
+
+  // BUG 3.4 FIX: Mapear pagamentos da RPC para exibição no split payment
+  const pagamentos: KDSPagamento[] | undefined = o.payments && o.payments.length > 0
+    ? o.payments.map((p) => ({
+        id: p.id,
+        amount: Number(p.amount),
+        change_amount: Number(p.change_amount ?? 0),
+        is_refunded: !!(p.is_refunded),
+        payment_method_id: p.payment_method_id ?? null,
+        payment_method_name: p.payment_method_name ?? null,
+        payment_method_type: p.payment_method_type ?? null,
+        operator_name: p.operator_name ?? null,
+        cash_register_id: p.cash_register_id ?? null,
+        cash_register_name: p.cash_register_name ?? null,
+        origin_type: p.origin_type ?? null,
+      }))
+    : undefined;
+
+  return {
+    id: o.id,
+    numero: numeroSeq,
+    numeroStr,
+    status,
+    destino: DB_DEST[effectiveDestType] ?? 'hora',
+    mesaNumero,
+    nomeCliente,
+    senha,
+    garcomNome,
+    origem: DB_ORIGIN[o.origin_type ?? ''] ?? 'caixa',
+    criadoEm: new Date(o.created_at).getTime(),
+    itens,
+    totalAmount,
+    isPaid: !!(o.is_paid),
+    // BUG 2.3: badge TREINO
+    isTraining: !!(o.is_training),
+    isCancelled: o.status === 'cancelled',
+    cancelReason: o.cancel_reason ?? undefined,
+    paymentMethodName,
+    // BUG 3.4: pagamentos para split payment
+    pagamentos,
+    // BUG 3.8: customer contact fields
+    customerPhone: o.destination_phone ?? undefined,
+    customerCpf: o.customer_cpf ?? undefined,
+    customerEmail: o.customer_email ?? undefined,
+  } as KDSPedido & { totalAmount: number; isPaid: boolean; isCancelled: boolean; cancelReason?: string };
+}
+
+/* ─── Helpers públicos para construção de pedido KDS (usado pelo PDV mock/offline) ─── */
+function inferEstacao(nome: string): string {
+  const n = nome.toLowerCase();
+  if (n.includes('batata') || n.includes('frita') || n.includes('crispy') || n.includes('onion')) return 'Frituras';
+  if (n.includes('refrigerante') || n.includes('água') || n.includes('agua') || n.includes('suco de açaí')) return 'Balcão';
+  if (n.includes('brownie') || n.includes('sorvete') || n.includes('açaí')) return 'Confeitaria';
+  if (n.includes('suco') || n.includes('shake') || n.includes('vitamina')) return 'Balcão';
+  return 'Grelha';
+}
+
+function inferSLA(nome: string): number {
+  const n = nome.toLowerCase();
+  if (n.includes('refrigerante') || n.includes('água') || n.includes('agua')) return 2;
+  if (n.includes('suco') || n.includes('shake')) return 5;
+  if (n.includes('batata') || n.includes('frita')) return 10;
+  if (n.includes('brownie') || n.includes('sorvete')) return 8;
+  return 12;
+}
+
+function gerarNumeroStr(seq: number): string {
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const aa = String(now.getFullYear()).slice(2);
+  return `P${dd}${mm}${aa}${String(seq).padStart(4, '0')}`;
+}
+
+export function buildKDSPedido(params: {
+  cart: CarrinhoItem[];
+  destino: DestinoInfo | null;
+  numeroSeq: number;
+  numeroStr?: string;
+  origem: KDSPedido['origem'];
+  garcomNome?: string;
+}): KDSPedido {
+  const { cart, destino, numeroSeq, numeroStr, origem, garcomNome } = params;
+  const nowTs = Date.now();
+  let pedidoDestino: KDSPedido['destino'] = 'hora';
+  let mesaNumero: number | undefined;
+  let nomeCliente: string | undefined;
+  let senha: string | undefined;
+  if (destino) {
+    if (destino.tipo === 'mesa') { pedidoDestino = 'mesa'; mesaNumero = destino.mesaNumero; }
+    else if (destino.tipo === 'nome') { pedidoDestino = 'nome'; nomeCliente = destino.nomeCliente; }
+    else if (destino.tipo === 'senha') { pedidoDestino = 'senha'; senha = destino.senha; }
+    else if (destino.tipo === 'delivery') { pedidoDestino = 'delivery'; nomeCliente = destino.nomeCliente; }
+  }
+  const finalNumeroStr = numeroStr ?? gerarNumeroStr(numeroSeq);
+  return {
+    id: `kds-${origem}-${nowTs}`,
+    numero: numeroSeq,
+    numeroStr: finalNumeroStr,
+    status: 'novo',
+    destino: pedidoDestino,
+    mesaNumero, nomeCliente, senha, origem, garcomNome,
+    criadoEm: nowTs,
+    totalAmount: 0,
+    isPaid: false,
+    isCancelled: false,
+    itens: cart.map((ci, i) => ({
+      id: `ki-${origem}-${nowTs}-${i}`,
+      nome: ci.nome,
+      categoriaNome: ci.categoriaNome,
+      quantidade: ci.quantidade,
+      estacao: inferEstacao(ci.nome),
+      slaMinutos: inferSLA(ci.nome),
+      status: 'novo' as KDSItemStatus,
+      opcoes: ci.opcoes.map((o) => ({ grupoNome: o.grupoNome, opcaoNome: o.opcaoNome })),
+      observacoes: [...(ci.observacoes ?? []), ...(ci.observacaoLivre ? [ci.observacaoLivre] : [])],
+      entroKdsEm: nowTs,
+    })),
+  };
+}
+
+/* ─── Context ─── */
+interface KDSContextValue {
+  pedidos: KDSPedido[];
+  loading: boolean;
+  addPedido: (pedido: KDSPedido) => void;
+  setPedidos: React.Dispatch<React.SetStateAction<KDSPedido[]>>;
+  updateItemStatusRemote: (orderItemId: string, orderId: string, newStatus: KDSItemStatus) => Promise<void>;
+  /** Atualiza status de uma unidade individual — persiste delivered_by_user_id no banco */
+  updateUnitStatusRemote: (orderItemId: string, orderId: string, unitNumber: number, newStatus: KDSItemStatus) => Promise<void>;
+  /** Cancela um pedido no backend — motivo opcional */
+  cancelOrderRemote: (orderId: string, reason?: string) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * BUG 3.10 FIX: Persiste a checagem de observação no banco (order_item_observation_checks).
+   * Chamado pelo KDSPage após o toggle optimista local.
+   */
+  toggleObsChecadaRemote: (orderItemId: string, obsText: string, obsIndex: number, checked: boolean, checkedByName?: string) => Promise<void>;
+  reloadOrders: () => Promise<void>;
+}
+
+const KDSContext = createContext<KDSContextValue | null>(null);
+
+export function KDSProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  const { sessao, loadingSession } = useSessao();
+  const { settings: sysSettings } = useSystemSettings();
+  const defaultPrepTime = sysSettings.default_prep_time ?? 12;
+  const [pedidos, setPedidos] = useState<KDSPedido[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [stationMap, setStationMap] = useState<StationMap>(new Map());
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const consecutiveErrorsRef = useRef(0);
+  const MAX_CONSECUTIVE_ERRORS = 5;
+  const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stationMapRef = useRef<StationMap>(new Map());
+  const stationsLoadedRef = useRef(false);
+
+  const tenantIdRef = useRef<string | undefined>(undefined);
+  // undefined = sessão ainda não resolvida | null = sem sessão | string = sessão ativa
+  const sessaoIdRef = useRef<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    if (user?.tenantId) {
+      tenantIdRef.current = user.tenantId;
+    }
+  }, [user?.tenantId]);
+
+  // ── Sincroniza sessaoIdRef quando SessaoContext termina de carregar ────────
+  useEffect(() => {
+    if (loadingSession) return; // ainda carregando — aguarda
+
+    const prevSessionId = sessaoIdRef.current;
+    const newSessionId = sessao?.id ?? null;
+    sessaoIdRef.current = newSessionId;
+
+    // Sessão mudou após resolução: limpa e recarrega
+    // BUG FIX: removida verificação prevSessionId !== undefined que impedia
+    // limpeza na primeira sessão — pedidos antigos de sessão=null ficavam presos
+    if (prevSessionId !== newSessionId) {
+      setPedidos([]);
+      loadOrders();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessao?.id, loadingSession]);
+
+  const loadOrders = useCallback(async (currentStationMap?: StationMap) => {
+    if (!user?.tenantId) { setLoading(false); return; }
+    // Bloqueia se sessão ainda não foi resolvida pelo SessaoContext
+    if (sessaoIdRef.current === undefined) { setLoading(false); return; }
+    try {
+      const currentSessionId = sessaoIdRef.current ?? null;
+      const { data, error } = await supabase.rpc('fn_get_kds_orders', {
+        p_tenant_id: user.tenantId,
+        p_session_id: currentSessionId,
+      });
+      if (error) throw error;
+
+      consecutiveErrorsRef.current = 0;
+
+      const mapToUse = currentStationMap ?? stationMapRef.current;
+      const orders: KDSPedido[] = (data as DBOrder[] ?? []).map(
+        (o) => dbOrderToKDS(o, mapToUse)
+      );
+
+      const withUnidades = orders;
+      const STATUS_ORDER: KDSItemStatus[] = ['novo', 'preparo', 'pronto', 'entregue'];
+      const statusRank = (s: KDSItemStatus) => STATUS_ORDER.indexOf(s);
+
+      setPedidos((prevPedidos) => {
+        const prevMap = new Map(prevPedidos.map((p) => [p.id, p]));
+        return withUnidades.map((newPedido) => {
+          const prev = prevMap.get(newPedido.id);
+          if (!prev) return newPedido;
+
+          const prevItemMap = new Map(prev.itens.map((i) => [i.id, i]));
+          const mergedItens = newPedido.itens.map((newItem) => {
+            const prevItem = prevItemMap.get(newItem.id);
+            if (!prevItem) return newItem;
+
+            const iniciouPreparoEm = newItem.iniciouPreparoEm ?? prevItem.iniciouPreparoEm;
+            const ficouProntoEm = newItem.ficouProntoEm ?? prevItem.ficouProntoEm;
+            const entregueEm = newItem.entregueEm ?? prevItem.entregueEm;
+
+            const mergedUnidades = (() => {
+              if (!newItem.unidades || newItem.unidades.length === 0) {
+                return prevItem.unidades;
+              }
+              return newItem.unidades.map((u) => {
+                const prevU = prevItem.unidades?.find((pu) => pu.id === u.id);
+                if (!prevU) return u;
+                const uStatus: KDSItemStatus =
+                  statusRank(prevU.status) > statusRank(u.status) ? prevU.status : u.status;
+                return {
+                  ...u,
+                  status: uStatus,
+                  operadorPreparo: u.operadorPreparo ?? prevU.operadorPreparo,
+                  iniciouPreparoEm: u.iniciouPreparoEm ?? prevU.iniciouPreparoEm,
+                  ficouProntoEm: u.ficouProntoEm ?? prevU.ficouProntoEm,
+                  entregueEm: u.entregueEm ?? prevU.entregueEm,
+                  // Preserva obs específica da unidade vinda do banco (novo > prev)
+                  observacao: u.observacao ?? prevU.observacao,
+                };
+              });
+            })();
+
+            let effectiveStatus: KDSItemStatus;
+            if (mergedUnidades && mergedUnidades.length > 0) {
+              const uStatuses = mergedUnidades.map((u) => u.status);
+              if (uStatuses.every((s) => s === 'entregue')) effectiveStatus = 'entregue';
+              else if (uStatuses.every((s) => s === 'pronto' || s === 'entregue')) effectiveStatus = 'pronto';
+              else if (uStatuses.some((s) => s === 'preparo' || s === 'pronto')) effectiveStatus = 'preparo';
+              else effectiveStatus = 'novo';
+            } else {
+              effectiveStatus =
+                statusRank(prevItem.status) > statusRank(newItem.status)
+                  ? prevItem.status
+                  : newItem.status;
+            }
+
+            // BUG 3.10 HYDRATE FIX: Mesclar observacoesChecadas.
+            // Se o banco retornou checks (newItem.observacoesChecadas), usar como base.
+            // Se o usuário checou algo localmente (prevItem.observacoesChecadas) que
+            // ainda não chegou ao banco via Realtime, incluir também (união dos dois sets).
+            const dbChecks = newItem.observacoesChecadas ?? [];
+            const localChecks = prevItem.observacoesChecadas ?? [];
+            const mergedChecks = dbChecks.length > 0 || localChecks.length > 0
+              ? [...new Set([...dbChecks, ...localChecks])]
+              : undefined;
+
+            return {
+              ...newItem,
+              status: effectiveStatus,
+              iniciouPreparoEm,
+              ficouProntoEm,
+              entregueEm,
+              operadorPreparo: newItem.operadorPreparo ?? prevItem.operadorPreparo,
+              observacoesChecadas: mergedChecks,
+              observacaoLivre: prevItem.observacaoLivre,
+              unidades: mergedUnidades,
+            };
+          });
+
+          const kitchenItens = mergedItens.filter((i) => !i.semPreparo && !i.skip_kds);
+          let mergedPedidoStatus: KDSPedido['status'] = 'novo';
+          if (mergedItens.length === 0) {
+            mergedPedidoStatus = 'novo';
+          } else if (mergedItens.every((i) => i.status === 'entregue')) {
+            mergedPedidoStatus = 'entregue';
+          } else if (kitchenItens.length === 0) {
+            if (mergedItens.every((i) => i.status === 'pronto' || i.status === 'entregue')) {
+              mergedPedidoStatus = 'pronto';
+            } else {
+              mergedPedidoStatus = 'novo';
+            }
+          } else if (kitchenItens.every((i) => i.status === 'pronto' || i.status === 'entregue')) {
+            mergedPedidoStatus = 'pronto';
+          } else if (kitchenItens.some((i) => i.status === 'preparo' || i.status === 'pronto')) {
+            mergedPedidoStatus = 'preparo';
+          }
+
+          // Nunca regredir o status do pedido — preserva o mais avançado entre local e banco
+          const DB_STATUS_RANK2: Record<string, number> = { novo: 0, preparo: 1, pronto: 2, entregue: 3, em_rota: 2 };
+          const prevRank = DB_STATUS_RANK2[prev.status as string] ?? 0;
+          const mergedRank = DB_STATUS_RANK2[mergedPedidoStatus as string] ?? 0;
+
+          const finalStatus: KDSPedido['status'] =
+            prev.status === 'em_rota' && mergedPedidoStatus !== 'entregue'
+              ? 'em_rota'
+              : prevRank > mergedRank
+                ? prev.status  // preserva status local mais avançado (ex: entregue local vs pronto no banco)
+                : mergedPedidoStatus;
+
+          return { ...newPedido, itens: mergedItens, status: finalStatus };
+        });
+      });
+    } catch (e) {
+      consecutiveErrorsRef.current += 1;
+      const errorMessage = (e as Error)?.message ?? String(e);
+      const isNetworkError =
+        errorMessage.toLowerCase().includes('failed to fetch') ||
+        errorMessage.toLowerCase().includes('network') ||
+        errorMessage.toLowerCase().includes('fetch') ||
+        errorMessage.toLowerCase().includes('offline') ||
+        errorMessage.toLowerCase().includes('abort') ||
+        errorMessage.toLowerCase().includes('timeout');
+      if (!isNetworkError && consecutiveErrorsRef.current <= MAX_CONSECUTIVE_ERRORS) {
+        console.error('[KDSContext] loadOrders error:', JSON.stringify({
+          message: errorMessage,
+        }));
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.tenantId]);
+
+  // BUG 2.6 FIX: Leading + trailing debounce.
+  // Executa imediatamente na primeira chamada e reagenda se novos eventos chegam
+  // durante o cooldown, garantindo que o último update também seja processado.
+  const realtimeLeadingFiredRef = useRef(false);
+
+  const handleRealtimeChange = useCallback(() => {
+    if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_ERRORS) return;
+
+    // Leading edge: executa imediatamente se não há debounce ativo
+    if (!realtimeLeadingFiredRef.current) {
+      realtimeLeadingFiredRef.current = true;
+      loadOrders();
+    }
+
+    // Trailing edge: reagenda com debounce curto para capturar o último evento
+    if (realtimeDebounceRef.current) {
+      clearTimeout(realtimeDebounceRef.current);
+    }
+    realtimeDebounceRef.current = setTimeout(() => {
+      realtimeLeadingFiredRef.current = false;
+      loadOrders();
+    }, 80);
+  }, [loadOrders]);
+
+  // ── Efeito 1: carrega estações quando o tenant muda ───────────────────────
+  useEffect(() => {
+    if (!user?.tenantId) { setLoading(false); return; }
+    const tenantId = user.tenantId;
+
+    consecutiveErrorsRef.current = 0;
+    stationsLoadedRef.current = false;
+    // Reseta sessão como "não resolvida" ao trocar de tenant
+    sessaoIdRef.current = undefined;
+
+    supabase
+      .rpc('fn_get_kitchen_stations', { p_tenant_id: tenantId })
+      .then(({ data: stData }) => {
+        const map = new Map<string, { name: string; sla: number }>();
+        (stData ?? []).forEach((s: DBStation) => {
+          map.set(s.id, { name: s.name, sla: s.sla_minutes ?? defaultPrepTime });
+        });
+        stationMapRef.current = map;
+        setStationMap(map);
+        stationsLoadedRef.current = true;
+      })
+      .catch((e) => {
+        console.error('[KDSContext] loadStations error:', (e as Error)?.message);
+        stationsLoadedRef.current = true; // continua mesmo sem estações
+      });
+
+    // Realtime channel
+    // BUG 2.5 FIX: Adicionar subscriptions em payments e order_discounts
+    // para que mudanças de pagamento e desconto propaguem em tempo real.
+    // SYNC FIX: Filtrar por tenant_id para garantir que mudanças de unidades
+    // entregues em qualquer PDV/KDS/Gestão propagam imediatamente para todos.
+    const channel = supabase
+      .channel(`kds-orders-${tenantId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_item_units', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_discounts', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_item_observation_checks', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_item_observations', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.info('[KDSContext] Realtime channel subscribed — all order tables active');
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[KDSContext] Realtime channel error, status:', status);
+        }
+      });
+
+    channelRef.current = channel;
+
+    const pollInterval = setInterval(() => {
+      if (consecutiveErrorsRef.current < MAX_CONSECUTIVE_ERRORS) {
+        loadOrders();
+      }
+    }, 30000);
+
+    // Recarrega ao voltar para a aba, mas com debounce de 2s para evitar
+    // sobrescrever estado local de ações recém-executadas (entregar, etc.)
+    let visibilityDebounce: ReturnType<typeof setTimeout> | null = null;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        if (visibilityDebounce) clearTimeout(visibilityDebounce);
+        visibilityDebounce = setTimeout(() => {
+          if (consecutiveErrorsRef.current < MAX_CONSECUTIVE_ERRORS) {
+            loadOrders();
+          }
+        }, 2000);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      channel.unsubscribe();
+      channelRef.current = null;
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (visibilityDebounce) clearTimeout(visibilityDebounce);
+      if (realtimeDebounceRef.current) {
+        clearTimeout(realtimeDebounceRef.current);
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.tenantId]);
+
+  // ── Efeito 2: carrega pedidos quando a sessão é resolvida ─────────────────
+  // Este efeito dispara APÓS o SessaoContext terminar de restaurar a sessão.
+  // Garante que loadOrders() sempre tem o sessao?.id correto.
+  useEffect(() => {
+    if (!user?.tenantId) return;
+    if (loadingSession) return; // aguarda SessaoContext terminar
+
+    // Sessão resolvida — atualiza ref e carrega pedidos
+    sessaoIdRef.current = sessao?.id ?? null;
+    setLoading(true);
+    loadOrders(stationMapRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.tenantId, loadingSession, sessao?.id]);
+
+  const addPedido = useCallback((pedido: KDSPedido) => {
+    setPedidos((prev) => [pedido, ...prev]);
+  }, []);
+
+  const updateItemStatusRemote = useCallback(async (
+    orderItemId: string,
+    orderId: string,
+    newStatus: KDSItemStatus,
+  ) => {
+    const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
+    if (!resolvedTenantId) {
+      console.warn('[KDSContext] updateItemStatusRemote: no tenantId available, skipping remote update');
+      return;
+    }
+    const { error } = await invokeWithAuth('order-write', {
+      body: {
+        action: 'update_order_item_status',
+        order_item_id: orderItemId,
+        order_id: orderId,
+        tenant_id: resolvedTenantId,
+        status: newStatus,
+      },
+    });
+    if (error) {
+      console.error('[KDSContext] updateItemStatusRemote error:', error.message);
+    }
+    // Realtime triggers reload automatically
+  }, [user?.tenantId]);
+
+  /**
+   * Atualiza o status de uma unidade individual (order_item_units).
+   * Registra delivered_by_user_id quando status = entregue.
+   * O backend recalcula o status do item e do pedido automaticamente.
+   * O Realtime (order_item_units channel) propaga para todos os PDVs/KDS/Gestor.
+   */
+  const updateUnitStatusRemote = useCallback(async (
+    orderItemId: string,
+    orderId: string,
+    unitNumber: number,
+    newStatus: KDSItemStatus,
+  ) => {
+    const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
+    if (!resolvedTenantId) {
+      console.warn('[KDSContext] updateUnitStatusRemote: no tenantId available, skipping remote update');
+      return;
+    }
+    const { error } = await invokeWithAuth('order-write', {
+      body: {
+        action: 'update_unit_status',
+        order_item_id: orderItemId,
+        order_id: orderId,
+        unit_number: unitNumber,
+        tenant_id: resolvedTenantId,
+        status: newStatus,
+      },
+    });
+    if (error) {
+      console.error('[KDSContext] updateUnitStatusRemote error:', error.message);
+    }
+    // Realtime (order_item_units) triggers reload automatically across all clients
+  }, [user?.tenantId]);
+
+  const toggleObsChecadaRemote = useCallback(async (
+    orderItemId: string,
+    obsText: string,
+    obsIndex: number,
+    checked: boolean,
+    checkedByName?: string,
+  ) => {
+    const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
+    if (!resolvedTenantId) return;
+    const { error } = await invokeWithAuth('order-write', {
+      body: {
+        action: 'toggle_obs_check',
+        tenant_id: resolvedTenantId,
+        order_item_id: orderItemId,
+        observation_text: obsText,
+        observation_index: obsIndex,
+        checked,
+        checked_by_name: checkedByName ?? null,
+      },
+    });
+    if (error) {
+      console.error('[KDSContext] toggleObsChecadaRemote error:', error.message);
+    }
+  }, [user?.tenantId]);
+
+  const cancelOrderRemote = useCallback(async (orderId: string, reason?: string): Promise<{ ok: boolean; error?: string }> => {
+    const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
+    if (!resolvedTenantId) {
+      return { ok: false, error: 'Tenant não identificado' };
+    }
+    const { error } = await invokeWithAuth('order-write', {
+      body: {
+        action: 'cancel_order',
+        order_id: orderId,
+        tenant_id: resolvedTenantId,
+        reason: reason ?? null,
+      },
+    });
+    if (error) {
+      console.error('[KDSContext] cancelOrderRemote error:', error.message);
+      return { ok: false, error: error.message };
+    }
+    // Atualiza estado local imediatamente (Realtime reconfirma depois)
+    // Mantém o status atual do pedido — não força 'entregue' em cancelados
+    setPedidos((prev) =>
+      prev.map((p) =>
+        p.id === orderId ? { ...p, isCancelled: true, cancelReason: reason } : p,
+      ),
+    );
+    return { ok: true };
+  }, [user?.tenantId]);
+
+  return (
+    <KDSContext.Provider value={{ pedidos, loading, addPedido, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, cancelOrderRemote, toggleObsChecadaRemote, reloadOrders: loadOrders }}>
+      {children}
+    </KDSContext.Provider>
+  );
+}
+
+export function useKDS(): KDSContextValue {
+  const ctx = useContext(KDSContext);
+  if (!ctx) throw new Error('useKDS must be within KDSProvider');
+  return ctx;
+}

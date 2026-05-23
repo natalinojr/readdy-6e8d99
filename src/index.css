@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Tablet / mobile keyboard fix
+ *
+ * Problema: no iOS/Android o teclado virtual cobre parte do viewport sem
+ * redimensionar o layout — inputs ficam atrás do teclado.
+ *
+ * Solução:
+ * 1. Usa `dvh` (dynamic viewport height) como altura base do app.
+ *    O dvh acompanha o viewport real (já descontando o teclado) no iOS 15.4+
+ *    e Android Chrome 108+.
+ * 2. Fallback para `100vh` com env(safe-area-inset-bottom) nos browsers antigos.
+ * 3. Modais `fixed` usam `env(keyboard-inset-height, 0px)` quando disponível.
+ */
+
+/* Raiz do app ocupa o viewport real — encolhe quando o teclado abre */
+html, body, #root {
+  height: 100%;
+  /* dvh = dynamic viewport height: se ajusta ao teclado virtual automaticamente */
+  min-height: 100dvh;
+  overscroll-behavior: none;
+}
+
+/* Impede que o iOS faça zoom automático ao focar inputs pequenos */
+input, textarea, select {
+  font-size: max(16px, 1em);
+}
+
+/* Garante que elementos focados dentro de contêineres scrolláveis fiquem visíveis */
+[data-keyboard-aware] {
+  scroll-padding-bottom: 24px;
+}
+
+/* Modais fixed: empurra para cima quando teclado está aberto via env() */
+@supports (height: env(keyboard-inset-height)) {
+  .modal-keyboard-aware {
+    padding-bottom: env(keyboard-inset-height, 0px);
+    transition: padding-bottom 0.2s ease;
+  }
+}
