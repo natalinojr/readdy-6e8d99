@@ -66,40 +66,40 @@ export default function FormaPagamentoKiosk({ total, onContinuar, onVoltar }: Fo
       {/* Título + Total lado a lado */}
       <div className="flex items-center justify-between w-full max-w-2xl">
         <div>
-          <h2 className="text-xl md:text-3xl font-black text-white leading-tight">Como vai pagar?</h2>
-          <p className="text-zinc-500 text-xs md:text-sm mt-0.5">
+          <h2 className="text-3xl md:text-6xl font-black text-white leading-tight">Como vai pagar?</h2>
+          <p className="text-zinc-500 text-sm md:text-xl mt-1">
             Pagamento feito <span className="text-amber-400 font-semibold">na entrega</span> — não agora
           </p>
         </div>
-        <div className="bg-zinc-800 rounded-xl md:rounded-2xl px-3 md:px-5 py-2 md:py-3 text-right flex-shrink-0">
-          <p className="text-zinc-500 text-xs font-semibold">Total</p>
-          <p className="text-amber-400 font-black text-lg md:text-2xl">{fmt(total)}</p>
+        <div className="bg-zinc-800 rounded-xl md:rounded-2xl px-4 md:px-6 py-2 md:py-4 text-right flex-shrink-0">
+          <p className="text-zinc-500 text-sm font-semibold">Total</p>
+          <p className="text-amber-400 font-black text-xl md:text-4xl">{fmt(total)}</p>
         </div>
       </div>
 
       {/* Métodos — grid compacto */}
-      <div className="grid grid-cols-2 gap-2 md:gap-3 w-full max-w-2xl">
+      <div className="grid grid-cols-2 gap-3 md:gap-4 w-full max-w-2xl">
         {methods.map((m) => {
           const isSel = selected?.id === m.id;
           return (
             <button
               key={m.id}
               onClick={() => setSelected(m)}
-              className={`flex items-center gap-2 md:gap-4 p-3 md:p-4 rounded-xl md:rounded-2xl border-2 cursor-pointer active:scale-95 transition-all text-left ${
+              className={`flex items-center gap-3 md:gap-4 p-4 md:p-6 rounded-xl md:rounded-2xl border-2 cursor-pointer active:scale-95 transition-all text-left ${
                 isSel
                   ? 'border-amber-500 bg-amber-500/10'
                   : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'
               }`}
             >
-              <div className={`w-9 h-9 md:w-12 md:h-12 flex items-center justify-center rounded-lg md:rounded-xl flex-shrink-0 ${isSel ? 'bg-amber-500/20' : 'bg-zinc-700'}`}>
-                <i className={`${TYPE_ICON[m.type] ?? 'ri-wallet-line'} text-xl md:text-2xl ${isSel ? 'text-amber-400' : 'text-zinc-400'}`} />
+              <div className={`w-12 h-12 md:w-14 md:h-14 flex items-center justify-center rounded-lg md:rounded-xl flex-shrink-0 ${isSel ? 'bg-amber-500/20' : 'bg-zinc-700'}`}>
+                <i className={`${TYPE_ICON[m.type] ?? 'ri-wallet-line'} text-xl md:text-3xl ${isSel ? 'text-amber-400' : 'text-zinc-400'}`} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className={`text-sm md:text-base font-black truncate ${isSel ? 'text-amber-400' : 'text-white'}`}>{m.name}</p>
-                <p className="text-zinc-500 text-xs mt-0.5 truncate hidden sm:block">{TYPE_LABEL[m.type] ?? 'Na entrega'}</p>
+                <p className={`text-base md:text-xl font-black truncate ${isSel ? 'text-amber-400' : 'text-white'}`}>{m.name}</p>
+                <p className="text-zinc-500 text-sm mt-1 truncate hidden sm:block">{TYPE_LABEL[m.type] ?? 'Na entrega'}</p>
               </div>
               {isSel && (
-                <div className="w-4 h-4 md:w-5 md:h-5 flex items-center justify-center bg-amber-500 rounded-full flex-shrink-0">
+                <div className="w-5 h-5 md:w-6 md:h-6 flex items-center justify-center bg-amber-500 rounded-full flex-shrink-0">
                   <i className="ri-check-line text-zinc-950 text-xs" />
                 </div>
               )}
@@ -109,25 +109,25 @@ export default function FormaPagamentoKiosk({ total, onContinuar, onVoltar }: Fo
       </div>
 
       {/* Aviso compacto */}
-      <div className="flex items-center gap-2 md:gap-3 bg-zinc-800/80 border border-zinc-700 rounded-lg md:rounded-xl px-3 md:px-4 py-2 md:py-3 max-w-2xl w-full">
-        <i className="ri-information-line text-amber-400 text-sm flex-shrink-0" />
-        <p className="text-zinc-400 text-xs">
+      <div className="flex items-center gap-3 md:gap-4 bg-zinc-800/80 border border-zinc-700 rounded-lg md:rounded-xl px-4 md:px-6 py-3 md:py-4 max-w-2xl w-full">
+        <i className="ri-information-line text-amber-400 text-base flex-shrink-0" />
+        <p className="text-zinc-400 text-sm">
           Você <strong className="text-white">não precisa pagar agora</strong>. O atendente cobrará na entrega do pedido.
         </p>
       </div>
 
       {/* Botões */}
-      <div className="flex gap-2 md:gap-3 w-full max-w-2xl">
+      <div className="flex gap-3 md:gap-4 w-full max-w-2xl">
         <button
           onClick={onVoltar}
-          className="px-4 md:px-6 py-2.5 md:py-3.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 font-semibold rounded-lg md:rounded-xl cursor-pointer transition-colors whitespace-nowrap text-sm md:text-base"
+          className="px-6 md:px-8 py-3 md:py-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 font-semibold rounded-lg md:rounded-xl cursor-pointer transition-colors whitespace-nowrap text-sm md:text-lg"
         >
           Voltar
         </button>
         <button
           onClick={() => selected && onContinuar(selected.id, selected.name)}
           disabled={!selected}
-          className="flex-1 py-2.5 md:py-3.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 font-black text-sm md:text-base rounded-lg md:rounded-xl cursor-pointer transition-colors whitespace-nowrap"
+          className="flex-1 py-3 md:py-4 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 font-black text-sm md:text-xl rounded-lg md:rounded-xl cursor-pointer transition-colors whitespace-nowrap"
         >
           Confirmar pedido
         </button>

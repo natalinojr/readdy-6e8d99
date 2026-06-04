@@ -1,15 +1,15 @@
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
-import { invokeWithAuth, supabase } from '@/lib/supabase';
+import { invokeWithAuth, supabase, ensureFreshSession } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from './SessaoContext';
-import { useEstoque } from './EstoqueContext';
 import { useKDS } from './KDSContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
-import { useOrderSubmit } from '@/hooks/useOrderSubmit';
+import { useOrderSubmit, type CreateOrderPayload } from '@/hooks/useOrderSubmit';
 import { useOffline } from '@/contexts/OfflineContext';
-import { useImpressoras } from '@/contexts/ImpressorasContext';
 import { useMesas } from '@/contexts/MesasContext';
-import { printKitchenTicket } from '@/pages/pdv/caixa/components/CozinhaTicketPrint';
+import { useToast } from './ToastContext';
+import { useNavigate } from 'react-router-dom';
+import { useImpressoras } from '@/contexts/ImpressorasContext';
 
 export interface OpcaoSelecionada {
   grupoId: string;
@@ -55,6 +55,14 @@ export interface PagamentoItem {
   formaNome: string;
   valor: number;
   troco?: number;
+  valorRecebido?: number;
+}
+
+export interface FinalizarResult {
+  orderId: string;
+  number: string;
+  printEnqueued?: boolean;
+  isOffline?: boolean;
 }
 
 interface PDVContextData {
@@ -78,8 +86,8 @@ interface PDVContextData {
   valorDesconto: number;
   valorTaxaServico: number;
   total: number;
-  finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string }) => Promise<string>;
-  enviarParaCozinha: (destinoOverride?: DestinoInfo | null) => Promise<string>;
+  finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; paymentGroupId?: string | null }) => Promise<FinalizarResult>;
+  enviarParaCozinha: (destinoOverride?: DestinoInfo | null) => Promise<FinalizarResult>;
 }
 
 const PDVContext = createContext<PDVContextData | null>(null);
@@ -88,29 +96,23 @@ let cartCounter = 0;
 function PDVProviderInner({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { sessao, caixa, gerarProximoNumeroPedido } = useSessao();
-  const { deductSaleItems } = useEstoque();
   const { reloadOrders } = useKDS();
   const { settings: sysSettings } = useSystemSettings();
   const { submitOrder } = useOrderSubmit();
   const { refreshPendingCount } = useOffline();
-  const { getImpressoraParaEstacao } = useImpressoras();
   const { mesas } = useMesas();
+  const { mapaEstacoes } = useImpressoras();
 
   const [carrinho, setCarrinho] = useState<CarrinhoItem[]>([]);
   const [destino, setDestino] = useState<DestinoInfo | null>(null);
   const [desconto, setDesconto] = useState(0);
-  // Inicializa taxaServico com o valor atual das settings (e sincroniza quando muda)
   const [taxaServico, setTaxaServico] = useState(() => sysSettings.service_fee_enabled ?? false);
   const [numeroPedidoSeq, setNumeroPedidoSeq] = useState(0);
   const [ultimoNumeroPedido, setUltimoNumeroPedido] = useState('—');
   const [pedidosPagos, setPedidosPagos] = useState<Set<number>>(new Set());
 
-  // Quando a config de taxa de serviço mudar no banco, reflete no toggle do carrinho
-  // (só sincroniza se o carrinho estiver vazio, para não surpreender o operador no meio de um pedido)
   useEffect(() => {
-    if (carrinho.length === 0) {
-      setTaxaServico(sysSettings.service_fee_enabled ?? false);
-    }
+    setTaxaServico(sysSettings.service_fee_enabled ?? false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sysSettings.service_fee_enabled]);
 
@@ -126,28 +128,22 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
 
   const addItem = useCallback((item: Omit<CarrinhoItem, 'cartId'>) => {
     setCarrinho((prev) => {
-      // Tenta encontrar um item idêntico no carrinho para somar a quantidade
-      // Critérios: mesmo itemId, mesmas opções (mesma combinação), mesma obs livre, sem obsUnidades
       const existingIdx = prev.findIndex((ci) => {
         if (ci.itemId !== item.itemId) return false;
         if (ci.observacaoLivre !== item.observacaoLivre) return false;
-        // Não agrupa se tem obs por unidade
         if (ci.obsUnidades && ci.obsUnidades.some((o) => o && o.trim() !== '')) return false;
         if (item.obsUnidades && item.obsUnidades.some((o) => o && o.trim() !== '')) return false;
-        // Compara opções selecionadas (mesma quantidade e mesmos ids)
         if (ci.opcoes.length !== item.opcoes.length) return false;
         const opcoesMatch = item.opcoes.every((op) =>
           ci.opcoes.some((co) => co.opcaoId === op.opcaoId && co.grupoId === op.grupoId),
         );
         if (!opcoesMatch) return false;
-        // Compara observações padrão
         if (ci.observacoes.length !== item.observacoes.length) return false;
         const obsMatch = item.observacoes.every((o) => ci.observacoes.includes(o));
         return obsMatch;
       });
 
       if (existingIdx >= 0) {
-        // Item idêntico encontrado → soma a quantidade
         return prev.map((ci, idx) =>
           idx === existingIdx
             ? { ...ci, quantidade: ci.quantidade + item.quantidade }
@@ -155,7 +151,6 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
         );
       }
 
-      // Item novo → adiciona ao carrinho
       cartCounter += 1;
       return [...prev, { ...item, cartId: `cart-${cartCounter}` }];
     });
@@ -182,7 +177,6 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     setCarrinho([]);
     setDestino(null);
     setDesconto(0);
-    // Resetar taxa de serviço para o valor padrão das configurações
     setTaxaServico(sysSettings.service_fee_enabled ?? false);
   }, [sysSettings.service_fee_enabled]);
 
@@ -195,8 +189,6 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
 
     return carrinho.flatMap((ci) => {
       const temObsUnidade = ci.obsUnidades && ci.obsUnidades.some((o) => o && o.trim() !== '');
-
-      // Adiciona observação geral do pedido no primeiro item
       const obsPedidoExtra = !obsPedidoAdded && obsPedido
         ? [{ text: `[PEDIDO] ${obsPedido}` }]
         : [];
@@ -256,39 +248,24 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     });
   }, [carrinho, destino]);
 
-  // ── Helper: executa baixa de estoque (usa carrinho snapshot) ────────────
-  const executarBaixaEstoque = useCallback((orderId: string, snapshot: CarrinhoItem[]) => {
-    const itensParaBaixa = snapshot
-      .filter((ci) => ci.itemId && /^[0-9a-f-]{36}$/i.test(ci.itemId))
-      .map((ci) => ({
-        itemId: ci.itemId,
-        nome: ci.nome,
-        quantidade: ci.quantidade,
-      }));
-    if (itensParaBaixa.length > 0) {
-      deductSaleItems(orderId, itensParaBaixa).catch((e) => {
-        console.warn('[PDVContext] Stock deduction failed (non-blocking):', e);
-      });
+  const finalizarPedido = useCallback(async (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; paymentGroupId?: string | null }): Promise<FinalizarResult> => {
+    const freshSession = await ensureFreshSession();
+    if (!freshSession) {
+      throw new Error('Sessao de autenticacao expirada. Por favor, faca login novamente.');
     }
-  }, [deductSaleItems]);
 
-  const finalizarPedido = useCallback(async (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string }): Promise<string> => {
-    // Generate order number (async — increments sessions.last_order_number in DB)
-    const numero = await gerarProximoNumeroPedido();
-    setUltimoNumeroPedido(numero);
+    // Gera número local APENAS para fallback de UI imediata (não é mais usado como retorno)
+    const numeroLocal = await gerarProximoNumeroPedido();
+    setUltimoNumeroPedido(numeroLocal);
     setNumeroPedidoSeq((s) => s + 1);
 
-    // If no session, just clear cart (offline/mock mode)
     if (!sessao || !user) {
       clearCart();
-      return numero;
+      return { orderId: 'local', number: numeroLocal };
     }
 
-    // Build items payload
     const itensPayload = buildItemsPayload();
-    const carrinhoSnapshot = [...carrinho]; // snapshot antes de limpar
 
-    // ── Pagamentos para modo offline ──────────────────────────────────────
     const offlinePayments = pagamentos
       .filter((p) => p.formaId)
       .map((p) => ({
@@ -297,12 +274,11 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
         change_amount: p.troco ?? 0,
       }));
 
-    // Resolve table_session_id from mesas context when destination is mesa
     const tableSessionId = destino?.tipo === 'mesa' && destino.mesaId
       ? (mesas.find((m) => m.id === destino.mesaId)?.tableSessionId ?? null)
       : null;
 
-    // ── 1. Criar pedido com retry automático (3 tentativas) ──────────────────
+    // Cria pedido — useOrderSubmit enfileira impressão automaticamente via fila centralizada
     const orderResult = await submitOrder({
       session_id: sessao.id,
       tenant_id: user.tenantId,
@@ -326,31 +302,25 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       table_number: destino?.tipo === 'mesa' ? destino.mesaNumero ?? null : null,
       customer_name: destino?.tipo === 'mesa' ? destino?.nomeCliente ?? null : null,
       table_session_id: tableSessionId,
-    }, {
-      offlinePayments,
-    });
+    }, { offlinePayments, stationToImpressoraId: mapaEstacoes });
 
     const orderId: string = orderResult.id;
     const isOffline = orderResult.isOffline ?? false;
     const cashRegisterId: string | null = caixa?.id ?? null;
 
-    // ── 2. Pedido criado com sucesso — limpa carrinho AGORA ──────────────────
     clearCart();
 
-    // ── 3. Se foi salvo offline, atualiza contador de pendentes ─────────────
     if (isOffline) {
       refreshPendingCount();
-      return orderResult.number;
+      return { orderId, number: orderResult.number, isOffline: true };
     }
 
-    // ── Validar se orderId é UUID real (não local/offline) ───────────────────
     const isValidUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId);
     if (!isValidUuid) {
       console.warn('[PDVContext] orderId inválido (não-UUID) — pulando registro de pagamentos:', orderId);
-      return numero;
+      return { orderId, number: orderResult.number, printEnqueued: orderResult.printEnqueued };
     }
 
-    // ── 4. Registrar desconto se houver — best effort ────────────────────────
     if (orderId && valorDesconto > 0) {
       try {
         const { error: discErr } = await invokeWithAuth('order-write', {
@@ -372,8 +342,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       }
     }
 
-    // ── 5. Registrar pagamentos — best effort, não bloqueia o operador ───────
-    if (orderId && cashRegisterId && pagamentos.length > 0) {
+    if (orderId && pagamentos.length > 0) {
       let paymentRegistered = false;
       for (const pag of pagamentos) {
         if (!pag.formaId) continue;
@@ -389,6 +358,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
               change_amount: pag.troco ?? 0,
               operator_name: user.nome ?? null,
               paid_by_pdv: 'cashier',
+              payment_group_id: customerData?.paymentGroupId ?? null,
             },
           });
           if (payErr) console.warn('[PDVContext] record_payment error (non-blocking):', payErr);
@@ -397,7 +367,6 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
           console.warn('[PDVContext] record_payment exception (non-blocking):', e);
         }
       }
-      // Salva o PDV que confirmou o pagamento
       if (paymentRegistered) {
         try {
           await supabase.rpc('fn_update_paid_by_pdv', { p_order_id: orderId, p_paid_by_pdv: 'cashier' });
@@ -405,39 +374,39 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
           console.warn('[PDVContext] fn_update_paid_by_pdv error (non-blocking):', e);
         }
       }
-    } else if (orderId && pagamentos.length > 0) {
-      console.warn('[PDVContext] Skipping record_payment — missing cash_register_id. Caixa must be open.');
     }
 
-    // ── 6. Reload KDS e baixa de estoque — best effort ───────────────────────
     if (orderId) {
       setTimeout(() => reloadOrders(), 500);
-      executarBaixaEstoque(orderId, carrinhoSnapshot);
     }
 
-    return numero;
+    return { orderId, number: orderResult.number, printEnqueued: orderResult.printEnqueued };
   }, [
     gerarProximoNumeroPedido, sessao, user, caixa,
     carrinho, destino, valorDesconto, valorTaxaServico,
     subtotal, total, clearCart, reloadOrders, submitOrder,
-    refreshPendingCount, buildItemsPayload, executarBaixaEstoque, mesas,
+    refreshPendingCount, buildItemsPayload, mesas,
   ]);
 
   // ── Enviar para Cozinha (sem pagamento — pagar depois) ───────────────────
-  const enviarParaCozinha = useCallback(async (destinoOverride?: DestinoInfo | null): Promise<string> => {
-    const numero = await gerarProximoNumeroPedido();
-    setUltimoNumeroPedido(numero);
+  const enviarParaCozinha = useCallback(async (destinoOverride?: DestinoInfo | null): Promise<FinalizarResult> => {
+    const freshSession = await ensureFreshSession();
+    if (!freshSession) {
+      throw new Error('Sessao de autenticacao expirada. Por favor, faca login novamente.');
+    }
+
+    // Gera número local APENAS para fallback de UI imediata
+    const numeroLocal = await gerarProximoNumeroPedido();
+    setUltimoNumeroPedido(numeroLocal);
     setNumeroPedidoSeq((s) => s + 1);
 
     if (!sessao || !user) {
       clearCart();
-      return numero;
+      return { orderId: 'local', number: numeroLocal };
     }
 
-    // Usa o destino do override (modal) ou do estado
     const destinoAtivo = destinoOverride ?? destino;
 
-    // Monta payload dos itens usando o destino ATIVO (não o estado que pode estar desatualizado)
     const obsPedido = destinoAtivo?.observacaoPedido;
     let obsPedidoAdded = false;
     const itensPayload = carrinho.flatMap((ci) => {
@@ -498,13 +467,11 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       }];
     });
 
-    const carrinhoSnapshot = [...carrinho];
-
-    // Resolve table_session_id from mesas context when destination is mesa
     const tableSessionId = destinoAtivo?.tipo === 'mesa' && destinoAtivo.mesaId
       ? (mesas.find((m) => m.id === destinoAtivo.mesaId)?.tableSessionId ?? null)
       : null;
 
+    // Cria pedido — useOrderSubmit enfileira impressão automaticamente via fila centralizada
     const orderResult = await submitOrder({
       session_id: sessao.id,
       tenant_id: user.tenantId,
@@ -528,7 +495,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       table_number: destinoAtivo?.tipo === 'mesa' ? destinoAtivo.mesaNumero ?? null : null,
       customer_name: destinoAtivo?.tipo === 'mesa' ? destinoAtivo?.nomeCliente ?? null : null,
       table_session_id: tableSessionId,
-    }, {});
+    }, { stationToImpressoraId: mapaEstacoes });
 
     const orderId: string = orderResult.id;
     const isOffline = orderResult.isOffline ?? false;
@@ -537,26 +504,14 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
 
     if (isOffline) {
       refreshPendingCount();
-      return orderResult.number;
+      return { orderId, number: orderResult.number, isOffline: true };
     }
 
     const isValidUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId);
     if (!isValidUuid) {
-      return numero;
+      return { orderId, number: orderResult.number, printEnqueued: orderResult.printEnqueued };
     }
 
-    // Imprimir ticket de cozinha automaticamente ao enviar para o KDS via impressora mapeada
-    try {
-      const seq = parseInt(numero.replace(/\D/g, '').slice(-4)) || 1;
-      const primeiroItem = carrinhoSnapshot.find((i) => i.stationId);
-      const estacao = primeiroItem?.stationId ?? 'cozinha-padrao';
-      const impressora = getImpressoraParaEstacao(estacao);
-      await printKitchenTicket(seq, carrinhoSnapshot, destinoAtivo ?? null, impressora);
-    } catch (e) {
-      console.warn('[PDVContext] Erro ao imprimir ticket de cozinha (non-blocking):', e);
-    }
-
-    // Registrar desconto se houver (best effort)
     if (orderId && valorDesconto > 0) {
       try {
         const { error: discErr } = await invokeWithAuth('order-write', {
@@ -578,18 +533,16 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       }
     }
 
-    // Reload KDS e baixa de estoque
     if (orderId) {
       setTimeout(() => reloadOrders(), 500);
-      executarBaixaEstoque(orderId, carrinhoSnapshot);
     }
 
-    return numero;
+    return { orderId, number: orderResult.number, printEnqueued: orderResult.printEnqueued };
   }, [
     gerarProximoNumeroPedido, sessao, user, caixa,
     carrinho, destino, valorDesconto, valorTaxaServico,
     subtotal, total, clearCart, reloadOrders, submitOrder,
-    refreshPendingCount, executarBaixaEstoque, mesas,
+    refreshPendingCount, mesas,
   ]);
 
   return (

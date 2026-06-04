@@ -9,7 +9,7 @@ export const getHojeBR = () => new Date().toLocaleDateString('en-CA', { timeZone
 export const HOJE = getHojeBR();
 
 export const DB_STATUS_LABEL: Record<string, string> = {
-  new: 'Aguardando', preparing: 'Em preparo', ready: 'Pronto', delivered: 'Entregue', cancelled: 'Cancelado',
+  new: 'Na Fila', preparing: 'Em preparo', ready: 'Pronto', delivered: 'Entregue', cancelled: 'Cancelado',
 };
 export const STATUS_LABEL: Record<string, string> = {
   aberto: 'Em aberto', pronto: 'Pronto', entregue: 'Entregue', cancelado: 'Cancelado',

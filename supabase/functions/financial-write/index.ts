@@ -173,7 +173,10 @@ Deno.serve(async (req) => {
           .eq('bank_account_id', payload.bank_account_id)
           .order('transaction_date', { ascending: false })
           .order('created_at', { ascending: false });
-        if (payload?.limit) query = query.limit(payload.limit);
+        if (payload?.start_date) query = query.gte('transaction_date', payload.start_date);
+        if (payload?.end_date) query = query.lte('transaction_date', payload.end_date);
+        const limit = payload?.limit ? Number(payload.limit) : 200;
+        query = query.limit(limit);
         const { data, error } = await query;
         if (error) {
           console.error('[list_bank_transactions] error:', error.message);
@@ -218,6 +221,8 @@ Deno.serve(async (req) => {
 
       // ── Bills Payable ─────────────────────────────────────────────────────
       case 'list_bills_payable': {
+        // Marcar contas vencidas no banco antes de retornar os dados
+        await supabase.rpc('fn_mark_overdue_bills');
         const { data, error } = await supabase
           .from('fin_accounts_payable')
           .select('*, cost_center:fin_cost_centers(id,name,color,icon)')
@@ -940,6 +945,90 @@ Deno.serve(async (req) => {
           return new Response(JSON.stringify({ error: extractErrorMessage(insertErr) }), { status: 500, headers: corsHeaders });
         }
         result = { data: inserted ?? [] };
+        break;
+      }
+
+      // ── Payroll ───────────────────────────────────────────────────────────
+      case 'pay_payroll': {
+        const { id, paid_date, payment_method } = payload;
+        const { data: entry, error: fetchErr } = await supabase
+          .from('hr_payroll')
+          .select('id, employee_name, net_salary, entry_type, reference_month')
+          .eq('id', id)
+          .eq('tenant_id', tenant_id)
+          .maybeSingle();
+        if (fetchErr || !entry) {
+          return new Response(JSON.stringify({ error: 'Lançamento não encontrado' }), { status: 404, headers: corsHeaders });
+        }
+        const { error: updateErr } = await supabase
+          .from('hr_payroll')
+          .update({ status: 'paid', paid_date, payment_method, updated_at: new Date().toISOString() })
+          .eq('id', id)
+          .eq('tenant_id', tenant_id);
+        if (updateErr) {
+          console.error('[pay_payroll] Erro ao atualizar:', updateErr.message);
+          return new Response(JSON.stringify({ error: extractErrorMessage(updateErr) }), { status: 500, headers: corsHeaders });
+        }
+        const typeLabel: Record<string, string> = {
+          regular: 'Folha de Pagamento',
+          thirteenth_first: '13º Salário (1ª Parcela)',
+          thirteenth_second: '13º Salário (2ª Parcela)',
+          vacation_pay: 'Férias',
+        };
+        const entryTypeKey = (entry as Record<string, unknown>).entry_type as string ?? 'regular';
+        const category = typeLabel[entryTypeKey] ?? 'Folha de Pagamento';
+        const employeeName = (entry as Record<string, unknown>).employee_name as string ?? '';
+        const netSalary = Number((entry as Record<string, unknown>).net_salary ?? 0);
+        const refMonth = (entry as Record<string, unknown>).reference_month as string ?? '';
+        await supabase.from('fin_cash_flow').insert({
+          tenant_id,
+          type: 'expense',
+          amount: netSalary,
+          description: `${category} — ${employeeName} (${refMonth})`,
+          category: 'Folha de Pagamento',
+          origin: 'auto_payroll',
+          reference_id: id,
+          date: paid_date,
+        });
+        result = { data: { id, status: 'paid' } };
+        break;
+      }
+
+      case 'pay_all_payroll': {
+        const { ids, paid_date, payment_method } = payload;
+        if (!ids || ids.length === 0) {
+          return new Response(JSON.stringify({ error: 'Nenhum ID informado' }), { status: 400, headers: corsHeaders });
+        }
+        const { data: entries, error: fetchErr } = await supabase
+          .from('hr_payroll')
+          .select('id, employee_name, net_salary, entry_type, reference_month')
+          .in('id', ids)
+          .eq('tenant_id', tenant_id);
+        if (fetchErr || !entries || entries.length === 0) {
+          return new Response(JSON.stringify({ error: 'Lançamentos não encontrados' }), { status: 404, headers: corsHeaders });
+        }
+        const { error: updateErr } = await supabase
+          .from('hr_payroll')
+          .update({ status: 'paid', paid_date, payment_method, updated_at: new Date().toISOString() })
+          .in('id', ids)
+          .eq('tenant_id', tenant_id);
+        if (updateErr) {
+          console.error('[pay_all_payroll] Erro ao atualizar:', updateErr.message);
+          return new Response(JSON.stringify({ error: extractErrorMessage(updateErr) }), { status: 500, headers: corsHeaders });
+        }
+        const totalNet = (entries as Array<{ net_salary: number }>).reduce((s, e) => s + Number(e.net_salary), 0);
+        const month = (entries[0] as Record<string, unknown>).reference_month as string ?? '';
+        await supabase.from('fin_cash_flow').insert({
+          tenant_id,
+          type: 'expense',
+          amount: totalNet,
+          description: `Folha de Pagamento — ${(entries as Array<{ employee_name: string }>).length} funcionário(s) (${month})`,
+          category: 'Folha de Pagamento',
+          origin: 'auto_payroll',
+          reference_id: (entries[0] as Record<string, unknown>).id as string,
+          date: paid_date,
+        });
+        result = { data: { updated: ids.length, total: totalNet } };
         break;
       }
 

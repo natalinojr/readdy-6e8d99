@@ -138,7 +138,7 @@ export interface BankTransaction {
   created_at: string;
 }
 
-export function useBankTransactions(bankAccountId?: string) {
+export function useBankTransactions(bankAccountId?: string, startDate?: string, endDate?: string) {
   const { user } = useAuth();
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
   const [loading, setLoading] = useState(false);
@@ -149,7 +149,12 @@ export function useBankTransactions(bankAccountId?: string) {
       return;
     }
     setLoading(true);
-    const result = await invokeFinancial('list_bank_transactions', user.tenantId, { bank_account_id: bankAccountId, limit: 100 });
+    const result = await invokeFinancial('list_bank_transactions', user.tenantId, {
+      bank_account_id: bankAccountId,
+      limit: 200,
+      start_date: startDate,
+      end_date: endDate,
+    });
     if (result?.error) {
       console.error('[useBankTransactions] Erro:', result.error);
       setTransactions([]);
@@ -157,7 +162,7 @@ export function useBankTransactions(bankAccountId?: string) {
       setTransactions((result?.data as BankTransaction[]) ?? []);
     }
     setLoading(false);
-  }, [user?.tenantId, bankAccountId]);
+  }, [user?.tenantId, bankAccountId, startDate, endDate]);
 
   useEffect(() => { fetchTransactions(); }, [fetchTransactions]);
 
@@ -291,19 +296,12 @@ export function useBillsPayable() {
   const fetchBills = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
-    const today = new Date().toISOString().split('T')[0];
     const result = await invokeFinancial('list_bills_payable', user.tenantId, {});
     if (result?.error) {
       console.error('[useFinanceiro] Erro ao buscar contas a pagar:', result.error);
       setBills([]);
     } else {
-      const data = (result?.data as BillPayable[]) ?? [];
-      // Auto-mark overdue
-      const processed = data.map(b => ({
-        ...b,
-        status: b.status === 'pending' && b.due_date < today ? 'overdue' : b.status,
-      }));
-      setBills(processed);
+      setBills((result?.data as BillPayable[]) ?? []);
     }
     setLoading(false);
   }, [user?.tenantId]);
@@ -374,7 +372,7 @@ export function usePurchases() {
       const supplier = String(payload.supplier ?? '');
       const paymentStatus = String(payload.payment_status ?? 'paid');
       auditFn({
-        tipo: 'estoque_entrada',
+        tipo: 'compra_registrada',
         severidade: 'info',
         usuario: user.nome,
         perfil: user.perfil,
@@ -520,8 +518,7 @@ export interface TopDespesa {
 
 // INVARIANTE: Para verificar double-count, some os valores de useTopDespesas
 // e compare com o total de saídas de fin_cash_flow do mesmo período.
-// Os valores devem ser iguais (ou ter apenas a diferença da folha de pagamento
-// que pode não estar em fin_cash_flow).
+// Os valores devem ser iguais.
 //
 // ESTRATÉGIA ANTI-DOUBLE-COUNT:
 // Usamos fin_cash_flow como ÚNICA fonte de verdade para despesas.
@@ -530,7 +527,9 @@ export interface TopDespesa {
 //   - 'auto_bill_payment'  → gerado automaticamente ao pagar uma conta (fin_accounts_payable)
 // Essas origens JÁ ESTÃO em fin_cash_flow, então não precisamos somar fin_purchases
 // nem fin_accounts_payable separadamente.
-// A folha de pagamento (hr_payroll) é a única exceção — ainda não passa por fin_cash_flow.
+// A folha de pagamento (hr_payroll) AGORA também passa por fin_cash_flow (origin='auto_payroll'),
+// então não precisamos mais buscar hr_payroll separadamente para despesas pagas.
+// Mantemos a busca separada apenas para hr_payroll.status='pending' (despesas comprometidas).
 
 export function useTopDespesas(monthsBack = 1) {
   const { user } = useAuth();
@@ -546,29 +545,18 @@ export function useTopDespesas(monthsBack = 1) {
     startDate.setMonth(startDate.getMonth() - monthsBack);
     startDate.setDate(1);
     const startStr = startDate.toISOString().split('T')[0];
-    const startStr2 = startStr.slice(0, 7); // YYYY-MM para hr_payroll
 
     // Fonte única de verdade: fin_cash_flow (saídas manuais + automáticas)
-    // Não somamos fin_purchases nem fin_accounts_payable separadamente para evitar
-    // double-count — eles já geram entradas em fin_cash_flow via auto_purchase e auto_bill_payment.
-    const [cashflowRes, payrollRes] = await Promise.all([
-      supabase
-        .from('fin_cash_flow')
-        .select('category, amount, origin, description')
-        .eq('tenant_id', user.tenantId)
-        .eq('type', 'expense')
-        .gte('date', startStr),
-      // Folha de pagamento: única fonte que ainda não passa por fin_cash_flow
-      supabase
-        .from('hr_payroll')
-        .select('net_salary, reference_month')
-        .eq('tenant_id', user.tenantId)
-        .eq('status', 'paid')
-        .gte('reference_month', startStr2),
-    ]);
+    // A folha de pagamento paga agora já está em fin_cash_flow com origin='auto_payroll',
+    // então não precisamos buscar hr_payroll separadamente.
+    const { data, error } = await supabase
+      .from('fin_cash_flow')
+      .select('category, amount, origin, description')
+      .eq('tenant_id', user.tenantId)
+      .eq('type', 'expense')
+      .gte('date', startStr);
 
-    if (cashflowRes.error) console.error('[useTopDespesas] Erro ao buscar cash_flow:', cashflowRes.error.message);
-    if (payrollRes.error) console.error('[useTopDespesas] Erro ao buscar folha:', payrollRes.error.message);
+    if (error) console.error('[useTopDespesas] Erro ao buscar cash_flow:', error.message);
 
     const map: Record<string, { total: number; count: number }> = {};
 
@@ -579,11 +567,8 @@ export function useTopDespesas(monthsBack = 1) {
       map[key].count += 1;
     };
 
-    // Todas as saídas do fluxo de caixa (inclui auto_purchase, auto_bill_payment, antecipações, manuais)
-    (cashflowRes.data ?? []).forEach(c => addToMap(c.category || 'Outros', c.amount));
-
-    // Folha de pagamento (não está em fin_cash_flow ainda)
-    (payrollRes.data ?? []).forEach(p => addToMap('Folha de Pagamento', p.net_salary));
+    // Todas as saídas do fluxo de caixa (inclui auto_payroll, auto_purchase, auto_bill_payment, antecipações, manuais)
+    (data ?? []).forEach(c => addToMap(c.category || 'Outros', c.amount));
 
     const total = Object.values(map).reduce((s, v) => s + v.total, 0);
 
@@ -664,28 +649,29 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
 
       // Busca pedidos (orders.total_amount = fonte única de verdade, igual ao dashboard e relatórios)
       const [cashFlow, billsVencendo, payments30d,
-             ordersHoje, ordersMes, ordersPrevMes, orders30d, payrollMes,
-             manualIncomeHoje, manualIncomeMes, manualIncome30d] = await Promise.all([
-        supabase.from('fin_cash_flow').select('type,amount').eq('tenant_id', user.tenantId).gte('date', startOfMonthStr.split('T')[0]),
+             ordersHoje, ordersMes, ordersPrevMes, orders30d, payrollPendingMes,
+             manualIncomeHoje, manualIncomeMes, manualIncome30d, installmentsPendentes] = await Promise.all([
+        supabase.from('fin_cash_flow').select('type,amount').eq('tenant_id', user.tenantId).not('origin', 'in', '(auto_sale,auto_card_fee)').gte('date', startOfMonthStr.split('T')[0]),
         supabase.from('fin_accounts_payable').select('*').eq('tenant_id', user.tenantId).in('status', ['pending', 'overdue']).lte('due_date', sevenDaysLaterStr).order('due_date'),
         supabase.from('payments').select('amount, payment_method_id, payment_methods(name)').eq('tenant_id', user.tenantId).gte('created_at', thirtyDaysAgoStr).not('is_refunded', 'eq', true),
         // Pedidos de hoje (entre meia-noite e meia-noite de amanhã, horário BR)
         supabase.from('orders').select('total_amount').eq('tenant_id', user.tenantId)
           .gte('created_at', todayStart).lt('created_at', tomorrowStart)
-          .not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
+          .eq('is_paid', true).not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
         supabase.from('orders').select('total_amount').eq('tenant_id', user.tenantId)
           .gte('created_at', startOfMonthStr)
-          .not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
+          .eq('is_paid', true).not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
         supabase.from('orders').select('total_amount').eq('tenant_id', user.tenantId)
           .gte('created_at', prevMonthStartStr).lte('created_at', prevMonthEndStr)
-          .not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
+          .eq('is_paid', true).not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
         supabase.from('orders').select('total_amount, created_at').eq('tenant_id', user.tenantId)
           .gte('created_at', thirtyDaysAgoStr)
-          .not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
-        // Folha de pagamento do mês atual (status paid ou pending — já é despesa comprometida)
-        supabase.from('hr_payroll').select('net_salary, status')
+          .eq('is_paid', true).not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
+        // Folha de pagamento pendente do mês atual (despesa comprometida ainda não paga)
+        supabase.from('hr_payroll').select('net_salary')
           .eq('tenant_id', user.tenantId)
-          .eq('reference_month', currentMonthStr),
+          .eq('reference_month', currentMonthStr)
+          .eq('status', 'pending'),
         // Entradas manuais do fluxo de caixa — hoje
         supabase.from('fin_cash_flow').select('amount, payment_method_id, payment_methods(name)')
           .eq('tenant_id', user.tenantId)
@@ -704,6 +690,11 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
           .eq('type', 'income')
           .eq('origin', 'manual')
           .gte('date', thirtyDaysAgoStr.split('T')[0]),
+        // Parcelas a receber pendentes nos próximos 7 dias
+        supabase.from('fin_receivable_installments').select('amount')
+          .eq('tenant_id', user.tenantId)
+          .eq('status', 'pending')
+          .lte('due_date', sevenDaysLaterStr),
       ]);
 
       // Verificar erros críticos e expor mensagem amigável
@@ -731,15 +722,20 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
 
       const entradas = (cashFlow.data ?? []).filter(e => e.type === 'income').reduce((s, e) => s + Number(e.amount), 0);
       const saidas = (cashFlow.data ?? []).filter(e => e.type === 'expense').reduce((s, e) => s + Number(e.amount), 0);
-      const saldoCaixa = entradas - saidas;
+      const saldoCaixa = receitaMes + entradas - saidas;
 
-      // Lucro REAL = Receita - Despesas Totais (cash_flow saídas + folha de pagamento)
-      // Não usa mais chute de 25% — calcula com dados reais do sistema
-      const folhaMes = (payrollMes.data ?? []).reduce((s, p) => s + Number(p.net_salary), 0);
-      const despesasTotais = saidas + folhaMes;
+      // Lucro REAL = Receita - Despesas Totais (apenas saídas de fin_cash_flow)
+      // A folha de pagamento paga já está em fin_cash_flow com origin='auto_payroll',
+      // então não precisamos somar hr_payroll separadamente.
+      const despesasTotais = saidas;
       const lucroEstimado = Math.max(0, receitaMes - despesasTotais);
 
       const totalAPagar = (billsVencendo.data ?? []).reduce((s, b) => s + Number(b.amount), 0);
+      const folhaPendente = (payrollPendingMes.data ?? []).reduce((s, p) => s + Number(p.net_salary), 0);
+      // Despesas comprometidas = contas a pagar + folha pendente
+      const totalComprometido = totalAPagar + folhaPendente;
+      // Parcelas a receber pendentes nos próximos 7 dias
+      const totalAReceber = (installmentsPendentes.data ?? []).reduce((s, i) => s + Number(i.amount), 0);
 
       // Receita por forma de pagamento (últimos 30 dias) — payments + entradas manuais do fluxo de caixa
       const paymentMap: Record<string, number> = {};
@@ -789,7 +785,8 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
         saldoCaixa,
         crescimentoMes,
         totalAPagar,
-        totalAReceber: 0,
+        totalAReceber,
+        totalComprometido,
         contasVencendo: (billsVencendo.data ?? []) as BillPayable[],
         receitaDiaria: Object.entries(dailyMap).sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value })),
         receitaPorPagamento,

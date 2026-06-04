@@ -3,7 +3,7 @@ import { formatOrderNumber } from '@/lib/statusMappers';
 import { TempoCell } from './SlaCell';
 
 const DB_STATUS_LABEL: Record<string, string> = {
-  new: 'Aguardando', preparing: 'Em preparo', ready: 'Pronto',
+  new: 'Na Fila', preparing: 'Em preparo', ready: 'Pronto',
   delivered: 'Entregue', cancelled: 'Cancelado',
 };
 const STATUS_LABEL: Record<string, string> = {
@@ -36,7 +36,7 @@ const ORIGEM_ICON: Record<string, string> = {
 };
 
 const UNIDADE_STATUS_LABEL: Record<string, string> = {
-  aguardando: 'Aguardando',
+  aguardando: 'Na Fila',
   preparo: 'Em preparo',
   pronto: 'Pronto',
   entregue: 'Entregue',
@@ -200,7 +200,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
       {/* Desktop table header */}
       <div
         className="hidden lg:grid gap-x-2 px-4 py-3 border-b border-zinc-100 bg-zinc-50"
-        style={{ gridTemplateColumns: '1.6fr 1.2fr 1.6fr 1.6fr 1.8fr 1.2fr 0.8fr 1.4fr 1.2fr 1.2fr' }}
+        style={{ gridTemplateColumns: '2fr 1.2fr 1.5fr 1.4fr 1.8fr 1.2fr 0.8fr 1.4fr 1.1fr 1.2fr' }}
       >
         {['#', 'Sessão', 'Status', 'Pagamento', 'Destino', 'Origem', 'Itens', 'Tempo', 'Hora', 'Total'].map((h) => (
           <div key={h} className={`text-[10px] font-bold text-zinc-400 uppercase tracking-wide ${h === 'Total' ? 'text-right' : ''}`}>{h}</div>
@@ -209,14 +209,14 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
 
       <div className="divide-y divide-zinc-50">
         {pedidos.map((pedido) => {
+          const isGrupo = (pedido.pedidoIds ?? []).length > 1;
+          const qtdPedidosGrupo = pedido.pedidoIds?.length ?? 1;
           const itensProntosReal = pedido.itensDetalhes.reduce((acc, item) => {
             const prontas = item.unidades?.filter((u) => u.status === 'pronto' || u.status === 'entregue').length ?? 0;
             return acc + prontas;
           }, 0);
           const itensTotalReal = pedido.itensDetalhes.reduce((acc, item) => acc + item.quantidade, 0);
           const prontosPctReal = itensTotalReal > 0 ? Math.round((itensProntosReal / itensTotalReal) * 100) : 0;
-
-
 
           const isAtrasado = pedido.atrasado === true;
 
@@ -229,21 +229,36 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
               {/* Desktop row */}
               <div
                 className="hidden lg:grid gap-x-2 px-4 py-3.5 items-center"
-                style={{ gridTemplateColumns: '1.6fr 1.2fr 1.6fr 1.6fr 1.8fr 1.2fr 0.8fr 1.4fr 1.2fr 1.2fr' }}
+                style={{ gridTemplateColumns: '2fr 1.2fr 1.5fr 1.4fr 1.8fr 1.2fr 0.8fr 1.4fr 1.1fr 1.2fr' }}
               >
-                {/* # BUG 3.1 FIX: formatOrderNumber centralizado */}
+                {/* # */}
                 <div className="min-w-0">
-                  <span className="text-sm font-bold text-zinc-800 whitespace-nowrap">
-                    {formatOrderNumber(pedido.numeroStr ?? pedido.numeroCodigo, pedido.numero)}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-bold text-zinc-800 whitespace-nowrap">
+                      {isGrupo
+                        ? `${qtdPedidosGrupo} pedidos`
+                        : formatOrderNumber(pedido.numeroStr ?? pedido.numeroCodigo, pedido.numero)}
+                    </span>
+                    {isGrupo && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 whitespace-nowrap">
+                        <i className="ri-stack-line text-[9px]" />
+                        Unificado
+                      </span>
+                    )}
+                  </div>
+                  {isGrupo && (
+                    <p className="text-[10px] text-zinc-400 mt-0.5 truncate" title={pedido.numeroCodigo}>
+                      {pedido.numeroCodigo}
+                    </p>
+                  )}
                 </div>
 
                 {/* Sessão */}
                 <div>
-                  {pedido.session_id ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200 whitespace-nowrap" title={pedido.session_id}>
+                  {pedido.session_number ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200 whitespace-nowrap" title={pedido.session_number}>
                       <i className="ri-archive-line text-[9px]" />
-                      {pedido.session_id.slice(0, 8)}
+                      {pedido.session_number}
                     </span>
                   ) : (
                     <span className="text-xs text-zinc-300">—</span>
@@ -325,8 +340,16 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-bold text-zinc-800">
-                      {formatOrderNumber(pedido.numeroStr ?? pedido.numeroCodigo, pedido.numero)}
+                      {isGrupo
+                        ? `${qtdPedidosGrupo} pedidos`
+                        : formatOrderNumber(pedido.numeroStr ?? pedido.numeroCodigo, pedido.numero)}
                     </span>
+                    {isGrupo && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                        <i className="ri-stack-line text-[9px]" />
+                        Unificado
+                      </span>
+                    )}
                     <StatusBadges pedido={pedido} />
                     {pedido.pago && (
                       <span className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">
@@ -342,10 +365,10 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                     {ORIGEM_LABEL[pedido.origem]}
                   </span>
                   <span>{destinoLabel(pedido)}</span>
-                  {pedido.session_id && (
+                  {pedido.session_number && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200">
                       <i className="ri-archive-line text-[9px]" />
-                      {pedido.session_id.slice(0, 8)}
+                      {pedido.session_number}
                     </span>
                   )}
                   {pedido.garcomNome && <span className="text-zinc-400">{pedido.garcomNome}</span>}

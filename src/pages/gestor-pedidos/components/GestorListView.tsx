@@ -2,7 +2,8 @@ import { useState, useMemo } from 'react';
 import type { KDSPedido, KDSItem } from '@/types/kds';
 import { formatOrderNumber } from '@/lib/statusMappers';
 import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
-import { printHTML } from '@/lib/printUtils';
+import { sendToPrinter } from '@/lib/printUtils';
+import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
 
 interface Props {
   pedidos: KDSPedido[];
@@ -204,6 +205,7 @@ function RowDetail({ pedido, filtroEstacao }: { pedido: KDSPedido; filtroEstacao
 
 export default function GestorListView({ pedidos, onAvancar, onEntregar, onCancelar, onOpenDetail, tick, filtroEstacao }: Props) {
   void tick;
+  const { getImpressoraParaEstacao } = useImpressoras();
   const [fichaItens, setFichaItens] = useState<{ nome: string; quantidade: number; menuItemId?: string }[] | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('tempo');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -237,21 +239,16 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
   }, [pedidos, sortKey, sortDir]);
 
   const handlePrint = (p: KDSPedido) => {
-    printHTML(`<html><head><title>Pedido #${p.numero}</title>
-      <style>body{font-family:monospace;font-size:12px;padding:16px}h2{margin:0 0 4px}hr{border:1px dashed #000}.item{margin:4px 0}.obs{color:red;font-weight:bold;font-size:11px}p{margin:2px 0;font-size:11px}</style>
-      </head><body>
-      <h2>Pedido #${String(p.numero).padStart(4, '0')}</h2>
-      <p>${destinoStr(p)} &mdash; ${p.origem}</p>
-      ${p.garcomNome ? `<p>Gar&ccedil;om: ${p.garcomNome}</p>` : ''}
-      <hr/>
-      ${p.itens.map((i) => `
-        <div class="item"><strong>${i.quantidade}x ${i.nome}</strong>
-        ${i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => `+ ${o.opcaoNome}`).join(', ')}</div>` : ''}
-        ${i.observacoes?.length ? `<div class="obs">${i.observacoes.map((o) => `&#9888; ${o}`).join('<br/>')}</div>` : ''}
-        </div>`).join('')}
-      <hr/>
-      <small>${new Date().toLocaleString('pt-BR')}</small>
-      </body></html>`);
+    const numStr = String(p.numero).padStart(4, '0');
+    const garcomLine = p.garcomNome ? `<p>Gar&ccedil;om: ${p.garcomNome}</p>` : '';
+    const itensHtml = p.itens.map((i) => {
+      const opts = i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => '+ ' + o.opcaoNome).join(', ')}</div>` : '';
+      const obs = i.observacoes?.length ? `<div style="color:red;font-weight:bold;font-size:11px">${i.observacoes.map((o) => '&#9888; ' + o).join('<br/>')}</div>` : '';
+      return `<div style="margin:4px 0"><strong>${i.quantidade}x ${i.nome}</strong>${opts}${obs}</div>`;
+    }).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Pedido #${numStr}</title><style>body{font-family:monospace;font-size:12px;padding:16px}h2{margin:0 0 4px}hr{border:1px dashed #000}p{margin:2px 0;font-size:11px}</style></head><body><h2>Pedido #${numStr}</h2><p>${destinoStr(p)} &mdash; ${p.origem}</p>${garcomLine}<hr/>${itensHtml}<hr/><small>${new Date().toLocaleString('pt-BR')}</small></body></html>`;
+    const impressora = getImpressoraParaEstacao(PRINTER_KEY_GESTOR_PEDIDOS);
+    sendToPrinter(html, impressora);
   };
 
   function SortTh({ label, col }: { label: string; col: SortKey }) {
@@ -307,6 +304,14 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
 
                 return (
                   <div key={p.id} className={`${p.status === 'entregue' && !isCancelled ? 'opacity-50' : ''} ${isCancelled ? 'bg-red-50/50' : ''}`}>
+                    {/* PDV Saving banner */}
+                    {p.isSaving && !isCancelled && (
+                      <div className="bg-sky-50 px-3 py-1 flex items-center gap-1.5 border-b border-sky-200">
+                        <div className="w-3 h-3 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+                        <span className="text-sky-700 text-[10px] font-bold">Atualizando pedido...</span>
+                      </div>
+                    )}
+
                     {/* Card header */}
                     <div
                       className={`px-3 py-3 cursor-pointer transition-colors ${isCancelled ? '' : urgRow}`}
@@ -378,7 +383,15 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
                           </button>
                         )}
                         <div className="flex-1" />
-                        {isPaid ? (
+                        {p.isSaving && !isCancelled ? (
+                          <span className="flex items-center gap-1 text-[9px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-1 rounded-lg whitespace-nowrap">
+                            <i className="ri-loader-4-line text-[9px] animate-spin" />Atualizando...
+                          </span>
+                        ) : p.isEditing && !isCancelled ? (
+                          <span className="flex items-center gap-1 text-[9px] font-bold text-orange-700 bg-orange-50 border border-orange-200 px-2 py-1 rounded-lg whitespace-nowrap">
+                            <i className="ri-edit-2-line text-[9px] animate-pulse" />Bloqueado
+                          </span>
+                        ) : isPaid ? (
                           <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 whitespace-nowrap">
                             <i className="ri-check-line text-[8px] mr-0.5" />Pago
                           </span>
@@ -389,6 +402,10 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
                         )}
                         {isCancelled ? (
                           <span className="text-[10px] text-red-400 font-bold whitespace-nowrap">Cancelado</span>
+                        ) : p.isSaving ? (
+                          <span className="text-[10px] font-bold text-sky-600 whitespace-nowrap">Atualizando...</span>
+                        ) : p.isEditing ? (
+                          <span className="text-[10px] font-bold text-zinc-300 whitespace-nowrap">Em edição</span>
                         ) : p.status === 'entregue' ? (
                           <span className="text-[10px] text-zinc-300 font-medium">Concluído</span>
                         ) : p.status === 'pronto' ? (
@@ -472,6 +489,13 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
 
                   return (
                     <div key={p.id} className={`border-b border-zinc-50 last:border-0 ${p.status === 'entregue' && !isCancelled ? 'opacity-50' : ''} ${isCancelled ? 'bg-red-50/50' : ''}`}>
+                      {/* PDV Saving banner */}
+                      {p.isSaving && !isCancelled && (
+                        <div className="bg-sky-50 px-3 py-1 flex items-center gap-1.5 border-b border-sky-200">
+                          <div className="w-3 h-3 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+                          <span className="text-sky-700 text-[10px] font-bold">Atualizando pedido...</span>
+                        </div>
+                      )}
                       <div
                         className={`grid grid-cols-[110px_68px_76px_140px_1fr_110px_72px_190px] px-3 py-3 transition-colors items-center gap-3 cursor-pointer hover:bg-zinc-50/80 ${isCancelled ? '' : urgRow}`}
                         onClick={() => setExpandedId(isExpanded ? null : p.id)}
@@ -552,6 +576,14 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
                           )}
                           {isCancelled ? (
                             <span className="text-[10px] text-red-400 font-bold px-1 whitespace-nowrap">Cancelado</span>
+                          ) : p.isSaving ? (
+                            <span className="flex items-center gap-1 text-[9px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-1 rounded-lg whitespace-nowrap">
+                              <i className="ri-loader-4-line text-[9px] animate-spin" />Atualizando...
+                            </span>
+                          ) : p.isEditing ? (
+                            <span className="flex items-center gap-1 text-[9px] font-bold text-orange-700 bg-orange-50 border border-orange-200 px-2 py-1 rounded-lg whitespace-nowrap">
+                              <i className="ri-edit-2-line text-[9px] animate-pulse" />Em edição
+                            </span>
                           ) : p.status === 'entregue' ? (
                             <span className="text-[10px] text-zinc-300 font-medium px-1">Concluído</span>
                           ) : p.status === 'pronto' ? (

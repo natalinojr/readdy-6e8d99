@@ -63,23 +63,35 @@ export interface DashboardMetrics {
   ultimos_pedidos: DashboardPedido[];
   mesas_mapa: DashboardMesa[];
   alertas_estoque: DashboardAlertaEstoque[];
+  pedidos_abertos_valor: number;
+  pedidos_abertos_count: number;
+  faturamento_andamento_hoje: number;
+  pedidos_andamento_hoje: number;
 }
 
 export function useDashboardMetrics() {
   const { user } = useAuth();
   const [data, setData] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
+    setError(null);
     try {
-      const { data: result, error } = await supabase.rpc('fn_get_dashboard_metrics', {
+      const { data: result, error: rpcError } = await supabase.rpc('fn_get_dashboard_metrics', {
         p_tenant_id: user.tenantId,
       });
-      if (!error && result) setData(result as DashboardMetrics);
+      if (rpcError) {
+        console.error('[useDashboardMetrics] RPC error:', rpcError);
+        setError(rpcError.message);
+      } else if (result) {
+        setData(result as DashboardMetrics);
+      }
     } catch (e) {
       console.error('[useDashboardMetrics]', e);
+      setError('Erro ao carregar métricas');
     } finally {
       setLoading(false);
     }
@@ -87,5 +99,5 @@ export function useDashboardMetrics() {
 
   useEffect(() => { load(); }, [load]);
 
-  return { data, loading, reload: load };
+  return { data, loading, error, reload: load };
 }

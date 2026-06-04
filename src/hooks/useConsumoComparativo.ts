@@ -96,32 +96,27 @@ export function useConsumoComparativo(dateFrom?: string, dateTo?: string) {
     const toAntTs = `${toAnterior}T23:59:59`;
 
     try {
-      // Busca ingredientes
-      const { data: ings, error: ingsErr } = await supabase
-        .from('ingredients')
-        .select('id, name, unit, category, supplier, current_stock, min_stock, unit_price')
-        .eq('tenant_id', tId)
-        .is('deleted_at', null);
-
+      // Busca ingredientes via RPC
+      const { data: ings, error: ingsErr } = await supabase.rpc('fn_get_ingredients_consumo', {
+        p_tenant_id: tId,
+      });
       if (ingsErr) throw ingsErr;
 
-      // Movimentações período atual
-      const { data: movsAtual } = await supabase
-        .from('stock_movements')
-        .select('ingredient_id, quantity, type, reason, created_at')
-        .eq('tenant_id', tId)
-        .in('type', ['theoretical_out', 'manual_out'])
-        .gte('created_at', fromTs)
-        .lte('created_at', toTs);
+      // Movimentações período atual via RPC
+      const { data: movsAtual } = await supabase.rpc('fn_get_stock_movements_filtered', {
+        p_tenant_id: tId,
+        p_date_from: fromTs,
+        p_date_to: toTs,
+        p_types: ['theoretical_out', 'manual_out', 'loss'],
+      });
 
-      // Movimentações período anterior
-      const { data: movsAnterior } = await supabase
-        .from('stock_movements')
-        .select('ingredient_id, quantity, type, reason, created_at')
-        .eq('tenant_id', tId)
-        .in('type', ['theoretical_out', 'manual_out'])
-        .gte('created_at', fromAntTs)
-        .lte('created_at', toAntTs);
+      // Movimentações período anterior via RPC
+      const { data: movsAnterior } = await supabase.rpc('fn_get_stock_movements_filtered', {
+        p_tenant_id: tId,
+        p_date_from: fromAntTs,
+        p_date_to: toAntTs,
+        p_types: ['theoretical_out', 'manual_out', 'loss'],
+      });
 
       // Agrupa consumo atual
       const consumoAtualMap = new Map<string, { total: number; dias: Set<string>; vendas: number; producao: number; perda: number }>();

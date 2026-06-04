@@ -506,10 +506,17 @@ export default function FecharContaModal({ mesaNome, rodadas, itensNovos, onConf
 
         {/* Resumo compacto */}
         <div className="px-4 py-2.5 bg-zinc-50 border-b border-zinc-100 flex-shrink-0">
-          <div className="flex items-center justify-between text-xs text-zinc-500 mb-1">
-            <span>{itensSelecionados.length} itens · Subtotal</span>
-            <span className="font-semibold">{fmt(subtotal)}</span>
-          </div>
+          {(taxaAtiva || gorjetaAtivaCfg) && (
+            <div className="flex items-center justify-between text-xs text-zinc-500 mb-1">
+              <span>{itensSelecionados.length} itens · Subtotal</span>
+              <span className="font-semibold">{fmt(subtotal)}</span>
+            </div>
+          )}
+          {!taxaAtiva && !gorjetaAtivaCfg && (
+            <div className="flex items-center justify-between text-xs text-zinc-500 mb-1">
+              <span>{itensSelecionados.length} itens</span>
+            </div>
+          )}
           {taxaAtiva && (
             <div className="flex items-center justify-between text-xs mb-1">
               <span className="text-zinc-400">Taxa de serviço ({settings.service_fee_percentage}%)</span>

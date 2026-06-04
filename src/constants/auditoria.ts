@@ -9,6 +9,7 @@ export type TipoAcao =
   | 'usuario_criado' | 'usuario_editado' | 'usuario_desativado'
   | 'permissao_alterada' | 'treino_ativado' | 'treino_desativado'
   | 'estoque_ajustado' | 'perda_registrada' | 'estoque_entrada' | 'estoque_transferencia'
+  | 'compra_registrada'
   | 'insumo_esgotado' | 'insumo_reposto'
   | 'acesso_login' | 'acesso_login_falhou' | 'acesso_logout'
   | 'mesa_transferida' | 'pedido_reaberto'
@@ -58,6 +59,7 @@ export const tipoAcaoConfig: Record<TipoAcao, { label: string; cor: string; bg: 
   estoque_ajustado:      { label: 'Estoque ajustado',        cor: 'text-amber-700',   bg: 'bg-amber-50',   icone: 'ri-stack-line' },
   perda_registrada:      { label: 'Perda registrada',        cor: 'text-orange-600',  bg: 'bg-orange-50',  icone: 'ri-alert-line' },
   estoque_entrada:       { label: 'Entrada de estoque',      cor: 'text-emerald-600', bg: 'bg-emerald-50', icone: 'ri-add-box-line' },
+  compra_registrada:     { label: 'Compra registrada',       cor: 'text-sky-600',     bg: 'bg-sky-50',     icone: 'ri-shopping-cart-line' },
   estoque_transferencia: { label: 'Transferência estoque',   cor: 'text-sky-600',     bg: 'bg-sky-50',     icone: 'ri-send-plane-line' },
   insumo_esgotado:       { label: 'Insumo esgotado',         cor: 'text-red-600',     bg: 'bg-red-50',     icone: 'ri-error-warning-line' },
   insumo_reposto:        { label: 'Insumo reposto',          cor: 'text-emerald-600', bg: 'bg-emerald-50', icone: 'ri-checkbox-circle-line' },
@@ -82,7 +84,7 @@ export const tiposParaFiltro = [
   { id: 'caixa',   label: 'Caixa / Sessão',  tipos: ['abertura_caixa','fechamento_caixa','sangria','suprimento','sessao_aberta','sessao_fechada'] },
   { id: 'pedidos', label: 'Pedidos',          tipos: ['desconto_aplicado','desconto_negado','desconto_solicitado','item_cancelado','pedido_cancelado','pedido_reaberto','estorno_realizado','item_kds_editado','item_kds_removido'] },
   { id: 'cardapio',label: 'Cardápio',         tipos: ['preco_alterado','item_editado'] },
-  { id: 'estoque', label: 'Estoque',          tipos: ['estoque_ajustado','perda_registrada','estoque_entrada','estoque_transferencia','insumo_esgotado','insumo_reposto'] },
+  { id: 'estoque', label: 'Estoque',          tipos: ['estoque_ajustado','perda_registrada','estoque_entrada','estoque_transferencia','insumo_esgotado','insumo_reposto','compra_registrada'] },
   { id: 'usuarios',label: 'Usuários',         tipos: ['usuario_criado','usuario_editado','usuario_desativado','permissao_alterada','treino_ativado','treino_desativado'] },
   { id: 'acesso',  label: 'Acesso',           tipos: ['acesso_login','acesso_login_falhou','acesso_logout'] },
   { id: 'mesas',   label: 'Mesas',            tipos: ['mesa_transferida'] },

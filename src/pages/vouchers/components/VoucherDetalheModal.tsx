@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import type { Voucher, VoucherTransaction } from '@/types/vouchers';
@@ -41,7 +41,7 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
   async function loadTransactions() {
     setLoading(true);
     try {
-      const { data } = await supabase.functions.invoke('voucher-write', {
+      const { data } = await invokeWithAuth('voucher-write', {
         body: { action: 'get_voucher_transactions', voucher_id: voucher.id, active_tenant_id: user?.tenantId },
       });
       setTransactions(((data as { data?: VoucherTransaction[] })?.data ?? []) as VoucherTransaction[]);
@@ -54,7 +54,7 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
     if (!window.confirm(`Cancelar o voucher ${voucher.code}?`)) return;
     setCancelling(true);
     try {
-      await supabase.functions.invoke('voucher-write', {
+      await invokeWithAuth('voucher-write', {
         body: { action: 'cancel_voucher', voucher_id: voucher.id, active_tenant_id: user?.tenantId },
       });
       registrarEvento({

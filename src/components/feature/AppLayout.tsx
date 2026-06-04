@@ -10,7 +10,7 @@ import RotaProtegida from './RotaProtegida';
 import AlertaSessaoEsquecida from './AlertaSessaoEsquecida';
 
 // Rotas publicas — acessiveis SEM autenticacao
-const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/autoatendimento', '/mesa/'];
+const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/autoatendimento', '/mesa/', '/mesa-qr/'];
 // Rotas full-screen protegidas — sem sidebar/topbar, MAS exigem auth + tenant
 const FULL_SCREEN_PROTECTED = ['/modulos'];
 // Terminais — full-screen com UI propria

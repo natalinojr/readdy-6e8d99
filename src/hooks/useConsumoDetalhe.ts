@@ -136,13 +136,12 @@ export function useConsumoDetalhe(
           new Set(rawMovs.map(m => m.order_id).filter(Boolean) as string[])
         );
 
-        // 3) Buscar pedidos
+        // 3) Buscar pedidos via RPC
         const pedidosMap = new Map<string, PedidoConsumo>();
         if (orderIds.length > 0) {
-          const { data: ordersData } = await supabase
-            .from('orders')
-            .select('id, number, origin_type, destination_name, table_number, total_amount, paid_by_pdv, status')
-            .in('id', orderIds);
+          const { data: ordersData } = await supabase.rpc('fn_get_orders_by_ids', {
+            p_order_ids: orderIds,
+          });
 
           for (const o of (ordersData ?? []) as Array<{
             id: string;

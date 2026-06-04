@@ -404,7 +404,7 @@ export default function ModulosPage() {
       )}
 
       {/* ── TOPBAR ── */}
-      <div className="relative z-10 flex items-center justify-between px-5 md:px-10 pt-5 pb-4 flex-shrink-0 gap-3">
+      <div className="relative z-10 flex items-center justify-between px-3 sm:px-5 md:px-10 pt-4 sm:pt-5 pb-3 sm:pb-4 flex-shrink-0 gap-2 sm:gap-3 flex-wrap">
         <div className="flex items-center gap-3 flex-shrink-0">
           <div className="w-10 h-10 flex items-center justify-center bg-gradient-to-br from-amber-400 to-amber-600 rounded-xl">
             <ChefHat size={18} className="text-white" />
@@ -526,13 +526,13 @@ export default function ModulosPage() {
             </button>
           )}
 
-          <div className="flex items-center gap-2 px-3 py-2 bg-white/70 rounded-xl border border-zinc-200 flex-shrink-0 backdrop-blur-sm">
+          <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 bg-white/70 rounded-xl border border-zinc-200 flex-shrink-0 backdrop-blur-sm">
             <div className="w-7 h-7 flex items-center justify-center bg-gradient-to-br from-amber-400 to-amber-600 rounded-full flex-shrink-0">
               <span className="text-[11px] font-black text-white">{user?.nome.charAt(0)}</span>
             </div>
-            <div className="min-w-0 hidden sm:block">
-              <p className="text-zinc-800 text-xs font-semibold leading-none truncate max-w-[100px]">{user?.nome}</p>
-              <p className="text-zinc-400 text-[10px] mt-0.5 truncate max-w-[100px]">{user?.perfil ? perfilLabel[user.perfil] : ''}</p>
+            <div className="min-w-0 hidden md:block">
+              <p className="text-zinc-800 text-xs font-semibold leading-none truncate max-w-[80px] lg:max-w-[120px]">{user?.nome}</p>
+              <p className="text-zinc-400 text-[10px] mt-0.5 truncate max-w-[80px] lg:max-w-[120px]">{user?.perfil ? perfilLabel[user.perfil] : ''}</p>
             </div>
             <button onClick={handleLogout} title="Sair" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer text-zinc-400 hover:text-red-500 transition-colors">
               <LogOut size={13} />

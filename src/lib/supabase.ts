@@ -17,14 +17,85 @@ export const SUPABASE_ANON_KEY = supabaseAnonKey;
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
-    autoRefreshToken: true,
+    autoRefreshToken: false,
     detectSessionInUrl: true,
   },
 });
 
+// ─── Helpers seguros para evitar que "Invalid Refresh Token" estoure na UI ──
+
+/**
+ * Verifica se uma mensagem de erro indica refresh token inválido/revogado.
+ * NOTE: 'jwt expired' sozinho pode ser do access token (que o refresh corrige),
+ *       então só consideramos revogado se vier junto com outras palavras-chave.
+ */
+function isRefreshTokenInvalidError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('invalid refresh token') ||
+    lower.includes('refresh token not found') ||
+    lower.includes('token has been revoked') ||
+    lower.includes('refresh token already used') ||
+    lower.includes('session not found') ||
+    // "jwt expired" só é fatal de refresh se vier com "refresh" ou "session"
+    (lower.includes('jwt expired') && (lower.includes('refresh') || lower.includes('session')))
+  );
+}
+
+/**
+ * SignOut seguro que nunca lança exceção e limpa o localStorage manualmente se necessário.
+ */
+export async function safeSignOut(): Promise<void> {
+  try {
+    await supabase.auth.signOut();
+  } catch {
+    // Se signOut falhar, limpa manualmente as chaves que o supabase-js usa
+  }
+  try {
+    const keys = Object.keys(localStorage);
+    for (const key of keys) {
+      if (key.startsWith('sb-') || key.includes('supabase')) {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch { /* silencioso */ }
+}
+
+/**
+ * Wrapper seguro para refreshSession. Se o refresh token for inválido
+ * (revogado, expirado, ou não encontrado no servidor), limpa a sessão local
+ * e retorna null sem propagar o erro.
+ * Se for outro erro (rede, timeout), retorna null SEM limpar a sessão local.
+ */
+export async function safeRefreshSession(): Promise<Session | null> {
+  try {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error) {
+      if (isRefreshTokenInvalidError(error.message)) {
+        console.warn('[safeRefreshSession] Refresh token inválido/revogado — limpando sessão local');
+        await safeSignOut();
+        return null;
+      }
+      // Outro erro (rede, servidor, etc.) — não limpa sessão
+      console.warn('[safeRefreshSession] refreshSession falhou (não-fatal):', error.message);
+      return null;
+    }
+    return data?.session ?? null;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (isRefreshTokenInvalidError(msg)) {
+      console.warn('[safeRefreshSession] Exceção de refresh token inválido — limpando sessão local');
+      await safeSignOut();
+      return null;
+    }
+    console.warn('[safeRefreshSession] Exceção inesperada (não-fatal):', msg);
+    return null;
+  }
+}
+
 /**
  * Garante que a sessao do Supabase esteja fresca (token nao expirado).
- * Se o token expirar em menos de 2 minutos, forca um refresh.
+ * Se o token expirar em menos de 5 minutos, forca um refresh.
  * Se o token JA estiver expirado, tenta renovar igualmente.
  * Se o refresh token for invalido (sessao revogada/expirada), retorna null sem propagar erro.
  * Retorna a sessao valida ou null caso nao consiga renovar.
@@ -42,17 +113,9 @@ export async function ensureFreshSession(): Promise<Session | null> {
   const expiresAt = session.expires_at ?? 0;
   const nowSec = Math.floor(Date.now() / 1000);
 
-  // Token ja expirado OU expira em menos de 2 minutos -> tenta refresh
-  if (expiresAt <= nowSec || expiresAt - nowSec < 120) {
-    try {
-      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-      if (refreshError || !refreshData?.session) {
-        return null;
-      }
-      return refreshData.session;
-    } catch {
-      return null;
-    }
+  // Token ja expirado OU expira em menos de 5 minutos -> tenta refresh
+  if (expiresAt <= nowSec || expiresAt - nowSec < 300) {
+    return await safeRefreshSession();
   }
 
   return session;
@@ -61,12 +124,17 @@ export async function ensureFreshSession(): Promise<Session | null> {
 /**
  * Faz o fetch para a Edge Function com o token fornecido.
  * Retorna a response para tratamento externo.
+ * Agora com timeout de 60s para evitar 'Failed to fetch' em operações pesadas.
  */
 async function doFetch(
   functionName: string,
   accessToken: string,
   body: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<Response> {
+  const payloadSize = JSON.stringify(body).length;
+  console.log(`[doFetch] ${functionName} — payload size: ${payloadSize} bytes`);
+  
   return fetch(
     `${supabaseUrl}/functions/v1/${functionName}`,
     {
@@ -77,6 +145,7 @@ async function doFetch(
         'apikey': supabaseAnonKey,
       },
       body: JSON.stringify(body),
+      signal,
     },
   );
 }
@@ -93,53 +162,61 @@ async function resolveAccessToken(externalToken?: string): Promise<{
     return { accessToken: externalToken, error: null };
   }
 
-  let session: { session?: Session | null } | null = null;
+  // ── Única chamada getSession: pega token E expiração de uma vez ─────────
+  let session: import('@supabase/supabase-js').Session | null = null;
   try {
     const { data, error } = await supabase.auth.getSession();
-    if (!error) session = data;
+    if (!error && data?.session) {
+      session = data.session;
+    }
   } catch {
-    session = null;
+    // Ignora erro de getSession
   }
 
-  if (!session?.session?.access_token) {
+  if (!session?.access_token) {
+    console.warn('[resolveAccessToken] Token ausente — tentando refresh imediato...');
+    const refreshed = await safeRefreshSession();
+    if (refreshed?.access_token) {
+      return { accessToken: refreshed.access_token, error: null };
+    }
     return {
       accessToken: null,
       error: new Error('Sessao invalida ou expirada. Faca login novamente.'),
     };
   }
 
-  const s = session.session;
-  const expiresAt = s.expires_at ?? 0;
+  const token = session.access_token;
+  const expiresAt = session.expires_at ?? 0;
   const nowSec = Math.floor(Date.now() / 1000);
+  const secondsLeft = expiresAt - nowSec;
 
-  // Token expirado ou expira em menos de 60s -> forca refresh
-  if (expiresAt - nowSec < 60) {
-    try {
-      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-      if (!refreshError && refreshData?.session?.access_token) {
-        return { accessToken: refreshData.session.access_token, error: null };
-      }
-      console.error('[invokeWithAuth] Token refresh failed');
-      return {
-        accessToken: null,
-        error: new Error('Sessao expirada. Por favor, faca login novamente.'),
-      };
-    } catch {
-      console.error('[invokeWithAuth] Token refresh threw');
-      return {
-        accessToken: null,
-        error: new Error('Sessao expirada. Por favor, faca login novamente.'),
-      };
+  // Token expirado OU expira em menos de 5 minutos → força refresh
+  if (secondsLeft < 300) {
+    console.warn(`[resolveAccessToken] Token expira em ${secondsLeft}s — forçando refresh...`);
+    const refreshed = await safeRefreshSession();
+    if (refreshed?.access_token) {
+      return { accessToken: refreshed.access_token, error: null };
     }
+    // Refresh falhou — se o token ainda tem > 0s de vida, usa como último recurso
+    if (secondsLeft > 0) {
+      console.warn('[resolveAccessToken] Refresh falhou — usando token atual como fallback');
+      return { accessToken: token, error: null };
+    }
+    // Token expirado e refresh falhou → desiste
+    return {
+      accessToken: null,
+      error: new Error('Sessao expirada. Por favor, faca login novamente.'),
+    };
   }
 
-  return { accessToken: s.access_token, error: null };
+  return { accessToken: token, error: null };
 }
 
 /**
  * Invoca uma Edge Function garantindo que o JWT mais recente da sessao
  * seja enviado no header Authorization. Se receber 401 (token rejeitado pelo
  * servidor), faz refresh do token e retenta a chamada uma unica vez.
+ * Agora com timeout de 60s e retry automatico para erros de rede (Failed to fetch).
  *
  * @param functionName  Nome da Edge Function
  * @param options       Corpo da requisicao e token externo opcional
@@ -155,86 +232,110 @@ export async function invokeWithAuth<T = unknown>(
   // Primeira tentativa: resolve token e faz fetch
   const firstResolve = await resolveAccessToken(options.externalToken);
   if (firstResolve.error) {
+    console.error(`[invokeWithAuth] ${functionName} — resolveAccessToken falhou:`, firstResolve.error.message);
     return { data: null, error: firstResolve.error };
   }
   accessToken = firstResolve.accessToken;
 
-  let response: Response;
-  try {
-    response = await doFetch(functionName, accessToken!, options.body ?? {});
-  } catch (netErr) {
-    return {
-      data: null,
-      error: netErr instanceof Error ? netErr : new Error('Erro de rede ao chamar funcao'),
-    };
-  }
+  const MAX_RETRIES = 2;
+  const TIMEOUT_MS = 60000;
 
-  // Se recebeu 401, pode ser token revogado no servidor. Forca refresh e retenta.
-  if (response.status === 401) {
-    console.warn(`[invokeWithAuth] ${functionName} returned 401 — forcing token refresh and retry`);
+  async function attemptFetch(isRetry: boolean): Promise<{ data: T | null; error: Error | null }> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
+    let response: Response;
     try {
-      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-      if (refreshError || !refreshData?.session?.access_token) {
-        return {
-          data: null,
-          error: new Error('Sessao expirada ou revogada. Por favor, faca login novamente.'),
-        };
-      }
-      accessToken = refreshData.session.access_token;
-    } catch {
-      return {
-        data: null,
-        error: new Error('Sessao expirada ou revogada. Por favor, faca login novamente.'),
-      };
-    }
-
-    try {
-      response = await doFetch(functionName, accessToken, options.body ?? {});
+      response = await doFetch(functionName, accessToken!, options.body ?? {}, controller.signal);
+      clearTimeout(timeoutId);
     } catch (netErr) {
+      clearTimeout(timeoutId);
+      const netMsg = netErr instanceof Error ? netErr.message : String(netErr);
+      console.error(`[invokeWithAuth] ${functionName} — erro de rede no fetch${isRetry ? ' (retry)' : ''}:`, netMsg);
+
+      // Se for erro de rede (Failed to fetch, timeout, etc.) e ainda tem retries, tenta novamente
+      if (!isRetry && (netMsg.includes('Failed to fetch') || netMsg.includes('fetch') || netMsg.includes('network') || netMsg.includes('abort') || netMsg.includes('timeout'))) {
+        console.warn(`[invokeWithAuth] ${functionName} — tentando retry por erro de rede...`);
+        await new Promise((r) => setTimeout(r, 1000));
+        return attemptFetch(true);
+      }
+
       return {
         data: null,
         error: netErr instanceof Error ? netErr : new Error('Erro de rede ao chamar funcao'),
       };
     }
-  }
 
-  if (!response.ok) {
-    let errMsg = `HTTP ${response.status}`;
-    let raw: unknown;
-    try {
-      const contentType = response.headers.get('content-type') ?? '';
-      if (contentType.includes('application/json')) {
-        const errBody = await response.json();
-        // Edge Functions retornam { error: string } ou { error: { message: string } }
-        const extracted =
-          errBody?.error ?? errBody?.message ?? errBody ?? errMsg;
-        if (typeof extracted === 'string') {
-          errMsg = extracted;
-        } else if (extracted && typeof extracted === 'object') {
-          const inner = (extracted as Record<string, unknown>).message;
-          errMsg = typeof inner === 'string' ? inner : JSON.stringify(extracted);
-        }
-        raw = extracted;
-      } else {
-        const text = await response.text();
-        errMsg = text || errMsg;
-        raw = text;
+    // Se recebeu 401, pode ser token revogado no servidor. Forca refresh, espera e retenta.
+    if (response.status === 401) {
+      console.warn(`[invokeWithAuth] ${functionName} returned 401 — forcing token refresh and retry`);
+
+      const refreshedSession = await safeRefreshSession();
+      if (!refreshedSession?.access_token) {
+        return {
+          data: null,
+          error: new Error('Sessao expirada ou revogada. Por favor, faca login novamente.'),
+        };
       }
-    } catch { /* ignore parse error */ }
-    // Nao logar como erro critico status 409 (conflict de negocio) — e esperado
-    if (response.status !== 409) {
-      console.error(`[invokeWithAuth] ${functionName} failed [${response.status}]:`, errMsg, 'raw:', raw ?? 'n/a');
+      accessToken = refreshedSession.access_token;
+
+      // Pequeno delay antes do retry (evita race condition no Supabase Auth)
+      await new Promise((r) => setTimeout(r, 500));
+
+      const retryController = new AbortController();
+      const retryTimeoutId = setTimeout(() => retryController.abort(), TIMEOUT_MS);
+      try {
+        response = await doFetch(functionName, accessToken, options.body ?? {}, retryController.signal);
+        clearTimeout(retryTimeoutId);
+      } catch (netErr) {
+        clearTimeout(retryTimeoutId);
+        console.error(`[invokeWithAuth] ${functionName} — erro de rede no retry:`, netErr);
+        return {
+          data: null,
+          error: netErr instanceof Error ? netErr : new Error('Erro de rede ao chamar funcao'),
+        };
+      }
     }
-    return { data: null, error: new Error(errMsg) };
+
+    if (!response.ok) {
+      let errMsg = `HTTP ${response.status}`;
+      let raw: unknown;
+      try {
+        const contentType = response.headers.get('content-type') ?? '';
+        if (contentType.includes('application/json')) {
+          const errBody = await response.json();
+          // Edge Functions retornam { error: string } ou { error: { message: string } }
+          const extracted =
+            errBody?.error ?? errBody?.message ?? errBody ?? errMsg;
+          if (typeof extracted === 'string') {
+            errMsg = extracted;
+          } else if (extracted && typeof extracted === 'object') {
+            const inner = (extracted as Record<string, unknown>).message;
+            errMsg = typeof inner === 'string' ? inner : JSON.stringify(extracted);
+          }
+          raw = extracted;
+        } else {
+          const text = await response.text();
+          errMsg = text || errMsg;
+          raw = text;
+        }
+      } catch { /* ignore parse error */ }
+      // Nao logar como erro critico status 409 (conflict de negocio) — e esperado
+      if (response.status !== 409) {
+        console.error(`[invokeWithAuth] ${functionName} failed [${response.status}]:`, errMsg, 'raw:', raw ?? 'n/a');
+      }
+      return { data: null, error: new Error(errMsg) };
+    }
+
+    try {
+      const data = (await response.json()) as T;
+      return { data, error: null };
+    } catch {
+      return { data: null, error: new Error('Resposta invalida da funcao') };
+    }
   }
 
-  try {
-    const data = (await response.json()) as T;
-    return { data, error: null };
-  } catch {
-    return { data: null, error: new Error('Resposta invalida da funcao') };
-  }
+  return attemptFetch(false);
 }
 
 /**

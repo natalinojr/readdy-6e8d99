@@ -58,6 +58,19 @@ interface DBStockMovement {
   sold_item_name?: string | null;
 }
 
+interface DBInventorySession {
+  id: string;
+  tenant_id: string;
+  numero: number | null;
+  operator_name: string | null;
+  status: string | null;
+  itens_contados: number | null;
+  itens_com_diferenca: number | null;
+  valor_ajuste_liquido: number | null;
+  items: unknown;
+  created_at: string | null;
+}
+
 export interface Insumo {
   id: string;
   nome: string;
@@ -67,7 +80,7 @@ export interface Insumo {
   estoqueAtual: number;
   esgotado: boolean;
   categoria: string;
-  fornecedor: string;
+  fornecedor?: string;
   ultimaEntrada: string;
   fichaTecnica: Array<{ insumoId: string; insumoNome: string; unidade: UnidadeEstoque; gramagem: number }>;
   priceSource?: 'manual' | 'purchase' | 'average';
@@ -104,7 +117,7 @@ const MOVE_TYPE_MAP: Record<string, string> = {
   entrada: 'in',
   saida_venda: 'theoretical_out',
   saida_manual: 'manual_out',
-  perda: 'manual_out',
+  perda: 'loss',
   ajuste_inventario: 'inventory_adjustment',
 };
 
@@ -113,9 +126,10 @@ const DB_TYPE_TO_FRONT: Record<string, Movimentacao['tipo']> = {
   in: 'entrada',
   manual_out: 'saida_manual',
   theoretical_out: 'saida_venda',
-  inventory_adjustment: 'entrada',
+  inventory_adjustment: 'ajuste_inventario',
   transfer_in: 'entrada',
   transfer_out: 'saida_manual',
+  loss: 'perda',
   // Fallback para tipos legados já em português
   entrada: 'entrada',
   saida_venda: 'saida_venda',
@@ -151,7 +165,7 @@ function dbToInsumo(row: DBIngredient): Insumo | null {
     esgotado: row.is_depleted ?? false,
     categoria: row.category ?? '',
     // supplier (texto livre) e supplier_id (FK) agora vem da RPC
-    fornecedor: row.supplier ?? '',
+    fornecedor: row.supplier ?? undefined,
     ultimaEntrada: updatedAt,
     fichaTecnica: [],
     priceSource: (row.price_source as Insumo['priceSource']) ?? 'manual',
@@ -165,6 +179,32 @@ function dbToInsumo(row: DBIngredient): Insumo | null {
   };
 }
 
+function dbToInventarioSession(row: DBInventorySession): InventarioSession | null {
+  const createdAt = row.created_at ? new Date(row.created_at) : new Date();
+  const itemsRaw = Array.isArray(row.items) ? row.items : [];
+  const sessionItems: InventarioItemContado[] = itemsRaw.map((item: Record<string, unknown>) => ({
+    insumoId: String(item.ingredient_id ?? item.insumoId ?? ''),
+    insumoNome: String(item.nome ?? item.insumoNome ?? ''),
+    unidade: (item.unidade as UnidadeEstoque) ?? 'un',
+    qtdTeorica: Number(item.qtdTeorica ?? item.estoque_atual ?? 0),
+    qtdContada: Number(item.qtd_contada ?? item.qtdContada ?? 0),
+    diferenca: Number(item.diferenca ?? 0),
+    precoUnitario: Number(item.preco_unitario ?? item.precoUnitario ?? 0),
+  }));
+  return {
+    id: row.id,
+    numero: row.numero ?? 0,
+    data: createdAt.toLocaleDateString('pt-BR'),
+    hora: createdAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    operador: row.operator_name ?? 'Operador',
+    status: (row.status as 'confirmado') ?? 'confirmado',
+    itens: sessionItems,
+    itensContados: row.itens_contados ?? 0,
+    itensComDiferenca: row.itens_com_diferenca ?? 0,
+    valorAjusteLiquido: Number(row.valor_ajuste_liquido ?? 0),
+  };
+}
+
 interface EstoqueContextValue {
   insumos: Insumo[];
   movimentacoes: Movimentacao[];
@@ -172,10 +212,6 @@ interface EstoqueContextValue {
   insumosEsgotados: string[];
   itensDesabilitadosIds: string[];
   loading: boolean;
-  deductSaleItems: (
-    orderId: string,
-    itens: Array<{ itemId: string; nome: string; quantidade: number }>
-  ) => Promise<void>;
   addMovimentacao: (mov: {
     insumoId: string;
     tipo: string;
@@ -190,7 +226,8 @@ interface EstoqueContextValue {
   upsertInsumo: (insumo: Partial<Insumo> & { nome: string }) => Promise<string | undefined>;
   setInsumos: React.Dispatch<React.SetStateAction<Insumo[]>>;
   reloadInsumos: () => Promise<void>;
-  reloadMovimentacoes: () => Promise<void>;
+  reloadMovimentacoes: (dateFrom?: Date, dateTo?: Date, ingredientId?: string) => Promise<void>;
+  reloadInventarioSessions: () => Promise<void>;
 }
 
 const EstoqueContext = createContext<EstoqueContextValue | null>(null);
@@ -203,11 +240,28 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
   const [insumos, setInsumos] = useState<Insumo[]>([]);
   const [movimentacoes, setMovimentacoes] = useState<Movimentacao[]>([]);
   const [inventarioSessions, setInventarioSessions] = useState<InventarioSession[]>([]);
+  const [itensDesabilitadosIds, setItensDesabilitadosIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   // Ref para detectar transição de estoque positivo → zero
   const insumosSnapshotRef = useRef<Map<string, number>>(new Map());
+
+  const loadItensDesabilitados = useCallback(async (tenantId: string) => {
+    try {
+      const { data, error } = await supabase.rpc('fn_get_items_sem_estoque', { p_tenant_id: tenantId });
+      if (error) throw error;
+      const rows = (data as Array<{
+        item_id: string;
+        item_name: string;
+        insumos_faltando: Array<{ id: string; nome: string; estoque: number; unidade: string }>;
+      }>) ?? [];
+      const ids = rows.map((r) => r.item_id);
+      setItensDesabilitadosIds(ids);
+    } catch (e) {
+      console.error('[EstoqueContext] loadItensDesabilitados error:', e);
+    }
+  }, []);
 
   const loadInsumos = useCallback(async () => {
     if (!user?.tenantId) { setLoading(false); return; }
@@ -257,6 +311,9 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
 
       setInsumos(loaded);
 
+      // ── Carregar itens desabilitados (cruzamento ficha técnica vs estoque) ──
+      await loadItensDesabilitados(tenantId);
+
       // ── Alertas de estoque mínimo ──────────────────────────────────────────
       const alertadosKey = `stock_alerted_${user.tenantId}`;
       let alertados: string[] = [];
@@ -304,15 +361,22 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [user?.tenantId, dispararNotificacao]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.tenantId, dispararNotificacao, loadItensDesabilitados]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadMovimentacoes = useCallback(async () => {
+  const loadMovimentacoes = useCallback(async (dateFrom?: Date, dateTo?: Date, ingredientId?: string) => {
     if (!user?.tenantId) return;
     try {
       const tenantId = user.tenantId;
 
+      const fromISO = dateFrom ? dateFrom.toISOString() : null;
+      const toISO = dateTo ? dateTo.toISOString() : null;
+
       const { data, error } = await supabase.rpc('fn_get_stock_movements', {
-        p_tenant_id: tenantId, p_limit: 200,
+        p_tenant_id: tenantId,
+        p_limit: 500,
+        p_date_from: fromISO,
+        p_date_to: toISO,
+        p_ingredient_id: ingredientId ?? null,
       });
       if (error) throw error;
       const rows = (data as DBStockMovement[]) ?? [];
@@ -341,12 +405,36 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     }
   }, [user?.tenantId]);
 
+  const loadInventarioSessions = useCallback(async () => {
+    if (!user?.tenantId) return;
+    try {
+      const tenantId = user.tenantId;
+      const result = await invokeWithAuth<{ data: DBInventorySession[] }>('stock-write', {
+        body: {
+          action: 'get_inventory_sessions',
+          tenant_id: tenantId,
+          limit: 50,
+        },
+      });
+      if (result.error) throw result.error;
+      const rows = result.data?.data ?? [];
+      const sessions = rows.map((r) => dbToInventarioSession(r)).filter((s): s is InventarioSession => s !== null);
+      setInventarioSessions(sessions);
+    } catch (e) {
+      console.error('[EstoqueContext] loadInventarioSessions error:', e);
+    }
+  }, [user?.tenantId]);
+
   useEffect(() => {
     if (!user?.tenantId) { setLoading(false); return; }
 
     // Carga inicial
     loadInsumos();
-    loadMovimentacoes();
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), 1);
+    from.setHours(0, 0, 0, 0);
+    loadMovimentacoes(from, now);
+    loadInventarioSessions();
 
     // ── Realtime: todas as tabelas que afetam estoque ─────────────────────
     const tenantId = user.tenantId;
@@ -366,6 +454,9 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'production_batch_items' }, () => {
         loadInsumos();
         loadMovimentacoes();
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inventory_sessions', filter: `tenant_id=eq.${tenantId}` }, () => {
+        loadInventarioSessions();
       })
       .subscribe((status) => {
         console.log('[EstoqueContext] realtime status:', status);
@@ -401,7 +492,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       bc?.close();
       window.removeEventListener('storage', handleStorage);
     };
-  }, [user?.tenantId, loadInsumos, loadMovimentacoes]);
+  }, [user?.tenantId, loadInsumos, loadMovimentacoes, loadInventarioSessions]);
 
   // Função para notificar outras abas sobre mudança no estoque
   const broadcastStockUpdate = useCallback(() => {
@@ -418,8 +509,8 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     .filter((i) => i.estoqueAtual <= 0 || i.esgotado)
     .map((i) => i.id);
 
-  // Items disabled by empty ingredients (no ficha técnica in DB yet — use empty array)
-  const itensDesabilitadosIds: string[] = [];
+  // Items disabled by empty ingredients (computed via RPC fn_get_items_sem_estoque)
+  // itensDesabilitadosIds is now a useState populated in loadItensDesabilitados
 
   const addMovimentacao = useCallback(async (mov: {
     insumoId: string;
@@ -430,14 +521,20 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     operadorId?: string;
   }) => {
     if (!user?.tenantId) return;
+    const insumo = insumos.find((i) => i.id === mov.insumoId);
+    let finalQty = mov.quantidade;
+    if (insumo && insumo.unidade !== mov.unidade) {
+      const converted = convertUnit(mov.quantidade, mov.unidade, insumo.unidade);
+      if (converted !== null) finalQty = converted;
+    }
     const { error } = await invokeWithAuth('stock-write', {
       body: {
         action: 'add_stock_movement',
         tenant_id: user.tenantId,
         ingredient_id: mov.insumoId,
         type: MOVE_TYPE_MAP[mov.tipo] ?? mov.tipo,
-        quantity: mov.quantidade,
-        unit: FRONT_UNIT_MAP[mov.unidade ?? 'un'] ?? 'unit',
+        quantity: finalQty,
+        unit: FRONT_UNIT_MAP[insumo?.unidade ?? mov.unidade] ?? 'unit',
         reason: mov.motivo ?? null,
         operator_id: mov.operadorId ?? null,
       },
@@ -451,18 +548,17 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     await loadInsumos();
     await loadMovimentacoes();
 
-    const insumo = insumos.find((i) => i.id === mov.insumoId);
     const tipoAuditoria = mov.tipo === 'entrada' ? 'estoque_entrada' : 'estoque_ajustado';
     registrarEvento({
       tipo: tipoAuditoria,
       severidade: 'info',
       usuario: user.nome,
       perfil: user.perfil,
-      descricao: `${mov.tipo === 'entrada' ? 'Entrada' : 'Ajuste'} de ${mov.quantidade} ${mov.unidade} em "${insumo?.nome ?? mov.insumoId}"`,
+      descricao: `${mov.tipo === 'entrada' ? 'Entrada' : 'Ajuste'} de ${finalQty} ${insumo?.unidade ?? mov.unidade} em "${insumo?.nome ?? mov.insumoId}"`,
       entidade: 'Insumo',
       entidadeId: insumo?.nome ?? mov.insumoId,
       detalhes: mov.motivo ?? undefined,
-      depois: { quantidade: mov.quantidade, motivo: mov.motivo ?? '' },
+      depois: { quantidade: finalQty, motivo: mov.motivo ?? '' },
     });
   }, [user, insumos, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes]);
 
@@ -551,16 +647,15 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
 
   const confirmarInventario = useCallback(async (itens: InventarioItemContado[], _operador: string) => {
     if (!user?.tenantId) return;
-    const payload = itens.map((i) => ({
-      ingredient_id: i.insumoId,
-      qtd_contada: i.qtdContada,
-      diferenca: i.diferenca,
-    }));
+    const valorAjuste = itens.reduce((sum, i) => sum + i.diferenca * (i.precoUnitario ?? 0), 0);
+    const comDiferenca = itens.filter((i) => i.diferenca !== 0);
     const { error } = await invokeWithAuth('stock-write', {
       body: {
         action: 'confirm_inventory',
         tenant_id: user.tenantId,
-        items: payload,
+        items: itens,
+        operator_name: _operador,
+        valor_ajuste_liquido: valorAjuste,
       },
     });
     if (error) console.error('[EstoqueContext] confirmarInventario error:', error);
@@ -568,35 +663,19 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     broadcastStockUpdate();
     await loadInsumos();
     await loadMovimentacoes();
+    await loadInventarioSessions();
 
-    const valorAjuste = itens.reduce((sum, i) => sum + i.diferenca * (i.precoUnitario ?? 0), 0);
-    const comDiferenca = itens.filter((i) => i.diferenca !== 0).length;
     registrarEvento({
       tipo: 'estoque_ajustado',
-      severidade: comDiferenca > 0 ? 'aviso' : 'info',
+      severidade: comDiferenca.length > 0 ? 'aviso' : 'info',
       usuario: user.nome,
       perfil: user.perfil,
-      descricao: `Inventário confirmado: ${itens.length} insumo(s), ${comDiferenca} com diferença, ajuste líquido R$ ${valorAjuste.toFixed(2)}`,
+      descricao: `Inventário confirmado: ${itens.length} insumo(s), ${comDiferenca.length} com diferença, ajuste líquido R$ ${valorAjuste.toFixed(2)}`,
       entidade: 'Inventário',
       entidadeId: `${itens.length} insumos`,
-      depois: { itens_contados: itens.length, divergencias: comDiferenca, valor_ajuste: valorAjuste },
+      depois: { itens_contados: itens.length, divergencias: comDiferenca.length, valor_ajuste: valorAjuste },
     });
-
-    const now = new Date();
-    const novaSession: InventarioSession = {
-      id: `inv-${Date.now()}`,
-      numero: inventarioSessions.length + 1,
-      data: now.toLocaleDateString('pt-BR'),
-      hora: now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-      operador: _operador,
-      status: 'confirmado',
-      itens,
-      itensContados: itens.length,
-      itensComDiferenca: itens.filter((i) => i.diferenca !== 0).length,
-      valorAjusteLiquido: valorAjuste,
-    };
-    setInventarioSessions((prev) => [novaSession, ...prev]);
-  }, [user?.tenantId, inventarioSessions.length, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes]);
+  }, [user?.tenantId, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes, loadInventarioSessions]);
 
   const upsertInsumo = useCallback(async (insumo: Partial<Insumo> & { nome: string }): Promise<string | undefined> => {
     if (!user?.tenantId) return;
@@ -610,11 +689,10 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       name: insumo.nome,
       unit: FRONT_UNIT_MAP[insumo.unidade ?? 'un'] ?? 'unit',
       unit_price: insumo.precoUnitario ?? 0,
+      price_source: insumo.priceSource ?? 'manual',
       min_stock: insumo.estoqueMinimo ?? 0,
       current_stock: insumo.estoqueAtual ?? 0,
       category: insumo.categoria ?? '',
-      supplier: insumo.fornecedor ?? '',
-      supplier_id: insumo.supplierId ?? null,
       purchase_unit: insumo.purchaseUnit ?? null,
       purchase_factor: insumo.purchaseFactor ?? 1,
       usage_type: insumo.usageType ?? 'final',
@@ -679,111 +757,14 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     return ingredientId;
   }, [user, insumos, registrarEvento, broadcastStockUpdate, loadInsumos]);
 
-  // Deduct sale items via stock-write
-  const deductSaleItems = useCallback(
-    async (
-      orderId: string,
-      itens: Array<{ itemId: string; nome: string; quantidade: number }>,
-    ) => {
-      if (!user?.tenantId || itens.length === 0) return;
-
-      try {
-        const menuItemIds = [
-          ...new Set(
-            itens
-              .map((i) => i.itemId)
-              .filter((id): id is string => !!id && id.length > 0),
-          ),
-        ];
-
-        if (menuItemIds.length === 0) return;
-
-        const { data: ingredientsData, error: fetchErr } = await supabase.rpc(
-          'fn_get_item_ingredients_batch',
-          {
-            p_tenant_id: user.tenantId,
-            p_item_ids: menuItemIds,
-          },
-        );
-
-        if (fetchErr) {
-          console.warn('[EstoqueContext] deductSaleItems fetch error:', fetchErr.message);
-          return;
-        }
-
-        const rows = (ingredientsData as Array<{
-          item_id: string;
-          ingredient_id: string;
-          quantity: number;
-          unit?: string | null;
-        }>) ?? [];
-
-        if (rows.length === 0) return;
-
-        const insumoMap = new Map(insumos.map((i) => [i.id, { unidade: i.unidade, nome: i.nome }]));
-
-        const deductionMap = new Map<string, { quantity: number; unit: string }>();
-        for (const item of itens) {
-          const fichas = rows.filter((r) => r.item_id === item.itemId);
-          for (const ficha of fichas) {
-            const insumo = insumoMap.get(ficha.ingredient_id);
-            const fichaUnit = (ficha.unit ?? 'unit').toLowerCase().trim();
-            const insumoUnit = insumo?.unidade ?? 'un';
-
-            const convertedQty = convertUnit(ficha.quantity, fichaUnit, insumoUnit);
-            const finalQty = convertedQty !== null ? convertedQty : ficha.quantity;
-            const totalQty = finalQty * item.quantidade;
-
-            const prev = deductionMap.get(ficha.ingredient_id);
-            if (prev) {
-              prev.quantity += totalQty;
-            } else {
-              deductionMap.set(ficha.ingredient_id, {
-                quantity: totalQty,
-                unit: insumoUnit,
-              });
-            }
-          }
-        }
-
-        if (deductionMap.size === 0) return;
-
-        const deductions = Array.from(deductionMap.entries()).map(([ingredient_id, info]) => ({
-          ingredient_id,
-          quantity: info.quantity,
-          unit: FRONT_UNIT_MAP[info.unit] ?? 'unit',
-          reason: 'Baixa automática por venda',
-        }));
-
-        const { error: deductErr } = await invokeWithAuth('stock-write', {
-          body: {
-            action: 'deduct_sale',
-            tenant_id: user.tenantId,
-            order_id: orderId,
-            deductions,
-          },
-        });
-
-        if (deductErr) {
-          console.error('[EstoqueContext] deductSaleItems invoke error:', deductErr);
-        }
-
-        // Notificar outras abas e recarregar estoque
-        broadcastStockUpdate();
-      } catch (e) {
-        console.error('[EstoqueContext] deductSaleItems error:', e);
-      }
-    },
-    [user?.tenantId, insumos, broadcastStockUpdate],
-  );
-
   return (
     <EstoqueContext.Provider value={{
       insumos, movimentacoes, inventarioSessions,
       insumosEsgotados, itensDesabilitadosIds, loading,
-      deductSaleItems, addMovimentacao, registrarPerda,
+      addMovimentacao, registrarPerda,
       confirmarInventario, marcarInsumoEsgotado, upsertInsumo,
       setInsumos, reloadInsumos: loadInsumos, reloadMovimentacoes: loadMovimentacoes,
+      reloadInventarioSessions: loadInventarioSessions,
     }}>
       {children}
     </EstoqueContext.Provider>

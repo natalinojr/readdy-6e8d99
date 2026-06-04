@@ -158,6 +158,8 @@ export default function VirtualKeyboard({
     ? [SYMBOLS_ROW1, SYMBOLS_ROW2, SYMBOLS_ROW3]
     : ROWS_QWERTY;
 
+  const numberRow = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+
   return (
     <div className="bg-zinc-100 border-t border-zinc-300 select-none px-2 pt-2 pb-3 safe-area-bottom">
       {/* Top bar with label and close */}
@@ -173,6 +175,21 @@ export default function VirtualKeyboard({
           Fechar
         </button>
       </div>
+
+      {/* Number row */}
+      {!showSymbols && (
+        <div className="flex gap-1 justify-center mb-1.5">
+          {numberRow.map((key) => (
+            <button
+              key={key}
+              onPointerDown={(e) => { e.preventDefault(); handleChar(key); }}
+              className="flex-1 max-w-[9.5%] min-w-[28px] h-9 flex items-center justify-center bg-zinc-200 hover:bg-zinc-300 active:bg-zinc-400 text-zinc-700 rounded-lg font-bold text-sm border border-zinc-300 cursor-pointer transition-colors"
+            >
+              {key}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Key rows */}
       <div className="space-y-1.5">

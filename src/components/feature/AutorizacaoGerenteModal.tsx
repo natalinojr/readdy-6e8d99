@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { invokeWithAuth } from '@/lib/supabase';
 
 /**
  * Modal de autorização — solicita credenciais de um gerente ou admin
@@ -69,7 +69,7 @@ export default function AutorizacaoGerenteModal({
 
     try {
       // Chama login-pin para obter o hashed_token sem consumir sessão
-      const { data, error: fnError } = await supabase.functions.invoke<{
+      const { data, error: fnError } = await invokeWithAuth<{
         hashed_token?: string;
         role?: string;
         name?: string;
@@ -124,19 +124,26 @@ export default function AutorizacaoGerenteModal({
     setErro('');
 
     try {
-      // Verificamos via RPC dedicada que não altera a sessão atual do usuário
-      const { data, error: rpcError } = await supabase.rpc('verify_manager_credentials', {
-        p_email: email.trim().toLowerCase(),
-        p_password: senhaEmail.trim(),
-        p_tenant_id: tenantId,
+      // Chama a edge function verify-manager-credentials (server-side, não afeta sessão)
+      const { data, error: fnError } = await invokeWithAuth<{
+        name?: string;
+        role?: string;
+        user_id?: string;
+        error?: string;
+      }>('verify-manager-credentials', {
+        body: {
+          email: email.trim().toLowerCase(),
+          password: senhaEmail.trim(),
+          tenant_id: tenantId,
+        },
       });
 
-      if (rpcError || !data) {
-        throw new Error('Credenciais inválidas ou usuário não encontrado.');
+      if (fnError || !data || data.error) {
+        throw new Error(data?.error ?? 'Credenciais inválidas.');
       }
 
-      const nivelUsuario = (data as { role?: string; name?: string }).role;
-      const nomeUsuario = (data as { role?: string; name?: string }).name ?? email;
+      const nomeUsuario = data.name ?? email;
+      const nivelUsuario = data.role as string;
 
       const roleMapa: Record<string, NivelAutorizacao> = {
         admin: 'admin',

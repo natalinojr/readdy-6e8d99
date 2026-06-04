@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
     'fin_investment_settings', 'fin_bank_accounts', 'fin_bank_transactions',
     'fin_income_routing', 'hr_employees', 'hr_payroll', 'refunds', 'order_discounts',
     'promotion_rules', 'vouchers', 'voucher_transactions', 'loyalty_transactions',
-    'combo_ingredients', 'ingredient_batches',
+    'combo_ingredients', 'ingredient_batches', 'print_queue',
   ];
 
   const results: Record<string, string> = {};

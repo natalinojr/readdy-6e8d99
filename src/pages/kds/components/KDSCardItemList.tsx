@@ -351,7 +351,7 @@ const UnidadeObsGate = memo(function UnidadeObsGate({ observacoes, opcoes, tipo,
 
 // ── UnidadeRow ─────────────────────────────────────────────────────────────────
 
-const UnidadeRow = memo(function UnidadeRow({ unidade, pedidoId, itemId, operadoresDisponiveis, onAvancarUnidade, onSelecionarOperadorUnidade, observacoesGlobaisItem, opcoesItem, faseColuna, isCancelledOrder, isKioskNaoPago }: {
+const UnidadeRow = memo(function UnidadeRow({ unidade, pedidoId, itemId, operadoresDisponiveis, onAvancarUnidade, onSelecionarOperadorUnidade, observacoesGlobaisItem, opcoesItem, faseColuna, isCancelledOrder, isKioskNaoPago, isPdvEditing }: {
   unidade: KDSUnidade; pedidoId: string; itemId: string; operadoresDisponiveis: string[];
   onAvancarUnidade: (pedidoId: string, itemId: string, unidadeId: string, novoStatus: KDSItemStatus) => void;
   onSelecionarOperadorUnidade: (pedidoId: string, itemId: string, unidadeId: string, operador: string) => void;
@@ -362,7 +362,7 @@ const UnidadeRow = memo(function UnidadeRow({ unidade, pedidoId, itemId, operado
   observacoesGlobaisItem: string[];
   /** Opções do item pai — também exigem confirmação antes de avançar */
   opcoesItem: { grupoNome: string; opcaoNome: string }[];
-  faseColuna?: KDSItemStatus; isCancelledOrder?: boolean; isKioskNaoPago?: boolean;
+  faseColuna?: KDSItemStatus; isCancelledOrder?: boolean; isKioskNaoPago?: boolean; isPdvEditing?: boolean;
 }) {
   useKDSTick();
   const [obsGateTarget, setObsGateTarget] = useState<{ tipo: 'iniciar' | 'pronto'; nextStatus: KDSItemStatus } | null>(null);
@@ -370,6 +370,7 @@ const UnidadeRow = memo(function UnidadeRow({ unidade, pedidoId, itemId, operado
   const nextStatus = NEXT_STATUS[unidade.status];
   const semOperador = !unidade.operadorPreparo && unidade.status === 'novo';
   const canceladoBloqueio = !!isCancelledOrder;
+  const pdvEditingBloqueio = !!isPdvEditing;
   const kioskBloqueioEntrega = !!isKioskNaoPago && nextStatus === 'entregue';
 
   // Obs específica desta unidade (ex: "Un.1: sem cebola" parseada) + obs globais do item
@@ -395,7 +396,7 @@ const UnidadeRow = memo(function UnidadeRow({ unidade, pedidoId, itemId, operado
   }
 
   const handleAvancar = () => {
-    if (canceladoBloqueio || semOperador || !nextStatus) return;
+    if (canceladoBloqueio || semOperador || pdvEditingBloqueio || !nextStatus) return;
     // Se tem obs ou opções e vai iniciar (novo→preparo) ou marcar pronto (preparo→pronto), abre gate
     if ((temObs || temOpcoes) && (nextStatus === 'preparo' || nextStatus === 'pronto')) {
       const tipo: 'iniciar' | 'pronto' = nextStatus === 'preparo' ? 'iniciar' : 'pronto';
@@ -487,10 +488,10 @@ const UnidadeRow = memo(function UnidadeRow({ unidade, pedidoId, itemId, operado
           ) : (
             <button
               onClick={handleAvancar}
-              disabled={canceladoBloqueio || semOperador}
-              className={`text-[9px] font-bold px-2 py-0.5 rounded-lg whitespace-nowrap flex-shrink-0 transition-colors mt-0.5 ${canceladoBloqueio ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed border border-zinc-200' : semOperador ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed border border-zinc-200' : `${NEXT_ACTION_COLOR[unidade.status]} cursor-pointer`}`}
+              disabled={canceladoBloqueio || semOperador || pdvEditingBloqueio}
+              className={`text-[9px] font-bold px-2 py-0.5 rounded-lg whitespace-nowrap flex-shrink-0 transition-colors mt-0.5 ${canceladoBloqueio || pdvEditingBloqueio ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed border border-zinc-200' : semOperador ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed border border-zinc-200' : `${NEXT_ACTION_COLOR[unidade.status]} cursor-pointer`}`}
             >
-              {canceladoBloqueio ? <><i className="ri-close-circle-line mr-0.5" />Canc.</> : semOperador ? <><i className="ri-user-add-line mr-0.5" />Op.</> : NEXT_ACTION_LABEL[unidade.status]}
+              {canceladoBloqueio || pdvEditingBloqueio ? <><i className="ri-lock-line mr-0.5" />Bloqueado</> : semOperador ? <><i className="ri-user-add-line mr-0.5" />Op.</> : NEXT_ACTION_LABEL[unidade.status]}
             </button>
           )
         )}
@@ -668,7 +669,7 @@ const ItemRow = memo(function ItemRow({ item, pedido, estacaoFiltro, onAvancar, 
               </div>
               <div className="space-y-0.5">
                 {item.unidades.map((unidade) => (
-                  <UnidadeRow key={unidade.id} unidade={unidade} pedidoId={pedido.id} itemId={item.id} operadoresDisponiveis={operadoresDisponiveis} onAvancarUnidade={onAvancarUnidade} onSelecionarOperadorUnidade={onSelecionarOperadorUnidade} observacoesGlobaisItem={item.observacoes} opcoesItem={item.opcoes} faseColuna={faseColuna} isCancelledOrder={bloqueado} isKioskNaoPago={isKioskNaoPago} />
+                  <UnidadeRow key={unidade.id} unidade={unidade} pedidoId={pedido.id} itemId={item.id} operadoresDisponiveis={operadoresDisponiveis} onAvancarUnidade={onAvancarUnidade} onSelecionarOperadorUnidade={onSelecionarOperadorUnidade} observacoesGlobaisItem={item.observacoes} opcoesItem={item.opcoes} faseColuna={faseColuna} isCancelledOrder={bloqueado} isKioskNaoPago={isKioskNaoPago} isPdvEditing={pedido.isEditing} />
                 ))}
               </div>
             </div>
@@ -769,7 +770,7 @@ const KDSCardItemList = memo(function KDSCardItemList({
           onAvancarParte={onAvancarParte}
           showTimer={pedido.status !== 'entregue'}
           onOpenDetalhe={onOpenDetalhe}
-          bloqueado={clienteEditando || !!isCancelled}
+          bloqueado={clienteEditando || !!isCancelled || pedido.isEditing}
           onToggleObsChecada={onToggleObsChecada}
           onAvancarUnidade={onAvancarUnidade}
           onSelecionarOperadorUnidade={onSelecionarOperadorUnidade}

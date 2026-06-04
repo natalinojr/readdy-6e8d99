@@ -25,6 +25,11 @@ const DestinoLabel = memo(function DestinoLabel({ pedido }: { pedido: KDSPedido 
         {showCliente && (
           <span className="text-zinc-400 font-normal"> · {pedido.nomeCliente}</span>
         )}
+        {pedido.participantToken && (
+          <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-black px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">
+            <i className="ri-key-2-line text-[9px]" />Senha {pedido.participantToken}
+          </span>
+        )}
       </span>
     );
   }
@@ -107,7 +112,11 @@ const KDSCardHeader = memo(function KDSCardHeader({
   const now = Date.now();
 
   const origemCfg = ORIGEM_BADGE[pedido.origem] ?? ORIGEM_BADGE.caixa;
-  const numeroDisplay = `#${String(pedido.numero).padStart(4, '0')}`;
+  const numeroBase = `#${String(pedido.numero).padStart(4, '0')}`;
+  // KDS display: "#0047 — Senha 03" quando o pedido tem participantToken
+  const numeroDisplay = pedido.participantToken
+    ? `${numeroBase} — Senha ${pedido.participantToken}`
+    : numeroBase;
   const faseColunaLabel: Record<KDSItemStatus, string> = {
     novo: 'Aguardando', preparo: 'Em Preparo', pronto: 'Pronto', entregue: 'Entregue',
   };

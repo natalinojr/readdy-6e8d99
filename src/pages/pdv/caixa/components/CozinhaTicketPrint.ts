@@ -1,5 +1,5 @@
 import type { CarrinhoItem, DestinoInfo } from '../../../../contexts/PDVContext';
-import { sendToPrinter } from '@/lib/printUtils';
+import { sendToPrinter, type TicketPayload, type TicketItem, type PrintResult } from '@/lib/printUtils';
 import type { Impressora } from '@/contexts/ImpressorasContext';
 
 function fmtData() {
@@ -29,10 +29,19 @@ function buildItensHTML(carrinho: CarrinhoItem[]): string {
       )
       .join('');
 
-    const obsItems = [...(item.observacoes ?? [])];
-    if (item.observacaoLivre) obsItems.push(item.observacaoLivre);
+    const obsItemsSet = new Set<string>();
+    const obsItems: string[] = [];
+    const addObsItem = (text: string | undefined | null) => {
+      const t = text?.trim();
+      if (!t) return;
+      if (obsItemsSet.has(t)) return;
+      obsItemsSet.add(t);
+      obsItems.push(t);
+    };
 
-    // Observacoes por unidade (se houver)
+    addObsItem(item.observacaoLivre);
+    item.observacoes?.forEach((obs) => addObsItem(obs));
+
     const obsUnidadesHTML = (item.obsUnidades ?? [])
       .map((obs, idx) => {
         if (!obs || !obs.trim()) return '';
@@ -73,7 +82,6 @@ function buildItensHTML(carrinho: CarrinhoItem[]): string {
         margin-bottom: 12px;
         overflow: hidden;
       ">
-        <!-- Qty + Nome -->
         <div style="display:flex;align-items:stretch;">
           <div style="
             background:#000;
@@ -110,18 +118,60 @@ function buildItensHTML(carrinho: CarrinhoItem[]): string {
   }).join('');
 }
 
-/**
- * Imprime o ticket de cozinha.
- * - Se a impressora for de REDE (tem IP): envia silenciosamente via Edge Function printer-raw
- * - Se a impressora for USB/Windows (sem IP): abre a janela de impressao do navegador
- * - Se nao houver impressora: fallback para janela do navegador
- */
-export async function printKitchenTicket(
+function buildTicketPayload(
   numeroPedido: number,
   carrinho: CarrinhoItem[],
   destino: DestinoInfo | null,
   impressora?: Impressora,
-): Promise<{ success: boolean; error?: string }> {
+): TicketPayload {
+  const destinoStr = descrDestino(destino);
+  const mesaStr = destino?.tipo === 'mesa' ? String(destino.mesaNumero ?? '') : undefined;
+
+  const itens: TicketItem[] = carrinho.map((item) => {
+    const opcoes = item.opcoes?.map((o) => o.opcaoNome) ?? [];
+
+    const observacoesSet = new Set<string>();
+    const observacoes: string[] = [];
+    const addObs = (text: string | undefined | null) => {
+      const t = text?.trim();
+      if (!t) return;
+      if (observacoesSet.has(t)) return;
+      observacoesSet.add(t);
+      observacoes.push(t);
+    };
+
+    addObs(item.observacaoLivre);
+    item.observacoes?.forEach((obs) => addObs(obs));
+    item.obsUnidades?.forEach((obs, idx) => {
+      if (obs?.trim()) observacoes.push(`Un.${idx + 1}: ${obs.trim()}`);
+    });
+
+    return {
+      quantidade: item.quantidade,
+      nome: item.nome,
+      opcoes: opcoes.length > 0 ? opcoes : undefined,
+      observacoes: observacoes.length > 0 ? observacoes : undefined,
+    };
+  });
+
+  return {
+    numero: numeroPedido,
+    destino: destinoStr,
+    origem: 'caixa',
+    impressora_id: impressora?.id || 'cozinha',
+    itens,
+    data_hora: fmtData(),
+    ...(mesaStr ? { mesa: mesaStr } : {}),
+    ...(destino?.observacaoPedido ? { observacao_geral: destino.observacaoPedido } : {}),
+  };
+}
+
+function buildKitchenHTML(
+  numeroPedido: number,
+  carrinho: CarrinhoItem[],
+  destino: DestinoInfo | null,
+  impressora?: Impressora,
+): string {
   const numStr = String(numeroPedido).padStart(4, '0');
   const dataHora = fmtData();
   const destinoStr = descrDestino(destino);
@@ -137,7 +187,7 @@ export async function printKitchenTicket(
       ">&#128424; ${impressora.nome}</div>`
     : '';
 
-  const html = `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"/>
@@ -157,15 +207,11 @@ export async function printKitchenTicket(
   </style>
 </head>
 <body>
-
-  <!-- Header -->
   <div style="text-align:center;border:3px solid #000;padding:8px;margin-bottom:10px;">
     <div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#555;">VIA COZINHA</div>
     <div style="font-size:32px;font-weight:900;letter-spacing:-1px;">PEDIDO #${numStr}</div>
     <div style="font-size:12px;color:#444;margin-top:2px;">${dataHora}</div>
   </div>
-
-  <!-- Destino -->
   <div style="
     background:#000;
     color:#fff;
@@ -177,47 +223,86 @@ export async function printKitchenTicket(
     letter-spacing:1px;
     text-transform:uppercase;
   ">${destinoStr}</div>
-
   ${impressoraHTML}
-
-  <!-- Itens -->
   ${itensHTML}
-
-  <!-- Footer -->
   <div style="border-top:2px dashed #000;margin-top:6px;padding-top:6px;text-align:center;font-size:10px;color:#777;">
     Impresso em ${dataHora}
   </div>
-
 </body>
 </html>`;
+}
 
-  return sendToPrinter(html, impressora);
+/**
+ * Imprime o ticket de cozinha.
+ * 1. SEMPRE tenta enviar JSON estruturado pro agente local primeiro (silencioso).
+ *    O agente formata ESC/POS sozinho. Se nao responder, continua o fluxo.
+ * 2. Se tiver impressora com IP: usa sendToPrinter com fallback automatico.
+ * 3. Se nao tiver impressora: fallback navegador (se nao suprimido).
+ */
+export async function printKitchenTicket(
+  numeroPedido: number,
+  carrinho: CarrinhoItem[],
+  destino: DestinoInfo | null,
+  impressora?: Impressora,
+  suppressBrowserFallback = false,
+): Promise<PrintResult> {
+  console.log('[CozinhaTicketPrint] printKitchenTicket chamado. Pedido:', numeroPedido, 'Itens:', carrinho.length, 'suppressFallback:', suppressBrowserFallback);
+  console.log('[CozinhaTicketPrint] impressora:', impressora ? `${impressora.nome} (id=${impressora.id}, ip=${impressora.ip || 'n/a'})` : 'NENHUMA');
+
+  // SEMPRE monta o payload JSON — mesmo sem impressora configurada
+  // O agente local resolve o IP pelo config.json usando impressora_id
+  const payload = buildTicketPayload(numeroPedido, carrinho, destino, impressora);
+  console.log('[CozinhaTicketPrint] payload montado:', JSON.stringify(payload, null, 2));
+
+  const html = buildKitchenHTML(numeroPedido, carrinho, destino, impressora);
+
+  // SEMPRE passa orderData (payload) pro sendToPrinter
+  // sendToPrinter tenta agente local com JSON primeiro, antes de qualquer fallback
+  const result = await sendToPrinter(html, impressora, payload, { suppressBrowserFallback });
+
+  if (result.fallbackToBrowser) {
+    console.warn('[CozinhaTicketPrint] Caiu no fallback do navegador. Motivo:', result.error);
+    return {
+      ...result,
+      fallbackToBrowser: true,
+      error: result.error || 'Agente local nao respondeu. Abrindo janela do navegador.',
+    };
+  }
+
+  return result;
 }
 
 function fmtPreco2(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-export function printSimpleReceipt(
+export async function printSimpleReceipt(
   numeroPedido: number,
   carrinho: CarrinhoItem[],
   total: number,
   desconto: number,
   pagamentos: { formaNome: string; valor: number; troco?: number }[],
   destino: DestinoInfo | null,
-): void {
+  impressora?: Impressora,
+  suppressBrowserFallback = false,
+  /** Pedidos vinculados para exibir no comprovante unificado */
+  pedidosVinculados?: { numero: number; numeroStr?: string; itens: { nome: string; quantidade: number; preco: number }[]; total: number; destino?: DestinoInfo | null }[],
+): Promise<PrintResult> {
   const numStr = String(numeroPedido).padStart(4, '0');
   const dataHora = fmtData();
   const destinoStr = descrDestino(destino);
   const subtotal = carrinho.reduce((acc, i) => acc + i.precoTotal * i.quantidade, 0);
   const troco = pagamentos.reduce((acc, p) => acc + (p.troco ?? 0), 0);
   const temDinheiro = pagamentos.some(p => /dinheiro/i.test(p.formaNome));
+  const temVinculados = (pedidosVinculados ?? []).length > 0;
+  const totalVinculados = (pedidosVinculados ?? []).reduce((s, p) => s + p.total, 0);
+  // total = total FINAL (já inclui carrinho + vinculados - desconto)
+  const totalGeral = total;
 
   const itensHTML = carrinho.map((item) => {
     const precoUnit = item.precoTotal;
     const precoLinha = item.precoTotal * item.quantidade;
 
-    // Observacoes por unidade (se houver)
     const obsUnidadesHTML = (item.obsUnidades ?? [])
       .map((obs, idx) => {
         if (!obs || !obs.trim()) return '';
@@ -239,6 +324,28 @@ export function printSimpleReceipt(
             <div style="font-size:10px;color:#888;">un. ${fmtPreco2(precoUnit)}</div>
           </div>
         </div>
+      </div>`;
+  }).join('');
+
+  const pedidosVinculadosHTML = (pedidosVinculados ?? []).map((pedido) => {
+    const pNumStr = pedido.numeroStr || String(pedido.numero).padStart(4, '0');
+    const pItensHTML = pedido.itens.map((item) => `
+      <div style="margin-bottom:8px;border-bottom:1px dashed #eee;padding-bottom:6px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:700;line-height:1.2;">${item.quantidade}x ${item.nome}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;margin-left:8px;">
+            <div style="font-size:14px;font-weight:800;">${fmtPreco2(item.preco * item.quantidade)}</div>
+          </div>
+        </div>
+      </div>`).join('');
+    return `
+      <div style="margin-bottom:12px;">
+        <div style="background:#000;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:900;margin-bottom:8px;border-radius:3px;letter-spacing:0.5px;">
+          PEDIDO #${pNumStr} · ${descrDestino(pedido.destino ?? null)}
+        </div>
+        ${pItensHTML}
       </div>`;
   }).join('');
 
@@ -264,11 +371,17 @@ export function printSimpleReceipt(
       <span style="color:#c00;">- ${fmtPreco2(desconto)}</span>
     </div>` : '';
 
+  const vinculadosSummary = temVinculados ? `
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:13px;">
+      <span>Pedidos vinculados (${pedidosVinculados!.length})</span>
+      <span>${fmtPreco2(totalVinculados)}</span>
+    </div>` : '';
+
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"/>
-  <title>Via Balcao — Pedido #${numStr}</title>
+  <title>${temVinculados ? 'Pagamento Unificado' : `Via Balcao — Pedido #${numStr}`}</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family: Arial, Helvetica, sans-serif; background:#fff; color:#000; padding:12px; width:300px; }
@@ -276,47 +389,50 @@ export function printSimpleReceipt(
   </style>
 </head>
 <body>
-  <!-- Header -->
   <div style="text-align:center;margin-bottom:10px;">
-    <div style="font-size:11px;color:#666;letter-spacing:1px;">VIA BALCAO</div>
-    <div style="font-size:40px;font-weight:900;letter-spacing:-2px;">#${numStr}</div>
+    <div style="font-size:11px;color:#666;letter-spacing:1px;">${temVinculados ? 'COMPROVANTE UNIFICADO' : 'VIA BALCAO'}</div>
+    <div style="font-size:40px;font-weight:900;letter-spacing:-2px;">#${temVinculados ? 'UNIF' : numStr}</div>
     <div style="font-size:11px;color:#444;">${dataHora}</div>
   </div>
-
-  <!-- Destino / Identificacao -->
+  ${!temVinculados ? `
   <div style="background:#000;color:#fff;text-align:center;padding:8px;font-size:15px;font-weight:900;margin-bottom:12px;border-radius:3px;letter-spacing:0.5px;">
     ${destinoStr}
   </div>
-
-  <!-- Itens -->
+  ` : ''}
   <div style="margin-bottom:10px;">
+    ${temVinculados ? `
+    <div style="background:#000;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:900;margin-bottom:8px;border-radius:3px;letter-spacing:0.5px;">
+      PEDIDO #${numStr} · ${destinoStr}
+    </div>
+    ` : ''}
     ${itensHTML}
   </div>
-
-  <!-- Totais -->
+  ${temVinculados ? `
+  <div style="border-top:2px dashed #000;margin:10px 0;padding-top:10px;">
+    ${pedidosVinculadosHTML}
+  </div>
+  ` : ''}
   <div style="border-top:2px solid #000;padding-top:10px;margin-bottom:10px;">
     <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
       <span>Subtotal</span>
       <span>${fmtPreco2(subtotal)}</span>
     </div>
+    ${vinculadosSummary}
     ${descontoHTML}
     <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:900;margin-bottom:10px;margin-top:6px;">
-      <span>TOTAL</span>
-      <span>${fmtPreco2(total)}</span>
+      <span>TOTAL GERAL</span>
+      <span>${fmtPreco2(totalGeral)}</span>
     </div>
   </div>
-
-  <!-- Pagamentos -->
   <div style="border-top:1px dashed #000;margin-bottom:10px;padding-top:8px;">
     ${pagamentosHTML}
     ${trocoHTML}
   </div>
-
   <div style="text-align:center;font-size:10px;color:#888;margin-top:6px;border-top:1px dashed #ccc;padding-top:6px;">
-    Obrigado!
+    ${temVinculados ? `${pedidosVinculados!.length + 1} pedidos pagos em unico pagamento` : 'Obrigado!'}
   </div>
 </body>
 </html>`;
 
-  import('@/lib/printUtils').then(({ printHTML }) => printHTML(html));
+  return sendToPrinter(html, impressora, undefined, { suppressBrowserFallback });
 }

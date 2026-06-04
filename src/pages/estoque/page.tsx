@@ -10,6 +10,7 @@ import FornecedoresRelatorioTab from './components/FornecedoresRelatorioTab';
 import ValidadeTab from './components/ValidadeTab';
 import ConsumoIngredientesTab from '../relatorios/components/ConsumoIngredientesTab';
 import { useEstoque } from '../../contexts/EstoqueContext';
+import CardapioExportImportModal from '../../components/feature/CardapioExportImportModal';
 
 type Tab = 'insumos' | 'movimentacoes' | 'inventario' | 'cmv' | 'producao' | 'fornecedores' | 'validade' | 'consumo';
 
@@ -24,11 +25,10 @@ const tabs: { id: Tab; label: string; badge?: string }[] = [
   { id: 'validade', label: 'Validade & Lotes' },
 ];
 
-// ... existing code ...
-
 export default function EstoquePage() {
   const [tab, setTab] = useState<Tab>('insumos');
-  const { insumos, insumosEsgotados } = useEstoque();
+  const [showExportImport, setShowExportImport] = useState(false);
+  const { insumos, insumosEsgotados, reloadInsumos } = useEstoque();
 
   const alertas = insumos.filter((i) => i.estoqueAtual <= i.estoqueMinimo).length;
 
@@ -64,6 +64,13 @@ export default function EstoquePage() {
                 </p>
               </div>
             )}
+            <button
+              onClick={() => setShowExportImport(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-xl hover:bg-amber-100 transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <i className="ri-exchange-line" />
+              Exportar / Importar
+            </button>
           </div>
         </div>
 
@@ -104,6 +111,15 @@ export default function EstoquePage() {
           {tab === 'validade' && <ValidadeTab />}
         </div>
       </div>
+
+      {/* Modal Exportar / Importar */}
+      <CardapioExportImportModal
+        open={showExportImport}
+        onClose={() => setShowExportImport(false)}
+        onSuccess={() => {
+          reloadInsumos();
+        }}
+      />
     </div>
   );
 }

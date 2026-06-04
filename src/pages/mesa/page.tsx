@@ -6,10 +6,9 @@ import { useKDS, buildKDSPedido } from '../../contexts/KDSContext';
 import { useMesas } from '../../contexts/MesasContext';
 import { useCardapio } from '../../contexts/CardapioContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { useKioskAuth } from '../../contexts/KioskAuthContext';
 import { useEstoque } from '../../contexts/EstoqueContext';
-import { useImpressoras } from '@/contexts/ImpressorasContext';
-import { invokeWithAuth, supabase, SUPABASE_URL } from '../../lib/supabase';
-import { printKitchenTicket } from '@/pages/pdv/caixa/components/CozinhaTicketPrint';
+import { supabase, SUPABASE_URL } from '../../lib/supabase';
 import type { CarrinhoItem, DestinoInfo } from '../../contexts/PDVContext';
 import IdentificacaoModal from './components/IdentificacaoModal';
 import CardapioPublico from './components/CardapioPublico';
@@ -18,6 +17,7 @@ import ChamarGarcomPanel from './components/ChamarGarcomPanel';
 import PagamentoMesaView from './components/PagamentoMesaView';
 import EditarItemCarrinhoModal from './components/EditarItemCarrinhoModal';
 import EncerrarMesaModal from './components/EncerrarMesaModal';
+import MeusPedidosModal from './components/MeusPedidosModal';
 import { type ItemPedidoCliente } from '../../types/mesaCliente';
 
 export interface OrderItemStatus {
@@ -95,15 +95,14 @@ async function closeTableByCustomer(tableSessionId: string): Promise<{ ok?: bool
 export default function MesaClientePage() {
   const { mesaId } = useParams<{ mesaId: string }>();
   const mesaNum = mesaId ? parseInt(mesaId, 10) || 1 : 1;
-  const { estado, sessao } = useSessao();
+  const { estado } = useSessao();
   const { iniciarEdicao, finalizarEdicao } = useMesaEdicao();
-  const { pedidos: kdsPedidos, addPedido: addKDSPedido } = useKDS();
+  const { pedidos: kdsPedidos, addPedido: addKDSPedido, stationMap: kdsStationMap } = useKDS();
   const { mesas, atualizarMesa } = useMesas();
   const { itensPublicos } = useCardapio();
+  const { itensDesabilitadosIds } = useEstoque();
   const { user } = useAuth();
-  const { deductSaleItems } = useEstoque();
-  const { getImpressoraParaEstacao } = useImpressoras();
-
+  const { kioskSession } = useKioskAuth();
   // ── Sessão do banco ──────────────────────────────────────────────────────────
   const [sessaoStatus, setSessaoStatus] = useState<SessaoStatus>('loading');
   const [tableSessionId, setTableSessionId] = useState<string | null>(null);
@@ -118,6 +117,7 @@ export default function MesaClientePage() {
   const [carrinho, setCarrinho] = useState<ItemPedidoCliente[]>([]);
   const [enviando, setEnviando] = useState(false);
   const [feedbackEnvio, setFeedbackEnvio] = useState(false);
+  const [erroEnvio, setErroEnvio] = useState('');
   const [editarIndex, setEditarIndex] = useState<number | null>(null);
   const [modoEdicaoEnviados, setModoEdicaoEnviados] = useState(false);
   const [carrinhoSnapshot, setCarrinhoSnapshot] = useState<ItemPedidoCliente[]>([]);
@@ -131,13 +131,21 @@ export default function MesaClientePage() {
   // ── Modal encerrar mesa ──────────────────────────────────────────────────────
   const [showEncerrarModal, setShowEncerrarModal] = useState(false);
   const [mesaEncerrada, setMesaEncerrada] = useState(false);
+  const [showMeusPedidos, setShowMeusPedidos] = useState(false);
 
   // ── Status dos itens em tempo real ──────────────────────────────────────────
   const [orderItemsStatus, setOrderItemsStatus] = useState<OrderItemStatus[]>([]);
 
-  const tenantId = user?.tenantId;
+  // ── TenantId: usuário autenticado OU kiosk (acesso público) ───────────────────
+  const tenantId = user?.tenantId ?? kioskSession?.tenantId ?? null;
   const carrinhoSavedRef = useRef(false);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Limpar erro de envio quando o carrinho mudar ────────────────────────────
+  useEffect(() => {
+    if (erroEnvio) {
+      setErroEnvio('');
+    }
+  }, [carrinho]);
 
   // ── 1. Validar sessão no banco ao entrar ─────────────────────────────────────
   useEffect(() => {
@@ -164,6 +172,7 @@ export default function MesaClientePage() {
             setIdentificado(true);
             setIsResponsavel(true);
             setResponsavelNome(sess.customer_name);
+            setEntradaPermitida(sess.entrada_permitida ?? true);
             if (sess.opened_at) {
               const d = new Date(sess.opened_at);
               setHoraAbertura(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
@@ -176,13 +185,12 @@ export default function MesaClientePage() {
               setCarrinho(carrinhoSalvo);
             }
           } else {
-            // Limpar qualquer carrinho antigo de sessão diferente
-            // (não temos o ID antigo, mas o novo ID já é diferente)
+            // Primeiro cliente — inicializar do banco também
+            setEntradaPermitida(sess.entrada_permitida ?? true);
           }
         } else if (result.session_status === 'closed' || result.session_status === 'not_found') {
           setSessaoStatus('closed');
           // Limpar localStorage de qualquer sessão anterior desta mesa
-          // (não sabemos o ID, mas podemos limpar por prefixo)
           try {
             const keys = Object.keys(localStorage).filter((k) => k.startsWith(`mesa_carrinho_${mesaNum}_`));
             keys.forEach((k) => localStorage.removeItem(k));
@@ -205,79 +213,94 @@ export default function MesaClientePage() {
     }
   }, [carrinho, mesaNum, tableSessionId]);
 
-  // ── 3. Polling periódico: detectar fechamento pelo garçom ────────────────────
+  // ── 3. Supabase Realtime: detectar fechamento da mesa pelo garçom ───────────
   useEffect(() => {
-    if (!tableSessionId || !tenantId || sessaoStatus !== 'open') return;
+    if (!tableSessionId) return;
 
-    const checkSession = async () => {
-      try {
-        const result = await fetchTableSessionStatus(mesaNum, tenantId);
-        if (result.session_status === 'closed' || result.session_status === 'not_found') {
-          // Garçom fechou a mesa pelo PDV
-          if (tableSessionId) clearCarrinho(mesaNum, tableSessionId);
+    const channel = supabase
+      .channel(`table-session-${tableSessionId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'table_sessions',
+        filter: `id=eq.${tableSessionId}`,
+      }, (payload) => {
+        if (payload.new?.status === 'closed') {
           setSessaoStatus('closed');
-          if (pollingRef.current) clearInterval(pollingRef.current);
+          localStorage.removeItem(`mesa_carrinho_${mesaNum}_${tableSessionId}`);
         }
-      } catch { /* ignora erros de rede */ }
-    };
+      })
+      .subscribe();
 
-    // Polling a cada 30 segundos
-    pollingRef.current = setInterval(checkSession, 30_000);
-
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    };
-  }, [tableSessionId, tenantId, mesaNum, sessaoStatus]);
+    return () => { channel.unsubscribe(); };
+  }, [tableSessionId, mesaNum]);
 
   // ── 4. Supabase Realtime: status dos itens pedidos ───────────────────────────
+  const fetchOrderItemsStatus = useCallback(async () => {
+    if (!tableSessionId) return;
+    const { data: orders } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('table_session_id', tableSessionId)
+      .neq('status', 'cancelled');
+
+    const orderIds = (orders ?? []).map((o: { id: string }) => o.id);
+    if (orderIds.length === 0) {
+      setOrderItemsStatus([]);
+      return;
+    }
+
+    const { data: items } = await supabase
+      .from('order_items')
+      .select('id, item_name, quantity, status, order_id')
+      .in('order_id', orderIds)
+      .order('created_at', { ascending: true });
+
+    setOrderItemsStatus((items ?? []) as OrderItemStatus[]);
+  }, [tableSessionId]);
+
   useEffect(() => {
     if (!tableSessionId || sessaoStatus !== 'open') return;
 
-    // Busca inicial dos itens
-    const fetchOrderItems = async () => {
+    fetchOrderItemsStatus();
+
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    const setupSubscription = async () => {
       const { data: orders } = await supabase
         .from('orders')
         .select('id')
-        .eq('table_session_id', tableSessionId);
+        .eq('table_session_id', tableSessionId)
+        .neq('status', 'cancelled');
 
-      if (!orders || orders.length === 0) return;
+      const orderIds = (orders ?? []).map((o: { id: string }) => o.id);
+      if (orderIds.length === 0) return;
 
-      const orderIds = orders.map((o: { id: string }) => o.id);
-
-      const { data: items } = await supabase
-        .from('order_items')
-        .select('id, item_name, quantity, status, order_id')
-        .in('order_id', orderIds)
-        .order('created_at', { ascending: true });
-
-      if (items) {
-        setOrderItemsStatus(items as OrderItemStatus[]);
-      }
+      channel = supabase
+        .channel(`mesa-${tableSessionId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'order_items',
+            filter: `order_id=in.(${orderIds.join(',')})`,
+          },
+          () => {
+            fetchOrderItemsStatus();
+          }
+        )
+        .subscribe();
     };
 
-    fetchOrderItems();
-
-    // Realtime subscription nos order_items
-    const channel = supabase
-      .channel(`mesa_items_${tableSessionId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'order_items',
-        },
-        async () => {
-          // Re-fetch ao detectar qualquer mudança
-          await fetchOrderItems();
-        }
-      )
-      .subscribe();
+    setupSubscription();
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
     };
-  }, [tableSessionId, sessaoStatus]);
+  }, [tableSessionId, sessaoStatus, fetchOrderItemsStatus]);
 
   // ── 3. Verificar condições para encerrar mesa após pagamento ─────────────────
   const verificarCondicoesEncerramento = useCallback(async (): Promise<boolean> => {
@@ -303,7 +326,7 @@ export default function MesaClientePage() {
   }, [tableSessionId, mesaNum]);
 
   const salvarPedidoBanco = useCallback(async (cart: CarrinhoItem[]): Promise<string | null> => {
-    if (!sessao || !user) return null;
+    if (!tenantId || !tableSessionId) return null;
 
     const subtotal = cart.reduce((s, i) => s + i.precoTotal * i.quantidade, 0);
     const itensPayload = cart.map((ci) => ({
@@ -324,11 +347,11 @@ export default function MesaClientePage() {
     }));
 
     try {
-      const { data, error } = await invokeWithAuth('order-write', {
+      const { data, error } = await supabase.functions.invoke('order-write', {
         body: {
           action: 'create_order',
-          session_id: sessao.id,
-          tenant_id: user.tenantId,
+          tenant_id: tenantId,
+          table_session_id: tableSessionId,
           destination: 'table',
           table_number: mesaNum,
           destination_name: clienteNome || null,
@@ -352,7 +375,27 @@ export default function MesaClientePage() {
       console.error('[MesaCliente] Erro ao criar pedido:', e);
       return null;
     }
-  }, [sessao, user, mesaNum, clienteNome]);
+  }, [tenantId, tableSessionId, mesaNum, clienteNome]);
+
+  const handleToggleEntrada = useCallback(async (permitida: boolean) => {
+    if (!tableSessionId) return;
+    setEntradaPermitida(permitida);
+    try {
+      await fetch(TABLE_WRITE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'toggle_entrada_permitida',
+          table_session_id: tableSessionId,
+          permitida,
+        }),
+      });
+    } catch (e) {
+      console.error('[MesaCliente] Erro ao toggle entrada_permitida:', e);
+      // Reverter em caso de erro
+      setEntradaPermitida(!permitida);
+    }
+  }, [tableSessionId]);
 
   // ── Tela: Mesa encerrada pelo cliente ────────────────────────────────────────
   if (mesaEncerrada) {
@@ -414,8 +457,8 @@ export default function MesaClientePage() {
     );
   }
 
-  // ── Tela: Loja fechada ───────────────────────────────────────────────────────
-  if (estado === 'sem_sessao') {
+  // ── Tela: Loja fechada (apenas para usuários autenticados — staff) ───────────
+  if (estado === 'sem_sessao' && user) {
     return (
       <div className="min-h-screen bg-zinc-900 flex justify-center">
         <div className="w-full max-w-sm bg-zinc-900 min-h-screen flex flex-col items-center justify-center p-8 text-center">
@@ -491,14 +534,27 @@ export default function MesaClientePage() {
 
   const handleSalvarEdicao = (index: number, novoItem: Omit<ItemPedidoCliente, 'enviadoKds'>) => {
     setCarrinho((prev) =>
-      prev.map((item, i) => i === index ? { ...novoItem, enviadoKds: false } : item)
+      prev.map((item, i) => i === index ? { ...novoItem, enviadoKds: item.enviadoKds } : item)
     );
     setEditarIndex(null);
   };
 
   const handleEnviarCozinha = async () => {
     setEnviando(true);
-    const itensPendentes = carrinho.filter((i) => !i.enviadoKds);
+    setErroEnvio('');
+
+    const itensNovos = carrinho.filter((i) => !i.enviadoKds);
+    const itemEsgotado = itensNovos.find((i) =>
+      itensDesabilitadosIds.includes(i.itemId)
+    );
+
+    if (itemEsgotado) {
+      setErroEnvio(`"${itemEsgotado.nome}" acabou de esgotar. Remova-o do carrinho antes de enviar.`);
+      setEnviando(false);
+      return;
+    }
+
+    const itensPendentes = itensNovos;
 
     if (itensPendentes.length > 0) {
       const cart: CarrinhoItem[] = itensPendentes.map((item) => ({
@@ -520,43 +576,33 @@ export default function MesaClientePage() {
       const orderId = await salvarPedidoBanco(cart);
 
       if (orderId) {
-        const itensParaBaixa = cart
-          .filter((ci) => ci.itemId && /^[0-9a-f-]{36}$/i.test(ci.itemId))
-          .map((ci) => ({ itemId: ci.itemId, nome: ci.nome, quantidade: ci.quantidade }));
-        if (itensParaBaixa.length > 0) {
-          deductSaleItems(orderId, itensParaBaixa).catch(console.warn);
+        // Só atualiza KDS e mesa localmente quando há usuário autenticado (staff)
+        if (user) {
+          const proximoNumero = kdsPedidos.length > 0 ? Math.max(...kdsPedidos.map((p) => p.numero)) + 1 : 101;
+          const destInfo: DestinoInfo = { tipo: 'mesa', mesaNumero: mesaNum };
+          addKDSPedido(buildKDSPedido({ cart, destino: destInfo, numeroSeq: proximoNumero, origem: 'mesa', stationMap: kdsStationMap }));
+
+          const novoTotal = itensPendentes.reduce((s, i) => s + i.preco * i.quantidade, 0);
+          const mesaAtual = mesas.find((m) => m.numero === mesaNum);
+          if (mesaAtual) {
+            atualizarMesa(mesaAtual.id, { totalConsumo: (mesaAtual.totalConsumo ?? 0) + novoTotal });
+          }
         }
+
+        setTimeout(() => {
+          setCarrinho((prev) => prev.map((i) => ({ ...i, enviadoKds: true })));
+          setEnviando(false);
+          setFeedbackEnvio(true);
+          fetchOrderItemsStatus();
+          setTimeout(() => setFeedbackEnvio(false), 3000);
+        }, 500);
+      } else {
+        setErroEnvio('Erro ao enviar pedido. Tente novamente.');
+        setEnviando(false);
       }
-
-      // Imprimir ticket de cozinha automaticamente via impressora mapeada
-      try {
-        const proximoNumero = kdsPedidos.length > 0 ? Math.max(...kdsPedidos.map((p) => p.numero)) + 1 : 101;
-        const destInfo: DestinoInfo = { tipo: 'mesa', mesaNumero: mesaNum };
-        const primeiroItem = cart.find((i) => i.stationId);
-        const estacao = primeiroItem?.stationId ?? 'cozinha-padrao';
-        const impressora = getImpressoraParaEstacao(estacao);
-        await printKitchenTicket(proximoNumero, cart, destInfo, impressora);
-      } catch (e) {
-        console.warn('[MesaCliente] Erro ao imprimir ticket de cozinha (non-blocking):', e);
-      }
-
-      const proximoNumero = kdsPedidos.length > 0 ? Math.max(...kdsPedidos.map((p) => p.numero)) + 1 : 101;
-      const destInfo: DestinoInfo = { tipo: 'mesa', mesaNumero: mesaNum };
-      addKDSPedido(buildKDSPedido({ cart, destino: destInfo, numeroSeq: proximoNumero, origem: 'mesa' }));
-
-      const novoTotal = itensPendentes.reduce((s, i) => s + i.preco * i.quantidade, 0);
-      const mesaAtual = mesas.find((m) => m.numero === mesaNum);
-      if (mesaAtual) {
-        atualizarMesa(mesaAtual.id, { totalConsumo: (mesaAtual.totalConsumo ?? 0) + novoTotal });
-      }
-    }
-
-    setTimeout(() => {
-      setCarrinho((prev) => prev.map((i) => ({ ...i, enviadoKds: true })));
+    } else {
       setEnviando(false);
-      setFeedbackEnvio(true);
-      setTimeout(() => setFeedbackEnvio(false), 3000);
-    }, 500);
+    }
   };
 
   const handleTransferirResponsabilidade = (novoNome: string) => {
@@ -634,6 +680,17 @@ export default function MesaClientePage() {
               )}
             </div>
           </div>
+          {identificado && (
+            <button
+              onClick={() => setShowMeusPedidos(true)}
+              className="mt-3 w-full flex items-center justify-center gap-2 py-2 bg-white/20 hover:bg-white/30 text-white text-xs font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
+            >
+              <div className="w-4 h-4 flex items-center justify-center">
+                <i className="ri-receipt-line" />
+              </div>
+              Meus Pedidos
+            </button>
+          )}
         </div>
 
         {feedbackEnvio && (
@@ -670,6 +727,8 @@ export default function MesaClientePage() {
               onEditar={handleEditar}
               onEnviar={handleEnviarCozinha}
               enviando={enviando}
+              erroEnvio={erroEnvio}
+              onLimparErroEnvio={() => setErroEnvio('')}
               onConfirmarEdicao={handleConfirmarEdicao}
               onCancelarEdicao={handleCancelarEdicao}
               orderItemsStatus={orderItemsStatus}
@@ -680,7 +739,7 @@ export default function MesaClientePage() {
               mesaNumero={mesaNum}
               isResponsavel={isResponsavel}
               entradaPermitida={entradaPermitida}
-              onToggleEntrada={setEntradaPermitida}
+              onToggleEntrada={handleToggleEntrada}
               clientesMesa={clientesMesa}
               onTransferirResponsabilidade={handleTransferirResponsabilidade}
               horaAbertura={horaAbertura}
@@ -754,10 +813,20 @@ export default function MesaClientePage() {
           />
         )}
 
+        {/* Modal meus pedidos */}
+        {showMeusPedidos && tableSessionId && tenantId && (
+          <MeusPedidosModal
+            tableSessionId={tableSessionId}
+            clienteNome={clienteNome}
+            tenantId={tenantId}
+            onClose={() => setShowMeusPedidos(false)}
+          />
+        )}
+
         {!identificado && (
           <IdentificacaoModal
             mesaNumero={mesaNum}
-            tenantId={user?.tenantId}
+            tenantId={tenantId}
             onConfirmar={handleIdentificar}
             ehPrimeiroCliente={clientesMesa.length === 0}
             responsavelNome={responsavelNome}

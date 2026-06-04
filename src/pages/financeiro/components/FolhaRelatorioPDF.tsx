@@ -1,4 +1,5 @@
 import { useMemo, useEffect } from 'react';
+import { useImpressoras, PRINTER_KEY_RELATORIOS } from '@/contexts/ImpressorasContext';
 import type { PayrollEntry } from '@/hooks/useRH';
 import { formatCurrency } from '@/lib/formatters';
 
@@ -15,6 +16,7 @@ function monthLabel(m: string) {
 }
 
 export default function FolhaRelatorioPDF({ entries, month, companyName = 'Empresa', onClose }: Props) {
+  const { getImpressoraParaEstacao } = useImpressoras();
   const totals = useMemo(() => {
     return entries.reduce(
       (acc, e) => ({
@@ -233,8 +235,10 @@ export default function FolhaRelatorioPDF({ entries, month, companyName = 'Empre
   };
 
   // Auto-abre a janela de impressão ao montar
+  // (usa janela do navegador, pois a folha de pagamento tem layout complexo)
   useEffect(() => {
     handlePrint();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

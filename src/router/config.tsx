@@ -14,6 +14,7 @@ import MesasPage from '../pages/mesas/page';
 import RelatoriosPage from '../pages/relatorios/page';
 import EstoquePage from '../pages/estoque/page';
 import MesaClientePage from '../pages/mesa/page';
+import MesaQRPage from '../pages/mesa-qr/page';
 import AutoatendimentoPage from '../pages/autoatendimento/page';
 import TotemPage from '../pages/totem/page';
 import ConfiguracoesPage from '../pages/configuracoes/page';
@@ -42,6 +43,7 @@ import SelecionarLojaPage from '@/pages/selecionar-loja/page';
 const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
   { path: '/mesa/:mesaId', element: <MesaClientePage /> },
+  { path: '/mesa-qr/:qr_token', element: <MesaQRPage /> },
   { path: '/autoatendimento', element: <AutoatendimentoPage /> },
   { path: '/totem/:token', element: <TotemPage /> },
   {

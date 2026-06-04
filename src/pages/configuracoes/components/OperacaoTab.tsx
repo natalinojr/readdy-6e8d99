@@ -82,6 +82,9 @@ export default function OperacaoTab() {
   const { success: toastSuccess, error: toastError } = useToast();
 
   const [cfg, setCfg] = useState<ConfigOperacao>(CFG_DEFAULTS);
+  // Ref para rastrear quando os dados do servidor realmente mudaram,
+  // evitando sobrescrever o estado local quando o componente \u00e9 remontado
+  const lastSettingsUpdatedAtRef = useRef<string | undefined>(undefined);
   const [pixCfg, setPixCfg] = useState({ stoneClientId: '', stoneClientSecret: '', chavePixTipo: 'cnpj' as const, chavePix: '', webhookUrl: '' });
   const [deliveryCommissionRates, setDeliveryCommissionRates] = useState<Record<string, number>>({});
   // IDs das formas de pagamento aceitas no delivery (null = todas aceitas)
@@ -115,6 +118,18 @@ export default function OperacaoTab() {
 
   useEffect(() => {
     if (settingsLoading || !settings) return;
+    // Só sincroniza cfg quando os dados do servidor realmente mudaram
+    // (updated_at diferente). Na primeira montagem (ref undefined) sempre sincroniza.
+    // Isso evita que, ao trocar de aba e voltar, o cfg volte pro default enquanto
+    // os settings ainda estão corretos no contexto.
+    if (
+      lastSettingsUpdatedAtRef.current !== undefined &&
+      settings.updated_at === lastSettingsUpdatedAtRef.current
+    ) {
+      return;
+    }
+    lastSettingsUpdatedAtRef.current = settings.updated_at;
+
     setCfg((prev) => ({
       ...prev,
       taxaServicoAtiva: settings.service_fee_enabled,
@@ -126,7 +141,6 @@ export default function OperacaoTab() {
       impressaoAutomatica: settings.auto_print_enabled,
       impressaoKDS: settings.print_kds_enabled,
       impressaoViasCozinhaAtiva: settings.print_kitchen_copy_enabled,
-      impressaoDeliveryAtiva: (settings as Record<string, unknown>).delivery_print_enabled as boolean ?? false,
       horarioFechamentoCozinha: settings.kitchen_close_time ?? '23:00',
       timerVerdeMax: settings.timer_verde_max ?? 45,
       timerAmbarMax: settings.timer_ambar_max ?? 90,
@@ -182,7 +196,6 @@ export default function OperacaoTab() {
       auto_print_enabled: cfg.impressaoAutomatica,
       print_kds_enabled: cfg.impressaoKDS,
       print_kitchen_copy_enabled: cfg.impressaoViasCozinhaAtiva,
-      delivery_print_enabled: (cfg as Record<string, unknown>).impressaoDeliveryAtiva as boolean ?? false,
       kitchen_close_time: cfg.horarioFechamentoCozinha,
       welcome_message_new: cfg.mensagemBoasVindas,
       welcome_message_returning: cfg.mensagemRetorno,
@@ -597,22 +610,6 @@ export default function OperacaoTab() {
               <Toggle checked={cfg[key]} onChange={(v) => set(key, v)} />
             </div>
           ))}
-          {/* Impressão de delivery — desativada por padrão */}
-          <div className="flex items-center justify-between border-t border-zinc-50 pt-4">
-            <div>
-              <p className="text-sm font-semibold text-zinc-700 flex items-center gap-1.5">
-                <i className="ri-motorbike-line text-zinc-400 text-sm" />
-                Imprimir pedidos do PDV Delivery
-              </p>
-              <p className="text-xs text-zinc-400">
-                Desativado por padrão — pedidos do iFood/apps já chegam impressos pelo próprio app
-              </p>
-            </div>
-            <Toggle
-              checked={(cfg as Record<string, unknown>).impressaoDeliveryAtiva as boolean ?? false}
-              onChange={(v) => set('impressaoDeliveryAtiva' as keyof ConfigOperacao, v as ConfigOperacao[keyof ConfigOperacao])}
-            />
-          </div>
         </div>
       </SectionCard>
 
@@ -626,6 +623,7 @@ export default function OperacaoTab() {
                 ['nome',    'Por nome',           'O cliente digita o nome no totem para ser chamado na retirada'],
                 ['senha',   'Por senha numérica', 'O sistema gera uma senha aleatória exibida na tela'],
                 ['comanda', 'Por comanda (pager)', 'O cliente escolhe um pager físico e digita o número no totem'],
+                ['senha_balcao', 'Senha do balcão', 'O cliente pega uma senha no balcão e digita o número no totem'],
               ] as const).map(([v, l, desc]) => (
                 <button key={v} onClick={() => set('autoatendimentoIdentificacao', v)}
                   className={`flex items-start gap-3 px-4 py-3 rounded-xl border cursor-pointer text-left transition-all ${cfg.autoatendimentoIdentificacao === v ? 'border-amber-400 bg-amber-50' : 'border-zinc-100 bg-zinc-50 hover:border-zinc-200'}`}>
@@ -638,18 +636,20 @@ export default function OperacaoTab() {
                   </div>
                 </button>
               ))}
-              {cfg.autoatendimentoIdentificacao === 'comanda' && (
+              {(cfg.autoatendimentoIdentificacao === 'comanda' || cfg.autoatendimentoIdentificacao === 'senha_balcao') && (
                 <div className="space-y-3 mt-1">
                   <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
                     <i className="ri-information-line text-amber-500 text-sm flex-shrink-0 mt-0.5" />
                     <p className="text-xs text-amber-800">
-                      <strong>Como funciona:</strong> Cada pager físico tem um número impresso. O cliente pega um pager disponível, digita o número no totem e aguarda ser chamado. O número do pager aparece no KDS e no gestor de pedidos para o atendente localizar o cliente.
+                      <strong>Como funciona:</strong> {cfg.autoatendimentoIdentificacao === 'comanda'
+                        ? 'Cada pager físico tem um número impresso. O cliente pega um pager disponível, digita o número no totem e aguarda ser chamado. O número do pager aparece no KDS e no gestor de pedidos para o atendente localizar o cliente.'
+                        : 'Cada senha no balcão tem um número. O cliente pega uma senha na fila, digita o número no totem e aguarda ser chamado. O número da senha aparece no KDS e no gestor de pedidos para o atendente localizar o cliente.'}
                     </p>
                   </div>
                   <div className="flex items-center justify-between px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl">
                     <div>
-                      <p className="text-sm font-semibold text-zinc-700">Quantidade de pagers disponíveis</p>
-                      <p className="text-xs text-zinc-400">O sistema valida se o número digitado é válido (1 até este limite)</p>
+                      <p className="text-sm font-semibold text-zinc-700">{cfg.autoatendimentoIdentificacao === 'comanda' ? 'Quantidade de pagers disponíveis' : 'Último número de senha do balcão'}</p>
+                      <p className="text-xs text-zinc-400">{cfg.autoatendimentoIdentificacao === 'comanda' ? 'O sistema valida se o número digitado é válido (1 até este limite)' : 'O sistema valida se o número digitado é válido (1 até este limite)'}</p>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <input
@@ -660,7 +660,7 @@ export default function OperacaoTab() {
                         onChange={(e) => set('pagerCount' as keyof ConfigOperacao, (parseInt(e.target.value) || 50) as ConfigOperacao[keyof ConfigOperacao])}
                         className="w-20 text-sm border border-zinc-200 rounded-lg px-2 py-1.5 text-center text-zinc-800 focus:outline-none focus:border-amber-400"
                       />
-                      <span className="text-xs text-zinc-500 whitespace-nowrap">pagers</span>
+                      <span className="text-xs text-zinc-500 whitespace-nowrap">{cfg.autoatendimentoIdentificacao === 'comanda' ? 'pagers' : 'senhas'}</span>
                     </div>
                   </div>
                 </div>

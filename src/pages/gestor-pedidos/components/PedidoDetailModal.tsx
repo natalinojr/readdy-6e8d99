@@ -1,5 +1,9 @@
 import type { KDSPedido, KDSItem, KDSItemStatus } from '@/types/kds';
-import { printHTML } from '@/lib/printUtils';
+import { sendToPrinter } from '@/lib/printUtils';
+import { useImpressoras } from '@/contexts/ImpressorasContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useState } from 'react';
+import PedidoEditHistory from './PedidoEditHistory';
 
 const ORIGEM_LABELS: Record<string, { label: string; cor: string }> = {
   caixa:           { label: 'Caixa',    cor: 'bg-violet-100 text-violet-700 border border-violet-200' },
@@ -160,16 +164,14 @@ interface Props {
   onCancelar?: () => void;
 }
 
-export default function PedidoDetailModal({ pedido, onClose, onCancelar }: Props) {
-  const origemInfo = ORIGEM_LABELS[pedido.origem] ?? { label: pedido.origem, cor: 'bg-zinc-100 text-zinc-700 border border-zinc-200' };
-  const statusCfg = ORDER_STATUS_CONFIG[pedido.status] ?? ORDER_STATUS_CONFIG.novo;
-  const kitchenItens = pedido.itens.filter((i) => !i.semPreparo && !i.skip_kds);
-  const directItens = pedido.itens.filter((i) => i.semPreparo || i.skip_kds);
-  const totalComItens = pedido.itens.reduce((acc, i) => acc + (i.item_price ?? 0) * i.quantidade, 0);
-  const displayTotal = pedido.totalAmount > 0 ? pedido.totalAmount : totalComItens;
+function useImpressoraPedidos() {
+  const { getImpressoraParaEstacao } = useImpressoras();
+  return getImpressoraParaEstacao('pedidos');
+}
 
-  const handlePrint = () => {
-    printHTML(`<html><head><title>Pedido #${pedido.numero}</title>
+function buildPedidoHTML(pedido: KDSPedido, displayTotal: number): string {
+  const origemInfo = ORIGEM_LABELS[pedido.origem] ?? { label: pedido.origem, cor: 'bg-zinc-100 text-zinc-700 border border-zinc-200' };
+  return `<html><head><title>Pedido #${pedido.numero}</title>
       <style>body{font-family:monospace;font-size:12px;padding:16px}h2{margin:0 0 4px}hr{border:1px dashed #000}.item{margin:4px 0}.obs{color:red;font-weight:bold;font-size:11px}p{margin:2px 0;font-size:11px}</style>
       </head><body>
       <h2>Pedido #${String(pedido.numero).padStart(4, '0')}</h2>
@@ -184,7 +186,26 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar }: Props
       <hr/>
       ${displayTotal > 0 ? `<p>Total: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(displayTotal)}</p>` : ''}
       <small>${new Date().toLocaleString('pt-BR')}</small>
-      </body></html>`);
+      </body></html>`;
+}
+
+export default function PedidoDetailModal({ pedido, onClose, onCancelar }: Props) {
+  const impressoraPedidos = useImpressoraPedidos();
+  const { error: toastError } = useToast();
+  const [showHistory, setShowHistory] = useState(false);
+  const origemInfo = ORIGEM_LABELS[pedido.origem] ?? { label: pedido.origem, cor: 'bg-zinc-100 text-zinc-700 border border-zinc-200' };
+  const statusCfg = ORDER_STATUS_CONFIG[pedido.status] ?? ORDER_STATUS_CONFIG.novo;
+  const kitchenItens = pedido.itens.filter((i) => !i.semPreparo && !i.skip_kds);
+  const directItens = pedido.itens.filter((i) => i.semPreparo || i.skip_kds);
+  const totalComItens = pedido.itens.reduce((acc, i) => acc + (i.item_price ?? 0) * i.quantidade, 0);
+  const displayTotal = pedido.totalAmount > 0 ? pedido.totalAmount : totalComItens;
+
+  const handlePrint = async () => {
+    const html = buildPedidoHTML(pedido, displayTotal);
+    const result = await sendToPrinter(html, impressoraPedidos, undefined, { paperWidthPx: 320 });
+    if (!result.success && !result.fallbackToBrowser) {
+      toastError('Erro na impressão', result.error || 'Não foi possível imprimir');
+    }
   };
 
   return (
@@ -303,6 +324,23 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar }: Props
               </div>
             </div>
           )}
+
+          {/* Histórico de alterações */}
+          <div>
+            <button
+              onClick={() => setShowHistory((v) => !v)}
+              className="flex items-center gap-1.5 text-[10px] font-black text-zinc-400 uppercase tracking-wider hover:text-zinc-600 cursor-pointer transition-colors"
+            >
+              <i className={`${showHistory ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xs`} />
+              <i className="ri-history-line text-xs" />
+              Histórico de alterações
+            </button>
+            {showHistory && (
+              <div className="mt-2">
+                <PedidoEditHistory orderId={pedido.id} />
+              </div>
+            )}
+          </div>
 
           {/* Totais */}
           {displayTotal > 0 && (

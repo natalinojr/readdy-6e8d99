@@ -59,6 +59,8 @@ export interface PedidoItemDetalhe {
   opcoes: string[];
   observacao?: string;
   unidades: UnidadeItem[];
+  /** Order ID this item belongs to — needed for grouped cards */
+  orderId?: string;
 }
 
 // ─── Bill Splitting (table_session_participants) ──────────────────────────────
@@ -192,6 +194,8 @@ export interface PagamentoPedido {
   origin_type?: string | null;
   /** PDV de origem: 'cashier' | 'waiter' | 'table' | 'self_service' | etc. */
   paid_by_pdv?: string | null;
+  /** Payment group ID — links orders that were paid together */
+  payment_group_id?: string | null;
 }
 
 export type PedidoStatus =
@@ -244,6 +248,8 @@ export interface PedidoRecente {
   serviceFee?: number;
   tipAmount?: number;
   pagamentos?: PagamentoPedido[];
+  /** Table session ID — links orders from the same table */
+  table_session_id?: string | null;
   /** Timestamp ISO do momento em que o pedido foi criado — usado para SLA em tempo real */
   _criadoTs?: string | null;
   /** Timestamp ISO do primeiro item que iniciou preparo — fase "Espera" ao vivo */
@@ -253,6 +259,12 @@ export interface PedidoRecente {
   /** Timestamp ISO do momento de entrega do pedido — para TempoCell parar de contar */
   _entregueTs?: string | null;
   session_id?: string | null;
+  /** Session number (e.g. "S001") — human-readable */
+  session_number?: string | null;
+  /** For grouped cards: IDs of original orders in this group */
+  pedidoIds?: string[];
+  /** For grouped cards: original orders data */
+  pedidosOriginais?: PedidoRecente[];
 }
 
 // ─── Table Session ────────────────────────────────────────────────────────────

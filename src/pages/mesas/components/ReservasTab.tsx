@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { TableReservation, ReservationStatus } from '@/types/reservations';
 import NovaReservaModal from './NovaReservaModal';
@@ -83,7 +83,7 @@ export default function ReservasTab() {
   async function handleAction(reservationId: string, action: string, extra?: Record<string, unknown>) {
     setActionLoading(reservationId + action);
     try {
-      await supabase.functions.invoke('reservation-write', {
+      await invokeWithAuth('reservation-write', {
         body: { action, reservation_id: reservationId, active_tenant_id: user?.tenantId, ...extra },
       });
       await loadReservations();

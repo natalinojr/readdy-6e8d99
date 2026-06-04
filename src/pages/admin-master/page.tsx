@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, ensureFreshSession, safeRefreshSession } from '@/lib/supabase';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase';
 
 const ADMIN_MASTER_EMAIL = 'natalinojr.engel@gmail.com';
@@ -272,15 +272,73 @@ function StoreActionConfirmModal({ modal, onClose, onDone }: StoreActionModalPro
     if (!confirmed) return;
     setLoading(true);
     setError(null);
-    try {
+
+    async function doCall(token: string): Promise<{ ok: true } | { ok: false; status: number; errMsg: string }> {
       let rpcName = '';
       if (action === 'clear_orders') rpcName = 'fn_admin_clear_orders';
       else if (action === 'clear_stock') rpcName = 'fn_admin_clear_stock';
       else if (action === 'reset') rpcName = 'fn_admin_reset_tenant';
       else if (action === 'delete') rpcName = 'fn_admin_delete_tenant';
 
-      const { error: rpcError } = await supabase.rpc(rpcName, { p_tenant_id: tenant.id });
-      if (rpcError) throw rpcError;
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${rpcName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'apikey': SUPABASE_ANON_KEY,
+          'Prefer': 'return=representation',
+        },
+        body: JSON.stringify({ p_tenant_id: tenant.id }),
+      });
+
+      if (resp.ok) return { ok: true };
+
+      let errMsg = `Erro ${resp.status}`;
+      let raw = '';
+      try {
+        const ct = resp.headers.get('content-type') ?? '';
+        if (ct.includes('application/json')) {
+          const j = await resp.json();
+          raw = JSON.stringify(j);
+          errMsg = j.message ?? j.error ?? JSON.stringify(j);
+        } else {
+          raw = await resp.text();
+          errMsg = raw || errMsg;
+        }
+      } catch {
+        // ignore parse error
+      }
+      console.error(`[AdminMaster] ${rpcName} failed:`, resp.status, errMsg, 'raw:', raw);
+      return { ok: false, status: resp.status, errMsg };
+    }
+
+    try {
+      // Primeira tentativa com token atual (refrescado se necessário)
+      let session = await ensureFreshSession();
+      if (!session) {
+        setError('Sessão expirada. Por favor, faça login novamente.');
+        setLoading(false);
+        return;
+      }
+
+      let result = await doCall(session.access_token);
+
+      // Se deu 401, pode ser token invalidado no servidor. Força refresh e retenta uma vez.
+      if (!result.ok && result.status === 401) {
+        console.warn('[AdminMaster] Token retornou 401 — forçando refresh e retentando...');
+        const refreshedSession = await safeRefreshSession();
+        if (!refreshedSession) {
+          setError('Sessão expirada. Por favor, faça login novamente.');
+          setLoading(false);
+          return;
+        }
+        result = await doCall(refreshedSession.access_token);
+      }
+
+      if (!result.ok) {
+        throw new Error(result.errMsg);
+      }
+
       setDone(true);
       onDone();
     } catch (e) {

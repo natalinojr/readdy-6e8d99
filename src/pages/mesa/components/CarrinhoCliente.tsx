@@ -55,6 +55,8 @@ interface CarrinhoClienteProps {
   onEditar: (index: number) => void;
   onEnviar: () => void;
   enviando: boolean;
+  erroEnvio?: string;
+  onLimparErroEnvio?: () => void;
   onConfirmarEdicao: () => void;
   onCancelarEdicao: () => void;
   orderItemsStatus: OrderItemStatus[];
@@ -70,6 +72,8 @@ export default function CarrinhoCliente({
   onEditar,
   onEnviar,
   enviando,
+  erroEnvio,
+  onLimparErroEnvio,
   onConfirmarEdicao,
   onCancelarEdicao,
   orderItemsStatus,
@@ -112,6 +116,24 @@ export default function CarrinhoCliente({
 
   return (
     <div className="flex flex-col h-full">
+      {/* Banner erro de envio */}
+      {erroEnvio && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2.5 flex items-start gap-2 flex-shrink-0">
+          <div className="w-5 h-5 flex items-center justify-center text-red-500 flex-shrink-0 mt-0.5">
+            <AlertTriangle size={14} />
+          </div>
+          <p className="text-xs font-semibold text-red-700 flex-1 leading-relaxed">
+            {erroEnvio}
+          </p>
+          <button
+            onClick={onLimparErroEnvio}
+            className="w-6 h-6 flex items-center justify-center text-red-400 hover:text-red-600 cursor-pointer transition-colors flex-shrink-0"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
       {/* Banner modo edição ativo */}
       {modoEdicaoEnviados && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center gap-2 flex-shrink-0">

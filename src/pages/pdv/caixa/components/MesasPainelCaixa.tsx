@@ -278,13 +278,14 @@ export default function MesasPainelCaixa({ onAddItemsMesa }: Props) {
                         </div>
                         <button
                           onClick={() => setMesaFechando(mesa)}
-                          className="w-full flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-sm py-2.5 rounded-xl transition-colors cursor-pointer whitespace-nowrap"
+                          className="w-full flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-sm py-2.5 rounded-xl transition-colors cursor-pointer"
                         >
                           <i className="ri-money-dollar-circle-line text-base text-amber-400" />
-                          Pagamento e Fechamento
+                          <span className="hidden sm:inline">Pagamento e Fechamento</span>
+                          <span className="sm:hidden">Pagar e Fechar</span>
                           {mesa.totalConsumo != null && (
-                            <span className="text-amber-300 font-black">
-                              · {formatPrice(calcTotal(mesa.totalConsumo))}
+                            <span className="text-amber-300 font-black whitespace-nowrap">
+                              &middot; {formatPrice(calcTotal(mesa.totalConsumo))}
                             </span>
                           )}
                         </button>

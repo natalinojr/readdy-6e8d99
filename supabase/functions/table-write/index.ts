@@ -44,7 +44,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       const { data: sessionData, error: sessionErr } = await admin
         .from('table_sessions')
-        .select('id, status, customer_name, opened_at')
+        .select('id, status, customer_name, opened_at, entrada_permitida')
         .eq('table_id', tableData.id)
         .eq('status', 'open')
         .maybeSingle();
@@ -56,6 +56,22 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         session: sessionData ?? null,
         session_status: sessionData ? 'open' : 'closed',
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ── Public action: toggle_entrada_permitida ──────────────────────────────────
+    if (action === 'toggle_entrada_permitida') {
+      const { table_session_id, permitida } = body;
+      if (!table_session_id || typeof permitida !== 'boolean') {
+        return new Response(JSON.stringify({ error: 'table_session_id and permitida (boolean) required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      const { error: updateErr } = await admin
+        .from('table_sessions')
+        .update({ entrada_permitida: permitida })
+        .eq('id', table_session_id);
+
+      if (updateErr) throw updateErr;
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // ── Public action: save_customer_name ────────────────────────────────────────
@@ -230,7 +246,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (sess.table_id) {
         await admin
           .from('tables')
-          .update({ status: 'available' })
+          .update({ status: 'livre' })
           .eq('id', sess.table_id);
       }
 
@@ -299,7 +315,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         pos_x: t.pos_x ?? 0,
         pos_y: t.pos_y ?? 0,
         is_active: true,
-        status: 'available',
+        status: 'livre',
         qr_token: crypto.randomUUID(),
       }));
       const { data, error } = await admin.from('tables').upsert(rows, { onConflict: 'tenant_id,number' }).select('id, number');

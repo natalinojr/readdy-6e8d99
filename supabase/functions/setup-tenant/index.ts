@@ -117,45 +117,39 @@ async function checkExistingTenant(
 }
 
 /**
- * Valida o invite code.
+ * Valida o invite code usando a RPC SECURITY DEFINER (evita problemas de permissão na tabela).
  */
 async function validateInviteCode(
   supabaseUrl: string,
   serviceKey: string,
   inviteCode: string,
 ): Promise<{ valid: boolean; inviteId: string | null; alreadyUsed: boolean; reason: string }> {
-  const res = await fetch(
-    `${normalizeUrl(supabaseUrl)}/rest/v1/store_invites?invite_code=eq.${encodeURIComponent(inviteCode)}&select=id,invite_code,used_at,used_by_tenant_id&limit=1`,
-    {
-      headers: {
-        'apikey': serviceKey,
-        'Authorization': `Bearer ${serviceKey}`,
-        'Accept': 'application/json',
-      },
-    },
-  );
+  const result = await restRpc(supabaseUrl, serviceKey, 'fn_validate_invite_code', {
+    p_code: inviteCode,
+  });
 
-  const bodyText = await res.text();
-  console.log('[setup-tenant] validateInviteCode status:', res.status, 'body:', bodyText);
+  console.log('[setup-tenant] validateInviteCode RPC status:', result.status, 'data:', JSON.stringify(result.data));
 
-  if (!res.ok) {
-    return { valid: false, inviteId: null, alreadyUsed: false, reason: `Erro ao validar convite (${res.status}): ${bodyText}` };
+  if (!result.ok) {
+    return { valid: false, inviteId: null, alreadyUsed: false, reason: `Erro ao validar convite (${result.status}): ${result.text}` };
   }
 
-  let data: Array<{ id: string; invite_code: string; used_at: string | null; used_by_tenant_id: string | null }> = [];
-  try { data = JSON.parse(bodyText); } catch { /* ignore */ }
+  const data = result.data as { status: string; invite_id?: string; label?: string; invite_code?: string } | null;
 
-  if (!data || data.length === 0) {
+  if (!data || data.status === 'invalid') {
     return { valid: false, inviteId: null, alreadyUsed: false, reason: 'Código de convite não encontrado.' };
   }
 
-  if (data[0].used_at) {
-    return { valid: false, inviteId: data[0].id, alreadyUsed: true, reason: 'Este código de convite já foi utilizado. Cada código só pode criar uma loja.' };
+  if (data.status === 'used') {
+    return { valid: false, inviteId: data.invite_id ?? null, alreadyUsed: true, reason: 'Este código de convite já foi utilizado. Cada código só pode criar uma loja.' };
   }
 
-  return { valid: true, inviteId: data[0].id, alreadyUsed: false, reason: '' };
+  return { valid: true, inviteId: data.invite_id ?? null, alreadyUsed: false, reason: '' };
 }
 
+/**
+ * Marca o invite como usado via RPC SECURITY DEFINER.
+ */
 async function markInviteUsed(
   supabaseUrl: string,
   serviceKey: string,
@@ -163,24 +157,21 @@ async function markInviteUsed(
   tenantId: string,
   email: string,
 ): Promise<void> {
-  const res = await fetch(`${normalizeUrl(supabaseUrl)}/rest/v1/store_invites?id=eq.${inviteId}`, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': serviceKey,
-      'Authorization': `Bearer ${serviceKey}`,
-      'Prefer': 'return=minimal',
-    },
-    body: JSON.stringify({
-      used_at: new Date().toISOString(),
-      used_by_tenant_id: tenantId,
-      used_by_email: email,
-    }),
+  const result = await restRpc(supabaseUrl, serviceKey, 'fn_mark_invite_used', {
+    p_invite_id: inviteId,
+    p_tenant_id: tenantId,
+    p_email: email,
   });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`markInviteUsed failed (${res.status}): ${txt}`);
+
+  if (!result.ok) {
+    throw new Error(`markInviteUsed RPC failed (${result.status}): ${result.text}`);
   }
+
+  const data = result.data as { success?: boolean; error?: string } | null;
+  if (!data?.success) {
+    throw new Error(`markInviteUsed RPC returned error: ${data?.error ?? 'unknown'}`);
+  }
+
   console.log('[setup-tenant] Invite marcado como usado com sucesso:', inviteId);
 }
 

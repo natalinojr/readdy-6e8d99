@@ -2,7 +2,6 @@ import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppMode } from '@/contexts/AppModeContext';
 import { useSessao } from '@/contexts/SessaoContext';
-import { useEstoque } from '@/contexts/EstoqueContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { invokeWithAuth, supabase } from '@/lib/supabase';
@@ -13,6 +12,9 @@ import DeliveryCarrinho, { type ClienteDelivery } from './components/DeliveryCar
 import DeliveryClienteModal from './components/DeliveryClienteModal';
 import DeliveryPagamentoModal from './components/DeliveryPagamentoModal';
 import DeliveryEntregaConfirmModal from './components/DeliveryEntregaConfirmModal';
+import { useImpressoras } from '@/contexts/ImpressorasContext';
+import { printKitchenTicket } from '@/pages/pdv/caixa/components/CozinhaTicketPrint';
+import type { DestinoInfo, CarrinhoItem } from '@/contexts/PDVContext';
 
 type ModalType = 'none' | 'cliente' | 'confirmar_entrega' | 'pagamento';
 
@@ -30,13 +32,13 @@ interface PedidoFinalizado {
 let _cartCounter = 0;
 
 export default function PDVDeliveryPage() {
-  const { estado, sessao, caixa } = useSessao();
+  const { estado, sessao, caixa, loadingSession } = useSessao();
   const navigate = useNavigate();
   const { setMode } = useAppMode();
-  const { deductSaleItems } = useEstoque();
   const { user } = useAuth();
   const { settings } = useSystemSettings();
   const { submitOrder } = useOrderSubmit();
+  const { getImpressoraParaEstacao, mapaEstacoes } = useImpressoras();
 
   // Impressão de delivery pode ser desativada nas configurações
   // settings.delivery_print_enabled: se false, não imprime nada
@@ -135,7 +137,7 @@ export default function PDVDeliveryPage() {
         is_training: user.modoTreino ?? false,
         // Plataforma de delivery para relatórios
         delivery_platform: cliente?.plataforma ?? null,
-      });
+      }, { stationToImpressoraId: mapaEstacoes });
 
       return { orderId: result.id, orderNumber: result.number };
     } catch (err) {
@@ -215,12 +217,38 @@ export default function PDVDeliveryPage() {
         await registrarPagamento(orderId, pagamentos);
       }
 
-      // Baixa estoque normalmente
-      const itensParaBaixa = carrinho
-        .filter((ci) => ci.itemId && /^[0-9a-f-]{36}$/i.test(ci.itemId))
-        .map((ci) => ({ itemId: ci.itemId, nome: ci.itemNome, quantidade: ci.quantidade }));
-      if (itensParaBaixa.length > 0) {
-        deductSaleItems(orderId, itensParaBaixa).catch(console.warn);
+      // Impressão automática de ticket de cozinha para delivery (se habilitado)
+      if (settings.print_kds_enabled && carrinho.length > 0) {
+        try {
+          const mappedCarrinho: CarrinhoItem[] = carrinho.map((ci) => ({
+            cartId: ci.cartId,
+            itemId: ci.itemId,
+            nome: ci.itemNome,
+            precoBase: ci.itemPreco,
+            precoTotal: ci.precoUnitario,
+            quantidade: ci.quantidade,
+            opcoes: ci.opcoesSelecionadas.map((o) => ({
+              grupoNome: o.grupoNome,
+              opcaoNome: o.opcaoNome,
+              precoAdicional: o.precoAdicional,
+            })),
+            observacoes: ci.observacoes,
+            observacaoLivre: ci.observacaoLivre,
+            semPreparo: ci.semPreparo ?? false,
+            stationId: ci.stationId,
+          }));
+          const seq = parseInt(orderNumber.replace(/\D/g, '').slice(-4)) || 1;
+          const primeiroItem = mappedCarrinho.find((i) => i.stationId);
+          const estacao = primeiroItem?.stationId ?? 'cozinha-padrao';
+          const impressora = getImpressoraParaEstacao(estacao);
+          const destinoPrint: DestinoInfo = {
+            tipo: 'delivery',
+            nomeCliente: cliente?.nome ?? 'Delivery',
+          };
+          await printKitchenTicket(seq, mappedCarrinho, destinoPrint, impressora, true);
+        } catch (e) {
+          console.warn('[PDVDelivery] Erro ao imprimir ticket de cozinha (non-blocking):', e);
+        }
       }
 
       // Impressão: só imprime se delivery_print_enabled = true nas configurações
@@ -253,9 +281,36 @@ export default function PDVDeliveryPage() {
     } finally {
       setSalvando(false);
     }
-  }, [carrinho, cliente, total, taxaEntrega, salvando, criarPedidoBanco, registrarPagamento, deductSaleItems, deliveryPrintEnabled]);
+  }, [carrinho, cliente, total, taxaEntrega, salvando, criarPedidoBanco, registrarPagamento, deliveryPrintEnabled, settings.print_kds_enabled, getImpressoraParaEstacao, printKitchenTicket]);
 
   // ─── Gate: sem sessão ─────────────────────────────────────────────────────
+  if (loadingSession) {
+    return (
+      <div
+        className="flex flex-col h-full items-center justify-center p-8 text-center relative overflow-hidden"
+        style={{ background: 'radial-gradient(ellipse at 20% 0%, #fff8ed 0%, #fafaf9 40%, #f5f5f4 100%)' }}
+      >
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute -top-24 -left-24 w-72 h-72 rounded-full opacity-30"
+            style={{ background: 'radial-gradient(circle, #fbbf24 0%, transparent 70%)' }} />
+          <div className="absolute -bottom-24 -right-24 w-80 h-80 rounded-full opacity-20"
+            style={{ background: 'radial-gradient(circle, #f97316 0%, transparent 70%)' }} />
+        </div>
+        <div className="relative z-10 bg-white/70 backdrop-blur-sm border border-zinc-200 rounded-2xl p-8 flex flex-col items-center max-w-xs w-full">
+          <div className="w-16 h-16 flex items-center justify-center bg-amber-50 border border-amber-200 rounded-2xl mb-5">
+            <i className="ri-loader-4-line animate-spin text-3xl text-amber-500" />
+          </div>
+          <h2 className="text-xl font-black text-zinc-900 mb-2">Verificando sessão...</h2>
+          <p className="text-zinc-500 text-sm max-w-xs">Aguarde enquanto confirmamos a sessão ativa.</p>
+          <div className="mt-5 flex items-center gap-2 px-4 py-2 bg-white/80 border border-zinc-200 rounded-full backdrop-blur-sm">
+            <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-zinc-500 text-xs font-medium">Verificando...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (estado === 'sem_sessao') {
     return (
       <div

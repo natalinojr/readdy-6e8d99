@@ -1,3 +1,4 @@
+import { useOptionGroupTemplates, type OptionGroupTemplate } from '@/hooks/useOptionGroupTemplates';
 import { useState, useEffect, useRef } from 'react';
 import type {
   Item, GrupoOpcoes, OpcaoItem, PromocaoItem, FichaTecnicaItem, SubproducaoItem, ConfiguracaoDelivery,
@@ -53,10 +54,11 @@ const novaPromocao = (): PromocaoItem => ({
   ativo: true,
 });
 
-const novaSubProducao = (primeiraEstacao = 'Grelha'): SubproducaoItem => ({
+const novaSubProducao = (estacaoNome = 'Grelha', estacaoId = ''): SubproducaoItem => ({
   id: `sp-${Date.now()}`,
   nome: '',
-  estacao: primeiraEstacao,
+  estacao: estacaoNome,
+  estacaoId: estacaoId || undefined,
   slaMinutos: 10,
 });
 
@@ -84,12 +86,39 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
   const [fichas, setFichas] = useState<FichaTecnicaItem[]>(item?.fichaTecnica ?? []);
   const [fichasCount, setFichasCount] = useState(item?.fichaTecnica?.length ?? 0);
   const [subproducao, setSubproducao] = useState<SubproducaoItem[]>(item?.subproducao ?? []);
-  const primeiraEstacao = estacoesNomes[0] ?? 'Grelha';
+  const primeiraEstacao = estacoes[0];
   const [producaoDividida, setProducaoDividida] = useState((item?.subproducao?.length ?? 0) > 0);
   const [deliveryConfig, setDeliveryConfig] = useState<ConfiguracaoDelivery | undefined>(item?.delivery);
   const fotoInputRef = useRef<HTMLInputElement>(null);
   const [uploadingFoto, setUploadingFoto] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Sincroniza todos os estados quando o item prop muda (abre/fecha modal)
+  // Usa JSON.stringify para detectar mudanças de conteúdo, não apenas de referência
+  useEffect(() => {
+    console.log('[ItemModal] Syncing item:', item?.id, 'subproducao:', item?.subproducao);
+    setNome(item?.nome ?? '');
+    setDescricao(item?.descricao ?? '');
+    setPreco(String(item?.preco ?? ''));
+    setCategoriaId(item?.categoriaId ?? categorias[0]?.id ?? '');
+    setSla(String(item?.slaMinutos ?? '10'));
+    setFotoUrl(item?.fotoUrl ?? '');
+    setStatus(item?.status ?? 'ativo');
+    setSemPreparo(item?.semPreparo ?? false);
+    setSomenteDelivery(item?.somenteDelivery ?? false);
+    setGrupos(item?.gruposOpcoes ?? []);
+    setPromocoes(item?.promocoes ?? []);
+    setObs(item?.observacoesPadrao ?? []);
+    setFichas(item?.fichaTecnica ?? []);
+    setFichasCount(item?.fichaTecnica?.length ?? 0);
+    setSubproducao(item?.subproducao ?? []);
+    setProducaoDividida((item?.subproducao?.length ?? 0) > 0);
+    setDeliveryConfig(item?.delivery);
+    setTab('info');
+    setNovaObs('');
+    setUploadError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item ? JSON.stringify({ id: item.id, subproducao: item.subproducao, nome: item.nome, descricao: item.descricao, preco: item.preco, categoriaId: item.categoriaId, slaMinutos: item.slaMinutos, fotoUrl: item.fotoUrl, status: item.status, semPreparo: item.semPreparo, somenteDelivery: item.somenteDelivery, gruposOpcoes: item.gruposOpcoes, promocoes: item.promocoes, observacoesPadrao: item.observacoesPadrao, fichaTecnica: item.fichaTecnica, delivery: item.delivery }) : 'undefined', categorias]);
 
   const slaCalculado = producaoDividida && subproducao.length > 0
     ? subproducao.reduce((acc, s) => acc + (s.slaMinutos || 0), 0)
@@ -134,6 +163,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
   ];
 
   const addGrupo = () => setGrupos(g => [...g, novosGrupo()]);
+  const addGrupoCompleto = (grupo: GrupoOpcoes) => setGrupos(g => [...g, grupo]);
   const removeGrupo = (id: string) => setGrupos(g => g.filter(x => x.id !== id));
   const updateGrupo = (id: string, patch: Partial<GrupoOpcoes>) =>
     setGrupos(g => g.map(x => x.id === id ? { ...x, ...patch } : x));
@@ -146,6 +176,18 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
       ...x,
       opcoes: x.opcoes.map(o => o.id === opcId ? { ...o, ...patch } : o),
     } : x));
+  const moverOpcao = (grupoId: string, opcId: string, direction: 'up' | 'down') =>
+    setGrupos(g => g.map(x => {
+      if (x.id !== grupoId) return x;
+      const idx = x.opcoes.findIndex(o => o.id === opcId);
+      if (idx < 0) return x;
+      if (direction === 'up' && idx === 0) return x;
+      if (direction === 'down' && idx === x.opcoes.length - 1) return x;
+      const newOpcoes = [...x.opcoes];
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+      [newOpcoes[idx], newOpcoes[swapIdx]] = [newOpcoes[swapIdx], newOpcoes[idx]];
+      return { ...x, opcoes: newOpcoes };
+    }));
 
   const addPromocao = () => setPromocoes(p => [...p, novaPromocao()]);
   const removePromocao = (id: string) => setPromocoes(p => p.filter(x => x.id !== id));
@@ -158,7 +200,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
       return { ...x, diasSemana: dias };
     }));
 
-  const addSubParte = () => setSubproducao(s => [...s, novaSubProducao(primeiraEstacao)]);
+  const addSubParte = () => setSubproducao(s => [...s, novaSubProducao(primeiraEstacao?.nome ?? 'Grelha', primeiraEstacao?.id ?? '')]);
   const removeSubParte = (id: string) => setSubproducao(s => s.filter(x => x.id !== id));
   const updateSubParte = (id: string, patch: Partial<SubproducaoItem>) =>
     setSubproducao(s => s.map(x => x.id === id ? { ...x, ...patch } : x));
@@ -174,7 +216,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
   const handleToggleProducaoDividida = (val: boolean) => {
     setProducaoDividida(val);
     if (!val) setSubproducao([]);
-    else if (subproducao.length === 0) setSubproducao([novaSubProducao(primeiraEstacao)]);
+    else if (subproducao.length === 0) setSubproducao([novaSubProducao(primeiraEstacao?.nome ?? 'Grelha', primeiraEstacao?.id ?? '')]);
   };
 
   const addObs = () => {
@@ -203,6 +245,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
       subproducao: producaoDividida && subproducao.length > 0 ? subproducao : undefined,
       delivery: deliveryConfig,
     };
+    console.log('[ItemModal] handleSave subproducao:', saved.subproducao);
     onSave(saved);
   };
 
@@ -550,11 +593,15 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                             <label className="block text-xs font-medium text-gray-600 mb-1.5">Estação *</label>
                             <select
                               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 transition-colors cursor-pointer"
-                              value={parte.estacao}
-                              onChange={e => updateSubParte(parte.id, { estacao: e.target.value })}
+                              value={parte.estacaoId ?? estacoes.find(e => e.nome === parte.estacao)?.id ?? ''}
+                              onChange={e => {
+                                const estId = e.target.value;
+                                const estNome = estacoes.find(e => e.id === estId)?.nome ?? '';
+                                updateSubParte(parte.id, { estacaoId: estId || undefined, estacao: estNome });
+                              }}
                             >
-                              {estacoesNomes.map(est => (
-                                <option key={est} value={est}>{est}</option>
+                              {estacoes.map(est => (
+                                <option key={est.id} value={est.id}>{est.nome}</option>
                               ))}
                             </select>
                           </div>
@@ -640,11 +687,13 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
               recipes={recipes}
               getBatchesByRecipeId={getBatchesByRecipeId}
               onAddGrupo={addGrupo}
+              onAddGrupoCompleto={addGrupoCompleto}
               onRemoveGrupo={removeGrupo}
               onUpdateGrupo={updateGrupo}
               onAddOpcao={addOpcao}
               onRemoveOpcao={removeOpcao}
               onUpdateOpcao={updateOpcao}
+              onMoveOpcao={moverOpcao}
             />
           )}
 
@@ -836,26 +885,95 @@ interface OpcoesTabProps {
   recipes: ProductionRecipe[];
   getBatchesByRecipeId: (recipeId: string) => Array<{ unitCost: number }>;
   onAddGrupo: () => void;
+  onAddGrupoCompleto?: (grupo: GrupoOpcoes) => void;
   onRemoveGrupo: (id: string) => void;
   onUpdateGrupo: (id: string, patch: Partial<GrupoOpcoes>) => void;
   onAddOpcao: (grupoId: string) => void;
   onRemoveOpcao: (grupoId: string, opcId: string) => void;
   onUpdateOpcao: (grupoId: string, opcId: string, patch: Partial<OpcaoItem>) => void;
+  onMoveOpcao: (grupoId: string, opcId: string, direction: 'up' | 'down') => void;
 }
 
 function OpcoesTab({
   grupos, insumos, recipes, getBatchesByRecipeId,
-  onAddGrupo, onRemoveGrupo, onUpdateGrupo,
-  onAddOpcao, onRemoveOpcao, onUpdateOpcao,
+  onAddGrupo, onAddGrupoCompleto, onRemoveGrupo, onUpdateGrupo,
+  onAddOpcao, onRemoveOpcao, onUpdateOpcao, onMoveOpcao,
 }: OpcoesTabProps) {
   const [openVinculo, setOpenVinculo] = useState<string | null>(null);
   const [vinculoTab, setVinculoTab] = useState<'ingredient' | 'production'>('ingredient');
   const [buscaInsumo, setBuscaInsumo] = useState('');
+  const {
+    templates, loading: loadingTemplates, saving: savingTemplate,
+    saveTemplate, deleteTemplate, updateTemplate, applyTemplate,
+  } = useOptionGroupTemplates();
+  const [showLoadTemplate, setShowLoadTemplate] = useState(false);
+  const [saveTemplateGrupoId, setSaveTemplateGrupoId] = useState<string | null>(null);
+  const [templateName, setTemplateName] = useState('');
+  const [showGerenciarTemplates, setShowGerenciarTemplates] = useState(false);
+  const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
+  const [editTemplateName, setEditTemplateName] = useState('');
+  const [editTemplateGrupo, setEditTemplateGrupo] = useState<GrupoOpcoes | null>(null);
 
   const getRecipeUnitCost = (recipeId: string): number => {
     const batches = getBatchesByRecipeId(recipeId);
     if (batches.length === 0) return 0;
     return batches.reduce((s, b) => s + b.unitCost, 0) / batches.length;
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!saveTemplateGrupoId || !templateName.trim()) return;
+    const grupo = grupos.find((g) => g.id === saveTemplateGrupoId);
+    if (!grupo) return;
+    const ok = await saveTemplate(templateName.trim(), grupo);
+    if (ok) {
+      setSaveTemplateGrupoId(null);
+      setTemplateName('');
+    }
+  };
+
+  const handleApplyTemplate = (template: OptionGroupTemplate) => {
+    const novoGrupo = applyTemplate(template);
+    if (onAddGrupoCompleto) {
+      onAddGrupoCompleto(novoGrupo);
+    } else {
+      onAddGrupo();
+    }
+    setShowLoadTemplate(false);
+  };
+
+  const handleStartEditTemplate = (template: OptionGroupTemplate) => {
+    const grupo: GrupoOpcoes = {
+      id: template.id,
+      nome: template.name,
+      obrigatorio: template.isRequired,
+      minSelecao: template.minSelections,
+      maxSelecao: template.maxSelections,
+      ordem: 1,
+      opcoes: template.templateData.map((td) => ({
+        id: `opc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        nome: td.nome,
+        precoAdicional: td.precoAdicional,
+        ativo: true,
+        ingredientId: td.ingredientId ?? null,
+        productionRecipeId: td.productionRecipeId ?? null,
+        consumptionQuantity: td.consumptionQuantity,
+        consumptionUnit: td.consumptionUnit,
+        source: td.source,
+      })),
+    };
+    setEditTemplateId(template.id);
+    setEditTemplateName(template.name);
+    setEditTemplateGrupo(grupo);
+  };
+
+  const handleConfirmEditTemplate = async () => {
+    if (!editTemplateId || !editTemplateName.trim() || !editTemplateGrupo) return;
+    const ok = await updateTemplate(editTemplateId, editTemplateName.trim(), editTemplateGrupo);
+    if (ok) {
+      setEditTemplateId(null);
+      setEditTemplateName('');
+      setEditTemplateGrupo(null);
+    }
   };
 
   const vincularInsumo = (grupoId: string, opcId: string, insumo: Insumo) => {
@@ -898,15 +1016,336 @@ function OpcoesTab({
 
   return (
     <div className="space-y-4">
+      {/* ── Barra de Templates ── */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setShowLoadTemplate(true)}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+        >
+          <i className="ri-stack-line" />
+          Usar Template
+          {templates.length > 0 && (
+            <span className="text-[10px] bg-orange-200 text-orange-700 px-1.5 py-0.5 rounded-full font-bold">
+              {templates.length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setShowGerenciarTemplates(true)}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+        >
+          <i className="ri-settings-3-line" />
+          Gerenciar Templates
+        </button>
+      </div>
+
+      {/* ── Modal: Usar Template ── */}
+      {showLoadTemplate && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h4 className="text-sm font-semibold text-gray-800">Usar Template de Grupo</h4>
+              <button
+                onClick={() => setShowLoadTemplate(false)}
+                className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 rounded-lg cursor-pointer transition-colors"
+              >
+                <i className="ri-close-line text-lg" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {loadingTemplates && (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-5 h-5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+              {!loadingTemplates && templates.length === 0 && (
+                <div className="text-center py-8">
+                  <div className="w-10 h-10 flex items-center justify-center bg-gray-100 rounded-xl mx-auto mb-2">
+                    <i className="ri-stack-line text-gray-400 text-lg" />
+                  </div>
+                  <p className="text-xs text-gray-500">Nenhum template salvo ainda</p>
+                  <p className="text-xs text-gray-400 mt-1">Crie um grupo de opções e clique em "Salvar como Template"</p>
+                </div>
+              )}
+              {!loadingTemplates && templates.length > 0 && (
+                <div className="space-y-2">
+                  {templates.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => handleApplyTemplate(t)}
+                      className="w-full text-left p-3 border border-gray-100 rounded-xl hover:border-orange-300 hover:bg-orange-50 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 flex items-center justify-center bg-orange-100 rounded-lg">
+                            <i className="ri-list-check-2 text-orange-600 text-sm" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-800">{t.name}</p>
+                            <p className="text-xs text-gray-400">
+                              {t.templateData.length} opção(ões)
+                              {t.isRequired && <span className="text-orange-500 ml-1">· Obrigatório</span>}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-xs font-medium text-orange-600">Adicionar</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Salvar Template ── */}
+      {saveTemplateGrupoId && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-4">
+            <h4 className="text-sm font-semibold text-gray-800 mb-3">Salvar como Template</h4>
+            <p className="text-xs text-gray-500 mb-3">
+              Dê um nome para este grupo de opções para reutilizá-lo em outros itens.
+            </p>
+            <input
+              autoFocus
+              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 mb-4"
+              placeholder="Ex: Ponto da Carne, Tamanhos, Adicionais..."
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveTemplate()}
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setSaveTemplateGrupoId(null); setTemplateName(''); }}
+                className="flex-1 border border-gray-200 text-gray-600 text-sm font-medium py-2 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveTemplate}
+                disabled={!templateName.trim() || savingTemplate}
+                className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white text-sm font-medium py-2 rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
+              >
+                {savingTemplate && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                Salvar Template
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Gerenciar Templates ── */}
+      {showGerenciarTemplates && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h4 className="text-sm font-semibold text-gray-800">Templates Salvos</h4>
+              <button
+                onClick={() => setShowGerenciarTemplates(false)}
+                className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 rounded-lg cursor-pointer transition-colors"
+              >
+                <i className="ri-close-line text-lg" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {loadingTemplates && (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-5 h-5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+              {!loadingTemplates && templates.length === 0 && (
+                <div className="text-center py-8">
+                  <div className="w-10 h-10 flex items-center justify-center bg-gray-100 rounded-xl mx-auto mb-2">
+                    <i className="ri-stack-line text-gray-400 text-lg" />
+                  </div>
+                  <p className="text-xs text-gray-500">Nenhum template salvo</p>
+                </div>
+              )}
+              {!loadingTemplates && templates.length > 0 && (
+                <div className="space-y-2">
+                  {templates.map((t) => (
+                    <div
+                      key={t.id}
+                      className="flex items-center justify-between p-3 border border-gray-100 rounded-xl"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-8 h-8 flex items-center justify-center bg-orange-100 rounded-lg flex-shrink-0">
+                          <i className="ri-list-check-2 text-orange-600 text-sm" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{t.name}</p>
+                          <p className="text-xs text-gray-400">
+                            {t.templateData.length} opção(ões)
+                            {t.isRequired && <span className="text-orange-500 ml-1">· Obrigatório</span>}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => handleStartEditTemplate(t)}
+                          disabled={savingTemplate}
+                          className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg cursor-pointer transition-colors disabled:opacity-40"
+                        >
+                          <i className="ri-pencil-line text-sm" />
+                        </button>
+                        <button
+                          onClick={() => deleteTemplate(t.id)}
+                          disabled={savingTemplate}
+                          className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer transition-colors flex-shrink-0 disabled:opacity-40"
+                        >
+                          <i className="ri-delete-bin-line text-sm" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Editar Template ── */}
+      {editTemplateId && editTemplateGrupo && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[70] p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h4 className="text-sm font-semibold text-gray-800">Editar Template</h4>
+              <button
+                onClick={() => { setEditTemplateId(null); setEditTemplateName(''); setEditTemplateGrupo(null); }}
+                className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 rounded-lg cursor-pointer transition-colors"
+              >
+                <i className="ri-close-line text-lg" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">Nome do Template</label>
+                <input
+                  autoFocus
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400"
+                  placeholder="Ex: Ponto da Carne, Tamanhos, Adicionais..."
+                  value={editTemplateName}
+                  onChange={(e) => setEditTemplateName(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-4 text-xs">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editTemplateGrupo.obrigatorio}
+                    onChange={(e) => setEditTemplateGrupo(g => g ? { ...g, obrigatorio: e.target.checked } : null)}
+                    className="accent-orange-500"
+                  />
+                  <span className="text-gray-600">Obrigatório</span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-gray-600">Mín</span>
+                  <input
+                    type="number"
+                    min="0"
+                    className="w-12 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-orange-400"
+                    value={editTemplateGrupo.minSelecao}
+                    onChange={(e) => setEditTemplateGrupo(g => g ? { ...g, minSelecao: parseInt(e.target.value, 10) } : null)}
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-gray-600">Máx</span>
+                  <input
+                    type="number"
+                    min="1"
+                    className="w-12 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-orange-400"
+                    value={editTemplateGrupo.maxSelecao}
+                    onChange={(e) => setEditTemplateGrupo(g => g ? { ...g, maxSelecao: parseInt(e.target.value, 10) } : null)}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-gray-600">Opções</p>
+                {editTemplateGrupo.opcoes.map((opc, idx) => (
+                  <div key={opc.id} className="flex items-center gap-2 border border-gray-100 rounded-lg p-2">
+                    <input
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                      placeholder="Nome da opção"
+                      value={opc.nome}
+                      onChange={(e) => setEditTemplateGrupo(g => g ? {
+                        ...g,
+                        opcoes: g.opcoes.map((o, i) => i === idx ? { ...o, nome: e.target.value } : o),
+                      } : null)}
+                    />
+                    <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                      <span className="text-gray-400 text-xs">+R$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="w-16 focus:outline-none text-sm"
+                        value={opc.precoAdicional}
+                        onChange={(e) => setEditTemplateGrupo(g => g ? {
+                          ...g,
+                          opcoes: g.opcoes.map((o, i) => i === idx ? { ...o, precoAdicional: parseFloat(e.target.value) } : o),
+                        } : null)}
+                      />
+                    </div>
+                    <button
+                      onClick={() => setEditTemplateGrupo(g => g ? {
+                        ...g,
+                        opcoes: g.opcoes.filter((_, i) => i !== idx),
+                      } : null)}
+                      className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 cursor-pointer rounded transition-colors"
+                    >
+                      <i className="ri-close-line text-sm" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={() => setEditTemplateGrupo(g => g ? {
+                    ...g,
+                    opcoes: [...g.opcoes, { id: `opc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, nome: '', precoAdicional: 0, ativo: true }],
+                  } : null)}
+                  className="text-xs text-orange-500 hover:text-orange-600 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <i className="ri-add-line" /> Adicionar opção
+                </button>
+              </div>
+            </div>
+            <div className="flex gap-2 p-4 border-t border-gray-100">
+              <button
+                onClick={() => { setEditTemplateId(null); setEditTemplateName(''); setEditTemplateGrupo(null); }}
+                className="flex-1 border border-gray-200 text-gray-600 text-sm font-medium py-2 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmEditTemplate}
+                disabled={!editTemplateName.trim() || savingTemplate}
+                className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white text-sm font-medium py-2 rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
+              >
+                {savingTemplate && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                Salvar Alterações
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Grupos de Opções ── */}
       {grupos.map((grp) => (
         <div key={grp.id} className="border border-gray-100 rounded-xl p-4">
-          <div className="flex items-center gap-3 mb-3">
+          <div className="flex items-center gap-2 mb-3">
             <input
               className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
               placeholder="Nome do grupo (ex: Ponto da carne)"
               value={grp.nome}
               onChange={e => onUpdateGrupo(grp.id, { nome: e.target.value })}
             />
+            <button
+              onClick={() => setSaveTemplateGrupoId(grp.id)}
+              title="Salvar como Template"
+              className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg cursor-pointer transition-colors"
+            >
+              <i className="ri-bookmark-line text-sm" />
+            </button>
             <button
               onClick={() => onRemoveGrupo(grp.id)}
               className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
@@ -946,9 +1385,27 @@ function OpcoesTab({
             </div>
           </div>
           <div className="space-y-2">
-            {grp.opcoes.map(opc => (
+            {grp.opcoes.map((opc, oi) => (
               <div key={opc.id} className="border border-gray-100 rounded-lg p-3 space-y-2.5">
                 <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={() => onMoveOpcao(grp.id, opc.id, 'up')}
+                      disabled={oi === 0}
+                      className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-default"
+                      title="Mover para cima"
+                    >
+                      <i className="ri-arrow-up-line text-xs" />
+                    </button>
+                    <button
+                      onClick={() => onMoveOpcao(grp.id, opc.id, 'down')}
+                      disabled={oi === grp.opcoes.length - 1}
+                      className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-default"
+                      title="Mover para baixo"
+                    >
+                      <i className="ri-arrow-down-line text-xs" />
+                    </button>
+                  </div>
                   <input
                     className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
                     placeholder="Nome da opção"

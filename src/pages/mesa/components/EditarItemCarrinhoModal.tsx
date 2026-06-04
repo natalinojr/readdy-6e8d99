@@ -86,6 +86,7 @@ export default function EditarItemCarrinhoModal({ item, itemAtual, index, onSalv
       }
     }
     const opcoesSelecionadas = Object.values(selecionadas).flat();
+    const obsTagsSelecionadas = obsSelecionadas.length > 0 ? obsSelecionadas : undefined;
     const temObsUnidades = obsUnidades.some(Boolean);
     onSalvar(index, {
       itemId: item.id,
@@ -95,6 +96,7 @@ export default function EditarItemCarrinhoModal({ item, itemAtual, index, onSalv
       opcoesSelecionadas,
       observacao: obs,
       clienteNome: itemAtual.clienteNome,
+      ...(obsTagsSelecionadas ? { observacoesSelecionadas: obsTagsSelecionadas } : {}),
       ...(temObsUnidades ? { obsUnidades } : {}),
     } as Omit<ItemPedidoCliente, 'enviadoKds'>);
     onClose();

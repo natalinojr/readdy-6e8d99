@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import QRCode from 'react-qr-code';
+import QRCodeImport from 'react-qr-code';
+const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
 import type { Mesa } from '../../../contexts/MesasContext';
 import { useKDS } from '@/contexts/KDSContext';
 import type { KDSPedido, KDSItem } from '@/types/kds';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { getAppBaseUrl } from '@/lib/appUrl';
 
 // ── Validação de pedidos antes de fechar mesa ──────────────────────────────────
 
@@ -377,9 +379,11 @@ export default function MesaDetalhes({ mesa, todasMesas, onClose, onUpdate, onTr
   };
 
   const mesasLivres = todasMesas.filter((m) => m.id !== mesa.id && m.status === 'livre');
-  const qrUrl = (__READDY_AI_DOMAIN__ && __READDY_AI_DOMAIN__.startsWith('http'))
-    ? `${__READDY_AI_DOMAIN__.replace(/\/$/, '')}/mesa/${mesa.numero}`
-    : `${window.location.origin}/mesa/${mesa.numero}`;
+
+  // QR URL construído diretamente do qrToken vindo do contexto (via fn_get_tables)
+  const qrUrl = mesa.qrToken
+    ? `${getAppBaseUrl()}/mesa-qr/${mesa.qrToken}`
+    : '';
 
   const tabs = [
     { id: 'sessao',     label: 'Sessão',    icon: 'ri-live-line' },
@@ -860,36 +864,48 @@ export default function MesaDetalhes({ mesa, todasMesas, onClose, onUpdate, onTr
         {/* ── ABA QR CODE ── */}
         {aba === 'qr' && (
           <div className="p-3 flex flex-col items-center text-center space-y-4">
-            <div className="bg-white border-4 border-zinc-900 rounded-2xl p-4">
-              <QRCode value={qrUrl} size={150} level="M" style={{ display: 'block' }} />
-            </div>
-            <div>
-              <p className="font-bold text-zinc-900">Mesa {mesa.numero}</p>
-              <p className="text-[10px] text-zinc-400 font-mono break-all mt-0.5 max-w-[200px]">{qrUrl}</p>
-            </div>
-            <div className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3">
-              <p className="text-xs text-amber-700 font-semibold">
-                <i className="ri-information-line mr-1" />
-                QR Code fixo — cliente aponta o celular e já cai na mesa certa
-              </p>
-            </div>
-            <div className="flex gap-2 w-full">
-              <button
-                onClick={() => { setShowQRSucesso(true); setTimeout(() => setShowQRSucesso(false), 2000); }}
-                className="flex-1 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap transition-colors"
-              >
-                <i className="ri-printer-line mr-1.5" />Imprimir
-              </button>
-              <button
-                onClick={() => { navigator.clipboard.writeText(qrUrl).catch(() => {}); setShowQRSucesso(true); setTimeout(() => setShowQRSucesso(false), 2000); }}
-                className="flex-1 py-2.5 border border-zinc-200 text-zinc-700 text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap hover:bg-zinc-50 transition-colors"
-              >
-                <i className="ri-links-line mr-1.5" />Copiar Link
-              </button>
-            </div>
-            {showQRSucesso && (
-              <div className="w-full bg-green-50 border border-green-200 rounded-lg py-2 text-green-700 text-sm font-semibold">
-                <i className="ri-check-line mr-1" />Ação concluída!
+            {qrUrl ? (
+              <>
+                <div className="bg-white border-4 border-zinc-900 rounded-2xl p-4">
+                  <QRCode value={qrUrl} size={150} level="M" style={{ display: 'block' }} />
+                </div>
+                <div>
+                  <p className="font-bold text-zinc-900">Mesa {mesa.numero}</p>
+                  <p className="text-[10px] text-zinc-400 font-mono break-all mt-0.5 max-w-[200px]">{qrUrl}</p>
+                </div>
+                <div className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="text-xs text-amber-700 font-semibold">
+                    <i className="ri-information-line mr-1" />
+                    QR Code da Mesa — cliente aponta o celular e acessa o cardápio digital
+                  </p>
+                </div>
+                <div className="flex gap-2 w-full">
+                  <button
+                    onClick={() => { setShowQRSucesso(true); setTimeout(() => setShowQRSucesso(false), 2000); }}
+                    className="flex-1 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap transition-colors"
+                  >
+                    <i className="ri-printer-line mr-1.5" />Imprimir
+                  </button>
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(qrUrl).catch(() => {}); setShowQRSucesso(true); setTimeout(() => setShowQRSucesso(false), 2000); }}
+                    className="flex-1 py-2.5 border border-zinc-200 text-zinc-700 text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap hover:bg-zinc-50 transition-colors"
+                  >
+                    <i className="ri-links-line mr-1.5" />Copiar Link
+                  </button>
+                </div>
+                {showQRSucesso && (
+                  <div className="w-full bg-green-50 border border-green-200 rounded-lg py-2 text-green-700 text-sm font-semibold">
+                    <i className="ri-check-line mr-1" />Ação concluída!
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="w-12 h-12 flex items-center justify-center bg-zinc-100 rounded-2xl mb-3">
+                  <i className="ri-qr-code-line text-2xl text-zinc-300" />
+                </div>
+                <p className="text-sm font-semibold text-zinc-500">QR Code não disponível</p>
+                <p className="text-xs text-zinc-400 mt-1">Regenere o QR Code nas configurações de mesas.</p>
               </div>
             )}
           </div>

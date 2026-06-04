@@ -4,7 +4,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
-import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade, KDSPagamento } from '../types/kds';
+import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade, KDSPagamento, KDSSubParte } from '../types/kds';
 import type { CarrinhoItem, DestinoInfo } from './PDVContext';
 
 /* ─── DB Row Types ─── */
@@ -42,6 +42,21 @@ interface DBOrderItemUnit {
   delivered_at?: string | null;
 }
 
+interface DBPart {
+  id: string;
+  name: string;
+  station_id?: string | null;
+  station_name?: string | null;
+  sla_minutes?: number | null;
+  sort_order?: number | null;
+  status?: string | null;
+  operator_id?: string | null;
+  operator_name?: string | null;
+  started_preparing_at?: string | null;
+  ready_at?: string | null;
+  delivered_at?: string | null;
+}
+
 interface DBComboChild {
   item_name: string;
   quantity: number;
@@ -73,6 +88,8 @@ interface DBOrderItem {
   /** BUG 3.10 HYDRATE FIX: checks persistidos no banco — vindos de order_item_observation_checks */
   obs_checks?: DBObsCheck[] | null;
   units?: DBOrderItemUnit[] | null;
+  /** Production parts (multi-station items) */
+  parts?: DBPart[] | null;
 }
 
 interface DBPayment {
@@ -87,6 +104,8 @@ interface DBPayment {
   cash_register_name?: string | null;
   cash_register_id?: string | null;
   origin_type?: string | null;
+  created_at?: string | null;
+  payment_group_id?: string | null;
 }
 
 interface DBOrder {
@@ -108,8 +127,29 @@ interface DBOrder {
   destination_phone?: string | null;
   customer_cpf?: string | null;
   customer_email?: string | null;
-  items?: DBOrderItem[];
-  // BUG 3.4: payments array from RPC join
+  /** Session ID that created this order */
+  session_id?: string | null;
+  /** Session number (e.g. "S001") — human-readable, populated from fn_get_kds_orders */
+  session_number?: string | null;
+  /** Whether the order is currently being edited */
+  is_editing?: boolean | null;
+  editing_by_user_id?: string | null;
+  editing_started_at?: string | null;
+  /** DB user name of editing user — resolved by fn_get_kds_orders */
+  editing_by_name?: string | null;
+  /** PDV that registered the payment: 'cashier' | 'waiter' | 'table' | 'self_service' | 'delivery' */
+  paid_by_pdv?: string | null;
+  /** Table session ID — links orders from the same table */
+  table_session_id?: string | null;
+  /** Participant ID in table_session_participants */
+  participant_id?: string | null;
+  /** Participant access_token (senha) from table_session_participants */
+  participant_token?: string | null;
+  /** Participant name from table_session_participants */
+  participant_name?: string | null;
+  /** Items array from RPC join */
+  items?: DBOrderItem[] | null;
+  /** Payments array from RPC join */
   payments?: DBPayment[] | null;
 }
 
@@ -281,6 +321,32 @@ function dbItemToKDS(oi: DBOrderItem, stationMap: StationMap): KDSItem {
       }))
     : undefined;
 
+  // Mapear partes de produção (multi-estação) do banco
+  const dbParts = oi.parts ?? [];
+  const partes: KDSSubParte[] | undefined = dbParts.length > 0
+    ? dbParts.map((p) => {
+        const pStationName = p.station_name ?? (p.station_id ? stationMap.get(p.station_id)?.name ?? 'Cozinha' : 'Cozinha');
+        return {
+          id: p.id,
+          nome: p.name,
+          estacao: pStationName,
+          estacaoId: p.station_id ?? undefined,
+          slaMinutos: p.sla_minutes ?? 10,
+          status: DB_STATUS[p.status ?? ''] ?? 'novo',
+          iniciouPreparoEm: p.started_preparing_at
+            ? new Date(p.started_preparing_at).getTime()
+            : undefined,
+          ficouProntoEm: p.ready_at
+            ? new Date(p.ready_at).getTime()
+            : undefined,
+          entregueEm: p.delivered_at
+            ? new Date(p.delivered_at).getTime()
+            : undefined,
+          operadorPreparo: p.operator_name ?? undefined,
+        };
+      })
+    : undefined;
+
   return {
     id: oi.id,
     menuItemId: oi.item_id ?? undefined,
@@ -312,6 +378,7 @@ function dbItemToKDS(oi: DBOrderItem, stationMap: StationMap): KDSItem {
     operadorPreparo: oi.operator_name ?? undefined,
     quemEntregou: oi.delivered_by_name ?? undefined,
     unidades,
+    partes,
   } as KDSItem & { item_price: number };
 }
 
@@ -429,6 +496,10 @@ function dbOrderToKDS(o: DBOrder, stationMap: StationMap): KDSPedido {
         cash_register_id: p.cash_register_id ?? null,
         cash_register_name: p.cash_register_name ?? null,
         origin_type: p.origin_type ?? null,
+        // Usa paid_by_pdv do pedido para identificar o canal correto — mais confiável que cash_register_id
+        paid_by_pdv: o.paid_by_pdv ?? null,
+        created_at: p.created_at ? new Date(p.created_at).getTime() : null,
+        payment_group_id: p.payment_group_id ?? null,
       }))
     : undefined;
 
@@ -454,10 +525,24 @@ function dbOrderToKDS(o: DBOrder, stationMap: StationMap): KDSPedido {
     paymentMethodName,
     // BUG 3.4: pagamentos para split payment
     pagamentos,
+    // paid_by_pdv do pedido — indica qual PDV registrou o pagamento
+    paid_by_pdv: o.paid_by_pdv ?? null,
     // BUG 3.8: customer contact fields
     customerPhone: o.destination_phone ?? undefined,
     customerCpf: o.customer_cpf ?? undefined,
     customerEmail: o.customer_email ?? undefined,
+    session_id: o.session_id ?? undefined,
+    session_number: o.session_number ?? undefined,
+    /** Table session ID — links orders from the same table */
+    table_session_id: o.table_session_id ?? null,
+    /** Participant info (senha / nome) from table_session_participants */
+    participantToken: o.participant_token ?? null,
+    participantName: o.participant_name ?? null,
+    // Order edit lock fields — propagated via Realtime to all PDVs/KDS/Gestor
+    isEditing: !!(o.is_editing),
+    editingByUserId: o.editing_by_user_id ?? null,
+    editingStartedAt: o.editing_started_at ? new Date(o.editing_started_at).getTime() : undefined,
+    editingByName: o.editing_by_name ?? undefined,
   } as KDSPedido & { totalAmount: number; isPaid: boolean; isCancelled: boolean; cancelReason?: string };
 }
 
@@ -495,8 +580,10 @@ export function buildKDSPedido(params: {
   numeroStr?: string;
   origem: KDSPedido['origem'];
   garcomNome?: string;
+  /** Station map para resolver UUID → nome de estação (opcional) */
+  stationMap?: StationMap;
 }): KDSPedido {
-  const { cart, destino, numeroSeq, numeroStr, origem, garcomNome } = params;
+  const { cart, destino, numeroSeq, numeroStr, origem, garcomNome, stationMap } = params;
   const nowTs = Date.now();
   let pedidoDestino: KDSPedido['destino'] = 'hora';
   let mesaNumero: number | undefined;
@@ -520,18 +607,32 @@ export function buildKDSPedido(params: {
     totalAmount: 0,
     isPaid: false,
     isCancelled: false,
-    itens: cart.map((ci, i) => ({
-      id: `ki-${origem}-${nowTs}-${i}`,
-      nome: ci.nome,
-      categoriaNome: ci.categoriaNome,
-      quantidade: ci.quantidade,
-      estacao: inferEstacao(ci.nome),
-      slaMinutos: inferSLA(ci.nome),
-      status: 'novo' as KDSItemStatus,
-      opcoes: ci.opcoes.map((o) => ({ grupoNome: o.grupoNome, opcaoNome: o.opcaoNome })),
-      observacoes: [...(ci.observacoes ?? []), ...(ci.observacaoLivre ? [ci.observacaoLivre] : [])],
-      entroKdsEm: nowTs,
-    })),
+    itens: cart.map((ci, i) => {
+      // Resolve o nome da estação: se stationMap existir e stationId for UUID, resolve pelo nome
+      let estacaoNome: string;
+      if (ci.stationId && stationMap) {
+        const resolved = stationMap.get(ci.stationId);
+        estacaoNome = resolved?.name ?? ci.stationId;
+      } else if (ci.stationId) {
+        estacaoNome = ci.stationId;
+      } else {
+        estacaoNome = inferEstacao(ci.nome);
+      }
+      return {
+        id: `ki-${origem}-${nowTs}-${i}`,
+        nome: ci.nome,
+        categoriaNome: ci.categoriaNome,
+        quantidade: ci.quantidade,
+        estacao: estacaoNome,
+        slaMinutos: inferSLA(ci.nome),
+        status: 'novo' as KDSItemStatus,
+        skip_kds: ci.semPreparo ?? false,
+        semPreparo: ci.semPreparo ?? false,
+        opcoes: ci.opcoes.map((o) => ({ grupoNome: o.grupoNome, opcaoNome: o.opcaoNome })),
+        observacoes: [...(ci.observacoes ?? []), ...(ci.observacaoLivre ? [ci.observacaoLivre] : [])],
+        entroKdsEm: nowTs,
+      };
+    }),
   };
 }
 
@@ -544,6 +645,8 @@ interface KDSContextValue {
   updateItemStatusRemote: (orderItemId: string, orderId: string, newStatus: KDSItemStatus) => Promise<void>;
   /** Atualiza status de uma unidade individual — persiste delivered_by_user_id no banco */
   updateUnitStatusRemote: (orderItemId: string, orderId: string, unitNumber: number, newStatus: KDSItemStatus) => Promise<void>;
+  /** Atualiza status de uma parte de produção (multi-estação) — persiste no banco e recalcula status do item */
+  updatePartStatusRemote: (orderItemPartId: string, orderItemId: string, orderId: string, newStatus: KDSItemStatus) => Promise<void>;
   /** Cancela um pedido no backend — motivo opcional */
   cancelOrderRemote: (orderId: string, reason?: string) => Promise<{ ok: boolean; error?: string }>;
   /**
@@ -551,7 +654,15 @@ interface KDSContextValue {
    * Chamado pelo KDSPage após o toggle optimista local.
    */
   toggleObsChecadaRemote: (orderItemId: string, obsText: string, obsIndex: number, checked: boolean, checkedByName?: string) => Promise<void>;
+  /** Inicia edição de pedido — bloqueia KDS/Gestor via Realtime */
+  startOrderEditRemote: (orderId: string) => Promise<{ ok: boolean; lockedBy?: string; error?: string }>;
+  /** Finaliza edição de pedido — libera KDS/Gestor via Realtime */
+  finishOrderEditRemote: (orderId: string, wasModified?: boolean, modificationsSummary?: string) => Promise<{ ok: boolean; error?: string }>;
   reloadOrders: () => Promise<void>;
+  /** Mapa de estações para resolver UUID → nome (usado por buildKDSPedido) */
+  stationMap: StationMap;
+  /** Lista de pedidos que estão em salvamento (persiste até o pedido reaparecer no loadOrders) */
+  pedidosSalvando: Array<{ id: string; numero: number; numeroStr: string; destino: KDSPedido['destino']; mesaNumero?: number; nomeCliente?: string; senha?: string }>;
 }
 
 const KDSContext = createContext<KDSContextValue | null>(null);
@@ -570,6 +681,10 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stationMapRef = useRef<StationMap>(new Map());
   const stationsLoadedRef = useRef(false);
+
+  // ── Estado separado para pedidos em salvamento — persiste até o pedido reaparecer no loadOrders
+  const pedidosSalvandoRef = useRef<Set<string>>(new Set());
+  const [pedidosSalvando, setPedidosSalvando] = useState<Array<{ id: string; numero: number; numeroStr: string; destino: KDSPedido['destino']; mesaNumero?: number; nomeCliente?: string; senha?: string }>>([]);
 
   const tenantIdRef = useRef<string | undefined>(undefined);
   // undefined = sessão ainda não resolvida | null = sem sessão | string = sessão ativa
@@ -726,9 +841,39 @@ export function KDSProvider({ children }: { children: ReactNode }) {
                 ? prev.status  // preserva status local mais avançado (ex: entregue local vs pronto no banco)
                 : mergedPedidoStatus;
 
-          return { ...newPedido, itens: mergedItens, status: finalStatus };
+          // Merge editing lock state: preserve local optimistic state if remote hasn't caught up,
+          // or use remote if another client locked it
+          const isEditing = newPedido.isEditing || prev.isEditing;
+          const editingByUserId = newPedido.isEditing ? newPedido.editingByUserId : (isEditing ? prev.editingByUserId : null);
+          const editingByName = newPedido.isEditing ? newPedido.editingByName : (isEditing ? prev.editingByName : undefined);
+          const editingStartedAt = newPedido.isEditing ? newPedido.editingStartedAt : (isEditing ? prev.editingStartedAt : undefined);
+
+          // Se o pedido estava na lista de salvamento e reapareceu nos dados, limpa isSaving
+          const reapareceu = pedidosSalvandoRef.current.has(newPedido.id);
+          if (reapareceu) {
+            pedidosSalvandoRef.current.delete(newPedido.id);
+          }
+
+          return {
+            ...newPedido,
+            itens: mergedItens,
+            status: finalStatus,
+            isEditing,
+            editingByUserId,
+            editingByName,
+            editingStartedAt,
+            isSaving: reapareceu ? false : prev.isSaving,
+          };
         });
       });
+
+      // Sincroniza pedidosSalvando: remove os que reapareceram nos dados
+      const idsNosDados = new Set(orders.map((o) => o.id));
+      const idsParaRemover = Array.from(pedidosSalvandoRef.current).filter((id) => idsNosDados.has(id));
+      if (idsParaRemover.length > 0) {
+        idsParaRemover.forEach((id) => pedidosSalvandoRef.current.delete(id));
+        setPedidosSalvando((prev) => prev.filter((p) => !idsParaRemover.includes(p.id)));
+      }
     } catch (e) {
       consecutiveErrorsRef.current += 1;
       const errorMessage = (e as Error)?.message ?? String(e);
@@ -752,25 +897,85 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   // BUG 2.6 FIX: Leading + trailing debounce.
   // Executa imediatamente na primeira chamada e reagenda se novos eventos chegam
   // durante o cooldown, garantindo que o último update também seja processado.
+  // ── EDIT LOCK FIX: Agora aceita o payload do Realtime para aplicar mudanças
+  // de is_editing instantaneamente no estado local de TODOS os dispositivos.
   const realtimeLeadingFiredRef = useRef(false);
 
-  const handleRealtimeChange = useCallback(() => {
+  /** Payload shape vindo do Supabase Realtime postgres_changes */
+  interface RealtimePayload {
+    eventType: string;
+    new: Record<string, unknown>;
+    old: Record<string, unknown>;
+    schema: string;
+    table: string;
+  }
+
+  const handleRealtimeChange = useCallback((payload?: RealtimePayload) => {
     if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_ERRORS) return;
 
+    // ── EDIT LOCK FIX: Aplicar mudanças de is_editing instantaneamente ──
+    // Quando a edge function order-edit-lock atualiza is_editing no banco,
+    // o Realtime entrega o payload com o novo valor. Aplicamos direto no
+    // estado local para bloqueio imediato em TODOS os dispositivos.
+    if (payload && payload.table === 'orders' && payload.eventType === 'UPDATE') {
+      const newRecord = payload.new;
+      const oldRecord = payload.old;
+      const orderId = newRecord.id as string | undefined;
+
+      if (orderId && typeof newRecord.is_editing === 'boolean') {
+        const isEditingNow = newRecord.is_editing === true;
+        const wasEditing = oldRecord.is_editing === true;
+
+        // Só atualiza se o valor realmente mudou
+        if (isEditingNow !== wasEditing) {
+          if (isEditingNow) {
+            // Lock ativado: busca o nome do usuário que está editando
+            const editingUserId = newRecord.editing_by_user_id as string | undefined;
+            setPedidos((prev) =>
+              prev.map((p) => {
+                if (p.id !== orderId) return p;
+                // Se já temos o nome localmente (otimista), preserva
+                const existingName = p.editingByName;
+                return {
+                  ...p,
+                  isEditing: true,
+                  editingByUserId: editingUserId ?? p.editingByUserId ?? null,
+                  editingByName: existingName ?? (editingUserId ? 'Outro usuário' : undefined),
+                  editingStartedAt: p.editingStartedAt ?? Date.now(),
+                };
+              }),
+            );
+            console.info('[KDSContext] Realtime lock applied for order:', orderId, 'by:', editingUserId);
+          } else {
+            // Lock liberado
+            setPedidos((prev) =>
+              prev.map((p) =>
+                p.id === orderId
+                  ? { ...p, isEditing: false, editingByUserId: null, editingByName: undefined, editingStartedAt: undefined }
+                  : p,
+              ),
+            );
+            console.info('[KDSContext] Realtime lock released for order:', orderId);
+          }
+        }
+      }
+    }
+
+    // ── Debounce do RPC completo (fallback para consistência) ──
     // Leading edge: executa imediatamente se não há debounce ativo
     if (!realtimeLeadingFiredRef.current) {
       realtimeLeadingFiredRef.current = true;
       loadOrders();
     }
 
-    // Trailing edge: reagenda com debounce curto para capturar o último evento
+    // Trailing edge: reagenda com debounce reduzido para capturar o último evento
     if (realtimeDebounceRef.current) {
       clearTimeout(realtimeDebounceRef.current);
     }
     realtimeDebounceRef.current = setTimeout(() => {
       realtimeLeadingFiredRef.current = false;
       loadOrders();
-    }, 80);
+    }, 40);
   }, [loadOrders]);
 
   // ── Efeito 1: carrega estações quando o tenant muda ───────────────────────
@@ -793,6 +998,11 @@ export function KDSProvider({ children }: { children: ReactNode }) {
         stationMapRef.current = map;
         setStationMap(map);
         stationsLoadedRef.current = true;
+        // ── KDS FIX: Recarrega pedidos com o stationMap correto assim que estações são carregadas ──
+        // Isso garante que os pedidos tenham o nome da estação correto (não o fallback 'Cozinha')
+        if (sessaoIdRef.current !== undefined) {
+          loadOrders(map);
+        }
       })
       .catch((e) => {
         console.error('[KDSContext] loadStations error:', (e as Error)?.message);
@@ -809,6 +1019,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_item_units', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_item_parts', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_discounts', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_item_observation_checks', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
@@ -820,6 +1031,107 @@ export function KDSProvider({ children }: { children: ReactNode }) {
           console.warn('[KDSContext] Realtime channel error, status:', status);
         }
       });
+
+    // CAMADA 2: Canal de Broadcast para propagação instantânea do lock (~50ms vs ~500ms via banco)
+    // Permite que PDV notifique KDS/Gestor imediatamente ao iniciar/finalizar edição
+    const lockChannel = supabase
+      .channel(`order-lock-${tenantId}`)
+      .on('broadcast', { event: 'order_locked' }, ({ payload }: { payload: Record<string, unknown> }) => {
+        const orderId = payload.order_id as string | undefined;
+        const lockedByName = payload.locked_by_name as string | undefined;
+        const lockedBy = payload.locked_by as string | undefined;
+        if (!orderId) return;
+        setPedidos((prev) =>
+          prev.map((p) =>
+            p.id === orderId
+              ? { ...p, isEditing: true, editingByUserId: lockedBy ?? p.editingByUserId ?? null, editingByName: lockedByName ?? p.editingByName ?? 'PDV' }
+              : p,
+          ),
+        );
+        console.info('[KDSContext] Broadcast lock received for order:', orderId, 'by:', lockedByName);
+      })
+      .on('broadcast', { event: 'order_unlocked' }, ({ payload }: { payload: Record<string, unknown> }) => {
+        const orderId = payload.order_id as string | undefined;
+        if (!orderId) return;
+        setPedidos((prev) =>
+          prev.map((p) =>
+            p.id === orderId
+              ? { ...p, isEditing: false, editingByUserId: null, editingByName: undefined, editingStartedAt: undefined }
+              : p,
+          ),
+        );
+        console.info('[KDSContext] Broadcast unlock received for order:', orderId);
+      })
+      .subscribe();
+
+    // CAMADA 3: Canal de Broadcast para propagação instantânea da edição finalizada
+    // Recebe os dados completos do pedido atualizado logo após o PDV salvar + desbloquear
+    const orderUpdatesChannel = supabase
+      .channel(`order-updates-${tenantId}`)
+      .on('broadcast', { event: 'order_saving' }, ({ payload }: { payload: Record<string, unknown> }) => {
+        const orderId = payload.order_id as string | undefined;
+        if (!orderId) return;
+        // Adiciona à lista persistente de salvamento (persiste até o pedido reaparecer no loadOrders)
+        const pedidoLocal = pedidos.find((p) => p.id === orderId);
+        addPedidoSalvando(orderId, pedidoLocal);
+        // Marca isSaving no pedido local (para o card também mostrar)
+        setPedidos((prev) =>
+          prev.map((p) =>
+            p.id === orderId ? { ...p, isSaving: true } : p,
+          ),
+        );
+        console.info('[KDSContext] Broadcast order_saving received for order:', orderId);
+        // Timeout de segurança: se o pedido não reaparecer em 10s, limpa tudo
+        setTimeout(() => {
+          if (pedidosSalvandoRef.current.has(orderId)) {
+            removePedidoSalvando(orderId);
+            setPedidos((prev) =>
+              prev.map((p) =>
+                p.id === orderId ? { ...p, isSaving: false } : p,
+              ),
+            );
+          }
+        }, 10000);
+      })
+      .on('broadcast', { event: 'order_edit_finished' }, ({ payload }: { payload: Record<string, unknown> }) => {
+        const orderId = payload.order_id as string | undefined;
+        const rawOrder = payload.order as DBOrder | null | undefined;
+        if (!orderId) return;
+
+        if (rawOrder) {
+          // Mapear o pedido completo atualizado para o formato KDS
+          const updatedPedido = dbOrderToKDS(rawOrder, stationMapRef.current);
+          // NÃO remove de pedidosSalvando aqui — espera o loadOrders confirmar que o pedido reapareceu
+          setPedidos((prev) =>
+            prev.map((p) => {
+              if (p.id !== orderId) return p;
+              // Aplica dados atualizados e limpa o lock, mas mantém isSaving se ainda estiver salvando
+              const aindaSalvando = pedidosSalvandoRef.current.has(orderId);
+              return {
+                ...updatedPedido,
+                isEditing: false,
+                isSaving: aindaSalvando,
+                editingByUserId: null,
+                editingByName: undefined,
+                editingStartedAt: undefined,
+              };
+            }),
+          );
+          console.info('[KDSContext] Broadcast order_edit_finished: pedido atualizado instantaneamente', { orderId });
+        } else {
+          // Fallback: se não veio o pedido completo, só limpa o lock
+          // isSaving continua true se o pedido ainda estiver na lista de salvamento
+          setPedidos((prev) =>
+            prev.map((p) =>
+              p.id === orderId
+                ? { ...p, isEditing: false, isSaving: pedidosSalvandoRef.current.has(orderId), editingByUserId: null, editingByName: undefined, editingStartedAt: undefined }
+                : p,
+            ),
+          );
+          console.info('[KDSContext] Broadcast order_edit_finished (sem dados): lock liberado', { orderId });
+        }
+      })
+      .subscribe();
 
     channelRef.current = channel;
 
@@ -846,6 +1158,8 @@ export function KDSProvider({ children }: { children: ReactNode }) {
 
     return () => {
       channel.unsubscribe();
+      lockChannel.unsubscribe();
+      orderUpdatesChannel.unsubscribe();
       channelRef.current = null;
       clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -875,6 +1189,31 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     setPedidos((prev) => [pedido, ...prev]);
   }, []);
 
+  // Helper: adiciona pedido à lista de salvamento
+  const addPedidoSalvando = useCallback((orderId: string, pedido?: KDSPedido) => {
+    pedidosSalvandoRef.current.add(orderId);
+    if (pedido) {
+      setPedidosSalvando((prev) => {
+        if (prev.some((s) => s.id === orderId)) return prev;
+        return [...prev, {
+          id: orderId,
+          numero: pedido.numero,
+          numeroStr: pedido.numeroStr,
+          destino: pedido.destino,
+          mesaNumero: pedido.mesaNumero,
+          nomeCliente: pedido.nomeCliente,
+          senha: pedido.senha,
+        }];
+      });
+    }
+  }, []);
+
+  // Helper: remove pedido da lista de salvamento
+  const removePedidoSalvando = useCallback((orderId: string) => {
+    pedidosSalvandoRef.current.delete(orderId);
+    setPedidosSalvando((prev) => prev.filter((p) => p.id !== orderId));
+  }, []);
+
   const updateItemStatusRemote = useCallback(async (
     orderItemId: string,
     orderId: string,
@@ -885,7 +1224,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       console.warn('[KDSContext] updateItemStatusRemote: no tenantId available, skipping remote update');
       return;
     }
-    const { error } = await invokeWithAuth('order-write', {
+    const { data, error } = await invokeWithAuth('order-write', {
       body: {
         action: 'update_order_item_status',
         order_item_id: orderItemId,
@@ -895,6 +1234,25 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       },
     });
     if (error) {
+      // CAMADA 3: Tratar erro 423 — pedido bloqueado pelo PDV
+      const isLocked =
+        error.message?.includes('bloqueado') ||
+        error.message?.includes('locked') ||
+        (data as Record<string, unknown>)?.code === 'order_locked';
+      if (isLocked) {
+        console.warn('[KDSContext] updateItemStatusRemote: order locked by PDV — reverting optimistic state');
+        // Reverte estado otimista local: marca o pedido como em edição
+        setPedidos((prev) =>
+          prev.map((p) =>
+            p.id === orderId ? { ...p, isEditing: true } : p,
+          ),
+        );
+        // Emite evento customizado para componentes mostrarem toast/feedback
+        window.dispatchEvent(new CustomEvent('kds:order-locked', {
+          detail: { orderId, message: 'Pedido em edição pelo PDV — ação bloqueada' },
+        }));
+        return;
+      }
       console.error('[KDSContext] updateItemStatusRemote error:', error.message);
     }
     // Realtime triggers reload automatically
@@ -917,7 +1275,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       console.warn('[KDSContext] updateUnitStatusRemote: no tenantId available, skipping remote update');
       return;
     }
-    const { error } = await invokeWithAuth('order-write', {
+    const { data, error } = await invokeWithAuth('order-write', {
       body: {
         action: 'update_unit_status',
         order_item_id: orderItemId,
@@ -928,9 +1286,69 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       },
     });
     if (error) {
+      // CAMADA 3: Tratar erro 423 — pedido bloqueado pelo PDV
+      const isLocked =
+        error.message?.includes('bloqueado') ||
+        error.message?.includes('locked') ||
+        (data as Record<string, unknown>)?.code === 'order_locked';
+      if (isLocked) {
+        console.warn('[KDSContext] updateUnitStatusRemote: order locked by PDV — reverting optimistic state');
+        setPedidos((prev) =>
+          prev.map((p) =>
+            p.id === orderId ? { ...p, isEditing: true } : p,
+          ),
+        );
+        window.dispatchEvent(new CustomEvent('kds:order-locked', {
+          detail: { orderId, message: 'Pedido em edição pelo PDV — ação bloqueada' },
+        }));
+        return;
+      }
       console.error('[KDSContext] updateUnitStatusRemote error:', error.message);
     }
     // Realtime (order_item_units) triggers reload automatically across all clients
+  }, [user?.tenantId]);
+
+  const updatePartStatusRemote = useCallback(async (
+    orderItemPartId: string,
+    orderItemId: string,
+    orderId: string,
+    newStatus: KDSItemStatus,
+  ) => {
+    const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
+    if (!resolvedTenantId) {
+      console.warn('[KDSContext] updatePartStatusRemote: no tenantId available, skipping remote update');
+      return;
+    }
+    const { data, error } = await invokeWithAuth('order-write', {
+      body: {
+        action: 'update_order_item_part_status',
+        order_item_part_id: orderItemPartId,
+        order_item_id: orderItemId,
+        order_id: orderId,
+        tenant_id: resolvedTenantId,
+        new_status: newStatus,
+      },
+    });
+    if (error) {
+      const isLocked =
+        error.message?.includes('bloqueado') ||
+        error.message?.includes('locked') ||
+        (data as Record<string, unknown>)?.code === 'order_locked';
+      if (isLocked) {
+        console.warn('[KDSContext] updatePartStatusRemote: order locked by PDV — reverting optimistic state');
+        setPedidos((prev) =>
+          prev.map((p) =>
+            p.id === orderId ? { ...p, isEditing: true } : p,
+          ),
+        );
+        window.dispatchEvent(new CustomEvent('kds:order-locked', {
+          detail: { orderId, message: 'Pedido em edição pelo PDV — ação bloqueada' },
+        }));
+        return;
+      }
+      console.error('[KDSContext] updatePartStatusRemote error:', error.message);
+    }
+    // Realtime (order_item_parts) triggers reload automatically across all clients
   }, [user?.tenantId]);
 
   const toggleObsChecadaRemote = useCallback(async (
@@ -985,8 +1403,94 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     return { ok: true };
   }, [user?.tenantId]);
 
+  /** Inicia edição de pedido — lock via edge function + Broadcast instantâneo */
+  const startOrderEditRemote = useCallback(async (orderId: string): Promise<{ ok: boolean; lockedBy?: string; error?: string }> => {
+    const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
+    if (!resolvedTenantId) {
+      return { ok: false, error: 'Tenant não identificado' };
+    }
+    try {
+      const { data, error } = await invokeWithAuth('order-edit-lock', {
+        body: {
+          action: 'start',
+          order_id: orderId,
+          tenant_id: resolvedTenantId,
+        },
+      });
+      if (error) {
+        console.error('[KDSContext] startOrderEditRemote error:', error.message);
+        return { ok: false, error: error.message };
+      }
+      // Status 423 = já está sendo editado por outro
+      if (data?.ok === false && data?.locked_by) {
+        return { ok: false, lockedBy: data.locked_by as string, error: data.message as string };
+      }
+      // Otimista local: marca como editing
+      setPedidos((prev) =>
+        prev.map((p) =>
+          p.id === orderId ? { ...p, isEditing: true, editingByUserId: user?.id ?? null, editingByName: user?.nome ?? undefined } : p,
+        ),
+      );
+      // CAMADA 2: Broadcast instantâneo para KDS/Gestor (entrega ~50ms vs ~500ms do Realtime via banco)
+      const broadcastChannel = supabase.channel(`order-lock-${resolvedTenantId}`);
+      broadcastChannel.send({
+        type: 'broadcast',
+        event: 'order_locked',
+        payload: { order_id: orderId, locked_by: user?.id ?? null, locked_by_name: user?.nome ?? 'PDV' },
+      }).catch((e: unknown) => console.warn('[KDSContext] broadcast order_locked failed:', e));
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: msg };
+    }
+  }, [user?.tenantId, user?.id, user?.nome]);
+
+  /** Finaliza edição de pedido — unlock via edge function + Broadcast instantâneo */
+  const finishOrderEditRemote = useCallback(async (
+    orderId: string,
+    wasModified?: boolean,
+    modificationsSummary?: string,
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
+    if (!resolvedTenantId) {
+      return { ok: false, error: 'Tenant não identificado' };
+    }
+    try {
+      const { error } = await invokeWithAuth('order-edit-lock', {
+        body: {
+          action: 'finish',
+          order_id: orderId,
+          tenant_id: resolvedTenantId,
+          was_modified: wasModified ?? false,
+          modifications_summary: modificationsSummary ?? null,
+        },
+      });
+      if (error) {
+        console.error('[KDSContext] finishOrderEditRemote error:', error.message);
+        return { ok: false, error: error.message };
+      }
+      // Otimista local: remove flag de editing
+      setPedidos((prev) =>
+        prev.map((p) =>
+          p.id === orderId ? { ...p, isEditing: false, editingByUserId: null, editingByName: undefined, editingStartedAt: undefined } : p,
+        ),
+      );
+      // CAMADA 2: Broadcast instantâneo de unlock para KDS/Gestor
+      const broadcastChannel = supabase.channel(`order-lock-${resolvedTenantId}`);
+      broadcastChannel.send({
+        type: 'broadcast',
+        event: 'order_unlocked',
+        payload: { order_id: orderId },
+      }).catch((e: unknown) => console.warn('[KDSContext] broadcast order_unlocked failed:', e));
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: msg };
+    }
+  }, [user?.tenantId]);
+
   return (
-    <KDSContext.Provider value={{ pedidos, loading, addPedido, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, cancelOrderRemote, toggleObsChecadaRemote, reloadOrders: loadOrders }}>
+    <KDSContext.Provider value={{ pedidos, loading, addPedido, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, toggleObsChecadaRemote, startOrderEditRemote, finishOrderEditRemote, reloadOrders: loadOrders, stationMap, pedidosSalvando }}>
       {children}
     </KDSContext.Provider>
   );

@@ -86,7 +86,7 @@ export default function ItemImage({
       <img
         src={src!}
         alt={alt}
-        className={`w-full h-full object-cover object-top ${esgotado ? 'grayscale' : ''} ${imgClassName}`}
+        className={`w-full h-full ${esgotado ? 'grayscale' : ''} ${imgClassName || 'object-cover object-top'}`}
       />
     </div>
   );

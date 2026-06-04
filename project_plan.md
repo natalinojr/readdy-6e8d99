@@ -871,9 +871,18 @@ Alguns insumos brutos sofrem transformação antes de virarem itens vendáveis:
 - **Meta:** Interface mobile-first do garçom, pedido progressivo, chamados
 - **Entregável:** Terminal garçom funcional
 
-### Fase 6: PDV Mesa (QR Code)
+### ✅ FASE 6 — PDV Mesa (QR Code) 
 - **Meta:** Fluxo completo do cliente via QR Code, responsável, pedidos individuais
-- **Entregável:** Página pública da mesa funcional
+- **Entregável:** Página pública `/mesa-qr/:qr_token` funcional
+- **Status:** ✅ Conectado ao Supabase (Edge Function `mesa-write` + página React)
+- **Fluxo implementado:**
+  - Acesso via QR Code → busca mesa pelo `qr_token`
+  - Identificação por nome → cria `table_session_participant` com `access_token` sequencial
+  - Cardápio agrupado por categorias → opções, observações, carrinho
+  - Confirmação de pedido → cria `order` com `origin_type='table'`, `destination_type='password'`
+  - Senha exibida destacada para retirada de pedidos
+  - Múltiplos pedidos com mesma senha, número de pedido sequencial por sessão
+- **Edge Function:** `mesa-write` (lookup_mesa, lookup_mesa_by_number, create_participant, create_mesa_order, get_cardapio, get_meus_pedidos)
 
 ### Fase 7: PDV Autoatendimento (Tablet)
 - **Meta:** Interface touch para autoatendimento
@@ -886,6 +895,7 @@ Alguns insumos brutos sofrem transformação antes de virarem itens vendáveis:
 ### Fase 9: Pagamentos & Operações de Caixa
 - **Meta:** Formas de pagamento, divisão de conta, gorjeta, abertura/fechamento de caixa, sangria/suprimento
 - **Entregável:** Fluxo de pagamento completo no PDV
+- **Auto-fechamento de mesa:** Trigger no banco fecha `table_sessions` automaticamente quando todos os pedidos vinculados são pagos (`is_paid = true`). O fechamento manual continua disponível nos PDVs Caixa e Garçom.
 
 ### Fase 10: Relatórios
 - **Meta:** Dashboard em tempo real + relatórios detalhados com filtros

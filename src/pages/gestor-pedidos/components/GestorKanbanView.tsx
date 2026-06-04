@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade } from '@/types/kds';
 import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
-import { printHTML } from '@/lib/printUtils';
+import { printHTML, sendToPrinter } from '@/lib/printUtils';
+import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
 
 interface Props {
   pedidos: KDSPedido[];
@@ -226,26 +227,23 @@ function GestorCard({
 
 
 
+  const { getImpressoraParaEstacao } = useImpressoras();
+
   const handlePrint = () => {
     const paymentLine = pedido.origem === 'autoatendimento' && pedido.paymentMethodName
       ? `<p style="font-weight:bold;border:1px solid #000;padding:4px;margin:4px 0;">&#128179; Pagar na entrega: ${pedido.paymentMethodName}</p>`
       : '';
-    printHTML(`<html><head><title>Pedido #${pedido.numero}</title>
-      <style>body{font-family:monospace;font-size:12px;padding:16px}h2{margin:0 0 4px}hr{border:1px dashed #000}.item{margin:4px 0}.obs{color:red;font-weight:bold;font-size:11px}p{margin:2px 0;font-size:11px}</style>
-      </head><body>
-      <h2>Pedido #${String(pedido.numero).padStart(4, '0')}</h2>
-      <p>${destinoLabel(pedido)} &mdash; ${origemInfo.label}</p>
-      ${pedido.garcomNome ? `<p>Gar&ccedil;om: ${pedido.garcomNome}</p>` : ''}
-      ${paymentLine}
-      <hr/>
-      ${pedido.itens.map((i) => `
-        <div class="item"><strong>${i.quantidade}x ${i.nome}</strong>${i.categoriaNome ? ` <small>(${i.categoriaNome})</small>` : ''}
-        ${i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => `+ ${o.opcaoNome}`).join(', ')}</div>` : ''}
-        ${i.observacoes?.length ? `<div class="obs">${i.observacoes.map((o) => `&#9888; ${o}`).join('<br/>')}</div>` : ''}
-        </div>`).join('')}
-      <hr/>
-      <small>${new Date().toLocaleString('pt-BR')}</small>
-      </body></html>`);
+    const numStr = String(pedido.numero).padStart(4, '0');
+    const destLabel = destinoLabel(pedido);
+    const garcomLine = pedido.garcomNome ? `<p>Gar&ccedil;om: ${pedido.garcomNome}</p>` : '';
+    const itensHtml = pedido.itens.map((i) => {
+      const opts = i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => '+ ' + o.opcaoNome).join(', ')}</div>` : '';
+      const obs = i.observacoes?.length ? `<div style="color:red;font-weight:bold;font-size:11px">${i.observacoes.map((o) => '&#9888; ' + o).join('<br/>')}</div>` : '';
+      return `<div style="margin:4px 0"><strong>${i.quantidade}x ${i.nome}</strong>${i.categoriaNome ? ` <small>(${i.categoriaNome})</small>` : ''}${opts}${obs}</div>`;
+    }).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Pedido #${numStr}</title><style>body{font-family:monospace;font-size:12px;padding:16px}h2{margin:0 0 4px}hr{border:1px dashed #000}p{margin:2px 0;font-size:11px}</style></head><body><h2>Pedido #${numStr}</h2><p>${destLabel} &mdash; ${origemInfo.label}</p>${garcomLine}${paymentLine}<hr/>${itensHtml}<hr/><small>${new Date().toLocaleString('pt-BR')}</small></body></html>`;
+    const impressora = getImpressoraParaEstacao(PRINTER_KEY_GESTOR_PEDIDOS);
+    sendToPrinter(html, impressora);
   };
 
   return (
@@ -285,6 +283,31 @@ function GestorCard({
           <div className="bg-red-100 px-3 py-1 flex items-center gap-1.5 border-b border-red-200">
             <i className="ri-close-circle-line text-red-600 text-xs" />
             <span className="text-red-700 text-[10px] font-black uppercase tracking-wide">Cancelado</span>
+          </div>
+        )}
+
+        {/* PDV Saving banner */}
+        {pedido.isSaving && !isCancelled && (
+          <div className="bg-sky-50 px-3 py-1.5 flex items-center gap-1.5 border-b border-sky-200">
+            <div className="w-3 h-3 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sky-700 text-[10px] font-bold flex-1">
+              Atualizando pedido...
+            </span>
+          </div>
+        )}
+
+        {/* PDV Editing lock banner */}
+        {pedido.isEditing && !isCancelled && (
+          <div className="bg-orange-50 px-3 py-1.5 flex items-center gap-1.5 border-b border-orange-200">
+            <i className="ri-edit-2-line text-orange-500 text-xs animate-pulse" />
+            <span className="text-orange-700 text-[10px] font-bold flex-1">
+              {pedido.editingByName
+                ? `${pedido.editingByName} está editando`
+                : 'Pedido em edição no PDV'} — aguardando confirmação
+            </span>
+            <span className="text-[10px] font-bold text-orange-500 bg-orange-100 border border-orange-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+              BLOQUEADO
+            </span>
           </div>
         )}
 
@@ -463,7 +486,15 @@ function GestorCard({
           {/* Ação principal */}
           {!isCancelled && (
             <div className="pt-1">
-              {pedido.status === 'entregue' ? (
+              {/* Block actions when order is being edited or saved in PDV */}
+              {pedido.isEditing || pedido.isSaving ? (
+                <div className="w-full py-2 px-3 rounded-xl border border-orange-200 bg-orange-50 flex items-center gap-2 justify-center">
+                  <i className={`${pedido.isSaving ? 'ri-loader-4-line animate-spin' : 'ri-edit-2-line animate-pulse'} text-orange-500 text-sm flex-shrink-0`} />
+                  <span className="text-xs font-bold text-orange-600 leading-tight whitespace-nowrap">
+                    {pedido.isSaving ? 'Atualizando pedido...' : 'Editando no PDV — ações bloqueadas'}
+                  </span>
+                </div>
+              ) : pedido.status === 'entregue' ? (
                 <div className="flex items-center justify-center gap-1.5 py-2 text-zinc-400 text-xs font-semibold">
                   <i className="ri-check-double-line" />Entregue
                 </div>

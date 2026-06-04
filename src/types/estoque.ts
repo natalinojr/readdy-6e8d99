@@ -114,7 +114,7 @@ export interface Movimentacao {
   id: string;
   insumoId: string;
   insumoNome: string;
-  tipo: 'entrada' | 'saida_venda' | 'saida_manual' | 'perda' | 'entrada_producao' | 'saida_producao';
+  tipo: 'entrada' | 'saida_venda' | 'saida_manual' | 'perda' | 'entrada_producao' | 'saida_producao' | 'ajuste_inventario';
   quantidade: number;
   unidade: UnidadeEstoque;
   motivo?: string;

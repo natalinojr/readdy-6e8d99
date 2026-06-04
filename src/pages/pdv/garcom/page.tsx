@@ -2,15 +2,12 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppMode } from '@/contexts/AppModeContext';
 import { useSessao } from '../../../contexts/SessaoContext';
-import type { CarrinhoItem, DestinoInfo } from '../../../contexts/PDVContext';
+import type { CarrinhoItem, DestinoInfo, OpcaoSelecionada } from '../../../contexts/PDVContext';
 import { useKDS } from '../../../contexts/KDSContext';
 import { useMesas } from '../../../contexts/MesasContext';
 import { useAuth } from '../../../contexts/AuthContext';
-import { useEstoque } from '../../../contexts/EstoqueContext';
-import { useImpressoras } from '@/contexts/ImpressorasContext';
 import { invokeWithAuth, supabase } from '@/lib/supabase';
 import { useOrderSubmit, PartialOrderError } from '@/hooks/useOrderSubmit';
-import { printKitchenTicket } from '@/pages/pdv/caixa/components/CozinhaTicketPrint';
 import type { Mesa } from '@/types/pdv';
 import type { Rodada, PedidoAvulso, Chamado } from './types';
 import MesaGrid from './components/MesaGrid';
@@ -20,6 +17,7 @@ import IdentificacaoAvulsoModal from './components/IdentificacaoAvulsoModal';
 import TransferirMesaModal from './components/TransferirMesaModal';
 import ChamadosPanel from './components/ChamadosPanel';
 import PedidosAtivosView from './components/PedidosAtivosView';
+import { useSystemSettings } from '@/hooks/useSystemSettings';
 
 type Tela = 'mesas' | 'identificacao' | 'transferir' | 'pedido' | 'avulso-identificacao' | 'avulso-pedido' | 'sucesso';
 type AbaMain = 'mesas' | 'pedidos';
@@ -113,14 +111,23 @@ function carregarRascunhos(): Record<string, CarrinhoItem[]> {
 
 export default function GarcomPage() {
   const { estado, sessao, gerarProximoNumeroPedido } = useSessao();
+
+  // Loading state para evitar flash de "sem sessão" durante a verificação
+  const [isVerificandoSessao, setIsVerificandoSessao] = useState(true);
+
+  useEffect(() => {
+    // Pequeno delay para garantir que o SessaoContext já terminou de verificar
+    const timer = setTimeout(() => setIsVerificandoSessao(false), 300);
+    return () => clearTimeout(timer);
+  }, []);
+
   const { user } = useAuth();
   const navigate = useNavigate();
   const { setMode } = useAppMode();
   const { reloadOrders, pedidos } = useKDS();
   const { mesas, atualizarMesa, abrirMesa, fecharMesa: fecharMesaContext, transferirMesa } = useMesas();
-  const { deductSaleItems } = useEstoque();
   const { submitOrder } = useOrderSubmit();
-  const { getImpressoraParaEstacao } = useImpressoras();
+  const { settings } = useSystemSettings();
 
   const [tela, setTela] = useState<Tela>('mesas');
   const [abaMain, setAbaMain] = useState<AbaMain>('mesas');
@@ -446,7 +453,7 @@ export default function GarcomPage() {
     });
   };
 
-  const handleEditItem = (cartId: string, updates: { quantidade: number; observacaoLivre: string; observacoes?: string[]; obsUnidades?: string[] }) => {
+  const handleEditItem = (cartId: string, updates: { quantidade: number; observacaoLivre: string; observacoes?: string[]; obsUnidades?: string[]; opcoes?: OpcaoSelecionada[]; precoTotal?: number }) => {
     const id = currentContextoId;
     setCarrinhosPorContexto((prev) => {
       const novoCarrinho = (prev[id] ?? []).map((c) => c.cartId === cartId ? { ...c, ...updates } : c).filter((c) => c.quantidade > 0);
@@ -486,26 +493,7 @@ export default function GarcomPage() {
         total: totalNovos,
       };
 
-      if (orderId) {
-        const itensParaBaixa = carrinho
-          .filter((ci) => ci.itemId && /^[0-9a-f-]{36}$/i.test(ci.itemId))
-          .map((ci) => ({ itemId: ci.itemId, nome: ci.nome, quantidade: ci.quantidade }));
-        if (itensParaBaixa.length > 0) {
-          deductSaleItems(orderId, itensParaBaixa).catch(console.warn);
-        }
-      }
-
-      try {
-        const seq = parseInt(savedNumero.replace(/\D/g, '').slice(-4)) || 1;
-        const primeiroItem = carrinho.find((i) => i.stationId);
-        const estacao = primeiroItem?.stationId ?? 'cozinha-padrao';
-        const impressora = getImpressoraParaEstacao(estacao);
-        if (impressora?.ip) {
-          await printKitchenTicket(seq, carrinho, destInfo, impressora);
-        }
-      } catch (e) {
-        console.warn('[GarcomPage] Erro ao imprimir ticket de cozinha (non-blocking):', e);
-      }
+      // Impressão é gerenciada pelo useOrderSubmit via fila centralizada
 
       atualizarMesa(mesaSelecionada.id, { totalConsumo: (mesaSelecionada.totalConsumo ?? 0) + totalNovos });
       const novasRodadas = [...rodadasExistentes, novaRodada];
@@ -544,29 +532,57 @@ export default function GarcomPage() {
         }
       }
 
-      for (const rodada of rodadasAPagar) {
-        if (!rodada.orderId || !formaPagamentoId) continue;
-        try {
-          const amount = valorParcial ?? rodada.total ?? 0;
-          await invokeWithAuth('order-write', {
-            body: {
-              action: 'record_payment',
-              order_id: rodada.orderId,
-              tenant_id: user?.tenantId,
-              cash_register_id: cashRegisterId,
-              payment_method_id: formaPagamentoId,
-              amount,
-              change_amount: 0,
-              operator_name: user?.nome ?? null,
-              paid_by_pdv: 'waiter',
-            },
-          });
-          // Salva PDV que confirmou pagamento
-          if (rodada.orderId) {
-            void Promise.resolve(supabase.rpc('fn_update_paid_by_pdv', { p_order_id: rodada.orderId, p_paid_by_pdv: 'waiter' })).catch(() => {});
+      // Quando valorParcial está definido (pagamento por divisão/conta dividida),
+      // registra o pagamento apenas UMA VEZ no primeiro pedido disponível.
+      // Isso evita que o valor parcial seja multiplicado pelo número de pedidos da mesa.
+      if (valorParcial !== undefined && rodadasAPagar.length > 0) {
+        const primeiraRodada = rodadasAPagar[0];
+        if (primeiraRodada.orderId && formaPagamentoId) {
+          try {
+            await invokeWithAuth('order-write', {
+              body: {
+                action: 'record_payment',
+                order_id: primeiraRodada.orderId,
+                tenant_id: user?.tenantId,
+                cash_register_id: cashRegisterId,
+                payment_method_id: formaPagamentoId,
+                amount: valorParcial,
+                change_amount: 0,
+                operator_name: user?.nome ?? null,
+                paid_by_pdv: 'waiter',
+              },
+            });
+            void Promise.resolve(supabase.rpc('fn_update_paid_by_pdv', { p_order_id: primeiraRodada.orderId, p_paid_by_pdv: 'waiter' })).catch(() => {});
+          } catch (e) {
+            console.error('[GarcomPage] record_payment divisão error:', e);
           }
-        } catch (e) {
-          console.error('[GarcomPage] record_payment error:', e);
+        }
+      } else {
+        // Pagamento integral: registra em cada pedido selecionado
+        for (const rodada of rodadasAPagar) {
+          if (!rodada.orderId || !formaPagamentoId) continue;
+          try {
+            const amount = rodada.total ?? 0;
+            await invokeWithAuth('order-write', {
+              body: {
+                action: 'record_payment',
+                order_id: rodada.orderId,
+                tenant_id: user?.tenantId,
+                cash_register_id: cashRegisterId,
+                payment_method_id: formaPagamentoId,
+                amount,
+                change_amount: 0,
+                operator_name: user?.nome ?? null,
+                paid_by_pdv: 'waiter',
+              },
+            });
+            // Salva PDV que confirmou pagamento
+            if (rodada.orderId) {
+              void Promise.resolve(supabase.rpc('fn_update_paid_by_pdv', { p_order_id: rodada.orderId, p_paid_by_pdv: 'waiter' })).catch(() => {});
+            }
+          } catch (e) {
+            console.error('[GarcomPage] record_payment error:', e);
+          }
         }
       }
 
@@ -730,26 +746,7 @@ export default function GarcomPage() {
         total: totalRodada,
       };
 
-      if (orderId) {
-        const itensParaBaixa = carrinhoAtual
-          .filter((ci) => ci.itemId && /^[0-9a-f-]{36}$/i.test(ci.itemId))
-          .map((ci) => ({ itemId: ci.itemId, nome: ci.nome, quantidade: ci.quantidade }));
-        if (itensParaBaixa.length > 0) {
-          deductSaleItems(orderId, itensParaBaixa).catch(console.warn);
-        }
-      }
-
-      try {
-        const seq = parseInt(savedNumero.replace(/\D/g, '').slice(-4)) || 1;
-        const primeiroItem = carrinhoAtual.find((i) => i.stationId);
-        const estacao = primeiroItem?.stationId ?? 'cozinha-padrao';
-        const impressora = getImpressoraParaEstacao(estacao);
-        if (impressora?.ip) {
-          await printKitchenTicket(seq, carrinhoAtual, destInfo, impressora);
-        }
-      } catch (e) {
-        console.warn('[GarcomPage] Erro ao imprimir ticket avulso (non-blocking):', e);
-      }
+      // Impressão é gerenciada pelo useOrderSubmit via fila centralizada
 
       const idAntigo = avulsoSelecionado.id;
 
@@ -813,7 +810,7 @@ export default function GarcomPage() {
   // Suppress unused warning for handleCarregarDivisaoPag
   void handleCarregarDivisaoPag;
 
-  if (estado === 'sem_sessao') {
+  if (isVerificandoSessao || estado === 'sem_sessao') {
     return (
       <div
         className="flex flex-col h-full items-center justify-center p-8 text-center relative overflow-hidden"
@@ -826,21 +823,33 @@ export default function GarcomPage() {
             style={{ background: 'radial-gradient(circle, #f97316 0%, transparent 70%)' }} />
         </div>
         <div className="relative z-10 bg-white/70 backdrop-blur-sm border border-zinc-200 rounded-2xl p-8 flex flex-col items-center max-w-xs w-full">
-          <div className="w-16 h-16 flex items-center justify-center bg-amber-50 border border-amber-200 rounded-2xl mb-5">
-            <i className="ri-lock-line text-3xl text-amber-500" />
-          </div>
-          <h2 className="text-xl font-black text-zinc-900 mb-2">PDV Garcom bloqueado</h2>
-          <p className="text-zinc-500 text-sm max-w-xs">Nenhuma sessao ativa no caixa. Abra uma sessao no PDV Caixa para liberar o atendimento.</p>
+          {isVerificandoSessao ? (
+            <>
+              <div className="w-16 h-16 flex items-center justify-center bg-amber-50 border border-amber-200 rounded-2xl mb-5">
+                <i className="ri-loader-4-line animate-spin text-3xl text-amber-500" />
+              </div>
+              <h2 className="text-xl font-black text-zinc-900 mb-2">Verificando sessão...</h2>
+              <p className="text-zinc-500 text-sm max-w-xs">Aguarde enquanto confirmamos a sessão ativa.</p>
+            </>
+          ) : (
+            <>
+              <div className="w-16 h-16 flex items-center justify-center bg-amber-50 border border-amber-200 rounded-2xl mb-5">
+                <i className="ri-lock-line text-3xl text-amber-500" />
+              </div>
+              <h2 className="text-xl font-black text-zinc-900 mb-2">PDV Garçom bloqueado</h2>
+              <p className="text-zinc-500 text-sm max-w-xs">Nenhuma sessão ativa no caixa. Abra uma sessão no PDV Caixa para liberar o atendimento.</p>
+            </>
+          )}
           <div className="mt-5 flex items-center gap-2 px-4 py-2 bg-white/80 border border-zinc-200 rounded-full backdrop-blur-sm">
-            <div className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
-            <span className="text-zinc-500 text-xs font-medium">Aguardando sessao...</span>
+            <div className={`w-2 h-2 rounded-full ${isVerificandoSessao ? 'bg-amber-400 animate-pulse' : 'bg-red-400 animate-pulse'}`} />
+            <span className="text-zinc-500 text-xs font-medium">{isVerificandoSessao ? 'Verificando...' : 'Aguardando sessão...'}</span>
           </div>
           <button
             onClick={() => { setMode('modulos'); navigate('/modulos'); }}
             className="mt-5 flex items-center gap-2 px-5 py-2.5 bg-zinc-800 hover:bg-zinc-900 text-white text-xs font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
           >
             <i className="ri-arrow-left-line text-sm" />
-            Voltar aos Modulos
+            Voltar aos Módulos
           </button>
         </div>
       </div>
@@ -890,7 +899,7 @@ export default function GarcomPage() {
       )}
 
       {tela !== 'pedido' && tela !== 'avulso-pedido' && (
-        <div className="relative z-10 flex items-center justify-between px-3 py-2.5 bg-white border-b border-zinc-100 flex-shrink-0">
+        <div className="relative z-10 flex items-center justify-between px-3 py-2.5 bg-white border-b border-zinc-100 flex-shrink-0 flex-wrap gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={() => { setMode('modulos'); navigate('/modulos'); }}
@@ -1039,7 +1048,13 @@ export default function GarcomPage() {
                   cashRegisterId = crRow?.id ?? null;
                 }
 
-                for (const orderId of orderIdsAvulso) {
+                // Quando valorParcial está definido (pagamento por divisão),
+                // registra apenas UMA VEZ no primeiro pedido para evitar duplicação
+                const orderIdsParaPagar = valorParcial !== undefined
+                  ? orderIdsAvulso.slice(0, 1)
+                  : orderIdsAvulso;
+
+                for (const orderId of orderIdsParaPagar) {
                   const rodada = rodadasAvulsoAtual.find((r) => r.orderId === orderId);
                   const amount = valorParcial ?? rodada?.total ?? 0;
                   await invokeWithAuth('order-write', {

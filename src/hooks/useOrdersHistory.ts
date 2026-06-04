@@ -45,6 +45,7 @@ export interface DBPayment {
   cash_register_id?: string | null;
   cash_register_name?: string | null;
   paid_by_pdv?: string | null;
+  payment_group_id?: string | null;
 }
 
 export interface DBOrder {
@@ -74,8 +75,10 @@ export interface DBOrder {
   delivery_fee?: number | null;
   paid_by_pdv?: string | null;
   session_id?: string | null;
+  session_number?: string | null;
   itens: DBOrderItem[];
   pagamentos: DBPayment[];
+  payment_group_id?: string | null;
 }
 
 // ─── Raw types from RPC fn_get_kds_orders ──────────────────────────────────────
@@ -120,6 +123,7 @@ interface RPCPayment {
   operator_name?: string | null;
   cash_register_id?: string | null;
   cash_register_name?: string | null;
+  payment_group_id?: string | null;
 }
 
 interface RPCOrder {
@@ -136,6 +140,7 @@ interface RPCOrder {
   is_paid?: boolean | null;
   cancel_reason?: string | null;
   session_id?: string | null;
+  session_number?: string | null;
   items?: RPCItem[] | null;
   payments?: RPCPayment[] | null;
 }
@@ -213,6 +218,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
               delivery_fee,
               paid_by_pdv,
               session_id,
+              session:sessions(id, number),
               order_items (
                 id,
                 item_name,
@@ -319,6 +325,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
             delivery_platform,
             delivery_fee,
             session_id,
+            session:sessions(id, number),
             order_items (
               id,
               item_name,
@@ -447,6 +454,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
             delivery_platform,
             delivery_fee,
             session_id,
+            session:sessions(id, number),
             order_items (
               id,
               item_name,
@@ -576,6 +584,7 @@ function mapRPCOrders(rpcOrders: RPCOrder[], _tenantId: string): DBOrder[] {
       cash_register_id: p.cash_register_id ?? null,
       cash_register_name: p.cash_register_name ?? null,
       paid_by_pdv: null,
+      payment_group_id: p.payment_group_id ?? null,
     }));
     const isPaid = o.status !== 'cancelled' && (
       rpcPayments.length > 0
@@ -613,6 +622,7 @@ function mapRPCOrders(rpcOrders: RPCOrder[], _tenantId: string): DBOrder[] {
       delivery_platform: (o as RPCOrder & { delivery_platform?: string | null }).delivery_platform ?? null,
       delivery_fee: null,
       session_id: (o as RPCOrder & { session_id?: string | null }).session_id ?? null,
+      session_number: (o as RPCOrder & { session_number?: string | null }).session_number ?? null,
       itens: items,
       pagamentos,
     };
@@ -656,6 +666,7 @@ interface DirectQueryPayment {
   cash_register_id?: string | null;
   operator_name?: string | null;
   payment_methods?: { name: string; type?: string | null } | null;
+  payment_group_id?: string | null;
 }
 
 interface DirectQueryOrder {
@@ -682,6 +693,7 @@ interface DirectQueryOrder {
   delivery_fee?: number | null;
   paid_by_pdv?: string | null;
   session_id?: string | null;
+  session?: { id: string; number: string | null } | null;
   order_items?: DirectQueryItem[] | null;
   payments?: DirectQueryPayment[] | null;
 }
@@ -763,24 +775,37 @@ async function mapDirectQueryOrders(data: DirectQueryOrder[], tenantId: string):
 
     const slaData = computeSLA(rawItems, o.status ?? '', o.created_at);
     const rawPayments = o.payments ?? [];
+    // Supabase pode retornar payment_methods como array [ { name, type } ]
+    const resolvePm = (p: DirectQueryPayment) => {
+      const pmRaw = p.payment_methods;
+      const pm = Array.isArray(pmRaw) ? pmRaw[0] : pmRaw;
+      return {
+        name: pm?.name ?? null,
+        type: (pm as { name: string; type?: string | null } | null)?.type ?? null,
+      };
+    };
     // Usa is_paid do banco diretamente (campo confiável), com fallback nos pagamentos
     const isPaid = o.is_paid != null
       ? o.is_paid
       : (o.status !== 'cancelled' && rawPayments.some((p) => !p.is_refunded));
 
-    const pagamentos: DBPayment[] = rawPayments.map((p) => ({
-      id: p.id,
-      amount: Number(p.amount) || 0,
-      change_amount: p.change_amount != null ? Number(p.change_amount) : null,
-      is_refunded: p.is_refunded ?? false,
-      payment_method_id: p.payment_method_id ?? null,
-      payment_method_name: p.payment_methods?.name ?? null,
-      payment_method_type: (p.payment_methods as { name: string; type?: string | null } | null)?.type ?? null,
-      operator_name: p.operator_name ?? null,
-      cash_register_id: p.cash_register_id ?? null,
-      cash_register_name: null, // resolvido depois via enrichWithCashRegisters se necessário
-      paid_by_pdv: o.paid_by_pdv ?? null,
-    }));
+    const pagamentos: DBPayment[] = rawPayments.map((p) => {
+      const pm = resolvePm(p);
+      return {
+        id: p.id,
+        amount: Number(p.amount) || 0,
+        change_amount: p.change_amount != null ? Number(p.change_amount) : null,
+        is_refunded: p.is_refunded ?? false,
+        payment_method_id: p.payment_method_id ?? null,
+        payment_method_name: pm.name,
+        payment_method_type: pm.type,
+        operator_name: p.operator_name ?? null,
+        cash_register_id: p.cash_register_id ?? null,
+        cash_register_name: null, // resolvido depois via enrichWithCashRegisters se necessário
+        paid_by_pdv: o.paid_by_pdv ?? null,
+        payment_group_id: p.payment_group_id ?? null,
+      };
+    });
 
     // Calcula total dos itens como fallback se total_amount do banco estiver nulo/zerado
     const calcTotalFromItems = items.reduce((sum, item) => sum + item.preco * item.quantidade, 0);
@@ -817,6 +842,7 @@ async function mapDirectQueryOrders(data: DirectQueryOrder[], tenantId: string):
       delivery_fee: Number(o.delivery_fee) || null,
       paid_by_pdv: o.paid_by_pdv ?? null,
       session_id: o.session_id ?? null,
+      session_number: (o as any).session?.number ?? null,
       itens: items,
       pagamentos,
     };
@@ -859,18 +885,22 @@ async function enrichWithPayments(orders: DBOrder[], tenantId: string): Promise<
   const paymentsByOrder: Record<string, DBPayment[]> = {};
   ((paymentsData as (DirectQueryPayment & { order_id: string })[]) ?? []).forEach((p) => {
     if (!paymentsByOrder[p.order_id]) paymentsByOrder[p.order_id] = [];
+    // Supabase pode retornar payment_methods como array [ { name, type } ]
+    const pmRaw = p.payment_methods;
+    const pm = Array.isArray(pmRaw) ? pmRaw[0] : pmRaw;
     paymentsByOrder[p.order_id].push({
       id: p.id,
       amount: Number(p.amount) || 0,
       change_amount: p.change_amount != null ? Number(p.change_amount) : null,
       is_refunded: p.is_refunded ?? false,
       payment_method_id: p.payment_method_id ?? null,
-      payment_method_name: p.payment_methods?.name ?? null,
-      payment_method_type: (p.payment_methods as { name: string; type?: string | null } | null)?.type ?? null,
+      payment_method_name: pm?.name ?? null,
+      payment_method_type: (pm as { name: string; type?: string | null } | null)?.type ?? null,
       operator_name: p.operator_name ?? null,
       cash_register_id: p.cash_register_id ?? null,
       cash_register_name: null,
       paid_by_pdv: null,
+      payment_group_id: p.payment_group_id ?? null,
     });
   });
 

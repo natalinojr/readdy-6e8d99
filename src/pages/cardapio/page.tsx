@@ -4,12 +4,16 @@ import CategoriasTab from './components/CategoriasTab';
 import ItensTab from './components/ItensTab';
 import CombosTab from './components/CombosTab';
 import ObservacoesGlobaisTab from './components/ObservacoesGlobaisTab';
+import CardapioExportImportModal from '../../components/feature/CardapioExportImportModal';
+
+import { notifyReload } from '@/lib/reloadSignal';
 
 type Tab = 'categorias' | 'itens' | 'combos' | 'obsGlobais';
 
 export default function CardapioPage() {
-  const { itens, categorias, combos, obsGlobais, loading } = useCardapio();
+  const { itens, categorias, combos, obsGlobais, loading, recarregar } = useCardapio();
   const [activeTab, setActiveTab] = useState<Tab>('itens');
+  const [showExportImport, setShowExportImport] = useState(false);
 
   const tabs: { id: Tab; label: string; shortLabel: string; icon: string; count: number }[] = [
     { id: 'itens', label: 'Itens', shortLabel: 'Itens', icon: 'ri-file-list-3-line', count: itens.length },
@@ -48,6 +52,13 @@ export default function CardapioPage() {
                 {promoCount} promo
               </div>
             )}
+            <button
+              onClick={() => setShowExportImport(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full hover:bg-amber-100 transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <i className="ri-exchange-line" />
+              Exportar / Importar
+            </button>
           </div>
         </div>
 
@@ -88,6 +99,16 @@ export default function CardapioPage() {
         {!loading && activeTab === 'combos' && <CombosTab />}
         {!loading && activeTab === 'obsGlobais' && <ObservacoesGlobaisTab />}
       </div>
+
+      {/* Modal Exportar / Importar */}
+      <CardapioExportImportModal
+        open={showExportImport}
+        onClose={() => setShowExportImport(false)}
+        onSuccess={() => {
+          recarregar();
+          notifyReload('menu');
+        }}
+      />
     </div>
   );
 }

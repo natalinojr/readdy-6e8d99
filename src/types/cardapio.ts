@@ -75,6 +75,7 @@ export interface SubproducaoItem {
   id: string;
   nome: string;
   estacao: string;
+  estacaoId?: string;
   slaMinutos: number;
 }
 
@@ -101,6 +102,10 @@ export interface Item {
   status: 'ativo' | 'inativo';
   semPreparo?: boolean;
   somenteDelivery?: boolean;
+  /** Canais de venda habilitados para o item (cashier, waiter, delivery, table_qr, self_service) */
+  canais?: Record<string, boolean> | null;
+  /** Ordem de exibição no cardápio (sort_order) */
+  ordem: number;
   gruposOpcoes: GrupoOpcoes[];
   promocoes: PromocaoItem[];
   observacoesPadrao: string[];

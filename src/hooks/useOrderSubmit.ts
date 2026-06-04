@@ -6,6 +6,7 @@ import {
   generateLocalOrderNumber,
   type OfflineOrder,
 } from '@/lib/offlineDB';
+import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,8 @@ export interface OrderSubmitResult {
   number: string;
   /** true quando o pedido foi salvo offline (sem conexão) */
   isOffline?: boolean;
+  /** true quando o ticket de cozinha foi enfileirado para impressão */
+  printEnqueued?: boolean;
 }
 
 export interface OrderSubmitError {
@@ -261,6 +264,7 @@ async function retryOrderItems(
  * - Logs estruturados de debug
  * - Validação forte antes de enviar
  * - Proteção contra submissão duplicada
+ * - Impressão automática via fila centralizada (print_queue)
  */
 export function useOrderSubmit() {
   const submittingRef = useRef(false);
@@ -272,6 +276,10 @@ export function useOrderSubmit() {
       maxRetries?: number;
       /** Pagamentos para registrar (necessário para modo offline) */
       offlinePayments?: OfflinePaymentPayload[];
+      /** Se false, não enfileira ticket de impressão (ex: re-impressão manual). Padrão true. */
+      enqueuePrint?: boolean;
+      /** Mapeamento stationKey → impressoraId para fila de impressão */
+      stationToImpressoraId?: Record<string, string>;
     },
   ): Promise<OrderSubmitResult> => {
     // ── Proteção contra submissão duplicada ───────────────────────────────
@@ -344,9 +352,6 @@ export function useOrderSubmit() {
               throw error;
             }
 
-            // Verificar se a resposta indica falha parcial (pedido criado mas itens falharam)
-            // A edge function retorna HTTP 422 quando todos os itens falham (pedido auto-cancelado)
-            // ou HTTP 200 com warning quando há inserção parcial
             const isPartial = data?.error && (
               data.error.includes('falha ao inserir itens') ||
               data.error.includes('cancelled') ||
@@ -365,7 +370,6 @@ export function useOrderSubmit() {
               throw new PartialOrderError(partialId, partialNumber);
             }
 
-            // Verificar se houve erro explícito na resposta
             if (data?.error) {
               throw new Error(data.error);
             }
@@ -399,10 +403,52 @@ export function useOrderSubmit() {
           total_amount: payload.total_amount,
         });
 
-        return result;
+        // ── Impressão automática via fila centralizada ───────────────────────
+        // Usa o número REAL do backend — nunca o número pré-gerado localmente.
+        // Funciona de qualquer dispositivo (caixa, garçom, totem, mesa).
+        // O agente local no PC da cozinha faz polling e imprime automaticamente.
+        let printEnqueued = false;
+        const shouldPrint = options?.enqueuePrint !== false && !payload.is_training;
+        if (shouldPrint) {
+          const printDestino: OrderPrintDestino = {
+            tipo: payload.destination,
+            destination_name: payload.destination_name,
+            table_number: payload.table_number ?? null,
+          };
+          const printItems: OrderItemForPrint[] = payload.items.map((item) => ({
+            item_name: item.item_name,
+            quantity: item.quantity,
+            skip_kds: item.skip_kds,
+            station_id: item.station_id,
+            options: item.options?.map((o) => ({ option_name: o.option_name })),
+            observations: item.observations,
+            notes: item.notes,
+          }));
+          try {
+            await queueOrderForPrint(
+              payload.tenant_id,
+              result.id,
+              result.number,
+              payload.origin,
+              printItems,
+              printDestino,
+              options?.stationToImpressoraId,
+            );
+            printEnqueued = true;
+            logOrder('info', 'submitOrder', 'Ticket enfileirado para impressão', {
+              order_id: result.id,
+              order_number: result.number,
+            });
+          } catch (e) {
+            logOrder('warn', 'submitOrder', 'Falha ao enfileirar ticket de impressão (non-blocking)', {
+              order_id: result.id,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        }
+
+        return { ...result, printEnqueued };
       } catch (err) {
-        // PartialOrderError: pedido criado mas itens falharam (HTTP 207)
-        // Tenta reinserir os itens automaticamente antes de exibir alerta ao operador
         if (err instanceof PartialOrderError) {
           logOrder('warn', 'submitOrder', 'HTTP 207 detectado — tentando retry automático de itens', {
             order_id: err.orderId,
@@ -418,22 +464,53 @@ export function useOrderSubmit() {
           );
 
           if (retrySuccess) {
-            // Retry bem-sucedido — retorna como pedido normal (sem alerta)
             logOrder('info', 'submitOrder', 'Retry de itens bem-sucedido — pedido recuperado', {
               order_id: err.orderId,
               order_number: err.orderNumber,
             });
-            return { id: err.orderId, number: err.orderNumber };
+
+            // Tenta enfileirar impressão mesmo no retry parcial
+            let printEnqueued = false;
+            const shouldPrint = options?.enqueuePrint !== false && !payload.is_training;
+            if (shouldPrint) {
+              const printDestino: OrderPrintDestino = {
+                tipo: payload.destination,
+                destination_name: payload.destination_name,
+                table_number: payload.table_number ?? null,
+              };
+              const printItems: OrderItemForPrint[] = payload.items.map((item) => ({
+                item_name: item.item_name,
+                quantity: item.quantity,
+                skip_kds: item.skip_kds,
+                station_id: item.station_id,
+                options: item.options?.map((o) => ({ option_name: o.option_name })),
+                observations: item.observations,
+                notes: item.notes,
+              }));
+              try {
+                await queueOrderForPrint(
+                  payload.tenant_id,
+                  err.orderId,
+                  err.orderNumber,
+                  payload.origin,
+                  printItems,
+                  printDestino,
+                );
+                printEnqueued = true;
+              } catch {
+                /* non-blocking */
+              }
+            }
+
+            return { id: err.orderId, number: err.orderNumber, printEnqueued };
           }
 
-          // Retry falhou — propaga PartialOrderError para o chamador exibir alerta
           logOrder('error', 'submitOrder', 'Retry de itens falhou — propagando PartialOrderError', {
             order_id: err.orderId,
             order_number: err.orderNumber,
           });
           throw err;
         }
-        // ── Fallback offline: erro de rede após retries ───────────────────
         if (isNetworkError(err)) {
           logOrder('warn', 'submitOrder', 'Erro de rede após retries — salvando offline', {
             tenant_id: payload.tenant_id,

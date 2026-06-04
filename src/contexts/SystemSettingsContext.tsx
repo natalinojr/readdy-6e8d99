@@ -23,9 +23,33 @@ export interface SectorConfig {
   icone: string;
 }
 
+export interface PrinterConfigImpressora {
+  id: string;
+  nome: string;
+  ip: string;
+  descricao: string;
+  paperStyle?: '80mm' | '58mm';
+}
+
+export interface PrintTemplateConfig {
+  stationKey: string;
+  showLogo: boolean;
+  showOrderNumber: boolean;
+  showDateTime: boolean;
+  showStationName: boolean;
+  showItemObservations: boolean;
+  showItemOptions: boolean;
+  showCustomerName: boolean;
+  showTableInfo: boolean;
+  showWaiterName: boolean;
+  footerMessage: string;
+  headerMessage: string;
+}
+
 export interface PrinterConfig {
-  impressoras: Array<{ id: string; nome: string; ip: string; descricao: string }>;
+  impressoras: PrinterConfigImpressora[];
   mapaEstacoes: Record<string, string>;
+  printTemplates?: Record<string, PrintTemplateConfig>;
 }
 
 export interface PdvConfig {
@@ -52,7 +76,7 @@ export interface SystemSettings {
   gorjeta_percentage: number;
   auto_print_enabled: boolean;
   kitchen_close_time: string;
-  self_service_id_type: 'nome' | 'senha' | 'comanda' | 'nenhum';
+  self_service_id_type: 'nome' | 'senha' | 'comanda' | 'senha_balcao' | 'nenhum';
   self_service_payment_type: 'hora' | 'entrega' | 'ambos';
   welcome_message_new: string;
   welcome_message_returning: string;
@@ -83,6 +107,7 @@ function normalizeIdType(v: string | null | undefined): SystemSettings['self_ser
     nome: 'nome', name: 'nome',
     senha: 'senha', password: 'senha', pin: 'senha',
     comanda: 'comanda', ticket: 'comanda',
+    senha_balcao: 'senha_balcao',
     nenhum: 'nenhum', none: 'nenhum',
   };
   return map[v.toLowerCase()] ?? 'nome';
@@ -195,13 +220,14 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const carregar = useCallback(async () => {
-    if (!user?.tenantId) { setLoading(false); return; }
+    const tenantId = user?.tenantId ?? kioskSession?.tenantId;
+    if (!tenantId) { setLoading(false); return; }
     setLoading(true);
     try {
       const { data } = await supabase
         .from('system_settings')
         .select('*')
-        .eq('tenant_id', user.tenantId)
+        .eq('tenant_id', tenantId)
         .maybeSingle();
       if (data) setSettings(parseRow(data as Record<string, unknown>));
     } catch (e) {
@@ -209,21 +235,33 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [user?.tenantId]);
+  }, [user?.tenantId, kioskSession?.tenantId]);
 
   // Carrega na montagem
   useEffect(() => { carregar(); }, [carregar]);
 
+  // Recarrega quando a aba/janela volta ao foco (evita dados stale)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        carregar();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [carregar]);
+
   // Realtime — um único canal para todo o app
   useEffect(() => {
-    if (!user?.tenantId) return;
+    const tenantId = user?.tenantId ?? kioskSession?.tenantId;
+    if (!tenantId) return;
     const channel = supabase
-      .channel(`system_settings_global:${user.tenantId}`)
+      .channel(`system_settings_global:${tenantId}`)
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
         table: 'system_settings',
-        filter: `tenant_id=eq.${user.tenantId}`,
+        filter: `tenant_id=eq.${tenantId}`,
       }, (payload) => {
         // Atualiza diretamente do payload sem nova query
         if (payload.new) {
@@ -234,11 +272,11 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [user?.tenantId, carregar]);
+  }, [user?.tenantId, kioskSession?.tenantId, carregar]);
 
   const salvar = useCallback(
     async (updates: Partial<SystemSettings>): Promise<{ success: boolean; error: string | null }> => {
-      const tenantId = user?.tenantId;
+      const tenantId = user?.tenantId ?? kioskSession?.tenantId;
       if (!tenantId) return { success: false, error: 'Usuário sem tenant' };
       try {
         // Usa o token do kiosk quando disponível (modo totem por token)
@@ -250,13 +288,22 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
         });
         if (error) return { success: false, error: error.message || 'Erro ao salvar' };
         if (!data?.success) return { success: false, error: data?.error || 'Operação falhou' };
-        // Realtime vai atualizar automaticamente via canal acima
+        // Atualiza estado local imediatamente para evitar stale data enquanto
+        // o Realtime não chega. Faz merge parcial mantendo normalização.
+        setSettings((prev) =>
+          parseRow({
+            ...prev,
+            ...updates,
+            tenant_id: tenantId,
+            updated_at: new Date().toISOString(),
+          } as Record<string, unknown>),
+        );
         return { success: true, error: null };
       } catch (e) {
         return { success: false, error: String(e) };
       }
     },
-    [user?.tenantId, kioskSession?.accessToken],
+    [user?.tenantId, kioskSession?.tenantId, kioskSession?.accessToken],
   );
 
   return (
@@ -271,3 +318,8 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
 export function useSystemSettings() {
   return useContext(SystemSettingsContext);
 }
+
+export {
+  type PrintTemplateConfig,
+  type PrinterConfigImpressora,
+};

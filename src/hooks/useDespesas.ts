@@ -88,11 +88,12 @@ export function useDespesas(filters: DespesasFilters) {
 
     // Busca paralela de todas as fontes
     const [billsRes, purchasesRes, payrollRes, cashflowRes, anticipationRes] = await Promise.all([
-      // Contas a pagar (pagas, pendentes, vencidas)
+      // Contas a pagar (pagas, pendentes, vencidas) — excluir geradas automaticamente por compras
       supabase
         .from('fin_accounts_payable')
         .select('id, description, category, amount, paid_amount, due_date, paid_date, status, payment_method, supplier, notes, created_at')
         .eq('tenant_id', user.tenantId)
+        .or('reference_type.is.null,reference_type.neq.purchase')
         .gte('due_date', startDate)
         .lte('due_date', endDate),
 

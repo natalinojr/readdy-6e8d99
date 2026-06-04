@@ -1,52 +1,52 @@
-// ... existing code ...
 import { useState, useRef, useEffect } from 'react';
-import { X, Building2 } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { Insumo, UnidadeEstoque } from '@/contexts/EstoqueContext';
-import { useSuppliers } from '@/hooks/useSuppliers';
-
+import { useIngredientPriceHistory } from '@/hooks/useIngredientPriceHistory';
 
 const unidades: UnidadeEstoque[] = ['kg', 'g', 'l', 'ml', 'un'];
 const UNIDADES_COMPRA_SUGERIDAS = ['kg', 'g', 'l', 'ml', 'un', 'caixa', 'fardo', 'pacote', 'saco', 'lata', 'garrafa', 'pct', 'dz'];
 
-interface SupplierOption {
-  id: string;
-  name: string;
-}
-
 interface InsumoModalProps {
   insumo?: Insumo | null;
   categoriasDisponiveis: string[];
-  fornecedoresDisponiveis: string[];
-  fornecedoresComId: SupplierOption[];
   dreCategories?: never[];
   onClose: () => void;
   onSave: (data: Omit<Insumo, 'estoqueAtual' | 'ultimaEntrada' | 'fichaTecnica' | 'esgotado'> & { id?: string }) => void;
-  onOpenFornecedores: () => void;
 }
 
-export default function InsumoModal({ insumo, categoriasDisponiveis, onClose, onSave, onOpenFornecedores }: InsumoModalProps) {
+export default function InsumoModal({ insumo, categoriasDisponiveis, onClose, onSave }: InsumoModalProps) {
   // Busca fornecedores diretamente — garante dados frescos independente do estado do pai
-  const { suppliers: loadedSuppliers } = useSuppliers();
-  const fornecedoresComId: SupplierOption[] = loadedSuppliers.map((s) => ({ id: s.id, name: s.name }));
-  const fornecedoresDisponiveis = loadedSuppliers.map((s) => s.name);
   const isEdit = !!insumo;
   const [nome, setNome] = useState(insumo?.nome ?? '');
   const [unidade, setUnidade] = useState<UnidadeEstoque>(insumo?.unidade ?? 'kg');
   const [categoria, setCategoria] = useState(insumo?.categoria ?? '');
   const [usageType, setUsageType] = useState<'final' | 'production'>(insumo?.usageType ?? 'final');
   const [estoqueMinimo, setEstoqueMinimo] = useState(insumo?.estoqueMinimo?.toString() ?? '');
-  const [fornecedor, setFornecedor] = useState(insumo?.fornecedor ?? '');
-  const [supplierId, setSupplierId] = useState<string | null>(insumo?.supplierId ?? null);
   const [purchaseUnit, setPurchaseUnit] = useState(insumo?.purchaseUnit ?? '');
   const [purchaseFactor, setPurchaseFactor] = useState(insumo?.purchaseFactor?.toString() ?? '1');
   const [purchaseUnitOpen, setPurchaseUnitOpen] = useState(false);
   const purchaseUnitRef = useRef<HTMLDivElement>(null);
 
+  // === Preço Unitário com fonte ===
+  const [priceSource, setPriceSource] = useState<'manual' | 'auto'>(
+    insumo?.priceSource === 'manual' ? 'manual' : 'auto'
+  );
+  const [precoUnitario, setPrecoUnitario] = useState(
+    insumo?.precoUnitario?.toString() ?? '0'
+  );
+
+  // Busca preço automático (média 3m / última compra)
+  const { stats: priceStats } = useIngredientPriceHistory(insumo?.id ?? null);
+
+  // Valor automático a exibir
+  const autoPrice = priceStats?.avg3m ?? priceStats?.lastPrice ?? insumo?.precoUnitario ?? 0;
+  const autoSourceLabel = priceStats?.avg3m ? 'Média 3 meses' : 'Última compra';
+  const autoSourceIcon = priceStats?.avg3m ? 'ri-bar-chart-line' : 'ri-shopping-cart-line';
+  const autoSourceColor = priceStats?.avg3m ? 'text-sky-600' : 'text-green-600';
+  const autoSourceBg = priceStats?.avg3m ? 'bg-sky-50' : 'bg-green-50';
+
   // Fornecedor dropdown state
-  const [supOpen, setSupOpen] = useState(false);
-  const [supSearch, setSupSearch] = useState(insumo?.fornecedor ?? '');
-  const supRef = useRef<HTMLDivElement>(null);
-  const supInputRef = useRef<HTMLInputElement>(null);
+  // (removido — campo de fornecedor não é mais exibido na UI de estoque)
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -58,36 +58,8 @@ export default function InsumoModal({ insumo, categoriasDisponiveis, onClose, on
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Fecha dropdown de fornecedor ao clicar fora
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (supRef.current && !supRef.current.contains(e.target as Node)) {
-        setSupOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
   const usePurchaseUnit = purchaseUnit.trim() !== '' && purchaseUnit.trim() !== unidade;
   const podeSubmeter = nome.trim().length > 0;
-
-  const handleFornecedorSelect = (name: string) => {
-    setFornecedor(name);
-    setSupSearch(name);
-    const found = fornecedoresComId.find((f) => f.name === name);
-    setSupplierId(found?.id ?? null);
-    setSupOpen(false);
-  };
-
-  const handleFornecedorInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setSupSearch(val);
-    setFornecedor(val);
-    const found = fornecedoresComId.find((f) => f.name === val);
-    setSupplierId(found?.id ?? null);
-    setSupOpen(true);
-  };
 
   const handleSalvar = () => {
     if (!podeSubmeter) return;
@@ -97,10 +69,11 @@ export default function InsumoModal({ insumo, categoriasDisponiveis, onClose, on
       unidade,
       categoria: categoria || 'Sem categoria',
       usageType,
-      precoUnitario: insumo?.precoUnitario ?? 0,
+      precoUnitario: priceSource === 'manual'
+        ? parseFloat(precoUnitario.replace(',', '.')) || 0
+        : (insumo?.precoUnitario ?? 0),
+      priceSource: priceSource === 'manual' ? 'manual' : 'auto',
       estoqueMinimo: parseFloat(estoqueMinimo.replace(',', '.')) || 0,
-      fornecedor: fornecedor.trim(),
-      supplierId,
       purchaseUnit: usePurchaseUnit ? purchaseUnit.trim() : null,
       purchaseFactor: usePurchaseUnit ? (parseFloat(purchaseFactor) || 1) : 1,
       dreCategoryId: null,
@@ -114,10 +87,6 @@ export default function InsumoModal({ insumo, categoriasDisponiveis, onClose, on
 
   // suppress unused warning for purchaseUnitOpen/purchaseUnitRef (kept for future use)
   void purchaseUnitOpen;
-
-  const filteredSuppliers = fornecedoresComId.filter((s) =>
-    s.name.toLowerCase().includes(supSearch.toLowerCase())
-  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -275,6 +244,79 @@ export default function InsumoModal({ insumo, categoriasDisponiveis, onClose, on
             )}
           </div>
 
+          {/* === Preço Unitário com fonte === */}
+          <div className="border border-zinc-100 rounded-xl p-3 bg-zinc-50 space-y-2">
+            <p className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+              <i className="ri-coins-line text-amber-500" />
+              Preço Unitário
+            </p>
+            <p className="text-[10px] text-zinc-400 leading-relaxed">
+              Escolha se o preço é definido manualmente ou calculado automaticamente com base nas compras.
+            </p>
+
+            {/* Toggle Manual / Automático */}
+            <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1">
+              <button
+                type="button"
+                onClick={() => setPriceSource('manual')}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                  priceSource === 'manual'
+                    ? 'bg-white text-zinc-900 shadow-sm'
+                    : 'text-zinc-500 hover:text-zinc-700'
+                }`}
+              >
+                <i className="ri-edit-line mr-1" /> Manual
+              </button>
+              <button
+                type="button"
+                onClick={() => setPriceSource('auto')}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                  priceSource === 'auto'
+                    ? 'bg-white text-zinc-900 shadow-sm'
+                    : 'text-zinc-500 hover:text-zinc-700'
+                }`}
+              >
+                <i className="ri-refresh-line mr-1" /> Automático
+              </button>
+            </div>
+
+            {/* Campo de preço */}
+            <div>
+              <label className="block text-[10px] font-medium text-zinc-500 mb-1">
+                Valor ({unidade})
+              </label>
+              {priceSource === 'manual' ? (
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400">R$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={precoUnitario}
+                    onChange={(e) => setPrecoUnitario(e.target.value)}
+                    className="w-full text-sm border border-zinc-200 rounded-lg px-3 pl-8 py-2 text-zinc-800 focus:outline-none focus:border-amber-400 bg-white"
+                    placeholder="0,00"
+                  />
+                </div>
+              ) : (
+                <div className="w-full flex items-center justify-between px-3 py-2 bg-zinc-100 border border-zinc-200 rounded-lg text-sm text-zinc-600">
+                  <span className="font-semibold text-zinc-800">
+                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(autoPrice)}
+                  </span>
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${autoSourceBg} ${autoSourceColor}`}>
+                    <i className={autoSourceIcon} /> {autoSourceLabel}
+                  </span>
+                </div>
+              )}
+              <p className="text-[10px] text-zinc-400 mt-1">
+                {priceSource === 'manual'
+                  ? 'Você define o preço. Ele não muda até ser editado novamente.'
+                  : 'O preço é atualizado automaticamente a cada compra registrada no sistema.'}
+              </p>
+            </div>
+          </div>
+          {/* === /Preço Unitário === */}
+
           <div>
             <label className="block text-xs font-medium text-zinc-600 mb-1">Estoque Mínimo ({unidade})</label>
             <input
@@ -285,78 +327,6 @@ export default function InsumoModal({ insumo, categoriasDisponiveis, onClose, on
               className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 text-zinc-800 focus:outline-none focus:border-amber-400"
               placeholder="0"
             />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-medium text-zinc-600">Fornecedor</label>
-              <button
-                type="button"
-                onClick={() => { onClose(); onOpenFornecedores(); }}
-                className="flex items-center gap-1 text-[10px] text-amber-600 hover:text-amber-700 cursor-pointer font-semibold"
-              >
-                <Building2 size={10} />
-                Gerenciar
-              </button>
-            </div>
-            <div ref={supRef} className="relative">
-              <div className="relative">
-                <input
-                  ref={supInputRef}
-                  value={supSearch}
-                  onChange={handleFornecedorInputChange}
-                  onFocus={() => setSupOpen(true)}
-                  placeholder="Selecionar ou digitar fornecedor..."
-                  className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 pr-8 text-zinc-800 focus:outline-none focus:border-amber-400 bg-white"
-                />
-                <button
-                  type="button"
-                  onClick={() => { setSupOpen((o) => !o); supInputRef.current?.focus(); }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center text-zinc-400 hover:text-zinc-600 cursor-pointer"
-                >
-                  {supOpen ? <i className="ri-arrow-up-s-line text-sm" /> : <i className="ri-arrow-down-s-line text-sm" />}
-                </button>
-              </div>
-              {supOpen && (
-                <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
-                  {filteredSuppliers.length === 0 && fornecedoresDisponiveis.length === 0 ? (
-                    <div className="px-3 py-3 text-xs text-zinc-400 text-center">
-                      Nenhum fornecedor cadastrado
-                    </div>
-                  ) : (
-                    <>
-                      {filteredSuppliers.map((s) => (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => handleFornecedorSelect(s.name)}
-                          className={`w-full text-left px-3 py-2.5 text-sm hover:bg-amber-50 cursor-pointer transition-colors flex items-center gap-2 ${
-                            fornecedor === s.name ? 'bg-amber-50 text-amber-700 font-semibold' : 'text-zinc-700'
-                          }`}
-                        >
-                          <i className="ri-store-2-line text-zinc-400 text-xs flex-shrink-0" />
-                          {s.name}
-                        </button>
-                      ))}
-                      {supSearch && !fornecedoresComId.find((s) => s.name.toLowerCase() === supSearch.toLowerCase()) && (
-                        <button
-                          type="button"
-                          onClick={() => handleFornecedorSelect(supSearch)}
-                          className="w-full text-left px-3 py-2.5 text-xs text-amber-600 hover:bg-amber-50 cursor-pointer border-t border-zinc-100 flex items-center gap-2"
-                        >
-                          <i className="ri-add-line" /> Usar &quot;{supSearch}&quot; como novo fornecedor
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-            {supplierId && (
-              <p className="text-[10px] text-emerald-600 flex items-center gap-1 mt-1">
-                <i className="ri-link text-[10px]" /> Vinculado ao cadastro de fornecedor
-              </p>
-            )}
           </div>
         </div>
         <div className="flex gap-2 mt-5">

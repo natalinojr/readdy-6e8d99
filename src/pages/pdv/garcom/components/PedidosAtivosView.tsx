@@ -91,7 +91,7 @@ const ORIGEM_CFG: Record<string, { label: string; icon: string; color: string }>
 };
 
 type FiltroOrigem = 'todos' | 'caixa' | 'garcom' | 'mesa' | 'autoatendimento';
-type FiltroStatus = 'todos' | 'aberto' | 'novo' | 'preparo' | 'pronto';
+type FiltroStatus = 'todos' | 'aberto' | 'pago' | 'novo' | 'preparo' | 'pronto';
 
 // ── Informações de pagamento ─────────────────────────────────────────────────
 
@@ -129,7 +129,15 @@ function isCash(name: string | null): boolean {
 }
 
 function getCanalLabel(pag: import('@/types/kds').KDSPagamento, origemPedido: string): { label: string; icon: string; color: string } {
-  if (pag.cash_register_id) return CANAL_CFG.caixa;
+  // Prioridade 1: paid_by_pdv — salvo diretamente pelo PDV que registrou o pagamento
+  const paidBy = (pag.paid_by_pdv ?? '').toLowerCase();
+  if (paidBy === 'waiter')      return CANAL_CFG.garcom;
+  if (paidBy === 'cashier')     return CANAL_CFG.caixa;
+  if (paidBy === 'self_service') return CANAL_CFG.autoatendimento;
+  if (paidBy === 'delivery')     return CANAL_CFG.delivery;
+  if (paidBy === 'table')        return CANAL_CFG.mesa;
+
+  // Prioridade 2: origin_type
   const origem = (pag.origin_type ?? origemPedido ?? '').toLowerCase();
   return CANAL_CFG[origem] ?? CANAL_CFG.caixa;
 }
@@ -137,9 +145,10 @@ function getCanalLabel(pag: import('@/types/kds').KDSPagamento, origemPedido: st
 interface PagamentoInfoProps {
   pagamentos?: import('@/types/kds').KDSPagamento[];
   origem: string;
+  totalPedido?: number;
 }
 
-function PagamentoInfo({ pagamentos, origem }: PagamentoInfoProps) {
+function PagamentoInfo({ pagamentos, origem, totalPedido }: PagamentoInfoProps) {
   const ativos = (pagamentos ?? []).filter((p) => !p.is_refunded);
   if (ativos.length === 0) {
     return (
@@ -150,7 +159,12 @@ function PagamentoInfo({ pagamentos, origem }: PagamentoInfoProps) {
     );
   }
 
-  const totalPago = ativos.reduce((s, p) => s + p.amount, 0);
+  const totalCalculado = ativos.reduce((s, p) => s + p.amount, 0);
+  // Limita o total exibido ao valor do pedido para evitar exibição errada
+  // de pagamentos duplicados por erro de divisão de conta
+  const totalPago = totalPedido !== undefined && totalCalculado > totalPedido + 0.01
+    ? totalPedido
+    : totalCalculado;
   const isSplit = ativos.length > 1;
 
   return (
@@ -160,7 +174,7 @@ function PagamentoInfo({ pagamentos, origem }: PagamentoInfoProps) {
         const cash = isCash(pag.payment_method_name);
         return (
           <div key={pag.id ?? idx} className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-2.5 py-2 space-y-1.5">
-            {/* Linha topo: ícone método + nome + canal */}
+            {/* Linha topo: ícone método + nome + canal + hora */}
             <div className="flex items-center gap-1.5 flex-wrap">
               <div className="w-5 h-5 flex items-center justify-center">
                 <i className={`${getMethodIcon(pag.payment_method_name)} text-emerald-600 text-sm`} />
@@ -177,9 +191,18 @@ function PagamentoInfo({ pagamentos, origem }: PagamentoInfoProps) {
                   <i className="ri-user-line mr-0.5" />{pag.operator_name}
                 </span>
               )}
-              {isSplit && (
-                <span className="ml-auto text-xs font-bold text-emerald-700">{fmt(pag.amount)}</span>
-              )}
+              {/* Hora e valor (split) alinhados à direita */}
+              <div className="ml-auto flex items-center gap-1.5 flex-wrap">
+                {pag.created_at && (
+                  <span className="text-[9px] text-zinc-400 whitespace-nowrap">
+                    <i className="ri-time-line mr-0.5" />
+                    {new Date(pag.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+                {isSplit && (
+                  <span className="text-xs font-bold text-emerald-700">{fmt(pag.amount)}</span>
+                )}
+              </div>
             </div>
 
             {/* Dinheiro: valor entregue + troco */}
@@ -517,6 +540,14 @@ function PedidoCard({ pedido, onEntregarItem, onReloadPedidos }: PedidoCardProps
         numeroDisplay={pedido.numero}
         total={totalAmount}
         destinoDisplay={destinoLabel(pedido)}
+        destino={
+          pedido.destino === 'mesa' ? { tipo: 'mesa', mesaNumero: pedido.mesaNumero, nomeCliente: pedido.nomeCliente } :
+          pedido.destino === 'nome' ? { tipo: 'nome', nomeCliente: pedido.nomeCliente } :
+          pedido.destino === 'senha' ? { tipo: 'senha', senha: pedido.senha } :
+          pedido.destino === 'delivery' ? { tipo: 'delivery', nomeCliente: pedido.nomeCliente } :
+          null
+        }
+        paidByPdv="waiter"
         onClose={() => setShowPagamento(false)}
         onSuccess={(_orderId, _paymentMethodId) => {
           setPagoLocal(true);
@@ -545,6 +576,12 @@ function PedidoCard({ pedido, onEntregarItem, onReloadPedidos }: PedidoCardProps
             <span className="text-xs font-semibold text-zinc-600 truncate max-w-[120px]" title={destinoLabel(pedido)}>
               {destinoLabel(pedido)}
             </span>
+            {/* Senha do participante (mesa digital) */}
+            {pedido.participantToken && (
+              <span className="flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 whitespace-nowrap">
+                <i className="ri-key-2-line text-[9px]" />Senha {pedido.participantToken}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
             <CronometroBadge criadoEm={pedido.criadoEm} ativo={isAtivo && !isCancelado} />
@@ -669,7 +706,7 @@ function PedidoCard({ pedido, onEntregarItem, onReloadPedidos }: PedidoCardProps
                 </button>
               ) : isPago ? (
                 <>
-                  <PagamentoInfo pagamentos={pedido.pagamentos} origem={pedido.origem} />
+                  <PagamentoInfo pagamentos={pedido.pagamentos} origem={pedido.origem} totalPedido={pedido.totalAmount} />
                   {pedido.status !== 'entregue' && (
                     <button
                       onClick={handleEntregarPedidoKiosk}
@@ -699,7 +736,7 @@ function PedidoCard({ pedido, onEntregarItem, onReloadPedidos }: PedidoCardProps
             </div>
           )}
           {pedido.origem !== 'autoatendimento' && !isCancelado && isPago && (
-            <PagamentoInfo pagamentos={pedido.pagamentos} origem={pedido.origem} />
+            <PagamentoInfo pagamentos={pedido.pagamentos} origem={pedido.origem} totalPedido={pedido.totalAmount} />
           )}
           {isCancelado && (
             <div className="px-3 pt-2 mt-1 border-t border-zinc-100 flex items-center gap-2">
@@ -724,26 +761,44 @@ export default function PedidosAtivosView({ onIrParaMesa: _onIrParaMesa }: Props
   const [filtroOrigem, setFiltroOrigem] = useState<FiltroOrigem>('todos');
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>('todos');
 
+  const [busca, setBusca] = useState('');
+
   const pedidosAtivos = useMemo(
-    () => kdsPedidos
-      .filter((p) => !p.isCancelled && p.status !== 'entregue')
-      .filter((p) => filtroOrigem === 'todos' || p.origem === filtroOrigem)
-      .filter((p) => {
-        if (filtroStatus === 'todos') return true;
-        if (filtroStatus === 'aberto') return !(p.isPaid);
-        return p.status === filtroStatus;
-      })
-      .sort((a, b) => {
-        if (a.status === 'pronto' && b.status !== 'pronto') return -1;
-        if (b.status === 'pronto' && a.status !== 'pronto') return 1;
-        return a.criadoEm - b.criadoEm;
-      }),
-    [kdsPedidos, filtroOrigem, filtroStatus],
+    () => {
+      let result = kdsPedidos
+        .filter((p) => !p.isCancelled)
+        .filter((p) => filtroOrigem === 'todos' || p.origem === filtroOrigem)
+        .filter((p) => {
+          if (filtroStatus === 'todos') return !p.isPaid || p.status !== 'entregue';
+          if (filtroStatus === 'aberto') return !p.isPaid;
+          if (filtroStatus === 'pago') return p.isPaid;
+          return p.status === filtroStatus;
+        })
+        .sort((a, b) => {
+          if (a.status === 'pronto' && b.status !== 'pronto') return -1;
+          if (b.status === 'pronto' && a.status !== 'pronto') return 1;
+          return a.criadoEm - b.criadoEm;
+        });
+      // Busca por nº, cliente, senha do participante ou mesa
+      const q = busca.trim().toLowerCase();
+      if (q) {
+        result = result.filter((p) => {
+          if (String(p.numero).includes(q)) return true;
+          if (p.nomeCliente?.toLowerCase().includes(q)) return true;
+          if (p.mesaNumero != null && String(p.mesaNumero).includes(q)) return true;
+          if (p.participantToken?.toLowerCase().includes(q)) return true;
+          if (p.participantName?.toLowerCase().includes(q)) return true;
+          return false;
+        });
+      }
+      return result;
+    },
+    [kdsPedidos, filtroOrigem, filtroStatus, busca],
   );
 
   const pedidosEntregues = useMemo(
     () => kdsPedidos
-      .filter((p) => !p.isCancelled && p.status === 'entregue')
+      .filter((p) => !p.isCancelled && p.status === 'entregue' && p.isPaid)
       .filter((p) => filtroOrigem === 'todos' || p.origem === filtroOrigem)
       .sort((a, b) => b.criadoEm - a.criadoEm)
       .slice(0, 5),
@@ -764,7 +819,7 @@ export default function PedidosAtivosView({ onIrParaMesa: _onIrParaMesa }: Props
 
   const countPorOrigem = useMemo(() => {
     const counts: Record<string, number> = {};
-    kdsPedidos.filter((p) => p.status !== 'entregue').forEach((p) => {
+    kdsPedidos.filter((p) => !p.isCancelled && (!p.isPaid || p.status !== 'entregue')).forEach((p) => {
       counts[p.origem] = (counts[p.origem] ?? 0) + 1;
     });
     return counts;
@@ -829,17 +884,18 @@ export default function PedidosAtivosView({ onIrParaMesa: _onIrParaMesa }: Props
     { key: 'autoatendimento', label: 'Kiosk',   icon: 'ri-tablet-line'       },
   ];
 
-  const countEmAberto = kdsPedidos.filter((p) => !p.isCancelled && p.status !== 'entregue' && !p.isPaid).length;
+  const countEmAberto = kdsPedidos.filter((p) => !p.isCancelled && !p.isPaid).length;
 
   const statusFiltros: { key: FiltroStatus; label: string; count?: number; activeCls?: string }[] = [
-    { key: 'todos',   label: 'Todos',     count: kdsPedidos.filter((p) => !p.isCancelled && p.status !== 'entregue').length },
+    { key: 'todos',   label: 'Todos',     count: kdsPedidos.filter((p) => !p.isCancelled && (!p.isPaid || p.status !== 'entregue')).length },
     { key: 'aberto',  label: 'Em Aberto', count: countEmAberto, activeCls: 'bg-orange-500 text-white' },
+    { key: 'pago',    label: 'Pago',      count: kdsPedidos.filter((p) => !p.isCancelled && p.isPaid).length, activeCls: 'bg-emerald-600 text-white' },
     { key: 'novo',    label: 'Novo',      count: kdsPedidos.filter((p) => !p.isCancelled && p.status === 'novo').length },
     { key: 'preparo', label: 'Preparo',   count: kdsPedidos.filter((p) => !p.isCancelled && p.status === 'preparo').length },
     { key: 'pronto',  label: 'Prontos',   count: kdsPedidos.filter((p) => !p.isCancelled && p.status === 'pronto').length },
   ];
 
-  if (kdsPedidos.filter((p) => p.status !== 'entregue').length === 0 && pedidosEntregues.length === 0) {
+  if (kdsPedidos.filter((p) => !p.isCancelled && (!p.isPaid || p.status !== 'entregue')).length === 0 && pedidosEntregues.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full py-16 text-center px-6">
         <div className="w-16 h-16 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
@@ -895,7 +951,7 @@ export default function PedidosAtivosView({ onIrParaMesa: _onIrParaMesa }: Props
         {/* Origem */}
         {origens.map(({ key, label, icon }) => {
           const count = key === 'todos'
-            ? kdsPedidos.filter((p) => p.status !== 'entregue').length
+            ? kdsPedidos.filter((p) => !p.isCancelled && (!p.isPaid || p.status !== 'entregue')).length
             : (countPorOrigem[key] ?? 0);
           if (key !== 'todos' && count === 0) return null;
           const isActive = filtroOrigem === key;
@@ -924,6 +980,30 @@ export default function PedidosAtivosView({ onIrParaMesa: _onIrParaMesa }: Props
         <div className="ml-auto flex items-center gap-1 flex-shrink-0">
           <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
           <span className="text-[10px] font-bold text-zinc-500">{totalAtivos}</span>
+        </div>
+      </div>
+
+      {/* Busca */}
+      <div className="px-2 py-2 border-b border-zinc-200 bg-white flex-shrink-0">
+        <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl">
+          <div className="w-4 h-4 flex items-center justify-center text-zinc-400">
+            <i className="ri-search-line text-sm" />
+          </div>
+          <input
+            type="text"
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar por nº, cliente, mesa ou senha..."
+            className="flex-1 min-w-0 bg-transparent text-xs font-medium text-zinc-700 placeholder-zinc-400 outline-none"
+          />
+          {busca && (
+            <button
+              onClick={() => setBusca('')}
+              className="w-4 h-4 flex items-center justify-center text-zinc-400 hover:text-zinc-600 cursor-pointer"
+            >
+              <i className="ri-close-line text-sm" />
+            </button>
+          )}
         </div>
       </div>
 

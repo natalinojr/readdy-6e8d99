@@ -308,18 +308,19 @@ export default function KDSSetupScreen({ onConfirm }: Props) {
         </div>
 
         {/* Aviso + botão entrar */}
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <p className="text-zinc-400 text-xs">
-            <i className="ri-information-line mr-1" />
-            Você pode adicionar ou remover operadores com o KDS aberto
-          </p>
-          <button
-            onClick={handleEntrar}
-            className="flex items-center gap-2 px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white font-black rounded-xl cursor-pointer transition-colors whitespace-nowrap"
-          >
-            <i className="ri-play-circle-line text-base" />
-            Entrar no KDS
-          </button>
+        <div className="mt-4 space-y-3">          <div className="flex items-center justify-between gap-3">
+            <p className="text-zinc-400 text-xs">
+              <i className="ri-information-line mr-1" />
+              Você pode adicionar ou remover operadores com o KDS aberto
+            </p>
+            <button
+              onClick={handleEntrar}
+              className="flex items-center gap-2 px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white font-black rounded-xl cursor-pointer transition-colors whitespace-nowrap"
+            >
+              <i className="ri-play-circle-line text-base" />
+              Entrar no KDS
+            </button>
+          </div>
         </div>
       </div>
     </div>

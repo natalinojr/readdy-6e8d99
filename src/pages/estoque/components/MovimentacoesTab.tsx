@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Plus, ArrowUpCircle, ArrowDownCircle, AlertTriangle, X, ChevronDown, ShoppingCart, Calendar } from 'lucide-react';
 import type { Movimentacao } from '@/types/estoque';
 import { useEstoque } from '../../../contexts/EstoqueContext';
@@ -16,6 +16,7 @@ const tipoConfig: Record<Movimentacao['tipo'], { label: string; cls: string; ico
   perda: { label: 'Perda', cls: 'text-red-600 bg-red-50', icon: <AlertTriangle size={13} /> },
   entrada_producao: { label: 'Entrada (produção)', cls: 'text-amber-600 bg-amber-50', icon: <ArrowUpCircle size={13} /> },
   saida_producao: { label: 'Saída (produção)', cls: 'text-amber-700 bg-amber-100', icon: <ArrowDownCircle size={13} /> },
+  ajuste_inventario: { label: 'Ajuste Inventário', cls: 'text-violet-600 bg-violet-50', icon: <i className="ri-equalizer-line text-[13px]" /> },
 };
 
 function getMotivoDisplay(mv: Movimentacao) {
@@ -194,7 +195,7 @@ function NovaMovimentacaoModal({ onClose, onOpenCompra }: NovaMovimentacaoModalP
 }
 
 export default function MovimentacoesTab() {
-  const { movimentacoes } = useEstoque();
+  const { movimentacoes, reloadMovimentacoes } = useEstoque();
   const [filtroTipo, setFiltroTipo] = useState<'Todos' | Movimentacao['tipo']>('Todos');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -206,6 +207,14 @@ export default function MovimentacoesTab() {
 
   const { insumos } = useEstoque();
   const [buscaInsumo, setBuscaInsumo] = useState('');
+
+  // Recarrega movimentacoes do servidor quando o filtro de periodo mudar
+  useEffect(() => {
+    if (!dateFrom && !dateTo) return;
+    const from = dateFrom ? new Date(dateFrom + 'T00:00:00') : undefined;
+    const to = dateTo ? new Date(dateTo + 'T23:59:59') : undefined;
+    reloadMovimentacoes(from, to);
+  }, [dateFrom, dateTo, reloadMovimentacoes]);
 
   const handleOpenCompra = (insumoId?: string) => {
     if (insumoId) {
@@ -276,7 +285,7 @@ export default function MovimentacoesTab() {
       {/* Toolbar */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
-          {(['Todos', 'entrada', 'saida_venda', 'saida_manual', 'perda', 'entrada_producao', 'saida_producao'] as const).map((t) => (
+          {(['Todos', 'entrada', 'saida_venda', 'saida_manual', 'perda', 'entrada_producao', 'saida_producao', 'ajuste_inventario'] as const).map((t) => (
             <button key={t} onClick={() => setFiltroTipo(t)}
               className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${filtroTipo === t ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
               {t === 'Todos' ? 'Todos' : tipoConfig[t].label}

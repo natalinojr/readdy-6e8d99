@@ -24,6 +24,41 @@ function corsHeaders() {
   };
 }
 
+// ── CP860 conversion for Portuguese accents ──────────────────────────────────
+
+const ESC = "\x1B";
+const INIT = ESC + "@";
+const CP860 = ESC + "\x74\x03";
+
+function utf8ToCp860(str: string): string {
+  const map: Record<string, string> = {
+    "á": "\xA0", "Á": "\x86", "à": "\x85", "À": "\x91",
+    "â": "\x83", "Â": "\x8F", "ã": "\x84", "Ã": "\x8E",
+    "ç": "\x87", "Ç": "\x80",
+    "é": "\x82", "É": "\x90", "è": "\x8A", "È": "\x92",
+    "ê": "\x88", "Ê": "\x89",
+    "í": "\xA1", "Í": "\x8B", "ì": "\x8D", "Ì": "\x98",
+    "ó": "\xA2", "Ó": "\x9F", "ò": "\x95", "Ò": "\xA9",
+    "ô": "\x93", "Ô": "\x8C", "õ": "\x94", "Õ": "\x99",
+    "ú": "\xA3", "Ú": "\x96", "ù": "\x97", "Ù": "\x9D",
+    "ü": "\x81", "Ü": "\x9A",
+    "ñ": "\xA4", "Ñ": "\xA5",
+    "ª": "\xA6", "º": "\xA7",
+    "¿": "\xA8", "¡": "\xAD",
+    "°": "\xF8",
+  };
+  let out = "";
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    out += map[ch] !== undefined ? map[ch] : ch;
+  }
+  return out;
+}
+
+function isEscPos(data: string): boolean {
+  return data.indexOf("\x1B") !== -1;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders() });
@@ -59,9 +94,22 @@ serve(async (req) => {
         buffer[i] = binary.charCodeAt(i);
       }
     } else {
-      // HTML ou texto — converte para bytes UTF-8
-      const encoder = new TextEncoder();
-      buffer = encoder.encode(data);
+      // HTML ou texto — converte para bytes CP860 para acentuacao correta
+      if (isEscPos(data)) {
+        // Ja contem comandos ESC/POS — envia como latin1
+        const converted = utf8ToCp860(data);
+        buffer = new Uint8Array(converted.length);
+        for (let i = 0; i < converted.length; i++) {
+          buffer[i] = converted.charCodeAt(i) & 0xFF;
+        }
+      } else {
+        // Texto/UTF-8 — converte para CP860 e adiciona comando de code page
+        const finalData = INIT + CP860 + utf8ToCp860(data);
+        buffer = new Uint8Array(finalData.length);
+        for (let i = 0; i < finalData.length; i++) {
+          buffer[i] = finalData.charCodeAt(i) & 0xFF;
+        }
+      }
     }
 
     // Conexao TCP com timeout

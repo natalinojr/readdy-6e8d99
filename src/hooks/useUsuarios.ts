@@ -31,6 +31,7 @@ export interface UsuarioReal {
   ativo: boolean;
   modoTreino: boolean;
   ultimoAcesso: string | null;
+  diasDesdeAcesso: number | null;
   kioskOnline: boolean;
   criadoEm: string;
 }
@@ -71,6 +72,7 @@ export function useUsuarios() {
         ativo: u.ativo as boolean,
         modoTreino: (u.modoTreino as boolean) ?? false,
         ultimoAcesso: u.ultimoAcesso as string | null,
+        diasDesdeAcesso: (u.diasDesdeAcesso as number | null) ?? null,
         kioskOnline: (u.kioskOnline as boolean) ?? false,
         criadoEm: u.criadoEm as string,
       }));

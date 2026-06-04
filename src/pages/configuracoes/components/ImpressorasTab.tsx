@@ -9,7 +9,7 @@ import {
 import { printHTML } from '@/lib/printUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 
 interface KitchenStation {
   id: string;
@@ -23,6 +23,26 @@ interface KitchenStation {
 const CAIXA_PDV_KEY = 'caixa-pdv';
 const CAIXA_PDV_NAME = 'Caixa PDV';
 const CAIXA_PDV_COLOR = '#52525b';
+
+const CLIENTE_KEY = 'cliente';
+const CLIENTE_NAME = 'Cliente (Senha / Comprovante)';
+const CLIENTE_COLOR = '#0ea5e9';
+
+const PEDIDOS_KEY = 'pedidos';
+const PEDIDOS_NAME = 'Pedidos (Resumo / Relatório)';
+const PEDIDOS_COLOR = '#8b5cf6';
+
+const GESTOR_PEDIDOS_KEY = 'gestor-pedidos';
+const GESTOR_PEDIDOS_NAME = 'Gestor de Pedidos (Comanda)';
+const GESTOR_PEDIDOS_COLOR = '#f59e0b';
+
+const RELATORIOS_KEY = 'relatorios';
+const RELATORIOS_NAME = 'Relatórios (DRE / Folha / Caixa)';
+const RELATORIOS_COLOR = '#ec4899';
+
+const QR_CODES_KEY = 'qrcodes';
+const QR_CODES_NAME = 'QR Codes das Mesas';
+const QR_CODES_COLOR = '#10b981';
 
 function getStationIcon(name: string): string {
   const lower = name.toLowerCase();
@@ -312,6 +332,7 @@ export default function ImpressorasTab() {
 
   const [stations, setStations] = useState<KitchenStation[]>([]);
   const [stationsLoading, setStationsLoading] = useState(true);
+  const [stationsError, setStationsError] = useState<string | null>(null);
 
   const [showModal, setShowModal] = useState(false);
   const [editando, setEditando] = useState<Impressora | null>(null);
@@ -323,19 +344,29 @@ export default function ImpressorasTab() {
     {},
   );
 
-  // Busca estações reais do banco
+  // Busca estações reais do banco via Edge Function (bypassa RLS problemático)
   const fetchStations = async () => {
     if (!user?.tenantId) { setStationsLoading(false); return; }
     setStationsLoading(true);
-    const { data, error } = await supabase
-      .from('kitchen_stations')
-      .select('id,name,color,sla_minutes,sort_order,is_active')
-      .eq('tenant_id', user!.tenantId)
-      .eq('is_active', true)
-      .order('sort_order', { ascending: true })
-      .order('name', { ascending: true });
-    if (!error && data) {
-      setStations(data as KitchenStation[]);
+    setStationsError(null);
+    try {
+      const { data, error } = await invokeWithAuth('config-write', {
+        body: { action: 'get_kitchen_stations', active_tenant_id: user!.tenantId },
+      });
+      if (error) {
+        console.error('[ImpressorasTab] Edge Function error:', error);
+        setStationsError('Erro ao carregar estações. Tente recarregar.');
+        setStations([]);
+      } else if (data?.success && Array.isArray(data.data)) {
+        setStations(data.data as KitchenStation[]);
+      } else {
+        console.warn('[ImpressorasTab] Resposta inesperada:', data);
+        setStations([]);
+      }
+    } catch (e) {
+      console.error('[ImpressorasTab] Exceção:', e);
+      setStationsError('Erro de conexão ao carregar estações.');
+      setStations([]);
     }
     setStationsLoading(false);
   };
@@ -348,11 +379,21 @@ export default function ImpressorasTab() {
   const allMappingKeys = useMemo(() => {
     const keys = stations.map((s) => s.id);
     keys.push(CAIXA_PDV_KEY);
+    keys.push(CLIENTE_KEY);
+    keys.push(PEDIDOS_KEY);
+    keys.push(GESTOR_PEDIDOS_KEY);
+    keys.push(RELATORIOS_KEY);
+    keys.push(QR_CODES_KEY);
     return keys;
   }, [stations]);
 
   const getMappingLabel = (key: string): string => {
     if (key === CAIXA_PDV_KEY) return CAIXA_PDV_NAME;
+    if (key === CLIENTE_KEY) return CLIENTE_NAME;
+    if (key === PEDIDOS_KEY) return PEDIDOS_NAME;
+    if (key === GESTOR_PEDIDOS_KEY) return GESTOR_PEDIDOS_NAME;
+    if (key === RELATORIOS_KEY) return RELATORIOS_NAME;
+    if (key === QR_CODES_KEY) return QR_CODES_NAME;
     const st = stations.find((s) => s.id === key);
     return st?.name ?? key;
   };
@@ -435,6 +476,11 @@ export default function ImpressorasTab() {
 
   const outrosEntries = [
     { key: CAIXA_PDV_KEY, label: CAIXA_PDV_NAME, icon: 'ri-bank-card-line', color: CAIXA_PDV_COLOR },
+    { key: CLIENTE_KEY, label: CLIENTE_NAME, icon: 'ri-user-smile-line', color: CLIENTE_COLOR },
+    { key: PEDIDOS_KEY, label: PEDIDOS_NAME, icon: 'ri-file-list-3-line', color: PEDIDOS_COLOR },
+    { key: GESTOR_PEDIDOS_KEY, label: GESTOR_PEDIDOS_NAME, icon: 'ri-restaurant-line', color: GESTOR_PEDIDOS_COLOR },
+    { key: RELATORIOS_KEY, label: RELATORIOS_NAME, icon: 'ri-bar-chart-2-line', color: RELATORIOS_COLOR },
+    { key: QR_CODES_KEY, label: QR_CODES_NAME, icon: 'ri-qr-code-line', color: QR_CODES_COLOR },
   ];
 
   return (
@@ -702,16 +748,33 @@ export default function ImpressorasTab() {
 
             {kitchenStationsEntries.length === 0 && !stationsLoading && (
               <div className="px-4 py-4 text-center">
-                <p className="text-xs text-zinc-400 italic mb-2">
-                  Nenhuma estação de cozinha cadastrada ainda.
-                </p>
-                <button
-                  onClick={fetchStations}
-                  className="text-xs font-bold text-amber-600 hover:text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg cursor-pointer transition-colors inline-flex items-center gap-1"
-                >
-                  <i className="ri-refresh-line" />
-                  Recarregar estações
-                </button>
+                {stationsError ? (
+                  <>
+                    <p className="text-xs text-red-500 font-semibold mb-2">
+                      {stationsError}
+                    </p>
+                    <button
+                      onClick={fetchStations}
+                      className="text-xs font-bold text-amber-600 hover:text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg cursor-pointer transition-colors inline-flex items-center gap-1"
+                    >
+                      <i className="ri-refresh-line" />
+                      Tentar novamente
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-zinc-400 italic mb-2">
+                      Nenhuma estação de cozinha cadastrada ainda.
+                    </p>
+                    <button
+                      onClick={fetchStations}
+                      className="text-xs font-bold text-amber-600 hover:text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg cursor-pointer transition-colors inline-flex items-center gap-1"
+                    >
+                      <i className="ri-refresh-line" />
+                      Recarregar estações
+                    </button>
+                  </>
+                )}
               </div>
             )}
 

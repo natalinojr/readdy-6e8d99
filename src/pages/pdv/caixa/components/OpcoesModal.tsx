@@ -5,6 +5,7 @@ import { useCardapio } from '@/contexts/CardapioContext';
 import { useObsParaItem } from '@/hooks/useObsParaItem';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useProducao } from '@/contexts/ProducaoContext';
+import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
 
 interface Props {
   item: Item;
@@ -27,11 +28,13 @@ function GrupoOpcaoCard({
   selecionadas,
   onChange,
   nomesVinculos,
+  opcoesIndisponiveis,
 }: {
   grupo: GrupoOpcoes;
   selecionadas: OpcaoSelecionada[];
   onChange: (opcao: OpcaoSelecionada, checked: boolean) => void;
   nomesVinculos?: Record<string, string>;
+  opcoesIndisponiveis?: Set<string>;
 }) {
   const isRadio = grupo.obrigatorio && grupo.maxSelecao === 1;
 
@@ -56,6 +59,7 @@ function GrupoOpcaoCard({
         {grupo.opcoes.filter((o) => o.ativo).map((opcao) => {
           const isSel = selecionadas.some((s) => s.opcaoId === opcao.id);
           const displayName = opcao.nome?.trim() || nomesVinculos?.[opcao.id] || '—';
+          const esgotada = opcoesIndisponiveis?.has(opcao.id) ?? false;
           const sel: OpcaoSelecionada = {
             grupoId: grupo.id,
             grupoNome: grupo.nome,
@@ -65,16 +69,27 @@ function GrupoOpcaoCard({
           };
 
           return (
-            <label key={opcao.id} className="flex items-center gap-3 cursor-pointer group">
+            <label
+              key={opcao.id}
+              className={`flex items-center gap-3 group ${esgotada ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+            >
               <input
                 type={isRadio ? 'radio' : 'checkbox'}
                 name={isRadio ? grupo.id : undefined}
                 checked={isSel}
-                onChange={(e) => onChange(sel, e.target.checked)}
-                className="accent-amber-500 w-4 h-4 cursor-pointer"
+                disabled={esgotada}
+                onChange={(e) => !esgotada && onChange(sel, e.target.checked)}
+                className="accent-amber-500 w-4 h-4 cursor-pointer disabled:cursor-not-allowed"
               />
-              <span className="flex-1 text-sm text-zinc-800 group-hover:text-zinc-900">{displayName}</span>
-              {opcao.precoAdicional > 0 && (
+              <span className={`flex-1 text-sm ${esgotada ? 'text-zinc-400 line-through' : 'text-zinc-800 group-hover:text-zinc-900'}`}>
+                {displayName}
+              </span>
+              {esgotada && (
+                <span className="text-[10px] font-bold text-red-500 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                  Esgotado
+                </span>
+              )}
+              {!esgotada && opcao.precoAdicional > 0 && (
                 <span className="text-xs text-amber-600 font-medium">+{formatPrice(opcao.precoAdicional)}</span>
               )}
             </label>
@@ -99,6 +114,7 @@ export default function OpcoesModal({
   const { categorias } = useCardapio();
   const { insumos } = useEstoque();
   const { recipes } = useProducao();
+  const { opcoesIndisponiveisIds } = useItensSemEstoque();
   // Estado para nomes de vínculos (insumo / produção) quando opcao.nome está vazio
   const [nomesVinculos, setNomesVinculos] = useState<Record<string, string>>();
   // Obs mescladas: específicas do item + globais ativas filtradas por item/categoria
@@ -261,6 +277,7 @@ export default function OpcoesModal({
               selecionadas={selecionadas}
               onChange={handleOpcaoChange}
               nomesVinculos={nomesVinculos}
+              opcoesIndisponiveis={opcoesIndisponiveisIds}
             />
           ))}
 

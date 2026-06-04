@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAuth } from '../../../contexts/AuthContext';
 import { useEstoque, type InventarioSession } from '../../../contexts/EstoqueContext';
 import ContagemInventario from './ContagemInventario';
 
@@ -116,6 +117,7 @@ function DetalheSession({ session, onVoltar }: { session: InventarioSession; onV
 
 export default function InventarioTab() {
   const { inventarioSessions, insumos } = useEstoque();
+  const { user } = useAuth();
   const [view, setView] = useState<View>('historico');
   const [sessionDetalhe, setSessionDetalhe] = useState<InventarioSession | null>(null);
 
@@ -125,7 +127,7 @@ export default function InventarioTab() {
   if (view === 'contagem') {
     return (
       <ContagemInventario
-        operador="Ana Lima"
+        operador={user?.nome ?? 'Operador'}
         onConcluido={() => setView('historico')}
         onCancelar={() => setView('historico')}
       />

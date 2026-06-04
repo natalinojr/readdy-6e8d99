@@ -263,6 +263,7 @@ export interface FinanceiroDashboard {
   crescimentoMes: number;
   totalAPagar: number;
   totalAReceber: number;
+  totalComprometido: number;
   contasVencendo: BillPayable[];
   receitaDiaria: { date: string; value: number }[];
   receitaPorPagamento: { name: string; value: number; color: string }[];

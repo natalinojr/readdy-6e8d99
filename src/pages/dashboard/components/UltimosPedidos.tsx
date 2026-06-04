@@ -54,7 +54,7 @@ const DetalheModal = memo(function DetalheModal({ pedido, onClose }: { pedido: D
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-white rounded-2xl p-5 w-[420px] max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl p-5 w-full max-w-[420px] max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
 
         {/* Header */}
         <div className="flex items-center justify-between mb-4 flex-shrink-0">

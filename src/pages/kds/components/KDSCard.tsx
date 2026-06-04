@@ -107,6 +107,7 @@ export default function KDSCard({
     return true;
   });
 
+  const isEditing = pedido.isEditing ?? false;
   const itensProntos = itensVisiveis.filter((i) => { const s = deriveItemStatus(i); return s === 'pronto' || s === 'entregue'; }).length;
   const todosProntos = itensVisiveis.every((i) => { const s = deriveItemStatus(i); return s === 'pronto' || s === 'entregue'; });
   const todosComOperador = itensVisiveis.every((i) => {
@@ -116,7 +117,14 @@ export default function KDSCard({
   const pedidoPodePronto = todosProntos && todosComOperador;
   const totalObs = itensVisiveis.filter((i) => i.observacoes.length > 0 || i.observacaoLivre).length;
   const elapsedTotal = getElapsedSeconds(pedido.criadoEm);
-  const slaTotal = itensVisiveis.reduce((s, i) => s + i.slaMinutos, 0);
+  // BUG FIX: quando filtrado por estação e item tem partes, somar apenas o SLA das partes visíveis
+  const slaTotal = itensVisiveis.reduce((s, i) => {
+    if (estacaoFiltro !== 'Todas' && i.partes && i.partes.length > 0) {
+      const partesVisiveis = i.partes.filter((p) => p.estacao === estacaoFiltro);
+      return s + partesVisiveis.reduce((ps, p) => ps + p.slaMinutos, 0);
+    }
+    return s + i.slaMinutos;
+  }, 0);
   const slaLevel = getSLALevel(elapsedTotal, slaTotal);
 
   const itensSemOperadorNovo = itensVisiveis.filter((i) => {
@@ -208,6 +216,29 @@ export default function KDSCard({
             </div>
             <p className="text-xs font-bold text-orange-700 flex-1">
               Cliente editando — aguardando confirmação da Mesa {pedido.mesaNumero}
+            </p>
+            <span className="text-[10px] font-bold text-orange-500 bg-orange-100 border border-orange-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+              BLOQUEADO
+            </span>
+          </div>
+        )}
+
+        {/* Saving banner — pedido sendo salvo após edição no PDV */}
+        {pedido.isSaving && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-50 border-b border-sky-200">
+            <div className="w-3 h-3 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+            <span className="text-[10px] font-semibold text-sky-600">Atualizando pedido...</span>
+          </div>
+        )}
+
+        {/* Editing banner — pedido bloqueado para edição no PDV */}
+        {isEditing && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-orange-50 border-b border-orange-200">
+            <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+              <i className="ri-edit-2-line text-orange-500 text-sm animate-pulse" />
+            </div>
+            <p className="text-xs font-bold text-orange-700 flex-1">
+              {pedido.editingByName ? `${pedido.editingByName} está editando` : 'Pedido em edição'} — aguardando confirmação
             </p>
             <span className="text-[10px] font-bold text-orange-500 bg-orange-100 border border-orange-200 px-2 py-0.5 rounded-full whitespace-nowrap">
               BLOQUEADO

@@ -23,6 +23,7 @@ export default function CombosTab() {
   const { combos, itens, salvarCombo, excluirCombo, saving } = useCardapio();
   const { user } = useAuth();
   const [modal, setModal] = useState<ModalState>(initialModal);
+  const [vistaLista, setVistaLista] = useState(true);
   const [uploadingImg, setUploadingImg] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -113,82 +114,227 @@ export default function CombosTab() {
           <h2 className="text-base font-semibold text-gray-800">Combos</h2>
           <p className="text-xs text-gray-500 mt-0.5">{combos.length} combos cadastrados</p>
         </div>
-        <button
-          onClick={openCreate}
-          className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer whitespace-nowrap self-start sm:self-auto"
-        >
-          <i className="ri-add-line text-base" />
-          Novo Combo
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Vista toggle */}
+          <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setVistaLista(false)}
+              className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors cursor-pointer ${!vistaLista ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+              title="Vista em grade"
+            >
+              <i className="ri-layout-grid-line text-sm" />
+            </button>
+            <button
+              onClick={() => setVistaLista(true)}
+              className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors cursor-pointer ${vistaLista ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+              title="Vista em lista"
+            >
+              <i className="ri-list-check text-sm" />
+            </button>
+          </div>
+          <button
+            onClick={openCreate}
+            className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer whitespace-nowrap self-start sm:self-auto"
+          >
+            <i className="ri-add-line text-base" />
+            Novo Combo
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-        {combos.length === 0 && (
-          <div className="col-span-full text-center py-16">
-            <div className="w-12 h-12 flex items-center justify-center bg-gray-100 rounded-full mx-auto mb-3">
-              <i className="ri-gift-2-line text-gray-400 text-xl" />
+      {/* Vista em Grade */}
+      {!vistaLista && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+          {combos.length === 0 && (
+            <div className="col-span-full text-center py-16">
+              <div className="w-12 h-12 flex items-center justify-center bg-gray-100 rounded-full mx-auto mb-3">
+                <i className="ri-gift-2-line text-gray-400 text-xl" />
+              </div>
+              <p className="text-sm text-gray-500">Nenhum combo cadastrado</p>
             </div>
-            <p className="text-sm text-gray-500">Nenhum combo cadastrado</p>
-          </div>
-        )}
-        {combos.map(combo => (
-          <div key={combo.id} className={`bg-white rounded-xl border border-gray-100 overflow-hidden transition-all hover:border-gray-200 ${!combo.ativo ? 'opacity-60' : ''}`}>
-            {/* Imagem do combo */}
-            {combo.fotoUrl ? (
-              <div className="h-32 w-full overflow-hidden">
-                <img src={combo.fotoUrl} alt={combo.nome} className="w-full h-full object-cover object-top" />
-              </div>
-            ) : (
-              <div className="h-32 w-full bg-gray-50 flex items-center justify-center">
-                <i className="ri-gift-2-line text-gray-300 text-3xl" />
-              </div>
-            )}
-            <div className="p-4">
-              <div className="flex items-start justify-between mb-2">
-                <div>
-                  <h3 className="font-semibold text-sm text-gray-800">{combo.nome}</h3>
-                  <span className="text-base font-bold text-orange-600">R$ {combo.preco.toFixed(2).replace('.', ',')}</span>
+          )}
+          {combos.map(combo => (
+            <div key={combo.id} className={`bg-white rounded-xl border border-gray-100 overflow-hidden transition-all hover:border-gray-200 ${!combo.ativo ? 'opacity-60' : ''}`}>
+              {/* Imagem do combo */}
+              {combo.fotoUrl ? (
+                <div className="h-32 w-full overflow-hidden">
+                  <img src={combo.fotoUrl} alt={combo.nome} className="w-full h-full object-cover object-top" />
                 </div>
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${combo.ativo ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'}`}>
-                  {combo.ativo ? 'Ativo' : 'Inativo'}
-                </span>
+              ) : (
+                <div className="h-32 w-full bg-gray-50 flex items-center justify-center">
+                  <i className="ri-gift-2-line text-gray-300 text-3xl" />
+                </div>
+              )}
+              <div className="p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <h3 className="font-semibold text-sm text-gray-800">{combo.nome}</h3>
+                    <span className="text-base font-bold text-orange-600">R$ {combo.preco.toFixed(2).replace('.', ',')}</span>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${combo.ativo ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'}`}>
+                    {combo.ativo ? 'Ativo' : 'Inativo'}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mb-3 line-clamp-2">{combo.descricao}</p>
+                <div className="space-y-1 mb-3">
+                  {combo.itens.map((it, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs text-gray-600">
+                      <i className="ri-arrow-right-s-line text-orange-400" />
+                      <span>{it.quantidade}x {it.nome || 'Item à escolha'}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between pt-3 border-t border-gray-50 gap-2">
+                  <button
+                    onClick={() => handleToggleAtivo(combo)}
+                    disabled={saving}
+                    className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer ${combo.ativo ? 'bg-orange-500' : 'bg-gray-200'} disabled:opacity-50`}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${combo.ativo ? 'left-5' : 'left-0.5'}`} />
+                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => openEdit(combo)} className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-orange-600 hover:bg-orange-50 border border-gray-200 hover:border-orange-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap">
+                      <i className="ri-pencil-line text-sm" />Editar
+                    </button>
+                    <button onClick={() => handleDelete(combo.id)} disabled={saving} className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 border border-gray-200 hover:border-red-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap">
+                      <i className="ri-delete-bin-line text-sm" />Excluir
+                    </button>
+                    <button onClick={() => openEdit(combo)} className="sm:hidden w-8 h-8 flex items-center justify-center text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors cursor-pointer">
+                      <i className="ri-pencil-line text-sm" />
+                    </button>
+                    <button onClick={() => handleDelete(combo.id)} disabled={saving} className="sm:hidden w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer disabled:opacity-40">
+                      <i className="ri-delete-bin-line text-sm" />
+                    </button>
+                  </div>
+                </div>
               </div>
-              <p className="text-xs text-gray-500 mb-3 line-clamp-2">{combo.descricao}</p>
-              <div className="space-y-1 mb-3">
-                {combo.itens.map((it, i) => (
-                  <div key={i} className="flex items-center gap-2 text-xs text-gray-600">
-                    <i className="ri-arrow-right-s-line text-orange-400" />
-                    <span>{it.quantidade}x {it.nome || 'Item à escolha'}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Vista em Lista */}
+      {vistaLista && (
+        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          {combos.length === 0 ? (
+            <div className="text-center py-16">
+              <i className="ri-gift-2-line text-3xl text-gray-300 block mb-2" />
+              <p className="text-sm text-gray-500">Nenhum combo cadastrado</p>
+            </div>
+          ) : (
+            <>
+              {/* Desktop table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">Combo</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">Itens</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500">Preço</th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {combos.map(combo => (
+                      <tr key={combo.id} className={`hover:bg-gray-50 transition-colors ${!combo.ativo ? 'opacity-60' : ''}`}>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100">
+                              {combo.fotoUrl ? (
+                                <img src={combo.fotoUrl} alt={combo.nome} className="w-full h-full object-cover object-top" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <i className="ri-gift-2-line text-gray-300 text-sm" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-gray-800 truncate">{combo.nome}</p>
+                              <p className="text-xs text-gray-400 line-clamp-1 max-w-[200px]">{combo.descricao}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="space-y-0.5">
+                            {combo.itens.slice(0, 3).map((it, i) => (
+                              <p key={i} className="text-xs text-gray-500">{it.quantidade}x {it.nome || 'Item à escolha'}</p>
+                            ))}
+                            {combo.itens.length > 3 && (
+                              <p className="text-xs text-gray-400">+{combo.itens.length - 3} itens</p>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="font-bold text-orange-600">R$ {combo.preco.toFixed(2).replace('.', ',')}</span>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            onClick={() => handleToggleAtivo(combo)}
+                            disabled={saving}
+                            className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer ${combo.ativo ? 'bg-orange-500' : 'bg-gray-200'} disabled:opacity-50`}
+                          >
+                            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${combo.ativo ? 'left-5' : 'left-0.5'}`} />
+                          </button>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1">
+                            <button onClick={() => openEdit(combo)} className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors cursor-pointer" title="Editar">
+                              <i className="ri-pencil-line text-sm" />
+                            </button>
+                            <button onClick={() => handleDelete(combo.id)} disabled={saving} className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer disabled:opacity-40" title="Excluir">
+                              <i className="ri-delete-bin-line text-sm" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile cards (list view) */}
+              <div className="md:hidden divide-y divide-gray-50">
+                {combos.map(combo => (
+                  <div key={combo.id} className={`flex items-center gap-3 px-3 py-3 ${!combo.ativo ? 'opacity-60' : ''}`}>
+                    <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100">
+                      {combo.fotoUrl ? (
+                        <img src={combo.fotoUrl} alt={combo.nome} className="w-full h-full object-cover object-top" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <i className="ri-gift-2-line text-gray-300 text-lg" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm text-gray-800 truncate">{combo.nome}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className="text-xs text-orange-600 font-bold">R$ {combo.preco.toFixed(2).replace('.', ',')}</span>
+                        <span className="text-xs text-gray-400">{combo.itens.length} item{combo.itens.length !== 1 ? 's' : ''}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button
+                        onClick={() => handleToggleAtivo(combo)}
+                        disabled={saving}
+                        className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${combo.ativo ? 'bg-orange-500' : 'bg-gray-200'} disabled:opacity-50`}
+                      >
+                        <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${combo.ativo ? 'left-4' : 'left-0.5'}`} />
+                      </button>
+                      <button onClick={() => openEdit(combo)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors cursor-pointer">
+                        <i className="ri-pencil-line text-sm" />
+                      </button>
+                      <button onClick={() => handleDelete(combo.id)} disabled={saving} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer disabled:opacity-40">
+                        <i className="ri-delete-bin-line text-sm" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
-              <div className="flex items-center justify-between pt-3 border-t border-gray-50 gap-2">
-                <button
-                  onClick={() => handleToggleAtivo(combo)}
-                  disabled={saving}
-                  className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer ${combo.ativo ? 'bg-orange-500' : 'bg-gray-200'} disabled:opacity-50`}
-                >
-                  <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${combo.ativo ? 'left-5' : 'left-0.5'}`} />
-                </button>
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => openEdit(combo)} className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-orange-600 hover:bg-orange-50 border border-gray-200 hover:border-orange-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap">
-                    <i className="ri-pencil-line text-sm" />Editar
-                  </button>
-                  <button onClick={() => handleDelete(combo.id)} disabled={saving} className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 border border-gray-200 hover:border-red-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap">
-                    <i className="ri-delete-bin-line text-sm" />Excluir
-                  </button>
-                  <button onClick={() => openEdit(combo)} className="sm:hidden w-8 h-8 flex items-center justify-center text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors cursor-pointer">
-                    <i className="ri-pencil-line text-sm" />
-                  </button>
-                  <button onClick={() => handleDelete(combo.id)} disabled={saving} className="sm:hidden w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer disabled:opacity-40">
-                    <i className="ri-delete-bin-line text-sm" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Modal */}
       {modal.open && (

@@ -71,6 +71,13 @@ function AcoesMenu({ usuario, onEditar, onToggleAtivo, onRedefinirSenha, onExclu
                 Redefinir senha
               </button>
             )}
+            {usuario.perfil === 'totem' && (
+              <button onClick={() => { onRedefinirSenha(); setOpen(false); }}
+                className="flex items-center gap-2.5 w-full px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 cursor-pointer">
+                <div className="w-4 h-4 flex items-center justify-center"><KeyRound size={12} /></div>
+                Redefinir senha do sistema
+              </button>
+            )}
             <div className="border-t border-zinc-100 my-1" />
             <button onClick={() => { onToggleAtivo(); setOpen(false); }}
               className={`flex items-center gap-2.5 w-full px-3 py-2 text-xs font-medium cursor-pointer ${usuario.ativo ? 'text-amber-600 hover:bg-amber-50' : 'text-emerald-600 hover:bg-emerald-50'}`}>
@@ -207,10 +214,16 @@ export default function UsuariosPage() {
   };
 
   // Badge de último acesso
-  const badgeAcesso = (ultimoAcesso: string | null) => {
+  const badgeAcesso = (ultimoAcesso: string | null, diasDesdeAcesso?: number | null) => {
     if (!ultimoAcesso) return { label: 'Nunca', cls: 'bg-zinc-100 text-zinc-400' };
-    const diff = Math.floor((Date.now() - new Date(ultimoAcesso).getTime()) / 86400000);
-    if (diff === 0) return { label: 'Hoje', cls: 'bg-emerald-100 text-emerald-700' };
+    // Usa cálculo do servidor quando disponível; evita depender do relógio do cliente
+    let diff: number;
+    if (diasDesdeAcesso != null) {
+      diff = diasDesdeAcesso;
+    } else {
+      diff = Math.floor((Date.now() - new Date(ultimoAcesso).getTime()) / 86400000);
+    }
+    if (diff < 1) return { label: 'Hoje', cls: 'bg-emerald-100 text-emerald-700' };
     if (diff <= 7) return { label: `${diff}d atrás`, cls: 'bg-amber-100 text-amber-700' };
     if (diff <= 30) return { label: `${diff}d atrás`, cls: 'bg-zinc-100 text-zinc-500' };
     return { label: `+${diff}d`, cls: 'bg-red-50 text-red-400' };
@@ -365,7 +378,7 @@ export default function UsuariosPage() {
                           </td>
                           <td className="px-4 py-3 hidden lg:table-cell">
                             {(() => {
-                              const b = badgeAcesso(u.ultimoAcesso);
+                              const b = badgeAcesso(u.ultimoAcesso, u.diasDesdeAcesso);
                               return (
                                 <div>
                                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${b.cls}`}>{b.label}</span>

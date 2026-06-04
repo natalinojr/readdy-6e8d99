@@ -11,7 +11,7 @@ interface Props {
   mesaNumero: number;
   isResponsavel: boolean;
   entradaPermitida: boolean;
-  onToggleEntrada: (v: boolean) => void;
+  onToggleEntrada: (v: boolean) => void | Promise<void>;
   clientesMesa: ClienteMesa[];
   onTransferirResponsabilidade: (nome: string) => void;
   horaAbertura?: string;
@@ -36,6 +36,7 @@ export default function ChamarGarcomPanel({
   const [timer, setTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [mostrarTransferir, setMostrarTransferir] = useState(false);
   const [clienteDestino, setClienteDestino] = useState('');
+  const [toggleLoading, setToggleLoading] = useState(false);
 
   const handleChamar = (tipo: TipoChamado) => {
     if (timer) clearTimeout(timer);
@@ -52,6 +53,13 @@ export default function ChamarGarcomPanel({
   };
 
   // Calcular tempo de mesa
+  const handleToggle = async () => {
+    if (toggleLoading) return;
+    setToggleLoading(true);
+    await onToggleEntrada(!entradaPermitida);
+    setToggleLoading(false);
+  };
+
   const calcTempo = () => {
     if (!horaAbertura) return null;
     const [h, m] = horaAbertura.split(':').map(Number);
@@ -142,10 +150,17 @@ export default function ChamarGarcomPanel({
                 </p>
               </div>
               <button
-                onClick={() => onToggleEntrada(!entradaPermitida)}
-                className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ${entradaPermitida ? 'bg-amber-500' : 'bg-zinc-300'}`}
+                onClick={handleToggle}
+                disabled={toggleLoading}
+                className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ${entradaPermitida ? 'bg-amber-500' : 'bg-zinc-300'} ${toggleLoading ? 'opacity-60' : ''}`}
               >
-                <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${entradaPermitida ? 'translate-x-5.5' : 'translate-x-0.5'}`} style={{ transform: entradaPermitida ? 'translateX(22px)' : 'translateX(2px)' }} />
+                {toggleLoading ? (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <i className="ri-loader-4-line text-white text-[10px] animate-spin" />
+                  </div>
+                ) : (
+                  <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${entradaPermitida ? 'translate-x-5.5' : 'translate-x-0.5'}`} style={{ transform: entradaPermitida ? 'translateX(22px)' : 'translateX(2px)' }} />
+                )}
               </button>
             </div>
 

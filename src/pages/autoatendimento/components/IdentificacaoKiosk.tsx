@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 
 interface Props {
-  modo: 'nome' | 'senha' | 'comanda' | 'nenhum';
+  modo: 'nome' | 'senha' | 'comanda' | 'senha_balcao' | 'nenhum';
   total: number;
   pagarNaEntrega: boolean;
   onContinuar: (nome: string, senha: string) => void;
@@ -25,7 +25,7 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
   const [erro, setErro] = useState('');
   const [senhaGerada] = useState(() => gerarSenha());
   const [confirmado, setConfirmado] = useState(false);
-  // Comanda / pager
+  // Comanda / pager / senha do balcão
   const [numeroPager, setNumeroPager] = useState('');
   const [pagerConfirmado, setPagerConfirmado] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -48,35 +48,47 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
     );
   }
 
-  // ── MODO COMANDA (PAGER) ──
-  if (modo === 'comanda') {
+  // ── MODO COMANDA (PAGER) E SENHA DO BALCÃO ──
+  if (modo === 'comanda' || modo === 'senha_balcao') {
+    const isSenhaBalcao = modo === 'senha_balcao';
+    const titulo = isSenhaBalcao ? 'Senha do Balcão' : 'Número do Pager';
+    const icone = isSenhaBalcao ? 'ri-ticket-line' : 'ri-wireless-charging-line';
+    const labelDisplay = isSenhaBalcao ? 'Nº da Senha' : 'Nº do Pager';
+    const placeholderDisplay = isSenhaBalcao ? `1–${pagerCount}` : `1–${pagerCount}`;
+    const textoInfo = isSenhaBalcao
+      ? 'Pegue uma senha no balcão e digite o número impresso nela'
+      : 'Pegue um pager no balcão e digite o número impresso nele';
+    const textoSucesso = isSenhaBalcao
+      ? `Senha Nº ${numeroPager} registrada!`
+      : `Pager Nº ${numeroPager} registrado!`;
+
     const handleConfirmarPager = () => {
       const num = parseInt(numeroPager, 10);
       if (!numeroPager.trim() || isNaN(num) || num < 1) {
-        setErro('Digite um número de pager válido.');
+        setErro(`Digite um número de ${isSenhaBalcao ? 'senha' : 'pager'} válido.`);
         return;
       }
       if (num > pagerCount) {
-        setErro(`Número inválido. Os pagers vão de 1 a ${pagerCount}.`);
+        setErro(`Número inválido. As ${isSenhaBalcao ? 'senhas' : 'pagers'} vão de 1 a ${pagerCount}.`);
         return;
       }
       setErro('');
       setPagerConfirmado(true);
-      setTimeout(() => onContinuar('Cliente', `P-${num}`), 600);
+      setTimeout(() => onContinuar('Cliente', `${isSenhaBalcao ? 'S' : 'P'}-${num}`), 600);
     };
 
     if (pagerConfirmado) {
       return (
-        <div className="flex flex-col items-center justify-center h-full gap-6 text-center p-12">
-          <div className="w-20 h-20 flex items-center justify-center bg-amber-500/20 rounded-full">
-            <i className="ri-checkbox-circle-line text-4xl text-amber-400" />
+        <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
+          <div className={`w-16 h-16 flex items-center justify-center ${isSenhaBalcao ? 'bg-emerald-500/20' : 'bg-amber-500/20'} rounded-full`}>
+            <i className={`ri-checkbox-circle-line text-3xl ${isSenhaBalcao ? 'text-emerald-400' : 'text-amber-400'}`} />
           </div>
           <div>
-            <p className="text-3xl font-black text-white">Pager Nº {numeroPager} registrado!</p>
-            <p className="text-zinc-400 text-lg mt-2">Aguarde ser chamado</p>
+            <p className="text-2xl font-black text-white">{textoSucesso}</p>
+            <p className="text-zinc-400 text-base mt-1">Aguarde ser chamado</p>
           </div>
           <div className="flex items-center gap-2 text-zinc-600">
-            <i className="ri-loader-4-line text-xl animate-spin text-amber-500" />
+            <i className={`ri-loader-4-line text-lg animate-spin ${isSenhaBalcao ? 'text-emerald-500' : 'text-amber-500'}`} />
             <span className="text-sm">Finalizando pedido...</span>
           </div>
         </div>
@@ -84,53 +96,36 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
     }
 
     return (
-      <div className="flex flex-col items-center justify-center h-full p-6 text-center overflow-hidden">
+      <div className="flex flex-col items-center justify-center h-full p-4 text-center overflow-hidden">
         {/* Layout em duas colunas: info à esquerda, teclado à direita */}
-        <div className="flex items-center gap-8 w-full max-w-4xl">
+        <div className="flex items-center gap-6 w-full max-w-3xl">
 
           {/* Coluna esquerda — instruções */}
-          <div className="flex-1 flex flex-col gap-4 text-left">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-12 h-12 flex items-center justify-center bg-amber-500/20 rounded-2xl flex-shrink-0">
-                  <i className="ri-wireless-charging-line text-2xl text-amber-400" />
-                </div>
-                <h2 className="text-3xl font-black text-white">Número do Pager</h2>
+          <div className="flex-1 flex flex-col gap-3 text-left">
+            <div className="flex items-center gap-3">
+              <div className={`w-12 h-12 flex items-center justify-center ${isSenhaBalcao ? 'bg-emerald-500/20' : 'bg-amber-500/20'} rounded-2xl flex-shrink-0`}>
+                <i className={`${icone} text-2xl ${isSenhaBalcao ? 'text-emerald-400' : 'text-amber-400'}`} />
               </div>
-              <p className="text-zinc-400 text-base">
-                Pegue um pager no balcão e digite o número impresso nele
-              </p>
+              <h2 className="text-2xl font-black text-white">{titulo}</h2>
             </div>
-
-            {/* Botões */}
-            <div className="flex gap-3 mt-2">
-              <button onClick={onVoltar}
-                className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-base rounded-2xl cursor-pointer whitespace-nowrap transition-colors">
-                Voltar
-              </button>
-              <button
-                onClick={handleConfirmarPager}
-                disabled={!numeroPager.trim()}
-                className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 text-lg font-black rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
-              >
-                Confirmar
-              </button>
-            </div>
+            <p className="text-zinc-400 text-base">
+              {textoInfo}
+            </p>
           </div>
 
           {/* Coluna direita — display + teclado */}
-          <div className="flex flex-col items-center gap-3">
+          <div className="flex flex-col items-center gap-2">
             {/* Display do número */}
-            <div className="w-64 bg-zinc-800 rounded-2xl px-6 py-4 text-center border border-zinc-700">
-              <p className="text-zinc-500 text-xs font-semibold mb-1">Nº do Pager</p>
+            <div className="w-64 bg-zinc-800 rounded-2xl px-4 py-3 text-center border border-zinc-700">
+              <p className="text-zinc-500 text-xs font-semibold mb-1">{labelDisplay}</p>
               <p className={`font-black leading-none ${numeroPager ? 'text-white text-6xl' : 'text-zinc-600 text-4xl'}`}>
-                {numeroPager || `1–${pagerCount}`}
+                {numeroPager || placeholderDisplay}
               </p>
-              {erro && <p className="text-red-400 text-xs mt-2 font-semibold">{erro}</p>}
+              {erro && <p className="text-red-400 text-sm mt-1 font-semibold">{erro}</p>}
             </div>
 
             {/* Teclado numérico */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-1.5">
               {['1','2','3','4','5','6','7','8','9','','0','⌫'].map((d, i) => (
                 <button
                   key={i}
@@ -151,6 +146,22 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
                 </button>
               ))}
             </div>
+            {/* Botão confirmar + voltar */}
+            <div className="flex gap-2 w-full">
+              <button onClick={onVoltar}
+                className="px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-base rounded-xl cursor-pointer whitespace-nowrap transition-colors">
+                <i className="ri-arrow-left-line mr-1" />
+                Voltar
+              </button>
+              <button
+                onClick={handleConfirmarPager}
+                disabled={!numeroPager.trim()}
+                className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 text-xl font-black rounded-xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
+              >
+                <i className="ri-checkbox-circle-line mr-1" />
+                Confirmar
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -160,33 +171,35 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
   // ── MODO SENHA ──
   if (modo === 'senha') {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-8 p-12 text-center">
+      <div className="flex flex-col items-center justify-center h-full gap-5 p-6 text-center">
         <div className="text-center">
-          <h2 className="text-5xl font-black text-white mb-3">Sua senha</h2>
+          <h2 className="text-4xl font-black text-white mb-2">Sua senha</h2>
           <p className="text-zinc-400 text-xl">Anote o número abaixo — ele será chamado na retirada</p>
         </div>
 
-        <div className="bg-amber-500/10 border-4 border-amber-500/50 rounded-3xl px-24 py-10">
-          <p className="text-amber-400 text-[7rem] font-black leading-none tracking-wider">{senhaGerada}</p>
+        <div className="bg-amber-500/10 border-4 border-amber-500/50 rounded-3xl px-20 py-8">
+          <p className="text-amber-400 text-6xl font-black leading-none tracking-wider">{senhaGerada}</p>
         </div>
 
-        <div className="bg-zinc-800 rounded-2xl px-8 py-5 text-center max-w-sm">
-          <p className="text-zinc-400 text-sm mb-1">Total do pedido</p>
-          <p className="text-amber-400 font-black text-3xl">{fmt(total)}</p>
+        <div className="bg-zinc-800 rounded-2xl px-6 py-3 text-center max-w-sm">
+          <p className="text-zinc-400 text-sm mb-0.5">Total do pedido</p>
+          <p className="text-amber-400 font-black text-2xl">{fmt(total)}</p>
         </div>
 
-
-
-        <div className="flex flex-col items-center gap-3 w-full max-w-md">
+        <div className="flex flex-col items-center gap-3 w-full max-w-sm">
           <p className="text-zinc-500 text-sm">Confirme que anotou sua senha para continuar</p>
           <button
             onClick={() => onContinuar('Cliente', senhaGerada)}
-            className="w-full py-5 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xl font-black rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
+            className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xl font-black rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
           >
             <i className="ri-checkbox-circle-line mr-2" />
             Anotei minha senha — Continuar
           </button>
-          <button onClick={onVoltar} className="text-zinc-600 hover:text-zinc-400 text-sm cursor-pointer transition-colors">
+          <button
+            onClick={onVoltar}
+            className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-base rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
+          >
+            <i className="ri-arrow-left-line mr-2" />
             Voltar ao carrinho
           </button>
         </div>
@@ -206,16 +219,16 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
 
   if (confirmado) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-6 text-center p-12">
-        <div className="w-20 h-20 flex items-center justify-center bg-amber-500/20 rounded-full">
-          <i className="ri-user-smile-line text-4xl text-amber-400" />
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
+        <div className="w-16 h-16 flex items-center justify-center bg-amber-500/20 rounded-full">
+          <i className="ri-user-smile-line text-3xl text-amber-400" />
         </div>
         <div>
-          <p className="text-3xl font-black text-white">Olá, {nome.trim().split(' ')[0]}!</p>
-          <p className="text-zinc-400 text-lg mt-2">{mensagemRetorno}</p>
+          <p className="text-2xl font-black text-white">Olá, {nome.trim().split(' ')[0]}!</p>
+          <p className="text-zinc-400 text-base mt-1">{mensagemRetorno}</p>
         </div>
         <div className="flex items-center gap-2 text-zinc-600">
-          <i className="ri-loader-4-line text-xl animate-spin text-amber-500" />
+          <i className="ri-loader-4-line text-lg animate-spin text-amber-500" />
           <span className="text-sm">Preparando seu pedido...</span>
         </div>
       </div>
@@ -223,18 +236,16 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
   }
 
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-8 p-12">
+    <div className="flex flex-col items-center justify-center h-full gap-4 p-6">
       <div className="text-center">
-        <h2 className="text-5xl font-black text-white mb-3">Qual é o seu nome?</h2>
+        <h2 className="text-4xl font-black text-white mb-2">Qual é o seu nome?</h2>
         <p className="text-zinc-400 text-xl">Vamos chamar você quando o pedido estiver pronto</p>
       </div>
 
-      <div className="bg-zinc-800 rounded-2xl px-8 py-4 text-center">
+      <div className="bg-zinc-800 rounded-2xl px-6 py-3 text-center">
         <p className="text-zinc-400 text-sm mb-0.5">Total do pedido</p>
-        <p className="text-amber-400 font-black text-3xl">{fmt(total)}</p>
+        <p className="text-amber-400 font-black text-2xl">{fmt(total)}</p>
       </div>
-
-
 
       <div className="w-full max-w-lg">
         <input
@@ -246,12 +257,12 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
           placeholder="Digite seu nome aqui..."
           autoFocus
           maxLength={50}
-          className="w-full bg-zinc-800 text-white text-3xl font-bold text-center rounded-3xl px-8 py-7 placeholder-zinc-600 focus:outline-none focus:ring-4 focus:ring-amber-500/50 transition-all"
+          className="w-full bg-zinc-800 text-white text-2xl font-bold text-center rounded-2xl px-6 py-4 placeholder-zinc-600 focus:outline-none focus:ring-4 focus:ring-amber-500/50 transition-all"
         />
-        {erro && <p className="text-red-400 text-center text-sm mt-3 font-semibold">{erro}</p>}
+        {erro && <p className="text-red-400 text-center text-base mt-2 font-semibold">{erro}</p>}
       </div>
 
-      <div className="w-full max-w-2xl">
+      <div className="w-full max-w-xl">
         {[
           ['Q','W','E','R','T','Y','U','I','O','P'],
           ['A','S','D','F','G','H','J','K','L'],
@@ -260,7 +271,7 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
           <div key={li} className="flex justify-center gap-1.5 mb-1.5">
             {linha.map((letra) => (
               <button key={letra} onClick={() => setNome((n) => n + letra)}
-                className="w-12 h-12 flex items-center justify-center bg-zinc-700 hover:bg-zinc-600 text-white font-bold text-base rounded-xl cursor-pointer active:scale-90 transition-all">
+                className="w-12 h-12 flex items-center justify-center bg-zinc-700 hover:bg-zinc-600 text-white font-bold text-lg rounded-lg cursor-pointer active:scale-90 transition-all">
                 {letra}
               </button>
             ))}
@@ -268,23 +279,23 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
         ))}
         <div className="flex justify-center gap-2 mt-2">
           <button onClick={() => setNome((n) => n + ' ')}
-            className="px-16 py-3 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 font-semibold text-sm rounded-xl cursor-pointer active:scale-95 transition-all whitespace-nowrap">
+            className="px-14 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 font-semibold text-base rounded-lg cursor-pointer active:scale-95 transition-all whitespace-nowrap">
             Espaço
           </button>
           <button onClick={() => setNome((n) => n.slice(0, -1))}
-            className="px-6 py-3 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 font-semibold text-sm rounded-xl cursor-pointer active:scale-95 transition-all whitespace-nowrap">
+            className="px-8 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 font-semibold text-base rounded-lg cursor-pointer active:scale-95 transition-all whitespace-nowrap">
             <i className="ri-delete-back-2-line text-lg" />
           </button>
         </div>
       </div>
 
-      <div className="flex gap-4 w-full max-w-lg">
+      <div className="flex gap-3 w-full max-w-sm">
         <button onClick={onVoltar}
-          className="px-8 py-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-lg rounded-2xl cursor-pointer whitespace-nowrap transition-colors">
+          className="px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-lg rounded-2xl cursor-pointer whitespace-nowrap transition-colors">
           Voltar
         </button>
         <button onClick={handleConfirmar} disabled={!nome.trim()}
-          className="flex-1 py-4 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 text-xl font-black rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap">
+          className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 text-xl font-black rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap">
           Confirmar
         </button>
       </div>

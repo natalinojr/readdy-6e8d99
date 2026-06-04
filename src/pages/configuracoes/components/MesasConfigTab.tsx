@@ -1,9 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import QRCode from 'react-qr-code';
+import QRCodeImport from 'react-qr-code';
+const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
 import { useTablesConfig, type MesaConfig, type MesaFormato } from '../../../hooks/useTablesConfig';
-import { printHTML } from '@/lib/printUtils';
+import { printHTML, sendToPrinter } from '@/lib/printUtils';
+import { useImpressoras, PRINTER_KEY_QRCODES } from '@/contexts/ImpressorasContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useSystemSettings, type SectorConfig } from '@/hooks/useSystemSettings';
+import { getAppBaseUrl } from '@/lib/appUrl';
 
 /* ─── Setor type alias for local use ─── */
 type SetorConfig = SectorConfig;
@@ -44,7 +47,9 @@ const FORMATOS: { id: MesaFormato; label: string; icon: string }[] = [
 ];
 
 function getMesaUrl(mesa: MesaConfig): string {
-  return `${window.location.protocol}//${window.location.host}/mesa/${mesa.numero}`;
+  // Usa qr_token do banco (qrCode) quando disponível; fallback para número da mesa
+  const token = mesa.qrCode || mesa.numero;
+  return `${getAppBaseUrl()}/mesa-qr/${token}`;
 }
 
 /* ─── SetorModal ─── */
@@ -184,42 +189,30 @@ interface PrintAllQRModalProps {
   mesas: MesaConfig[];
   nomeLoja: string;
   onClose: () => void;
+  impressoraQR?: import('@/contexts/ImpressorasContext').Impressora;
 }
 
-function PrintAllQRModal({ mesas, nomeLoja, onClose }: PrintAllQRModalProps) {
+function PrintAllQRModal({ mesas, nomeLoja, onClose, impressoraQR }: PrintAllQRModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
     if (!printRef.current) return;
     const printContent = printRef.current.innerHTML;
-    printHTML(`<!DOCTYPE html>
-<html>
-<head>
-  <title>QR Codes das Mesas — ${nomeLoja}</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: system-ui, -apple-system, sans-serif; background: white; }
-    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; page-break-inside: avoid; }
-    .card { width: 90mm; height: 90mm; border: 1px solid #e4e4e7; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8mm; page-break-inside: avoid; break-inside: avoid; }
-    .card canvas { display: block; width: 55mm !important; height: 55mm !important; }
-    .card .mesa-num { font-size: 18pt; font-weight: 900; color: #09090b; margin-top: 4mm; }
-    .card .mesa-setor { font-size: 8pt; color: #71717a; margin-top: 1mm; }
-    .card .mesa-url { font-size: 5.5pt; color: #a1a1aa; margin-top: 1.5mm; word-break: break-all; text-align: center; }
-    .header { text-align: center; padding: 5mm; border-bottom: 1px solid #e4e4e7; margin-bottom: 5mm; }
-    .header h1 { font-size: 14pt; font-weight: 700; color: #09090b; }
-    .header p { font-size: 8pt; color: #71717a; margin-top: 1mm; }
-    @media print { @page { size: A4; margin: 5mm; } body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
-    .cut-line { border: 1px dashed #d4d4d8; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1>${nomeLoja}</h1>
-    <p>QR Codes das Mesas — ${new Date().toLocaleDateString('pt-BR')}</p>
-  </div>
-  ${printContent}
-</body>
-</html>`);
+    const dateStr = new Date().toLocaleDateString('pt-BR');
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"/><title>QR Codes das Mesas</title>'
+      + '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui,sans-serif;background:white}'
+      + '.header{text-align:center;padding:5mm;border-bottom:1px solid #e4e4e7;margin-bottom:5mm}'
+      + '.header h1{font-size:14pt;font-weight:700;color:#09090b}.header p{font-size:8pt;color:#71717a;margin-top:1mm}'
+      + '@media print{@page{size:A4;margin:5mm}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}'
+      + '</style></head><body>'
+      + '<div class="header"><h1>' + nomeLoja + '</h1><p>QR Codes das Mesas — ' + dateStr + '</p></div>'
+      + printContent
+      + '</body></html>';
+    if (impressoraQR && impressoraQR.ip) {
+      sendToPrinter(html, impressoraQR);
+    } else {
+      printHTML(html);
+    }
   };
 
   const mesasOrdenadas = [...mesas].sort((a, b) => a.numero - b.numero);
@@ -485,6 +478,7 @@ function ConfirmarExclusaoModal({ mesa, onConfirmar, onClose }: { mesa: MesaConf
 /* ─── Main ─── */
 export default function MesasConfigTab() {
   const { settings, salvar: salvarSettings } = useSystemSettings();
+  const { getImpressoraParaEstacao } = useImpressoras();
   const [setores, setSetores] = useState<SectorConfig[]>(SETORES_INICIAIS);
   const setoresCarregadosRef = useRef(false);
 
@@ -503,7 +497,7 @@ export default function MesasConfigTab() {
   }, [salvarSettings]);
 
   const { mesas: mesasDB, loading: loadingMesas, criarMesa, editarMesa, excluirMesa: excluirMesaDB, regenerarQR: regenerarQRDB } = useTablesConfig();
-  const { showToast } = useToast();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [mesas, setMesas] = useState<MesaConfig[]>([]);
   useEffect(() => { if (mesasDB.length > 0 || !loadingMesas) setMesas(mesasDB); }, [mesasDB, loadingMesas]);
   const [filtroSetor, setFiltroSetor] = useState<string>('Todos');
@@ -563,44 +557,44 @@ export default function MesasConfigTab() {
         observacao: dados.observacao,
         x: 50, y: 50,
         status: 'livre',
-        qrCode: `MESA-${String(dados.numero ?? maxNumero + 1).padStart(3, '0')}-QR-${Date.now()}`,
       });
       if (error) {
-        showToast(`Erro ao criar mesa: ${error}`, 'error');
+        toastError(`Erro ao criar mesa: ${error}`, 'error');
       } else if (mesa) {
-        showToast(`Mesa ${mesa.numero} criada com sucesso!`, 'success');
+        toastSuccess(`Mesa ${mesa.numero} criada com sucesso!`);
       }
     } else if (mesaModal && mesaModal !== 'new') {
       const { success, error } = await editarMesa(mesaModal.id, dados);
       if (error) {
-        showToast(`Erro ao editar mesa: ${error}`, 'error');
+        toastError(`Erro ao editar mesa: ${error}`);
       } else if (success) {
-        showToast('Mesa atualizada!', 'success');
+        toastSuccess('Mesa atualizada!');
       }
     }
-  }, [mesaModal, maxNumero, setores, criarMesa, editarMesa, showToast]);
+  }, [mesaModal, maxNumero, setores, criarMesa, editarMesa, toastSuccess, toastError]);
 
   const handleRegenerarQR = useCallback(async (id: string) => {
     const { success, error } = await regenerarQRDB(id);
     if (error) {
-      showToast(`Erro ao regenerar QR: ${error}`, 'error');
+      toastError(`Erro ao regenerar QR: ${error}`, 'error');
       return;
     }
     if (success) {
       setQrModal((prev) => {
         if (!prev || prev.id !== id) return prev;
-        return { ...prev, qrCode: `MESA-${String(prev.numero).padStart(3, '0')}-QR-${Date.now()}` };
+        return prev;
       });
+      toastSuccess('QR Code regenerado com sucesso!', 'success');
     }
-  }, [regenerarQRDB, showToast]);
+  }, [regenerarQRDB, toastSuccess, toastError]);
 
   const handleRegenerarTodos = async () => {
     const results = await Promise.all(mesas.map((m) => regenerarQRDB(m.id)));
     const erros = results.filter(r => r.error);
     if (erros.length > 0) {
-      showToast(`${erros.length} QR(s) falharam ao regenerar`, 'error');
+      toastError(`${erros.length} QR(s) falharam ao regenerar`);
     } else {
-      setRegeneradoTodos(true);
+      toastSuccess(`${erros.length === 0 ? 'Todos QR Codes regenerados!' : 'QR Codes regenerados!'}`);
       setTimeout(() => setRegeneradoTodos(false), 2500);
     }
   };
@@ -608,12 +602,12 @@ export default function MesasConfigTab() {
   const handleExcluirMesa = useCallback(async (id: string) => {
     const { success, error } = await excluirMesaDB(id);
     if (error) {
-      showToast(`Erro ao excluir mesa: ${error}`, 'error');
+      toastError(`Erro ao excluir mesa: ${error}`, 'error');
     } else if (success) {
-      showToast('Mesa removida', 'success');
+      toastSuccess('Mesa removida', 'success');
     }
     setExcluirModal(null);
-  }, [excluirMesaDB, showToast]);
+  }, [excluirMesaDB, toastSuccess, toastError]);
 
   const formatoIcon: Record<MesaFormato, string> = {
     redonda: 'ri-circle-line', quadrada: 'ri-stop-line', retangular: 'ri-rectangle-line',
@@ -882,6 +876,7 @@ export default function MesasConfigTab() {
           mesas={filtradas.length > 0 ? filtradas : mesas}
           nomeLoja="Meu Restaurante"
           onClose={() => setPrintAllModal(false)}
+          impressoraQR={getImpressoraParaEstacao(PRINTER_KEY_QRCODES)}
         />
       )}
       {setorModal && (

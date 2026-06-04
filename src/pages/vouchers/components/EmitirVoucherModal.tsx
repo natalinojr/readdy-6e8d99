@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import type { VoucherType, VoucherDiscountType } from '@/types/vouchers';
@@ -68,7 +68,7 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
         payload.discount_value = form.discount_value !== '' ? Number(form.discount_value) : null;
       }
 
-      const { data, error: fnErr } = await supabase.functions.invoke('voucher-write', { body: payload });
+      const { data, error: fnErr } = await invokeWithAuth('voucher-write', { body: payload });
       if (fnErr) throw fnErr;
 
       const code = (data as { data?: { code?: string } })?.data?.code ?? '';

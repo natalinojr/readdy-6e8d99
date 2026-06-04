@@ -8,7 +8,7 @@ const corsHeaders = {
 const UNIT_MAP: Record<string, string> = { kg: 'kg', g: 'g', ml: 'ml', l: 'L', L: 'L', un: 'unit', unit: 'unit' };
 const MOVEMENT_TYPE_MAP: Record<string, string> = {
   entrada: 'in', saida_venda: 'theoretical_out', saida_manual: 'manual_out',
-  perda: 'manual_out', inventory_adjustment: 'inventory_adjustment',
+  perda: 'loss', inventory_adjustment: 'inventory_adjustment',
   ajuste_inventario: 'inventory_adjustment', transfer_in: 'transfer_in',
   transfer_out: 'transfer_out', in: 'in', theoretical_out: 'theoretical_out',
   manual_out: 'manual_out',
@@ -46,20 +46,24 @@ Deno.serve({ verify_jwt: false }, async (req) => {
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
   const authHeader = req.headers.get('Authorization') ?? '';
 
-  const hasServiceRole = serviceRoleKey.length > 100;
+  const hasServiceRole = !!serviceRoleKey && serviceRoleKey.length > 0;
+  if (!hasServiceRole) {
+    console.warn('[stock-write] SUPABASE_SERVICE_ROLE_KEY not available — will use user auth for RLS tables');
+  }
 
   const db = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authHeader } },
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const admin = createClient(supabaseUrl, hasServiceRole ? serviceRoleKey : anonKey, {
-    global: { headers: hasServiceRole
-      ? { Authorization: `Bearer ${serviceRoleKey}` }
-      : { Authorization: authHeader }
-    },
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  const admin = hasServiceRole
+    ? createClient(supabaseUrl, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      })
+    : createClient(supabaseUrl, anonKey, {
+        global: { headers: { Authorization: authHeader } },
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
 
   const { data: { user }, error: userError } = await db.auth.getUser();
   if (userError || !user) {
@@ -147,8 +151,12 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
     if (action === 'add_stock_movement') {
       const { ingredient_id, type, quantity, unit, reason, notes, order_id, operator_id, batch_id } = body;
-      const dbType = MOVEMENT_TYPE_MAP[type] ?? 'manual_out';
-      const isSub = ['manual_out', 'theoretical_out', 'transfer_out'].includes(dbType);
+      let dbType = MOVEMENT_TYPE_MAP[type] ?? 'manual_out';
+      const reasonLower = (reason ?? '').toLowerCase();
+      if (reasonLower.includes('perda') || type === 'perda') {
+        dbType = 'loss';
+      }
+      const isSub = ['manual_out', 'theoretical_out', 'transfer_out', 'loss'].includes(dbType);
       const delta = isSub ? -Math.abs(quantity) : Math.abs(quantity);
 
       const { data: rpcData, error: rpcErr } = await admin.rpc('fn_add_stock_movement', {
@@ -233,7 +241,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     }
 
     if (action === 'upsert_ingredient') {
-      const { id, name, unit, unit_price, min_stock, current_stock, category, supplier, supplier_id, purchase_unit, purchase_factor, dre_category_id, usage_type } = body;
+      const { id, name, unit, unit_price, min_stock, current_stock, category, supplier, supplier_id, purchase_unit, purchase_factor, dre_category_id, usage_type, price_source } = body;
       const { data: rpcData, error: rpcErr } = await admin.rpc('fn_upsert_ingredient', {
         p_tenant_id: tenantId,
         p_id: id ?? null,
@@ -249,6 +257,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         p_purchase_factor: purchase_factor != null ? Number(purchase_factor) : 1,
         p_supplier_id: supplier_id ?? null,
         p_dre_category_id: dre_category_id ?? null,
+        p_price_source: price_source ?? 'manual',
       });
       if (rpcErr) {
         if (isUniqueViolation(rpcErr)) {
@@ -274,8 +283,11 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     }
 
     if (action === 'confirm_inventory') {
-      const { items, operator_id } = body;
+      const { items, operator_id, operator_name } = body;
       if (!Array.isArray(items)) throw new Error('items must be array');
+
+      const comDiferenca = items.filter((i: {diferenca: number}) => i.diferenca !== 0);
+      const valorAjuste = body.valor_ajuste_liquido ?? 0;
 
       for (const item of items) {
         if (item.diferenca === 0) continue;
@@ -299,7 +311,47 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { error: updErr } = await admin.from('ingredients').update({ current_stock: item.qtd_contada, updated_at: new Date().toISOString() }).eq('id', item.ingredient_id).eq('tenant_id', tenantId);
         if (updErr) console.error('[stock-write] confirm_inventory update error:', extractErrorMessage(updErr));
       }
-      return new Response(JSON.stringify({ ok: true, adjusted: items.filter((i: {diferenca: number}) => i.diferenca !== 0).length }), {
+
+      try {
+        const { data: countData, error: countErr } = await admin.rpc('fn_get_inventory_sessions', {
+          p_tenant_id: tenantId,
+          p_limit: 1000,
+        });
+        if (countErr) console.error('[stock-write] confirm_inventory fn_get_inventory_sessions count error:', extractErrorMessage(countErr));
+        const sessionCount = Array.isArray(countData) ? countData.length : 0;
+        const numero = sessionCount + 1;
+
+        const { data: insertData, error: sessionErr } = await admin.rpc('fn_insert_inventory_session', {
+          p_tenant_id: tenantId,
+          p_numero: numero,
+          p_operator_name: operator_name ?? 'Operador',
+          p_status: 'confirmado',
+          p_itens_contados: items.length,
+          p_itens_com_diferenca: comDiferenca.length,
+          p_valor_ajuste_liquido: valorAjuste,
+          p_items: items,
+        });
+        if (sessionErr) console.error('[stock-write] confirm_inventory fn_insert_inventory_session error:', extractErrorMessage(sessionErr));
+        else console.log('[stock-write] confirm_inventory session inserted id:', insertData);
+      } catch (e) {
+        console.error('[stock-write] confirm_inventory inventory_sessions insert error:', extractErrorMessage(e));
+      }
+
+      return new Response(JSON.stringify({ ok: true, adjusted: comDiferenca.length }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (action === 'get_inventory_sessions') {
+      const { limit = 50 } = body;
+      const { data, error } = await admin.rpc('fn_get_inventory_sessions', {
+        p_tenant_id: tenantId,
+        p_limit: Number(limit),
+      });
+      if (error) {
+        throw new Error(extractErrorMessage(error));
+      }
+      return new Response(JSON.stringify({ data: data ?? [] }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }

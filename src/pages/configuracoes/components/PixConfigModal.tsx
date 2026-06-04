@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import QRCode from 'react-qr-code';
+import QRCodeImport from 'react-qr-code';
+const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 
 interface PixConfigModalProps {
   onClose: () => void;
@@ -66,7 +67,7 @@ export default function PixConfigModal({ onClose }: PixConfigModalProps) {
     setLoadingPreview(true);
     try {
       // Salva temporariamente para gerar o payload via edge function
-      const { data, error: fnErr } = await supabase.functions.invoke('pix-payment', {
+      const { data, error: fnErr } = await invokeWithAuth('pix-payment', {
         body: {
           action: 'generate',
           tenant_id: user.tenantId,

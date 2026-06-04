@@ -57,6 +57,7 @@ export function useTablesConfig() {
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const mountedRef = useRef(true);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -77,22 +78,42 @@ export function useTablesConfig() {
     setLoading(true);
     setError(null);
 
-    const { data, error: err } = await supabase
-      .from('tables')
-      .select('id, number, capacity, table_type, area, pos_x, pos_y, status, qr_token, is_active, observation')
-      .eq('tenant_id', user.tenantId)
-      .order('number', { ascending: true });
+    // Usa fn_get_tables (SECURITY DEFINER) para bypassar RLS e manter
+    // sincronia com a página Mesas que usa a mesma função
+    const { data, error: err } = await supabase.rpc('fn_get_tables', {
+      p_tenant_id: user.tenantId,
+    });
 
     if (err) {
       console.error('[useTablesConfig] load error:', err.code, err.message);
       if (mountedRef.current) setError(err.message);
     } else {
-      if (mountedRef.current) setMesas((data as DBTable[]).map(toMesaConfig));
+      const rows = (data as DBTable[]) ?? [];
+      if (mountedRef.current) setMesas(rows.map(toMesaConfig));
     }
     if (mountedRef.current) setLoading(false);
   }, [user?.tenantId]);
 
   useEffect(() => { load(); }, [load, tick]);
+
+  // Realtime sync: escuta mudanças na tabela 'tables' para manter sincronizado
+  // com outras abas e usuários
+  useEffect(() => {
+    if (!user?.tenantId) return;
+
+    const channel = supabase
+      .channel(`tables_config_rt_${user.tenantId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tables' }, () => {
+        if (mountedRef.current) load();
+      })
+      .subscribe();
+
+    channelRef.current = channel;
+    return () => {
+      channel.unsubscribe();
+      channelRef.current = null;
+    };
+  }, [user?.tenantId, load]);
 
   const criarMesa = useCallback(async (dados: Omit<MesaConfig, 'id'>): Promise<{ mesa: MesaConfig | null; error: string | null }> => {
     if (!user?.tenantId) return { mesa: null, error: 'Usuário sem tenant' };
@@ -134,7 +155,6 @@ export function useTablesConfig() {
         pos_x: dados.x,
         pos_y: dados.y,
         status: dados.status,
-        qr_token: dados.qrCode,
         observation: dados.observacao,
       },
     });
@@ -167,11 +187,29 @@ export function useTablesConfig() {
   }, [user?.tenantId]);
 
   const regenerarQR = useCallback(async (id: string): Promise<{ success: boolean; error: string | null }> => {
-    const mesa = mesas.find((m) => m.id === id);
-    if (!mesa) return { success: false, error: 'Mesa não encontrada' };
-    const novoQR = `MESA-${String(mesa.numero).padStart(3, '0')}-QR-${Date.now()}`;
-    return editarMesa(id, { qrCode: novoQR });
-  }, [mesas, editarMesa]);
+    if (!user?.tenantId) return { success: false, error: 'Usuário sem tenant' };
+
+    const { data, error: err } = await invokeWithAuth<{ success: boolean; data?: DBTable; error?: string }>('config-write', {
+      body: {
+        action: 'regenerate_qr',
+        tenant_id: user.tenantId,
+        id,
+      },
+    });
+
+    if (err || !data?.success || !data.data) {
+      return { success: false, error: err?.message || data?.error || 'Erro ao regenerar QR' };
+    }
+
+    // Atualiza o estado local com o novo qr_token
+    const novoToken = data.data.qr_token;
+    if (novoToken) {
+      setMesas(prev => prev.map(m => m.id === id ? { ...m, qrCode: novoToken } : m));
+    }
+
+    notifyReload(CHANNEL);
+    return { success: true, error: null };
+  }, [user?.tenantId]);
 
   return { mesas, loading, error, load, criarMesa, editarMesa, excluirMesa, regenerarQR };
 }

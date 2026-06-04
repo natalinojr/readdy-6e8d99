@@ -1,26 +1,30 @@
-import { useState } from 'react';
-import type { CarrinhoItem } from '../../../../contexts/PDVContext';
+import { useState, useMemo } from 'react';
+import type { CarrinhoItem, OpcaoSelecionada } from '../../../../contexts/PDVContext';
+import { useCardapio } from '@/contexts/CardapioContext';
 import { useObsPorItemId } from '@/hooks/useObsPorItemId';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 interface Props {
   item: CarrinhoItem;
-  onSalvar: (cartId: string, updates: { quantidade: number; observacaoLivre: string; observacoes?: string[]; obsUnidades?: string[] }) => void;
+  onSalvar: (cartId: string, updates: { quantidade: number; observacaoLivre: string; observacoes?: string[]; obsUnidades?: string[]; opcoes?: OpcaoSelecionada[]; precoTotal?: number }) => void;
   onDeletar: (cartId: string) => void;
   onClose: () => void;
 }
 
 export default function EditarItemGarcomModal({ item, onSalvar, onDeletar, onClose }: Props) {
+  const { itensAtivos } = useCardapio();
+  const itemCardapio = itensAtivos.find((i) => i.id === item.itemId);
+
   const [quantidade, setQuantidade] = useState(item.quantidade);
   const [obs, setObs] = useState(item.observacaoLivre || '');
   const [obsUnidades, setObsUnidades] = useState<string[]>(item.obsUnidades ?? []);
   const [abaObs, setAbaObs] = useState<'todas' | number>('todas');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [selecionadas, setSelecionadas] = useState<OpcaoSelecionada[]>(item.opcoes);
 
   // Obs pré-definidas do item (específicas + globais)
   const todasObsDisponiveis = useObsPorItemId(item.itemId);
-  // Inicializa seleção com as obs que já estavam no item
   const [obsSelecionadas, setObsSelecionadas] = useState<string[]>(
     () => item.observacoes ?? [],
   );
@@ -31,9 +35,45 @@ export default function EditarItemGarcomModal({ item, onSalvar, onDeletar, onClo
     );
   };
 
-  const totalItem = item.precoBase * quantidade;
+  // Recalcula precoTotal baseado nas opções selecionadas atualmente
+  const precoTotal = useMemo(() => {
+    const extras = selecionadas.reduce((acc, s) => acc + s.precoAdicional, 0);
+    return item.precoBase + extras;
+  }, [item.precoBase, selecionadas]);
+
+  const totalItem = precoTotal * quantidade;
+
+  // Manipula toggle de opção (radio ou checkbox)
+  const handleOpcaoChange = (grupoId: string, opcao: OpcaoSelecionada, checked: boolean) => {
+    const grupo = itemCardapio?.gruposOpcoes.find((g) => g.id === grupoId);
+    if (!grupo) return;
+    const isRadio = grupo.obrigatorio && grupo.maxSelecao === 1;
+
+    setSelecionadas((prev) => {
+      if (isRadio) {
+        const rest = prev.filter((s) => s.grupoId !== grupoId);
+        return checked ? [...rest, opcao] : rest;
+      }
+      if (checked) {
+        const count = prev.filter((s) => s.grupoId === grupoId).length;
+        if (count >= grupo.maxSelecao) return prev;
+        return [...prev, opcao];
+      }
+      return prev.filter((s) => s.opcaoId !== opcao.opcaoId);
+    });
+  };
+
+  // Verifica se grupos obrigatórios estão satisfeitos
+  const gruposInvalidos = !itemCardapio ? [] : itemCardapio.gruposOpcoes.filter((g) => {
+    if (!g.obrigatorio) return false;
+    const count = selecionadas.filter((s) => s.grupoId === g.id).length;
+    return count < g.minSelecao;
+  });
+
+  const podeSalvar = quantidade <= 0 || gruposInvalidos.length === 0;
 
   const handleSalvar = () => {
+    if (!podeSalvar && quantidade > 0) return;
     if (quantidade <= 0) {
       onDeletar(item.cartId);
     } else {
@@ -42,6 +82,8 @@ export default function EditarItemGarcomModal({ item, onSalvar, onDeletar, onClo
         observacaoLivre: obs,
         observacoes: obsSelecionadas,
         obsUnidades: obsUnidades.some(Boolean) ? obsUnidades : undefined,
+        opcoes: selecionadas,
+        precoTotal,
       });
     }
     onClose();
@@ -61,6 +103,7 @@ export default function EditarItemGarcomModal({ item, onSalvar, onDeletar, onClo
   };
 
   const temObsUnidade = obsUnidades.some(Boolean);
+  const temGruposOpcoes = itemCardapio && itemCardapio.gruposOpcoes.length > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -70,9 +113,9 @@ export default function EditarItemGarcomModal({ item, onSalvar, onDeletar, onClo
         <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-100">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-zinc-900 truncate">{item.nome}</p>
-            {item.opcoes.length > 0 && (
+            {selecionadas.length > 0 && (
               <p className="text-[11px] text-zinc-400 truncate mt-0.5">
-                {item.opcoes.map((o) => o.opcaoNome).join(' · ')}
+                {selecionadas.map((o) => o.opcaoNome).join(' · ')}
               </p>
             )}
           </div>
@@ -99,7 +142,7 @@ export default function EditarItemGarcomModal({ item, onSalvar, onDeletar, onClo
               </button>
               <div className="flex-1 text-center">
                 <span className="text-3xl font-black text-zinc-900">{quantidade}</span>
-                <p className="text-xs text-zinc-400 mt-0.5">{fmt(item.precoBase)} / un</p>
+                <p className="text-xs text-zinc-400 mt-0.5">{fmt(precoTotal)} / un</p>
               </div>
               <button
                 onClick={() => handleSetQuantidade(quantidade + 1)}
@@ -119,6 +162,60 @@ export default function EditarItemGarcomModal({ item, onSalvar, onDeletar, onClo
               </div>
             )}
           </div>
+
+          {/* Opções do item */}
+          {temGruposOpcoes && itemCardapio.gruposOpcoes.map((grupo) => {
+            const isRadio = grupo.obrigatorio && grupo.maxSelecao === 1;
+            return (
+              <div key={grupo.id}>
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">{grupo.nome}</p>
+                    <p className="text-[10px] text-zinc-400">
+                      {grupo.obrigatorio
+                        ? `Obrigatório · ${grupo.minSelecao === grupo.maxSelecao ? grupo.maxSelecao : `${grupo.minSelecao}–${grupo.maxSelecao}`}`
+                        : `Opcional · Até ${grupo.maxSelecao}`}
+                    </p>
+                  </div>
+                  {grupo.obrigatorio && (
+                    <span className="text-[9px] font-bold bg-red-50 text-red-500 border border-red-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                      Obrigatório
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  {grupo.opcoes.filter((o) => o.ativo).map((opcao) => {
+                    const isSel = selecionadas.some((s) => s.opcaoId === opcao.id && s.grupoId === grupo.id);
+                    const sel: OpcaoSelecionada = {
+                      grupoId: grupo.id,
+                      grupoNome: grupo.nome,
+                      opcaoId: opcao.id,
+                      opcaoNome: opcao.nome || '—',
+                      precoAdicional: opcao.precoAdicional,
+                    };
+                    return (
+                      <label
+                        key={opcao.id}
+                        className="flex items-center gap-2.5 cursor-pointer py-0.5"
+                      >
+                        <input
+                          type={isRadio ? 'radio' : 'checkbox'}
+                          name={isRadio ? grupo.id : undefined}
+                          checked={isSel}
+                          onChange={(e) => handleOpcaoChange(grupo.id, sel, e.target.checked)}
+                          className="accent-amber-500 w-4 h-4 cursor-pointer"
+                        />
+                        <span className="flex-1 text-xs text-zinc-700">{opcao.nome || '—'}</span>
+                        {opcao.precoAdicional > 0 && (
+                          <span className="text-[10px] text-amber-600 font-medium">+{fmt(opcao.precoAdicional)}</span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
 
           {/* Observação */}
           <div>
@@ -221,9 +318,15 @@ export default function EditarItemGarcomModal({ item, onSalvar, onDeletar, onClo
         <div className="px-4 pb-5 pt-2 space-y-2.5">
           {!confirmDelete ? (
             <>
+              {gruposInvalidos.length > 0 && (
+                <p className="text-[10px] font-semibold text-red-500 text-center">
+                  Selecione: {gruposInvalidos.map((g) => g.nome).join(', ')}
+                </p>
+              )}
               <button
                 onClick={handleSalvar}
-                className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors text-sm"
+                disabled={!podeSalvar && quantidade > 0}
+                className="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors text-sm"
               >
                 <i className="ri-check-line mr-1.5" />
                 {quantidade === 0 ? 'Remover item' : 'Salvar alterações'}

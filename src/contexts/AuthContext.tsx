@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, safeRefreshSession, safeSignOut } from '@/lib/supabase';
 import { ensureFreshSession } from '@/lib/supabase';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -93,14 +93,14 @@ async function fetchProfileForTenant(
       (error.message ?? '').toLowerCase().includes('jwt expired');
 
     if (isJwtExpired) {
-      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-      if (!refreshError && refreshData?.session) {
+      const refreshedSession = await safeRefreshSession();
+      if (refreshedSession) {
         const retry = await supabase.rpc('get_user_profile_for_tenant', {
           p_user_id: userId,
           p_tenant_id: tenantId,
         });
         if (!retry.error && retry.data) {
-          const emailRetry = refreshData.session?.user?.email ?? '';
+          const emailRetry = refreshedSession.user?.email ?? '';
           return {
             id: userId,
             email: emailRetry,
@@ -182,8 +182,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (isJwtExpired) {
         // Tenta renovar o token uma vez e refazer a chamada
         try {
-          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-          if (!refreshError && refreshData?.session) {
+          const refreshedSession = await safeRefreshSession();
+          if (refreshedSession) {
             const retry = await supabase.rpc('get_user_tenants', { p_user_id: userId });
             if (!retry.error) {
               const tenantsRetry: TenantOption[] = ((retry.data as Record<string, unknown>[]) ?? []).map(
@@ -202,7 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Silencioso: refresh token inválido ou sessão expirada
         }
         // Se não conseguiu renovar, desloga
-        try { await supabase.auth.signOut(); } catch { /* silencioso */ }
+        await safeSignOut();
         setUser(null);
         setNeedsTenantSelection(false);
         setAvailableTenants([]);
@@ -341,10 +341,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (secondsUntilExpiry < 300) {
           // Token prestes a expirar — faz refresh real
-          const { error } = await supabase.auth.refreshSession();
-          if (error) {
-            // Sessão rejeitada pelo servidor (ban, pausa, revogação)
-            try { await supabase.auth.signOut(); } catch { /* silencioso */ }
+          const refreshedSession = await safeRefreshSession();
+          if (!refreshedSession) {
+            // Sessão rejeitada pelo servidor (ban, pausa, revogação, token inválido)
+            console.warn('[AuthContext] forceSessionCheck: refresh falhou — token inválido ou revogado');
+            await safeSignOut();
+            setUser(null);
+            setAvailableTenants([]);
+            setNeedsTenantSelection(false);
+            setHasNoTenants(false);
+            authUserIdRef.current = null;
+            localStorage.removeItem(SELECTED_TENANT_KEY);
           }
         }
       } catch {
@@ -356,6 +363,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, []);
 
+  // ── Interação do usuário: refresh preventivo quando token < 2min ─────────
+  useEffect(() => {
+    let interactionTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastRefreshAttempt = 0;
+
+    const checkAndRefresh = async () => {
+      const now = Date.now();
+      // Evita spam: só tenta uma vez a cada 30s
+      if (now - lastRefreshAttempt < 30_000) return;
+
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const session = sessionData?.session;
+        if (!session) return;
+
+        const expiresAt = session.expires_at ?? 0;
+        const nowSeconds = Math.floor(now / 1000);
+        const secondsUntilExpiry = expiresAt - nowSeconds;
+
+        // Token expira em menos de 2min e usuário está ativo → refresh agora
+        if (secondsUntilExpiry < 120 && secondsUntilExpiry > 0) {
+          lastRefreshAttempt = now;
+          console.log('[AuthContext] Usuário ativo — refresh preventivo do token (expira em', secondsUntilExpiry, 's)');
+          const refreshedSession = await safeRefreshSession();
+          if (!refreshedSession) {
+            console.warn('[AuthContext] Refresh preventivo falhou: token inválido ou revogado');
+            await safeSignOut();
+            setUser(null);
+            setAvailableTenants([]);
+            setNeedsTenantSelection(false);
+            setHasNoTenants(false);
+            authUserIdRef.current = null;
+            localStorage.removeItem(SELECTED_TENANT_KEY);
+          }
+        }
+      } catch {
+        // Silencioso
+      }
+    };
+
+    const onInteraction = () => {
+      if (interactionTimer) clearTimeout(interactionTimer);
+      // Debounce: espera 500ms após a última interação para fazer o check
+      interactionTimer = setTimeout(checkAndRefresh, 500);
+    };
+
+    window.addEventListener('mousemove', onInteraction, { passive: true });
+    window.addEventListener('click', onInteraction, { passive: true });
+    window.addEventListener('keydown', onInteraction, { passive: true });
+    window.addEventListener('touchstart', onInteraction, { passive: true });
+
+    return () => {
+      window.removeEventListener('mousemove', onInteraction);
+      window.removeEventListener('click', onInteraction);
+      window.removeEventListener('keydown', onInteraction);
+      window.removeEventListener('touchstart', onInteraction);
+      if (interactionTimer) clearTimeout(interactionTimer);
+    };
+  }, []);
+
   // ─── Login ─────────────────────────────────────────────────────────────────
 
   const login = async (identifier: string, senha: string): Promise<boolean> => {
@@ -364,18 +431,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const isBadge = /^\d+$/.test(trimmedId) && trimmedId.length <= 8;
 
     if (isBadge) {
-      const { data, error } = await supabase.functions.invoke<{
-        hashed_token: string;
-        error?: string;
-      }>('login-pin', {
-        body: { badge_number: trimmedId, pin: trimmedSenha },
-      });
-      if (error || !data?.hashed_token) return false;
-      const { error: otpError } = await supabase.auth.verifyOtp({
-        token_hash: data.hashed_token,
-        type: 'email',
-      });
-      return !otpError;
+      // Chama a edge function login-pin diretamente (sem invokeWithAuth,
+      // pois o usuário ainda não tem sessão e invokeWithAuth exige token)
+      try {
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/login-pin`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ badge_number: trimmedId, pin: trimmedSenha }),
+        });
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          console.error('[Auth] login-pin error:', errBody.error);
+          return false;
+        }
+
+        const data = (await res.json()) as { hashed_token?: string; error?: string };
+        if (!data?.hashed_token) {
+          console.error('[Auth] login-pin: no hashed_token returned');
+          return false;
+        }
+
+        const { error: otpError } = await supabase.auth.verifyOtp({
+          token_hash: data.hashed_token,
+          type: 'magiclink',
+        });
+
+        if (otpError) {
+          console.error('[Auth] verifyOtp error:', otpError.message);
+          return false;
+        }
+        return true;
+      } catch (e) {
+        console.error('[Auth] login-pin fetch error:', e);
+        return false;
+      }
     }
 
     const { error } = await supabase.auth.signInWithPassword({
@@ -388,7 +481,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ─── Logout ────────────────────────────────────────────────────────────────
 
   const logout = () => {
-    try { supabase.auth.signOut(); } catch { /* silencioso */ }
+    void safeSignOut();
     setUser(null);
     setAvailableTenants([]);
     setNeedsTenantSelection(false);
@@ -407,7 +500,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const profile = await fetchProfileForTenant(userId, tenantId);
     if (!profile) {
       // Se não conseguiu buscar o perfil (token expirado, etc), desloga
-      try { await supabase.auth.signOut(); } catch { /* silencioso */ }
+      await safeSignOut();
       setUser(null);
       setNeedsTenantSelection(false);
       setAvailableTenants([]);

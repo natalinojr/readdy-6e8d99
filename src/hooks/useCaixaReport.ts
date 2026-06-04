@@ -12,6 +12,12 @@ export interface CashTransaction {
   numero_pedido: string | null;
   origem: string | null;
   is_refunded: boolean;
+  // Agrupamento de pagamentos vinculados
+  payment_group_id?: string | null;
+  table_session_id?: string | null;
+  is_agrupado?: boolean;
+  pedidos_vinculados?: string[];
+  total_transacoes?: number;
 }
 
 export interface CashMovimento {
@@ -77,6 +83,7 @@ export interface CashSession {
   por_forma_pagamento: PorFormaPagamento[];
   por_origem: PorOrigem[];
   cash_transactions: CashTransaction[];
+  cash_transactions_grouped: CashTransaction[];
 }
 
 export interface CaixaFiltros {
@@ -118,8 +125,8 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
         }).filter((r: any) => r && r.id);
       }
 
-      // Fallback: se RPC nao retornou nada, buscar direto das tabelas
-      if (rawSessions.length === 0 && !error) {
+      // Fallback: se RPC nao retornou nada ou falhou, buscar direto das tabelas
+      if (rawSessions.length === 0) {
         console.log('[useCaixaReport] RPC vazio, usando fallback direto...');
         // Não usa .eq('tenant_id') — o RLS já filtra via JWT, evitar conflito
         let sessQuery = supabase
@@ -215,8 +222,114 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
               },
               por_forma_pagamento: [],
               por_origem: [],
+              cash_transactions: [],
+              cash_transactions_grouped: [],
             };
           });
+        }
+      }
+
+      // ── Enriquecer transações com payment_group_id e table_session_id ──
+      const sessionIds = rawSessions.map((s) => s.id).filter(Boolean);
+      if (sessionIds.length > 0) {
+        // Buscar orders das sessões para mapear table_session_id
+        const { data: ordersData } = await supabase
+          .from('orders')
+          .select('id, session_id, number, table_session_id')
+          .eq('tenant_id', user.tenantId)
+          .in('session_id', sessionIds)
+          .eq('is_training', false)
+          .eq('is_draft', false);
+
+        // Buscar payments dos orders para mapear payment_group_id
+        const orderIds = ordersData?.map((o) => o.id).filter(Boolean) ?? [];
+        let paymentsData: any[] = [];
+        if (orderIds.length > 0) {
+          const { data: payData } = await supabase
+            .from('payments')
+            .select('id, order_id, payment_group_id, amount')
+            .eq('tenant_id', user.tenantId)
+            .in('order_id', orderIds);
+          paymentsData = payData ?? [];
+        }
+
+        // Mapear order_id -> table_session_id, number
+        const orderMap = new Map<string, { table_session_id: string | null; number: string | null }>();
+        for (const o of ordersData ?? []) {
+          orderMap.set(o.id, { table_session_id: o.table_session_id, number: o.number });
+        }
+
+        // Mapear payment_id -> payment_group_id, order_id
+        const paymentMap = new Map<string, { payment_group_id: string | null; order_id: string }>();
+        for (const p of paymentsData) {
+          paymentMap.set(p.id, { payment_group_id: p.payment_group_id, order_id: p.order_id });
+        }
+
+        // Enriquecer transações e agrupar
+        for (const sess of rawSessions) {
+          const trans = (sess.cash_transactions ?? []).map((t: CashTransaction) => {
+            const payInfo = paymentMap.get(t.id);
+            const ordId = payInfo?.order_id;
+            const ordInfo = ordId ? orderMap.get(ordId) : null;
+            return {
+              ...t,
+              payment_group_id: payInfo?.payment_group_id ?? null,
+              table_session_id: ordInfo?.table_session_id ?? null,
+            };
+          });
+
+          // Agrupar por payment_group_id
+          const porGrupo = new Map<string, CashTransaction[]>();
+          const semGrupo: CashTransaction[] = [];
+
+          for (const t of trans) {
+            if (t.payment_group_id) {
+              const lista = porGrupo.get(t.payment_group_id) ?? [];
+              lista.push(t);
+              porGrupo.set(t.payment_group_id, lista);
+            } else {
+              semGrupo.push(t);
+            }
+          }
+
+          // Construir transações agrupadas
+          const agrupadas: CashTransaction[] = [];
+
+          for (const [, lista] of porGrupo) {
+            if (lista.length === 1) {
+              agrupadas.push(lista[0]);
+              continue;
+            }
+            const primeiro = lista[0];
+            const pedidosNums = lista
+              .map((t) => t.numero_pedido)
+              .filter((n): n is string => !!n);
+            const pedidosUnicos = [...new Set(pedidosNums)];
+            const totalVenda = lista.reduce((s, t) => s + t.valor_venda, 0);
+            const totalPago = lista.reduce((s, t) => s + t.valor_pago, 0);
+            const totalTroco = lista.reduce((s, t) => s + t.troco, 0);
+
+            agrupadas.push({
+              ...primeiro,
+              valor_venda: totalVenda,
+              valor_pago: totalPago,
+              troco: totalTroco,
+              is_agrupado: true,
+              pedidos_vinculados: pedidosUnicos,
+              total_transacoes: lista.length,
+              numero_pedido: pedidosUnicos.length > 0 ? pedidosUnicos.join(', ') : primeiro.numero_pedido,
+              is_refunded: lista.some((t) => t.is_refunded),
+            });
+          }
+
+          // Adicionar transações sem grupo
+          agrupadas.push(...semGrupo);
+
+          // Ordenar por hora (mais recente primeiro)
+          agrupadas.sort((a, b) => new Date(b.hora).getTime() - new Date(a.hora).getTime());
+
+          sess.cash_transactions = trans;
+          sess.cash_transactions_grouped = agrupadas;
         }
       }
 
@@ -229,6 +342,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
         por_origem: s.por_origem ?? [],
         cash_registers: s.cash_registers ?? [],
         cash_transactions: s.cash_transactions ?? [],
+        cash_transactions_grouped: s.cash_transactions_grouped ?? s.cash_transactions ?? [],
         movimentos: {
           ...s.movimentos,
           lista: s.movimentos?.lista ?? [],

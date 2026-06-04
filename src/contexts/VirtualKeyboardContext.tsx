@@ -70,6 +70,10 @@ export function VirtualKeyboardProvider({ children }: { children: ReactNode }) {
   ) => {
     if (!isTouchDevice()) return;
 
+    // Impede teclado nativo: marca como readOnly enquanto teclado virtual está ativo
+    el.readOnly = true;
+    el.setAttribute('inputmode', 'none');
+
     setState({
       open: true,
       value: el.value,
@@ -85,6 +89,8 @@ export function VirtualKeyboardProvider({ children }: { children: ReactNode }) {
     setState((prev) => {
       if (prev.targetEl) {
         prev.targetEl.blur();
+        prev.targetEl.readOnly = false;
+        prev.targetEl.removeAttribute('inputmode');
       }
       return DEFAULT_STATE;
     });
@@ -102,38 +108,6 @@ export function VirtualKeyboardProvider({ children }: { children: ReactNode }) {
     });
   }, [syncToTarget]);
 
-  // Adiciona inputmode="none" em todos os inputs para suprimir o teclado nativo
-  useEffect(() => {
-    if (!isTouchDevice()) return;
-
-    const applyInputMode = (el: HTMLInputElement | HTMLTextAreaElement) => {
-      if (el.dataset.nativeKeyboard === 'true') return;
-      if ((el as HTMLInputElement).type === 'password') return;
-      if (['hidden', 'submit', 'button', 'file', 'checkbox', 'radio'].includes((el as HTMLInputElement).type)) return;
-      el.setAttribute('inputmode', 'none');
-    };
-
-    // Aplica em todos os inputs existentes
-    document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea').forEach(applyInputMode);
-
-    // Observa novos inputs adicionados ao DOM
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        mutation.addedNodes.forEach((node) => {
-          if (node.nodeType !== Node.ELEMENT_NODE) return;
-          const el = node as HTMLElement;
-          if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-            applyInputMode(el as HTMLInputElement | HTMLTextAreaElement);
-          }
-          el.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea').forEach(applyInputMode);
-        });
-      });
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, []);
-
   // Listener global para interceptar toque em inputs e abrir teclado virtual
   useEffect(() => {
     if (!isTouchDevice()) return;
@@ -150,26 +124,45 @@ export function VirtualKeyboardProvider({ children }: { children: ReactNode }) {
       // Verifica se o campo optou por NÃO usar o teclado virtual
       if (el.dataset.nativeKeyboard === 'true') return;
 
-      // Ignora campos de senha (mantém teclado nativo por segurança)
-      if ((el as HTMLInputElement).type === 'password') return;
-
       // Ignora campos hidden, submit, button, file, checkbox, radio
-      if (['hidden', 'submit', 'button', 'file', 'checkbox', 'radio'].includes((el as HTMLInputElement).type)) return;
+      if (['hidden', 'submit', 'button', 'file', 'checkbox', 'radio'].includes(el.type)) return;
 
-      // Previne foco nativo que abriria o teclado do SO
+      // Impede teclado nativo de abrir
       e.preventDefault();
+      e.stopPropagation();
 
-      const inputType = (el as HTMLInputElement).type;
-      const isNumeric = inputType === 'number' || el.dataset.keyboard === 'numeric';
-      const isDecimal = el.dataset.keyboard === 'decimal';
+      // Marca como readOnly e inputmode none para garantir que teclado nativo não abra
+      el.readOnly = true;
+      el.setAttribute('inputmode', 'none');
+
+      // Mantém foco visual no input para o usuário saber qual campo está ativo
+      el.focus();
+
+      // Rola a página para o input ficar visível acima do teclado virtual
+      setTimeout(() => {
+        const keyboardHeight = 320; // altura aproximada do teclado virtual
+        const rect = el.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        if (rect.bottom > viewportHeight - keyboardHeight - 24) {
+          const scrollBy = rect.bottom - (viewportHeight - keyboardHeight - 24) + 12;
+          window.scrollBy({ top: scrollBy, behavior: 'smooth' });
+        }
+      }, 100);
+
+      const inputType = el.type;
+      // data-keyboard="numeric" ou "decimal" tem prioridade para definir o layout
+      const dataKeyboard = el.dataset.keyboard;
+      const isNumeric = inputType === 'number' || dataKeyboard === 'numeric' || el.getAttribute('data-keyboard') === 'numeric';
+      const isDecimal = dataKeyboard === 'decimal' || el.getAttribute('data-keyboard') === 'decimal';
 
       const mode: KeyboardMode = isDecimal ? 'decimal' : isNumeric ? 'numeric' : 'text';
       const label = el.placeholder || el.getAttribute('aria-label') || el.closest('label')?.textContent?.trim() || undefined;
-      const maxLen = (el as HTMLInputElement).maxLength > 0 ? (el as HTMLInputElement).maxLength : undefined;
+      const maxLen = el.maxLength > 0 ? el.maxLength : undefined;
 
       openKeyboard(el, { mode, label, maxLength: maxLen });
     };
 
+    // Usa capture: true para interceptar ANTES do browser processar o touch
     document.addEventListener('touchstart', handleTouchStart, { passive: false, capture: true });
     return () => document.removeEventListener('touchstart', handleTouchStart, true);
   }, [openKeyboard]);

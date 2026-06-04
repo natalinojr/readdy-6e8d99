@@ -125,7 +125,7 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 md:gap-3 px-3 md:px-4 py-3 md:py-4">
+      <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 md:gap-3 px-3 md:px-4 py-3 md:py-4">
         {itens.map((item) => {
           const promoAtiva = item.promocoes.find((p) => p.ativo);
           const precoFinal = promoAtiva ? promoAtiva.precoPromocional : item.preco;

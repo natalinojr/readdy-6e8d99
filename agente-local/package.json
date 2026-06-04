@@ -1,0 +1,19 @@
+{
+  "name": "erpos-print-agent",
+  "version": "1.0.0",
+  "description": "Agente local de impressao para ERPOS — recebe pedidos via HTTP e envia para impressora de rede via TCP",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "install-service": "node service-install.js",
+    "uninstall-service": "node service-uninstall.js"
+  },
+  "dependencies": {
+    "node-windows": "^1.0.0-beta.8"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "author": "ERPOS",
+  "license": "MIT"
+}

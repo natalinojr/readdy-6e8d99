@@ -11,7 +11,25 @@ export default function VirtualKeyboardOverlay() {
   const { state, setValue, closeKeyboard } = useVirtualKeyboard();
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  // Fecha ao clicar fora do teclado E fora do input alvo
+  // Rola a página para o input alvo quando o teclado abre, evitando que o campo fique coberto
+  useEffect(() => {
+    if (!state.open || !state.targetEl) return;
+
+    const el = state.targetEl;
+    const scrollIntoView = () => {
+      const keyboardHeight = 320;
+      const rect = el.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      if (rect.bottom > viewportHeight - keyboardHeight - 24) {
+        const scrollBy = rect.bottom - (viewportHeight - keyboardHeight - 24) + 12;
+        window.scrollBy({ top: scrollBy, behavior: 'smooth' });
+      }
+    };
+
+    // Pequeno delay para garantir que o teclado já renderizou
+    const t = setTimeout(scrollIntoView, 150);
+    return () => clearTimeout(t);
+  }, [state.open, state.targetEl]);
   useEffect(() => {
     if (!state.open) return;
 

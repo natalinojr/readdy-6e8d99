@@ -9,14 +9,12 @@ function errResp(msg: string, status = 400) {
   return new Response(JSON.stringify({ error: msg }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
 
-/** Detecta se um erro do Supabase é violação de unique constraint */
 function isUniqueViolation(err: unknown): boolean {
   if (!err) return false;
   const msg = typeof err === 'string' ? err : (err as Record<string, unknown>)?.message as string ?? '';
   return msg.includes('unique constraint') || msg.includes('duplicate key') || msg.includes('already exists');
 }
 
-/** Mapeia erros de unique constraint para mensagens amigáveis */
 function friendlyUniqueError(err: unknown, context: string): string {
   const msg = typeof err === 'string' ? err : (err as Record<string, unknown>)?.message as string ?? '';
   if (msg.includes('menu_categories') || context === 'category') return 'Já existe uma categoria com este nome. Escolha outro nome.';
@@ -24,6 +22,10 @@ function friendlyUniqueError(err: unknown, context: string): string {
   if (msg.includes('combos') || context === 'combo') return 'Já existe um combo com este nome. Escolha outro nome.';
   if (msg.includes('global_observations') || context === 'obs') return 'Esta observação já existe. Escolha outro texto.';
   return 'Já existe um registro com este nome. Escolha outro nome.';
+}
+
+function isValidUuid(v: unknown): boolean {
+  return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 
 Deno.serve({ verify_jwt: false }, async (req: Request) => {
@@ -39,16 +41,32 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (!serviceRoleKey || serviceRoleKey.length < 40) return errResp('Server misconfiguration (service key)', 500);
     if (!authHeader || authHeader === 'Bearer ') return errResp('Unauthorized', 401);
 
-    // Admin client (service role) — bypasses RLS for writes
     const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
-    // Validate user JWT
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
     if (!token) return errResp('Unauthorized', 401);
-    const { data: { user }, error: userError } = await admin.auth.getUser(token);
-    if (userError || !user) return errResp('Unauthorized', 401);
 
-    // ── Special: multipart upload for images ──────────────────────────────
+    // ── Retry no getUser: o Supabase Auth pode ter micro-lag após refresh ──
+    let user: { id: string } | null = null;
+    let userError: { message: string } | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { data: userData, error: userErr } = await admin.auth.getUser(token);
+      if (!userErr && userData?.user) {
+        user = userData.user;
+        userError = null;
+        break;
+      }
+      userError = userErr;
+      if (attempt === 0 && userErr) {
+        console.warn('[menu-write] getUser attempt 1 failed:', userErr.message, '— retrying in 300ms...');
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    }
+    if (userError || !user) {
+      console.error('[menu-write] getUser failed after retry:', userError?.message ?? 'no user');
+      return errResp('Unauthorized', 401);
+    }
+
     const contentType = req.headers.get('content-type') ?? '';
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
@@ -59,7 +77,6 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!file) return errResp('No file provided', 400);
       if (!tenantIdForm) return errResp('tenant_id required', 400);
 
-      // Validate tenant membership
       const { data: tenantRows } = await admin
         .from('user_tenants')
         .select('tenant_id')
@@ -94,14 +111,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       });
     }
 
-    // User client (for tenant lookup via RPC that checks auth.uid())
     const db = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } }, auth: { autoRefreshToken: false, persistSession: false } });
 
     let body: { action: string; payload: Record<string, unknown>; active_tenant_id?: string };
     try { body = await req.json(); } catch { return errResp('Invalid JSON body', 400); }
     const { action, payload } = body;
 
-    // Tenant lookup using admin to avoid RLS issues
+    console.log('[menu-write] action:', action, 'payload keys:', Object.keys(payload));
+
     const { data: tenantRows, error: tenantErr } = await admin
       .from('user_tenants')
       .select('tenant_id')
@@ -156,15 +173,20 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       }
       result = { reordered: true };
     }
+    else if (action === 'reorder_items') {
+      const { items } = payload as { items: Array<{ id: string; sort_order: number }> };
+      for (const item of items) {
+        await admin.from('menu_items').update({ sort_order: item.sort_order }).eq('id', item.id).eq('tenant_id', tenantId);
+      }
+      result = { reordered: true };
+    }
     else if (action === 'upsert_item') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const p = payload as any;
-      const { id, category_id, name, description, price, sla_minutes, is_active, skip_kds, sort_order, channels, option_groups, promotions, preset_observations, delivery_config } = p;
+      const { id, category_id, name, description, price, sla_minutes, is_active, skip_kds, sort_order, channels, option_groups, promotions, preset_observations, delivery_config, production_parts } = p;
 
-      // Strip base64 photo_url to avoid payload issues — only accept real URLs
       let photo_url: string | null = p.photo_url ?? null;
       if (photo_url && photo_url.startsWith('data:')) {
-        photo_url = null; // base64 not supported — use URL only
+        photo_url = null;
       }
 
       let itemId = id;
@@ -185,6 +207,31 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!itemId) throw new Error('Failed to upsert item — no id returned');
 
       if (option_groups !== undefined) {
+        const ingredientIdsToFetch: string[] = [];
+        for (let gi = 0; gi < option_groups.length; gi++) {
+          const grp = option_groups[gi];
+          for (let oi = 0; oi < (grp.options ?? []).length; oi++) {
+            const opt = grp.options[oi];
+            if (opt.ingredient_id && (!opt.name || String(opt.name).trim() === '')) {
+              ingredientIdsToFetch.push(opt.ingredient_id);
+            }
+          }
+        }
+        const ingredientNameMap = new Map<string, string>();
+        if (ingredientIdsToFetch.length > 0) {
+          const uniqueIds = [...new Set(ingredientIdsToFetch)];
+          const { data: ingRows } = await admin
+            .from('ingredients')
+            .select('id, name')
+            .in('id', uniqueIds)
+            .eq('tenant_id', tenantId);
+          if (ingRows) {
+            for (const row of ingRows) {
+              if (row.id && row.name) ingredientNameMap.set(row.id, row.name);
+            }
+          }
+        }
+
         const keepGroupIds = option_groups.filter((g: { id?: string }) => g.id).map((g: { id: string }) => g.id);
         if (keepGroupIds.length > 0) {
           await admin.from('option_groups').update({ deleted_at: now }).eq('item_id', itemId).eq('tenant_id', tenantId).not('id', 'in', `(${keepGroupIds.map((i: string) => `'${i}'`).join(',')})`).is('deleted_at', null);
@@ -209,8 +256,11 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           }
           for (let oi = 0; oi < (grp.options ?? []).length; oi++) {
             const opt = grp.options[oi];
+            const resolvedName = (opt.name && String(opt.name).trim() !== '')
+              ? opt.name
+              : (opt.ingredient_id && ingredientNameMap.get(opt.ingredient_id)) || opt.name || '';
             const optPayload = {
-              name: opt.name,
+              name: resolvedName,
               additional_price: opt.additional_price ?? 0,
               is_active: opt.is_active ?? true,
               sort_order: oi,
@@ -241,6 +291,22 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         }
       }
 
+      // ── Production Parts via admin RPC (service role — sem dependência de anonKey) ──
+      if (production_parts !== undefined) {
+        console.log('[menu-write] production_parts for item:', itemId, 'count:', (production_parts as unknown[])?.length ?? 0);
+        console.log('[menu-write] production_parts payload:', JSON.stringify(production_parts));
+        const { error: rpcError } = await admin.rpc('fn_upsert_item_production_parts', {
+          p_tenant_id: tenantId,
+          p_item_id: itemId,
+          p_parts: production_parts ?? [],
+        });
+        if (rpcError) {
+          console.error('[menu-write] production_parts RPC error:', rpcError.message, 'code:', rpcError.code);
+          throw new Error(`production_parts upsert: ${rpcError.message}`);
+        }
+        console.log('[menu-write] production_parts RPC ok for item:', itemId);
+      }
+
       result = { id: itemId };
     }
     else if (action === 'delete_item') {
@@ -254,8 +320,17 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           await admin.from('options').update({ deleted_at: now }).eq('group_id', g.id).eq('tenant_id', tenantId).is('deleted_at', null);
         }
       }
-      // Limpa ingredientes via RPC SECURITY DEFINER
-      await db.rpc('fn_upsert_item_ingredients', { p_tenant_id: tenantId, p_item_id: id, p_ingredients: [] });
+      // Soft delete production_parts via admin (service role)
+      const { error: rpcError } = await admin.rpc('fn_upsert_item_production_parts', {
+        p_tenant_id: tenantId,
+        p_item_id: id,
+        p_parts: [],
+      });
+      if (rpcError) {
+        console.error('[menu-write] delete_item production_parts RPC error:', rpcError.message);
+        throw new Error(`delete_item production_parts: ${rpcError.message}`);
+      }
+      await admin.rpc('fn_upsert_item_ingredients', { p_tenant_id: tenantId, p_item_id: id, p_ingredients: [] });
       const { error } = await admin.from('menu_items').update({ deleted_at: now }).eq('id', id).eq('tenant_id', tenantId);
       if (error) throw new Error(`delete_item: ${error.message}`);
       result = { deleted: true };
@@ -304,7 +379,6 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       result = { deleted: true };
     }
     else if (action === 'upsert_combo') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { id, name, description, photo_url, price, is_active, items } = payload as any;
       let comboId = id;
       if (comboId) {
@@ -335,6 +409,86 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       await admin.from('combo_items').update({ deleted_at: now }).eq('combo_id', id).eq('tenant_id', tenantId).is('deleted_at', null);
       const { error } = await admin.from('combos').update({ deleted_at: now }).eq('id', id).eq('tenant_id', tenantId);
       if (error) throw new Error(`delete_combo: ${error.message}`);
+      result = { deleted: true };
+    }
+    else if (action === 'fetch_templates') {
+      const { data, error } = await admin
+        .rpc('fn_fetch_option_group_templates', { p_tenant_id: tenantId });
+      if (error) throw new Error(`fetch_templates: ${error.message}`);
+      result = data ?? [];
+    }
+    else if (action === 'save_template') {
+      const { name, is_required, min_selections, max_selections, template_data } = payload as {
+        name: string;
+        is_required: boolean;
+        min_selections: number;
+        max_selections: number;
+        template_data: Array<{
+          nome: string;
+          precoAdicional: number;
+          ingredientId?: string | null;
+          productionRecipeId?: string | null;
+          consumptionQuantity?: number;
+          consumptionUnit?: string;
+          source?: string;
+        }>;
+      };
+      const { data, error } = await admin
+        .rpc('fn_save_option_group_template', {
+          p_tenant_id: tenantId,
+          p_name: name.trim(),
+          p_is_required: is_required ?? false,
+          p_min_selections: min_selections ?? 0,
+          p_max_selections: max_selections ?? 1,
+          p_template_data: template_data ?? [],
+        });
+      if (error) {
+        if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: 'Já existe um template com este nome.' }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        throw new Error(`save_template: ${error.message}`);
+      }
+      result = data;
+    }
+    else if (action === 'update_template') {
+      const { id, name, is_required, min_selections, max_selections, template_data } = payload as {
+        id: string;
+        name: string;
+        is_required: boolean;
+        min_selections: number;
+        max_selections: number;
+        template_data: Array<{
+          nome: string;
+          precoAdicional: number;
+          ingredientId?: string | null;
+          productionRecipeId?: string | null;
+          consumptionQuantity?: number;
+          consumptionUnit?: string;
+          source?: string;
+        }>;
+      };
+      const { data, error } = await admin
+        .rpc('fn_update_option_group_template', {
+          p_tenant_id: tenantId,
+          p_id: id,
+          p_name: name.trim(),
+          p_is_required: is_required ?? false,
+          p_min_selections: min_selections ?? 0,
+          p_max_selections: max_selections ?? 1,
+          p_template_data: template_data ?? [],
+        });
+      if (error) {
+        if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: 'Já existe um template com este nome.' }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        throw new Error(`update_template: ${error.message}`);
+      }
+      result = data;
+    }
+    else if (action === 'delete_template') {
+      const { id } = payload as { id: string };
+      const { data, error } = await admin
+        .rpc('fn_delete_option_group_template', {
+          p_tenant_id: tenantId,
+          p_id: id,
+        });
+      if (error) throw new Error(`delete_template: ${error.message}`);
       result = { deleted: true };
     }
     else {

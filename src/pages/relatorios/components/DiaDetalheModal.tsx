@@ -66,89 +66,59 @@ export default function DiaDetalheModal({ date, onClose }: DiaDetalheModalProps)
     if (!user?.tenantId) return;
     setLoading(true);
     try {
-      // Usar fuso de Brasília para delimitar o dia corretamente
-      const from = new Date(date + 'T00:00:00-03:00').toISOString();
-      const to = new Date(date + 'T23:59:59-03:00').toISOString();
+      const from = `${date}T00:00:00-03:00`;
+      const to = `${date}T23:59:59-03:00`;
 
-      // Buscar todos os pedidos do dia (exceto cancelados e drafts)
-      const { data: orders, error: ordersErr } = await supabase
-        .from('orders')
-        .select('id, total_amount, status, table_session_id')
-        .eq('tenant_id', user.tenantId)
-        .not('status', 'in', '(cancelled,draft)')
-        .eq('is_training', false)
-        .eq('is_draft', false)
-        .gte('created_at', from)
-        .lte('created_at', to);
-
-      if (ordersErr) throw ordersErr;
-
-      const orderIds = (orders ?? []).map((o) => o.id);
-      const revenue = (orders ?? []).reduce((s, o) => s + Number(o.total_amount ?? 0), 0);
-      setTotalRevenue(revenue);
-      setTotalOrders(orderIds.length);
-
-      if (orderIds.length === 0) {
-        setPayments([]);
-        setItems([]);
-        return;
-      }
-
-      // Buscar pagamentos vinculados aos pedidos do dia
-      const { data: paymentsData, error: paymentsErr } = await supabase
-        .from('payments')
-        .select('amount, change_amount, payment_method_id, payment_methods(name, type)')
-        .in('order_id', orderIds)
-        .eq('tenant_id', user.tenantId)
-        .eq('is_refunded', false);
-
-      if (paymentsErr) throw paymentsErr;
-
-      // Agrupar pagamentos por método
-      const payMap: Record<string, PaymentSummary> = {};
-      (paymentsData ?? []).forEach((p: any) => {
-        const pm = p.payment_methods as { name: string; type: string } | null;
-        const key = p.payment_method_id ?? 'unknown';
-        if (!payMap[key]) {
-          payMap[key] = {
-            methodName: pm?.name ?? 'Desconhecido',
-            type: pm?.type ?? 'other',
-            total: 0,
-            count: 0,
-            changeTotal: 0,
-          };
-        }
-        payMap[key].total += Number(p.amount ?? 0);
-        payMap[key].changeTotal += Number(p.change_amount ?? 0);
-        payMap[key].count += 1;
+      // Usar RPC fn_get_sales_report (SECURITY DEFINER) que bypassa RLS
+      const { data, error } = await supabase.rpc('fn_get_sales_report', {
+        p_tenant_id: user.tenantId,
+        p_date_from: from,
+        p_date_to: to,
+        p_session_id: null,
       });
-      setPayments(Object.values(payMap).sort((a, b) => b.total - a.total));
 
-      // Buscar itens vendidos
-      const { data: orderItems, error: itemsErr } = await supabase
-        .from('order_items')
-        .select('item_name, item_price, quantity')
-        .in('order_id', orderIds)
-        .eq('tenant_id', user.tenantId);
+      if (error) throw error;
 
-      if (itemsErr) throw itemsErr;
+      const result = data as any;
+      const dayData = result?.orders_by_day?.find(
+        (d: any) => d.day === date
+      );
 
-      // Agrupar itens por nome
-      const itemMap: Record<string, ItemSummary> = {};
-      (orderItems ?? []).forEach((oi: any) => {
-        const key = oi.item_name;
-        if (!itemMap[key]) {
-          itemMap[key] = {
-            item_name: oi.item_name,
-            quantity: 0,
-            unit_price: Number(oi.item_price ?? 0),
-            total: 0,
-          };
-        }
-        itemMap[key].quantity += oi.quantity ?? 1;
-        itemMap[key].total += Number(oi.item_price ?? 0) * (oi.quantity ?? 1);
-      });
-      setItems(Object.values(itemMap).sort((a, b) => b.total - a.total));
+      setTotalOrders(dayData?.orders ?? 0);
+      setTotalRevenue(Number(dayData?.revenue ?? 0));
+
+      // Mapear formas de pagamento
+      const rawPayments = (result?.by_payment ?? []) as Array<{
+        payment_method: string;
+        payment_type: string;
+        total: number;
+        count: number;
+      }>;
+      setPayments(
+        rawPayments.map((p) => ({
+          methodName: p.payment_method,
+          type: p.payment_type,
+          total: Number(p.total ?? 0),
+          count: Number(p.count ?? 0),
+          changeTotal: 0, // A RPC não retorna troco; buscamos separado se necessário
+        }))
+      );
+
+      // Mapear itens vendidos
+      const rawItems = (result?.top_items ?? []) as Array<{
+        item_name: string;
+        total_qty: number;
+        total_revenue: number;
+        avg_price: number;
+      }>;
+      setItems(
+        rawItems.map((i) => ({
+          item_name: i.item_name,
+          quantity: Number(i.total_qty ?? 0),
+          unit_price: Number(i.avg_price ?? 0),
+          total: Number(i.total_revenue ?? 0),
+        }))
+      );
     } catch (e) {
       console.error('[DiaDetalheModal]', e);
     } finally {
@@ -236,8 +206,6 @@ export default function DiaDetalheModal({ date, onClose }: DiaDetalheModalProps)
                   {payments.map((p) => {
                     const pct = payTotal > 0 ? Math.round((p.total / payTotal) * 100) : 0;
                     const color = TYPE_COLORS[p.type] ?? '#94a3b8';
-                    const ehDinheiro = p.type === 'cash' || p.type === 'dinheiro';
-                    const valorEntregue = ehDinheiro ? p.total + p.changeTotal : null;
                     return (
                       <div key={p.methodName} className="flex items-start gap-3">
                         <div
@@ -271,18 +239,6 @@ export default function DiaDetalheModal({ date, onClose }: DiaDetalheModalProps)
                             <span className="text-[10px] text-zinc-400">{TYPE_LABELS[p.type] ?? p.type}</span>
                             <span className="text-[10px] text-zinc-400">{p.count} transação(ões) · {pct}%</span>
                           </div>
-                          {ehDinheiro && p.changeTotal > 0 && (
-                            <div className="mt-1.5 pt-1.5 border-t border-emerald-100 space-y-1">
-                              <div className="flex items-center justify-between text-[10px]">
-                                <span className="text-zinc-500">Valor entregue pelo cliente</span>
-                                <span className="font-semibold text-zinc-700">{fmt(valorEntregue ?? 0)}</span>
-                              </div>
-                              <div className="flex items-center justify-between text-[10px]">
-                                <span className="text-emerald-600 font-medium">Troco devolvido</span>
-                                <span className="font-bold text-emerald-700">{fmt(p.changeTotal)}</span>
-                              </div>
-                            </div>
-                          )}
                         </div>
                       </div>
                     );

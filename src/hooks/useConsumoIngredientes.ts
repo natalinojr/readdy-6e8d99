@@ -166,10 +166,14 @@ export function useConsumoIngredientes(
         const ingredientMap = new Map(activeIngredients.map((i) => [i.id, i]));
         const allIngredientMap = new Map(ingredients.map((i) => [i.id, i]));
 
-        /* 2) stock movements via RPC (funciona com RLS, sem limit de 200) */
-        const { data: movsData, error: movsErr } = await supabase.rpc('fn_get_stock_movements', {
+        const fromDate = new Date(`${fromIso}T00:00:00`);
+        const toDate = new Date(`${toIso}T23:59:59`);
+
+        /* 2) stock movements via RPC com filtro de período */
+        const { data: movsData, error: movsErr } = await supabase.rpc('fn_get_stock_movements_filtered', {
           p_tenant_id: tenantId,
-          p_limit: 5000,
+          p_date_from: fromDate.toISOString(),
+          p_date_to: toDate.toISOString(),
         });
         if (movsErr) throw movsErr;
 
@@ -185,33 +189,22 @@ export function useConsumoIngredientes(
           order_id?: string | null;
         }>;
 
-        /* filtra por período no JS (created_at é ISO) */
-        const fromDate = new Date(`${fromIso}T00:00:00`);
-        const toDate = new Date(`${toIso}T23:59:59`);
+        const movements = rawMovs.map((r) => ({
+          id: r.id,
+          ingredientId: r.ingredient_id,
+          type: r.type,
+          quantity: Number(r.quantity),
+          unit: normalizeUnit(r.ingredient_unit),
+          reason: r.reason ?? null,
+          createdAt: r.created_at ?? '',
+        }));
 
-        const movements = rawMovs
-          .filter((r) => {
-            if (!r.created_at) return false;
-            const d = new Date(r.created_at);
-            return d >= fromDate && d <= toDate;
-          })
-          .map((r) => ({
-            id: r.id,
-            ingredientId: r.ingredient_id,
-            type: r.type,
-            quantity: Number(r.quantity),
-            unit: normalizeUnit(r.ingredient_unit),
-            reason: r.reason ?? null,
-            createdAt: r.created_at ?? '',
-          }));
-
-        /* 3) orders do período */
-        const { data: ordersData } = await supabase
-          .from('orders')
-          .select('id, total, status')
-          .eq('tenant_id', tenantId)
-          .gte('created_at', fromDate.toISOString())
-          .lte('created_at', toDate.toISOString());
+        /* 3) orders do período via RPC */
+        const { data: ordersData } = await supabase.rpc('fn_get_orders_for_consumo', {
+          p_tenant_id: tenantId,
+          p_date_from: fromDate.toISOString(),
+          p_date_to: toDate.toISOString(),
+        });
 
         const invalidStatuses = new Set(['cancelled', 'canceled', 'cancelado', 'refunded']);
         const validOrders = (ordersData ?? []).filter((o) => !invalidStatuses.has(o.status as string));

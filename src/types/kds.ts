@@ -15,6 +15,7 @@ export interface KDSSubParte {
   id: string;
   nome: string;
   estacao: string;
+  estacaoId?: string;
   slaMinutos: number;
   status: KDSItemStatus;
   iniciouPreparoEm?: number;
@@ -94,6 +95,12 @@ export interface KDSPagamento {
   cash_register_name?: string | null;
   /** Origin type of the order when the payment was registered */
   origin_type?: string | null;
+  /** PDV that registered the payment: 'cashier' | 'waiter' | 'table' | 'self_service' | 'delivery' */
+  paid_by_pdv?: string | null;
+  /** When the payment was registered (Unix timestamp in ms) */
+  created_at?: number | null;
+  /** Payment group ID — links orders that were paid together */
+  payment_group_id?: string | null;
 }
 
 export interface KDSPedido {
@@ -130,4 +137,26 @@ export interface KDSPedido {
   isTraining?: boolean;
   /** BUG 3.4: All payments for this order — used for split payment display */
   pagamentos?: KDSPagamento[];
+  /** PDV that registered the payment: 'cashier' | 'waiter' | 'table' | 'self_service' | 'delivery' */
+  paid_by_pdv?: string | null;
+  /** Session ID that created this order — for Pedidos list display */
+  session_id?: string | null;
+  /** Session number (e.g. "S001") — human-readable, populated from fn_get_kds_orders */
+  session_number?: string | null;
+  /** Table session ID — links orders from the same table */
+  table_session_id?: string | null;
+  /** Whether the order is currently being edited by a PDV — blocks KDS/Gestor progression */
+  isEditing?: boolean;
+  /** User ID of whoever is currently editing this order */
+  editingByUserId?: string | null;
+  /** When the editing session started */
+  editingStartedAt?: number;
+  /** Name of the user currently editing (resolved from DB users.name) */
+  editingByName?: string;
+  /** Whether the order is currently being saved after an edit — shows "updating" indicator */
+  isSaving?: boolean;
+  /** Participant access_token (senha) from table_session_participants — used in KDS/Gestor display */
+  participantToken?: string | null;
+  /** Participant name from table_session_participants */
+  participantName?: string | null;
 }

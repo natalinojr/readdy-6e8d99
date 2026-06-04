@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Voucher, VoucherStatus, VoucherType } from '@/types/vouchers';
 import EmitirVoucherModal from './components/EmitirVoucherModal';
@@ -61,7 +61,7 @@ export default function VouchersPage() {
 
   async function cancelVoucher(v: Voucher) {
     if (!window.confirm(`Cancelar o voucher ${v.code}?`)) return;
-    await supabase.functions.invoke('voucher-write', {
+    await invokeWithAuth('voucher-write', {
       body: { action: 'cancel_voucher', voucher_id: v.id, active_tenant_id: user?.tenantId },
     });
     await loadVouchers();

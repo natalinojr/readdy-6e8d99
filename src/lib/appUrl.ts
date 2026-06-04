@@ -16,7 +16,8 @@ export function getAppBaseUrl(): string {
     // ignore
   }
 
-  const envUrl = import.meta.env.VITE_PUBLIC_APP_URL as string | undefined;
+  const envUrl = (import.meta.env.VITE_APP_URL as string | undefined)
+    || (import.meta.env.VITE_PUBLIC_APP_URL as string | undefined);
   if (envUrl && envUrl.startsWith('http')) {
     return envUrl.replace(/\/$/, '');
   }

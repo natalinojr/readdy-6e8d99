@@ -138,6 +138,16 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
         <div className="p-6 space-y-5">
           {modo === 'senha' ? (
             <div>
+              {usuario?.perfil === 'totem' && (
+                <div className="mb-4 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-xs text-amber-800 font-medium">
+                    Este é um usuário tablet/totem. O login no terminal é feito por <strong>matrícula + PIN</strong>.
+                  </p>
+                  <p className="text-[11px] text-amber-700 mt-1">
+                    A senha do sistema abaixo só é usada em casos especiais. Para redefinir o PIN de acesso, edite o usuário e use a seção "PIN do PDV".
+                  </p>
+                </div>
+              )}
               <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nova senha</label>
               <div className="relative">
                 <input

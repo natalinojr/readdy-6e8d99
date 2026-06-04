@@ -11,7 +11,7 @@ export interface ConfigOperacao {
   impressaoAutomatica: boolean;
   impressaoKDS: boolean;
   impressaoViasCozinhaAtiva: boolean;
-  autoatendimentoIdentificacao: 'nome' | 'senha' | 'comanda' | 'nenhum';
+  autoatendimentoIdentificacao: 'nome' | 'senha' | 'comanda' | 'senha_balcao' | 'nenhum';
   autoatendimentoPagamento: 'hora' | 'entrega' | 'ambos';
   mensagemBoasVindas: string;
   mensagemRetorno: string;

@@ -4,13 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import { useSessao } from '../../contexts/SessaoContext';
 import { useKDS, buildKDSPedido } from '../../contexts/KDSContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { useEstoque } from '../../contexts/EstoqueContext';
 import { useSystemSettings } from '../../hooks/useSystemSettings';
 import { useKioskAuth } from '../../contexts/KioskAuthContext';
-import { useImpressoras } from '@/contexts/ImpressorasContext';
 import { invokeWithAuth, supabase } from '../../lib/supabase';
 import { useOrderSubmit, PartialOrderError } from '../../hooks/useOrderSubmit';
-import { printKitchenTicket } from '@/pages/pdv/caixa/components/CozinhaTicketPrint';
 import WelcomeScreen from './components/WelcomeScreen';
 import CardapioKiosk from './components/CardapioKiosk';
 import CarrinhoKiosk from './components/CarrinhoKiosk';
@@ -99,12 +96,10 @@ function useFullscreen() {
 
 function AutoatendimentoPageInner() {
   const { estado, sessao, caixa, sincronizarSessao } = useSessao();
-  const { addPedido, reloadOrders } = useKDS();
+  const { addPedido, reloadOrders, stationMap } = useKDS();
   const { user, logout } = useAuth();
-  const { deductSaleItems } = useEstoque();
   const { settings } = useSystemSettings();
   const { kioskSession } = useKioskAuth();
-  const { getImpressoraParaEstacao } = useImpressoras();
   const navigate = useNavigate();
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen();
 
@@ -203,6 +198,21 @@ function AutoatendimentoPageInner() {
         );
       }
       return [...prev, { ...item, enviadoKds: false }];
+    });
+  };
+
+  const handleDiminuir = (itemId: string) => {
+    setCarrinho((prev) => {
+      // Procura de trás pra frente o primeiro item com esse itemId e quantidade > 0
+      const idx = prev.map((c) => c.itemId).lastIndexOf(itemId);
+      if (idx < 0) return prev;
+      const novo = [...prev];
+      const novaQtd = novo[idx].quantidade - 1;
+      if (novaQtd <= 0) {
+        return novo.filter((_, i) => i !== idx);
+      }
+      novo[idx] = { ...novo[idx], quantidade: novaQtd };
+      return novo;
     });
   };
 
@@ -318,7 +328,7 @@ function AutoatendimentoPageInner() {
     let destinoInfo: DestinoInfo;
     if (modoIdentificacao === 'nome') {
       destinoInfo = { tipo: 'nome', nomeCliente: identifNome || 'Cliente' };
-    } else if (modoIdentificacao === 'senha' || modoIdentificacao === 'comanda') {
+    } else if (modoIdentificacao === 'senha' || modoIdentificacao === 'comanda' || modoIdentificacao === 'senha_balcao') {
       destinoInfo = { tipo: 'senha', senha: identifSenha };
     } else {
       destinoInfo = { tipo: 'hora' };
@@ -333,7 +343,7 @@ function AutoatendimentoPageInner() {
       item_name: item.nome,
       item_price: item.preco,
       quantity: item.quantidade,
-      station_id: null,
+      station_id: (item.stationId && /^[0-9a-f-]{36}$/i.test(item.stationId)) ? item.stationId : null,
       skip_kds: item.semPreparo ?? false,
       notes: item.observacao || null,
       options: item.opcoesSelecionadas.map((o) => ({
@@ -354,6 +364,7 @@ function AutoatendimentoPageInner() {
       nome: 'nome',
       senha: 'senha',
       comanda: 'senha',
+      senha_balcao: 'senha',
       hora: 'hora',
       na_hora: 'hora',
     };
@@ -431,40 +442,14 @@ function AutoatendimentoPageInner() {
         setPendingOrderId(result.id);
         setPendingOrderNumber(result.numero);
 
-        // Imprimir ticket de cozinha automaticamente no totem via impressora mapeada
-        try {
-          const destinoPrint: DestinoInfo = {
-            tipo: modoIdentificacao === 'nome' ? 'nome' : modoIdentificacao === 'senha' || modoIdentificacao === 'comanda' ? 'senha' : 'hora',
-            nomeCliente: identifNome || 'Cliente',
-            senha: identifSenha,
-          };
-          const carrinhoPrint = carrinho.map((item) => ({
-            cartId: item.itemId || `k-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            itemId: item.itemId,
-            nome: item.nome,
-            precoBase: item.preco,
-            precoTotal: item.preco,
-            quantidade: item.quantidade,
-            opcoes: (item.opcoesSelecionadas ?? []).map((o) => ({ grupoNome: 'Opcoes', opcaoNome: o, precoAdicional: 0 })),
-            observacoes: item.observacao ? [item.observacao] : [],
-            observacaoLivre: item.observacao || '',
-            obsUnidades: [],
-            semPreparo: item.semPreparo ?? false,
-          }));
-          const primeiroItem = carrinhoPrint.find((i) => i.stationId);
-          const estacao = primeiroItem?.stationId ?? 'cozinha-padrao';
-          const impressora = getImpressoraParaEstacao(estacao);
-          await printKitchenTicket(result.numero, carrinhoPrint, destinoPrint, impressora);
-        } catch (e) {
-          console.warn('[Autoatendimento] Erro ao imprimir ticket de cozinha (non-blocking):', e);
-        }
+        // Impressão é gerenciada pelo useOrderSubmit via fila centralizada
       } else {
         console.warn('[Autoatendimento] handleAvancarPagamento: criarPedidoBanco retornou null — pedido não salvo no banco');
       }
     } finally {
       criarPedidoRef.current = false;
     }
-  }, [criarPedidoBanco, pendingOrderId, carrinho, identifNome, identifSenha, modoIdentificacao]);
+  }, [criarPedidoBanco, pendingOrderId]);
 
   const handleConcluir = useCallback(async (paymentMethodId?: string) => {
     const effectiveOrderId = pendingOrderId;
@@ -507,18 +492,6 @@ function AutoatendimentoPageInner() {
             console.error('[Autoatendimento] record_payment error:', payErr);
           } else {
             supabase.rpc('fn_update_paid_by_pdv', { p_order_id: effectiveOrderId, p_paid_by_pdv: 'self_service' }).catch(() => {});
-            const itensParaBaixa = carrinho
-              .filter((item) => item.itemId && /^[0-9a-f-]{36}$/i.test(item.itemId))
-              .map((item) => ({
-                itemId: item.itemId,
-                nome: item.nome,
-                quantidade: item.quantidade,
-              }));
-            if (itensParaBaixa.length > 0) {
-              deductSaleItems(effectiveOrderId, itensParaBaixa).catch((e) => {
-                console.warn('[Autoatendimento] Stock deduction failed:', e);
-              });
-            }
           }
         } catch (e) {
           console.error('[Autoatendimento] Erro ao registrar pagamento:', e);
@@ -531,7 +504,7 @@ function AutoatendimentoPageInner() {
         let destinoInfo: DestinoInfo;
         if (modoIdentificacao === 'nome') {
           destinoInfo = { tipo: 'nome', nomeCliente: identifNome || 'Cliente' };
-        } else if (modoIdentificacao === 'senha' || modoIdentificacao === 'comanda') {
+        } else if (modoIdentificacao === 'senha' || modoIdentificacao === 'comanda' || modoIdentificacao === 'senha_balcao') {
           destinoInfo = { tipo: 'senha', senha: identifSenha };
         } else {
           destinoInfo = { tipo: 'hora' };
@@ -556,6 +529,7 @@ function AutoatendimentoPageInner() {
           destino: destinoInfo,
           numeroSeq: pedidoSeq,
           origem: 'autoatendimento',
+          stationMap,
         });
         addPedido(pedidoKDS);
       }
@@ -576,7 +550,7 @@ function AutoatendimentoPageInner() {
   }, [
     pendingOrderId, caixa, getTenantAndSession, carrinho,
     identifNome, identifSenha, modoIdentificacao,
-    addPedido, reloadOrders, deductSaleItems, kioskInvoke,
+    addPedido, reloadOrders, kioskInvoke,
   ]);
 
   const handleCancelar = useCallback(async () => {
@@ -734,11 +708,11 @@ function AutoatendimentoPageInner() {
       <>
         <WelcomeScreen onIniciar={handleIniciar} />
         {showConfigModal && <KioskConfigModal onClose={() => setShowConfigModal(false)} />}
-        {/* Botão de configuração — canto inferior direito (acima do fullscreen) */}
+        {/* Botão de configuração — canto superior direito */}
         <button
           onClick={() => setShowConfigModal(true)}
           title="Configurações do totem"
-          className="fixed bottom-16 right-5 z-[100] w-9 h-9 flex items-center justify-center bg-zinc-900/70 hover:bg-zinc-800/90 text-zinc-600 hover:text-zinc-400 rounded-xl border border-zinc-800 cursor-pointer transition-all"
+          className="fixed top-5 right-5 z-[100] w-9 h-9 flex items-center justify-center bg-zinc-900/70 hover:bg-zinc-800/90 text-zinc-600 hover:text-zinc-400 rounded-xl border border-zinc-800 cursor-pointer transition-all"
         >
           <i className="ri-settings-3-line text-sm" />
         </button>
@@ -882,6 +856,7 @@ function AutoatendimentoPageInner() {
           <CardapioKiosk
             carrinho={carrinho}
             onAdicionar={handleAdicionar}
+            onDiminuir={handleDiminuir}
             onVerCarrinho={() => setEtapa('carrinho')}
           />
         )}

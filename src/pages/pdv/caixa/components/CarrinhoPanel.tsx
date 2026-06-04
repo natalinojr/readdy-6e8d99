@@ -7,6 +7,7 @@ import { useAprovacoes } from '../../../../contexts/AprovacoesContext';
 import DescontoAutorizacaoModal from './DescontoAutorizacaoModal';
 import type { DestinoInfo, CarrinhoItem } from '../../../../contexts/PDVContext';
 import { useSystemSettings } from '../../../../hooks/useSystemSettings';
+import { usePedidosAgrupados } from '@/hooks/usePedidosAgrupados';
 
 interface Props {
   onDestino: () => void;
@@ -14,6 +15,7 @@ interface Props {
   onLimpar: () => void;
   onEditItem: (cartId: string) => void;
   onEnviarCozinha?: () => void;
+  onVincularPedidos?: () => void;
 }
 
 interface Rascunho {
@@ -53,7 +55,7 @@ function DestinoTag({ destino }: { destino: DestinoInfo }) {
   return (
     <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
       <i className={`${icons[destino.tipo]} text-sm`} />
-      <span className="truncate max-w-[90px]">{labels[destino.tipo]}</span>
+      <span className="truncate max-w-[140px]">{labels[destino.tipo]}</span>
     </div>
   );
 }
@@ -101,12 +103,13 @@ function ConfirmDialog({
   );
 }
 
-export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem, onEnviarCozinha }: Props) {
+export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem, onEnviarCozinha, onVincularPedidos }: Props) {
   const {
     carrinho, destino, taxaServico,
     subtotal, valorDesconto, valorTaxaServico, total,
     updateItemQty, removeItem, setDesconto, toggleTaxaServico, addItem, clearCart,
   } = usePDV();
+  const { pedidosRelacionados } = usePedidosAgrupados(destino, carrinho, total);
   const { dispararNotificacao, addPendingApproval, cancelPending } = useNotificacoes();
   const { user } = useAuth();
   const { registrarEvento } = useAuditoria();
@@ -125,7 +128,13 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const labelInputRef = useRef<HTMLInputElement>(null);
 
-  const { settings: sysSettings } = useSystemSettings();
+  const { settings: sysSettings, carregar: recarregarSettings } = useSystemSettings();
+  // Força recarga das configurações ao montar para evitar dados stale
+  useEffect(() => {
+    recarregarSettings();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Taxa de serviço aparece no carrinho do PDV Caixa apenas quando ambas as flags estão ativas
   const taxaServicoConfig = sysSettings.service_fee_enabled && sysSettings.pdv_caixa_show_service_fee;
   const taxaServicoPct = sysSettings.service_fee_percentage;
@@ -719,10 +728,12 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
 
           {/* Totais */}
           <div className="px-3 md:px-4 py-2.5 md:py-3 space-y-1">
-            <div className="flex justify-between text-xs text-zinc-500">
-              <span>Subtotal</span>
-              <span>{formatPrice(subtotal)}</span>
-            </div>
+            {(subtotal !== total || valorDesconto > 0 || (taxaServico && taxaServicoConfig)) && (
+              <div className="flex justify-between text-xs text-zinc-500">
+                <span>Subtotal</span>
+                <span>{formatPrice(subtotal)}</span>
+              </div>
+            )}
             {valorDesconto > 0 && (
               <div className="flex justify-between text-xs text-green-600">
                 <span>Desconto</span>
@@ -735,7 +746,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
                 <span>+{formatPrice(valorTaxaServico)}</span>
               </div>
             )}
-            <div className="flex justify-between text-base font-bold text-zinc-900 pt-1 border-t border-zinc-200">
+            <div className={`flex justify-between text-base font-bold text-zinc-900 ${(subtotal !== total || valorDesconto > 0 || (taxaServico && taxaServicoConfig)) ? 'pt-1 border-t border-zinc-200' : ''}`}>
               <span>Total</span>
               <span>{formatPrice(total)}</span>
             </div>
@@ -757,6 +768,21 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
               >
                 <i className="ri-restaurant-line text-base" />
                 Enviar para Cozinha
+              </button>
+            )}
+            {/* Botão Vincular Pedidos — aparece quando detecta pedidos da mesma conta */}
+            {onVincularPedidos && pedidosRelacionados.length > 0 && (
+              <button
+                onClick={onVincularPedidos}
+                className="w-full py-2.5 flex items-center justify-center gap-2 border-2 border-amber-400 text-amber-700 bg-amber-50 hover:bg-amber-100 font-bold text-sm rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <div className="w-5 h-5 flex items-center justify-center">
+                  <i className="ri-links-line text-amber-600 text-base" />
+                </div>
+                <span>Pedidos da mesma conta</span>
+                <span className="ml-1 bg-amber-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full">
+                  +{pedidosRelacionados.length}
+                </span>
               </button>
             )}
             <button

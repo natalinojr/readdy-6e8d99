@@ -88,6 +88,22 @@ function kdsParaRecente(p: KDSPedido): PedidoRecente {
     _iniciouPreparoTs: primeiroIniciouPreparo ? new Date(primeiroIniciouPreparo).toISOString() : null,
     _ficouProntoTs: primeiroFicouPronto ? new Date(primeiroFicouPronto).toISOString() : null,
     _entregueTs: p.status === 'entregue' ? (() => { const tsList = p.itens.flatMap((i) => i.unidades?.map((u) => u.entregueEm).filter((t): t is number => typeof t === 'number') ?? (i.ficouProntoEm ? [i.ficouProntoEm] : [])); const latest = tsList.sort((a, b) => b - a)[0]; return latest ? new Date(latest).toISOString() : null; })() : null,
+    session_id: p.session_id ?? undefined,
+    session_number: p.session_number ?? undefined,
+    pagamentos: p.pagamentos?.map((pg) => ({
+      id: pg.id,
+      amount: Number(pg.amount),
+      change_amount: Number(pg.change_amount ?? 0),
+      is_refunded: !!pg.is_refunded,
+      payment_method_name: pg.payment_method_name ?? null,
+      payment_method_type: pg.payment_method_type ?? null,
+      operator_name: pg.operator_name ?? null,
+      cash_register_id: pg.cash_register_id ?? null,
+      cash_register_name: pg.cash_register_name ?? null,
+      origin_type: pg.origin_type ?? null,
+      paid_by_pdv: pg.paid_by_pdv ?? null,
+      payment_group_id: pg.payment_group_id ?? null,
+    })),
     itensDetalhes: p.itens.map((item) => ({
       id: item.id,
       nome: item.nome,
@@ -239,6 +255,7 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
     deliveryPlatform: o.delivery_platform ?? undefined,
     deliveryFee: o.delivery_fee ?? undefined,
     session_id: o.session_id ?? undefined,
+    session_number: o.session_number ?? undefined,
     _criadoTs: o.created_at,
     _iniciouPreparoTs: dbPrimeiroIniciouPreparo,
     _ficouProntoTs: dbPrimeiroFicouPronto,
@@ -283,11 +300,13 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
       amount: Number(p.amount) || 0,
       change_amount: p.change_amount != null ? Number(p.change_amount) : 0,
       is_refunded: p.is_refunded ?? false,
-      payment_method_name: p.payment_methods?.name ?? null,
-      payment_method_type: (p.payment_methods as { name: string; type?: string | null } | null)?.type ?? null,
+      payment_method_name: p.payment_method_name ?? null,
+      payment_method_type: p.payment_method_type ?? null,
       operator_name: p.operator_name ?? null,
       cash_register_id: p.cash_register_id ?? null,
+      cash_register_name: p.cash_register_name ?? null,
       paid_by_pdv: o.paid_by_pdv ?? null,
+      payment_group_id: p.payment_group_id ?? null,
     })),
     itensDetalhes: o.itens.map((item) => {
       const opcoes = item.options?.map((op) => op.option_name) ?? [];
@@ -365,6 +384,88 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
       };
     }),
   };
+}
+
+// ─── Agrupamento de pedidos unificados (payment_group_id) ─────────────────────
+
+/** Agrupa pedidos que compartilham o mesmo payment_group_id em um único pedido representativo.
+ *  Pedidos sem payment_group_id permanecem individuais. */
+function agruparPedidosUnificados(pedidos: PedidoRecente[]): PedidoRecente[] {
+  const grupos = new Map<string, PedidoRecente[]>();
+  const individuais: PedidoRecente[] = [];
+
+  // Separa pedidos com payment_group_id dos sem
+  pedidos.forEach((p) => {
+    const groupId = p.pagamentos?.find((pg) => pg.payment_group_id)?.payment_group_id ?? null;
+    if (groupId) {
+      if (!grupos.has(groupId)) grupos.set(groupId, []);
+      grupos.get(groupId)!.push(p);
+    } else {
+      individuais.push(p);
+    }
+  });
+
+  // Para cada grupo, cria um pedido representativo
+  const agrupados: PedidoRecente[] = [];
+  grupos.forEach((pedidosDoGrupo, groupId) => {
+    // Ordena por data de criação (mais antigo primeiro)
+    pedidosDoGrupo.sort((a, b) => {
+      const aTs = a._criadoTs ? new Date(a._criadoTs).getTime() : 0;
+      const bTs = b._criadoTs ? new Date(b._criadoTs).getTime() : 0;
+      return bTs - aTs; // mais recente primeiro
+    });
+
+    const pedidoPrincipal = pedidosDoGrupo[0];
+    const todosItens = pedidosDoGrupo.flatMap((p) => p.itensDetalhes.map((item) => ({ ...item, orderId: p.id })));
+    const todosPagamentos = pedidosDoGrupo.flatMap((p) => p.pagamentos ?? []);
+    const totalGrupo = pedidosDoGrupo.reduce((sum, p) => sum + p.total, 0);
+    const todosPago = pedidosDoGrupo.every((p) => p.pago);
+    const todosCancelado = pedidosDoGrupo.every((p) => p.status === 'cancelled' || p.status === 'cancelado');
+    const todosEntregue = pedidosDoGrupo.every((p) => p.status === 'delivered' || p.status === 'entregue');
+    const todosPronto = pedidosDoGrupo.every((p) => p.status === 'ready' || p.status === 'pronto');
+    const algumPreparo = pedidosDoGrupo.some((p) => p.status === 'preparing' || p.status === 'preparo');
+    const algumAberto = pedidosDoGrupo.some((p) => p.status === 'new' || p.status === 'novo');
+
+    const statusGrupo: PedidoRecente['status'] = todosCancelado
+      ? 'cancelled'
+      : todosEntregue
+      ? 'delivered'
+      : todosPronto
+      ? 'ready'
+      : algumPreparo
+      ? 'preparing'
+      : algumAberto
+      ? 'new'
+      : pedidoPrincipal.status;
+
+    // Número do grupo: concatena os números dos pedidos
+    const numerosCodigos = pedidosDoGrupo.map((p) => p.numeroCodigo ?? String(p.numero)).join(', ');
+    const numerosStr = pedidosDoGrupo.map((p) => p.numeroStr ?? String(p.numero)).join(', ');
+
+    const pedidoAgrupado: PedidoRecente = {
+      ...pedidoPrincipal,
+      id: `group-${groupId}`, // ID sintético para o grupo
+      numero: pedidoPrincipal.numero,
+      numeroCodigo: numerosCodigos,
+      numeroStr: numerosStr,
+      status: statusGrupo,
+      total: totalGrupo,
+      pago: todosPago,
+      itensDetalhes: todosItens,
+      pagamentos: todosPagamentos,
+      pedidoIds: pedidosDoGrupo.map((p) => p.id),
+      pedidosOriginais: pedidosDoGrupo,
+    };
+
+    agrupados.push(pedidoAgrupado);
+  });
+
+  // Combina: grupos primeiro (ordenados por data), depois individuais
+  return [...agrupados, ...individuais].sort((a, b) => {
+    const aTs = a._criadoTs ? new Date(a._criadoTs).getTime() : 0;
+    const bTs = b._criadoTs ? new Date(b._criadoTs).getTime() : 0;
+    return bTs - aTs;
+  });
 }
 
 // ── Helpers de label ──────────────────────────────────────────────────────────
@@ -677,9 +778,12 @@ export default function PedidosPage() {
   }, [pedidos, busca, filtroStatus, filtroOrigem, filtroPlataforma, modoPeriodo, presetAtivo, diaEspecifico,
       periodoInicio, periodoFim, mesSelecionado, anoSelecionado, anoApenas, modo]);
 
+  // ── Agrupamento de pedidos unificados para a lista ─────────────────────────
+  const pedidosAgrupados = useMemo(() => agruparPedidosUnificados(filtrados), [filtrados]);
+
   const pedidoDetalhe = useMemo(
-    () => (pedidoDetalheId ? pedidos.find((p) => p.id === pedidoDetalheId) ?? null : null),
-    [pedidoDetalheId, pedidos],
+    () => (pedidoDetalheId ? pedidosAgrupados.find((p) => p.id === pedidoDetalheId) ?? null : null),
+    [pedidoDetalheId, pedidosAgrupados],
   );
 
   // ── Métricas ──────────────────────────────────────────────────────────────
@@ -727,7 +831,7 @@ export default function PedidosPage() {
       filtrados.forEach((p) => {
         p.itensDetalhes.forEach((item) => {
           rows.push([
-            String(p.numero).padStart(4, '0'), p.numeroCodigo ?? '', p.session_id ?? '', p.dataPedido ?? '', p.criadoEm,
+            String(p.numero).padStart(4, '0'), p.numeroCodigo ?? '', p.session_number ?? '', p.dataPedido ?? '', p.criadoEm,
             DB_STATUS_LABEL[p.status] ?? _STATUS_LABEL[p.status] ?? p.status,
             p.pago ? 'Pago' : 'Pendente',
             destinoStr(p), ORIGEM_LABEL[p.origem] ?? p.origem, p.garcomNome ?? '',
@@ -751,7 +855,7 @@ export default function PedidosPage() {
     } else {
       const headers = ['Nº Pedido','Código','Sessão','Data','Hora','Status','Pagamento','Destino','Origem','Operador','Itens','SLA Espera (min)','SLA Cozinha (min)','Tempo Total (min)','Total (R$)'];
       const rows = filtrados.map((p) => [
-        String(p.numero).padStart(4, '0'), p.numeroCodigo ?? '', p.session_id ?? '', p.dataPedido ?? '', p.criadoEm,
+        String(p.numero).padStart(4, '0'), p.numeroCodigo ?? '', p.session_number ?? '', p.dataPedido ?? '', p.criadoEm,
         DB_STATUS_LABEL[p.status] ?? _STATUS_LABEL[p.status] ?? p.status,
         p.pago ? 'Pago' : 'Pendente',
         destinoStr(p), ORIGEM_LABEL[p.origem] ?? p.origem, p.garcomNome ?? '',
@@ -796,7 +900,7 @@ export default function PedidosPage() {
               <i className={`ri-refresh-line ${loadingSessaoOrders ? 'animate-spin' : ''}`} />
             </button>
             <span className="text-xs text-zinc-400 bg-zinc-100 px-3 py-1.5 rounded-lg font-medium">
-              {filtrados.length} pedido{filtrados.length !== 1 ? 's' : ''}
+              {pedidosAgrupados.length} pedido{pedidosAgrupados.length !== 1 ? 's' : ''}
             </span>
             <div className="relative" ref={refMenuExport}>
               <button
@@ -913,7 +1017,7 @@ export default function PedidosPage() {
 
         {/* Lista */}
         <PedidosLista
-          pedidos={filtrados}
+          pedidos={pedidosAgrupados}
           loading={loadingSessaoOrders}
           onSelectPedido={setPedidoDetalheId}
         />

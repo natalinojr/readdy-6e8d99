@@ -4,6 +4,7 @@ import { useTablesConfig } from '../../hooks/useTablesConfig';
 import { useKDS } from '@/contexts/KDSContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useMesaKDSNotificacoes } from '@/hooks/useMesaKDSNotificacoes';
+import { useSystemSettings, type SectorConfig } from '@/hooks/useSystemSettings';
 import MapaSalao from './components/MapaSalao';
 import MesaDetalhes from './components/MesaDetalhes';
 import NovaMesaModal from './components/NovaMesaModal';
@@ -50,6 +51,7 @@ function formatPrice(v: number) {
 export default function MesasPage() {
   const { mesas, loading, atualizarMesa, transferirMesa, fecharMesa } = useMesas();
   const { criarMesa, editarMesa, excluirMesa: excluirMesaDB } = useTablesConfig();
+  const { settings } = useSystemSettings();
   const { pedidos: todosPedidos } = useKDS();
   const { success: toastSuccess, error: toastError } = useToast();
 
@@ -132,7 +134,6 @@ export default function MesasPage() {
         x: 50,
         y: 50,
         status: 'livre',
-        qrCode: `MESA-${String(data.numero).padStart(3, '0')}-QR-${Date.now()}`,
       });
       if (error) {
         toastError('Erro ao criar mesa', error);
@@ -189,6 +190,8 @@ export default function MesasPage() {
       </div>
     );
   }
+
+  const setores: SectorConfig[] = settings.sectors_config ?? [];
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -508,6 +511,7 @@ export default function MesasPage() {
       {novaMesaModal.open && (
         <NovaMesaModal
           mesa={novaMesaModal.mesa}
+          setores={setores}
           onClose={() => setNovaMesaModal({ open: false, mesa: null })}
           onSalvar={handleSalvarMesa}
           onExcluir={handleExcluirMesa}

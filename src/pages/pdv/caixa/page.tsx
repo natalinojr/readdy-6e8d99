@@ -40,6 +40,23 @@ interface MovimentoCaixa {
   hora: string;
 }
 
+/* ─── Tela: Carregando sessão ─── */
+function CarregandoSessaoView() {
+  return (
+    <div className="flex flex-col h-full items-center justify-center p-8 text-center relative overflow-hidden"
+      style={{ background: 'radial-gradient(ellipse at 20% 0%, #fff8ed 0%, #fafaf9 40%, #f5f5f4 100%)' }}
+    >
+      <div className="relative z-10 flex flex-col items-center">
+        <div className="w-16 h-16 flex items-center justify-center bg-amber-50 border border-amber-200 rounded-2xl mb-4">
+          <i className="ri-loader-4-line animate-spin text-3xl text-amber-500" />
+        </div>
+        <p className="text-sm font-bold text-zinc-600">Verificando sessão...</p>
+        <p className="text-xs text-zinc-400 mt-1">Aguarde um momento</p>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Tela: Sem Sessão ─── */
 function SemSessaoView({ onIniciar, onVoltar }: { onIniciar: () => void; onVoltar: () => void }) {
   return (
@@ -416,8 +433,10 @@ function PDVOperacional() {
       setPendingAction(null);
       setIsEnviandoCozinha(true);
       enviarParaCozinha(destino)
-        .then((numero) => {
-          toastSuccess('Pedido enviado para cozinha!', `#${String(numero).padStart(4, '0')} — pague depois`);
+        .then((result) => {
+          const numStr = result?.number || `P${Date.now()}`;
+          const printOk = result?.printEnqueued;
+          toastSuccess('Pedido enviado para cozinha!', `#${numStr} — pague depois${printOk ? ' · Ticket na fila de impressão' : ''}`);
         })
         .catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -439,8 +458,10 @@ function PDVOperacional() {
       // Passa o destino confirmado diretamente para o enviarParaCozinha
       // evitando que o estado desatualizado do React cause perda da identificação
       enviarParaCozinha(d)
-        .then((numero) => {
-          toastSuccess('Pedido enviado para cozinha!', `#${String(numero).padStart(4, '0')} — pague depois`);
+        .then((result) => {
+          const numStr = result?.number || `P${Date.now()}`;
+          const printOk = result?.printEnqueued;
+          toastSuccess('Pedido enviado para cozinha!', `#${numStr} — pague depois${printOk ? ' · Ticket na fila de impressão' : ''}`);
         })
         .catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -563,8 +584,10 @@ function PDVOperacional() {
       }
       setIsEnviandoCozinha(true);
       try {
-        const numero = await enviarParaCozinha();
-        toastSuccess('Pedido enviado para cozinha!', `#${String(numero).padStart(4, '0')} — pague depois`);
+        const result = await enviarParaCozinha();
+        const numStr = result?.number || `P${Date.now()}`;
+        const printOk = result?.printEnqueued;
+        toastSuccess('Pedido enviado para cozinha!', `#${numStr} — pague depois${printOk ? ' · Ticket na fila de impressão' : ''}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         toastError('Erro ao enviar para cozinha', msg);
@@ -597,7 +620,7 @@ function PDVOperacional() {
   return (
     <div className="flex flex-col h-full bg-zinc-50 overflow-hidden">
       {/* ── TOP BAR ── */}
-      <div className="flex items-center justify-between px-3 md:px-4 py-2 md:py-2.5 bg-white border-b border-zinc-100 flex-shrink-0">
+      <div className="flex items-center justify-between px-3 md:px-4 py-2 md:py-2.5 bg-white border-b border-zinc-100 flex-shrink-0 flex-wrap gap-y-2">
         <div className="flex items-center gap-2 md:gap-3 min-w-0">
           {/* Botão Módulos integrado na top bar */}
           <button
@@ -628,7 +651,7 @@ function PDVOperacional() {
         </div>
 
         {/* Desktop actions */}
-        <div className="hidden md:flex items-center gap-4">
+        <div className="hidden md:flex items-center gap-2 lg:gap-4 flex-wrap justify-end">
           <div className="text-right">
             <p className="text-sm font-bold text-zinc-900">{timeStr}</p>
             <p className="text-[10px] text-zinc-400 capitalize">{dateStr}</p>
@@ -731,7 +754,7 @@ function PDVOperacional() {
         </div>
 
         {/* RIGHT: Cart + Pedidos */}
-        <div className="w-80 xl:w-96 flex-shrink-0 flex flex-col bg-white border-l border-zinc-200">
+        <div className="w-72 lg:w-80 xl:w-96 flex-shrink-0 flex flex-col bg-white border-l border-zinc-200">
           <div className="flex border-b border-zinc-200 bg-zinc-50 flex-shrink-0">
             {([
               { key: 'carrinho', icon: 'ri-shopping-cart-line', label: 'Carrinho' },
@@ -760,6 +783,7 @@ function PDVOperacional() {
                 onLimpar={handleLimpar}
                 onEditItem={handleEditItem}
                 onEnviarCozinha={handleEnviarCozinha}
+                onVincularPedidos={handlePagar}
               />
             )}
             {tabRight === 'mesas' && (
@@ -818,6 +842,7 @@ function PDVOperacional() {
               onLimpar={handleLimpar}
               onEditItem={handleEditItem}
               onEnviarCozinha={handleEnviarCozinha}
+              onVincularPedidos={handlePagar}
             />
           )}
           {mobileTab === 'mesas' && (
@@ -974,7 +999,7 @@ function PDVOperacional() {
 
 /* ─── Controlador principal ─── */
 function PDVCaixaInner() {
-  const { estado } = useSessao();
+  const { estado, loadingSession } = useSessao();
   const navigate = useNavigate();
   const { setMode } = useAppMode();
   const [modal, setModal] = useState<'none' | 'iniciar_sessao' | 'abertura_caixa' | 'fechar_sessao'>('none');
@@ -983,6 +1008,10 @@ function PDVCaixaInner() {
     setMode('modulos');
     navigate('/modulos');
   };
+
+  if (loadingSession) {
+    return <CarregandoSessaoView />;
+  }
 
   return (
     <>

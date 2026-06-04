@@ -11,7 +11,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get('Authorization');
+    const authHeader = req.headers.get('Authorization') ?? '';
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
@@ -19,33 +19,39 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Cria client com o JWT do usuário
-    const supabaseUser = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } },
-    );
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+    const hasServiceRole = serviceRoleKey.length > 100;
 
-    // Cria client com service_role para bypassar RLS nas payments
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    );
+    // Cria client com o JWT do usuario
+    const supabaseUser = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    // Cria client com service_role (ou fallback para anon se service role nao disponivel)
+    const supabaseAdmin = createClient(supabaseUrl, hasServiceRole ? serviceRoleKey : anonKey, {
+      global: {
+        headers: hasServiceRole
+          ? { Authorization: `Bearer ${serviceRoleKey}` }
+          : { Authorization: authHeader },
+      },
+    });
 
     const body = await req.json();
     const { session_id, tenant_id } = body;
 
     if (!session_id || !tenant_id) {
-      return new Response(JSON.stringify({ error: 'session_id e tenant_id são obrigatórios' }), {
+      return new Response(JSON.stringify({ error: 'session_id e tenant_id sao obrigatorios' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Verifica que o usuário está autenticado e tem acesso ao tenant
+    // Verifica que o usuario esta autenticado
     const { data: userData, error: userErr } = await supabaseUser.auth.getUser();
     if (userErr || !userData?.user) {
-      return new Response(JSON.stringify({ error: 'Usuário não autenticado' }), {
+      return new Response(JSON.stringify({ error: 'Usuario nao autenticado' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -53,7 +59,7 @@ Deno.serve(async (req) => {
 
     const userId = userData.user.id;
 
-    // Verifica acesso ao tenant — busca todos os registros do usuário e verifica se algum bate
+    // Verifica acesso ao tenant
     const { data: userTenants, error: tenantErr } = await supabaseAdmin
       .from('user_tenants')
       .select('tenant_id')
@@ -61,12 +67,10 @@ Deno.serve(async (req) => {
 
     if (tenantErr) {
       console.error('[session-payments] erro ao verificar tenant:', tenantErr);
-      // Se não conseguiu verificar, continua com cautela (pode ser admin-master sem user_tenants)
     }
 
     const tenantIds = (userTenants ?? []).map((ut: { tenant_id: string }) => ut.tenant_id);
-    
-    // Verifica acesso — se temos registros e o tenant não está incluído, nega
+
     if (tenantIds.length > 0 && !tenantIds.includes(tenant_id)) {
       return new Response(JSON.stringify({ error: 'Acesso negado ao tenant' }), {
         status: 403,
@@ -74,7 +78,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Verifica também se a sessão pertence ao tenant
+    // Verifica tambem se a sessao pertence ao tenant
     const { data: sessaoCheck, error: sessaoErr } = await supabaseAdmin
       .from('sessions')
       .select('id, tenant_id')
@@ -83,17 +87,17 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (sessaoErr) {
-      console.error('[session-payments] erro ao verificar sessão:', sessaoErr);
+      console.error('[session-payments] erro ao verificar sessao:', sessaoErr);
     }
 
     if (!sessaoCheck) {
-      return new Response(JSON.stringify({ error: 'Sessão não encontrada para este tenant' }), {
+      return new Response(JSON.stringify({ error: 'Sessao nao encontrada para este tenant' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Busca pedidos da sessão (não cancelados, não treino)
+    // Busca pedidos da sessao (nao cancelados, nao treino)
     const { data: orders, error: ordersErr } = await supabaseAdmin
       .from('orders')
       .select('id, total_amount')
@@ -103,7 +107,10 @@ Deno.serve(async (req) => {
       .eq('is_training', false)
       .eq('is_draft', false);
 
-    if (ordersErr) throw ordersErr;
+    if (ordersErr) {
+      console.error('[session-payments] orders error:', ordersErr);
+      throw ordersErr;
+    }
 
     const orderIds = (orders ?? []).map((o: { id: string }) => o.id);
 
@@ -114,7 +121,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Busca pagamentos e métodos de pagamento em paralelo com service_role
+    // Busca pagamentos e metodos de pagamento em paralelo
     const [paymentsRes, pmRes] = await Promise.all([
       supabaseAdmin
         .from('payments')
@@ -128,8 +135,14 @@ Deno.serve(async (req) => {
         .eq('tenant_id', tenant_id),
     ]);
 
-    if (paymentsRes.error) throw paymentsRes.error;
-    if (pmRes.error) throw pmRes.error;
+    if (paymentsRes.error) {
+      console.error('[session-payments] payments error:', paymentsRes.error);
+      throw paymentsRes.error;
+    }
+    if (pmRes.error) {
+      console.error('[session-payments] payment_methods error:', pmRes.error);
+      throw pmRes.error;
+    }
 
     console.log('[session-payments] orders:', orderIds.length, 'payments:', paymentsRes.data?.length ?? 0);
 

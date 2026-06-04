@@ -57,6 +57,14 @@ export const TODAS_ESTACOES_KEY = 'todas-estacoes';
 export const IMPRESSORA_PADRAO_WINDOWS_KEY = 'impressora-padrao-windows';
 export const IMPRESSORA_PADRAO_WINDOWS_LABEL = 'Impressora Padrão (USB/Windows)';
 
+// Chaves dos pontos fixos de impressão
+export const PRINTER_KEY_CAIXA_PDV = 'caixa-pdv';
+export const PRINTER_KEY_CLIENTE = 'cliente';
+export const PRINTER_KEY_PEDIDOS = 'pedidos';
+export const PRINTER_KEY_GESTOR_PEDIDOS = 'gestor-pedidos';
+export const PRINTER_KEY_RELATORIOS = 'relatorios';
+export const PRINTER_KEY_QRCODES = 'qrcodes';
+
 function getDefaultTemplate(stationKey: string): PrintTemplate {
   return {
     stationKey,
@@ -80,26 +88,30 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
   const [mapaEstacoes, setMapaEstacoes] = useState<MapaEstacoes>({});
   const [printTemplates, setPrintTemplates] = useState<PrintTemplatesMap>({});
   const [salvando, setSalvando] = useState(false);
-  const initialized = useRef(false);
+  // Guarda a última config do banco pra saber quando sincronizar (evita sobrescrever edições locais)
+  const lastDbConfigRef = useRef<string>('');
 
-  // Load from DB when settings are ready
+  // Sincroniza estado local com o banco sempre que settings.printers_config mudar
   useEffect(() => {
-    if (settingsLoading || initialized.current) return;
-    initialized.current = true;
-    if (settings.printers_config) {
-      const cfg = settings.printers_config;
-      if (cfg.impressoras && Array.isArray(cfg.impressoras)) {
-        setImpressoras(cfg.impressoras.map((i: Impressora) => ({
-          ...i,
-          paperStyle: i.paperStyle ?? '80mm',
-        })));
-      }
-      if (cfg.mapaEstacoes && typeof cfg.mapaEstacoes === 'object') {
-        setMapaEstacoes(cfg.mapaEstacoes as MapaEstacoes);
-      }
-      if (cfg.printTemplates && typeof cfg.printTemplates === 'object') {
-        setPrintTemplates(cfg.printTemplates as PrintTemplatesMap);
-      }
+    if (settingsLoading) return;
+    const cfg = settings.printers_config;
+    if (!cfg) return;
+
+    const cfgJson = JSON.stringify(cfg);
+    if (cfgJson === lastDbConfigRef.current) return;
+    lastDbConfigRef.current = cfgJson;
+
+    if (cfg.impressoras && Array.isArray(cfg.impressoras)) {
+      setImpressoras(cfg.impressoras.map((i: Impressora) => ({
+        ...i,
+        paperStyle: i.paperStyle ?? '80mm',
+      })));
+    }
+    if (cfg.mapaEstacoes && typeof cfg.mapaEstacoes === 'object') {
+      setMapaEstacoes(cfg.mapaEstacoes as MapaEstacoes);
+    }
+    if (cfg.printTemplates && typeof cfg.printTemplates === 'object') {
+      setPrintTemplates(cfg.printTemplates as PrintTemplatesMap);
     }
   }, [settings, settingsLoading]);
 
@@ -121,10 +133,16 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
 
   const getImpressoraParaEstacao = useCallback(
     (estacao: string): Impressora | undefined => {
+      console.log('[ImpressorasContext] Buscando impressora para estação:', estacao);
+      console.log('[ImpressorasContext] Mapa de estações:', mapaEstacoes);
+      console.log('[ImpressorasContext] Impressoras cadastradas:', impressoras.map(i => ({ id: i.id, nome: i.nome, ip: i.ip })));
+
       // 1. Mapeamento específico desta estação
       const id = mapaEstacoes?.[estacao];
       if (id) {
+        console.log('[ImpressorasContext] Mapeamento específico encontrado:', id);
         if (id === IMPRESSORA_PADRAO_WINDOWS_KEY) {
+          console.warn('[ImpressorasContext] Mapeamento aponta para Impressora Padrão Windows (sem IP → abrirá janela)');
           return {
             id: IMPRESSORA_PADRAO_WINDOWS_KEY,
             nome: IMPRESSORA_PADRAO_WINDOWS_LABEL,
@@ -133,12 +151,19 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
             paperStyle: '80mm',
           };
         }
-        return impressoras.find((i) => i.id === id);
+        const imp = impressoras.find((i) => i.id === id);
+        if (imp) {
+          console.log('[ImpressorasContext] Impressora específica encontrada:', imp.nome, 'IP:', imp.ip || 'SEM IP');
+          return imp;
+        }
       }
+
       // 2. Fallback: "todas as estações" quando nenhum mapeamento específico
       const fallbackId = mapaEstacoes?.[TODAS_ESTACOES_KEY];
       if (fallbackId) {
+        console.log('[ImpressorasContext] Fallback geral encontrado:', fallbackId);
         if (fallbackId === IMPRESSORA_PADRAO_WINDOWS_KEY) {
+          console.warn('[ImpressorasContext] Fallback geral aponta para Impressora Padrão Windows (sem IP → abrirá janela)');
           return {
             id: IMPRESSORA_PADRAO_WINDOWS_KEY,
             nome: IMPRESSORA_PADRAO_WINDOWS_LABEL,
@@ -147,8 +172,21 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
             paperStyle: '80mm',
           };
         }
-        return impressoras.find((i) => i.id === fallbackId);
+        const imp = impressoras.find((i) => i.id === fallbackId);
+        if (imp) {
+          console.log('[ImpressorasContext] Impressora fallback geral encontrada:', imp.nome, 'IP:', imp.ip || 'SEM IP');
+          return imp;
+        }
       }
+
+      // 3. Fallback final: primeira impressora de rede (com IP) cadastrada no sistema
+      const rede = impressoras.find((i) => i.ip && i.ip.trim() !== '');
+      if (rede) {
+        console.log('[ImpressorasContext] Fallback automático — usando primeira impressora de rede:', rede.nome, 'IP:', rede.ip);
+        return rede;
+      }
+
+      console.warn('[ImpressorasContext] NENHUMA impressora encontrada para estação:', estacao, '→ imprimirá via navegador (janela)');
       return undefined;
     },
     [impressoras, mapaEstacoes],

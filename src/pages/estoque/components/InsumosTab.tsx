@@ -1,15 +1,13 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Search, Plus, Edit2, Trash2, Building2, History } from 'lucide-react';
+import { Search, Plus, Edit2, Trash2, History } from 'lucide-react';
 import type { Insumo } from '@/contexts/EstoqueContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useProducao } from '@/contexts/ProducaoContext';
 import { useIngredientCategories } from '@/hooks/useIngredientCategories';
-import { useSuppliers } from '@/hooks/useSuppliers';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import NovaCompraModal from '@/pages/financeiro/components/NovaCompraModal';
 import AlertasReposicao from './AlertasReposicao';
-import GerenciarFornecedoresModal from './GerenciarFornecedoresModal';
 import HistoricoComprasModal from './HistoricoComprasModal';
 import CategoriasModal from './insumos/CategoriasModal';
 import InsumoModal from './insumos/InsumoModal';
@@ -17,14 +15,12 @@ import EntradaRapidaModal from './insumos/EntradaRapidaModal';
 import MiniPriceHistory from './insumos/MiniPriceHistory';
 import { statusEstoque, barColor, barWidth, diasParaRuptura, exportarInsumosCSV } from './insumos/InsumosUtils';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
-import { formatCurrency } from '@/lib/formatters';
 import ItensIndisponiveisPanel from './ItensIndisponiveisPanel';
 
 export default function InsumosTab() {
   const { insumos, insumosEsgotados, marcarInsumoEsgotado, upsertInsumo, reloadInsumos, addMovimentacao } = useEstoque();
   const { recipes, batches } = useProducao();
   const { categories, names: categoriasDB, loading: loadingCategorias, addCategory, removeCategory } = useIngredientCategories();
-  const { suppliers, names: fornecedoresDB } = useSuppliers();
   const { user } = useAuth();
   const [busca, setBusca] = useState('');
   const [categoriaFiltro, setCategoriaFiltro] = useState('Todas');
@@ -32,7 +28,6 @@ export default function InsumosTab() {
   const [modal, setModal] = useState<'new' | Insumo | null>(null);
   const [confirmEsgotado, setConfirmEsgotado] = useState<Insumo | null>(null);
   const [categoriasModal, setCategoriasModal] = useState(false);
-  const [fornecedoresModal, setFornecedoresModal] = useState(false);
   const [entradaRapida, setEntradaRapida] = useState<Insumo | null>(null);
   const [confirmExcluir, setConfirmExcluir] = useState<Insumo | null>(null);
   const [showRuptura, setShowRuptura] = useState(false);
@@ -110,14 +105,10 @@ export default function InsumosTab() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
   }, [categoriasDB, insumos, recipes]);
 
-  const todosFornecedores = useMemo(() => {
-    const set = new Set<string>(fornecedoresDB);
-    insumos.forEach((i) => { if (i.fornecedor) set.add(i.fornecedor); });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  }, [fornecedoresDB, insumos]);
+
 
   const insumosVisiveis = useMemo(() => insumos.filter((i) => {
-    const matchBusca = i.nome.toLowerCase().includes(busca.toLowerCase()) || (i.fornecedor && i.fornecedor.toLowerCase().includes(busca.toLowerCase()));
+    const matchBusca = i.nome.toLowerCase().includes(busca.toLowerCase());
     const matchCat = categoriaFiltro === 'Todas' || i.categoria === categoriaFiltro;
     const st = statusEstoque(i).label;
     const esgotado = insumosEsgotados.includes(i.id);
@@ -144,9 +135,8 @@ export default function InsumosTab() {
       unidade: data.unidade,
       categoria: data.categoria,
       precoUnitario: data.precoUnitario,
+      priceSource: data.priceSource,
       estoqueMinimo: data.estoqueMinimo,
-      fornecedor: data.fornecedor,
-      supplierId: data.supplierId ?? null,
       purchaseUnit: data.purchaseUnit,
       purchaseFactor: data.purchaseFactor ?? 1,
       dreCategoryId: data.dreCategoryId,
@@ -294,13 +284,6 @@ export default function InsumosTab() {
               <i className="ri-file-transfer-line text-sm" />
             </button>
             <button
-              onClick={() => setFornecedoresModal(true)}
-              title="Fornecedores"
-              className="w-8 h-8 flex items-center justify-center bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer"
-            >
-              <div className="w-4 h-4 flex items-center justify-center"><Building2 size={13} /></div>
-            </button>
-            <button
               onClick={() => setCategoriasModal(true)}
               title="Categorias"
               className="w-8 h-8 flex items-center justify-center bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer"
@@ -360,7 +343,6 @@ export default function InsumosTab() {
                   <tr>
                     <th className="px-4 py-3 text-left font-semibold text-zinc-500">Insumo</th>
                     <th className="px-4 py-3 text-left font-semibold text-zinc-500">Categoria</th>
-                    <th className="px-4 py-3 text-left font-semibold text-zinc-500">Fornecedor</th>
                     <th className="px-4 py-3 text-right font-semibold text-zinc-500">Preço Unit.</th>
                     <th className="px-4 py-3 text-center font-semibold text-zinc-500">Estoque Atual</th>
                     <th className="px-4 py-3 text-center font-semibold text-zinc-500">Status</th>
@@ -413,9 +395,6 @@ export default function InsumosTab() {
                           ) : (
                             <span className="text-zinc-300 text-[10px]">—</span>
                           )}
-                        </td>
-                        <td className="px-4 py-3 text-zinc-500 max-w-[140px] truncate">
-                          {insumo.fornecedor || <span className="text-zinc-300">—</span>}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <p className="font-semibold text-zinc-800">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(insumo.precoUnitario)}/{insumo.unidade}</p>
@@ -542,10 +521,6 @@ export default function InsumosTab() {
                     </div>
                   </div>
 
-                  {insumo.fornecedor && (
-                    <p className="text-[10px] text-zinc-400 mb-2 truncate"><i className="ri-building-line mr-1" />{insumo.fornecedor}</p>
-                  )}
-
                   <div className="flex items-center gap-1.5 pt-2 border-t border-zinc-50">
                     <button onClick={() => setEntradaRapida(insumo)} className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-green-50 text-green-700 text-xs font-semibold rounded-lg cursor-pointer">
                       <i className="ri-add-circle-line text-sm" /> Entrada
@@ -654,12 +629,9 @@ export default function InsumosTab() {
         <InsumoModal
           insumo={modal === 'new' ? null : modal}
           categoriasDisponiveis={todasCategorias}
-          fornecedoresDisponiveis={todosFornecedores}
-          fornecedoresComId={suppliers.map((s) => ({ id: s.id, name: s.name }))}
           dreCategories={dreCategories}
           onClose={() => setModal(null)}
           onSave={handleSaveInsumo}
-          onOpenFornecedores={() => setFornecedoresModal(true)}
         />
       )}
 
@@ -677,12 +649,6 @@ export default function InsumosTab() {
           insumoPreSelecionado={compraModal}
           onClose={() => setCompraModal(null)}
           onSaved={() => { setCompraModal(null); reloadInsumos(); }}
-        />
-      )}
-
-      {fornecedoresModal && (
-        <GerenciarFornecedoresModal
-          onClose={() => setFornecedoresModal(false)}
         />
       )}
 

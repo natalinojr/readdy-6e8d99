@@ -58,7 +58,7 @@ export default function KDSColuna({ status, count, children, invertSort, onToggl
 
   return (
     <div
-      className="flex flex-col flex-1 min-w-0 rounded-xl overflow-hidden border border-zinc-200/70"
+      className="flex flex-col flex-1 min-w-0 rounded-xl overflow-hidden border border-zinc-200/70 h-full"
       style={{
         background: status === 'novo'
           ? 'linear-gradient(160deg, rgba(254,243,199,0.65) 0%, rgba(255,255,255,0.80) 60%)'

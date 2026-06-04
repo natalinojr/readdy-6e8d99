@@ -4,8 +4,6 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from './SessaoContext';
 
-/* ─── DB Row Type ─── */
-
 interface DBTable {
   id: string;
   number: number;
@@ -20,6 +18,7 @@ interface DBTable {
   pos_x?: number | null;
   pos_y?: number | null;
   customer_name?: string | null;
+  qr_token?: string | null;
 }
 
 export interface Mesa {
@@ -39,6 +38,7 @@ export interface Mesa {
   numeroPessoas?: number;
   posX?: number;
   posY?: number;
+  qrToken?: string;
 }
 
 interface MesasContextValue {
@@ -76,6 +76,7 @@ function dbToMesa(row: DBTable): Mesa {
     clienteNome: row.customer_name ?? undefined,
     posX: row.pos_x ?? undefined,
     posY: row.pos_y ?? undefined,
+    qrToken: row.qr_token ?? undefined,
   };
 }
 

@@ -64,16 +64,16 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
 
       {/* Logo + Nome da loja */}
       <div className="flex flex-col items-center gap-3 mt-8 relative z-10">
-        <div className="w-20 h-20 flex items-center justify-center bg-amber-500 rounded-3xl">
-          <span className="text-4xl">🍔</span>
+        <div className="w-32 h-32 flex items-center justify-center bg-amber-500 rounded-3xl">
+          <span className="text-7xl">🍔</span>
         </div>
-        <p className="text-white font-black text-2xl tracking-wide">{nomeLoja}</p>
-        <p className="text-white/40 text-xs font-semibold tracking-widest uppercase">Terminal de Autoatendimento</p>
+        <p className="text-white font-black text-4xl tracking-wide">{nomeLoja}</p>
+        <p className="text-white/40 text-lg font-semibold tracking-widest uppercase">Terminal de Autoatendimento</p>
       </div>
 
       {/* Central */}
       <div className="flex flex-col items-center text-center relative z-10">
-        <h1 className="text-6xl font-black text-white leading-tight mb-4">
+        <h1 className="text-8xl font-black text-white leading-tight mb-4">
           {titulo.includes(' ') ? (
             <>
               {titulo.split(' ').slice(0, Math.ceil(titulo.split(' ').length / 2)).join(' ')}<br />
@@ -83,39 +83,39 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
             <span className="text-amber-400">{titulo}</span>
           )}
         </h1>
-        <p className="text-zinc-400 text-xl mb-16">{subtitulo}</p>
+        <p className="text-zinc-400 text-3xl mb-16">{subtitulo}</p>
 
         {/* Botão principal */}
         <button
           onClick={handleIniciar}
-          className="group flex items-center gap-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 px-12 py-6 rounded-3xl transition-all active:scale-95 cursor-pointer"
+          className="group flex items-center gap-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 px-16 py-8 rounded-3xl transition-all active:scale-95 cursor-pointer"
         >
-          <span className="text-2xl font-black">Toque para começar</span>
-          <div className="w-10 h-10 flex items-center justify-center bg-zinc-950/10 rounded-2xl group-hover:bg-zinc-950/20 transition-colors">
-            <ChevronRight size={22} />
+          <span className="text-4xl font-black">Toque para começar</span>
+          <div className="w-14 h-14 flex items-center justify-center bg-zinc-950/10 rounded-2xl group-hover:bg-zinc-950/20 transition-colors">
+            <ChevronRight size={30} />
           </div>
         </button>
       </div>
 
       {/* Footer */}
       <div className="flex flex-col items-center gap-2 relative z-10">
-        <div className="flex gap-6 text-zinc-600 text-sm font-medium">
+        <div className="flex gap-6 text-zinc-600 text-lg font-medium">
           <span>Aceito: Dinheiro</span>
           <span>•</span>
           <span>PIX</span>
           <span>•</span>
           <span>Cartão de Crédito / Débito</span>
         </div>
-        <p className="text-zinc-700 text-xs">ERPOS</p>
+        <p className="text-zinc-700 text-base">ERPOS</p>
       </div>
 
       {/* Botão Fullscreen — canto inferior direito */}
       <button
         onClick={toggle}
         title={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
-        className="absolute bottom-5 right-5 z-20 w-10 h-10 flex items-center justify-center bg-zinc-800/60 hover:bg-zinc-700/80 text-zinc-500 hover:text-zinc-300 rounded-xl transition-all cursor-pointer"
+        className="absolute bottom-5 right-5 z-20 w-14 h-14 flex items-center justify-center bg-zinc-800/60 hover:bg-zinc-700/80 text-zinc-500 hover:text-zinc-300 rounded-xl transition-all cursor-pointer"
       >
-        {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+        {isFullscreen ? <Minimize2 size={22} /> : <Maximize2 size={22} />}
       </button>
     </div>
   );

@@ -56,7 +56,38 @@ const emptyForm: Partial<BankAccount> = {
 
 // ── Histórico de Movimentações ────────────────────────────────────────────────
 function TransactionHistory({ account, onClose }: { account: BankAccount; onClose: () => void }) {
-  const { transactions, loading, manualTransaction } = useBankTransactions(account.id);
+  const [periodFilter, setPeriodFilter] = useState<'current_month' | 'last_month' | 'last_30' | 'last_90' | 'all'>('current_month');
+
+  const getPeriodDates = useCallback(() => {
+    const today = new Date();
+    const format = (d: Date) => d.toISOString().split('T')[0];
+    switch (periodFilter) {
+      case 'current_month': {
+        const start = new Date(today.getFullYear(), today.getMonth(), 1);
+        const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        return { startDate: format(start), endDate: format(end) };
+      }
+      case 'last_month': {
+        const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        const end = new Date(today.getFullYear(), today.getMonth(), 0);
+        return { startDate: format(start), endDate: format(end) };
+      }
+      case 'last_30': {
+        const start = new Date(today.getTime() - 30 * 86400000);
+        return { startDate: format(start), endDate: format(today) };
+      }
+      case 'last_90': {
+        const start = new Date(today.getTime() - 90 * 86400000);
+        return { startDate: format(start), endDate: format(today) };
+      }
+      case 'all':
+      default:
+        return { startDate: undefined, endDate: undefined };
+    }
+  }, [periodFilter]);
+
+  const { startDate, endDate } = getPeriodDates();
+  const { transactions, loading, manualTransaction } = useBankTransactions(account.id, startDate, endDate);
   const [showManual, setShowManual] = useState(false);
   const [manualForm, setManualForm] = useState({
     type: 'debit' as 'credit' | 'debit',
@@ -115,12 +146,28 @@ function TransactionHistory({ account, onClose }: { account: BankAccount; onClos
           </div>
         </div>
 
-        {/* Saldo atual */}
-        <div className="px-6 py-3 bg-zinc-50 border-b border-zinc-100 flex items-center justify-between flex-shrink-0">
-          <span className="text-xs text-zinc-500">Saldo Atual</span>
-          <span className={`text-lg font-bold ${Number(account.current_balance) >= 0 ? 'text-zinc-900' : 'text-red-600'}`}>
-            {formatCurrency(Number(account.current_balance))}
-          </span>
+        {/* Period filter + Saldo atual */}
+        <div className="px-6 py-3 bg-zinc-50 border-b border-zinc-100 flex items-center justify-between flex-shrink-0 gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-500">Período:</span>
+            <select
+              value={periodFilter}
+              onChange={e => setPeriodFilter(e.target.value as typeof periodFilter)}
+              className="border border-zinc-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+            >
+              <option value="current_month">Mês Atual</option>
+              <option value="last_month">Mês Anterior</option>
+              <option value="last_30">Últimos 30 dias</option>
+              <option value="last_90">Últimos 90 dias</option>
+              <option value="all">Todo o Período</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-zinc-500">Saldo Atual</span>
+            <span className={`text-base font-bold ${Number(account.current_balance) >= 0 ? 'text-zinc-900' : 'text-red-600'}`}>
+              {formatCurrency(Number(account.current_balance))}
+            </span>
+          </div>
         </div>
 
         {/* Transactions list */}
@@ -134,7 +181,7 @@ function TransactionHistory({ account, onClose }: { account: BankAccount; onClos
               <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-full mb-3">
                 <i className="ri-exchange-line text-zinc-400 text-xl" />
               </div>
-              <p className="text-sm font-semibold text-zinc-600 mb-1">Nenhuma movimentação ainda</p>
+              <p className="text-sm font-semibold text-zinc-600 mb-1">Nenhuma movimentação no período</p>
               <p className="text-xs text-zinc-400">
                 As movimentações aparecem automaticamente ao pagar contas ou registrar compras vinculadas a esta conta.
               </p>

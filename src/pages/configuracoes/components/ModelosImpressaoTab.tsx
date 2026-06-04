@@ -17,6 +17,26 @@ const CAIXA_PDV_KEY = 'caixa-pdv';
 const CAIXA_PDV_NAME = 'Caixa PDV';
 const CAIXA_PDV_COLOR = '#52525b';
 
+const CLIENTE_KEY = 'cliente';
+const CLIENTE_NAME = 'Cliente (Senha / Comprovante)';
+const CLIENTE_COLOR = '#0ea5e9';
+
+const PEDIDOS_KEY = 'pedidos';
+const PEDIDOS_NAME = 'Pedidos (Resumo / Relatório)';
+const PEDIDOS_COLOR = '#8b5cf6';
+
+const GESTOR_PEDIDOS_KEY = 'gestor-pedidos';
+const GESTOR_PEDIDOS_NAME = 'Gestor de Pedidos (Comanda)';
+const GESTOR_PEDIDOS_COLOR = '#f59e0b';
+
+const RELATORIOS_KEY = 'relatorios';
+const RELATORIOS_NAME = 'Relatórios (DRE / Folha / Caixa)';
+const RELATORIOS_COLOR = '#ec4899';
+
+const QR_CODES_KEY = 'qrcodes';
+const QR_CODES_NAME = 'QR Codes das Mesas';
+const QR_CODES_COLOR = '#10b981';
+
 function colorBadgeStyle(hex: string) {
   return {
     color: hex,
@@ -69,6 +89,11 @@ export default function ModelosImpressaoTab() {
   const allStations = [
     ...stations.map((s) => ({ key: s.id, label: s.name, color: s.color })),
     { key: CAIXA_PDV_KEY, label: CAIXA_PDV_NAME, color: CAIXA_PDV_COLOR },
+    { key: CLIENTE_KEY, label: CLIENTE_NAME, color: CLIENTE_COLOR },
+    { key: PEDIDOS_KEY, label: PEDIDOS_NAME, color: PEDIDOS_COLOR },
+    { key: GESTOR_PEDIDOS_KEY, label: GESTOR_PEDIDOS_NAME, color: GESTOR_PEDIDOS_COLOR },
+    { key: RELATORIOS_KEY, label: RELATORIOS_NAME, color: RELATORIOS_COLOR },
+    { key: QR_CODES_KEY, label: QR_CODES_NAME, color: QR_CODES_COLOR },
   ];
 
   const getImpressoraName = (stationKey: string) => {

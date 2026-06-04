@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { type KDSPedido, type KDSItem, type KDSItemStatus, type KDSUnidade } from '../../types/kds';
+import { type KDSPedido, type KDSItemStatus, type KDSUnidade } from '../../types/kds';
+import { useAuth } from '@/contexts/AuthContext';
 
 const ESTACOES_KDS = ['Grelha', 'Frituras', 'Balcão', 'Confeitaria'];
 import { useCardapio } from '@/contexts/CardapioContext';
@@ -21,19 +22,19 @@ import { useEstoque } from '../../contexts/EstoqueContext';
 import { useKDS } from '../../contexts/KDSContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 
-function deriveItemStatus(item: KDSItem): KDSItemStatus {
+function deriveItemStatus(item: any): any {
   if (item.partes && item.partes.length > 0) {
-    const statuses = item.partes.map((p) => p.status);
-    if (statuses.every((s) => s === 'entregue')) return 'entregue';
-    if (statuses.every((s) => s === 'pronto' || s === 'entregue')) return 'pronto';
-    if (statuses.some((s) => s === 'preparo' || s === 'pronto')) return 'preparo';
+    const statuses = item.partes.map((p: any) => p.status);
+    if (statuses.every((s: any) => s === 'entregue')) return 'entregue';
+    if (statuses.every((s: any) => s === 'pronto' || s === 'entregue')) return 'pronto';
+    if (statuses.some((s: any) => s === 'preparo' || s === 'pronto')) return 'preparo';
     return 'novo';
   }
   if (item.unidades && item.unidades.length > 0) {
-    const statuses = item.unidades.map((u) => u.status);
-    if (statuses.every((s) => s === 'entregue')) return 'entregue';
-    if (statuses.every((s) => s === 'pronto' || s === 'entregue')) return 'pronto';
-    if (statuses.some((s) => s === 'preparo' || s === 'pronto')) return 'preparo';
+    const statuses = item.unidades.map((u: any) => u.status);
+    if (statuses.every((s: any) => s === 'entregue')) return 'entregue';
+    if (statuses.every((s: any) => s === 'pronto' || s === 'entregue')) return 'pronto';
+    if (statuses.some((s: any) => s === 'preparo' || s === 'pronto')) return 'preparo';
     return 'novo';
   }
   return item.status;
@@ -42,10 +43,7 @@ function deriveItemStatus(item: KDSItem): KDSItemStatus {
 function derivePedidoStatus(pedido: KDSPedido): KDSPedido['status'] {
   const kitchenItens = pedido.itens.filter((i) => !i.semPreparo && !i.skip_kds);
   const allItens = pedido.itens;
-  // Todos os itens (incluindo skip_kds) devem estar entregues para o pedido ser 'entregue'
   if (allItens.every((i) => deriveItemStatus(i) === 'entregue')) return 'entregue';
-  // Se não há itens de cozinha e os skip_kds ainda não estão todos entregues,
-  // verifica se todos os skip_kds estão pelo menos prontos
   if (kitchenItens.length === 0) {
     const skipStatuses = allItens.map((i) => deriveItemStatus(i));
     if (skipStatuses.every((s) => s === 'pronto' || s === 'entregue')) return 'pronto';
@@ -60,16 +58,20 @@ function derivePedidoStatus(pedido: KDSPedido): KDSPedido['status'] {
 export default function KDSPage() {
   useKDSTick();
   const { playNovoPedido, playPedidoPronto, resume } = useKDSSound();
-  const { estado, sessao, estacoesAbertas, fecharEstacao } = useSessao();
-  const { deductSaleItems, marcarInsumoEsgotado, insumosEsgotados, insumos } = useEstoque();
-  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, toggleObsChecadaRemote } = useKDS();
+  const { estado, sessao, estacoesAbertas, fecharEstacao, loadingSession } = useSessao();
+  const { user } = useAuth();
+  const { marcarInsumoEsgotado, insumosEsgotados, insumos } = useEstoque();
+  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, toggleObsChecadaRemote, pedidosSalvando } = useKDS();
   const { itensAtivos, estacoes } = useCardapio();
   const { settings: sysSettings } = useSystemSettings();
+
+  // Impressão automática é gerenciada pelo useOrderSubmit via fila centralizada.
+  // O KDS não reimprime ao abrir — evita duplicação.
 
   // ── Alerta de fechamento da cozinha ──────────────────────────────────────
   const [alertaFechamento, setAlertaFechamento] = useState<'aviso' | 'fechando' | null>(null);
   useEffect(() => {
-    const closeTime = sysSettings.kitchen_close_time; // 'HH:MM'
+    const closeTime = sysSettings.kitchen_close_time;
     if (!closeTime) return;
     const check = () => {
       const now = new Date();
@@ -115,13 +117,12 @@ export default function KDSPage() {
     [estacoes],
   );
 
-  // Ordenação das colunas KDS
   const [invertOrdemNovos, setInvertOrdemNovos] = useState(false);
   const [invertOrdemPreparo, setInvertOrdemPreparo] = useState(false);
 
   useEffect(() => {
-    if (estado === 'sem_sessao') setLogado(false);
-  }, [estado]);
+    if (!loadingSession && estado === 'sem_sessao') setLogado(false);
+  }, [estado, loadingSession]);
 
   useEffect(() => {
     const id = setInterval(() => setClock(new Date()), 1000);
@@ -179,14 +180,6 @@ export default function KDSPage() {
 
       setPedidos((prev) => {
         const pedidoAtual = prev.find((p) => p.id === pedidoId);
-        if (pedidoAtual?.status === 'pronto' || pedidoAtual?.status === 'em_rota') {
-          const itensParaDeducao = pedidoAtual.itens.map((i) => ({
-            itemId: i.menuItemId ?? i.id,
-            nome: i.nome,
-            quantidade: i.quantidade,
-          }));
-          deductSaleItems(pedidoAtual.numero, itensParaDeducao);
-        }
         return prev.map((p) => {
           if (p.id !== pedidoId) return p;
           const now = Date.now();
@@ -245,7 +238,7 @@ export default function KDSPage() {
         });
       }
     },
-    [estacaoFiltro, estacoesAbertas, deductSaleItems, setPedidos, updateItemStatusRemote],
+    [estacaoFiltro, estacoesAbertas, setPedidos, updateItemStatusRemote],
   );
 
   const handleAvancarItem = useCallback(
@@ -298,12 +291,13 @@ export default function KDSPage() {
   const handleAvancarParte = useCallback(
     (pedidoId: string, itemId: string, parteId: string, novoStatus: KDSItemStatus) => {
       const estacaoOp = estacaoFiltro !== 'Todas' ? estacaoFiltro : undefined;
+      const isSimulated = pedidoId.startsWith('kds-');
       setPedidos((prev) =>
         prev.map((p) => {
           if (p.id !== pedidoId) return p;
+          const nowTs = Date.now();
           const itens = p.itens.map((i) => {
             if (i.id !== itemId) return i;
-            const nowTs = Date.now();
             const partes = i.partes?.map((parte) => {
               if (parte.id !== parteId) return parte;
               return {
@@ -343,8 +337,12 @@ export default function KDSPage() {
           return { ...p, itens, status: novoStatusPedido };
         }),
       );
+
+      if (!isSimulated) {
+        updatePartStatusRemote(parteId, itemId, pedidoId, novoStatus);
+      }
     },
-    [estacaoFiltro, somAtivo, playPedidoPronto, setPedidos],
+    [estacaoFiltro, somAtivo, playPedidoPronto, setPedidos, updatePartStatusRemote],
   );
 
   const handleToggleObsChecada = useCallback(
@@ -352,7 +350,6 @@ export default function KDSPage() {
       let obsIndex = 0;
       let checked = false;
 
-      // Optimistic update local
       setPedidos((prev) =>
         prev.map((p) => {
           if (p.id !== pedidoId) return p;
@@ -361,7 +358,6 @@ export default function KDSPage() {
             const atuais = i.observacoesChecadas ?? [];
             const jaChecada = atuais.includes(obs);
             checked = !jaChecada;
-            // Determina o index da observação no array original
             obsIndex = i.observacoes.indexOf(obs);
             if (obsIndex < 0) obsIndex = 0;
             return {
@@ -375,7 +371,6 @@ export default function KDSPage() {
         }),
       );
 
-      // BUG 3.10 FIX: Persiste no banco de forma assíncrona (fire-and-forget)
       if (!pedidoId.startsWith('kds-')) {
         const operadorNome = estacoesAbertas[0]?.operadorNome ?? undefined;
         toggleObsChecadaRemote(itemId, obs, obsIndex, checked, operadorNome);
@@ -403,7 +398,6 @@ export default function KDSPage() {
   const handleAvancarUnidade = useCallback(
     (pedidoId: string, itemId: string, unidadeId: string, novoStatus: KDSItemStatus) => {
       const isSimulated = pedidoId.startsWith('kds-');
-      // Extract unit number from unidadeId (format: `${itemId}-u${numero}`)
       const unitNumMatch = unidadeId.match(/-u(\d+)$/);
       const unitNumber = unitNumMatch ? parseInt(unitNumMatch[1], 10) : 1;
 
@@ -457,7 +451,6 @@ export default function KDSPage() {
         }),
       );
 
-      // Persiste no banco — sem isso o Realtime reseta as unidades para o status agregado
       if (!isSimulated) {
         updateUnitStatusRemote(itemId, pedidoId, unitNumber, novoStatus);
       }
@@ -597,12 +590,6 @@ export default function KDSPage() {
           if (!temNaEstacao) return p;
         }
         const now = Date.now();
-        const itensParaDeducao = p.itens.map((i) => ({
-          itemId: i.menuItemId ?? i.id,
-          nome: i.nome,
-          quantidade: i.quantidade,
-        }));
-        deductSaleItems(p.numero, itensParaDeducao);
         const itens = p.itens.map((i) => {
           const partes = i.partes?.map((parte) => ({
             ...parte,
@@ -620,7 +607,7 @@ export default function KDSPage() {
         return { ...p, itens, status: 'entregue' };
       }),
     );
-  }, [estacaoFiltro, estacoesAbertas, deductSaleItems, setPedidos]);
+  }, [estacaoFiltro, estacoesAbertas, setPedidos]);
 
   const { novos, preparo, prontos, entregues, emRota, contadorPorEstacao, alertasOutrasEstacoes } =
     usePedidosFiltrados({ pedidos, estacaoFiltro, invertNovos: invertOrdemNovos, invertPreparo: invertOrdemPreparo, busca: buscaKDS }, estacoesNomes);
@@ -633,17 +620,50 @@ export default function KDSPage() {
   const totalNovos = novos.length;
   const totalAtivos = novos.length + preparo.length;
 
+  // CAMADA 3: Feedback visual quando pedido é bloqueado pelo PDV
+  const [lockAlert, setLockAlert] = useState<{ orderId: string; message: string } | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { orderId: string; message: string } | undefined;
+      if (detail?.orderId) {
+        setLockAlert(detail);
+        // Auto-dismiss após 5 segundos
+        setTimeout(() => setLockAlert((prev) => (prev?.orderId === detail.orderId ? null : prev)), 5000);
+      }
+    };
+    window.addEventListener('kds:order-locked', handler);
+    return () => window.removeEventListener('kds:order-locked', handler);
+  }, []);
+
   const estacaoInfo =
     estacaoFiltro !== 'Todas'
       ? estacoesAbertas.find((e) => e.estacaoNome === estacaoFiltro) ?? null
       : null;
 
+  if (loadingSession) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center bg-white">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-16 h-16 flex items-center justify-center bg-amber-50 border border-amber-200 rounded-2xl">
+            <i className="ri-loader-4-line animate-spin text-3xl text-amber-500" />
+          </div>
+          <p className="text-sm font-bold text-zinc-600">Verificando sessão...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!logado) {
-    return <KDSSetupScreen onConfirm={handleLoginSuccess} />;
+    return (
+      <KDSSetupScreen onConfirm={handleLoginSuccess} />
+    );
   }
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-white">
+
+      {/* Banner de impressão automática ativa (backup do KDS) */}
+
 
       {flashNovo && (
         <div className="fixed inset-0 bg-amber-400/15 z-40 pointer-events-none animate-ping" />
@@ -661,6 +681,21 @@ export default function KDSPage() {
             </span>
           </div>
           <button onClick={() => setAlertaFechamento(null)} className="text-white/70 hover:text-white cursor-pointer">
+            <i className="ri-close-line text-sm" />
+          </button>
+        </div>
+      )}
+
+      {/* Banner de pedido bloqueado para edição (PDV) */}
+      {lockAlert && (
+        <div className="flex items-center justify-between px-4 py-2 flex-shrink-0 bg-red-500">
+          <div className="flex items-center gap-2">
+            <i className="ri-lock-line text-white text-base" />
+            <span className="text-white text-xs font-bold">
+              {lockAlert.message}
+            </span>
+          </div>
+          <button onClick={() => setLockAlert(null)} className="text-white/70 hover:text-white cursor-pointer">
             <i className="ri-close-line text-sm" />
           </button>
         </div>
@@ -707,6 +742,33 @@ export default function KDSPage() {
         onFecharEstacao={() => setShowFecharEstacao(true)}
       />
 
+      {/* ── Barra fixa: pedidos sendo atualizados pelo PDV ── */}
+      {pedidosSalvando.length > 0 && (
+        <div className="bg-sky-50 border-b border-sky-200 px-3 py-2 flex items-center gap-2 flex-shrink-0">
+          <div className="w-4 h-4 border-2 border-sky-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          <span className="text-xs font-bold text-sky-700 flex-shrink-0">Atualizando:</span>
+          <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
+            {pedidosSalvando.map((p) => (
+              <span
+                key={p.id}
+                className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-sky-200 rounded-full text-[10px] font-bold text-sky-800 whitespace-nowrap"
+              >
+                #{String(p.numero).padStart(4, '0')}
+                {p.destino === 'mesa' && p.mesaNumero && (
+                  <span className="text-sky-500 font-medium">M{p.mesaNumero}</span>
+                )}
+                {p.destino === 'nome' && p.nomeCliente && (
+                  <span className="text-sky-500 font-medium truncate max-w-[80px]">{p.nomeCliente}</span>
+                )}
+                {p.destino === 'senha' && p.senha && (
+                  <span className="text-sky-500 font-medium">S{p.senha}</span>
+                )}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Status Bar */}
       <KDSStatusBar
         prontos={prontos}
@@ -718,50 +780,54 @@ export default function KDSPage() {
       />
 
       {/* Kanban */}
-      <div className="flex gap-3 flex-1 overflow-x-auto overflow-y-hidden p-3">
-        <div className="flex gap-3 min-w-max lg:min-w-0 lg:w-full">
-          <KDSColuna status="novo" count={novos.length} invertSort onToggleSort={() => setInvertOrdemNovos((v) => !v)} sortLabel={invertOrdemNovos ? 'Mais recente' : 'Mais antigo'}>
-            {novos.map((pedido) => (
-              <KDSCard
-                key={`${pedido.id}-novo`}
-                pedido={pedido}
-                faseColuna="novo"
-                estacaoFiltro={estacaoFiltro}
-                onAvancar={handleAvancarItem}
-                onAvancarParte={handleAvancarParte}
-                onAvancarPedido={handleAvancarPedido}
-                onMarcarEmRota={handleMarcarEmRota}
-                onToggleObsChecada={handleToggleObsChecada}
-                onAvancarUnidade={handleAvancarUnidade}
-                onSelecionarOperadorUnidade={handleSelecionarOperadorUnidade}
-                operadoresDisponiveis={operadoresDisponiveis}
-                onSelecionarOperador={handleSelecionarOperadorItem}
-                onAtribuirOperadorTodos={handleAtribuirOperadorTodos}
-                onSetObsLivre={handleSetObsLivre}
-              />
-            ))}
-          </KDSColuna>
-          <KDSColuna status="preparo" count={preparo.length} invertSort onToggleSort={() => setInvertOrdemPreparo((v) => !v)} sortLabel={invertOrdemPreparo ? 'Mais antigo' : 'Mais recente'}>
-            {preparo.map((pedido) => (
-              <KDSCard
-                key={`${pedido.id}-preparo`}
-                pedido={pedido}
-                faseColuna="preparo"
-                estacaoFiltro={estacaoFiltro}
-                onAvancar={handleAvancarItem}
-                onAvancarParte={handleAvancarParte}
-                onAvancarPedido={handleAvancarPedido}
-                onMarcarEmRota={handleMarcarEmRota}
-                onToggleObsChecada={handleToggleObsChecada}
-                onAvancarUnidade={handleAvancarUnidade}
-                onSelecionarOperadorUnidade={handleSelecionarOperadorUnidade}
-                operadoresDisponiveis={operadoresDisponiveis}
-                onSelecionarOperador={handleSelecionarOperadorItem}
-                onAtribuirOperadorTodos={handleAtribuirOperadorTodos}
-                onSetObsLivre={handleSetObsLivre}
-              />
-            ))}
-          </KDSColuna>
+      <div className="flex gap-3 flex-1 overflow-x-auto overflow-y-hidden p-3 snap-x snap-mandatory scroll-smooth">
+        <div className="flex gap-3 min-w-max lg:min-w-0 lg:w-full h-full">
+          <div className="w-[calc(100vw-1.5rem)] sm:w-[calc(100vw-2rem)] md:w-auto flex-shrink-0 md:flex-1 snap-start lg:snap-none min-w-[340px] lg:min-w-0 h-full flex flex-col">
+            <KDSColuna status="novo" count={novos.length} invertSort onToggleSort={() => setInvertOrdemNovos((v) => !v)} sortLabel={invertOrdemNovos ? 'Mais recente' : 'Mais antigo'}>
+              {novos.map((pedido) => (
+                <KDSCard
+                  key={`${pedido.id}-novo`}
+                  pedido={pedido}
+                  faseColuna="novo"
+                  estacaoFiltro={estacaoFiltro}
+                  onAvancar={handleAvancarItem}
+                  onAvancarParte={handleAvancarParte}
+                  onAvancarPedido={handleAvancarPedido}
+                  onMarcarEmRota={handleMarcarEmRota}
+                  onToggleObsChecada={handleToggleObsChecada}
+                  onAvancarUnidade={handleAvancarUnidade}
+                  onSelecionarOperadorUnidade={handleSelecionarOperadorUnidade}
+                  operadoresDisponiveis={operadoresDisponiveis}
+                  onSelecionarOperador={handleSelecionarOperadorItem}
+                  onAtribuirOperadorTodos={handleAtribuirOperadorTodos}
+                  onSetObsLivre={handleSetObsLivre}
+                />
+              ))}
+            </KDSColuna>
+          </div>
+          <div className="w-[calc(100vw-1.5rem)] sm:w-[calc(100vw-2rem)] md:w-auto flex-shrink-0 md:flex-1 snap-start lg:snap-none min-w-[340px] lg:min-w-0 h-full flex flex-col">
+            <KDSColuna status="preparo" count={preparo.length} invertSort onToggleSort={() => setInvertOrdemPreparo((v) => !v)} sortLabel={invertOrdemPreparo ? 'Mais antigo' : 'Mais recente'}>
+              {preparo.map((pedido) => (
+                <KDSCard
+                  key={`${pedido.id}-preparo`}
+                  pedido={pedido}
+                  faseColuna="preparo"
+                  estacaoFiltro={estacaoFiltro}
+                  onAvancar={handleAvancarItem}
+                  onAvancarParte={handleAvancarParte}
+                  onAvancarPedido={handleAvancarPedido}
+                  onMarcarEmRota={handleMarcarEmRota}
+                  onToggleObsChecada={handleToggleObsChecada}
+                  onAvancarUnidade={handleAvancarUnidade}
+                  onSelecionarOperadorUnidade={handleSelecionarOperadorUnidade}
+                  operadoresDisponiveis={operadoresDisponiveis}
+                  onSelecionarOperador={handleSelecionarOperadorItem}
+                  onAtribuirOperadorTodos={handleAtribuirOperadorTodos}
+                  onSetObsLivre={handleSetObsLivre}
+                />
+              ))}
+            </KDSColuna>
+          </div>
         </div>
       </div>
 

@@ -74,6 +74,7 @@ export function useOrigemReport(periodo: string) {
         p_tenant_id: user.tenantId,
         p_date_from: from,
         p_date_to: to,
+        p_session_id: null,
       });
 
       if (error) throw error;

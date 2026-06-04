@@ -247,10 +247,6 @@ export default function CardapioPublico({ clienteNome, carrinho, onAdicionar, on
                   <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2">{item.descricao}</p>
                   <div className="flex items-center justify-between mt-2">
                     <span className={`text-sm font-bold ${esgotado ? 'text-zinc-400' : 'text-amber-600'}`}>{fmt(item.preco)}</span>
-                    <div className="flex items-center gap-1 text-zinc-400">
-                      <div className="w-3 h-3 flex items-center justify-center"><Clock size={10} /></div>
-                      <span className="text-[10px]">~{item.slaMinutos}min</span>
-                    </div>
                   </div>
                 </div>
                 {!esgotado && <div className="w-5 h-5 flex items-center justify-center text-zinc-300"><ChevronRight size={14} /></div>}

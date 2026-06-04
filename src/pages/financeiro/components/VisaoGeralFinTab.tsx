@@ -547,7 +547,7 @@ export default function VisaoGeralFinTab() {
             </div>
           </div>
 
-          {/* A Pagar */}
+          {/* A Pagar + Comprometido */}
           <div className="bg-white rounded-xl border border-zinc-200 p-5">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 flex items-center justify-center bg-red-100 rounded-xl">
@@ -558,6 +558,14 @@ export default function VisaoGeralFinTab() {
                 <p className="text-xl font-bold text-red-600">{formatCurrency(dashboard.totalAPagar)}</p>
               </div>
             </div>
+            {dashboard.totalComprometido > dashboard.totalAPagar && (
+              <div className="mb-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-amber-700">Total comprometido (inclui folha pendente)</span>
+                  <span className="text-xs font-bold text-amber-700">{formatCurrency(dashboard.totalComprometido)}</span>
+                </div>
+              </div>
+            )}
             {dashboard.contasVencendo.length > 0 && (
               <div className="space-y-1.5">
                 <p className="text-xs font-semibold text-zinc-500 mb-2">Vencendo em breve:</p>

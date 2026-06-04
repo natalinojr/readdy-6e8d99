@@ -9,6 +9,7 @@ interface MetricCardProps {
   icon: ComponentType<{ size?: number; className?: string }>;
   iconBg: string;
   iconColor: string;
+  onClick?: () => void;
 }
 
 export default function MetricCard({
@@ -19,11 +20,15 @@ export default function MetricCard({
   icon: Icon,
   iconBg,
   iconColor,
+  onClick,
 }: MetricCardProps) {
   const isPositive = trend !== undefined && trend >= 0;
 
   return (
-    <div className="bg-white border border-zinc-100 rounded-xl p-5">
+    <div
+      onClick={onClick}
+      className={`bg-white border border-zinc-100 rounded-xl p-5 ${onClick ? 'cursor-pointer hover:border-rose-200 hover:shadow-sm transition-all' : ''}`}
+    >
       <div className="flex items-start justify-between">
         <div className="flex-1">
           <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">{label}</p>

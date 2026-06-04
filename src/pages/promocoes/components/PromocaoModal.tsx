@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { PromotionRule, PromoType, PromotionChannels } from '@/types/promotions';
 
@@ -137,7 +137,7 @@ export default function PromocaoModal({ rule, onClose, onSaved }: Props) {
     };
 
     try {
-      const { error: fnErr } = await supabase.functions.invoke('menu-write', { body: payload });
+      const { error: fnErr } = await invokeWithAuth('menu-write', { body: payload });
       if (fnErr) throw fnErr;
       onSaved();
     } catch (err) {

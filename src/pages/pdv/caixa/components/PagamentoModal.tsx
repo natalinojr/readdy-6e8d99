@@ -5,9 +5,14 @@ import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { useToast } from '../../../../contexts/ToastContext';
 import { useSessao } from '../../../../contexts/SessaoContext';
 import { useKDS, buildKDSPedido } from '../../../../contexts/KDSContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpressoras } from '@/contexts/ImpressorasContext';
+import { usePedidosAgrupados } from '@/hooks/usePedidosAgrupados';
 import type { Voucher } from '@/types/vouchers';
+import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
+import EtapaSelecionarPedidos from './pagamento/EtapaSelecionarPedidos';
+import type { KDSPedido } from '@/types/kds';
 
 interface VoucherAplicado {
   voucher: Voucher;
@@ -33,198 +38,9 @@ const ICON_MAP: Record<string, string> = {
 };
 import ComprovantePrint from './ComprovantePrint';
 import { printKitchenTicket, printSimpleReceipt } from './CozinhaTicketPrint';
+import type { PrintResult } from '@/lib/printUtils';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-/* ─── Rodada simulada para seleção de contas (mesa) ─── */
-interface RodadaMock {
-  id: string;
-  numero: number;
-  nomeResponsavel: string;
-  hora: string;
-  itens: { nome: string; quantidade: number; preco: number }[];
-}
-
-function gerarRodadasMock(mesaNumero: number): RodadaMock[] {
-  const horas = ['19:10', '19:35', '20:05'];
-  const nomes = [
-    ['Carlos Lima', 'Ana Souza'],
-    ['Pedro Alves', 'Mariana Costa'],
-    ['Roberto Nunes', 'Juliana Melo'],
-  ];
-  const idx = (mesaNumero - 1) % 3;
-  const base = [
-    {
-      id: `r-${mesaNumero}-1`,
-      numero: 1001 + mesaNumero,
-      nomeResponsavel: nomes[idx][0],
-      hora: horas[0],
-      itens: [
-        { nome: 'X-Burguer Clássico', quantidade: 2, preco: 28.9 },
-        { nome: 'Batata Frita Clássica', quantidade: 1, preco: 14.9 },
-      ],
-    },
-    {
-      id: `r-${mesaNumero}-2`,
-      numero: 1002 + mesaNumero,
-      nomeResponsavel: nomes[idx][1],
-      hora: horas[1],
-      itens: [
-        { nome: 'X-Bacon Duplo', quantidade: 1, preco: 34.9 },
-        { nome: 'Refrigerante Lata', quantidade: 2, preco: 7.5 },
-      ],
-    },
-  ];
-  return base;
-}
-
-/* ─── Etapa 0: Selecionar contas ─── */
-function EtapaContasMesa({
-  mesaNumero,
-  carrinho,
-  totalCarrinho,
-  onAvancar,
-  onClose,
-}: {
-  mesaNumero: number;
-  carrinho: import('../../../../contexts/PDVContext').CarrinhoItem[];
-  totalCarrinho: number;
-  onAvancar: (totalSelecionado: number, rodadasSelecionadas: RodadaMock[]) => void;
-  onClose: () => void;
-}) {
-  const rodadas = useMemo(() => gerarRodadasMock(mesaNumero), [mesaNumero]);
-  const [selecionados, setSelecionados] = useState<Set<string>>(new Set(rodadas.map((r) => r.id)));
-  const [incluirCarrinho, setIncluirCarrinho] = useState(true);
-
-  const toggle = (id: string) => {
-    const next = new Set(selecionados);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelecionados(next);
-  };
-
-  const totalRodadas = useMemo(
-    () =>
-      rodadas
-        .filter((r) => selecionados.has(r.id))
-        .flatMap((r) => r.itens)
-        .reduce((a, i) => a + i.preco * i.quantidade, 0),
-    [rodadas, selecionados],
-  );
-
-  const totalSelecionado = totalRodadas + (incluirCarrinho ? totalCarrinho : 0);
-
-  const podeProsseguir = selecionados.size > 0 || (incluirCarrinho && carrinho.length > 0);
-
-  return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200 bg-zinc-50 flex-shrink-0">
-          <div>
-            <p className="font-bold text-zinc-900">Selecionar Contas</p>
-            <p className="text-xs text-zinc-500 mt-0.5">Mesa {mesaNumero} · Escolha quais pedidos pagar</p>
-          </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-200 cursor-pointer text-zinc-400">
-            <i className="ri-close-line text-lg" />
-          </button>
-        </div>
-
-        {/* Lista */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {/* Rodadas anteriores */}
-          {rodadas.map((rodada) => {
-            const subtotal = rodada.itens.reduce((a, i) => a + i.preco * i.quantidade, 0);
-            const sel = selecionados.has(rodada.id);
-            return (
-              <button
-                key={rodada.id}
-                onClick={() => toggle(rodada.id)}
-                className={`w-full text-left border-2 rounded-xl overflow-hidden transition-all cursor-pointer ${
-                  sel ? 'border-amber-400 bg-amber-50/40' : 'border-zinc-200 bg-white hover:border-zinc-300'
-                }`}
-              >
-                <div className={`flex items-center gap-2.5 px-3 py-2.5 border-b ${sel ? 'border-amber-100 bg-amber-50' : 'border-zinc-100 bg-zinc-50'}`}>
-                  <div className={`w-5 h-5 flex items-center justify-center rounded border-2 flex-shrink-0 transition-colors ${
-                    sel ? 'bg-amber-500 border-amber-500' : 'border-zinc-300 bg-white'
-                  }`}>
-                    {sel && <i className="ri-check-line text-white text-[10px]" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-zinc-800">
-                      Pedido #{rodada.numero} · {rodada.nomeResponsavel}
-                    </p>
-                    <p className="text-[10px] text-zinc-400">{rodada.hora} · {rodada.itens.length} itens</p>
-                  </div>
-                  <span className={`text-sm font-black flex-shrink-0 ${sel ? 'text-amber-700' : 'text-zinc-600'}`}>{fmt(subtotal)}</span>
-                </div>
-                <div className="px-3 py-2">
-                  {rodada.itens.map((it, i) => (
-                    <div key={i} className="flex items-center gap-1.5 py-0.5">
-                      <span className="text-[10px] text-zinc-400 w-4 text-right">{it.quantidade}x</span>
-                      <span className="text-[11px] text-zinc-600 truncate">{it.nome}</span>
-                    </div>
-                  ))}
-                </div>
-              </button>
-            );
-          })}
-
-          {/* Carrinho atual */}
-          {carrinho.length > 0 && (
-            <button
-              onClick={() => setIncluirCarrinho((v) => !v)}
-              className={`w-full text-left border-2 rounded-xl overflow-hidden transition-all cursor-pointer ${
-                incluirCarrinho ? 'border-amber-400 bg-amber-50/40' : 'border-zinc-200 bg-white hover:border-zinc-300'
-              }`}
-            >
-              <div className={`flex items-center gap-2.5 px-3 py-2.5 border-b ${incluirCarrinho ? 'border-amber-100 bg-amber-50' : 'border-zinc-100 bg-zinc-50'}`}>
-                <div className={`w-5 h-5 flex items-center justify-center rounded border-2 flex-shrink-0 transition-colors ${
-                  incluirCarrinho ? 'bg-amber-500 border-amber-500' : 'border-zinc-300 bg-white'
-                }`}>
-                  {incluirCarrinho && <i className="ri-check-line text-white text-[10px]" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-xs font-bold text-zinc-800">Pedido Atual</p>
-                    <span className="text-[9px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full">NOVO</span>
-                  </div>
-                  <p className="text-[10px] text-zinc-400">{carrinho.length} {carrinho.length === 1 ? 'item' : 'itens'} no carrinho</p>
-                </div>
-                <span className={`text-sm font-black flex-shrink-0 ${incluirCarrinho ? 'text-amber-700' : 'text-zinc-600'}`}>{fmt(totalCarrinho)}</span>
-              </div>
-              <div className="px-3 py-2">
-                {carrinho.slice(0, 3).map((it) => (
-                  <div key={it.cartId} className="flex items-center gap-1.5 py-0.5">
-                    <span className="text-[10px] text-zinc-400 w-4 text-right">{it.quantidade}x</span>
-                    <span className="text-[11px] text-zinc-600 truncate">{it.nome}</span>
-                  </div>
-                ))}
-                {carrinho.length > 3 && <p className="text-[10px] text-zinc-400 mt-0.5">+{carrinho.length - 3} mais...</p>}
-              </div>
-            </button>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-5 py-4 border-t border-zinc-200 flex-shrink-0 space-y-3">
-          <div className="flex items-center justify-between bg-zinc-50 rounded-xl px-4 py-2.5">
-            <span className="text-sm font-semibold text-zinc-600">Total selecionado</span>
-            <span className="text-lg font-black text-zinc-900">{fmt(totalSelecionado)}</span>
-          </div>
-          <button
-            onClick={() => onAvancar(totalSelecionado, rodadas.filter((r) => selecionados.has(r.id)))}
-            disabled={!podeProsseguir}
-            className="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
-          >
-            <i className="ri-arrow-right-line" />
-            Ir para Pagamento · {fmt(totalSelecionado)}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 interface Props {
   onClose: () => void;
@@ -235,13 +51,31 @@ function formatPrice(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function kdsToPedidoAgrupado(p: KDSPedido): PedidoAgrupado {
+  return {
+    id: p.id,
+    numero: p.numero,
+    numeroStr: p.numeroStr,
+    total: p.totalAmount,
+    criadoEm: p.criadoEm,
+    itens: p.itens.map((i) => ({
+      nome: i.nome,
+      quantidade: i.quantidade,
+      preco: i.item_price,
+    })),
+    isCarrinho: false,
+  };
+}
+
 export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const { total, destino, carrinho, finalizarPedido, marcarComoPago } = usePDV();
-  const { success: toastSuccess, error: toastError } = useToast();
+  const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
   const { caixa, sessao } = useSessao();
-  const { addPedido } = useKDS();
+  const { addPedido, reloadOrders, pedidos: kdsPedidos, stationMap: kdsStationMap } = useKDS();
   const { user } = useAuth();
+  const { getImpressoraParaEstacao } = useImpressoras();
   const { settings } = useSystemSettings();
+  const { pedidosRelacionados, carrinhoComoPedido, reloadOrders: reloadPedidosAgrupados } = usePedidosAgrupados(destino, carrinho, total);
   const operadorNome = caixa?.operadorNome ?? 'Operador';
   const lojaNome = 'ERPOS Restaurante';
   const [formasPagamento, setFormasPagamento] = useState<FormaPagamento[]>([]);
@@ -273,6 +107,94 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const [customerCpf, setCustomerCpf] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
 
+  const [carrinhoParaReimpressao, setCarrinhoParaReimpressao] = useState<import('../../../../contexts/PDVContext').CarrinhoItem[]>([]);
+  const [destinoParaReimpressao, setDestinoParaReimpressao] = useState<import('../../../../contexts/PDVContext').DestinoInfo | null>(null);
+  // Dados dos pedidos vinculados para exibir no comprovante/print
+  const [pedidosVinculadosComprovante, setPedidosVinculadosComprovante] = useState<import('./ComprovantePrint').PedidoVinculadoComprovante[]>([]);
+
+  // ── Etapa seleção de pedidos ──
+  const temPedidosRelacionados = pedidosRelacionados.length > 0;
+  // Estado de etapa: começa como 'selecionar_conta' se tem pedidos relacionados, senão 'pagar'
+  const [etapa, setEtapa] = useState<'selecionar_conta' | 'pagar'>(
+    temPedidosRelacionados ? 'selecionar_conta' : 'pagar',
+  );
+  const [modoVincularManual, setModoVincularManual] = useState(false);
+  const [totalSelecionado, setTotalSelecionado] = useState(total);
+  const [pedidosExistentesSelecionados, setPedidosExistentesSelecionados] = useState<PedidoAgrupado[]>([]);
+
+  // Recarrega KDS quando o modal abre para garantir dados atualizados
+  useEffect(() => {
+    reloadPedidosAgrupados();
+  }, [reloadPedidosAgrupados]);
+
+  // Recalcula etapa automaticamente quando pedidos relacionados mudam
+  // ATENÇÃO: só redireciona se ainda não houve nenhuma seleção confirmada pelo usuário
+  // (pedidosExistentesSelecionados vazio = usuário ainda não passou pela tela de seleção)
+  useEffect(() => {
+    if (
+      etapa === 'pagar' &&
+      temPedidosRelacionados &&
+      !modoVincularManual &&
+      pedidosExistentesSelecionados.length === 0
+    ) {
+      setEtapa('selecionar_conta');
+    }
+  }, [temPedidosRelacionados, etapa, modoVincularManual, pedidosExistentesSelecionados.length]);
+
+  const totalEfetivo = etapa === 'pagar' ? totalSelecionado : total;
+
+  // Total com desconto de voucher aplicado
+  const desconto = voucherAplicado?.applicable_amount ?? 0;
+  const totalComDesconto = Math.max(0, totalEfetivo - desconto);
+
+  // ── Pedidos abertos para vinculação manual ──
+  const todosPedidosAbertos = useMemo(() => {
+    return kdsPedidos
+      .filter((p) => {
+        if (p.isPaid) return false;
+        if (p.isCancelled) return false;
+        if (p.status === 'cancelled') return false;
+        return true;
+      })
+      .map(kdsToPedidoAgrupado);
+  }, [kdsPedidos]);
+
+  // Pedidos a mostrar na etapa de seleção
+  const pedidosExistentesParaSelecao = useMemo(() => {
+    if (modoVincularManual) {
+      return todosPedidosAbertos;
+    }
+    return pedidosRelacionados;
+  }, [modoVincularManual, todosPedidosAbertos, pedidosRelacionados]);
+
+  // Helper para identificação do pedido
+  const getPedidoIdentificacao = (pedido: PedidoAgrupado) => {
+    if (pedido.isCarrinho) return '';
+    if (pedido.destino === 'mesa' && pedido.mesaNumero) return `· Mesa ${pedido.mesaNumero}`;
+    if (pedido.destino === 'senha' && pedido.senha) return `· Senha ${pedido.senha}`;
+    if (pedido.destino === 'nome' && pedido.nomeCliente) return `· ${pedido.nomeCliente}`;
+    if (pedido.destino === 'delivery' && pedido.nomeCliente) return `· Delivery · ${pedido.nomeCliente}`;
+    if (pedido.destino === 'delivery') return '· Delivery';
+    return '';
+  };
+
+  // Helper para identificação do pedido principal (carrinho)
+  const getCarrinhoIdentificacao = () => {
+    if (!destino) return '';
+    if (destino.tipo === 'mesa' && destino.mesaNumero) return `· Mesa ${destino.mesaNumero}`;
+    if (destino.tipo === 'senha' && destino.senha) return `· Senha ${destino.senha}`;
+    if (destino.tipo === 'nome' && destino.nomeCliente) return `· ${destino.nomeCliente}`;
+    if (destino.tipo === 'delivery' && destino.nomeCliente) return `· Delivery · ${destino.nomeCliente}`;
+    if (destino.tipo === 'delivery') return '· Delivery';
+    return '';
+  };
+
+  // ─────────────────────────────────────────────
+
+  const totalPago = pagamentos.reduce((acc, p) => acc + p.valor, 0);
+  const restante = Math.max(0, totalComDesconto - totalPago);
+  const troco = totalPago > totalComDesconto ? totalPago - totalComDesconto : 0;
+
   useEffect(() => {
     if (!user?.tenantId) return;
     supabase.rpc('fn_get_payment_methods', { p_tenant_id: user.tenantId }).then(({ data }) => {
@@ -292,32 +214,13 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     });
   }, [user?.tenantId]);
 
-  // ── Etapa seleção de contas (apenas mesa) ──
-  const isMesa = destino?.tipo === 'mesa';
-  const [etapa, setEtapa] = useState<'selecionar_conta' | 'pagar'>(
-    isMesa ? 'selecionar_conta' : 'pagar',
-  );
-  const [totalSelecionado, setTotalSelecionado] = useState(total);
-
-  const totalEfetivo = isMesa && etapa === 'pagar' ? totalSelecionado : total;
-
-  // Total com desconto de voucher aplicado
-  const desconto = voucherAplicado?.applicable_amount ?? 0;
-  const totalComDesconto = Math.max(0, totalEfetivo - desconto);
-
-  // ─────────────────────────────────────────────
-
-  const totalPago = pagamentos.reduce((acc, p) => acc + p.valor, 0);
-  const restante = Math.max(0, totalComDesconto - totalPago);
-  const troco = totalPago > totalComDesconto ? totalPago - totalComDesconto : 0;
-
   // ── Voucher handlers ───────────────────────────────────────────────────────
   async function handleValidarVoucher() {
     if (!voucherCode.trim()) return;
     setVoucherLoading(true);
     setVoucherError('');
     try {
-      const { data, error: fnErr } = await supabase.functions.invoke('voucher-write', {
+      const { data, error: fnErr } = await invokeWithAuth('voucher-write', {
         body: {
           action: 'validate_voucher',
           active_tenant_id: user?.tenantId,
@@ -358,11 +261,21 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     if (isNaN(v) || v <= 0) return;
     const forma = formasPagamento.find((f) => f.id === formaAtiva);
     if (!forma) return;
-    const trocoCalc = forma.tipo === 'cash' && v > restante ? v - restante : undefined;
-    setPagamentos((prev) => [
-      ...prev,
-      { formaId: forma.id, formaNome: forma.nome, valor: Math.min(v, restante + (trocoCalc ?? 0)), troco: trocoCalc },
-    ]);
+    const isCash = forma.tipo === 'cash';
+    if (isCash && v > restante) {
+      // Dinheiro com troco: amount = restante, troco = v - restante, valorRecebido = v
+      const trocoCalc = v - restante;
+      setPagamentos((prev) => [
+        ...prev,
+        { formaId: forma.id, formaNome: forma.nome, valor: restante, troco: trocoCalc, valorRecebido: v },
+      ]);
+    } else {
+      // Outros métodos: amount = valor informado
+      setPagamentos((prev) => [
+        ...prev,
+        { formaId: forma.id, formaNome: forma.nome, valor: v, troco: undefined },
+      ]);
+    }
     setValorInput('');
   };
 
@@ -370,25 +283,143 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     setPagamentos((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  // Pagamento de pedido existente (não cria pedido, só registra pagamento)
+  // paymentGroupId: ID único gerado para agrupar pagamentos de múltiplos pedidos pagos juntos
+  const pagarPedidoExistente = useCallback(async (orderId: string, pagamentosParaRegistrar: PagamentoItem[], paymentGroupId?: string | null) => {
+    const cashRegisterId: string | null = caixa?.id ?? null;
+    let paymentRegistered = false;
+    for (const pag of pagamentosParaRegistrar) {
+      if (!pag.formaId) continue;
+      try {
+        const { error: payErr } = await invokeWithAuth('order-write', {
+          body: {
+            action: 'record_payment',
+            order_id: orderId,
+            tenant_id: user?.tenantId,
+            cash_register_id: cashRegisterId,
+            payment_method_id: pag.formaId,
+            amount: pag.valor,
+            change_amount: pag.troco ?? 0,
+            operator_name: user?.nome ?? null,
+            paid_by_pdv: 'cashier',
+            payment_group_id: paymentGroupId ?? null,
+          },
+        });
+        if (payErr) {
+          console.warn('[PagamentoModal] record_payment error (non-blocking):', payErr);
+        } else {
+          paymentRegistered = true;
+        }
+      } catch (e) {
+        console.warn('[PagamentoModal] record_payment exception (non-blocking):', e);
+      }
+    }
+    if (paymentRegistered) {
+      try {
+        await supabase.rpc('fn_update_paid_by_pdv', { p_order_id: orderId, p_paid_by_pdv: 'cashier' });
+      } catch (e) {
+        console.warn('[PagamentoModal] fn_update_paid_by_pdv error (non-blocking):', e);
+      }
+    }
+    return paymentRegistered;
+  }, [caixa?.id, user?.tenantId, user?.nome]);
+
   const handleFinalizar = async () => {
     if (restante > 0.01) return;
-    // Padrão ref+state: ref bloqueia no mesmo tick, state controla UI
     if (confirmandoRef.current) return;
     confirmandoRef.current = true;
     setConfirmando(true);
+
+    const carrinhoSnapshot = [...carrinho];
+    const destinoSnapshot = destino;
+    const pedidosExistentes = pedidosExistentesSelecionados.filter((p) => !p.isCarrinho);
+    const incluirCarrinho = pedidosExistentesSelecionados.some((p) => p.isCarrinho);
+
     try {
-      // Passar dados do cliente (CPF/email) para o pedido
-      const numeroStr = await finalizarPedido(pagamentos, {
-        customerCpf: customerCpf || undefined,
-        customerEmail: customerEmail || undefined,
+      let numeroPedidoLocal = 0;
+      let orderIdLocal = '';
+
+      // Gera um payment_group_id único se houver mais de um pedido sendo pago junto
+      const totalPedidosPagando = pedidosExistentes.length + (incluirCarrinho ? 1 : 0);
+      const paymentGroupId: string | null = totalPedidosPagando > 1
+        ? crypto.randomUUID()
+        : null;
+
+      // ── Recalcula troco total quando há múltiplas formas de pagamento ──
+      // Se o total pago > total do pedido, o troco é a diferença.
+      // O troco deve ser aplicado aos pagamentos em dinheiro que AINDA NÃO têm troco calculado.
+      const trocoTotal = totalPago > totalComDesconto ? totalPago - totalComDesconto : 0;
+      let trocoRestante = trocoTotal;
+      const pagamentosComTroco: PagamentoItem[] = pagamentos.map((p) => {
+        const isCash = formasPagamento.find((f) => f.id === p.formaId)?.tipo === 'cash';
+        // Só recalcula se for dinheiro, ainda tem troco restante, e o pagamento ainda não tem troco
+        if (isCash && trocoRestante > 0.01 && !p.troco) {
+          const trocoDoPagamento = Math.min(trocoRestante, p.valor);
+          trocoRestante -= trocoDoPagamento;
+          return {
+            ...p,
+            valor: p.valor - trocoDoPagamento,
+            troco: trocoDoPagamento,
+            valorRecebido: p.valorRecebido ?? p.valor,
+          };
+        }
+        return p;
       });
-      const seq = parseInt(numeroStr.replace(/\D/g, '').slice(-4)) || 1;
-      setNumeroPedidoFinal(seq);
-      marcarComoPago(seq);
+      // ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ──
+
+      // Se não veio da tela de seleção (pedidosExistentesSelecionados vazio),
+      // trata como se o carrinho atual fosse o único pedido a pagar
+      const effectiveIncluirCarrinho = incluirCarrinho || pedidosExistentesSelecionados.length === 0;
+
+      // 1. Cria o pedido do carrinho se estiver selecionado
+      if (effectiveIncluirCarrinho && carrinhoSnapshot.length > 0) {
+        const result = await finalizarPedido(pagamentosComTroco, {
+          customerCpf: customerCpf || undefined,
+          customerEmail: customerEmail || undefined,
+          paymentGroupId,
+        });
+        const numeroStr = result.number;
+        const seq = parseInt(numeroStr.replace(/\D/g, '').slice(-4)) || 1;
+        numeroPedidoLocal = seq;
+        orderIdLocal = result.orderId;
+        setNumeroPedidoFinal(seq);
+        marcarComoPago(seq);
+      }
+
+      // 2. Paga os pedidos existentes selecionados (distribui os pagamentos proporcionalmente)
+      // O troco é do pagamento total — não deve ser proporcionalizado entre pedidos
+      const totalTrocoDistribuido = pagamentosComTroco.reduce((acc, p) => acc + (p.troco ?? 0), 0);
+      let trocoJaAtribuido = false;
+
+      const pagamentosParaPedidosExistentes = pedidosExistentes.map((pedido) => {
+        const proporcao = pedido.total / totalEfetivo;
+        return {
+          orderId: pedido.id,
+          pagamentos: pagamentosComTroco.map((p) => {
+            const isCash = formasPagamento.find((f) => f.id === p.formaId)?.tipo === 'cash';
+            const valorProporcional = Number((p.valor * proporcao).toFixed(2));
+            // Troco só no primeiro pedido que recebe dinheiro, e apenas uma vez
+            let trocoDoPedido = 0;
+            if (isCash && !trocoJaAtribuido && totalTrocoDistribuido > 0) {
+              trocoJaAtribuido = true;
+              trocoDoPedido = totalTrocoDistribuido;
+            }
+            return {
+              ...p,
+              valor: valorProporcional,
+              troco: trocoDoPedido > 0 ? trocoDoPedido : undefined,
+            };
+          }),
+        };
+      });
+
+      for (const { orderId, pagamentos: pg } of pagamentosParaPedidosExistentes) {
+        await pagarPedidoExistente(orderId, pg, paymentGroupId);
+      }
 
       // Resgatar voucher se aplicado
       if (voucherAplicado) {
-        await supabase.functions.invoke('voucher-write', {
+        await invokeWithAuth('voucher-write', {
           body: {
             action: 'redeem_voucher',
             active_tenant_id: user?.tenantId,
@@ -400,26 +431,36 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       }
 
       if (!sessao) {
-        const kdsPedido = buildKDSPedido({ cart: carrinho, destino, numeroSeq: seq, origem: 'caixa' });
+        const kdsPedido = buildKDSPedido({ cart: carrinhoSnapshot, destino: destinoSnapshot, numeroSeq: numeroPedidoLocal, origem: 'caixa', stationMap: kdsStationMap });
         addPedido(kdsPedido);
       }
-      setPagamentosFinal([...pagamentos]);
+      setPagamentosFinal([...pagamentosComTroco]);
+      setCarrinhoParaReimpressao(carrinhoSnapshot);
+      setDestinoParaReimpressao(destinoSnapshot);
+      // Guarda os pedidos vinculados para o comprovante
+      const pedidosVinculadosParaComprovante = pedidosExistentes.map((p) => ({
+        numero: p.numero,
+        numeroStr: p.numeroStr,
+        itens: p.itens.map((i) => ({ nome: i.nome, quantidade: i.quantidade, preco: i.preco })),
+        total: p.total,
+        destino: p.destino === 'mesa' ? { tipo: 'mesa' as const, mesaNumero: p.mesaNumero ?? 0 } :
+          p.destino === 'senha' ? { tipo: 'senha' as const, senha: p.senha ?? '' } :
+          p.destino === 'nome' ? { tipo: 'nome' as const, nomeCliente: p.nomeCliente ?? '' } :
+          p.destino === 'delivery' ? { tipo: 'delivery' as const, nomeCliente: p.nomeCliente ?? '' } :
+          null,
+      }));
+      setPedidosVinculadosComprovante(pedidosVinculadosParaComprovante);
       setSucesso(true);
-      toastSuccess('Pedido finalizado!', `#${String(seq).padStart(4, '0')} enviado ao KDS`);
-      if (settings.print_kds_enabled) {
-        printKitchenTicket(seq, carrinho, destino);
-      }
-      if (settings.print_kitchen_copy_enabled) {
-        printSimpleReceipt(seq, carrinho, totalComDesconto, desconto, pagamentos, destino);
-      }
+      toastSuccess('Pagamento registrado!', `${pedidosExistentes.length + (effectiveIncluirCarrinho ? 1 : 0)} pedido(s) pago(s) · ${formatPrice(totalComDesconto)}`);
+
+      // Reload KDS
+      setTimeout(() => {
+        reloadOrders();
+      }, 500);
     } catch (err) {
-      // ── Alerta diferenciado para inserção parcial (HTTP 207) ──────────────
-      // O pedido foi criado no banco mas alguns itens podem ter falhado.
-      // Exibimos um aviso específico em vez de tratar como erro genérico.
       if (err instanceof PartialOrderError) {
         console.warn('[PagamentoModal] Inserção parcial detectada:', err.orderId, err.orderNumber);
         setAlertaParcial({ orderId: err.orderId, orderNumber: err.orderNumber });
-        // Ainda marca como pago e mostra tela de sucesso — o pedido existe no banco
         const seq = parseInt(err.orderNumber.replace(/\D/g, '').slice(-4)) || 1;
         setNumeroPedidoFinal(seq);
         marcarComoPago(seq);
@@ -438,25 +479,46 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
 
   const handleDismissAlertaParcial = useCallback(() => setAlertaParcial(null), []);
 
-  // ── Etapa: selecionar contas da mesa ──
-  if (isMesa && etapa === 'selecionar_conta') {
+  // ── Etapa: selecionar pedidos ──
+  if (etapa === 'selecionar_conta') {
+    const titulo = modoVincularManual
+      ? 'Vincular Pedidos'
+      : destino?.tipo === 'mesa'
+        ? 'Selecionar Contas'
+        : 'Selecionar Pedidos para Pagar';
+    const subtitulo = modoVincularManual
+      ? 'Escolha quais pedidos abertos pagar junto com este carrinho'
+      : destino?.tipo === 'mesa'
+        ? `Mesa ${destino.mesaNumero} · Escolha quais pedidos pagar`
+        : 'Escolha quais pedidos pagar de uma vez';
+
     return (
-      <EtapaContasMesa
-        mesaNumero={(destino as { tipo: 'mesa'; mesaNumero: number }).mesaNumero ?? 1}
-        carrinho={carrinho}
-        totalCarrinho={total}
-        onAvancar={(totalSel) => {
+      <EtapaSelecionarPedidos
+        titulo={titulo}
+        subtitulo={subtitulo}
+        pedidosExistentes={pedidosExistentesParaSelecao}
+        pedidoCarrinho={carrinhoComoPedido}
+        onAvancar={(totalSel, pedidosSel) => {
           setTotalSelecionado(totalSel);
+          setPedidosExistentesSelecionados(pedidosSel);
           setPagamentos([]);
           setValorInput('');
           setEtapa('pagar');
         }}
-        onClose={onClose}
+        onClose={() => {
+          setModoVincularManual(false);
+          if (!temPedidosRelacionados) {
+            setEtapa('pagar');
+          } else {
+            onClose();
+          }
+        }}
       />
     );
   }
 
   if (showComprovante) {
+    const impressoraCaixa = getImpressoraParaEstacao('caixa-pdv');
     return (
       <ComprovantePrint
         numero={numeroPedidoFinal}
@@ -467,6 +529,8 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         pagamentos={pagamentosFinal}
         operador={operadorNome}
         loja={lojaNome}
+        impressora={impressoraCaixa}
+        pedidosVinculados={pedidosVinculadosComprovante}
         onClose={() => { setShowComprovante(false); onSuccess(); }}
       />
     );
@@ -533,20 +597,42 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
               <p className="text-green-600 text-xs">Troco para o cliente</p>
             </div>
           )}
-          <button
-            onClick={() => { setSucesso(false); setShowComprovante(true); }}
-            className="mt-5 w-full py-2.5 border-2 border-orange-500 text-orange-600 font-semibold text-sm rounded-xl hover:bg-orange-50 cursor-pointer transition-colors whitespace-nowrap flex items-center justify-center gap-2"
-          >
-            <i className="ri-printer-line" />
-            Imprimir Comprovante
-          </button>
-          <button
-            onClick={() => printSimpleReceipt(numeroPedidoFinal, carrinho, totalComDesconto, desconto, pagamentosFinal, destino)}
-            className="mt-2 w-full py-2.5 border-2 border-zinc-300 text-zinc-600 font-semibold text-sm rounded-xl hover:bg-zinc-50 cursor-pointer transition-colors whitespace-nowrap flex items-center justify-center gap-2"
-          >
-            <i className="ri-receipt-line" />
-            Via Simples (Balcão)
-          </button>
+
+          {/* Resolve impressora para os botoes manuais de impressao */}
+          {(() => {
+            const primeiroItem = carrinhoParaReimpressao.find((i) => i.stationId);
+            const estacao = primeiroItem?.stationId ?? 'cozinha-padrao';
+            const impressora = getImpressoraParaEstacao(estacao);
+            return (
+              <>
+                <button
+                  onClick={async () => {
+                    const result = await printKitchenTicket(numeroPedidoFinal, carrinhoParaReimpressao, destinoParaReimpressao, impressora, true);
+                    if (!result.success) {
+                      toastWarning('Impressão não disponível', result.error || 'Agente local não respondeu. Verifique se o agente está rodando.');
+                    }
+                  }}
+                  className="mt-5 w-full py-2.5 border-2 border-orange-500 text-orange-600 font-semibold text-sm rounded-xl hover:bg-orange-50 cursor-pointer transition-colors whitespace-nowrap flex items-center justify-center gap-2"
+                >
+                  <i className="ri-printer-line" />
+                  Imprimir Comprovante
+                </button>
+                <button
+                  onClick={async () => {
+                    const result = await printSimpleReceipt(numeroPedidoFinal, carrinhoParaReimpressao, totalComDesconto, desconto, pagamentosFinal, destinoParaReimpressao, impressora, true, pedidosVinculadosComprovante);
+                    if (!result.success) {
+                      toastWarning('Impressão não disponível', result.error || 'Agente local não respondeu. Verifique se o agente está rodando.');
+                    }
+                  }}
+                  className="mt-2 w-full py-2.5 border-2 border-zinc-300 text-zinc-600 font-semibold text-sm rounded-xl hover:bg-zinc-50 cursor-pointer transition-colors whitespace-nowrap flex items-center justify-center gap-2"
+                >
+                  <i className="ri-receipt-line" />
+                  Via Simples (Balcão)
+                </button>
+              </>
+            );
+          })()}
+
           <button
             onClick={onSuccess}
             className="mt-2 w-full py-2.5 text-zinc-400 text-sm cursor-pointer hover:text-zinc-600 transition-colors whitespace-nowrap"
@@ -564,9 +650,13 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200 bg-zinc-50">
           <div className="flex items-center gap-2">
-            {isMesa && (
+            {(temPedidosRelacionados || modoVincularManual) && (
               <button
-                onClick={() => { setEtapa('selecionar_conta'); setPagamentos([]); }}
+                onClick={() => {
+                  setModoVincularManual(false);
+                  setEtapa('selecionar_conta');
+                  setPagamentos([]);
+                }}
                 className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-zinc-200 cursor-pointer text-zinc-400"
               >
                 <i className="ri-arrow-left-line text-sm" />
@@ -579,8 +669,8 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                   {destino.tipo === 'mesa' ? `Mesa ${destino.mesaNumero}` :
                     destino.tipo === 'nome' ? destino.nomeCliente :
                     destino.tipo === 'senha' ? `Senha: ${destino.senha}` :
-                    destino.tipo === 'hora' ? 'Fechar na Hora' : `Delivery · ${destino.nomeCliente}`}
-                  {isMesa && etapa === 'pagar' && (
+                    destino.tipo === 'delivery' ? `Delivery · ${destino.nomeCliente}` : 'Balcão'}
+                  {etapa === 'pagar' && (
                     <span className="ml-1.5 text-amber-600 font-semibold">{formatPrice(totalEfetivo)}</span>
                   )}
                 </p>
@@ -593,9 +683,33 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         </div>
 
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
+          {/* Botão Vincular Pedidos — destacado no topo, sempre visível */}
+          <button
+            onClick={() => {
+              setModoVincularManual(true);
+              setEtapa('selecionar_conta');
+              setPagamentos([]);
+            }}
+            className="w-full flex items-center justify-center gap-2 py-3 text-sm font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border-2 border-amber-300 rounded-xl cursor-pointer whitespace-nowrap transition-colors"
+          >
+            <div className="w-5 h-5 flex items-center justify-center">
+              <i className="ri-link-m text-amber-600 text-base" />
+            </div>
+            Vincular Pedidos
+            <span className="text-xs font-normal text-amber-500">(unir com outros pedidos)</span>
+          </button>
+
           {/* Order summary */}
           <div className="bg-zinc-50 rounded-xl p-4">
-            <p className="text-xs font-semibold text-zinc-500 mb-2 uppercase tracking-wider">Resumo do Pedido</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Resumo do Pedido</p>
+              {/* Badge indicando pedidos vinculados já selecionados */}
+              {pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length > 0 && (
+                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                  {pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length} pedido(s) vinculado(s)
+                </span>
+              )}
+            </div>
             <div className="space-y-1.5 max-h-28 overflow-y-auto">
               {carrinho.map((item) => (
                 <div key={item.cartId} className="flex justify-between text-sm">
@@ -604,6 +718,24 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                 </div>
               ))}
             </div>
+            {/* Pedidos vinculados manualmente */}
+            {pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length > 0 && (
+              <div className="mt-2 pt-2 border-t border-zinc-200 space-y-1">
+                <p className="text-[10px] font-bold text-amber-600 flex items-center gap-1">
+                  <i className="ri-link-m text-[10px]" />
+                  Pedidos vinculados:
+                </p>
+                {pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).map((p) => (
+                  <div key={p.id} className="flex justify-between text-xs">
+                    <span className="text-zinc-600">
+                      #{p.numeroStr || String(p.numero).padStart(4, '0')}
+                      <span className="text-zinc-400 ml-1">{getPedidoIdentificacao(p)}</span>
+                    </span>
+                    <span className="font-medium text-zinc-900">{formatPrice(p.total)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="mt-3 pt-3 border-t border-zinc-200 space-y-1">
               <div className="flex justify-between text-sm text-zinc-500">
                 <span>Subtotal</span>
@@ -618,7 +750,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                 </div>
               )}
               <div className="flex justify-between font-bold text-base pt-1 border-t border-zinc-100">
-                <span>{isMesa ? 'Total selecionado' : 'Total'}</span>
+                <span>{pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length > 0 ? 'Total selecionado' : 'Total'}</span>
                 <span className="text-amber-600">{formatPrice(totalComDesconto)}</span>
               </div>
             </div>
@@ -798,7 +930,6 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                   data-keyboard="decimal"
                   value={valorInput}
                   onChange={(e) => {
-                    // Permite apenas dígitos, vírgula e ponto
                     const raw = e.target.value.replace(/[^0-9.,]/g, '');
                     setValorInput(raw);
                   }}
@@ -834,7 +965,9 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-bold text-zinc-900">{formatPrice(p.valor)}</span>
                       {p.troco && p.troco > 0 && (
-                        <span className="text-xs text-green-600 font-medium">troco: {formatPrice(p.troco)}</span>
+                        <span className="text-xs text-green-600 font-medium">
+                          recebido {formatPrice(p.valorRecebido ?? p.valor)} · troco {formatPrice(p.troco)}
+                        </span>
                       )}
                       <button onClick={() => handleRemovePagamento(idx)} className="text-zinc-300 hover:text-red-400 cursor-pointer">
                         <div className="w-4 h-4 flex items-center justify-center">

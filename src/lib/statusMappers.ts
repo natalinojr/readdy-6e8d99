@@ -93,12 +93,12 @@ export function kdsStatusToPdvStatus(
  */
 export function kdsStatusLabel(kdsStatus: KDSPedidoStatus): string {
   switch (kdsStatus) {
-    case 'novo':     return 'Aguardando';
+    case 'novo':     return 'Na Fila';
     case 'preparo':  return 'Em preparo';
     case 'pronto':   return 'Pronto';
     case 'em_rota':  return 'Em rota';
     case 'entregue': return 'Entregue';
-    default:         return 'Aguardando';
+    default:         return 'Na Fila';
   }
 }
 
@@ -107,11 +107,11 @@ export function kdsStatusLabel(kdsStatus: KDSPedidoStatus): string {
  */
 export function kdsItemLabel(kdsStatus: KDSItemStatus): string {
   switch (kdsStatus) {
-    case 'novo':     return 'Aguardando';
+    case 'novo':     return 'Na Fila';
     case 'preparo':  return 'Em preparo';
     case 'pronto':   return 'Pronto';
     case 'entregue': return 'Entregue';
-    default:         return 'Aguardando';
+    default:         return 'Na Fila';
   }
 }
 
@@ -125,7 +125,7 @@ export function pdvStatusLabel(status: PedidoStatus, kdsStatus?: KDSPedidoStatus
   if (status === 'pronto')    return 'Pronto';
   // 'aberto' — differentiate between "Aguardando" and "Em preparo" using KDS status
   if (kdsStatus === 'preparo') return 'Em preparo';
-  return 'Aguardando';
+  return 'Na Fila';
 }
 
 /**

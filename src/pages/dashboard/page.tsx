@@ -1,4 +1,5 @@
-import { DollarSign, ShoppingBag, Receipt, LayoutGrid, Timer } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { DollarSign, ShoppingBag, Receipt, LayoutGrid, Timer, Clock } from 'lucide-react';
 import MetricCard from './components/MetricCard';
 import SalesChart from './components/SalesChart';
 import PedidosStatus from './components/PedidosStatus';
@@ -29,8 +30,9 @@ const pct = (current: number, prev: number) =>
   prev > 0 ? ((current - prev) / prev) * 100 : 0;
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { user } = useAuth();
-  const { data: m, loading, reload } = useDashboardMetrics();
+  const { data: m, loading, error: metricsError, reload } = useDashboardMetrics();
   const { data: extras, loading: extrasLoading } = useVisaoGeralExtras('Hoje');
   const { alertas: alertasCriticos, loading: alertasCriticosLoading } = useStockCriticalAlerts();
   const { pedidos: kdsPedidos } = useKDS();
@@ -65,6 +67,8 @@ export default function Dashboard() {
   const ticketMedioOntem = modo === 'sessao' ? 0 : (m?.ticket_medio_ontem ?? 0);
   const mesasOcupadas = m?.mesas_ocupadas ?? 0;
   const mesasTotal = m?.mesas_total ?? 0;
+  const pedidosAbertosValor = m?.pedidos_abertos_valor ?? 0;
+  const pedidosAbertosCount = m?.pedidos_abertos_count ?? 0;
 
   const isLoading = loading || (modo === 'sessao' && sessaoLoading);
 
@@ -102,6 +106,17 @@ export default function Dashboard() {
       icon: Receipt,
       iconBg: 'bg-zinc-100',
       iconColor: 'text-zinc-600',
+    },
+    {
+      label: 'Pedidos em Aberto',
+      value: fmt(pedidosAbertosValor),
+      icon: Clock,
+      iconBg: 'bg-rose-50',
+      iconColor: 'text-rose-500',
+      trendLabel: pedidosAbertosCount > 0
+        ? `${pedidosAbertosCount} pedido${pedidosAbertosCount !== 1 ? 's' : ''} não pago${pedidosAbertosCount !== 1 ? 's' : ''}`
+        : 'Nenhum pedido pendente',
+      onClick: () => navigate('/gestor-pedidos', { state: { filtroPagamento: 'nao-pagos' } }),
     },
     {
       label: 'Mesas Ocupadas',
@@ -174,8 +189,22 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Error banner */}
+      {metricsError && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+          <i className="ri-error-warning-line text-sm" />
+          <span>Erro ao carregar métricas: {metricsError}</span>
+          <button
+            onClick={reload}
+            className="ml-auto text-red-600 hover:text-red-800 font-medium underline cursor-pointer"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      )}
+
       {/* Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         {metrics.map((metric) => (
           <MetricCard key={metric.label} {...metric} />
         ))}

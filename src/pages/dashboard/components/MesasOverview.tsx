@@ -20,7 +20,7 @@ const MesaDetalheModal = memo(function MesaDetalheModal({ mesa, onClose }: { mes
   if (!isOcupada) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-        <div className="bg-white rounded-2xl p-6 w-72" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-white rounded-2xl p-6 w-full max-w-xs sm:w-72" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-bold text-zinc-800">Mesa {numero}</h3>
             <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg bg-zinc-100 cursor-pointer"><i className="ri-close-line text-sm text-zinc-500" /></button>
@@ -37,7 +37,7 @@ const MesaDetalheModal = memo(function MesaDetalheModal({ mesa, onClose }: { mes
   const realMesa = mesa;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-white rounded-2xl p-5 w-80" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl p-5 w-full max-w-xs sm:w-80" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 flex items-center justify-center bg-amber-100 rounded-xl"><span className="text-sm font-black text-amber-700">{numero}</span></div>
@@ -108,7 +108,7 @@ const MesasOverview = memo(function MesasOverview({ mesas }: Props) {
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-zinc-100 border border-zinc-200 inline-block" />Livre</span>
           </div>
         </div>
-        <div className="grid grid-cols-6 gap-2">
+        <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
           {mesas.map((mesa) => {
             const isOcupada = mesa.status === 'occupied';
             return (

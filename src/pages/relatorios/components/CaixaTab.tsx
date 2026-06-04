@@ -156,7 +156,7 @@ function SessaoCard({ s, selected, onClick }: { s: CashSession; selected: boolea
   const diff = s.cash_register?.closing_difference;
   const hasDiff = diff !== null && diff !== undefined && diff !== 0;
 
-  const closedAt = s.status !== 'open' ? (s.cash_register?.closed_at ?? s.closed_at) : null;
+  const closedAt = s.status !== 'open' ? (s.closed_at ?? s.cash_register?.closed_at ?? null) : null;
   const openedDate = formatDate(s.opened_at);
   const closedDate = closedAt ? formatDate(closedAt) : null;
   const diffDay = closedDate && closedDate !== openedDate;
@@ -471,14 +471,29 @@ function TransacoesDinheiroPanel({ transacoes, totalTroco }: { transacoes: CashT
                     <span className="font-medium text-zinc-700">
                       {new Date(t.hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })}
                     </span>
+                    {t.is_agrupado && (
+                      <span className="ml-1.5 text-[9px] font-bold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                        {t.total_transacoes} pedidos
+                      </span>
+                    )}
                     {t.is_refunded && (
                       <span className="ml-1.5 text-[9px] font-bold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">Estornado</span>
                     )}
                   </td>
                   <td className="px-3 py-2.5 hidden sm:table-cell">
-                    <span className="font-medium text-zinc-600">
-                      {t.numero_pedido ? `#${t.numero_pedido}` : '—'}
-                    </span>
+                    {t.is_agrupado && t.pedidos_vinculados && t.pedidos_vinculados.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {t.pedidos_vinculados.map((n, idx) => (
+                          <span key={idx} className="font-medium text-zinc-600 bg-zinc-100 px-1.5 py-0.5 rounded-md text-[10px]">
+                            #{n}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="font-medium text-zinc-600">
+                        {t.numero_pedido ? `#${t.numero_pedido}` : '—'}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-right font-semibold text-zinc-800">
                     {fmt(t.valor_venda)}
@@ -671,7 +686,8 @@ export default function CaixaTab() {
   }, [sessions]);
 
   const totalFormas = sessao?.por_forma_pagamento.reduce((s, f) => s + f.total, 0) ?? 0;
-  const duracao = sessao ? formatDuration(sessao.opened_at, sessao.status !== 'open' ? (sessao.cash_register?.closed_at ?? sessao.closed_at) : null) : '—';
+  const duracao = sessao ? formatDuration(sessao.opened_at, sessao.status !== 'open' ? (sessao.closed_at ?? sessao.cash_register?.closed_at) : null) : '—';
+  const sessaoFechamentoTs = sessao?.status !== 'open' ? (sessao?.closed_at ?? sessao?.cash_register?.closed_at ?? null) : null;
 
   return (
     <div className="flex flex-col gap-4 h-full min-h-0">
@@ -824,8 +840,8 @@ export default function CaixaTab() {
                   <span className="flex items-center gap-1 text-xs text-zinc-500">
                     <i className="ri-time-line text-[11px]" />
                     {formatTime(sessao.opened_at)}
-                    {sessao.status !== 'open' && (sessao.cash_register?.closed_at ?? sessao.closed_at) && (() => {
-                      const closedTs = sessao.cash_register?.closed_at ?? sessao.closed_at!;
+                    {sessaoFechamentoTs && (() => {
+                      const closedTs = sessaoFechamentoTs;
                       const sameDay = formatDate(sessao.opened_at) === formatDate(closedTs);
                       return (
                         <>
@@ -872,6 +888,30 @@ export default function CaixaTab() {
                 value: fmt(sessao.cash_register?.opening_value ?? sessao.opening_amount ?? 0),
                 icon: 'ri-safe-2-line',
                 color: 'bg-zinc-100 text-zinc-600',
+              },
+              {
+                label: 'Valor Esperado no Caixa',
+                value: (() => {
+                  const isOpen = sessao.status === 'open';
+                  const openingValue = sessao.cash_register?.opening_value ?? sessao.opening_amount ?? 0;
+                  const cashPayments = sessao.por_forma_pagamento
+                    .filter(f => f.tipo === 'cash')
+                    .reduce((s, f) => s + f.total, 0);
+                  const retiradas = sessao.movimentos.total_retiradas ?? 0;
+                  const adicoes = sessao.movimentos.total_adicoes ?? 0;
+                  const troco = sessao.total_troco ?? 0;
+                  const expected = openingValue + cashPayments - retiradas + adicoes - troco;
+                  if (isOpen) {
+                    return fmt(expected);
+                  }
+                  // Sessão fechada: usa o valor esperado do fechamento
+                  const closedExpected = sessao.cash_register?.closing_value_expected;
+                  return closedExpected !== null && closedExpected !== undefined ? fmt(closedExpected) : '—';
+                })(),
+                icon: sessao.status === 'open' ? 'ri-calculator-line' : 'ri-checkbox-circle-line',
+                color: sessao.status === 'open' ? 'bg-amber-50 text-amber-600' : 'bg-zinc-100 text-zinc-400',
+                sub: sessao.status === 'open' ? 'Dinheiro + Fundo - Sangrias + Suprimentos - Troco' : undefined,
+                subColor: 'text-zinc-400',
               },
               {
                 label: 'Diferença Caixa',
@@ -1017,22 +1057,34 @@ export default function CaixaTab() {
                   </div>
                   <h3 className="text-sm font-semibold text-zinc-800">Fechamento</h3>
                 </div>
-                {sessao.status !== 'open' && sessao.cash_register?.closed_at ? (
+                {sessao.status !== 'open' && sessaoFechamentoTs ? (
                   <div className="space-y-2.5">
                     <div className="flex justify-between text-xs gap-2">
-                      <span className="text-zinc-500 flex-shrink-0">Fechamento</span>
+                      <span className="text-zinc-500 flex-shrink-0">Fechamento da sessão</span>
                       <span className="font-semibold text-zinc-800 text-right">
-                        {formatDate(sessao.cash_register.closed_at) !== formatDate(sessao.opened_at) && (
-                          <span className="text-amber-600">{formatDate(sessao.cash_register.closed_at)} </span>
+                        {formatDate(sessaoFechamentoTs) !== formatDate(sessao.opened_at) && (
+                          <span className="text-amber-600">{formatDate(sessaoFechamentoTs)} </span>
                         )}
-                        {formatTime(sessao.cash_register.closed_at)}
+                        {formatTime(sessaoFechamentoTs)}
                       </span>
                     </div>
+                    {/* Se o caixa foi fechado em horário diferente da sessão, mostra como detalhe */}
+                    {sessao.cash_register?.closed_at && sessao.cash_register.closed_at !== sessaoFechamentoTs && (
+                      <div className="flex justify-between text-xs gap-2">
+                        <span className="text-zinc-400 flex-shrink-0">Fechamento do caixa</span>
+                        <span className="font-semibold text-zinc-500 text-right">
+                          {formatDate(sessao.cash_register.closed_at) !== formatDate(sessao.opened_at) && (
+                            <span className="text-amber-600">{formatDate(sessao.cash_register.closed_at)} </span>
+                          )}
+                          {formatTime(sessao.cash_register.closed_at)}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between text-xs">
                       <span className="text-zinc-500">Valor contado</span>
-                      <span className="font-semibold text-zinc-800">{fmt(sessao.cash_register.closing_value_actual ?? 0)}</span>
+                      <span className="font-semibold text-zinc-800">{fmt(sessao.cash_register?.closing_value_actual ?? 0)}</span>
                     </div>
-                    {sessao.cash_register.closing_value_expected !== null && sessao.cash_register.closing_value_expected !== undefined && (
+                    {sessao.cash_register?.closing_value_expected !== null && sessao.cash_register?.closing_value_expected !== undefined && (
                       <div className="flex justify-between text-xs">
                         <span className="text-zinc-500">Valor esperado</span>
                         <span className="font-semibold text-zinc-800">{fmt(sessao.cash_register.closing_value_expected)}</span>
@@ -1040,20 +1092,20 @@ export default function CaixaTab() {
                     )}
                     <div className="flex justify-between text-xs pt-2 border-t border-zinc-100">
                       <span className="font-semibold text-zinc-700">Diferença</span>
-                      <DifBadge valor={sessao.cash_register.closing_difference} />
+                      <DifBadge valor={sessao.cash_register?.closing_difference} />
                     </div>
-                    {sessao.cash_register.closing_notes && (
+                    {sessao.cash_register?.closing_notes && (
                       <div className="mt-2 px-3 py-2 rounded-lg text-[10px] font-semibold bg-zinc-50 text-zinc-600 flex items-start gap-1.5">
                         <i className="ri-chat-1-line mt-0.5 flex-shrink-0" />
                         <span>Justificativa: {sessao.cash_register.closing_notes}</span>
                       </div>
                     )}
-                    {sessao.cash_register.closing_difference !== null && sessao.cash_register.closing_difference !== undefined && Math.abs(sessao.cash_register.closing_difference) < 0.01 && (
+                    {sessao.cash_register?.closing_difference !== null && sessao.cash_register?.closing_difference !== undefined && Math.abs(sessao.cash_register.closing_difference) < 0.01 && (
                       <div className="mt-2 px-3 py-2 rounded-lg text-[10px] font-semibold bg-emerald-50 text-emerald-600 flex items-center gap-1.5">
                         <i className="ri-checkbox-circle-fill" />Caixa conferido sem diferenças
                       </div>
                     )}
-                    {sessao.cash_register.closing_difference !== null && sessao.cash_register.closing_difference !== undefined && Math.abs(sessao.cash_register.closing_difference) >= 0.01 && (
+                    {sessao.cash_register?.closing_difference !== null && sessao.cash_register?.closing_difference !== undefined && Math.abs(sessao.cash_register.closing_difference) >= 0.01 && (
                       <div className={`mt-2 px-3 py-2 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 ${
                         sessao.cash_register.closing_difference < 0 ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'
                       }`}>
@@ -1133,14 +1185,14 @@ export default function CaixaTab() {
                     <h3 className="text-sm font-semibold text-zinc-800">Transações em Dinheiro</h3>
                     <p className="text-[10px] text-zinc-400">Valor pago, troco e valor da venda por transação</p>
                   </div>
-                  {sessao.cash_transactions.length > 0 && (
+                  {sessao.cash_transactions_grouped.length > 0 && (
                     <span className="ml-auto text-xs font-bold px-2 py-1 rounded-full bg-emerald-50 text-emerald-700">
-                      {sessao.cash_transactions.filter(t => !t.is_refunded).length} transações
+                      {sessao.cash_transactions_grouped.filter(t => !t.is_refunded).length} transações
                     </span>
                   )}
                 </div>
                 <TransacoesDinheiroPanel
-                  transacoes={sessao.cash_transactions}
+                  transacoes={sessao.cash_transactions_grouped}
                   totalTroco={sessao.total_troco}
                 />
               </div>

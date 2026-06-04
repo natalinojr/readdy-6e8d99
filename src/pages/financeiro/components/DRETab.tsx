@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useImpressoras, PRINTER_KEY_RELATORIOS } from '@/contexts/ImpressorasContext';
+import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -612,6 +614,7 @@ function DreModeToggle({ mode, onChange }: { mode: DREMode; onChange: (m: DREMod
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function DRETab() {
   const { user } = useAuth();
+  const { getImpressoraParaEstacao } = useImpressoras();
   const today = new Date();
   const [mes, setMes] = useState(
     `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
@@ -885,7 +888,16 @@ export default function DRETab() {
           </div>
 
           <button
-            onClick={() => window.print()}
+            onClick={() => {
+              const imp = getImpressoraParaEstacao(PRINTER_KEY_RELATORIOS);
+              if (imp && imp.ip) {
+                // Impressora de rede configurada: envia HTML da página
+                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>DRE</title><style>body{font-family:monospace;font-size:11px;padding:16px;width:700px}table{width:100%;border-collapse:collapse}th,td{padding:4px 8px;text-align:right;border-bottom:1px solid #eee}th:first-child,td:first-child{text-align:left}@media print{body{padding:4px}}</style></head><body><h2>DRE — ${mes}</h2><p style="font-size:10px;color:#888">Impresso em ${new Date().toLocaleString('pt-BR')}</p></body></html>`;
+                sendToPrinter(html, imp);
+              } else {
+                window.print();
+              }
+            }}
             className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap"
           >
             <i className="ri-printer-line text-sm" /> Imprimir

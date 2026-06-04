@@ -1,18 +1,29 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
 import type { Item } from '@/types/cardapio';
 import ItemModal from './ItemModal';
 import ItemImage from '@/components/base/ItemImage';
 
 export default function ItensTab() {
-  const { itens, categorias, obsGlobais, estacoes, salvarItem, excluirItem, saving } = useCardapio();
+  const { itens, categorias, obsGlobais, estacoes, salvarItem, excluirItem, reordenarItens, saving } = useCardapio();
   const [busca, setBusca] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroDelivery, setFiltroDelivery] = useState(false);
   const [modalItem, setModalItem] = useState<Item | null | undefined>(undefined);
-  const [vistaLista, setVistaLista] = useState(false);
+  const [vistaLista, setVistaLista] = useState(true);
   const [duplicando, setDuplicando] = useState<string | null>(null);
+
+  // Sincroniza modalItem com o array itens atualizado quando o cardapio recarrega
+  useEffect(() => {
+    if (modalItem?.id) {
+      const updated = itens.find(i => i.id === modalItem.id);
+      if (updated) {
+        console.log('[ItensTab] Syncing modalItem with updated itens array, subproducao:', updated.subproducao);
+        setModalItem(updated);
+      }
+    }
+  }, [itens, modalItem?.id]);
 
   const categoriaMap = Object.fromEntries(categorias.map(c => [c.id, c.nome]));
 
@@ -34,6 +45,9 @@ export default function ItensTab() {
     const matchDelivery = !filtroDelivery || item.somenteDelivery === true || item.delivery?.ativo === true;
     return matchBusca && matchCat && matchStatus && matchDelivery;
   });
+
+  // Determina se o modo ordenação está disponível (sem busca textual, para não bagunçar)
+  const modoOrdenacao = busca === '';
 
   const deliveryCount = itens.filter(i => i.somenteDelivery || i.delivery?.ativo).length;
   const ativosCount = itens.filter(i => i.status === 'ativo').length;
@@ -72,6 +86,45 @@ export default function ItensTab() {
     } finally {
       setDuplicando(null);
     }
+  };
+
+  const moveItemUp = async (idx: number) => {
+    if (idx === 0 || !modoOrdenacao) return;
+    const itemToMove = itensFiltrados[idx];
+    if (!itemToMove) return;
+
+    // Base de reordenação: se filtrou por categoria, reordena só dentro dela
+    // se não, reordena todos os itens
+    const baseList = filtroCategoria
+      ? itens.filter(i => i.categoriaId === filtroCategoria)
+      : [...itens];
+
+    const targetIdx = baseList.findIndex(i => i.id === itemToMove.id);
+    if (targetIdx <= 0) return;
+
+    const newList = [...baseList];
+    [newList[targetIdx], newList[targetIdx - 1]] = [newList[targetIdx - 1], newList[targetIdx]];
+
+    // Reatribuir sort_order sequencial (0, 1, 2...) pra garantir ordem única
+    await reordenarItens(newList.map((item, i) => ({ id: item.id, sortOrder: i })));
+  };
+
+  const moveItemDown = async (idx: number) => {
+    if (idx === itensFiltrados.length - 1 || !modoOrdenacao) return;
+    const itemToMove = itensFiltrados[idx];
+    if (!itemToMove) return;
+
+    const baseList = filtroCategoria
+      ? itens.filter(i => i.categoriaId === filtroCategoria)
+      : [...itens];
+
+    const targetIdx = baseList.findIndex(i => i.id === itemToMove.id);
+    if (targetIdx < 0 || targetIdx >= baseList.length - 1) return;
+
+    const newList = [...baseList];
+    [newList[targetIdx], newList[targetIdx + 1]] = [newList[targetIdx + 1], newList[targetIdx]];
+
+    await reordenarItens(newList.map((item, i) => ({ id: item.id, sortOrder: i })));
   };
 
   return (
@@ -200,10 +253,18 @@ export default function ItensTab() {
         </div>
       </div>
 
+      {/* Modo ordenação hint */}
+      {modoOrdenacao && (
+        <div className="flex items-center gap-1.5 mb-3 text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
+          <i className="ri-arrow-up-down-line" />
+          Use as setas nos cards para reordenar os itens no cardápio. A ordem será refletida no autoatendimento.
+        </div>
+      )}
+
       {/* Vista em Grade */}
       {!vistaLista && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-          {itensFiltrados.map(item => (
+          {itensFiltrados.map((item, idx) => (
             <div key={item.id} className={`bg-white rounded-xl border border-gray-100 overflow-hidden transition-all hover:border-gray-200 ${item.status === 'inativo' ? 'opacity-60' : ''}`}>
               <div className="relative w-full h-32 md:h-36">
                 <ItemImage src={item.fotoUrl} alt={item.nome} className="w-full h-full" />
@@ -227,6 +288,26 @@ export default function ItensTab() {
                     {item.status === 'ativo' ? 'Ativo' : 'Inativo'}
                   </span>
                 </div>
+                {modoOrdenacao && (
+                  <div className="absolute top-2 left-2 flex flex-col gap-0.5">
+                    <button
+                      onClick={() => moveItemUp(idx)}
+                      disabled={idx === 0 || saving}
+                      className="w-6 h-5 flex items-center justify-center rounded bg-white/80 hover:bg-white shadow-sm disabled:opacity-30 cursor-pointer text-gray-500 transition-colors"
+                      title="Subir"
+                    >
+                      <i className="ri-arrow-up-s-line text-sm" />
+                    </button>
+                    <button
+                      onClick={() => moveItemDown(idx)}
+                      disabled={idx === itensFiltrados.length - 1 || saving}
+                      className="w-6 h-5 flex items-center justify-center rounded bg-white/80 hover:bg-white shadow-sm disabled:opacity-30 cursor-pointer text-gray-500 transition-colors"
+                      title="Descer"
+                    >
+                      <i className="ri-arrow-down-s-line text-sm" />
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="p-3">
                 <div className="flex items-start justify-between gap-2 mb-1">
@@ -313,11 +394,12 @@ export default function ItensTab() {
                       <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">SLA</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500">Preço</th>
                       <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
+                      {modoOrdenacao && <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">Ordem</th>}
                       <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {itensFiltrados.map(item => (
+                    {itensFiltrados.map((item, idx) => (
                       <tr key={item.id} className={`hover:bg-gray-50 transition-colors ${item.status === 'inativo' ? 'opacity-60' : ''}`}>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
@@ -364,6 +446,27 @@ export default function ItensTab() {
                             <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${item.status === 'ativo' ? 'left-5' : 'left-0.5'}`} />
                           </button>
                         </td>
+                        {modoOrdenacao && (
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <button
+                                onClick={() => moveItemUp(idx)}
+                                disabled={idx === 0 || saving}
+                                className="w-6 h-5 flex items-center justify-center rounded hover:bg-gray-100 disabled:opacity-30 cursor-pointer text-gray-400 transition-colors"
+                              >
+                                <i className="ri-arrow-up-s-line text-sm" />
+                              </button>
+                              <span className="text-[10px] font-bold text-gray-300">{idx + 1}</span>
+                              <button
+                                onClick={() => moveItemDown(idx)}
+                                disabled={idx === itensFiltrados.length - 1 || saving}
+                                className="w-6 h-5 flex items-center justify-center rounded hover:bg-gray-100 disabled:opacity-30 cursor-pointer text-gray-400 transition-colors"
+                              >
+                                <i className="ri-arrow-down-s-line text-sm" />
+                              </button>
+                            </div>
+                          </td>
+                        )}
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
                             <button
@@ -402,8 +505,27 @@ export default function ItensTab() {
 
               {/* Mobile cards (list view) */}
               <div className="md:hidden divide-y divide-gray-50">
-                {itensFiltrados.map(item => (
+                {itensFiltrados.map((item, idx) => (
                   <div key={item.id} className={`flex items-center gap-3 px-3 py-3 ${item.status === 'inativo' ? 'opacity-60' : ''}`}>
+                    {modoOrdenacao && (
+                      <div className="flex flex-col gap-0.5 flex-shrink-0">
+                        <button
+                          onClick={() => moveItemUp(idx)}
+                          disabled={idx === 0 || saving}
+                          className="w-6 h-5 flex items-center justify-center rounded hover:bg-gray-100 disabled:opacity-30 cursor-pointer text-gray-400 transition-colors"
+                        >
+                          <i className="ri-arrow-up-s-line text-sm" />
+                        </button>
+                        <span className="text-[10px] font-bold text-gray-300 text-center">{idx + 1}</span>
+                        <button
+                          onClick={() => moveItemDown(idx)}
+                          disabled={idx === itensFiltrados.length - 1 || saving}
+                          className="w-6 h-5 flex items-center justify-center rounded hover:bg-gray-100 disabled:opacity-30 cursor-pointer text-gray-400 transition-colors"
+                        >
+                          <i className="ri-arrow-down-s-line text-sm" />
+                        </button>
+                      </div>
+                    )}
                     <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100">
                       <ItemImage src={item.fotoUrl} alt={item.nome} className="w-full h-full" />
                     </div>
@@ -447,6 +569,7 @@ export default function ItensTab() {
 
       {modalItem !== undefined && (
         <ItemModal
+          key={modalItem?.id ?? 'new-item'}
           item={modalItem ?? undefined}
           categorias={categorias}
           obsGlobais={obsGlobais}

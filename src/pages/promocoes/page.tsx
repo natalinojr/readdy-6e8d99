@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import type { PromotionRule, PromoType } from '@/types/promotions';
@@ -81,7 +81,7 @@ export default function PromocoesPage() {
   async function toggleActive(rule: PromotionRule) {
     setTogglingId(rule.id);
     try {
-      await supabase.functions.invoke('menu-write', {
+      await invokeWithAuth('menu-write', {
         body: {
           action: 'update_promotion_rule',
           promotion_id: rule.id,

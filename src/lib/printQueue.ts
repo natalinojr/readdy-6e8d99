@@ -194,22 +194,17 @@ export async function countPendingPrints(tenantId: string): Promise<number> {
 
 // ── Teste de conectividade da impressora ────────────────────────────────────
 
-export async function testPrinterOnline(ip: string, port = 9100): Promise<{ online: boolean; ms?: number }> {
+export async function testPrinterOnline(_ip: string, _port = 9100): Promise<{ online: boolean; ms?: number }> {
   try {
-    const url = `${import.meta.env.VITE_PUBLIC_SUPABASE_URL}/functions/v1/printer-ping`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip, port }),
+    const res = await fetch('http://127.0.0.1:9876/health', {
+      signal: AbortSignal.timeout(2000),
     });
-    const result = await res.json().catch(() => null);
-    if (result && result.online) {
-      return { online: true, ms: result.responseTimeMs };
-    }
-    return { online: false };
+    const data = await res.json();
+    if (data.status === 'ok') return { online: true };
   } catch {
-    return { online: false };
+    // agente não está rodando
   }
+  return { online: false };
 }
 
 // ── Reprocessamento da fila ─────────────────────────────────────────────────

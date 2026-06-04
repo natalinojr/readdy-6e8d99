@@ -20,44 +20,6 @@ function errResp(message: string) {
   return new Response(JSON.stringify({ error: message }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
 
-async function adminCreateUser(
-  supabaseUrl: string, serviceKey: string, email: string, password: string
-): Promise<{ id: string; email: string } | null> {
-  const res = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` },
-    body: JSON.stringify({ email, password, email_confirm: true }),
-  });
-  if (!res.ok) { const body = await res.text(); throw new Error(`adminCreateUser failed (${res.status}): ${body}`); }
-  return res.json();
-}
-
-async function adminDeleteUser(supabaseUrl: string, serviceKey: string, userId: string): Promise<void> {
-  await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
-    method: 'DELETE',
-    headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` },
-  });
-}
-
-async function adminUpdateUser(supabaseUrl: string, serviceKey: string, userId: string, updates: Record<string, unknown>): Promise<void> {
-  const res = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` },
-    body: JSON.stringify(updates),
-  });
-  if (!res.ok) { const body = await res.text(); throw new Error(`adminUpdateUser failed (${res.status}): ${body}`); }
-}
-
-async function adminGetUser(
-  supabaseUrl: string, serviceKey: string, userId: string
-): Promise<{ id: string; email: string; user_metadata?: Record<string, unknown> } | null> {
-  const res = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
-    headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` },
-  });
-  if (!res.ok) return null;
-  return res.json();
-}
-
 async function verifyJWT(req: Request): Promise<boolean> {
   try {
     const authHeader = req.headers.get('Authorization');
@@ -133,7 +95,6 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       // Garante unicidade da matrícula
       const { data: existingBadge } = await db.from('users').select('id').eq('badge_number', badgeNumber).maybeSingle();
       if (existingBadge) {
-        // Se colidiu, gera uma nova automaticamente
         badgeNumber = await gerarProximaMatricula(db);
       }
 
@@ -146,9 +107,13 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
         let authUser: { id: string; email: string };
         try {
-          const created = await adminCreateUser(supabaseUrl, serviceRoleKey, syntheticEmail, senhaTotem);
-          if (!created) return errResp('Erro ao criar usuário totem');
-          authUser = created;
+          const { data: created, error: createErr } = await db.auth.admin.createUser({
+            email: syntheticEmail,
+            password: senhaTotem,
+            email_confirm: true,
+          });
+          if (createErr || !created?.user) throw new Error(createErr?.message ?? 'Erro ao criar usuário totem');
+          authUser = { id: created.user.id, email: created.user.email ?? syntheticEmail };
         } catch (e) {
           return errResp(e instanceof Error ? e.message : String(e));
         }
@@ -163,7 +128,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           badge_number: badgeNumber,
         });
         if (userError) {
-          await adminDeleteUser(supabaseUrl, serviceRoleKey, userId);
+          await db.auth.admin.deleteUser(userId);
           return errResp(userError.message);
         }
 
@@ -174,7 +139,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           training_mode: training_mode ?? false,
         });
         if (tenantError) {
-          await adminDeleteUser(supabaseUrl, serviceRoleKey, userId);
+          await db.auth.admin.deleteUser(userId);
           return errResp(tenantError.message);
         }
 
@@ -202,9 +167,13 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       let authUser: { id: string; email: string };
       try {
-        const created = await adminCreateUser(supabaseUrl, serviceRoleKey, effectiveEmail, senha.trim());
-        if (!created) return errResp('Erro ao criar usuário');
-        authUser = created;
+        const { data: created, error: createErr } = await db.auth.admin.createUser({
+          email: effectiveEmail,
+          password: senha.trim(),
+          email_confirm: true,
+        });
+        if (createErr || !created?.user) throw new Error(createErr?.message ?? 'Erro ao criar usuário');
+        authUser = { id: created.user.id, email: created.user.email ?? effectiveEmail };
       } catch (e) {
         return errResp(e instanceof Error ? e.message : String(e));
       }
@@ -219,7 +188,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         badge_number: badgeNumber,
       });
       if (userError) {
-        await adminDeleteUser(supabaseUrl, serviceRoleKey, userId);
+        await db.auth.admin.deleteUser(userId);
         return errResp(userError.message);
       }
 
@@ -230,7 +199,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         training_mode: training_mode ?? false,
       });
       if (tenantError) {
-        await adminDeleteUser(supabaseUrl, serviceRoleKey, userId);
+        await db.auth.admin.deleteUser(userId);
         return errResp(tenantError.message);
       }
 
@@ -261,7 +230,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       // Hard delete no Auth (remove acesso de login)
       try {
-        await adminDeleteUser(supabaseUrl, serviceRoleKey, user_id);
+        await db.auth.admin.deleteUser(user_id);
       } catch (e) {
         console.warn('[user-write] adminDeleteUser error (non-fatal):', e);
       }
@@ -272,10 +241,14 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     // ─── reset_password ───────────────────────────────────────────────────────
     if (action === 'reset_password') {
       const { user_id, nova_senha } = body;
+      if (!user_id || !nova_senha) return errResp('user_id e nova_senha são obrigatórios');
       try {
-        await adminUpdateUser(supabaseUrl, serviceRoleKey, user_id, { password: nova_senha });
+        const { error: updateErr } = await db.auth.admin.updateUserById(user_id, { password: nova_senha });
+        if (updateErr) throw new Error(updateErr.message);
       } catch (e) {
-        return errResp(e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error('[user-write] reset_password error:', msg);
+        return errResp(msg);
       }
       return ok({ success: true });
     }
@@ -311,10 +284,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const { data: existingUser } = await db.from('users').select('id').eq('id', user_id).maybeSingle();
       if (!existingUser) {
         try {
-          const authUser = await adminGetUser(supabaseUrl, serviceRoleKey, user_id);
-          if (authUser) {
-            const name = (authUser.user_metadata?.name as string) || authUser.email?.split('@')[0] || 'Operador';
-            const email = authUser.email || `user_${user_id}@erpos.local`;
+          const { data: authUser } = await db.auth.admin.getUserById(user_id);
+          if (authUser?.user) {
+            const name = (authUser.user.user_metadata?.name as string) || authUser.user.email?.split('@')[0] || 'Operador';
+            const email = authUser.user.email || `user_${user_id}@erpos.local`;
             await db.from('users').upsert(
               { id: user_id, name, email, is_active: true },
               { onConflict: 'id', ignoreDuplicates: true }
@@ -327,7 +300,9 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
     return errResp('Ação desconhecida');
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[user-write] unhandled error:', msg);
+    return new Response(JSON.stringify({ error: msg }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

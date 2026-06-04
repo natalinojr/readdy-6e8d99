@@ -1,0 +1,32 @@
+{
+  "agent_port": 9876,
+  "default_timeout_ms": 10000,
+  "impressoras": [
+    {
+      "id": "cozinha",
+      "nome": "Cozinha",
+      "ip": "10.0.0.186",
+      "porta": 9100,
+      "papel": "80mm"
+    },
+    {
+      "id": "bar",
+      "nome": "Bar",
+      "ip": "10.0.0.187",
+      "porta": 9100,
+      "papel": "80mm"
+    },
+    {
+      "id": "caixa",
+      "nome": "Caixa",
+      "ip": "10.0.0.188",
+      "porta": 9100,
+      "papel": "58mm"
+    }
+  ],
+  "print_queue_enabled": true,
+  "supabase_url": "https://mdghhjemzdmeuqpzuyzx.supabase.co",
+  "supabase_anon_key": "sb_publishable_YcaOldq1Hh-GqWNW40eo0Q_CagNN5lZ",
+  "tenant_id": "7049e90e-c453-4268-b2dd-d074a7386612",
+  "poll_interval_ms": 3000
+}

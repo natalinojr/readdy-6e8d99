@@ -131,7 +131,7 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
     setLoadingSession(true);
     restoreSession().finally(() => setLoadingSession(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.tenantId, kioskSession?.tenantId, restoreSession]);
+  }, [effectiveTenantId, restoreSession]);
 
   // ── Realtime: escuta mudanças em sessions e cash_registers ────────────────
   useEffect(() => {
@@ -273,10 +273,12 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
 
   const gerarProximoNumeroPedido = useCallback(async (): Promise<string> => {
     if (!sessao) return `P${Date.now()}`;
-    const { data, error } = await supabase.rpc('fn_next_order_number', { p_session_id: sessao.id });
-    if (error || !data?.[0]) return `P${Date.now()}`;
+    const { data, error } = await supabase.rpc('fn_next_order_number', { p_session_id: sessao.id, p_tenant_id: effectiveTenantId ?? undefined });
+    if (error || !data?.[0] || typeof data[0].number !== 'string' || data[0].number === 'null' || !data[0].number) {
+      return `P${Date.now()}`;
+    }
     return data[0].number;
-  }, [sessao]);
+  }, [sessao, effectiveTenantId]);
 
   return (
     <SessaoContext.Provider value={{

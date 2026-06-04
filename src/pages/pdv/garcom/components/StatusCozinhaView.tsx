@@ -9,11 +9,8 @@ import {
   SLA_COLORS,
   SLA_BG,
 } from '../../../../hooks/useKDSTick';
-
-interface Props {
-  mesaNumero?: number;
-  nomeClienteAvulso?: string;
-}
+import { invokeWithAuth } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 const STATUS_CONFIG = {
   novo:     { label: 'Na fila',  icon: 'ri-time-line',          bg: 'bg-zinc-100',  text: 'text-zinc-600',  dot: 'bg-zinc-400'  },
@@ -36,12 +33,14 @@ function estacaoColor(e: string) {
 // Modal para editar item antes do preparo
 interface EditarItemCozinhaModalProps {
   item: KDSItem;
+  orderId: string;
   onSalvar: (itemId: string, updates: { quantidade: number; observacoes: string[] }) => void;
   onRemover: (itemId: string) => void;
   onClose: () => void;
+  loading?: boolean;
 }
 
-function EditarItemCozinhaModal({ item, onSalvar, onRemover, onClose }: EditarItemCozinhaModalProps) {
+function EditarItemCozinhaModal({ item, onSalvar, onRemover, onClose, loading }: EditarItemCozinhaModalProps) {
   const [quantidade, setQuantidade] = useState(item.quantidade);
   const [novaObs, setNovaObs] = useState('');
   const [observacoes, setObservacoes] = useState<string[]>([...item.observacoes]);
@@ -131,17 +130,26 @@ function EditarItemCozinhaModal({ item, onSalvar, onRemover, onClose }: EditarIt
           </div>
         </div>
 
+        {loading && (
+          <div className="flex items-center gap-2 text-xs text-zinc-500 mb-3">
+            <i className="ri-loader-4-line animate-spin" />
+            Salvando...
+          </div>
+        )}
+
         <div className="flex gap-2">
           <button
-            onClick={() => { onRemover(item.id); onClose(); }}
-            className="flex items-center gap-1.5 px-3 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors border border-red-200"
+            onClick={() => { onRemover(item.id); }}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors border border-red-200 disabled:opacity-50"
           >
             <i className="ri-delete-bin-line" />
             Remover
           </button>
           <button
             onClick={onClose}
-            className="flex-1 py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-semibold rounded-xl cursor-pointer whitespace-nowrap transition-colors"
+            disabled={loading}
+            className="flex-1 py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-semibold rounded-xl cursor-pointer whitespace-nowrap transition-colors disabled:opacity-50"
           >
             Cancelar
           </button>
@@ -152,9 +160,9 @@ function EditarItemCozinhaModal({ item, onSalvar, onRemover, onClose }: EditarIt
               } else {
                 onSalvar(item.id, { quantidade, observacoes });
               }
-              onClose();
             }}
-            className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors"
+            disabled={loading}
+            className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors"
           >
             Salvar
           </button>
@@ -170,7 +178,7 @@ interface ItemRowProps {
   onEntregarUm: (itemId: string) => void;
 }
 
-function ItemStatusRow({ item, deliveredCount, onEntregarUm, onEditar, podeEditar }: ItemRowProps & { onEditar?: (item: KDSItem) => void; podeEditar?: boolean }) {
+function ItemStatusRow({ item, deliveredCount, onEntregarUm, onEditar, podeEditar }: ItemRowProps & { onEditar?: (item: KDSItem, pedidoId: string) => void; podeEditar?: boolean; pedidoId?: string }) {
   useKDSTick();
 
   const refTime = item.iniciouPreparoEm ?? item.entroKdsEm;
@@ -321,7 +329,7 @@ interface PedidoCardProps {
   deliveredCounts: Record<string, number>;
   onEntregarUm: (itemId: string) => void;
   onEntregarTodos: (pedidoId: string) => void;
-  onEditar?: (item: KDSItem) => void;
+  onEditar?: (item: KDSItem, pedidoId: string) => void;
   itensRemovidos?: Set<string>;
   itensEditados?: Record<string, { quantidade: number; observacoes: string[] }>;
 }
@@ -447,7 +455,7 @@ function PedidoCard({ pedido, deliveredCounts, onEntregarUm, onEntregarTodos, on
             item={item}
             deliveredCount={deliveredCounts[item.id] ?? 0}
             onEntregarUm={onEntregarUm}
-            onEditar={onEditar}
+            onEditar={onEditar ? (itm) => onEditar(itm, pedido.id) : undefined}
             podeEditar={item.status === 'novo'}
           />
         ))}
@@ -456,15 +464,18 @@ function PedidoCard({ pedido, deliveredCounts, onEntregarUm, onEntregarTodos, on
   );
 }
 
-export default function StatusCozinhaView({ mesaNumero, nomeClienteAvulso }: Props) {
+export default function StatusCozinhaView({ mesaNumero, nomeClienteAvulso }: { mesaNumero?: number; nomeClienteAvulso?: string }) {
   useKDSTick();
   const { pedidos: allKDSPedidos } = useKDS();
+  const { user } = useAuth();
 
   // Map de itemId -> quantas unidades foram marcadas como entregues pelo garçom
   const [deliveredCounts, setDeliveredCounts] = useState<Record<string, number>>({});
-  const [itemEditando, setItemEditando] = useState<KDSItem | null>(null);
+  const [itemEditando, setItemEditando] = useState<{ item: KDSItem; orderId: string } | null>(null);
   const [itensEditados, setItensEditados] = useState<Record<string, { quantidade: number; observacoes: string[] }>>({});
   const [itensRemovidos, setItensRemovidos] = useState<Set<string>>(new Set());
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  const [erroEdicao, setErroEdicao] = useState<string | null>(null);
 
   const handleEntregarUm = useCallback((itemId: string) => {
     setDeliveredCounts((prev) => {
@@ -513,17 +524,77 @@ export default function StatusCozinhaView({ mesaNumero, nomeClienteAvulso }: Pro
     [mesaNumero, nomeClienteAvulso, allKDSPedidos]
   );
 
-  const handleEditar = useCallback((item: KDSItem) => {
-    setItemEditando(item);
+  const handleEditar = useCallback((item: KDSItem, orderId: string) => {
+    setItemEditando({ item, orderId });
+    setErroEdicao(null);
   }, []);
 
-  const handleSalvarEdicao = useCallback((itemId: string, updates: { quantidade: number; observacoes: string[] }) => {
-    setItensEditados((prev) => ({ ...prev, [itemId]: updates }));
-  }, []);
+  const handleSalvarEdicao = useCallback(async (itemId: string, updates: { quantidade: number; observacoes: string[] }) => {
+    if (!itemEditando || !user?.tenantId) return;
+    setSalvandoEdicao(true);
+    setErroEdicao(null);
+    try {
+      if (updates.quantidade === 0) {
+        // Cancelar item
+        await invokeWithAuth('order-write', {
+          body: {
+            action: 'update_order_item_status',
+            order_id: itemEditando.orderId,
+            order_item_id: itemId,
+            status: 'cancelled',
+            tenant_id: user.tenantId,
+          },
+        });
+      } else {
+        await invokeWithAuth('order-write', {
+          body: {
+            action: 'update_order_item',
+            order_id: itemEditando.orderId,
+            order_item_id: itemId,
+            tenant_id: user.tenantId,
+            quantity: updates.quantidade,
+            notes: null,
+            observations: updates.observacoes.map((text) => ({ text })),
+          },
+        });
+      }
+      setItensEditados((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      setItemEditando(null);
+    } catch (e) {
+      console.error('[StatusCozinhaView] erro ao salvar edicao:', e);
+      setErroEdicao('Não foi possível salvar. Tente novamente.');
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  }, [itemEditando, user]);
 
-  const handleRemoverItem = useCallback((itemId: string) => {
-    setItensRemovidos((prev) => new Set([...prev, itemId]));
-  }, []);
+  const handleRemoverItem = useCallback(async (itemId: string) => {
+    if (!itemEditando || !user?.tenantId) return;
+    setSalvandoEdicao(true);
+    setErroEdicao(null);
+    try {
+      await invokeWithAuth('order-write', {
+        body: {
+          action: 'update_order_item_status',
+          order_id: itemEditando.orderId,
+          order_item_id: itemId,
+          status: 'cancelled',
+          tenant_id: user.tenantId,
+        },
+      });
+      setItensRemovidos((prev) => new Set([...prev, itemId]));
+      setItemEditando(null);
+    } catch (e) {
+      console.error('[StatusCozinhaView] erro ao remover item:', e);
+      setErroEdicao('Não foi possível remover. Tente novamente.');
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  }, [itemEditando, user]);
 
   // Deriva o status efetivo de um pedido a partir dos itens + entregas locais
   const getEffectiveStatus = useCallback((p: KDSPedido) => {
@@ -597,6 +668,13 @@ export default function StatusCozinhaView({ mesaNumero, nomeClienteAvulso }: Pro
           <p className="text-[10px] font-semibold text-amber-700">
             {Object.keys(itensEditados).length} {Object.keys(itensEditados).length === 1 ? 'item editado' : 'itens editados'} localmente — aguardando sincronização com o KDS
           </p>
+        </div>
+      )}
+      {erroEdicao && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border-b border-red-200 flex-shrink-0">
+          <i className="ri-error-warning-line text-red-500 text-sm" />
+          <p className="text-[10px] font-semibold text-red-700 flex-1">{erroEdicao}</p>
+          <button onClick={() => setErroEdicao(null)} className="text-[10px] text-red-600 font-bold cursor-pointer">Fechar</button>
         </div>
       )}
 
@@ -684,10 +762,12 @@ export default function StatusCozinhaView({ mesaNumero, nomeClienteAvulso }: Pro
 
       {itemEditando && (
         <EditarItemCozinhaModal
-          item={itemEditando}
+          item={itemEditando.item}
+          orderId={itemEditando.orderId}
           onSalvar={handleSalvarEdicao}
           onRemover={handleRemoverItem}
           onClose={() => setItemEditando(null)}
+          loading={salvandoEdicao}
         />
       )}
     </div>

@@ -79,6 +79,7 @@ export default function CalendarioFaturamentoTab() {
         p_tenant_id: user.tenantId,
         p_date_from: fromStr,
         p_date_to: toStr,
+        p_session_id: null,
       });
 
       if (!rpcError && rpcData && (rpcData as any).orders_by_day) {

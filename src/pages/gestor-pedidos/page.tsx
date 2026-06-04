@@ -1,21 +1,22 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useKDS } from '@/contexts/KDSContext';
-import { useEstoque } from '@/contexts/EstoqueContext';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useAuth } from '@/contexts/AuthContext';
 import type { KDSPedido, KDSItem, KDSItemStatus } from '@/types/kds';
 import GestorKanbanView from './components/GestorKanbanView';
 import GestorListView from './components/GestorListView';
+import GestorMesasView from './components/GestorMesasView';
 import ObsGateModal, { type ObsGateTipo } from '@/components/feature/ObsGateModal';
 import EntregaGateModal from '@/components/feature/EntregaGateModal';
 import CancelOrderModal from './components/CancelOrderModal';
 import PedidoDetailModal from './components/PedidoDetailModal';
 import HistoricoDrawer from './components/HistoricoDrawer';
 
-type Visualizacao = 'kanban' | 'lista';
+type Visualizacao = 'kanban' | 'lista' | 'mesas';
 type FiltroStatus = 'todos' | 'novo' | 'preparo' | 'pronto' | 'entregue' | 'cancelado';
 type FiltroOrigem = 'todas' | 'caixa' | 'garcom' | 'mesa' | 'autoatendimento' | 'delivery';
+type FiltroPagamento = 'todos' | 'pagos' | 'nao-pagos';
 
 interface PendingObsAction {
   tipo: ObsGateTipo;
@@ -85,15 +86,16 @@ function destinoToast(pedido: KDSPedido): string {
 
 export default function GestorPedidosPage() {
   const navigate = useNavigate();
-  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, cancelOrderRemote, reloadOrders } = useKDS();
-  const { deductSaleItems } = useEstoque();
-  const { estado, sessao } = useSessao();
+  const location = useLocation();
+  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, cancelOrderRemote, reloadOrders, pedidosSalvando } = useKDS();
+  const { estado, sessao, loadingSession } = useSessao();
   const { user } = useAuth();
 
   const [visualizacao, setVisualizacao] = useState<Visualizacao>('kanban');
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>('todos');
   const [filtroEstacao, setFiltroEstacao] = useState<string>('todas');
   const [filtroOrigem, setFiltroOrigem] = useState<FiltroOrigem>('todas');
+  const [filtroPagamento, setFiltroPagamento] = useState<FiltroPagamento>('todos');
   const [tick, setTick] = useState(0);
   const [clock, setClock] = useState(new Date());
   const [busca, setBusca] = useState('');
@@ -103,9 +105,20 @@ export default function GestorPedidosPage() {
   const [showHistorico, setShowHistorico] = useState(false);
   const [prontoAlertDismissedAt, setProntoAlertDismissedAt] = useState<number>(0);
   const [refreshing, setRefreshing] = useState(false);
-
+  const [pedidosSalvandoDismissedAt, setPedidosSalvandoDismissedAt] = useState<number>(0);
   const prevIdsRef = useRef<Set<string>>(new Set(pedidos.map((p) => p.id)));
   const audioCtxRef = useRef<AudioContext | null>(null);
+
+  // Aplicar filtro de pagamento vindo do dashboard (navegação)
+  useEffect(() => {
+    const state = location.state as { filtroPagamento?: FiltroPagamento } | null;
+    if (state?.filtroPagamento) {
+      setFiltroPagamento(state.filtroPagamento);
+      // Limpar o state para não reaplicar em refresh
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   // ─── Som de alerta ───
   const tocarAlerta = useCallback(() => {
@@ -199,6 +212,7 @@ export default function GestorPedidosPage() {
   const handleIniciarPreparo = useCallback((pedidoId: string) => {
     const pedido = pedidos.find((p) => p.id === pedidoId);
     if (!pedido) return;
+    if (pedido.isEditing) return;
     if (derivePedidoStatus(pedido) !== 'novo') return;
 
     const itensComObs = getItensComObs(pedido);
@@ -245,6 +259,7 @@ export default function GestorPedidosPage() {
   const handleMarcarPronto = useCallback((pedidoId: string) => {
     const pedido = pedidos.find((p) => p.id === pedidoId);
     if (!pedido) return;
+    if (pedido.isEditing) return;
     if (derivePedidoStatus(pedido) !== 'preparo') return;
     const itensComObs = getItensComObs(pedido);
 
@@ -287,6 +302,7 @@ export default function GestorPedidosPage() {
   const handleAvancar = useCallback((pedidoId: string) => {
     const pedido = pedidos.find((p) => p.id === pedidoId);
     if (!pedido) return;
+    if (pedido.isEditing) return;
     const derived = derivePedidoStatus(pedido);
     if (derived === 'novo') handleIniciarPreparo(pedidoId);
     else if (derived === 'preparo') handleMarcarPronto(pedidoId);
@@ -296,10 +312,9 @@ export default function GestorPedidosPage() {
   const handleEntregar = useCallback((pedidoId: string) => {
     const pedido = pedidos.find((p) => p.id === pedidoId);
     if (!pedido) return;
+    if (pedido.isEditing) return;
 
     const executar = () => {
-      const itensDeducao = pedido.itens.map((i) => ({ nome: i.nome, quantidade: i.quantidade }));
-      deductSaleItems(pedido.numero, itensDeducao);
       const now = Date.now();
       const operador = user?.nome ?? 'Operador';
       setPedidos((prev) =>
@@ -328,7 +343,7 @@ export default function GestorPedidosPage() {
     };
 
     setEntregaModal({ pedido, onConfirm: executar });
-  }, [pedidos, user, setPedidos, deductSaleItems, updateItemStatusRemote]);
+  }, [pedidos, user, setPedidos, updateItemStatusRemote]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -455,18 +470,27 @@ export default function GestorPedidosPage() {
       );
     }
 
+    if (filtroPagamento !== 'todos') {
+      result = result.filter((p) => {
+        if (filtroPagamento === 'pagos') return p.isPaid;
+        return !p.isPaid;
+      });
+    }
+
     if (busca.trim()) {
       const q = busca.trim().toLowerCase().replace(/^#/, '');
       result = result.filter(
         (p) =>
           String(p.numero).includes(q) ||
           (p.nomeCliente?.toLowerCase().includes(q)) ||
-          (p.mesaNumero ? String(p.mesaNumero).includes(q) : false),
+          (p.mesaNumero ? String(p.mesaNumero).includes(q) : false) ||
+          (p.participantToken?.toLowerCase().includes(q)) ||
+          (p.participantName?.toLowerCase().includes(q)),
       );
     }
 
     return result;
-  }, [pedidosComStatus, filtroStatus, filtroOrigem, filtroEstacao, busca]);
+  }, [pedidosComStatus, filtroStatus, filtroOrigem, filtroEstacao, filtroPagamento, busca]);
 
   const FILTROS: { key: FiltroStatus; label: string; count?: number; urgent?: boolean; danger?: boolean }[] = [
     { key: 'todos',     label: 'Ativos',      count: contadores.total },
@@ -485,6 +509,18 @@ export default function GestorPedidosPage() {
   };
 
   // ─── Gate: sem sessão ───
+  if (loadingSession) {
+    return (
+      <div className="flex flex-col h-full bg-zinc-50 items-center justify-center p-8 text-center">
+        <div className="w-16 h-16 flex items-center justify-center bg-amber-50 border border-amber-200 rounded-2xl mb-4">
+          <i className="ri-loader-4-line animate-spin text-3xl text-amber-500" />
+        </div>
+        <p className="text-sm font-bold text-zinc-600">Verificando sessão...</p>
+        <p className="text-xs text-zinc-400 mt-1">Aguarde um momento</p>
+      </div>
+    );
+  }
+
   if (estado === 'sem_sessao') {
     return (
       <div className="flex flex-col h-full bg-zinc-50 items-center justify-center p-8 text-center">
@@ -604,6 +640,40 @@ export default function GestorPedidosPage() {
         </div>
       )}
 
+      {/* ── Barra fixa: pedidos sendo atualizados pelo PDV ── */}
+      {pedidosSalvando.length > 0 && (
+        <div className="bg-sky-50 border-b border-sky-200 px-3 py-2 flex items-center gap-2 flex-shrink-0">
+          <div className="w-4 h-4 border-2 border-sky-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          <span className="text-xs font-bold text-sky-700 flex-shrink-0">Atualizando:</span>
+          <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
+            {pedidosSalvando.map((p) => (
+              <span
+                key={p.id}
+                className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-sky-200 rounded-full text-[10px] font-bold text-sky-800 whitespace-nowrap"
+              >
+                #{String(p.numero).padStart(4, '0')}
+                {p.destino === 'mesa' && p.mesaNumero && (
+                  <span className="text-sky-500 font-medium">M{p.mesaNumero}</span>
+                )}
+                {p.destino === 'nome' && p.nomeCliente && (
+                  <span className="text-sky-500 font-medium truncate max-w-[80px]">{p.nomeCliente}</span>
+                )}
+                {p.destino === 'senha' && p.senha && (
+                  <span className="text-sky-500 font-medium">S{p.senha}</span>
+                )}
+              </span>
+            ))}
+          </div>
+          <button
+            onClick={() => setPedidosSalvandoDismissedAt(Date.now())}
+            className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-sky-100 cursor-pointer text-sky-400 hover:text-sky-600 flex-shrink-0"
+            title="Ocultar"
+          >
+            <i className="ri-close-line text-xs" />
+          </button>
+        </div>
+      )}
+
       {/* Top Bar */}
       <div className="bg-white border-b border-zinc-100 px-3 py-2 flex items-center gap-2 flex-shrink-0">
         {/* ← Módulos */}
@@ -642,7 +712,7 @@ export default function GestorPedidosPage() {
           <input
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
-            placeholder="Buscar pedido..."
+            placeholder="Buscar por nº, cliente, mesa ou senha..."
             className="w-full pl-7 pr-7 py-1.5 text-xs border border-zinc-200 rounded-lg bg-zinc-50 text-zinc-800 focus:outline-none focus:border-amber-400"
           />
           {busca && (
@@ -710,6 +780,15 @@ export default function GestorPedidosPage() {
           >
             <i className="ri-list-check-2 text-sm" />
           </button>
+          <button
+            onClick={() => setVisualizacao('mesas')}
+            title="Por Mesa"
+            className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors cursor-pointer ${
+              visualizacao === 'mesas' ? 'bg-white text-zinc-800' : 'text-zinc-400 hover:bg-white hover:text-zinc-600'
+            }`}
+          >
+            <i className="ri-table-2 text-sm" />
+          </button>
         </div>
       </div>
 
@@ -721,6 +800,8 @@ export default function GestorPedidosPage() {
         setFiltroOrigem={setFiltroOrigem}
         filtroEstacao={filtroEstacao}
         setFiltroEstacao={setFiltroEstacao}
+        filtroPagamento={filtroPagamento}
+        setFiltroPagamento={setFiltroPagamento}
         contadores={contadores}
         contadoresOrigem={contadoresOrigem}
         estacoesDisponiveis={estacoesDisponiveis}
@@ -821,10 +902,74 @@ export default function GestorPedidosPage() {
             </div>
           </>
         )}
+
+        {/* Pagamento */}
+        <div className="w-px h-4 bg-zinc-200 mx-2 flex-shrink-0" />
+        <div className="flex items-center gap-0.5 py-1.5">
+          {[
+            { key: 'todos' as FiltroPagamento, label: 'Pagamento', icon: 'ri-wallet-3-line' },
+            { key: 'pagos' as FiltroPagamento, label: 'Pagos', icon: 'ri-checkbox-circle-line' },
+            { key: 'nao-pagos' as FiltroPagamento, label: 'Não Pagos', icon: 'ri-time-line' },
+          ].map((o) => {
+            const isActive = filtroPagamento === o.key;
+            const count = o.key === 'todos'
+              ? contadores.total
+              : pedidosComStatus.filter((p) => !p.isCancelled && (o.key === 'pagos' ? p.isPaid : !p.isPaid)).length;
+            return (
+              <button
+                key={o.key}
+                onClick={() => setFiltroPagamento(o.key)}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer whitespace-nowrap flex-shrink-0 ${
+                  isActive
+                    ? o.key === 'nao-pagos'
+                      ? 'bg-red-600 text-white'
+                      : o.key === 'pagos'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-zinc-800 text-white'
+                    : o.key === 'nao-pagos' && count > 0
+                      ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                      : o.key === 'pagos' && count > 0
+                        ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                        : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100'
+                }`}
+              >
+                <i className={`${o.icon} text-[10px]`} />
+                {o.label}
+                {count > 0 && (
+                  <span className={`text-[9px] font-black px-1.5 rounded-full ${
+                    isActive
+                      ? 'bg-white/25 text-white'
+                      : o.key === 'nao-pagos'
+                        ? 'bg-red-500 text-white'
+                        : o.key === 'pagos'
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-zinc-200 text-zinc-500'
+                  }`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Resultado da busca */}
-      {busca.trim() && (
+      {/* Resultado da busca + indicador de visualizacao mesas */}
+      {visualizacao === 'mesas' && (
+        <div className="bg-violet-50 border-b border-violet-100 px-4 py-2 flex items-center gap-2 flex-shrink-0">
+          <i className="ri-table-2 text-violet-600 text-xs" />
+          <span className="text-xs font-semibold text-violet-700">
+            Agrupado por mesa — mostrando pedidos com participantes e suas senhas
+          </span>
+          <button
+            onClick={() => setVisualizacao('kanban')}
+            className="ml-auto text-xs text-violet-600 hover:text-violet-800 cursor-pointer underline whitespace-nowrap"
+          >
+            Voltar ao Kanban
+          </button>
+        </div>
+      )}
+      {busca.trim() && visualizacao !== 'mesas' && (
         <div className="bg-amber-50 border-b border-amber-100 px-4 py-2 flex items-center gap-2 flex-shrink-0">
           <i className="ri-search-line text-amber-600 text-xs" />
           <span className="text-xs font-semibold text-amber-700">
@@ -838,7 +983,15 @@ export default function GestorPedidosPage() {
 
       {/* Conteúdo */}
       <div className="flex-1 overflow-hidden p-2 sm:p-3 md:p-4">
-        {visualizacao === 'kanban' ? (
+        {visualizacao === 'mesas' ? (
+          <div className="h-full overflow-y-auto">
+            <GestorMesasView
+              pedidos={pedidosComStatus}
+              busca={busca}
+              onOpenDetail={(id) => setDetailPedidoId(id)}
+            />
+          </div>
+        ) : visualizacao === 'kanban' ? (
           <GestorKanbanView
             pedidos={filtrados}
             onAvancar={handleAvancar}
@@ -919,6 +1072,8 @@ interface MobileFiltrosBarProps {
   setFiltroOrigem: (v: FiltroOrigem) => void;
   filtroEstacao: string;
   setFiltroEstacao: (v: string) => void;
+  filtroPagamento: FiltroPagamento;
+  setFiltroPagamento: (v: FiltroPagamento) => void;
   contadores: { novo: number; preparo: number; pronto: number; entregue: number; cancelado: number; total: number };
   contadoresOrigem: { caixa: number; garcom: number; mesa: number; autoatendimento: number; delivery: number };
   estacoesDisponiveis: string[];
@@ -933,6 +1088,8 @@ function MobileFiltrosBar({
   setFiltroOrigem,
   filtroEstacao,
   setFiltroEstacao,
+  filtroPagamento,
+  setFiltroPagamento,
   contadores,
   contadoresOrigem,
   estacoesDisponiveis,
@@ -941,7 +1098,7 @@ function MobileFiltrosBar({
 }: MobileFiltrosBarProps) {
   const [showSheet, setShowSheet] = useState(false);
 
-  const temFiltroAtivo = filtroOrigem !== 'todas' || filtroEstacao !== 'todas';
+  const temFiltroAtivo = filtroOrigem !== 'todas' || filtroEstacao !== 'todas' || filtroPagamento !== 'todos';
 
   const ORIGENS: { key: FiltroOrigem; label: string; icon: string; cor: string; corAtivo: string }[] = [
     { key: 'todas',           label: 'Todas',    icon: 'ri-apps-line',       cor: 'bg-zinc-100 text-zinc-600 border-zinc-200',     corAtivo: 'bg-zinc-800 text-white border-zinc-800' },
@@ -950,6 +1107,12 @@ function MobileFiltrosBar({
     { key: 'mesa',            label: 'Mesa',     icon: 'ri-table-2',         cor: 'bg-teal-50 text-teal-700 border-teal-200',       corAtivo: 'bg-teal-600 text-white border-teal-600' },
     { key: 'autoatendimento', label: 'Totem',    icon: 'ri-smartphone-line', cor: 'bg-amber-50 text-amber-700 border-amber-200',    corAtivo: 'bg-amber-500 text-white border-amber-500' },
     { key: 'delivery',        label: 'Delivery', icon: 'ri-bike-line',       cor: 'bg-rose-50 text-rose-700 border-rose-200',       corAtivo: 'bg-rose-600 text-white border-rose-600' },
+  ];
+
+  const PAGAMENTOS: { key: FiltroPagamento; label: string; icon: string; cor: string; corAtivo: string }[] = [
+    { key: 'todos',     label: 'Todos',     icon: 'ri-wallet-3-line',       cor: 'bg-zinc-100 text-zinc-600 border-zinc-200',     corAtivo: 'bg-zinc-800 text-white border-zinc-800' },
+    { key: 'pagos',     label: 'Pagos',     icon: 'ri-checkbox-circle-line', cor: 'bg-emerald-50 text-emerald-700 border-emerald-200', corAtivo: 'bg-emerald-600 text-white border-emerald-600' },
+    { key: 'nao-pagos', label: 'Não Pagos', icon: 'ri-time-line',           cor: 'bg-red-50 text-red-700 border-red-200',         corAtivo: 'bg-red-600 text-white border-red-600' },
   ];
 
   const ESTACAO_CORES: Record<string, string> = {
@@ -968,6 +1131,10 @@ function MobileFiltrosBar({
     entregue: 'ri-check-double-line',
     cancelado:'ri-close-circle-line',
   };
+
+  // Contadores de pagamento
+  const pagosCount = pedidosComStatus.filter((p) => !p.isCancelled && p.isPaid).length;
+  const naoPagosCount = pedidosComStatus.filter((p) => !p.isCancelled && !p.isPaid).length;
 
   return (
     <>
@@ -1015,6 +1182,49 @@ function MobileFiltrosBar({
         {/* Divisor */}
         <div className="w-px h-6 bg-zinc-200 flex-shrink-0" />
 
+        {/* Botão de pagamento — toggle rápido */}
+        <div className="relative flex-shrink-0">
+          <button
+            onClick={() => {
+              if (filtroPagamento === 'todos') setFiltroPagamento('nao-pagos');
+              else if (filtroPagamento === 'nao-pagos') setFiltroPagamento('pagos');
+              else setFiltroPagamento('todos');
+            }}
+            className={`relative flex items-center justify-center w-9 h-9 rounded-xl flex-shrink-0 transition-all cursor-pointer ${
+              filtroPagamento === 'nao-pagos'
+                ? 'bg-red-600 text-white'
+                : filtroPagamento === 'pagos'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-zinc-100 text-zinc-500'
+            }`}
+            title={
+              filtroPagamento === 'nao-pagos' ? 'Não Pagos' : filtroPagamento === 'pagos' ? 'Pagos' : 'Pagamento'
+            }
+          >
+            <i className={`${
+              filtroPagamento === 'nao-pagos' ? 'ri-time-line' : filtroPagamento === 'pagos' ? 'ri-checkbox-circle-line' : 'ri-wallet-3-line'
+            } text-base`} />
+            {(naoPagosCount > 0 || pagosCount > 0) && filtroPagamento === 'todos' && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 flex items-center justify-center text-[9px] font-black px-1 rounded-full bg-zinc-400 text-white">
+                {naoPagosCount + pagosCount}
+              </span>
+            )}
+            {filtroPagamento === 'nao-pagos' && naoPagosCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 flex items-center justify-center text-[9px] font-black px-1 rounded-full bg-white/25 text-white">
+                {naoPagosCount}
+              </span>
+            )}
+            {filtroPagamento === 'pagos' && pagosCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 flex items-center justify-center text-[9px] font-black px-1 rounded-full bg-white/25 text-white">
+                {pagosCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Divisor */}
+        <div className="w-px h-6 bg-zinc-200 flex-shrink-0" />
+
         {/* Botão "Filtros" com indicador de ativo */}
         <button
           onClick={() => setShowSheet(true)}
@@ -1028,7 +1238,7 @@ function MobileFiltrosBar({
           Filtros
           {temFiltroAtivo && (
             <span className="w-4 h-4 flex items-center justify-center bg-white/30 rounded-full text-[9px] font-black">
-              {(filtroOrigem !== 'todas' ? 1 : 0) + (filtroEstacao !== 'todas' ? 1 : 0)}
+              {(filtroOrigem !== 'todas' ? 1 : 0) + (filtroEstacao !== 'todas' ? 1 : 0) + (filtroPagamento !== 'todos' ? 1 : 0)}
             </span>
           )}
         </button>
@@ -1056,7 +1266,7 @@ function MobileFiltrosBar({
                 <div className="flex items-center gap-2">
                   {temFiltroAtivo && (
                     <button
-                      onClick={() => { setFiltroOrigem('todas'); setFiltroEstacao('todas'); }}
+                      onClick={() => { setFiltroOrigem('todas'); setFiltroEstacao('todas'); setFiltroPagamento('todos'); }}
                       className="text-xs text-amber-600 font-bold cursor-pointer"
                     >
                       Limpar
@@ -1068,6 +1278,36 @@ function MobileFiltrosBar({
                   >
                     <i className="ri-close-line text-sm" />
                   </button>
+                </div>
+              </div>
+
+              {/* Pagamento */}
+              <div className="mb-5">
+                <p className="text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                  <i className="ri-wallet-3-line" />Pagamento
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {PAGAMENTOS.map((p) => {
+                    const count = p.key === 'todos' ? 0 : p.key === 'pagos' ? pagosCount : naoPagosCount;
+                    const isActive = filtroPagamento === p.key;
+                    return (
+                      <button
+                        key={p.key}
+                        onClick={() => setFiltroPagamento(p.key)}
+                        className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                          isActive ? p.corAtivo : `${p.cor} opacity-80`
+                        }`}
+                      >
+                        <i className={`${p.icon} text-lg`} />
+                        <span className="text-[11px]">{p.label}</span>
+                        {count > 0 && (
+                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${isActive ? 'bg-white/25 text-white' : 'bg-black/10'}`}>
+                            {count}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

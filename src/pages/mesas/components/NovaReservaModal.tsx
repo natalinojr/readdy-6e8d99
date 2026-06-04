@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { ReservationOccasion } from '@/types/reservations';
 
@@ -55,7 +55,7 @@ export default function NovaReservaModal({ onClose, onSaved }: Props) {
     setSaving(true);
     setError('');
     try {
-      const { error: fnErr } = await supabase.functions.invoke('reservation-write', {
+      const { error: fnErr } = await invokeWithAuth('reservation-write', {
         body: {
           action: 'create_reservation',
           active_tenant_id: user?.tenantId,

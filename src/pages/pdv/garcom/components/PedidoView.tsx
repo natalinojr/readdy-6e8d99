@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useCallback } from 'react';
 import type { Item } from '@/types/cardapio';
 import { useCardapio } from '../../../../contexts/CardapioContext';
-import type { CarrinhoItem } from '../../../../contexts/PDVContext';
+import type { CarrinhoItem, OpcaoSelecionada } from '../../../../contexts/PDVContext';
 import { useKDS } from '../../../../contexts/KDSContext';
 import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
 import type { InsumoFaltando } from '@/hooks/useItensSemEstoque';
@@ -28,7 +28,7 @@ interface Props {
   rodadas?: Rodada[];
   onAdd: (item: CarrinhoItem) => void;
   onUpdateQty: (cartId: string, delta: number) => void;
-  onEditItem?: (cartId: string, updates: { quantidade: number; observacaoLivre: string; observacoes?: string[]; obsUnidades?: string[] }) => void;
+  onEditItem?: (cartId: string, updates: { quantidade: number; observacaoLivre: string; observacoes?: string[]; obsUnidades?: string[]; opcoes?: OpcaoSelecionada[]; precoTotal?: number }) => void;
   onRemoveItem?: (cartId: string) => void;
   onEnviar: (nomeResponsavel: string) => void | Promise<void>;
   onVoltar: () => void;
@@ -151,13 +151,13 @@ export default function PedidoView({
   const handleQuickAdd = (item: Item) => {
     const promoAtiva = item.promocoes.find((p) => p.ativo);
     const preco = promoAtiva ? promoAtiva.precoPromocional : item.preco;
-    // Abre modal se tiver opções OU obs pré-definidas/globais
-    const temOpcoes = item.gruposOpcoes.length > 0;
+    // Abre modal SÓ se tiver opções obrigatórias OU obs pré-definidas/globais
+    const temOpcoesObrigatorias = item.gruposOpcoes.some((g) => g.obrigatorio);
     const temObsEspecificas = (item.observacoesPadrao?.length ?? 0) > 0;
     const temObsGlobais = obsGlobais.some(
       (og) => og.ativo && !og.excludedItemIds?.includes(item.id) && !og.excludedCategoryIds?.includes(item.categoriaId)
     );
-    if (temOpcoes || temObsEspecificas || temObsGlobais) { setItemOpcoes(item); return; }
+    if (temOpcoesObrigatorias || temObsEspecificas || temObsGlobais) { setItemOpcoes(item); return; }
     const cat = todasCategorias.find((c) => c.id === item.categoriaId);
     garcomCartId += 1;
     onAdd({ cartId: `gc-${garcomCartId}`, itemId: item.id, nome: item.nome, precoBase: preco, precoTotal: preco, quantidade: 1, opcoes: [], observacoes: [], observacaoLivre: '', semPreparo: item.semPreparo ?? false, stationId: cat?.estacaoId ?? undefined });
@@ -250,7 +250,7 @@ export default function PedidoView({
   return (
     <div className="flex flex-col h-full">
       {/* Header — responsivo */}
-      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-zinc-200 bg-zinc-50 flex-shrink-0">
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-zinc-200 bg-zinc-50 flex-shrink-0 flex-wrap">
         <button onClick={onVoltar} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg hover:bg-zinc-200 cursor-pointer text-zinc-600 transition-colors flex-shrink-0 border border-zinc-200 bg-white">
           <i className="ri-arrow-left-line text-sm" />
           <span className="text-xs font-semibold whitespace-nowrap hidden sm:inline">Mesas</span>

@@ -147,12 +147,11 @@ export function recalcPayroll(entry: Partial<PayrollEntry>): Partial<PayrollEntr
 }
 
 // ─── Helper: lançar no Fluxo de Caixa ────────────────────────────────────────
-async function insertCashFlowEntry(tenantId: string, payload: {
-  description: string;
-  amount: number;
-  date: string;
-  category: string;
-}) {
+// REMOVED: agora a inserção no fin_cash_flow é feita pela edge function financial-write
+// via as actions 'pay_payroll' e 'pay_all_payroll'
+
+// ─── Helper: chamar edge function financial-write ─────────────────────────────
+async function invokeFinancial(action: string, tenantId: string, payload: Record<string, unknown>) {
   const { data: { session } } = await supabase.auth.getSession();
   const res = await fetch(`${SUPABASE_URL}/functions/v1/financial-write`, {
     method: 'POST',
@@ -160,20 +159,14 @@ async function insertCashFlowEntry(tenantId: string, payload: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${session?.access_token}`,
     },
-    body: JSON.stringify({
-      action: 'insert_cash_flow',
-      tenant_id: tenantId,
-      payload: {
-        type: 'expense',
-        origin: 'auto_payroll',
-        ...payload,
-      },
-    }),
+    body: JSON.stringify({ action, tenant_id: tenantId, payload }),
   });
+  const json = await res.json().catch(() => null);
   if (!res.ok) {
-    const json = await res.json();
-    console.error('[insertCashFlowEntry] Erro:', json.error);
+    console.error(`[invokeFinancial] ${action} erro:`, json.error || res.statusText);
+    return { error: json.error || res.statusText };
   }
+  return { data: json.data ?? null };
 }
 
 // ─── Employees ────────────────────────────────────────────────────────────────
@@ -302,63 +295,13 @@ export function usePayroll(referenceMonth?: string) {
 
   const markPaid = async (id: string, paid_date: string, payment_method: string) => {
     if (!user?.tenantId) return;
-
-    // Busca o lançamento para pegar dados para o fluxo de caixa
-    const entry = entries.find(e => e.id === id);
-
-    await supabase.from('hr_payroll').update({
-      status: 'paid',
-      paid_date,
-      payment_method,
-      updated_at: new Date().toISOString(),
-    }).eq('id', id);
-
-    // Lança automaticamente no Fluxo de Caixa
-    if (entry && user.tenantId) {
-      const typeLabel: Record<string, string> = {
-        regular: 'Folha de Pagamento',
-        thirteenth_first: '13º Salário (1ª Parcela)',
-        thirteenth_second: '13º Salário (2ª Parcela)',
-        vacation_pay: 'Férias',
-      };
-      const entryTypeKey = entry.entry_type ?? 'regular';
-      const category = typeLabel[entryTypeKey] ?? 'Folha de Pagamento';
-
-      await insertCashFlowEntry(user.tenantId, {
-        description: `${category} — ${entry.employee_name} (${entry.reference_month})`,
-        amount: entry.net_salary,
-        date: paid_date,
-        category: 'Folha de Pagamento',
-      });
-    }
-
+    await invokeFinancial('pay_payroll', user.tenantId, { id, paid_date, payment_method });
     fetchEntries();
   };
 
   const markAllPaid = async (ids: string[], paid_date: string, payment_method: string) => {
     if (!user?.tenantId) return;
-
-    await supabase.from('hr_payroll').update({
-      status: 'paid',
-      paid_date,
-      payment_method,
-      updated_at: new Date().toISOString(),
-    }).in('id', ids);
-
-    // Lança no fluxo de caixa para cada lançamento pago
-    const entriesToPay = entries.filter(e => ids.includes(e.id));
-    const totalNet = entriesToPay.reduce((s, e) => s + Number(e.net_salary), 0);
-
-    if (totalNet > 0 && user.tenantId) {
-      const month = entriesToPay[0]?.reference_month ?? referenceMonth ?? '';
-      await insertCashFlowEntry(user.tenantId, {
-        description: `Folha de Pagamento — ${entriesToPay.length} funcionário(s) (${month})`,
-        amount: totalNet,
-        date: paid_date,
-        category: 'Folha de Pagamento',
-      });
-    }
-
+    await invokeFinancial('pay_all_payroll', user.tenantId, { ids, paid_date, payment_method });
     fetchEntries();
   };
 

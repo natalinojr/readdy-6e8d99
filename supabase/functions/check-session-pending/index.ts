@@ -26,10 +26,10 @@ Deno.serve(async (req) => {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    // 1. Busca pedidos da sessão (bypass RLS)
+    // 1. Busca pedidos da sessão (não cancelados)
     const { data: pedidos, error: errPedidos } = await supabase
       .from('orders')
-      .select('id, session_id, is_paid, status, number, tenant_id')
+      .select('id, session_id, is_paid, status, number, tenant_id, is_draft')
       .eq('session_id', session_id)
       .eq('tenant_id', tenant_id)
       .neq('status', 'cancelled');
@@ -45,39 +45,74 @@ Deno.serve(async (req) => {
     const orderIds = listaPedidos.map((p) => p.id);
     const orderIdsComItensNaoEntregues: string[] = [];
 
-    // 2. Busca itens não entregues
     if (orderIds.length > 0) {
-      const { data: itens, error: errItens } = await supabase
+      // 2. Busca order_items da sessão (não cancelados, não skip_kds)
+      // Precisamos dos IDs dos order_items para depois consultar order_item_units corretamente
+      const { data: orderItemsRows, error: errOrderItems } = await supabase
         .from('order_items')
-        .select('order_id')
+        .select('id, order_id, status, skip_kds')
         .in('order_id', orderIds)
         .eq('tenant_id', tenant_id)
-        .neq('status', 'delivered')
         .neq('status', 'cancelled')
         .eq('skip_kds', false);
 
-      if (!errItens && itens) {
-        for (const item of itens) {
-          if (!orderIdsComItensNaoEntregues.includes(item.order_id)) {
-            orderIdsComItensNaoEntregues.push(item.order_id);
+      const allOrderItems = orderItemsRows ?? [];
+      const orderItemIds = allOrderItems.map((oi) => oi.id);
+
+      // 3. Busca UNIDADES não entregues em order_item_units
+      // CORRIGIDO: filtra por order_item_id (IDs de order_items), não por orderIds (IDs de orders)
+      if (!errOrderItems && orderItemIds.length > 0) {
+        const { data: unidades, error: errUnidades } = await supabase
+          .from('order_item_units')
+          .select('order_item_id')
+          .in('order_item_id', orderItemIds)
+          .in('status', ['new', 'preparing', 'ready']);
+
+        if (!errUnidades && unidades && unidades.length > 0) {
+          // Mapeia order_item_id → order_id
+          const itemToOrder = new Map<string, string>();
+          for (const oi of allOrderItems) {
+            itemToOrder.set(oi.id, oi.order_id);
+          }
+
+          for (const u of unidades) {
+            const orderId = itemToOrder.get(u.order_item_id as string);
+            if (orderId && !orderIdsComItensNaoEntregues.includes(orderId)) {
+              orderIdsComItensNaoEntregues.push(orderId);
+            }
+          }
+        }
+      }
+
+      // 4. Fallback: order_items cujo status agregado não é 'delivered'
+      // (para itens que não têm units no order_item_units — ex: itens mais antigos)
+      if (!errOrderItems) {
+        for (const oi of allOrderItems) {
+          if (oi.status !== 'delivered' && oi.status !== 'cancelled') {
+            if (!orderIdsComItensNaoEntregues.includes(oi.order_id)) {
+              orderIdsComItensNaoEntregues.push(oi.order_id);
+            }
           }
         }
       }
     }
 
-    // 3. Monta pendentes
+    // 5. Monta pendentes
     const pendentes: { id: string; numero: string; motivo: string }[] = [];
     for (const pedido of listaPedidos) {
-      const temItens = orderIdsComItensNaoEntregues.includes(pedido.id);
+      const temItensNaoEntregues = orderIdsComItensNaoEntregues.includes(pedido.id);
+      // Um pedido é entregue se: status = 'delivered' OU não tem itens não entregues
+      const pedidoNaoEntregue = pedido.status !== 'delivered' && temItensNaoEntregues;
       const naoPago = !pedido.is_paid;
-      if (temItens) {
+
+      if (pedidoNaoEntregue) {
         pendentes.push({ id: pedido.id, numero: pedido.number ?? pedido.id.slice(0, 8), motivo: 'nao_entregue' });
       } else if (naoPago) {
         pendentes.push({ id: pedido.id, numero: pedido.number ?? pedido.id.slice(0, 8), motivo: 'nao_pago' });
       }
     }
 
-    // 4. Mesas abertas — busca com detalhes para debug
+    // 6. Mesas abertas
     const { data: sessoesAbertas, error: errMesas } = await supabase
       .from('table_sessions')
       .select('id, opened_at, customer_name, table_id')
@@ -87,13 +122,10 @@ Deno.serve(async (req) => {
 
     const mesasAbertas = sessoesAbertas?.length ?? 0;
 
-    // 5. Auto-correção: fechar sessões zumbi (abertas há mais de 4 horas sem pedidos vinculados)
-    // Uma sessão zumbi é aquela que não tem pedidos vinculados a ela diretamente (table_session_id)
-    // mas ficou com status open indevidamente
+    // 7. Auto-correção: sessões zumbi (mesas abertas sem pedidos ou abertas há mais de 6h)
     const sessoesZumbi: string[] = [];
     if (sessoesAbertas && sessoesAbertas.length > 0) {
       for (const sess of sessoesAbertas) {
-        // Verifica se há pedidos vinculados diretamente a esta table_session
         const { count: pedidosNaSessao } = await supabase
           .from('orders')
           .select('id', { count: 'exact', head: true })
@@ -101,17 +133,14 @@ Deno.serve(async (req) => {
           .eq('tenant_id', tenant_id)
           .neq('status', 'cancelled');
 
-        // Verifica se foi aberta há mais de 4 horas
         const abertoHa = Date.now() - new Date(sess.opened_at).getTime();
         const horasAberta = abertoHa / (1000 * 60 * 60);
 
-        // É zumbi se: (sem pedidos vinculados) OU (aberta há mais de 6 horas)
         if ((pedidosNaSessao ?? 0) === 0 || horasAberta > 6) {
           sessoesZumbi.push(sess.id);
         }
       }
 
-      // Fecha as sessões zumbi automaticamente
       if (sessoesZumbi.length > 0) {
         await supabase
           .from('table_sessions')
@@ -121,7 +150,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Recalcula depois da limpeza
     const mesasAbertasReal = mesasAbertas - sessoesZumbi.length;
 
     return new Response(
