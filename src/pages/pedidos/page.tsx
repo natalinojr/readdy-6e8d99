@@ -5,6 +5,8 @@ import PedidosLista from './components/PedidosLista';
 import PedidosMetricas from './components/PedidosMetricas';
 import PedidosFiltros from './components/PedidosFiltros';
 import { useKDS } from '@/contexts/KDSContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import type { KDSPedido } from '@/types/kds';
 import { useOrdersHistory } from '@/hooks/useOrdersHistory';
 import type { DBOrder } from '@/hooks/useOrdersHistory';
@@ -496,6 +498,7 @@ export default function PedidosPage() {
   const [filtroPlataforma, setFiltroPlataforma] = useState<string>('todos');
   const [pedidoDetalheId, setPedidoDetalheId] = useState<string | null>(null);
   const { pedidos: kdsPedidos } = useKDS();
+  const { user } = useAuth();
   const { modo } = useModoFaturamento();
 
   // Sessão atual do SessaoContext (para modo sessão ativa)
@@ -595,18 +598,40 @@ export default function PedidosPage() {
     hookSessionId,
   );
 
-  // ── Polling automático para sincronizar pagamentos em tempo real ─────────
+  // ── Sincronização em tempo real (orientada a eventos) ─────────────────────
+  // Em vez de consultar o banco a cada poucos segundos, escutamos o Supabase
+  // Realtime: qualquer INSERT/UPDATE em orders ou payments (do tenant) dispara
+  // um reload — agrupado por um debounce para não recarregar em rajada. Um poll
+  // de fallback de 60s cobre eventuais eventos perdidos pelo realtime.
   useEffect(() => {
-    // Só faz polling em modo "hoje" ou "sessão" (pedidos ativos)
-    const shouldPoll = modo === 'sessao' || (modoPeriodo === 'preset' && presetAtivo === 'hoje');
-    if (!shouldPoll) return;
+    const shouldLive = modo === 'sessao' || (modoPeriodo === 'preset' && presetAtivo === 'hoje');
+    if (!shouldLive || !user?.tenantId) return;
 
-    const interval = setInterval(() => {
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const agendarReload = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        reloadOrders(hookDateFrom, hookDateTo, hookSessionId ?? null);
+      }, 800);
+    };
+
+    const canal = supabase
+      .channel(`pedidos-page-${user.tenantId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `tenant_id=eq.${user.tenantId}` }, agendarReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `tenant_id=eq.${user.tenantId}` }, agendarReload)
+      .subscribe();
+
+    // Fallback de segurança (realtime pode perder eventos) — muito mais leve que 10s
+    const fallback = setInterval(() => {
       reloadOrders(hookDateFrom, hookDateTo, hookSessionId ?? null);
-    }, 10000); // a cada 10 segundos para capturar novos pedidos rapidamente
+    }, 60000);
 
-    return () => clearInterval(interval);
-  }, [reloadOrders, hookDateFrom, hookDateTo, hookSessionId, modo, modoPeriodo, presetAtivo]);
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      clearInterval(fallback);
+      supabase.removeChannel(canal);
+    };
+  }, [user?.tenantId, reloadOrders, hookDateFrom, hookDateTo, hookSessionId, modo, modoPeriodo, presetAtivo]);
 
   useEffect(() => {
     if (modo !== 'sessao') setSessaoSelecionadaId(null);

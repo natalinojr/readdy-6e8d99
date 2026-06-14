@@ -450,15 +450,18 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
           .eq('is_training', false)
           .eq('is_draft', false);
 
-        // Buscar payments dos orders para mapear payment_group_id
-        const orderIds = ordersData?.map((o) => o.id).filter(Boolean) ?? [];
+        // Buscar payments EXATAMENTE pelos ids das transações de caixa (= payment ids).
+        // Robusto: não depende de filtrar por order_id/sessão (que poderia truncar em
+        // 1000 linhas e perder pagamentos → payment_group_id viria null → não agruparia).
+        const txIds = rawSessions
+          .flatMap((s) => (s.cash_transactions ?? []).map((t: CashTransaction) => t.id))
+          .filter(Boolean);
         let paymentsData: any[] = [];
-        if (orderIds.length > 0) {
+        if (txIds.length > 0) {
           const { data: payData } = await supabase
             .from('payments')
-            .select('id, order_id, payment_group_id, amount')
-            .eq('tenant_id', user.tenantId)
-            .in('order_id', orderIds);
+            .select('id, order_id, payment_group_id')
+            .in('id', txIds);
           paymentsData = payData ?? [];
         }
 
