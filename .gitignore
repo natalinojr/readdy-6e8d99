@@ -8,3 +8,7 @@ out/
 .DS_Store
 .vscode/
 .idea/
+
+.vercel
+.tools/
+.npm-cache/
