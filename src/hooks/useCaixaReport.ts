@@ -515,8 +515,11 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
               .filter((n): n is string => !!n);
             const pedidosUnicos = [...new Set(pedidosNums)];
             const totalVenda = lista.reduce((s, t) => s + t.valor_venda, 0);
-            const totalPago = lista.reduce((s, t) => s + t.valor_pago, 0);
             const totalTroco = lista.reduce((s, t) => s + t.troco, 0);
+            // Pagamento conjunto: o pedido principal grava o amount do GRUPO inteiro e os
+            // vinculados gravam o deles, então somar valor_pago (amount+troco) conta em dobro.
+            // O recebido real do grupo = venda total + troco entregue uma única vez.
+            const totalPago = totalVenda + totalTroco;
 
             agrupadas.push({
               ...primeiro,

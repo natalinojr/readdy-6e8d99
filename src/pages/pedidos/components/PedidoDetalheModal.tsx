@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { PedidoRecente, PedidoItemDetalhe, PagamentoPedido } from '@/types/pdv';
+import { isQRUniversal, clienteNome } from './utils';
 import { supabase } from '@/lib/supabase';
 import { PLATAFORMAS_DELIVERY } from '@/constants/delivery';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
@@ -98,6 +99,10 @@ function DeliveryPlatformBadge({ platform, fee }: { platform?: string | null; fe
 }
 
 function getDestinoLabel(pedido: PedidoRecente): string {
+  if (isQRUniversal(pedido)) {
+    const nome = clienteNome(pedido);
+    return `Senha ${pedido.participantToken}${nome ? ` - ${nome}` : ''}`;
+  }
   if (pedido.destino === 'mesa') return `Mesa ${pedido.mesaNumero ?? ''}`;
   if (pedido.destino === 'nome') return pedido.nomeCliente ?? '—';
   if (pedido.destino === 'senha') return `Senha ${pedido.senha ?? ''}`;
@@ -397,10 +402,8 @@ function PagamentoDetalhado({ pedido, isConsolidated }: { pedido: PedidoRecente;
     );
   }
 
-  // Para consolidado: pg.amount já é o valor cobrado; para individual: pg.amount - change_amount
-  const totalPago = pedido.pagamentos.reduce((acc, p) => {
-    return acc + (isConsolidated ? p.amount : p.amount - (p.change_amount ?? 0));
-  }, 0);
+  // amount já é o valor cobrado (convenção do banco), tanto no consolidado quanto no individual
+  const totalPago = pedido.pagamentos.reduce((acc, p) => acc + p.amount, 0);
 
   return (
     <div className="space-y-3">
@@ -420,10 +423,9 @@ function PagamentoDetalhado({ pedido, isConsolidated }: { pedido: PedidoRecente;
           const canal = canalRegistro(cashRegisterId, pedido.origem);
           const trocoRaw = pgExtended.change_amount != null ? pgExtended.change_amount : null;
           const troco = trocoRaw != null && trocoRaw > 0 ? trocoRaw : null;
-          // Para consolidado: pg.amount já é o valor cobrado (ajustado)
-          // Para individual: pg.amount - change_amount = valor cobrado
-          const valorCobrado = isConsolidated ? pg.amount : pg.amount - (trocoRaw ?? 0);
-          const valorEntregue = ehDinheiro ? (isConsolidated ? valorCobrado + (trocoRaw ?? 0) : pg.amount) : null;
+          // amount já é o valor cobrado (convenção do banco); valor entregue = cobrado + troco
+          const valorCobrado = pg.amount;
+          const valorEntregue = ehDinheiro ? valorCobrado + (trocoRaw ?? 0) : null;
           const nomePg = paymentMethodLabel(pg.payment_method_name, pgExtended.payment_method_type ?? null, pgExtended.change_amount ?? null);
 
           return (
@@ -559,7 +561,7 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
 
       <div className="grid grid-cols-3 gap-3">
         <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Destino</p><p className="text-sm font-bold text-zinc-800">{getDestinoLabel(pedido)}</p></div>
-        <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Origem</p><div className="flex items-center gap-1.5"><i className={`${ORIGEM_ICON[pedido.origem] ?? 'ri-store-line'} text-zinc-500 text-sm`} /><p className="text-sm font-bold text-zinc-800">{ORIGEM_LABEL[pedido.origem] ?? pedido.origem}</p></div></div>
+        <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Origem</p><div className="flex items-center gap-1.5"><i className={`${ORIGEM_ICON[pedido.origem] ?? 'ri-store-line'} text-zinc-500 text-sm`} /><p className="text-sm font-bold text-zinc-800">{isQRUniversal(pedido) ? 'QR CODE' : (ORIGEM_LABEL[pedido.origem] ?? pedido.origem)}</p></div></div>
         <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Total</p>
           {fase === 'cancelado' ? (
             <p className="text-sm font-bold text-red-400">Cancelado</p>
@@ -878,8 +880,9 @@ function consolidatePayments(pedidos: PedidoRecente[]): PedidoRecente {
   todosPagamentos.forEach((pg) => {
     const pgExt = pg as PagamentoPedido;
     const key = `${pg.payment_method_name || ''}::${pgExt.payment_method_type || ''}`;
-    // valorCobrado = amount - change_amount (para dinheiro, amount é o valor entregue)
-    const valorCobrado = pg.amount - (pgExt.change_amount ?? 0);
+    // Convenção do banco: amount JÁ é o valor cobrado (a venda); change_amount é o troco
+    // à parte. Valor entregue pelo cliente = amount + change_amount.
+    const valorCobrado = pg.amount;
     const existente = agrupado.get(key);
     if (existente) {
       existente.amount += valorCobrado;
@@ -898,14 +901,15 @@ function consolidatePayments(pedidos: PedidoRecente[]): PedidoRecente {
     }
   });
 
-  // CORREÇÃO: garantir que total dos pagamentos não exceda o total real dos pedidos
-  // Isso acontece quando o amount registrado no banco diverge do total (taxas, arredondamento, erro)
+  // CORREÇÃO: em pedidos pagos juntos, o pedido principal grava o amount do GRUPO
+  // inteiro e os vinculados gravam o deles → a soma dos amounts excede o total real.
+  // Limita o valor COBRADO ao total dos pedidos (a venda real). O troco NÃO é escalado:
+  // é o troco real entregue uma única vez no pagamento conjunto.
   const totalPagamentos = Array.from(agrupado.values()).reduce((acc, g) => acc + g.amount, 0);
   if (totalPagamentos > totalPedidos && totalPagamentos > 0) {
     const fator = totalPedidos / totalPagamentos;
     agrupado.forEach((g) => {
       g.amount = g.amount * fator;
-      g.change_amount = g.change_amount * fator;
     });
   }
 
