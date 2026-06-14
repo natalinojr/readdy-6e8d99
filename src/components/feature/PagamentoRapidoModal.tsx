@@ -502,7 +502,8 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
       const termo = buscaPedidos.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const numeroMatch = String(p.numero).includes(termo) || p.numeroStr.toLowerCase().includes(termo);
       const itemMatch = p.itens.some((i) => i.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(termo));
-      const senhaMatch = p.senha?.toLowerCase().includes(termo);
+      const senhaMatch = p.senha?.toLowerCase().includes(termo)
+        || p.participantToken?.toLowerCase().includes(termo);
       const mesaMatch = p.mesaNumero != null && String(p.mesaNumero).includes(termo);
       const nomeMatch = p.nomeCliente?.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(termo);
       return numeroMatch || itemMatch || senhaMatch || mesaMatch || nomeMatch;
