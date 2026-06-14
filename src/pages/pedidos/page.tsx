@@ -601,8 +601,9 @@ export default function PedidosPage() {
   // ── Sincronização em tempo real (orientada a eventos) ─────────────────────
   // Em vez de consultar o banco a cada poucos segundos, escutamos o Supabase
   // Realtime: qualquer INSERT/UPDATE em orders ou payments (do tenant) dispara
-  // um reload — agrupado por um debounce para não recarregar em rajada. Um poll
-  // de fallback de 60s cobre eventuais eventos perdidos pelo realtime.
+  // um reload — agrupado por um debounce para não recarregar em rajada. 100%
+  // orientado a eventos (sem poll). O botão de atualizar manual cobre o caso
+  // raro de um evento realtime perdido.
   useEffect(() => {
     const shouldLive = modo === 'sessao' || (modoPeriodo === 'preset' && presetAtivo === 'hoje');
     if (!shouldLive || !user?.tenantId) return;
@@ -621,14 +622,8 @@ export default function PedidosPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `tenant_id=eq.${user.tenantId}` }, agendarReload)
       .subscribe();
 
-    // Fallback de segurança (realtime pode perder eventos) — muito mais leve que 10s
-    const fallback = setInterval(() => {
-      reloadOrders(hookDateFrom, hookDateTo, hookSessionId ?? null);
-    }, 60000);
-
     return () => {
       if (debounce) clearTimeout(debounce);
-      clearInterval(fallback);
       supabase.removeChannel(canal);
     };
   }, [user?.tenantId, reloadOrders, hookDateFrom, hookDateTo, hookSessionId, modo, modoPeriodo, presetAtivo]);
