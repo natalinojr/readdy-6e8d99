@@ -16,6 +16,42 @@ const RATE_LIMIT_WINDOW_MIN = 10;
 const MAX_ORDERS_PER_PHONE = 3;
 const MAX_ORDERS_PER_IP = 15;
 
+async function notifyDeliveryOrderCreated(payload: {
+  tenant_id: string;
+  order_id: string;
+  order_number: string;
+  customer_name: string;
+  customer_phone: string;
+  total_amount: number;
+}) {
+  const internalToken = Deno.env.get("WHATSAPP_INTERNAL_TOKEN")?.trim();
+  if (!internalToken) return;
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")?.replace(/\/$/, "");
+  if (!supabaseUrl) return;
+
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/whatsapp-send`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-token": internalToken,
+      },
+      body: JSON.stringify({
+        action: "delivery_order_created",
+        ...payload,
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.warn("[delivery-write] whatsapp-send failed:", res.status, text);
+    }
+  } catch (err) {
+    console.warn("[delivery-write] whatsapp-send unavailable:", err instanceof Error ? err.message : String(err));
+  }
+}
+
 function extractClientIp(req: Request): string {
   const fwd = req.headers.get("x-forwarded-for");
   if (fwd) return fwd.split(",")[0].trim();
@@ -571,6 +607,15 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           p_paper_style: "80mm",
         });
       } catch { /* non-blocking */ }
+
+      await notifyDeliveryOrderCreated({
+        tenant_id,
+        order_id: orderId,
+        order_number: orderNumber,
+        customer_name: customer_name || "Cliente",
+        customer_phone: cleanPhone || String(customer_phone || ""),
+        total_amount: serverTotal,
+      });
 
       return new Response(JSON.stringify({
         _v: "v14",
