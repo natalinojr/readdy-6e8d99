@@ -247,6 +247,12 @@ function GestorCard({
   const isCancelled = pedido.isCancelled;
   const isPaid = pedido.isPaid ?? false;
   const isDelivery = pedido.origem === 'delivery' || pedido.destino === 'delivery';
+  // QR code universal: tem senha de participante mas sem mesa física (mesaNumero 0)
+  const isQRUniversal = !!pedido.participantToken && !pedido.mesaNumero;
+  // Nome do cliente exibido junto da senha (participantName ou nomeCliente sem o prefixo "Mesa N")
+  const participanteNome = pedido.participantName
+    || pedido.nomeCliente?.replace(/^Mesa\s*\d*\s*[-–.·]?\s*/i, '').trim()
+    || '';
   const itensComPreparo = pedido.itens.filter((i) => !i.semPreparo && !i.skip_kds);
   const temItemComPreparo = itensComPreparo.length > 0;
   const elapsedMin = elapsedMinutes(pedido.criadoEm);
@@ -410,21 +416,23 @@ function GestorCard({
             </div>
           </div>
 
-          {/* Destino + garçom */}
-          <div className="flex items-center gap-1.5 min-w-0">
-            <i className={`text-xs text-zinc-400 flex-shrink-0 ${
-              pedido.destino === 'mesa' ? 'ri-table-line' :
-              pedido.destino === 'delivery' ? 'ri-motorbike-line' : 'ri-user-line'
-            }`} />
-            <span className="text-xs text-zinc-800 font-semibold truncate flex-1 min-w-0">
-              {destinoLabel(pedido)}
-            </span>
-            {pedido.garcomNome && (
-              <span className="text-[10px] text-zinc-400 flex-shrink-0 whitespace-nowrap">
-                <i className="ri-walk-line text-[9px]" /> {pedido.garcomNome.split(' ')[0]}
+          {/* Destino + garçom — escondido em QR universal (identidade fica na seção da senha) */}
+          {!isQRUniversal && (
+            <div className="flex items-center gap-1.5 min-w-0">
+              <i className={`text-xs text-zinc-400 flex-shrink-0 ${
+                pedido.destino === 'mesa' ? 'ri-table-line' :
+                pedido.destino === 'delivery' ? 'ri-motorbike-line' : 'ri-user-line'
+              }`} />
+              <span className="text-xs text-zinc-800 font-semibold truncate flex-1 min-w-0">
+                {destinoLabel(pedido)}
               </span>
-            )}
-          </div>
+              {pedido.garcomNome && (
+                <span className="text-[10px] text-zinc-400 flex-shrink-0 whitespace-nowrap">
+                  <i className="ri-walk-line text-[9px]" /> {pedido.garcomNome.split(' ')[0]}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Delivery address + WhatsApp */}
           {isDelivery && pedido.deliveryAddress && (
@@ -477,7 +485,7 @@ function GestorCard({
           {/* Participante do QR Code */}
           {pedido.participantToken && (
             <div className="flex items-center gap-1.5 flex-wrap">
-              {pedido.mesaNumero != null && (
+              {pedido.mesaNumero != null && pedido.mesaNumero > 0 && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 border border-violet-300 text-[10px] font-black text-violet-800">
                   <i className="ri-table-line text-[9px]" />
                   Mesa {pedido.mesaNumero}
@@ -487,9 +495,9 @@ function GestorCard({
                 <i className="ri-qr-code-line text-[9px]" />
                 Senha {pedido.participantToken}
               </span>
-              {pedido.participantName && (
+              {participanteNome && (
                 <span className="text-[10px] font-semibold text-zinc-600 truncate">
-                  {pedido.participantName}
+                  {participanteNome}
                 </span>
               )}
             </div>
@@ -551,7 +559,7 @@ function GestorCard({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1 flex-wrap">
                         <span className="text-[10px] font-black text-zinc-500 flex-shrink-0">{item.quantidade}x</span>
-                        <span className={`text-xs font-semibold flex-1 min-w-0 truncate ${isSkip ? 'text-zinc-400' : 'text-zinc-800'}`}>
+                        <span className={`text-xs font-semibold flex-1 min-w-0 break-words ${isSkip ? 'text-zinc-400' : 'text-zinc-800'}`}>
                           {item.nome}
                         </span>
                         {item.status === 'entregue' && (
