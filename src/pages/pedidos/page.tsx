@@ -14,7 +14,7 @@ import ModoFaturamentoToggle from '@/components/feature/ModoFaturamentoToggle';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import {
   HOJE, somarDias, MESES, STATUS_LABEL as _STATUS_LABEL, DB_STATUS_LABEL, ORIGEM_LABEL,
-  formatarDataExibicao,
+  formatarDataExibicao, isQRUniversal, clienteNome, origemLabelFor,
 } from './components/utils';
 import type { FiltroStatus, FiltroOrigem, ModoPeriodo } from './components/utils';
 
@@ -69,6 +69,8 @@ function kdsParaRecente(p: KDSPedido): PedidoRecente {
     mesaNumero: p.mesaNumero,
     nomeCliente: p.nomeCliente ?? (p.destino === 'delivery' ? 'Delivery' : undefined),
     senha: p.senha,
+    participantToken: p.participantToken,
+    participantName: p.participantName,
     status: kdsStatusMap[p.status] ?? 'new',
     total: 0, // KDS não tem total — será enriquecido pelo DB quando disponível
     criadoEm: criadoHora,
@@ -172,6 +174,9 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
     nomeCliente = o.destination_name ?? undefined;
   } else if (o.destination === 'password') {
     senha = o.destination_name ?? undefined;
+  } else if (o.destination === 'table') {
+    // QR universal: destination_name pode trazer o nome do cliente (ex.: "Mesa 0 - Angelica")
+    nomeCliente = o.destination_name ?? undefined;
   }
 
   const slaEspera = o.sla_espera_min != null ? Number(o.sla_espera_min) : undefined;
@@ -471,6 +476,10 @@ function agruparPedidosUnificados(pedidos: PedidoRecente[]): PedidoRecente[] {
 // ── Helpers de label ──────────────────────────────────────────────────────────
 
 function destinoStr(pedido: PedidoRecente): string {
+  if (isQRUniversal(pedido)) {
+    const nome = clienteNome(pedido);
+    return `Senha ${pedido.participantToken}${nome ? ` - ${nome}` : ''}`;
+  }
   if (pedido.destino === 'mesa') return `Mesa ${pedido.mesaNumero ?? ''}`;
   if (pedido.destino === 'nome') return pedido.nomeCliente ?? '—';
   if (pedido.destino === 'delivery') return pedido.nomeCliente ?? 'Delivery';
@@ -623,6 +632,10 @@ export default function PedidosPage() {
           };
           rec.status = kdsStatusMap[kds.status] ?? rec.status;
 
+          // Senha/nome do participante (QR universal) — só o KDS resolve esses campos
+          if (kds.participantToken) rec.participantToken = kds.participantToken;
+          if (kds.participantName) rec.participantName = kds.participantName;
+
           // ── Timestamps para SLA em tempo real: usa KDS que tem os dados mais frescos ──
           const kdsIniciouPreparo = kds.itens
             .map((i) => i.iniciouPreparoEm)
@@ -750,8 +763,10 @@ export default function PedidosPage() {
           String(p.numero).includes(q) ||
           (p.numeroCodigo?.toLowerCase().includes(q) ?? false) ||
           (p.nomeCliente?.toLowerCase().includes(q) ?? false) ||
+          (p.participantName?.toLowerCase().includes(q) ?? false) ||
           (p.garcomNome?.toLowerCase().includes(q) ?? false) ||
           (p.senha?.toLowerCase().includes(q) ?? false) ||
+          (p.participantToken?.toLowerCase().includes(q) ?? false) ||
           (p.mesaNumero ? `mesa ${p.mesaNumero}`.includes(q) : false) ||
           p.itensDetalhes.some((i) => i.nome.toLowerCase().includes(q));
 
@@ -856,7 +871,7 @@ export default function PedidosPage() {
             String(p.numero).padStart(4, '0'), p.numeroCodigo ?? '', p.session_number ?? '', p.dataPedido ?? '', p.criadoEm,
             DB_STATUS_LABEL[p.status] ?? _STATUS_LABEL[p.status] ?? p.status,
             p.pago ? 'Pago' : 'Pendente',
-            destinoStr(p), ORIGEM_LABEL[p.origem] ?? p.origem, p.garcomNome ?? '',
+            destinoStr(p), origemLabelFor(p), p.garcomNome ?? '',
             item.nome, String(item.quantidade),
             item.preco.toFixed(2).replace('.', ','),
             (item.preco * item.quantidade).toFixed(2).replace('.', ','),
@@ -880,7 +895,7 @@ export default function PedidosPage() {
         String(p.numero).padStart(4, '0'), p.numeroCodigo ?? '', p.session_number ?? '', p.dataPedido ?? '', p.criadoEm,
         DB_STATUS_LABEL[p.status] ?? _STATUS_LABEL[p.status] ?? p.status,
         p.pago ? 'Pago' : 'Pendente',
-        destinoStr(p), ORIGEM_LABEL[p.origem] ?? p.origem, p.garcomNome ?? '',
+        destinoStr(p), origemLabelFor(p), p.garcomNome ?? '',
         p.itensDetalhes.map((i) => `${i.quantidade}x ${i.nome}`).join(' | '),
         p.slaEspera !== undefined ? String(p.slaEspera) : '',
         p.slaCozinha !== undefined ? String(p.slaCozinha) : '',

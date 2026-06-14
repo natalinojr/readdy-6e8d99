@@ -225,6 +225,10 @@ export interface PedidoRecente {
   mesaNumero?: number;
   nomeCliente?: string;
   senha?: string;
+  /** Senha do participante em pedidos de QR code universal (mesa sem número físico) */
+  participantToken?: string | null;
+  /** Nome informado pelo participante em pedidos de QR code universal */
+  participantName?: string | null;
   status: PedidoStatus;
   pago?: boolean;
   total: number;

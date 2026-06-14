@@ -239,7 +239,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
                   operator_id, started_preparing_at, ready_at, delivered_at
                 )
               ),
-              payments ( id, amount, change_amount, is_refunded, payment_method_id, cash_register_id, operator_name, payment_methods ( name, type ) )
+              payments ( id, amount, change_amount, is_refunded, payment_method_id, cash_register_id, operator_name, payment_group_id, payment_methods ( name, type ) )
             `)
             .eq('tenant_id', user.tenantId)
             .eq('session_id', sid)
@@ -475,7 +475,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
                 operator_id, started_preparing_at, ready_at, delivered_at
               )
             ),
-            payments ( id, amount, is_refunded, payment_method_id, operator_name, payment_methods ( name ) )
+            payments ( id, amount, is_refunded, payment_method_id, operator_name, payment_group_id, payment_methods ( name ) )
           `)
           .eq('tenant_id', user.tenantId)
           .eq('is_training', false)
@@ -866,7 +866,7 @@ async function enrichWithPayments(orders: DBOrder[], tenantId: string): Promise<
 
   const { data: paymentsData, error } = await supabase
     .from('payments')
-    .select('id, order_id, amount, change_amount, is_refunded, payment_method_id, cash_register_id, operator_name, payment_methods ( name, type )')
+    .select('id, order_id, amount, change_amount, is_refunded, payment_method_id, cash_register_id, operator_name, payment_group_id, payment_methods ( name, type )')
     .in('order_id', orderIds)
     .eq('tenant_id', tenantId);
 

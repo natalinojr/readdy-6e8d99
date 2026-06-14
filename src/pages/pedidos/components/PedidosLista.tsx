@@ -1,6 +1,8 @@
+import { useState, useMemo } from 'react';
 import type { PedidoRecente } from '@/types/pdv';
 import { formatOrderNumber } from '@/lib/statusMappers';
 import { TempoCell } from './SlaCell';
+import { isQRUniversal, clienteNome, origemLabelFor } from './utils';
 
 const DB_STATUS_LABEL: Record<string, string> = {
   new: 'Na Fila', preparing: 'Em preparo', ready: 'Pronto',
@@ -150,6 +152,7 @@ function formatarDataExibicao(data: string): string {
 }
 
 function destinoLabel(pedido: PedidoRecente): string {
+  if (isQRUniversal(pedido)) return `Senha ${pedido.participantToken}`;
   if (pedido.destino === 'mesa') return `Mesa ${pedido.mesaNumero ?? ''}`;
   if (pedido.destino === 'nome') return pedido.nomeCliente ?? '—';
   if (pedido.destino === 'delivery') return pedido.nomeCliente ?? 'Delivery';
@@ -158,6 +161,11 @@ function destinoLabel(pedido: PedidoRecente): string {
 }
 
 function clientesMesaLabel(pedido: PedidoRecente): string | null {
+  // QR universal: nome do cliente vai como linha secundária (a senha é o destino principal)
+  if (isQRUniversal(pedido)) {
+    const nome = clienteNome(pedido);
+    return nome || null;
+  }
   if (pedido.destino !== 'mesa') return null;
   if (pedido.nomeCliente && !/^Mesa\s*\d*$/i.test(pedido.nomeCliente.trim())) {
     return pedido.nomeCliente;
@@ -171,7 +179,60 @@ interface PedidosListaProps {
   onSelectPedido: (id: string) => void;
 }
 
+type SortKey = 'numero' | 'sessao' | 'status' | 'pagamento' | 'destino' | 'origem' | 'itens' | 'tempo' | 'hora' | 'total';
+
+const COLUNAS: { label: string; key: SortKey }[] = [
+  { label: '#', key: 'numero' },
+  { label: 'Sessão', key: 'sessao' },
+  { label: 'Status', key: 'status' },
+  { label: 'Pagamento', key: 'pagamento' },
+  { label: 'Destino', key: 'destino' },
+  { label: 'Origem', key: 'origem' },
+  { label: 'Itens', key: 'itens' },
+  { label: 'Tempo', key: 'tempo' },
+  { label: 'Hora', key: 'hora' },
+  { label: 'Total', key: 'total' },
+];
+
 export default function PedidosLista({ pedidos, loading, onSelectPedido }: PedidosListaProps) {
+  const [sortBy, setSortBy] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const toggleSort = (key: SortKey) => {
+    if (sortBy === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(key);
+      setSortDir('asc');
+    }
+  };
+
+  const pedidosOrdenados = useMemo(() => {
+    if (!sortBy) return pedidos;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const val = (p: PedidoRecente): string | number => {
+      switch (sortBy) {
+        case 'numero': return p.numero;
+        case 'sessao': return p.session_number ?? '';
+        case 'status': return p.status;
+        case 'pagamento': return p.pago ? 1 : 0;
+        case 'destino': return destinoLabel(p).toLowerCase();
+        case 'origem': return origemLabelFor(p).toLowerCase();
+        case 'itens': return p.itensDetalhes.reduce((a, i) => a + i.quantidade, 0);
+        case 'tempo': return p.minutosAtras;
+        case 'hora': return p._criadoTs ? new Date(p._criadoTs).getTime() : 0;
+        case 'total': return p.total;
+        default: return 0;
+      }
+    };
+    return [...pedidos].sort((a, b) => {
+      const av = val(a);
+      const bv = val(b);
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv), 'pt-BR') * dir;
+    });
+  }, [pedidos, sortBy, sortDir]);
+
   if (loading) {
     return (
       <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
@@ -202,13 +263,22 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
         className="hidden lg:grid gap-x-2 px-4 py-3 border-b border-zinc-100 bg-zinc-50"
         style={{ gridTemplateColumns: '2fr 1.2fr 1.5fr 1.4fr 1.8fr 1.2fr 0.8fr 1.4fr 1.1fr 1.2fr' }}
       >
-        {['#', 'Sessão', 'Status', 'Pagamento', 'Destino', 'Origem', 'Itens', 'Tempo', 'Hora', 'Total'].map((h) => (
-          <div key={h} className={`text-[10px] font-bold text-zinc-400 uppercase tracking-wide ${h === 'Total' ? 'text-right' : ''}`}>{h}</div>
+        {COLUNAS.map(({ label, key }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => toggleSort(key)}
+            className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:text-zinc-600 transition-colors ${label === 'Total' ? 'justify-end' : ''} ${sortBy === key ? 'text-amber-600' : 'text-zinc-400'}`}
+            title={`Ordenar por ${label}`}
+          >
+            {label}
+            <i className={`text-[10px] ${sortBy === key ? (sortDir === 'asc' ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line') : 'ri-arrow-up-down-line opacity-30'}`} />
+          </button>
         ))}
       </div>
 
       <div className="divide-y divide-zinc-50">
-        {pedidos.map((pedido) => {
+        {pedidosOrdenados.map((pedido) => {
           const isGrupo = (pedido.pedidoIds ?? []).length > 1;
           const qtdPedidosGrupo = pedido.pedidoIds?.length ?? 1;
           const itensProntosReal = pedido.itensDetalhes.reduce((acc, item) => {
@@ -299,7 +369,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                 <div>
                   <div className="flex items-center gap-1">
                     <i className={`${ORIGEM_ICON[pedido.origem]} text-zinc-400 text-sm flex-shrink-0`} />
-                    <span className="text-[10px] text-zinc-500 font-medium hidden xl:block truncate">{ORIGEM_LABEL[pedido.origem]}</span>
+                    <span className="text-[10px] text-zinc-500 font-medium hidden xl:block truncate">{origemLabelFor(pedido)}</span>
                   </div>
                 </div>
 
@@ -370,7 +440,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                 <div className="flex items-center gap-3 text-xs text-zinc-500 flex-wrap">
                   <span className="flex items-center gap-1">
                     <i className={`${ORIGEM_ICON[pedido.origem]} text-zinc-400`} />
-                    {ORIGEM_LABEL[pedido.origem]}
+                    {origemLabelFor(pedido)}
                   </span>
                   <span>{destinoLabel(pedido)}</span>
                   {pedido.session_number && (
