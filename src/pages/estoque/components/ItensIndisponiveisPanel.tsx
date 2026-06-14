@@ -10,7 +10,7 @@ interface Props {
 export default function ItensIndisponiveisPanel({ onEntradaRapida }: Props) {
   const { mapaItens, loading, reload } = useItensSemEstoque();
   const { insumos } = useEstoque();
-  const [expandido, setExpandido] = useState(true);
+  const [expandido, setExpandido] = useState(false);
 
   // Agrupa por insumo: quais itens do cardápio cada insumo está bloqueando
   const porInsumo = useMemo(() => {

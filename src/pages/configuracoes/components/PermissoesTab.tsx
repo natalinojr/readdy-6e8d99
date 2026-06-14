@@ -72,6 +72,22 @@ const defaultPermissoes: Record<Papel, string[]> = {
 
 const categorias = [...new Set(permissoes.map((p) => p.categoria))];
 
+const papeisToDbRole: Record<Papel, string> = {
+  admin: 'admin',
+  gerente: 'manager',
+  caixa: 'cashier',
+  garcom: 'waiter',
+  cozinha: 'kitchen',
+};
+
+const dbRoleToPapel: Record<string, Papel> = {
+  admin: 'admin',
+  manager: 'gerente',
+  cashier: 'caixa',
+  waiter: 'garcom',
+  kitchen: 'cozinha',
+};
+
 export default function PermissoesTab() {
   const { user } = useAuth();
   const { recarregar: recarregarPermissoes } = usePermissoes();
@@ -95,7 +111,7 @@ export default function PermissoesTab() {
         // Build matrix from DB data
         const newMatrix: Record<Papel, string[]> = { admin: permissoes.map(p => p.id), gerente: [], caixa: [], garcom: [], cozinha: [] };
         data.data.forEach((row) => {
-          const papel = row.role as Papel;
+          const papel = dbRoleToPapel[row.role];
           if (papel !== 'admin' && newMatrix[papel] !== undefined && row.allowed) {
             newMatrix[papel].push(row.permission_key);
           }
@@ -135,7 +151,7 @@ export default function PermissoesTab() {
     for (const papel of papeisSalvar) {
       for (const perm of permissoes) {
         permissionsPayload.push({
-          role: papel,
+          role: papeisToDbRole[papel],
           permission_key: perm.id,
           allowed: matrix[papel].includes(perm.id),
         });

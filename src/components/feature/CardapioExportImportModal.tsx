@@ -135,6 +135,7 @@ export default function CardapioExportImportModal({ open, onClose, onSuccess }: 
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const [exportResult, setExportResult] = useState<Record<string, number> | null>(null);
+  const [importErrors, setImportErrors] = useState<Record<string, string> | null>(null);
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [duplicates, setDuplicates] = useState<DuplicateMap | null>(null);
@@ -432,7 +433,7 @@ export default function CardapioExportImportModal({ open, onClose, onSuccess }: 
 
       const include = ALL_GROUPS.filter((g) => selectedGroups[g]);
 
-      const { data, error } = await invokeWithAuth<{ success: boolean; results: Record<string, number> }>('import-menu-template', {
+      const { data, error } = await invokeWithAuth<{ success: boolean; results: Record<string, number>; errors?: Record<string, string>; warnings?: string[] }>('import-menu-template', {
         body: {
           tenant_id: user.tenantId,
           data: payload,
@@ -445,10 +446,23 @@ export default function CardapioExportImportModal({ open, onClose, onSuccess }: 
       if (error) throw new Error(error.message ?? 'Erro ao importar');
       if (!data?.success) throw new Error('Falha na importação');
 
+      if (data.errors && Object.keys(data.errors).length > 0) {
+        setImportErrors(data.errors);
+        throw new Error('Alguns itens não foram importados. Veja os detalhes abaixo.');
+      }
+
+      // Show warnings if items were skipped
+      if (data.warnings && data.warnings.length > 0) {
+        setImportError(data.warnings.join('\n'));
+      }
+
       setImportSuccess(true);
+      setImportErrors(null);
       setFileContent(null);
-      setFileName(null);
-      setPreview(null);
+      // Keep fileName so warnings can be shown
+      // setFileName(null);
+      // Keep preview for results display
+      // setPreview(null);
       setShowPreview(false);
       setDuplicates(null);
       setRawPayload(null);
@@ -679,12 +693,14 @@ export default function CardapioExportImportModal({ open, onClose, onSuccess }: 
                 <div className="bg-green-50 border border-green-200 rounded-xl p-4">
                   <p className="text-xs font-bold text-green-700 mb-2">Exportação concluída!</p>
                   <div className="grid grid-cols-2 gap-2">
-                    {Object.entries(exportResult).map(([key, value]) => (
-                      <div key={key} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-green-100">
-                        <span className="text-[10px] text-zinc-500 capitalize">{key}</span>
-                        <span className="text-xs font-bold text-green-700">{value}</span>
-                      </div>
-                    ))}
+                    {Object.entries(exportResult)
+                      .filter(([, value]) => (value as number) > 0)
+                      .map(([key, value]) => (
+                        <div key={key} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-green-100">
+                          <span className="text-[10px] text-zinc-500 capitalize">{key}</span>
+                          <span className="text-xs font-bold text-green-700">{value as number}</span>
+                        </div>
+                      ))}
                   </div>
                 </div>
               )}
@@ -974,20 +990,67 @@ export default function CardapioExportImportModal({ open, onClose, onSuccess }: 
                   </div>
                 )}
 
-                {!showPreview && fileName && importError && (
-                  <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
-                    <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />
-                    <p className="text-xs text-red-700">{importError}</p>
+                {!showPreview && importError && (
+                  <div className={`mt-3 rounded-lg px-3 py-2 flex items-start gap-2 whitespace-pre-line ${importSuccess ? 'bg-amber-50 border border-amber-200' : 'bg-red-50 border border-red-200'}`}>
+                    <i className={`${importSuccess ? 'ri-alert-line text-amber-500' : 'ri-error-warning-line text-red-500'} mt-0.5 flex-shrink-0`} />
+                    <p className={`text-xs ${importSuccess ? 'text-amber-700' : 'text-red-700'}`}>{importError}</p>
+                  </div>
+                )}
+
+                {importErrors && !importSuccess && (
+                  <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2 space-y-1.5">
+                    <div className="flex items-start gap-2">
+                      <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-red-700 font-semibold">Erros na importação:</p>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto space-y-1">
+                      {Object.entries(importErrors).map(([key, msg]) => (
+                        <div key={key} className="bg-white border border-red-100 rounded px-2 py-1 flex items-start gap-2">
+                          <span className="text-[10px] font-bold text-red-600 whitespace-nowrap">{key}:</span>
+                          <span className="text-[10px] text-red-500 break-all">{msg}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
                 {importSuccess && (
-                  <div className="mt-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-start gap-2">
-                    <i className="ri-checkbox-circle-line text-green-500 mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="text-xs text-green-700 font-semibold">Importação concluída com sucesso!</p>
-                      <p className="text-[10px] text-green-600 mt-0.5">Recarregue a página para ver os dados importados.</p>
+                  <div className="mt-3 space-y-3">
+                    <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                      <i className="ri-checkbox-circle-line text-green-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-green-700 font-semibold">Importação concluída com sucesso!</p>
+                        <p className="text-[10px] text-green-600 mt-0.5">Recarregue a página para ver os dados importados.</p>
+                      </div>
                     </div>
+                    {exportResult && (
+                      <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                        <p className="text-xs font-bold text-green-700 mb-2">Resumo da importação</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {preview ? getGroupConfigs(preview).filter((g) => (exportResult[g.key] ?? 0) > 0 || selectedGroups[g.key]).map((g) => {
+                            const imported = (exportResult[g.key] ?? 0) as number;
+                            return (
+                              <div key={g.key} className={`flex items-center justify-between bg-white rounded-lg px-3 py-2 border ${imported > 0 ? 'border-green-100' : 'border-amber-100 bg-amber-50/30'}`}>
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <div className={`w-4 h-4 flex items-center justify-center flex-shrink-0 ${g.color}`}>
+                                    <i className={`${g.icon} text-[10px]`} />
+                                  </div>
+                                  <span className="text-[10px] text-zinc-600 truncate">{g.label}</span>
+                                </div>
+                                <span className={`text-xs font-bold ml-1 flex-shrink-0 ${imported > 0 ? 'text-green-700' : 'text-amber-600'}`}>
+                                  {imported > 0 ? imported : '0'}
+                                </span>
+                              </div>
+                            );
+                          }) : Object.entries(exportResult).filter(([, v]) => (v as number) > 0).map(([key, value]) => (
+                            <div key={key} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-green-100">
+                              <span className="text-[10px] text-zinc-600 capitalize">{key}</span>
+                              <span className="text-xs font-bold text-green-700">{value as number}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

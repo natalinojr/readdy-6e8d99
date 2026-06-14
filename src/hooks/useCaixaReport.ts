@@ -12,6 +12,7 @@ export interface CashTransaction {
   numero_pedido: string | null;
   origem: string | null;
   is_refunded: boolean;
+  cash_register_id?: string | null;
   // Agrupamento de pagamentos vinculados
   payment_group_id?: string | null;
   table_session_id?: string | null;
@@ -75,6 +76,7 @@ export interface CashSession {
   faturamento: number;
   num_pedidos: number;
   num_cancelados: number;
+  num_cortesias: number;
   total_descontos: number;
   total_troco: number;
   cash_register: CashRegisterInfo | null;
@@ -152,7 +154,13 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
           const sessionIds = sessData.map((s) => s.id).filter(Boolean);
 
           let registersMap: Record<string, any[]> = {};
-          let ordersMap: Record<string, { total: number; count: number; cancelados: number }> = {};
+          let ordersMap: Record<string, { total: number; count: number; cancelados: number; cortesias: number }> = {};
+          let ordersResultData: any[] = [];
+          let ordersById = new Map<string, any>();
+          let pmMap = new Map<string, { name: string; type: string }>();
+          let paymentsBySession = new Map<string, any[]>();
+          let discountsBySession = new Map<string, number>();
+          let movementsByRegister = new Map<string, any[]>();
 
           if (sessionIds.length > 0) {
             const [regResult, ordersResult] = await Promise.all([
@@ -163,7 +171,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
                 .in('session_id', sessionIds),
               supabase
                 .from('orders')
-                .select('session_id, total_amount, status')
+                .select('id, session_id, number, total_amount, status, is_cortesia, created_at, origin_type, origin_user_id')
                 .eq('tenant_id', user.tenantId)
                 .in('session_id', sessionIds)
                 .eq('is_training', false)
@@ -180,23 +188,229 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
             }
 
             if (!ordersResult.error && ordersResult.data) {
+              ordersResultData = ordersResult.data;
               for (const o of ordersResult.data) {
                 const sid = o.session_id;
-                if (!ordersMap[sid]) ordersMap[sid] = { total: 0, count: 0, cancelados: 0 };
+                if (!ordersMap[sid]) ordersMap[sid] = { total: 0, count: 0, cancelados: 0, cortesias: 0 };
                 if (o.status === 'cancelled') {
                   ordersMap[sid].cancelados += 1;
+                } else if (o.is_cortesia) {
+                  ordersMap[sid].cortesias += 1;
+                  ordersMap[sid].count += 1;
                 } else {
                   ordersMap[sid].total += Number(o.total_amount ?? 0);
                   ordersMap[sid].count += 1;
                 }
               }
             }
+
+            // ── Queries adicionais para o fallback completo ──
+            const orderIds = (ordersResult.data ?? []).map((o: any) => o.id).filter(Boolean);
+            const registerIds = Object.values(registersMap).flat().map((r: any) => r.id).filter(Boolean);
+
+            let paymentsData: any[] = [];
+            let paymentMethodsData: any[] = [];
+            let discountsData: any[] = [];
+            let cashMovementsData: any[] = [];
+
+            if (orderIds.length > 0 || registerIds.length > 0) {
+              const queries: Promise<any>[] = [];
+
+              if (orderIds.length > 0) {
+                queries.push(
+                  supabase.from('payments')
+                    .select('id, order_id, cash_register_id, payment_method_id, amount, change_amount, is_refunded, created_at, operator_name, origin_type')
+                    .eq('tenant_id', user.tenantId)
+                    .in('order_id', orderIds)
+                );
+                queries.push(
+                  supabase.from('order_discounts')
+                    .select('order_id, discount_value')
+                    .eq('tenant_id', user.tenantId)
+                    .in('order_id', orderIds)
+                );
+              }
+
+              queries.push(
+                supabase.from('payment_methods')
+                  .select('id, name, type')
+                  .eq('tenant_id', user.tenantId)
+              );
+
+              if (registerIds.length > 0) {
+                queries.push(
+                  supabase.from('cash_movements')
+                    .select('cash_register_id, type, amount, reason, created_at')
+                    .eq('tenant_id', user.tenantId)
+                    .in('cash_register_id', registerIds)
+                );
+              }
+
+              const results = await Promise.all(queries);
+              let idx = 0;
+
+              if (orderIds.length > 0) {
+                const payResult = results[idx++];
+                if (!payResult.error && payResult.data) paymentsData = payResult.data;
+
+                const discResult = results[idx++];
+                if (!discResult.error && discResult.data) discountsData = discResult.data;
+              }
+
+              const pmResult = results[idx++];
+              if (!pmResult.error && pmResult.data) paymentMethodsData = pmResult.data;
+
+              if (registerIds.length > 0) {
+                const cmResult = results[idx++];
+                if (!cmResult.error && cmResult.data) cashMovementsData = cmResult.data;
+              }
+            }
+
+            // Mapas auxiliares
+            for (const o of ordersResultData ?? []) {
+              ordersById.set(o.id, o);
+            }
+
+            for (const pm of paymentMethodsData) {
+              pmMap.set(pm.id, { name: pm.name, type: pm.type ?? 'other' });
+            }
+
+            // pagamentos por session_id (via order)
+            for (const p of paymentsData) {
+              const order = ordersById.get(p.order_id);
+              if (!order) continue;
+              const sid = order.session_id;
+              const arr = paymentsBySession.get(sid) ?? [];
+              arr.push(p);
+              paymentsBySession.set(sid, arr);
+            }
+
+            // descontos por session_id (via order)
+            for (const d of discountsData) {
+              const order = ordersById.get(d.order_id);
+              if (!order) continue;
+              const sid = order.session_id;
+              discountsBySession.set(sid, (discountsBySession.get(sid) ?? 0) + Number(d.discount_value ?? 0));
+            }
+
+            // cash_movements por cash_register_id
+            for (const cm of cashMovementsData) {
+              const arr = movementsByRegister.get(cm.cash_register_id) ?? [];
+              arr.push(cm);
+              movementsByRegister.set(cm.cash_register_id, arr);
+            }
           }
 
           rawSessions = sessData.map((sess: any) => {
             const regs = registersMap[sess.id] ?? [];
             const cr = regs[0] ?? null;
-            const ords = ordersMap[sess.id] ?? { total: 0, count: 0, cancelados: 0 };
+            const ords = ordersMap[sess.id] ?? { total: 0, count: 0, cancelados: 0, cortesias: 0 };
+            const sessPayments = paymentsBySession.get(sess.id) ?? [];
+            const sessDiscountsTotal = discountsBySession.get(sess.id) ?? 0;
+
+            // ── por_forma_pagamento ──
+            const porFormaMap = new Map<string, { total: number; count: number; tipo: string }>();
+            for (const p of sessPayments) {
+              if (p.is_refunded) continue;
+              const order = ordersById.get(p.order_id);
+              if (!order || order.status === 'cancelled' || order.status === 'draft') continue;
+              const pmInfo = pmMap.get(p.payment_method_id);
+              const key = pmInfo?.name ?? 'Outros';
+              const existing = porFormaMap.get(key);
+              if (existing) {
+                existing.total += Number(p.amount ?? 0);
+                existing.count += 1;
+              } else {
+                porFormaMap.set(key, { total: Number(p.amount ?? 0), count: 1, tipo: pmInfo?.type ?? 'other' });
+              }
+            }
+            const por_forma_pagamento: PorFormaPagamento[] = Array.from(porFormaMap.entries())
+              .map(([forma, data]) => ({ forma, tipo: data.tipo, total: data.total, count: data.count }))
+              .sort((a, b) => b.total - a.total);
+
+            // ── total_troco ──
+            let total_troco = 0;
+            for (const p of sessPayments) {
+              if (p.is_refunded) continue;
+              const order = ordersById.get(p.order_id);
+              if (!order || order.status === 'cancelled' || order.status === 'draft') continue;
+              total_troco += Number(p.change_amount ?? 0);
+            }
+
+            // ── por_origem ──
+            const porOrigemMap = new Map<string, { pedidos: number; total: number }>();
+            for (const o of ordersResultData ?? []) {
+              if (o.session_id !== sess.id) continue;
+              if (o.status === 'cancelled' || o.status === 'draft') continue;
+              if (o.is_training) continue;
+              const key = o.origin_type ?? 'outros';
+              const existing = porOrigemMap.get(key);
+              if (existing) {
+                existing.pedidos += 1;
+                existing.total += Number(o.total_amount ?? 0);
+              } else {
+                porOrigemMap.set(key, { pedidos: 1, total: Number(o.total_amount ?? 0) });
+              }
+            }
+            const por_origem: PorOrigem[] = Array.from(porOrigemMap.entries())
+              .map(([origem, data]) => ({ origem, pedidos: data.pedidos, total: data.total }));
+
+            // ── cash_transactions (apenas pagamentos em dinheiro/espécie) ──
+            const cash_transactions: CashTransaction[] = sessPayments
+              .filter((p) => {
+                const order = ordersById.get(p.order_id);
+                if (!order || order.status === 'cancelled' || order.status === 'draft' || order.is_training) return false;
+                const pmInfo = pmMap.get(p.payment_method_id);
+                const isCash = !pmInfo || pmInfo.type === 'cash' ||
+                  (pmInfo.name ?? '').toLowerCase().includes('dinheiro') ||
+                  (pmInfo.name ?? '').toLowerCase().includes('espécie');
+                return isCash;
+              })
+              .map((p) => {
+                const order = ordersById.get(p.order_id);
+                return {
+                  id: p.id,
+                  hora: p.created_at,
+                  valor_venda: Number(order?.total_amount ?? 0),
+                  valor_pago: Number(p.amount ?? 0) + Number(p.change_amount ?? 0),
+                  troco: Number(p.change_amount ?? 0),
+                  operador: p.operator_name ?? null,
+                  numero_pedido: order?.number ?? null,
+                  origem: p.origin_type ?? order?.origin_type ?? null,
+                  is_refunded: p.is_refunded ?? false,
+                  cash_register_id: p.cash_register_id ?? null,
+                } as CashTransaction;
+              })
+              .sort((a, b) => new Date(b.hora).getTime() - new Date(a.hora).getTime());
+
+            // ── movimentos ──
+            const allMovs: CashMovimento[] = [];
+            let totalRetiradas = 0;
+            let totalAdicoes = 0;
+            for (const reg of regs) {
+              const regMovs = movementsByRegister.get(reg.id) ?? [];
+              for (const cm of regMovs) {
+                const val = Number(cm.amount ?? 0);
+                allMovs.push({
+                  tipo: cm.type as 'out' | 'in',
+                  valor: val,
+                  motivo: cm.reason ?? null,
+                  hora: cm.created_at,
+                });
+                if (cm.type === 'out') totalRetiradas += val;
+                else totalAdicoes += val;
+              }
+            }
+            allMovs.sort((a, b) => new Date(b.hora).getTime() - new Date(a.hora).getTime());
+
+            const movimentos: CashMovimentos = {
+              retiradas: allMovs.filter((m) => m.tipo === 'out').length,
+              adicoes: allMovs.filter((m) => m.tipo === 'in').length,
+              total_retiradas: totalRetiradas,
+              total_adicoes: totalAdicoes,
+              lista: allMovs,
+            };
+
             return {
               id: sess.id,
               numero: sess.number ?? '-',
@@ -209,20 +423,15 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
               faturamento: ords.total,
               num_pedidos: ords.count,
               num_cancelados: ords.cancelados,
-              total_descontos: 0,
-              total_troco: 0,
+              num_cortesias: ords.cortesias,
+              total_descontos: sessDiscountsTotal,
+              total_troco,
               cash_register: cr,
               cash_registers: regs,
-              movimentos: {
-                retiradas: cr?.total_retiradas ?? 0,
-                adicoes: cr?.total_adicoes ?? 0,
-                total_retiradas: cr?.total_retiradas ?? 0,
-                total_adicoes: cr?.total_adicoes ?? 0,
-                lista: [],
-              },
-              por_forma_pagamento: [],
-              por_origem: [],
-              cash_transactions: [],
+              movimentos,
+              por_forma_pagamento,
+              por_origem,
+              cash_transactions,
               cash_transactions_grouped: [],
             };
           });
@@ -336,6 +545,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
       const normalized = rawSessions.map((s) => ({
         ...s,
         num_cancelados: s.num_cancelados ?? 0,
+        num_cortesias: s.num_cortesias ?? 0,
         total_descontos: s.total_descontos ?? 0,
         total_troco: s.total_troco ?? 0,
         por_forma_pagamento: s.por_forma_pagamento ?? [],

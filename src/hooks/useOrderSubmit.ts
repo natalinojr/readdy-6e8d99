@@ -19,11 +19,15 @@ export interface OrderItemPayload {
   station_id: string | null;
   skip_kds: boolean;
   notes: string | null;
+  /** Partes de produção pré-carregadas para split de tickets (evita query RLS no printOrderQueue) */
+  production_parts?: Array<{ name: string; station_id: string; station_name?: string }>;
   options: Array<{
     option_id: string | null;
     option_name: string;
     group_name: string;
     additional_price: number;
+    /** Indica se o grupo de opções é obrigatório (sem "+" na impressão) */
+    group_obrigatorio?: boolean;
   }>;
   observations: Array<{ text: string }>;
 }
@@ -53,6 +57,15 @@ export interface CreateOrderPayload {
   delivery_platform?: string | null;
   /** ID da sessão de mesa (table_session_id) para vincular pedido ao consumo da mesa */
   table_session_id?: string | null;
+  /** Pedido cortesia — total zerado, is_paid=true automaticamente */
+  is_cortesia?: boolean;
+  /** Notas do pedido (ex: "Cortesia autorizada por: Nome") */
+  notes?: string | null;
+  /** Nome de quem autorizou a cortesia */
+  cortesia_authorized_by?: string | null;
+  /** UUID de idempotência — gerado pelo frontend uma única vez por finalização.
+   *  Garante que retries de rede não criem pedidos duplicados (BUG-06). */
+  client_request_id?: string | null;
 }
 
 export interface OrderSubmitResult {
@@ -280,6 +293,8 @@ export function useOrderSubmit() {
       enqueuePrint?: boolean;
       /** Mapeamento stationKey → impressoraId para fila de impressão */
       stationToImpressoraId?: Record<string, string>;
+      /** Indica que o pedido é para viagem/retirada */
+      paraViagem?: boolean;
     },
   ): Promise<OrderSubmitResult> => {
     // ── Proteção contra submissão duplicada ───────────────────────────────
@@ -322,6 +337,13 @@ export function useOrderSubmit() {
       is_training: payload.is_training,
       is_online: navigator.onLine,
     });
+
+    // ── Idempotency key: UUID único gerado UMA vez por finalização ──────
+    // BUG-06: este UUID viaja para a edge function e fica salvo na tabela orders.
+    // Se a rede falhar e o frontend fizer retry, o backend detecta o mesmo
+    // client_request_id e retorna o pedido já criado — sem duplicar nada.
+    const clientRequestId = crypto.randomUUID();
+    payload.client_request_id = clientRequestId;
 
     submittingRef.current = true;
 
@@ -420,7 +442,9 @@ export function useOrderSubmit() {
             quantity: item.quantity,
             skip_kds: item.skip_kds,
             station_id: item.station_id,
-            options: item.options?.map((o) => ({ option_name: o.option_name })),
+            item_id: item.item_id,
+            production_parts: item.production_parts,
+            options: item.options?.map((o) => ({ option_name: o.option_name, obrigatorio: o.group_obrigatorio })),
             observations: item.observations,
             notes: item.notes,
           }));
@@ -433,6 +457,8 @@ export function useOrderSubmit() {
               printItems,
               printDestino,
               options?.stationToImpressoraId,
+              payload.total_amount,
+              options?.paraViagem,
             );
             printEnqueued = true;
             logOrder('info', 'submitOrder', 'Ticket enfileirado para impressão', {
@@ -483,7 +509,9 @@ export function useOrderSubmit() {
                 quantity: item.quantity,
                 skip_kds: item.skip_kds,
                 station_id: item.station_id,
-                options: item.options?.map((o) => ({ option_name: o.option_name })),
+                item_id: item.item_id,
+                production_parts: item.production_parts,
+                options: item.options?.map((o) => ({ option_name: o.option_name, obrigatorio: o.group_obrigatorio })),
                 observations: item.observations,
                 notes: item.notes,
               }));
@@ -495,6 +523,9 @@ export function useOrderSubmit() {
                   payload.origin,
                   printItems,
                   printDestino,
+                  undefined,
+                  payload.total_amount,
+                  options?.paraViagem,
                 );
                 printEnqueued = true;
               } catch {

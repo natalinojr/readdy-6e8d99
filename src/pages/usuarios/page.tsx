@@ -471,7 +471,21 @@ export default function UsuariosPage() {
                 showToast(res.error ?? 'Erro ao criar usuário', 'erro');
               }
             } else if (modal.tipo === 'editar' && modal.usuario) {
-              const ok = await editarUsuario(modal.usuario.id, payload as Parameters<typeof editarUsuario>[1]);
+              const payloadRaw = payload as Record<string, unknown>;
+              // Se senha foi fornecida, redefinir separadamente primeiro
+              if (payloadRaw.senha && typeof payloadRaw.senha === 'string') {
+                const senhaRes = await redefinirSenha(modal.usuario.id, payloadRaw.senha);
+                if (!senhaRes.success) {
+                  showToast(senhaRes.error ?? 'Erro ao redefinir senha', 'erro');
+                  return;
+                }
+              }
+              const ok = await editarUsuario(modal.usuario.id, {
+                nome: payloadRaw.nome as string,
+                perfil: payloadRaw.perfil as Parameters<typeof editarUsuario>[1]['perfil'],
+                modoTreino: payloadRaw.modoTreino as boolean,
+                ativo: payloadRaw.ativo as boolean,
+              });
               if (ok) { showToast('Dados atualizados!', 'ok'); setModal(null); }
               else { showToast('Erro ao atualizar dados', 'erro'); }
             } else if (modal.tipo === 'senha' && modal.usuario) {

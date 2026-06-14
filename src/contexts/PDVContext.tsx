@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { invokeWithAuth, supabase, ensureFreshSession } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from './SessaoContext';
@@ -17,6 +17,8 @@ export interface OpcaoSelecionada {
   opcaoId: string;
   opcaoNome: string;
   precoAdicional: number;
+  /** Se o grupo desta opção é obrigatório — quando true, NÃO exibir "+" no ticket/gestor */
+  obrigatorio?: boolean;
 }
 
 export interface CarrinhoItem {
@@ -34,6 +36,10 @@ export interface CarrinhoItem {
   obsUnidades?: string[];
   semPreparo?: boolean;
   stationId?: string;
+  /** Partes de produção a destacar no ticket de cozinha (ex: ['hamburguer', 'batata']) */
+  partesDestaque?: string[];
+  /** Partes de produção do item para split de tickets por estação */
+  subproducao?: Array<{ nome: string; estacaoId: string; estacao?: string }>;
 }
 
 export type DestinoType = 'hora' | 'mesa' | 'delivery' | 'nome' | 'senha';
@@ -72,7 +78,15 @@ interface PDVContextData {
   taxaServico: boolean;
   numeroPedidoSeq: number;
   ultimoNumeroPedido: string;
-  pedidosPagos: Set<number>;
+  senhaCounter: number;
+  consumirSenha: () => Promise<number>;
+  /** Cortesia ativa (pedido gratuito autorizado por gerente/admin) */
+  isCortesia: boolean;
+  cortesiaAutorizadaPor: string | null;
+  cortesiaDestinatario: string | null;
+  cortesiaMotivo: string | null;
+  setCortesia: (ativa: boolean, autorizadoPor: string | null, destinatario?: string | null, motivo?: string | null) => void;
+  clearCortesia: () => void;
   addItem: (item: Omit<CarrinhoItem, 'cartId'>) => void;
   updateItemQty: (cartId: string, delta: number) => void;
   removeItem: (cartId: string) => void;
@@ -110,6 +124,45 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
   const [numeroPedidoSeq, setNumeroPedidoSeq] = useState(0);
   const [ultimoNumeroPedido, setUltimoNumeroPedido] = useState('—');
   const [pedidosPagos, setPedidosPagos] = useState<Set<number>>(new Set());
+  const [isCortesia, setIsCortesia] = useState(false);
+  const [cortesiaAutorizadaPor, setCortesiaAutorizadaPor] = useState<string | null>(null);
+  const [cortesiaDestinatario, setCortesiaDestinatario] = useState<string | null>(null);
+  const [cortesiaMotivo, setCortesiaMotivo] = useState<string | null>(null);
+
+  // Contador de senha/comanda — inicia em 200 e incrementa a cada uso.
+  // Gerido pelo backend (Supabase RPC) para ser consistente entre múltiplos PDVs.
+  const [senhaCounter, setSenhaCounter] = useState(200);
+
+  // No mount, busca o contador atual do backend (sem incrementar)
+  useEffect(() => {
+    if (!user?.tenantId) return;
+    supabase.rpc('fn_peek_senha', { p_tenant_id: user.tenantId }).then(({ data, error }) => {
+      if (!error && typeof data === 'number' && data >= 200) {
+        setSenhaCounter(data);
+      }
+    });
+  }, [user?.tenantId]);
+
+  const consumirSenha = useCallback(async (): Promise<number> => {
+    if (!user?.tenantId) {
+      // Fallback offline: usa contador local
+      const current = senhaCounter;
+      setSenhaCounter((c) => c + 1);
+      return current;
+    }
+    const { data, error } = await supabase.rpc('fn_next_senha', { p_tenant_id: user.tenantId });
+    if (error) {
+      console.warn('[PDVContext] Erro ao consumir senha:', error);
+      // Fallback local em caso de erro de rede
+      const current = senhaCounter;
+      setSenhaCounter((c) => c + 1);
+      return current;
+    }
+    const senha = typeof data === 'number' ? data : 200;
+    // Atualiza o estado local para exibição da próxima senha
+    setSenhaCounter(senha + 1);
+    return senha;
+  }, [user?.tenantId, senhaCounter]);
 
   useEffect(() => {
     setTaxaServico(sysSettings.service_fee_enabled ?? false);
@@ -178,6 +231,8 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     setDestino(null);
     setDesconto(0);
     setTaxaServico(sysSettings.service_fee_enabled ?? false);
+    setIsCortesia(false);
+    setCortesiaAutorizadaPor(null);
   }, [sysSettings.service_fee_enabled]);
 
   const toggleTaxaServico = useCallback(() => setTaxaServico((v) => !v), []);
@@ -194,6 +249,10 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
         : [];
       if (!obsPedidoAdded && obsPedido) obsPedidoAdded = true;
 
+      // Partes de produção pré-carregadas do contexto do cardápio (evita query RLS no print)
+      const productionPartsPayload = ci.subproducao?.filter(sp => sp.estacaoId)
+        .map(sp => ({ name: sp.nome, station_id: sp.estacaoId, station_name: sp.estacao })) ?? undefined;
+
       if (temObsUnidade && ci.quantidade > 1) {
         return Array.from({ length: ci.quantidade }, (_, unitIdx) => {
           const obsUnidade = ci.obsUnidades?.[unitIdx]?.trim() ?? '';
@@ -206,11 +265,13 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
             station_id: ci.stationId ?? null,
             skip_kds: ci.semPreparo ?? false,
             notes: obsUnidade || ci.observacaoLivre || null,
+            production_parts: productionPartsPayload,
             options: ci.opcoes.map((o) => ({
               option_id: o.opcaoId || null,
               option_name: o.opcaoNome,
               group_name: o.grupoNome,
               additional_price: o.precoAdicional,
+              group_obrigatorio: o.obrigatorio,
             })),
             observations: [
               ...ci.observacoes.map((t) => ({ text: t })),
@@ -234,11 +295,13 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
         station_id: ci.stationId ?? null,
         skip_kds: ci.semPreparo ?? false,
         notes: ci.observacaoLivre || null,
+        production_parts: productionPartsPayload,
         options: ci.opcoes.map((o) => ({
           option_id: o.opcaoId || null,
           option_name: o.opcaoNome,
           group_name: o.grupoNome,
           additional_price: o.precoAdicional,
+          group_obrigatorio: o.obrigatorio,
         })),
         observations: [
           ...ci.observacoes.map((t) => ({ text: t })),
@@ -278,6 +341,25 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       ? (mesas.find((m) => m.id === destino.mesaId)?.tableSessionId ?? null)
       : null;
 
+    // ── Cortesia: zeramos o total e aplicamos desconto total ──────────────
+    const cortesiaAtiva = isCortesia;
+    const cortesiaAutor = cortesiaAutorizadaPor;
+    const cortesiaDest = cortesiaDestinatario;
+    const cortesiaMot = cortesiaMotivo;
+    const actualDesconto = cortesiaAtiva ? subtotal : valorDesconto;
+    const actualTaxaServico = cortesiaAtiva ? 0 : valorTaxaServico;
+    const actualTotal = cortesiaAtiva ? 0 : total;
+
+    // ── Cortesia: monta notes estruturado ──
+    let cortesiaNotesStr: string | null = null;
+    if (cortesiaAtiva) {
+      const parts: string[] = ['Cortesia'];
+      if (cortesiaDest) parts.push(`Para: ${cortesiaDest}`);
+      if (cortesiaMot) parts.push(`Motivo: ${cortesiaMot}`);
+      parts.push(`Autorizado por: ${cortesiaAutor ?? 'Gerente'}`);
+      cortesiaNotesStr = parts.join(' | ');
+    }
+
     // Cria pedido — useOrderSubmit enfileira impressão automaticamente via fila centralizada
     const orderResult = await submitOrder({
       session_id: sessao.id,
@@ -291,10 +373,10 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       delivery_fee: destino?.taxaEntrega ?? 0,
       origin: 'cashier',
       items: itensPayload,
-      discount_amount: valorDesconto,
-      service_fee_amount: valorTaxaServico,
+      discount_amount: actualDesconto,
+      service_fee_amount: actualTaxaServico,
       subtotal,
-      total_amount: total,
+      total_amount: actualTotal,
       cash_register_id: caixa?.id ?? null,
       is_training: user.modoTreino,
       customer_cpf: customerData?.customerCpf ?? null,
@@ -302,6 +384,9 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       table_number: destino?.tipo === 'mesa' ? destino.mesaNumero ?? null : null,
       customer_name: destino?.tipo === 'mesa' ? destino?.nomeCliente ?? null : null,
       table_session_id: tableSessionId,
+      is_cortesia: cortesiaAtiva ? true : undefined,
+      notes: cortesiaAtiva ? cortesiaNotesStr : undefined,
+      cortesia_authorized_by: cortesiaAtiva ? (cortesiaAutor ?? undefined) : undefined,
     }, { offlinePayments, stationToImpressoraId: mapaEstacoes });
 
     const orderId: string = orderResult.id;
@@ -321,7 +406,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       return { orderId, number: orderResult.number, printEnqueued: orderResult.printEnqueued };
     }
 
-    if (orderId && valorDesconto > 0) {
+    if (orderId && actualDesconto > 0) {
       try {
         const { error: discErr } = await invokeWithAuth('order-write', {
           body: {
@@ -329,11 +414,14 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
             order_id: orderId,
             tenant_id: user.tenantId,
             discount_type: 'manual_value',
-            discount_value: valorDesconto,
+            discount_value: actualDesconto,
             requires_approval: true,
-            new_discount_amount: valorDesconto,
-            new_total_amount: total,
-            reason: 'Desconto autorizado no PDV Caixa',
+            approved_by: cortesiaAtiva ? (cortesiaAutor ?? 'Cortesia') : 'Gerente',
+            new_discount_amount: actualDesconto,
+            new_total_amount: actualTotal,
+            reason: cortesiaAtiva
+              ? (cortesiaNotesStr ?? `Cortesia autorizada por: ${cortesiaAutor ?? 'Gerente'}`)
+              : 'Desconto autorizado no PDV Caixa',
           },
         });
         if (discErr) console.warn('[PDVContext] apply_discount error (non-blocking):', discErr);
@@ -342,8 +430,10 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       }
     }
 
-    if (orderId && pagamentos.length > 0) {
+    // Cortesia: pedido já marcado como pago na edge function — não registrar pagamento
+    if (!cortesiaAtiva && orderId && pagamentos.length > 0) {
       let paymentRegistered = false;
+      const paymentErrors: string[] = [];
       for (const pag of pagamentos) {
         if (!pag.formaId) continue;
         try {
@@ -361,11 +451,17 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
               payment_group_id: customerData?.paymentGroupId ?? null,
             },
           });
-          if (payErr) console.warn('[PDVContext] record_payment error (non-blocking):', payErr);
-          else paymentRegistered = true;
+          if (payErr) {
+            paymentErrors.push(typeof payErr === 'string' ? payErr : JSON.stringify(payErr));
+          } else {
+            paymentRegistered = true;
+          }
         } catch (e) {
-          console.warn('[PDVContext] record_payment exception (non-blocking):', e);
+          paymentErrors.push(e instanceof Error ? e.message : String(e));
         }
+      }
+      if (paymentErrors.length > 0 && !paymentRegistered) {
+        throw new Error(`Falha ao registrar pagamento: ${paymentErrors.join('; ')}`);
       }
       if (paymentRegistered) {
         try {
@@ -386,6 +482,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     carrinho, destino, valorDesconto, valorTaxaServico,
     subtotal, total, clearCart, reloadOrders, submitOrder,
     refreshPendingCount, buildItemsPayload, mesas,
+    isCortesia, cortesiaAutorizadaPor, cortesiaDestinatario, cortesiaMotivo,
   ]);
 
   // ── Enviar para Cozinha (sem pagamento — pagar depois) ───────────────────
@@ -414,6 +511,10 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       const obsPedidoExtra = !obsPedidoAdded && obsPedido ? [{ text: `[PEDIDO] ${obsPedido}` }] : [];
       if (!obsPedidoAdded && obsPedido) obsPedidoAdded = true;
 
+      // Partes de produção pré-carregadas do contexto do cardápio (evita query RLS no print)
+      const productionPartsPayload = ci.subproducao?.filter(sp => sp.estacaoId)
+        .map(sp => ({ name: sp.nome, station_id: sp.estacaoId, station_name: sp.estacao })) ?? undefined;
+
       if (temObsUnidade && ci.quantidade > 1) {
         return Array.from({ length: ci.quantidade }, (_, unitIdx) => {
           const obsUnidade = ci.obsUnidades?.[unitIdx]?.trim() ?? '';
@@ -426,11 +527,13 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
             station_id: ci.stationId ?? null,
             skip_kds: ci.semPreparo ?? false,
             notes: obsUnidade || ci.observacaoLivre || null,
+            production_parts: productionPartsPayload,
             options: ci.opcoes.map((o) => ({
               option_id: o.opcaoId || null,
               option_name: o.opcaoNome,
               group_name: o.grupoNome,
               additional_price: o.precoAdicional,
+              group_obrigatorio: o.obrigatorio,
             })),
             observations: [
               ...ci.observacoes.map((t) => ({ text: t })),
@@ -454,11 +557,13 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
         station_id: ci.stationId ?? null,
         skip_kds: ci.semPreparo ?? false,
         notes: ci.observacaoLivre || null,
+        production_parts: productionPartsPayload,
         options: ci.opcoes.map((o) => ({
           option_id: o.opcaoId || null,
           option_name: o.opcaoNome,
           group_name: o.grupoNome,
           additional_price: o.precoAdicional,
+          group_obrigatorio: o.obrigatorio,
         })),
         observations: [
           ...ci.observacoes.map((t) => ({ text: t })),
@@ -545,14 +650,30 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     refreshPendingCount, mesas,
   ]);
 
+  const setCortesia = useCallback((ativa: boolean, autorizadoPor: string | null, destinatario?: string | null, motivo?: string | null) => {
+    setIsCortesia(ativa);
+    setCortesiaAutorizadaPor(autorizadoPor);
+    setCortesiaDestinatario(destinatario ?? null);
+    setCortesiaMotivo(motivo ?? null);
+  }, []);
+
+  const clearCortesia = useCallback(() => {
+    setIsCortesia(false);
+    setCortesiaAutorizadaPor(null);
+    setCortesiaDestinatario(null);
+    setCortesiaMotivo(null);
+  }, []);
+
   return (
     <PDVContext.Provider value={{
       carrinho, destino, desconto, taxaServico, numeroPedidoSeq,
       ultimoNumeroPedido, pedidosPagos,
+      isCortesia, cortesiaAutorizadaPor, cortesiaDestinatario, cortesiaMotivo, setCortesia, clearCortesia,
       addItem, updateItemQty, removeItem, updateItemObs, clearCart,
       setDestino, setDesconto, toggleTaxaServico, marcarComoPago,
       subtotal, valorDesconto, valorTaxaServico, total,
       finalizarPedido, enviarParaCozinha,
+      senhaCounter, consumirSenha,
     }}>
       {children}
     </PDVContext.Provider>

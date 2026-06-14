@@ -83,38 +83,24 @@ function useReceitaVsDespesa(meses: number) {
     if (!user?.tenantId) return;
     setLoading(true);
     try {
-      // Receita: orders + entradas manuais do fluxo de caixa
-      const startDateStr = new Date(new Date().setMonth(new Date().getMonth() - meses)).toISOString();
-      const startDateCashFlow = startDateStr.slice(0, 10);
+      // ═══ Receita: fin_cash_flow auto_sale + manual (livro-razão único) ═══
+      const startDateStr = new Date(new Date().setMonth(new Date().getMonth() - meses)).toISOString().split('T')[0];
 
-      const { data: ordersData } = await supabase
-        .from('orders')
-        .select('created_at, total_amount')
-        .eq('tenant_id', user.tenantId)
-        .not('status', 'in', '(cancelled,draft)')
-        .eq('is_training', false)
-        .eq('is_draft', false)
-        .gte('created_at', startDateStr);
-
-      // Entradas manuais do fluxo de caixa
-      const { data: manualIncomeData } = await supabase
+      const { data: incomeData } = await supabase
         .from('fin_cash_flow')
         .select('date, amount')
         .eq('tenant_id', user.tenantId)
         .eq('type', 'income')
-        .eq('origin', 'manual')
-        .gte('date', startDateCashFlow);
+        .in('origin', ['auto_sale', 'manual'])
+        .gte('date', startDateStr);
 
-      // Despesas: cash_flow saídas por mês — fonte única de verdade.
-      // Não somamos fin_purchases nem fin_accounts_payable separadamente para evitar
-      // double-count: compras pagas geram origin='auto_purchase' e contas pagas geram
-      // origin='auto_bill_payment' em fin_cash_flow, então já estão contabilizadas aqui.
+      // Despesas: fin_cash_flow saídas (já inclui auto_purchase, auto_bill_payment, auto_payroll)
       const { data: expData } = await supabase
         .from('fin_cash_flow')
         .select('date, amount')
         .eq('tenant_id', user.tenantId)
         .eq('type', 'expense')
-        .gte('date', startDateCashFlow);
+        .gte('date', startDateStr);
 
       const map = new Map<string, { receita: number; despesa: number }>();
 
@@ -127,13 +113,9 @@ function useReceitaVsDespesa(meses: number) {
         map.set(key, { receita: 0, despesa: 0 });
       }
 
-      for (const o of (ordersData ?? [])) {
-        const key = o.created_at.slice(0, 7);
-        if (map.has(key)) map.get(key)!.receita += Number(o.total_amount ?? 0);
-      }
-      for (const m of (manualIncomeData ?? [])) {
-        const key = m.date.slice(0, 7);
-        if (map.has(key)) map.get(key)!.receita += Number(m.amount ?? 0);
+      for (const o of (incomeData ?? [])) {
+        const key = o.date.slice(0, 7);
+        if (map.has(key)) map.get(key)!.receita += Number(o.amount ?? 0);
       }
       for (const e of (expData ?? [])) {
         const key = e.date.slice(0, 7);

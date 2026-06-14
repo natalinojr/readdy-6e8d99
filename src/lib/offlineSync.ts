@@ -52,8 +52,8 @@ async function syncSingleOrder(order: OfflineOrder): Promise<SyncResult> {
     }>('order-write', {
       body: {
         action: 'create_order',
-        // Idempotency key — previne duplicação se a rede cair após o servidor processar
-        local_id: order.localId,
+        // Idempotency key — previne duplicação se a rede cair após o servidor processar (BUG-06)
+        client_request_id: order.localId,
         session_id: order.session_id,
         tenant_id: order.tenant_id,
         origin: order.origin,

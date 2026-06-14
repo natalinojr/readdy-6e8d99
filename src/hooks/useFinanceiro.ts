@@ -613,26 +613,11 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       const d = String(nowBR.getDate()).padStart(2, '0');
       const todayStr = `${y}-${m}-${d}`;
 
-      const todayStart = `${todayStr}T00:00:00-03:00`;
-      const todayEnd = `${todayStr}T23:59:59.999-03:00`;
-
-      const tomorrowBR = new Date(nowBR.getTime() + 24 * 60 * 60 * 1000);
-      const tY = tomorrowBR.getFullYear();
-      const tM = String(tomorrowBR.getMonth() + 1).padStart(2, '0');
-      const tD = String(tomorrowBR.getDate()).padStart(2, '0');
-      const tomorrowStart = `${tY}-${tM}-${tD}T00:00:00-03:00`;
-
       const startOfMonthStr = `${y}-${m}-01T00:00:00-03:00`;
       const prevMonthDate = new Date(nowBR.getFullYear(), nowBR.getMonth() - 1, 1);
       const pY = prevMonthDate.getFullYear();
       const pM = String(prevMonthDate.getMonth() + 1).padStart(2, '0');
       const prevMonthStartStr = `${pY}-${pM}-01T00:00:00-03:00`;
-      const prevMonthEndDate = new Date(nowBR.getFullYear(), nowBR.getMonth(), 0, 23, 59, 59, 999);
-      const pEndY = prevMonthEndDate.getFullYear();
-      const pEndM = String(prevMonthEndDate.getMonth() + 1).padStart(2, '0');
-      const pEndD = String(prevMonthEndDate.getDate()).padStart(2, '0');
-      const prevMonthEndStr = `${pEndY}-${pEndM}-${pEndD}T23:59:59.999-03:00`;
-
       const thirtyDaysAgoBR = new Date(nowBR.getTime() - 30 * 86400000);
       const tdaY = thirtyDaysAgoBR.getFullYear();
       const tdaM = String(thirtyDaysAgoBR.getMonth() + 1).padStart(2, '0');
@@ -646,59 +631,75 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       const sevenDaysLaterStr = `${sdlY}-${sdlM}-${sdlD}`;
 
       const currentMonthStr = `${y}-${m}`;
+      const monthStartDate = startOfMonthStr.split('T')[0];
+      const monthEndDate = `${y}-${m}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+      const prevMonthStartDate = prevMonthStartStr.split('T')[0];
+      const prevMonthEndDate = `${pY}-${pM}-${String(new Date(pY, pM, 0).getDate()).padStart(2, '0')}`;
+      const thirtyDaysAgoDate = thirtyDaysAgoStr.split('T')[0];
 
-      // Busca pedidos (orders.total_amount = fonte única de verdade, igual ao dashboard e relatórios)
-      const [cashFlow, billsVencendo, payments30d,
-             ordersHoje, ordersMes, ordersPrevMes, orders30d, payrollPendingMes,
+      // ═══ LIVRO-RAZÃO ÚNICO: fin_cash_flow é a fonte de verdade para receita e despesa ═══
+      // Receita = auto_sale (vendas recebidas à vista) + manual (entradas manuais)
+      // Despesa = todas as saídas de fin_cash_flow (já inclui auto_purchase, auto_bill_payment, auto_payroll, etc.)
+      // orders e payments são usados APENAS para contagem (ticket médio) e detalhamento.
+      const [cashFlow, billsVencendo,          
+             autoSaleHoje, autoSaleMes, autoSalePrevMes, autoSale30d, ordersMesCount, payrollPendingMes,
              manualIncomeHoje, manualIncomeMes, manualIncome30d, installmentsPendentes] = await Promise.all([
-        supabase.from('fin_cash_flow').select('type,amount').eq('tenant_id', user.tenantId).not('origin', 'in', '(auto_sale,auto_card_fee)').gte('date', startOfMonthStr.split('T')[0]),
-        supabase.from('fin_accounts_payable').select('*').eq('tenant_id', user.tenantId).in('status', ['pending', 'overdue']).lte('due_date', sevenDaysLaterStr).order('due_date'),
-        supabase.from('payments').select('amount, payment_method_id, payment_methods(name)').eq('tenant_id', user.tenantId).gte('created_at', thirtyDaysAgoStr).not('is_refunded', 'eq', true),
-        // Pedidos de hoje (entre meia-noite e meia-noite de amanhã, horário BR)
-        supabase.from('orders').select('total_amount').eq('tenant_id', user.tenantId)
-          .gte('created_at', todayStart).lt('created_at', tomorrowStart)
-          .eq('is_paid', true).not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
-        supabase.from('orders').select('total_amount').eq('tenant_id', user.tenantId)
-          .gte('created_at', startOfMonthStr)
-          .eq('is_paid', true).not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
-        supabase.from('orders').select('total_amount').eq('tenant_id', user.tenantId)
-          .gte('created_at', prevMonthStartStr).lte('created_at', prevMonthEndStr)
-          .eq('is_paid', true).not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
-        supabase.from('orders').select('total_amount, created_at').eq('tenant_id', user.tenantId)
-          .gte('created_at', thirtyDaysAgoStr)
-          .eq('is_paid', true).not('status', 'in', '(cancelled,draft)').eq('is_training', false).eq('is_draft', false),
-        // Folha de pagamento pendente do mês atual (despesa comprometida ainda não paga)
+        supabase.from('fin_cash_flow').select('type,amount,origin')
+          .eq('tenant_id', user.tenantId)
+          .gte('date', monthStartDate),
+        supabase.from('fin_accounts_payable').select('*')
+          .eq('tenant_id', user.tenantId)
+          .in('status', ['pending', 'overdue'])
+          .lte('due_date', sevenDaysLaterStr)
+          .order('due_date'),
+        // Receita auto_sale (vendas recebidas à vista) — hoje
+        supabase.from('fin_cash_flow').select('amount, payment_method_id, payment_methods(name)')
+          .eq('tenant_id', user.tenantId).eq('type', 'income')
+          .eq('origin', 'auto_sale').eq('date', todayStr),
+        // Receita auto_sale — mês atual
+        supabase.from('fin_cash_flow').select('amount, payment_method_id, payment_methods(name)')
+          .eq('tenant_id', user.tenantId).eq('type', 'income')
+          .eq('origin', 'auto_sale')
+          .gte('date', monthStartDate).lte('date', monthEndDate),
+        // Receita auto_sale — mês anterior
+        supabase.from('fin_cash_flow').select('amount')
+          .eq('tenant_id', user.tenantId).eq('type', 'income')
+          .eq('origin', 'auto_sale')
+          .gte('date', prevMonthStartDate).lte('date', prevMonthEndDate),
+        // Receita auto_sale — últimos 30 dias (com date e payment_method pra gráficos)
+        supabase.from('fin_cash_flow').select('amount, payment_method_id, payment_methods(name), date')
+          .eq('tenant_id', user.tenantId).eq('type', 'income')
+          .eq('origin', 'auto_sale').gte('date', thirtyDaysAgoDate),
+        // Apenas contagem de pedidos do mês para ticket médio
+        supabase.from('orders').select('id', { count: 'exact', head: true })
+          .eq('tenant_id', user.tenantId).gte('created_at', startOfMonthStr)
+          .eq('is_paid', true).not('status', 'in', '(cancelled,draft)')
+          .eq('is_training', false).eq('is_draft', false),
+        // Folha de pagamento pendente do mês atual
         supabase.from('hr_payroll').select('net_salary')
           .eq('tenant_id', user.tenantId)
           .eq('reference_month', currentMonthStr)
           .eq('status', 'pending'),
         // Entradas manuais do fluxo de caixa — hoje
         supabase.from('fin_cash_flow').select('amount, payment_method_id, payment_methods(name)')
-          .eq('tenant_id', user.tenantId)
-          .eq('type', 'income')
-          .eq('origin', 'manual')
-          .eq('date', todayStr),
+          .eq('tenant_id', user.tenantId).eq('type', 'income')
+          .eq('origin', 'manual').eq('date', todayStr),
         // Entradas manuais do fluxo de caixa — mês atual
         supabase.from('fin_cash_flow').select('amount, payment_method_id, payment_methods(name)')
-          .eq('tenant_id', user.tenantId)
-          .eq('type', 'income')
-          .eq('origin', 'manual')
-          .gte('date', startOfMonthStr.split('T')[0]),
+          .eq('tenant_id', user.tenantId).eq('type', 'income')
+          .eq('origin', 'manual').gte('date', monthStartDate),
         // Entradas manuais do fluxo de caixa — últimos 30 dias
         supabase.from('fin_cash_flow').select('amount, payment_method_id, payment_methods(name), date')
-          .eq('tenant_id', user.tenantId)
-          .eq('type', 'income')
-          .eq('origin', 'manual')
-          .gte('date', thirtyDaysAgoStr.split('T')[0]),
+          .eq('tenant_id', user.tenantId).eq('type', 'income')
+          .eq('origin', 'manual').gte('date', thirtyDaysAgoDate),
         // Parcelas a receber pendentes nos próximos 7 dias
         supabase.from('fin_receivable_installments').select('amount')
-          .eq('tenant_id', user.tenantId)
-          .eq('status', 'pending')
+          .eq('tenant_id', user.tenantId).eq('status', 'pending')
           .lte('due_date', sevenDaysLaterStr),
       ]);
 
       // Verificar erros críticos e expor mensagem amigável
-      const criticalErrors = [cashFlow, billsVencendo, payments30d, ordersHoje, ordersMes]
+      const criticalErrors = [cashFlow, billsVencendo, payrollPendingMes]
         .filter(r => r.error);
       if (criticalErrors.length > 0) {
         const firstErr = criticalErrors[0].error!;
@@ -708,19 +709,24 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       }
       if (cashFlow.error) console.error('[useFinanceiro] fluxo de caixa:', cashFlow.error.message);
       if (billsVencendo.error) console.error('[useFinanceiro] contas vencendo:', billsVencendo.error.message);
-      if (payments30d.error) console.error('[useFinanceiro] pagamentos 30d:', payments30d.error.message);
+      if (payrollPendingMes.error) console.error('[useFinanceiro] folha pendente:', payrollPendingMes.error.message);
 
-      // Fonte única de verdade: orders.total_amount + entradas manuais do fluxo de caixa
+      // Fonte única de verdade: auto_sale + entradas manuais do fluxo de caixa
       const manualHojeTotal = (manualIncomeHoje.data ?? []).reduce((s, m) => s + Number(m.amount), 0);
       const manualMesTotal = (manualIncomeMes.data ?? []).reduce((s, m) => s + Number(m.amount), 0);
-      const receitaHoje = (ordersHoje.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0) + manualHojeTotal;
-      const receitaMes = (ordersMes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0) + manualMesTotal;
-      const receitaPrevMes = (ordersPrevMes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
+      const receitaHoje = (autoSaleHoje.data ?? []).reduce((s, o) => s + Number(o.amount), 0) + manualHojeTotal;
+      const receitaMes = (autoSaleMes.data ?? []).reduce((s, o) => s + Number(o.amount), 0) + manualMesTotal;
+      const receitaPrevMes = (autoSalePrevMes.data ?? []).reduce((s, o) => s + Number(o.amount), 0);
       const crescimentoMes = receitaPrevMes > 0 ? ((receitaMes - receitaPrevMes) / receitaPrevMes) * 100 : 0;
-      const totalOrdersMes = (ordersMes.data ?? []).length;
+      const totalOrdersMes = (ordersMesCount as any).count;
       const ticketMedio = totalOrdersMes > 0 ? (receitaMes - manualMesTotal) / totalOrdersMes : 0;
 
-      const entradas = (cashFlow.data ?? []).filter(e => e.type === 'income').reduce((s, e) => s + Number(e.amount), 0);
+      // entradas: exclui auto_sale e manual income (já contados em receitaMes)
+      // mantém outras origens de receita (ex: antecipações, estornos, etc.)
+      const entradas = (cashFlow.data ?? [])
+        .filter(e => e.type === 'income' && !['auto_sale', 'manual'].includes((e as any).origin ?? ''))
+        .reduce((s, e) => s + Number(e.amount), 0);
+      // saidas: TODAS as despesas — incluindo manual, auto_card_fee, auto_purchase, auto_bill_payment, auto_payroll
       const saidas = (cashFlow.data ?? []).filter(e => e.type === 'expense').reduce((s, e) => s + Number(e.amount), 0);
       const saldoCaixa = receitaMes + entradas - saidas;
 
@@ -737,42 +743,30 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       // Parcelas a receber pendentes nos próximos 7 dias
       const totalAReceber = (installmentsPendentes.data ?? []).reduce((s, i) => s + Number(i.amount), 0);
 
-      // Receita por forma de pagamento (últimos 30 dias) — payments + entradas manuais do fluxo de caixa
+      // Receita por forma de pagamento (últimos 30 dias) — auto_sale + entradas manuais
       const paymentMap: Record<string, number> = {};
       const colors = ['#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444', '#06b6d4'];
-      (payments30d.data ?? []).forEach((p: Record<string, unknown>) => {
-        const name = (p.payment_methods as Record<string, string> | null)?.name ?? 'Outros';
-        paymentMap[name] = (paymentMap[name] ?? 0) + Number(p.amount);
+      (autoSale30d.data ?? []).forEach((e: Record<string, unknown>) => {
+        const name = (e.payment_methods as Record<string, string> | null)?.name ?? 'Venda Direta';
+        paymentMap[name] = (paymentMap[name] ?? 0) + Number(e.amount);
       });
-      // Entradas manuais do fluxo de caixa por forma de pagamento
       (manualIncome30d.data ?? []).forEach((m: Record<string, unknown>) => {
         const name = (m.payment_methods as Record<string, string> | null)?.name ?? 'Entrada Manual';
         paymentMap[name] = (paymentMap[name] ?? 0) + Number(m.amount);
       });
-      // Adiciona pedidos sem pagamento registrado como "Pagar na Entrega"
-      const totalPago30d = (payments30d.data ?? []).reduce((s, p) => s + Number(p.amount), 0);
-      const totalOrders30d = (orders30d.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
-      const semPagamento30d = Math.max(0, totalOrders30d - totalPago30d);
-      if (semPagamento30d > 0) {
-        paymentMap['Pagar na Entrega'] = semPagamento30d;
-      }
       const receitaPorPagamento = Object.entries(paymentMap).map(([name, value], i) => ({
         name, value, color: colors[i % colors.length],
       }));
 
-      // Receita diária últimos 30 dias — usa orders + entradas manuais do fluxo de caixa
+      // Receita diária últimos 30 dias — auto_sale + entradas manuais agrupados por data
       const dailyMap: Record<string, number> = {};
       for (let i = 29; i >= 0; i--) {
         const d = new Date(nowBR.getTime() - i * 86400000).toISOString().split('T')[0];
         dailyMap[d] = 0;
       }
-      (orders30d.data ?? []).forEach((o: { total_amount: number; created_at: string }) => {
-        // Converter para data no fuso de Brasília
-        const dBR = new Date(new Date(o.created_at).toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
-        const d = `${dBR.getFullYear()}-${String(dBR.getMonth() + 1).padStart(2, '0')}-${String(dBR.getDate()).padStart(2, '0')}`;
-        if (d in dailyMap) dailyMap[d] += Number(o.total_amount);
+      (autoSale30d.data ?? []).forEach((e: { amount: number; date: string }) => {
+        if (e.date in dailyMap) dailyMap[e.date] += Number(e.amount);
       });
-      // Adicionar entradas manuais do fluxo de caixa no dailyMap
       (manualIncome30d.data ?? []).forEach((m: { amount: number; date: string }) => {
         if (m.date in dailyMap) dailyMap[m.date] += Number(m.amount);
       });

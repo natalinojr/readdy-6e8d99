@@ -16,6 +16,8 @@ export interface OpcaoItem {
   nome: string;
   precoAdicional: number;
   ativo: boolean;
+  /** Descrição explicativa da opção (ex: "Pão artesanal com gergelim") */
+  descricao?: string;
   /** ID do insumo do estoque vinculado a esta opção */
   ingredientId?: string | null;
   /** Nome do insumo (cache local) */
@@ -152,6 +154,23 @@ export interface ObservacaoGlobal {
   deleted_at?: string | null;
 }
 
+// ─── Destaques ────────────────────────────────────────────────────────────────
+
+export interface Destaque {
+  id: string;
+  itemId: string;
+  itemNome: string;
+  itemDescricao: string;
+  itemPreco: number;
+  itemFotoUrl: string;
+  itemCategoriaId: string;
+  itemCategoriaNome: string;
+  customPrice?: number | null;
+  customDescription?: string | null;
+  ordem: number;
+  ativo: boolean;
+}
+
 // ─── Ficha Técnica de Combos (combo_ingredients) ─────────────────────────────
 
 /**
@@ -225,6 +244,7 @@ export interface Option {
   tenant_id: string;
   group_id: string;
   name: string;
+  description?: string | null;
   additional_price: number;
   is_active: boolean;
   sort_order: number;

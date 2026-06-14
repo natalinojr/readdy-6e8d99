@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, supabase } from '@/lib/supabase';
 
 const STORAGE_KEY = 'erpos_kiosk_session';
 
@@ -42,10 +42,52 @@ function loadStoredSession(): KioskSession | null {
   }
 }
 
+/**
+ * Injeta a sessão do kiosk no cliente Supabase global.
+ * Isso garante que chamadas como supabase.rpc() incluam o JWT do kiosk,
+ * permitindo que fn_get_full_menu e outras RPCs autentiquem corretamente.
+ */
+async function injectSupabaseSession(accessToken: string, refreshToken: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    if (error || !data?.session) {
+      console.warn('[KioskAuth] injectSupabaseSession: setSession falhou:', error?.message);
+      return false;
+    }
+    console.log('[KioskAuth] Sessão do Supabase atualizada com token do kiosk');
+    return true;
+  } catch (e) {
+    console.warn('[KioskAuth] injectSupabaseSession: exceção:', e);
+    return false;
+  }
+}
+
 export function KioskAuthProvider({ children }: { children: ReactNode }) {
   const [kioskSession, setKioskSession] = useState<KioskSession | null>(loadStoredSession);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Ao montar, só injeta a sessão do kiosk no cliente Supabase se:
+  // 1. A rota atual é /autoatendimento ou /totem/ (rota de kiosk)
+  // 2. Não há um admin logado normalmente (para não sobrescrever a sessão do admin)
+  //
+  // IMPORTANTE: Injetar a sessão kiosk em rotas normais (ex: /configuracoes) sobrescrevia
+  // o JWT do admin com o JWT do kiosk de outra loja, causando erros de 'Unauthorized'
+  // nas RPCs que verificam auth.uid() contra user_tenants.
+  useEffect(() => {
+    const stored = loadStoredSession();
+    if (!stored?.accessToken || !stored?.refreshToken) return;
+
+    // Só injeta automaticamente em rotas de kiosk
+    const pathname = window.location.pathname;
+    const isKioskRoute = pathname.includes('/autoatendimento') || pathname.includes('/totem/');
+    if (isKioskRoute) {
+      injectSupabaseSession(stored.accessToken, stored.refreshToken);
+    }
+  }, []);
 
   const saveSession = useCallback((session: KioskSession) => {
     setKioskSession(session);
@@ -55,6 +97,8 @@ export function KioskAuthProvider({ children }: { children: ReactNode }) {
   const clearKioskSession = useCallback(() => {
     setKioskSession(null);
     localStorage.removeItem(STORAGE_KEY);
+    // Limpa também a sessão do Supabase (logout silencioso)
+    supabase.auth.signOut().catch(() => {});
   }, []);
 
   const authenticateWithToken = useCallback(async (token: string): Promise<boolean> => {
@@ -78,6 +122,15 @@ export function KioskAuthProvider({ children }: { children: ReactNode }) {
       const data = await res.json();
       if (!data.access_token) throw new Error('Resposta inválida do servidor');
 
+      // PRIMEIRO: injeta a sessão no cliente Supabase
+      // Isso garante que quando o CardapioContext chamar fn_get_full_menu,
+      // o JWT do kiosk já estará disponível no cliente Supabase
+      const sessionInjected = await injectSupabaseSession(data.access_token, data.refresh_token);
+      if (!sessionInjected) {
+        console.warn('[KioskAuth] authenticateWithToken: Não conseguiu injetar sessão no Supabase, mas continuando...');
+      }
+
+      // DEPOIS: salva no estado e localStorage (isso dispara o CardapioContext.recarregar)
       const session: KioskSession = {
         accessToken: data.access_token,
         refreshToken: data.refresh_token ?? '',
@@ -114,6 +167,9 @@ export function KioskAuthProvider({ children }: { children: ReactNode }) {
       if (!res.ok) return;
       const data = await res.json();
       if (data.access_token) {
+        // Atualiza também a sessão do Supabase com o novo token
+        injectSupabaseSession(data.access_token, data.refresh_token ?? kioskSession.refreshToken);
+        
         saveSession({
           ...kioskSession,
           accessToken: data.access_token,

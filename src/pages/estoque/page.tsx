@@ -98,8 +98,8 @@ export default function EstoquePage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 md:p-6">
         <div className="max-w-7xl mx-auto space-y-6">
-          {/* Painel de divergência sempre visível */}
-          {tab !== 'validade' && <DivergenciaPanel />}
+          {/* Painel de divergência — só na aba Inventário */}
+          {tab === 'inventario' && <DivergenciaPanel />}
 
           {tab === 'insumos' && <InsumosTab />}
           {tab === 'movimentacoes' && <MovimentacoesTab />}

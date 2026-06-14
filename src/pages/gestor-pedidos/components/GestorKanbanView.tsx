@@ -1,18 +1,20 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade } from '@/types/kds';
 import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
-import { printHTML, sendToPrinter } from '@/lib/printUtils';
+import { sendToPrinter } from '@/lib/printUtils';
 import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
 
 interface Props {
   pedidos: KDSPedido[];
   onAvancar: (pedidoId: string) => void;
+  onEmRota: (pedidoId: string) => void;
   onEntregar: (pedidoId: string) => void;
   onMudarOperador: (pedidoId: string, operador: string) => void;
   onCancelar: (pedidoId: string) => void;
   onOpenDetail: (pedidoId: string) => void;
   onAvancarUnidade?: (pedidoId: string, itemId: string, unidadeId: string, novoStatus: KDSItemStatus) => void;
   onEntregarUnidade?: (pedidoId: string, itemId: string, unidadeId: string) => void;
+  onEntregarItem?: (pedidoId: string, itemId: string) => void;
   operadorAtual?: string;
   elapsed: number;
   filtroEstacao?: string;
@@ -51,6 +53,16 @@ const STATUS_COLS = [
     emptyText: 'Nenhum pronto ainda',
   },
   {
+    key: 'em_rota' as const,
+    label: 'Em Rota',
+    icon: 'ri-bike-line',
+    cor: 'text-sky-700',
+    bg: 'bg-sky-50',
+    border: 'border-sky-200',
+    badge: 'bg-sky-500 text-white',
+    emptyText: 'Nenhum pedido em rota',
+  },
+  {
     key: 'entregue' as const,
     label: 'Entregues',
     icon: 'ri-check-double-line',
@@ -65,10 +77,17 @@ const STATUS_COLS = [
 const ORIGEM_LABELS: Record<string, { label: string; cor: string }> = {
   caixa:           { label: 'Caixa',    cor: 'bg-violet-100 text-violet-700 border border-violet-200' },
   garcom:          { label: 'Garçom',   cor: 'bg-sky-100 text-sky-700 border border-sky-200' },
-  autoatendimento: { label: 'Kiosk',    cor: 'bg-pink-100 text-pink-700 border border-pink-200' },
+  autoatendimento: { label: 'Autoatendimento',    cor: 'bg-pink-100 text-pink-700 border border-pink-200' },
   mesa_qr:         { label: 'QR Code',  cor: 'bg-teal-100 text-teal-700 border border-teal-200' },
-  mesa:            { label: 'Mesa QR',  cor: 'bg-teal-100 text-teal-700 border border-teal-200' },
+  mesa:            { label: 'QR CODE',  cor: 'bg-teal-100 text-teal-700 border border-teal-200' },
   delivery:        { label: 'Delivery', cor: 'bg-orange-100 text-orange-700 border border-orange-200' },
+};
+
+const PLATFORM_LABELS: Record<string, { label: string; cor: string }> = {
+  propria: { label: 'Própria', cor: 'bg-orange-100 text-orange-700 border border-orange-200' },
+  ifood: { label: 'iFood', cor: 'bg-red-100 text-red-700 border border-red-200' },
+  uber: { label: 'Uber Eats', cor: 'bg-emerald-100 text-emerald-700 border border-emerald-200' },
+  rappi: { label: 'Rappi', cor: 'bg-purple-100 text-purple-700 border border-purple-200' },
 };
 
 function elapsedStr(criadoEm: number): string {
@@ -85,6 +104,7 @@ function elapsedMinutes(criadoEm: number): number {
 
 function timerColor(criadoEm: number, status: string): string {
   if (status === 'entregue') return 'text-zinc-400';
+  if (status === 'em_rota') return 'text-sky-600 font-semibold';
   const m = elapsedMinutes(criadoEm);
   if (m > 20) return 'text-red-500 font-black animate-pulse';
   if (m > 10) return 'text-amber-500 font-bold';
@@ -92,7 +112,7 @@ function timerColor(criadoEm: number, status: string): string {
 }
 
 function urgencyBorder(criadoEm: number, status: string): string {
-  if (status === 'entregue' || status === 'pronto') return '';
+  if (status === 'entregue' || status === 'pronto' || status === 'em_rota') return '';
   const m = elapsedMinutes(criadoEm);
   if (m > 20) return 'border-red-400 ring-1 ring-red-200';
   if (m > 10) return 'border-amber-300';
@@ -102,11 +122,12 @@ function urgencyBorder(criadoEm: number, status: string): string {
 function destinoLabel(p: KDSPedido): string {
   if (p.destino === 'mesa') {
     const base = `Mesa ${p.mesaNumero}`;
-    return p.nomeCliente ? `${base} · ${p.nomeCliente}` : base;
+    const label = p.nomeCliente ? `${base} · ${p.nomeCliente}` : base;
+    return p.participantName ? `${label} · ${p.participantName}` : label;
   }
   if (p.destino === 'nome' && p.nomeCliente) return p.nomeCliente;
   if (p.destino === 'senha' && p.senha) return `Senha ${p.senha}`;
-  if (p.destino === 'delivery' && p.nomeCliente) return `Delivery · ${p.nomeCliente}`;
+  if (p.destino === 'delivery' && p.nomeCliente) return p.nomeCliente;
   if (p.destino === 'delivery') return 'Delivery';
   return 'Balcão';
 }
@@ -187,12 +208,14 @@ function ItemUnidadesRow({
 interface CardProps {
   pedido: KDSPedido;
   onAvancar: () => void;
+  onEmRota: () => void;
   onEntregar: () => void;
   onMudarOperador: (operador: string) => void;
   onCancelar: () => void;
   onOpenDetail: () => void;
   onAvancarUnidade?: (itemId: string, unidadeId: string, novoStatus: KDSItemStatus) => void;
   onEntregarUnidade?: (itemId: string, unidadeId: string) => void;
+  onEntregarItem?: (itemId: string) => void;
   operadorAtual?: string;
   tick: number;
   filtroEstacao?: string;
@@ -202,30 +225,50 @@ interface CardProps {
 function GestorCard({
   pedido,
   onAvancar,
+  onEmRota,
   onEntregar,
   onCancelar,
   onOpenDetail,
   onAvancarUnidade,
   onEntregarUnidade,
+  onEntregarItem,
   tick,
   filtroEstacao,
   isNew,
 }: CardProps) {
   void tick;
   const [showFicha, setShowFicha] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const origemInfo = ORIGEM_LABELS[pedido.origem] ?? { label: pedido.origem, cor: 'bg-zinc-100 text-zinc-700 border border-zinc-200' };
+  const platformInfo = pedido.deliveryPlatform
+    ? (PLATFORM_LABELS[pedido.deliveryPlatform] ?? { label: pedido.deliveryPlatform, cor: 'bg-zinc-100 text-zinc-700 border border-zinc-200' })
+    : null;
   const temObs = pedido.itens.some((i) => i.observacoes && i.observacoes.length > 0);
   const isCancelled = pedido.isCancelled;
   const isPaid = pedido.isPaid ?? false;
-  // Só mostra ficha técnica se houver pelo menos um item que precisa de preparo
+  const isDelivery = pedido.origem === 'delivery' || pedido.destino === 'delivery';
   const itensComPreparo = pedido.itens.filter((i) => !i.semPreparo && !i.skip_kds);
   const temItemComPreparo = itensComPreparo.length > 0;
-
   const elapsedMin = elapsedMinutes(pedido.criadoEm);
-  const isAtrasado = pedido.status !== 'entregue' && pedido.status !== 'pronto' && elapsedMin > 20;
-  const isAviso = !isAtrasado && pedido.status !== 'entregue' && pedido.status !== 'pronto' && elapsedMin > 10;
+  const isAtrasado = pedido.status !== 'entregue' && pedido.status !== 'pronto' && pedido.status !== 'em_rota' && elapsedMin > 20;
+  const isAviso = !isAtrasado && pedido.status !== 'entregue' && pedido.status !== 'pronto' && pedido.status !== 'em_rota' && elapsedMin > 10;
 
+  const handleWhatsAppMotoboy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const address = pedido.deliveryAddress ?? '';
+    const name = pedido.nomeCliente ?? 'Cliente';
+    const notes = pedido.notes ? `\nObs: ${pedido.notes}` : '';
+    const msg = `🚀 *Entrega para ${name}*\n📍 ${address}${notes}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+  };
 
+  const handleWhatsAppCliente = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const phone = (pedido.customerPhone ?? '').replace(/\D/g, '');
+    if (!phone) return;
+    const msg = `Olá ${pedido.nomeCliente ?? ''}! Seu pedido #${String(pedido.numero).padStart(4, '0')} está ${pedido.status === 'em_rota' ? 'a caminho' : pedido.status === 'pronto' ? 'pronto e saindo para entrega' : pedido.status === 'preparo' ? 'em preparo' : pedido.status === 'entregue' ? 'entregue' : 'recebido'}! 🏍️`;
+    window.open(`https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
 
   const { getImpressoraParaEstacao } = useImpressoras();
 
@@ -236,12 +279,13 @@ function GestorCard({
     const numStr = String(pedido.numero).padStart(4, '0');
     const destLabel = destinoLabel(pedido);
     const garcomLine = pedido.garcomNome ? `<p>Gar&ccedil;om: ${pedido.garcomNome}</p>` : '';
+    const addressLine = pedido.deliveryAddress ? `<p>📍 ${pedido.deliveryAddress}</p>` : '';
     const itensHtml = pedido.itens.map((i) => {
-      const opts = i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => '+ ' + o.opcaoNome).join(', ')}</div>` : '';
+      const opts = i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => `${o.obrigatorio ? '' : '+ '}${o.opcaoNome}`).join(', ')}</div>` : '';
       const obs = i.observacoes?.length ? `<div style="color:red;font-weight:bold;font-size:11px">${i.observacoes.map((o) => '&#9888; ' + o).join('<br/>')}</div>` : '';
       return `<div style="margin:4px 0"><strong>${i.quantidade}x ${i.nome}</strong>${i.categoriaNome ? ` <small>(${i.categoriaNome})</small>` : ''}${opts}${obs}</div>`;
     }).join('');
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Pedido #${numStr}</title><style>body{font-family:monospace;font-size:12px;padding:16px}h2{margin:0 0 4px}hr{border:1px dashed #000}p{margin:2px 0;font-size:11px}</style></head><body><h2>Pedido #${numStr}</h2><p>${destLabel} &mdash; ${origemInfo.label}</p>${garcomLine}${paymentLine}<hr/>${itensHtml}<hr/><small>${new Date().toLocaleString('pt-BR')}</small></body></html>`;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Pedido #${numStr}</title><style>body{font-family:monospace;font-size:12px;padding:16px}h2{margin:0 0 4px}hr{border:1px dashed #000}p{margin:2px 0;font-size:11px}</style></head><body><h2>Pedido #${numStr}</h2><p>${destLabel} &mdash; ${origemInfo.label}</p>${garcomLine}${addressLine}${paymentLine}<hr/>${itensHtml}<hr/><small>${new Date().toLocaleString('pt-BR')}</small></body></html>`;
     const impressora = getImpressoraParaEstacao(PRINTER_KEY_GESTOR_PEDIDOS);
     sendToPrinter(html, impressora);
   };
@@ -322,9 +366,20 @@ function GestorCard({
               <span className="text-sm font-black text-zinc-900 whitespace-nowrap tracking-tight hover:underline">
                 #{String(pedido.numero).padStart(4, '0')}
               </span>
-              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${origemInfo.cor}`}>
-                {origemInfo.label}
-              </span>
+              {isDelivery ? (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 bg-orange-100 text-orange-700 border border-orange-200">
+                  <i className="ri-motorbike-line text-[8px] mr-0.5" />Delivery
+                </span>
+              ) : (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${origemInfo.cor}`}>
+                  {origemInfo.label}
+                </span>
+              )}
+              {platformInfo && (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${platformInfo.cor}`}>
+                  <i className="ri-bike-line text-[8px] mr-0.5" />{platformInfo.label}
+                </span>
+              )}
               {temObs && (
                 <span className="flex items-center gap-0.5 text-[10px] font-black text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full border border-amber-300 flex-shrink-0">
                   <i className="ri-alert-fill text-[9px]" />OBS
@@ -348,16 +403,7 @@ function GestorCard({
                   <i className="ri-clipboard-line text-xs" />
                 </button>
               )}
-              {/* Botão cancelar — só para não-cancelados e não-entregues */}
-              {!isCancelled && pedido.status !== 'entregue' && (
-                <button
-                  onClick={onCancelar}
-                  title="Cancelar pedido"
-                  className="w-6 h-6 flex items-center justify-center rounded-lg bg-zinc-100 hover:bg-red-50 hover:border hover:border-red-200 text-zinc-400 hover:text-red-500 cursor-pointer transition-colors"
-                >
-                  <i className="ri-close-circle-line text-xs" />
-                </button>
-              )}
+
               <span className={`text-xs tabular-nums ml-0.5 ${timerColor(pedido.criadoEm, pedido.status)}`}>
                 {elapsedStr(pedido.criadoEm)}
               </span>
@@ -380,7 +426,76 @@ function GestorCard({
             )}
           </div>
 
-          {/* Pagamento */}
+          {/* Delivery address + WhatsApp */}
+          {isDelivery && pedido.deliveryAddress && (
+            <div className="border-t border-zinc-50 pt-2">
+              <div className="flex items-start gap-1.5">
+                <i className="ri-map-pin-line text-zinc-400 text-xs mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className={`text-[11px] text-zinc-600 leading-snug ${!expanded && pedido.deliveryAddress.length > 60 ? 'line-clamp-1' : ''}`}>
+                    {pedido.deliveryAddress}
+                  </p>
+                  {pedido.deliveryAddress.length > 60 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+                      className="text-[9px] text-orange-500 font-bold hover:underline cursor-pointer mt-0.5"
+                    >
+                      {expanded ? 'Mostrar menos' : 'Ver endereço completo'}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {pedido.notes && (
+                <div className="flex items-start gap-1.5 mt-1">
+                  <i className="ri-sticky-note-line text-zinc-300 text-xs mt-0.5 flex-shrink-0" />
+                  <p className="text-[10px] text-zinc-500 italic">{pedido.notes}</p>
+                </div>
+              )}
+              <div className="flex items-center gap-1.5 mt-2">
+                <button
+                  onClick={handleWhatsAppMotoboy}
+                  className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
+                  title="Compartilhar endereço no WhatsApp"
+                >
+                  <i className="ri-whatsapp-line text-xs" />
+                  Motoboy
+                </button>
+                {pedido.customerPhone && (
+                  <button
+                    onClick={handleWhatsAppCliente}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-sky-500 hover:bg-sky-600 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
+                    title="Enviar mensagem ao cliente"
+                  >
+                    <i className="ri-whatsapp-line text-xs" />
+                    Cliente
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Participante do QR Code */}
+          {pedido.participantToken && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {pedido.mesaNumero != null && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 border border-violet-300 text-[10px] font-black text-violet-800">
+                  <i className="ri-table-line text-[9px]" />
+                  Mesa {pedido.mesaNumero}
+                </span>
+              )}
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[10px] font-black text-violet-700">
+                <i className="ri-qr-code-line text-[9px]" />
+                Senha {pedido.participantToken}
+              </span>
+              {pedido.participantName && (
+                <span className="text-[10px] font-semibold text-zinc-600 truncate">
+                  {pedido.participantName}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Pagamento + delivery fee */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
               isPaid
@@ -394,7 +509,13 @@ function GestorCard({
                 <i className="ri-wallet-3-line text-[8px]" />{pedido.paymentMethodName}
               </span>
             )}
-            {pedido.origem === 'autoatendimento' && pedido.totalAmount > 0 && (
+            {(pedido.deliveryFee ?? 0) > 0 && (
+              <span className="flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
+                <i className="ri-bike-line text-[8px]" />
+                Taxa R$ {(pedido.deliveryFee ?? 0).toFixed(2)}
+              </span>
+            )}
+            {pedido.totalAmount > 0 && (
               <span className="flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
                 <i className="ri-money-dollar-circle-line text-[8px]" />
                 {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(pedido.totalAmount)}
@@ -433,15 +554,34 @@ function GestorCard({
                         <span className={`text-xs font-semibold flex-1 min-w-0 truncate ${isSkip ? 'text-zinc-400' : 'text-zinc-800'}`}>
                           {item.nome}
                         </span>
-                        {isSkip ? (
+                        {item.status === 'entregue' && (
+                          <span className="flex items-center gap-0.5 text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 whitespace-nowrap flex-shrink-0">
+                            <i className="ri-check-double-line text-[8px]" />Entregue
+                          </span>
+                        )}
+                        {isSkip && item.status !== 'entregue' && (
                           <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-zinc-100 text-zinc-400 border border-zinc-200 whitespace-nowrap flex-shrink-0">
                             direto
                           </span>
-                        ) : item.categoriaNome ? (
+                        )}
+                        {!isSkip && item.categoriaNome && item.status !== 'entregue' && (
                           <span className="text-[8px] font-semibold px-1 py-0.5 rounded bg-zinc-100 text-zinc-500 border border-zinc-200 whitespace-nowrap flex-shrink-0">
                             {item.categoriaNome}
                           </span>
-                        ) : null}
+                        )}
+                        {/* Botão entregar item individual */}
+                        {!isCancelled && !isDelivery && onEntregarItem && (
+                          (item.status === 'pronto' || (isSkip && item.status !== 'entregue')) && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onEntregarItem(item.id); }}
+                              title="Entregar este item"
+                              className="ml-auto flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-700 text-[9px] font-bold border border-emerald-300 cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
+                            >
+                              <i className="ri-check-line text-[9px]" />
+                              Entregar
+                            </button>
+                          )
+                        )}
                       </div>
 
                       {/* Opções */}
@@ -449,7 +589,7 @@ function GestorCard({
                         <div className="mt-0.5 flex flex-wrap gap-1">
                           {item.opcoes.map((o, i) => (
                             <span key={i} className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200 whitespace-nowrap">
-                              <i className="ri-add-line text-[8px]" />
+                              {!o.obrigatorio && <i className="ri-add-line text-[8px]" />}
                               {o.opcaoNome}
                             </span>
                           ))}
@@ -507,6 +647,24 @@ function GestorCard({
                       Aguardando pagamento — entrega pelo caixa
                     </span>
                   </div>
+                ) : isDelivery ? (
+                  <div className="flex items-center gap-2">
+                    {pedido.deliveryPlatform === 'retirada' ? (
+                      <button
+                        onClick={onEntregar}
+                        className="flex-1 py-2.5 bg-zinc-900 hover:bg-black text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <i className="ri-check-double-line" />Entregar
+                      </button>
+                    ) : (
+                      <button
+                        onClick={onEmRota}
+                        className="flex-1 py-2.5 bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <i className="ri-bike-line" />Em Rota
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   <button
                     onClick={onEntregar}
@@ -515,6 +673,13 @@ function GestorCard({
                     <i className="ri-check-double-line" />Marcar Entregue
                   </button>
                 )
+              ) : pedido.status === 'em_rota' ? (
+                <button
+                  onClick={onEntregar}
+                  className="w-full py-2.5 bg-zinc-900 hover:bg-black text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <i className="ri-check-double-line" />Marcar Entregue
+                </button>
               ) : pedido.status === 'preparo' ? (
                 <button
                   onClick={onAvancar}
@@ -574,12 +739,14 @@ function useNewPedidoIds(pedidos: KDSPedido[]): Set<string> {
 export default function GestorKanbanView({
   pedidos,
   onAvancar,
+  onEmRota,
   onEntregar,
   onMudarOperador,
   onCancelar,
   onOpenDetail,
   onAvancarUnidade,
   onEntregarUnidade,
+  onEntregarItem,
   operadorAtual,
   elapsed: tick,
   filtroEstacao,
@@ -613,12 +780,14 @@ export default function GestorKanbanView({
       key={p.id}
       pedido={p}
       onAvancar={() => onAvancar(p.id)}
+      onEmRota={() => onEmRota(p.id)}
       onEntregar={() => onEntregar(p.id)}
       onMudarOperador={(op) => onMudarOperador(p.id, op)}
       onCancelar={() => onCancelar(p.id)}
       onOpenDetail={() => onOpenDetail(p.id)}
       onAvancarUnidade={(iId, uId, st) => handleAvancarUnidade(p.id, iId, uId, st)}
       onEntregarUnidade={(iId, uId) => handleEntregarUnidade(p.id, iId, uId)}
+      onEntregarItem={(iId) => onEntregarItem?.(p.id, iId)}
       operadorAtual={operadorAtual}
       tick={tick}
       filtroEstacao={filtroEstacao}

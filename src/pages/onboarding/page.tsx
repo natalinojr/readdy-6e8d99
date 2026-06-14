@@ -80,6 +80,7 @@ export default function OnboardingPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { setMode: setAppMode } = useAppMode();
+  const { reloadUser } = useAuth();
   const { user: loggedUser } = useAuth();
   const [sessionUserName, setSessionUserName] = useState('');
   const [sessionUserEmail, setSessionUserEmail] = useState('');
@@ -96,6 +97,8 @@ export default function OnboardingPage() {
         '';
       setSessionUserName(nome);
       setSessionUserEmail(u.email ?? '');
+    }).catch(() => {
+      // Silencioso - se falhar, usa os valores vazios padrão
     });
   }, []);
 
@@ -227,6 +230,7 @@ export default function OnboardingPage() {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.setItem('erpos_onboarding_done', 'true');
       localStorage.setItem('erpos_loja_nome', state.loja.nomeLoja);
+      await reloadUser();
       setAppMode('modulos');
       navigate('/modulos', { replace: true });
     } catch (err) {

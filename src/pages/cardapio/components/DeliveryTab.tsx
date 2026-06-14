@@ -56,7 +56,7 @@ export default function DeliveryTab({ config, precoBase, slaBase, descricaoBase,
             <div className="w-5 h-5 flex items-center justify-center">
               <i className="ri-e-bike-2-line text-orange-500 text-base" />
             </div>
-            <p className="text-sm font-semibold text-gray-800">Disponível no Delivery</p>
+            <p className="text-sm font-semibold text-gray-800">Disponível no Delivery Próprio</p>
             {cfg.ativo && (
               <span className="text-[10px] font-bold px-2 py-0.5 bg-orange-100 text-orange-700 border border-orange-200 rounded-full">
                 ATIVO
@@ -64,8 +64,9 @@ export default function DeliveryTab({ config, precoBase, slaBase, descricaoBase,
             )}
           </div>
           <p className="text-xs text-gray-500 mt-0.5">
-            Ative para que este item apareça no cardápio de delivery. Você pode definir
-            preço, quantidade, embalagem e ficha técnica <strong>diferentes</strong> do cardápio presencial.
+            Ative para que este item apareça no <strong>cardápio do delivery próprio</strong> (link de pedidos
+            do seu restaurante). Desmarque para esconder itens que não podem ser entregues.
+            Preço, embalagem e ficha técnica podem ser diferentes do cardápio presencial.
           </p>
         </div>
         <button
@@ -235,9 +236,9 @@ export default function DeliveryTab({ config, precoBase, slaBase, descricaoBase,
           <div className="w-14 h-14 flex items-center justify-center mx-auto mb-3 bg-gray-50 rounded-2xl border border-gray-100">
             <i className="ri-e-bike-2-line text-3xl" />
           </div>
-          <p className="text-sm text-gray-400 font-medium">Item não disponível no delivery</p>
+          <p className="text-sm text-gray-400 font-medium">Item oculto no delivery próprio</p>
           <p className="text-xs text-gray-300 mt-1">
-            Ative acima para definir preço, embalagem e ficha técnica para entrega.
+            Ative acima para liberar este item no cardápio de delivery próprio.
           </p>
         </div>
       )}

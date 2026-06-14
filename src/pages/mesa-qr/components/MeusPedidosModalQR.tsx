@@ -1,9 +1,6 @@
-import { useState, useEffect } from 'react';
-import { X, ReceiptText, ChevronDown, ChevronUp } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
-
-const fmt = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+function formatMoney(v: number) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+}
 
 interface ItemPedido {
   id: string;
@@ -25,146 +22,112 @@ interface Pedido {
   created_at: string;
 }
 
-interface MeusPedidosModalQRProps {
+interface Props {
   participantId: string;
   participantName: string;
   tenantId: string;
   onClose: () => void;
 }
 
-export default function MeusPedidosModalQR({
-  participantId,
-  participantName,
-  tenantId,
-  onClose,
-}: MeusPedidosModalQRProps) {
+const STATUS_LABELS: Record<string, string> = {
+  new: 'Aguardando',
+  preparing: 'Em preparo',
+  ready: 'Pronto',
+  delivered: 'Entregue',
+  cancelled: 'Cancelado',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  new: 'text-zinc-400 bg-zinc-100',
+  preparing: 'text-amber-600 bg-amber-100',
+  ready: 'text-emerald-600 bg-emerald-100',
+  delivered: 'text-zinc-400 bg-zinc-50',
+  cancelled: 'text-red-500 bg-red-50',
+};
+
+export default function MeusPedidosModalQR(props: Props) {
+  const participantId = props.participantId;
+  const participantName = props.participantName;
+  const onClose = props.onClose;
+
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const buscarPedidos = async () => {
+  useEffect(function () {
+    let cancelled = false;
+
+    async function buscarPedidos() {
       setCarregando(true);
+      const url = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '') + '/functions/v1/mesa-write';
       try {
-        const { data: orders } = await supabase
-          .from('orders')
-          .select('id, number, total_amount, subtotal, created_at')
-          .eq('participant_id', participantId)
-          .eq('tenant_id', tenantId)
-          .neq('status', 'cancelled')
-          .order('created_at', { ascending: true });
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'get_meus_pedidos', participant_id: participantId }),
+        });
+        const result = await res.json();
+        if (cancelled) return;
 
-        if (!orders?.length) {
-          setPedidos([]);
-          setCarregando(false);
-          return;
-        }
-
-        const pedidosComItens: Pedido[] = await Promise.all(
-          orders.map(async (order) => {
-            const { data: items } = await supabase
-              .from('order_items')
-              .select('id, item_name, item_price, quantity, notes, status')
-              .eq('order_id', order.id)
-              .order('created_at', { ascending: true });
-
-            if (!items?.length) {
+        const orders = result.data || [];
+        const pedidosFormatados: Pedido[] = orders.map(function (order: any) {
+          return {
+            id: order.id,
+            number: order.number ? order.number.slice(-3) : '#' + order.id.slice(0, 8),
+            total_amount: order.total_amount || 0,
+            subtotal: order.subtotal || 0,
+            created_at: order.created_at,
+            items: (order.order_items || []).map(function (it: any) {
               return {
-                id: order.id,
-                number: order.number ?? `#${order.id.slice(0, 8)}`,
-                total_amount: order.total_amount ?? 0,
-                subtotal: order.subtotal ?? 0,
-                created_at: order.created_at,
-                items: [],
-              };
-            }
-
-            const itemIds = items.map((it) => it.id);
-
-            const { data: options } = await supabase
-              .from('order_item_options')
-              .select('order_item_id, option_name, group_name, additional_price')
-              .in('order_item_id', itemIds);
-
-            const { data: observations } = await supabase
-              .from('order_item_observations')
-              .select('order_item_id, text, is_checked')
-              .in('order_item_id', itemIds);
-
-            const optionsMap: Record<string, ItemPedido['options']> = {};
-            (options ?? []).forEach((opt) => {
-              if (!optionsMap[opt.order_item_id]) optionsMap[opt.order_item_id] = [];
-              optionsMap[opt.order_item_id].push({
-                option_name: opt.option_name,
-                group_name: opt.group_name,
-                additional_price: opt.additional_price ?? 0,
-              });
-            });
-
-            const obsMap: Record<string, ItemPedido['observations']> = {};
-            (observations ?? []).forEach((obs) => {
-              if (!obsMap[obs.order_item_id]) obsMap[obs.order_item_id] = [];
-              obsMap[obs.order_item_id].push({
-                text: obs.text,
-                is_checked: obs.is_checked ?? true,
-              });
-            });
-
-            return {
-              id: order.id,
-              number: order.number ?? `#${order.id.slice(0, 8)}`,
-              total_amount: order.total_amount ?? 0,
-              subtotal: order.subtotal ?? 0,
-              created_at: order.created_at,
-              items: items.map((it) => ({
                 id: it.id,
                 item_name: it.item_name,
-                item_price: it.item_price ?? 0,
-                quantity: it.quantity ?? 1,
+                item_price: it.item_price || 0,
+                quantity: it.quantity || 1,
                 notes: it.notes,
                 status: it.status,
-                options: optionsMap[it.id] ?? [],
-                observations: obsMap[it.id] ?? [],
-              })),
-            };
-          })
-        );
+                options: (it.order_item_options || []).map(function (o: any) {
+                  return {
+                    option_name: o.option_name,
+                    group_name: o.group_name || '',
+                    additional_price: o.additional_price || 0,
+                  };
+                }),
+                observations: (it.order_item_observations || []).map(function (o: any) {
+                  return {
+                    text: o.text,
+                    is_checked: true,
+                  };
+                }),
+              };
+            }),
+          };
+        });
 
-        setPedidos(pedidosComItens);
-        if (pedidosComItens.length > 0) {
-          setExpandedOrderId(pedidosComItens[pedidosComItens.length - 1].id);
+        setPedidos(pedidosFormatados);
+        if (pedidosFormatados.length > 0) {
+          setExpandedOrderId(pedidosFormatados[pedidosFormatados.length - 1].id);
         }
       } catch (e) {
         console.error('[MeusPedidosQR] Erro ao buscar pedidos:', e);
       } finally {
-        setCarregando(false);
+        if (!cancelled) setCarregando(false);
       }
-    };
+    }
 
     buscarPedidos();
-  }, [participantId, tenantId]);
 
-  const totalConta = pedidos.reduce((s, p) => s + p.total_amount, 0);
+    return function () {
+      cancelled = true;
+    };
+  }, [participantId]);
 
-  const toggleExpand = (id: string) => {
-    setExpandedOrderId((prev) => (prev === id ? null : id));
-  };
+  const totalConta = pedidos.reduce(function (s, p) { return s + p.total_amount; }, 0);
 
-  const statusLabel: Record<string, string> = {
-    new: 'Aguardando',
-    preparing: 'Em preparo',
-    ready: 'Pronto',
-    delivered: 'Entregue',
-    cancelled: 'Cancelado',
-  };
-
-  const statusColor: Record<string, string> = {
-    new: 'text-zinc-400 bg-zinc-100',
-    preparing: 'text-amber-600 bg-amber-100',
-    ready: 'text-emerald-600 bg-emerald-100',
-    delivered: 'text-zinc-400 bg-zinc-50',
-    cancelled: 'text-red-500 bg-red-50',
-  };
+  function toggleExpand(id: string) {
+    setExpandedOrderId(function (prev) {
+      return prev === id ? null : id;
+    });
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50">
@@ -173,7 +136,7 @@ export default function MeusPedidosModalQR({
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 flex-shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 flex items-center justify-center bg-amber-100 rounded-xl">
-              <ReceiptText size={18} className="text-amber-600" />
+              <i className="ri-receipt-line text-amber-600 text-base" />
             </div>
             <div>
               <h2 className="text-base font-bold text-zinc-900">Meus Pedidos</h2>
@@ -181,10 +144,11 @@ export default function MeusPedidosModalQR({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="w-8 h-8 flex items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-500 cursor-pointer transition-colors"
           >
-            <X size={16} />
+            <i className="ri-close-line text-base" />
           </button>
         </div>
 
@@ -200,27 +164,27 @@ export default function MeusPedidosModalQR({
           ) : pedidos.length === 0 ? (
             <div className="flex flex-col items-center py-12 text-center">
               <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
-                <ReceiptText size={24} className="text-zinc-300" />
+                <i className="ri-receipt-line text-zinc-300 text-xl" />
               </div>
               <p className="text-sm font-semibold text-zinc-600">Nenhum pedido encontrado</p>
               <p className="text-xs text-zinc-400 mt-1">Seus pedidos enviados aparecerão aqui</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {pedidos.map((pedido) => {
+              {pedidos.map(function (pedido) {
                 const isExpanded = expandedOrderId === pedido.id;
                 const data = new Date(pedido.created_at);
-                const hora = `${String(data.getHours()).padStart(2, '0')}:${String(data.getMinutes()).padStart(2, '0')}`;
+                const hora = String(data.getHours()).padStart(2, '0') + ':' + String(data.getMinutes()).padStart(2, '0');
 
                 return (
                   <div key={pedido.id} className="bg-white border border-zinc-200/80 rounded-2xl overflow-hidden">
-                    {/* Pedido header - clicável */}
                     <button
-                      onClick={() => toggleExpand(pedido.id)}
+                      type="button"
+                      onClick={function () { toggleExpand(pedido.id); }}
                       className="w-full flex items-center justify-between px-4 py-3 hover:bg-zinc-50 cursor-pointer transition-colors text-left"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 flex items-center justify-center bg-amber-50 rounded-xl">
+                        <div className="min-w-9 h-9 flex items-center justify-center bg-amber-50 rounded-xl px-2">
                           <span className="text-xs font-black text-amber-600">{pedido.number}</span>
                         </div>
                         <div>
@@ -231,18 +195,17 @@ export default function MeusPedidosModalQR({
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="text-sm font-bold text-zinc-900">{fmt(pedido.total_amount)}</span>
+                        <span className="text-sm font-bold text-zinc-900">{formatMoney(pedido.total_amount)}</span>
                         <div className="w-6 h-6 flex items-center justify-center text-zinc-400">
-                          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          {isExpanded ? <i className="ri-arrow-up-s-line text-sm" /> : <i className="ri-arrow-down-s-line text-sm" />}
                         </div>
                       </div>
                     </button>
 
-                    {/* Itens expandidos */}
-                    {isExpanded && (
+                    {isExpanded ? (
                       <div className="border-t border-zinc-100">
                         <div className="px-4 py-2 divide-y divide-zinc-50">
-                          {pedido.items.map((item) => {
+                          {pedido.items.map(function (item) {
                             const precoTotalItem = item.item_price * item.quantity;
                             return (
                               <div key={item.id} className="py-2.5">
@@ -252,53 +215,54 @@ export default function MeusPedidosModalQR({
                                       <p className="text-xs font-semibold text-zinc-800 truncate">
                                         {item.item_name}
                                       </p>
-                                      <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${statusColor[item.status] ?? 'text-zinc-400 bg-zinc-100'}`}>
-                                        {statusLabel[item.status] ?? item.status}
+                                      <span className={'text-[8px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ' + (STATUS_COLORS[item.status] || 'text-zinc-400 bg-zinc-100')}>
+                                        {STATUS_LABELS[item.status] || item.status}
                                       </span>
                                     </div>
 
-                                    {/* Opções */}
-                                    {item.options.length > 0 && (
+                                    {item.options.length > 0 ? (
                                       <div className="mt-1 flex flex-wrap gap-1">
-                                        {item.options.map((opt, i) => (
-                                          <span
-                                            key={i}
-                                            className="text-[9px] text-zinc-500 bg-zinc-50 px-1.5 py-0.5 rounded-md"
-                                          >
-                                            {opt.option_name}
-                                            {opt.additional_price > 0 && (
-                                              <span className="text-zinc-400 ml-0.5">+{fmt(opt.additional_price)}</span>
-                                            )}
-                                          </span>
-                                        ))}
+                                        {item.options.map(function (opt, i) {
+                                          return (
+                                            <span
+                                              key={i}
+                                              className="text-[9px] text-zinc-500 bg-zinc-50 px-1.5 py-0.5 rounded-md"
+                                            >
+                                              {opt.option_name}
+                                              {opt.additional_price > 0 ? (
+                                                <span className="text-zinc-400 ml-0.5">+{formatMoney(opt.additional_price)}</span>
+                                              ) : null}
+                                            </span>
+                                          );
+                                        })}
                                       </div>
-                                    )}
+                                    ) : null}
 
-                                    {/* Observações */}
-                                    {item.observations.filter((o) => o.is_checked).length > 0 && (
+                                    {item.observations.filter(function (o) { return o.is_checked; }).length > 0 ? (
                                       <div className="mt-1">
                                         {item.observations
-                                          .filter((o) => o.is_checked)
-                                          .map((obs, i) => (
-                                            <p key={i} className="text-[9px] text-amber-600 italic">
-                                              "{obs.text}"
-                                            </p>
-                                          ))}
+                                          .filter(function (o) { return o.is_checked; })
+                                          .map(function (obs, i) {
+                                            return (
+                                              <p key={i} className="text-[9px] text-amber-600 italic">
+                                                "{obs.text}"
+                                              </p>
+                                            );
+                                          })}
                                       </div>
-                                    )}
+                                    ) : null}
 
-                                    {/* Nota livre */}
-                                    {item.notes && (
+                                    {item.notes ? (
                                       <p className="text-[9px] text-zinc-400 italic mt-0.5 truncate">
                                         Obs: {item.notes}
                                       </p>
-                                    )}
+                                    ) : null}
                                   </div>
 
                                   <div className="text-right flex-shrink-0">
-                                    <p className="text-xs font-bold text-zinc-800">{fmt(precoTotalItem)}</p>
+                                    <p className="text-xs font-bold text-zinc-800">{formatMoney(precoTotalItem)}</p>
                                     <p className="text-[9px] text-zinc-400">
-                                      {item.quantity}x {fmt(item.item_price)}
+                                      {item.quantity}x {formatMoney(item.item_price)}
                                     </p>
                                   </div>
                                 </div>
@@ -307,21 +271,20 @@ export default function MeusPedidosModalQR({
                           })}
                         </div>
 
-                        {/* Subtotais do pedido */}
                         <div className="bg-zinc-50/70 px-4 py-2.5 space-y-1 border-t border-zinc-100">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] text-zinc-500">Subtotal do pedido</span>
-                            <span className="text-xs font-semibold text-zinc-700">{fmt(pedido.subtotal)}</span>
+                            <span className="text-xs font-semibold text-zinc-700">{formatMoney(pedido.subtotal)}</span>
                           </div>
-                          {pedido.total_amount !== pedido.subtotal && (
+                          {pedido.total_amount !== pedido.subtotal ? (
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] text-zinc-500">Total do pedido</span>
-                              <span className="text-xs font-bold text-zinc-800">{fmt(pedido.total_amount)}</span>
+                              <span className="text-xs font-bold text-zinc-800">{formatMoney(pedido.total_amount)}</span>
                             </div>
-                          )}
+                          ) : null}
                         </div>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 );
               })}
@@ -336,7 +299,7 @@ export default function MeusPedidosModalQR({
               <p className="text-[10px] text-zinc-400 uppercase tracking-wider">Total da Conta</p>
               <p className="text-[10px] text-zinc-400">{pedidos.length} {pedidos.length === 1 ? 'pedido' : 'pedidos'}</p>
             </div>
-            <span className="text-xl font-black text-amber-600">{fmt(totalConta)}</span>
+            <span className="text-xl font-black text-amber-600">{formatMoney(totalConta)}</span>
           </div>
         </div>
       </div>

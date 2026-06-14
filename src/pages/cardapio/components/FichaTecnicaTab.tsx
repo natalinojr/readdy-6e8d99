@@ -66,7 +66,7 @@ interface FichaLocal {
   /** Unidade base do insumo no estoque */
   baseUnit: string;
   unit_price: number;
-  /** 'ingredient' = insumo do estoque; 'production' = produto semi-acabado */
+  /** 'ingredient' = insumo do estoque; 'production' = produto produzido */
   source: 'ingredient' | 'production';
 }
 
@@ -127,7 +127,7 @@ export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: P
       const mapped: FichaLocal[] = rows.map((r) => {
         const baseUnit = DB_UNIT_MAP[r.ingredient_unit] ?? 'un';
         const rowUnit = DB_UNIT_MAP[r.unit] ?? 'un';
-        // Detecta se é produto de produção (semi-acabado) pelo outputIngredientId
+        // Detecta se é produto produzido pelo outputIngredientId
         const recipeMatch = recipes.find((rec) => rec.outputIngredientId === r.ingredient_id);
         return {
           id: r.id,
@@ -287,7 +287,7 @@ export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: P
   return (
     <div className="space-y-4">
       <p className="text-xs text-zinc-500">
-        Vincule insumos de uso final ou produtos de produção (semi-acabados). O sistema converte automaticamente ao dar baixa no estoque.
+        Vincule insumos de uso final ou produtos produzidos. O sistema converte automaticamente ao dar baixa no estoque.
       </p>
 
       {/* Banner: baixa automática */}
@@ -369,7 +369,7 @@ export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: P
                       <div className="flex items-center gap-1.5">
                         {f.source === 'production' && (
                           <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-bold rounded">
-                            PRODUÇÃO
+                            PRODUZIDO
                           </span>
                         )}
                         <p className="text-xs font-medium text-zinc-700 leading-tight">{f.ingredient_name}</p>
@@ -533,7 +533,7 @@ export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: P
                       className="w-full flex items-center justify-between px-3 py-2 text-sm rounded-lg hover:bg-white cursor-pointer transition-colors text-left"
                     >
                       <div className="flex items-center gap-1.5">
-                        <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-bold rounded">PRODUÇÃO</span>
+                        <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-bold rounded">PRODUZIDO</span>
                         <span className="text-zinc-700 font-medium">{recipe.name}</span>
                       </div>
                       <span className="text-xs text-zinc-400">

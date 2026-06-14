@@ -25,7 +25,7 @@ function duracaoStr(criadoEm: number, prontoEm?: number): string {
 
 function destinoLabel(p: KDSPedido): string {
   if (p.destino === 'mesa') return `Mesa ${p.mesaNumero}${p.nomeCliente ? ` · ${p.nomeCliente}` : ''}`;
-  if (p.destino === 'delivery' && p.nomeCliente) return `Delivery · ${p.nomeCliente}`;
+  if (p.destino === 'delivery' && p.nomeCliente) return p.nomeCliente;
   if (p.destino === 'delivery') return 'Delivery';
   if (p.nomeCliente) return p.nomeCliente;
   if (p.senha) return `Senha ${p.senha}`;
@@ -35,7 +35,7 @@ function destinoLabel(p: KDSPedido): string {
 const ORIGEM_LABELS: Record<string, { label: string; cor: string }> = {
   caixa:           { label: 'Caixa',    cor: 'bg-violet-100 text-violet-700' },
   garcom:          { label: 'Garçom',   cor: 'bg-sky-100 text-sky-700' },
-  autoatendimento: { label: 'Kiosk',    cor: 'bg-pink-100 text-pink-700' },
+  autoatendimento: { label: 'Autoatendimento',    cor: 'bg-pink-100 text-pink-700' },
   mesa_qr:         { label: 'QR',       cor: 'bg-teal-100 text-teal-700' },
   mesa:            { label: 'QR',       cor: 'bg-teal-100 text-teal-700' },
   delivery:        { label: 'Delivery', cor: 'bg-orange-100 text-orange-700' },
@@ -236,9 +236,15 @@ export default function HistoricoDrawer({ pedidos, onClose, onOpenDetail }: Prop
                         <span className="text-xs font-black text-zinc-800 tracking-tight">
                           #{String(p.numero).padStart(4, '0')}
                         </span>
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${origemInfo.cor}`}>
-                          {origemInfo.label}
-                        </span>
+                        {(p.origem === 'delivery' || p.destino === 'delivery') ? (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">
+                            <i className="ri-motorbike-line text-[7px] mr-0.5" />Delivery
+                          </span>
+                        ) : (
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${origemInfo.cor}`}>
+                            {origemInfo.label}
+                          </span>
+                        )}
                         <span className="text-xs font-medium text-zinc-600 truncate flex-1 min-w-0">
                           {destinoLabel(p)}
                         </span>

@@ -30,6 +30,7 @@ interface DBTable {
   status: string | null;
   qr_token: string | null;
   is_active: boolean;
+  is_universal?: boolean;
   observation: string | null;
 }
 
@@ -186,30 +187,5 @@ export function useTablesConfig() {
     return { success: true, error: null };
   }, [user?.tenantId]);
 
-  const regenerarQR = useCallback(async (id: string): Promise<{ success: boolean; error: string | null }> => {
-    if (!user?.tenantId) return { success: false, error: 'Usuário sem tenant' };
-
-    const { data, error: err } = await invokeWithAuth<{ success: boolean; data?: DBTable; error?: string }>('config-write', {
-      body: {
-        action: 'regenerate_qr',
-        tenant_id: user.tenantId,
-        id,
-      },
-    });
-
-    if (err || !data?.success || !data.data) {
-      return { success: false, error: err?.message || data?.error || 'Erro ao regenerar QR' };
-    }
-
-    // Atualiza o estado local com o novo qr_token
-    const novoToken = data.data.qr_token;
-    if (novoToken) {
-      setMesas(prev => prev.map(m => m.id === id ? { ...m, qrCode: novoToken } : m));
-    }
-
-    notifyReload(CHANNEL);
-    return { success: true, error: null };
-  }, [user?.tenantId]);
-
-  return { mesas, loading, error, load, criarMesa, editarMesa, excluirMesa, regenerarQR };
+  return { mesas, loading, error, load, criarMesa, editarMesa, excluirMesa };
 }

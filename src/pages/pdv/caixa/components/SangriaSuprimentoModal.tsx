@@ -48,7 +48,7 @@ export default function SangriaSuprimentoModal({
   const [salvando, setSalvando] = useState(false);
 
   const motivoFinal = (): string => {
-    if (tipo === 'suprimento') return motivoAdicao;
+    if (tipo === 'suprimento') return motivoAdicao === 'Outros' ? motivoOutro : motivoAdicao;
     if (motivoRetirada === 'Fornecedor') return nomeFornecedor ? `Fornecedor: ${nomeFornecedor}` : '';
     if (motivoRetirada === 'Freelancer') return nomeFreelancer ? `Freelancer: ${nomeFreelancer}` : '';
     if (motivoRetirada === 'Outro') return motivoOutro;
@@ -62,6 +62,7 @@ export default function SangriaSuprimentoModal({
     if (!mf.trim()) { setErro('Informe o motivo da movimentação.'); return; }
     if (motivoRetirada === 'Fornecedor' && !nomeFornecedor.trim()) { setErro('Informe o nome do fornecedor.'); return; }
     if (motivoRetirada === 'Freelancer' && !nomeFreelancer.trim()) { setErro('Informe o nome do freelancer.'); return; }
+    if (tipo === 'suprimento' && motivoAdicao === 'Outros' && !motivoOutro.trim()) { setErro('Descreva o motivo da movimentação.'); return; }
 
     setSalvando(true);
     const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -235,14 +236,21 @@ export default function SangriaSuprimentoModal({
                 )}
               </>
             ) : (
-              <div className="grid grid-cols-2 gap-1.5">
-                {(['Troco', 'Outros'] as MotivoAdicao[]).map((m) => (
-                  <button key={m} onClick={() => { setMotivoAdicao(m); setErro(''); }}
-                    className={`py-2.5 px-3 text-xs font-medium rounded-lg cursor-pointer transition-colors text-center ${motivoAdicao === m ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-                    {m}
-                  </button>
-                ))}
-              </div>
+              <>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(['Troco', 'Outros'] as MotivoAdicao[]).map((m) => (
+                    <button key={m} onClick={() => { setMotivoAdicao(m); setErro(''); }}
+                      className={`py-2.5 px-3 text-xs font-medium rounded-lg cursor-pointer transition-colors text-center ${motivoAdicao === m ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
+                {motivoAdicao === 'Outros' && (
+                  <input value={motivoOutro} onChange={(e) => setMotivoOutro(e.target.value)}
+                    placeholder="Descreva o motivo..."
+                    className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400 mt-3" />
+                )}
+              </>
             )}
           </div>
 

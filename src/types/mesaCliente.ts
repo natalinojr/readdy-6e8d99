@@ -7,6 +7,10 @@ export interface ItemCardapioPublico {
   categoria: string;
   slaMinutos: number;
   popular?: boolean;
+  /** Quando true, o item tem promoção ativa (preco já reflete o promocional) */
+  temPromocao?: boolean;
+  /** Preço original antes da promoção (null se não tem promoção ativa) */
+  precoOriginal?: number | null;
   /** Quando true, o item não passa pela cozinha e vai direto para pronto */
   semPreparo?: boolean;
   /** Quando true, este item é um combo (não tem grupos de opções) */
@@ -18,8 +22,15 @@ export interface ItemCardapioPublico {
   opcoes?: {
     grupo: string;
     obrigatorio: boolean;
-    itens: { nome: string; precoAdicional: number }[];
+    itens: { id?: string; nome: string; precoAdicional: number }[];
   }[];
+}
+
+export interface OpcaoSelecionadaCliente {
+  id?: string;
+  nome: string;
+  precoAdicional: number;
+  grupoNome: string;
 }
 
 export interface ItemPedidoCliente {
@@ -28,7 +39,7 @@ export interface ItemPedidoCliente {
   categoria?: string;
   preco: number;
   quantidade: number;
-  opcoesSelecionadas: string[];
+  opcoesSelecionadas: OpcaoSelecionadaCliente[];
   observacao: string;
   clienteNome: string;
   enviadoKds: boolean;

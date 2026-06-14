@@ -119,10 +119,19 @@ interface OpcoesKioskProps {
   onClose: () => void;
 }
 
+interface OpcaoTrackKiosk {
+  id?: string;
+  nome: string;
+  precoAdicional: number;
+  grupoNome: string;
+  obrigatorio?: boolean;
+}
+
 function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
   const [qtd, setQtd] = useState(1);
-  const [selecionadas, setSelecionadas] = useState<Record<string, string[]>>({});
-  const [obs, setObs] = useState('');
+  const [selecionadas, setSelecionadas] = useState<Record<string, OpcaoTrackKiosk[]>>({});
+  const [obsLivre, setObsLivre] = useState('');
+  const [obsTags, setObsTags] = useState<string[]>([]);
   const [erro, setErro] = useState('');
   const [mostrarScrollHint, setMostrarScrollHint] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -139,22 +148,16 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
     return () => el.removeEventListener('scroll', onScroll);
   }, [item]);
 
-  const toggleOpcao = (grupo: string, opcao: string, obrigatorio: boolean) => {
+  const toggleOpcao = (grupo: string, opcao: OpcaoTrackKiosk, obrigatorio: boolean) => {
     setSelecionadas((prev) => {
       const atual = prev[grupo] ?? [];
       if (obrigatorio) return { ...prev, [grupo]: [opcao] };
-      if (atual.includes(opcao)) return { ...prev, [grupo]: atual.filter((o) => o !== opcao) };
+      if (atual.some((o) => o.nome === opcao.nome)) return { ...prev, [grupo]: atual.filter((o) => o.nome !== opcao.nome) };
       return { ...prev, [grupo]: [...atual, opcao] };
     });
   };
 
-  const totalOpcoes = Object.entries(selecionadas).reduce((sum, [grupo, selected]) => {
-    const grp = item.opcoes?.find((g) => g.grupo === grupo);
-    return sum + selected.reduce((s, o) => {
-      const it = grp?.itens.find((i) => i.nome === o);
-      return s + (it?.precoAdicional ?? 0);
-    }, 0);
-  }, 0);
+  const totalOpcoes = Object.values(selecionadas).flat().reduce((sum, o) => sum + o.precoAdicional, 0);
 
   const total = (item.preco + totalOpcoes) * qtd;
 
@@ -163,7 +166,12 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
     for (const g of obrigatorios) {
       if (!selecionadas[g.grupo]?.length) { setErro(`Escolha: ${g.grupo}`); return; }
     }
-    onAdicionar({ itemId: item.id, nome: item.nome, categoria: item.categoria, preco: item.preco + totalOpcoes, quantidade: qtd, opcoesSelecionadas: Object.values(selecionadas).flat(), observacao: obs, clienteNome: 'Kiosk', semPreparo: item.semPreparo ?? false, stationId: item.stationId ?? null });
+    // Combina observações pré-configuradas + texto livre
+    const obsCompleta = [
+      ...obsTags,
+      ...(obsLivre.trim() ? [obsLivre.trim()] : []),
+    ].join('; ');
+    onAdicionar({ itemId: item.id, nome: item.nome, categoria: item.categoria, preco: item.preco + totalOpcoes, quantidade: qtd, opcoesSelecionadas: Object.values(selecionadas).flat(), observacao: obsCompleta, clienteNome: 'Kiosk', semPreparo: item.semPreparo ?? false, stationId: item.stationId ?? null });
     onClose();
   };
 
@@ -189,6 +197,15 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
             <div className="absolute bottom-3 left-5">
               <h2 className="text-2xl font-black text-white">{item.nome}</h2>
               <p className="text-zinc-400 text-base">{item.descricao}</p>
+              {item.temPromocao && item.precoOriginal != null ? (
+                <p className="text-zinc-500 text-sm mt-1">
+                  <span className="line-through text-zinc-600">{fmt(item.precoOriginal)}</span>
+                  {' '}
+                  <span className="text-red-400 font-bold">{fmt(item.preco)}</span>
+                </p>
+              ) : (
+                <p className="text-zinc-400 text-sm mt-1 font-bold">{fmt(item.preco)}</p>
+              )}
             </div>
           </div>
 
@@ -201,9 +218,10 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   {grupo.itens.map((opcao) => {
-                    const sel = selecionadas[grupo.grupo]?.includes(opcao.nome);
+                    const sel = selecionadas[grupo.grupo]?.some((o) => o.nome === opcao.nome);
+                    const opTrack: OpcaoTrackKiosk = { id: opcao.id, nome: opcao.nome, precoAdicional: opcao.precoAdicional, grupoNome: grupo.grupo, obrigatorio: grupo.obrigatorio };
                     return (
-                      <button key={opcao.nome} onClick={() => toggleOpcao(grupo.grupo, opcao.nome, grupo.obrigatorio)}
+                      <button key={opcao.nome} onClick={() => toggleOpcao(grupo.grupo, opTrack, grupo.obrigatorio)}
                         className={`flex items-center justify-between px-4 py-4 rounded-xl border-2 transition-all cursor-pointer ${sel ? 'border-amber-500 bg-amber-500/10' : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'}`}
                       >
                         <div className="flex items-center gap-3">
@@ -225,17 +243,16 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
                 <h3 className="text-lg font-bold text-white mb-2">Observações</h3>
                 <div className="flex flex-wrap gap-2">
                   {item.observacoesPadrao.map((obsPadrao) => {
-                    const ativa = obs.split('; ').filter(Boolean).includes(obsPadrao);
+                    const ativa = obsTags.includes(obsPadrao);
                     return (
                       <button
                         key={obsPadrao}
                         onClick={() => {
-                          setObs((prev) => {
-                            const partes = prev.split('; ').filter(Boolean);
-                            if (partes.includes(obsPadrao)) {
-                              return partes.filter((p) => p !== obsPadrao).join('; ');
+                          setObsTags((prev) => {
+                            if (prev.includes(obsPadrao)) {
+                              return prev.filter((p) => p !== obsPadrao);
                             }
-                            return prev ? `${prev}; ${obsPadrao}` : obsPadrao;
+                            return [...prev, obsPadrao];
                           });
                         }}
                         className={`px-4 py-2 rounded-lg text-base font-semibold transition-all cursor-pointer whitespace-nowrap ${
@@ -256,14 +273,14 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
             {item.observacoesPadrao && item.observacoesPadrao.length > 0 && (
               <div className="border-t border-zinc-800 pt-4">
                 <h3 className="text-base font-bold text-zinc-500 mb-3 uppercase tracking-wider">Outra observação</h3>
-                <TecladoVirtual value={obs} onChange={setObs} />
+                <TecladoVirtual value={obsLivre} onChange={setObsLivre} />
               </div>
             )}
 
             {(!item.observacoesPadrao || item.observacoesPadrao.length === 0) && (
               <div>
                 <h3 className="text-lg font-bold text-white mb-2">Observações (opcional)</h3>
-                <TecladoVirtual value={obs} onChange={setObs} />
+                <TecladoVirtual value={obsLivre} onChange={setObsLivre} />
               </div>
             )}
 
@@ -310,7 +327,7 @@ interface CardapioKioskProps {
 }
 
 export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVerCarrinho }: CardapioKioskProps) {
-  const { itensPublicos, categorias: categoriasCtx } = useCardapio();
+  const { itensPublicos, categorias: categoriasCtx, loading, erroCarregamento, recarregar } = useCardapio();
   const { itensDesabilitadosIds } = useEstoque();
   const { mapaItens: itensSemEstoque } = useItensSemEstoque();
 
@@ -355,114 +372,189 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
 
   return (
     <div className="flex h-full">
-      {/* Sidebar categorias */}
-      <div className="w-56 flex-shrink-0 bg-zinc-950 flex flex-col py-4 gap-1 overflow-y-auto border-r border-zinc-800">
-        {categorias.map((cat) => (
-          <button key={cat} onClick={() => setCategoriaAtiva(cat)}
-            className={`mx-2 px-4 py-6 rounded-2xl text-lg font-bold transition-all cursor-pointer text-left ${categoriaEfetiva === cat ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}>
-            {cat}
-          </button>
-        ))}
-      </div>
-
-      {/* Lista de itens */}
-      <div className="flex-1 overflow-y-auto p-6 pb-32">
-        <div className="flex flex-col gap-4">
-          {itens.map((item) => {
-            const qtd = qtdNoCarrinho(item.id);
-            const esgotado = itensDesabilitadosIds.includes(item.id);
-            const handleClick = () => {
-              const semOpcoes = !item.opcoes || item.opcoes.length === 0;
-              const semObsPreConfiguradas = !item.observacoesPadrao || item.observacoesPadrao.length === 0;
-              if (item.isCombo || (semOpcoes && semObsPreConfiguradas)) {
-                onAdicionar({
-                  itemId: item.id,
-                  nome: item.nome,
-                  categoria: item.categoria,
-                  preco: item.preco,
-                  quantidade: 1,
-                  opcoesSelecionadas: [],
-                  observacao: '',
-                  clienteNome: 'Kiosk',
-                  semPreparo: item.semPreparo ?? false,
-                  stationId: item.stationId ?? null,
-                });
-              } else {
-                setItemModal(item);
-              }
-            };
-            const handleDiminuirClick = (e: React.MouseEvent) => {
-              e.stopPropagation();
-              onDiminuir(item.id);
-            };
-            return (
-              <button
-                key={item.id}
-                onClick={handleClick}
-                disabled={esgotado}
-                className={`flex items-center gap-4 bg-zinc-800 rounded-2xl p-3 text-left transition-all ${esgotado ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-zinc-750 active:scale-[0.99]'}`}
-              >
-                {/* Imagem */}
-                <div className="w-36 h-36 flex-shrink-0 relative rounded-xl overflow-hidden bg-zinc-900">
-                  <ItemImage
-                    src={item.foto}
-                    alt={item.nome}
-                    className="w-full h-full"
-                    imgClassName="object-contain"
-                    esgotado={esgotado}
-                  />
-                  {item.isCombo && !esgotado && (
-                    <span className="absolute top-2 left-2 bg-emerald-500 text-white text-sm font-black px-3 py-1 rounded-full">COMBO</span>
-                  )}
-                  {item.popular && !esgotado && !item.isCombo && (
-                    <span className="absolute top-2 left-2 bg-amber-500 text-zinc-950 text-sm font-black px-3 py-1 rounded-full">TOP</span>
-                  )}
-                  {esgotado && (
-                    <div className="absolute inset-0 bg-red-900/50 flex items-center justify-center">
-                      <span className="text-white text-base font-black bg-red-600 px-4 py-1.5 rounded-full">ESGOTADO</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <p className={`font-bold text-xl leading-tight ${esgotado ? 'text-zinc-500' : 'text-white'}`}>{item.nome}</p>
-                  <p className="text-zinc-500 text-base mt-1 line-clamp-2">{item.descricao}</p>
-                  <p className={`font-black text-2xl mt-1.5 ${esgotado ? 'text-zinc-600' : 'text-amber-400'}`}>{fmt(item.preco)}</p>
-                </div>
-
-                {/* Controles */}
-                {!esgotado && (
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    {qtd > 0 && (
-                      <button
-                        onClick={handleDiminuirClick}
-                        className="w-14 h-14 flex items-center justify-center bg-amber-500 hover:bg-amber-400 rounded-xl cursor-pointer transition-colors"
-                      >
-                        <Minus size={20} className="text-zinc-950" />
-                      </button>
-                    )}
-                    {qtd > 0 && (
-                      <span className="w-14 h-14 flex items-center justify-center bg-zinc-800 text-white text-lg font-black rounded-xl">
-                        {qtd}
-                      </span>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleClick();
-                      }}
-                      className="w-14 h-14 flex items-center justify-center bg-amber-500 hover:bg-amber-400 rounded-xl cursor-pointer transition-colors"
-                    >
-                      <Plus size={22} className="text-zinc-950" />
-                    </button>
-                  </div>
-                )}
-              </button>
-            );
-          })}
+      {/* ── Estado de carregamento ────────────────────────────────────── */}
+      {loading && (
+        <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+          <div className="w-20 h-20 flex items-center justify-center rounded-3xl bg-amber-500/20 mb-6">
+            <div className="w-8 h-8 border-[3px] border-amber-500/30 border-t-amber-500 rounded-full animate-spin" />
+          </div>
+          <h2 className="text-2xl font-black text-white mb-2">Carregando cardápio...</h2>
+          <p className="text-zinc-500 text-base max-w-xs">Buscando os itens disponíveis para a loja</p>
+          <div className="flex items-center justify-center gap-1.5 mt-6">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="w-2 h-2 rounded-full bg-amber-500 animate-bounce"
+                style={{ animationDelay: `${i * 0.15}s` }}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ── Estado de erro ─────────────────────────────────────────────── */}
+      {!loading && erroCarregamento && (
+        <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+          <div className="w-20 h-20 flex items-center justify-center rounded-3xl bg-red-500/20 mb-6">
+            <i className="ri-error-warning-line text-4xl text-red-400" />
+          </div>
+          <h2 className="text-2xl font-black text-white mb-2">Erro ao carregar</h2>
+          <p className="text-zinc-500 text-base max-w-md mb-4">
+            Não foi possível carregar o cardápio. Verifique a conexão e tente novamente.
+          </p>
+          <details className="mb-6 text-left bg-zinc-900 border border-zinc-800 rounded-xl p-4 max-w-sm w-full">
+            <summary className="text-xs text-zinc-500 font-semibold cursor-pointer hover:text-zinc-400">Detalhes técnicos</summary>
+            <pre className="text-[10px] text-red-400 mt-2 overflow-auto max-h-24 whitespace-pre-wrap">{erroCarregamento}</pre>
+          </details>
+          <button
+            onClick={() => recarregar()}
+            className="px-8 py-3 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold rounded-2xl cursor-pointer transition-colors whitespace-nowrap flex items-center gap-2"
+          >
+            <i className="ri-refresh-line" />
+            Tentar novamente
+          </button>
+        </div>
+      )}
+
+      {/* ── Estado vazio (sem itens no cardápio) ───────────────────────── */}
+      {!loading && !erroCarregamento && itensPublicos.length === 0 && (
+        <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+          <div className="w-20 h-20 flex items-center justify-center rounded-3xl bg-zinc-800 mb-6">
+            <i className="ri-restaurant-2-line text-4xl text-zinc-600" />
+          </div>
+          <h2 className="text-2xl font-black text-white mb-2">Cardápio vazio</h2>
+          <p className="text-zinc-500 text-base max-w-xs">
+            Nenhum item foi adicionado ao cardápio desta loja ainda.
+          </p>
+          <p className="text-zinc-600 text-sm mt-4">
+            Acesse o painel administrativo para configurar o cardápio.
+          </p>
+        </div>
+      )}
+
+      {/* ── Cardápio normal (com itens) ────────────────────────────────── */}
+      {!loading && !erroCarregamento && itensPublicos.length > 0 && (
+        <>
+          {/* Sidebar categorias */}
+          <div className="w-56 flex-shrink-0 bg-zinc-950 flex flex-col py-4 gap-1 overflow-y-auto border-r border-zinc-800">
+            {categorias.map((cat) => (
+              <button key={cat} onClick={() => setCategoriaAtiva(cat)}
+                className={`mx-2 px-4 py-6 rounded-2xl text-lg font-bold transition-all cursor-pointer text-left ${categoriaEfetiva === cat ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}>
+                {cat}
+              </button>
+            ))}
+          </div>
+
+          {/* Lista de itens */}
+          <div className="flex-1 overflow-y-auto p-6 pb-32">
+            <div className="flex flex-col gap-4">
+              {itens.map((item) => {
+                const qtd = qtdNoCarrinho(item.id);
+                const esgotado = itensDesabilitadosIds.includes(item.id);
+                const handleClick = () => {
+                  const semOpcoes = !item.opcoes || item.opcoes.length === 0;
+                  const semObsPreConfiguradas = !item.observacoesPadrao || item.observacoesPadrao.length === 0;
+                  if (item.isCombo || (semOpcoes && semObsPreConfiguradas)) {
+                    onAdicionar({
+                      itemId: item.id,
+                      nome: item.nome,
+                      categoria: item.categoria,
+                      preco: item.preco,
+                      quantidade: 1,
+                      opcoesSelecionadas: [],
+                      observacao: '',
+                      clienteNome: 'Kiosk',
+                      semPreparo: item.semPreparo ?? false,
+                      stationId: item.stationId ?? null,
+                    });
+                  } else {
+                    setItemModal(item);
+                  }
+                };
+                const handleDiminuirClick = (e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  onDiminuir(item.id);
+                };
+                return (
+                  <button
+                    key={item.id}
+                    onClick={handleClick}
+                    disabled={esgotado}
+                    className={`flex items-center gap-4 bg-zinc-800 rounded-2xl p-3 text-left transition-all ${esgotado ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-zinc-750 active:scale-[0.99]'}`}
+                  >
+                    {/* Imagem */}
+                    <div className="w-36 h-36 flex-shrink-0 relative rounded-xl overflow-hidden bg-zinc-900">
+                      <ItemImage
+                        src={item.foto}
+                        alt={item.nome}
+                        className="w-full h-full"
+                        imgClassName="object-contain"
+                        esgotado={esgotado}
+                      />
+                      {item.isCombo && !esgotado && (
+                        <span className="absolute top-2 left-2 bg-emerald-500 text-white text-sm font-black px-3 py-1 rounded-full">COMBO</span>
+                      )}
+                      {item.temPromocao && !esgotado && !item.isCombo && (
+                        <span className="absolute top-2 left-2 bg-red-500 text-white text-sm font-black px-3 py-1 rounded-full">PROMO</span>
+                      )}
+                      {item.popular && !esgotado && !item.temPromocao && !item.isCombo && (
+                        <span className="absolute top-2 left-2 bg-amber-500 text-zinc-950 text-sm font-black px-3 py-1 rounded-full">TOP</span>
+                      )}
+                      {esgotado && (
+                        <div className="absolute inset-0 bg-red-900/50 flex items-center justify-center">
+                          <span className="text-white text-base font-black bg-red-600 px-4 py-1.5 rounded-full">ESGOTADO</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className={`font-bold text-xl leading-tight ${esgotado ? 'text-zinc-500' : 'text-white'}`}>{item.nome}</p>
+                      <p className="text-zinc-500 text-base mt-1 line-clamp-2">{item.descricao}</p>
+                      {item.temPromocao && item.precoOriginal != null ? (
+                        <div className="flex items-baseline gap-2 mt-1.5">
+                          <span className="text-sm text-zinc-500 line-through">{fmt(item.precoOriginal)}</span>
+                          <span className="font-black text-2xl text-red-400">{fmt(item.preco)}</span>
+                        </div>
+                      ) : (
+                        <p className={`font-black text-2xl mt-1.5 ${esgotado ? 'text-zinc-600' : 'text-amber-400'}`}>{fmt(item.preco)}</p>
+                      )}
+                    </div>
+
+                    {/* Controles */}
+                    {!esgotado && (
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        {qtd > 0 && (
+                          <button
+                            onClick={handleDiminuirClick}
+                            className="w-14 h-14 flex items-center justify-center bg-amber-500 hover:bg-amber-400 rounded-xl cursor-pointer transition-colors"
+                          >
+                            <Minus size={20} className="text-zinc-950" />
+                          </button>
+                        )}
+                        {qtd > 0 && (
+                          <span className="w-14 h-14 flex items-center justify-center bg-zinc-800 text-white text-lg font-black rounded-xl">
+                            {qtd}
+                          </span>
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleClick();
+                          }}
+                          className="w-14 h-14 flex items-center justify-center bg-amber-500 hover:bg-amber-400 rounded-xl cursor-pointer transition-colors"
+                        >
+                          <Plus size={22} className="text-zinc-950" />
+                        </button>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Barra inferior */}
       {totalItens > 0 && (

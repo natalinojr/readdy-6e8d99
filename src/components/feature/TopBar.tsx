@@ -3,6 +3,7 @@ import { ChevronDown, User, LogOut, WifiOff, Store } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useModoTreino } from '../../contexts/ModoTreinoContext';
+import { useSessao } from '../../contexts/SessaoContext';
 
 // ─── Modal Criar Nova Loja ────────────────────────────────────────────────────
 function CriarLojaModal({ onClose }: { onClose: () => void }) {
@@ -87,6 +88,7 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
   const { user, logout, canSwitchTenant, switchTenant } = useAuth();
   const navigate = useNavigate();
   const { isModoTreino } = useModoTreino();
+  const { estado } = useSessao();
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showCriarLoja, setShowCriarLoja] = useState(false);
@@ -171,6 +173,19 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
       <p className="text-sm text-zinc-500 capitalize hidden md:block">{formattedDate}</p>
 
       <div className="flex items-center gap-2 ml-auto">
+        {/* BADGE: Loja Aberta / Fechada */}
+        {estado === 'sem_sessao' ? (
+          <div className="flex items-center gap-1.5 bg-red-500 text-white text-xs font-black px-3 py-1.5 rounded-lg">
+            <i className="ri-store-2-line text-sm" />
+            FECHADA
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 bg-emerald-500 text-white text-xs font-black px-3 py-1.5 rounded-lg">
+            <i className="ri-store-2-line text-sm" />
+            ABERTA
+          </div>
+        )}
+
         {/* TREINO badge */}
         {isModoTreino && (
           <div className="flex items-center gap-1.5 bg-amber-400 text-amber-900 text-xs font-black px-3 py-1.5 rounded-lg">

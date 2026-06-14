@@ -151,7 +151,7 @@ export interface InventarioSession {
   valorAjusteLiquido: number;
 }
 
-// ─── Producao (Semi-acabados) ────────────────────────────────────────────────
+// ─── Producao (Produtos Produzidos) ────────────────────────────────────────────────
 
 export interface ProductionRecipeItem {
   id: string;
@@ -178,11 +178,11 @@ export interface ProductionRecipe {
   items: ProductionRecipeItem[];
   isActive: boolean;
   createdAt: string;
-  /** Categoria do produto semi-acabado no estoque */
+  /** Categoria do produto produzido no estoque */
   category?: string;
-  /** Quantidade minima de estoque para o produto semi-acabado */
+  /** Quantidade minima de estoque para o produto produzido */
   minStock?: number;
-  /** ID do ingrediente (semi-acabado) no estoque vinculado a esta ficha */
+  /** ID do ingrediente (produto produzido) no estoque vinculado a esta ficha */
   outputIngredientId?: string;
 }
 

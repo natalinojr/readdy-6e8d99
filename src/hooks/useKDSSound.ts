@@ -44,10 +44,11 @@ export function useKDSSound() {
     osc.stop(ctx.currentTime + delay + duration + 0.05);
   }, [getCtx]);
 
-  /** Double beep — novo pedido chegou */
+  /** Triple beep agudo e chamativo — novo pedido chegou */
   const playNovoPedido = useCallback(() => {
-    beep(880, 0.12, 0.4, 0, 'sine');
-    beep(1100, 0.15, 0.4, 0.18, 'sine');
+    beep(1000, 0.1, 0.6, 0, 'square');
+    beep(1300, 0.1, 0.6, 0.12, 'square');
+    beep(1600, 0.15, 0.55, 0.26, 'square');
   }, [beep]);
 
   /** Triple high beep — SLA ultrapassado */

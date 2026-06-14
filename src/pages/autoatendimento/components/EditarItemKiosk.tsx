@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { X, Check, Minus, Plus } from 'lucide-react';
 import type { ItemPedidoCliente, ItemCardapioPublico } from '@/types/mesaCliente';
 import ItemImage from '@/components/base/ItemImage';
@@ -111,58 +111,84 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
   // Se temos o item completo do cardápio, usamos modo completo
   const modoCompleto = !!itemCardapio && (itemCardapio.opcoes?.length || itemCardapio.observacoesPadrao?.length);
 
-  // Estado de opções selecionadas: { grupoNome: [opcaoNome, ...] }
-  const [selecionadas, setSelecionadas] = useState<Record<string, string[]>>(() => {
-    const map: Record<string, string[]> = {};
+  // Estado de opções selecionadas: { grupoNome: [OpcaoTrack, ...] }
+  const [selecionadas, setSelecionadas] = useState<Record<string, { id?: string; nome: string; precoAdicional: number; grupoNome: string }[]>>(() => {
+    const map: Record<string, { id?: string; nome: string; precoAdicional: number; grupoNome: string }[]> = {};
     if (itemCardapio?.opcoes) {
       for (const grupo of itemCardapio.opcoes) {
-        map[grupo.grupo] = itemCarrinho.opcoesSelecionadas.filter((sel) =>
-          grupo.itens.some((it) => it.nome === sel)
+        const fromCarrinho = itemCarrinho.opcoesSelecionadas.filter((sel) =>
+          grupo.itens.some((it) => it.nome === sel.nome)
         );
+        map[grupo.grupo] = fromCarrinho.length > 0 ? fromCarrinho : [];
       }
     }
     return map;
   });
 
-  const [obs, setObs] = useState(itemCarrinho.observacao ?? '');
+  // Separa observações pré-configuradas do texto livre
+  // O campo observacao do carrinho pode conter ambos (separados por '; ')
+  const [obsLivre, setObsLivre] = useState<string>(() => {
+    if (!itemCarrinho.observacao || !itemCardapio?.observacoesPadrao) {
+      return itemCarrinho.observacao ?? '';
+    }
+    // Remove as observações pré-configuradas do texto, deixando só o texto livre
+    const partes = itemCarrinho.observacao.split('; ').filter(Boolean);
+    const textoLivre = partes
+      .filter((p) => !itemCardapio!.observacoesPadrao!.includes(p))
+      .join('; ');
+    return textoLivre;
+  });
+
+  const [obsTags, setObsTags] = useState<string[]>(() => {
+    if (!itemCarrinho.observacao || !itemCardapio?.observacoesPadrao) return [];
+    const partes = itemCarrinho.observacao.split('; ').filter(Boolean);
+    return partes.filter((p) => itemCardapio!.observacoesPadrao!.includes(p));
+  });
+
+  // Reinicializa os estados de observação quando o item do carrinho muda
+  // (o modal pode ser reaberto sem desmontar o componente)
+  useEffect(() => {
+    setObsLivre(() => {
+      if (!itemCarrinho.observacao || !itemCardapio?.observacoesPadrao) {
+        return itemCarrinho.observacao ?? '';
+      }
+      const partes = itemCarrinho.observacao.split('; ').filter(Boolean);
+      return partes
+        .filter((p) => !itemCardapio!.observacoesPadrao!.includes(p))
+        .join('; ');
+    });
+    setObsTags(() => {
+      if (!itemCarrinho.observacao || !itemCardapio?.observacoesPadrao) return [];
+      const partes = itemCarrinho.observacao.split('; ').filter(Boolean);
+      return partes.filter((p) => itemCardapio!.observacoesPadrao!.includes(p));
+    });
+  }, [itemCarrinho.observacao, itemCardapio?.observacoesPadrao?.join('|')]);
+
   const [erro, setErro] = useState('');
 
-  const toggleOpcao = (grupo: string, opcao: string, obrigatorio: boolean) => {
+  const toggleOpcao = (grupo: string, opcao: { id?: string; nome: string; precoAdicional: number; grupoNome: string }, obrigatorio: boolean) => {
     setErro('');
     setSelecionadas((prev) => {
       const atual = prev[grupo] ?? [];
       if (obrigatorio) return { ...prev, [grupo]: [opcao] };
-      if (atual.includes(opcao)) return { ...prev, [grupo]: atual.filter((o) => o !== opcao) };
+      if (atual.some((o) => o.nome === opcao.nome)) return { ...prev, [grupo]: atual.filter((o) => o.nome !== opcao.nome) };
       return { ...prev, [grupo]: [...atual, opcao] };
     });
   };
 
   const totalOpcoes = useMemo(() => {
-    if (!itemCardapio?.opcoes) return 0;
-    return Object.entries(selecionadas).reduce((sum, [grupo, selected]) => {
-      const grp = itemCardapio.opcoes?.find((g) => g.grupo === grupo);
-      return sum + selected.reduce((s, o) => {
-        const it = grp?.itens.find((i) => i.nome === o);
-        return s + (it?.precoAdicional ?? 0);
-      }, 0);
-    }, 0);
-  }, [selecionadas, itemCardapio]);
+    return Object.values(selecionadas).flat().reduce((sum, o) => sum + o.precoAdicional, 0);
+  }, [selecionadas]);
 
   const precoUnitario = (itemCardapio?.preco ?? itemCarrinho.preco) + totalOpcoes;
   const total = precoUnitario * qtd;
 
-  // Verifica observações pré-configuradas já selecionadas
-  const obsSelecionadas = useMemo(() => {
-    return obs.split('; ').filter(Boolean);
-  }, [obs]);
-
   const toggleObsPadrao = (obsPadrao: string) => {
-    setObs((prev) => {
-      const partes = prev.split('; ').filter(Boolean);
-      if (partes.includes(obsPadrao)) {
-        return partes.filter((p) => p !== obsPadrao).join('; ');
+    setObsTags((prev) => {
+      if (prev.includes(obsPadrao)) {
+        return prev.filter((p) => p !== obsPadrao);
       }
-      return prev ? `${prev}; ${obsPadrao}` : obsPadrao;
+      return [...prev, obsPadrao];
     });
   };
 
@@ -175,11 +201,16 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
     }
 
     const todasOpcoes = Object.values(selecionadas).flat();
+    // Combina observações pré-configuradas + texto livre
+    const obsCompleta = [
+      ...obsTags,
+      ...(obsLivre.trim() ? [obsLivre.trim()] : []),
+    ].join('; ');
     const updates: Partial<ItemPedidoCliente> = {
       quantidade: qtd,
       preco: precoUnitario,
       opcoesSelecionadas: todasOpcoes,
-      observacao: obs,
+      observacao: obsCompleta,
     };
 
     onSalvar(index, updates);
@@ -223,7 +254,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
             {/* Observação */}
             <div>
               <p className="text-sm font-bold text-zinc-500 uppercase tracking-widest mb-4">Observação</p>
-              <TecladoVirtual value={obs} onChange={setObs} />
+              <TecladoVirtual value={obsLivre} onChange={setObsLivre} />
             </div>
           </div>
 
@@ -273,10 +304,11 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {grupo.itens.map((opcao) => {
-                  const sel = selecionadas[grupo.grupo]?.includes(opcao.nome);
+                  const sel = selecionadas[grupo.grupo]?.some((o) => o.nome === opcao.nome);
+                  const opTrack = { id: opcao.id, nome: opcao.nome, precoAdicional: opcao.precoAdicional, grupoNome: grupo.grupo, obrigatorio: grupo.obrigatorio };
                   return (
                     <button key={opcao.nome}
-                      onClick={() => toggleOpcao(grupo.grupo, opcao.nome, grupo.obrigatorio)}
+                      onClick={() => toggleOpcao(grupo.grupo, opTrack, grupo.obrigatorio)}
                       className={`flex items-center justify-between px-5 py-6 rounded-2xl border-2 transition-all cursor-pointer ${sel ? 'border-amber-500 bg-amber-500/10' : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'}`}
                     >
                       <div className="flex items-center gap-3">
@@ -301,7 +333,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
               <h3 className="text-xl font-bold text-white mb-3">Observações</h3>
               <div className="flex flex-wrap gap-3">
                 {itemCardapio!.observacoesPadrao.map((obsPadrao) => {
-                  const ativa = obsSelecionadas.includes(obsPadrao);
+                  const ativa = obsTags.includes(obsPadrao);
                   return (
                     <button
                       key={obsPadrao}
@@ -324,7 +356,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
             <h3 className={`text-lg font-bold text-zinc-500 mb-4 uppercase tracking-wider ${itemCardapio!.observacoesPadrao && itemCardapio!.observacoesPadrao.length > 0 ? '' : 'text-xl text-white mb-4 normal-case tracking-normal'}`}>
               {itemCardapio!.observacoesPadrao && itemCardapio!.observacoesPadrao.length > 0 ? 'Outra observação' : 'Observações (opcional)'}
             </h3>
-            <TecladoVirtual value={obs} onChange={setObs} />
+            <TecladoVirtual value={obsLivre} onChange={setObsLivre} />
           </div>
         </div>
 

@@ -346,7 +346,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
             estoqueAtual: 0,
             estoqueMinimo: recipe.minStock ?? 0,
             precoUnitario: unitCost,
-            categoria: recipe.category ?? 'Produtos Semi-acabados',
+            categoria: recipe.category ?? 'Produtos Produzidos',
             fornecedor: 'Producao interna',
             usageType: 'production',
           });

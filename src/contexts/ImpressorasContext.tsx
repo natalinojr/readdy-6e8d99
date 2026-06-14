@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
+import { useAuth } from '@/contexts/AuthContext';
 
 export type PaperStyle = '80mm' | '58mm';
 
@@ -13,7 +14,7 @@ export interface Impressora {
 
 export type MapaEstacoes = Record<string, string>;
 
-/** Campos customizáveis do template de ticket por estação */
+/** Campos customizaveis do template de ticket por estacao */
 export interface PrintTemplate {
   stationKey: string;       // id da kitchen_station ou 'caixa-pdv'
   showLogo: boolean;
@@ -53,17 +54,24 @@ const ImpressorasContext = createContext<ImpressorasContextType | null>(null);
 
 export const TODAS_ESTACOES_KEY = 'todas-estacoes';
 
-/** Chave especial para usar a impressora padrão do Windows (USB ou qualquer impressora local) */
+/** Chave especial para usar a impressora padrao do Windows (USB ou qualquer impressora local) */
 export const IMPRESSORA_PADRAO_WINDOWS_KEY = 'impressora-padrao-windows';
-export const IMPRESSORA_PADRAO_WINDOWS_LABEL = 'Impressora Padrão (USB/Windows)';
+export const IMPRESSORA_PADRAO_WINDOWS_LABEL = 'Impressora Padrao (USB/Windows)';
 
-// Chaves dos pontos fixos de impressão
+// Chaves dos pontos fixos de impressao
 export const PRINTER_KEY_CAIXA_PDV = 'caixa-pdv';
 export const PRINTER_KEY_CLIENTE = 'cliente';
 export const PRINTER_KEY_PEDIDOS = 'pedidos';
 export const PRINTER_KEY_GESTOR_PEDIDOS = 'gestor-pedidos';
 export const PRINTER_KEY_RELATORIOS = 'relatorios';
 export const PRINTER_KEY_QRCODES = 'qrcodes';
+
+// ── Chave do localStorage ────────────────────────────────────────────────────
+const LOCAL_STORAGE_KEY_PREFIX = 'hotbar_printers_config_backup';
+
+function getTenantStorageKey(tenantId: string): string {
+  return `${LOCAL_STORAGE_KEY_PREFIX}_${tenantId}`;
+}
 
 function getDefaultTemplate(stationKey: string): PrintTemplate {
   return {
@@ -82,93 +90,249 @@ function getDefaultTemplate(stationKey: string): PrintTemplate {
   };
 }
 
+interface PrintersBackup {
+  impressoras: Impressora[];
+  mapaEstacoes: MapaEstacoes;
+  printTemplates: PrintTemplatesMap;
+  savedAt: string;
+}
+
+function salvarLocalStorage(tenantId: string, data: PrintersBackup) {
+  if (!tenantId) return;
+  try {
+    localStorage.setItem(getTenantStorageKey(tenantId), JSON.stringify(data));
+    console.log('[ImpressorasContext] Backup salvo no localStorage para tenant:', tenantId);
+  } catch (e) {
+    console.warn('[ImpressorasContext] Nao foi possivel salvar no localStorage:', e);
+  }
+}
+
+function lerLocalStorage(tenantId: string): PrintersBackup | null {
+  if (!tenantId) return null;
+  try {
+    const raw = localStorage.getItem(getTenantStorageKey(tenantId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.impressoras) && typeof parsed.mapaEstacoes === 'object') {
+      console.log('[ImpressorasContext] Backup restaurado do localStorage para tenant:', tenantId, 'de:', parsed.savedAt);
+      return parsed as PrintersBackup;
+    }
+  } catch (e) {
+    console.warn('[ImpressorasContext] Erro ao ler localStorage:', e);
+  }
+  return null;
+}
+
 export function ImpressorasProvider({ children }: { children: React.ReactNode }) {
   const { settings, loading: settingsLoading, salvar } = useSystemSettings();
+  const { user } = useAuth();
+  const tenantId = user?.tenantId ?? '';
+
   const [impressoras, setImpressoras] = useState<Impressora[]>([]);
   const [mapaEstacoes, setMapaEstacoes] = useState<MapaEstacoes>({});
   const [printTemplates, setPrintTemplates] = useState<PrintTemplatesMap>({});
   const [salvando, setSalvando] = useState(false);
-  // Guarda a última config do banco pra saber quando sincronizar (evita sobrescrever edições locais)
+  // Guarda a ultima config do banco pra saber quando sincronizar (evita sobrescrever edicoes locais)
   const lastDbConfigRef = useRef<string>('');
+  // Guarda o ultimo tenantId pra detectar troca de loja
+  const lastTenantIdRef = useRef<string>('');
 
-  // Sincroniza estado local com o banco sempre que settings.printers_config mudar
+  // Ref para o debounce do auto-save
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Flag: ja inicializou do banco ou localStorage
+  const initializedRef = useRef(false);
+
+  // ── Reseta estado quando troca de tenant ──
+  useEffect(() => {
+    if (tenantId && tenantId !== lastTenantIdRef.current) {
+      console.log('[ImpressorasContext] Tenant mudou de', lastTenantIdRef.current, 'para', tenantId, '— resetando estado');
+      lastTenantIdRef.current = tenantId;
+      setImpressoras([]);
+      setMapaEstacoes({});
+      setPrintTemplates({});
+      initializedRef.current = false;
+      lastDbConfigRef.current = '';
+    }
+  }, [tenantId]);
+
+  // ── Sincroniza estado local com o banco sempre que settings.printers_config mudar ──
   useEffect(() => {
     if (settingsLoading) return;
-    const cfg = settings.printers_config;
-    if (!cfg) return;
+    if (!tenantId) return;
+
+    let cfg = settings.printers_config;
+    if (!cfg || !cfg.impressoras || !Array.isArray(cfg.impressoras)) {
+      // Tenta recuperar do localStorage como fallback (AGORA POR TENANT!)
+      const backup = lerLocalStorage(tenantId);
+      if (backup && backup.impressoras.length > 0) {
+        console.log('[ImpressorasContext] Usando backup do localStorage (Supabase sem dados) para tenant:', tenantId);
+        setImpressoras(backup.impressoras.map((i: Impressora) => ({
+          ...i,
+          paperStyle: i.paperStyle ?? '80mm',
+        })));
+        if (backup.mapaEstacoes && typeof backup.mapaEstacoes === 'object') {
+          setMapaEstacoes(backup.mapaEstacoes as MapaEstacoes);
+        }
+        if (backup.printTemplates && typeof backup.printTemplates === 'object') {
+          setPrintTemplates(backup.printTemplates as PrintTemplatesMap);
+        }
+        initializedRef.current = true;
+      }
+      return;
+    }
 
     const cfgJson = JSON.stringify(cfg);
     if (cfgJson === lastDbConfigRef.current) return;
     lastDbConfigRef.current = cfgJson;
 
-    if (cfg.impressoras && Array.isArray(cfg.impressoras)) {
-      setImpressoras(cfg.impressoras.map((i: Impressora) => ({
-        ...i,
-        paperStyle: i.paperStyle ?? '80mm',
-      })));
-    }
-    if (cfg.mapaEstacoes && typeof cfg.mapaEstacoes === 'object') {
-      setMapaEstacoes(cfg.mapaEstacoes as MapaEstacoes);
-    }
-    if (cfg.printTemplates && typeof cfg.printTemplates === 'object') {
-      setPrintTemplates(cfg.printTemplates as PrintTemplatesMap);
-    }
-  }, [settings, settingsLoading]);
+    console.log('[ImpressorasContext] Sincronizando do Supabase:', {
+      tenant: tenantId,
+      impressoras: cfg.impressoras?.length,
+      estacoes: Object.keys(cfg.mapaEstacoes ?? {}).length,
+      templates: Object.keys(cfg.printTemplates ?? {}).length,
+    });
+
+    const updatedImpressoras = cfg.impressoras.map((i: Impressora) => ({
+      ...i,
+      paperStyle: i.paperStyle ?? '80mm',
+    }));
+    setImpressoras(updatedImpressoras);
+    setMapaEstacoes((cfg.mapaEstacoes as MapaEstacoes) ?? {});
+    setPrintTemplates((cfg.printTemplates as PrintTemplatesMap) ?? {});
+
+    // Atualiza backup local com os dados do banco
+    salvarLocalStorage(tenantId, {
+      impressoras: updatedImpressoras,
+      mapaEstacoes: (cfg.mapaEstacoes as MapaEstacoes) ?? {},
+      printTemplates: (cfg.printTemplates as PrintTemplatesMap) ?? {},
+      savedAt: new Date().toISOString(),
+    });
+
+    initializedRef.current = true;
+  }, [settings, settingsLoading, tenantId]);
 
   const salvarImpressoras = useCallback(async () => {
+    if (!tenantId) return;
     setSalvando(true);
-    await salvar({
-      printers_config: { impressoras, mapaEstacoes, printTemplates },
-    });
+    try {
+      await salvar({
+        printers_config: { impressoras, mapaEstacoes, printTemplates },
+      });
+      // Salva backup local tambem
+      salvarLocalStorage(tenantId, {
+        impressoras,
+        mapaEstacoes,
+        printTemplates,
+        savedAt: new Date().toISOString(),
+      });
+      console.log('[ImpressorasContext] Configuracoes salvas com sucesso no Supabase + localStorage para tenant:', tenantId);
+    } catch (e) {
+      console.error('[ImpressorasContext] Erro ao salvar no Supabase, salvando no localStorage:', e);
+      salvarLocalStorage(tenantId, {
+        impressoras,
+        mapaEstacoes,
+        printTemplates,
+        savedAt: new Date().toISOString(),
+      });
+    }
     setSalvando(false);
-  }, [impressoras, mapaEstacoes, printTemplates, salvar]);
+  }, [impressoras, mapaEstacoes, printTemplates, salvar, tenantId]);
 
   const salvarTemplates = useCallback(async () => {
+    if (!tenantId) return;
     setSalvando(true);
     await salvar({
       printers_config: { impressoras, mapaEstacoes, printTemplates },
     });
+    salvarLocalStorage(tenantId, {
+      impressoras,
+      mapaEstacoes,
+      printTemplates,
+      savedAt: new Date().toISOString(),
+    });
     setSalvando(false);
-  }, [impressoras, mapaEstacoes, printTemplates, salvar]);
+  }, [impressoras, mapaEstacoes, printTemplates, salvar, tenantId]);
+
+  // ── Auto-save com debounce: sempre que impressoras, mapaEstacoes ou printTemplates mudar ──
+  useEffect(() => {
+    // So dispara auto-save apos a inicializacao inicial (evita salvar estado vazio no primeiro render)
+    if (!initializedRef.current) return;
+    if (!tenantId) return;
+    // Se nao tem nada configurado ainda, nao salva
+    if (impressoras.length === 0 && Object.keys(mapaEstacoes).length === 0) return;
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = setTimeout(() => {
+      console.log('[ImpressorasContext] Auto-save disparado (debounce 2s) para tenant:', tenantId);
+      salvar({
+        printers_config: { impressoras, mapaEstacoes, printTemplates },
+      }).then(() => {
+        salvarLocalStorage(tenantId, {
+          impressoras,
+          mapaEstacoes,
+          printTemplates,
+          savedAt: new Date().toISOString(),
+        });
+        console.log('[ImpressorasContext] Auto-save concluido');
+      }).catch((e) => {
+        console.error('[ImpressorasContext] Auto-save falhou:', e);
+        // Fallback: salva no localStorage mesmo assim
+        salvarLocalStorage(tenantId, {
+          impressoras,
+          mapaEstacoes,
+          printTemplates,
+          savedAt: new Date().toISOString(),
+        });
+      });
+    }, 2000);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [impressoras, mapaEstacoes, printTemplates, salvar, tenantId]);
 
   const getImpressoraParaEstacao = useCallback(
     (estacao: string): Impressora | undefined => {
-      console.log('[ImpressorasContext] Buscando impressora para estação:', estacao);
-      console.log('[ImpressorasContext] Mapa de estações:', mapaEstacoes);
+      console.log('[ImpressorasContext] Buscando impressora para estacao:', estacao);
+      console.log('[ImpressorasContext] Mapa de estacoes:', mapaEstacoes);
       console.log('[ImpressorasContext] Impressoras cadastradas:', impressoras.map(i => ({ id: i.id, nome: i.nome, ip: i.ip })));
 
-      // 1. Mapeamento específico desta estação
+      // 1. Mapeamento especifico desta estacao
       const id = mapaEstacoes?.[estacao];
       if (id) {
-        console.log('[ImpressorasContext] Mapeamento específico encontrado:', id);
+        console.log('[ImpressorasContext] Mapeamento especifico encontrado:', id);
         if (id === IMPRESSORA_PADRAO_WINDOWS_KEY) {
-          console.warn('[ImpressorasContext] Mapeamento aponta para Impressora Padrão Windows (sem IP → abrirá janela)');
+          console.warn('[ImpressorasContext] Mapeamento aponta para Impressora Padrao Windows (sem IP → abrira janela)');
           return {
             id: IMPRESSORA_PADRAO_WINDOWS_KEY,
             nome: IMPRESSORA_PADRAO_WINDOWS_LABEL,
             ip: '',
-            descricao: 'Usa a impressora padrão definida no Windows',
+            descricao: 'Usa a impressora padrao definida no Windows',
             paperStyle: '80mm',
           };
         }
         const imp = impressoras.find((i) => i.id === id);
         if (imp) {
-          console.log('[ImpressorasContext] Impressora específica encontrada:', imp.nome, 'IP:', imp.ip || 'SEM IP');
+          console.log('[ImpressorasContext] Impressora especifica encontrada:', imp.nome, 'IP:', imp.ip || 'SEM IP');
           return imp;
         }
       }
 
-      // 2. Fallback: "todas as estações" quando nenhum mapeamento específico
+      // 2. Fallback: "todas as estacoes" quando nenhum mapeamento especifico
       const fallbackId = mapaEstacoes?.[TODAS_ESTACOES_KEY];
       if (fallbackId) {
         console.log('[ImpressorasContext] Fallback geral encontrado:', fallbackId);
         if (fallbackId === IMPRESSORA_PADRAO_WINDOWS_KEY) {
-          console.warn('[ImpressorasContext] Fallback geral aponta para Impressora Padrão Windows (sem IP → abrirá janela)');
+          console.warn('[ImpressorasContext] Fallback geral aponta para Impressora Padrao Windows (sem IP → abrira janela)');
           return {
             id: IMPRESSORA_PADRAO_WINDOWS_KEY,
             nome: IMPRESSORA_PADRAO_WINDOWS_LABEL,
             ip: '',
-            descricao: 'Usa a impressora padrão definida no Windows',
+            descricao: 'Usa a impressora padrao definida no Windows',
             paperStyle: '80mm',
           };
         }
@@ -182,11 +346,11 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
       // 3. Fallback final: primeira impressora de rede (com IP) cadastrada no sistema
       const rede = impressoras.find((i) => i.ip && i.ip.trim() !== '');
       if (rede) {
-        console.log('[ImpressorasContext] Fallback automático — usando primeira impressora de rede:', rede.nome, 'IP:', rede.ip);
+        console.log('[ImpressorasContext] Fallback automatico — usando primeira impressora de rede:', rede.nome, 'IP:', rede.ip);
         return rede;
       }
 
-      console.warn('[ImpressorasContext] NENHUMA impressora encontrada para estação:', estacao, '→ imprimirá via navegador (janela)');
+      console.warn('[ImpressorasContext] NENHUMA impressora encontrada para estacao:', estacao, '→ imprimira via navegador (janela)');
       return undefined;
     },
     [impressoras, mapaEstacoes],

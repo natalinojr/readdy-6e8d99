@@ -1,22 +1,84 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useEstoque, type InventarioItemContado } from '../../../contexts/EstoqueContext';
+import { useAuth } from '../../../contexts/AuthContext';
 import ConfirmarInventarioModal from './ConfirmarInventarioModal';
+
+interface InventarioDraft {
+  contagens: Record<string, string>;
+  savedAt: string;
+  operador: string;
+}
 
 interface Props {
   operador: string;
   onConcluido: () => void;
   onCancelar: () => void;
+  /** Se true, ignora rascunho existente e começa do zero */
+  startFresh?: boolean;
 }
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
-export default function ContagemInventario({ operador, onConcluido, onCancelar }: Props) {
+export default function ContagemInventario({ operador, onConcluido, onCancelar, startFresh }: Props) {
   const { insumos } = useEstoque();
   const { confirmarInventario } = useEstoque();
+  const { user } = useAuth();
+  const tenantId = user?.tenantId ?? '';
+
+  const getDraftKey = () => `erpos_inventario_draft_${tenantId}`;
+
+  // Tenta carregar rascunho do localStorage (a menos que startFresh)
+  const carregarRascunho = (): Record<string, string> | null => {
+    if (!tenantId) return null;
+    try {
+      const raw = localStorage.getItem(getDraftKey());
+      if (!raw) return null;
+      const draft: InventarioDraft = JSON.parse(raw);
+      if (!draft.contagens || Object.keys(draft.contagens).length === 0) return null;
+      return draft.contagens;
+    } catch {
+      return null;
+    }
+  };
+
+  const salvarRascunho = () => {
+    if (!tenantId) return;
+    try {
+      const draft: InventarioDraft = {
+        contagens,
+        savedAt: new Date().toISOString(),
+        operador,
+      };
+      localStorage.setItem(getDraftKey(), JSON.stringify(draft));
+      setRascunhoSalvo(true);
+    } catch {
+      // localStorage cheio ou indisponível
+    }
+  };
+
+  const limparRascunho = () => {
+    if (!tenantId) return;
+    try { localStorage.removeItem(getDraftKey()); } catch { /* ignore */ }
+  };
 
   // Mapa: insumoId → quantidade digitada (string para permitir vazio/decimal)
   const [contagens, setContagens] = useState<Record<string, string>>(() => {
+    if (startFresh) {
+      if (tenantId) { try { localStorage.removeItem(getDraftKey()); } catch { /* ignore */ } }
+      const init: Record<string, string> = {};
+      insumos.forEach((i) => { init[i.id] = i.estoqueAtual.toString(); });
+      return init;
+    }
+    const draft = carregarRascunho();
+    if (draft) {
+      // Garante que novos insumos (não presentes no rascunho) tenham valor padrão
+      const merged: Record<string, string> = {};
+      insumos.forEach((i) => {
+        merged[i.id] = draft[i.id] ?? i.estoqueAtual.toString();
+      });
+      return merged;
+    }
     const init: Record<string, string> = {};
     insumos.forEach((i) => { init[i.id] = i.estoqueAtual.toString(); });
     return init;
@@ -26,6 +88,23 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar }
   const [apenasComDiff, setApenasComDiff] = useState(false);
   const [showConfirmar, setShowConfirmar] = useState(false);
   const [confirmado, setConfirmado] = useState(false);
+  const [rascunhoSalvo, setRascunhoSalvo] = useState(false);
+  const [showCancelarModal, setShowCancelarModal] = useState(false);
+
+  // Limpa flag de "salvo" após 2 segundos
+  useEffect(() => {
+    if (rascunhoSalvo) {
+      const t = setTimeout(() => setRascunhoSalvo(false), 2000);
+      return () => clearTimeout(t);
+    }
+  }, [rascunhoSalvo]);
+
+  // Verifica se tem rascunho carregado (para mostrar badge)
+  const temRascunhoCarregado = useMemo(() => {
+    const draft = carregarRascunho();
+    return draft !== null && Object.keys(draft).length > 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contagens]);
 
   const handleChange = (id: string, value: string) => {
     setContagens((prev) => ({ ...prev, [id]: value }));
@@ -76,9 +155,33 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar }
 
   const handleConfirmar = () => {
     confirmarInventario(itensParaConfirmar, operador);
+    limparRascunho();
     setShowConfirmar(false);
     setConfirmado(true);
     setTimeout(() => onConcluido(), 2000);
+  };
+
+  const handleCancelarContagem = () => {
+    // Se não tem nada alterado, cancela direto
+    const temAlteracao = itensComDiferenca.length > 0 || temRascunhoCarregado;
+    if (!temAlteracao) {
+      limparRascunho();
+      onCancelar();
+      return;
+    }
+    setShowCancelarModal(true);
+  };
+
+  const handleDescartarESair = () => {
+    limparRascunho();
+    setShowCancelarModal(false);
+    onCancelar();
+  };
+
+  const handleSalvarRascunhoESair = () => {
+    salvarRascunho();
+    setShowCancelarModal(false);
+    onCancelar();
   };
 
   if (confirmado) {
@@ -102,16 +205,32 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar }
       {/* Header da contagem */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <p className="text-sm font-bold text-zinc-800">Nova Contagem de Inventário</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-bold text-zinc-800">Nova Contagem de Inventário</p>
+            {temRascunhoCarregado && (
+              <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+                Rascunho carregado
+              </span>
+            )}
+          </div>
           <p className="text-xs text-zinc-500">Operador: <span className="font-semibold">{operador}</span> · {insumos.length} insumos a contar</p>
         </div>
-        <button
-          onClick={onCancelar}
-          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer transition-colors whitespace-nowrap"
-        >
-          <i className="ri-close-line text-sm" />
-          Cancelar contagem
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={salvarRascunho}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+          >
+            <i className={`text-sm ${rascunhoSalvo ? 'ri-check-line text-emerald-500' : 'ri-save-line'}`} />
+            {rascunhoSalvo ? 'Salvo!' : 'Salvar Rascunho'}
+          </button>
+          <button
+            onClick={handleCancelarContagem}
+            className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-red-500 cursor-pointer transition-colors whitespace-nowrap"
+          >
+            <i className="ri-close-line text-sm" />
+            Cancelar contagem
+          </button>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -252,11 +371,12 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar }
           onClick={() => setShowConfirmar(true)}
           className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center gap-2"
         >
-          <i className="ri-clipboard-check-line" />
+          <i className="ri-check-double-line" />
           Confirmar Contagem
         </button>
       </div>
 
+      {/* Modal de confirmação */}
       {showConfirmar && (
         <ConfirmarInventarioModal
           itens={itensParaConfirmar}
@@ -264,6 +384,47 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar }
           onConfirmar={handleConfirmar}
           onCancelar={() => setShowConfirmar(false)}
         />
+      )}
+
+      {/* Modal de cancelamento — salvar rascunho ou descartar */}
+      {showCancelarModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="flex items-start gap-4 px-6 py-5 bg-amber-50 border-b border-amber-200">
+              <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-xl flex-shrink-0 mt-0.5">
+                <i className="ri-error-warning-line text-amber-600 text-xl" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-zinc-900 mb-1">Cancelar contagem?</h2>
+                <p className="text-xs text-zinc-600 leading-relaxed">
+                  Você tem {itensComDiferenca.length} iten{itensComDiferenca.length !== 1 ? 's' : ''} com diferença na contagem atual. Deseja salvar o progresso como rascunho para terminar depois ou descartar tudo?
+                </p>
+              </div>
+            </div>
+            <div className="px-6 py-4 bg-zinc-50 border-t border-zinc-100 flex flex-col gap-3">
+              <button
+                onClick={handleSalvarRascunhoESair}
+                className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
+              >
+                <i className="ri-save-line" />
+                Salvar Rascunho e Sair
+              </button>
+              <button
+                onClick={handleDescartarESair}
+                className="w-full py-3 border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-semibold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
+              >
+                <i className="ri-delete-bin-line" />
+                Descartar e Sair
+              </button>
+              <button
+                onClick={() => setShowCancelarModal(false)}
+                className="w-full py-2 text-zinc-500 hover:text-zinc-700 text-xs font-medium cursor-pointer transition-colors"
+              >
+                Continuar contando
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

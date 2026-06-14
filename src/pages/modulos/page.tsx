@@ -316,16 +316,19 @@ export default function ModulosPage() {
   };
 
   const modulosVisiveis = MODULOS.filter((m) => {
-    if (m.perfis && user?.perfil && !m.perfis.includes(user.perfil)) return false;
+    const perfilOk = !m.perfis || !user?.perfil || m.perfis.includes(user.perfil);
+    let cfgOk = true;
     if (!settingsLoading) {
       const cfgKey = PDV_MODULE_KEY[m.id];
-      if (cfgKey && pdvCfg[cfgKey] === false) return false;
+      if (cfgKey && pdvCfg[cfgKey] === false) cfgOk = false;
     }
-    if (m.id === 'kds' && kitchenView !== 'kds' && kitchenView !== 'ambos') return false;
-    if (m.id === 'gestor_pedidos' && kitchenView !== 'gestor' && kitchenView !== 'ambos') return false;
-    if (m.id === 'kds' && !hasPermissao('kds_acessar')) return false;
-    if (m.id === 'gestor_pedidos' && !hasPermissao('gestor_pedidos_acessar')) return false;
-    return true;
+    if (m.id === 'kds' && kitchenView !== 'kds' && kitchenView !== 'ambos') cfgOk = false;
+    if (m.id === 'gestor_pedidos' && kitchenView !== 'gestor' && kitchenView !== 'ambos') cfgOk = false;
+    if (m.id === 'kds' && !hasPermissao('kds_acessar')) cfgOk = false;
+    if (m.id === 'gestor_pedidos' && !hasPermissao('gestor_pedidos_acessar')) cfgOk = false;
+    const visible = perfilOk && cfgOk;
+    console.log('[Modulos]', m.id, '| perfil:', user?.perfil, '| perfilOk:', perfilOk, '| cfgOk:', cfgOk, '| pdvCfg:', JSON.stringify(pdvCfg), '| visible:', visible);
+    return visible;
   });
 
   const terminais = modulosVisiveis.filter((m) => m.tag === 'Terminal');
@@ -342,6 +345,8 @@ export default function ModulosPage() {
       const meta = data?.session?.user?.user_metadata;
       const name = meta?.name ?? meta?.nome ?? data?.session?.user?.email ?? 'Usuário';
       setNoTenantUserName(name);
+    }).catch(() => {
+      // Silencioso - se falhar, usa o fallback 'Usuário'
     });
   }, [hasNoTenants]);
 

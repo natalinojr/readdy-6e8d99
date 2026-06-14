@@ -24,7 +24,7 @@ interface VerificacaoSessao {
 }
 
 export default function FecharSessaoModal({ onClose }: Props) {
-  const { sessao, caixa, fecharSessao } = useSessao();
+  const { sessao, caixa, fecharSessao, sincronizarSessao } = useSessao();
   const { registrarEvento } = useAuditoria();
   const { user } = useAuth();
 
@@ -34,7 +34,7 @@ export default function FecharSessaoModal({ onClose }: Props) {
   const [showFechamentoCaixa, setShowFechamentoCaixa] = useState(false);
 
   const [verif, setVerif] = useState<VerificacaoSessao>({
-    caixaAberto: caixa !== null,
+    caixaAberto: true, // default cauteloso: assume aberto até confirmar
     pedidosPendentes: [],
     mesasAbertas: 0,
     carregando: true,
@@ -48,6 +48,11 @@ export default function FecharSessaoModal({ onClose }: Props) {
 
     const verificar = async () => {
       try {
+        // 1. Sincroniza com o banco E captura o estado real do caixa
+        const estadoReal = await sincronizarSessao();
+        const caixaRealmenteAberto = estadoReal?.caixa !== null;
+
+        // 2. Verifica pedidos pendentes e mesas abertas
         const { data: efData, error: efError } = await invokeWithAuth<{
           pedidosPendentes: { id: string; numero: string; motivo: string }[];
           mesasAbertas: number;
@@ -60,12 +65,12 @@ export default function FecharSessaoModal({ onClose }: Props) {
         });
 
         if (efError || efData?.error) {
-          setVerif((prev) => ({ ...prev, carregando: false }));
+          setVerif((prev) => ({ ...prev, caixaAberto: caixaRealmenteAberto, carregando: false }));
           return;
         }
 
         setVerif({
-          caixaAberto: caixa !== null,
+          caixaAberto: caixaRealmenteAberto,
           pedidosPendentes: (efData?.pedidosPendentes ?? []).map((p) => ({
             id: p.id,
             numero: p.numero,
@@ -90,7 +95,7 @@ export default function FecharSessaoModal({ onClose }: Props) {
 
   const podeFechar = caixaOk && pedidosOk && mesasOk && !verif.carregando;
 
-  const handleFechar = async () => {
+  const handleFechar = async (force?: boolean) => {
     setFechando(true);
     setErroFechar('');
     try {
@@ -105,13 +110,13 @@ export default function FecharSessaoModal({ onClose }: Props) {
         severidade: 'info',
         usuario: user?.nome ?? 'Operador',
         perfil: user?.perfil ?? 'operador',
-        descricao: `Sessão ${sessao?.numero ?? ''} encerrada pelo operador`,
+        descricao: `Sessão ${sessao?.numero ?? ''} encerrada pelo operador${force ? ' (forçado)' : ''}`,
         entidade: 'Sessão',
         entidadeId: sessao?.id ?? sessao?.numero ?? '—',
-        detalhes: `Sessão iniciada às ${sessao?.iniciadaEm ?? '—'}. Duração: ${duracaoMin > 0 ? `${duracaoMin} min` : 'N/A'}.`,
+        detalhes: `Sessão iniciada às ${sessao?.iniciadaEm ?? '—'}. Duração: ${duracaoMin > 0 ? `${duracaoMin} min` : 'N/A'}.${force ? ' Fechamento forçado.' : ''}`,
       });
 
-      await fecharSessao();
+      await fecharSessao(undefined, undefined, force ?? false);
       setEtapa('concluido');
       setTimeout(() => { onClose(); }, 1500);
     } catch (e: any) {
@@ -244,15 +249,49 @@ ${verif.pedidosPendentes
             </div>
           )}
 
+          {/* Erro ao fechar - mostra opção de forçar */}
           {erroFechar && (
-            <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-xl">
-              <div className="w-4 h-4 flex items-center justify-center text-red-500 mt-0.5 flex-shrink-0">
-                <i className="ri-error-warning-line text-sm" />
+            <div className="space-y-3">
+              <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                <div className="w-5 h-5 flex items-center justify-center text-amber-600 mt-0.5 flex-shrink-0">
+                  <i className="ri-error-warning-line text-sm" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-amber-800">Não foi possível fechar</p>
+                  <p className="text-xs text-amber-700 mt-0.5">{erroFechar}</p>
+                </div>
               </div>
-              <p className="text-xs text-red-700 font-medium">{erroFechar}</p>
+
+              <div className="flex items-start gap-2 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl">
+                <div className="w-5 h-5 flex items-center justify-center text-zinc-500 mt-0.5 flex-shrink-0">
+                  <i className="ri-information-line text-sm" />
+                </div>
+                <p className="text-[11px] text-zinc-600">
+                  Se tem certeza que está tudo finalizado, pode forçar o fechamento. Isso ignora as verificações e encerra a sessão imediatamente.
+                </p>
+              </div>
+
+              <button
+                onClick={() => handleFechar(true)}
+                disabled={fechando}
+                className="w-full py-2.5 bg-red-500 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
+              >
+                {fechando ? (
+                  <>
+                    <i className="ri-loader-4-line animate-spin text-base" />
+                    Forçando...
+                  </>
+                ) : (
+                  <>
+                    <i className="ri-alert-line text-base" />
+                    Forçar Fechamento
+                  </>
+                )}
+              </button>
             </div>
           )}
 
+          {/* Botões normais (sem erro) */}
           <div className="flex gap-3 pt-1">
             <button
               onClick={onClose}
@@ -261,7 +300,7 @@ ${verif.pedidosPendentes
               Cancelar
             </button>
             <button
-              onClick={handleFechar}
+              onClick={() => handleFechar(false)}
               disabled={!podeFechar || fechando}
               className="flex-1 py-2.5 bg-red-500 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
             >
@@ -280,6 +319,7 @@ ${verif.pedidosPendentes
 
       {showFechamentoCaixa && (
         <FechamentoCaixaModal
+          caixaId={caixa?.id ?? ''}
           historico={[]}
           numPedidos={0}
           totalVendas={0}

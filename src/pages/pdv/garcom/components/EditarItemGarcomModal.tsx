@@ -192,6 +192,7 @@ export default function EditarItemGarcomModal({ item, onSalvar, onDeletar, onClo
                       opcaoId: opcao.id,
                       opcaoNome: opcao.nome || '—',
                       precoAdicional: opcao.precoAdicional,
+                      obrigatorio: grupo.obrigatorio,
                     };
                     return (
                       <label

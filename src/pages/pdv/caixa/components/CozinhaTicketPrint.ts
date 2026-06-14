@@ -10,12 +10,12 @@ function fmtData() {
 }
 
 function descrDestino(destino: DestinoInfo | null): string {
-  if (!destino) return 'Balcao';
+  if (!destino) return 'Balcão';
   if (destino.tipo === 'mesa') return `Mesa ${destino.mesaNumero}`;
   if (destino.tipo === 'nome') return destino.nomeCliente ?? 'Cliente';
   if (destino.tipo === 'senha') return `Senha: ${destino.senha}`;
-  if (destino.tipo === 'delivery') return `DELIVERY — ${destino.nomeCliente}`;
-  return 'Balcao';
+  if (destino.tipo === 'delivery') return `Delivery — ${destino.nomeCliente}`;
+  return 'Balcão';
 }
 
 function buildItensHTML(carrinho: CarrinhoItem[]): string {
@@ -24,7 +24,7 @@ function buildItensHTML(carrinho: CarrinhoItem[]): string {
       .map(
         (o) =>
           `<div style="margin-left:0;font-size:13px;color:#444;padding:2px 0;">
-            &nbsp;&nbsp;+ ${o.opcaoNome}
+            &nbsp;&nbsp;${o.obrigatorio ? '' : '+ '}${o.opcaoNome}
           </div>`,
       )
       .join('');
@@ -75,6 +75,12 @@ function buildItensHTML(carrinho: CarrinhoItem[]): string {
             .join('<br/>')
         : '';
 
+    const partesDestaqueHTML = (item.partesDestaque && item.partesDestaque.length > 0)
+      ? `<div style="font-size:13px;font-weight:bold;color:#b45309;margin-top:4px;">
+          &#9654; ${item.partesDestaque.join(' · ')}
+        </div>`
+      : '';
+
     return `
       <div style="
         border: 2px solid #000;
@@ -100,6 +106,7 @@ function buildItensHTML(carrinho: CarrinhoItem[]): string {
             <div style="font-size:17px;font-weight:800;line-height:1.2;">${item.nome}</div>
             ${item.categoriaNome ? `<div style="font-size:10px;color:#777;letter-spacing:0.5px;text-transform:uppercase;margin-top:2px;">${item.categoriaNome}</div>` : ''}
             ${opcoesHTML}
+            ${partesDestaqueHTML}
           </div>
         </div>
         ${
@@ -123,12 +130,15 @@ function buildTicketPayload(
   carrinho: CarrinhoItem[],
   destino: DestinoInfo | null,
   impressora?: Impressora,
+  participantName?: string | null,
+  total?: number,
+  paraViagem?: boolean,
 ): TicketPayload {
   const destinoStr = descrDestino(destino);
   const mesaStr = destino?.tipo === 'mesa' ? String(destino.mesaNumero ?? '') : undefined;
 
   const itens: TicketItem[] = carrinho.map((item) => {
-    const opcoes = item.opcoes?.map((o) => o.opcaoNome) ?? [];
+    const opcoes = item.opcoes?.map((o) => ({ nome: o.opcaoNome, obrigatorio: o.obrigatorio })) ?? [];
 
     const observacoesSet = new Set<string>();
     const observacoes: string[] = [];
@@ -146,23 +156,32 @@ function buildTicketPayload(
       if (obs?.trim()) observacoes.push(`Un.${idx + 1}: ${obs.trim()}`);
     });
 
+    const partesDestaque = (item as CarrinhoItem).partesDestaque;
+
     return {
       quantidade: item.quantidade,
       nome: item.nome,
       opcoes: opcoes.length > 0 ? opcoes : undefined,
       observacoes: observacoes.length > 0 ? observacoes : undefined,
+      ...(partesDestaque && partesDestaque.length > 0 ? { partes_destaque: partesDestaque } : {}),
     };
   });
+
+  const senhaStr = destino?.tipo === 'senha' && destino?.senha ? destino.senha : undefined;
 
   return {
     numero: numeroPedido,
     destino: destinoStr,
-    origem: 'caixa',
+    origem: 'Caixa',
     impressora_id: impressora?.id || 'cozinha',
     itens,
     data_hora: fmtData(),
     ...(mesaStr ? { mesa: mesaStr } : {}),
+    ...(senhaStr ? { senha: senhaStr } : {}),
+    ...(participantName ? { participant_name: participantName } : {}),
     ...(destino?.observacaoPedido ? { observacao_geral: destino.observacaoPedido } : {}),
+    ...(total !== undefined ? { total } : {}),
+    ...(paraViagem ? { para_viagem: true } : {}),
   };
 }
 
@@ -171,11 +190,26 @@ function buildKitchenHTML(
   carrinho: CarrinhoItem[],
   destino: DestinoInfo | null,
   impressora?: Impressora,
+  participantName?: string | null,
+  nomeLoja?: string,
+  total?: number,
+  paraViagem?: boolean,
 ): string {
   const numStr = String(numeroPedido).padStart(4, '0');
   const dataHora = fmtData();
   const destinoStr = descrDestino(destino);
   const itensHTML = buildItensHTML(carrinho);
+
+  // Destacar senha com fundo preto e letra branca
+  const isSenha = destino?.tipo === 'senha' || destino?.tipo === 'password';
+  const senhaVal = isSenha ? (destino?.senha ?? destino?.nomeCliente ?? '') : null;
+  const destinoDisplay = isSenha && destino?.nomeCliente ? destino.nomeCliente : destinoStr;
+
+  const participanteDestaque = participantName
+    ? `<div style="background:#f0f0f0;border:2px solid #000;font-size:16px;font-weight:800;text-align:center;padding:6px 4px;margin-bottom:10px;letter-spacing:0.3px;display:flex;align-items:center;justify-content:center;gap:6px;">
+        &#128100; ${participantName}
+      </div>`
+    : '';
 
   const impressoraHTML = impressora
     ? `<div style="
@@ -191,7 +225,7 @@ function buildKitchenHTML(
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"/>
-  <title>VIA COZINHA — PEDIDO #${numStr}</title>
+  <title>COZINHA — PEDIDO #${numStr}</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body {
@@ -202,29 +236,52 @@ function buildKitchenHTML(
       width: 320px;
     }
     @media print {
-      body { padding: 6px; width: 100%; }
+      body { padding: 6px; width: 100%; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>
 <body>
-  <div style="text-align:center;border:3px solid #000;padding:8px;margin-bottom:10px;">
-    <div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#555;">VIA COZINHA</div>
-    <div style="font-size:32px;font-weight:900;letter-spacing:-1px;">PEDIDO #${numStr}</div>
-    <div style="font-size:12px;color:#444;margin-top:2px;">${dataHora}</div>
+  <div style="text-align:center;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:10px;">
+    ${nomeLoja ? `<div style="font-size:14px;font-weight:900;letter-spacing:1px;text-transform:uppercase;">${nomeLoja}</div>` : ''}
+    <div style="font-size:11px;color:#888;letter-spacing:1px;margin-top:2px;">COMANDA DE COZINHA</div>
+    <div style="font-size:14px;color:#555;margin-top:2px;">Pedido #${numStr} &nbsp;·&nbsp; ${dataHora}</div>
   </div>
-  <div style="
-    background:#000;
-    color:#fff;
-    font-size:16px;
-    font-weight:900;
-    text-align:center;
-    padding:7px;
-    margin-bottom:12px;
-    letter-spacing:1px;
-    text-transform:uppercase;
-  ">${destinoStr}</div>
+  ${senhaVal ? `
+<div style="
+  background:#000;
+  color:#fff;
+  border-radius: 6px;
+  text-align: center;
+  padding: 10px 6px;
+  margin-bottom: 12px;
+">
+  <div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#ccc;text-transform:uppercase;">SENHA</div>
+  <div style="font-size:52px;font-weight:900;letter-spacing:-2px;line-height:1;">${senhaVal}</div>
+  ${destinoDisplay ? `<div style="font-size:13px;color:#ddd;margin-top:2px;">${destinoDisplay}</div>` : ''}
+</div>
+` : `
+<div style="
+  background:#000;color:#fff;
+  font-size:16px;font-weight:900;
+  text-align:center;padding:7px;
+  margin-bottom:12px;
+  letter-spacing:1px;text-transform:uppercase;
+">${destinoStr}</div>
+`}
+  ${participanteDestaque}
   ${impressoraHTML}
   ${itensHTML}
+  ${total !== undefined ? `
+  <div style="border-top:2px solid #000;margin-top:10px;padding-top:10px;text-align:center;">
+    <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:1px;">TOTAL DO PEDIDO</div>
+    <div style="font-size:34px;font-weight:900;letter-spacing:-1px;">${fmtPreco2(total)}</div>
+  </div>
+  ` : ''}
+  ${paraViagem ? `
+  <div style="border:4px solid #000;border-radius:6px;text-align:center;padding:6px;margin-top:10px;">
+    <div style="font-size:18px;font-weight:900;letter-spacing:1px;text-transform:uppercase;">&#128666; PARA VIAGEM</div>
+  </div>
+  ` : ''}
   <div style="border-top:2px dashed #000;margin-top:6px;padding-top:6px;text-align:center;font-size:10px;color:#777;">
     Impresso em ${dataHora}
   </div>
@@ -245,16 +302,20 @@ export async function printKitchenTicket(
   destino: DestinoInfo | null,
   impressora?: Impressora,
   suppressBrowserFallback = false,
+  participantName?: string | null,
+  nomeLoja?: string,
+  total?: number,
+  paraViagem?: boolean,
 ): Promise<PrintResult> {
   console.log('[CozinhaTicketPrint] printKitchenTicket chamado. Pedido:', numeroPedido, 'Itens:', carrinho.length, 'suppressFallback:', suppressBrowserFallback);
   console.log('[CozinhaTicketPrint] impressora:', impressora ? `${impressora.nome} (id=${impressora.id}, ip=${impressora.ip || 'n/a'})` : 'NENHUMA');
 
   // SEMPRE monta o payload JSON — mesmo sem impressora configurada
   // O agente local resolve o IP pelo config.json usando impressora_id
-  const payload = buildTicketPayload(numeroPedido, carrinho, destino, impressora);
+  const payload = buildTicketPayload(numeroPedido, carrinho, destino, impressora, participantName, total, paraViagem);
   console.log('[CozinhaTicketPrint] payload montado:', JSON.stringify(payload, null, 2));
 
-  const html = buildKitchenHTML(numeroPedido, carrinho, destino, impressora);
+  const html = buildKitchenHTML(numeroPedido, carrinho, destino, impressora, participantName, nomeLoja, total, paraViagem);
 
   // SEMPRE passa orderData (payload) pro sendToPrinter
   // sendToPrinter tenta agente local com JSON primeiro, antes de qualquer fallback
@@ -287,6 +348,7 @@ export async function printSimpleReceipt(
   suppressBrowserFallback = false,
   /** Pedidos vinculados para exibir no comprovante unificado */
   pedidosVinculados?: { numero: number; numeroStr?: string; itens: { nome: string; quantidade: number; preco: number }[]; total: number; destino?: DestinoInfo | null }[],
+  participantName?: string | null,
 ): Promise<PrintResult> {
   const numStr = String(numeroPedido).padStart(4, '0');
   const dataHora = fmtData();
@@ -385,7 +447,7 @@ export async function printSimpleReceipt(
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family: Arial, Helvetica, sans-serif; background:#fff; color:#000; padding:12px; width:300px; }
-    @media print { body { padding:6px; width:100%; } }
+    @media print { body { padding:6px; width:100%; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   </style>
 </head>
 <body>
@@ -394,6 +456,7 @@ export async function printSimpleReceipt(
     <div style="font-size:40px;font-weight:900;letter-spacing:-2px;">#${temVinculados ? 'UNIF' : numStr}</div>
     <div style="font-size:11px;color:#444;">${dataHora}</div>
   </div>
+  ${participantName ? `<div style="background:#f0f0f0;border:2px solid #000;text-align:center;padding:6px;font-size:14px;font-weight:800;margin-bottom:10px;letter-spacing:0.3px;display:flex;align-items:center;justify-content:center;gap:6px;">&#128100; ${participantName}</div>` : ''}
   ${!temVinculados ? `
   <div style="background:#000;color:#fff;text-align:center;padding:8px;font-size:15px;font-weight:900;margin-bottom:12px;border-radius:3px;letter-spacing:0.5px;">
     ${destinoStr}

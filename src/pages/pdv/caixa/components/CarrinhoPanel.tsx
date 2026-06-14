@@ -37,7 +37,7 @@ function formatPrice(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-function DestinoTag({ destino }: { destino: DestinoInfo }) {
+function DestinoTag({ destino, onClear }: { destino: DestinoInfo; onClear?: () => void }) {
   const labels: Record<string, string> = {
     hora: 'Fechar na Hora',
     mesa: `Mesa ${destino.mesaNumero}`,
@@ -53,9 +53,18 @@ function DestinoTag({ destino }: { destino: DestinoInfo }) {
     delivery: 'ri-e-bike-line',
   };
   return (
-    <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+    <div className="flex items-center gap-1 text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 pl-2 pr-1 py-1 rounded-full">
       <i className={`${icons[destino.tipo]} text-sm`} />
-      <span className="truncate max-w-[140px]">{labels[destino.tipo]}</span>
+      <span className="truncate max-w-[100px]">{labels[destino.tipo]}</span>
+      {onClear && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onClear(); }}
+          title="Remover destino"
+          className="w-4 h-4 flex items-center justify-center text-amber-400 hover:text-red-500 hover:bg-red-50 rounded-full cursor-pointer transition-colors flex-shrink-0"
+        >
+          <i className="ri-close-line text-xs" />
+        </button>
+      )}
     </div>
   );
 }
@@ -107,7 +116,8 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
   const {
     carrinho, destino, taxaServico,
     subtotal, valorDesconto, valorTaxaServico, total,
-    updateItemQty, removeItem, setDesconto, toggleTaxaServico, addItem, clearCart,
+    updateItemQty, removeItem, setDesconto, toggleTaxaServico, addItem, clearCart, setDestino,
+    isCortesia, cortesiaAutorizadaPor, cortesiaDestinatario, cortesiaMotivo,
   } = usePDV();
   const { pedidosRelacionados } = usePedidosAgrupados(destino, carrinho, total);
   const { dispararNotificacao, addPendingApproval, cancelPending } = useNotificacoes();
@@ -490,11 +500,17 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
               {carrinho.reduce((a, i) => a + i.quantidade, 0)}
             </span>
           )}
+          {isCortesia && (
+            <span className="flex items-center gap-1 px-2 py-0.5 bg-violet-100 text-violet-700 border border-violet-200 rounded-full text-[10px] font-bold flex-shrink-0">
+              <i className="ri-gift-line text-xs" />
+              CORTESIA
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {destino && (
             <>
-              <DestinoTag destino={destino} />
+              <DestinoTag destino={destino} onClear={() => setDestino(null)} />
               <button
                 onClick={onDestino}
                 title="Alterar destino"
@@ -728,28 +744,68 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
 
           {/* Totais */}
           <div className="px-3 md:px-4 py-2.5 md:py-3 space-y-1">
-            {(subtotal !== total || valorDesconto > 0 || (taxaServico && taxaServicoConfig)) && (
-              <div className="flex justify-between text-xs text-zinc-500">
-                <span>Subtotal</span>
-                <span>{formatPrice(subtotal)}</span>
-              </div>
+            {isCortesia ? (
+              <>
+                <div className="flex justify-between text-xs text-zinc-400">
+                  <span>Subtotal</span>
+                  <span className="line-through">{formatPrice(subtotal)}</span>
+                </div>
+                <div className="flex justify-between text-xs text-violet-600 font-semibold">
+                  <span className="flex items-center gap-1">
+                    <i className="ri-gift-line" />
+                    Cortesia (100%)
+                  </span>
+                  <span>-{formatPrice(subtotal)}</span>
+                </div>
+                <div className="flex justify-between text-base font-bold text-zinc-900 pt-1 border-t border-zinc-200">
+                  <span>Total</span>
+                  <span className="text-violet-600">R$ 0,00</span>
+                </div>
+                {cortesiaAutorizadaPor && (
+                  <p className="text-[10px] text-violet-600 flex items-center gap-1 pt-0.5">
+                    <i className="ri-shield-check-line" />
+                    Autorizado por {cortesiaAutorizadaPor}
+                  </p>
+                )}
+                {cortesiaDestinatario && (
+                  <p className="text-[10px] text-violet-600 flex items-center gap-1 pt-0.5">
+                    <i className="ri-user-line" />
+                    Para: {cortesiaDestinatario}
+                  </p>
+                )}
+                {cortesiaMotivo && (
+                  <p className="text-[10px] text-violet-500 flex items-center gap-1 pt-0.5">
+                    <i className="ri-chat-1-line" />
+                    {cortesiaMotivo}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                {(subtotal !== total || valorDesconto > 0 || (taxaServico && taxaServicoConfig)) && (
+                  <div className="flex justify-between text-xs text-zinc-500">
+                    <span>Subtotal</span>
+                    <span>{formatPrice(subtotal)}</span>
+                  </div>
+                )}
+                {valorDesconto > 0 && (
+                  <div className="flex justify-between text-xs text-green-600">
+                    <span>Desconto</span>
+                    <span>-{formatPrice(valorDesconto)}</span>
+                  </div>
+                )}
+                {taxaServico && taxaServicoConfig && (
+                  <div className="flex justify-between text-xs text-zinc-500">
+                    <span>Taxa de Serviço</span>
+                    <span>+{formatPrice(valorTaxaServico)}</span>
+                  </div>
+                )}
+                <div className={`flex justify-between text-base font-bold text-zinc-900 ${(subtotal !== total || valorDesconto > 0 || (taxaServico && taxaServicoConfig)) ? 'pt-1 border-t border-zinc-200' : ''}`}>
+                  <span>Total</span>
+                  <span>{formatPrice(total)}</span>
+                </div>
+              </>
             )}
-            {valorDesconto > 0 && (
-              <div className="flex justify-between text-xs text-green-600">
-                <span>Desconto</span>
-                <span>-{formatPrice(valorDesconto)}</span>
-              </div>
-            )}
-            {taxaServico && taxaServicoConfig && (
-              <div className="flex justify-between text-xs text-zinc-500">
-                <span>Taxa de Serviço</span>
-                <span>+{formatPrice(valorTaxaServico)}</span>
-              </div>
-            )}
-            <div className={`flex justify-between text-base font-bold text-zinc-900 ${(subtotal !== total || valorDesconto > 0 || (taxaServico && taxaServicoConfig)) ? 'pt-1 border-t border-zinc-200' : ''}`}>
-              <span>Total</span>
-              <span>{formatPrice(total)}</span>
-            </div>
           </div>
 
           {/* Botões */}
@@ -785,13 +841,23 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
                 </span>
               </button>
             )}
-            <button
-              onClick={onPagar}
-              className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
-            >
-              <i className="ri-secure-payment-line text-base" />
-              Finalizar Pedido
-            </button>
+            {isCortesia ? (
+              <button
+                onClick={onPagar}
+                className="w-full py-3 bg-violet-600 hover:bg-violet-700 text-white font-bold text-sm rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
+              >
+                <i className="ri-gift-line text-base" />
+                Confirmar Cortesia
+              </button>
+            ) : (
+              <button
+                onClick={onPagar}
+                className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
+              >
+                <i className="ri-secure-payment-line text-base" />
+                Finalizar Pedido
+              </button>
+            )}
           </div>
         </div>
       )}

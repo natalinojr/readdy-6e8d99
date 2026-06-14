@@ -53,12 +53,15 @@ interface SessaoContextData {
   iniciarSessao: () => Promise<void>;
   fecharSessao: (valorFechamento?: number, notas?: string, force?: boolean) => Promise<void>;
   abrirCaixa: (valorAbertura: number, operadorNome: string, observacao?: string) => Promise<void>;
-  fecharCaixa: (valorFechamento?: number, closingNotes?: string) => Promise<void>;
+  fecharCaixa: (valorFechamento?: number, closingNotes?: string, skipLocalUpdate?: boolean) => Promise<void>;
   abrirEstacao: (estacaoId: string, estacaoNome: string, operadorNome: string) => void;
   fecharEstacao: (estacaoId: string) => void;
   gerarProximoNumeroPedido: () => Promise<string>;
-  /** Força re-sincronização da sessão com o banco (útil para polling de fallback) */
-  sincronizarSessao: () => Promise<void>;
+
+  /** Sincroniza sessão/caixa com o banco e retorna o estado real lido do banco */
+  sincronizarSessao: () => Promise<{ sessao: SessaoInfo | null; caixa: CaixaInfo | null } | null>;
+  /** Sinaliza fechamento de caixa localmente (sem RPC) — útil quando o caixa já foi fechado no banco mas o estado local precisa ser sincronizado */
+  sinalizarCaixaFechadoLocalmente: () => void;
 }
 
 const SessaoContext = createContext<SessaoContextData | null>(null);
@@ -79,7 +82,7 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
 
   // ── Core: busca sessão e caixa ativos ─────────────────────────────────────
   const restoreSession = useCallback(async () => {
-    if (!effectiveTenantId) return;
+    if (!effectiveTenantId) return null;
     try {
       const { data: sessions } = await supabase.rpc('fn_get_active_session', {
         p_tenant_id: effectiveTenantId,
@@ -89,7 +92,7 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
         setSessao(null);
         setCaixa(null);
         setEstado('sem_sessao');
-        return;
+        return { sessao: null, caixa: null };
       }
 
       const dataRef = new Date(sess.opened_at);
@@ -109,18 +112,22 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
       });
       const reg = registers?.[0];
       if (reg) {
-        setCaixa({
+        const caixaInfo: CaixaInfo = {
           id: reg.id,
           valorAbertura: reg.opening_value,
           abertaEm: new Date(reg.opened_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }),
           operadorNome: user?.nome ?? kioskSession?.kioskLabel ?? 'Totem',
-        });
+        };
+        setCaixa(caixaInfo);
         setEstado('caixa_aberto');
-      } else {
-        setEstado('sessao_aberta');
+        return { sessao: sessaoInfo, caixa: caixaInfo };
       }
+      setCaixa(null);
+      setEstado('sessao_aberta');
+      return { sessao: sessaoInfo, caixa: null };
     } catch (e) {
       console.error('[SessaoContext] restoreSession error:', e);
+      return null;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveTenantId, user?.nome, kioskSession?.kioskLabel]);
@@ -248,7 +255,7 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
   }, [sessao, user]);
 
   // ── fecharCaixa ────────────────────────────────────────────────────────────
-  const fecharCaixa = useCallback(async (valorFechamento?: number, closingNotes?: string) => {
+  const fecharCaixa = useCallback(async (valorFechamento?: number, closingNotes?: string, skipLocalUpdate?: boolean) => {
     if (!caixa) return;
     const { error } = await supabase.rpc('fn_close_cash_register_v2', {
       p_cash_register_id: caixa.id,
@@ -256,9 +263,19 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
       p_closing_notes: closingNotes ?? null,
     });
     if (error) console.error('[SessaoContext] fn_close_cash_register error:', error);
+    // Se skipLocalUpdate=true, não altera o estado local — o polling/realtime
+    // vai detectar a mudança no banco e atualizar. Isso evita que modais de
+    // fechamento (ex: justificativa de diferença) sejam desmontados abruptamente.
+    if (!skipLocalUpdate) {
+      setCaixa(null);
+      setEstado('sessao_aberta');
+    }
+  }, [caixa]);
+
+  const sinalizarCaixaFechadoLocalmente = useCallback(() => {
     setCaixa(null);
     setEstado('sessao_aberta');
-  }, [caixa]);
+  }, []);
 
   const abrirEstacao = useCallback((estacaoId: string, estacaoNome: string, operadorNome: string) => {
     setEstacoesAbertas((prev) => {
@@ -272,13 +289,14 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const gerarProximoNumeroPedido = useCallback(async (): Promise<string> => {
-    if (!sessao) return `P${Date.now()}`;
-    const { data, error } = await supabase.rpc('fn_next_order_number', { p_session_id: sessao.id, p_tenant_id: effectiveTenantId ?? undefined });
+    // BUG-08 FIX: numeração por tenant+dia, não por sessão
+    if (!effectiveTenantId) return `P${Date.now()}`;
+    const { data, error } = await supabase.rpc('fn_next_tenant_order_number', { p_tenant_id: effectiveTenantId });
     if (error || !data?.[0] || typeof data[0].number !== 'string' || data[0].number === 'null' || !data[0].number) {
       return `P${Date.now()}`;
     }
     return data[0].number;
-  }, [sessao, effectiveTenantId]);
+  }, [effectiveTenantId]);
 
   return (
     <SessaoContext.Provider value={{
@@ -286,6 +304,7 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
       iniciarSessao, fecharSessao, abrirCaixa, fecharCaixa,
       abrirEstacao, fecharEstacao, gerarProximoNumeroPedido,
       sincronizarSessao: restoreSession,
+      sinalizarCaixaFechadoLocalmente,
     }}>
       {children}
     </SessaoContext.Provider>

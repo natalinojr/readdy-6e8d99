@@ -66,6 +66,7 @@ function GrupoOpcaoCard({
             opcaoId: opcao.id,
             opcaoNome: opcao.nome || nomesVinculos?.[opcao.id] || '—',
             precoAdicional: opcao.precoAdicional,
+            obrigatorio: grupo.obrigatorio,
           };
 
           return (
@@ -240,6 +241,8 @@ export default function OpcoesModal({
       obsUnidades: obsUnidades.length > 0 ? obsUnidades : undefined,
       semPreparo: item.semPreparo ?? false,
       stationId,
+      subproducao: item.subproducao?.filter(sp => sp.estacaoId)
+        .map(sp => ({ nome: sp.nome, estacaoId: sp.estacaoId!, estacao: sp.estacao })) ?? undefined,
     });
     onClose();
   };

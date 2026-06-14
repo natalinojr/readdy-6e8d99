@@ -24,8 +24,9 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
   const [ativo, setAtivo] = useState(usuario?.ativo ?? true);
   const [senha, setSenha] = useState('');
   const [showSenha, setShowSenha] = useState(false);
-  const [erros, setErros] = useState<Record<string, string>>({});
+  const [erros, setErros] = useState<Record<string, string>>();
   const [salvando, setSalvando] = useState(false);
+  const [extraErro, setExtraErro] = useState<string | null>(null);
 
   // PIN state
   const [pin, setPin] = useState('');
@@ -54,6 +55,8 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
       }
     }
     if (modo === 'senha' && senha.length < 6) e.senha = 'Mínimo 6 caracteres';
+    // No modo editar, senha é opcional — só validar se preenchida
+    if (modo === 'editar' && senha && senha.length < 6) e.senha = 'Mínimo 6 caracteres';
     return e;
   };
 
@@ -61,6 +64,7 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
     const e = validar();
     if (Object.keys(e).length) { setErros(e); return; }
     setSalvando(true);
+    setExtraErro(null);
     try {
       if (modo === 'novo') {
         await onSalvar({
@@ -73,7 +77,26 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
           pin: isTotem ? pin.trim() : undefined,
         });
       } else if (modo === 'editar') {
-        await onSalvar({ nome, perfil, modoTreino, ativo });
+        // Se PIN preenchido, salvar separadamente primeiro
+        if (pin.trim() && onDefinirPIN) {
+          if (!/^\d{4,8}$/.test(pin)) {
+            setPinErro('PIN deve ter entre 4 e 8 dígitos numéricos');
+            setSalvando(false);
+            return;
+          }
+          const pinRes = await onDefinirPIN(pin);
+          if (!pinRes.success) {
+            setExtraErro(pinRes.error ?? 'Erro ao salvar PIN');
+            setSalvando(false);
+            return;
+          }
+        }
+        // Salvar dados do usuário
+        const payload: Record<string, unknown> = { nome, perfil, modoTreino, ativo };
+        if (senha && senha.length >= 6) {
+          payload.senha = senha;
+        }
+        await onSalvar(payload);
       } else {
         await onSalvar({ senha });
       }
@@ -322,6 +345,32 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
                 )}
               </div>
 
+              {/* Senha — no modo editar também (opcional) */}
+              {modo === 'editar' && (
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Senha</p>
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+                      Nova senha
+                      <span className="text-zinc-400 font-normal ml-1">— deixe em branco para não alterar</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showSenha ? 'text' : 'password'}
+                        value={senha}
+                        onChange={(e) => { setSenha(e.target.value); setErros((p) => ({ ...p, senha: '' })); }}
+                        placeholder="Mínimo 6 caracteres"
+                        className={`w-full text-sm border rounded-lg px-3 py-2.5 pr-9 text-zinc-800 focus:outline-none focus:border-amber-400 ${erros.senha ? 'border-red-300 bg-red-50' : 'border-zinc-200'}`}
+                      />
+                      <button onClick={() => setShowSenha(!showSenha)} className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center text-zinc-400 cursor-pointer">
+                        {showSenha ? <EyeOff size={13} /> : <Eye size={13} />}
+                      </button>
+                    </div>
+                    {erros.senha && <p className="text-xs text-red-500 mt-1">{erros.senha}</p>}
+                  </div>
+                </div>
+              )}
+
               {/* PIN do PDV — apenas no modo editar */}
               {modo === 'editar' && onDefinirPIN && (
                 <div className="space-y-3">
@@ -406,6 +455,14 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
                 </div>
               )}
             </>
+          )}
+
+          {/* Erro extra (ex: PIN falhou no handleSalvar) */}
+          {extraErro && (
+            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
+              <i className="ri-error-warning-line text-red-500 text-sm flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-red-700">{extraErro}</p>
+            </div>
           )}
         </div>
 

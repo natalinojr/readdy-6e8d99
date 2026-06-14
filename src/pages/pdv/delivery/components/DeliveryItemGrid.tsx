@@ -37,10 +37,12 @@ function ItemOpcoes({
   item,
   onConfirm,
   onClose,
+  opcoesIndisponiveisIds,
 }: {
   item: Item;
   onConfirm: (ci: Omit<DeliveryCarrinhoItem, 'cartId'>) => void;
   onClose: () => void;
+  opcoesIndisponiveisIds: Set<string>;
 }) {
   const [selecionadas, setSelecionadas] = useState<OpcaoSel[]>([]);
   const [obsSel, setObsSel] = useState<number[]>([]);
@@ -152,29 +154,39 @@ function ItemOpcoes({
               <div className="space-y-1.5">
                 {grp.opcoes.filter((o) => o.ativo).map((opc) => {
                   const sel = selecionadas.some((s) => s.opcaoId === opc.id);
+                  const esgotada = opcoesIndisponiveisIds.has(opc.id);
                   return (
                     <button
                       key={opc.id}
-                      onClick={() => toggleOpcao(grp, opc)}
-                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border cursor-pointer transition-all ${
-                        sel ? 'bg-amber-50 border-amber-400' : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300'
+                      onClick={esgotada ? undefined : () => toggleOpcao(grp, opc)}
+                      disabled={esgotada}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all ${
+                        esgotada
+                          ? 'opacity-50 cursor-not-allowed bg-zinc-50 border-zinc-100'
+                          : sel
+                            ? 'bg-amber-50 border-amber-400 cursor-pointer'
+                            : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300 cursor-pointer'
                       }`}
                     >
                       <div className="flex items-center gap-2">
                         <div
                           className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                            sel ? 'border-amber-500 bg-amber-500' : 'border-zinc-300'
+                            esgotada ? 'border-zinc-300' : sel ? 'border-amber-500 bg-amber-500' : 'border-zinc-300'
                           }`}
                         >
-                          {sel && <i className="ri-check-line text-white text-[9px]" />}
+                          {sel && !esgotada && <i className="ri-check-line text-white text-[9px]" />}
                         </div>
-                        <span className="text-sm text-zinc-700 font-medium">{opc.nome}</span>
+                        <span className={`text-sm font-medium ${esgotada ? 'text-zinc-400 line-through' : 'text-zinc-700'}`}>{opc.nome}</span>
                       </div>
-                      {opc.precoAdicional > 0 && (
+                      {esgotada ? (
+                        <span className="text-[9px] font-bold text-red-500 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                          Esgotado
+                        </span>
+                      ) : opc.precoAdicional > 0 ? (
                         <span className="text-xs font-semibold text-amber-600">
                           +R$ {opc.precoAdicional.toFixed(2)}
                         </span>
-                      )}
+                      ) : null}
                     </button>
                   );
                 })}
@@ -256,7 +268,7 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
   const [catAtiva, setCatAtiva] = useState('todas');
   const [busca, setBusca] = useState('');
   const [itemModal, setItemModal] = useState<Item | null>(null);
-  const { mapaItens: itensSemEstoque } = useItensSemEstoque();
+  const { mapaItens: itensSemEstoque, opcoesIndisponiveisIds } = useItensSemEstoque();
   const [tooltipItemId, setTooltipItemId] = useState<string | null>(null);
   const tooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -433,7 +445,7 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
       </div>
 
       {itemModal && (
-        <ItemOpcoes item={itemModal} onConfirm={handleAdd} onClose={() => setItemModal(null)} />
+        <ItemOpcoes item={itemModal} onConfirm={handleAdd} onClose={() => setItemModal(null)} opcoesIndisponiveisIds={opcoesIndisponiveisIds} />
       )}
     </div>
   );

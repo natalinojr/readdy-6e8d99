@@ -131,7 +131,6 @@ Deno.serve(async (req) => {
         })
       }
 
-      // Get next sort_order
       const { data: lastStation } = await supabaseAdmin
         .from('kitchen_stations')
         .select('sort_order')
@@ -212,7 +211,6 @@ Deno.serve(async (req) => {
         })
       }
 
-      // Remove operators first
       await supabaseAdmin
         .from('station_operators')
         .delete()
@@ -336,30 +334,55 @@ Deno.serve(async (req) => {
     // TABLES
     // ═══════════════════════════════════════════════════════════════════════════
     if (action === 'create_table') {
-      const { number, capacity, table_type, area, pos_x, pos_y } = rest
+      const { number, capacity, table_type, area, pos_x, pos_y, is_universal } = rest
       if (!tId || number === undefined) {
         return new Response(JSON.stringify({ success: false, error: 'tenant_id e number são obrigatórios' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
         })
       }
 
+      // Se for mesa universal, verifica se já existe — operação idempotente
+      if (is_universal) {
+        const { data: existingUniversal } = await supabaseAdmin
+          .from('tables')
+          .select('id, number, capacity, table_type, area, pos_x, pos_y, status, qr_token, is_active, observation, is_universal')
+          .eq('tenant_id', tId)
+          .eq('is_universal', true)
+          .eq('is_active', true)
+          .maybeSingle()
+
+        if (existingUniversal) {
+          return new Response(JSON.stringify({ success: true, data: existingUniversal }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
+          })
+        }
+      }
+
       const qr_token = crypto.randomUUID().replace(/-/g, '')
+
+      const insertData: Record<string, unknown> = {
+        tenant_id: tId,
+        number: Number(number),
+        capacity: typeof capacity === 'number' ? capacity : 4,
+        table_type: table_type ? String(table_type) : 'quadrada',
+        area: area ? String(area) : 'Salão',
+        pos_x: typeof pos_x === 'number' ? pos_x : 0,
+        pos_y: typeof pos_y === 'number' ? pos_y : 0,
+        status: 'available',
+        is_active: true,
+        qr_token,
+      }
+
+      if (is_universal !== undefined) {
+        insertData.is_universal = Boolean(is_universal)
+        insertData.capacity = typeof capacity === 'number' ? capacity : 999
+        insertData.status = 'free'
+      }
 
       const { data, error } = await supabaseAdmin
         .from('tables')
-        .insert({
-          tenant_id: tId,
-          number: Number(number),
-          capacity: typeof capacity === 'number' ? capacity : 4,
-          table_type: table_type ? String(table_type) : 'quadrada',
-          area: area ? String(area) : 'Salão',
-          pos_x: typeof pos_x === 'number' ? pos_x : 0,
-          pos_y: typeof pos_y === 'number' ? pos_y : 0,
-          status: 'available',
-          is_active: true,
-          qr_token,
-        })
-        .select('id, number, capacity, table_type, area, pos_x, pos_y, status, qr_token, is_active, observation')
+        .insert(insertData)
+        .select('id, number, capacity, table_type, area, pos_x, pos_y, status, qr_token, is_active, observation, is_universal')
         .single()
 
       if (error) {
@@ -440,35 +463,6 @@ Deno.serve(async (req) => {
       })
     }
 
-    if (action === 'regenerate_qr') {
-      const { id } = rest
-      if (!tId || !id) {
-        return new Response(JSON.stringify({ success: false, error: 'tenant_id e id são obrigatórios' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
-        })
-      }
-
-      const newQrToken = crypto.randomUUID().replace(/-/g, '')
-
-      const { data, error } = await supabaseAdmin
-        .from('tables')
-        .update({ qr_token: newQrToken })
-        .eq('id', id)
-        .eq('tenant_id', tId)
-        .select('id, number, capacity, table_type, area, pos_x, pos_y, status, qr_token, is_active, observation')
-        .single()
-
-      if (error) {
-        console.error('[config-write] regenerate_qr error:', error)
-        return new Response(JSON.stringify({ success: false, error: error.message }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500,
-        })
-      }
-      return new Response(JSON.stringify({ success: true, data }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
-      })
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // PERMISSIONS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -503,7 +497,6 @@ Deno.serve(async (req) => {
         })
       }
 
-      // Build upsert rows
       const rows = permissions.map((p: { role: string; permission_key: string; allowed: boolean }) => ({
         tenant_id: tId,
         role: p.role,
@@ -530,7 +523,6 @@ Deno.serve(async (req) => {
     // TENANTS
     // ═══════════════════════════════════════════════════════════════════════════
     if (action === 'update_tenant') {
-      // Validate tenant_id from body (not from auth)
       const tenantIdFromBody = tenant_id || active_tenant_id
       if (!tenantIdFromBody) {
         return new Response(JSON.stringify({ success: false, error: 'tenant_id é obrigatório' }), {
@@ -579,7 +571,6 @@ Deno.serve(async (req) => {
         })
       }
 
-      // Avoid duplicates
       const { data: existing } = await supabaseAdmin
         .from('station_operators')
         .select('id')
@@ -589,7 +580,6 @@ Deno.serve(async (req) => {
         .maybeSingle()
 
       if (existing) {
-        // Already assigned
         return new Response(JSON.stringify({ success: true }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
         })
@@ -641,7 +631,7 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // SYSTEM SETTINGS (existing action preserved)
+    // SYSTEM SETTINGS
     // ═══════════════════════════════════════════════════════════════════════════
     if (action === 'upsert_system_settings') {
       if (!tenant_id) {

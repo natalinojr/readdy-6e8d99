@@ -6,7 +6,7 @@ import { useKioskAuth } from '@/contexts/KioskAuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import { notifyReload } from '@/lib/reloadSignal';
-import type { Categoria, Item, Combo, ObservacaoGlobal, GrupoOpcoes, OpcaoItem, PromocaoItem } from '@/types/cardapio';
+import type { Categoria, Item, Combo, ObservacaoGlobal, GrupoOpcoes, OpcaoItem, PromocaoItem, Destaque } from '@/types/cardapio';
 import type { ItemCardapioPublico } from '@/types/mesaCliente';
 import { saveMenuCache, getMenuCache } from '@/lib/offlineDB';
 
@@ -41,11 +41,13 @@ interface DBStation {
 interface DBOpcao {
   id: string;
   name: string;
+  description?: string | null;
   additional_price?: number | null;
   is_active?: boolean | null;
   ingredient_id?: string | null;
   production_recipe_id?: string | null;
   consumption_quantity?: number | null;
+  consumption_unit?: string | null;
 }
 
 interface DBGrupoOpcoes {
@@ -133,6 +135,16 @@ interface DBCombo {
   items?: DBComboItem[];
 }
 
+interface DBHighlight {
+  id: string;
+  item_id: string;
+  custom_price?: number | null;
+  custom_description?: string | null;
+  sort_order?: number | null;
+  is_active?: boolean | null;
+  menu_items?: DBItem | null;
+}
+
 // ── DB → Frontend Mappers ──────────────────────────────────────────────────────
 
 function mapStation(s: DBStation): EstacaoCozinha {
@@ -155,9 +167,11 @@ function mapOpcao(o: DBOpcao, ingredientNameMap?: Map<string, string>): OpcaoIte
     : (o.ingredient_id && ingredientNameMap?.get(o.ingredient_id)) || o.name || '';
   return {
     id: o.id, nome: resolvedName, precoAdicional: Number(o.additional_price ?? 0), ativo: o.is_active ?? true,
+    descricao: o.description ?? undefined,
     ingredientId: o.ingredient_id ?? null,
     productionRecipeId: o.production_recipe_id ?? null,
     consumptionQuantity: o.consumption_quantity ? Number(o.consumption_quantity) : undefined,
+    consumptionUnit: o.consumption_unit ?? undefined,
   };
 }
 
@@ -243,6 +257,25 @@ function mapCombo(c: DBCombo): Combo {
   };
 }
 
+function mapDestaque(h: DBHighlight, categorias: Categoria[]): Destaque {
+  const item = h.menu_items;
+  const catNome = item ? categorias.find(c => c.id === item.category_id)?.nome ?? '—' : '—';
+  return {
+    id: h.id,
+    itemId: h.item_id,
+    itemNome: item?.name ?? '(item removido)',
+    itemDescricao: item?.description ?? '',
+    itemPreco: Number(item?.price ?? 0),
+    itemFotoUrl: item?.photo_url ?? '',
+    itemCategoriaId: item?.category_id ?? '',
+    itemCategoriaNome: catNome,
+    customPrice: h.custom_price != null ? Number(h.custom_price) : null,
+    customDescription: h.custom_description ?? null,
+    ordem: h.sort_order ?? 0,
+    ativo: h.is_active ?? true,
+  };
+}
+
 // ── Menu Write Helper ──────────────────────────────────────────────────────────
 
 async function menuWrite(action: string, payload: Record<string, unknown>, tenantId?: string): Promise<{ success?: boolean } | null> {
@@ -273,6 +306,7 @@ interface CardapioContextValue {
   estacoes: EstacaoCozinha[];
   loading: boolean;
   saving: boolean;
+  erroCarregamento: string | null;
 
   // Backward compat setters
   setItens: Dispatch<SetStateAction<Item[]>>;
@@ -303,6 +337,13 @@ interface CardapioContextValue {
   salvarCombo: (combo: Combo) => Promise<void>;
   excluirCombo: (id: string) => Promise<void>;
 
+  // Destaques CRUD
+  destaques: Destaque[];
+  adicionarDestaque: (itemId: string, customPrice?: number | null, customDescription?: string | null) => Promise<void>;
+  editarDestaque: (id: string, data: { customPrice?: number | null; customDescription?: string | null; ativo?: boolean }) => Promise<void>;
+  removerDestaque: (id: string) => Promise<void>;
+  reordenarDestaques: (items: Array<{ id: string; sortOrder: number }>) => Promise<void>;
+
   // Derived
   itensAtivos: Item[];      // itens ativos para canais presenciais (exclui somenteDelivery)
   itensDelivery: Item[];    // itens ativos para o canal delivery
@@ -325,8 +366,10 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
   const [combos, setCombos] = useState<Combo[]>([]);
   const [obsGlobais, setObsGlobais] = useState<ObservacaoGlobal[]>([]);
   const [estacoes, setEstacoes] = useState<EstacaoCozinha[]>([]);
+  const [destaques, setDestaques] = useState<Destaque[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [erroCarregamento, setErroCarregamento] = useState<string | null>(null);
 
   const effectiveTenantId = user?.tenantId ?? kioskSession?.tenantId ?? null;
 
@@ -355,93 +398,142 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
       setItens([]);
       setCombos([]);
       setObsGlobais([]);
+      setDestaques([]);
       setLoading(false);
+      setErroCarregamento(null);
       return;
     }
     setLoading(true);
-    try {
-      const { data, error } = await supabase.rpc('fn_get_full_menu', { p_tenant_id: effectiveTenantId });
-      if (error || !data) {
-        console.warn('[Cardapio] DB load failed:', error?.message);
+    setErroCarregamento(null);
 
-        // ── OFFLINE FALLBACK: tenta carregar do cache local ───────────────
-        const cached = await getMenuCache(effectiveTenantId);
-        if (cached) {
-          console.info('[Cardapio] Usando cache offline do cardápio');
-          setEstacoes((cached.stations as Parameters<typeof mapStation>[0][] ?? []).map(mapStation));
-          setCategorias((cached.categories as Parameters<typeof mapCategoria>[0][] ?? []).map(mapCategoria));
-          setItens((cached.items as Parameters<typeof mapItem>[0][] ?? []).map(mapItem));
-          setCombos((cached.combos as Parameters<typeof mapCombo>[0][] ?? []).map(mapCombo));
-          setObsGlobais((cached.globalObservations as Parameters<typeof mapObsGlobal>[0][] ?? []).map(mapObsGlobal));
+    // Tenta carregar do banco com até 3 tentativas (intervalo de 2s entre elas)
+    // Isso resolve race conditions comuns em primeiro acesso de loja nova,
+    // onde o token JWT pode não estar totalmente propagado no primeiro tick
+    let lastError: string | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const { data, error } = await supabase.rpc('fn_get_full_menu', { p_tenant_id: effectiveTenantId });
+        if (error || !data) {
+          lastError = error?.message ?? 'Resposta vazia do servidor';
+          console.warn(`[Cardapio] Tentativa ${attempt}/3 falhou:`, lastError);
+
+          if (attempt < 3) {
+            // Espera 2s antes de tentar de novo — dá tempo do token propagar
+            await new Promise((r) => setTimeout(r, 2000));
+            continue;
+          }
+
+          // Última tentativa falhou — tenta cache offline
+          console.warn('[Cardapio] Todas as tentativas ao DB falharam — tentando cache offline');
+          const cached = await getMenuCache(effectiveTenantId);
+          if (cached) {
+            console.info('[Cardapio] Usando cache offline do cardápio');
+            setEstacoes((cached.stations as Parameters<typeof mapStation>[0][] ?? []).map(mapStation));
+            setCategorias((cached.categories as Parameters<typeof mapCategoria>[0][] ?? []).map(mapCategoria));
+            setItens((cached.items as Parameters<typeof mapItem>[0][] ?? []).map(mapItem));
+            setCombos((cached.combos as Parameters<typeof mapCombo>[0][] ?? []).map(mapCombo));
+            setObsGlobais((cached.globalObservations as Parameters<typeof mapObsGlobal>[0][] ?? []).map(mapObsGlobal));
+            setErroCarregamento(null);
+          } else {
+            setCategorias([]);
+            setItens([]);
+            setCombos([]);
+            setObsGlobais([]);
+            setErroCarregamento(lastError ?? 'Erro ao carregar cardápio');
+          }
         } else {
-          setCategorias([]);
-          setItens([]);
-          setCombos([]);
-          setObsGlobais([]);
-        }
-      } else {
-        // ── Fallback: buscar nomes de ingredientes para opções com name vazio ──
-        const ingredientIdsToFetch: string[] = [];
-        const rawItems = (data.items ?? []) as DBItem[];
-        for (const item of rawItems) {
-          for (const grp of (item.option_groups ?? [])) {
-            for (const opt of (grp.options ?? [])) {
-              if (opt.ingredient_id && (!opt.name || String(opt.name).trim() === '')) {
-                ingredientIdsToFetch.push(opt.ingredient_id);
+          // ── Sucesso! ──────────────────────────────────────────────────
+          // ── Fallback: buscar nomes de ingredientes para opções com name vazio ──
+          const ingredientIdsToFetch: string[] = [];
+          const rawItems = (data.items ?? []) as DBItem[];
+          for (const item of rawItems) {
+            for (const grp of (item.option_groups ?? [])) {
+              for (const opt of (grp.options ?? [])) {
+                if (opt.ingredient_id && (!opt.name || String(opt.name).trim() === '')) {
+                  ingredientIdsToFetch.push(opt.ingredient_id);
+                }
               }
             }
           }
-        }
-        let ingredientNameMap = new Map<string, string>();
-        if (ingredientIdsToFetch.length > 0) {
-          const uniqueIds = [...new Set(ingredientIdsToFetch)];
-          const { data: ingRows, error: ingError } = await supabase
-            .from('ingredients')
-            .select('id, name')
-            .in('id', uniqueIds)
-            .eq('tenant_id', effectiveTenantId);
-          if (!ingError && ingRows) {
-            for (const row of ingRows) {
-              if (row.id && row.name) ingredientNameMap.set(row.id, row.name);
+          let ingredientNameMap = new Map<string, string>();
+          if (ingredientIdsToFetch.length > 0) {
+            const uniqueIds = [...new Set(ingredientIdsToFetch)];
+            const { data: ingRows, error: ingError } = await supabase
+              .from('ingredients')
+              .select('id, name')
+              .in('id', uniqueIds)
+              .eq('tenant_id', effectiveTenantId);
+            if (!ingError && ingRows) {
+              for (const row of ingRows) {
+                if (row.id && row.name) ingredientNameMap.set(row.id, row.name);
+              }
             }
           }
+
+          setEstacoes((data.stations ?? []).map(mapStation));
+          setCategorias((data.categories ?? []).map(mapCategoria));
+          setItens((data.items ?? []).map((i: DBItem) => mapItem(i, ingredientNameMap)));
+          setCombos((data.combos ?? []).map(mapCombo));
+          setObsGlobais((data.global_observations ?? []).map(mapObsGlobal));
+          setErroCarregamento(null);
+
+          // ── Carrega Destaques ────────────────────────────────────────────
+          const { data: highlightsData, error: highlightsError } = await supabase
+            .from('menu_highlights')
+            .select('id, item_id, custom_price, custom_description, sort_order, is_active, menu_items(id, category_id, name, description, price, photo_url, is_active)')
+            .eq('tenant_id', effectiveTenantId)
+            .eq('is_active', true)
+            .order('sort_order', { ascending: true });
+          if (!highlightsError && highlightsData) {
+            const cats = (data.categories ?? []).map(mapCategoria);
+            setDestaques((highlightsData as unknown as DBHighlight[]).map(h => mapDestaque(h, cats)));
+          } else if (highlightsError) {
+            console.warn('[Cardapio] Destaques load failed:', highlightsError.message);
+          }
+
+          // ── Salva no cache offline após carregamento bem-sucedido ─────────
+          saveMenuCache(effectiveTenantId, {
+            categories: data.categories ?? [],
+            items: data.items ?? [],
+            combos: data.combos ?? [],
+            globalObservations: data.global_observations ?? [],
+            stations: data.stations ?? [],
+          }).catch((e) => console.warn('[Cardapio] Falha ao salvar cache offline:', e));
+
+          break; // Sucesso — sai do loop de retry
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        console.error(`[Cardapio] Tentativa ${attempt}/3 — exceção:`, lastError);
+
+        if (attempt < 3) {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
         }
 
-        setEstacoes((data.stations ?? []).map(mapStation));
-        setCategorias((data.categories ?? []).map(mapCategoria));
-        setItens((data.items ?? []).map((i: DBItem) => mapItem(i, ingredientNameMap)));
-        setCombos((data.combos ?? []).map(mapCombo));
-        setObsGlobais((data.global_observations ?? []).map(mapObsGlobal));
-
-        // ── Salva no cache offline após carregamento bem-sucedido ─────────
-        saveMenuCache(effectiveTenantId, {
-          categories: data.categories ?? [],
-          items: data.items ?? [],
-          combos: data.combos ?? [],
-          globalObservations: data.global_observations ?? [],
-          stations: data.stations ?? [],
-        }).catch((e) => console.warn('[Cardapio] Falha ao salvar cache offline:', e));
-      }
-    } catch (err) {
-      console.error('[Cardapio] Error loading:', err);
-
-      // ── OFFLINE FALLBACK em exceção ───────────────────────────────────
-      try {
-        const cached = await getMenuCache(effectiveTenantId);
-        if (cached) {
-          console.info('[Cardapio] Usando cache offline do cardápio (exceção)');
-          setEstacoes((cached.stations as Parameters<typeof mapStation>[0][] ?? []).map(mapStation));
-          setCategorias((cached.categories as Parameters<typeof mapCategoria>[0][] ?? []).map(mapCategoria));
-          setItens((cached.items as Parameters<typeof mapItem>[0][] ?? []).map(mapItem));
-          setCombos((cached.combos as Parameters<typeof mapCombo>[0][] ?? []).map(mapCombo));
-          setObsGlobais((cached.globalObservations as Parameters<typeof mapObsGlobal>[0][] ?? []).map(mapObsGlobal));
+        // Última tentativa — tenta cache offline
+        console.error('[Cardapio] Todas as tentativas lançaram exceção — tentando cache offline');
+        try {
+          const cached = await getMenuCache(effectiveTenantId);
+          if (cached) {
+            console.info('[Cardapio] Usando cache offline do cardápio (exceção)');
+            setEstacoes((cached.stations as Parameters<typeof mapStation>[0][] ?? []).map(mapStation));
+            setCategorias((cached.categories as Parameters<typeof mapCategoria>[0][] ?? []).map(mapCategoria));
+            setItens((cached.items as Parameters<typeof mapItem>[0][] ?? []).map(mapItem));
+            setCombos((cached.combos as Parameters<typeof mapCombo>[0][] ?? []).map(mapCombo));
+            setObsGlobais((cached.globalObservations as Parameters<typeof mapObsGlobal>[0][] ?? []).map(mapObsGlobal));
+            setErroCarregamento(null);
+          } else {
+            setErroCarregamento(lastError ?? 'Erro ao carregar cardápio');
+          }
+        } catch (cacheErr) {
+          console.error('[Cardapio] Cache offline também falhou:', cacheErr);
+          setErroCarregamento(lastError ?? 'Erro ao carregar cardápio');
         }
-      } catch (cacheErr) {
-        console.error('[Cardapio] Cache offline também falhou:', cacheErr);
       }
-    } finally {
-      setLoading(false);
     }
+
+    setLoading(false);
   }, [effectiveTenantId]);
 
   useEffect(() => { recarregar(); }, [recarregar]);
@@ -542,8 +634,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         sort_order: idx,
       }));
 
-      console.log('[CardapioContext] salvarItem production_parts:', productionPartsPayload);
-
+      console.log('[Cardapio] salvarItem: sending option_groups:', JSON.stringify(item.gruposOpcoes.map(g => ({ id: g.id, isUuid: isUuid(g.id), nome: g.nome, opts: g.opcoes.map(o => ({ id: o.id, isUuid: isUuid(o.id), nome: o.nome })) }))));
       await menuWrite('upsert_item', {
         id: idToSend,
         category_id: item.categoriaId,
@@ -563,9 +654,11 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
           options: g.opcoes.map((o, oi) => ({
             id: isUuid(o.id) ? o.id : undefined,
             name: o.nome, additional_price: o.precoAdicional, is_active: o.ativo, sort_order: oi,
+            description: o.descricao ?? null,
             ingredient_id: o.ingredientId ?? null,
             production_recipe_id: o.productionRecipeId ?? null,
             consumption_quantity: o.consumptionQuantity ?? null,
+            consumption_unit: o.consumptionUnit ?? null,
           })),
         })),
         promotions: item.promocoes.map(p => ({
@@ -745,6 +838,80 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // ── Destaques CRUD ──────────────────────────────────────────────────────
+
+  const adicionarDestaque = async (itemId: string, customPrice?: number | null, customDescription?: string | null) => {
+    setSaving(true);
+    const maxOrdem = destaques.length > 0 ? Math.max(...destaques.map(d => d.ordem)) : 0;
+    try {
+      const result = await menuWrite('upsert_highlight', {
+        item_id: itemId,
+        custom_price: customPrice ?? null,
+        custom_description: customDescription ?? null,
+        sort_order: maxOrdem + 1,
+        is_active: true,
+      }, user?.tenantId);
+      if (result?.success) {
+        await recarregar();
+        addToast({ type: 'success', message: 'Item adicionado aos destaques!' });
+      }
+    } catch (err) {
+      addToast({ type: 'error', message: `Erro ao adicionar destaque: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const editarDestaque = async (id: string, data: { customPrice?: number | null; customDescription?: string | null; ativo?: boolean }) => {
+    const dest = destaques.find(d => d.id === id);
+    if (!dest) return;
+    setSaving(true);
+    try {
+      await menuWrite('upsert_highlight', {
+        id,
+        item_id: dest.itemId,
+        custom_price: data.customPrice ?? dest.customPrice,
+        custom_description: data.customDescription ?? dest.customDescription,
+        sort_order: dest.ordem,
+        is_active: data.ativo ?? dest.ativo,
+      }, user?.tenantId);
+      await recarregar();
+    } catch (err) {
+      addToast({ type: 'error', message: `Erro ao editar destaque: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removerDestaque = async (id: string) => {
+    setSaving(true);
+    try {
+      await menuWrite('delete_highlight', { id }, user?.tenantId);
+      await recarregar();
+      addToast({ type: 'success', message: 'Item removido dos destaques.' });
+    } catch (err) {
+      addToast({ type: 'error', message: `Erro ao remover destaque: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reordenarDestaques = async (items: Array<{ id: string; sortOrder: number }>) => {
+    const mapped: Record<string, number> = {};
+    items.forEach(({ id, sortOrder }) => { mapped[id] = sortOrder; });
+    setDestaques(prev =>
+      prev.map(d => ({ ...d, ordem: mapped[d.id] ?? d.ordem })).sort((a, b) => a.ordem - b.ordem)
+    );
+    try {
+      await menuWrite('reorder_highlights', {
+        items: items.map(({ id, sortOrder }) => ({ id, sort_order: sortOrder })),
+      }, user?.tenantId);
+    } catch (err) {
+      addToast({ type: 'error', message: `Erro ao reordenar destaques: ${err instanceof Error ? err.message : String(err)}` });
+      await recarregar();
+    }
+  };
+
   // ── Derived ───────────────────────────────────────────────────────────────
 
   // Itens para canais presenciais: ativos e NÃO exclusivos de delivery
@@ -768,9 +935,12 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     // Só categorias ativas (não deletadas) — categorias deletadas não aparecem no cardápio público
     const categoriasAtivasIds = new Set(categorias.filter(c => c.ativo).map(c => c.id));
 
-    // Itens normais ativos que permitem mesa_qr (ou sem canais configurados — retrocompatibilidade)
+    // Itens normais ativos que permitem mesa_qr OU self_service (ou sem canais — retrocompatibilidade)
     const itensAtivosMesaQR = itensAtivos.filter(item =>
-      item.canais?.mesa_qr === true || item.canais === null || item.canais === undefined
+      item.canais?.mesa_qr === true ||
+      item.canais?.self_service === true ||
+      item.canais === null ||
+      item.canais === undefined
     );
 
     const itensNormais: ItemCardapioPublico[] = itensAtivosMesaQR
@@ -788,14 +958,17 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
           preco: promoAtiva ? promoAtiva.precoPromocional : item.preco,
           foto: item.fotoUrl,
           categoria: categoriaNome,
-          slaMinutos: item.slaMinutos, popular: promoAtiva != null,
+          slaMinutos: item.slaMinutos,
+          popular: promoAtiva != null,
+          temPromocao: promoAtiva != null,
+          precoOriginal: promoAtiva ? item.preco : null,
           semPreparo: item.semPreparo ?? false,
           isCombo: false,
           observacoesPadrao,
           stationId: cat?.estacaoId ?? null,
           opcoes: item.gruposOpcoes.map(g => ({
             grupo: g.nome, obrigatorio: g.obrigatorio,
-            itens: g.opcoes.filter(o => o.ativo).map(o => ({ nome: o.nome, precoAdicional: o.precoAdicional })),
+            itens: g.opcoes.filter(o => o.ativo).map(o => ({ id: o.id, nome: o.nome, precoAdicional: o.precoAdicional })),
           })),
         };
       });
@@ -825,13 +998,14 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
 
   return (
     <CardapioContext.Provider value={{
-      itens, categorias, combos, obsGlobais, estacoes, loading, saving,
+      itens, categorias, combos, obsGlobais, estacoes, loading, saving, erroCarregamento,
       setItens, setCategorias, setCombos, setObsGlobais,
       recarregar, recarregarEstacoes,
       criarCategoria, editarCategoria, excluirCategoria, reordenarCategorias,
       salvarItem, excluirItem, reordenarItens,
       criarObsGlobal, editarObsGlobal, excluirObsGlobal,
       salvarCombo, excluirCombo,
+      destaques, adicionarDestaque, editarDestaque, removerDestaque, reordenarDestaques,
       itensAtivos, itensDelivery, itensPublicos, numerosMap,
     }}>
       {children}

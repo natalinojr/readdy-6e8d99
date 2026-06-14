@@ -22,7 +22,7 @@ interface Props {
 
 function destinoStr(p: KDSPedido): string {
   if (p.destino === 'mesa') return `Mesa ${p.mesaNumero}${p.nomeCliente ? ` · ${p.nomeCliente}` : ''}`;
-  if (p.destino === 'delivery' && p.nomeCliente) return `Delivery · ${p.nomeCliente}`;
+  if (p.destino === 'delivery' && p.nomeCliente) return p.nomeCliente;
   if (p.destino === 'delivery') return 'Delivery';
   if (p.nomeCliente) return p.nomeCliente;
   return 'Balcão';

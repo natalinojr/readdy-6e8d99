@@ -83,8 +83,14 @@ export function useSessaoFaturamento() {
 }
 
 /**
- * Detecta se existe uma sessão aberta que passou da meia-noite
- * sem nenhuma venda registrada até as 4h da madrugada.
+ * Detecta se existe uma sessão aberta no dia ANTERIOR que passou das 4h da madrugada
+ * sem nenhuma venda registrada nas últimas 4 horas.
+ * 
+ * Regras:
+ * 1. Sessão precisa ter sido aberta em dia anterior (não hoje)
+ * 2. Hora atual precisa ser >= 4h da manhã
+ * 3. Nenhuma venda nas últimas 4h
+ * 
  * Retorna a sessão problemática se encontrada.
  */
 export function useSessaoEsquecida() {
@@ -106,8 +112,27 @@ export function useSessaoEsquecida() {
       const abertaEm = sessao.dataRef;
       const horasAberta = (agora.getTime() - abertaEm.getTime()) / 3600000;
 
-      // Sessão precisa estar aberta há pelo menos 4h para ser considerada "esquecida"
+      // ⛔ Sessão precisa estar aberta há pelo menos 4h para ser considerada "esquecida"
       if (horasAberta < 4) {
+        setSessaoEsquecida(null);
+        return;
+      }
+
+      // ⛔ Só dispara alerta para sessões abertas em dia ANTERIOR
+      // Se a sessão foi aberta hoje, não é "esquecida" — é só um dia parado
+      const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
+      const diaAbertura = new Date(abertaEm.getFullYear(), abertaEm.getMonth(), abertaEm.getDate());
+      if (diaAbertura.getTime() >= hoje.getTime()) {
+        // Sessão aberta hoje → não alertar, mesmo que esteja ociosa há 4h
+        setSessaoEsquecida(null);
+        return;
+      }
+
+      // ⛔ Só dispara depois das 4h da madrugada
+      // Não faz sentido alertar às 2h da manhã que a sessão de ontem tá aberta —
+      // pode ser que ainda estejam trabalhando de madrugada
+      const horaAtual = agora.getHours();
+      if (horaAtual < 4) {
         setSessaoEsquecida(null);
         return;
       }
@@ -126,7 +151,7 @@ export function useSessaoEsquecida() {
         .limit(1);
 
       if (!data || data.length === 0) {
-        // Nenhuma venda nas últimas 4h — sessão provavelmente esquecida
+        // Sessão do dia anterior, passou das 4h, sem vendas nas últimas 4h → esquecida
         setSessaoEsquecida({
           id: sessao.id,
           numero: sessao.numero,

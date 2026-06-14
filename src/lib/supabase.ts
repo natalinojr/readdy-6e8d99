@@ -54,7 +54,7 @@ export async function safeSignOut(): Promise<void> {
   try {
     const keys = Object.keys(localStorage);
     for (const key of keys) {
-      if (key.startsWith('sb-') || key.includes('supabase')) {
+      if (key.startsWith('sb-') || key.includes('supabase') || key === 'erpos_selected_tenant_id') {
         localStorage.removeItem(key);
       }
     }
@@ -66,31 +66,74 @@ export async function safeSignOut(): Promise<void> {
  * (revogado, expirado, ou não encontrado no servidor), limpa a sessão local
  * e retorna null sem propagar o erro.
  * Se for outro erro (rede, timeout), retorna null SEM limpar a sessão local.
+ * Agora com retry automático para erros transitórios de rede.
  */
 export async function safeRefreshSession(): Promise<Session | null> {
-  try {
-    const { data, error } = await supabase.auth.refreshSession();
-    if (error) {
-      if (isRefreshTokenInvalidError(error.message)) {
-        console.warn('[safeRefreshSession] Refresh token inválido/revogado — limpando sessão local');
+  const MAX_REFRESH_RETRIES = 2;
+
+  for (let attempt = 0; attempt < MAX_REFRESH_RETRIES; attempt++) {
+    try {
+      const { data, error } = await supabase.auth.refreshSession();
+      if (error) {
+        if (isRefreshTokenInvalidError(error.message)) {
+          console.warn('[safeRefreshSession] Refresh token inválido/revogado — limpando sessão local');
+          await safeSignOut();
+          return null;
+        }
+        // Erro de rede ou servidor — retry se ainda tiver tentativas
+        const lower = error.message.toLowerCase();
+        const isTransient =
+          lower.includes('fetch') ||
+          lower.includes('network') ||
+          lower.includes('timeout') ||
+          lower.includes('abort') ||
+          lower.includes('econnrefused') ||
+          lower.includes('econnreset') ||
+          lower.includes('socket') ||
+          lower.includes('unreachable');
+
+        if (isTransient && attempt < MAX_REFRESH_RETRIES - 1) {
+          const delay = (attempt + 1) * 2000;
+          console.warn(`[safeRefreshSession] Erro transitório no refresh (tentativa ${attempt + 1}/${MAX_REFRESH_RETRIES}), retry em ${delay}ms:`, error.message);
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+
+        console.warn('[safeRefreshSession] refreshSession falhou:', error.message);
+        return null;
+      }
+      return data?.session ?? null;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isRefreshTokenInvalidError(msg)) {
+        console.warn('[safeRefreshSession] Exceção de refresh token inválido — limpando sessão local');
         await safeSignOut();
         return null;
       }
-      // Outro erro (rede, servidor, etc.) — não limpa sessão
-      console.warn('[safeRefreshSession] refreshSession falhou (não-fatal):', error.message);
+      const lower = msg.toLowerCase();
+      const isTransient =
+        lower.includes('fetch') ||
+        lower.includes('network') ||
+        lower.includes('timeout') ||
+        lower.includes('abort') ||
+        lower.includes('econnrefused') ||
+        lower.includes('econnreset') ||
+        lower.includes('socket') ||
+        lower.includes('unreachable');
+
+      if (isTransient && attempt < MAX_REFRESH_RETRIES - 1) {
+        const delay = (attempt + 1) * 2000;
+        console.warn(`[safeRefreshSession] Exceção transitória (tentativa ${attempt + 1}/${MAX_REFRESH_RETRIES}), retry em ${delay}ms:`, msg);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+
+      console.warn('[safeRefreshSession] Exceção inesperada:', msg);
       return null;
     }
-    return data?.session ?? null;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (isRefreshTokenInvalidError(msg)) {
-      console.warn('[safeRefreshSession] Exceção de refresh token inválido — limpando sessão local');
-      await safeSignOut();
-      return null;
-    }
-    console.warn('[safeRefreshSession] Exceção inesperada (não-fatal):', msg);
-    return null;
   }
+
+  return null;
 }
 
 /**
@@ -153,6 +196,8 @@ async function doFetch(
 /**
  * Tenta obter um token valido da sessao, fazendo refresh se necessario.
  * Retorna { accessToken, error } onde error indica falha critica de sessao.
+ * Agora com retry automatico: se a primeira tentativa falhar por erro transiente
+ * (rede, timeout), aguarda e tenta novamente antes de desistir.
  */
 async function resolveAccessToken(externalToken?: string): Promise<{
   accessToken: string | null;
@@ -162,54 +207,82 @@ async function resolveAccessToken(externalToken?: string): Promise<{
     return { accessToken: externalToken, error: null };
   }
 
-  // ── Única chamada getSession: pega token E expiração de uma vez ─────────
-  let session: import('@supabase/supabase-js').Session | null = null;
-  try {
-    const { data, error } = await supabase.auth.getSession();
-    if (!error && data?.session) {
-      session = data.session;
+  const MAX_RESOLVE_ATTEMPTS = 2;
+
+  for (let attempt = 0; attempt < MAX_RESOLVE_ATTEMPTS; attempt++) {
+    // ── Única chamada getSession: pega token E expiração de uma vez ─────────
+    let session: import('@supabase/supabase-js').Session | null = null;
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (!error && data?.session) {
+        session = data.session;
+      }
+    } catch {
+      // Ignora erro de getSession
     }
-  } catch {
-    // Ignora erro de getSession
+
+    if (!session?.access_token) {
+      if (attempt === 0) {
+        console.warn('[resolveAccessToken] Token ausente — tentando refresh imediato...');
+      } else {
+        console.warn(`[resolveAccessToken] Token ausente (tentativa ${attempt + 1}/${MAX_RESOLVE_ATTEMPTS}) — tentando refresh...`);
+      }
+      const refreshed = await safeRefreshSession();
+      if (refreshed?.access_token) {
+        return { accessToken: refreshed.access_token, error: null };
+      }
+      // Refresh falhou — se ainda tem tentativas, espera e tenta de novo
+      if (attempt < MAX_RESOLVE_ATTEMPTS - 1) {
+        const delay = (attempt + 1) * 2500;
+        console.warn(`[resolveAccessToken] Refresh falhou — retry em ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      return {
+        accessToken: null,
+        error: new Error('Sessao invalida ou expirada. Faca login novamente.'),
+      };
+    }
+
+    const token = session.access_token;
+    const expiresAt = session.expires_at ?? 0;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const secondsLeft = expiresAt - nowSec;
+
+    // Token expirado OU expira em menos de 5 minutos → força refresh
+    if (secondsLeft < 300) {
+      console.warn(`[resolveAccessToken] Token expira em ${secondsLeft}s — forçando refresh...`);
+      const refreshed = await safeRefreshSession();
+      if (refreshed?.access_token) {
+        return { accessToken: refreshed.access_token, error: null };
+      }
+      // Refresh falhou — se o token ainda tem > 0s de vida, usa como último recurso
+      if (secondsLeft > 0) {
+        console.warn('[resolveAccessToken] Refresh falhou — usando token atual como fallback');
+        return { accessToken: token, error: null };
+      }
+      // Token expirado e refresh falhou — se ainda tem tentativas, espera e tenta
+      if (attempt < MAX_RESOLVE_ATTEMPTS - 1) {
+        const delay = (attempt + 1) * 2500;
+        console.warn(`[resolveAccessToken] Token expirado e refresh falhou — retry em ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      // Todas as tentativas esgotadas
+      return {
+        accessToken: null,
+        error: new Error('Sessao expirada. Por favor, faca login novamente.'),
+      };
+    }
+
+    return { accessToken: token, error: null };
   }
 
-  if (!session?.access_token) {
-    console.warn('[resolveAccessToken] Token ausente — tentando refresh imediato...');
-    const refreshed = await safeRefreshSession();
-    if (refreshed?.access_token) {
-      return { accessToken: refreshed.access_token, error: null };
-    }
-    return {
-      accessToken: null,
-      error: new Error('Sessao invalida ou expirada. Faca login novamente.'),
-    };
-  }
-
-  const token = session.access_token;
-  const expiresAt = session.expires_at ?? 0;
-  const nowSec = Math.floor(Date.now() / 1000);
-  const secondsLeft = expiresAt - nowSec;
-
-  // Token expirado OU expira em menos de 5 minutos → força refresh
-  if (secondsLeft < 300) {
-    console.warn(`[resolveAccessToken] Token expira em ${secondsLeft}s — forçando refresh...`);
-    const refreshed = await safeRefreshSession();
-    if (refreshed?.access_token) {
-      return { accessToken: refreshed.access_token, error: null };
-    }
-    // Refresh falhou — se o token ainda tem > 0s de vida, usa como último recurso
-    if (secondsLeft > 0) {
-      console.warn('[resolveAccessToken] Refresh falhou — usando token atual como fallback');
-      return { accessToken: token, error: null };
-    }
-    // Token expirado e refresh falhou → desiste
-    return {
-      accessToken: null,
-      error: new Error('Sessao expirada. Por favor, faca login novamente.'),
-    };
-  }
-
-  return { accessToken: token, error: null };
+  // Fallback final (nunca deveria chegar aqui, mas por segurança)
+  return {
+    accessToken: null,
+    error: new Error('Nao foi possivel obter token de acesso apos multiplas tentativas.'),
+  };
 }
 
 /**
@@ -232,7 +305,7 @@ export async function invokeWithAuth<T = unknown>(
   // Primeira tentativa: resolve token e faz fetch
   const firstResolve = await resolveAccessToken(options.externalToken);
   if (firstResolve.error) {
-    console.error(`[invokeWithAuth] ${functionName} — resolveAccessToken falhou:`, firstResolve.error.message);
+    console.warn(`[invokeWithAuth] ${functionName} — resolveAccessToken falhou:`, firstResolve.error.message);
     return { data: null, error: firstResolve.error };
   }
   accessToken = firstResolve.accessToken;
@@ -251,14 +324,16 @@ export async function invokeWithAuth<T = unknown>(
     } catch (netErr) {
       clearTimeout(timeoutId);
       const netMsg = netErr instanceof Error ? netErr.message : String(netErr);
-      console.error(`[invokeWithAuth] ${functionName} — erro de rede no fetch${isRetry ? ' (retry)' : ''}:`, netMsg);
 
       // Se for erro de rede (Failed to fetch, timeout, etc.) e ainda tem retries, tenta novamente
       if (!isRetry && (netMsg.includes('Failed to fetch') || netMsg.includes('fetch') || netMsg.includes('network') || netMsg.includes('abort') || netMsg.includes('timeout'))) {
-        console.warn(`[invokeWithAuth] ${functionName} — tentando retry por erro de rede...`);
-        await new Promise((r) => setTimeout(r, 1000));
+        console.warn(`[invokeWithAuth] ${functionName} — erro de rede (tentando retry em 3s):`, netMsg);
+        await new Promise((r) => setTimeout(r, 3000));
         return attemptFetch(true);
       }
+
+      // Só loga como warn se for o retry que falhou também — não é erro crítico, já tratado pelo caller
+      console.warn(`[invokeWithAuth] ${functionName} — erro de rede no fetch${isRetry ? ' (retry)' : ''}:`, netMsg);
 
       return {
         data: null,

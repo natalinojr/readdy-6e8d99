@@ -27,6 +27,9 @@
   "print_queue_enabled": true,
   "supabase_url": "https://mdghhjemzdmeuqpzuyzx.supabase.co",
   "supabase_anon_key": "sb_publishable_YcaOldq1Hh-GqWNW40eo0Q_CagNN5lZ",
-  "tenant_id": "7049e90e-c453-4268-b2dd-d074a7386612",
+  "tenant_ids": [
+    "7049e90e-c453-4268-b2dd-d074a7386612",
+    "ac66279a-47b0-469c-8228-4844d87831a6"
+  ],
   "poll_interval_ms": 3000
 }

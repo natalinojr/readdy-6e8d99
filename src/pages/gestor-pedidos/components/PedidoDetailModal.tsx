@@ -8,9 +8,9 @@ import PedidoEditHistory from './PedidoEditHistory';
 const ORIGEM_LABELS: Record<string, { label: string; cor: string }> = {
   caixa:           { label: 'Caixa',    cor: 'bg-violet-100 text-violet-700 border border-violet-200' },
   garcom:          { label: 'Garçom',   cor: 'bg-sky-100 text-sky-700 border border-sky-200' },
-  autoatendimento: { label: 'Kiosk',    cor: 'bg-pink-100 text-pink-700 border border-pink-200' },
+  autoatendimento: { label: 'Autoatendimento',    cor: 'bg-pink-100 text-pink-700 border border-pink-200' },
   mesa_qr:         { label: 'QR Code',  cor: 'bg-teal-100 text-teal-700 border border-teal-200' },
-  mesa:            { label: 'Mesa QR',  cor: 'bg-teal-100 text-teal-700 border border-teal-200' },
+  mesa:            { label: 'QR CODE',  cor: 'bg-teal-100 text-teal-700 border border-teal-200' },
   delivery:        { label: 'Delivery', cor: 'bg-orange-100 text-orange-700 border border-orange-200' },
 };
 
@@ -38,8 +38,11 @@ function elapsedStr(criadoEm: number): string {
 }
 
 function destinoLabel(p: KDSPedido): string {
-  if (p.destino === 'mesa') return `Mesa ${p.mesaNumero}${p.nomeCliente ? ` · ${p.nomeCliente}` : ''}`;
-  if (p.destino === 'delivery' && p.nomeCliente) return `Delivery · ${p.nomeCliente}`;
+  if (p.destino === 'mesa') {
+    const base = `Mesa ${p.mesaNumero}${p.nomeCliente ? ` · ${p.nomeCliente}` : ''}`;
+    return p.participantName ? `${base} · ${p.participantName}` : base;
+  }
+  if (p.destino === 'delivery' && p.nomeCliente) return p.nomeCliente;
   if (p.destino === 'delivery') return 'Delivery';
   if (p.nomeCliente) return p.nomeCliente;
   if (p.senha) return `Senha ${p.senha}`;
@@ -48,10 +51,13 @@ function destinoLabel(p: KDSPedido): string {
 
 interface ItemRowProps {
   item: KDSItem;
+  isCancelled?: boolean;
+  onEntregarItem?: (itemId: string) => void;
 }
-function ItemDetailRow({ item }: ItemRowProps) {
+function ItemDetailRow({ item, isCancelled, onEntregarItem }: ItemRowProps) {
   const isSkip = item.semPreparo || item.skip_kds;
   const statusCfg = STATUS_CONFIG[item.status] ?? STATUS_CONFIG.novo;
+  const podeEntregar = !isCancelled && onEntregarItem && (item.status === 'pronto' || (isSkip && item.status !== 'entregue'));
 
   return (
     <div className={`p-3 rounded-xl border ${isSkip ? 'bg-zinc-50 border-zinc-100' : 'bg-white border-zinc-100'}`}>
@@ -76,6 +82,19 @@ function ItemDetailRow({ item }: ItemRowProps) {
             )}
           </div>
 
+          {/* Botão entregar item */}
+          {podeEntregar && (
+            <div className="mt-1.5">
+              <button
+                onClick={() => onEntregarItem?.(item.id)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap"
+              >
+                <i className="ri-check-line text-xs" />
+                Entregar este item
+              </button>
+            </div>
+          )}
+
           {/* Categoria + estação */}
           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
             {item.categoriaNome && (
@@ -95,7 +114,7 @@ function ItemDetailRow({ item }: ItemRowProps) {
             <div className="mt-1.5 flex flex-wrap gap-1">
               {item.opcoes.map((o, i) => (
                 <span key={i} className="inline-flex items-center gap-0.5 text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200 whitespace-nowrap">
-                  <i className="ri-add-line text-[9px]" />{o.opcaoNome}
+                  {!o.obrigatorio && <i className="ri-add-line text-[9px]" />}{o.opcaoNome}
                 </span>
               ))}
             </div>
@@ -162,6 +181,7 @@ interface Props {
   pedido: KDSPedido;
   onClose: () => void;
   onCancelar?: () => void;
+  onEntregarItem?: (itemId: string) => void;
 }
 
 function useImpressoraPedidos() {
@@ -180,7 +200,7 @@ function buildPedidoHTML(pedido: KDSPedido, displayTotal: number): string {
       <hr/>
       ${pedido.itens.map((i) => `
         <div class="item"><strong>${i.quantidade}x ${i.nome}</strong>
-        ${i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => `+ ${o.opcaoNome}`).join(', ')}</div>` : ''}
+        ${i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => `${o.obrigatorio ? '' : '+ '}${o.opcaoNome}`).join(', ')}</div>` : ''}
         ${i.observacoes?.length ? `<div class="obs">${i.observacoes.map((o) => `&#9888; ${o}`).join('<br/>')}</div>` : ''}
         </div>`).join('')}
       <hr/>
@@ -189,7 +209,7 @@ function buildPedidoHTML(pedido: KDSPedido, displayTotal: number): string {
       </body></html>`;
 }
 
-export default function PedidoDetailModal({ pedido, onClose, onCancelar }: Props) {
+export default function PedidoDetailModal({ pedido, onClose, onCancelar, onEntregarItem }: Props) {
   const impressoraPedidos = useImpressoraPedidos();
   const { error: toastError } = useToast();
   const [showHistory, setShowHistory] = useState(false);
@@ -197,6 +217,7 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar }: Props
   const statusCfg = ORDER_STATUS_CONFIG[pedido.status] ?? ORDER_STATUS_CONFIG.novo;
   const kitchenItens = pedido.itens.filter((i) => !i.semPreparo && !i.skip_kds);
   const directItens = pedido.itens.filter((i) => i.semPreparo || i.skip_kds);
+  const isDelivery = pedido.origem === 'delivery' || pedido.destino === 'delivery';
   const totalComItens = pedido.itens.reduce((acc, i) => acc + (i.item_price ?? 0) * i.quantidade, 0);
   const displayTotal = pedido.totalAmount > 0 ? pedido.totalAmount : totalComItens;
 
@@ -225,9 +246,15 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar }: Props
               <span className="text-lg font-black text-zinc-900 tracking-tight">
                 #{String(pedido.numero).padStart(4, '0')}
               </span>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${origemInfo.cor}`}>
-                {origemInfo.label}
-              </span>
+              {isDelivery ? (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">
+                  <i className="ri-motorbike-line text-[8px] mr-0.5" />Delivery
+                </span>
+              ) : (
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${origemInfo.cor}`}>
+                  {origemInfo.label}
+                </span>
+              )}
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${statusCfg.cls}`}>
                 <i className={`${statusCfg.icon} text-[9px]`} />{statusCfg.label}
               </span>
@@ -252,6 +279,26 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar }: Props
               <div className="flex items-center gap-1 mt-1">
                 <i className="ri-walk-line text-zinc-400 text-xs" />
                 <span className="text-xs text-zinc-500">Garçom: <strong className="text-zinc-700">{pedido.garcomNome}</strong></span>
+              </div>
+            )}
+
+            {pedido.participantToken && (
+              <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                {pedido.mesaNumero != null && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 border border-violet-300 text-[10px] font-black text-violet-800">
+                    <i className="ri-table-line text-[9px]" />
+                    Mesa {pedido.mesaNumero}
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[10px] font-black text-violet-700">
+                  <i className="ri-qr-code-line text-[9px]" />
+                  Senha {pedido.participantToken}
+                </span>
+                {pedido.participantName && (
+                  <span className="text-[10px] font-semibold text-zinc-600">
+                    {pedido.participantName}
+                  </span>
+                )}
               </div>
             )}
 
@@ -307,7 +354,7 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar }: Props
                 <span className="text-[9px] bg-zinc-100 px-1.5 py-0.5 rounded-full text-zinc-500 font-bold">{kitchenItens.length}</span>
               </p>
               <div className="space-y-2">
-                {kitchenItens.map((item) => <ItemDetailRow key={item.id} item={item} />)}
+                {kitchenItens.map((item) => <ItemDetailRow key={item.id} item={item} isCancelled={pedido.isCancelled} onEntregarItem={onEntregarItem && !isDelivery ? onEntregarItem : undefined} />)}
               </div>
             </div>
           )}
@@ -320,7 +367,7 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar }: Props
                 <span className="text-[9px] bg-zinc-100 px-1.5 py-0.5 rounded-full text-zinc-500 font-bold">{directItens.length}</span>
               </p>
               <div className="space-y-2">
-                {directItens.map((item) => <ItemDetailRow key={item.id} item={item} />)}
+                {directItens.map((item) => <ItemDetailRow key={item.id} item={item} isCancelled={pedido.isCancelled} onEntregarItem={onEntregarItem && !isDelivery ? onEntregarItem : undefined} />)}
               </div>
             </div>
           )}

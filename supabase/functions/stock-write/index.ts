@@ -156,14 +156,28 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (reasonLower.includes('perda') || type === 'perda') {
         dbType = 'loss';
       }
+
+      // BUG-31: inventory_adjustment pode ser positivo (ganho) ou negativo (perda).
+      // Preserva o sinal da quantity para que fn_add_stock_movement registre a direcao correta.
       const isSub = ['manual_out', 'theoretical_out', 'transfer_out', 'loss'].includes(dbType);
-      const delta = isSub ? -Math.abs(quantity) : Math.abs(quantity);
+      let delta: number;
+      let pQuantity: number;
+      if (dbType === 'inventory_adjustment') {
+        delta = quantity;
+        pQuantity = quantity;
+      } else if (isSub) {
+        delta = -Math.abs(quantity);
+        pQuantity = Math.abs(quantity);
+      } else {
+        delta = Math.abs(quantity);
+        pQuantity = Math.abs(quantity);
+      }
 
       const { data: rpcData, error: rpcErr } = await admin.rpc('fn_add_stock_movement', {
         p_tenant_id: tenantId,
         p_ingredient_id: ingredient_id,
         p_type: dbType,
-        p_quantity: Math.abs(quantity),
+        p_quantity: pQuantity,
         p_unit: UNIT_MAP[unit] ?? null,
         p_reason: reason ?? null,
         p_notes: notes ?? null,
@@ -289,14 +303,18 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const comDiferenca = items.filter((i: {diferenca: number}) => i.diferenca !== 0);
       const valorAjuste = body.valor_ajuste_liquido ?? 0;
 
+      // Registrar movimentos de ajuste para itens com diferença
+      // Suporta tanto camelCase (insumoId, qtdContada) quanto snake_case (ingredient_id, qtd_contada)
+      // BUG-31: Passa diferença COM SINAL (negativo = perda, positivo = ganho)
+      // para que fn_add_stock_movement registre a direção correta do ajuste
       for (const item of items) {
         if (item.diferenca === 0) continue;
-        const dbType = 'inventory_adjustment';
-        const { data: rpcData, error: rpcErr } = await admin.rpc('fn_add_stock_movement', {
+        const ingredientId = item.insumoId ?? item.ingredient_id;
+        const { error: rpcErr } = await admin.rpc('fn_add_stock_movement', {
           p_tenant_id: tenantId,
-          p_ingredient_id: item.ingredient_id,
-          p_type: dbType,
-          p_quantity: Math.abs(item.diferenca),
+          p_ingredient_id: ingredientId,
+          p_type: 'inventory_adjustment',
+          p_quantity: item.diferenca,
           p_unit: null,
           p_reason: item.reason ?? 'Ajuste de Inventario',
           p_notes: null,
@@ -307,8 +325,15 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (rpcErr) console.error('[stock-write] confirm_inventory fn_add_stock_movement error:', extractErrorMessage(rpcErr));
       }
 
+      // Atualizar estoque atual de todos os itens contados
       for (const item of items) {
-        const { error: updErr } = await admin.from('ingredients').update({ current_stock: item.qtd_contada, updated_at: new Date().toISOString() }).eq('id', item.ingredient_id).eq('tenant_id', tenantId);
+        const ingredientId = item.insumoId ?? item.ingredient_id;
+        const qtdContada = item.qtdContada ?? item.qtd_contada;
+        const { error: updErr } = await admin
+          .from('ingredients')
+          .update({ current_stock: qtdContada, updated_at: new Date().toISOString() })
+          .eq('id', ingredientId)
+          .eq('tenant_id', tenantId);
         if (updErr) console.error('[stock-write] confirm_inventory update error:', extractErrorMessage(updErr));
       }
 

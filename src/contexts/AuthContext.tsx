@@ -51,6 +51,8 @@ interface AuthContextType {
   switchTenant: () => void;
   /** true quando o usuário está autenticado mas não tem nenhum tenant vinculado */
   hasNoTenants: boolean;
+  /** Recarrega os dados do usuário e tenants (útil após onboarding) */
+  reloadUser: () => Promise<void>;
   // Legacy compat
   saveDynamicUser: (data: Omit<DynamicUserRecord, 'id'>) => void;
   completeOnboarding: (adminUser: AuthUser, lojaName: string) => void;
@@ -292,6 +294,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       handleSession(session?.user?.id);
+    }).catch((err) => {
+      // Se getSession falhar (ex: token corrompido), trata como sem sessão
+      console.warn('[AuthContext] getSession falhou:', (err as Error).message ?? err);
+      handleSession(undefined);
     });
 
     const {
@@ -559,6 +565,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  const reloadUser = async () => {
+    const userId = authUserIdRef.current;
+    if (!userId) return;
+    setLoading(true);
+    await resolveSession(userId);
+    setLoading(false);
+  };
+
   // ─── Onboarding helpers (backward compat) ──────────────────────────────────
 
   const isFirstSetup = !localStorage.getItem(ONBOARDING_KEY);
@@ -592,6 +606,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         switchTenant,
         saveDynamicUser,
         completeOnboarding,
+        reloadUser,
       }}
     >
       {/* Sempre renderiza os children para que todos os providers filhos

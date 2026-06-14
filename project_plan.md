@@ -28,6 +28,7 @@ Todos os módulos de interface foram construídos e estão funcionando com dados
 | PDV Delivery | ✅ Completo | Mock |
 | KDS | ✅ Completo | Context |
 | Gestor de Pedidos | ✅ Completo | Context |
+| Gestor de Delivery | ✅ Completo | Context + Mock |
 | Mesas | ✅ Completo | Context |
 | Estoque | ✅ Completo | Context |
 | Relatórios | ✅ Completo | Mock |

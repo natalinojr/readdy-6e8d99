@@ -69,7 +69,7 @@ export default function CarrinhoKiosk({
                       )}
                       <p className="text-white font-bold text-2xl">{item.nome}</p>
                       {item.opcoesSelecionadas.length > 0 && (
-                        <p className="text-zinc-500 text-lg mt-1">{item.opcoesSelecionadas.join(', ')}</p>
+                        <p className="text-zinc-500 text-lg mt-1">{item.opcoesSelecionadas.map((o) => o.nome).join(', ')}</p>
                       )}
                       {item.observacao && (
                         <p className="text-amber-400 text-lg mt-1 italic">

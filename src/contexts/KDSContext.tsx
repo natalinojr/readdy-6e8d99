@@ -10,9 +10,11 @@ import type { CarrinhoItem, DestinoInfo } from './PDVContext';
 /* ─── DB Row Types ─── */
 
 interface DBOrderItemOption {
+  option_id?: string | null;
   group_name: string;
   option_name: string;
   additional_price?: number;
+  is_required?: boolean;
 }
 
 interface DBOrderItemObservation {
@@ -147,6 +149,16 @@ interface DBOrder {
   participant_token?: string | null;
   /** Participant name from table_session_participants */
   participant_name?: string | null;
+  /** Delivery address */
+  delivery_address?: string | null;
+  /** Delivery fee */
+  delivery_fee?: number | null;
+  /** Delivery platform */
+  delivery_platform?: string | null;
+  /** Order notes */
+  notes?: string | null;
+  /** BUG-09: Timestamp when delivery order was marked as "Em Rota" */
+  out_for_delivery_at?: string | null;
   /** Items array from RPC join */
   items?: DBOrderItem[] | null;
   /** Payments array from RPC join */
@@ -367,6 +379,8 @@ function dbItemToKDS(oi: DBOrderItem, stationMap: StationMap): KDSItem {
       grupoNome: o.group_name,
       opcaoNome: o.option_name,
       additional_price: (o as { additional_price?: number }).additional_price ?? 0,
+      opcaoId: o.option_id ?? undefined,
+      obrigatorio: o.is_required ?? false,
     })),
     observacoes: obsTexts,
     // BUG 3.10 HYDRATE FIX: checks do banco → hidrata estado inicial sem necessitar de interação
@@ -387,27 +401,34 @@ function dbOrderToKDS(o: DBOrder, stationMap: StationMap): KDSPedido {
   const itens = rawItems.map((item) => dbItemToKDS(item, stationMap));
 
   const kitchenItens = itens.filter((i) => !i.semPreparo && !i.skip_kds);
-  const allItens = itens;
 
   // Status derivado dos itens (source of truth = items)
+  // BUGFIX: Itens skip_kds NÃO devem impedir o pedido de ser "entregue".
+  // Apenas itens de cozinha determinam o status do pedido.
   let statusDerived: KDSPedido['status'] = 'novo';
 
-  if (allItens.length === 0) {
+  if (itens.length === 0) {
     statusDerived = 'novo';
-  } else if (allItens.every((i) => i.status === 'entregue')) {
-    statusDerived = 'entregue';
-  } else if (kitchenItens.length === 0) {
-    if (allItens.every((i) => i.status === 'pronto' || i.status === 'entregue')) {
+  } else if (kitchenItens.length > 0) {
+    const kitchenStatuses = kitchenItens.map((i) => i.status);
+    if (kitchenStatuses.every((s) => s === 'entregue')) {
+      statusDerived = 'entregue';
+    } else if (kitchenStatuses.every((s) => s === 'pronto' || s === 'entregue')) {
+      statusDerived = 'pronto';
+    } else if (kitchenStatuses.some((s) => s === 'preparo' || s === 'pronto')) {
+      statusDerived = 'preparo';
+    } else {
+      statusDerived = 'novo';
+    }
+  } else {
+    // Pedido só tem itens skip_kds (sem preparo)
+    if (itens.every((i) => i.status === 'entregue')) {
+      statusDerived = 'entregue';
+    } else if (itens.every((i) => i.status === 'pronto' || i.status === 'entregue')) {
       statusDerived = 'pronto';
     } else {
       statusDerived = 'novo';
     }
-  } else if (kitchenItens.every((i) => i.status === 'pronto' || i.status === 'entregue')) {
-    statusDerived = 'pronto';
-  } else if (kitchenItens.some((i) => i.status === 'preparo' || i.status === 'pronto')) {
-    statusDerived = 'preparo';
-  } else {
-    statusDerived = 'novo';
   }
 
   // Use o status do banco como fallback se for mais avançado que o derivado dos itens.
@@ -418,10 +439,19 @@ function dbOrderToKDS(o: DBOrder, stationMap: StationMap): KDSPedido {
   };
   const DB_STATUS_RANK: Record<string, number> = { novo: 0, preparo: 1, pronto: 2, entregue: 3 };
   const dbOrderStatusFrontend: KDSPedido['status'] = DB_ORDER_STATUS_MAP[o.status ?? ''] ?? 'novo';
-  const status: KDSPedido['status'] =
+  let status: KDSPedido['status'] =
     DB_STATUS_RANK[dbOrderStatusFrontend as string] > DB_STATUS_RANK[statusDerived as string]
       ? dbOrderStatusFrontend
       : statusDerived;
+
+  // BUG-09 FIX: Se out_for_delivery_at está preenchido (pedido de delivery foi
+  // marcado como "Em Rota" no Gestor), promove o status para em_rota.
+  // Isso persiste mesmo após refresh/troca de terminal porque o campo
+  // out_for_delivery_at está no banco.
+  // Só promove se o pedido não está entregue/cancelado e os itens estão prontos.
+  if (o.out_for_delivery_at && status === 'pronto') {
+    status = 'em_rota';
+  }
 
   const numeroStr = o.number ?? '';
   const numeroSeq = parseInt(numeroStr.replace(/\D/g, '').slice(-4), 10) || 0;
@@ -460,6 +490,12 @@ function dbOrderToKDS(o: DBOrder, stationMap: StationMap): KDSPedido {
     nomeCliente = o.destination_name ?? undefined;
   } else {
     nomeCliente = o.destination_name ?? undefined;
+  }
+
+  // Mesmo quando o destino não é 'mesa' (ex: senha, nome), se o pedido veio de uma mesa
+  // (origin_type = 'table'), captura o table_number para exibição no badge de origem
+  if (mesaNumero == null && o.table_number != null && o.origin_type === 'table') {
+    mesaNumero = o.table_number;
   }
 
   const garcomNome = o.waiter_name ?? undefined;
@@ -538,6 +574,11 @@ function dbOrderToKDS(o: DBOrder, stationMap: StationMap): KDSPedido {
     /** Participant info (senha / nome) from table_session_participants */
     participantToken: o.participant_token ?? null,
     participantName: o.participant_name ?? null,
+    // Delivery fields
+    deliveryAddress: o.delivery_address ?? undefined,
+    deliveryFee: o.delivery_fee ?? undefined,
+    deliveryPlatform: o.delivery_platform ?? undefined,
+    notes: o.notes ?? undefined,
     // Order edit lock fields — propagated via Realtime to all PDVs/KDS/Gestor
     isEditing: !!(o.is_editing),
     editingByUserId: o.editing_by_user_id ?? null,
@@ -628,7 +669,7 @@ export function buildKDSPedido(params: {
         status: 'novo' as KDSItemStatus,
         skip_kds: ci.semPreparo ?? false,
         semPreparo: ci.semPreparo ?? false,
-        opcoes: ci.opcoes.map((o) => ({ grupoNome: o.grupoNome, opcaoNome: o.opcaoNome })),
+        opcoes: ci.opcoes.map((o) => ({ grupoNome: o.grupoNome, opcaoNome: o.opcaoNome, opcaoId: o.opcaoId, obrigatorio: o.obrigatorio })),
         observacoes: [...(ci.observacoes ?? []), ...(ci.observacaoLivre ? [ci.observacaoLivre] : [])],
         entroKdsEm: nowTs,
       };
@@ -649,6 +690,8 @@ interface KDSContextValue {
   updatePartStatusRemote: (orderItemPartId: string, orderItemId: string, orderId: string, newStatus: KDSItemStatus) => Promise<void>;
   /** Cancela um pedido no backend — motivo opcional */
   cancelOrderRemote: (orderId: string, reason?: string) => Promise<{ ok: boolean; error?: string }>;
+  /** BUG-38: Marca pedido de delivery como "Em Rota" com retry + queue (padrao BUG-35) */
+  markOutForDeliveryRemote: (orderId: string) => Promise<void>;
   /**
    * BUG 3.10 FIX: Persiste a checagem de observação no banco (order_item_observation_checks).
    * Chamado pelo KDSPage após o toggle optimista local.
@@ -663,6 +706,10 @@ interface KDSContextValue {
   stationMap: StationMap;
   /** Lista de pedidos que estão em salvamento (persiste até o pedido reaparecer no loadOrders) */
   pedidosSalvando: Array<{ id: string; numero: number; numeroStr: string; destino: KDSPedido['destino']; mesaNumero?: number; nomeCliente?: string; senha?: string }>;
+  /** BUG-35: Número de atualizações de status pendentes na fila de retry */
+  pendingStatusCount: number;
+  /** BUG-35: Força retentativa imediata de todos os itens na fila pendente */
+  flushPendingStatusQueue: () => Promise<void>;
 }
 
 const KDSContext = createContext<KDSContextValue | null>(null);
@@ -685,6 +732,175 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   // ── Estado separado para pedidos em salvamento — persiste até o pedido reaparecer no loadOrders
   const pedidosSalvandoRef = useRef<Set<string>>(new Set());
   const [pedidosSalvando, setPedidosSalvando] = useState<Array<{ id: string; numero: number; numeroStr: string; destino: KDSPedido['destino']; mesaNumero?: number; nomeCliente?: string; senha?: string }>>([]);
+
+  // ── BUG-35: Fila de retry para atualizações de status com falha ──
+  // Persiste em sessionStorage para sobreviver a reloads da página.
+  // Itens na fila são retentados automaticamente via polling e evento online.
+  interface PendingStatusUpdate {
+    id: string;
+    type: 'item' | 'unit' | 'part' | 'out_for_delivery';
+    tenantId: string;
+    orderItemId: string;
+    orderId: string;
+    newStatus: KDSItemStatus;
+    unitNumber?: number;
+    partId?: string;
+    timestamp: number;
+    retryCount: number;
+  }
+
+  const MAX_STATUS_RETRIES = 3;
+  const STATUS_RETRY_BASE_DELAY = 500;
+  const pendingStatusQueueRef = useRef<PendingStatusUpdate[]>([]);
+  const [pendingStatusCount, setPendingStatusCount] = useState(0);
+  const pendingFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingFlushLockRef = useRef(false);
+
+  // Carrega fila do sessionStorage ao montar (sobrevive a reload)
+  useEffect(() => {
+    try {
+      const tid = user?.tenantId ?? tenantIdRef.current;
+      if (!tid) return;
+      const key = `kds_pending_status_${tid}`;
+      const stored = sessionStorage.getItem(key);
+      if (stored) {
+        const parsed: PendingStatusUpdate[] = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          pendingStatusQueueRef.current = parsed;
+          setPendingStatusCount(parsed.length);
+        }
+      }
+    } catch { /* ignore parse errors */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.tenantId]);
+
+  /** Persiste a fila no sessionStorage */
+  const persistStatusQueue = useCallback(() => {
+    try {
+      const tid = user?.tenantId ?? tenantIdRef.current;
+      if (!tid) return;
+      const key = `kds_pending_status_${tid}`;
+      if (pendingStatusQueueRef.current.length === 0) {
+        sessionStorage.removeItem(key);
+      } else {
+        sessionStorage.setItem(key, JSON.stringify(pendingStatusQueueRef.current));
+      }
+    } catch { /* ignore */ }
+  }, [user?.tenantId]);
+
+  /** Detecta erro de rede */
+  const isKdsNetworkError = useCallback((err: unknown): boolean => {
+    if (!(err instanceof Error)) return !navigator.onLine;
+    const msg = err.message.toLowerCase();
+    return (
+      msg.includes('fetch') ||
+      msg.includes('network') ||
+      msg.includes('failed to fetch') ||
+      msg.includes('load failed') ||
+      msg.includes('networkerror') ||
+      msg.includes('offline') ||
+      msg.includes('timeout') ||
+      msg.includes('abort') ||
+      !navigator.onLine
+    );
+  }, []);
+
+  /** Adiciona item à fila pendente e persiste */
+  const enqueuePendingStatus = useCallback((update: PendingStatusUpdate) => {
+    const exists = pendingStatusQueueRef.current.some(
+      (u) => u.orderItemId === update.orderItemId
+        && u.orderId === update.orderId && u.newStatus === update.newStatus,
+    );
+    if (!exists) {
+      pendingStatusQueueRef.current.push(update);
+      setPendingStatusCount(pendingStatusQueueRef.current.length);
+      persistStatusQueue();
+    }
+  }, [persistStatusQueue]);
+
+  /** Remove item da fila (quando sucesso no retry) */
+  const dequeuePendingStatus = useCallback((updateId: string) => {
+    pendingStatusQueueRef.current = pendingStatusQueueRef.current.filter((u) => u.id !== updateId);
+    setPendingStatusCount(pendingStatusQueueRef.current.length);
+    persistStatusQueue();
+  }, [persistStatusQueue]);
+
+  /** Flush da fila pendente: retenta cada item */
+  const flushPendingStatusQueue = useCallback(async () => {
+    if (pendingFlushLockRef.current) return;
+    if (pendingStatusQueueRef.current.length === 0) return;
+    if (!navigator.onLine) return;
+
+    pendingFlushLockRef.current = true;
+    try {
+      const queue = [...pendingStatusQueueRef.current];
+      for (const update of queue) {
+        if (!pendingStatusQueueRef.current.some((u) => u.id === update.id)) continue;
+
+        let success = false;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const body: Record<string, unknown> = {
+              order_item_id: update.orderItemId,
+              order_id: update.orderId,
+              tenant_id: update.tenantId,
+              status: update.newStatus,
+            };
+            if (update.type === 'item') {
+              body.action = 'update_order_item_status';
+            } else if (update.type === 'unit') {
+              body.action = 'update_unit_status';
+              body.unit_number = update.unitNumber!;
+            } else if (update.type === 'out_for_delivery') {
+              body.action = 'mark_out_for_delivery';
+              body.order_id = update.orderId;
+              delete body.order_item_id;
+              delete body.status;
+              delete body.unit_number;
+            } else {
+              body.action = 'update_order_item_part_status';
+              body.order_item_part_id = update.partId!;
+              body.new_status = update.newStatus;
+            }
+            const { error } = await invokeWithAuth('order-write', { body });
+            if (!error) { success = true; break; }
+            if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * attempt));
+          } catch {
+            if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * attempt));
+          }
+        }
+
+        if (success) {
+          dequeuePendingStatus(update.id);
+        }
+        await new Promise((r) => setTimeout(r, 150));
+      }
+    } catch {
+      /* non-critical */
+    } finally {
+      pendingFlushLockRef.current = false;
+    }
+  }, [dequeuePendingStatus]);
+
+  // Flush automático: ao detectar que voltou online
+  useEffect(() => {
+    const handleOnline = () => { flushPendingStatusQueue(); };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [flushPendingStatusQueue]);
+
+  // Polling da fila a cada 30s
+  useEffect(() => {
+    pendingFlushTimerRef.current = setInterval(() => {
+      flushPendingStatusQueue();
+    }, 30000);
+    return () => {
+      if (pendingFlushTimerRef.current) {
+        clearInterval(pendingFlushTimerRef.current);
+        pendingFlushTimerRef.current = null;
+      }
+    };
+  }, [flushPendingStatusQueue]);
 
   const tenantIdRef = useRef<string | undefined>(undefined);
   // undefined = sessão ainda não resolvida | null = sem sessão | string = sessão ativa
@@ -760,7 +976,9 @@ export function KDSProvider({ children }: { children: ReactNode }) {
                 const prevU = prevItem.unidades?.find((pu) => pu.id === u.id);
                 if (!prevU) return u;
                 const uStatus: KDSItemStatus =
-                  statusRank(prevU.status) > statusRank(u.status) ? prevU.status : u.status;
+                  statusRank(prevU.status) > statusRank(u.status) && pendingStatusQueueRef.current.some((q) => q.orderItemId === newItem.id)
+                    ? prevU.status  // BUG-36: só preserva se há gravação pendente
+                    : u.status;
                 return {
                   ...u,
                   status: uStatus,
@@ -774,6 +992,36 @@ export function KDSProvider({ children }: { children: ReactNode }) {
               });
             })();
 
+            // BUGFIX MULTI-ESTACAO: Mesclar partes de producao entre prev e new,
+            // preservando o status otimista local. Sem esse merge, quando o Realtime
+            // dispara loadOrders antes do backend persistir a atualizacao da parte,
+            // TODAS as partes voltam ao status antigo (ex: ao clicar Iniciar em uma
+            // parte especifica, todas as partes do item sao resetadas para novo).
+            const mergedPartes = (() => {
+              if (!newItem.partes || newItem.partes.length === 0) {
+                return prevItem.partes;
+              }
+              if (!prevItem.partes || prevItem.partes.length === 0) {
+                return newItem.partes;
+              }
+              return newItem.partes.map((newPart) => {
+                const prevPart = prevItem.partes!.find((pp) => pp.id === newPart.id);
+                if (!prevPart) return newPart;
+                const partStatus: KDSItemStatus =
+                  statusRank(prevPart.status) > statusRank(newPart.status) && pendingStatusQueueRef.current.some((q) => q.orderItemId === newItem.id)
+                    ? prevPart.status  // BUG-36: só preserva se há gravação pendente
+                    : newPart.status;
+                return {
+                  ...newPart,
+                  status: partStatus,
+                  iniciouPreparoEm: newPart.iniciouPreparoEm ?? prevPart.iniciouPreparoEm,
+                  ficouProntoEm: newPart.ficouProntoEm ?? prevPart.ficouProntoEm,
+                  entregueEm: newPart.entregueEm ?? prevPart.entregueEm,
+                  operadorPreparo: newPart.operadorPreparo ?? prevPart.operadorPreparo,
+                };
+              });
+            })();
+
             let effectiveStatus: KDSItemStatus;
             if (mergedUnidades && mergedUnidades.length > 0) {
               const uStatuses = mergedUnidades.map((u) => u.status);
@@ -783,8 +1031,8 @@ export function KDSProvider({ children }: { children: ReactNode }) {
               else effectiveStatus = 'novo';
             } else {
               effectiveStatus =
-                statusRank(prevItem.status) > statusRank(newItem.status)
-                  ? prevItem.status
+                statusRank(prevItem.status) > statusRank(newItem.status) && pendingStatusQueueRef.current.some((u) => u.orderItemId === newItem.id)
+                  ? prevItem.status  // BUG-36: só preserva se há gravação pendente
                   : newItem.status;
             }
 
@@ -808,6 +1056,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
               observacoesChecadas: mergedChecks,
               observacaoLivre: prevItem.observacaoLivre,
               unidades: mergedUnidades,
+              partes: mergedPartes,
             };
           });
 
@@ -815,18 +1064,22 @@ export function KDSProvider({ children }: { children: ReactNode }) {
           let mergedPedidoStatus: KDSPedido['status'] = 'novo';
           if (mergedItens.length === 0) {
             mergedPedidoStatus = 'novo';
-          } else if (mergedItens.every((i) => i.status === 'entregue')) {
-            mergedPedidoStatus = 'entregue';
-          } else if (kitchenItens.length === 0) {
-            if (mergedItens.every((i) => i.status === 'pronto' || i.status === 'entregue')) {
+          } else if (kitchenItens.length > 0) {
+            const kStatuses = kitchenItens.map((i) => i.status);
+            if (kStatuses.every((s) => s === 'entregue')) {
+              mergedPedidoStatus = 'entregue';
+            } else if (kStatuses.every((s) => s === 'pronto' || s === 'entregue')) {
               mergedPedidoStatus = 'pronto';
-            } else {
-              mergedPedidoStatus = 'novo';
+            } else if (kStatuses.some((s) => s === 'preparo' || s === 'pronto')) {
+              mergedPedidoStatus = 'preparo';
             }
-          } else if (kitchenItens.every((i) => i.status === 'pronto' || i.status === 'entregue')) {
-            mergedPedidoStatus = 'pronto';
-          } else if (kitchenItens.some((i) => i.status === 'preparo' || i.status === 'pronto')) {
-            mergedPedidoStatus = 'preparo';
+          } else {
+            // Só itens skip_kds
+            if (mergedItens.every((i) => i.status === 'entregue')) {
+              mergedPedidoStatus = 'entregue';
+            } else if (mergedItens.every((i) => i.status === 'pronto' || i.status === 'entregue')) {
+              mergedPedidoStatus = 'pronto';
+            }
           }
 
           // Nunca regredir o status do pedido — preserva o mais avançado entre local e banco
@@ -834,12 +1087,39 @@ export function KDSProvider({ children }: { children: ReactNode }) {
           const prevRank = DB_STATUS_RANK2[prev.status as string] ?? 0;
           const mergedRank = DB_STATUS_RANK2[mergedPedidoStatus as string] ?? 0;
 
+          // BUGFIX: Se o banco retornou o pedido como 'entregue' (newPedido.status === 'entregue'),
+          // respeitar sempre o status do banco — o banco é source of truth para status final.
+          // Isso evita que o status local 'entregue' seja revertido para 'pronto' por race condition
+          // quando o Realtime chega antes do banco confirmar todos os itens skip_kds como delivered.
+          const bankSaysDelivered = newPedido.status === 'entregue';
+
+          // BUG-09 FIX: Se o banco retornou out_for_delivery_at (newPedido.status === 'em_rota'
+          // via dbOrderToKDS), promover para em_rota mesmo que o estado local ainda não tenha isso.
+          // Isso garante que ao recarregar a pagina o pedido ja aparece como Em Rota.
+          const bankSaysOnRoute = newPedido.status === 'em_rota';
+
+          // BUG-39 FIX: Race condition ao marcar "Entregue" com múltiplos itens.
+          // Quando handleEntregar dispara updateItemStatusRemote para cada item em paralelo,
+          // o Realtime do PRIMEIRO item que persiste no banco já dispara loadOrders().
+          // Nesse momento os outros itens ainda estão "ready/pronto" no banco, então
+          // mergedPedidoStatus = 'pronto' e o pedido regride de 'entregue' para 'pronto'
+          // por ~1-2 segundos até o restante dos itens também serem persistidos.
+          // Correção: se TODOS os itens locais estão 'entregue' (acabamos de clicar "Entregar")
+          // e o merge só deu 'pronto' por item parcial no banco, preserva 'entregue'.
+          const allLocalItemsEntregue = prev.status === 'entregue' && prev.itens.length > 0 && prev.itens.every((i) => i.status === 'entregue');
+
           const finalStatus: KDSPedido['status'] =
-            prev.status === 'em_rota' && mergedPedidoStatus !== 'entregue'
-              ? 'em_rota'
-              : prevRank > mergedRank
-                ? prev.status  // preserva status local mais avançado (ex: entregue local vs pronto no banco)
-                : mergedPedidoStatus;
+            bankSaysDelivered
+              ? 'entregue'  // banco diz entregue → sempre entregue, sem regressao
+              : prev.status === 'em_rota' && mergedPedidoStatus !== 'entregue'
+                ? 'em_rota'
+                : bankSaysOnRoute && mergedPedidoStatus !== 'entregue'
+                  ? 'em_rota'  // BUG-09: banco diz em_rota (out_for_delivery_at) → promove
+                  : allLocalItemsEntregue && mergedPedidoStatus !== 'entregue'
+                    ? 'entregue'  // BUG-39: todos os itens locais entregues → preserva durante race condition do Realtime
+                    : prevRank > mergedRank && pendingStatusQueueRef.current.some((u) => u.orderId === newPedido.id)
+                      ? prev.status  // BUG-36: só preserva status local se há gravação pendente na fila de retry
+                      : mergedPedidoStatus;
 
           // Merge editing lock state: preserve local optimistic state if remote hasn't caught up,
           // or use remote if another client locked it
@@ -1224,39 +1504,93 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       console.warn('[KDSContext] updateItemStatusRemote: no tenantId available, skipping remote update');
       return;
     }
-    const { data, error } = await invokeWithAuth('order-write', {
-      body: {
-        action: 'update_order_item_status',
-        order_item_id: orderItemId,
-        order_id: orderId,
-        tenant_id: resolvedTenantId,
-        status: newStatus,
-      },
-    });
-    if (error) {
-      // CAMADA 3: Tratar erro 423 — pedido bloqueado pelo PDV
-      const isLocked =
-        error.message?.includes('bloqueado') ||
-        error.message?.includes('locked') ||
-        (data as Record<string, unknown>)?.code === 'order_locked';
-      if (isLocked) {
-        console.warn('[KDSContext] updateItemStatusRemote: order locked by PDV — reverting optimistic state');
-        // Reverte estado otimista local: marca o pedido como em edição
-        setPedidos((prev) =>
-          prev.map((p) =>
-            p.id === orderId ? { ...p, isEditing: true } : p,
-          ),
-        );
-        // Emite evento customizado para componentes mostrarem toast/feedback
-        window.dispatchEvent(new CustomEvent('kds:order-locked', {
-          detail: { orderId, message: 'Pedido em edição pelo PDV — ação bloqueada' },
-        }));
+
+    // ── BUG-35: Retry com backoff exponencial antes de enfileirar ──
+    let lastError: Error | null = null;
+    let isLocked = false;
+
+    for (let attempt = 1; attempt <= MAX_STATUS_RETRIES; attempt++) {
+      try {
+        if (!navigator.onLine && attempt > 1) {
+          throw new Error('offline');
+        }
+        const { data, error } = await invokeWithAuth('order-write', {
+          body: {
+            action: 'update_order_item_status',
+            order_item_id: orderItemId,
+            order_id: orderId,
+            tenant_id: resolvedTenantId,
+            status: newStatus,
+          },
+        });
+        if (error) {
+          const locked =
+            error.message?.includes('bloqueado') ||
+            error.message?.includes('locked') ||
+            (data as Record<string, unknown>)?.code === 'order_locked';
+          if (locked) {
+            isLocked = true;
+            console.warn('[KDSContext] updateItemStatusRemote: order locked by PDV — enfileirando para retry');
+            setPedidos((prev) =>
+              prev.map((p) =>
+                p.id === orderId ? { ...p, isEditing: true } : p,
+              ),
+            );
+            window.dispatchEvent(new CustomEvent('kds:order-locked', {
+              detail: { orderId, message: 'Pedido em edicao pelo PDV — acao enfileirada para retry' },
+            }));
+            // BUG-37 FIX: Enfileira para retry — o lock vai auto-expirar no backend em 5 min
+            // e o flush automatico (30s) vai eventualmente aplicar a atualizacao
+            enqueuePendingStatus({
+              id: `item-${orderItemId}-${Date.now()}`,
+              type: 'item',
+              tenantId: resolvedTenantId,
+              orderItemId,
+              orderId,
+              newStatus,
+              timestamp: Date.now(),
+              retryCount: 0,
+            });
+            window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+              detail: { orderId, orderItemId, newStatus, locked: true, pendingCount: pendingStatusQueueRef.current.length },
+            }));
+            return;
+          }
+          throw error;
+        }
+        // Sucesso — sai do loop
         return;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < MAX_STATUS_RETRIES) {
+          await new Promise((r) => setTimeout(r, STATUS_RETRY_BASE_DELAY * Math.pow(2, attempt - 1)));
+        }
       }
-      console.error('[KDSContext] updateItemStatusRemote error:', error.message);
     }
-    // Realtime triggers reload automatically
-  }, [user?.tenantId]);
+
+    // ── Esgotou retries — enfileira para retry em background ──
+    if (!isLocked && isKdsNetworkError(lastError)) {
+      enqueuePendingStatus({
+        id: `item-${orderItemId}-${Date.now()}`,
+        type: 'item',
+        tenantId: resolvedTenantId,
+        orderItemId,
+        orderId,
+        newStatus,
+        timestamp: Date.now(),
+        retryCount: 0,
+      });
+      window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+        detail: { orderId, orderItemId, newStatus, pendingCount: pendingStatusQueueRef.current.length },
+      }));
+    } else if (!isLocked) {
+      console.error('[KDSContext] updateItemStatusRemote: permanent failure after retries',
+        lastError?.message);
+      window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+        detail: { orderId, orderItemId, newStatus, permanent: true, pendingCount: pendingStatusQueueRef.current.length },
+      }));
+    }
+  }, [user?.tenantId, isKdsNetworkError, enqueuePendingStatus]);
 
   /**
    * Atualiza o status de uma unidade individual (order_item_units).
@@ -1275,38 +1609,93 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       console.warn('[KDSContext] updateUnitStatusRemote: no tenantId available, skipping remote update');
       return;
     }
-    const { data, error } = await invokeWithAuth('order-write', {
-      body: {
-        action: 'update_unit_status',
-        order_item_id: orderItemId,
-        order_id: orderId,
-        unit_number: unitNumber,
-        tenant_id: resolvedTenantId,
-        status: newStatus,
-      },
-    });
-    if (error) {
-      // CAMADA 3: Tratar erro 423 — pedido bloqueado pelo PDV
-      const isLocked =
-        error.message?.includes('bloqueado') ||
-        error.message?.includes('locked') ||
-        (data as Record<string, unknown>)?.code === 'order_locked';
-      if (isLocked) {
-        console.warn('[KDSContext] updateUnitStatusRemote: order locked by PDV — reverting optimistic state');
-        setPedidos((prev) =>
-          prev.map((p) =>
-            p.id === orderId ? { ...p, isEditing: true } : p,
-          ),
-        );
-        window.dispatchEvent(new CustomEvent('kds:order-locked', {
-          detail: { orderId, message: 'Pedido em edição pelo PDV — ação bloqueada' },
-        }));
+
+    // ── BUG-35: Retry com backoff exponencial antes de enfileirar ──
+    let lastError: Error | null = null;
+    let isLocked = false;
+
+    for (let attempt = 1; attempt <= MAX_STATUS_RETRIES; attempt++) {
+      try {
+        if (!navigator.onLine && attempt > 1) {
+          throw new Error('offline');
+        }
+        const { data, error } = await invokeWithAuth('order-write', {
+          body: {
+            action: 'update_unit_status',
+            order_item_id: orderItemId,
+            order_id: orderId,
+            unit_number: unitNumber,
+            tenant_id: resolvedTenantId,
+            status: newStatus,
+          },
+        });
+        if (error) {
+          const locked =
+            error.message?.includes('bloqueado') ||
+            error.message?.includes('locked') ||
+            (data as Record<string, unknown>)?.code === 'order_locked';
+          if (locked) {
+            isLocked = true;
+            console.warn('[KDSContext] updateUnitStatusRemote: order locked by PDV — enfileirando para retry');
+            setPedidos((prev) =>
+              prev.map((p) =>
+                p.id === orderId ? { ...p, isEditing: true } : p,
+              ),
+            );
+            window.dispatchEvent(new CustomEvent('kds:order-locked', {
+              detail: { orderId, message: 'Pedido em edicao pelo PDV — acao enfileirada para retry' },
+            }));
+            // BUG-37 FIX: Enfileira para retry
+            enqueuePendingStatus({
+              id: `unit-${orderItemId}-u${unitNumber}-${Date.now()}`,
+              type: 'unit',
+              tenantId: resolvedTenantId,
+              orderItemId,
+              orderId,
+              newStatus,
+              unitNumber,
+              timestamp: Date.now(),
+              retryCount: 0,
+            });
+            window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+              detail: { orderId, orderItemId, newStatus, locked: true, pendingCount: pendingStatusQueueRef.current.length },
+            }));
+            return;
+          }
+          throw error;
+        }
         return;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < MAX_STATUS_RETRIES) {
+          await new Promise((r) => setTimeout(r, STATUS_RETRY_BASE_DELAY * Math.pow(2, attempt - 1)));
+        }
       }
-      console.error('[KDSContext] updateUnitStatusRemote error:', error.message);
     }
-    // Realtime (order_item_units) triggers reload automatically across all clients
-  }, [user?.tenantId]);
+
+    if (!isLocked && isKdsNetworkError(lastError)) {
+      enqueuePendingStatus({
+        id: `unit-${orderItemId}-u${unitNumber}-${Date.now()}`,
+        type: 'unit',
+        tenantId: resolvedTenantId,
+        orderItemId,
+        orderId,
+        newStatus,
+        unitNumber,
+        timestamp: Date.now(),
+        retryCount: 0,
+      });
+      window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+        detail: { orderId, orderItemId, newStatus, pendingCount: pendingStatusQueueRef.current.length },
+      }));
+    } else if (!isLocked) {
+      console.error('[KDSContext] updateUnitStatusRemote: permanent failure after retries',
+        lastError?.message);
+      window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+        detail: { orderId, orderItemId, newStatus, permanent: true, pendingCount: pendingStatusQueueRef.current.length },
+      }));
+    }
+  }, [user?.tenantId, isKdsNetworkError, enqueuePendingStatus]);
 
   const updatePartStatusRemote = useCallback(async (
     orderItemPartId: string,
@@ -1319,37 +1708,93 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       console.warn('[KDSContext] updatePartStatusRemote: no tenantId available, skipping remote update');
       return;
     }
-    const { data, error } = await invokeWithAuth('order-write', {
-      body: {
-        action: 'update_order_item_part_status',
-        order_item_part_id: orderItemPartId,
-        order_item_id: orderItemId,
-        order_id: orderId,
-        tenant_id: resolvedTenantId,
-        new_status: newStatus,
-      },
-    });
-    if (error) {
-      const isLocked =
-        error.message?.includes('bloqueado') ||
-        error.message?.includes('locked') ||
-        (data as Record<string, unknown>)?.code === 'order_locked';
-      if (isLocked) {
-        console.warn('[KDSContext] updatePartStatusRemote: order locked by PDV — reverting optimistic state');
-        setPedidos((prev) =>
-          prev.map((p) =>
-            p.id === orderId ? { ...p, isEditing: true } : p,
-          ),
-        );
-        window.dispatchEvent(new CustomEvent('kds:order-locked', {
-          detail: { orderId, message: 'Pedido em edição pelo PDV — ação bloqueada' },
-        }));
+
+    // ── BUG-35: Retry com backoff exponencial antes de enfileirar ──
+    let lastError: Error | null = null;
+    let isLocked = false;
+
+    for (let attempt = 1; attempt <= MAX_STATUS_RETRIES; attempt++) {
+      try {
+        if (!navigator.onLine && attempt > 1) {
+          throw new Error('offline');
+        }
+        const { data, error } = await invokeWithAuth('order-write', {
+          body: {
+            action: 'update_order_item_part_status',
+            order_item_part_id: orderItemPartId,
+            order_item_id: orderItemId,
+            order_id: orderId,
+            tenant_id: resolvedTenantId,
+            new_status: newStatus,
+          },
+        });
+        if (error) {
+          const locked =
+            error.message?.includes('bloqueado') ||
+            error.message?.includes('locked') ||
+            (data as Record<string, unknown>)?.code === 'order_locked';
+          if (locked) {
+            isLocked = true;
+            console.warn('[KDSContext] updatePartStatusRemote: order locked by PDV — enfileirando para retry');
+            setPedidos((prev) =>
+              prev.map((p) =>
+                p.id === orderId ? { ...p, isEditing: true } : p,
+              ),
+            );
+            window.dispatchEvent(new CustomEvent('kds:order-locked', {
+              detail: { orderId, message: 'Pedido em edicao pelo PDV — acao enfileirada para retry' },
+            }));
+            // BUG-37 FIX: Enfileira para retry
+            enqueuePendingStatus({
+              id: `part-${orderItemPartId}-${Date.now()}`,
+              type: 'part',
+              tenantId: resolvedTenantId,
+              orderItemId,
+              orderId,
+              newStatus,
+              partId: orderItemPartId,
+              timestamp: Date.now(),
+              retryCount: 0,
+            });
+            window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+              detail: { orderId, orderItemId, newStatus, locked: true, pendingCount: pendingStatusQueueRef.current.length },
+            }));
+            return;
+          }
+          throw error;
+        }
         return;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < MAX_STATUS_RETRIES) {
+          await new Promise((r) => setTimeout(r, STATUS_RETRY_BASE_DELAY * Math.pow(2, attempt - 1)));
+        }
       }
-      console.error('[KDSContext] updatePartStatusRemote error:', error.message);
     }
-    // Realtime (order_item_parts) triggers reload automatically across all clients
-  }, [user?.tenantId]);
+
+    if (!isLocked && isKdsNetworkError(lastError)) {
+      enqueuePendingStatus({
+        id: `part-${orderItemPartId}-${Date.now()}`,
+        type: 'part',
+        tenantId: resolvedTenantId,
+        orderItemId,
+        orderId,
+        newStatus,
+        partId: orderItemPartId,
+        timestamp: Date.now(),
+        retryCount: 0,
+      });
+      window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+        detail: { orderId, orderItemId, newStatus, pendingCount: pendingStatusQueueRef.current.length },
+      }));
+    } else if (!isLocked) {
+      console.error('[KDSContext] updatePartStatusRemote: permanent failure after retries',
+        lastError?.message);
+      window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+        detail: { orderId, orderItemId, newStatus, permanent: true, pendingCount: pendingStatusQueueRef.current.length },
+      }));
+    }
+  }, [user?.tenantId, isKdsNetworkError, enqueuePendingStatus]);
 
   const toggleObsChecadaRemote = useCallback(async (
     orderItemId: string,
@@ -1402,6 +1847,64 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     );
     return { ok: true };
   }, [user?.tenantId]);
+
+  /** BUG-38: Marca pedido de delivery como "Em Rota" com retry + queue (padrao BUG-35).
+   * Persiste out_for_delivery_at no banco via order-write mark_out_for_delivery.
+   * Em caso de falha de rede, enfileira para retry no sessionStorage. */
+  const markOutForDeliveryRemote = useCallback(async (orderId: string) => {
+    const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
+    if (!resolvedTenantId) {
+      console.warn('[KDSContext] markOutForDeliveryRemote: no tenantId available');
+      return;
+    }
+
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= MAX_STATUS_RETRIES; attempt++) {
+      try {
+        if (!navigator.onLine && attempt > 1) {
+          throw new Error('offline');
+        }
+        const { error } = await invokeWithAuth('order-write', {
+          body: {
+            action: 'mark_out_for_delivery',
+            order_id: orderId,
+            tenant_id: resolvedTenantId,
+          },
+        });
+        if (!error) return;
+        throw error;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < MAX_STATUS_RETRIES) {
+          await new Promise((r) => setTimeout(r, STATUS_RETRY_BASE_DELAY * Math.pow(2, attempt - 1)));
+        }
+      }
+    }
+
+    // Esgotou retries — enfileira para retry em background
+    if (isKdsNetworkError(lastError)) {
+      enqueuePendingStatus({
+        id: `out-for-delivery-${orderId}-${Date.now()}`,
+        type: 'out_for_delivery',
+        tenantId: resolvedTenantId,
+        orderItemId: orderId,
+        orderId,
+        newStatus: 'pronto' as KDSItemStatus,
+        timestamp: Date.now(),
+        retryCount: 0,
+      });
+      window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+        detail: { orderId, action: 'em_rota', pendingCount: pendingStatusQueueRef.current.length },
+      }));
+    } else {
+      console.error('[KDSContext] markOutForDeliveryRemote: permanent failure after retries',
+        lastError?.message);
+      window.dispatchEvent(new CustomEvent('kds:status-update-failed', {
+        detail: { orderId, action: 'em_rota', permanent: true, pendingCount: pendingStatusQueueRef.current.length },
+      }));
+    }
+  }, [user?.tenantId, isKdsNetworkError, enqueuePendingStatus]);
 
   /** Inicia edição de pedido — lock via edge function + Broadcast instantâneo */
   const startOrderEditRemote = useCallback(async (orderId: string): Promise<{ ok: boolean; lockedBy?: string; error?: string }> => {
@@ -1490,7 +1993,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   }, [user?.tenantId]);
 
   return (
-    <KDSContext.Provider value={{ pedidos, loading, addPedido, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, toggleObsChecadaRemote, startOrderEditRemote, finishOrderEditRemote, reloadOrders: loadOrders, stationMap, pedidosSalvando }}>
+    <KDSContext.Provider value={{ pedidos, loading, addPedido, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, markOutForDeliveryRemote, toggleObsChecadaRemote, startOrderEditRemote, finishOrderEditRemote, reloadOrders: loadOrders, stationMap, pedidosSalvando, pendingStatusCount, flushPendingStatusQueue }}>
       {children}
     </KDSContext.Provider>
   );

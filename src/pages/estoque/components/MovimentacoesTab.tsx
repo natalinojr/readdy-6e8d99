@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, ArrowUpCircle, ArrowDownCircle, AlertTriangle, X, ChevronDown, ShoppingCart, Calendar } from 'lucide-react';
+import { ArrowUpCircle, ArrowDownCircle, AlertTriangle, X, ShoppingCart, Calendar } from 'lucide-react';
 import type { Movimentacao } from '@/types/estoque';
 import { useEstoque } from '../../../contexts/EstoqueContext';
 import RegistrarPerdaModal from '../../kds/components/RegistrarPerdaModal';
 import TransferirEstoqueModal from './TransferirEstoqueModal';
 import NovaCompraModal from '../../financeiro/components/NovaCompraModal';
+import RegistrarSaidaModal from './RegistrarSaidaModal';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -40,170 +41,16 @@ function getMotivoDisplay(mv: Movimentacao) {
   return { label: motivo || (mv.tipo === 'saida_venda' ? 'Baixa automática por venda' : '—'), sub: null, cls: 'text-zinc-500' };
 }
 
-type MovTipoModal = Movimentacao['tipo'] | 'compra_fornecedor';
-
-interface NovaMovimentacaoModalProps {
-  onClose: () => void;
-  onOpenCompra: (insumoId?: string) => void;
-}
-
-function NovaMovimentacaoModal({ onClose, onOpenCompra }: NovaMovimentacaoModalProps) {
-  const { insumos, addMovimentacao } = useEstoque();
-  const [tipo, setTipo] = useState<MovTipoModal>('entrada');
-  const [insumoId, setInsumoId] = useState('');
-  const [quantidade, setQuantidade] = useState('');
-  const [motivo, setMotivo] = useState('');
-
-  const handleRegistrar = async () => {
-    if (tipo === 'compra_fornecedor') {
-      onClose();
-      onOpenCompra(insumoId || undefined);
-      return;
-    }
-    if (!insumoId || !quantidade) return;
-    const insumoSel = insumos.find((i) => i.id === insumoId);
-    if (!insumoSel) return;
-    await addMovimentacao({
-      insumoId,
-      tipo: tipo as Movimentacao['tipo'],
-      quantidade: parseFloat(quantidade),
-      unidade: insumoSel.unidade,
-      motivo: motivo || undefined,
-    });
-    onClose();
-  };
-
-  const tipoOpcoes: { key: MovTipoModal; label: string; icon: string }[] = [
-    { key: 'entrada', label: 'Entrada manual', icon: 'ri-arrow-up-circle-line' },
-    { key: 'saida_manual', label: 'Saída manual', icon: 'ri-arrow-down-circle-line' },
-    { key: 'compra_fornecedor', label: 'Compra de fornecedor', icon: 'ri-shopping-cart-2-line' },
-  ];
-
-  const isCompra = tipo === 'compra_fornecedor';
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-sm font-bold text-zinc-900">Registrar Movimentação</h2>
-          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer text-zinc-500">
-            <X size={16} />
-          </button>
-        </div>
-        <div className="space-y-3">
-          {/* Tipo selector */}
-          <div>
-            <label className="block text-xs font-medium text-zinc-600 mb-2">Tipo de Movimentação</label>
-            <div className="space-y-1.5">
-              {tipoOpcoes.map(({ key, label, icon }) => (
-                <button
-                  key={key}
-                  onClick={() => setTipo(key)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
-                    tipo === key ? 'border-amber-400 bg-amber-50' : 'border-zinc-100 bg-zinc-50 hover:border-zinc-300'
-                  }`}
-                >
-                  <div className={`w-8 h-8 flex items-center justify-center rounded-lg ${
-                    tipo === key ? 'bg-amber-500 text-white' : 'bg-white text-zinc-400'
-                  }`}>
-                    <i className={`${icon} text-sm`} />
-                  </div>
-                  <span className={`text-xs font-semibold ${tipo === key ? 'text-amber-700' : 'text-zinc-600'}`}>{label}</span>
-                  {key === 'compra_fornecedor' && (
-                    <span className="ml-auto text-xs text-zinc-400 bg-zinc-100 px-2 py-0.5 rounded-full whitespace-nowrap">
-                      Abre módulo financeiro
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {isCompra ? (
-            /* Quando for compra — só precisa do insumo (opcional) */
-            <div>
-              <label className="block text-xs font-medium text-zinc-600 mb-1">Insumo (opcional)</label>
-              <div className="relative">
-                <select value={insumoId} onChange={(e) => setInsumoId(e.target.value)}
-                  className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 text-zinc-800 focus:outline-none focus:border-amber-400 appearance-none cursor-pointer">
-                  <option value="">Pré-selecionar insumo...</option>
-                  {insumos.map((i) => <option key={i.id} value={i.id}>{i.nome}</option>)}
-                </select>
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none w-4 h-4 flex items-center justify-center text-zinc-400">
-                  <ChevronDown size={12} />
-                </div>
-              </div>
-              <p className="text-xs text-zinc-400 mt-1.5 flex items-start gap-1">
-                <i className="ri-information-line text-amber-500 mt-px flex-shrink-0" />
-                O formulário completo de compra será aberto no próximo passo. Selecionar o insumo acima apenas o pré-preenche.
-              </p>
-            </div>
-          ) : (
-            /* Entrada / Saída manual */
-            <>
-              <div>
-                <label className="block text-xs font-medium text-zinc-600 mb-1">Insumo</label>
-                <div className="relative">
-                  <select value={insumoId} onChange={(e) => setInsumoId(e.target.value)}
-                    className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 text-zinc-800 focus:outline-none focus:border-amber-400 appearance-none cursor-pointer">
-                    <option value="">Selecionar insumo...</option>
-                    {insumos.map((i) => <option key={i.id} value={i.id}>{i.nome}</option>)}
-                  </select>
-                  <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none w-4 h-4 flex items-center justify-center text-zinc-400">
-                    <ChevronDown size={12} />
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-600 mb-1">Quantidade</label>
-                <input type="number" step="0.01" value={quantidade}
-                  onChange={(e) => setQuantidade(e.target.value)}
-                  className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 text-zinc-800 focus:outline-none focus:border-amber-400"
-                  placeholder="0" />
-              </div>
-              {tipo === 'saida_manual' && (
-                <div>
-                  <label className="block text-xs font-medium text-zinc-600 mb-1">Motivo <span className="text-red-400">*</span></label>
-                  <textarea rows={2} value={motivo} onChange={(e) => setMotivo(e.target.value)}
-                    className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 text-zinc-800 focus:outline-none focus:border-amber-400 resize-none"
-                    placeholder="Descreva o motivo..." maxLength={200} />
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        <div className="flex gap-2 mt-5">
-          <button onClick={onClose}
-            className="flex-1 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer whitespace-nowrap">
-            Cancelar
-          </button>
-          <button
-            onClick={handleRegistrar}
-            disabled={!isCompra && (!insumoId || !quantidade)}
-            className={`flex-1 py-2 text-sm font-semibold text-white rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2 ${
-              isCompra ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-amber-500 hover:bg-amber-600'
-            }`}
-          >
-            {isCompra && <div className="w-4 h-4 flex items-center justify-center"><ShoppingCart size={13} /></div>}
-            {isCompra ? 'Ir para Nova Compra' : 'Registrar'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function MovimentacoesTab() {
   const { movimentacoes, reloadMovimentacoes } = useEstoque();
   const [filtroTipo, setFiltroTipo] = useState<'Todos' | Movimentacao['tipo']>('Todos');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [showModal, setShowModal] = useState(false);
   const [showPerdaModal, setShowPerdaModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showCompraModal, setShowCompraModal] = useState(false);
   const [compraInsumoPreSelecionado, setCompraInsumoPreSelecionado] = useState<{ id: string; nome: string; unidade: string } | null>(null);
+  const [showSaidaModal, setShowSaidaModal] = useState(false);
 
   const { insumos } = useEstoque();
   const [buscaInsumo, setBuscaInsumo] = useState('');
@@ -223,7 +70,6 @@ export default function MovimentacoesTab() {
     } else {
       setCompraInsumoPreSelecionado(null);
     }
-    setShowModal(false);
     setShowCompraModal(true);
   };
 
@@ -257,9 +103,9 @@ export default function MovimentacoesTab() {
     });
   }, [movimentacoes, filtroTipo, buscaInsumo, dateFrom, dateTo]);
 
-  const totalEntradas = movimentacoes.filter((m) => m.tipo === 'entrada').reduce((s, m) => s + (m.custo ?? 0), 0);
-  const totalPerdas = movimentacoes.filter((m) => m.tipo === 'perda').length;
-  const totalSaidasVenda = movimentacoes.filter((m) => m.tipo === 'saida_venda').length;
+  const totalEntradas = movs.filter((m) => m.tipo === 'entrada').reduce((s, m) => s + (m.custo ?? 0), 0);
+  const totalPerdas = movs.filter((m) => m.tipo === 'perda').length;
+  const totalSaidasVenda = movs.filter((m) => m.tipo === 'saida_venda').length;
 
   const hasDateFilter = dateFrom || dateTo;
   const clearDates = () => { setDateFrom(''); setDateTo(''); };
@@ -270,7 +116,7 @@ export default function MovimentacoesTab() {
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-white border border-zinc-100 rounded-xl p-4">
           <p className="text-lg font-bold text-emerald-600">{fmt(totalEntradas)}</p>
-          <p className="text-xs text-zinc-500">Custo em entradas (hoje)</p>
+          <p className="text-xs text-zinc-500">Custo em entradas{hasDateFilter ? ' (período)' : ' (hoje)'}</p>
         </div>
         <div className="bg-white border border-zinc-100 rounded-xl p-4">
           <p className="text-lg font-bold text-sky-600">{totalSaidasVenda}</p>
@@ -310,12 +156,13 @@ export default function MovimentacoesTab() {
             <span className="hidden sm:inline">Compra de Fornecedor</span>
             <span className="sm:hidden">Compra</span>
           </button>
-          <button onClick={() => setShowModal(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 transition-colors whitespace-nowrap cursor-pointer ml-auto">
-            <div className="w-4 h-4 flex items-center justify-center"><Plus size={13} /></div>
-            <span className="hidden sm:inline">Registrar Movimentação</span>
-            <span className="sm:hidden">Registrar</span>
+          <button onClick={() => setShowSaidaModal(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-orange-50 text-orange-600 border border-orange-200 text-xs font-semibold rounded-lg hover:bg-orange-100 transition-colors whitespace-nowrap cursor-pointer">
+            <i className="ri-arrow-down-circle-line text-sm" />
+            <span className="hidden sm:inline">Registrar Saída</span>
+            <span className="sm:hidden">Saída</span>
           </button>
+
         </div>
       </div>
 
@@ -475,7 +322,7 @@ export default function MovimentacoesTab() {
                     <td className="px-4 py-3 text-zinc-600">{mv.operador}</td>
                     <td className="px-4 py-3 text-right text-zinc-500 whitespace-nowrap">{mv.data} {mv.hora}</td>
                     <td className="px-4 py-3 text-right font-semibold">
-                      {mv.custo ? <span className="text-emerald-600">{fmt(mv.custo)}</span> : <span className="text-zinc-300">—</span>}
+                      {mv.custo ? <span className="text-red-500 font-medium">{fmt(mv.custo)}</span> : <span className="text-zinc-300">—</span>}
                     </td>
                   </tr>
                 );
@@ -525,7 +372,7 @@ export default function MovimentacoesTab() {
                 </div>
                 <div className="text-right flex-shrink-0">
                   {mv.custo ? (
-                    <span className="text-sm font-bold text-emerald-600">{fmt(mv.custo)}</span>
+                    <span className="text-sm font-bold text-red-500">{fmt(mv.custo)}</span>
                   ) : (
                     <span className="text-xs text-zinc-300">—</span>
                   )}
@@ -537,12 +384,6 @@ export default function MovimentacoesTab() {
         })}
       </div>
 
-      {showModal && (
-        <NovaMovimentacaoModal
-          onClose={() => setShowModal(false)}
-          onOpenCompra={handleOpenCompra}
-        />
-      )}
       {showPerdaModal && (
         <RegistrarPerdaModal
           operador="Operador Estoque"
@@ -556,6 +397,9 @@ export default function MovimentacoesTab() {
           onClose={() => { setShowCompraModal(false); setCompraInsumoPreSelecionado(null); }}
           onSaved={() => { setShowCompraModal(false); setCompraInsumoPreSelecionado(null); }}
         />
+      )}
+      {showSaidaModal && (
+        <RegistrarSaidaModal onClose={() => setShowSaidaModal(false)} />
       )}
     </div>
   );

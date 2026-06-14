@@ -15,28 +15,30 @@ interface OpcoesModalProps {
   onClose: () => void;
 }
 
+interface OpcaoTrack {
+  id?: string;
+  nome: string;
+  precoAdicional: number;
+  grupoNome: string;
+  obrigatorio?: boolean;
+}
+
 function OpcoesModal({ item, clienteNome, onAdicionar, onClose }: OpcoesModalProps) {
   const [qtd, setQtd] = useState(1);
-  const [selecionadas, setSelecionadas] = useState<Record<string, string[]>>({});
+  const [selecionadas, setSelecionadas] = useState<Record<string, OpcaoTrack[]>>({});
   const [obs, setObs] = useState('');
   const [erro, setErro] = useState('');
 
-  const toggleOpcao = (grupo: string, opcao: string, obrigatorio: boolean, max = 1) => {
+  const toggleOpcao = (grupo: string, opcao: OpcaoTrack, obrigatorio: boolean, max = 1) => {
     setSelecionadas((prev) => {
       const atual = prev[grupo] ?? [];
       if (obrigatorio || max === 1) return { ...prev, [grupo]: [opcao] };
-      if (atual.includes(opcao)) return { ...prev, [grupo]: atual.filter((o) => o !== opcao) };
+      if (atual.some((o) => o.nome === opcao.nome)) return { ...prev, [grupo]: atual.filter((o) => o.nome !== opcao.nome) };
       return { ...prev, [grupo]: [...atual, opcao] };
     });
   };
 
-  const totalOpcoes = Object.entries(selecionadas).reduce((sum, [grupo, selected]) => {
-    const grp = item.opcoes?.find((g) => g.grupo === grupo);
-    return sum + selected.reduce((s, o) => {
-      const it = grp?.itens.find((i) => i.nome === o);
-      return s + (it?.precoAdicional ?? 0);
-    }, 0);
-  }, 0);
+  const totalOpcoes = Object.values(selecionadas).flat().reduce((sum, o) => sum + o.precoAdicional, 0);
 
   const total = (item.preco + totalOpcoes) * qtd;
 
@@ -85,11 +87,12 @@ function OpcoesModal({ item, clienteNome, onAdicionar, onClose }: OpcoesModalPro
               </div>
               <div className="space-y-1.5">
                 {grupo.itens.map((opcao) => {
-                  const sel = selecionadas[grupo.grupo]?.includes(opcao.nome);
+                  const sel = selecionadas[grupo.grupo]?.some((o) => o.nome === opcao.nome);
+                  const opTrack: OpcaoTrack = { id: opcao.id, nome: opcao.nome, precoAdicional: opcao.precoAdicional, grupoNome: grupo.grupo, obrigatorio: grupo.obrigatorio };
                   return (
                     <button
                       key={opcao.nome}
-                      onClick={() => toggleOpcao(grupo.grupo, opcao.nome, grupo.obrigatorio)}
+                      onClick={() => toggleOpcao(grupo.grupo, opTrack, grupo.obrigatorio)}
                       className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all cursor-pointer ${sel ? 'border-amber-400 bg-amber-50' : 'border-zinc-100 bg-zinc-50 hover:border-zinc-200'}`}
                     >
                       <div className="flex items-center gap-2">

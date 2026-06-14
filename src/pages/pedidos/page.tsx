@@ -531,9 +531,8 @@ export default function PedidosPage() {
     // Modo data
     if (modoPeriodo === 'preset') {
       if (presetAtivo === 'hoje') {
-        // "Hoje" = usa RPC sem filtro de data (últimas 12h) — mesma fonte do KDS, mais confiável
-        // A filtragem visual por data é feita no frontend pelo filtrarPorData()
-        return { hookDateFrom: undefined, hookDateTo: undefined, hookSessionId: null };
+        // "Hoje" = filtro de data direto para garantir apenas pedidos do dia atual
+        return { hookDateFrom: HOJE, hookDateTo: HOJE, hookSessionId: null };
       }
       if (presetAtivo === 'ontem') {
         const d = somarDias(HOJE, -1);
@@ -670,9 +669,32 @@ export default function PedidosPage() {
     // Enquanto carrega, não mostra KDS (total=0 poluiria a lista)
     if (loadingSessaoOrders) return [];
 
-    // DB vazio após carregamento: usa KDS como fallback
-    return kdsPedidos.map(kdsParaRecente);
-  }, [kdsPedidos, dbOrders, loadingSessaoOrders]);
+    // DB vazio após carregamento: usa KDS como fallback, mas filtra por data
+    return kdsPedidos
+      .filter((p) => {
+        const dataBR = new Date(p.criadoEm).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+        if (modo === 'sessao') return true;
+        if (modoPeriodo === 'preset') {
+          if (presetAtivo === 'hoje') return dataBR === HOJE;
+          if (presetAtivo === 'ontem') return dataBR === somarDias(HOJE, -1);
+          if (presetAtivo === '7dias') return dataBR >= somarDias(HOJE, -6) && dataBR <= HOJE;
+          if (presetAtivo === '30dias') return dataBR >= somarDias(HOJE, -29) && dataBR <= HOJE;
+          if (presetAtivo === 'mes') return dataBR.startsWith(HOJE.slice(0, 7));
+          if (presetAtivo === 'ano') return dataBR.startsWith(HOJE.slice(0, 4));
+          return true;
+        }
+        if (modoPeriodo === 'dia') return dataBR === diaEspecifico;
+        if (modoPeriodo === 'periodo') return dataBR >= periodoInicio && dataBR <= periodoFim;
+        if (modoPeriodo === 'mes') {
+          const mesStr = String(mesSelecionado + 1).padStart(2, '0');
+          return dataBR.startsWith(`${anoSelecionado}-${mesStr}`);
+        }
+        if (modoPeriodo === 'ano') return dataBR.startsWith(`${anoApenas}`);
+        return true;
+      })
+      .map(kdsParaRecente);
+  }, [kdsPedidos, dbOrders, loadingSessaoOrders, modo, modoPeriodo, presetAtivo, diaEspecifico,
+      periodoInicio, periodoFim, mesSelecionado, anoSelecionado, anoApenas]);
 
   // ── Filtro de data no frontend (apenas para filtragem visual) ─────────────
   const filtrarPorData = (p: PedidoRecente): boolean => {
@@ -795,7 +817,7 @@ export default function PedidosPage() {
     (p) => !p.pago && !['cancelado', 'cancelled'].includes(p.status),
   ).length;
   const entregues = filtrados.filter((p) => p.status === 'delivered').length;
-  const cancelados = filtrados.filter((p) => p.status === 'cancelled').length;
+  const cancelados = filtrados.filter((p) => p.status === 'cancelled' || p.status === 'cancelado').length;
   const ticketMedio = filtradosComTotal.length > 0 ? totalValor / filtradosComTotal.length : 0;
   const pedidosComSla = filtrados.filter((p) => p.slaCozinha !== undefined);
   const slaMedio = pedidosComSla.length > 0

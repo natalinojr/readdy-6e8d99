@@ -2,11 +2,12 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import QRCodeImport from 'react-qr-code';
 const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
 import { useTablesConfig, type MesaConfig, type MesaFormato } from '../../../hooks/useTablesConfig';
-import { printHTML, sendToPrinter } from '@/lib/printUtils';
-import { useImpressoras, PRINTER_KEY_QRCODES } from '@/contexts/ImpressorasContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useSystemSettings, type SectorConfig } from '@/hooks/useSystemSettings';
-import { getAppBaseUrl } from '@/lib/appUrl';
+import { getAppUrl, getPublicUrl } from '@/lib/appUrl';
+import { supabase } from '@/lib/supabase';
+import { invokeWithAuth } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 /* ─── Setor type alias for local use ─── */
 type SetorConfig = SectorConfig;
@@ -49,7 +50,7 @@ const FORMATOS: { id: MesaFormato; label: string; icon: string }[] = [
 function getMesaUrl(mesa: MesaConfig): string {
   // Usa qr_token do banco (qrCode) quando disponível; fallback para número da mesa
   const token = mesa.qrCode || mesa.numero;
-  return `${getAppBaseUrl()}/mesa-qr/${token}`;
+  return getPublicUrl(`/mesa-qr/${token}`);
 }
 
 /* ─── SetorModal ─── */
@@ -184,96 +185,13 @@ function ConfirmarExclusaoSetorModal({ setor, mesasNoSetor, onConfirmar, onClose
   );
 }
 
-/* ─── PrintAllQRModal ─── */
-interface PrintAllQRModalProps {
-  mesas: MesaConfig[];
-  nomeLoja: string;
-  onClose: () => void;
-  impressoraQR?: import('@/contexts/ImpressorasContext').Impressora;
-}
-
-function PrintAllQRModal({ mesas, nomeLoja, onClose, impressoraQR }: PrintAllQRModalProps) {
-  const printRef = useRef<HTMLDivElement>(null);
-
-  const handlePrint = () => {
-    if (!printRef.current) return;
-    const printContent = printRef.current.innerHTML;
-    const dateStr = new Date().toLocaleDateString('pt-BR');
-    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"/><title>QR Codes das Mesas</title>'
-      + '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui,sans-serif;background:white}'
-      + '.header{text-align:center;padding:5mm;border-bottom:1px solid #e4e4e7;margin-bottom:5mm}'
-      + '.header h1{font-size:14pt;font-weight:700;color:#09090b}.header p{font-size:8pt;color:#71717a;margin-top:1mm}'
-      + '@media print{@page{size:A4;margin:5mm}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}'
-      + '</style></head><body>'
-      + '<div class="header"><h1>' + nomeLoja + '</h1><p>QR Codes das Mesas — ' + dateStr + '</p></div>'
-      + printContent
-      + '</body></html>';
-    if (impressoraQR && impressoraQR.ip) {
-      sendToPrinter(html, impressoraQR);
-    } else {
-      printHTML(html);
-    }
-  };
-
-  const mesasOrdenadas = [...mesas].sort((a, b) => a.numero - b.numero);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 flex-shrink-0">
-          <div>
-            <h2 className="text-sm font-bold text-zinc-900">Imprimir QR Codes em lote</h2>
-            <p className="text-xs text-zinc-400 mt-0.5">Layout 3×3 por página, otimizado para corte em cartões de mesa</p>
-          </div>
-          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer text-zinc-500">
-            <i className="ri-close-line text-base" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="mb-4 flex items-center gap-3 p-3.5 bg-amber-50 border border-amber-100 rounded-xl">
-            <i className="ri-information-line text-amber-600 flex-shrink-0" />
-            <p className="text-xs text-amber-800">
-              <strong>PDF gerado com {mesas.length} QR Codes</strong> em layout 3×3. Imprima em papel A4 e corte pelas linhas tracejadas. Cada cartão tem 90×90mm.
-            </p>
-          </div>
-          <div className="border border-zinc-200 rounded-xl overflow-hidden bg-zinc-50 p-4">
-            <div ref={printRef}>
-              <div className="grid grid-cols-3 gap-0">
-                {mesasOrdenadas.map((m) => (
-                  <div key={m.id} className="border border-dashed border-zinc-300 flex flex-col items-center justify-center p-4 aspect-square">
-                    <QRCode value={getMesaUrl(m)} size={90} level="H" bgColor="#ffffff" fgColor="#09090b" style={{ display: 'block' }} />
-                    <p className="text-base font-black text-zinc-900 mt-2">Mesa {m.numero}</p>
-                    <p className="text-[10px] text-zinc-400">{m.setor}</p>
-                    <p className="text-[8px] text-zinc-300 mt-0.5 text-center break-all font-mono">{getMesaUrl(m)}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-3 px-6 py-4 border-t border-zinc-100 flex-shrink-0">
-          <div className="flex-1 text-xs text-zinc-400">
-            {mesas.length} QR Codes · {Math.ceil(mesas.length / 9)} página{Math.ceil(mesas.length / 9) !== 1 ? 's' : ''} A4
-          </div>
-          <button onClick={onClose} className="px-5 py-2.5 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-xl hover:bg-zinc-200 cursor-pointer whitespace-nowrap">Cancelar</button>
-          <button onClick={handlePrint} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-zinc-900 rounded-xl hover:bg-zinc-800 cursor-pointer whitespace-nowrap">
-            <i className="ri-printer-line text-base" />
-            Imprimir / Salvar PDF
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ─── QR Code Modal ─── */
 interface QRModalProps {
   mesa: MesaConfig;
-  onRegenerate: () => void;
   onClose: () => void;
 }
 
-function QRModal({ mesa, onRegenerate, onClose }: QRModalProps) {
+function QRModal({ mesa, onClose }: QRModalProps) {
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -288,30 +206,52 @@ function QRModal({ mesa, onRegenerate, onClose }: QRModalProps) {
   const handleDownloadPNG = async () => {
     setDownloading(true);
     try {
-      const canvas = containerRef.current?.querySelector('canvas');
-      if (!canvas) return;
+      // Busca o SVG do QR code e renderiza em canvas
+      const svgEl = containerRef.current?.querySelector('svg');
+      if (!svgEl) return;
+      const svgData = new XMLSerializer().serializeToString(svgEl);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('SVG load failed'));
+        img.src = url;
+      });
       const outputSize = 400;
-      const paddingTop = 20;
-      const paddingBottom = 60;
-      const totalHeight = outputSize + paddingTop + paddingBottom;
+      const qrPadding = 40;
+      const qrSize = outputSize - qrPadding * 2;
       const outputCanvas = document.createElement('canvas');
       outputCanvas.width = outputSize;
-      outputCanvas.height = totalHeight;
+      outputCanvas.height = outputSize;
       const ctx = outputCanvas.getContext('2d');
       if (!ctx) return;
+      // Fundo branco com borda
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, outputSize, totalHeight);
+      ctx.fillRect(0, 0, outputSize, outputSize);
       ctx.strokeStyle = '#e4e4e7';
       ctx.lineWidth = 2;
-      ctx.strokeRect(1, 1, outputSize - 2, totalHeight - 2);
-      ctx.drawImage(canvas, 20, paddingTop, outputSize - 40, outputSize - 40);
+      ctx.strokeRect(1, 1, outputSize - 2, outputSize - 2);
+      // Desenha QR code
+      ctx.drawImage(img, qrPadding, qrPadding, qrSize, qrSize);
+      // Círculo branco central com número da mesa
+      const centerX = outputSize / 2;
+      const centerY = outputSize / 2;
+      const circleRadius = 48;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, circleRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      // Número da mesa
       ctx.fillStyle = '#09090b';
-      ctx.font = 'bold 20px system-ui, sans-serif';
+      ctx.font = 'bold 38px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(`Mesa ${mesa.numero}`, outputSize / 2, outputSize + paddingTop + 28);
-      ctx.fillStyle = '#71717a';
-      ctx.font = '13px system-ui, sans-serif';
-      ctx.fillText(mesa.setor, outputSize / 2, outputSize + paddingTop + 48);
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(mesa.numero), centerX, centerY);
+      URL.revokeObjectURL(url);
       const link = document.createElement('a');
       link.download = `mesa-${mesa.numero}-qrcode.png`;
       link.href = outputCanvas.toDataURL('image/png');
@@ -331,8 +271,16 @@ function QRModal({ mesa, onRegenerate, onClose }: QRModalProps) {
           </button>
         </div>
         <div className="p-6 flex flex-col items-center gap-4">
-          <div ref={containerRef} className="p-3 bg-white border-2 border-zinc-100 rounded-xl">
-            <QRCode value={qrUrl} size={180} level="H" bgColor="#ffffff" fgColor="#09090b" style={{ display: 'block' }} />
+          <div ref={containerRef} className="relative inline-block w-[204px] h-[204px]">
+            <div className="p-3 bg-white border-2 border-zinc-100 rounded-xl">
+              <QRCode value={qrUrl} size={180} level="H" bgColor="#ffffff" fgColor="#09090b" style={{ display: 'block', width: '100%', height: '100%' }} />
+            </div>
+            {/* Número da mesa no centro do QR */}
+            <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+              <div className="bg-white rounded-full w-14 h-14 flex items-center justify-center border-4 border-zinc-900 shadow-sm">
+                <span className="text-lg font-black text-zinc-900 leading-none">{mesa.numero}</span>
+              </div>
+            </div>
           </div>
           <div className="text-center">
             <p className="text-xs font-bold text-zinc-700">Mesa {mesa.numero} — {mesa.setor}</p>
@@ -348,11 +296,6 @@ function QRModal({ mesa, onRegenerate, onClose }: QRModalProps) {
               className={`flex items-center justify-center gap-2 w-full py-2.5 text-xs font-semibold rounded-xl cursor-pointer transition-colors whitespace-nowrap ${copied ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'}`}>
               <i className={copied ? 'ri-check-line' : 'ri-clipboard-line'} />
               {copied ? 'URL copiada!' : 'Copiar URL da mesa'}
-            </button>
-            <button onClick={onRegenerate}
-              className="flex items-center justify-center gap-2 w-full py-2 text-xs font-semibold rounded-xl cursor-pointer bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-colors whitespace-nowrap">
-              <i className="ri-refresh-line" />
-              Regenerar QR Code
             </button>
           </div>
           <p className="text-[10px] text-zinc-400 text-center">O PNG está otimizado para impressão em papel A4 ou cartão de mesa.</p>
@@ -475,10 +418,163 @@ function ConfirmarExclusaoModal({ mesa, onConfirmar, onClose }: { mesa: MesaConf
   );
 }
 
+/* ─── Universal QR Section ─── */
+interface UniversalQRSectionProps {
+  qrToken: string;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  onRegenerar: () => void;
+}
+
+function UniversalQRSection({ qrToken, containerRef, onRegenerar }: UniversalQRSectionProps) {
+  const [copied, setCopied] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const universalQrUrl = getPublicUrl(`/mesa-qr/${qrToken}`);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(universalQrUrl).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownloadPNG = async () => {
+    setDownloading(true);
+    try {
+      const svgEl = containerRef.current?.querySelector('svg');
+      if (!svgEl) return;
+      const svgData = new XMLSerializer().serializeToString(svgEl);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('SVG load failed'));
+        img.src = url;
+      });
+      const outputSize = 400;
+      const qrPadding = 40;
+      const qrSize = outputSize - qrPadding * 2;
+      const outputCanvas = document.createElement('canvas');
+      outputCanvas.width = outputSize;
+      outputCanvas.height = outputSize;
+      const ctx = outputCanvas.getContext('2d');
+      if (!ctx) return;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, outputSize, outputSize);
+      ctx.strokeStyle = '#e4e4e7';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(1, 1, outputSize - 2, outputSize - 2);
+      ctx.drawImage(img, qrPadding, qrPadding, qrSize, qrSize);
+      const centerX = outputSize / 2;
+      const centerY = outputSize / 2;
+      const circleRadius = 42;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, circleRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.fillStyle = '#09090b';
+      ctx.font = 'bold 34px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('BC', centerX, centerY);
+      URL.revokeObjectURL(url);
+      const link = document.createElement('a');
+      link.download = 'qrcode-balcao-retirada.png';
+      link.href = outputCanvas.toDataURL('image/png');
+      link.click();
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className="bg-white border border-amber-200 rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3.5 border-b border-amber-100 bg-amber-50">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-xl">
+            <i className="ri-qr-code-line text-amber-500 text-lg" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-zinc-800">QR Code Universal — Balcão de Retirada</p>
+            <p className="text-[10px] text-zinc-500">Clientes escaneiam este QR para fazer pedidos sem mesa fixa</p>
+          </div>
+        </div>
+      </div>
+      <div className="p-6 flex flex-col md:flex-row items-center gap-6">
+        {/* QR Code */}
+        <div ref={containerRef} className="relative inline-block w-[180px] h-[180px] shrink-0">
+          <div className="p-2.5 bg-white border-2 border-zinc-100 rounded-xl">
+            <QRCode
+              value={universalQrUrl}
+              size={160}
+              level="H"
+              bgColor="#ffffff"
+              fgColor="#09090b"
+              style={{ display: 'block', width: '100%', height: '100%' }}
+            />
+          </div>
+          <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+            <div className="bg-white rounded-full w-12 h-12 flex items-center justify-center border-3 border-zinc-900 shadow-sm">
+              <span className="text-sm font-black text-zinc-900 leading-none">BC</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Info & Actions */}
+        <div className="flex-1 min-w-0 space-y-3">
+          <div>
+            <p className="text-xs font-bold text-zinc-700">Link do QR Code</p>
+            <p className="text-[10px] text-zinc-400 mt-0.5 break-all font-mono">{universalQrUrl}</p>
+          </div>
+          <p className="text-xs text-zinc-500 leading-relaxed">
+            <i className="ri-information-line text-amber-500 mr-1" />
+            Este QR Code pode ser usado por qualquer cliente. Cada pessoa que escanear recebe uma senha única para retirar seu pedido.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleCopy}
+              className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-colors whitespace-nowrap ${
+                copied ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
+              }`}
+            >
+              <i className={copied ? 'ri-check-line' : 'ri-clipboard-line'} />
+              {copied ? 'Copiado!' : 'Copiar Link'}
+            </button>
+            <button
+              onClick={handleDownloadPNG}
+              disabled={downloading}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-colors bg-amber-500 text-white hover:bg-amber-600 whitespace-nowrap disabled:opacity-60"
+            >
+              <i className="ri-download-line" />
+              {downloading ? 'Gerando...' : 'Baixar PNG'}
+            </button>
+            <button
+              onClick={() => window.open(getAppUrl('/imprimir-qrcodes'), '_blank')}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-colors bg-zinc-900 text-white hover:bg-zinc-700 whitespace-nowrap"
+            >
+              <i className="ri-printer-line" />
+              Imprimir
+            </button>
+            <button
+              onClick={onRegenerar}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-colors bg-zinc-100 text-zinc-600 hover:bg-zinc-200 whitespace-nowrap"
+            >
+              <i className="ri-refresh-line" />
+              Regenerar QR
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Main ─── */
 export default function MesasConfigTab() {
+  const { user } = useAuth();
   const { settings, salvar: salvarSettings } = useSystemSettings();
-  const { getImpressoraParaEstacao } = useImpressoras();
   const [setores, setSetores] = useState<SectorConfig[]>(SETORES_INICIAIS);
   const setoresCarregadosRef = useRef(false);
 
@@ -496,17 +592,109 @@ export default function MesasConfigTab() {
     await salvarSettings({ sectors_config: novosSetores });
   }, [salvarSettings]);
 
-  const { mesas: mesasDB, loading: loadingMesas, criarMesa, editarMesa, excluirMesa: excluirMesaDB, regenerarQR: regenerarQRDB } = useTablesConfig();
+  const { mesas: mesasDB, loading: loadingMesas, criarMesa, editarMesa, excluirMesa: excluirMesaDB } = useTablesConfig();
   const { success: toastSuccess, error: toastError } = useToast();
   const [mesas, setMesas] = useState<MesaConfig[]>([]);
   useEffect(() => { if (mesasDB.length > 0 || !loadingMesas) setMesas(mesasDB); }, [mesasDB, loadingMesas]);
   const [filtroSetor, setFiltroSetor] = useState<string>('Todos');
 
+  // Universal QR (Balcão de Retirada)
+  const [universalMesa, setUniversalMesa] = useState<{ id: string; qr_token: string; tenant_id: string } | null>(null);
+  const [loadingUniversal, setLoadingUniversal] = useState(true);
+  const universalContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const fetchUniversal = async () => {
+      if (!user?.tenantId) {
+        setLoadingUniversal(false);
+        return;
+      }
+      try {
+        // Usa fn_get_tables (SECURITY DEFINER) para bypassar RLS — evita conflito
+        // de auth_tenant_id() quando o usuário tem múltiplas lojas
+        const { data } = await supabase.rpc('fn_get_tables', { p_tenant_id: user.tenantId });
+        const tables = (data as Array<Record<string, unknown>>) ?? [];
+        const universal = tables.find((t) => t.is_universal === true);
+        if (universal && universal.id && universal.qr_token) {
+          setUniversalMesa({
+            id: universal.id as string,
+            qr_token: universal.qr_token as string,
+            tenant_id: user.tenantId,
+          });
+        }
+      } catch {
+        // ignore
+      } finally {
+        setLoadingUniversal(false);
+      }
+    };
+    fetchUniversal();
+  }, [user?.tenantId]);
+
+  const handleRegenerarQR = async () => {
+    if (!universalMesa || !user?.tenantId) return;
+    try {
+      const novoQrToken = crypto.randomUUID().replace(/-/g, '');
+      // Usa invokeWithAuth para bypassar RLS — evita conflito de auth_tenant_id()
+      // quando o usuário tem múltiplas lojas
+      const { error } = await invokeWithAuth('config-write', {
+        body: {
+          action: 'update_table',
+          tenant_id: user.tenantId,
+          id: universalMesa.id,
+          qr_token: novoQrToken,
+        },
+      });
+      if (error) {
+        toastError('Erro ao regenerar QR Code', 'error');
+        return;
+      }
+      // Recarregar via fn_get_tables
+      const { data: rpcData } = await supabase.rpc('fn_get_tables', { p_tenant_id: user.tenantId });
+      const tables = (rpcData as Array<Record<string, unknown>>) ?? [];
+      const universal = tables.find((t) => t.is_universal === true);
+      if (universal && universal.id && universal.qr_token) {
+        setUniversalMesa({
+          id: universal.id as string,
+          qr_token: universal.qr_token as string,
+          tenant_id: user.tenantId,
+        });
+      }
+      toastSuccess('QR Code regenerado com sucesso!');
+    } catch {
+      toastError('Erro inesperado ao regenerar QR Code', 'error');
+    }
+  };
+
+  const handleCriarMesaUniversal = async () => {
+    try {
+      const { data, error } = await invokeWithAuth<{ success: boolean; data?: { id: string; qr_token: string; tenant_id: string }; error?: string }>('config-write', {
+        body: {
+          action: 'create_table',
+          tenant_id: user?.tenantId,
+          number: 0,
+          area: 'Balcão',
+          is_universal: true,
+          capacity: 999,
+          pos_x: 0,
+          pos_y: 0,
+          table_type: 'quadrada',
+        },
+      });
+      if (error || !data?.success || !data.data) {
+        toastError('Erro ao criar mesa universal. Verifique as permissões.', 'error');
+        return;
+      }
+      setUniversalMesa(data.data);
+      toastSuccess('QR Code Universal criado com sucesso!');
+    } catch {
+      toastError('Erro inesperado ao criar mesa universal.', 'error');
+    }
+  };
+
   const [mesaModal, setMesaModal] = useState<MesaConfig | 'new' | null>(null);
   const [qrModal, setQrModal] = useState<MesaConfig | null>(null);
   const [excluirModal, setExcluirModal] = useState<MesaConfig | null>(null);
-  const [printAllModal, setPrintAllModal] = useState(false);
-  const [regeneradoTodos, setRegeneradoTodos] = useState(false);
 
   const [setorModal, setSetorModal] = useState<SectorConfig | 'new' | null>(null);
   const [excluirSetorModal, setExcluirSetorModal] = useState<SectorConfig | null>(null);
@@ -573,32 +761,6 @@ export default function MesasConfigTab() {
     }
   }, [mesaModal, maxNumero, setores, criarMesa, editarMesa, toastSuccess, toastError]);
 
-  const handleRegenerarQR = useCallback(async (id: string) => {
-    const { success, error } = await regenerarQRDB(id);
-    if (error) {
-      toastError(`Erro ao regenerar QR: ${error}`, 'error');
-      return;
-    }
-    if (success) {
-      setQrModal((prev) => {
-        if (!prev || prev.id !== id) return prev;
-        return prev;
-      });
-      toastSuccess('QR Code regenerado com sucesso!', 'success');
-    }
-  }, [regenerarQRDB, toastSuccess, toastError]);
-
-  const handleRegenerarTodos = async () => {
-    const results = await Promise.all(mesas.map((m) => regenerarQRDB(m.id)));
-    const erros = results.filter(r => r.error);
-    if (erros.length > 0) {
-      toastError(`${erros.length} QR(s) falharam ao regenerar`);
-    } else {
-      toastSuccess(`${erros.length === 0 ? 'Todos QR Codes regenerados!' : 'QR Codes regenerados!'}`);
-      setTimeout(() => setRegeneradoTodos(false), 2500);
-    }
-  };
-
   const handleExcluirMesa = useCallback(async (id: string) => {
     const { success, error } = await excluirMesaDB(id);
     if (error) {
@@ -622,15 +784,10 @@ export default function MesasConfigTab() {
           <p className="text-xs text-zinc-400 mt-0.5">Gerencie setores, mesas, capacidades e QR Codes.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setPrintAllModal(true)}
+          <button onClick={() => window.open(getAppUrl('/imprimir-qrcodes'), '_blank')}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-colors whitespace-nowrap bg-zinc-900 text-white hover:bg-zinc-800">
             <i className="ri-printer-line" />
             Imprimir todos QR
-          </button>
-          <button onClick={handleRegenerarTodos}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-colors whitespace-nowrap ${regeneradoTodos ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'}`}>
-            <i className={regeneradoTodos ? 'ri-check-line' : 'ri-refresh-line'} />
-            {regeneradoTodos ? 'Regenerados!' : 'Regenerar QR'}
           </button>
           <button onClick={() => setMesaModal('new')}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 cursor-pointer transition-colors whitespace-nowrap">
@@ -638,6 +795,61 @@ export default function MesasConfigTab() {
           </button>
         </div>
       </div>
+
+      {/* ─── QR CODE UNIVERSAL ─── */}
+      {loadingUniversal ? (
+        <div className="bg-white border border-amber-200 rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-amber-100 bg-amber-50">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-xl">
+                <i className="ri-qr-code-line text-amber-500 text-lg" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-zinc-800">QR Code Universal — Balcão de Retirada</p>
+                <p className="text-[10px] text-zinc-500">Clientes escaneiam este QR para fazer pedidos sem mesa fixa</p>
+              </div>
+            </div>
+          </div>
+          <div className="p-6 flex items-center justify-center">
+            <div className="flex items-center gap-2 text-xs text-zinc-400">
+              <div className="w-4 h-4 border-2 border-amber-300 border-t-transparent rounded-full animate-spin" />
+              Carregando QR Code Universal...
+            </div>
+          </div>
+        </div>
+      ) : universalMesa ? (
+        <UniversalQRSection
+          qrToken={universalMesa.qr_token}
+          containerRef={universalContainerRef}
+          onRegenerar={handleRegenerarQR}
+        />
+      ) : (
+        <div className="bg-white border border-dashed border-amber-300 rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-amber-100 bg-amber-50/50">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 flex items-center justify-center bg-amber-100/50 rounded-xl">
+                <i className="ri-qr-code-line text-amber-400 text-lg" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-zinc-800">QR Code Universal — Balcão de Retirada</p>
+                <p className="text-[10px] text-zinc-500">Permite que clientes façam pedidos sem mesa fixa</p>
+              </div>
+            </div>
+          </div>
+          <div className="p-6 flex flex-col items-center gap-3 text-center">
+            <p className="text-xs text-zinc-500 max-w-md">
+              Nenhuma mesa universal configurada ainda. Crie uma para gerar o QR Code de Balcão de Retirada e permitir que clientes façam pedidos sem mesa fixa.
+            </p>
+            <button
+              onClick={handleCriarMesaUniversal}
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-colors bg-amber-500 text-white hover:bg-amber-600 whitespace-nowrap"
+            >
+              <i className="ri-add-line" />
+              Criar QR Code Universal
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ─── SETORES ─── */}
       <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
@@ -860,7 +1072,6 @@ export default function MesasConfigTab() {
       {qrModal && (
         <QRModal
           mesa={qrModal}
-          onRegenerate={() => handleRegenerarQR(qrModal.id)}
           onClose={() => setQrModal(null)}
         />
       )}
@@ -869,14 +1080,6 @@ export default function MesasConfigTab() {
           mesa={excluirModal}
           onConfirmar={() => handleExcluirMesa(excluirModal.id)}
           onClose={() => setExcluirModal(null)}
-        />
-      )}
-      {printAllModal && (
-        <PrintAllQRModal
-          mesas={filtradas.length > 0 ? filtradas : mesas}
-          nomeLoja="Meu Restaurante"
-          onClose={() => setPrintAllModal(false)}
-          impressoraQR={getImpressoraParaEstacao(PRINTER_KEY_QRCODES)}
         />
       )}
       {setorModal && (

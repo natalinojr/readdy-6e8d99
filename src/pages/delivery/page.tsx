@@ -1,0 +1,1062 @@
+import { useState, useEffect, useRef } from 'react';
+import { useDeliveryData } from './useDeliveryData';
+import IdentificacaoDelivery from './components/IdentificacaoDelivery';
+import EnderecoDelivery from './components/EnderecoDelivery';
+import ConfirmacaoDelivery from './components/ConfirmacaoDelivery';
+import AcompanharPedido from './components/AcompanharPedido';
+import HistoricoPedidos from './components/HistoricoPedidos';
+import CardapioMesaQR from '../mesa-qr/components/CardapioMesaQR';
+import CarrinhoDelivery from './components/CarrinhoDelivery';
+import EditarItemMesaQRModal from '../mesa-qr/components/EditarItemMesaQRModal';
+import ModoEntregaDelivery from './components/ModoEntregaDelivery';
+
+// ── Helpers de ícones de tipo de endereço ─────────────────────────────────────
+
+const ADDRESS_TYPE_ICONS: Record<string, string> = {
+  'Casa': 'ri-home-4-line',
+  'Trabalho': 'ri-briefcase-line',
+  'Escritório': 'ri-building-line',
+  'Faculdade': 'ri-graduation-cap-line',
+  'Casa dos pais': 'ri-heart-line',
+};
+
+function getAddressDropdownIcon(label: string): string {
+  return ADDRESS_TYPE_ICONS[label] || 'ri-map-pin-line';
+}
+
+// ── Extrair slug da URL de forma robusta (bypass React Router params) ───────
+
+function getStoreSlugFromUrl(): string | undefined {
+  const path = window.location.pathname;
+  // Remove basePath se existir
+  const basePath = (__BASE_PATH__ || '').replace(/\/$/, '');
+  const cleanPath = basePath ? path.replace(basePath, '') : path;
+
+  // Padrão: /qualquer-coisa-delivery
+  const match = cleanPath.match(/\/([^/]+)-delivery\/?$/);
+  if (match) {
+    return match[1];
+  }
+
+  // Fallback: /delivery/qualquer-coisa
+  const match2 = cleanPath.match(/\/delivery\/([^/]+)\/?$/);
+  if (match2) {
+    return match2[1];
+  }
+
+  return undefined;
+}
+
+export default function DeliveryPage() {
+  const storeSlug = getStoreSlugFromUrl();
+  const data = useDeliveryData(storeSlug);
+
+  const step = data.step;
+  const tenant = data.tenant;
+  const city = data.city;
+  const neighborhoods = data.neighborhoods;
+  const error = data.error;
+  const phone = data.phone;
+  const customerName = data.customerName;
+  const selectedNeighborhoodId = data.selectedNeighborhoodId;
+  const street = data.street;
+  const addressNumber = data.addressNumber;
+  const complement = data.complement;
+  const referencePoint = data.referencePoint;
+  const bairroAtual = data.bairroAtual;
+  const savedAddresses = data.savedAddresses;
+  const selectedAddressId = data.selectedAddressId;
+  const enderecoAtual = data.enderecoAtual;
+  const displayAddresses = data.displayAddresses;
+  const categories = data.categories;
+  const items = data.items;
+  const optionGroups = data.optionGroups;
+  const options = data.options;
+  const observations = data.observations;
+  const categoriaAtiva = data.categoriaAtiva;
+  const outOfStockIds = data.outOfStockIds;
+  const cart = data.cart;
+  const editingItem = data.editingItem;
+  const showCart = data.showCart;
+  const enviando = data.enviando;
+  const pedidoConfirmado = data.pedidoConfirmado;
+  const numeroPedido = data.numeroPedido;
+  const orderTotal = data.orderTotal;
+  const deliveryFee = data.deliveryFee;
+  const totalItens = data.totalItens;
+  const totalItensProdutos = data.totalItensProdutos;
+  const totalValor = data.totalValor;
+  const tenantId = data.tenantId;
+  const customerId = data.customerId;
+  const opcoesIndisponiveisIds = data.opcoesIndisponiveisIds;
+  const paymentMethods = data.paymentMethods;
+  const pagamentoSelecionado = data.pagamentoSelecionado;
+  const modoEntrega = data.modoEntrega;
+  const customer = data.customer;
+
+  const handleLookupCustomer = data.handleLookupCustomer;
+  const handleSalvarEndereco = data.handleSalvarEndereco;
+  const handleSelecionarEndereco = data.handleSelecionarEndereco;
+  const handleSalvarNovoEndereco = data.handleSalvarNovoEndereco;
+  const handleDeletarEndereco = data.handleDeletarEndereco;
+  const handleSetDefaultAddress = data.handleSetDefaultAddress;
+  const enderecoFromCardapio = data.enderecoFromCardapio;
+  const setEnderecoFromCardapio = data.setEnderecoFromCardapio;
+  const handleIrParaEnderecos = data.handleIrParaEnderecos;
+  const handleConfirmarModo = data.handleConfirmarModo;
+  const handleAlterarModo = data.handleAlterarModo;
+  const handleAdicionar = data.handleAdicionar;
+  const handleAlterarQtd = data.handleAlterarQtd;
+  const handleRemover = data.handleRemover;
+  const handleAbrirEdicao = data.handleAbrirEdicao;
+  const handleSalvarEdicao = data.handleSalvarEdicao;
+  const handleFecharEdicao = data.handleFecharEdicao;
+  const handleConfirmarPedido = data.handleConfirmarPedido;
+  const handleNovoPedido = data.handleNovoPedido;
+  const handleChangeNeighborhood = data.handleChangeNeighborhood;
+
+  // Sub-view para acompanhar pedido e histórico
+  const [subView, setSubView] = useState<'cardapio' | 'acompanhar' | 'acompanhar_input' | 'historico'>('cardapio');
+  const [previousSubView, setPreviousSubView] = useState<'acompanhar_input' | 'historico'>('acompanhar_input');
+  const [trackingNumero, setTrackingNumero] = useState('');
+
+  // Modal de pagamento
+  const [showPagamentoModal, setShowPagamentoModal] = useState(false);
+  const [metodoPagamento, setMetodoPagamento] = useState('');
+  const [valorDinheiro, setValorDinheiro] = useState('');
+  const [erroValorDinheiro, setErroValorDinheiro] = useState('');
+
+  // Dropdown de endereço
+  const [showAddressDropdown, setShowAddressDropdown] = useState(false);
+
+  // Controle de clique vs scroll
+  const categoriaClickRef = useRef(false);
+  const categoriaClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function scrollToCategoria(catId: string) {
+    if (categoriaClickTimerRef.current) clearTimeout(categoriaClickTimerRef.current);
+    categoriaClickRef.current = true;
+    categoriaClickTimerRef.current = setTimeout(function () {
+      categoriaClickRef.current = false;
+    }, 800);
+
+    data.setCategoriaAtiva(catId);
+
+    // Se o carrinho estiver aberto, fecha primeiro e espera o cardápio renderizar
+    if (showCart) {
+      data.setShowCart(false);
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          const el = document.getElementById('scroll-cat-' + catId);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        });
+      });
+    } else {
+      const el = document.getElementById('scroll-cat-' + catId);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }
+
+  function handleCategoriaAtivaChange(catId: string) {
+    if (categoriaClickRef.current) return;
+    data.setCategoriaAtiva(catId);
+  }
+
+  // Pedidos ativos
+  const [activeOrders, setActiveOrders] = useState<Array<{ id: string; number: string; status: string; created_at: string; total_amount: number; delivery_fee: number }>>([]);
+  const [activeOrdersLoading, setActiveOrdersLoading] = useState(false);
+  const [activeOrdersError, setActiveOrdersError] = useState('');
+
+  function fetchActiveOrders() {
+    if (!tenantId || !phone) return;
+    setActiveOrdersLoading(true);
+    setActiveOrdersError('');
+
+    const url = ((import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '')) + '/functions/v1/delivery-write';
+
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get_customer_orders', tenant_id: tenantId, phone: phone }),
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data.error) {
+          setActiveOrdersError(data.message || 'Erro ao carregar pedidos');
+          setActiveOrdersLoading(false);
+          return;
+        }
+        const all = data.orders || [];
+        const ativos = all.filter(function (o: { status: string }) {
+          return o.status !== 'delivered' && o.status !== 'cancelled' && o.status !== 'draft';
+        });
+        setActiveOrders(ativos);
+        setActiveOrdersLoading(false);
+      })
+      .catch(function () {
+        setActiveOrdersError('Erro de conexão');
+        setActiveOrdersLoading(false);
+      });
+  }
+
+  useEffect(function () {
+    if (data.step !== 'cardapio') {
+      setSubView('cardapio');
+    }
+  }, [data.step]);
+
+  // ── Renderização ──
+
+  if (step === 'loading') {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 flex items-center justify-center mx-auto mb-5 bg-amber-50 rounded-2xl border border-amber-100">
+            <i className="ri-loader-4-line text-2xl text-amber-500 animate-spin" />
+          </div>
+          <p className="text-sm font-bold text-zinc-800">Carregando delivery</p>
+          <p className="text-xs text-zinc-500 mt-1">Aguarde um momento</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'erro_config') {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center px-4">
+        <div className="text-center max-w-sm">
+          <div className="w-16 h-16 flex items-center justify-center mx-auto mb-5 bg-red-50 rounded-2xl border border-red-100">
+            <i className="ri-error-warning-line text-2xl text-red-500" />
+          </div>
+          <p className="text-sm font-bold text-zinc-800">Erro ao carregar</p>
+          <p className="text-xs text-zinc-500 mt-2 mb-5">{error || 'Não foi possível carregar o delivery. Verifique sua conexão.'}</p>
+          <button
+            type="button"
+            onClick={function () { window.location.reload(); }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
+          >
+            <i className="ri-refresh-line text-sm" />
+            Tentar novamente
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'identificacao') {
+    return (
+      <IdentificacaoDelivery
+        phone={phone}
+        onPhoneChange={data.setPhone}
+        onBuscar={function () { handleLookupCustomer(phone); }}
+        enviando={enviando}
+        error={error}
+        city={city}
+        tenantName={tenant?.name}
+      />
+    );
+  }
+
+  if (step === 'modo_entrega') {
+    return (
+      <ModoEntregaDelivery
+        customerName={customerName}
+        phone={phone}
+        tenantName={tenant?.name}
+        onSelecionar={handleConfirmarModo}
+        enviando={enviando}
+      />
+    );
+  }
+
+  if (step === 'endereco') {
+    return (
+      <EnderecoDelivery
+        phone={phone}
+        nome={customerName}
+        onNomeChange={data.setCustomerName}
+        bairroId={selectedNeighborhoodId}
+        onBairroChange={data.setSelectedNeighborhoodId}
+        rua={street}
+        onRuaChange={data.setStreet}
+        numero={addressNumber}
+        onNumeroChange={data.setAddressNumber}
+        complemento={complement}
+        onComplementoChange={data.setComplement}
+        referencia={referencePoint}
+        onReferenciaChange={data.setReferencePoint}
+        neighborhoods={neighborhoods}
+        savedAddresses={savedAddresses}
+        selectedAddressId={selectedAddressId}
+        isExistingCustomer={!!customer}
+        onSalvar={handleSalvarEndereco}
+        onSelecionarEndereco={handleSelecionarEndereco}
+        onSalvarNovoEndereco={handleSalvarNovoEndereco}
+        onDeletarEndereco={handleDeletarEndereco}
+        onSetDefaultAddress={handleSetDefaultAddress}
+        onIrParaCardapio={function () { data.setStep('cardapio'); }}
+        onVoltar={function () {
+          if (enderecoFromCardapio) {
+            setEnderecoFromCardapio(false);
+            data.setStep('cardapio');
+            data.setError('');
+            return;
+          }
+          if (customer) {
+            data.setStep('modo_entrega');
+          } else {
+            data.setStep('identificacao' as any);
+          }
+          data.setError('');
+        }}
+        enviando={enviando}
+        error={error}
+        city={city}
+      />
+    );
+  }
+
+  if (step === 'confirmacao' && pedidoConfirmado) {
+    return (
+      <ConfirmacaoDelivery
+        numeroPedido={numeroPedido}
+        orderTotal={orderTotal}
+        deliveryFee={deliveryFee}
+        phone={phone}
+        tenantId={tenantId}
+        customerId={customerId}
+        onNovoPedido={handleNovoPedido}
+        paymentMethod={pagamentoSelecionado}
+        modoEntrega={modoEntrega}
+      />
+    );
+  }
+
+  // ── Cardápio ──
+  const enderecoParts: string[] = [];
+  if (modoEntrega === 'retirada') {
+    enderecoParts.push('Retirada na loja');
+  } else {
+    if (street) enderecoParts.push(street);
+    if (addressNumber) enderecoParts.push(addressNumber);
+    if (complement) enderecoParts.push('(' + complement + ')');
+  }
+  const enderecoDisplay = enderecoParts.join(', ') || 'Endereço';
+
+  const hasAnyAddresses = displayAddresses.length > 0;
+
+  return (
+    <div className="min-h-screen bg-white flex justify-center">
+      <div className="w-full max-w-lg h-dvh flex flex-col bg-white relative">
+        {/* Header */}
+        <div className="bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0 relative">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 flex items-center justify-center bg-white/30 rounded-xl">
+                <i className="ri-motorbike-line text-white text-sm" />
+              </div>
+              <div>
+                <h1 className="text-white text-lg font-black leading-tight">Cardápio Delivery</h1>
+                <p className="text-white/80 text-xs">
+                  Olá, <strong className="text-white">{customerName}</strong>
+                </p>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-white/70 text-[10px] uppercase tracking-wider font-bold">{tenant?.name || 'Delivery'}</p>
+              {modoEntrega === 'retirada' ? (
+                <div className="inline-flex items-center gap-1.5">
+                  <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-green-500/30 rounded-full border border-green-400/40 mt-1">
+                    <i className="ri-store-2-line text-[10px] text-white" />
+                    <span className="text-white text-[10px] font-bold whitespace-nowrap">Retirada</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAlterarModo}
+                    className="mt-1 px-2 py-1 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+                    title="Trocar modo de entrega"
+                  >
+                    <i className="ri-arrow-left-right-line text-[10px]" />
+                    Trocar
+                  </button>
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-1.5">
+                  <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-white/20 rounded-full border border-white/30 mt-1">
+                    <i className="ri-map-pin-line text-[10px] text-white" />
+                    <span className="text-white text-[10px] font-bold max-w-[120px] truncate">
+                      {bairroAtual ? bairroAtual.name : 'Sem bairro'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAlterarModo}
+                    className="mt-1 px-2 py-1 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+                    title="Trocar modo de entrega"
+                  >
+                    <i className="ri-arrow-left-right-line text-[10px]" />
+                    Trocar
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Informações do cliente com seletor de endereço */}
+          <div className="mt-3 flex items-center gap-2 text-white/80 text-xs">
+            <div className="flex-1 flex flex-wrap gap-x-3 gap-y-1">
+              <span><i className="ri-phone-line text-[10px] mr-1" />{phone}</span>
+              <span className="hidden sm:inline">
+                <i className={(modoEntrega === 'retirada' ? 'ri-store-2-line' : 'ri-home-4-line') + ' text-[10px] mr-1'} />
+                {modoEntrega === 'retirada' ? 'Retirada na loja' : (enderecoAtual ? enderecoAtual.label + ': ' + enderecoDisplay : enderecoDisplay)}
+              </span>
+            </div>
+
+            {modoEntrega !== 'retirada' ? (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={function () {
+                    if (hasAnyAddresses) {
+                      setShowAddressDropdown(!showAddressDropdown);
+                    } else {
+                      handleIrParaEnderecos();
+                    }
+                  }}
+                  className="px-2.5 py-1.5 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1"
+                >
+                  <i className="ri-pencil-line text-[10px]" />
+                  {hasAnyAddresses ? (enderecoAtual ? enderecoAtual.label : 'Endereços') : 'Editar'}
+                  {hasAnyAddresses ? <i className={'ri-arrow-down-s-line text-[10px] transition-transform ' + (showAddressDropdown ? 'rotate-180' : '')} /> : null}
+                </button>
+
+                {/* Dropdown de endereços */}
+                {showAddressDropdown && hasAnyAddresses ? (
+                  <>
+                    <div
+                      className="fixed inset-0 z-[40]"
+                      onClick={function () { setShowAddressDropdown(false); }}
+                    />
+                    <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-lg border border-zinc-100 z-[50] overflow-hidden">
+                      <div className="px-3 py-2 border-b border-zinc-100">
+                        <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Seus endereços</p>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto py-1">
+                        {displayAddresses.map(function (addr) {
+                          const isSelected = addr.id === selectedAddressId;
+                          const addrLine: string[] = [];
+                          if (addr.street) addrLine.push(addr.street);
+                          if (addr.number) addrLine.push(addr.number);
+                          const line = addrLine.join(', ') || 'Endereço incompleto';
+
+                          return (
+                            <button
+                              key={addr.id}
+                              type="button"
+                              onClick={function () {
+                                handleSelecionarEndereco(addr.id);
+                                setShowAddressDropdown(false);
+                              }}
+                              className={'w-full text-left px-3 py-2.5 hover:bg-amber-50 transition-colors cursor-pointer ' +
+                                (isSelected ? 'bg-amber-50' : '')
+                              }
+                            >
+                              <div className="flex items-center gap-2">
+                                <div className={'w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ' +
+                                  (isSelected ? 'bg-amber-500 border-amber-500' : 'border-zinc-300')
+                                }>
+                                  {isSelected ? <i className="ri-check-line text-white text-[8px]" /> : null}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <div className="w-5 h-5 flex items-center justify-center bg-zinc-100 rounded-md shrink-0 mr-1">
+                                    <i className={getAddressDropdownIcon(addr.label) + ' text-zinc-400 text-[10px]'} />
+                                  </div>
+                                  <span className="text-xs font-bold text-zinc-800 truncate">{addr.label}</span>
+                                    {addr.is_default ? (
+                                      <span className="shrink-0 inline-flex items-center gap-0.5 px-1 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-bold rounded-full">
+                                        <i className="ri-star-fill text-[7px]" />
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <p className="text-[10px] text-zinc-500 truncate">{line}</p>
+                                  <p className="text-[10px] text-zinc-400">
+                                    {addr.neighborhood_name || 'Sem bairro'}
+                                    {addr.neighborhood_delivery_fee > 0 ? ' • R$ ' + addr.neighborhood_delivery_fee.toFixed(2) : ' • Grátis'}
+                                  </p>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="border-t border-zinc-100 p-2">
+                        <button
+                          type="button"
+                          onClick={function () {
+                            setShowAddressDropdown(false);
+                            handleIrParaEnderecos();
+                          }}
+                          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 text-[11px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+                        >
+                          <i className="ri-settings-3-line text-xs" />
+                          Gerenciar endereços
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          {/* Botões Acompanhar Pedido e Histórico */}
+          {customerId ? (
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={function () {
+                  setSubView('acompanhar_input');
+                  fetchActiveOrders();
+                }}
+                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap border border-white/20"
+              >
+                <i className="ri-time-line text-sm" />
+                Acompanhar pedido
+              </button>
+              <button
+                type="button"
+                onClick={function () { setSubView('historico'); }}
+                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap border border-white/20"
+              >
+                <i className="ri-history-line text-sm" />
+                Histórico
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Categorias sticky */}
+        {subView === 'cardapio' ? (
+        <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-zinc-100 shrink-0">
+          <div className="flex items-center gap-2 px-4 py-3 overflow-x-auto scrollbar-hide">
+            {categories.map(function (cat) {
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={function () { scrollToCategoria(cat.id); }}
+                  className={'shrink-0 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap cursor-pointer transition-all duration-200 ' +
+                    (categoriaAtiva === cat.id
+                      ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-sm'
+                      : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/60')
+                  }
+                >
+                  {cat.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        ) : null}
+
+        {/* Conteúdo scrollable */}
+        <div className="flex-1 overflow-y-auto">
+          {subView === 'acompanhar_input' ? (
+            <div className="px-4 py-4">
+              <button
+                type="button"
+                onClick={function () { setSubView('cardapio'); }}
+                className="inline-flex items-center gap-1 text-sm font-bold text-zinc-500 hover:text-zinc-700 cursor-pointer mb-5 transition-colors whitespace-nowrap"
+              >
+                <i className="ri-arrow-left-s-line text-lg" />
+                Voltar ao cardápio
+              </button>
+
+              <div className="mb-5">
+                <h3 className="text-base font-black text-zinc-800 mb-1">Acompanhar pedido</h3>
+                <p className="text-xs text-zinc-500">Seus pedidos em andamento</p>
+              </div>
+
+              {activeOrdersLoading ? (
+                <div className="text-center py-8">
+                  <div className="w-10 h-10 flex items-center justify-center mx-auto mb-3 bg-amber-50 rounded-2xl border border-amber-100">
+                    <i className="ri-loader-4-line text-lg text-amber-500 animate-spin" />
+                  </div>
+                  <p className="text-xs text-zinc-500">Buscando seus pedidos...</p>
+                </div>
+              ) : activeOrdersError ? (
+                <div className="text-center py-8">
+                  <div className="w-10 h-10 flex items-center justify-center mx-auto mb-3 bg-red-50 rounded-2xl border border-red-100">
+                    <i className="ri-error-warning-line text-lg text-red-500" />
+                  </div>
+                  <p className="text-xs text-zinc-500 mb-3">{activeOrdersError}</p>
+                  <button
+                    type="button"
+                    onClick={fetchActiveOrders}
+                    className="px-4 py-2 bg-amber-50 text-amber-700 text-xs font-bold rounded-xl cursor-pointer hover:bg-amber-100 transition-colors whitespace-nowrap"
+                  >
+                    Tentar novamente
+                  </button>
+                </div>
+              ) : activeOrders.length === 0 ? (
+                <div className="text-center py-10 mb-6 flex flex-col items-center">
+                  <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-2xl mb-3">
+                    <i className="ri-time-line text-2xl text-zinc-300" />
+                  </div>
+                  <p className="text-sm font-bold text-zinc-700 mb-1">Nenhum pedido em andamento</p>
+                  <p className="text-xs text-zinc-500">Seus pedidos ativos aparecerão aqui</p>
+                </div>
+              ) : (
+                <div className="space-y-2 mb-6">
+                  {activeOrders.map(function (order) {
+                    const statusMap: Record<string, { bg: string; text: string; border: string; icon: string; label: string }> = {
+                      new: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200/60', icon: 'ri-check-double-line', label: 'Recebido' },
+                      preparing: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200/60', icon: 'ri-restaurant-2-line', label: 'Em preparo' },
+                      ready: { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200/60', icon: 'ri-checkbox-circle-line', label: 'Pronto' },
+                    };
+                    const style = statusMap[order.status] || statusMap.new;
+
+                    let timeStr = '';
+                    try {
+                      const d = new Date(order.created_at);
+                      timeStr = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) + ' - ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                    } catch (_e) { /* vazio */ }
+
+                    return (
+                      <div
+                        key={order.id}
+                        onClick={function () {
+                          setTrackingNumero(order.number);
+                          setPreviousSubView('acompanhar_input');
+                          setSubView('acompanhar');
+                        }}
+                        className="bg-white rounded-2xl border border-zinc-100 p-4 cursor-pointer hover:border-amber-200/60 transition-all active:scale-[0.98]"
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-zinc-800">#{order.number}</span>
+                              <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ' + style.bg + ' ' + style.text + ' ' + style.border}>
+                                <i className={style.icon + ' text-[9px]'} />
+                                {style.label}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-zinc-400 mt-1">{timeStr}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-amber-600">R$ {order.total_amount.toFixed(2)}</p>
+                            {order.delivery_fee > 0 ? (
+                              <p className="text-[10px] text-zinc-400">+ taxa R$ {order.delivery_fee.toFixed(2)}</p>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-end">
+                          <span className="text-[11px] text-amber-600 font-bold flex items-center gap-1">
+                            Acompanhar
+                            <i className="ri-arrow-right-s-line text-xs" />
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : subView === 'acompanhar' ? (
+            <div className="px-4 py-4">
+              <button
+                type="button"
+                onClick={function () { setSubView(previousSubView); }}
+                className="inline-flex items-center gap-1 text-sm font-bold text-zinc-500 hover:text-zinc-700 cursor-pointer mb-5 transition-colors whitespace-nowrap"
+              >
+                <i className="ri-arrow-left-s-line text-lg" />
+                {previousSubView === 'historico' ? 'Histórico' : 'Meus pedidos'}
+              </button>
+              <AcompanharPedido
+                numeroPedido={trackingNumero}
+                tenantId={tenantId}
+                onNovoPedido={function () { setSubView('cardapio'); }}
+              />
+            </div>
+          ) : subView === 'historico' ? (
+            <div className="px-4 py-4">
+              <button
+                type="button"
+                onClick={function () { setSubView('cardapio'); }}
+                className="inline-flex items-center gap-1 text-sm font-bold text-zinc-500 hover:text-zinc-700 cursor-pointer mb-5 transition-colors whitespace-nowrap"
+              >
+                <i className="ri-arrow-left-s-line text-lg" />
+                Voltar ao cardápio
+              </button>
+              <div className="mb-4">
+                <h3 className="text-base font-black text-zinc-800 mb-1">Meus pedidos</h3>
+                <p className="text-xs text-zinc-500">Histórico de delivery</p>
+              </div>
+              <HistoricoPedidos
+                tenantId={tenantId}
+                phone={phone}
+                onVerPedido={function (numero: string) {
+                  setTrackingNumero(numero);
+                  setPreviousSubView('historico');
+                  setSubView('acompanhar');
+                }}
+              />
+            </div>
+          ) : (
+            <>
+              {showCart ? (
+                <CarrinhoDelivery
+                  cart={cart}
+                  neighborhoods={neighborhoods}
+                  selectedNeighborhoodId={selectedNeighborhoodId}
+                  deliveryFee={deliveryFee}
+                  onChangeNeighborhood={handleChangeNeighborhood}
+                  onAlterarQtd={handleAlterarQtd}
+                  onRemover={handleRemover}
+                  onEditar={handleAbrirEdicao}
+                  error={error}
+                  onVoltar={function () { data.setShowCart(false); }}
+                  city={city}
+                  modoEntrega={modoEntrega}
+                />
+              ) : (
+                <CardapioMesaQR
+                  categoriaAtiva={categoriaAtiva}
+                  categories={categories}
+                  items={items}
+                  optionGroups={optionGroups}
+                  options={options}
+                  observations={observations}
+                  outOfStockIds={outOfStockIds}
+                  opcoesIndisponiveisIds={opcoesIndisponiveisIds}
+                  onAdicionar={handleAdicionar}
+                  onVerCarrinho={function () { data.setShowCart(true); }}
+                  cart={cart}
+                  onCategoriaAtivaChange={handleCategoriaAtivaChange}
+                />
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer do carrinho - sempre visível */}
+        {showCart && cart.length > 0 ? (() => {
+          const subtotalFooter = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
+          const totalFooter = subtotalFooter + deliveryFee;
+          return (
+            <div className="shrink-0 bg-white border-t border-zinc-100 px-4 py-3 space-y-3 z-30">
+              {/* Resumo de totais */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500">Subtotal ({totalItens} {totalItens === 1 ? 'item' : 'itens'})</span>
+                  <span className="text-zinc-800 font-bold">R$ {subtotalFooter.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500">
+                    {modoEntrega === 'retirada' ? 'Retirada na loja' : 'Taxa de entrega'}
+                  </span>
+                  <span className={modoEntrega === 'retirada' || deliveryFee === 0 ? 'text-green-600 font-bold' : 'text-zinc-800 font-bold'}>
+                    {modoEntrega === 'retirada' ? 'Grátis' : (deliveryFee > 0 ? 'R$ ' + deliveryFee.toFixed(2) : 'Grátis')}
+                  </span>
+                </div>
+                {modoEntrega !== 'retirada' && bairroAtual && deliveryFee > 0 ? (
+                  <div className="flex items-center justify-end">
+                    <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+                      <i className="ri-map-pin-line text-[9px]" />
+                      {bairroAtual.name}
+                    </span>
+                  </div>
+                ) : null}
+                <div className="h-px bg-zinc-100" />
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-zinc-800">Total</span>
+                  <span className="text-sm font-bold text-amber-600">R$ {totalFooter.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Botões de ação */}
+              <button
+                type="button"
+                onClick={function () {
+                  const activeMethods = Object.entries(paymentMethods).filter(function (entry) { return entry[1] === true; });
+                  if (activeMethods.length > 0) {
+                    setMetodoPagamento('');
+                    setValorDinheiro('');
+                    setErroValorDinheiro('');
+                    setShowPagamentoModal(true);
+                  } else {
+                    handleConfirmarPedido();
+                  }
+                }}
+                disabled={enviando}
+                className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-60 disabled:hover:from-amber-500 disabled:hover:to-orange-500 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
+              >
+                {enviando ? (
+                  <>
+                    <i className="ri-loader-4-line animate-spin" />
+                    Enviando pedido...
+                  </>
+                ) : (
+                  <>
+                    <i className="ri-check-line" />
+                    Confirmar pedido — R$ {totalFooter.toFixed(2)}
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={function () { data.setShowCart(false); }}
+                disabled={enviando}
+                className="w-full text-sm text-zinc-500 font-bold py-3 cursor-pointer hover:text-zinc-700 transition-colors bg-zinc-100 rounded-xl hover:bg-zinc-200 disabled:opacity-50 whitespace-nowrap flex items-center justify-center gap-2"
+              >
+                <i className="ri-add-line" />
+                Adicionar mais itens
+              </button>
+            </div>
+          );
+        })() : null}
+
+        {/* Footer carrinho fixo */}
+        {(!showCart && totalItens > 0 && subView === 'cardapio') ? (
+          <div className="sticky bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-zinc-100 px-4 py-3 z-30">
+            <button
+              type="button"
+              onClick={function () { data.setShowCart(true); }}
+              className="w-full flex items-center justify-between bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-5 py-3.5 rounded-xl cursor-pointer transition-colors shadow-sm"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 flex items-center justify-center bg-white/20 rounded-full">
+                  <span className="text-xs font-bold text-white">{totalItens}</span>
+                </div>
+                <span className="text-sm font-bold">Ver pedido</span>
+              </div>
+              <span className="text-sm font-bold">
+                R$ {totalValor.toFixed(2)}
+              </span>
+            </button>
+          </div>
+        ) : null}
+
+        {/* Modal Editar Item */}
+        {editingItem ? (
+          <EditarItemMesaQRModal
+            cartItem={editingItem}
+            items={items}
+            optionGroups={optionGroups}
+            options={options}
+            observations={observations}
+            opcoesIndisponiveisIds={opcoesIndisponiveisIds}
+            onSalvar={handleSalvarEdicao}
+            onClose={handleFecharEdicao}
+          />
+        ) : null}
+
+        {/* Modal de seleção de forma de pagamento */}
+        {showPagamentoModal ? (() => {
+          const subtotalModal = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
+          const totalModal = subtotalModal + deliveryFee;
+          return (
+            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+              <div
+                className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+                onClick={function () { if (!enviando) { setShowPagamentoModal(false); setValorDinheiro(''); setErroValorDinheiro(''); } }}
+              />
+              <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl p-6 pb-8 z-10 animate-slide-up">
+                <div className="w-10 h-1.5 bg-zinc-200 rounded-full mx-auto mb-5 sm:hidden" />
+
+                <div className="text-center mb-6">
+                  <div className="w-14 h-14 flex items-center justify-center mx-auto mb-3 bg-amber-50 rounded-2xl border border-amber-100">
+                    <i className="ri-wallet-3-line text-2xl text-amber-600" />
+                  </div>
+                  <h3 className="text-lg font-black text-zinc-800 mb-1">Forma de pagamento</h3>
+                  <p className="text-xs text-zinc-500">
+                    {modoEntrega === 'retirada'
+                      ? 'Escolha como vai pagar na retirada'
+                      : 'Escolha como vai pagar para o motoboy já se preparar'}
+                  </p>
+                </div>
+
+                <div className="space-y-2 mb-6">
+                  {Object.entries(paymentMethods).filter(function (entry) { return entry[1] === true; }).map(function (entry) {
+                    const key = entry[0];
+                    const methodMap: Record<string, { label: string; icon: string; description: string }> = modoEntrega === 'retirada' ? {
+                      dinheiro: { label: 'Dinheiro', icon: 'ri-money-dollar-circle-line', description: 'Informe o valor para calcular o troco' },
+                      cartao_credito: { label: 'Cartão de Crédito', icon: 'ri-bank-card-line', description: 'Pague com cartão na retirada' },
+                      cartao_debito: { label: 'Cartão de Débito', icon: 'ri-bank-card-2-line', description: 'Pague com cartão na retirada' },
+                      pix: { label: 'PIX', icon: 'ri-qr-code-line', description: 'Faça o PIX na retirada' },
+                      vale_refeicao: { label: 'Vale Refeição', icon: 'ri-coupon-line', description: 'Use seu vale na retirada' },
+                    } : {
+                      dinheiro: { label: 'Dinheiro', icon: 'ri-money-dollar-circle-line', description: 'Informe o valor para calcular o troco' },
+                      cartao_credito: { label: 'Cartão de Crédito', icon: 'ri-bank-card-line', description: 'O motoboy levará a maquininha' },
+                      cartao_debito: { label: 'Cartão de Débito', icon: 'ri-bank-card-2-line', description: 'O motoboy levará a maquininha' },
+                      pix: { label: 'PIX', icon: 'ri-qr-code-line', description: 'O motoboy levará a maquininha' },
+                      vale_refeicao: { label: 'Vale Refeição', icon: 'ri-coupon-line', description: 'O motoboy levará a maquininha' },
+                    };
+                    const info = methodMap[key] || { label: key, icon: 'ri-wallet-line', description: '' };
+                    const selected = metodoPagamento === key;
+
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={function () {
+                          setMetodoPagamento(key);
+                          setValorDinheiro('');
+                          setErroValorDinheiro('');
+                        }}
+                        className={'w-full flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer transition-all duration-200 ' +
+                          (selected
+                            ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-200/50'
+                            : 'bg-white border-zinc-100 hover:border-zinc-200')
+                        }
+                      >
+                        <div className={'w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ' +
+                          (selected ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-400')
+                        }>
+                          <i className={info.icon + ' text-lg'} />
+                        </div>
+                        <div className="flex-1 text-left">
+                          <span className={'text-sm font-bold ' + (selected ? 'text-zinc-800' : 'text-zinc-700')}>
+                            {info.label}
+                          </span>
+                          <p className="text-[11px] text-zinc-400 mt-0.5">{info.description}</p>
+                        </div>
+                        <div className={'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ' +
+                          (selected ? 'bg-amber-500 border-amber-500' : 'border-zinc-200')
+                        }>
+                          {selected ? <i className="ri-check-line text-white text-[10px]" /> : null}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Campo de valor em dinheiro + troco */}
+                {metodoPagamento === 'dinheiro' ? (
+                  <div className="mb-6 bg-amber-50 rounded-xl p-4 border border-amber-200/60">
+                    <label className="block text-xs font-bold text-zinc-700 mb-2">
+                      <i className="ri-money-dollar-circle-line text-amber-600 mr-1" />
+                      Qual valor você vai entregar?
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                        <span className="text-sm font-bold text-zinc-400">R$</span>
+                      </div>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.01"
+                        min="0"
+                        value={valorDinheiro}
+                        onChange={function (e) {
+                          const raw = e.target.value;
+                          setValorDinheiro(raw);
+                          const num = parseFloat(raw);
+                          if (raw === '') {
+                            setErroValorDinheiro('');
+                          } else if (isNaN(num) || num < totalModal) {
+                            setErroValorDinheiro('O valor não pode ser menor que o total do pedido');
+                          } else {
+                            setErroValorDinheiro('');
+                          }
+                        }}
+                        placeholder={'0,00'}
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-800 placeholder-zinc-300 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200/50 transition-all"
+                      />
+                    </div>
+                    {erroValorDinheiro ? (
+                      <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
+                        <i className="ri-error-warning-line text-xs" />
+                        {erroValorDinheiro}
+                      </p>
+                    ) : null}
+
+                    {valorDinheiro !== '' && !erroValorDinheiro ? (() => {
+                      const valorNum = parseFloat(valorDinheiro) || 0;
+                      const troco = valorNum - totalModal;
+                      return (
+                        <div className="mt-3 pt-3 border-t border-amber-200/60">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-zinc-600 font-medium">Total do pedido</span>
+                            <span className="text-xs font-bold text-zinc-800">R$ {totalModal.toFixed(2)}</span>
+                          </div>
+                          <div className="flex items-center justify-between mt-1.5">
+                            <span className="text-xs text-zinc-600 font-medium">Valor entregue</span>
+                            <span className="text-xs font-bold text-zinc-800">R$ {valorNum.toFixed(2)}</span>
+                          </div>
+                          <div className="flex items-center justify-between mt-2 pt-2 border-t border-amber-200/60">
+                            <span className="text-sm font-bold text-green-700 flex items-center gap-1">
+                              <i className="ri-arrow-go-back-line text-sm" />
+                              Troco
+                            </span>
+                            <span className="text-sm font-black text-green-700">R$ {troco.toFixed(2)}</span>
+                          </div>
+                          <p className="text-[10px] text-green-600/70 mt-1.5">
+                            {modoEntrega === 'retirada'
+                              ? 'Apresente o valor na retirada e receba o troco de '
+                              : 'O motoboy já levará o troco de '}
+                            <strong>R$ {troco.toFixed(2)}</strong>
+                          </p>
+                        </div>
+                      );
+                    })() : null}
+                  </div>
+                ) : null}
+
+                <button
+                  type="button"
+                  disabled={!metodoPagamento || enviando || (metodoPagamento === 'dinheiro' && (valorDinheiro === '' || !!erroValorDinheiro))}
+                  onClick={function () {
+                    if (metodoPagamento) {
+                      if (metodoPagamento === 'dinheiro' && valorDinheiro !== '') {
+                        const valorNum = parseFloat(valorDinheiro) || 0;
+                        if (valorNum < totalModal) return;
+                      }
+                      setShowPagamentoModal(false);
+                      handleConfirmarPedido(metodoPagamento, valorDinheiro);
+                    }
+                  }}
+                  className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-40 disabled:hover:from-amber-500 disabled:hover:to-orange-500 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
+                >
+                  {enviando ? (
+                    <>
+                      <i className="ri-loader-4-line animate-spin" />
+                      Enviando...
+                    </>
+                  ) : (
+                    <>
+                      <i className="ri-check-line" />
+                      Confirmar pedido — R$ {totalModal.toFixed(2)}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          );
+        })() : null}
+
+        {/* Animação slide-up */}
+        <style>{`
+          @keyframes slide-up {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+          }
+          .animate-slide-up {
+            animation: slide-up 0.25s ease-out;
+          }
+          @media (min-width: 640px) {
+            @keyframes slide-up {
+              from { transform: translateY(20px); opacity: 0; }
+              to { transform: translateY(0); opacity: 1; }
+            }
+          }
+        `}</style>
+      </div>
+    </div>
+  );
+}

@@ -46,7 +46,6 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
     if (!token) return errResp('Unauthorized', 401);
 
-    // ── Retry no getUser: o Supabase Auth pode ter micro-lag após refresh ──
     let user: { id: string } | null = null;
     let userError: { message: string } | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -207,6 +206,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!itemId) throw new Error('Failed to upsert item — no id returned');
 
       if (option_groups !== undefined) {
+        console.log('[menu-write] Processing option_groups, count:', (option_groups as unknown[])?.length ?? 0);
+        console.log('[menu-write] Raw option_groups:', JSON.stringify(option_groups));
+        
         const ingredientIdsToFetch: string[] = [];
         for (let gi = 0; gi < option_groups.length; gi++) {
           const grp = option_groups[gi];
@@ -232,49 +234,91 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           }
         }
 
+        // Soft-delete groups that are no longer in the list
         const keepGroupIds = option_groups.filter((g: { id?: string }) => g.id).map((g: { id: string }) => g.id);
+        console.log('[menu-write] keepGroupIds:', JSON.stringify(keepGroupIds));
         if (keepGroupIds.length > 0) {
-          await admin.from('option_groups').update({ deleted_at: now }).eq('item_id', itemId).eq('tenant_id', tenantId).not('id', 'in', `(${keepGroupIds.map((i: string) => `'${i}'`).join(',')})`).is('deleted_at', null);
+          const { error: delErr } = await admin.from('option_groups').update({ deleted_at: now }).eq('item_id', itemId).eq('tenant_id', tenantId).not('id', 'in', `(${keepGroupIds.map((i: string) => `'${i}'`).join(',')})`).is('deleted_at', null);
+          if (delErr) console.error('[menu-write] Soft-delete old groups error:', delErr.message);
         } else {
-          await admin.from('option_groups').update({ deleted_at: now }).eq('item_id', itemId).eq('tenant_id', tenantId).is('deleted_at', null);
+          const { error: delErr } = await admin.from('option_groups').update({ deleted_at: now }).eq('item_id', itemId).eq('tenant_id', tenantId).is('deleted_at', null);
+          if (delErr) console.error('[menu-write] Soft-delete all groups error:', delErr.message);
         }
+
         for (let gi = 0; gi < option_groups.length; gi++) {
           const grp = option_groups[gi];
+          console.log(`[menu-write] Group ${gi}: id="${grp.id}", name="${grp.name}", options=${(grp.options ?? []).length}`);
+          
           let groupId = grp.id;
           if (groupId) {
-            await admin.from('option_groups').update({ name: grp.name, is_required: grp.is_required, min_selections: grp.min_selections, max_selections: grp.max_selections, sort_order: gi }).eq('id', groupId).eq('tenant_id', tenantId);
+            console.log(`[menu-write] Updating existing group ${groupId}`);
+            const { error: updErr } = await admin.from('option_groups').update({ name: grp.name, is_required: grp.is_required, min_selections: grp.min_selections, max_selections: grp.max_selections, sort_order: gi }).eq('id', groupId).eq('tenant_id', tenantId);
+            if (updErr) {
+              console.error(`[menu-write] Failed to update group ${groupId}:`, updErr.message);
+              throw new Error(`Failed to update option group: ${updErr.message}`);
+            }
           } else {
-            const { data: newGrp } = await admin.from('option_groups').insert({ tenant_id: tenantId, item_id: itemId, name: grp.name, is_required: grp.is_required ?? false, min_selections: grp.min_selections ?? 0, max_selections: grp.max_selections ?? 1, sort_order: gi }).select().maybeSingle();
+            console.log(`[menu-write] Inserting NEW group: name="${grp.name}", item_id="${itemId}", tenant_id="${tenantId}"`);
+            const { data: newGrp, error: insErr } = await admin.from('option_groups').insert({ tenant_id: tenantId, item_id: itemId, name: grp.name, is_required: grp.is_required ?? false, min_selections: grp.min_selections ?? 0, max_selections: grp.max_selections ?? 1, sort_order: gi }).select().maybeSingle();
+            if (insErr) {
+              console.error(`[menu-write] FAILED to insert group:`, insErr.message, 'code:', insErr.code, 'details:', insErr.details);
+              throw new Error(`Failed to insert option group: ${insErr.message}`);
+            }
+            console.log(`[menu-write] Group inserted, got data:`, JSON.stringify(newGrp));
             groupId = newGrp?.id;
           }
-          if (!groupId) continue;
+          if (!groupId) {
+            console.warn(`[menu-write] SKIPPING group ${gi} — no groupId (insert returned null?)`);
+            continue;
+          }
+          console.log(`[menu-write] Group resolved id: ${groupId}, processing ${(grp.options ?? []).length} options`);
+
+          // Soft-delete options no longer in this group
           const keepOptIds = (grp.options ?? []).filter((o: { id?: string }) => o.id).map((o: { id: string }) => o.id);
           if (keepOptIds.length > 0) {
             await admin.from('options').update({ deleted_at: now }).eq('group_id', groupId).eq('tenant_id', tenantId).not('id', 'in', `(${keepOptIds.map((i: string) => `'${i}'`).join(',')})`).is('deleted_at', null);
           } else {
             await admin.from('options').update({ deleted_at: now }).eq('group_id', groupId).eq('tenant_id', tenantId).is('deleted_at', null);
           }
+
           for (let oi = 0; oi < (grp.options ?? []).length; oi++) {
             const opt = grp.options[oi];
+            console.log(`[menu-write] Option ${oi}: id="${opt.id}", name="${opt.name}", price=${opt.additional_price}`);
+            
             const resolvedName = (opt.name && String(opt.name).trim() !== '')
               ? opt.name
               : (opt.ingredient_id && ingredientNameMap.get(opt.ingredient_id)) || opt.name || '';
-            const optPayload = {
+            const optDescription = typeof opt.description === 'string' ? opt.description : null;
+            const optPayload: Record<string, unknown> = {
               name: resolvedName,
+              description: optDescription,
               additional_price: opt.additional_price ?? 0,
               is_active: opt.is_active ?? true,
               sort_order: oi,
               ingredient_id: opt.ingredient_id ?? null,
               production_recipe_id: opt.production_recipe_id ?? null,
               consumption_quantity: opt.consumption_quantity ?? null,
+              consumption_unit: opt.consumption_unit ?? null,
             };
             if (opt.id) {
-              await admin.from('options').update(optPayload).eq('id', opt.id).eq('tenant_id', tenantId);
+              console.log(`[menu-write] Updating option ${opt.id}`);
+              const { data: updatedOpt, error: updErr } = await admin.from('options').update(optPayload).eq('id', opt.id).eq('tenant_id', tenantId).select('id, name, description').maybeSingle();
+              if (updErr) {
+                console.error('[menu-write] Failed to update option', opt.id, ':', updErr.message);
+                throw new Error(`Failed to update option: ${updErr.message}`);
+              }
             } else {
-              await admin.from('options').insert({ tenant_id: tenantId, group_id: groupId, ...optPayload });
+              console.log(`[menu-write] Inserting NEW option for group ${groupId}`);
+              const { data: insertedOpt, error: insErr } = await admin.from('options').insert({ tenant_id: tenantId, group_id: groupId, ...optPayload }).select('id, name, description').maybeSingle();
+              if (insErr) {
+                console.error('[menu-write] Failed to insert option:', insErr.message, 'code:', insErr.code);
+                throw new Error(`Failed to insert option: ${insErr.message}`);
+              }
+              console.log('[menu-write] Option inserted:', JSON.stringify(insertedOpt));
             }
           }
         }
+        console.log('[menu-write] option_groups processing COMPLETE');
       }
 
       if (promotions !== undefined) {
@@ -291,7 +335,6 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         }
       }
 
-      // ── Production Parts via admin RPC (service role — sem dependência de anonKey) ──
       if (production_parts !== undefined) {
         console.log('[menu-write] production_parts for item:', itemId, 'count:', (production_parts as unknown[])?.length ?? 0);
         console.log('[menu-write] production_parts payload:', JSON.stringify(production_parts));
@@ -320,7 +363,6 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           await admin.from('options').update({ deleted_at: now }).eq('group_id', g.id).eq('tenant_id', tenantId).is('deleted_at', null);
         }
       }
-      // Soft delete production_parts via admin (service role)
       const { error: rpcError } = await admin.rpc('fn_upsert_item_production_parts', {
         p_tenant_id: tenantId,
         p_item_id: id,
@@ -426,6 +468,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         template_data: Array<{
           nome: string;
           precoAdicional: number;
+          descricao?: string;
           ingredientId?: string | null;
           productionRecipeId?: string | null;
           consumptionQuantity?: number;
@@ -458,6 +501,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         template_data: Array<{
           nome: string;
           precoAdicional: number;
+          descricao?: string;
           ingredientId?: string | null;
           productionRecipeId?: string | null;
           consumptionQuantity?: number;
@@ -490,6 +534,41 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         });
       if (error) throw new Error(`delete_template: ${error.message}`);
       result = { deleted: true };
+    }
+    else if (action === 'upsert_highlight') {
+      const { id, item_id, custom_price, custom_description, sort_order, is_active } = payload as {
+        id?: string; item_id: string; custom_price?: number | null;
+        custom_description?: string | null; sort_order?: number; is_active?: boolean;
+      };
+      const { data, error } = await admin.rpc('fn_upsert_menu_highlight', {
+        p_tenant_id: tenantId,
+        p_id: id ?? null,
+        p_item_id: item_id,
+        p_custom_price: custom_price ?? null,
+        p_custom_description: custom_description ?? null,
+        p_sort_order: sort_order ?? 0,
+        p_is_active: is_active ?? true,
+      });
+      if (error) throw new Error(`upsert_highlight: ${error.message}`);
+      result = data;
+    }
+    else if (action === 'delete_highlight') {
+      const { id } = payload as { id: string };
+      const { data, error } = await admin.rpc('fn_delete_menu_highlight', {
+        p_tenant_id: tenantId,
+        p_id: id,
+      });
+      if (error) throw new Error(`delete_highlight: ${error.message}`);
+      result = { deleted: data };
+    }
+    else if (action === 'reorder_highlights') {
+      const { items } = payload as { items: Array<{ id: string; sort_order: number }> };
+      const { data, error } = await admin.rpc('fn_reorder_menu_highlights', {
+        p_tenant_id: tenantId,
+        p_items: items,
+      });
+      if (error) throw new Error(`reorder_highlights: ${error.message}`);
+      result = { reordered: data };
     }
     else {
       return errResp(`Unknown action: ${action}`, 400);

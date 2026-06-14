@@ -155,8 +155,10 @@ async function sendToLocalAgentRaw(
 export interface TicketItem {
   quantidade: number;
   nome: string;
-  opcoes?: string[];
+  opcoes?: Array<{ nome: string; obrigatorio?: boolean }>;
   observacoes?: string[];
+  /** Partes de produção destacadas para esta estação (ex: ['hamburguer']) */
+  partes_destaque?: string[];
 }
 
 export interface TicketPayload {
@@ -169,6 +171,14 @@ export interface TicketPayload {
   mesa?: string;
   comanda?: string;
   observacao_geral?: string;
+  senha?: string;
+  participant_name?: string;
+  /** Nome da estação de produção (ex: 'Hamburguer', 'Fritadeira') para exibir no cabeçalho */
+  estacao?: string;
+  /** Valor total do pedido */
+  total?: number;
+  /** Indica que o pedido é para viagem/retirada */
+  para_viagem?: boolean;
 }
 
 /**
@@ -371,7 +381,7 @@ export function printHTML(html: string, options?: PrintOptions): void {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: Arial, Helvetica, sans-serif; width: ${paperWidth}px; padding: 8px; }
     @media print {
-      body { padding: 4px; width: 100%; }
+      body { padding: 4px; width: 100%; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>

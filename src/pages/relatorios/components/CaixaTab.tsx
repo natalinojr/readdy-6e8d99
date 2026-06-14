@@ -249,7 +249,13 @@ function MovimentacoesPanel({ sessao }: { sessao: CashSession }) {
 }
 
 // ── Histórico de caixas da sessão ─────────────────────────────────────────────
-function HistoricoCaixasPanel({ registers }: { registers: CashRegisterInfo[] }) {
+function HistoricoCaixasPanel({ registers, transactions }: { registers: CashRegisterInfo[]; transactions: CashTransaction[] }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const toggle = (id: string) => {
+    setExpandedId((prev) => (prev === id ? null : id));
+  };
+
   if (registers.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-8 text-zinc-300">
@@ -267,6 +273,7 @@ function HistoricoCaixasPanel({ registers }: { registers: CashRegisterInfo[] }) 
         const hasDiff = diff !== null && diff !== undefined;
         const isNeg = hasDiff && diff! < 0;
         const isOk = hasDiff && Math.abs(diff!) < 0.01;
+        const isExpanded = expandedId === cr.id;
 
         const openedDate = formatDate(cr.opened_at);
         const openedTime = formatTime(cr.opened_at);
@@ -274,111 +281,250 @@ function HistoricoCaixasPanel({ registers }: { registers: CashRegisterInfo[] }) 
         const closedTime = cr.closed_at ? formatTime(cr.closed_at) : null;
         const diffDay = closedDate && closedDate !== openedDate;
 
+        // Filtrar transações deste caixa
+        const caixaTrans = transactions.filter((t) => t.cash_register_id === cr.id && !t.is_refunded);
+        const totalTrocoCaixa = caixaTrans.reduce((s, t) => s + t.troco, 0);
+
         return (
-          <div key={cr.id} className={`rounded-xl border p-4 ${isOpen ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-zinc-100'}`}>
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <div className="flex items-center gap-2">
-                <div className={`w-7 h-7 flex items-center justify-center rounded-lg flex-shrink-0 ${isOpen ? 'bg-emerald-100' : 'bg-zinc-100'}`}>
-                  <i className={`text-sm ${isOpen ? 'ri-safe-2-line text-emerald-600' : 'ri-door-lock-line text-zinc-500'}`} />
+          <div key={cr.id} className={`rounded-xl border ${isOpen ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-zinc-100'}`}>
+            {/* Card clicável */}
+            <button
+              onClick={() => toggle(cr.id)}
+              className="w-full text-left p-4 cursor-pointer"
+            >
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="flex items-center gap-2">
+                  <div className={`w-7 h-7 flex items-center justify-center rounded-lg flex-shrink-0 ${isOpen ? 'bg-emerald-100' : 'bg-zinc-100'}`}>
+                    <i className={`text-sm ${isOpen ? 'ri-safe-2-line text-emerald-600' : 'ri-door-lock-line text-zinc-500'}`} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-xs font-bold ${isOpen ? 'text-emerald-700' : 'text-zinc-700'}`}>
+                        Caixa #{idx + 1}
+                      </span>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isOpen ? 'bg-emerald-200 text-emerald-700' : 'bg-zinc-100 text-zinc-500'}`}>
+                        {isOpen ? 'Aberto' : 'Fechado'}
+                      </span>
+                      {caixaTrans.length > 0 && (
+                        <span className="text-[9px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">
+                          {caixaTrans.length} dinheiro
+                        </span>
+                      )}
+                    </div>
+                    {cr.operador && (
+                      <p className="text-[10px] text-zinc-400 mt-0.5">
+                        <i className="ri-user-line mr-0.5" />{cr.operador}
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`text-xs font-bold ${isOpen ? 'text-emerald-700' : 'text-zinc-700'}`}>
-                      Caixa #{idx + 1}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {/* Badge de diferença */}
+                  {hasDiff && !isOk && (
+                    <span className={`text-xs font-black px-2 py-1 rounded-lg ${isNeg ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>
+                      {diff! > 0 ? '+' : ''}{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(diff!)}
                     </span>
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isOpen ? 'bg-emerald-200 text-emerald-700' : 'bg-zinc-100 text-zinc-500'}`}>
-                      {isOpen ? 'Aberto' : 'Fechado'}
+                  )}
+                  {isOk && (
+                    <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-100 px-2 py-1 rounded-lg">
+                      <i className="ri-checkbox-circle-fill text-sm" />Conferido
+                    </span>
+                  )}
+                  <i className={`text-xs text-zinc-300 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                    <i className="ri-arrow-down-s-line" />
+                  </i>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                <div className="flex justify-between gap-2">
+                  <span className="text-zinc-400 flex-shrink-0">Abertura</span>
+                  <span className="font-semibold text-zinc-700 text-right">
+                    {openedDate} {openedTime}
+                  </span>
+                </div>
+                {cr.closed_at && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-zinc-400 flex-shrink-0">Fechamento</span>
+                    <span className={`font-semibold text-right ${diffDay ? 'text-amber-700' : 'text-zinc-700'}`}>
+                      {closedDate} {closedTime}
+                      {diffDay && <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded-full">+1d</span>}
                     </span>
                   </div>
-                  {cr.operador && (
-                    <p className="text-[10px] text-zinc-400 mt-0.5">
-                      <i className="ri-user-line mr-0.5" />{cr.operador}
-                    </p>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">Fundo inicial</span>
+                  <span className="font-semibold text-zinc-700">
+                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cr.opening_value)}
+                  </span>
+                </div>
+                {cr.closing_value_actual !== null && cr.closing_value_actual !== undefined && (
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Valor contado</span>
+                    <span className="font-semibold text-zinc-700">
+                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cr.closing_value_actual)}
+                    </span>
+                  </div>
+                )}
+                {cr.closing_value_expected !== null && cr.closing_value_expected !== undefined && (
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Valor esperado</span>
+                    <span className="font-semibold text-zinc-700">
+                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cr.closing_value_expected)}
+                    </span>
+                  </div>
+                )}
+                {(cr.total_retiradas ?? 0) > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Sangrias</span>
+                    <span className="font-semibold text-red-500">
+                      -{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cr.total_retiradas ?? 0)}
+                    </span>
+                  </div>
+                )}
+                {(cr.total_adicoes ?? 0) > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Suprimentos</span>
+                    <span className="font-semibold text-emerald-600">
+                      +{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cr.total_adicoes ?? 0)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Barra de diferença */}
+              {hasDiff && !isOk && (
+                <div className={`mt-3 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${isNeg ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                  <i className={isNeg ? 'ri-arrow-down-line' : 'ri-arrow-up-line'} />
+                  {isNeg ? 'Falta no caixa' : 'Sobra no caixa'}: {diff! > 0 ? '+' : ''}{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(diff!)}
+                </div>
+              )}
+
+              {/* Justificativa da diferença */}
+              {cr.closing_notes && (
+                <div className="mt-2 px-3 py-2 rounded-lg text-[10px] font-semibold bg-zinc-50 text-zinc-600 flex items-start gap-1.5">
+                  <i className="ri-chat-1-line mt-0.5 flex-shrink-0" />
+                  <span>Justificativa: {cr.closing_notes}</span>
+                </div>
+              )}
+            </button>
+
+            {/* Conteúdo expandido: tabela de vendas em dinheiro */}
+            {isExpanded && (
+              <div className="border-t border-zinc-100 px-4 pb-4 pt-3">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-6 h-6 flex items-center justify-center bg-emerald-50 rounded-lg">
+                    <i className="ri-money-dollar-circle-line text-emerald-600 text-xs" />
+                  </div>
+                  <h4 className="text-xs font-semibold text-zinc-700">Vendas em Dinheiro deste Caixa</h4>
+                  {caixaTrans.length > 0 && (
+                    <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                      {caixaTrans.length} transação{caixaTrans.length !== 1 ? 'ões' : ''}
+                    </span>
                   )}
                 </div>
-              </div>
-              {/* Badge de diferença */}
-              {hasDiff && !isOk && (
-                <span className={`text-xs font-black px-2 py-1 rounded-lg flex-shrink-0 ${isNeg ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>
-                  {diff! > 0 ? '+' : ''}{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(diff!)}
-                </span>
-              )}
-              {isOk && (
-                <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-100 px-2 py-1 rounded-lg flex-shrink-0">
-                  <i className="ri-checkbox-circle-fill text-sm" />Conferido
-                </span>
-              )}
-            </div>
 
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-              <div className="flex justify-between gap-2">
-                <span className="text-zinc-400 flex-shrink-0">Abertura</span>
-                <span className="font-semibold text-zinc-700 text-right">
-                  {openedDate} {openedTime}
-                </span>
-              </div>
-              {cr.closed_at && (
-                <div className="flex justify-between gap-2">
-                  <span className="text-zinc-400 flex-shrink-0">Fechamento</span>
-                  <span className={`font-semibold text-right ${diffDay ? 'text-amber-700' : 'text-zinc-700'}`}>
-                    {closedDate} {closedTime}
-                    {diffDay && <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded-full">+1d</span>}
-                  </span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-zinc-400">Fundo inicial</span>
-                <span className="font-semibold text-zinc-700">
-                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cr.opening_value)}
-                </span>
-              </div>
-              {cr.closing_value_actual !== null && cr.closing_value_actual !== undefined && (
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Valor contado</span>
-                  <span className="font-semibold text-zinc-700">
-                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cr.closing_value_actual)}
-                  </span>
-                </div>
-              )}
-              {cr.closing_value_expected !== null && cr.closing_value_expected !== undefined && (
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Valor esperado</span>
-                  <span className="font-semibold text-zinc-700">
-                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cr.closing_value_expected)}
-                  </span>
-                </div>
-              )}
-              {(cr.total_retiradas ?? 0) > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Sangrias</span>
-                  <span className="font-semibold text-red-500">
-                    -{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cr.total_retiradas ?? 0)}
-                  </span>
-                </div>
-              )}
-              {(cr.total_adicoes ?? 0) > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Suprimentos</span>
-                  <span className="font-semibold text-emerald-600">
-                    +{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cr.total_adicoes ?? 0)}
-                  </span>
-                </div>
-              )}
-            </div>
+                {caixaTrans.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-6 text-zinc-300">
+                    <i className="ri-money-dollar-circle-line text-xl mb-1.5" />
+                    <p className="text-[10px]">Nenhuma venda em dinheiro neste caixa</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Totalizadores */}
+                    <div className="grid grid-cols-3 gap-2 mb-3">
+                      <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-2 text-center">
+                        <p className="text-sm font-black text-emerald-700">{fmt(caixaTrans.reduce((s, t) => s + t.valor_pago, 0))}</p>
+                        <p className="text-[9px] text-zinc-500">Total recebido</p>
+                      </div>
+                      <div className="bg-amber-50 border border-amber-100 rounded-lg p-2 text-center">
+                        <p className="text-sm font-black text-amber-700">{fmt(caixaTrans.reduce((s, t) => s + t.valor_venda, 0))}</p>
+                        <p className="text-[9px] text-zinc-500">Total das vendas</p>
+                      </div>
+                      <div className="bg-red-50 border border-red-100 rounded-lg p-2 text-center">
+                        <p className="text-sm font-black text-red-600">{fmt(totalTrocoCaixa)}</p>
+                        <p className="text-[9px] text-zinc-500">Total de troco</p>
+                      </div>
+                    </div>
 
-            {/* Barra de diferença */}
-            {hasDiff && !isOk && (
-              <div className={`mt-3 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${isNeg ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
-                <i className={isNeg ? 'ri-arrow-down-line' : 'ri-arrow-up-line'} />
-                {isNeg ? 'Falta no caixa' : 'Sobra no caixa'}: {diff! > 0 ? '+' : ''}{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(diff!)}
-              </div>
-            )}
-
-            {/* Justificativa da diferença */}
-            {cr.closing_notes && (
-              <div className="mt-2 px-3 py-2 rounded-lg text-[10px] font-semibold bg-zinc-50 text-zinc-600 flex items-start gap-1.5">
-                <i className="ri-chat-1-line mt-0.5 flex-shrink-0" />
-                <span>Justificativa: {cr.closing_notes}</span>
+                    {/* Tabela */}
+                    <div className="bg-white border border-zinc-100 rounded-lg overflow-hidden">
+                      <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
+                        <table className="w-full text-[10px]">
+                          <thead className="bg-zinc-50 border-b border-zinc-100 sticky top-0">
+                            <tr>
+                              <th className="px-2.5 py-2 text-left font-semibold text-zinc-500">Horário</th>
+                              <th className="px-2.5 py-2 text-left font-semibold text-zinc-500 hidden sm:table-cell">Pedido</th>
+                              <th className="px-2.5 py-2 text-right font-semibold text-zinc-500">Venda</th>
+                              <th className="px-2.5 py-2 text-right font-semibold text-zinc-500">Pago</th>
+                              <th className="px-2.5 py-2 text-right font-semibold text-zinc-500">Troco</th>
+                              <th className="px-2.5 py-2 text-left font-semibold text-zinc-500 hidden md:table-cell">Operador</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-50">
+                            {caixaTrans.map((t) => (
+                              <tr key={t.id} className="hover:bg-zinc-50 transition-colors">
+                                <td className="px-2.5 py-2 whitespace-nowrap">
+                                  <span className="font-medium text-zinc-700">
+                                    {new Date(t.hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })}
+                                  </span>
+                                  {t.is_agrupado && (
+                                    <span className="ml-1 text-[8px] font-bold bg-amber-100 text-amber-700 px-1 py-0.5 rounded-full">
+                                      {t.total_transacoes} ped.
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-2.5 py-2 hidden sm:table-cell">
+                                  {t.is_agrupado && t.pedidos_vinculados && t.pedidos_vinculados.length > 0 ? (
+                                    <div className="flex flex-wrap gap-0.5">
+                                      {t.pedidos_vinculados.map((n, i) => (
+                                        <span key={i} className="font-medium text-zinc-600 bg-zinc-100 px-1 py-0.5 rounded text-[9px]">
+                                          #{n}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className="font-medium text-zinc-600">
+                                      {t.numero_pedido ? `#${t.numero_pedido}` : '—'}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-2.5 py-2 text-right font-semibold text-zinc-800">{fmt(t.valor_venda)}</td>
+                                <td className="px-2.5 py-2 text-right">
+                                  <span className={`font-bold ${t.valor_pago > t.valor_venda ? 'text-amber-600' : 'text-emerald-700'}`}>
+                                    {fmt(t.valor_pago)}
+                                  </span>
+                                </td>
+                                <td className="px-2.5 py-2 text-right">
+                                  {t.troco > 0 ? (
+                                    <span className="font-bold text-red-600">{fmt(t.troco)}</span>
+                                  ) : (
+                                    <span className="text-zinc-300">—</span>
+                                  )}
+                                </td>
+                                <td className="px-2.5 py-2 hidden md:table-cell">
+                                  <span className="text-zinc-500 truncate max-w-[80px] block">{t.operador ?? '—'}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot className="border-t-2 border-zinc-200 bg-zinc-50">
+                            <tr>
+                              <td colSpan={2} className="px-2.5 py-2 font-bold text-zinc-600 text-[10px] hidden sm:table-cell">
+                                {caixaTrans.length} transação{caixaTrans.length !== 1 ? 'ões' : ''}
+                              </td>
+                              <td className="px-2.5 py-2 font-bold text-zinc-600 text-[10px] sm:hidden">Total</td>
+                              <td className="px-2.5 py-2 text-right font-black text-zinc-900">{fmt(caixaTrans.reduce((s, t) => s + t.valor_venda, 0))}</td>
+                              <td className="px-2.5 py-2 text-right font-black text-emerald-700">{fmt(caixaTrans.reduce((s, t) => s + t.valor_pago, 0))}</td>
+                              <td className="px-2.5 py-2 text-right font-black text-red-600">{totalTrocoCaixa > 0 ? fmt(totalTrocoCaixa) : '—'}</td>
+                              <td className="hidden md:table-cell" />
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -874,8 +1020,11 @@ export default function CaixaTab() {
                 value: sessao.num_pedidos.toString(),
                 icon: 'ri-receipt-line',
                 color: 'bg-amber-50 text-amber-600',
-                sub: sessao.num_cancelados > 0 ? `${sessao.num_cancelados} cancelados` : undefined,
-                subColor: 'text-red-400',
+                sub: [
+                  sessao.num_cancelados > 0 ? `${sessao.num_cancelados} cancelados` : null,
+                  sessao.num_cortesias > 0 ? `${sessao.num_cortesias} cortesias` : null,
+                ].filter(Boolean).join(' · ') || undefined,
+                subColor: sessao.num_cancelados > 0 ? 'text-red-400' : 'text-violet-500',
               },
               {
                 label: 'Ticket Médio',
@@ -1029,6 +1178,12 @@ export default function CaixaTab() {
                     </span>
                   </div>
                   <div className="flex justify-between text-xs">
+                    <span className="text-zinc-500">Cortesias</span>
+                    <span className={`font-semibold ${sessao.num_cortesias > 0 ? 'text-violet-600' : 'text-zinc-400'}`}>
+                      {sessao.num_cortesias}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs">
                     <span className="text-zinc-500">Ticket médio</span>
                     <span className="font-semibold text-zinc-800">
                       {sessao.num_pedidos > 0 ? fmt(sessao.faturamento / sessao.num_pedidos) : '—'}
@@ -1135,7 +1290,7 @@ export default function CaixaTab() {
                   <h3 className="text-sm font-semibold text-zinc-800">Histórico de Caixas desta Sessão</h3>
                   <span className="text-xs text-zinc-400">{sessao.cash_registers.length} caixa{sessao.cash_registers.length !== 1 ? 's' : ''}</span>
                 </div>
-                <HistoricoCaixasPanel registers={sessao.cash_registers} />
+                <HistoricoCaixasPanel registers={sessao.cash_registers} transactions={sessao.cash_transactions_grouped} />
               </div>
             </div>
           )}

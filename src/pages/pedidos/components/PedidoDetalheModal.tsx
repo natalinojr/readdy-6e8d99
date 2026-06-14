@@ -560,7 +560,13 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
       <div className="grid grid-cols-3 gap-3">
         <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Destino</p><p className="text-sm font-bold text-zinc-800">{getDestinoLabel(pedido)}</p></div>
         <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Origem</p><div className="flex items-center gap-1.5"><i className={`${ORIGEM_ICON[pedido.origem] ?? 'ri-store-line'} text-zinc-500 text-sm`} /><p className="text-sm font-bold text-zinc-800">{ORIGEM_LABEL[pedido.origem] ?? pedido.origem}</p></div></div>
-        <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Total</p><p className="text-sm font-bold text-zinc-800">R$ {totalReal.toFixed(2)}</p></div>
+        <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Total</p>
+          {fase === 'cancelado' ? (
+            <p className="text-sm font-bold text-red-400">Cancelado</p>
+          ) : (
+            <p className="text-sm font-bold text-zinc-800">R$ {totalReal.toFixed(2)}</p>
+          )}
+        </div>
       </div>
 
       {pedido.origem === 'delivery' && pedido.deliveryPlatform && <DeliveryPlatformBadge platform={pedido.deliveryPlatform} fee={pedido.deliveryFee} />}
@@ -718,7 +724,7 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
         </div>
       </div>
 
-      {showResumo && (
+      {showResumo && fase !== 'cancelado' && (
         <div className="bg-zinc-50 rounded-xl border border-zinc-100 p-4 space-y-4">
           <div>
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-3">Resumo financeiro</p>
@@ -784,7 +790,10 @@ export default function PedidoDetalheModal({ pedido, onClose }: Props) {
               </div>
               <p className="text-xs text-zinc-400 mt-0.5">
                 {isGrupo ? (
-                  <span className="text-zinc-500">Pedidos: {pedido.numeroCodigo} · Total: R$ {pedido.total.toFixed(2)}</span>
+                  <span className="text-zinc-500">
+                    Pedidos: {pedido.numeroCodigo}
+                    {getStatusFase(pedido.status) !== 'cancelado' && ` · Total: R$ ${pedido.total.toFixed(2)}`}
+                  </span>
                 ) : (
                   <>Criado às {pedido.criadoEm}{pedido.dataPedido && ` · ${pedido.dataPedido.split('-').reverse().join('/')}`}</>
                 )}
@@ -802,7 +811,13 @@ export default function PedidoDetalheModal({ pedido, onClose }: Props) {
               <div className="grid grid-cols-3 gap-3">
                 <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Pedidos</p><p className="text-sm font-bold text-zinc-800">{pedidosDoGrupo.length} unificados</p></div>
                 <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Destino</p><p className="text-sm font-bold text-zinc-800">{getDestinoLabel(pedido)}</p></div>
-                <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Total</p><p className="text-sm font-bold text-zinc-800">R$ {pedido.total.toFixed(2)}</p></div>
+                <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100"><p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Total</p>
+                  {getStatusFase(pedido.status) === 'cancelado' ? (
+                    <p className="text-sm font-bold text-red-400">Cancelado</p>
+                  ) : (
+                    <p className="text-sm font-bold text-zinc-800">R$ {pedido.total.toFixed(2)}</p>
+                  )}
+                </div>
               </div>
 
               {pedidosDoGrupo.map((p, idx) => (
@@ -812,24 +827,25 @@ export default function PedidoDetalheModal({ pedido, onClose }: Props) {
                 </div>
               ))}
 
-              <div className="bg-zinc-50 rounded-xl border border-zinc-100 p-4 space-y-4">
-                <p className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Resumo financeiro consolidado</p>
-                <div className="space-y-2">
-                  {pedidosDoGrupo.map((p) => (
-                    <div key={p.id} className="flex items-center justify-between text-xs">
-                      <span className="text-zinc-600">Pedido #{p.numeroCodigo ?? String(p.numero).padStart(4, '0')}</span>
-                      <span className="text-zinc-800 font-semibold">R$ {p.total.toFixed(2)}</span>
+              {getStatusFase(pedido.status) !== 'cancelado' && (
+                <div className="bg-zinc-50 rounded-xl border border-zinc-100 p-4 space-y-4">
+                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Resumo financeiro consolidado</p>
+                  <div className="space-y-2">
+                    {pedidosDoGrupo.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between text-xs">
+                        <span className="text-zinc-600">Pedido #{p.numeroCodigo ?? String(p.numero).padStart(4, '0')}</span>
+                        <span className="text-zinc-800 font-semibold">R$ {p.total.toFixed(2)}</span>
+                      </div>
+                    ))}
+                    <div className="pt-2 border-t border-zinc-200 flex items-center justify-between">
+                      <span className="text-sm font-bold text-zinc-700">Total geral</span>
+                      <span className="text-base font-black text-zinc-900">R$ {pedido.total.toFixed(2)}</span>
                     </div>
-                  ))}
-                  <div className="pt-2 border-t border-zinc-200 flex items-center justify-between">
-                    <span className="text-sm font-bold text-zinc-700">Total geral</span>
-                    <span className="text-base font-black text-zinc-900">R$ {pedido.total.toFixed(2)}</span>
                   </div>
+                  <div className="border-t border-zinc-200" />
+                  <PagamentoDetalhado pedido={consolidatePayments(pedidosDoGrupo)} isConsolidated />
                 </div>
-                <div className="border-t border-zinc-200" />
-                {/* Pagamento consolidado — isConsolidated=true pois amount já é valorCobrado */}
-                <PagamentoDetalhado pedido={consolidatePayments(pedidosDoGrupo)} isConsolidated />
-              </div>
+              )}
             </>
           ) : (
             <PedidoConteudo pedido={pedido} />

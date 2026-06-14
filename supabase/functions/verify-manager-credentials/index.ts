@@ -19,13 +19,19 @@ Deno.serve(async (req: Request) => {
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
   const effectiveKey = serviceRoleKey.length >= 40 ? serviceRoleKey : anonKey;
-  const db = createClient(supabaseUrl, effectiveKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+  // Cliente para auth (signInWithPassword) — este vai ter a sessao alterada
+  const authDb = createClient(supabaseUrl, effectiveKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+  // Cliente admin para queries no banco — SEMPRE roda como service_role,
+  // sem ser afetado pelo signInWithPassword do authDb
+  const adminDb = createClient(supabaseUrl, effectiveKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
   // Busca o usuário no auth.users pelo email (usando admin API)
   const normalizedEmail = email.trim().toLowerCase();
 
   // Verifica credenciais via signInWithPassword (server-side, não afeta sessão do browser)
-  const { data: authData, error: authError } = await db.auth.signInWithPassword({
+  const { data: authData, error: authError } = await authDb.auth.signInWithPassword({
     email: normalizedEmail,
     password: password.trim(),
   });
@@ -37,8 +43,12 @@ Deno.serve(async (req: Request) => {
 
   const userId = authData.user.id;
 
+  // Usa adminDb (service_role puro) para TODAS as queries no banco
+  // Isso evita que o RLS bloqueie a consulta apos o signInWithPassword
+  // ter alterado o contexto de auth do cliente original
+
   // Busca o nome na tabela users
-  const { data: userRow } = await db.from('users').select('name, is_active').eq('id', userId).maybeSingle();
+  const { data: userRow } = await adminDb.from('users').select('name, is_active').eq('id', userId).maybeSingle();
   if (!userRow?.is_active) {
     return new Response(JSON.stringify({ error: 'Usuário inativo' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
@@ -46,14 +56,14 @@ Deno.serve(async (req: Request) => {
   // Se tenant_id foi informado, verifica membership e role
   let role: string | null = null;
   if (tenant_id) {
-    const { data: tenantRow } = await db.from('user_tenants').select('role').eq('user_id', userId).eq('tenant_id', tenant_id).maybeSingle();
+    const { data: tenantRow } = await adminDb.from('user_tenants').select('role').eq('user_id', userId).eq('tenant_id', tenant_id).maybeSingle();
     if (!tenantRow) {
       return new Response(JSON.stringify({ error: 'Usuário não pertence a este estabelecimento' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     role = tenantRow.role;
   } else {
     // Sem tenant_id, pega o primeiro role admin/manager
-    const { data: tenantRows } = await db.from('user_tenants').select('role').eq('user_id', userId);
+    const { data: tenantRows } = await adminDb.from('user_tenants').select('role').eq('user_id', userId);
     const best = (tenantRows ?? []).find((t: { role: string }) => t.role === 'admin' || t.role === 'manager');
     role = best?.role ?? (tenantRows ?? [])[0]?.role ?? null;
   }

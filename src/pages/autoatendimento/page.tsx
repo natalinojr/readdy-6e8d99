@@ -8,6 +8,9 @@ import { useSystemSettings } from '../../hooks/useSystemSettings';
 import { useKioskAuth } from '../../contexts/KioskAuthContext';
 import { invokeWithAuth, supabase } from '../../lib/supabase';
 import { useOrderSubmit, PartialOrderError } from '../../hooks/useOrderSubmit';
+import { useWakeLock } from '../../hooks/useWakeLock';
+import { saveOfflineOrder, generateLocalOrderId, generateLocalOrderNumber, countPendingOrders, type OfflineOrder } from '../../lib/offlineDB';
+import { startAutoSync, stopAutoSync } from '../../lib/offlineSync';
 import WelcomeScreen from './components/WelcomeScreen';
 import CardapioKiosk from './components/CardapioKiosk';
 import CarrinhoKiosk from './components/CarrinhoKiosk';
@@ -103,6 +106,9 @@ function AutoatendimentoPageInner() {
   const navigate = useNavigate();
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen();
 
+  // Mantém a tela do tablet ligada enquanto o autoatendimento está aberto
+  useWakeLock();
+
   const [pinLiberado, setPinLiberado] = useState(false);
   const [etapa, setEtapa] = useState<Etapa>('welcome');
   const [showLogoutPin, setShowLogoutPin] = useState(false);
@@ -120,6 +126,8 @@ function AutoatendimentoPageInner() {
   const [formaPagamentoNome, setFormaPagamentoNome] = useState<string | null>(null);
   // Alerta de inserção parcial (HTTP 207) — pedido criado mas itens podem estar faltando no KDS
   const [alertaParcialKiosk, setAlertaParcialKiosk] = useState<string | null>(null);
+  // BUG-10: contador de pedidos offline pendentes de sincronização
+  const [offlinePendingCount, setOfflinePendingCount] = useState(0);
 
   const modoIdentificacao = settings.self_service_id_type;
   const modoPagamento = settings.self_service_payment_type;
@@ -155,6 +163,34 @@ function AutoatendimentoPageInner() {
     const interval = setInterval(updateHeartbeat, 2 * 60 * 1000);
     return () => clearInterval(interval);
   }, [kioskSession?.kioskUserId, user?.id]);
+
+  // ── BUG-10: Auto-sync de pedidos offline no kiosk ──────────────────────────
+  // O totem não passa pelo AppLayout/TopBar (que tem auto-sync global),
+  // então precisamos de um auto-sync dedicado aqui.
+  useEffect(() => {
+    const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+    if (!tenantId) return;
+
+    const refreshPending = async () => {
+      const count = await countPendingOrders(tenantId).catch(() => 0);
+      setOfflinePendingCount(count);
+    };
+
+    refreshPending();
+
+    startAutoSync(tenantId, (summary) => {
+      if (summary.succeeded > 0) {
+        refreshPending();
+      }
+    });
+
+    const interval = setInterval(refreshPending, 30_000);
+
+    return () => {
+      stopAutoSync();
+      clearInterval(interval);
+    };
+  }, [kioskSession?.tenantId, user?.tenantId]);
 
   // ── Helper: invoca edge function usando o token do kiosk (ou fallback para invokeWithAuth) ──
   // PADRONIZADO: usa invokeWithAuth com externalToken — mesmo mecanismo de todos os outros fluxos
@@ -347,10 +383,11 @@ function AutoatendimentoPageInner() {
       skip_kds: item.semPreparo ?? false,
       notes: item.observacao || null,
       options: item.opcoesSelecionadas.map((o) => ({
-        option_id: null,
-        option_name: o,
-        group_name: 'Opções',
-        additional_price: 0,
+        option_id: o.id || null,
+        option_name: o.nome,
+        group_name: o.grupoNome || 'Opções',
+        additional_price: o.precoAdicional ?? 0,
+        group_obrigatorio: o.obrigatorio,
       })),
       observations: [
         ...(item.observacao ? [{ text: item.observacao }] : []),
@@ -400,7 +437,7 @@ function AutoatendimentoPageInner() {
           total_amount: subtotal,
           is_training: user?.modoTreino ?? false,
         },
-        { externalToken: kioskToken },
+        { externalToken: kioskToken, paraViagem: destino === 'viagem' },
       );
 
       const orderNumber = parseInt(result.number.replace(/\D/g, '').slice(-4), 10) || 0;
@@ -490,15 +527,36 @@ function AutoatendimentoPageInner() {
           });
           if (payErr) {
             console.error('[Autoatendimento] record_payment error:', payErr);
+            throw new Error(typeof payErr === 'string' ? payErr : 'Falha ao registrar pagamento no caixa');
           } else {
             supabase.rpc('fn_update_paid_by_pdv', { p_order_id: effectiveOrderId, p_paid_by_pdv: 'self_service' }).catch(() => {});
           }
         } catch (e) {
           console.error('[Autoatendimento] Erro ao registrar pagamento:', e);
+          throw e;
         }
+      } else if (paymentMethodId) {
+        // BUG-11: Safety net — método de pagamento selecionado mas sem caixa aberto.
+        // A UI do PagamentoKiosk já bloqueia esse cenário, mas este catch protege
+        // contra race conditions e chamadas diretas.
+        console.error('[Autoatendimento] BUG-11 safety net: pagamento bloqueado — sem caixa', {
+          orderId: effectiveOrderId,
+          paymentMethodId,
+          sessionId,
+        });
+        // Cancela o pedido pois não podemos aceitar pagamento sem caixa
+        try {
+          await kioskInvoke('order-write', {
+            action: 'cancel_order',
+            order_id: effectiveOrderId,
+            tenant_id: tenantId,
+            reason: 'Pagamento recusado: caixa fechado (BUG-11 safety net)',
+          });
+        } catch { /* non-fatal */ }
+        throw new Error('Não é possível registrar o pagamento sem um caixa (gaveta) aberto. Solicite ao operador que abra o caixa no PDV.');
       }
     } else if (!sessionId) {
-      // Modo offline: adiciona apenas ao KDS local
+      // BUG-10 FIX: Modo offline — salva no IndexedDB + KDS local
       if (carrinho.length > 0) {
         pedidoSeq += 1;
         let destinoInfo: DestinoInfo;
@@ -509,6 +567,8 @@ function AutoatendimentoPageInner() {
         } else {
           destinoInfo = { tipo: 'hora' };
         }
+
+        // ── KDS local (feedback visual imediato) ──────────────────
         const carrinhoKDS = carrinho.map((item, i) => ({
           cartId: `kiosk-${Date.now()}-${i}`,
           itemId: item.itemId,
@@ -517,9 +577,9 @@ function AutoatendimentoPageInner() {
           precoTotal: item.preco * item.quantidade,
           quantidade: item.quantidade,
           opcoes: item.opcoesSelecionadas.map((o) => ({
-            grupoNome: 'Opções',
-            opcaoNome: o,
-            precoExtra: 0,
+            grupoNome: o.grupoNome || 'Opções',
+            opcaoNome: o.nome,
+            precoExtra: o.precoAdicional ?? 0,
           })),
           observacoes: item.observacao ? [item.observacao] : [],
           observacaoLivre: '',
@@ -532,6 +592,63 @@ function AutoatendimentoPageInner() {
           stationMap,
         });
         addPedido(pedidoKDS);
+
+        // ── IndexedDB (persistência offline) ──────────────────────
+        const destinoTipo = destinoInfo.tipo === 'nome' ? 'nome'
+          : (destinoInfo.tipo === 'senha' ? 'senha' : 'hora');
+        const destinoNome = destinoInfo.tipo === 'nome' ? (destinoInfo.nomeCliente ?? null)
+          : (destinoInfo.tipo === 'senha' ? (destinoInfo.senha ?? null) : null);
+        const subtotal = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
+
+        const offlineOrder: OfflineOrder = {
+          localId: generateLocalOrderId(),
+          serverId: null,
+          localNumber: generateLocalOrderNumber(pedidoSeq),
+          serverNumber: null,
+          status: 'pending',
+          retryCount: 0,
+          lastError: null,
+          createdAt: Date.now(),
+          syncedAt: null,
+          session_id: sessionId ?? '',
+          tenant_id: tenantId ?? '',
+          origin: 'self_service',
+          destination: destinoTipo,
+          destination_name: destinoNome,
+          destination_phone: null,
+          delivery_address: null,
+          delivery_fee: 0,
+          items: carrinho.map((item) => ({
+            item_id: item.itemId && /^[0-9a-f-]{36}$/i.test(item.itemId) ? item.itemId : null,
+            item_name: item.nome,
+            item_price: item.preco,
+            quantity: item.quantidade,
+            station_id: (item.stationId && /^[0-9a-f-]{36}$/i.test(item.stationId)) ? item.stationId : null,
+            skip_kds: item.semPreparo ?? false,
+            notes: item.observacao || null,
+            options: item.opcoesSelecionadas.map((o) => ({
+              option_id: o.id || null,
+              option_name: o.nome,
+              group_name: o.grupoNome || 'Opções',
+              additional_price: o.precoAdicional ?? 0,
+            })),
+            observations: item.observacao ? [{ text: item.observacao }] : [],
+          })),
+          discount_amount: 0,
+          service_fee_amount: 0,
+          subtotal,
+          total_amount: subtotal,
+          cash_register_id: caixa?.id ?? null,
+          is_training: user?.modoTreino ?? false,
+          payments: [],
+        };
+
+        saveOfflineOrder(offlineOrder).then(() => {
+          setOfflinePendingCount((c) => c + 1);
+          console.log('[Autoatendimento] Pedido salvo offline no IndexedDB:', offlineOrder.localId);
+        }).catch((e) => {
+          console.error('[Autoatendimento] Erro ao salvar pedido offline:', e);
+        });
       }
     }
 
@@ -627,6 +744,23 @@ function AutoatendimentoPageInner() {
           <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
           <span className="text-zinc-400 text-sm font-semibold">Aguardando abertura do caixa...</span>
         </div>
+
+        {/* BUG-10: badge de pedidos offline pendentes no totem */}
+        {offlinePendingCount > 0 && (
+          <div className="mt-6 flex items-center gap-2 px-5 py-3 bg-orange-500/10 border border-orange-500/30 rounded-2xl">
+            <div className="w-8 h-8 flex items-center justify-center">
+              <i className="ri-cloud-off-line text-orange-400 text-lg" />
+            </div>
+            <div className="text-left">
+              <p className="text-sm font-bold text-orange-400">
+                {offlinePendingCount} pedido{offlinePendingCount > 1 ? 's' : ''} offline
+              </p>
+              <p className="text-xs text-orange-400/70">
+                Será sincronizado quando o caixa abrir
+              </p>
+            </div>
+          </div>
+        )}
 
         {!showLogoutPin ? (
           <button
@@ -836,6 +970,18 @@ function AutoatendimentoPageInner() {
             >
               <i className={`text-sm ${isFullscreen ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'}`} />
             </button>
+            {/* BUG-10: badge de pedidos offline pendentes */}
+            {offlinePendingCount > 0 && (
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-orange-500/20 border border-orange-500/30 rounded-lg cursor-default"
+                title={`${offlinePendingCount} pedido(s) aguardando sincronização`}
+              >
+                <i className="ri-cloud-off-line text-orange-400 text-xs" />
+                <span className="text-xs font-bold text-orange-400 whitespace-nowrap">
+                  {offlinePendingCount}
+                </span>
+              </div>
+            )}
             <button
               onClick={handleCancelar}
               className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors whitespace-nowrap"

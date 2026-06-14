@@ -55,6 +55,7 @@ const navSections: NavSection[] = [
     title: 'Gestão',
     items: [
       { label: 'Pedidos',               icon: ClipboardList,   path: '/pedidos' },
+      { label: 'Delivery',              icon: Truck,           path: '/config-delivery', permissao: 'configuracoes_editar' },
       { label: 'Relatórios',            icon: BarChart3,       path: '/relatorios',    permissao: 'relatorio_financeiro' },
       { label: 'Cardápio',              icon: UtensilsCrossed, path: '/cardapio',      permissao: 'cardapio_editar' },
       { label: 'Estoque',               icon: Package,         path: '/estoque',       permissao: 'estoque_movimentar' },

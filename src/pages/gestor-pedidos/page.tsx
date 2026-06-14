@@ -14,7 +14,7 @@ import PedidoDetailModal from './components/PedidoDetailModal';
 import HistoricoDrawer from './components/HistoricoDrawer';
 
 type Visualizacao = 'kanban' | 'lista' | 'mesas';
-type FiltroStatus = 'todos' | 'novo' | 'preparo' | 'pronto' | 'entregue' | 'cancelado';
+type FiltroStatus = 'todos' | 'novo' | 'preparo' | 'pronto' | 'em_rota' | 'entregue' | 'cancelado';
 type FiltroOrigem = 'todas' | 'caixa' | 'garcom' | 'mesa' | 'autoatendimento' | 'delivery';
 type FiltroPagamento = 'todos' | 'pagos' | 'nao-pagos';
 
@@ -51,20 +51,29 @@ function deriveItemStatus(item: KDSItem): KDSItemStatus {
 }
 
 function derivePedidoStatus(pedido: KDSPedido): KDSPedido['status'] {
+  // Pedidos em_rota mantêm o status
+  if (pedido.status === 'em_rota') return 'em_rota';
+
   // Pedidos cancelados mantêm status visual "entregue" no kanban,
   // mas o filtro usa isCancelled separadamente
   const allStatuses = pedido.itens.map((i) => deriveItemStatus(i));
-  if (allStatuses.every((s) => s === 'entregue')) return 'entregue';
 
   const kitchenItens = pedido.itens.filter((i) => !i.semPreparo && !i.skip_kds);
   const kitchenStatuses = kitchenItens.map((i) => deriveItemStatus(i));
 
-  if (kitchenItens.length === 0) {
-    if (allStatuses.every((s) => s === 'pronto' || s === 'entregue')) return 'pronto';
+  // BUGFIX: Itens skip_kds (sem preparo) NÃO devem impedir o pedido de ser "entregue".
+  // Se todos os itens de cozinha estão entregues, o pedido está entregue —
+  // itens como bebidas e sobremesas prontas não passam pelo fluxo da cozinha.
+  if (kitchenItens.length > 0) {
+    if (kitchenStatuses.every((s) => s === 'entregue')) return 'entregue';
+    if (kitchenStatuses.every((s) => s === 'pronto' || s === 'entregue')) return 'pronto';
+    if (kitchenStatuses.some((s) => s === 'preparo' || s === 'pronto')) return 'preparo';
     return 'novo';
   }
-  if (kitchenStatuses.every((s) => s === 'pronto' || s === 'entregue')) return 'pronto';
-  if (kitchenStatuses.some((s) => s === 'preparo' || s === 'pronto')) return 'preparo';
+
+  // Pedido só tem itens skip_kds (sem preparo)
+  if (allStatuses.every((s) => s === 'entregue')) return 'entregue';
+  if (allStatuses.every((s) => s === 'pronto' || s === 'entregue')) return 'pronto';
   return 'novo';
 }
 
@@ -87,7 +96,7 @@ function destinoToast(pedido: KDSPedido): string {
 export default function GestorPedidosPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, cancelOrderRemote, reloadOrders, pedidosSalvando } = useKDS();
+  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, markOutForDeliveryRemote, reloadOrders, pedidosSalvando } = useKDS();
   const { estado, sessao, loadingSession } = useSessao();
   const { user } = useAuth();
 
@@ -236,6 +245,12 @@ export default function GestorPedidosPage() {
                 iniciouPreparoEm: u.iniciouPreparoEm ?? now,
                 operadorPreparo: u.operadorPreparo ?? operador,
               })),
+              partes: i.partes?.map((part) => ({
+                ...part,
+                status: part.status === 'novo' ? ('preparo' as KDSItemStatus) : part.status,
+                iniciouPreparoEm: part.iniciouPreparoEm ?? now,
+                operadorPreparo: part.operadorPreparo ?? operador,
+              })),
             };
           });
           return { ...p, itens, status: 'preparo' };
@@ -244,6 +259,12 @@ export default function GestorPedidosPage() {
       pedido.itens.forEach((item) => {
         if (item.status === 'novo' && !item.semPreparo && !item.skip_kds) {
           updateItemStatusRemote(item.id, pedidoId, 'preparo');
+          // Atualiza todas as partes (múltiplas estações) também
+          item.partes?.forEach((part) => {
+            if (part.status === 'novo') {
+              updatePartStatusRemote(part.id, item.id, pedidoId, 'preparo');
+            }
+          });
         }
       });
     };
@@ -279,6 +300,11 @@ export default function GestorPedidosPage() {
                 status: u.status === 'pronto' || u.status === 'entregue' ? u.status : ('pronto' as KDSItemStatus),
                 ficouProntoEm: u.ficouProntoEm ?? now,
               })),
+              partes: i.partes?.map((part) => ({
+                ...part,
+                status: part.status === 'pronto' || part.status === 'entregue' ? part.status : ('pronto' as KDSItemStatus),
+                ficouProntoEm: part.ficouProntoEm ?? now,
+              })),
             };
           });
           return { ...p, itens, status: 'pronto' };
@@ -287,6 +313,12 @@ export default function GestorPedidosPage() {
       pedido.itens.forEach((item) => {
         if (item.status !== 'pronto' && item.status !== 'entregue' && !item.semPreparo && !item.skip_kds) {
           updateItemStatusRemote(item.id, pedidoId, 'pronto');
+          // Atualiza todas as partes (múltiplas estações) também
+          item.partes?.forEach((part) => {
+            if (part.status !== 'pronto' && part.status !== 'entregue') {
+              updatePartStatusRemote(part.id, item.id, pedidoId, 'pronto');
+            }
+          });
         }
       });
     };
@@ -308,6 +340,23 @@ export default function GestorPedidosPage() {
     else if (derived === 'preparo') handleMarcarPronto(pedidoId);
   }, [pedidos, handleIniciarPreparo, handleMarcarPronto]);
 
+  // ─── Em Rota (delivery) ───
+  const handleEmRota = useCallback((pedidoId: string) => {
+    const pedido = pedidos.find((p) => p.id === pedidoId);
+    if (!pedido || pedido.isEditing) return;
+    // Otimista local
+    setPedidos((prev) =>
+      prev.map((p) => {
+        if (p.id !== pedidoId) return p;
+        return { ...p, status: 'em_rota' as const };
+      }),
+    );
+    // BUG-38 FIX: Persiste out_for_delivery_at no banco com retry + queue (padrao BUG-35).
+    // Em caso de falha de rede, a fila no sessionStorage garante que "Em Rota" sera
+    // persistido assim que a rede voltar — sem depender de .catch() silencioso.
+    markOutForDeliveryRemote(pedidoId);
+  }, [pedidos, setPedidos, markOutForDeliveryRemote]);
+
   // ─── Entregar ───
   const handleEntregar = useCallback((pedidoId: string) => {
     const pedido = pedidos.find((p) => p.id === pedidoId);
@@ -317,6 +366,14 @@ export default function GestorPedidosPage() {
     const executar = () => {
       const now = Date.now();
       const operador = user?.nome ?? 'Operador';
+
+      // BUG-38 FIX: busca fresca do pedido no momento da confirmacao da modal.
+      // O `pedido` capturado no closure pode estar desatualizado se itens
+      // foram adicionados/alterados entre o clique e a confirmacao do modal.
+      // `pedidos` (plural) esta sempre atualizado via useCallback deps.
+      const freshPedido = pedidos.find((p) => p.id === pedidoId);
+      if (!freshPedido) return;
+
       setPedidos((prev) =>
         prev.map((p) => {
           if (p.id !== pedidoId) return p;
@@ -331,19 +388,80 @@ export default function GestorPedidosPage() {
               entregueEm: now,
               quemEntregou: operador,
             })),
+            partes: i.partes?.map((part) => ({
+              ...part,
+              status: 'entregue' as KDSItemStatus,
+              entregueEm: now,
+            })),
           }));
           return { ...p, itens, status: 'entregue' };
         }),
       );
-      pedido.itens.forEach((item) => {
-        if (item.status !== 'entregue' && !item.semPreparo) {
+
+      // BUG-38 FIX: dispara updates remotos para TODOS os itens atuais,
+      // usando o pedido fresco encontrado no momento da confirmacao.
+      // updateItemStatusRemote ja tem retry + queue do BUG-35.
+      freshPedido.itens.forEach((item) => {
+        if (item.status !== 'entregue') {
           updateItemStatusRemote(item.id, pedidoId, 'entregue');
+          item.partes?.forEach((part) => {
+            if (part.status !== 'entregue') {
+              updatePartStatusRemote(part.id, item.id, pedidoId, 'entregue');
+            }
+          });
         }
       });
     };
 
     setEntregaModal({ pedido, onConfirm: executar });
-  }, [pedidos, user, setPedidos, updateItemStatusRemote]);
+  }, [pedidos, user, setPedidos, updateItemStatusRemote, updatePartStatusRemote]);
+
+  // ─── Entregar Item Individual ───
+  const handleEntregarItem = useCallback((pedidoId: string, itemId: string) => {
+    const pedido = pedidos.find((p) => p.id === pedidoId);
+    if (!pedido) return;
+    if (pedido.isEditing) return;
+
+    const now = Date.now();
+    const operador = user?.nome ?? 'Operador';
+
+    setPedidos((prev) =>
+      prev.map((p) => {
+        if (p.id !== pedidoId) return p;
+        return {
+          ...p,
+          itens: p.itens.map((item) => {
+            if (item.id !== itemId) return item;
+            return {
+              ...item,
+              status: 'entregue' as KDSItemStatus,
+              entregueEm: now,
+              quemEntregou: operador,
+              unidades: item.unidades?.map((u) => ({
+                ...u,
+                status: 'entregue' as KDSItemStatus,
+                entregueEm: now,
+                quemEntregou: operador,
+              })),
+              partes: item.partes?.map((part) => ({
+                ...part,
+                status: 'entregue' as KDSItemStatus,
+                entregueEm: now,
+              })),
+            };
+          }),
+        };
+      }),
+    );
+
+    updateItemStatusRemote(itemId, pedidoId, 'entregue');
+    const item = pedido.itens.find((i) => i.id === itemId);
+    item?.partes?.forEach((part) => {
+      if (part.status !== 'entregue') {
+        updatePartStatusRemote(part.id, itemId, pedidoId, 'entregue');
+      }
+    });
+  }, [pedidos, user, setPedidos, updateItemStatusRemote, updatePartStatusRemote]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -383,6 +501,7 @@ export default function GestorPedidosPage() {
     novo:      pedidosComStatus.filter((p) => p.status === 'novo' && !p.isCancelled).length,
     preparo:   pedidosComStatus.filter((p) => p.status === 'preparo' && !p.isCancelled).length,
     pronto:    pedidosComStatus.filter((p) => p.status === 'pronto' && !p.isCancelled).length,
+    em_rota:   pedidosComStatus.filter((p) => p.status === 'em_rota' && !p.isCancelled).length,
     entregue:  pedidosComStatus.filter((p) => p.status === 'entregue' && !p.isCancelled).length,
     cancelado: pedidosComStatus.filter((p) => p.isCancelled).length,
     total:     pedidosComStatus.filter((p) => !p.isCancelled).length,
@@ -485,7 +604,9 @@ export default function GestorPedidosPage() {
           (p.nomeCliente?.toLowerCase().includes(q)) ||
           (p.mesaNumero ? String(p.mesaNumero).includes(q) : false) ||
           (p.participantToken?.toLowerCase().includes(q)) ||
-          (p.participantName?.toLowerCase().includes(q)),
+          (p.participantName?.toLowerCase().includes(q)) ||
+          (p.deliveryAddress?.toLowerCase().includes(q)) ||
+          (p.customerPhone?.includes(q)),
       );
     }
 
@@ -497,6 +618,7 @@ export default function GestorPedidosPage() {
     { key: 'novo',      label: 'Aguardando',  count: contadores.novo,      urgent: contadores.novo > 0 },
     { key: 'preparo',   label: 'Em Preparo',  count: contadores.preparo },
     { key: 'pronto',    label: 'Prontos',     count: contadores.pronto,    urgent: contadores.pronto > 0 },
+    { key: 'em_rota',   label: 'Em Rota',     count: contadores.em_rota,   urgent: contadores.em_rota > 0 },
     { key: 'entregue',  label: 'Entregues',   count: contadores.entregue },
     { key: 'cancelado', label: 'Cancelados',  count: contadores.cancelado, danger: true },
   ];
@@ -579,6 +701,7 @@ export default function GestorPedidosPage() {
           pedido={detailPedido}
           onClose={() => setDetailPedidoId(null)}
           onCancelar={() => handleCancelarPedido(detailPedido.id)}
+          onEntregarItem={(itemId: string) => handleEntregarItem(detailPedido.id, itemId)}
         />
       )}
       {showHistorico && (
@@ -995,10 +1118,12 @@ export default function GestorPedidosPage() {
           <GestorKanbanView
             pedidos={filtrados}
             onAvancar={handleAvancar}
+            onEmRota={handleEmRota}
             onEntregar={handleEntregar}
             onMudarOperador={handleMudarOperador}
             onCancelar={handleCancelarPedido}
             onOpenDetail={(pedidoId) => setDetailPedidoId(pedidoId)}
+            onEntregarItem={handleEntregarItem}
             onAvancarUnidade={(pedidoId, itemId, unidadeId, novoStatus) => {
               setPedidos((prev) => prev.map((p) => {
                 if (p.id !== pedidoId) return p;
@@ -1050,10 +1175,12 @@ export default function GestorPedidosPage() {
           <GestorListView
             pedidos={filtrados}
             onAvancar={handleAvancar}
+            onEmRota={handleEmRota}
             onEntregar={handleEntregar}
             onMudarOperador={handleMudarOperador}
             onCancelar={handleCancelarPedido}
             onOpenDetail={(pedidoId) => setDetailPedidoId(pedidoId)}
+            onEntregarItem={handleEntregarItem}
             operadorAtual={user?.nome}
             tick={tick}
             filtroEstacao={filtroEstacao}
@@ -1074,7 +1201,7 @@ interface MobileFiltrosBarProps {
   setFiltroEstacao: (v: string) => void;
   filtroPagamento: FiltroPagamento;
   setFiltroPagamento: (v: FiltroPagamento) => void;
-  contadores: { novo: number; preparo: number; pronto: number; entregue: number; cancelado: number; total: number };
+  contadores: { novo: number; preparo: number; pronto: number; em_rota: number; entregue: number; cancelado: number; total: number };
   contadoresOrigem: { caixa: number; garcom: number; mesa: number; autoatendimento: number; delivery: number };
   estacoesDisponiveis: string[];
   pedidosComStatus: KDSPedido[];
@@ -1106,7 +1233,7 @@ function MobileFiltrosBar({
     { key: 'garcom',          label: 'Garçom',   icon: 'ri-user-star-line',  cor: 'bg-sky-50 text-sky-700 border-sky-200',          corAtivo: 'bg-sky-600 text-white border-sky-600' },
     { key: 'mesa',            label: 'Mesa',     icon: 'ri-table-2',         cor: 'bg-teal-50 text-teal-700 border-teal-200',       corAtivo: 'bg-teal-600 text-white border-teal-600' },
     { key: 'autoatendimento', label: 'Totem',    icon: 'ri-smartphone-line', cor: 'bg-amber-50 text-amber-700 border-amber-200',    corAtivo: 'bg-amber-500 text-white border-amber-500' },
-    { key: 'delivery',        label: 'Delivery', icon: 'ri-bike-line',       cor: 'bg-rose-50 text-rose-700 border-rose-200',       corAtivo: 'bg-rose-600 text-white border-rose-600' },
+    { key: 'delivery',        label: 'Delivery', icon: 'ri-bike-line',       cor: 'bg-orange-50 text-orange-700 border-orange-200',  corAtivo: 'bg-orange-500 text-white border-orange-500' },
   ];
 
   const PAGAMENTOS: { key: FiltroPagamento; label: string; icon: string; cor: string; corAtivo: string }[] = [
@@ -1128,6 +1255,7 @@ function MobileFiltrosBar({
     novo:     'ri-time-line',
     preparo:  'ri-fire-line',
     pronto:   'ri-checkbox-circle-line',
+    em_rota:  'ri-bike-line',
     entregue: 'ri-check-double-line',
     cancelado:'ri-close-circle-line',
   };

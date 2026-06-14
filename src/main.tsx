@@ -6,7 +6,10 @@ import App from './App.tsx'
 import { supabase } from './lib/supabase'
 
 // ── Rede de segurança: captura erros de refresh token do Supabase que
-//    escapem do try-catch interno (geralmente do autoRefreshToken). ──
+//    escapem do try-catch interno. Ao invés de redirecionar bruscamente,
+//    apenas limpa a sessão local e deixa o AuthContext redirecionar.
+//    safeRefreshSession() e safeSignOut() já fazem a limpeza principal;
+//    este handler é a última linha de defesa. ──
 function handleInvalidRefreshToken(reason: unknown) {
   const msg = (reason as Error | undefined)?.message ?? ''
   if (
@@ -15,15 +18,15 @@ function handleInvalidRefreshToken(reason: unknown) {
     msg.includes('Refresh Token Already Used') ||
     msg.includes('JWT expired')
   ) {
-    console.warn('[Auth] Refresh token inválido detectado — limpando sessão e redirecionando para login')
-    supabase.auth.signOut().catch(() => {
-      // Se signOut() falhar, ainda assim limpa o localStorage manualmente
-    }).finally(() => {
-      window.localStorage.removeItem('supabase.auth.token')
-      window.localStorage.removeItem('sb-localhost-auth-token') // dev
-      window.localStorage.removeItem('sb-127.0.0.1-auth-token') // dev
-      window.location.href = '/login'
-    })
+    console.warn('[Auth] Refresh token inválido detectado (unhandled) — limpando sessão local')
+    // Somente limpa o localStorage, sem redirecionar — o AuthContext
+    // vai detectar a ausência de sessão e exibir a tela de login.
+    const keys = Object.keys(window.localStorage)
+    for (const key of keys) {
+      if (key.startsWith('sb-') || key.includes('supabase')) {
+        window.localStorage.removeItem(key)
+      }
+    }
     return true
   }
   return false

@@ -3,7 +3,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { AppRoutes } from './router';
 import { AppProviders } from './providers/AppProviders';
 import ToastContainer from './components/base/ToastContainer';
-
+import { Suspense } from 'react';
 
 // ─── Fallback de crash de render ────────────────────────────────────────────
 function ErroAplicacao({ error }: { error?: Error }) {
@@ -78,7 +78,18 @@ function App() {
     <ErrorBoundary fallback={(err) => <ErroAplicacao error={err} />}>
       <AppProviders>
         <BrowserRouter basename={__BASE_PATH__}>
-          <AppRoutes />
+          <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center bg-white">
+              <div className="text-center">
+                <div className="w-16 h-16 flex items-center justify-center mx-auto mb-5 bg-amber-50 rounded-2xl border border-amber-100">
+                  <i className="ri-loader-4-line text-2xl text-amber-500 animate-spin" />
+                </div>
+                <p className="text-sm font-bold text-zinc-800">Carregando...</p>
+              </div>
+            </div>
+          }>
+            <AppRoutes />
+          </Suspense>
           <ToastContainer />
         </BrowserRouter>
       </AppProviders>
@@ -87,4 +98,3 @@ function App() {
 }
 
 export default App;
-

@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { PedidoRecente, PedidoItemDetalhe, UnidadeItem } from '@/types/pdv';
 import ImprimirPedidoModal from './ImprimirPedidoModal';
-import EstornoModal from './EstornoModal';
 import CancelamentoModal from '@/components/feature/CancelamentoModal';
 import { useKDS } from '../../../../contexts/KDSContext';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSPedidoStatus } from '@/types/kds';
@@ -88,6 +87,7 @@ const ORIGEM_CONFIG: Record<string, { label: string; icon: string; color: string
   caixa:           { label: 'Caixa',          icon: 'ri-safe-2-line',       color: 'bg-amber-50  text-amber-700  border-amber-200'  },
   garcom:          { label: 'Garçom',          icon: 'ri-walk-line',         color: 'bg-sky-50    text-sky-700    border-sky-200'    },
   mesa:            { label: 'Mesa',            icon: 'ri-restaurant-2-line', color: 'bg-violet-50 text-violet-700 border-violet-200' },
+  qr_code:         { label: 'QR CODE',          icon: 'ri-qr-code-line',      color: 'bg-violet-50 text-violet-700 border-violet-200' },
   autoatendimento: { label: 'Autoatendimento', icon: 'ri-tablet-line',       color: 'bg-teal-50   text-teal-700   border-teal-200'   },
 };
 
@@ -99,11 +99,14 @@ const UNIDADE_STATUS_CFG: Record<string, { icon: string; color: string; label: s
 };
 
 function destinoLabel(p: PedidoRecente) {
-  if (p.destino === 'mesa')     return `Mesa ${p.mesaNumero}${p.nomeCliente ? ` · ${p.nomeCliente}` : ''}`;
+  if (p.destino === 'mesa') {
+    const nome = p.nomeCliente?.replace(new RegExp(`^Mesa\\s*${p.mesaNumero}\\s*[-–.·]?\\s*`), '').trim() ?? '';
+    return `Mesa ${p.mesaNumero}${nome ? ` - ${nome}` : ''}`;
+  }
   if (p.destino === 'nome')     return p.nomeCliente ?? '—';
-  if (p.destino === 'senha')    return `Senha ${p.senha}`;
+  if (p.destino === 'senha')    return `Senha ${p.senha}${p.nomeCliente ? ` - ${p.nomeCliente}` : ''}`;
   if (p.destino === 'hora')     return 'Balcão';
-  if (p.destino === 'delivery') return `Delivery · ${p.nomeCliente}`;
+  if (p.destino === 'delivery') return `Delivery - ${p.nomeCliente}`;
   return '—';
 }
 
@@ -616,6 +619,9 @@ function construirPedidoGrupo(
     minutosAtras: minutosAntigo,
     itensProntos: itensProntosTotal,
     itensTotal: itensTotalTotal,
+    // Preserva explicitamente os dados de participante da mesa digital
+    participantToken: (primeiro as PedidoRecenteComParticipant).participantToken ?? null,
+    participantName: (primeiro as PedidoRecenteComParticipant).participantName ?? null,
   };
 }
 
@@ -637,8 +643,10 @@ function agruparPedidos(pedidos: PedidoRecente[]): PedidoRecente[] {
       if (!gruposPagamento.has(pgId)) gruposPagamento.set(pgId, []);
       gruposPagamento.get(pgId)!.push(p);
     } else if (p.table_session_id && p.destino === 'mesa') {
-      // Pedidos de mesa (table_session_id) → agrupar
-      const key = `mesa-${p.table_session_id}`;
+      // Pedidos de mesa → agrupa por table_session_id + participantToken (senha)
+      // Pedidos de senhas diferentes da mesma mesa ficam separados
+      const token = (p as PedidoRecente & { participantToken?: string | null }).participantToken ?? '__sem_senha__';
+      const key = `mesa-${p.table_session_id}-${token}`;
       if (!gruposMesa.has(key)) gruposMesa.set(key, []);
       gruposMesa.get(key)!.push(p);
     } else {
@@ -719,7 +727,7 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
   const [expanded, setExpanded] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
   const [showEstorno, setShowEstorno] = useState(false);
-  const [showCancelamento, setShowCancelamento] = useState(false);
+  const [cancelandoOrderId, setCancelandoOrderId] = useState<string | null>(null);
   const [showPagamento, setShowPagamento] = useState(false);
   const [cancelado, setCancelado] = useState(false);
   const [estornado, setEstornado] = useState(false);
@@ -728,13 +736,15 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
   const [entreguesLocal, setEntreguesLocal] = useState<Set<string>>(new Set());
   const [itemEditando, setItemEditando] = useState<PedidoItemDetalhe | null>(null);
   const [pagamentoOrderId, setPagamentoOrderId] = useState<string>('');
+  const [pagamentoAutoLinkIds, setPagamentoAutoLinkIds] = useState<string[]>([]);
   const [cancelamentoItem, setCancelamentoItem] = useState<PedidoItemDetalhe | null>(null);
   const [diferencaPagamento, setDiferencaPagamento] = useState<{ valor: number; orderId: string } | null>(null);
 
   const isCancelado = cancelado || pedido.status === 'cancelado';
   const isPago = (pedido.pago === true || pagoLocal) && !estornado;
   const statusEfetivo = isCancelado ? 'cancelado' : pedido.status;
-  const origemCfg = ORIGEM_CONFIG[pedido.origem] ?? ORIGEM_CONFIG.caixa;
+  const isQRCode = pedido.origem === 'mesa' && !!(pedido as PedidoRecenteComParticipant).participantToken;
+  const origemCfg = isQRCode ? ORIGEM_CONFIG.qr_code : (ORIGEM_CONFIG[pedido.origem] ?? ORIGEM_CONFIG.caixa);
 
   const kdsStatusRaw = (pedido as PedidoRecente & { kdsStatus?: KDSPedidoStatus }).kdsStatus;
   const statusLabel = isCancelado ? 'Cancelado' : pdvStatusLabel(statusEfetivo as PedidoRecente['status'], kdsStatusRaw);
@@ -746,6 +756,8 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
   // Label do destino agrupado
   const destinoAgrupadoLabel = useMemo(() => {
     if (pedido.destino === 'mesa' && pedido.mesaNumero) {
+      const token = (pedido as PedidoRecenteComParticipant).participantToken;
+      if (token) return `QR CODE ${pedido.mesaNumero} — Senha ${token}`;
       return `Mesa ${pedido.mesaNumero}`;
     }
     if (pedido.destino === 'senha' && pedido.senha) {
@@ -757,8 +769,8 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
     if (pedido.destino === 'delivery') {
       return pedido.nomeCliente ? `Delivery · ${pedido.nomeCliente}` : 'Delivery';
     }
-    return 'Pedido';
-  }, [pedido.destino, pedido.mesaNumero, pedido.senha, pedido.nomeCliente]);
+    return 'Agrupados';
+  }, [pedido.destino, pedido.mesaNumero, pedido.senha, pedido.nomeCliente, (pedido as PedidoRecenteComParticipant).participantToken]);
 
   const handleEditar = (item: PedidoItemDetalhe) => {
     setItemEditando(item);
@@ -827,10 +839,12 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
   const primeiroNaoPago = pedidosOriginais.find((p) => !p.pago);
 
   const handlePagar = () => {
-    if (primeiroNaoPago) {
-      setPagamentoOrderId(primeiroNaoPago.id);
-      setShowPagamento(true);
-    }
+    const naoPagos = pedidosOriginais.filter((p) => !p.pago);
+    if (naoPagos.length === 0) return;
+    const primeiro = naoPagos[0];
+    setPagamentoOrderId(primeiro.id);
+    setPagamentoAutoLinkIds(naoPagos.slice(1).map((p) => p.id));
+    setShowPagamento(true);
   };
 
   return (
@@ -876,13 +890,15 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
           orderId={pagamentoOrderId}
           numeroDisplay={primeiroNaoPago.numero}
           total={primeiroNaoPago.total}
+          autoLinkOrderIds={pagamentoAutoLinkIds.length > 0 ? pagamentoAutoLinkIds : undefined}
           destinoDisplay={destinoLabel(primeiroNaoPago)}
           destino={pedidoRecenteToDestino(primeiroNaoPago)}
           paidByPdv="cashier"
-          onClose={() => setShowPagamento(false)}
+          onClose={() => { setShowPagamento(false); setPagamentoAutoLinkIds([]); }}
           onSuccess={(_orderId, _paymentMethodId) => {
             setPagoLocal(true);
             setShowPagamento(false);
+            setPagamentoAutoLinkIds([]);
           }}
         />
       )}
@@ -895,41 +911,57 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
           onKeyDown={(e) => e.key === 'Enter' && setExpanded((v) => !v)}
           className="px-3 pt-3 pb-2.5 cursor-pointer hover:brightness-95 transition-all"
         >
-          {/* Linha 1: número + destino + origem */}
-          <div className="flex items-start justify-between gap-2 mb-1.5 flex-wrap">
-            <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
-              <span className="font-black text-zinc-900 text-sm whitespace-nowrap">
-                {destinoAgrupadoLabel}
-              </span>
-              {pedido.nomeCliente && pedido.destino !== 'nome' && pedido.destino !== 'delivery' && (
-                <span className="text-xs font-semibold text-zinc-600 truncate" title={pedido.nomeCliente}>
-                  {pedido.nomeCliente}
-                </span>
-              )}
-              <span className={`flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${origemCfg.color}`}>
-                <i className={`${origemCfg.icon} text-[9px]`} />
-                {origemCfg.label}
-                {pedido.garcomNome && (
-                  <span className="ml-0.5">· {pedido.garcomNome.split(' ')[0]}</span>
-                )}
-              </span>
-              {pedido.isTraining && (
-                <span className="flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-yellow-300 text-yellow-900 border border-yellow-400">
-                  <i className="ri-graduation-cap-fill text-[9px]" />TREINO
-                </span>
-              )}
-              {/* Badge de pedidos agrupados */}
-              {pedidosOriginais.length > 1 && (
-                <span className="flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">
-                  <i className="ri-stack-line text-[9px]" />
-                  {pedidosOriginais.length} pedidos
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Linha 1: destino principal + preço sempre na mesma linha */}
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="font-black text-zinc-900 text-sm whitespace-nowrap">
+              {destinoAgrupadoLabel}
+            </span>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
               <span className="text-xs font-black text-zinc-900">{formatPrice(pedido.total)}</span>
               <i className={`text-zinc-400 text-sm flex-shrink-0 ${expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`} />
             </div>
+          </div>
+          {/* Badges: fluem em wrap, gap menor pra aproveitar espaço */}
+          <div className="flex flex-wrap items-center gap-1 mb-1.5">
+            {/* Nome do cliente (mesa digital via QR code) */}
+            {(pedido as PedidoRecenteComParticipant).participantName && (
+              <span className="flex items-center gap-0.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200 whitespace-nowrap" title={`Identificou-se como: ${(pedido as PedidoRecenteComParticipant).participantName}`}>
+                <i className="ri-user-smile-line text-[9px]" />{(pedido as PedidoRecenteComParticipant).participantName}
+              </span>
+            )}
+            {/* Senha do participante (mesa digital via QR code) */}
+            {(pedido as PedidoRecenteComParticipant).participantToken && (
+              <span className="flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 whitespace-nowrap">
+                <i className="ri-key-2-line text-[9px]" />Senha {(pedido as PedidoRecenteComParticipant).participantToken}
+              </span>
+            )}
+
+            <span className={`flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full border whitespace-nowrap ${origemCfg.color}`}>
+              <i className={`${origemCfg.icon} text-[9px]`} />
+              {isQRCode ? 'QR CODE' : (
+                <>
+                  {origemCfg.label}
+                  {pedido.origem === 'mesa' && pedido.mesaNumero && (
+                    <span className="ml-0.5">· {pedido.mesaNumero}</span>
+                  )}
+                </>
+              )}
+              {pedido.garcomNome && (
+                <span className="ml-0.5">· {pedido.garcomNome.split(' ')[0]}</span>
+              )}
+            </span>
+            {pedido.isTraining && (
+              <span className="flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-yellow-300 text-yellow-900 border border-yellow-400 whitespace-nowrap">
+                <i className="ri-graduation-cap-fill text-[9px]" />TREINO
+              </span>
+            )}
+            {/* Badge de pedidos agrupados */}
+            {pedidosOriginais.length > 1 && (
+              <span className="flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 whitespace-nowrap">
+                <i className="ri-stack-line text-[9px]" />
+                {pedidosOriginais.length} pedidos
+              </span>
+            )}
           </div>
 
           {/* Linha 2: tempo + pago + status + unidades + hora + pedidos */}
@@ -1026,6 +1058,11 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
                         <span className="text-xs font-black text-zinc-800">
                           #{String(p.numero).padStart(4, '0')}
                         </span>
+                        {(p as PedidoRecenteComParticipant).participantName && (
+                          <span className="flex items-center gap-0.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200" title={`Identificou-se como: ${(p as PedidoRecenteComParticipant).participantName}`}>
+                            <i className="ri-user-smile-line text-[9px]" />{(p as PedidoRecenteComParticipant).participantName}
+                          </span>
+                        )}
                         <CronometroBadge pedido={p} />
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${pdvStatusBadgeCls(p.status, p.kdsStatus)}`}>
                           {pdvStatusLabel(p.status, p.kdsStatus)}
@@ -1033,6 +1070,16 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
                         <span className="text-[10px] text-zinc-400 font-medium">{p.criadoEm}</span>
                       </div>
                       <span className="text-xs font-bold text-zinc-700">{formatPrice(p.total)}</span>
+                      {/* Botão cancelar pedido específico */}
+                      {p.status !== 'cancelado' && p.status !== 'entregue' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setCancelandoOrderId(p.id); }}
+                          title={`Cancelar pedido #${String(p.numero).padStart(4, '0')}`}
+                          className="w-6 h-6 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 border border-red-200 hover:border-red-300 rounded-md cursor-pointer transition-colors flex-shrink-0"
+                        >
+                          <i className="ri-close-circle-line text-sm" />
+                        </button>
+                      )}
                     </div>
                     {/* Itens desse pedido */}
                     <div className="px-2.5 py-2 space-y-2">
@@ -1169,8 +1216,11 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
                       <i className="ri-refund-2-line text-sm" />
                     </button>
                   )}
-                  {!isCancelado && !estornado && (statusEfetivo === 'aberto' || statusEfetivo === 'pronto') && (
-                    <button onClick={() => setShowCancelamento(true)} title="Cancelar"
+                  {!isCancelado && !estornado && (statusEfetivo === 'aberto' || statusEfetivo === 'pronto') && pedidosOriginais.some((p) => p.status !== 'cancelado') && (
+                    <button onClick={() => {
+                      const alvo = pedidosOriginais.find((p) => p.status !== 'cancelado');
+                      if (alvo) setCancelandoOrderId(alvo.id);
+                    }} title="Cancelar"
                       className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-700 border border-red-200 hover:border-red-400 hover:bg-red-50 rounded-lg cursor-pointer transition-colors">
                       <i className="ri-close-circle-line text-sm" />
                     </button>
@@ -1182,17 +1232,29 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
         )}
 
         {imprimindo && <ImprimirPedidoModal pedido={pedido} onClose={() => setImprimindo(false)} />}
-        {showEstorno && <EstornoModal pedido={pedido} onClose={() => setShowEstorno(false)} onConfirmar={() => { setEstornado(true); setShowEstorno(false); }} />}
-        {showCancelamento && (
+        {showEstorno && (
           <CancelamentoModal
             tipo="pedido"
             orderId={pedido.pedidoIds?.[0] ?? pedido.id}
             orderNumber={pedido.numero}
             pagamentos={pedido.pagamentos}
-            onConcluido={() => { setCancelado(true); setShowCancelamento(false); onRecarregar?.(); }}
-            onFechar={() => setShowCancelamento(false)}
+            onConcluido={() => { setEstornado(true); setShowEstorno(false); onRecarregar?.(); }}
+            onFechar={() => setShowEstorno(false)}
           />
         )}
+        {cancelandoOrderId && (() => {
+          const ord = pedidosOriginais.find((p) => p.id === cancelandoOrderId) ?? pedido;
+          return (
+            <CancelamentoModal
+              tipo="pedido"
+              orderId={cancelandoOrderId}
+              orderNumber={ord.numero}
+              pagamentos={ord.pagamentos}
+              onConcluido={() => { setCancelado(true); setCancelandoOrderId(null); onRecarregar?.(); }}
+              onFechar={() => setCancelandoOrderId(null)}
+            />
+          );
+        })()}
         {cancelamentoItem && (
           <CancelamentoModal
             tipo="item"
@@ -1238,7 +1300,8 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
   // pagoLocal é otimista — set imediatamente após PagamentoRapidoModal.onSuccess
   const isPago = (pedido.pago === true || pagoLocal) && !estornado;
   const statusEfetivo = isCancelado ? 'cancelado' : pedido.status;
-  const origemCfg = ORIGEM_CONFIG[pedido.origem] ?? ORIGEM_CONFIG.caixa;
+  const isQRCode = pedido.origem === 'mesa' && !!(pedido as PedidoRecenteComParticipant).participantToken;
+  const origemCfg = isQRCode ? ORIGEM_CONFIG.qr_code : (ORIGEM_CONFIG[pedido.origem] ?? ORIGEM_CONFIG.caixa);
 
 
   // Use centralized mappers — source of truth is KDS status, no re-derivation
@@ -1370,45 +1433,62 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
         onKeyDown={(e) => e.key === 'Enter' && setExpanded((v) => !v)}
         className="px-3 pt-3 pb-2.5 cursor-pointer hover:brightness-95 transition-all"
       >
-        {/* Linha 1: número + destino + origem */}
-        <div className="flex items-start justify-between gap-2 mb-1.5 flex-wrap">
-          <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
-            <span className="font-black text-zinc-900 text-sm whitespace-nowrap">
-              #{String(pedido.numero).padStart(4, '0')}
-            </span>
-            <span className="text-xs font-semibold text-zinc-600 truncate" title={destinoLabel(pedido)}>
-              {destinoLabel(pedido)}
-            </span>
-            {/* Senha do participante (mesa digital) */}
-            {(pedido as PedidoRecenteComParticipant).participantToken && (
-              <span className="flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">
-                <i className="ri-key-2-line text-[9px]" />Senha {(pedido as PedidoRecenteComParticipant).participantToken}
-              </span>
-            )}
-            <span className={`flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${origemCfg.color}`}>
-              <i className={`${origemCfg.icon} text-[9px]`} />
-              {origemCfg.label}
-              {pedido.origem === 'garcom' && pedido.garcomNome && (
-                <span className="ml-0.5">· {pedido.garcomNome.split(' ')[0]}</span>
-              )}
-            </span>
-            {/* BUG 3.7 FIX: garcom em pedidos de mesa */}
-            {pedido.origem !== 'garcom' && pedido.garcomNome && (
-              <span className="flex items-center gap-0.5 text-[9px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-full">
-                <i className="ri-walk-line text-[9px]" />{pedido.garcomNome.split(' ')[0]}
-              </span>
-            )}
-            {/* BUG 2.3 FIX: badge TREINO */}
-            {pedido.isTraining && (
-              <span className="flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-yellow-300 text-yellow-900 border border-yellow-400">
-                <i className="ri-graduation-cap-fill text-[9px]" />TREINO
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+        {/* Linha 1: número + preço sempre na mesma linha */}
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <span className="font-black text-zinc-900 text-sm whitespace-nowrap">
+            #{String(pedido.numero).padStart(4, '0')}
+          </span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             <span className="text-xs font-black text-zinc-900">{formatPrice(pedido.total)}</span>
             <i className={`text-zinc-400 text-sm flex-shrink-0 ${expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`} />
           </div>
+        </div>
+        {/* Badges: fluem em wrap com gap menor pra aproveitar espaço */}
+        <div className="flex flex-wrap items-center gap-1 mb-1.5">
+          {/* Não exibe destinoLabel quando há badge de participantToken (senha já aparece em evidência) */}
+          {!(pedido as PedidoRecenteComParticipant).participantToken && (
+            <span className="text-xs font-semibold text-zinc-600 truncate max-w-[120px]" title={destinoLabel(pedido)}>
+              {destinoLabel(pedido)}
+            </span>
+          )}
+          {/* Nome do cliente (mesa digital via QR code) */}
+          {(pedido as PedidoRecenteComParticipant).participantName && (
+            <span className="flex items-center gap-0.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200 whitespace-nowrap" title={`Identificou-se como: ${(pedido as PedidoRecenteComParticipant).participantName}`}>
+              <i className="ri-user-smile-line text-[9px]" />{(pedido as PedidoRecenteComParticipant).participantName}
+            </span>
+          )}
+          {/* Senha do participante (mesa digital) */}
+          {(pedido as PedidoRecenteComParticipant).participantToken && (
+            <span className="flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 whitespace-nowrap">
+              <i className="ri-key-2-line text-[9px]" />Senha {(pedido as PedidoRecenteComParticipant).participantToken}
+            </span>
+          )}
+          <span className={`flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full border whitespace-nowrap ${origemCfg.color}`}>
+            <i className={`${origemCfg.icon} text-[9px]`} />
+            {isQRCode ? 'QR CODE' : (
+              <>
+                {origemCfg.label}
+                {pedido.origem === 'mesa' && pedido.mesaNumero && (
+                  <span className="ml-0.5">· {pedido.mesaNumero}</span>
+                )}
+              </>
+            )}
+            {pedido.origem === 'garcom' && pedido.garcomNome && (
+              <span className="ml-0.5">· {pedido.garcomNome.split(' ')[0]}</span>
+            )}
+          </span>
+          {/* BUG 3.7 FIX: garcom em pedidos de mesa */}
+          {pedido.origem !== 'garcom' && pedido.garcomNome && (
+            <span className="flex items-center gap-0.5 text-[9px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+              <i className="ri-walk-line text-[9px]" />{pedido.garcomNome.split(' ')[0]}
+            </span>
+          )}
+          {/* BUG 2.3 FIX: badge TREINO */}
+          {pedido.isTraining && (
+            <span className="flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-yellow-300 text-yellow-900 border border-yellow-400 whitespace-nowrap">
+              <i className="ri-graduation-cap-fill text-[9px]" />TREINO
+            </span>
+          )}
         </div>
 
         {/* Linha 2: tempo + pago + status + unidades + hora */}
@@ -1632,7 +1712,16 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
       )}
 
       {imprimindo && <ImprimirPedidoModal pedido={pedido} onClose={() => setImprimindo(false)} />}
-      {showEstorno && <EstornoModal pedido={pedido} onClose={() => setShowEstorno(false)} onConfirmar={() => { setEstornado(true); setShowEstorno(false); }} />}
+      {showEstorno && (
+        <CancelamentoModal
+          tipo="pedido"
+          orderId={pedido.id}
+          orderNumber={pedido.numero}
+          pagamentos={pedido.pagamentos}
+          onConcluido={() => { setEstornado(true); setShowEstorno(false); onRecarregar?.(); }}
+          onFechar={() => setShowEstorno(false)}
+        />
+      )}
       {showCancelamento && (
         <CancelamentoModal
           tipo="pedido"
@@ -1895,7 +1984,7 @@ export default function PedidosRecentesPanel() {
             type="text"
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
-            placeholder="Buscar por nº, cliente, senha da mesa ou participante..."
+            placeholder="Buscar por nº, nome do cliente, senha da mesa..."
             className="flex-1 min-w-0 bg-transparent text-xs font-medium text-zinc-700 placeholder-zinc-400 outline-none"
           />
           {busca && (

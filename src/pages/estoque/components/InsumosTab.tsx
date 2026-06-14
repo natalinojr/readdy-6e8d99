@@ -7,7 +7,6 @@ import { useIngredientCategories } from '@/hooks/useIngredientCategories';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import NovaCompraModal from '@/pages/financeiro/components/NovaCompraModal';
-import AlertasReposicao from './AlertasReposicao';
 import HistoricoComprasModal from './HistoricoComprasModal';
 import CategoriasModal from './insumos/CategoriasModal';
 import InsumoModal from './insumos/InsumoModal';
@@ -18,7 +17,7 @@ import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal'
 import ItensIndisponiveisPanel from './ItensIndisponiveisPanel';
 
 export default function InsumosTab() {
-  const { insumos, insumosEsgotados, marcarInsumoEsgotado, upsertInsumo, reloadInsumos, addMovimentacao } = useEstoque();
+  const { insumos, insumosEsgotados, marcarInsumoEsgotado, upsertInsumo, reloadInsumos, addMovimentacao, inventarioSessions } = useEstoque();
   const { recipes, batches } = useProducao();
   const { categories, names: categoriasDB, loading: loadingCategorias, addCategory, removeCategory } = useIngredientCategories();
   const { user } = useAuth();
@@ -52,7 +51,7 @@ export default function InsumosTab() {
       .then(({ data }) => setDreCategories(data ?? []));
   }, [user?.tenantId]);
 
-  // Set de nomes de fichas para identificar produtos semi-acabados
+  // Set de nomes de fichas para identificar produtos produzidos
   const recipeNames = useMemo(() => new Set(recipes.map((r) => r.name).filter(Boolean) as string[]), [recipes]);
 
   // Última produção de cada produto (indexado pelo nome)
@@ -118,6 +117,9 @@ export default function InsumosTab() {
 
   const alertas = insumos.filter((i) => i.estoqueAtual <= i.estoqueMinimo && i.estoqueMinimo > 0).length;
   const qtdEsgotados = insumosEsgotados.length;
+  const criticosResumo = insumos.filter((i) => i.estoqueAtual <= i.estoqueMinimo * 0.5).length;
+  const valorTotalEstoque = insumos.reduce((s, i) => s + i.estoqueAtual * i.precoUnitario, 0);
+  const fmtValor = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
   const insumosRuptura = useMemo(() => insumos
     .map((i) => ({ insumo: i, dias: diasParaRuptura(i) }))
@@ -189,8 +191,6 @@ export default function InsumosTab() {
 
   return (
     <div className="space-y-4">
-      <AlertasReposicao onEntradaRapida={(ins) => setEntradaRapida(ins)} />
-
       {/* Painel de itens do cardápio indisponíveis por falta de insumo */}
       <ItensIndisponiveisPanel
         onEntradaRapida={(insumoId, insumoNome) => {
@@ -258,6 +258,26 @@ export default function InsumosTab() {
           )}
         </div>
       )}
+
+      {/* Cards de resumo */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white border border-zinc-100 rounded-xl p-4 text-center">
+          <p className="text-xl font-bold text-zinc-900">{insumos.length}</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">Total de insumos</p>
+        </div>
+        <div className={`bg-white border rounded-xl p-4 text-center ${criticosResumo > 0 ? 'border-red-200' : 'border-zinc-100'}`}>
+          <p className={`text-xl font-bold ${criticosResumo > 0 ? 'text-red-500' : 'text-zinc-400'}`}>{criticosResumo}</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">Críticos</p>
+        </div>
+        <div className="bg-white border border-zinc-100 rounded-xl p-4 text-center">
+          <p className="text-xl font-bold text-zinc-700">{inventarioSessions.length}</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">Contagens</p>
+        </div>
+        <div className="bg-white border border-zinc-100 rounded-xl p-4 text-center">
+          <p className="text-sm font-bold text-zinc-900">{fmtValor(valorTotalEstoque)}</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">Valor em estoque</p>
+        </div>
+      </div>
 
       {/* Filtros */}
       <div className="flex flex-col gap-3">
@@ -373,7 +393,7 @@ export default function InsumosTab() {
                                 <p className={`font-medium group-hover:text-amber-600 transition-colors ${esgotado ? 'text-red-700' : 'text-zinc-800'}`}>{insumo.nome}</p>
                                 {isProdutoAcabado && (
                                   <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded-full text-[9px] font-bold border border-amber-200 whitespace-nowrap">
-                                    PRODUÇÃO
+                                    PRODUZIDO
                                   </span>
                                 )}
                               </div>
@@ -483,7 +503,7 @@ export default function InsumosTab() {
                         <p className={`text-sm font-bold truncate ${esgotado ? 'text-red-700' : 'text-zinc-800'}`}>{insumo.nome}</p>
                         {isProdutoAcabado && (
                           <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded-full text-[9px] font-bold border border-amber-200 whitespace-nowrap">
-                            PRODUTO
+                            PRODUZIDO
                           </span>
                         )}
                       </div>

@@ -6,7 +6,7 @@ import { useKDS } from '@/contexts/KDSContext';
 import type { KDSPedido, KDSItem } from '@/types/kds';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { getAppBaseUrl } from '@/lib/appUrl';
+import { getPublicUrl } from '@/lib/appUrl';
 
 // ── Validação de pedidos antes de fechar mesa ──────────────────────────────────
 
@@ -318,6 +318,7 @@ export default function MesaDetalhes({ mesa, todasMesas, onClose, onUpdate, onTr
   const [nomeSalvoOk, setNomeSalvoOk] = useState(false);
   const [verificandoFechamento, setVerificandoFechamento] = useState(false);
   const [pedidosPendentes, setPedidosPendentes] = useState<PedidoPendente[] | null>(null);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
 
   // ── Dados em tempo real do KDS ──
   const { pedidos: todosPedidos } = useKDS();
@@ -357,6 +358,27 @@ export default function MesaDetalhes({ mesa, todasMesas, onClose, onUpdate, onTr
   // Clientes da sessão (Supabase)
   const { clientes, loading: loadingClientes } = useClientesMesa(mesa);
 
+  // Buscar session_token da sessão ativa (para QR code seguro)
+  useEffect(() => {
+    if (!mesa.tableSessionId) {
+      setSessionToken(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchToken = async () => {
+      const { data } = await supabase
+        .from('table_sessions')
+        .select('session_token')
+        .eq('id', mesa.tableSessionId)
+        .maybeSingle();
+      if (!cancelled) {
+        setSessionToken(data?.session_token ?? null);
+      }
+    };
+    fetchToken();
+    return () => { cancelled = true; };
+  }, [mesa.tableSessionId]);
+
   const handleSalvar = async () => {
     setSalvandoNome(true);
     // Se mesa está ocupada e tem sessão aberta, salva o customer_name no banco
@@ -380,9 +402,9 @@ export default function MesaDetalhes({ mesa, todasMesas, onClose, onUpdate, onTr
 
   const mesasLivres = todasMesas.filter((m) => m.id !== mesa.id && m.status === 'livre');
 
-  // QR URL construído diretamente do qrToken vindo do contexto (via fn_get_tables)
+  // QR URL com session_token da sessão ativa (se disponível)
   const qrUrl = mesa.qrToken
-    ? `${getAppBaseUrl()}/mesa-qr/${mesa.qrToken}`
+    ? getPublicUrl(`/mesa-qr/${mesa.qrToken}${sessionToken ? `/${sessionToken}` : ''}`)
     : '';
 
   const tabs = [
@@ -866,8 +888,13 @@ export default function MesaDetalhes({ mesa, todasMesas, onClose, onUpdate, onTr
           <div className="p-3 flex flex-col items-center text-center space-y-4">
             {qrUrl ? (
               <>
-                <div className="bg-white border-4 border-zinc-900 rounded-2xl p-4">
+                <div className="bg-white border-4 border-zinc-900 rounded-2xl p-4 relative inline-block">
                   <QRCode value={qrUrl} size={150} level="M" style={{ display: 'block' }} />
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="bg-white rounded-full w-12 h-12 flex items-center justify-center border-[3px] border-zinc-900 shadow-sm">
+                      <span className="text-base font-black text-zinc-900 leading-none">{mesa.numero}</span>
+                    </div>
+                  </div>
                 </div>
                 <div>
                   <p className="font-bold text-zinc-900">Mesa {mesa.numero}</p>

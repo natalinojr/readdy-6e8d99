@@ -4,18 +4,20 @@ import CategoriasTab from './components/CategoriasTab';
 import ItensTab from './components/ItensTab';
 import CombosTab from './components/CombosTab';
 import ObservacoesGlobaisTab from './components/ObservacoesGlobaisTab';
+import DestaquesTab from './components/DestaquesTab';
 import CardapioExportImportModal from '../../components/feature/CardapioExportImportModal';
 
 import { notifyReload } from '@/lib/reloadSignal';
 
-type Tab = 'categorias' | 'itens' | 'combos' | 'obsGlobais';
+type Tab = 'destaques' | 'itens' | 'categorias' | 'combos' | 'obsGlobais';
 
 export default function CardapioPage() {
-  const { itens, categorias, combos, obsGlobais, loading, recarregar } = useCardapio();
-  const [activeTab, setActiveTab] = useState<Tab>('itens');
+  const { itens, categorias, combos, obsGlobais, destaques, loading, recarregar } = useCardapio();
+  const [activeTab, setActiveTab] = useState<Tab>('destaques');
   const [showExportImport, setShowExportImport] = useState(false);
 
   const tabs: { id: Tab; label: string; shortLabel: string; icon: string; count: number }[] = [
+    { id: 'destaques', label: 'Destaques', shortLabel: 'Dest.', icon: 'ri-star-line', count: destaques.length },
     { id: 'itens', label: 'Itens', shortLabel: 'Itens', icon: 'ri-file-list-3-line', count: itens.length },
     { id: 'categorias', label: 'Categorias', shortLabel: 'Categ.', icon: 'ri-layout-grid-line', count: categorias.length },
     { id: 'combos', label: 'Combos', shortLabel: 'Combos', icon: 'ri-gift-2-line', count: combos.length },
@@ -94,6 +96,7 @@ export default function CardapioPage() {
             <div className="w-6 h-6 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
           </div>
         )}
+        {!loading && activeTab === 'destaques' && <DestaquesTab />}
         {!loading && activeTab === 'itens' && <ItensTab />}
         {!loading && activeTab === 'categorias' && <CategoriasTab />}
         {!loading && activeTab === 'combos' && <CombosTab />}

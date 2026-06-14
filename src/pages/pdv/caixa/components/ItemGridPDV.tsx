@@ -133,7 +133,7 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
           const semEstoqueInsumo = insumosFaltando.length > 0;
           const esgotado = itensDesabilitadosIds.includes(item.id) || semEstoqueInsumo;
           const itemNumber = globalNumberMap.get(item.id) ?? 0;
-          const temObrigatorio = item.gruposOpcoes.some((g) => g.obrigatorio);
+          const temOpcoes = item.gruposOpcoes.length > 0;
 
           return (
             <div
@@ -207,7 +207,7 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
                   )}
 
                   {/* Hover overlay com ícone + */}
-                  {!esgotado && !temObrigatorio && (
+                  {!esgotado && !temOpcoes && (
                     <div className="absolute inset-0 bg-amber-500/0 group-hover:bg-amber-500/15 transition-all duration-200 flex items-center justify-center">
                       <div className="opacity-0 group-hover:opacity-100 transition-all duration-200 scale-75 group-hover:scale-100 bg-amber-500 text-white rounded-full w-9 h-9 flex items-center justify-center">
                         <i className="ri-add-line text-lg font-bold" />
@@ -249,7 +249,7 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
               {/* Rodapé — só quando não esgotado */}
               {!esgotado && (
                 <div className="px-3 pb-2.5 pt-0 flex items-center justify-between gap-1">
-                  {temObrigatorio ? (
+                  {temOpcoes ? (
                     <span className="flex items-center gap-1 text-[10px] text-zinc-400 font-medium">
                       <i className="ri-settings-3-line text-xs" />
                       Personalizar
@@ -267,9 +267,9 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
                       Obs
                     </button>
                   )}
-                  {temObrigatorio && (
+                  {temOpcoes && (
                     <span className="text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                      Obrigatório
+                      Opções
                     </span>
                   )}
                 </div>

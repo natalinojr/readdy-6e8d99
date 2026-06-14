@@ -61,7 +61,7 @@ export default function KDSPage() {
   const { estado, sessao, estacoesAbertas, fecharEstacao, loadingSession } = useSessao();
   const { user } = useAuth();
   const { marcarInsumoEsgotado, insumosEsgotados, insumos } = useEstoque();
-  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, toggleObsChecadaRemote, pedidosSalvando } = useKDS();
+  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, toggleObsChecadaRemote, pedidosSalvando, pendingStatusCount, flushPendingStatusQueue } = useKDS();
   const { itensAtivos, estacoes } = useCardapio();
   const { settings: sysSettings } = useSystemSettings();
 
@@ -102,7 +102,7 @@ export default function KDSPage() {
   const [buscaInsumo, setBuscaInsumo] = useState('');
   const [insumoEsgotadoId, setInsumoEsgotadoId] = useState('');
   const [clock, setClock] = useState(new Date());
-  const [somAtivo, setSomAtivo] = useState(false);
+  const [somAtivo, setSomAtivo] = useState(true);
   const [buscaKDS, setBuscaKDS] = useState('');
   const [flashNovo, setFlashNovo] = useState(false);
   const prevNovosRef = useRef(pedidos.filter((p) => p.status === 'novo').length);
@@ -635,6 +635,33 @@ export default function KDSPage() {
     return () => window.removeEventListener('kds:order-locked', handler);
   }, []);
 
+  // ── BUG-35: Alerta de atualização de status com falha ──
+  const [statusFailAlert, setStatusFailAlert] = useState<{ count: number; timestamp: number } | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { pendingCount: number; permanent?: boolean } | undefined;
+      if (detail) {
+        setStatusFailAlert({ count: detail.pendingCount, timestamp: Date.now() });
+        // Auto-dismiss após 15s (se ainda houver pendências, o operador verá de novo no próximo toque)
+        setTimeout(() => setStatusFailAlert((prev) => {
+          if (!prev) return null;
+          // Se envelheceu 15s e count não mudou, limpa
+          if (Date.now() - prev.timestamp >= 15000) return null;
+          return prev;
+        }), 15000);
+      }
+    };
+    window.addEventListener('kds:status-update-failed', handler);
+    return () => window.removeEventListener('kds:status-update-failed', handler);
+  }, []);
+
+  // Se pendingStatusCount chegou a zero, limpa o alerta
+  useEffect(() => {
+    if (pendingStatusCount === 0 && statusFailAlert) {
+      setStatusFailAlert(null);
+    }
+  }, [pendingStatusCount, statusFailAlert]);
+
   const estacaoInfo =
     estacaoFiltro !== 'Todas'
       ? estacoesAbertas.find((e) => e.estacaoNome === estacaoFiltro) ?? null
@@ -698,6 +725,36 @@ export default function KDSPage() {
           <button onClick={() => setLockAlert(null)} className="text-white/70 hover:text-white cursor-pointer">
             <i className="ri-close-line text-sm" />
           </button>
+        </div>
+      )}
+
+      {/* ── BUG-35: Banner de atualização de status com falha ── */}
+      {(statusFailAlert || pendingStatusCount > 0) && (
+        <div className="flex items-center justify-between px-4 py-2 flex-shrink-0 bg-orange-500">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 flex items-center justify-center">
+              <i className="ri-cloud-off-line text-white text-base" />
+            </div>
+            <span className="text-white text-xs font-bold">
+              {pendingStatusCount > 0
+                ? `${pendingStatusCount} atualização${pendingStatusCount > 1 ? 'ções' : ''} de status pendente${pendingStatusCount > 1 ? 's' : ''} — tentando novamente em breve`
+                : 'Falha ao atualizar status — verifique a conexão'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { flushPendingStatusQueue(); setStatusFailAlert(null); }}
+              className="px-3 py-1 bg-white/20 hover:bg-white/30 text-white text-xs font-bold rounded-md cursor-pointer whitespace-nowrap transition-colors"
+            >
+              Tentar agora
+            </button>
+            <button
+              onClick={() => setStatusFailAlert(null)}
+              className="text-white/70 hover:text-white cursor-pointer"
+            >
+              <i className="ri-close-line text-sm" />
+            </button>
+          </div>
         </div>
       )}
 

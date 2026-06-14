@@ -45,34 +45,28 @@ export default function EditarItemCarrinhoModal({ item, itemAtual, index, onSalv
     if (q === 1) setAbaObs('todas');
   };
 
-  // Reconstrói o estado de selecionadas a partir do array flat de opcoesSelecionadas
-  const [selecionadas, setSelecionadas] = useState<Record<string, string[]>>(() => {
-    const result: Record<string, string[]> = {};
+  // Reconstrói o estado de selecionadas a partir do array de opcoesSelecionadas
+  const [selecionadas, setSelecionadas] = useState<Record<string, { id?: string; nome: string; precoAdicional: number; grupoNome: string }[]>>(() => {
+    const result: Record<string, { id?: string; nome: string; precoAdicional: number; grupoNome: string }[]> = {};
     item.opcoes?.forEach((grupo) => {
-      const sels = grupo.itens
-        .filter((opt) => itemAtual.opcoesSelecionadas.includes(opt.nome))
-        .map((opt) => opt.nome);
+      const sels = itemAtual.opcoesSelecionadas
+        .filter((opt) => grupo.itens.some((gopt) => gopt.nome === opt.nome))
+        .map((opt) => ({ id: opt.id || grupo.itens.find((gi) => gi.nome === opt.nome)?.id, nome: opt.nome, precoAdicional: opt.precoAdicional || grupo.itens.find((gi) => gi.nome === opt.nome)?.precoAdicional || 0, grupoNome: grupo.grupo }));
       if (sels.length > 0) result[grupo.grupo] = sels;
     });
     return result;
   });
 
-  const toggleOpcao = (grupo: string, opcao: string, obrigatorio: boolean) => {
+  const toggleOpcao = (grupo: string, opcao: { id?: string; nome: string; precoAdicional: number; grupoNome: string }, obrigatorio: boolean) => {
     setSelecionadas((prev) => {
       const atual = prev[grupo] ?? [];
       if (obrigatorio) return { ...prev, [grupo]: [opcao] };
-      if (atual.includes(opcao)) return { ...prev, [grupo]: atual.filter((o) => o !== opcao) };
+      if (atual.some((o) => o.nome === opcao.nome)) return { ...prev, [grupo]: atual.filter((o) => o.nome !== opcao.nome) };
       return { ...prev, [grupo]: [...atual, opcao] };
     });
   };
 
-  const totalOpcoes = Object.entries(selecionadas).reduce((sum, [grupo, selected]) => {
-    const grp = item.opcoes?.find((g) => g.grupo === grupo);
-    return sum + selected.reduce((s, o) => {
-      const it = grp?.itens.find((i) => i.nome === o);
-      return s + (it?.precoAdicional ?? 0);
-    }, 0);
-  }, 0);
+  const totalOpcoes = Object.values(selecionadas).flat().reduce((sum, o) => sum + o.precoAdicional, 0);
 
   const precoUnit = item.preco + totalOpcoes;
   const total = precoUnit * qtd;
@@ -150,11 +144,12 @@ export default function EditarItemCarrinhoModal({ item, itemAtual, index, onSalv
               </div>
               <div className="space-y-1.5">
                 {grupo.itens.map((opcao) => {
-                  const sel = selecionadas[grupo.grupo]?.includes(opcao.nome);
+                  const sel = selecionadas[grupo.grupo]?.some((o) => o.nome === opcao.nome);
+                  const opTrack = { id: opcao.id, nome: opcao.nome, precoAdicional: opcao.precoAdicional, grupoNome: grupo.grupo, obrigatorio: grupo.obrigatorio };
                   return (
                     <button
                       key={opcao.nome}
-                      onClick={() => toggleOpcao(grupo.grupo, opcao.nome, grupo.obrigatorio)}
+                      onClick={() => toggleOpcao(grupo.grupo, opTrack, grupo.obrigatorio)}
                       className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all cursor-pointer ${
                         sel
                           ? 'border-amber-400 bg-amber-50'

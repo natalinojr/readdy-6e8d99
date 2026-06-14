@@ -36,12 +36,12 @@ function fmtData() {
   });
 }
 
-function descrDestino(destino: DestinoInfo | null): string {
+function descrDestino(destino: DestinoInfo | null, numero?: number): string {
   if (!destino) return 'Balcão';
   if (destino.tipo === 'mesa') return `Mesa ${destino.mesaNumero}`;
   if (destino.tipo === 'nome') return destino.nomeCliente ?? '';
   if (destino.tipo === 'senha') return `Senha: ${destino.senha}`;
-  if (destino.tipo === 'delivery') return `Delivery · ${destino.nomeCliente}`;
+  if (destino.tipo === 'delivery') return numero != null ? `Pedido #${String(numero).padStart(4, '0')}` : `Delivery · ${destino.nomeCliente}`;
   if (destino.tipo === 'hora') return 'Fechar na Hora';
   return 'Balcão';
 }
@@ -49,7 +49,7 @@ function descrDestino(destino: DestinoInfo | null): string {
 function buildItensHTML(carrinho: CarrinhoItem[]): string {
   return carrinho.map((item) => {
     const opcoesHTML = (item.opcoes ?? [])
-      .map((o) => `<div style="padding-left:12px;font-size:10px;color:#555;">+ ${o.opcaoNome}${o.precoAdicional > 0 ? ` (+${fmtPreco(o.precoAdicional)})` : ''}</div>`)
+      .map((o) => `<div style="padding-left:12px;font-size:10px;color:#555;">${o.obrigatorio ? '' : '+ '}${o.opcaoNome}${o.precoAdicional > 0 ? ` (+${fmtPreco(o.precoAdicional)})` : ''}</div>`)
       .join('');
     const obsHTML = item.observacaoLivre
       ? `<div style="padding-left:12px;font-size:10px;color:#777;">Obs: ${item.observacaoLivre}</div>`
@@ -84,7 +84,7 @@ function buildPedidosVinculadosHTML(pedidos: PedidoVinculadoComprovante[]): stri
     return `
       <div style="margin-bottom:8px;">
         <div style="font-weight:bold;font-size:11px;color:#000;margin-bottom:4px;padding:4px 0;border-bottom:1px dashed #ccc;">
-          Pedido #${numStr} · ${descrDestino(pedido.destino ?? null)} · ${fmtPreco(pedido.total)}
+          Pedido #${numStr} · ${descrDestino(pedido.destino ?? null, pedido.numero)} · ${fmtPreco(pedido.total)}
         </div>
         ${itensHTML}
       </div>`;
@@ -168,14 +168,14 @@ function buildReceiptHTML(props: Omit<Props, 'onClose'>): string {
   ${!temVinculados ? `
   <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
     <span>Destino:</span>
-    <span style="font-weight:bold;">${descrDestino(destino)}</span>
+    <span style="font-weight:bold;">${descrDestino(destino, numero)}</span>
   </div>
   <hr class="divider"/>
   ` : ''}
 
   ${!temVinculados ? itensHTML : `
   <div style="font-weight:bold;font-size:11px;margin-bottom:4px;padding:4px 0;border-bottom:1px dashed #ccc;">
-    Pedido #${numStr} · ${descrDestino(destino)} · ${fmtPreco(subtotal)}
+    Pedido #${numStr} · ${descrDestino(destino, numero)} · ${fmtPreco(subtotal)}
   </div>
   ${itensHTML}
   `}
@@ -264,7 +264,7 @@ export default function ComprovantePrint({
             {!temVinculados && (
               <div className="flex justify-between">
                 <span className="text-zinc-500">Destino:</span>
-                <span className="font-bold">{descrDestino(destino)}</span>
+                <span className="font-bold">{descrDestino(destino, numero)}</span>
               </div>
             )}
             {!temVinculados && <div className="border-t border-dashed border-zinc-400 my-2" />}
@@ -273,7 +273,7 @@ export default function ComprovantePrint({
             <div className="mb-1">
               {temVinculados && (
                 <div className="font-bold text-[10px] text-zinc-700 mb-1 pb-1 border-b border-dashed border-zinc-300">
-                  Pedido #{String(numero).padStart(4, '0')} · {descrDestino(destino)} · {fmtPreco(subtotal)}
+                  Pedido #{String(numero).padStart(4, '0')} · {descrDestino(destino, numero)} · {fmtPreco(subtotal)}
                 </div>
               )}
               {carrinho.map((item, idx) => (
@@ -283,7 +283,7 @@ export default function ComprovantePrint({
                     <span className="font-bold">{fmtPreco(item.precoTotal * item.quantidade)}</span>
                   </div>
                   {(item.opcoes ?? []).map((o, i) => (
-                    <div key={i} className="pl-3 text-[10px] text-zinc-400">+ {o.opcaoNome}</div>
+                    <div key={i} className="pl-3 text-[10px] text-zinc-400">{o.obrigatorio ? '' : '+ '}{o.opcaoNome}</div>
                   ))}
                   {item.observacaoLivre && (
                     <div className="pl-3 text-[10px] text-amber-500">Obs: {item.observacaoLivre}</div>
@@ -299,7 +299,7 @@ export default function ComprovantePrint({
                 {(pedidosVinculados ?? []).map((pedido, pidx) => (
                   <div key={pidx} className="mb-2">
                     <div className="font-bold text-[10px] text-zinc-700 mb-1 pb-1 border-b border-dashed border-zinc-300">
-                      Pedido #{pedido.numeroStr || String(pedido.numero).padStart(4, '0')} · {descrDestino(pedido.destino ?? null)} · {fmtPreco(pedido.total)}
+                      Pedido #{pedido.numeroStr || String(pedido.numero).padStart(4, '0')} · {descrDestino(pedido.destino ?? null, pedido.numero)} · {fmtPreco(pedido.total)}
                     </div>
                     {pedido.itens.map((item, idx) => (
                       <div key={idx} className="mb-0.5">

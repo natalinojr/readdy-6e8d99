@@ -515,6 +515,51 @@ Deno.serve(async (req) => {
             if ((orderData as Record<string, unknown>)?.number) orderDesc = `Recebimento Pedido #${(orderData as Record<string, unknown>).number} (${(installment as Record<string, unknown>).installment_number}/${(installment as Record<string, unknown>).total_installments})`;
           }
           await supabase.from('fin_cash_flow').insert({ tenant_id, type: 'income', amount: (installment as Record<string, unknown>).amount, description: orderDesc, category: 'Vendas', origin: 'auto_sale', reference_id: id, date: today });
+
+          // BUG-43: Lançar taxa de maquininha tambem para recebiveis a prazo
+          const instOrderId = (installment as Record<string, unknown>).order_id as string | undefined;
+          const instAmount = Number((installment as Record<string, unknown>).amount ?? 0);
+          if (instOrderId && instAmount > 0) {
+            const { data: relatedPayment } = await supabase
+              .from('payments')
+              .select('payment_method_id')
+              .eq('order_id', instOrderId)
+              .eq('amount', instAmount)
+              .eq('is_refunded', false)
+              .maybeSingle();
+            if (relatedPayment?.payment_method_id) {
+              const { data: pmData } = await supabase
+                .from('payment_methods')
+                .select('fee_percentage, name')
+                .eq('id', relatedPayment.payment_method_id)
+                .maybeSingle();
+              const feePercent = Number((pmData as Record<string, unknown>)?.fee_percentage ?? 0);
+              if (feePercent > 0) {
+                const feeAmount = Math.round((instAmount * feePercent / 100) * 100) / 100;
+                if (feeAmount > 0) {
+                  const { data: existingFee } = await supabase.from('fin_cash_flow')
+                    .select('id')
+                    .eq('tenant_id', tenant_id)
+                    .eq('reference_id', id)
+                    .eq('origin', 'auto_card_fee')
+                    .maybeSingle();
+                  if (!existingFee) {
+                    const pmName = (pmData as Record<string, unknown>)?.name ?? 'Cartao';
+                    await supabase.from('fin_cash_flow').insert({
+                      tenant_id,
+                      type: 'expense',
+                      amount: feeAmount,
+                      description: `Taxa maquininha — ${pmName} (${feePercent}%) — ${orderDesc}`,
+                      category: 'Taxas de Cartao',
+                      origin: 'auto_card_fee',
+                      reference_id: id,
+                      date: today,
+                    });
+                  }
+                }
+              }
+            }
+          }
         }
         break;
       }

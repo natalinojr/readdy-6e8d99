@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { X, Calendar } from 'lucide-react';
 import { useProducao } from '@/contexts/ProducaoContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -21,9 +22,11 @@ type OrdenacaoProducoes = 'data_desc' | 'custo_desc' | 'receita_desc';
 function ResumoCards({
   recipes,
   batches,
+  hasFilter,
 }: {
   recipes: ProductionRecipe[];
   batches: ProductionBatch[];
+  hasFilter?: boolean;
 }) {
   const activeRecipes = recipes.filter((r) => r.isActive).length;
   const totalBatches = batches.length;
@@ -47,7 +50,7 @@ function ResumoCards({
       <div className="bg-white border border-zinc-100 rounded-xl p-4">
         <p className="text-xs text-zinc-500 mb-1">Produções Registradas</p>
         <p className="text-2xl font-black text-zinc-800">{totalBatches}</p>
-        <p className="text-[10px] text-zinc-400 mt-1">no histórico</p>
+        <p className="text-[10px] text-zinc-400 mt-1">{hasFilter ? 'no período' : 'no histórico'}</p>
       </div>
       <div className="bg-white border border-zinc-100 rounded-xl p-4">
         <p className="text-xs text-zinc-500 mb-1">Rendimento Médio</p>
@@ -57,7 +60,7 @@ function ResumoCards({
       <div className="bg-white border border-zinc-100 rounded-xl p-4">
         <p className="text-xs text-zinc-500 mb-1">Custo Total Investido</p>
         <p className="text-2xl font-black text-zinc-800">{fmt(custoTotal)}</p>
-        <p className="text-[10px] text-zinc-400 mt-1">em insumos brutos</p>
+        <p className="text-[10px] text-zinc-400 mt-1">{hasFilter ? 'no período selecionado' : 'em todo o histórico'}</p>
       </div>
     </div>
   );
@@ -274,8 +277,16 @@ function ListaFichas({
 // ── Lista de Produções ─────────────────────────────────────────────────────
 function ListaProducoes({
   onVerDetalhe,
+  dateFrom,
+  dateTo,
+  setDateFrom,
+  setDateTo,
 }: {
   onVerDetalhe: (batch: ProductionBatch) => void;
+  dateFrom: string;
+  dateTo: string;
+  setDateFrom: (v: string) => void;
+  setDateTo: (v: string) => void;
 }) {
   const { batches, deleteBatch } = useProducao();
   const [busca, setBusca] = useState('');
@@ -283,19 +294,30 @@ function ListaProducoes({
   const [confirmBatchId, setConfirmBatchId] = useState<string | null>(null);
   const [confirmBatchName, setConfirmBatchName] = useState('');
 
+  const hasDateFilter = dateFrom || dateTo;
+  const clearDates = () => { setDateFrom(''); setDateTo(''); };
+
   const producoesFiltradas = useMemo(() => {
-    const base = busca
-      ? batches.filter((b) =>
-          b.recipeName.toLowerCase().includes(busca.toLowerCase())
-        )
+    let base = busca
+      ? batches.filter((b) => b.recipeName.toLowerCase().includes(busca.toLowerCase()))
       : batches;
+
+    if (dateFrom || dateTo) {
+      base = base.filter((b) => {
+        const d = new Date(b.producedAt);
+        if (dateFrom && d < new Date(dateFrom + 'T00:00:00')) return false;
+        if (dateTo && d > new Date(dateTo + 'T23:59:59')) return false;
+        return true;
+      });
+    }
+
     return [...base].sort((a, b) => {
       if (ordenacao === 'data_desc')
         return new Date(b.producedAt).getTime() - new Date(a.producedAt).getTime();
       if (ordenacao === 'custo_desc') return b.totalCost - a.totalCost;
       return b.producedQuantity - a.producedQuantity;
     });
-  }, [batches, busca, ordenacao]);
+  }, [batches, busca, ordenacao, dateFrom, dateTo]);
 
   const formatDate = (iso: string) => {
     const d = new Date(iso);
@@ -337,6 +359,79 @@ function ListaProducoes({
             className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none"
           />
         </div>
+
+        {/* Filtro de período */}
+        <div className="flex items-center gap-3 flex-wrap bg-white border border-zinc-100 rounded-xl px-4 py-3">
+          <div className="w-4 h-4 flex items-center justify-center text-zinc-400 flex-shrink-0">
+            <Calendar size={14} />
+          </div>
+          <span className="text-xs font-semibold text-zinc-500 whitespace-nowrap">Período:</span>
+          <div className="flex items-center gap-2 flex-wrap flex-1">
+            <div className="flex items-center gap-1.5">
+              <label className="text-xs text-zinc-400 whitespace-nowrap">De</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer"
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <label className="text-xs text-zinc-400 whitespace-nowrap">Até</label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              {[
+                { label: 'Hoje', days: 0 },
+                { label: '7d', days: 7 },
+                { label: '30d', days: 30 },
+                { label: 'Mês', days: -1 },
+              ].map(({ label, days }) => (
+                <button
+                  key={label}
+                  onClick={() => {
+                    const today = new Date();
+                    const todayStr = today.toISOString().split('T')[0];
+                    if (days === 0) {
+                      setDateFrom(todayStr); setDateTo(todayStr);
+                    } else if (days === -1) {
+                      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+                      setDateFrom(firstDay.toISOString().split('T')[0]);
+                      setDateTo(todayStr);
+                    } else {
+                      const from = new Date(today);
+                      from.setDate(from.getDate() - days);
+                      setDateFrom(from.toISOString().split('T')[0]);
+                      setDateTo(todayStr);
+                    }
+                  }}
+                  className="px-2 py-1 text-xs font-medium rounded-md bg-zinc-100 text-zinc-500 hover:bg-amber-100 hover:text-amber-700 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {hasDateFilter && (
+              <button
+                onClick={clearDates}
+                className="flex items-center gap-1 px-2 py-1 text-xs font-semibold text-zinc-500 hover:text-red-500 bg-zinc-100 hover:bg-red-50 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <X size={11} /> Limpar
+              </button>
+            )}
+          </div>
+          {hasDateFilter && (
+            <span className="text-xs font-semibold text-amber-600 whitespace-nowrap">
+              {producoesFiltradas.length} resultado{producoesFiltradas.length !== 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+
         <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
           {[
             { id: 'data_desc' as OrdenacaoProducoes, label: 'Mais recente' },
@@ -366,7 +461,7 @@ function ListaProducoes({
             Nenhum registro de produção
           </p>
           <p className="text-xs text-zinc-400 mt-1">
-            Registre produções a partir das fichas de produção.
+            {hasDateFilter ? 'Tente outro período ou limpe o filtro.' : 'Registre produções a partir das fichas de produção.'}
           </p>
         </div>
       ) : (
@@ -593,6 +688,21 @@ export default function ProducaoTab() {
   const [producaoRecipeId, setProducaoRecipeId] = useState<string>('');
   const [detalheBatch, setDetalheBatch] = useState<ProductionBatch | null>(null);
 
+  // Filtro de período elevado para o nível do tab
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  // Batches filtrados pelo período — usados no resumo E na lista
+  const batchesFiltrados = useMemo(() => {
+    if (!dateFrom && !dateTo) return batches;
+    return batches.filter((b) => {
+      const d = new Date(b.producedAt);
+      if (dateFrom && d < new Date(dateFrom + 'T00:00:00')) return false;
+      if (dateTo && d > new Date(dateTo + 'T23:59:59')) return false;
+      return true;
+    });
+  }, [batches, dateFrom, dateTo]);
+
   const handleEdit = (recipe: ProductionRecipe) => {
     setEditingRecipe(recipe);
     setShowFichaModal(true);
@@ -610,8 +720,8 @@ export default function ProducaoTab() {
 
   return (
     <div className="space-y-5">
-      {/* Resumo */}
-      <ResumoCards recipes={recipes} batches={batches} />
+      {/* Resumo — usa batchesFiltrados para refletir o período */}
+      <ResumoCards recipes={recipes} batches={batchesFiltrados} hasFilter={!!(dateFrom || dateTo)} />
 
       {/* Sub-tabs + ação */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -671,7 +781,13 @@ export default function ProducaoTab() {
         />
       )}
       {!loading && subTab === 'producoes' && (
-        <ListaProducoes onVerDetalhe={handleVerDetalhe} />
+        <ListaProducoes
+          onVerDetalhe={handleVerDetalhe}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          setDateFrom={setDateFrom}
+          setDateTo={setDateTo}
+        />
       )}
 
       {/* Modais */}

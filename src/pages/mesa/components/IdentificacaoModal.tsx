@@ -10,6 +10,7 @@ const MSG_TEMPLATES = {
 interface IdentificacaoModalProps {
   mesaNumero: number;
   tenantId?: string;
+  tenantName?: string;
   onConfirmar: (nome: string, telefone: string) => void;
   ehPrimeiroCliente?: boolean;
   responsavelNome?: string;
@@ -21,6 +22,7 @@ type Etapa = 'form' | 'boasvindas' | 'aguardando_aprovacao';
 export default function IdentificacaoModal({
   mesaNumero,
   tenantId,
+  tenantName,
   onConfirmar,
   ehPrimeiroCliente = true,
   responsavelNome = '',
@@ -128,7 +130,7 @@ export default function IdentificacaoModal({
           <p className="text-sm text-zinc-600 leading-relaxed mb-6">{msgBoasVindas}</p>
           <div className={`rounded-xl p-3 mb-5 ${isPrimeiraVisita ? 'bg-amber-50' : 'bg-green-50'}`}>
             <p className={`text-xs font-medium ${isPrimeiraVisita ? 'text-amber-600' : 'text-green-600'}`}>
-              Mesa {mesaNumero} — {nome.trim()}
+              {tenantName || `Mesa ${mesaNumero}`} — {nome.trim()}
             </p>
           </div>
           <button
@@ -152,7 +154,7 @@ export default function IdentificacaoModal({
           <div className="w-14 h-14 flex items-center justify-center bg-amber-100 rounded-2xl mb-3">
             <Smartphone size={24} className="text-amber-600" />
           </div>
-          <h2 className="text-lg font-bold text-zinc-900">Bem-vindo à Mesa {mesaNumero}!</h2>
+          <h2 className="text-lg font-bold text-zinc-900">{tenantName ? `Bem-vindo à ${tenantName}!` : `Bem-vindo à Mesa ${mesaNumero}!`}</h2>
           <p className="text-sm text-zinc-500 mt-1">Para fazer seu pedido, precisamos te identificar</p>
         </div>
         <div className="space-y-3">

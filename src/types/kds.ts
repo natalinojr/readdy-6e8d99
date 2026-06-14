@@ -9,6 +9,10 @@ export interface KDSItemOpcao {
   opcaoNome: string;
   /** BUG 3.2 FIX: preço adicional da opção — ex: "Queijo extra (+R$ 3,00)" */
   additional_price?: number;
+  /** UUID da opção no banco — necessário para baixa de estoque no re-envio */
+  opcaoId?: string;
+  /** Se o grupo desta opção é obrigatório — quando true, NÃO exibir "+" no ticket/gestor */
+  obrigatorio?: boolean;
 }
 
 export interface KDSSubParte {
@@ -159,4 +163,12 @@ export interface KDSPedido {
   participantToken?: string | null;
   /** Participant name from table_session_participants */
   participantName?: string | null;
+  /** Delivery address — populated from orders.delivery_address */
+  deliveryAddress?: string;
+  /** Delivery fee */
+  deliveryFee?: number;
+  /** Delivery platform (e.g., 'propria', 'ifood') */
+  deliveryPlatform?: string;
+  /** Order notes */
+  notes?: string;
 }

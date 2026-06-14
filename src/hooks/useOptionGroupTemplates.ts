@@ -6,6 +6,7 @@ import type { GrupoOpcoes, OpcaoItem } from '@/types/cardapio';
 export interface TemplateOptionData {
   nome: string;
   precoAdicional: number;
+  descricao?: string;
   ingredientId?: string | null;
   productionRecipeId?: string | null;
   consumptionQuantity?: number;
@@ -98,6 +99,7 @@ export function useOptionGroupTemplates() {
       const templateData: TemplateOptionData[] = grupo.opcoes.map((o) => ({
         nome: o.nome,
         precoAdicional: o.precoAdicional,
+        descricao: o.descricao,
         ingredientId: o.ingredientId ?? null,
         productionRecipeId: o.productionRecipeId ?? null,
         consumptionQuantity: o.consumptionQuantity,
@@ -143,6 +145,7 @@ export function useOptionGroupTemplates() {
       const templateData: TemplateOptionData[] = grupo.opcoes.map((o) => ({
         nome: o.nome,
         precoAdicional: o.precoAdicional,
+        descricao: o.descricao,
         ingredientId: o.ingredientId ?? null,
         productionRecipeId: o.productionRecipeId ?? null,
         consumptionQuantity: o.consumptionQuantity,
@@ -213,6 +216,7 @@ export function useOptionGroupTemplates() {
       nome: td.nome,
       precoAdicional: td.precoAdicional,
       ativo: true,
+      descricao: td.descricao,
       ingredientId: td.ingredientId ?? null,
       productionRecipeId: td.productionRecipeId ?? null,
       consumptionQuantity: td.consumptionQuantity,

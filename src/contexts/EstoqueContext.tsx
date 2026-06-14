@@ -94,7 +94,7 @@ export interface Insumo {
   supplierId?: string | null;
   /** ID da categoria DRE para classificação no DRE */
   dreCategoryId?: string | null;
-  /** 'final' = usa direto no cardápio; 'production' = só usado em fichas de produção (semi-acabado) */
+  /** 'final' = usa direto no cardápio; 'production' = só usado em fichas de produção (produto produzido) */
   usageType: 'final' | 'production';
 }
 
@@ -246,6 +246,8 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
 
   // Ref para detectar transição de estoque positivo → zero
   const insumosSnapshotRef = useRef<Map<string, number>>(new Map());
+  // Ref de preços unitários — usado em loadMovimentacoes para calcular custo sem depender do estado
+  const insumoPriceRef = useRef<Map<string, number>>(new Map());
 
   const loadItensDesabilitados = useCallback(async (tenantId: string) => {
     try {
@@ -308,6 +310,8 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       }
       // Atualiza snapshot com valores atuais
       insumosSnapshotRef.current = new Map(loaded.map((i) => [i.id, i.estoqueAtual]));
+      // Atualiza mapa de preços para cálculo de custo nas movimentações
+      insumoPriceRef.current = new Map(loaded.map((i) => [i.id, i.precoUnitario]));
 
       setInsumos(loaded);
 
@@ -380,10 +384,27 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       });
       if (error) throw error;
       const rows = (data as DBStockMovement[]) ?? [];
+
+      // Garante que todos os preços unitários estão no cache
+      const ingIdsNosMovs = [...new Set(rows.map((r) => r.ingredient_id).filter(Boolean))];
+      const faltando = ingIdsNosMovs.filter((id) => !insumoPriceRef.current.has(id));
+      if (faltando.length > 0) {
+        const { data: ingData } = await supabase
+          .from('ingredients')
+          .select('id, unit_price')
+          .in('id', faltando)
+          .eq('tenant_id', tenantId);
+        for (const ing of (ingData ?? []) as Array<{ id: string; unit_price: number | null }>) {
+          insumoPriceRef.current.set(ing.id, Number(ing.unit_price ?? 0));
+        }
+      }
+
       const now = new Date();
       const movs: Movimentacao[] = rows.map((r) => {
         const createdAt = r.created_at ? new Date(r.created_at) : now;
         const tipoDetectado = detectProducaoTipo(r);
+        const unitPrice = insumoPriceRef.current.get(r.ingredient_id) ?? 0;
+        const custo = unitPrice > 0 ? Math.abs(Number(r.quantity)) * unitPrice : undefined;
         return {
           id: r.id,
           insumoId: r.ingredient_id,
@@ -397,6 +418,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
           hora: createdAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
           pedidoNumero: r.order_number ?? null,
           itemVendidoNome: r.sold_item_name ?? null,
+          custo,
         };
       });
       setMovimentacoes(movs);

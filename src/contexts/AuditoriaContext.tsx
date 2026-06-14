@@ -124,6 +124,124 @@ export function AuditoriaProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const notifFiredRef = useRef<Set<string>>(new Set());
 
+  // ─── Fila de eventos pendentes (resiliência contra "Failed to fetch") ───
+  interface PendingAuditPayload {
+    action: string;
+    tenant_id: string;
+    action_type: string;
+    entity_type: string;
+    entity_id: string | null;
+    severity: string;
+    user_name: string;
+    user_role: string;
+    description: string;
+    entity_label: string;
+    entity_label_type: string;
+    before: Record<string, string | number> | null;
+    after: Record<string, string | number> | null;
+    notes: string | null;
+  }
+  const STORAGE_KEY = 'audit_pending_queue';
+  const pendingQueueRef = useRef<PendingAuditPayload[]>([]);
+  const isFlushingRef = useRef(false);
+  const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const MAX_QUEUE_SIZE = 500;
+  const FLUSH_INTERVAL_MS = 60000; // tenta esvaziar a fila a cada 60s
+
+  // ─── Carrega fila pendente do sessionStorage ao iniciar ───
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          pendingQueueRef.current = parsed.slice(0, MAX_QUEUE_SIZE);
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // ─── Persiste a fila no sessionStorage sempre que mudar ───
+  const persistQueue = useCallback(() => {
+    try {
+      if (pendingQueueRef.current.length > 0) {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(pendingQueueRef.current));
+      } else {
+        sessionStorage.removeItem(STORAGE_KEY);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const flushPendingQueue = useCallback(async () => {
+    if (isFlushingRef.current || pendingQueueRef.current.length === 0) return;
+    
+    // Se o navegador reporta offline, nem tenta — evita "Failed to fetch" garantido
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    
+    isFlushingRef.current = true;
+
+    const batch = pendingQueueRef.current.splice(0);
+    persistQueue();
+    let allOk = true;
+
+    try {
+      if (batch.length === 1) {
+        const { error } = await invokeWithAuth('audit-write', { body: batch[0] as unknown as Record<string, unknown> });
+        if (error) allOk = false;
+      } else {
+        // Envia em batch se tiver mais de um
+        const { error } = await invokeWithAuth('audit-write', {
+          body: { action: 'log_batch', tenant_id: batch[0].tenant_id, events: batch } as unknown as Record<string, unknown>,
+        });
+        if (error) allOk = false;
+      }
+    } catch {
+      allOk = false;
+    }
+
+    // Se falhou, devolve pra fila (limitado ao MAX_QUEUE_SIZE)
+    if (!allOk && batch.length > 0) {
+      if (pendingQueueRef.current.length + batch.length <= MAX_QUEUE_SIZE) {
+        pendingQueueRef.current.push(...batch);
+        persistQueue();
+      }
+    }
+
+    isFlushingRef.current = false;
+  }, [persistQueue]);
+
+  // Periodic flush timer
+  useEffect(() => {
+    flushTimerRef.current = setInterval(() => {
+      flushPendingQueue();
+    }, FLUSH_INTERVAL_MS);
+    return () => {
+      if (flushTimerRef.current) clearInterval(flushTimerRef.current);
+    };
+  }, [flushPendingQueue]);
+
+  // Flush pending queue on page visibility change (usuário voltou pra aba)
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        flushPendingQueue();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [flushPendingQueue]);
+
+  // Flush imediato quando a rede voltar (online event)
+  useEffect(() => {
+    const onOnline = () => {
+      console.log('[AuditoriaContext] Rede restaurada — flush imediato da fila pendente');
+      flushPendingQueue();
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [flushPendingQueue]);
+  // ─── Fim da fila de eventos pendentes ───
+
   const carregarEventos = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
@@ -291,31 +409,56 @@ export function AuditoriaProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Write to Supabase via Edge Function (non-blocking)
+      // Write to Supabase via Edge Function (non-blocking, com fila de resiliência)
       if (user?.tenantId) {
-        invokeWithAuth('audit-write', {
-          body: {
-            action: 'log_event',
-            tenant_id: user.tenantId,
-            action_type: params.tipo,
-            entity_type: params.entidade,
-            entity_id: UUID_RE.test(params.entidadeId) ? params.entidadeId : null,
-            severity: params.severidade,
-            user_name: params.usuario,
-            user_role: params.perfil,
-            description: params.descricao,
-            entity_label: params.entidadeId,
-            entity_label_type: params.entidade,
-            before: params.antes ?? null,
-            after: params.depois ?? null,
-            notes: params.detalhes ?? null,
-          },
-        }).then(({ error }) => {
-          if (error) console.warn('[AuditoriaContext] audit-write error:', error.message);
-        });
+        const payload: PendingAuditPayload = {
+          action: 'log_event',
+          tenant_id: user.tenantId,
+          action_type: params.tipo,
+          entity_type: params.entidade,
+          entity_id: UUID_RE.test(params.entidadeId) ? params.entidadeId : null,
+          severity: params.severidade,
+          user_name: params.usuario,
+          user_role: params.perfil,
+          description: params.descricao,
+          entity_label: params.entidadeId,
+          entity_label_type: params.entidade,
+          before: params.antes ?? null,
+          after: params.depois ?? null,
+          notes: params.detalhes ?? null,
+        };
+
+        // Tenta esvaziar a fila pendente antes de enviar o novo evento
+        flushPendingQueue();
+
+        const tryWrite = async (attempt: number): Promise<void> => {
+          // Se offline, vai direto pra fila — não perde tempo com retry
+          if (typeof navigator !== 'undefined' && !navigator.onLine) {
+            if (pendingQueueRef.current.length < MAX_QUEUE_SIZE) {
+              pendingQueueRef.current.push(payload);
+              persistQueue();
+            }
+            return;
+          }
+
+          const { error } = await invokeWithAuth('audit-write', { body: payload as unknown as Record<string, unknown> });
+          if (error && attempt < 2) {
+            await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
+            return tryWrite(attempt + 1);
+          }
+          if (error) {
+            // Esgotou retries — coloca na fila de pendentes pra reenviar depois
+            if (pendingQueueRef.current.length < MAX_QUEUE_SIZE) {
+              pendingQueueRef.current.push(payload);
+              persistQueue();
+            }
+          }
+        };
+
+        tryWrite(0);
       }
     },
-    [user],
+    [user, flushPendingQueue, persistQueue],
   );
 
   // Deduplicate: remove session events that already exist in DB (by matching tipo+usuario+hora)

@@ -37,7 +37,8 @@ const ICON_MAP: Record<string, string> = {
   other: 'ri-more-line',
 };
 import ComprovantePrint from './ComprovantePrint';
-import { printKitchenTicket, printSimpleReceipt } from './CozinhaTicketPrint';
+import { printSimpleReceipt } from './CozinhaTicketPrint';
+import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
 import type { PrintResult } from '@/lib/printUtils';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -73,7 +74,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const { caixa, sessao } = useSessao();
   const { addPedido, reloadOrders, pedidos: kdsPedidos, stationMap: kdsStationMap } = useKDS();
   const { user } = useAuth();
-  const { getImpressoraParaEstacao } = useImpressoras();
+  const { getImpressoraParaEstacao, mapaEstacoes } = useImpressoras();
   const { settings } = useSystemSettings();
   const { pedidosRelacionados, carrinhoComoPedido, reloadOrders: reloadPedidosAgrupados } = usePedidosAgrupados(destino, carrinho, total);
   const operadorNome = caixa?.operadorNome ?? 'Operador';
@@ -86,6 +87,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const [pagamentosFinal, setPagamentosFinal] = useState<PagamentoItem[]>([]);
   const [showComprovante, setShowComprovante] = useState(false);
   const [numeroPedidoFinal, setNumeroPedidoFinal] = useState(0);
+  const [orderIdSucesso, setOrderIdSucesso] = useState('');
   const [confirmando, setConfirmando] = useState(false);
   // Ref bloqueia clique duplo no mesmo tick (state sozinho não é suficiente)
   const confirmandoRef = useRef(false);
@@ -109,6 +111,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
 
   const [carrinhoParaReimpressao, setCarrinhoParaReimpressao] = useState<import('../../../../contexts/PDVContext').CarrinhoItem[]>([]);
   const [destinoParaReimpressao, setDestinoParaReimpressao] = useState<import('../../../../contexts/PDVContext').DestinoInfo | null>(null);
+  const [participantNameParaReimpressao, setParticipantNameParaReimpressao] = useState<string | null>(null);
   // Dados dos pedidos vinculados para exibir no comprovante/print
   const [pedidosVinculadosComprovante, setPedidosVinculadosComprovante] = useState<import('./ComprovantePrint').PedidoVinculadoComprovante[]>([]);
 
@@ -288,6 +291,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const pagarPedidoExistente = useCallback(async (orderId: string, pagamentosParaRegistrar: PagamentoItem[], paymentGroupId?: string | null) => {
     const cashRegisterId: string | null = caixa?.id ?? null;
     let paymentRegistered = false;
+    const paymentErrors: string[] = [];
     for (const pag of pagamentosParaRegistrar) {
       if (!pag.formaId) continue;
       try {
@@ -306,13 +310,16 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
           },
         });
         if (payErr) {
-          console.warn('[PagamentoModal] record_payment error (non-blocking):', payErr);
+          paymentErrors.push(typeof payErr === 'string' ? payErr : JSON.stringify(payErr));
         } else {
           paymentRegistered = true;
         }
       } catch (e) {
-        console.warn('[PagamentoModal] record_payment exception (non-blocking):', e);
+        paymentErrors.push(e instanceof Error ? e.message : String(e));
       }
+    }
+    if (paymentErrors.length > 0 && !paymentRegistered) {
+      throw new Error(`Falha ao registrar pagamento: ${paymentErrors.join('; ')}`);
     }
     if (paymentRegistered) {
       try {
@@ -383,6 +390,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         numeroPedidoLocal = seq;
         orderIdLocal = result.orderId;
         setNumeroPedidoFinal(seq);
+        setOrderIdSucesso(result.orderId);
         marcarComoPago(seq);
       }
 
@@ -437,6 +445,11 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       setPagamentosFinal([...pagamentosComTroco]);
       setCarrinhoParaReimpressao(carrinhoSnapshot);
       setDestinoParaReimpressao(destinoSnapshot);
+      // Buscar participantName nos pedidos KDS vinculados para exibir no ticket de cozinha
+      const participantNameFromKDS = pedidosExistentes
+        .map((p) => kdsPedidos.find((k) => k.id === p.id)?.participantName)
+        .find(Boolean) ?? null;
+      setParticipantNameParaReimpressao(participantNameFromKDS);
       // Guarda os pedidos vinculados para o comprovante
       const pedidosVinculadosParaComprovante = pedidosExistentes.map((p) => ({
         numero: p.numero,
@@ -463,6 +476,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         setAlertaParcial({ orderId: err.orderId, orderNumber: err.orderNumber });
         const seq = parseInt(err.orderNumber.replace(/\D/g, '').slice(-4)) || 1;
         setNumeroPedidoFinal(seq);
+        setOrderIdSucesso(err.orderId);
         marcarComoPago(seq);
         setPagamentosFinal([...pagamentos]);
         setSucesso(true);
@@ -479,63 +493,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
 
   const handleDismissAlertaParcial = useCallback(() => setAlertaParcial(null), []);
 
-  // ── Etapa: selecionar pedidos ──
-  if (etapa === 'selecionar_conta') {
-    const titulo = modoVincularManual
-      ? 'Vincular Pedidos'
-      : destino?.tipo === 'mesa'
-        ? 'Selecionar Contas'
-        : 'Selecionar Pedidos para Pagar';
-    const subtitulo = modoVincularManual
-      ? 'Escolha quais pedidos abertos pagar junto com este carrinho'
-      : destino?.tipo === 'mesa'
-        ? `Mesa ${destino.mesaNumero} · Escolha quais pedidos pagar`
-        : 'Escolha quais pedidos pagar de uma vez';
-
-    return (
-      <EtapaSelecionarPedidos
-        titulo={titulo}
-        subtitulo={subtitulo}
-        pedidosExistentes={pedidosExistentesParaSelecao}
-        pedidoCarrinho={carrinhoComoPedido}
-        onAvancar={(totalSel, pedidosSel) => {
-          setTotalSelecionado(totalSel);
-          setPedidosExistentesSelecionados(pedidosSel);
-          setPagamentos([]);
-          setValorInput('');
-          setEtapa('pagar');
-        }}
-        onClose={() => {
-          setModoVincularManual(false);
-          if (!temPedidosRelacionados) {
-            setEtapa('pagar');
-          } else {
-            onClose();
-          }
-        }}
-      />
-    );
-  }
-
-  if (showComprovante) {
-    const impressoraCaixa = getImpressoraParaEstacao('caixa-pdv');
-    return (
-      <ComprovantePrint
-        numero={numeroPedidoFinal}
-        carrinho={carrinho}
-        total={totalComDesconto}
-        desconto={desconto}
-        destino={destino}
-        pagamentos={pagamentosFinal}
-        operador={operadorNome}
-        loja={lojaNome}
-        impressora={impressoraCaixa}
-        pedidosVinculados={pedidosVinculadosComprovante}
-        onClose={() => { setShowComprovante(false); onSuccess(); }}
-      />
-    );
-  }
-
+  // ── Tela de sucesso tem PRIORIDADE sobre qualquer etapa ──
   if (sucesso) {
     return (
       <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
@@ -607,19 +565,51 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
               <>
                 <button
                   onClick={async () => {
-                    const result = await printKitchenTicket(numeroPedidoFinal, carrinhoParaReimpressao, destinoParaReimpressao, impressora, true);
-                    if (!result.success) {
-                      toastWarning('Impressão não disponível', result.error || 'Agente local não respondeu. Verifique se o agente está rodando.');
+                    try {
+                      if (!user?.tenantId || !orderIdSucesso) {
+                        toastWarning('Erro ao enfileirar', 'Dados do pedido incompletos para reimpressão.');
+                        return;
+                      }
+                      const printItems: OrderItemForPrint[] = carrinhoParaReimpressao.map((ci) => ({
+                        item_name: ci.nome,
+                        quantity: ci.quantidade,
+                        skip_kds: ci.semPreparo || false,
+                        station_id: ci.stationId || null,
+                        item_id: ci.itemId || null,
+                        options: ci.opcoes?.map((o) => ({ option_name: o.opcaoNome, obrigatorio: (o as Record<string, unknown>).obrigatorio as boolean | undefined })),
+                        observations: [
+                          ...(ci.observacoes ?? []).map((t) => ({ text: t })),
+                        ],
+                        notes: ci.observacaoLivre || null,
+                      }));
+                      const printDestino: OrderPrintDestino = {
+                        tipo: destinoParaReimpressao?.tipo ?? 'balcao',
+                        destination_name: destinoParaReimpressao?.nomeCliente ?? null,
+                        table_number: destinoParaReimpressao?.mesaNumero ?? null,
+                      };
+                      await queueOrderForPrint(
+                        user.tenantId,
+                        orderIdSucesso,
+                        String(numeroPedidoFinal),
+                        'cashier',
+                        printItems,
+                        printDestino,
+                        mapaEstacoes,
+                        totalComDesconto,
+                      );
+                      toastSuccess('Comanda enfileirada', 'A impressora vai imprimir assim que estiver disponível.');
+                    } catch (e) {
+                      toastWarning('Erro ao enfileirar', 'Não foi possível enfileirar a comanda para impressão.');
                     }
                   }}
                   className="mt-5 w-full py-2.5 border-2 border-orange-500 text-orange-600 font-semibold text-sm rounded-xl hover:bg-orange-50 cursor-pointer transition-colors whitespace-nowrap flex items-center justify-center gap-2"
                 >
                   <i className="ri-printer-line" />
-                  Imprimir Comprovante
+                  Reimprimir Comanda (Fila)
                 </button>
                 <button
                   onClick={async () => {
-                    const result = await printSimpleReceipt(numeroPedidoFinal, carrinhoParaReimpressao, totalComDesconto, desconto, pagamentosFinal, destinoParaReimpressao, impressora, true, pedidosVinculadosComprovante);
+                    const result = await printSimpleReceipt(numeroPedidoFinal, carrinhoParaReimpressao, totalComDesconto, desconto, pagamentosFinal, destinoParaReimpressao, impressora, true, pedidosVinculadosComprovante, participantNameParaReimpressao);
                     if (!result.success) {
                       toastWarning('Impressão não disponível', result.error || 'Agente local não respondeu. Verifique se o agente está rodando.');
                     }
@@ -641,6 +631,63 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
           </button>
         </div>
       </div>
+    );
+  }
+
+  // ── Etapa: selecionar pedidos ──
+  if (etapa === 'selecionar_conta') {
+    const titulo = modoVincularManual
+      ? 'Vincular Pedidos'
+      : destino?.tipo === 'mesa'
+        ? 'Selecionar Contas'
+        : 'Selecionar Pedidos para Pagar';
+    const subtitulo = modoVincularManual
+      ? 'Escolha quais pedidos abertos pagar junto com este carrinho'
+      : destino?.tipo === 'mesa'
+        ? `Mesa ${destino.mesaNumero} · Escolha quais pedidos pagar`
+        : 'Escolha quais pedidos pagar de uma vez';
+
+    return (
+      <EtapaSelecionarPedidos
+        titulo={titulo}
+        subtitulo={subtitulo}
+        pedidosExistentes={pedidosExistentesParaSelecao}
+        pedidoCarrinho={carrinhoComoPedido}
+        onAvancar={(totalSel, pedidosSel) => {
+          setTotalSelecionado(totalSel);
+          setPedidosExistentesSelecionados(pedidosSel);
+          setPagamentos([]);
+          setValorInput('');
+          setEtapa('pagar');
+        }}
+        onClose={() => {
+          setModoVincularManual(false);
+          if (!temPedidosRelacionados) {
+            setEtapa('pagar');
+          } else {
+            onClose();
+          }
+        }}
+      />
+    );
+  }
+
+  if (showComprovante) {
+    const impressoraCaixa = getImpressoraParaEstacao('caixa-pdv');
+    return (
+      <ComprovantePrint
+        numero={numeroPedidoFinal}
+        carrinho={carrinho}
+        total={totalComDesconto}
+        desconto={desconto}
+        destino={destino}
+        pagamentos={pagamentosFinal}
+        operador={operadorNome}
+        loja={lojaNome}
+        impressora={impressoraCaixa}
+        pedidosVinculados={pedidosVinculadosComprovante}
+        onClose={() => { setShowComprovante(false); onSuccess(); }}
+      />
     );
   }
 

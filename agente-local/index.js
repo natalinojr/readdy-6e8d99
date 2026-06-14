@@ -52,9 +52,14 @@ function loadConfig() {
     if (config.print_queue_enabled && config.supabase_url && config.tenant_id) {
       log(`Fila centralizada ATIVA — tenant: ${config.tenant_id}, polling a cada ${config.poll_interval_ms}ms`);
     }
+    if (config.print_queue_enabled && config.supabase_url && config.tenant_ids && config.tenant_ids.length > 0) {
+      log(`Fila centralizada ATIVA — ${config.tenant_ids.length} tenant(s): ${config.tenant_ids.join(', ')}, polling a cada ${config.poll_interval_ms}ms`);
+    }
 
-    // Verificacao critica: tenant_id nao pode ser placeholder
-    if (config.tenant_id === 'SEU-TENANT-ID-AQUI' || !config.tenant_id || config.tenant_id.trim() === '') {
+    // Verificacao critica: tenant_id(s) nao pode(m) ser placeholder
+    const tenantIds = config.tenant_ids || (config.tenant_id ? [config.tenant_id] : []);
+    const hasValidTenant = tenantIds.length > 0 && tenantIds.every(function(tid) { return tid && tid.trim() !== '' && tid !== 'SEU-TENANT-ID-AQUI'; });
+    if (!hasValidTenant) {
       log('');
       log('============================================================');
       log('ERRO CRITICO: tenant_id nao configurado no config.json!');
@@ -132,14 +137,20 @@ function sendToPrinterTcp(ip, port, data, timeoutMs = 10000) {
 
     socket.on('connect', () => {
       log(`Connected to ${ip}:${port}`);
-      // Se os dados nao contem comandos ESC/POS (0x1B), assume texto UTF-8
-      // e converte para CP860 (Portugues) antes de enviar para a impressora
-      let finalData = data;
-      if (data.indexOf('\x1B') === -1) {
-        finalData = INIT + CP860 + utf8ToCp860(data);
+
+      let buf;
+      if (Buffer.isBuffer(data)) {
+        // Dados binarios ja prontos (ESC/POS pre-formatado pela edge function)
+        buf = data;
+      } else {
+        // Modo legado: texto puro — converte pra CP860 e envolve com ESC/POS basico
+        let finalData = data;
+        if (data.indexOf('\x1B') === -1) {
+          finalData = INIT + CP860 + '\n\n\n\n\n' + utf8ToCp860(data) + '\n\n\n\n\n' + CUT;
+        }
+        buf = Buffer.from(finalData, 'latin1');
       }
-      // Envia como latin1 para preservar bytes 128-255
-      const buf = Buffer.from(finalData, 'latin1');
+
       socket.write(buf, (err) => {
         if (err) {
           done(false, err);
@@ -193,20 +204,45 @@ function postJson(urlStr, body, timeoutMs = 15000) {
       timeout: timeoutMs,
     };
 
+    const startTime = Date.now();
+    log(`[HTTP] POST ${urlStr.split('?')[0].split('/').slice(-1).join('/')} (tenant: ${(body.tenant_id || '').slice(0, 8)}...)`);
+
     const req = client.request(options, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
-        try {
-          resolve(JSON.parse(data));
-        } catch (e) {
-          resolve({ raw: data });
+        const elapsed = Date.now() - startTime;
+        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+          log(`[HTTP] Resposta ${res.statusCode} em ${elapsed}ms`);
+          try {
+            const json = JSON.parse(data);
+            if (!json.success) {
+              log(`[HTTP] Edge function retornou success=false: ${json.error || 'sem detalhes'}`);
+            }
+            resolve(json);
+          } catch (e) {
+            resolve({ raw: data });
+          }
+        } else {
+          const errMsg = `HTTP ${res.statusCode}: ${data.slice(0, 200)}`;
+          log(`[HTTP] ERRO ${errMsg} (${elapsed}ms)`);
+          reject(new Error(errMsg));
         }
+      });
+      res.on('error', (err) => {
+        log(`[HTTP] Erro na resposta: ${err.message}`);
+        reject(err);
       });
     });
 
-    req.on('error', (err) => reject(err));
+    req.on('error', (err) => {
+      const elapsed = Date.now() - startTime;
+      log(`[HTTP] Erro de conexao apos ${elapsed}ms: ${err.message}`);
+      reject(err);
+    });
     req.on('timeout', () => {
+      const elapsed = Date.now() - startTime;
+      log(`[HTTP] Timeout apos ${elapsed}ms`);
       req.destroy();
       reject(new Error('Request timeout'));
     });
@@ -217,7 +253,12 @@ function postJson(urlStr, body, timeoutMs = 15000) {
 }
 
 // ============================================
-// ESC/POS Formatter — formata ticket de pedido
+// ESC/POS Formatter — LEGADO (apenas /print direto)
+// ATENCAO: O layout de impressao da fila centralizada
+// agora e gerado pela edge function print-queue-agent.
+// Alteracoes de layout NAO exigem atualizar este arquivo.
+// As funcoes abaixo sao mantidas apenas para o endpoint
+// /print (modo ticket), que e um fallback legado.
 // ============================================
 
 const ESC = '\x1B';
@@ -234,6 +275,8 @@ const DOUBLE_HEIGHT = ESC + '!\x10';
 const NORMAL = ESC + '!\x00';
 const UNDERLINE = ESC + '-\x01';
 const UNDERLINE_OFF = ESC + '-\x00';
+const REVERSE_ON = GS + 'B\x01';
+const REVERSE_OFF = GS + 'B\x00';
 
 /** Seleciona code page 860 (Português) para acentuação correta */
 const CP860 = ESC + '\x74\x03';
@@ -268,6 +311,16 @@ function utf8ToCp860(str) {
   return out;
 }
 
+/** Converte nome de origem (ingles) para portugues */
+const ORIGEM_PT = {
+  'cashier': 'Caixa',
+  'waiter': 'Garcom',
+  'self_service': 'Autoatendimento',
+  'delivery': 'Delivery',
+  'table': 'Mesa',
+  'mesa': 'Mesa',
+};
+
 function formatTicket(body, impressora) {
   const {
     numero,
@@ -278,7 +331,14 @@ function formatTicket(body, impressora) {
     mesa,
     comanda,
     observacao_geral,
+    senha,
+    participant_name,
+    estacao,
+    total,
+    para_viagem,
   } = body;
+
+  const origemDisplay = ORIGEM_PT[(origem || '').toLowerCase()] || origem;
 
   const papel = impressora?.papel || '80mm';
   const width = papel === '58mm' ? 32 : 48;
@@ -288,7 +348,15 @@ function formatTicket(body, impressora) {
   let out = INIT;
   out += CP860; // ativa code page 860 para acentos
 
-  // Cabecalho
+  // --- Cabeçalho: NOME DA ESTACAO em destaque (quando ticket é splitado) ---
+  if (estacao) {
+    out += ALIGN_CENTER;
+    out += BOLD_ON + DOUBLE_HEIGHT + utf8ToCp860(`>>> ${estacao.toUpperCase()} <<<`) + NORMAL + BOLD_OFF;
+    out += LINE_FEED + LINE_FEED;
+    out += utf8ToCp860(eqSep) + LINE_FEED;
+  }
+
+  // Cabecalho numero do pedido
   out += ALIGN_CENTER;
   out += BOLD_ON + DOUBLE_HEIGHT + utf8ToCp860(`PEDIDO #${numero || '---'}`) + NORMAL + BOLD_OFF;
   out += LINE_FEED + LINE_FEED;
@@ -296,8 +364,14 @@ function formatTicket(body, impressora) {
   if (destino) {
     out += BOLD_ON + utf8ToCp860(`DESTINO: ${destino}`) + BOLD_OFF + LINE_FEED;
   }
+  if (para_viagem) {
+    out += ALIGN_CENTER;
+    out += DOUBLE_HEIGHT + BOLD_ON + utf8ToCp860('>> PARA VIAGEM <<') + BOLD_OFF + NORMAL + LINE_FEED;
+    out += ALIGN_LEFT;
+    out += LINE_FEED;
+  }
   if (origem) {
-    out += utf8ToCp860(`Origem: ${origem}`) + LINE_FEED;
+    out += utf8ToCp860(`Origem: ${origemDisplay}`) + LINE_FEED;
   }
   if (mesa) {
     out += BOLD_ON + utf8ToCp860(`MESA: ${mesa}`) + BOLD_OFF + LINE_FEED;
@@ -310,6 +384,28 @@ function formatTicket(body, impressora) {
   out += utf8ToCp860(now) + LINE_FEED;
   out += utf8ToCp860(sep) + LINE_FEED;
 
+  // Senha em destaque com fundo preto (modo reverse)
+  if (senha) {
+    out += LINE_FEED;
+    out += ALIGN_CENTER;
+    out += REVERSE_ON;
+    out += utf8ToCp860('                        ') + LINE_FEED;
+    out += BOLD_ON + DOUBLE_HEIGHT + utf8ToCp860(`  SENHA ${senha}  `) + NORMAL + BOLD_OFF + LINE_FEED;
+    out += utf8ToCp860('                        ') + LINE_FEED;
+    out += REVERSE_OFF;
+    out += LINE_FEED;
+    out += ALIGN_LEFT;
+  }
+
+  // Nome do participante em destaque
+  if (participant_name) {
+    out += ALIGN_CENTER;
+    out += BOLD_ON + utf8ToCp860(`>> ${participant_name} <<`) + BOLD_OFF + LINE_FEED;
+    out += utf8ToCp860(sep) + LINE_FEED;
+    out += ALIGN_LEFT;
+    out += LINE_FEED;
+  }
+
   // Itens
   itens.forEach((item) => {
     const qtd = item.quantidade || 1;
@@ -321,7 +417,10 @@ function formatTicket(body, impressora) {
 
     if (item.opcoes && item.opcoes.length > 0) {
       item.opcoes.forEach((opt) => {
-        out += utf8ToCp860(`   + ${opt}`) + LINE_FEED;
+        // Suporta tanto string (legado) quanto objeto { nome, obrigatorio }
+        const nome = typeof opt === 'string' ? opt : opt.nome;
+        const obrigatorio = typeof opt === 'object' && opt.obrigatorio;
+        out += utf8ToCp860(`   ${obrigatorio ? '  ' : '+ '}${nome}`) + LINE_FEED;
       });
     }
 
@@ -330,14 +429,41 @@ function formatTicket(body, impressora) {
         out += utf8ToCp860(`   * ${obs}`) + LINE_FEED;
       });
     }
+
+    // Partes de produção em destaque (ex: hamburguer, batata)
+    if (item.partes_destaque && item.partes_destaque.length > 0) {
+      out += utf8ToCp860(sep) + LINE_FEED;
+      out += BOLD_ON;
+      item.partes_destaque.forEach((parte) => {
+        out += DOUBLE_HEIGHT + utf8ToCp860(`>> ${parte.toUpperCase()} <<`) + NORMAL + LINE_FEED;
+      });
+      out += BOLD_OFF;
+    }
+
+    out += LINE_FEED;
   });
+
+  // Total do pedido
+  if (total !== undefined && total !== null && total > 0) {
+    out += LINE_FEED;
+    out += utf8ToCp860(sep) + LINE_FEED;
+    out += ALIGN_RIGHT;
+    out += DOUBLE_HEIGHT + BOLD_ON + utf8ToCp860(`TOTAL: R$ ${Number(total).toFixed(2).replace('.', ',')}`) + BOLD_OFF + NORMAL + LINE_FEED;
+    out += ALIGN_LEFT;
+  }
 
   out += utf8ToCp860(sep) + LINE_FEED;
 
   if (observacao_geral) {
-    out += BOLD_ON + utf8ToCp860('OBS:') + BOLD_OFF + LINE_FEED;
-    out += utf8ToCp860(observacao_geral) + LINE_FEED;
-    out += utf8ToCp860(sep) + LINE_FEED;
+    // Se for comprovante de entrega/retirada, formata sem label "OBS:"
+    if (estacao && (estacao.toUpperCase().includes('COMPROVANTE') || estacao.toUpperCase().includes('RETIRADA'))) {
+      out += utf8ToCp860(observacao_geral) + LINE_FEED;
+      out += utf8ToCp860(sep) + LINE_FEED;
+    } else {
+      out += BOLD_ON + utf8ToCp860('OBS:') + BOLD_OFF + LINE_FEED;
+      out += utf8ToCp860(observacao_geral) + LINE_FEED;
+      out += utf8ToCp860(sep) + LINE_FEED;
+    }
   }
 
   out += ALIGN_CENTER;
@@ -359,77 +485,170 @@ let isProcessingQueue = false;
 
 async function processPrintQueue() {
   if (isProcessingQueue) return;
-  if (!config.print_queue_enabled || !config.supabase_url || !config.tenant_id) return;
+  if (!config.print_queue_enabled || !config.supabase_url) {
+    return;
+  }
+
+  // Resolve tenant IDs: tenant_ids array ou tenant_id legacy
+  const tenantIds = (config.tenant_ids && config.tenant_ids.length > 0) ? config.tenant_ids : (config.tenant_id ? [config.tenant_id] : []);
+  const validTenantIds = tenantIds.filter(function(tid) { return tid && tid.trim() !== '' && tid !== 'SEU-TENANT-ID-AQUI'; });
+
+  if (validTenantIds.length === 0) return;
 
   isProcessingQueue = true;
 
   try {
-    // Chama Edge Function print-queue-agent (action: poll)
     const functionUrl = config.supabase_url.replace(/\/$/, '') + '/functions/v1/print-queue-agent';
-    log(`[Queue] Polling fila centralizada...`);
 
-    const result = await postJson(functionUrl, {
-      action: 'poll',
-      tenant_id: config.tenant_id,
-      limit: 10,
-    }, 15000);
-
-    if (!result.success) {
-      log(`[Queue] Poll error: ${result.error || 'unknown'}`);
-      isProcessingQueue = false;
-      return;
-    }
-
-    const tickets = result.tickets || [];
-    if (tickets.length === 0) {
-      log(`[Queue] Nenhum ticket pendente (tenant_id: ${config.tenant_id})`);
-      isProcessingQueue = false;
-      return;
-    }
-
-    log(`[Queue] ${tickets.length} ticket(s) pendentes encontrados`);
-
-    for (const ticket of tickets) {
+    for (const tenantId of validTenantIds) {
       try {
-        log(`[Queue] Imprimindo ticket #${ticket.order_number} (${ticket.station_key})`);
+        log(`[Queue] Polling tenant: ${tenantId.slice(0,8)}...`);
 
-        let impressora = null;
+        const result = await postJson(functionUrl, {
+          action: 'poll',
+          tenant_id: tenantId,
+          limit: 10,
+        }, 15000);
 
-        // Se o ticket é do bar, procura impressora 'bar' primeiro
-        if (ticket.station_key === 'bar' || ticket.station_key === 'balcao') {
-          impressora = findImpressora('bar');
-          if (impressora) {
-            log(`[Queue] Usando impressora BAR para ticket #${ticket.order_number}`);
-          }
-        }
-
-        // Fallback: procura pelo impressora_id do ticket
-        if (!impressora && ticket.impressora_id) {
-          impressora = findImpressora(ticket.impressora_id);
-        }
-
-        // Último fallback: impressora 'cozinha'
-        if (!impressora) {
-          impressora = findImpressora('cozinha');
-        }
-
-        if (!impressora) {
-          log(`[Queue] ERRO: Nenhuma impressora encontrada para ticket #${ticket.order_number} (station=${ticket.station_key}, impressora_id=${ticket.impressora_id || 'n/a'})`);
-          await confirmTicket(ticket.id, 'failed', `Impressora nao configurada no agente para station=${ticket.station_key}`);
+        if (!result.success) {
+          log(`[Queue] Poll error tenant ${tenantId.slice(0,8)}...: ${result.error || 'unknown'}`);
           continue;
         }
 
-        const payload = ticket.payload || {};
-        const escPosData = formatTicket(payload, impressora);
+        const tickets = result.tickets || [];
+        if (tickets.length === 0) {
+          // Silencioso — sem tickets pendentes é normal
+          continue;
+        }
 
-        await sendToPrinterTcp(impressora.ip, impressora.porta || 9100, escPosData, config.default_timeout_ms || 10000);
-        log(`[Queue] Ticket #${ticket.order_number} impresso com sucesso (${impressora.nome})`);
+        log(`[Queue] ${tickets.length} ticket(s) pendentes para tenant ${tenantId.slice(0,8)}...`);
+        log(`[Queue] Tickets: ${tickets.map(function(t) { return '#' + t.order_number + '(' + (t.station_label || t.station_key || '?').slice(0,15) + ')'; }).join(', ')}`);
 
-        await confirmTicket(ticket.id, 'printed');
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Erro desconhecido';
-        log(`[Queue] ERRO ao imprimir ticket #${ticket.order_number}: ${msg}`);
-        await confirmTicket(ticket.id, 'failed', msg);
+        for (const ticket of tickets) {
+          try {
+            log(`[Queue] Imprimindo ticket #${ticket.order_number} (${ticket.station_key})`);
+
+            // ── NOVO ROTEAMENTO (v3.1): impressora_id como rota principal ──
+            // O frontend (queueOrderForPrint) define impressora_id no payload do ticket.
+            // O agente respeita essa decisao como rota primaria.
+            // So usa fallback por station_key quando impressora_id nao existe no config.
+            let impressora = null;
+            let resolvedBy = '';
+
+            // ── RESOLUCAO DE IMPRESSORA (v3.2) ──
+            // Ordem de prioridade:
+            //   1. impressora_id na coluna (definido pela RPC via payload)
+            //   2. payload.impressora_id (qualquer valor — busca direta no config.json)
+            //   3. station_key === 'bar'/'balcao' -> impressora 'bar'
+            //   4. payload contem extra_label de bar (legado) -> impressora 'bar'
+            //   5. Fallback final: cozinha
+            // 1. ROTA PRINCIPAL: impressora_id na coluna (salvo pela RPC do payload)
+            if (ticket.impressora_id) {
+              impressora = findImpressora(ticket.impressora_id);
+              if (impressora) {
+                resolvedBy = `coluna impressora_id="${ticket.impressora_id}"`;
+              } else {
+                log(`[Queue] impressora_id "${ticket.impressora_id}" nao encontrado no config.json -> tentando fallbacks`);
+              }
+            }
+
+            // 2. FALLBACK: payload.impressora_id (generico — qualquer valor)
+            if (!impressora && ticket.payload?.impressora_id) {
+              impressora = findImpressora(ticket.payload.impressora_id);
+              if (impressora) {
+                resolvedBy = `payload.impressora_id="${ticket.payload.impressora_id}"`;
+              }
+            }
+
+            // 3. FALLBACK: station_key === 'bar' ou 'balcao'
+            if (!impressora && (ticket.station_key === 'bar' || ticket.station_key === 'balcao')) {
+              impressora = findImpressora('bar');
+              if (impressora) resolvedBy = `station_key="${ticket.station_key}" -> bar`;
+            }
+
+            // 4. FALLBACK LEGADO: payload.impressora_id === 'bar'
+            if (!impressora && ticket.payload?.impressora_id === 'bar') {
+              impressora = findImpressora('bar');
+              if (impressora) resolvedBy = 'payload.impressora_id=bar (legado)';
+            }
+
+            // 5. FALLBACK FINAL: cozinha
+            if (!impressora) {
+              impressora = findImpressora('cozinha');
+              if (impressora) resolvedBy = 'cozinha (fallback final)';
+            }
+
+            if (!impressora) {
+              log(`[Queue] ERRO: Nenhuma impressora encontrada para ticket #${ticket.order_number} (station=${ticket.station_key}, impressora_id=${ticket.impressora_id || 'n/a'})`);
+              await confirmTicket(ticket.id, 'failed', `Impressora nao configurada no agente para station=${ticket.station_key}`);
+              continue;
+            }
+
+            log(`[Queue] Impressora resolvida: ${impressora.nome} (${impressora.ip}:${impressora.porta || 9100}) via ${resolvedBy}`);
+
+            // ── USA ESC/POS PRE-FORMATADO PELA EDGE FUNCTION ──
+            // O layout do ticket agora é gerado remotamente pela print-queue-agent.
+            // Alterar o layout = deploy na edge function, sem tocar nos PCs das lojas.
+            const papel = impressora?.papel || '80mm';
+            const b64Key = papel === '58mm' ? 'escpos_58mm_base64' : 'escpos_80mm_base64';
+            const escPosBase64 = ticket[b64Key];
+
+            if (!escPosBase64) {
+              log(`[Queue] ERRO: ESC/POS pre-formatado ausente para ticket #${ticket.order_number} (papel=${papel})`);
+              await confirmTicket(ticket.id, 'failed', `ESC/POS base64 nao disponivel (papel=${papel})`);
+              continue;
+            }
+
+            const escPosBuffer = Buffer.from(escPosBase64, 'base64');
+            log(`[Queue] ESC/POS decodificado: ${escPosBuffer.length} bytes (${papel}, via edge)`);
+
+            // ── TENTA IMPRIMIR com fallback inteligente ──
+            // Se a impressora resolvida falhar e NAO for a cozinha,
+            // tenta automaticamente na cozinha como backup.
+            // Ticket de bebida NAO PODE sumir so porque a impressora do bar caiu.
+            let printed = false;
+            try {
+              await sendToPrinterTcp(impressora.ip, impressora.porta || 9100, escPosBuffer, config.default_timeout_ms || 10000);
+              printed = true;
+              log(`[Queue] Ticket #${ticket.order_number} impresso com sucesso (${impressora.nome})`);
+              await confirmTicket(ticket.id, 'printed');
+            } catch (primaryErr) {
+              const primaryMsg = primaryErr instanceof Error ? primaryErr.message : 'Erro desconhecido';
+              log(`[Queue] Impressora primaria (${impressora.nome}) falhou: ${primaryMsg}`);
+
+              // Tenta fallback na cozinha se a primaria nao for a cozinha
+              const cozinha = findImpressora('cozinha');
+              if (cozinha && impressora.id !== 'cozinha' && cozinha.ip !== impressora.ip) {
+                log(`[Queue] Tentando backup na COZINHA (${cozinha.ip}:${cozinha.porta || 9100})...`);
+                try {
+                  // Usa o ESC/POS de 80mm para cozinha (ou o tamanho configurado)
+                  const cozinhaPapel = cozinha.papel || '80mm';
+                  const cozinhaB64Key = cozinhaPapel === '58mm' ? 'escpos_58mm_base64' : 'escpos_80mm_base64';
+                  const cozinhaBase64 = ticket[cozinhaB64Key] || escPosBase64;
+                  const cozinhaBuffer = Buffer.from(cozinhaBase64, 'base64');
+
+                  await sendToPrinterTcp(cozinha.ip, cozinha.porta || 9100, cozinhaBuffer, config.default_timeout_ms || 10000);
+                  printed = true;
+                  log(`[Queue] Ticket #${ticket.order_number} impresso no BACKUP (cozinha)`);
+                  await confirmTicket(ticket.id, 'printed');
+                } catch (backupErr) {
+                  const backupMsg = backupErr instanceof Error ? backupErr.message : 'Erro desconhecido';
+                  log(`[Queue] Backup cozinha tambem falhou: ${backupMsg}`);
+                }
+              }
+
+              if (!printed) {
+                await confirmTicket(ticket.id, 'failed', primaryMsg);
+              }
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Erro desconhecido';
+            log(`[Queue] ERRO ao imprimir ticket #${ticket.order_number}: ${msg}`);
+            await confirmTicket(ticket.id, 'failed', msg);
+          }
+        }
+      } catch (tenantErr) {
+        log(`[Queue] Erro processando tenant ${tenantId.slice(0,8)}...: ${tenantErr.message}`);
       }
     }
   } catch (err) {
@@ -505,10 +724,11 @@ const server = http.createServer(async (req, res) => {
 
   // Status da fila
   if (pathname === '/queue-status' && req.method === 'GET') {
+    const tids = (config.tenant_ids && config.tenant_ids.length > 0) ? config.tenant_ids : (config.tenant_id ? [config.tenant_id] : []);
     sendJson(res, 200, {
       enabled: config.print_queue_enabled,
       polling: !!pollingInterval,
-      tenant_id: config.tenant_id,
+      tenant_ids: tids,
       interval_ms: config.poll_interval_ms,
     });
     return;
@@ -623,12 +843,22 @@ server.listen(config.agent_port, '127.0.0.1', () => {
   log(`============================================`);
 
   // Inicia polling da fila se configurado
-  if (config.print_queue_enabled && config.supabase_url && config.tenant_id) {
+  const tenantIds = (config.tenant_ids && config.tenant_ids.length > 0) ? config.tenant_ids : (config.tenant_id ? [config.tenant_id] : []);
+  const validTenantIds = tenantIds.filter(function(tid) { return tid && tid.trim() !== '' && tid !== 'SEU-TENANT-ID-AQUI'; });
+
+  if (config.print_queue_enabled && config.supabase_url && validTenantIds.length > 0) {
+    log('');
+    log('>>> FILA CENTRALIZADA ATIVA <<<');
+    log(`    Polling a cada ${config.poll_interval_ms}ms para ${validTenantIds.length} tenant(s)`);
+    validTenantIds.forEach(function(tid) { log(`      - ${tid.slice(0,8)}...`); });
+    log(`    Edge Function: ${config.supabase_url}/functions/v1/print-queue-agent`);
+    log('');
     startQueuePolling();
-  } else if (config.print_queue_enabled && (!config.supabase_url || !config.tenant_id)) {
-    log('AVISO: print_queue_enabled=true mas supabase_url ou tenant_id nao configurados');
-    log('         Adicione no config.json:');
-    log('         { "supabase_url": "https://...", "tenant_id": "uuid-do-tenant" }');
+  } else if (config.print_queue_enabled && (!config.supabase_url || validTenantIds.length === 0)) {
+    log('');
+    log('!!! AVISO: print_queue_enabled=true mas configuracao incompleta !!!');
+    log('    Verifique no config.json: supabase_url e tenant_ids');
+    log('');
   }
 });
 

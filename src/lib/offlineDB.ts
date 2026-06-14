@@ -256,11 +256,9 @@ function txDelete(db: IDBDatabase, store: string, key: string | number): Promise
 
 // ── Offline Orders API ────────────────────────────────────────────────────────
 
-/** Gera um ID local único para pedidos offline */
+/** Gera um ID local único para pedidos offline (UUID válido — compatível com client_request_id do BUG-06) */
 export function generateLocalOrderId(): string {
-  const ts = Date.now();
-  const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
-  return `offline_${ts}_${rand}`;
+  return crypto.randomUUID();
 }
 
 /** Gera número de pedido local (visível para o operador) */

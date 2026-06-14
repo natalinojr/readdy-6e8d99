@@ -13,8 +13,6 @@ import DeliveryClienteModal from './components/DeliveryClienteModal';
 import DeliveryPagamentoModal from './components/DeliveryPagamentoModal';
 import DeliveryEntregaConfirmModal from './components/DeliveryEntregaConfirmModal';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
-import { printKitchenTicket } from '@/pages/pdv/caixa/components/CozinhaTicketPrint';
-import type { DestinoInfo, CarrinhoItem } from '@/contexts/PDVContext';
 
 type ModalType = 'none' | 'cliente' | 'confirmar_entrega' | 'pagamento';
 
@@ -38,7 +36,7 @@ export default function PDVDeliveryPage() {
   const { user } = useAuth();
   const { settings } = useSystemSettings();
   const { submitOrder } = useOrderSubmit();
-  const { getImpressoraParaEstacao, mapaEstacoes } = useImpressoras();
+  const { mapaEstacoes } = useImpressoras();
 
   // Impressão de delivery pode ser desativada nas configurações
   // settings.delivery_print_enabled: se false, não imprime nada
@@ -101,6 +99,7 @@ export default function PDVDeliveryPage() {
         option_name: o.opcaoNome,
         group_name: o.grupoNome,
         additional_price: o.precoAdicional,
+        group_obrigatorio: o.obrigatorio,
       })),
       observations: [
         ...(ci.observacaoLivre ? [{ text: ci.observacaoLivre }] : []),
@@ -217,44 +216,11 @@ export default function PDVDeliveryPage() {
         await registrarPagamento(orderId, pagamentos);
       }
 
-      // Impressão automática de ticket de cozinha para delivery (se habilitado)
-      if (settings.print_kds_enabled && carrinho.length > 0) {
-        try {
-          const mappedCarrinho: CarrinhoItem[] = carrinho.map((ci) => ({
-            cartId: ci.cartId,
-            itemId: ci.itemId,
-            nome: ci.itemNome,
-            precoBase: ci.itemPreco,
-            precoTotal: ci.precoUnitario,
-            quantidade: ci.quantidade,
-            opcoes: ci.opcoesSelecionadas.map((o) => ({
-              grupoNome: o.grupoNome,
-              opcaoNome: o.opcaoNome,
-              precoAdicional: o.precoAdicional,
-            })),
-            observacoes: ci.observacoes,
-            observacaoLivre: ci.observacaoLivre,
-            semPreparo: ci.semPreparo ?? false,
-            stationId: ci.stationId,
-          }));
-          const seq = parseInt(orderNumber.replace(/\D/g, '').slice(-4)) || 1;
-          const primeiroItem = mappedCarrinho.find((i) => i.stationId);
-          const estacao = primeiroItem?.stationId ?? 'cozinha-padrao';
-          const impressora = getImpressoraParaEstacao(estacao);
-          const destinoPrint: DestinoInfo = {
-            tipo: 'delivery',
-            nomeCliente: cliente?.nome ?? 'Delivery',
-          };
-          await printKitchenTicket(seq, mappedCarrinho, destinoPrint, impressora, true);
-        } catch (e) {
-          console.warn('[PDVDelivery] Erro ao imprimir ticket de cozinha (non-blocking):', e);
-        }
-      }
-
-      // Impressão: só imprime se delivery_print_enabled = true nas configurações
+      // Impressão: submitOrder já enfileira tickets via print_queue (queueOrderForPrint).
+      // NÃO chamar printKitchenTicket direto — o agente local faz polling e imprime com retry.
+      // BUG-22: padronizado para usar apenas a fila centralizada.
       if (deliveryPrintEnabled) {
-        // Impressão habilitada — o sistema de impressão padrão cuida disso
-        console.log('[PDVDelivery] Impressão habilitada para delivery');
+        console.log('[PDVDelivery] Impressão gerenciada pela fila centralizada (print_queue)');
       }
 
       const pedidoFinalizado: PedidoFinalizado = {
@@ -281,7 +247,7 @@ export default function PDVDeliveryPage() {
     } finally {
       setSalvando(false);
     }
-  }, [carrinho, cliente, total, taxaEntrega, salvando, criarPedidoBanco, registrarPagamento, deliveryPrintEnabled, settings.print_kds_enabled, getImpressoraParaEstacao, printKitchenTicket]);
+  }, [carrinho, cliente, total, taxaEntrega, salvando, criarPedidoBanco, registrarPagamento, deliveryPrintEnabled, settings.print_kds_enabled]);
 
   // ─── Gate: sem sessão ─────────────────────────────────────────────────────
   if (loadingSession) {

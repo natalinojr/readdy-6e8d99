@@ -148,7 +148,7 @@ const ComboChildrenList = memo(function ComboChildrenList({ children }: { childr
           <span className="text-[10px] font-bold text-orange-600 w-5 text-right flex-shrink-0">
             {child.quantidade}x
           </span>
-          <span className="text-[11px] text-zinc-700 flex-1 truncate">{child.nome}</span>
+          <span className="text-[11px] text-zinc-700 flex-1 whitespace-normal break-words">{child.nome}</span>
           {child.unitPrice != null && child.unitPrice > 0 && (
             <span className="text-[9px] text-zinc-400 flex-shrink-0">
               {fmtPrice(child.unitPrice)}
@@ -180,7 +180,7 @@ const SubParteRow = memo(function SubParteRow({ parte, pedidoId, itemId, onAvanc
   return (
     <div className={`flex items-center gap-2 py-1.5 pl-3 border-l-2 border-zinc-100 ml-2 ${rowBg}`}>
       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border flex-shrink-0 ${getEstacaoColor(parte.estacao)}`}>{parte.estacao}</span>
-      <span className="text-xs text-zinc-700 flex-1 truncate">{parte.nome}</span>
+      <span className="text-xs text-zinc-700 flex-1 whitespace-normal break-words">{parte.nome}</span>
       {showTimer && parte.status !== 'entregue' && faseLabelStr && <span className={`text-[10px] font-bold tabular-nums flex-shrink-0 ${SLA_COLORS[slaLevel]}`}>{faseLabelStr}</span>}
       {nextStatus && <button onClick={() => onAvancarParte(pedidoId, itemId, parte.id, nextStatus)} className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap flex-shrink-0 ${NEXT_ACTION_COLOR[parte.status]}`}>{NEXT_ACTION_LABEL[parte.status]}</button>}
     </div>
@@ -571,7 +571,7 @@ const ItemRow = memo(function ItemRow({ item, pedido, estacaoFiltro, onAvancar, 
             />
           )}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <button onClick={() => onOpenDetalhe(item)} className="text-sm font-semibold text-zinc-900 hover:text-amber-600 transition-colors cursor-pointer text-left">
+            <button onClick={() => onOpenDetalhe(item)} className="text-sm font-semibold text-zinc-900 hover:text-amber-600 transition-colors cursor-pointer text-left whitespace-normal break-words">
               {item.quantidade > 1 && <span className="text-amber-600 font-bold">{item.quantidade}x </span>}
               {item.nome}<i className="ri-information-line text-[10px] ml-1 opacity-40" />
             </button>
@@ -647,7 +647,7 @@ const ItemRow = memo(function ItemRow({ item, pedido, estacaoFiltro, onAvancar, 
                 return (
                   <button key={i} onClick={() => onToggleObsChecada(pedido.id, item.id, obs)} className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-left cursor-pointer transition-all w-full ${checked ? 'bg-green-50 border-green-300 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700 animate-pulse'}`}>
                     <div className={`w-3.5 h-3.5 flex items-center justify-center rounded border flex-shrink-0 ${checked ? 'bg-green-500 border-green-500' : 'bg-white border-amber-400'}`}>{checked && <i className="ri-check-line text-[9px] text-white" />}</div>
-                    <span className="text-[10px] font-bold truncate flex-1">{obs}</span>
+                    <span className="text-[10px] font-bold whitespace-normal break-words flex-1">{obs}</span>
                     {!checked && <span className="text-[9px] font-bold text-amber-500 flex-shrink-0 whitespace-nowrap">⚠ confirmar</span>}
                   </button>
                 );

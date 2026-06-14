@@ -1,8 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { SUPABASE_URL } from '@/lib/supabase';
-import { supabase } from '@/lib/supabase';
 import VisaoGeralFinTab from './components/VisaoGeralFinTab';
 import FluxoCaixaTab from './components/FluxoCaixaTab';
 import ContasPagarTab from './components/ContasPagarTab';
@@ -56,26 +54,6 @@ export default function FinanceiroPage() {
   const handleClearHighlight = () => {
     setHighlightPurchaseId(undefined);
   };
-
-  // Garante permissões nas tabelas financeiras ao abrir o módulo
-  useEffect(() => {
-    const grantPermissions = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        await fetch(`${SUPABASE_URL}/functions/v1/grant-permissions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        });
-      } catch {
-        // silencioso — não bloqueia o módulo
-      }
-    };
-    grantPermissions();
-  }, []);
 
   if (!user || !['admin', 'gerente'].includes(user.perfil)) {
     return (

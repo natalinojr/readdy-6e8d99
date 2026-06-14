@@ -529,6 +529,8 @@ export default function PagamentoKiosk({
   );
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [pendingOrderIdLocal, setPendingOrderIdLocal] = useState<string | null>(null);
+  // BUG-11: estado de erro de pagamento (ex: caixa fechado)
+  const [pagamentoError, setPagamentoError] = useState<string | null>(null);
 
   const simulandoRef = useRef(false);
   const pagarEntregaRef = useRef(false);
@@ -574,11 +576,16 @@ export default function PagamentoKiosk({
     if (simulandoRef.current) return;
     simulandoRef.current = true;
     setAguardando(true);
+    setPagamentoError(null);
     try {
       await onEntrarPagamento();
       await new Promise((r) => setTimeout(r, 1200));
       await onConcluir(method.id);
       setConfirmado(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Erro ao processar pagamento. Tente novamente.';
+      setPagamentoError(msg);
+      console.error('[PagamentoKiosk] Erro no pagamento:', msg);
     } finally {
       simulandoRef.current = false;
       setAguardando(false);
@@ -602,6 +609,7 @@ export default function PagamentoKiosk({
   // Quando PIX é confirmado: cria pedido e finaliza
   const handlePixPago = useCallback(async (pixPaymentId: string) => {
     setAguardando(true);
+    setPagamentoError(null);
     try {
       // Cria o pedido no banco
       await onEntrarPagamento();
@@ -609,6 +617,10 @@ export default function PagamentoKiosk({
       const pixMethod = paymentMethods.find((m) => m.type === 'pix');
       await onConcluir(pixMethod?.id);
       setConfirmado(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Erro ao processar pagamento PIX. Tente novamente.';
+      setPagamentoError(msg);
+      console.error('[PagamentoKiosk] Erro no pagamento PIX:', msg);
     } finally {
       setAguardando(false);
     }
@@ -665,23 +677,37 @@ export default function PagamentoKiosk({
         <div className="text-center">
           <h2 className="text-3xl md:text-6xl font-black text-white mb-2">Quando deseja pagar?</h2>
           <p className="text-zinc-400 text-base md:text-2xl">Total: <span className="text-amber-400 font-black">{fmt(total)}</span></p>
+          {!hasCaixa && (
+            <div className="mt-3 flex items-center justify-center gap-2 text-amber-400 bg-amber-500/10 rounded-full px-4 py-1.5 mx-auto w-fit">
+              <i className="ri-lock-line text-sm" />
+              <span className="text-xs font-bold">Caixa fechado — pagamento presencial indisponível</span>
+            </div>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-4 md:gap-6 w-full max-w-2xl">
           <button
-            onClick={() => setModoEscolhido('hora')}
-            className="flex flex-col items-center gap-4 md:gap-6 p-6 md:p-8 bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-2xl md:rounded-3xl cursor-pointer active:scale-95 transition-all"
+            onClick={() => hasCaixa ? setModoEscolhido('hora') : undefined}
+            disabled={!hasCaixa}
+            className={`flex flex-col items-center gap-4 md:gap-6 p-6 md:p-8 rounded-2xl md:rounded-3xl transition-all ${
+              hasCaixa
+                ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950 cursor-pointer active:scale-95'
+                : 'bg-zinc-800 text-zinc-600 cursor-not-allowed opacity-70'
+            }`}
           >
-            <div className="w-16 h-16 md:w-20 md:h-20 flex items-center justify-center bg-zinc-950/10 rounded-xl md:rounded-2xl">
-              <i className="ri-secure-payment-line text-4xl md:text-5xl" />
+            <div className={`w-16 h-16 md:w-20 md:h-20 flex items-center justify-center rounded-xl md:rounded-2xl ${hasCaixa ? 'bg-zinc-950/10' : 'bg-zinc-700/50'}`}>
+              <i className={`ri-secure-payment-line text-4xl md:text-5xl ${!hasCaixa ? 'text-zinc-600' : ''}`} />
             </div>
             <div className="text-center">
               <p className="text-xl md:text-3xl font-black">Pagar agora</p>
-              <p className="text-zinc-950/60 text-sm md:text-lg mt-1">PIX, cartão ou dinheiro</p>
+              <p className={`text-sm md:text-lg mt-1 ${hasCaixa ? 'text-zinc-950/60' : 'text-zinc-600'}`}>
+                {hasCaixa ? 'PIX, cartão ou dinheiro' : 'Caixa fechado — indisponível'}
+              </p>
             </div>
           </button>
           <button
             onClick={handlePagarNaEntregaEscolhido}
-            className="flex flex-col items-center gap-4 md:gap-6 p-6 md:p-8 bg-zinc-800 hover:bg-zinc-700 text-white rounded-2xl md:rounded-3xl cursor-pointer active:scale-95 transition-all"
+            disabled={pagarEntregaRef.current}
+            className="flex flex-col items-center gap-4 md:gap-6 p-6 md:p-8 bg-zinc-800 hover:bg-zinc-700 text-white rounded-2xl md:rounded-3xl cursor-pointer active:scale-95 transition-all disabled:opacity-60"
           >
             <div className="w-16 h-16 md:w-20 md:h-20 flex items-center justify-center bg-zinc-700 rounded-xl md:rounded-2xl">
               <i className="ri-store-2-line text-4xl md:text-5xl text-zinc-300" />
@@ -712,6 +738,63 @@ export default function PagamentoKiosk({
 
   // ── Escolha de forma de pagamento ──
   if (!forma) {
+    // BUG-11: Bloquear pagamento quando não há caixa (gaveta) aberto.
+    // Sem cash_register, record_payment é silenciosamente ignorado → venda sem receita.
+    // Só permite "pagar na entrega" (que não precisa de caixa).
+    if (!hasCaixa) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-5 md:gap-6 p-5 md:p-8 text-center">
+          <div className="w-16 h-16 md:w-24 md:h-24 flex items-center justify-center bg-amber-500/10 rounded-2xl">
+            <i className="ri-lock-line text-3xl md:text-5xl text-amber-400" />
+          </div>
+          <div>
+            <h2 className="text-xl md:text-4xl font-black text-white mb-2">Caixa fechado</h2>
+            <p className="text-zinc-400 text-sm md:text-lg max-w-md">
+              O pagamento não está disponível porque nenhum caixa (gaveta) foi aberto para esta sessão.
+            </p>
+          </div>
+          <div className="bg-zinc-800 border border-zinc-700 rounded-xl px-5 py-4 max-w-md w-full text-left">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <i className="ri-information-line text-amber-400 text-lg" />
+              </div>
+              <div>
+                <p className="text-amber-400 font-bold text-sm mb-1">O que fazer?</p>
+                <ul className="text-zinc-400 text-sm space-y-1.5">
+                  <li className="flex items-start gap-2">
+                    <span className="text-amber-400 mt-0.5">•</span>
+                    <span>Solicite ao operador que abra o caixa no PDV</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-amber-400 mt-0.5">•</span>
+                    <span>Ou escolha a opção de pagamento na entrega abaixo</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <div className="bg-zinc-800 rounded-xl px-5 py-3">
+            <p className="text-zinc-500 text-xs">Total do pedido</p>
+            <p className="text-amber-400 font-black text-2xl md:text-3xl">{fmt(total)}</p>
+          </div>
+          {modoPagamento === 'ambos' || pagarNaEntrega ? (
+            <button
+              onClick={handlePagarNaEntregaEscolhido}
+              disabled={pagarEntregaRef.current}
+              className="px-8 py-3 md:py-4 bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-sm md:text-lg rounded-xl md:rounded-2xl cursor-pointer transition-colors whitespace-nowrap disabled:opacity-60"
+            >
+              <i className="ri-store-2-line mr-2" />
+              Pagar na entrega
+            </button>
+          ) : (
+            <p className="text-zinc-600 text-sm">
+              Aguarde o operador abrir o caixa para continuar
+            </p>
+          )}
+        </div>
+      );
+    }
+
     const getMethodIcon = (type: string) => {
       if (type === 'pix') return 'ri-qr-code-line';
       if (type === 'cash') return 'ri-money-dollar-circle-line';
@@ -732,6 +815,24 @@ export default function PagamentoKiosk({
           <h2 className="text-3xl md:text-6xl font-black text-white mb-2">Como deseja pagar?</h2>
           <p className="text-zinc-400 text-base md:text-2xl">Total: <span className="text-amber-400 font-black">{fmt(total)}</span></p>
         </div>
+        {/* BUG-11: Banner de erro de pagamento */}
+        {pagamentoError && (
+          <div className="w-full max-w-2xl bg-red-500/10 border border-red-500/30 rounded-xl px-5 py-4 flex items-start gap-3">
+            <div className="w-8 h-8 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <i className="ri-error-warning-line text-red-400 text-lg" />
+            </div>
+            <div className="flex-1">
+              <p className="text-red-400 font-bold text-sm">Erro no pagamento</p>
+              <p className="text-red-400/80 text-sm mt-0.5">{pagamentoError}</p>
+            </div>
+            <button
+              onClick={() => setPagamentoError(null)}
+              className="w-6 h-6 flex items-center justify-center text-red-400/60 hover:text-red-400 cursor-pointer flex-shrink-0"
+            >
+              <i className="ri-close-line text-sm" />
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3 md:gap-4 w-full max-w-2xl">
           {paymentMethods.map((method) => {
             const isPix = method.type === 'pix';
@@ -787,6 +888,24 @@ export default function PagamentoKiosk({
           : 'Dirija-se ao caixa para pagar'}
       </h2>
       <p className="text-zinc-400 text-sm md:text-2xl">Total: <span className="text-amber-400 font-black">{fmt(total)}</span></p>
+      {/* BUG-11: Banner de erro de pagamento */}
+      {pagamentoError && (
+        <div className="w-full max-w-md bg-red-500/10 border border-red-500/30 rounded-xl px-5 py-4 flex items-start gap-3">
+          <div className="w-8 h-8 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <i className="ri-error-warning-line text-red-400 text-lg" />
+          </div>
+          <div className="flex-1">
+            <p className="text-red-400 font-bold text-sm">Erro no pagamento</p>
+            <p className="text-red-400/80 text-sm mt-0.5">{pagamentoError}</p>
+          </div>
+          <button
+            onClick={() => setPagamentoError(null)}
+            className="w-6 h-6 flex items-center justify-center text-red-400/60 hover:text-red-400 cursor-pointer flex-shrink-0"
+          >
+            <i className="ri-close-line text-sm" />
+          </button>
+        </div>
+      )}
       {forma.type !== 'cash' && (
         <div className="bg-zinc-800 rounded-xl md:rounded-2xl px-8 md:px-12 py-4 md:py-6 border-2 border-dashed border-zinc-600">
           <p className="text-zinc-500 text-sm md:text-xl">Aguardando leitura do terminal...</p>
@@ -799,7 +918,7 @@ export default function PagamentoKiosk({
       )}
       <div className="flex gap-3 md:gap-4">
         <button
-          onClick={() => setForma(null)}
+          onClick={() => { setForma(null); setPagamentoError(null); }}
           className="px-5 md:px-10 py-3 md:py-4 bg-zinc-700 hover:bg-zinc-600 text-white font-bold text-sm md:text-xl rounded-xl md:rounded-2xl cursor-pointer whitespace-nowrap"
         >
           Voltar

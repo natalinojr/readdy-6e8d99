@@ -8,10 +8,12 @@ import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/Impressor
 interface Props {
   pedidos: KDSPedido[];
   onAvancar: (pedidoId: string) => void;
+  onEmRota: (pedidoId: string) => void;
   onEntregar: (pedidoId: string) => void;
   onMudarOperador: (pedidoId: string, operador: string) => void;
   onCancelar: (pedidoId: string) => void;
   onOpenDetail: (pedidoId: string) => void;
+  onEntregarItem?: (pedidoId: string, itemId: string) => void;
   operadorAtual?: string;
   tick: number;
   filtroEstacao?: string;
@@ -21,6 +23,7 @@ const STATUS_STYLE: Record<string, { label: string; cls: string; dot: string }> 
   novo:      { label: 'Aguardando', cls: 'bg-zinc-100 text-zinc-600 border border-zinc-200',     dot: 'bg-zinc-400' },
   preparo:   { label: 'Em Preparo', cls: 'bg-amber-100 text-amber-700 border border-amber-200',  dot: 'bg-amber-500 animate-pulse' },
   pronto:    { label: 'Pronto',     cls: 'bg-emerald-100 text-emerald-700 border border-emerald-200', dot: 'bg-emerald-500' },
+  em_rota:   { label: 'Em Rota',    cls: 'bg-sky-100 text-sky-700 border border-sky-200',        dot: 'bg-sky-500' },
   entregue:  { label: 'Entregue',   cls: 'bg-zinc-100 text-zinc-400 border border-zinc-200',     dot: 'bg-zinc-300' },
   cancelado: { label: 'Cancelado',  cls: 'bg-red-100 text-red-600 border border-red-200',        dot: 'bg-red-400' },
 };
@@ -28,7 +31,7 @@ const STATUS_STYLE: Record<string, { label: string; cls: string; dot: string }> 
 const ORIGEM_STYLE: Record<string, { label: string; cls: string }> = {
   caixa:           { label: 'Caixa',    cls: 'bg-violet-100 text-violet-700 border border-violet-200' },
   garcom:          { label: 'Garçom',   cls: 'bg-sky-100 text-sky-700 border border-sky-200' },
-  autoatendimento: { label: 'Kiosk',    cls: 'bg-pink-100 text-pink-700 border border-pink-200' },
+  autoatendimento: { label: 'Autoatendimento',    cls: 'bg-pink-100 text-pink-700 border border-pink-200' },
   mesa_qr:         { label: 'QR',       cls: 'bg-teal-100 text-teal-700 border border-teal-200' },
   mesa:            { label: 'Mesa QR',  cls: 'bg-teal-100 text-teal-700 border border-teal-200' },
   delivery:        { label: 'Delivery', cls: 'bg-orange-100 text-orange-700 border border-orange-200' },
@@ -48,6 +51,7 @@ function elapsedMin(criadoEm: number): number {
 
 function timerCls(criadoEm: number, status: string): string {
   if (status === 'entregue') return 'text-zinc-400';
+  if (status === 'em_rota') return 'text-sky-600 font-semibold';
   const m = elapsedMin(criadoEm);
   if (m > 20) return 'text-red-500 font-black';
   if (m > 10) return 'text-amber-500 font-bold';
@@ -55,7 +59,7 @@ function timerCls(criadoEm: number, status: string): string {
 }
 
 function rowUrgencyClass(criadoEm: number, status: string): string {
-  if (status === 'entregue' || status === 'pronto') return '';
+  if (status === 'entregue' || status === 'pronto' || status === 'em_rota') return '';
   const m = elapsedMin(criadoEm);
   if (m > 20) return 'bg-red-50 border-l-2 border-red-400';
   if (m > 10) return 'bg-amber-50/60 border-l-2 border-amber-300';
@@ -64,11 +68,12 @@ function rowUrgencyClass(criadoEm: number, status: string): string {
 
 function destinoStr(p: KDSPedido): string {
   if (p.destino === 'mesa') {
-    return p.nomeCliente ? `Mesa ${p.mesaNumero} · ${p.nomeCliente}` : `Mesa ${p.mesaNumero}`;
+    const base = p.nomeCliente ? `Mesa ${p.mesaNumero} · ${p.nomeCliente}` : `Mesa ${p.mesaNumero}`;
+    return p.participantName ? `${base} · ${p.participantName}` : base;
   }
   if (p.destino === 'nome' && p.nomeCliente) return p.nomeCliente;
   if (p.destino === 'senha' && p.senha) return `Senha ${p.senha}`;
-  if (p.destino === 'delivery' && p.nomeCliente) return `Delivery · ${p.nomeCliente}`;
+  if (p.destino === 'delivery' && p.nomeCliente) return p.nomeCliente;
   if (p.destino === 'delivery') return 'Delivery';
   return 'Balcão';
 }
@@ -77,34 +82,51 @@ type SortKey = 'numero' | 'tempo' | 'origem' | 'destino' | 'status' | 'valor';
 type SortDir = 'asc' | 'desc';
 
 // ─── Linha expandida com detalhes completos ───
-function RowDetail({ pedido, filtroEstacao }: { pedido: KDSPedido; filtroEstacao?: string }) {
+function RowDetail({ pedido, filtroEstacao, onEntregarItem }: { pedido: KDSPedido; filtroEstacao?: string; onEntregarItem?: (itemId: string) => void }) {
   const kitchenItens = pedido.itens.filter((i) => !i.semPreparo && !i.skip_kds);
   const directItens = pedido.itens.filter((i) => i.semPreparo || i.skip_kds);
+  const isCancelled = pedido.isCancelled;
+  const isDelivery = pedido.origem === 'delivery' || pedido.destino === 'delivery';
 
   const renderItem = (item: KDSItem, isSkip: boolean) => {
     const isDimmed = filtroEstacao && filtroEstacao !== 'todas' && item.estacao !== filtroEstacao;
+    const podeEntregar = !isCancelled && !isDelivery && onEntregarItem && (item.status === 'pronto' || (isSkip && item.status !== 'entregue'));
     return (
       <div key={item.id} className={`transition-opacity ${isDimmed ? 'opacity-25' : ''}`}>
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-black text-zinc-400 w-5 text-right flex-shrink-0">{item.quantidade}x</span>
           <span className={`text-xs font-semibold ${isSkip ? 'text-zinc-400' : 'text-zinc-700'}`}>{item.nome}</span>
-          {item.categoriaNome && !isSkip && (
+          {item.status === 'entregue' && (
+            <span className="flex items-center gap-0.5 text-[8px] font-bold px-1 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 whitespace-nowrap">
+              <i className="ri-check-double-line text-[8px]" />Entregue
+            </span>
+          )}
+          {!isSkip && item.categoriaNome && item.status !== 'entregue' && (
             <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-zinc-100 text-zinc-500 border border-zinc-200 whitespace-nowrap">
               {item.categoriaNome}
             </span>
           )}
-          {isSkip && (
+          {isSkip && item.status !== 'entregue' && (
             <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-zinc-100 text-zinc-400 border border-zinc-200 whitespace-nowrap">
               direto
             </span>
           )}
-
+          {podeEntregar && (
+            <button
+              onClick={() => onEntregarItem?.(item.id)}
+              className="flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-700 text-[9px] font-bold border border-emerald-300 cursor-pointer transition-colors whitespace-nowrap"
+              title="Entregar este item"
+            >
+              <i className="ri-check-line text-[8px]" />
+              Entregar
+            </button>
+          )}
         </div>
         {item.opcoes && item.opcoes.length > 0 && (
           <div className="ml-7 mt-0.5 flex flex-wrap gap-1">
             {item.opcoes.map((o, i) => (
               <span key={i} className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200 whitespace-nowrap">
-                <i className="ri-add-line text-[8px]" /> {o.opcaoNome}
+                {!o.obrigatorio && <i className="ri-add-line text-[8px]" />} {o.opcaoNome}
               </span>
             ))}
           </div>
@@ -203,7 +225,7 @@ function RowDetail({ pedido, filtroEstacao }: { pedido: KDSPedido; filtroEstacao
   );
 }
 
-export default function GestorListView({ pedidos, onAvancar, onEntregar, onCancelar, onOpenDetail, tick, filtroEstacao }: Props) {
+export default function GestorListView({ pedidos, onAvancar, onEmRota, onEntregar, onCancelar, onOpenDetail, onEntregarItem, tick, filtroEstacao }: Props) {
   void tick;
   const { getImpressoraParaEstacao } = useImpressoras();
   const [fichaItens, setFichaItens] = useState<{ nome: string; quantidade: number; menuItemId?: string }[] | null>(null);
@@ -242,7 +264,7 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
     const numStr = String(p.numero).padStart(4, '0');
     const garcomLine = p.garcomNome ? `<p>Gar&ccedil;om: ${p.garcomNome}</p>` : '';
     const itensHtml = p.itens.map((i) => {
-      const opts = i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => '+ ' + o.opcaoNome).join(', ')}</div>` : '';
+      const opts = i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => `${o.obrigatorio ? '' : '+ '}${o.opcaoNome}`).join(', ')}</div>` : '';
       const obs = i.observacoes?.length ? `<div style="color:red;font-weight:bold;font-size:11px">${i.observacoes.map((o) => '&#9888; ' + o).join('<br/>')}</div>` : '';
       return `<div style="margin:4px 0"><strong>${i.quantidade}x ${i.nome}</strong>${opts}${obs}</div>`;
     }).join('');
@@ -326,9 +348,15 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
                         >
                           {formatOrderNumber(p.numeroStr, p.numero)}
                         </button>
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${oStyle.cls}`}>
-                          {oStyle.label}
-                        </span>
+                        {(p.origem === 'delivery' || p.destino === 'delivery') ? (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">
+                            <i className="ri-motorbike-line text-[8px] mr-0.5" />Delivery
+                          </span>
+                        ) : (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${oStyle.cls}`}>
+                            {oStyle.label}
+                          </span>
+                        )}
                         <div className="flex items-center gap-1 ml-auto">
                           <span className={`w-1.5 h-1.5 rounded-full ${stStyle.dot}`} />
                           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${stStyle.cls}`}>
@@ -365,6 +393,27 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
                           )}
                         </div>
                       </div>
+
+                      {/* Participante QR Code (mobile) */}
+                      {p.participantToken && (
+                        <div className="mt-1.5 ml-4 flex items-center gap-1.5 flex-wrap">
+                          {p.mesaNumero != null && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 border border-violet-300 text-[9px] font-black text-violet-800">
+                              <i className="ri-table-line text-[8px]" />
+                              Mesa {p.mesaNumero}
+                            </span>
+                          )}
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[9px] font-black text-violet-700">
+                            <i className="ri-qr-code-line text-[8px]" />
+                            Senha {p.participantToken}
+                          </span>
+                          {p.participantName && (
+                            <span className="text-[9px] font-semibold text-zinc-600 truncate">
+                              {p.participantName}
+                            </span>
+                          )}
+                        </div>
+                      )}
 
                       {/* Linha 3: ações */}
                       <div className="flex items-center gap-1.5 mt-2.5 ml-4" onClick={(e) => e.stopPropagation()}>
@@ -408,11 +457,36 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
                           <span className="text-[10px] font-bold text-zinc-300 whitespace-nowrap">Em edição</span>
                         ) : p.status === 'entregue' ? (
                           <span className="text-[10px] text-zinc-300 font-medium">Concluído</span>
+                        ) : p.status === 'em_rota' ? (
+                          <button
+                            onClick={() => onEntregar(p.id)}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-zinc-900 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap"
+                          >
+                            <i className="ri-check-double-line text-sm" />Entregar
+                          </button>
                         ) : p.status === 'pronto' ? (
                           p.origem === 'autoatendimento' && !p.isPaid ? (
                             <span className="flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg whitespace-nowrap">
                               <i className="ri-store-2-line text-[9px]" />Pagar no caixa
                             </span>
+                          ) : (p.origem === 'delivery' || p.destino === 'delivery') ? (
+                            <>
+                              {p.deliveryPlatform === 'retirada' ? (
+                                <button
+                                  onClick={() => onEntregar(p.id)}
+                                  className="flex items-center gap-1 px-3 py-1.5 bg-zinc-900 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap"
+                                >
+                                  <i className="ri-check-double-line text-sm" />Entregar
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => onEmRota(p.id)}
+                                  className="flex items-center gap-1 px-3 py-1.5 bg-sky-500 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap"
+                                >
+                                  <i className="ri-bike-line text-sm" />Em Rota
+                                </button>
+                              )}
+                            </>
                           ) : (
                             <button
                               onClick={() => onEntregar(p.id)}
@@ -444,7 +518,7 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
                     </div>
 
                     {isExpanded && (
-                      <RowDetail pedido={p} filtroEstacao={filtroEstacao} />
+                      <RowDetail pedido={p} filtroEstacao={filtroEstacao} onEntregarItem={onEntregarItem ? (itemId: string) => onEntregarItem(p.id, itemId) : undefined} />
                     )}
                   </div>
                 );
@@ -516,16 +590,39 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
                           </span>
                         </div>
                         <div className="flex items-center">
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full w-fit ${oStyle.cls}`}>
-                            {oStyle.label}
-                          </span>
+                          {p.origem === 'delivery' || p.destino === 'delivery' ? (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200 w-fit">
+                              <i className="ri-motorbike-line text-[8px] mr-0.5" />Delivery
+                            </span>
+                          ) : (
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full w-fit ${oStyle.cls}`}>
+                              {oStyle.label}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-1 min-w-0">
                           <i className={`text-[10px] text-zinc-400 flex-shrink-0 ${
                             p.destino === 'mesa' ? 'ri-table-line' :
                             p.destino === 'delivery' ? 'ri-motorbike-line' : 'ri-user-line'
                           }`} />
-                          <span className="text-xs text-zinc-700 truncate font-medium">{destinoStr(p)}</span>
+                          <div className="min-w-0">
+                            <span className="text-xs text-zinc-700 truncate font-medium block">{destinoStr(p)}</span>
+                            {p.participantToken && (
+                              <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                                {p.mesaNumero != null && (
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-violet-100 border border-violet-300 text-[8px] font-black text-violet-800">
+                                    <i className="ri-table-line text-[7px]" />
+                                    M{p.mesaNumero}
+                                  </span>
+                                )}
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[8px] font-black text-violet-700">
+                                  <i className="ri-qr-code-line text-[7px]" />
+                                  {p.participantToken}
+                                  {p.participantName && <span className="font-semibold text-zinc-500 ml-0.5">{p.participantName}</span>}
+                                </span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                         <div className="pr-2 min-w-0">
                           <div className="flex flex-wrap gap-1">
@@ -586,11 +683,27 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
                             </span>
                           ) : p.status === 'entregue' ? (
                             <span className="text-[10px] text-zinc-300 font-medium px-1">Concluído</span>
+                          ) : p.status === 'em_rota' ? (
+                            <button onClick={() => onEntregar(p.id)} className="flex items-center gap-1 px-2.5 py-1.5 bg-zinc-900 hover:bg-black text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors">
+                              <i className="ri-check-double-line text-sm" />Entregar
+                            </button>
                           ) : p.status === 'pronto' ? (
                             p.origem === 'autoatendimento' && !p.isPaid ? (
                               <span className="flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg whitespace-nowrap">
                                 <i className="ri-store-2-line text-[9px]" />Pagar no caixa
                               </span>
+                            ) : (p.origem === 'delivery' || p.destino === 'delivery') ? (
+                              <>
+                                {p.deliveryPlatform === 'retirada' ? (
+                                  <button onClick={() => onEntregar(p.id)} className="flex items-center gap-1 px-2.5 py-1.5 bg-zinc-900 hover:bg-black text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors">
+                                    <i className="ri-check-double-line text-sm" />Entregar
+                                  </button>
+                                ) : (
+                                  <button onClick={() => onEmRota(p.id)} className="flex items-center gap-1 px-2.5 py-1.5 bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors">
+                                    <i className="ri-bike-line text-sm" />Em Rota
+                                  </button>
+                                )}
+                              </>
                             ) : (
                               <button onClick={() => onEntregar(p.id)} className="flex items-center gap-1 px-2.5 py-1.5 bg-zinc-900 hover:bg-black text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors">
                                 <i className="ri-check-double-line text-sm" />Entregar
@@ -609,7 +722,7 @@ export default function GestorListView({ pedidos, onAvancar, onEntregar, onCance
                           )}
                         </div>
                       </div>
-                      {isExpanded && <RowDetail pedido={p} filtroEstacao={filtroEstacao} />}
+                      {isExpanded && <RowDetail pedido={p} filtroEstacao={filtroEstacao} onEntregarItem={onEntregarItem ? (itemId: string) => onEntregarItem(p.id, itemId) : undefined} />}
                     </div>
                   );
                 })}

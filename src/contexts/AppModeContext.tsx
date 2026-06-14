@@ -7,7 +7,8 @@ export type AppMode =
   | 'pdv_garcom'
   | 'pdv_delivery'
   | 'kds'
-  | 'gestor_pedidos';
+  | 'gestor_pedidos'
+  | 'gestor_delivery';
 
 interface AppModeContextValue {
   mode: AppMode;

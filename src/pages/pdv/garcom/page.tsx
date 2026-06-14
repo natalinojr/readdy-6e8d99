@@ -178,7 +178,12 @@ export default function GarcomPage() {
           nome: item.nome,
           quantidade: item.quantidade,
           precoTotal: item.item_price ?? 0,
-          opcoes: item.opcoes.map((o) => ({ opcaoId: '', opcaoNome: o.opcaoNome, grupoNome: o.grupoNome, precoAdicional: 0 })),
+          opcoes: item.opcoes.map((o) => ({
+            opcaoId: o.opcaoId || '',
+            opcaoNome: o.opcaoNome,
+            grupoNome: o.grupoNome,
+            precoAdicional: o.additional_price ?? 0,
+          })),
           observacoes: item.observacoes,
           observacaoLivre: item.observacaoLivre,
         })),
@@ -316,6 +321,7 @@ export default function GarcomPage() {
         option_name: o.opcaoNome,
         group_name: o.grupoNome,
         additional_price: o.precoAdicional,
+        group_obrigatorio: o.obrigatorio,
       })),
       observations: [
         ...ci.observacoes.map((t) => ({ text: t })),

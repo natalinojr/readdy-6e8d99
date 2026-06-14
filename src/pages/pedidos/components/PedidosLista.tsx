@@ -223,7 +223,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
           return (
             <div
               key={pedido.id}
-              className={`cursor-pointer transition-colors ${isAtrasado ? 'hover:bg-red-50 border-l-2 border-red-400' : 'hover:bg-zinc-50'}`}
+              className={`cursor-pointer transition-colors ${isAtrasado ? 'hover:bg-red-50 border-l-2 border-red-400' : 'hover:bg-zinc-50'} ${pedido.status === 'cancelado' || pedido.status === 'cancelled' ? 'opacity-60 bg-red-50/30' : ''}`}
               onClick={() => onSelectPedido(pedido.id)}
             >
               {/* Desktop row */}
@@ -331,7 +331,11 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
 
                 {/* Total */}
                 <div className="text-right">
-                  <p className="text-sm font-black text-zinc-900 whitespace-nowrap">R$ {pedido.total.toFixed(2)}</p>
+                  {pedido.status === 'cancelado' || pedido.status === 'cancelled' ? (
+                    <span className="text-xs font-semibold text-red-400 whitespace-nowrap">Cancelado</span>
+                  ) : (
+                    <p className="text-sm font-black text-zinc-900 whitespace-nowrap">R$ {pedido.total.toFixed(2)}</p>
+                  )}
                 </div>
               </div>
 
@@ -357,7 +361,11 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                       </span>
                     )}
                   </div>
-                  <p className="text-sm font-black text-zinc-900 whitespace-nowrap">R$ {pedido.total.toFixed(2)}</p>
+                  {pedido.status === 'cancelado' || pedido.status === 'cancelled' ? (
+                    <span className="text-xs font-semibold text-red-400 whitespace-nowrap">Cancelado</span>
+                  ) : (
+                    <p className="text-sm font-black text-zinc-900 whitespace-nowrap">R$ {pedido.total.toFixed(2)}</p>
+                  )}
                 </div>
                 <div className="flex items-center gap-3 text-xs text-zinc-500 flex-wrap">
                   <span className="flex items-center gap-1">

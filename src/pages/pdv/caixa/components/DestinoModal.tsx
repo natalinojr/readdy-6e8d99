@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { DestinoInfo, DestinoType } from '../../../../contexts/PDVContext';
+import { usePDV } from '../../../../contexts/PDVContext';
 import { useMesas } from '../../../../contexts/MesasContext';
 
 interface Props {
@@ -19,12 +20,20 @@ const TIPOS: { tipo: DestinoType; label: string; icon: string; desc: string }[] 
 
 export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa }: Props) {
   const { mesas } = useMesas();
+  const { senhaCounter, consumirSenha } = usePDV();
   const [tipo, setTipo] = useState<DestinoType>(current?.tipo && current.tipo !== 'hora' ? current.tipo : 'mesa');
   const [mesaId, setMesaId] = useState(current?.mesaId ?? '');
   const [nomeCliente, setNomeCliente] = useState(current?.nomeCliente ?? '');
   const [telefone, setTelefone] = useState(current?.telefone ?? '');
   const [senha, setSenha] = useState(current?.senha ?? '');
   const [observacaoPedido, setObservacaoPedido] = useState(current?.observacaoPedido ?? '');
+
+  // Sempre exibe a próxima senha do contador quando o tipo for "senha"
+  useEffect(() => {
+    if (tipo === 'senha') {
+      setSenha(String(senhaCounter));
+    }
+  }, [tipo, senhaCounter]);
 
   // Mostra todas as mesas (livres + ocupadas), exceto bloqueadas
   const todasMesas = mesas
@@ -34,7 +43,7 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
   // Compatível com código antigo
   const mesasLivres = mesas.filter((m) => m.status === 'livre' || m.id === current?.mesaId);
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     let info: DestinoInfo = { tipo };
     if (tipo === 'mesa') {
       const mesa = mesas.find((m) => m.id === mesaId);
@@ -48,8 +57,9 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
       if (!nomeCliente.trim()) return;
       info = { tipo, nomeCliente, observacaoPedido: observacaoPedido.trim() || undefined };
     } else if (tipo === 'senha') {
-      if (!senha.trim()) return;
-      info = { tipo, senha, observacaoPedido: observacaoPedido.trim() || undefined };
+      // Consome a senha do contador do sistema (backend, atômico)
+      const senhaGerada = await consumirSenha();
+      info = { tipo, senha: String(senhaGerada), observacaoPedido: observacaoPedido.trim() || undefined };
     } else if (tipo === 'delivery') {
       if (!nomeCliente.trim()) return;
       info = { tipo, nomeCliente, telefone, observacaoPedido: observacaoPedido.trim() || undefined };
@@ -60,7 +70,7 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
   const isValid = () => {
     if (tipo === 'mesa') return !!mesaId;
     if (tipo === 'nome') return !!nomeCliente.trim();
-    if (tipo === 'senha') return !!senha.trim();
+    if (tipo === 'senha') return true; // Sempre válido — senha é gerada automaticamente
     if (tipo === 'delivery') return !!nomeCliente.trim();
     return false;
   };
@@ -171,13 +181,15 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
           {tipo === 'senha' && (
             <div>
               <label className="block text-sm font-medium text-zinc-700 mb-1">Senha do Pedido</label>
-              <input
-                type="text"
-                value={senha}
-                onChange={(e) => setSenha(e.target.value.toUpperCase())}
-                placeholder="Ex: A-01"
-                className="w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-              />
+              <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                <div className="w-8 h-8 flex items-center justify-center bg-amber-100 rounded-lg">
+                  <i className="ri-ticket-line text-amber-600 text-lg" />
+                </div>
+                <div>
+                  <p className="text-2xl font-black text-amber-700 tracking-wider">{senha}</p>
+                  <p className="text-[10px] text-amber-500 font-medium">Gerada automaticamente pelo sistema</p>
+                </div>
+              </div>
             </div>
           )}
 

@@ -90,8 +90,12 @@ export default function DivergenciaPanel() {
 
           {divergencias.length === 0 ? (
             <div className="flex items-center gap-2 px-4 py-3">
-              <i className="ri-checkbox-circle-fill text-emerald-400 text-sm" />
-              <p className="text-xs text-zinc-500">Estoque teórico alinhado com a última contagem. Faça nova contagem para atualizar.</p>
+              <i className="ri-checkbox-circle-fill text-emerald-400 text-sm flex-shrink-0" />
+              <p className="text-xs text-zinc-500">
+                {ultimaContagem.itensComDiferenca > 0
+                  ? <>Estoque atual coincide com o que foi contado. A última contagem registrou <strong className="text-amber-600">{ultimaContagem.itensComDiferenca} divergência{ultimaContagem.itensComDiferenca > 1 ? 's' : ''}</strong> que foram ajustadas — sem novas movimentações divergentes desde então.</>
+                  : 'Estoque teórico alinhado com a última contagem. Nenhuma divergência detectada.'}
+              </p>
             </div>
           ) : (
             <div className="divide-y divide-zinc-50">

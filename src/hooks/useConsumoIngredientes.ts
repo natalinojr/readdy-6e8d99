@@ -158,11 +158,21 @@ export function useConsumoIngredientes(
           category: String(r.category ?? ''),
           supplier: String(r.supplier ?? ''),
           deletedAt: r.deleted_at ? String(r.deleted_at) : null,
-          // 'production' = semi-acabado/intermediário; 'final' = vendido direto no PDV
+          // 'production' = produto produzido/intermediário; 'final' = vendido direto no PDV
           usageType: String(r.usage_type ?? 'final') as 'final' | 'production',
         })).filter((i) => i.id);
 
-        const activeIngredients = ingredients.filter((i) => !i.deletedAt);
+        const CATEGORIAS_PRODUCAO = new Set([
+          'Produtos Produzidos',
+          'Produtos Semi-acabados',
+          'Produtos de Produção',
+        ]);
+        const activeIngredients = ingredients.filter(
+          (i) =>
+            !i.deletedAt &&
+            !CATEGORIAS_PRODUCAO.has(i.category) &&
+            i.usageType !== 'production',
+        );
         const ingredientMap = new Map(activeIngredients.map((i) => [i.id, i]));
         const allIngredientMap = new Map(ingredients.map((i) => [i.id, i]));
 
@@ -304,7 +314,7 @@ export function useConsumoIngredientes(
           // independente do usage_type. Isso cobre hambúrgueres e outros itens de produção
           // que também são vendidos diretamente no PDV.
           //
-          // Se o insumo é usage_type='production' E não teve vendas diretas → é um semi-acabado
+          // Se o insumo é usage_type='production' E não teve vendas diretas → é um produto produzido
           // puro (ex: Molho de Tomate). Usa o bucket PRODUÇÃO (saídas para outras receitas)
           // como referência.
           //
@@ -312,7 +322,7 @@ export function useConsumoIngredientes(
           const isProdutoProducao = ing.usageType === 'production';
           const temVendasDiretas = c?.temVendasDiretas ?? false;
           const consumoReferencia = (isProdutoProducao && !temVendasDiretas)
-            ? porTipo.producao   // semi-acabado puro: consumido em outras receitas
+            ? porTipo.producao   // produto produzido puro: consumido em outras receitas
             : porTipo.vendas;    // vendido diretamente no PDV (inclui itens de produção com venda)
 
           const mediaDiaria = dias > 0 ? consumoReferencia / dias : 0;
@@ -363,6 +373,8 @@ export function useConsumoIngredientes(
         for (const [ingId, c] of agg.entries()) {
           if (processedIds.has(ingId)) continue;
           const delIng = allIngredientMap.get(ingId);
+          // Exclui órfãos que eram de categorias de produção
+          if (CATEGORIAS_PRODUCAO.has(delIng?.category ?? '') || delIng?.usageType === 'production') continue;
 
           result.push({
             id: ingId,

@@ -32,7 +32,12 @@ export function getAppBaseUrl(): string {
 function hasPublicDomain(): boolean {
   try {
     const d = typeof __READDY_AI_DOMAIN__ !== 'undefined' ? __READDY_AI_DOMAIN__ : '';
-    return !!(d && d.startsWith('http'));
+    if (d && d.startsWith('http')) return true;
+
+    // Fallback: se __READDY_AI_DOMAIN__ não estiver disponível, verifica as env vars
+    const envUrl = (import.meta.env.VITE_APP_URL as string | undefined)
+      || (import.meta.env.VITE_PUBLIC_APP_URL as string | undefined);
+    return !!(envUrl && envUrl.startsWith('http'));
   } catch {
     return false;
   }

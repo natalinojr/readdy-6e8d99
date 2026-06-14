@@ -424,10 +424,12 @@ export default function ImpressorasTab() {
     setRemovendoId(null);
   };
 
+  // ── Botao Salvar ──
+  // (auto-save ja acontece no contexto, mas o botao manual da seguranca extra)
   const handleSalvar = async () => {
     await salvarImpressoras();
     setSalvo(true);
-    toastSuccess('Impressoras salvas!', 'Configurações de impressoras atualizadas com sucesso.');
+    toastSuccess('Impressoras salvas!', 'Configuracoes de impressoras atualizadas com sucesso.');
     setTimeout(() => setSalvo(false), 2500);
   };
 
@@ -867,8 +869,12 @@ export default function ImpressorasTab() {
         </div>
       )}
 
-      {/* Botão Salvar */}
-      <div className="flex justify-end pb-4">
+      {/* Botao Salvar + indicador auto-save */}
+      <div className="flex items-center justify-end gap-3 pb-4">
+        <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+          <i className="ri-database-2-line text-amber-400" />
+          Salvamento automatico ativo
+        </span>
         <button
           onClick={handleSalvar}
           disabled={salvando}
@@ -879,7 +885,7 @@ export default function ImpressorasTab() {
           ) : (
             <i className="ri-save-line" />
           )}
-          {salvando ? 'Salvando...' : 'Salvar configurações'}
+          {salvando ? 'Salvando...' : 'Salvar agora'}
         </button>
       </div>
 

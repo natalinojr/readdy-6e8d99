@@ -24,6 +24,8 @@ interface Props {
   valorInicial?: number;
   /** Texto de contexto exibido no topo do modal para indicar o que está sendo cobrado */
   tituloContexto?: string;
+  /** IDs de pedidos para auto-vincular na abertura — soma os totais automaticamente */
+  autoLinkOrderIds?: string[];
 }
 
 interface ItemPedido {
@@ -33,7 +35,7 @@ interface ItemPedido {
   opcoes?: string[];
 }
 
-export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, destinoDisplay, destino, onClose, onSuccess, paidByPdv = 'cashier', valorInicial, tituloContexto }: Props) {
+export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, destinoDisplay, destino, onClose, onSuccess, paidByPdv = 'cashier', valorInicial, tituloContexto, autoLinkOrderIds }: Props) {
   const { formasAtivas, loading: loadingFormas } = usePaymentMethods();
   const { user } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
@@ -48,6 +50,12 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   const [sucesso, setSucesso] = useState(false);
   const [etapa, setEtapa] = useState<'pagar' | 'selecionar'>('pagar');
   const [pedidosSelecionados, setPedidosSelecionados] = useState<Set<string>>(new Set());
+  // Auto-link orders from props (ex: grouped orders from same senha in PDV caixa)
+  useEffect(() => {
+    if (autoLinkOrderIds && autoLinkOrderIds.length > 0) {
+      setPedidosSelecionados(new Set(autoLinkOrderIds));
+    }
+  }, [autoLinkOrderIds]);
   const [pedidoExpandido, setPedidoExpandido] = useState<string | null>(null);
   const [itensPrincipalDb, setItensPrincipalDb] = useState<ItemPedido[]>([]);
   const [loadingItens, setLoadingItens] = useState(false);
@@ -65,7 +73,13 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         .filter((o) => !!o.opcaoNome)
         .map((o) => {
           const addPrice = (o as { additional_price?: number }).additional_price ?? 0;
-          return addPrice > 0 ? `${o.grupoNome}: ${o.opcaoNome} (+${fmt(addPrice)})` : `${o.grupoNome}: ${o.opcaoNome}`;
+          const isMandatory = !!(o as { obrigatorio?: boolean }).obrigatorio;
+          if (addPrice > 0) {
+            return isMandatory
+              ? `${o.grupoNome}: ${o.opcaoNome} (${fmt(addPrice)})`
+              : `${o.grupoNome}: ${o.opcaoNome} (+${fmt(addPrice)})`;
+          }
+          return `${o.grupoNome}: ${o.opcaoNome}`;
         }),
     }));
   }, [kdsPedidos, orderId]);
@@ -159,7 +173,10 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
           const opts = optsPorItem.get(row.id) ?? [];
           const opcoes = opts
             .filter((o) => !!o.option_name)
-            .map((o) => `${o.option_name} (+${fmt(o.additional_price)})`);
+            .map((o) => {
+              const price = o.additional_price ?? 0;
+              return price > 0 ? `${o.option_name} (+${fmt(price)})` : o.option_name;
+            });
           const nome = row.item_name || (row.item_id ? nomesMenuItem.get(row.item_id) : null) || 'Item';
           return {
             nome,
@@ -283,6 +300,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
       // Registra pagamentos dos pedidos vinculados (distribui proporcionalmente)
       if (todosPedidosVinculados.length > 0) {
         const proporcao = todosPedidosVinculados.map((p) => p.total / totalEfetivo);
+        const vinculadoErrors: string[] = [];
         for (let i = 0; i < todosPedidosVinculados.length; i++) {
           const pedido = todosPedidosVinculados[i];
           const prop = proporcao[i];
@@ -301,9 +319,12 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
               },
             });
             if (payErr) {
-              console.warn('[PagamentoRapidoModal] record_payment vinculado error:', payErr);
+              vinculadoErrors.push(typeof payErr === 'string' ? payErr : JSON.stringify(payErr));
             }
           }
+        }
+        if (vinculadoErrors.length > 0) {
+          throw new Error(`Falha ao registrar pagamento vinculado: ${vinculadoErrors.join('; ')}`);
         }
       }
 

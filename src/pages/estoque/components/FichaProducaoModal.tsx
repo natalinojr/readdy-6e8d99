@@ -250,7 +250,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-                Nome do produto semi-acabado
+                Nome do produto produzido
               </label>
               <input
                 value={nome}
@@ -285,7 +285,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                 list="cat-producao"
                 value={categoria}
                 onChange={(e) => setCategoria(e.target.value)}
-                placeholder="Ex: Produtos Semi-acabados"
+                placeholder="Ex: Produtos Produzidos"
                 className="flex-1 text-xs border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
               />
               <datalist id="cat-producao">

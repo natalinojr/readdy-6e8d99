@@ -161,7 +161,7 @@ interface RPCOrder {
 export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?: string | null) {
   const { user } = useAuth();
   const [orders, setOrders] = useState<DBOrder[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async (from?: string, to?: string, sid?: string | null) => {

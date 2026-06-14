@@ -44,6 +44,7 @@ const novaOpcao = (): OpcaoItem => ({
   nome: '',
   precoAdicional: 0,
   ativo: true,
+  descricao: '',
 });
 
 const novaPromocao = (): PromocaoItem => ({
@@ -157,7 +158,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
     { id: 'ficha', label: `Ficha Técnica (${fichasCount})`, icon: 'ri-test-tube-line' },
     {
       id: 'delivery',
-      label: deliveryConfig?.ativo ? 'Delivery ✓' : 'Delivery',
+      label: deliveryConfig?.ativo ? 'Delivery Próprio ✓' : 'Delivery Próprio',
       icon: 'ri-e-bike-2-line',
     },
   ];
@@ -245,7 +246,6 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
       subproducao: producaoDividida && subproducao.length > 0 ? subproducao : undefined,
       delivery: deliveryConfig,
     };
-    console.log('[ItemModal] handleSave subproducao:', saved.subproducao);
     onSave(saved);
   };
 
@@ -385,7 +385,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-gray-800">Exclusivo Delivery</p>
+                        <p className="text-sm font-semibold text-gray-800">Exclusivo PDV Delivery (iFood, 99, etc.)</p>
                         {somenteDelivery && (
                           <span className="text-[10px] font-bold px-2 py-0.5 bg-orange-100 text-orange-700 border border-orange-200 rounded-full whitespace-nowrap">
                             ATIVO
@@ -394,8 +394,8 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                       </div>
                       <p className="text-xs text-gray-500 mt-0.5">
                         {somenteDelivery
-                          ? 'Este item aparece apenas no PDV Delivery — não fica visível no caixa, garçom ou autoatendimento.'
-                          : 'Ative para que este item apareça somente no PDV Delivery, ocultando-o dos demais canais.'}
+                          ? 'Este item aparece apenas no PDV Delivery (apps de entrega) — não fica visível no caixa, garçom ou autoatendimento.'
+                          : 'Ative para que este item apareça somente no PDV Delivery (apps como iFood, 99), ocultando-o dos demais canais.'}
                       </p>
                     </div>
                     <button
@@ -954,6 +954,7 @@ function OpcoesTab({
         nome: td.nome,
         precoAdicional: td.precoAdicional,
         ativo: true,
+        descricao: td.descricao,
         ingredientId: td.ingredientId ?? null,
         productionRecipeId: td.productionRecipeId ?? null,
         consumptionQuantity: td.consumptionQuantity,
@@ -1264,44 +1265,55 @@ function OpcoesTab({
               <div className="space-y-2">
                 <p className="text-xs font-medium text-gray-600">Opções</p>
                 {editTemplateGrupo.opcoes.map((opc, idx) => (
-                  <div key={opc.id} className="flex items-center gap-2 border border-gray-100 rounded-lg p-2">
-                    <input
-                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
-                      placeholder="Nome da opção"
-                      value={opc.nome}
-                      onChange={(e) => setEditTemplateGrupo(g => g ? {
-                        ...g,
-                        opcoes: g.opcoes.map((o, i) => i === idx ? { ...o, nome: e.target.value } : o),
-                      } : null)}
-                    />
-                    <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-2 text-sm">
-                      <span className="text-gray-400 text-xs">+R$</span>
+                  <div key={opc.id} className="border border-gray-100 rounded-lg p-2 space-y-2">
+                    <div className="flex items-center gap-2">
                       <input
-                        type="number"
-                        step="0.01"
-                        className="w-16 focus:outline-none text-sm"
-                        value={opc.precoAdicional}
+                        className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                        placeholder="Nome da opção"
+                        value={opc.nome}
                         onChange={(e) => setEditTemplateGrupo(g => g ? {
                           ...g,
-                          opcoes: g.opcoes.map((o, i) => i === idx ? { ...o, precoAdicional: parseFloat(e.target.value) } : o),
+                          opcoes: g.opcoes.map((o, i) => i === idx ? { ...o, nome: e.target.value } : o),
                         } : null)}
                       />
+                      <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                        <span className="text-gray-400 text-xs">+R$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="w-16 focus:outline-none text-sm"
+                          value={opc.precoAdicional}
+                          onChange={(e) => setEditTemplateGrupo(g => g ? {
+                            ...g,
+                            opcoes: g.opcoes.map((o, i) => i === idx ? { ...o, precoAdicional: parseFloat(e.target.value) } : o),
+                          } : null)}
+                        />
+                      </div>
+                      <button
+                        onClick={() => setEditTemplateGrupo(g => g ? {
+                          ...g,
+                          opcoes: g.opcoes.filter((_, i) => i !== idx),
+                        } : null)}
+                        className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 cursor-pointer rounded transition-colors"
+                      >
+                        <i className="ri-close-line text-sm" />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => setEditTemplateGrupo(g => g ? {
+                    <input
+                      className="w-full border border-gray-100 rounded-md px-2.5 py-1.5 text-xs text-gray-500 focus:outline-none focus:border-gray-300 focus:text-gray-700 placeholder-gray-300 transition-colors"
+                      placeholder="Descrição (opcional)"
+                      value={opc.descricao ?? ''}
+                      onChange={(e) => setEditTemplateGrupo(g => g ? {
                         ...g,
-                        opcoes: g.opcoes.filter((_, i) => i !== idx),
+                        opcoes: g.opcoes.map((o, i) => i === idx ? { ...o, descricao: e.target.value } : o),
                       } : null)}
-                      className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 cursor-pointer rounded transition-colors"
-                    >
-                      <i className="ri-close-line text-sm" />
-                    </button>
+                    />
                   </div>
                 ))}
                 <button
                   onClick={() => setEditTemplateGrupo(g => g ? {
                     ...g,
-                    opcoes: [...g.opcoes, { id: `opc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, nome: '', precoAdicional: 0, ativo: true }],
+                    opcoes: [...g.opcoes, { id: `opc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, nome: '', precoAdicional: 0, ativo: true, descricao: '' }],
                   } : null)}
                   className="text-xs text-orange-500 hover:text-orange-600 font-medium flex items-center gap-1 cursor-pointer transition-colors"
                 >
@@ -1428,6 +1440,25 @@ function OpcoesTab({
                   >
                     <i className="ri-close-line text-sm" />
                   </button>
+                </div>
+
+                {/* Descrição da opção */}
+                <div className="flex items-center gap-1.5">
+                  <i className="ri-file-text-line text-gray-300 text-xs flex-shrink-0" />
+                  <input
+                    className="flex-1 border border-gray-100 rounded-md px-2.5 py-1.5 text-xs text-gray-500 focus:outline-none focus:border-gray-300 focus:text-gray-700 placeholder-gray-300 transition-colors"
+                    placeholder="Descrição (ex: Pão brioche artesanal, Molho especial da casa...)"
+                    value={opc.descricao ?? ''}
+                    onChange={e => onUpdateOpcao(grp.id, opc.id, { descricao: e.target.value })}
+                  />
+                  {(opc.descricao && opc.descricao.trim()) && (
+                    <button
+                      onClick={() => onUpdateOpcao(grp.id, opc.id, { descricao: '' })}
+                      className="w-5 h-5 flex items-center justify-center text-gray-300 hover:text-gray-500 cursor-pointer rounded transition-colors flex-shrink-0"
+                    >
+                      <i className="ri-close-line text-xs" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Vínculo com estoque */}

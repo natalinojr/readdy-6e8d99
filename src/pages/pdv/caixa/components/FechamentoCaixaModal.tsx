@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSessao } from '../../../../contexts/SessaoContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotificacoes } from '@/contexts/NotificacoesContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
+import { supabase } from '@/lib/supabase';
 
 interface Props {
+  caixaId: string;
   historico: { tipo: 'sangria' | 'suprimento'; valor: number; motivo: string; hora: string }[];
   numPedidos: number;
   totalVendas: number;
@@ -13,6 +15,11 @@ interface Props {
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+const fmtSemSinal = (v: number) => {
+  const abs = Math.abs(v);
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(abs);
+};
 
 /* ─── Denominações ─── */
 const NOTAS = [
@@ -33,11 +40,10 @@ const MOEDAS = [
 ];
 
 type Contagem = Record<number, number>;
-// 'justificativa' é a nova etapa entre 'confirmar' e fechar de fato
 type Etapa = 'contagem' | 'confirmar' | 'justificativa' | 'concluido';
 
-export default function FechamentoCaixaModal({ onClose }: Props) {
-  const { caixa, fecharCaixa } = useSessao();
+export default function FechamentoCaixaModal({ caixaId, historico, onClose }: Props) {
+  const { caixa, fecharCaixa, sinalizarCaixaFechadoLocalmente } = useSessao();
   const { user } = useAuth();
   const { dispararNotificacao } = useNotificacoes();
   const { registrarEvento } = useAuditoria();
@@ -50,8 +56,83 @@ export default function FechamentoCaixaModal({ onClose }: Props) {
   const [erro, setErro] = useState('');
   const [salvando, setSalvando] = useState(false);
 
+  // ── Totais reais de dinheiro (buscados do banco) ──
+  const [loadingTotais, setLoadingTotais] = useState(true);
+  const [totalCashRecebido, setTotalCashRecebido] = useState(0);
+  const [totalTroco, setTotalTroco] = useState(0);
+
+  // ── Valores apurados pelo RPC de fechamento (lidos após fechar) ──
+  const diferencaRpcRef = useRef<number | null>(null);
+  const esperadoRpcRef = useRef<number | null>(null);
+
+  // Busca os totais de dinheiro assim que o modal abre
+  useEffect(() => {
+    if (!caixaId) {
+      setLoadingTotais(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingTotais(true);
+
+    (async () => {
+      try {
+        // 1. IDs dos métodos de pagamento do tipo 'cash'
+        const { data: cashMethods } = await supabase
+          .from('payment_methods')
+          .select('id')
+          .eq('tenant_id', user?.tenantId ?? '')
+          .eq('type', 'cash')
+          .eq('is_active', true);
+
+        const cashMethodIds = (cashMethods ?? []).map((m: { id: string }) => m.id);
+
+        if (cashMethodIds.length === 0) {
+          if (!cancelled) {
+            setTotalCashRecebido(0);
+            setTotalTroco(0);
+            setLoadingTotais(false);
+          }
+          return;
+        }
+
+        // 2. Soma amount e change_amount dos pagamentos em dinheiro deste caixa
+        const { data: pagamentos } = await supabase
+          .from('payments')
+          .select('amount, change_amount')
+          .eq('tenant_id', user?.tenantId ?? '')
+          .eq('cash_register_id', caixaId)
+          .eq('is_refunded', false)
+          .in('payment_method_id', cashMethodIds);
+
+        const recebido = (pagamentos ?? []).reduce(
+          (s: number, p: { amount: number }) => s + (Number(p.amount) || 0),
+          0,
+        );
+        const troco = (pagamentos ?? []).reduce(
+          (s: number, p: { change_amount: number }) => s + (Number(p.change_amount) || 0),
+          0,
+        );
+
+        if (!cancelled) {
+          setTotalCashRecebido(recebido);
+          setTotalTroco(troco);
+          setLoadingTotais(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setTotalCashRecebido(0);
+          setTotalTroco(0);
+          setLoadingTotais(false);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [caixaId, user?.tenantId]);
+
   /* Valor contado */
-  const totalContagem = Object.entries(contagem).reduce(
+  const totalContagem = Object.entries(contagem ?? {}).reduce(
     (acc, [val, qty]) => acc + Number(val) * qty,
     0,
   );
@@ -59,8 +140,22 @@ export default function FechamentoCaixaModal({ onClose }: Props) {
     ? totalContagem
     : parseFloat(valorManual.replace(',', '.')) || 0;
 
-  /* Diferença calculada localmente (antes de fechar) */
-  const valorEsperado = caixa?.valorAbertura ?? 0;
+  /* Valor esperado CORRETO no caixa */
+  const abertura = caixa?.valorAbertura ?? 0;
+  const retiradas = historico
+    .filter((m) => m.tipo === 'sangria')
+    .reduce((s, m) => s + m.valor, 0);
+  const adicoes = historico
+    .filter((m) => m.tipo === 'suprimento')
+    .reduce((s, m) => s + m.valor, 0);
+
+  // Fórmula correta:
+  // O amount já é o valor líquido que entrou no caixa (já descontado o troco).
+  // O dinheiro físico no caixa = abertura + totalCashRecebido - retiradas + adições.
+  // NÃO subtraímos totalTroco aqui porque o amount já é líquido.
+  const valorEsperado = abertura + totalCashRecebido - retiradas + adicoes;
+
+  /* Diferença calculada corretamente */
   const diferencaPrevia = valorDeclarado - valorEsperado;
   const temDiferenca = Math.abs(diferencaPrevia) > 0.01;
 
@@ -79,37 +174,71 @@ export default function FechamentoCaixaModal({ onClose }: Props) {
   };
 
   /* Ao clicar "Confirmar e fechar":
-     - Se tiver diferença → vai para etapa de justificativa (sem fechar ainda)
-     - Se não tiver diferença → fecha direto */
-  const handleConfirmarEFechar = () => {
-    if (temDiferenca) {
+     - Fecha o caixa no banco (com skipLocalUpdate=true para manter o modal aberto)
+     - Lê o fechamento real do banco (esperado e diferença calculados pelo RPC)
+     - Se tiver diferença → vai pra tela de justificativa
+     - Se não tiver diferença → vai direto pra concluído */
+  const handleConfirmarEFechar = async () => {
+    await executarFechamento('', true);
+
+    // Lê o resultado real do RPC para garantir que usamos os mesmos valores
+    const diffRpc = diferencaRpcRef.current;
+    const espRpc = esperadoRpcRef.current;
+
+    if (diffRpc !== null && Math.abs(diffRpc) > 0.01) {
+      setJustificativa('');
+      setErro('');
+      setEtapa('justificativa');
+    } else if (temDiferenca) {
+      // Fallback: se o RPC não retornou diferença mas o cálculo local detectou
       setJustificativa('');
       setErro('');
       setEtapa('justificativa');
     } else {
-      executarFechamento('');
+      // BUG FIX: sem diferença, sincroniza o estado local antes de fechar a modal
+      // para que a modal de Fechar Sessão não mostre "caixa ainda aberto"
+      sinalizarCaixaFechadoLocalmente();
+      setEtapa('concluido');
+      setTimeout(onClose, 2200);
     }
   };
 
-  /* Fecha o caixa de fato (chamado após justificativa ou direto se sem diferença) */
-  const executarFechamento = async (justificativaTexto: string) => {
+  /* Fecha o caixa de fato (chamado na confirmar ou após justificativa) */
+  const executarFechamento = async (justificativaTexto: string, skipLocalUpdate?: boolean) => {
     setSalvando(true);
-    const caixaId = caixa?.id ?? '';
     try {
-      // Passa a justificativa direto na RPC para evitar ambiguidade de overload
-      await fecharCaixa(valorDeclarado, justificativaTexto.trim() || undefined);
+      await fecharCaixa(valorDeclarado, justificativaTexto.trim() || undefined, skipLocalUpdate);
 
-      const diff = diferencaPrevia;
+      // Lê os valores reais calculados pelo RPC
+      try {
+        const { data: reg } = await supabase
+          .from('cash_registers')
+          .select('closing_value_expected, closing_difference')
+          .eq('id', caixaId)
+          .single();
+
+        if (reg) {
+          diferencaRpcRef.current = Number(reg.closing_difference) || 0;
+          esperadoRpcRef.current = Number(reg.closing_value_expected) || 0;
+        }
+      } catch {
+        // Se falhar a leitura, confia no cálculo local
+        diferencaRpcRef.current = diferencaPrevia;
+        esperadoRpcRef.current = valorEsperado;
+      }
+
+      const diff = diferencaRpcRef.current ?? diferencaPrevia;
+      const esp = esperadoRpcRef.current ?? valorEsperado;
 
       registrarEvento({
         tipo: 'fechamento_caixa',
         severidade: Math.abs(diff) > 50 ? 'aviso' : 'info',
         usuario: user?.nome ?? 'Operador',
         perfil: user?.perfil ?? 'operador',
-        descricao: `Caixa fechado. Contado: ${fmt(valorDeclarado)}${Math.abs(diff) > 0.01 ? ` | Diferença: ${fmt(diff)}` : ' | Sem diferenças'}${justificativaTexto ? ` | Justificativa: ${justificativaTexto}` : ''}`,
+        descricao: `Caixa fechado. Contado: ${fmt(valorDeclarado)} | Esperado (RPC): ${fmt(esp)}${Math.abs(diff) > 0.01 ? ` | Diferença: ${fmt(diff)}` : ' | Sem diferenças'}${justificativaTexto ? ` | Justificativa: ${justificativaTexto}` : ''}`,
         entidade: 'caixa',
         entidadeId: caixaId || '—',
-        depois: { valor_contado: valorDeclarado, diferenca: diff },
+        depois: { valor_contado: valorDeclarado, valor_esperado: esp, diferenca: diff },
       });
 
       if (Math.abs(diff) > 0.01) {
@@ -119,31 +248,73 @@ export default function FechamentoCaixaModal({ onClose }: Props) {
         dispararNotificacao({
           tipo: 'diferenca_caixa',
           titulo: 'Diferença no fechamento de caixa',
-          mensagem: `${isNeg ? 'Faltaram' : 'Sobraram'} ${fmt2(diff)} no caixa. Contado: ${fmt2(valorDeclarado)}`,
+          mensagem: `${isNeg ? 'Faltaram' : 'Sobraram'} ${fmt2(diff)} no caixa. Contado: ${fmt2(valorDeclarado)} | Esperado: ${fmt2(esp)}`,
           urgente: Math.abs(diff) > 50,
           perfisAlvo: ['gerente', 'admin'],
           icone: 'ri-safe-2-line',
           cor: 'red',
-          extra: { diff, valorDeclarado },
+          extra: { diff, valorDeclarado, valorEsperado: esp },
         });
       }
-
-      setEtapa('concluido');
-      setTimeout(onClose, 2200);
     } finally {
       setSalvando(false);
     }
   };
 
-  /* Confirmar justificativa e fechar */
-  const handleConfirmarJustificativa = () => {
+  /* Confirmar justificativa — caixa já foi fechado no banco na etapa anterior.
+     Atualiza o closing_notes no banco e registra no audit log. */
+  const handleJustificar = async () => {
     if (justificativa.trim().length < 5) {
       setErro('A justificativa deve ter pelo menos 5 caracteres.');
       return;
     }
     setErro('');
-    executarFechamento(justificativa);
+    setSalvando(true);
+    try {
+      // Atualiza a justificativa via RPC (SECURITY DEFINER burla o RLS de deny_direct_write)
+      const { error: updateError } = await supabase.rpc('fn_update_cash_register_notes', {
+        p_id: caixaId,
+        p_notes: justificativa.trim(),
+      });
+
+      if (updateError) {
+        console.error('[FechamentoCaixaModal] Erro ao salvar justificativa:', updateError);
+        setErro('Erro ao salvar justificativa. Tente novamente.');
+        return;
+      }
+
+      registrarEvento({
+        tipo: 'justificativa_diferenca',
+        severidade: Math.abs(diferencaPrevia) > 50 ? 'aviso' : 'info',
+        usuario: user?.nome ?? 'Operador',
+        perfil: user?.perfil ?? 'operador',
+        descricao: `Justificativa da diferença de ${fmt(diferencaPrevia)} no fechamento: ${justificativa.trim()}`,
+        entidade: 'caixa',
+        entidadeId: caixaId || '—',
+        depois: { diferenca: diferencaPrevia, justificativa: justificativa.trim() },
+      });
+    } catch (e) {
+      console.error('[FechamentoCaixaModal] Erro inesperado ao justificar:', e);
+      setErro('Erro inesperado. Tente novamente.');
+      return;
+    } finally {
+      setSalvando(false);
+    }
+    onClose();
   };
+
+  // Bloqueia ESC na etapa de justificativa (usuário deve justificar antes de sair)
+  useEffect(() => {
+    if (etapa !== 'justificativa') return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [etapa]);
 
   /* ─── ETAPA: concluido ─── */
   if (etapa === 'concluido') {
@@ -168,22 +339,25 @@ export default function FechamentoCaixaModal({ onClose }: Props) {
   }
 
   /* ─── ETAPA: justificativa ─── */
-  /* Aparece ANTES de fechar, quando há diferença. Sem botão de fechar/cancelar. */
+  const diffExibicao = diferencaRpcRef.current ?? diferencaPrevia;
+  const espExibicao = esperadoRpcRef.current ?? valorEsperado;
+
   if (etapa === 'justificativa') {
-    const isNegativo = diferencaPrevia < 0;
+    const isNegativo = diffExibicao < 0;
     return (
       <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden">
-          {/* Header — sem botão de fechar */}
+          {/* Header — sem botão de fechar, usuário deve justificar */}
           <div className="px-6 py-5 border-b border-zinc-100">
             <div className="flex items-center gap-2 mb-1">
               <div className="w-5 h-5 flex items-center justify-center text-amber-500">
                 <i className="ri-alert-line text-base" />
               </div>
-              <h2 className="text-sm font-bold text-zinc-900">Diferença detectada</h2>
+              <h2 className="text-sm font-bold text-zinc-900">Justificar diferença</h2>
             </div>
             <p className="text-xs text-zinc-400">
-              O caixa será fechado após a justificativa. Esta ação é irreversível.
+              Foi encontrada uma <strong className="text-zinc-600">diferença</strong> entre o valor contado e o esperado.
+              O caixa já foi fechado. Registre o motivo para continuar.
             </p>
           </div>
 
@@ -195,21 +369,22 @@ export default function FechamentoCaixaModal({ onClose }: Props) {
                   {isNegativo ? 'Faltou dinheiro no caixa' : 'Sobrou dinheiro no caixa'}
                 </p>
                 <p className="text-[10px] text-zinc-400 mt-0.5">
-                  Valor contado: {fmt(valorDeclarado)}
+                  Contado: {fmt(valorDeclarado)} · Esperado: {fmt(espExibicao)}
                 </p>
               </div>
-              <p className={`text-2xl font-black ${isNegativo ? 'text-red-600' : 'text-amber-600'}`}>
-                {diferencaPrevia > 0 ? '+' : ''}{fmt(diferencaPrevia)}
+              <p className={`text-2xl font-black whitespace-nowrap ${isNegativo ? 'text-red-600' : 'text-amber-600'}`}>
+                {isNegativo ? '−' : diffExibicao > 0 ? '+' : ''}{fmtSemSinal(diffExibicao)}
               </p>
             </div>
 
-            {/* Aviso de ponto sem retorno */}
-            <div className="flex items-start gap-2 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl">
-              <div className="w-4 h-4 flex items-center justify-center text-zinc-500 mt-0.5 flex-shrink-0">
-                <i className="ri-lock-line text-sm" />
+            {/* Aviso — caixa já foi fechado */}
+            <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+              <div className="w-4 h-4 flex items-center justify-center text-amber-500 mt-0.5 flex-shrink-0">
+                <i className="ri-information-line text-sm" />
               </div>
-              <p className="text-xs text-zinc-600">
-                A partir daqui <strong>não é possível voltar</strong> para recontar. Justifique a diferença para concluir o fechamento.
+              <p className="text-xs text-amber-700">
+                <strong>Caixa já fechado.</strong> A justificativa é obrigatória para registrar a diferença no histórico.
+                Você não pode sair desta tela sem justificar.
               </p>
             </div>
 
@@ -238,21 +413,21 @@ export default function FechamentoCaixaModal({ onClose }: Props) {
               </div>
             </div>
 
-            {/* Botão único — sem cancelar */}
+            {/* Botão Justificar */}
             <button
-              onClick={handleConfirmarJustificativa}
+              onClick={() => handleJustificar()}
               disabled={salvando || justificativa.trim().length < 5}
               className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
             >
               {salvando ? (
                 <>
                   <i className="ri-loader-4-line animate-spin text-base" />
-                  Fechando caixa...
+                  Salvando...
                 </>
               ) : (
                 <>
-                  <i className="ri-lock-2-line text-base" />
-                  Justificar e fechar caixa
+                  <i className="ri-check-line text-base" />
+                  Justificar
                 </>
               )}
             </button>
@@ -272,22 +447,35 @@ export default function FechamentoCaixaModal({ onClose }: Props) {
             <p className="text-xs text-zinc-400 mt-0.5">Confirme o valor contado e feche o caixa.</p>
           </div>
           <div className="p-6 space-y-5">
-            <div className="bg-zinc-50 rounded-xl p-4 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-zinc-500">Valor contado</span>
-                <span className="font-bold text-zinc-900">{fmt(valorDeclarado)}</span>
+            {/* Loading dos totais */}
+            {loadingTotais ? (
+              <div className="bg-zinc-50 rounded-xl p-6 flex flex-col items-center gap-3">
+                <i className="ri-loader-4-line animate-spin text-zinc-400 text-2xl" />
+                <p className="text-xs text-zinc-500">Carregando totais de pagamento...</p>
+                <p className="text-[10px] text-zinc-400 max-w-[220px] text-center">
+                  Aguarde enquanto os dados de dinheiro recebido são calculados para garantir o fechamento correto.
+                </p>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="bg-zinc-50 rounded-xl p-4">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-zinc-500">Valor contado</span>
+                    <span className="font-bold text-zinc-900">{fmt(valorDeclarado)}</span>
+                  </div>
+                </div>
 
-            {/* Aviso irreversível */}
-            <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-100 rounded-xl">
-              <div className="w-4 h-4 flex items-center justify-center text-red-500 mt-0.5 flex-shrink-0">
-                <i className="ri-alert-line text-sm" />
-              </div>
-              <p className="text-xs text-red-700 font-medium">
-                <strong>Ação irreversível.</strong> Após confirmar, não será possível reabrir o caixa.
-              </p>
-            </div>
+                {/* Aviso irreversível */}
+                <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-100 rounded-xl">
+                  <div className="w-4 h-4 flex items-center justify-center text-red-500 mt-0.5 flex-shrink-0">
+                    <i className="ri-alert-line text-sm" />
+                  </div>
+                  <p className="text-xs text-red-700 font-medium">
+                    <strong>Ação irreversível.</strong> Após confirmar, não será possível reabrir o caixa.
+                  </p>
+                </div>
+              </>
+            )}
 
             <div className="flex gap-3">
               <button
@@ -299,13 +487,18 @@ export default function FechamentoCaixaModal({ onClose }: Props) {
               </button>
               <button
                 onClick={handleConfirmarEFechar}
-                disabled={salvando}
+                disabled={salvando || loadingTotais}
                 className="flex-1 py-2.5 text-sm font-bold text-white bg-red-500 hover:bg-red-600 rounded-xl cursor-pointer whitespace-nowrap disabled:opacity-70 flex items-center justify-center gap-2"
               >
                 {salvando ? (
                   <>
                     <i className="ri-loader-4-line animate-spin text-base" />
                     Aguarde...
+                  </>
+                ) : loadingTotais ? (
+                  <>
+                    <i className="ri-loader-4-line animate-spin text-base" />
+                    Carregando...
                   </>
                 ) : (
                   'Confirmar e fechar'
@@ -437,8 +630,16 @@ export default function FechamentoCaixaModal({ onClose }: Props) {
             Cancelar
           </button>
           <button onClick={handleIrParaConfirmar}
-            className="flex-1 py-2.5 text-sm font-bold text-white bg-red-500 hover:bg-red-600 rounded-xl cursor-pointer whitespace-nowrap">
-            Fechar Caixa
+            disabled={loadingTotais}
+            className="flex-1 py-2.5 text-sm font-bold text-white bg-red-500 hover:bg-red-600 rounded-xl cursor-pointer whitespace-nowrap disabled:opacity-50 flex items-center justify-center gap-2">
+            {loadingTotais ? (
+              <>
+                <i className="ri-loader-4-line animate-spin text-base" />
+                Carregando...
+              </>
+            ) : (
+              'Fechar Caixa'
+            )}
           </button>
         </div>
       </div>

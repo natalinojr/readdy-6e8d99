@@ -14,10 +14,10 @@ import MesasPage from '../pages/mesas/page';
 import RelatoriosPage from '../pages/relatorios/page';
 import EstoquePage from '../pages/estoque/page';
 import MesaClientePage from '../pages/mesa/page';
-import MesaQRPage from '../pages/mesa-qr/page';
 import AutoatendimentoPage from '../pages/autoatendimento/page';
 import TotemPage from '../pages/totem/page';
 import ConfiguracoesPage from '../pages/configuracoes/page';
+import ConfigDeliveryPage from '../pages/config-delivery/page';
 import UsuariosPage from '../pages/usuarios/page';
 import AuditoriaPage from '../pages/auditoria/page';
 import ClientesPage from '../pages/clientes/page';
@@ -34,16 +34,26 @@ import FinanceiroPage from '@/pages/financeiro/page';
 import PromocoesPage from '@/pages/promocoes/page';
 import VouchersPage from '@/pages/vouchers/page';
 import DiagnosticoPage from '@/pages/diagnostico/page';
+import ImprimirQRCodesPage from '@/pages/imprimir-qrcodes/page';
 import SimulacaoPedidos from '@/pages/diagnostico/SimulacaoPedidos';
 import QADashboard from '@/pages/diagnostico/QADashboard';
 import ChecklistTeste from '@/pages/diagnostico/ChecklistTeste';
 import AdminMasterPage from '@/pages/admin-master/page';
 import SelecionarLojaPage from '@/pages/selecionar-loja/page';
+import { lazy } from 'react';
+
+const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
+const DeliveryPage = lazy(() => import('../pages/delivery/page'));
 
 const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
   { path: '/mesa/:mesaId', element: <MesaClientePage /> },
+  { path: '/mesa-qr/:qr_token/:session_token', element: <MesaQRPage /> },
   { path: '/mesa-qr/:qr_token', element: <MesaQRPage /> },
+  { path: '/pedido/:qr_token/:session_token', element: <MesaQRPage /> },
+  { path: '/pedido/:qr_token', element: <MesaQRPage /> },
+  { path: '/delivery', element: <DeliveryPage /> },
+  { path: '/:storeSlug-delivery', element: <DeliveryPage /> },
   { path: '/autoatendimento', element: <AutoatendimentoPage /> },
   { path: '/totem/:token', element: <TotemPage /> },
   {
@@ -67,6 +77,7 @@ const routes: RouteObject[] = [
       { path: 'estoque', element: <EstoquePage /> },
       { path: 'aprovacoes', element: <AprovacoesPage /> },
       { path: 'configuracoes', element: <ConfiguracoesPage /> },
+      { path: 'config-delivery', element: <ConfigDeliveryPage /> },
       { path: 'usuarios', element: <UsuariosPage /> },
       { path: 'clientes', element: <ClientesPage /> },
       { path: 'auditoria', element: <AuditoriaPage /> },
@@ -79,6 +90,7 @@ const routes: RouteObject[] = [
       { path: 'diagnostico/simulacao', element: <SimulacaoPedidos /> },
       { path: 'diagnostico/qa', element: <QADashboard /> },
       { path: 'diagnostico/checklist', element: <ChecklistTeste /> },
+      { path: 'imprimir-qrcodes', element: <ImprimirQRCodesPage /> },
       { path: 'admin-master', element: <AdminMasterPage /> },
       { path: '*', element: <PaginaEmConstrucao /> },
     ],

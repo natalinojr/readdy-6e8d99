@@ -127,6 +127,7 @@ export default function MesaClientePage() {
   const [clientesMesa, setClientesMesa] = useState<ClienteMesa[]>([]);
   const [horaAbertura, setHoraAbertura] = useState<string | undefined>(undefined);
   const [responsavelNome, setResponsavelNome] = useState('');
+  const [erroConexao, setErroConexao] = useState('');
 
   // ── Modal encerrar mesa ──────────────────────────────────────────────────────
   const [showEncerrarModal, setShowEncerrarModal] = useState(false);
@@ -139,6 +140,24 @@ export default function MesaClientePage() {
   // ── TenantId: usuário autenticado OU kiosk (acesso público) ───────────────────
   const tenantId = user?.tenantId ?? kioskSession?.tenantId ?? null;
   const carrinhoSavedRef = useRef(false);
+
+  // ── Nome da loja ───────────────────────────────────────────────────────────
+  const [tenantName, setTenantName] = useState('');
+
+  useEffect(() => {
+    if (!tenantId) return;
+    async function fetchTenantName() {
+      const { data } = await supabase
+        .from('tenants')
+        .select('name')
+        .eq('id', tenantId)
+        .maybeSingle();
+      if (data?.name) {
+        setTenantName(data.name);
+      }
+    }
+    fetchTenantName();
+  }, [tenantId]);
 
   // ── Limpar erro de envio quando o carrinho mudar ────────────────────────────
   useEffect(() => {
@@ -200,8 +219,10 @@ export default function MesaClientePage() {
         }
       })
       .catch(() => {
-        // Em caso de erro de rede, deixar entrar (fallback gracioso)
-        setSessaoStatus('open');
+        // BUG-24 FIX: Em caso de erro de rede, NAO assumir sessao aberta.
+        // Mostrar estado fechado com mensagem de erro para o cliente.
+        setSessaoStatus('closed');
+        setErroConexao('Erro de conexao. Verifique sua internet e tente novamente.');
       });
   }, [mesaNum, tenantId]);
 
@@ -338,18 +359,23 @@ export default function MesaClientePage() {
       skip_kds: false,
       notes: ci.observacaoLivre || null,
       options: ci.opcoes.map((o) => ({
-        option_id: null,
+        option_id: o.opcaoId || null,
         option_name: o.opcaoNome,
         group_name: o.grupoNome,
         additional_price: o.precoAdicional ?? 0,
+        group_obrigatorio: o.obrigatorio,
       })),
       observations: ci.observacoes.map((t) => ({ text: t })),
     }));
 
     try {
+      // ── Idempotency key: UUID único por finalização (BUG-06) ──────────
+      const clientRequestId = crypto.randomUUID();
+
       const { data, error } = await supabase.functions.invoke('order-write', {
         body: {
           action: 'create_order',
+          client_request_id: clientRequestId,
           tenant_id: tenantId,
           table_session_id: tableSessionId,
           destination: 'table',
@@ -444,9 +470,11 @@ export default function MesaClientePage() {
             {sessaoStatus === 'closed' ? 'Mesa Encerrada' : 'Mesa não disponível'}
           </h2>
           <p className="text-zinc-500 text-sm max-w-xs leading-relaxed">
-            {sessaoStatus === 'closed'
-              ? 'Esta mesa foi encerrada. Se precisar de ajuda, chame um garçom.'
-              : 'Esta mesa não está disponível no momento. Por favor, chame um garçom.'}
+            {erroConexao
+              ? erroConexao
+              : sessaoStatus === 'closed'
+                ? 'Esta mesa foi encerrada. Se precisar de ajuda, chame um garçom.'
+                : 'Esta mesa não está disponível no momento. Por favor, chame um garçom.'}
           </p>
           <div className="mt-8 flex items-center gap-2 px-4 py-2 bg-zinc-800 rounded-full">
             <div className="w-2 h-2 rounded-full bg-zinc-500" />
@@ -565,9 +593,11 @@ export default function MesaClientePage() {
         precoTotal: item.preco,
         quantidade: item.quantidade,
         opcoes: (item.opcoesSelecionadas ?? []).map((o) => ({
-          grupoNome: '',
-          opcaoNome: typeof o === 'string' ? o : String(o),
-          precoAdicional: 0,
+          grupoNome: o.grupoNome || '',
+          opcaoNome: o.nome,
+          precoAdicional: o.precoAdicional ?? 0,
+          opcaoId: o.id || '',
+          grupoId: '',
         })),
         observacoes: item.observacao ? [item.observacao] : [],
         observacaoLivre: item.observacao ?? '',
@@ -827,6 +857,7 @@ export default function MesaClientePage() {
           <IdentificacaoModal
             mesaNumero={mesaNum}
             tenantId={tenantId}
+            tenantName={tenantName}
             onConfirmar={handleIdentificar}
             ehPrimeiroCliente={clientesMesa.length === 0}
             responsavelNome={responsavelNome}

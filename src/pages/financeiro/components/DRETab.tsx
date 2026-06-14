@@ -69,14 +69,39 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   const endDateTime = endDate + 'T23:59:59';
   const monthStr = startDate.slice(0, 7);
 
-  const [paymentsRes, cancelledRes, descontosRes, billsRes, purchasesRes, purchaseItemsRes, manualIncomeRes, payrollRes, payMethodsRes] = await Promise.all([
+  // ═══ LIVRO-RAZÃO ÚNICO: fin_cash_flow é a fonte de verdade para receita ═══
+  // auto_sale = vendas recebidas à vista; manual = entradas manuais
+  // payments é usado apenas para breakdown por destino (detalhamento) — filtrado a pagamentos imediatos
+  // BUG-42: Para cartão a prazo (days_to_receive > 0), o auto_sale só é criado na liquidação do recebível
+  // (receive_installment no financial-write). O breakdown por destino usa fin_receivable_installments
+  // com received_at no período + join com orders para destination_type.
+  const [autoSaleRes, manualIncomeRes, paymentsRes, cancelledRes, descontosRes, billsRes, purchasesRes, purchaseItemsRes, payrollRes, payMethodsRes, receivablesReceivedRes] = await Promise.all([
+    supabase
+      .from('fin_cash_flow')
+      .select('amount, reference_id')
+      .eq('tenant_id', tenantId)
+      .eq('type', 'income')
+      .eq('origin', 'auto_sale')
+      .gte('date', startDate)
+      .lte('date', endDate),
+
+    supabase
+      .from('fin_cash_flow')
+      .select('amount')
+      .eq('tenant_id', tenantId)
+      .eq('type', 'income')
+      .eq('origin', 'manual')
+      .gte('date', startDate)
+      .lte('date', endDate),
+
     supabase
       .from('payments')
-      .select('amount, payment_method_id, order_id, orders!inner(destination_type, status, discount_amount, is_training, is_draft)')
+      .select('amount, payment_method_id, order_id, id, orders!inner(destination_type, status, discount_amount, is_training, is_draft)')
       .eq('orders.tenant_id', tenantId)
       .eq('orders.is_training', false)
       .eq('orders.is_draft', false)
-      .not('orders.status', 'in', '("cancelled","draft")')
+      .not('orders.status', 'in', '(cancelled,draft)')
+      .eq('is_refunded', false)
       .gte('created_at', startDate)
       .lte('created_at', endDateTime),
 
@@ -96,7 +121,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .eq('tenant_id', tenantId)
       .eq('is_training', false)
       .eq('is_draft', false)
-      .not('status', 'in', '("cancelled","draft")')
+      .not('status', 'in', '(cancelled,draft)')
       .gte('created_at', startDate)
       .lte('created_at', endDateTime),
 
@@ -122,15 +147,6 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .eq('tenant_id', tenantId),
 
     supabase
-      .from('fin_cash_flow')
-      .select('amount')
-      .eq('tenant_id', tenantId)
-      .eq('type', 'income')
-      .eq('origin', 'manual')
-      .gte('date', startDate)
-      .lte('date', endDate),
-
-    supabase
       .from('hr_payroll')
       .select('net_salary, gross_salary, fgts')
       .eq('tenant_id', tenantId)
@@ -138,30 +154,85 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
 
     supabase
       .from('payment_methods')
-      .select('id, fee_percentage'),
+      .select('id, fee_percentage, days_to_receive'),
+
+    // BUG-42: Recebíveis liquidados no período (cartão a prazo cujo dinheiro entrou)
+    supabase
+      .from('fin_receivable_installments')
+      .select('id, amount, order_id, orders!inner(destination_type)')
+      .eq('tenant_id', tenantId)
+      .eq('status', 'received')
+      .gte('received_at', startDate)
+      .lte('received_at', endDateTime),
   ]);
 
+  if (autoSaleRes.error) console.error('[DRE] Auto-sale fin_cash_flow:', autoSaleRes.error.message);
+  if (manualIncomeRes.error) console.error('[DRE] Manual income:', manualIncomeRes.error.message);
   if (paymentsRes.error) console.error('[DRE] Pagamentos:', paymentsRes.error.message);
   if (billsRes.error) console.error('[DRE] Contas a pagar:', billsRes.error.message);
   if (purchasesRes.error) console.error('[DRE] Compras:', purchasesRes.error.message);
   if (payMethodsRes.error) console.error('[DRE] Payment methods:', payMethodsRes.error.message);
+  if (receivablesReceivedRes.error) console.error('[DRE] Recebíveis liquidados:', receivablesReceivedRes.error.message);
 
-  const payments = paymentsRes.data ?? [];
+  // Receita total do livro-razão (auto_sale = vendas à vista, manual = entradas manuais)
+  const receitaManual = (manualIncomeRes.data ?? []).reduce((s, m) => s + Number(m.amount), 0);
 
-  const receitaBalcao = payments
+  // Coleta reference_ids dos auto_sale para filtrar payments (cross-reference)
+  const autoSalePaymentIds = new Set(
+    (autoSaleRes.data ?? []).map(e => e.reference_id).filter(Boolean) as string[]
+  );
+
+  // BUG-42: Mapa days_to_receive por payment_method_id
+  const daysToReceiveMap: Record<string, number> = {};
+  (payMethodsRes.data ?? []).forEach((m: Record<string, unknown>) => {
+    daysToReceiveMap[m.id as string] = Number(m.days_to_receive ?? 0);
+  });
+
+  // BUG-42: Payments filtrados: APENAS pagamentos imediatos (days_to_receive = 0)
+  // Cartão a prazo NÃO entra aqui — é reconhecido via recebíveis liquidados abaixo
+  const paymentsImmediate = (paymentsRes.data ?? []).filter(p => {
+    const pmId = (p as Record<string, unknown>).payment_method_id as string;
+    return (daysToReceiveMap[pmId] ?? 0) === 0;
+  });
+
+  // Payments imediatos que têm auto_sale correspondente no livro-razão
+  const paymentsMatched = paymentsImmediate.filter(
+    p => autoSalePaymentIds.has(p.id)
+  );
+
+  let receitaBalcao = paymentsMatched
     .filter(p => ['immediate', 'balcao', 'hora', 'password', 'name'].includes((p.orders as Record<string, unknown>)?.destination_type as string))
     .reduce((s, p) => s + Number(p.amount), 0);
-  const receitaDelivery = payments
+  let receitaDelivery = paymentsMatched
     .filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'delivery')
     .reduce((s, p) => s + Number(p.amount), 0);
-  const receitaMesa = payments
+  let receitaMesa = paymentsMatched
     .filter(p => ['table', 'mesa'].includes((p.orders as Record<string, unknown>)?.destination_type as string))
     .reduce((s, p) => s + Number(p.amount), 0);
-  const receitaAutoatendimento = payments
+  let receitaAutoatendimento = paymentsMatched
     .filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'self_service')
     .reduce((s, p) => s + Number(p.amount), 0);
 
-  const receitaManual = (manualIncomeRes.data ?? []).reduce((s, m) => s + Number(m.amount), 0);
+  // BUG-42: Adiciona recebíveis liquidados no período ao breakdown por destino
+  // O total desses valores já está nos auto_sale do fin_cash_flow (data do recebimento)
+  // Aqui só distribuímos por destination_type para o detalhamento
+  (receivablesReceivedRes.data ?? []).forEach((ri: Record<string, unknown>) => {
+    const destType = (ri.orders as Record<string, unknown>)?.destination_type as string ?? '';
+    const amount = Number(ri.amount ?? 0);
+    if (['immediate', 'balcao', 'hora', 'password', 'name'].includes(destType)) {
+      receitaBalcao += amount;
+    } else if (destType === 'delivery') {
+      receitaDelivery += amount;
+    } else if (['table', 'mesa'].includes(destType)) {
+      receitaMesa += amount;
+    } else if (destType === 'self_service') {
+      receitaAutoatendimento += amount;
+    } else {
+      // Fallback: se destination_type não bater, vai pra balcão
+      receitaBalcao += amount;
+    }
+  });
+
   const cancelamentos = (cancelledRes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
   const descontos = (descontosRes.data ?? []).reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
 
@@ -203,7 +274,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   (payMethodsRes.data ?? []).forEach((m: Record<string, unknown>) => {
     feeMap[m.id as string] = Number(m.fee_percentage ?? 0);
   });
-  const taxasMaquininha = payments.reduce((s, p) => {
+  const taxasMaquininha = (paymentsRes.data ?? []).reduce((s, p) => {
     const fee = feeMap[p.payment_method_id ?? ''] ?? 0;
     return s + Number(p.amount) * (fee / 100);
   }, 0);
@@ -224,14 +295,37 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
   const endDateTime = endDate + 'T23:59:59';
   const monthStr = startDate.slice(0, 7);
 
-  const [paymentsRes, receivablesRes, cancelledRes, descontosRes, billsRes, purchasesRes, purchaseItemsRes, manualIncomeRes, payrollRes, payMethodsRes] = await Promise.all([
+  // ═══ LIVRO-RAZÃO ÚNICO + SALDO DE RECEBÍVEIS ═══
+  // Regime de Competência: receita = auto_sale (recebido à vista) + manual
+  // Recebíveis são saldo (balanço), NÃO somam na receita bruta (BUG-41)
+  // A receita já foi reconhecida no auto_sale no momento da venda
+  const [autoSaleRes, manualIncomeRes, paymentsRes, receivablesRes, cancelledRes, descontosRes, billsRes, purchasesRes, purchaseItemsRes, payrollRes, payMethodsRes] = await Promise.all([
+    supabase
+      .from('fin_cash_flow')
+      .select('amount, reference_id')
+      .eq('tenant_id', tenantId)
+      .eq('type', 'income')
+      .eq('origin', 'auto_sale')
+      .gte('date', startDate)
+      .lte('date', endDate),
+
+    supabase
+      .from('fin_cash_flow')
+      .select('amount')
+      .eq('tenant_id', tenantId)
+      .eq('type', 'income')
+      .eq('origin', 'manual')
+      .gte('date', startDate)
+      .lte('date', endDate),
+
     supabase
       .from('payments')
-      .select('amount, payment_method_id, order_id, orders!inner(destination_type, status, discount_amount, is_training, is_draft)')
+      .select('amount, payment_method_id, order_id, id, orders!inner(destination_type, status, discount_amount, is_training, is_draft)')
       .eq('orders.tenant_id', tenantId)
       .eq('orders.is_training', false)
       .eq('orders.is_draft', false)
-      .not('orders.status', 'in', '("cancelled","draft")')
+      .not('orders.status', 'in', '(cancelled,draft)')
+      .eq('is_refunded', false)
       .gte('created_at', startDate)
       .lte('created_at', endDateTime),
 
@@ -259,7 +353,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .eq('tenant_id', tenantId)
       .eq('is_training', false)
       .eq('is_draft', false)
-      .not('status', 'in', '("cancelled","draft")')
+      .not('status', 'in', '(cancelled,draft)')
       .gte('created_at', startDate)
       .lte('created_at', endDateTime),
 
@@ -284,15 +378,6 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .eq('tenant_id', tenantId),
 
     supabase
-      .from('fin_cash_flow')
-      .select('amount')
-      .eq('tenant_id', tenantId)
-      .eq('type', 'income')
-      .eq('origin', 'manual')
-      .gte('date', startDate)
-      .lte('date', endDate),
-
-    supabase
       .from('hr_payroll')
       .select('net_salary, gross_salary, fgts')
       .eq('tenant_id', tenantId)
@@ -303,29 +388,40 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .select('id, fee_percentage'),
   ]);
 
+  if (autoSaleRes.error) console.error('[DRE-Comp] Auto-sale fin_cash_flow:', autoSaleRes.error.message);
+  if (manualIncomeRes.error) console.error('[DRE-Comp] Manual income:', manualIncomeRes.error.message);
   if (paymentsRes.error) console.error('[DRE-Comp] Pagamentos:', paymentsRes.error.message);
   if (receivablesRes.error) console.error('[DRE-Comp] Recebíveis:', receivablesRes.error.message);
   if (billsRes.error) console.error('[DRE-Comp] Contas a pagar:', billsRes.error.message);
   if (purchasesRes.error) console.error('[DRE-Comp] Compras:', purchasesRes.error.message);
   if (payMethodsRes.error) console.error('[DRE-Comp] Payment methods:', payMethodsRes.error.message);
 
-  const payments = paymentsRes.data ?? [];
+  const receitaManual = (manualIncomeRes.data ?? []).reduce((s, m) => s + Number(m.amount), 0);
+  const receitaAReceber = (receivablesRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
-  const receitaBalcao = payments
+  // Coleta reference_ids dos auto_sale para filtrar payments (cross-reference)
+  const autoSalePaymentIds = new Set(
+    (autoSaleRes.data ?? []).map(e => e.reference_id).filter(Boolean) as string[]
+  );
+
+  // Payments filtrados: apenas os que têm auto_sale correspondente no livro-razão
+  const paymentsMatched = (paymentsRes.data ?? []).filter(
+    p => autoSalePaymentIds.has(p.id)
+  );
+
+  const receitaBalcao = paymentsMatched
     .filter(p => ['immediate', 'balcao', 'hora', 'password', 'name'].includes((p.orders as Record<string, unknown>)?.destination_type as string))
     .reduce((s, p) => s + Number(p.amount), 0);
-  const receitaDelivery = payments
+  const receitaDelivery = paymentsMatched
     .filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'delivery')
     .reduce((s, p) => s + Number(p.amount), 0);
-  const receitaMesa = payments
+  const receitaMesa = paymentsMatched
     .filter(p => ['table', 'mesa'].includes((p.orders as Record<string, unknown>)?.destination_type as string))
     .reduce((s, p) => s + Number(p.amount), 0);
-  const receitaAutoatendimento = payments
+  const receitaAutoatendimento = paymentsMatched
     .filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'self_service')
     .reduce((s, p) => s + Number(p.amount), 0);
 
-  const receitaManual = (manualIncomeRes.data ?? []).reduce((s, m) => s + Number(m.amount), 0);
-  const receitaAReceber = (receivablesRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0);
   const cancelamentos = (cancelledRes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
   const descontos = (descontosRes.data ?? []).reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
 
@@ -375,7 +471,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
   (payMethodsRes.data ?? []).forEach((m: Record<string, unknown>) => {
     feeMap[m.id as string] = Number(m.fee_percentage ?? 0);
   });
-  const taxasMaquininha = payments.reduce((s, p) => {
+  const taxasMaquininha = (paymentsRes.data ?? []).reduce((s, p) => {
     const fee = feeMap[p.payment_method_id ?? ''] ?? 0;
     return s + Number(p.amount) * (fee / 100);
   }, 0);
@@ -558,7 +654,7 @@ function CatTreeRows({
 // ─── Mode Toggle ──────────────────────────────────────────────────────────────
 const MODE_TOOLTIPS: Record<DREMode, string> = {
   caixa: 'Mostra apenas transações efetivamente pagas/recebidas',
-  competencia: 'Inclui receitas a receber e despesas a pagar do período',
+  competencia: 'Reconhece receitas pela data da venda e despesas pela data de vencimento (não pela data de pagamento)',
 };
 
 function DreModeToggle({ mode, onChange }: { mode: DREMode; onChange: (m: DREMode) => void }) {
@@ -702,9 +798,8 @@ export default function DRETab() {
       const { start, end } = getMonthRange(m);
       const d = await fetchFn(user.tenantId, start, end);
       const receitaBase = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento;
-      const receita = dreMode === 'competencia'
-        ? receitaBase + d.receitaAReceber
-        : receitaBase;
+      // BUG-41: receitaAReceber não soma na receita (é saldo, não receita adicional)
+      const receita = receitaBase;
       const cmv = dreMode === 'competencia'
         ? d.cmvCompras + d.cmvComprasPendentes
         : d.cmvCompras;
@@ -735,9 +830,10 @@ export default function DRETab() {
 
   const receitaRecebida = data.receitaBalcao + data.receitaDelivery + data.receitaMesa + data.receitaAutoatendimento + data.receitaManual;
 
-  const receitaBruta = dreMode === 'competencia'
-    ? receitaRecebida + data.receitaAReceber
-    : receitaRecebida;
+  // BUG-41: receitaAReceber é saldo (balanço), não receita adicional.
+  // No regime de competência a receita já está no auto_sale do fin_cash_flow
+  // (criado no momento da venda). Somar recebíveis duplicaria vendas a prazo.
+  const receitaBruta = receitaRecebida;
 
   const cmvTotal = dreMode === 'competencia'
     ? data.cmvCompras + data.cmvComprasPendentes
@@ -780,9 +876,7 @@ export default function DRETab() {
   const prevReceitaRecebida = (prevData?.receitaBalcao ?? 0) + (prevData?.receitaDelivery ?? 0)
     + (prevData?.receitaMesa ?? 0) + (prevData?.receitaAutoatendimento ?? 0) + (prevData?.receitaManual ?? 0);
 
-  const prevReceitaBruta = dreMode === 'competencia'
-    ? prevReceitaRecebida + (prevData?.receitaAReceber ?? 0)
-    : prevReceitaRecebida;
+  const prevReceitaBruta = prevReceitaRecebida;
 
   const prevCmvTotal = dreMode === 'competencia'
     ? (prevData?.cmvCompras ?? 0) + (prevData?.cmvComprasPendentes ?? 0)
@@ -915,7 +1009,7 @@ export default function DRETab() {
             <div>
               <p className="text-xs font-semibold text-indigo-800">Regime de Competência ativo</p>
               <p className="text-xs text-indigo-700 mt-0.5">
-                Receitas incluem recebíveis pendentes com vencimento no período. Despesas incluem <strong>todas</strong> as contas com vencimento no mês (pagas, pendentes e vencidas). CMV considera todas as compras pela data de compra.
+                Receitas incluem todas as vendas do período, independente de quando o dinheiro entra. Os recebíveis pendentes aparecem como <strong>saldo</strong> (não somam na receita bruta). Despesas incluem <strong>todas</strong> as contas com vencimento no mês (pagas, pendentes e vencidas). CMV considera todas as compras pela data de compra.
               </p>
             </div>
           </div>
@@ -923,10 +1017,10 @@ export default function DRETab() {
             <div className="bg-white border border-indigo-100 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-1">
                 <div className="w-2 h-2 rounded-full bg-indigo-400" />
-                <p className="text-xs font-semibold text-indigo-700">Receita a Receber</p>
+                <p className="text-xs font-semibold text-indigo-700">Saldo a Receber</p>
               </div>
               <p className="text-sm font-bold text-indigo-800">{formatCurrency(data.receitaAReceber)}</p>
-              <p className="text-xs text-indigo-400 mt-0.5">Recebíveis pendentes no período</p>
+              <p className="text-xs text-indigo-400 mt-0.5">Recebíveis pendentes (já contabilizados na receita)</p>
             </div>
             <div className="bg-white border border-orange-100 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-1">
@@ -962,9 +1056,6 @@ export default function DRETab() {
             { label: 'Taxas Cartão', value: taxasMaquininha, color: 'bg-pink-400' },
             { label: 'CMV', value: cmvTotal, color: 'bg-orange-400' },
             { label: 'Deduções', value: data.cancelamentos + data.descontos, color: 'bg-red-400' },
-            ...(dreMode === 'competencia' && data.receitaAReceber > 0
-              ? [{ label: 'A Receber', value: data.receitaAReceber, color: 'bg-indigo-300' }]
-              : []),
             ...(customGroupTrees.filter(g => g.total > 0).map(g => ({
               label: g.group.label,
               value: g.total,
@@ -987,9 +1078,6 @@ export default function DRETab() {
             { label: 'Taxas Cartão/PIX', color: 'bg-pink-400', value: taxasMaquininha },
             { label: 'CMV', color: 'bg-orange-400', value: cmvTotal },
             { label: 'Deduções', color: 'bg-red-400', value: data.cancelamentos + data.descontos },
-            ...(dreMode === 'competencia' && data.receitaAReceber > 0
-              ? [{ label: 'A Receber', color: 'bg-indigo-300', value: data.receitaAReceber }]
-              : []),
             ...(customGroupTrees.filter(g => g.total > 0).map(g => ({
               label: g.group.label,
               color: 'bg-zinc-400',
@@ -1091,7 +1179,7 @@ export default function DRETab() {
                   anterior={prevData?.receitaBalcao}
                   receitaBruta={receitaBruta}
                   depth={1}
-                  origin="Pagamentos recebidos"
+                  origin="Livro-razão: fin_cash_flow → auto_sale"
                   clickable
                   onClick={() => setDrillDown({ type: 'receita_balcao' })}
                 />
@@ -1103,7 +1191,7 @@ export default function DRETab() {
                   anterior={prevData?.receitaDelivery}
                   receitaBruta={receitaBruta}
                   depth={1}
-                  origin="Pagamentos recebidos"
+                  origin="Livro-razão: fin_cash_flow → auto_sale"
                   clickable
                   onClick={() => setDrillDown({ type: 'receita_delivery' })}
                 />
@@ -1115,7 +1203,7 @@ export default function DRETab() {
                   anterior={prevData?.receitaMesa}
                   receitaBruta={receitaBruta}
                   depth={1}
-                  origin="Pagamentos recebidos"
+                  origin="Livro-razão: fin_cash_flow → auto_sale"
                   clickable
                   onClick={() => setDrillDown({ type: 'receita_mesa' })}
                 />
@@ -1127,7 +1215,7 @@ export default function DRETab() {
                   anterior={prevData?.receitaAutoatendimento}
                   receitaBruta={receitaBruta}
                   depth={1}
-                  origin="Pagamentos recebidos"
+                  origin="Livro-razão: fin_cash_flow → auto_sale"
                   clickable
                   onClick={() => setDrillDown({ type: 'receita_autoatendimento' })}
                 />
@@ -1144,26 +1232,25 @@ export default function DRETab() {
                   onClick={() => setDrillDown({ type: 'receita_manual' })}
                 />
               )}
-              {dreMode === 'competencia' && data.receitaAReceber > 0 && (
-                <DRERow
-                  label="Receita a Realizar (Recebíveis)"
-                  atual={data.receitaAReceber}
-                  anterior={prevData?.receitaAReceber}
-                  receitaBruta={receitaBruta}
-                  depth={1}
-                  origin="Recebíveis pendentes com vencimento no período"
-                  badge="A receber"
-                  badgeColor="bg-indigo-100 text-indigo-600"
-                  clickable
-                  onClick={() => setDrillDown({ type: 'receita_a_receber' })}
-                />
-              )}
               {receitaBruta === 0 && (
                 <tr>
                   <td colSpan={5} className="px-5 py-3 text-xs text-zinc-400 text-center">Nenhuma receita registrada neste período</td>
                 </tr>
               )}
               <DRERow label="(=) RECEITA BRUTA" atual={receitaBruta} anterior={prevReceitaBruta} receitaBruta={receitaBruta} isTotal />
+              {dreMode === 'competencia' && data.receitaAReceber > 0 && (
+                <tr className="bg-indigo-50/30 border-t border-dashed border-indigo-200">
+                  <td className="px-5 py-2 text-xs text-indigo-600" colSpan={5}>
+                    <div className="flex items-center gap-2">
+                      <i className="ri-information-line text-indigo-400" />
+                      <span>
+                        <strong>Saldo a receber no período: {formatCurrency(data.receitaAReceber)}</strong>
+                        {' '}— Esses valores já estão contabilizados na receita bruta acima (vendas já reconhecidas, dinheiro ainda não entrou).
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              )}
               <DRERow label="(-) Cancelamentos" atual={data.cancelamentos} anterior={prevData?.cancelamentos} receitaBruta={receitaBruta} isNeg depth={1} origin="Pedidos cancelados" clickable={data.cancelamentos > 0} onClick={data.cancelamentos > 0 ? () => setDrillDown({ type: 'cancelamentos' }) : undefined} />
               <DRERow label="(-) Descontos Concedidos" atual={data.descontos} anterior={prevData?.descontos} receitaBruta={receitaBruta} isNeg depth={1} origin="Descontos aplicados nos pedidos" clickable={data.descontos > 0} onClick={data.descontos > 0 ? () => setDrillDown({ type: 'descontos' }) : undefined} />
               <DRERow label="(=) RECEITA LÍQUIDA" atual={receitaLiquida} anterior={prevReceitaLiquida} receitaBruta={receitaBruta} isTotal />
@@ -1325,12 +1412,12 @@ export default function DRETab() {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {(dreMode === 'caixa' ? [
-            { icon: 'ri-shopping-bag-line', label: 'Receitas', desc: 'Pagamentos recebidos (exceto cancelados)' },
+            { icon: 'ri-shopping-bag-line', label: 'Receitas', desc: 'Livro-razão (fin_cash_flow): auto_sale + entradas manuais' },
             { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Compras pagas no módulo Estoque' },
             { icon: 'ri-bill-line', label: 'Despesas', desc: 'Contas a Pagar pagas + categoria DRE' },
             { icon: 'ri-price-tag-3-line', label: 'Deduções', desc: 'Cancelamentos e descontos dos pedidos' },
           ] : [
-            { icon: 'ri-shopping-bag-line', label: 'Receitas', desc: 'Pagamentos recebidos + recebíveis pendentes no período' },
+            { icon: 'ri-shopping-bag-line', label: 'Receitas', desc: 'Livro-razão (fin_cash_flow): auto_sale + entradas manuais (recebíveis são saldo, já contabilizados)' },
             { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Todas as compras pela data de compra (pagas ou não)' },
             { icon: 'ri-bill-line', label: 'Despesas', desc: 'Todas as contas com vencimento no período (pagas, pendentes, vencidas)' },
             { icon: 'ri-price-tag-3-line', label: 'Deduções', desc: 'Cancelamentos e descontos dos pedidos' },

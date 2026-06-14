@@ -203,7 +203,7 @@ export default function CarrinhoCliente({
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-bold text-zinc-800 truncate">{item.nome}</p>
                           {item.opcoesSelecionadas.length > 0 && (
-                            <p className="text-[10px] text-zinc-400 mt-0.5">{item.opcoesSelecionadas.join(', ')}</p>
+                            <p className="text-[10px] text-zinc-400 mt-0.5">{item.opcoesSelecionadas.map((o) => o.nome).join(', ')}</p>
                           )}
                           {item.observacao && (
                             <p className="text-[10px] text-amber-600 mt-0.5 italic">{item.observacao}</p>
@@ -263,7 +263,7 @@ export default function CarrinhoCliente({
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-zinc-700 truncate">{item.nome}</p>
                       {item.opcoesSelecionadas.length > 0 && (
-                        <p className="text-[10px] text-zinc-400 truncate">{item.opcoesSelecionadas.join(', ')}</p>
+                        <p className="text-[10px] text-zinc-400 truncate">{item.opcoesSelecionadas.map((o) => o.nome).join(', ')}</p>
                       )}
                       {itemStatus && (
                         <div className="mt-1">
@@ -318,7 +318,7 @@ export default function CarrinhoCliente({
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-bold text-zinc-800 truncate">{item.nome}</p>
                         {item.opcoesSelecionadas.length > 0 && (
-                          <p className="text-[10px] text-zinc-400 mt-0.5">{item.opcoesSelecionadas.join(', ')}</p>
+                          <p className="text-[10px] text-zinc-400 mt-0.5">{item.opcoesSelecionadas.map((o) => o.nome).join(', ')}</p>
                         )}
                         {item.observacao && (
                           <p className="text-[10px] text-amber-600 mt-0.5 italic">{item.observacao}</p>
