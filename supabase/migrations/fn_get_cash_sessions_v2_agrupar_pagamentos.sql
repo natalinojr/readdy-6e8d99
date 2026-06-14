@@ -154,8 +154,11 @@ BEGIN
           'count', sub_pf.cnt
         ))
         FROM (
+          -- Para pagamentos em grupo (pagos juntos), usa o total REAL do pedido
+          -- (o pedido principal grava amount = total do grupo, o que duplicaria).
+          -- Para pagamentos avulsos/divididos, mantem p.amount (comportamento anterior).
           SELECT p.payment_method_id,
-            SUM(p.amount) as total_val,
+            SUM(CASE WHEN p.payment_group_id IS NOT NULL THEN o.total_amount ELSE p.amount END) as total_val,
             COUNT(*) as cnt
           FROM payments p
           JOIN orders o ON p.order_id = o.id
