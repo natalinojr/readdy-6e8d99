@@ -17,6 +17,8 @@ export interface PedidoAgrupado {
   mesaNumero?: number;
   senha?: string;
   nomeCliente?: string;
+  /** Senha do participante em pedidos de QR code universal (mesa sem número físico) */
+  participantToken?: string | null;
 }
 
 function normalizarSenha(s: string | undefined): string {
@@ -198,6 +200,7 @@ export function usePedidosAgrupados(destino: DestinoInfo | null, carrinho: { nom
       mesaNumero: p.mesaNumero,
       senha: p.senha,
       nomeCliente: p.nomeCliente,
+      participantToken: p.participantToken,
     }));
   }, [todosPedidos, destino]);
 
@@ -242,6 +245,7 @@ export function usePedidosAgrupados(destino: DestinoInfo | null, carrinho: { nom
       mesaNumero: p.mesaNumero,
       senha: p.senha,
       nomeCliente: p.nomeCliente,
+      participantToken: p.participantToken,
     }));
   }, [todosPedidos]);
 

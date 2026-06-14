@@ -358,6 +358,11 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
 
   // Helper para formatar o destino de um pedido
   const formatarDestino = (p: PedidoAgrupado) => {
+    // QR code universal (mesa sem número físico) com senha de participante → mostra a senha, não "Mesa 0"
+    if (p.destino === 'mesa' && !p.mesaNumero && p.participantToken) {
+      const nome = p.nomeCliente?.replace(/^Mesa\s*\d*\s*[-–.·]?\s*/i, '').trim() ?? '';
+      return `Senha ${p.participantToken}${nome ? ` - ${nome}` : ''}`;
+    }
     if (p.destino === 'mesa' && p.mesaNumero) return `Mesa ${p.mesaNumero}`;
     if (p.destino === 'senha' && p.senha) return `Senha ${p.senha}`;
     if (p.destino === 'delivery') return 'Delivery';

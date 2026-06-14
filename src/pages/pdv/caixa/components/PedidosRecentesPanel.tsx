@@ -100,6 +100,12 @@ const UNIDADE_STATUS_CFG: Record<string, { icon: string; color: string; label: s
 
 function destinoLabel(p: PedidoRecente) {
   if (p.destino === 'mesa') {
+    const token = (p as PedidoRecenteComParticipant).participantToken;
+    // QR code universal (sem mesa física): mostra a senha em vez de "Mesa 0"
+    if (token && !p.mesaNumero) {
+      const nome = p.nomeCliente?.replace(/^Mesa\s*\d*\s*[-–.·]?\s*/i, '').trim() ?? '';
+      return `Senha ${token}${nome ? ` - ${nome}` : ''}`;
+    }
     const nome = p.nomeCliente?.replace(new RegExp(`^Mesa\\s*${p.mesaNumero}\\s*[-–.·]?\\s*`), '').trim() ?? '';
     return `Mesa ${p.mesaNumero}${nome ? ` - ${nome}` : ''}`;
   }
