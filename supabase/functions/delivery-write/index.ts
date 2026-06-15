@@ -12,6 +12,61 @@ function jsonErr(msg: string, code = 400) {
 
 function fmtPrice(v: number): string { return "R$ " + v.toFixed(2).replace(".", ","); }
 
+// ── Entrega por distancia (pin + faixas) ───────────────────────────────────────
+
+type FaixaEntrega = { ate_km: number; taxa: number; tempo_max_min: number };
+
+// Fator de via para o fallback haversine (reta subestima a distancia de rua).
+const ROAD_FACTOR = 1.3;
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Mapeia uma distancia (km) para a faixa configurada. dentroArea=false se alem da ultima faixa. */
+function quoteFromTiers(km: number, tiers: FaixaEntrega[]): { taxa: number; tempoMax: number; dentroArea: boolean } | null {
+  if (!tiers || tiers.length === 0) return null;
+  const sorted = tiers.slice().sort((a, b) => a.ate_km - b.ate_km);
+  for (const t of sorted) {
+    if (km <= t.ate_km) return { taxa: t.taxa, tempoMax: t.tempo_max_min, dentroArea: true };
+  }
+  const last = sorted[sorted.length - 1];
+  return { taxa: last.taxa, tempoMax: last.tempo_max_min, dentroArea: false };
+}
+
+/**
+ * Distancia de rota (km) loja->cliente via OpenRouteService (driving-car).
+ * Retorna null em qualquer falha (timeout/quota/sem chave) — o chamador faz fallback haversine.
+ * ORS usa ordem [lng, lat].
+ */
+async function orsRouteKm(storeLat: number, storeLng: number, destLat: number, destLng: number): Promise<number | null> {
+  const apiKey = Deno.env.get("ORS_API_KEY");
+  if (!apiKey) return null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch("https://api.openrouteservice.org/v2/directions/driving-car", {
+      method: "POST",
+      headers: { "Authorization": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ coordinates: [[storeLng, storeLat], [destLng, destLat]] }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const meters = data?.routes?.[0]?.summary?.distance;
+    if (typeof meters === "number" && meters >= 0) return meters / 1000;
+    return null;
+  } catch (_e) {
+    return null;
+  }
+}
+
 const RATE_LIMIT_WINDOW_MIN = 10;
 const MAX_ORDERS_PER_PHONE = 3;
 const MAX_ORDERS_PER_IP = 15;
@@ -196,6 +251,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         subtotal: _clientSubtotal,
         total_amount: _clientTotal,
         notes, payment_method, cash_amount, order_type,
+        address_lat, address_lng,
         client_request_id,
       } = body;
 
@@ -279,7 +335,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         }
       }
 
-      const [menuItemsRes, combosRes, optionsRes, neighRes] = await Promise.all([
+      const [menuItemsRes, combosRes, optionsRes, neighRes, settingsRes] = await Promise.all([
         itemIds.length > 0
           ? admin.from("menu_items").select("id, name, price, is_active, delivery_config").eq("tenant_id", tenant_id).in("id", itemIds)
           : Promise.resolve({ data: [], error: null }) as { data: Array<Record<string, unknown>>; error: unknown },
@@ -292,6 +348,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         !isRetirada && neighborhood_id
           ? admin.from("delivery_neighborhoods").select("id, delivery_fee, is_active").eq("tenant_id", tenant_id).eq("id", neighborhood_id).maybeSingle()
           : Promise.resolve({ data: null, error: null }) as { data: Record<string, unknown> | null; error: unknown },
+        admin.from("system_settings").select("delivery_config").eq("tenant_id", tenant_id).maybeSingle(),
       ]);
 
       if (menuItemsRes.error) throw menuItemsRes.error;
@@ -403,10 +460,42 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         });
       }
 
+      // Config de entrega por distancia (Fase 1): localizacao da loja + faixas
+      const deliveryConfig = (settingsRes.data?.delivery_config ?? {}) as Record<string, any>;
+      const storeLoc = deliveryConfig.store_location;
+      const tiersRaw = Array.isArray(deliveryConfig.delivery_fee_tiers) ? deliveryConfig.delivery_fee_tiers : [];
+      const tiers: FaixaEntrega[] = tiersRaw
+        .map((t: any) => ({ ate_km: Number(t.ate_km) || 0, taxa: Number(t.taxa) || 0, tempo_max_min: Number(t.tempo_max_min) || 0 }))
+        .filter((t: FaixaEntrega) => t.ate_km > 0);
+      const hasDistanceConfig = storeLoc && typeof storeLoc.lat === "number" && typeof storeLoc.lng === "number" && tiers.length > 0;
+
+      const pinLat = (address_lat != null && address_lat !== "") ? Number(address_lat) : null;
+      const pinLng = (address_lng != null && address_lng !== "") ? Number(address_lng) : null;
+      const hasPin = pinLat != null && !Number.isNaN(pinLat) && pinLng != null && !Number.isNaN(pinLng);
+
       let serverDeliveryFee = 0;
+      let routeKm: number | null = null;
+      let routeTempoMax: number | null = null;
+
       if (isRetirada) {
         serverDeliveryFee = 0;
+      } else if (hasDistanceConfig && hasPin) {
+        // Entrega por distancia: rota real via ORS (fallback haversine x fator de via)
+        const ors = await orsRouteKm(storeLoc.lat, storeLoc.lng, pinLat as number, pinLng as number);
+        const km = ors != null ? ors : haversineKm(storeLoc.lat, storeLoc.lng, pinLat as number, pinLng as number) * ROAD_FACTOR;
+        routeKm = Math.round(km * 100) / 100;
+        const quote = quoteFromTiers(km, tiers);
+        if (!quote || !quote.dentroArea) {
+          return new Response(JSON.stringify({
+            _v: "v14",
+            error: "fora_area",
+            message: "Endereco fora da area de entrega desta loja.",
+          }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        serverDeliveryFee = quote.taxa;
+        routeTempoMax = quote.tempoMax;
       } else if (neighborhood_id && neighRes.data) {
+        // Fluxo legado por bairro (loja sem config de distancia, ou pedido sem pin)
         const nb = neighRes.data as Record<string, unknown>;
         if (nb.is_active !== false) {
           serverDeliveryFee = Number(nb.delivery_fee ?? 0);
@@ -500,6 +589,17 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       if (!orderId) return jsonErr("Falha ao criar pedido", 500);
 
+      // Grava o pin do cliente + distancia da rota (delivery por distancia / link do motoboy na Fase 4)
+      if (!isRetirada && hasPin) {
+        try {
+          await admin.from("orders").update({
+            delivery_lat: pinLat,
+            delivery_lng: pinLng,
+            delivery_distance_km: routeKm,
+          }).eq("id", orderId);
+        } catch { /* nao bloqueia o pedido */ }
+      }
+
       const { error: itemsErr } = await admin.rpc("fn_create_order_items_bypass", {
         p_order_id: orderId, p_tenant_id: tenant_id, p_items: serverItems,
       });
@@ -582,6 +682,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         const obsGeralParts = [
           "Cliente: " + (customer_name || "Nao informado"),
           isRetirada ? "RETIRADA NA LOJA" : "",
+          (!isRetirada && routeKm != null) ? "Distancia: ~" + routeKm.toFixed(1) + " km" + (routeTempoMax ? " (ate " + routeTempoMax + " min)" : "") : "",
           serverDeliveryFee > 0 ? "Taxa de entrega: " + fmtPrice(serverDeliveryFee) : "",
           "Subtotal: " + fmtPrice(serverSubtotal),
           "TOTAL: " + fmtPrice(serverTotal),
@@ -623,6 +724,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           id: orderId, number: orderNumber,
           total: serverTotal,
           delivery_fee: serverDeliveryFee,
+          distance_km: routeKm,
           customer_id: realCustomerId,
           payment_method,
           order_type: order_type || "entrega",

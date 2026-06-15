@@ -179,6 +179,62 @@ function getDeliveryWriteUrl(): string {
   return base + '/functions/v1/delivery-write';
 }
 
+// ── Entrega por distância (pin + faixas) ───────────────────────────────────────
+
+type StoreLocation = { lat: number; lng: number };
+
+export type FaixaEntrega = {
+  ate_km: number;        // distância máxima da faixa (km)
+  taxa: number;          // taxa de entrega (R$)
+  tempo_max_min: number; // tempo máximo de entrega da faixa (min)
+};
+
+export type DeliveryQuote = {
+  km: number;            // distância estimada (km, já com fator de via)
+  taxa: number;          // taxa da faixa correspondente (R$)
+  tempoMax: number;      // tempo máximo da faixa (min)
+  dentroArea: boolean;   // false → além da última faixa (pedido bloqueado)
+};
+
+// A reta (haversine) subestima a distância de rua. Aplicamos um fator de via para
+// a ESTIMATIVA não ficar abaixo da taxa real (que virá da rota ORS na Fase 3).
+const ROAD_FACTOR = 1.3;
+
+const PIN_STORAGE_KEY = 'delivery_pin';
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371; // raio da Terra em km
+  const toRad = function (d: number) { return (d * Math.PI) / 180; };
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Mapeia uma distância (km) para a faixa configurada. Retorna dentroArea=false se além da última faixa. */
+function quoteFromTiers(km: number, tiers: FaixaEntrega[]): DeliveryQuote | null {
+  if (!tiers || tiers.length === 0) return null;
+  const sorted = tiers.slice().sort(function (a, b) { return a.ate_km - b.ate_km; });
+  for (const t of sorted) {
+    if (km <= t.ate_km) {
+      return { km, taxa: t.taxa, tempoMax: t.tempo_max_min, dentroArea: true };
+    }
+  }
+  const last = sorted[sorted.length - 1];
+  return { km, taxa: last.taxa, tempoMax: last.tempo_max_min, dentroArea: false };
+}
+
+function loadStoredPin(): { lat: number; lng: number } | null {
+  try {
+    const raw = localStorage.getItem(PIN_STORAGE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (typeof p?.lat === 'number' && typeof p?.lng === 'number') return { lat: p.lat, lng: p.lng };
+  } catch (_e) { /* ignora */ }
+  return null;
+}
+
 // ── Resolve slug → tenant_id localmente (bypass edge function deploy issues) ──
 
 async function resolveTenantIdBySlug(slug: string): Promise<string | null> {
@@ -251,6 +307,8 @@ async function fetchDeliveryConfig(
     setDeliveryFee: (v: number) => void;
     setPaymentMethods: (v: Record<string, boolean>) => void;
     setRetiradaAtivo: (v: boolean) => void;
+    setStoreLocation: (v: StoreLocation | null) => void;
+    setTiers: (v: FaixaEntrega[]) => void;
     productionPartsRef: MutableRefObject<ProductionPartsMap | undefined>;
   },
 ) {
@@ -327,6 +385,26 @@ async function fetchDeliveryConfig(
 
     const ra = dc.retirada_ativo;
     setters.setRetiradaAtivo(ra !== false);
+
+    // Entrega por distância: localização da loja + faixas (km → taxa/tempo)
+    const sl = dc.store_location;
+    if (sl && typeof sl === 'object' && typeof sl.lat === 'number' && typeof sl.lng === 'number') {
+      setters.setStoreLocation({ lat: sl.lat, lng: sl.lng });
+    } else {
+      setters.setStoreLocation(null);
+    }
+    const rawTiers = dc.delivery_fee_tiers;
+    if (Array.isArray(rawTiers)) {
+      setters.setTiers(rawTiers.map(function (t: any) {
+        return {
+          ate_km: Number(t.ate_km) || 0,
+          taxa: Number(t.taxa) || 0,
+          tempo_max_min: Number(t.tempo_max_min) || 0,
+        };
+      }).filter(function (t: FaixaEntrega) { return t.ate_km > 0; }));
+    } else {
+      setters.setTiers([]);
+    }
 
     if (merged.categories && merged.categories.length > 0) {
       setters.setCategoriaAtiva(merged.categories[0].id);
@@ -407,6 +485,12 @@ export function useDeliveryData(storeSlug?: string) {
   const [modoEntrega, setModoEntrega] = useState<'entrega' | 'retirada'>('entrega');
   const [retiradaAtivo, setRetiradaAtivo] = useState(true);
 
+  // Entrega por distância (pin do cliente + faixas configuradas pela loja)
+  const [storeLocation, setStoreLocation] = useState<StoreLocation | null>(null);
+  const [tiers, setTiers] = useState<FaixaEntrega[]>([]);
+  const [addressLat, setAddressLat] = useState<number | null>(null);
+  const [addressLng, setAddressLng] = useState<number | null>(null);
+
   const initializedRef = useRef(false);
   const prevStoreSlugRef = useRef<string | undefined>(storeSlug);
   const productionPartsRef = useRef<ProductionPartsMap | undefined>();
@@ -456,7 +540,14 @@ export function useDeliveryData(storeSlug?: string) {
     setOrderTotal(0);
     setPagamentoSelecionado('');
     setModoEntrega('entrega');
+    setStoreLocation(null);
+    setTiers([]);
     setEnderecoFromCardapio(false);
+
+    // Restaura o último pin marcado neste dispositivo (pin é por aparelho, não por bairro)
+    const storedPin = loadStoredPin();
+    setAddressLat(storedPin ? storedPin.lat : null);
+    setAddressLng(storedPin ? storedPin.lng : null);
 
     let cancelled = false;
 
@@ -477,6 +568,8 @@ export function useDeliveryData(storeSlug?: string) {
           setDeliveryFee,
           setPaymentMethods,
           setRetiradaAtivo,
+          setStoreLocation,
+          setTiers,
           productionPartsRef,
         });
 
@@ -983,7 +1076,10 @@ export function useDeliveryData(storeSlug?: string) {
           setDeliveryFee(customer.delivery_neighborhoods.delivery_fee);
         }
 
-        const temEndereco = savedAddresses.length > 0 || (customer.neighborhood_id && customer.street);
+        // Modo distância exige pin marcado (+ texto do endereço); modo bairro mantém o legado
+        const temEndereco = distanceMode
+          ? (addressLat != null && addressLng != null && !!customer.street)
+          : (savedAddresses.length > 0 || (customer.neighborhood_id && customer.street));
 
         if (temEndereco) {
           // Já tem endereço (salvo ou legado) — vai direto pro cardápio
@@ -1053,6 +1149,14 @@ export function useDeliveryData(storeSlug?: string) {
     if (!tenant || !customer) return;
     if (cart.length === 0) return;
 
+    // Modo distância: bloqueia se fora da área de entrega (sem pin ou além da última faixa)
+    if (foraDeArea) {
+      setErrorMsg(addressLat == null
+        ? 'Marque sua localização no mapa para calcular a entrega.'
+        : 'Endereço fora da área de entrega desta loja.');
+      return;
+    }
+
     setEnviando(true);
     setErrorMsg('');
 
@@ -1071,7 +1175,7 @@ export function useDeliveryData(storeSlug?: string) {
 
     const url = getDeliveryWriteUrl();
     const subtotal = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
-    const total = subtotal + deliveryFee;
+    const total = subtotal + effectiveDeliveryFee;
 
     const enderecoParts: string[] = [];
     if (street) enderecoParts.push(street);
@@ -1124,7 +1228,11 @@ export function useDeliveryData(storeSlug?: string) {
         customer_address: endereco,
         neighborhood_name: bairroName,
         neighborhood_id: selectedNeighborhoodId,
-        delivery_fee: deliveryFee,
+        delivery_fee: effectiveDeliveryFee,
+        // Pin do cliente + distância estimada (Fase 3: backend recalcula via rota ORS)
+        address_lat: addressLat,
+        address_lng: addressLng,
+        distance_km: deliveryQuote ? Number(deliveryQuote.km.toFixed(2)) : null,
         items: itemsPayload,
         subtotal: subtotal,
         total_amount: total,
@@ -1174,11 +1282,40 @@ export function useDeliveryData(storeSlug?: string) {
     if (nb) setDeliveryFee(nb.delivery_fee);
   }
 
+  // ── Pin do cliente (entrega por distância) ──────────────────────────────────
+
+  function setAddressPin(lat: number, lng: number) {
+    setAddressLat(lat);
+    setAddressLng(lng);
+    try {
+      localStorage.setItem(PIN_STORAGE_KEY, JSON.stringify({ lat, lng }));
+    } catch (_e) { /* ignora */ }
+  }
+
   // ── Valores derivados ───────────────────────────────────────────────────────
+
+  // distanceMode = a loja configurou localização + faixas de distância (Fase 1).
+  // Quando ativo, a taxa vem do PIN (não do bairro). Senão, mantém o fluxo legado de bairro.
+  const distanceMode = storeLocation != null && tiers.length > 0;
+
+  const deliveryQuote: DeliveryQuote | null = (distanceMode && storeLocation && addressLat != null && addressLng != null)
+    ? quoteFromTiers(haversineKm(storeLocation.lat, storeLocation.lng, addressLat, addressLng) * ROAD_FACTOR, tiers)
+    : null;
+
+  // Pedido bloqueado: modo distância + entrega + (sem pin ou além da última faixa)
+  const foraDeArea = distanceMode && modoEntrega === 'entrega'
+    && (deliveryQuote == null || !deliveryQuote.dentroArea);
+
+  // Taxa efetiva: no modo distância vem da faixa do pin; senão, do bairro (estado deliveryFee)
+  const effectiveDeliveryFee = modoEntrega === 'retirada'
+    ? 0
+    : distanceMode
+      ? (deliveryQuote && deliveryQuote.dentroArea ? deliveryQuote.taxa : 0)
+      : deliveryFee;
 
   const totalItens = cart.reduce(function (s, i) { return s + i.quantidade; }, 0);
   const totalItensProdutos = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
-  const totalValor = totalItensProdutos + deliveryFee;
+  const totalValor = totalItensProdutos + effectiveDeliveryFee;
   const bairroAtual = neighborhoods.find(function (n) { return n.id === selectedNeighborhoodId; });
   const tenantId = tenant?.id || '';
   const customerId = customer?.id || '';
@@ -1244,7 +1381,7 @@ export function useDeliveryData(storeSlug?: string) {
     pedidoConfirmado,
     numeroPedido,
     orderTotal,
-    deliveryFee,
+    deliveryFee: effectiveDeliveryFee,
     totalItens,
     totalItensProdutos,
     totalValor,
@@ -1283,5 +1420,14 @@ export function useDeliveryData(storeSlug?: string) {
     handleChangeNeighborhood,
     enderecoFromCardapio,
     setEnderecoFromCardapio,
+    // Entrega por distância (pin)
+    distanceMode,
+    storeLocation,
+    tiers,
+    addressLat,
+    addressLng,
+    setAddressPin,
+    deliveryQuote,
+    foraDeArea,
   };
 }

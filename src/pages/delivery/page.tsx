@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useDeliveryData } from './useDeliveryData';
 import IdentificacaoDelivery from './components/IdentificacaoDelivery';
 import EnderecoDelivery from './components/EnderecoDelivery';
+import EnderecoPinDelivery from './components/EnderecoPinDelivery';
 import ConfirmacaoDelivery from './components/ConfirmacaoDelivery';
 import AcompanharPedido from './components/AcompanharPedido';
 import HistoricoPedidos from './components/HistoricoPedidos';
@@ -93,6 +94,11 @@ export default function DeliveryPage() {
   const pagamentoSelecionado = data.pagamentoSelecionado;
   const modoEntrega = data.modoEntrega;
   const customer = data.customer;
+
+  // Entrega por distância (pin)
+  const distanceMode = data.distanceMode;
+  const deliveryQuote = data.deliveryQuote;
+  const foraDeArea = data.foraDeArea;
 
   const handleLookupCustomer = data.handleLookupCustomer;
   const handleSalvarEndereco = data.handleSalvarEndereco;
@@ -273,6 +279,50 @@ export default function DeliveryPage() {
     );
   }
 
+  if (step === 'endereco' && distanceMode) {
+    return (
+      <EnderecoPinDelivery
+        phone={phone}
+        nome={customerName}
+        onNomeChange={data.setCustomerName}
+        rua={street}
+        onRuaChange={data.setStreet}
+        numero={addressNumber}
+        onNumeroChange={data.setAddressNumber}
+        complemento={complement}
+        onComplementoChange={data.setComplement}
+        referencia={referencePoint}
+        onReferenciaChange={data.setReferencePoint}
+        storeLat={data.storeLocation ? data.storeLocation.lat : null}
+        storeLng={data.storeLocation ? data.storeLocation.lng : null}
+        addressLat={data.addressLat}
+        addressLng={data.addressLng}
+        onPinChange={data.setAddressPin}
+        deliveryQuote={deliveryQuote}
+        foraDeArea={foraDeArea}
+        isExistingCustomer={!!customer}
+        onSalvar={handleSalvarEndereco}
+        onVoltar={function () {
+          if (enderecoFromCardapio) {
+            setEnderecoFromCardapio(false);
+            data.setStep('cardapio');
+            data.setError('');
+            return;
+          }
+          if (customer) {
+            data.setStep('modo_entrega');
+          } else {
+            data.setStep('identificacao' as any);
+          }
+          data.setError('');
+        }}
+        enviando={enviando}
+        error={error}
+        city={city}
+      />
+    );
+  }
+
   if (step === 'endereco') {
     return (
       <EnderecoDelivery
@@ -388,8 +438,12 @@ export default function DeliveryPage() {
                 <div className="inline-flex items-center gap-1.5">
                   <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-white/20 rounded-full border border-white/30 mt-1">
                     <i className="ri-map-pin-line text-[10px] text-white" />
-                    <span className="text-white text-[10px] font-bold max-w-[120px] truncate">
-                      {bairroAtual ? bairroAtual.name : 'Sem bairro'}
+                    <span className="text-white text-[10px] font-bold max-w-[140px] truncate">
+                      {distanceMode
+                        ? (deliveryQuote
+                            ? '~' + deliveryQuote.km.toFixed(1) + ' km'
+                            : 'Marcar no mapa')
+                        : (bairroAtual ? bairroAtual.name : 'Sem bairro')}
                     </span>
                   </div>
                   <button
@@ -772,6 +826,15 @@ export default function DeliveryPage() {
                     </span>
                   </div>
                 ) : null}
+                {modoEntrega !== 'retirada' && distanceMode && deliveryQuote && deliveryQuote.dentroArea ? (
+                  <div className="flex items-center justify-end">
+                    <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+                      <i className="ri-route-line text-[9px]" />
+                      ~{deliveryQuote.km.toFixed(1)} km
+                      {deliveryQuote.tempoMax > 0 ? ' • até ' + deliveryQuote.tempoMax + ' min' : ''}
+                    </span>
+                  </div>
+                ) : null}
                 <div className="h-px bg-zinc-100" />
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-bold text-zinc-800">Total</span>
@@ -779,10 +842,28 @@ export default function DeliveryPage() {
                 </div>
               </div>
 
+              {/* Aviso de fora da área de entrega (modo distância) */}
+              {foraDeArea ? (
+                <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-100 rounded-xl">
+                  <i className="ri-map-pin-off-line text-red-500 text-sm mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-red-700">Fora da área de entrega</p>
+                    <button
+                      type="button"
+                      onClick={function () { data.handleIrParaEnderecos(); }}
+                      className="text-[11px] text-red-600 underline cursor-pointer"
+                    >
+                      Ajustar localização no mapa
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               {/* Botões de ação */}
               <button
                 type="button"
                 onClick={function () {
+                  if (foraDeArea) { data.handleIrParaEnderecos(); return; }
                   const activeMethods = Object.entries(paymentMethods).filter(function (entry) { return entry[1] === true; });
                   if (activeMethods.length > 0) {
                     setMetodoPagamento('');
@@ -793,7 +874,7 @@ export default function DeliveryPage() {
                     handleConfirmarPedido();
                   }
                 }}
-                disabled={enviando}
+                disabled={enviando || foraDeArea}
                 className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-60 disabled:hover:from-amber-500 disabled:hover:to-orange-500 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
               >
                 {enviando ? (
