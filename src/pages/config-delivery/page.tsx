@@ -190,17 +190,38 @@ export default function ConfigDeliveryPage() {
         .sort(function (a, b) { return a.ate_km - b.ate_km; }),
     };
 
-    // Salva direto via supabase (RLS: só o admin do próprio tenant pode atualizar).
-    const { error } = await supabase
-      .from('system_settings')
-      .update({ delivery_city: city.trim(), delivery_config: deliveryConfig })
-      .eq('tenant_id', tenantId);
+    // Salva via Edge Function (service role + valida que o usuário é admin DESTA loja).
+    // Necessário porque o RLS direto usa auth_tenant_id() = última membership criada,
+    // o que faz o save falhar silenciosamente para donos com mais de uma loja.
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) {
+      setSalvando(false);
+      setMensagem({ tipo: 'erro', texto: 'Sessão expirada. Entre novamente para salvar.' });
+      return;
+    }
 
-    setSalvando(false);
-    if (error) {
-      setMensagem({ tipo: 'erro', texto: 'Erro ao salvar: ' + error.message });
-    } else {
-      setMensagem({ tipo: 'sucesso', texto: 'Configurações de delivery salvas com sucesso!' });
+    try {
+      const res = await fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({
+          action: 'save_delivery_settings',
+          tenant_id: tenantId,
+          delivery_city: city.trim(),
+          delivery_config: deliveryConfig,
+        }),
+      });
+      const data = await res.json();
+      setSalvando(false);
+      if (data.error) {
+        setMensagem({ tipo: 'erro', texto: 'Erro ao salvar: ' + (data.message || data.error) });
+      } else {
+        setMensagem({ tipo: 'sucesso', texto: 'Configurações de delivery salvas com sucesso!' });
+      }
+    } catch (_e) {
+      setSalvando(false);
+      setMensagem({ tipo: 'erro', texto: 'Erro de conexão ao salvar.' });
     }
   }
 

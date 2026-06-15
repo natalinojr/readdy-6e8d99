@@ -238,7 +238,46 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ _v: "v14", customer, addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    if (action === "get_customer_addresses" || action === "save_customer_address" || action === "set_default_address" || action === "delete_customer_address" || action === "save_delivery_settings" || action === "get_order_status" || action === "get_customer_orders") {
+    if (action === "save_delivery_settings") {
+      // Salva a config de delivery (system_settings) com service role, validando que o
+      // usuario autenticado e admin DESTA loja. Necessario porque o RLS direto usa
+      // auth_tenant_id() (ultima membership criada) e quebra para donos multi-loja.
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) return jsonErr("Nao autenticado", 401);
+
+      const { data: userData, error: userErr } = await admin.auth.getUser(token);
+      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+      const userId = userData.user.id;
+
+      const { tenant_id, delivery_city, delivery_config } = body;
+      if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
+
+      const { data: membership, error: memErr } = await admin
+        .from("user_tenants")
+        .select("role")
+        .eq("user_id", userId)
+        .eq("tenant_id", tenant_id)
+        .limit(1)
+        .maybeSingle();
+      if (memErr) throw memErr;
+      if (!membership || membership.role !== "admin") {
+        return jsonErr("Sem permissao de admin para esta loja.", 403);
+      }
+
+      const updatePayload: Record<string, unknown> = { delivery_config: delivery_config ?? {} };
+      if (typeof delivery_city === "string") updatePayload.delivery_city = delivery_city;
+
+      const { error: updErr } = await admin
+        .from("system_settings")
+        .update(updatePayload)
+        .eq("tenant_id", tenant_id);
+      if (updErr) throw updErr;
+
+      return new Response(JSON.stringify({ _v: "v14", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "get_customer_addresses" || action === "save_customer_address" || action === "set_default_address" || action === "delete_customer_address" || action === "get_order_status" || action === "get_customer_orders") {
       return new Response(JSON.stringify({ _v: "v14", error: "Action " + action + " ok - v14" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
