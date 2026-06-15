@@ -76,6 +76,8 @@ export interface DBOrder {
   paid_by_pdv?: string | null;
   session_id?: string | null;
   session_number?: string | null;
+  participant_token?: string | null;
+  participant_name?: string | null;
   itens: DBOrderItem[];
   pagamentos: DBPayment[];
   payment_group_id?: string | null;
@@ -141,6 +143,8 @@ interface RPCOrder {
   cancel_reason?: string | null;
   session_id?: string | null;
   session_number?: string | null;
+  participant_token?: string | null;
+  participant_name?: string | null;
   items?: RPCItem[] | null;
   payments?: RPCPayment[] | null;
 }
@@ -623,6 +627,8 @@ function mapRPCOrders(rpcOrders: RPCOrder[], _tenantId: string): DBOrder[] {
       delivery_fee: null,
       session_id: (o as RPCOrder & { session_id?: string | null }).session_id ?? null,
       session_number: (o as RPCOrder & { session_number?: string | null }).session_number ?? null,
+      participant_token: o.participant_token ?? null,
+      participant_name: o.participant_name ?? null,
       itens: items,
       pagamentos,
     };

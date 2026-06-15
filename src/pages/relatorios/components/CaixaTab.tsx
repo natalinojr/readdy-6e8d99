@@ -86,6 +86,7 @@ const ORIGEM_LABELS: Record<string, { label: string; icon: string; color: string
   cashier:      { label: 'Caixa',          icon: 'ri-safe-2-line',       color: 'bg-amber-100 text-amber-700' },
   waiter:       { label: 'Garçom',          icon: 'ri-walk-line',         color: 'bg-sky-100 text-sky-700' },
   table:        { label: 'Mesa (QR)',       icon: 'ri-restaurant-2-line', color: 'bg-violet-100 text-violet-700' },
+  qr_universal: { label: 'QR CODE',         icon: 'ri-qr-code-line',      color: 'bg-violet-100 text-violet-700' },
   self_service: { label: 'Autoatendimento', icon: 'ri-tablet-line',       color: 'bg-teal-100 text-teal-700' },
   delivery:     { label: 'Delivery',        icon: 'ri-motorbike-line',    color: 'bg-orange-100 text-orange-700' },
 };

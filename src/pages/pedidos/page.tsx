@@ -238,6 +238,8 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
     mesaNumero: o.mesa_numero ?? undefined,
     nomeCliente,
     senha,
+    participantToken: o.participant_token ?? undefined,
+    participantName: o.participant_name ?? undefined,
     status: o.status as PedidoRecente['status'],
     total: Number(o.total) || 0,
     criadoEm: dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }),

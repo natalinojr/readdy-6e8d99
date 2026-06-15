@@ -101,7 +101,8 @@ function DeliveryPlatformBadge({ platform, fee }: { platform?: string | null; fe
 function getDestinoLabel(pedido: PedidoRecente): string {
   if (isQRUniversal(pedido)) {
     const nome = clienteNome(pedido);
-    return `Senha ${pedido.participantToken}${nome ? ` - ${nome}` : ''}`;
+    if (pedido.participantToken) return `Senha ${pedido.participantToken}${nome ? ` - ${nome}` : ''}`;
+    return nome || 'QR Code';
   }
   if (pedido.destino === 'mesa') return `Mesa ${pedido.mesaNumero ?? ''}`;
   if (pedido.destino === 'nome') return pedido.nomeCliente ?? '—';

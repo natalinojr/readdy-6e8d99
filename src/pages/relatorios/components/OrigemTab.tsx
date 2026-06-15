@@ -16,6 +16,7 @@ const ICONES: Record<string, string> = {
   'Caixa': 'ri-store-line',
   'Garçom': 'ri-user-smile-line',
   'Mesa (QR)': 'ri-qr-code-line',
+  'QR CODE': 'ri-qr-code-line',
   'Autoatendimento': 'ri-tablet-line',
   'Delivery': 'ri-motorbike-line',
 };
@@ -37,6 +38,7 @@ const ORIGEM_LABEL: Record<string, string> = {
   cashier: 'Caixa',
   waiter: 'Garçom',
   table: 'Mesa (QR)',
+  qr_universal: 'QR CODE',
   self_service: 'Autoatendimento',
   delivery: 'Delivery',
 };
@@ -45,6 +47,7 @@ const ORIGEM_COR: Record<string, string> = {
   cashier: '#f59e0b',
   waiter: '#10b981',
   table: '#06b6d4',
+  qr_universal: '#8b5cf6',
   self_service: '#f97316',
   delivery: '#ef4444',
 };

@@ -171,19 +171,23 @@ BEGIN
       ), '[]'::jsonb),
       'por_origem', COALESCE((
         SELECT jsonb_agg(jsonb_build_object(
-          'origem', sub_or.origin_type,
+          'origem', sub_or.canal,
           'pedidos', sub_or.cnt,
           'total', sub_or.total_val
         ))
         FROM (
-          SELECT o.origin_type,
+          -- QR universal (mesa sem numero fisico) vira o canal 'qr_universal';
+          -- QR de mesa real (table_number > 0) continua 'table' (Mesa QR).
+          SELECT CASE WHEN o.origin_type::text = 'table' AND COALESCE(o.table_number, 0) = 0
+                      THEN 'qr_universal'
+                      ELSE o.origin_type::text END as canal,
                  COUNT(*) as cnt,
                  COALESCE(SUM(o.total_amount), 0) as total_val
           FROM orders o
           WHERE o.session_id = v_session.id
             AND o.status NOT IN ('cancelled', 'draft')
             AND NOT o.is_training
-          GROUP BY o.origin_type
+          GROUP BY 1
         ) sub_or
       ), '[]'::jsonb),
       'cash_transactions', COALESCE((

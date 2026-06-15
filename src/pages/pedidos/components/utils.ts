@@ -50,12 +50,14 @@ export function somarDias(dataStr: string, dias: number): string {
 }
 
 // ── Helpers de QR code universal ──────────────────────────────────────────────
-// QR code universal = pedido de mesa sem mesa física (mesaNumero 0/ausente) com
-// senha de participante. A identidade real fica na senha (participantToken) e no
-// participantName, nao em "Mesa 0".
+// QR code universal = pedido de origem "mesa" (QR) sem mesa física (mesaNumero
+// 0/ausente). A identidade real fica na senha (participantToken/access_token) e
+// no participantName, nao em "Mesa 0". A deteccao usa apenas origem + mesaNumero
+// (funciona em qualquer pedido, ao vivo ou historico, mesmo sem o token); o
+// token so e necessario para EXIBIR a senha.
 
-export function isQRUniversal(p: Pick<PedidoRecente, 'origem' | 'mesaNumero' | 'participantToken'>): boolean {
-  return p.origem === 'mesa' && !!p.participantToken && !p.mesaNumero;
+export function isQRUniversal(p: Pick<PedidoRecente, 'origem' | 'mesaNumero'>): boolean {
+  return p.origem === 'mesa' && !p.mesaNumero;
 }
 
 /** Remove o prefixo "Mesa N -" de um nome poluido (ex.: "Mesa 0 - Angelica" → "Angelica"). */
@@ -64,19 +66,18 @@ export function limparNomeMesa(nome?: string | null): string {
 }
 
 /** Nome do cliente exibivel: participantName (QR) ou nomeCliente sem prefixo de mesa. */
-export function clienteNome(p: Pick<PedidoRecente, 'participantToken' | 'participantName' | 'nomeCliente'>): string {
-  if (p.participantToken) return p.participantName || limparNomeMesa(p.nomeCliente);
-  return p.nomeCliente ?? '';
+export function clienteNome(p: Pick<PedidoRecente, 'participantName' | 'nomeCliente'>): string {
+  return p.participantName || limparNomeMesa(p.nomeCliente);
 }
 
 /** Rotulo de origem: "QR CODE" para QR universal, senao o rotulo padrao. */
-export function origemLabelFor(p: Pick<PedidoRecente, 'origem' | 'mesaNumero' | 'participantToken'>): string {
+export function origemLabelFor(p: Pick<PedidoRecente, 'origem' | 'mesaNumero'>): string {
   if (isQRUniversal(p)) return 'QR CODE';
   return ORIGEM_LABEL[p.origem] ?? p.origem;
 }
 
 export const destino = (pedido: PedidoRecente): string => {
-  if (isQRUniversal(pedido)) return `Senha ${pedido.participantToken}`;
+  if (isQRUniversal(pedido)) return pedido.participantToken ? `Senha ${pedido.participantToken}` : (clienteNome(pedido) || 'QR Code');
   if (pedido.destino === 'mesa') return `Mesa ${pedido.mesaNumero ?? ''}`;
   if (pedido.destino === 'nome') return pedido.nomeCliente ?? '—';
   if (pedido.destino === 'delivery') return pedido.nomeCliente ?? 'Delivery';

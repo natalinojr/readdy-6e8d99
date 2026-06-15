@@ -152,7 +152,8 @@ function formatarDataExibicao(data: string): string {
 }
 
 function destinoLabel(pedido: PedidoRecente): string {
-  if (isQRUniversal(pedido)) return `Senha ${pedido.participantToken}`;
+  // QR universal: senha como destino principal (ou o nome, se a senha nao veio nos dados)
+  if (isQRUniversal(pedido)) return pedido.participantToken ? `Senha ${pedido.participantToken}` : (clienteNome(pedido) || 'QR Code');
   if (pedido.destino === 'mesa') return `Mesa ${pedido.mesaNumero ?? ''}`;
   if (pedido.destino === 'nome') return pedido.nomeCliente ?? '—';
   if (pedido.destino === 'delivery') return pedido.nomeCliente ?? 'Delivery';

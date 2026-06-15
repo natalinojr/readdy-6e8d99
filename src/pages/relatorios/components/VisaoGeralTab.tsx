@@ -40,6 +40,7 @@ const DEST_LABELS: Record<string, string> = {
   cashier: 'PDV Caixa',
   waiter: 'PDV Garçom',
   table: 'Mesa (QR)',
+  qr_universal: 'QR CODE',
   self_service: 'Autoatendimento',
   delivery: 'Delivery',
   // fallback para destination_type antigo
