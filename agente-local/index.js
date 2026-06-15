@@ -529,61 +529,22 @@ async function processPrintQueue() {
             log(`[Queue] Imprimindo ticket #${ticket.order_number} (${ticket.station_key})`);
 
             // ── NOVO ROTEAMENTO (v3.1): impressora_id como rota principal ──
-            // O frontend (queueOrderForPrint) define impressora_id no payload do ticket.
-            // O agente respeita essa decisao como rota primaria.
-            // So usa fallback por station_key quando impressora_id nao existe no config.
-            let impressora = null;
-            let resolvedBy = '';
-
-            // ── RESOLUCAO DE IMPRESSORA (v3.2) ──
-            // Ordem de prioridade:
-            //   1. impressora_id na coluna (definido pela RPC via payload)
-            //   2. payload.impressora_id (qualquer valor — busca direta no config.json)
-            //   3. station_key === 'bar'/'balcao' -> impressora 'bar'
-            //   4. payload contem extra_label de bar (legado) -> impressora 'bar'
-            //   5. Fallback final: cozinha
-            // 1. ROTA PRINCIPAL: impressora_id na coluna (salvo pela RPC do payload)
-            if (ticket.impressora_id) {
-              impressora = findImpressora(ticket.impressora_id);
-              if (impressora) {
-                resolvedBy = `coluna impressora_id="${ticket.impressora_id}"`;
-              } else {
-                log(`[Queue] impressora_id "${ticket.impressora_id}" nao encontrado no config.json -> tentando fallbacks`);
-              }
-            }
-
-            // 2. FALLBACK: payload.impressora_id (generico — qualquer valor)
-            if (!impressora && ticket.payload?.impressora_id) {
-              impressora = findImpressora(ticket.payload.impressora_id);
-              if (impressora) {
-                resolvedBy = `payload.impressora_id="${ticket.payload.impressora_id}"`;
-              }
-            }
-
-            // 3. FALLBACK: station_key === 'bar' ou 'balcao'
-            if (!impressora && (ticket.station_key === 'bar' || ticket.station_key === 'balcao')) {
-              impressora = findImpressora('bar');
-              if (impressora) resolvedBy = `station_key="${ticket.station_key}" -> bar`;
-            }
-
-            // 4. FALLBACK LEGADO: payload.impressora_id === 'bar'
-            if (!impressora && ticket.payload?.impressora_id === 'bar') {
-              impressora = findImpressora('bar');
-              if (impressora) resolvedBy = 'payload.impressora_id=bar (legado)';
-            }
-
-            // 5. FALLBACK FINAL: cozinha
-            if (!impressora) {
-              impressora = findImpressora('cozinha');
-              if (impressora) resolvedBy = 'cozinha (fallback final)';
-            }
-
-            if (!impressora) {
-              log(`[Queue] ERRO: Nenhuma impressora encontrada para ticket #${ticket.order_number} (station=${ticket.station_key}, impressora_id=${ticket.impressora_id || 'n/a'})`);
-              await confirmTicket(ticket.id, 'failed', `Impressora nao configurada no agente para station=${ticket.station_key}`);
+            // O sistema define impressora_id. O agente apenas resolve esse ID
+            // para IP/porta no config.json, sem roteamento por station_key.
+            const requestedImpressoraId = ticket.impressora_id || ticket.payload?.impressora_id || '';
+            if (!requestedImpressoraId) {
+              log(`[Queue] ERRO: ticket #${ticket.order_number} sem impressora_id definido pelo sistema (station=${ticket.station_key})`);
+              await confirmTicket(ticket.id, 'failed', 'Ticket sem impressora_id definido pelo sistema');
               continue;
             }
 
+            const impressora = findImpressora(requestedImpressoraId);
+            if (!impressora) {
+              log(`[Queue] ERRO: impressora_id "${requestedImpressoraId}" nao encontrado no config.json para ticket #${ticket.order_number}`);
+              await confirmTicket(ticket.id, 'failed', `Impressora "${requestedImpressoraId}" nao configurada no agente`);
+              continue;
+            }
+            const resolvedBy = `impressora_id="${requestedImpressoraId}"`;
             log(`[Queue] Impressora resolvida: ${impressora.nome} (${impressora.ip}:${impressora.porta || 9100}) via ${resolvedBy}`);
 
             // ── USA ESC/POS PRE-FORMATADO PELA EDGE FUNCTION ──
@@ -602,10 +563,7 @@ async function processPrintQueue() {
             const escPosBuffer = Buffer.from(escPosBase64, 'base64');
             log(`[Queue] ESC/POS decodificado: ${escPosBuffer.length} bytes (${papel}, via edge)`);
 
-            // ── TENTA IMPRIMIR com fallback inteligente ──
-            // Se a impressora resolvida falhar e NAO for a cozinha,
-            // tenta automaticamente na cozinha como backup.
-            // Ticket de bebida NAO PODE sumir so porque a impressora do bar caiu.
+            // Tenta imprimir somente na impressora escolhida pelo sistema.
             let printed = false;
             try {
               await sendToPrinterTcp(impressora.ip, impressora.porta || 9100, escPosBuffer, config.default_timeout_ms || 10000);
@@ -616,26 +574,6 @@ async function processPrintQueue() {
               const primaryMsg = primaryErr instanceof Error ? primaryErr.message : 'Erro desconhecido';
               log(`[Queue] Impressora primaria (${impressora.nome}) falhou: ${primaryMsg}`);
 
-              // Tenta fallback na cozinha se a primaria nao for a cozinha
-              const cozinha = findImpressora('cozinha');
-              if (cozinha && impressora.id !== 'cozinha' && cozinha.ip !== impressora.ip) {
-                log(`[Queue] Tentando backup na COZINHA (${cozinha.ip}:${cozinha.porta || 9100})...`);
-                try {
-                  // Usa o ESC/POS de 80mm para cozinha (ou o tamanho configurado)
-                  const cozinhaPapel = cozinha.papel || '80mm';
-                  const cozinhaB64Key = cozinhaPapel === '58mm' ? 'escpos_58mm_base64' : 'escpos_80mm_base64';
-                  const cozinhaBase64 = ticket[cozinhaB64Key] || escPosBase64;
-                  const cozinhaBuffer = Buffer.from(cozinhaBase64, 'base64');
-
-                  await sendToPrinterTcp(cozinha.ip, cozinha.porta || 9100, cozinhaBuffer, config.default_timeout_ms || 10000);
-                  printed = true;
-                  log(`[Queue] Ticket #${ticket.order_number} impresso no BACKUP (cozinha)`);
-                  await confirmTicket(ticket.id, 'printed');
-                } catch (backupErr) {
-                  const backupMsg = backupErr instanceof Error ? backupErr.message : 'Erro desconhecido';
-                  log(`[Queue] Backup cozinha tambem falhou: ${backupMsg}`);
-                }
-              }
 
               if (!printed) {
                 await confirmTicket(ticket.id, 'failed', primaryMsg);
@@ -764,16 +702,13 @@ const server = http.createServer(async (req, res) => {
         impressora = findImpressora(impressora_id);
         if (!impressora) {
           log(`impressora_id "${impressora_id}" nao encontrado no config.json`);
+          if (!body.ip) {
+            sendJson(res, 400, { success: false, error: `Impressora "${impressora_id}" nao configurada no agente` });
+            return;
+          }
         }
       }
 
-      // Fallback: usa "cozinha" se nao passou impressora_id
-      if (!impressora && !body.ip) {
-        impressora = findImpressora('cozinha');
-        if (impressora) {
-          log('Usando impressora padrao "cozinha"');
-        }
-      }
 
       let ip = body.ip;
       let port = body.port || 9100;

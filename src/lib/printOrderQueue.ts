@@ -100,29 +100,16 @@ function getTicketPayload(
 
   const destinoStr = destinoToString(destino);
 
-  // Resolve impressora_id com fallback inteligente:
-  // O agente local (index.js) conhece apenas IDs fixos: 'cozinha', 'bar', 'caixa'
-  // Qualquer outro ID (ex: UUIDs, 'imp-...') não será encontrado no config.json
-  // e o agente cairá no fallback -> cozinha.
-  // Para evitar essa ambiguidade, normalizamos aqui:
-  // - Se extraLabel existe (itens de bar/skip_kds), usa 'bar'
-  // - Se impressoraId é um UUID ou ID dinâmico (imp-*, etc.), usa 'cozinha'
-  // - Se impressoraId for 'bar', 'cozinha' ou 'caixa', usa direto
-  const AGENT_KNOWN_IDS = new Set(['cozinha', 'bar', 'caixa']);
-  let resolvedImpressoraId = impressoraId;
+  // Preserva o impressora_id escolhido pela configuracao do sistema.
+  // O agente local deve apenas resolver esse ID para IP/porta.
+  const resolvedImpressoraId = impressoraId;
   const extraLabelText = extraLabel;
-  if (extraLabelText) {
-    resolvedImpressoraId = 'bar';
-  } else if (!resolvedImpressoraId || !AGENT_KNOWN_IDS.has(resolvedImpressoraId)) {
-    // ID não reconhecido pelo agente → normaliza pra cozinha
-    resolvedImpressoraId = 'cozinha';
-  }
 
   const payload: TicketPayload = {
     numero: numeroTicket,
     destino: extraLabelText ? `${destinoStr} — ${extraLabelText}` : destinoStr,
     origem: ORIGEM_PT[origin] ?? origin,
-    impressora_id: resolvedImpressoraId,
+    impressora_id: resolvedImpressoraId || '',
     itens: items,
     data_hora: new Date().toLocaleString('pt-BR', {
       day: '2-digit', month: '2-digit', year: 'numeric',

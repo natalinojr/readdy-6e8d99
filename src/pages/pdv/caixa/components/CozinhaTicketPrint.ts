@@ -173,7 +173,7 @@ function buildTicketPayload(
     numero: numeroPedido,
     destino: destinoStr,
     origem: 'Caixa',
-    impressora_id: impressora?.id || 'cozinha',
+    impressora_id: impressora?.id || '',
     itens,
     data_hora: fmtData(),
     ...(mesaStr ? { mesa: mesaStr } : {}),

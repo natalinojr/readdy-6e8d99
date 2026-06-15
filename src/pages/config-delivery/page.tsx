@@ -3,12 +3,20 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getPublicUrl, getAppUrl } from '@/lib/appUrl';
 import { supabase } from '@/lib/supabase';
 import { Truck } from 'lucide-react';
+import MapaPin from '@/components/feature/MapaPin';
 
 interface Neighborhood {
   id: string;
   name: string;
   delivery_fee: number;
   is_active: boolean;
+}
+
+/** Faixa de entrega por distância (km) configurável pelo lojista. */
+interface FaixaEntrega {
+  ate_km: number;        // distância máxima da faixa (km)
+  taxa: number;          // taxa de entrega (R$)
+  tempo_max_min: number; // tempo máximo de entrega da faixa (min)
 }
 
 function getDeliveryWriteUrl(): string {
@@ -27,6 +35,10 @@ export default function ConfigDeliveryPage() {
   const [pedidoMinimoAtivo, setPedidoMinimoAtivo] = useState(false);
   const [pedidoMinimoValor, setPedidoMinimoValor] = useState('0');
   const [retiradaAtivo, setRetiradaAtivo] = useState(true);
+  // ── Entrega por distância (loja + faixas) ──
+  const [storeLat, setStoreLat] = useState<number | null>(null);
+  const [storeLng, setStoreLng] = useState<number | null>(null);
+  const [faixas, setFaixas] = useState<FaixaEntrega[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null);
@@ -88,6 +100,22 @@ export default function ConfigDeliveryPage() {
           if (fp && typeof fp === 'object') {
             setFormasPagamento(fp as Record<string, boolean>);
           }
+          // Localização da loja + faixas de distância
+          const sl = dc.store_location;
+          if (sl && typeof sl === 'object' && typeof sl.lat === 'number' && typeof sl.lng === 'number') {
+            setStoreLat(sl.lat);
+            setStoreLng(sl.lng);
+          }
+          const tiers = dc.delivery_fee_tiers;
+          if (Array.isArray(tiers)) {
+            setFaixas(tiers.map(function (t: any) {
+              return {
+                ate_km: Number(t.ate_km) || 0,
+                taxa: Number(t.taxa) || 0,
+                tempo_max_min: Number(t.tempo_max_min) || 0,
+              };
+            }));
+          }
         }
       })
       .catch(function () {})
@@ -143,69 +171,56 @@ export default function ConfigDeliveryPage() {
     });
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!tenantId) return;
 
     setSalvando(true);
     setMensagem(null);
 
-    const url = getDeliveryWriteUrl();
-    fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'save_delivery_settings',
-        tenant_id: tenantId,
-        delivery_city: city.trim(),
-        neighborhoods: neighborhoods.map(function (nb) {
-          return {
-            name: nb.name,
-            delivery_fee: nb.delivery_fee,
-            is_active: nb.is_active,
-          };
-        }),
-        pedido_minimo_ativo: pedidoMinimoAtivo,
-        pedido_minimo_valor: pedidoMinimoAtivo ? parseFloat(pedidoMinimoValor.replace(',', '.')) || 0 : 0,
-        retirada_ativo: retiradaAtivo,
-        formas_pagamento: formasPagamento,
-      }),
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
-        if (data.error) {
-          setMensagem({ tipo: 'erro', texto: data.message || data.error });
-        } else {
-          setMensagem({ tipo: 'sucesso', texto: 'Configurações de delivery salvas com sucesso!' });
-          setTimeout(function () {
-            fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'get_delivery_config', tenant_id: tenantId }),
-            })
-              .then(function (res) { return res.json(); })
-              .then(function (data) {
-                if (!data.error) {
-                  setNeighborhoods(data.neighborhoods || []);
-                  const dc = data.delivery_config || {};
-                  setPedidoMinimoAtivo(dc.pedido_minimo_ativo === true);
-                  setPedidoMinimoValor(dc.pedido_minimo_valor ? String(dc.pedido_minimo_valor) : '0');
-                  setRetiradaAtivo(dc.retirada_ativo !== false);
-                  const fp = dc.formas_pagamento;
-                  if (fp && typeof fp === 'object') {
-                    setFormasPagamento(fp as Record<string, boolean>);
-                  }
-                }
-              })
-              .catch(function () {});
-          }, 500);
-        }
-      })
-      .catch(function () {
-        setMensagem({ tipo: 'erro', texto: 'Erro de conexão. Tente novamente.' });
-      })
-      .finally(function () {
-        setSalvando(false);
+    // Monta o delivery_config (JSON em system_settings) mesclando os campos
+    // existentes + os novos (localização da loja e faixas de distância).
+    const deliveryConfig = {
+      pedido_minimo_ativo: pedidoMinimoAtivo,
+      pedido_minimo_valor: pedidoMinimoAtivo ? parseFloat(pedidoMinimoValor.replace(',', '.')) || 0 : 0,
+      retirada_ativo: retiradaAtivo,
+      formas_pagamento: formasPagamento,
+      store_location: (storeLat != null && storeLng != null) ? { lat: storeLat, lng: storeLng } : null,
+      delivery_fee_tiers: faixas
+        .filter(function (f) { return f.ate_km > 0; })
+        .sort(function (a, b) { return a.ate_km - b.ate_km; }),
+    };
+
+    // Salva direto via supabase (RLS: só o admin do próprio tenant pode atualizar).
+    const { error } = await supabase
+      .from('system_settings')
+      .update({ delivery_city: city.trim(), delivery_config: deliveryConfig })
+      .eq('tenant_id', tenantId);
+
+    setSalvando(false);
+    if (error) {
+      setMensagem({ tipo: 'erro', texto: 'Erro ao salvar: ' + error.message });
+    } else {
+      setMensagem({ tipo: 'sucesso', texto: 'Configurações de delivery salvas com sucesso!' });
+    }
+  }
+
+  // ── Funções das faixas de entrega por distância ──
+  function handleAddFaixa() {
+    setFaixas(function (prev) {
+      const ultimoKm = prev.length > 0 ? prev[prev.length - 1].ate_km : 0;
+      return prev.concat([{ ate_km: ultimoKm + 2, taxa: 0, tempo_max_min: 40 }]);
+    });
+  }
+  function handleRemoveFaixa(idx: number) {
+    setFaixas(function (prev) { return prev.filter(function (_, i) { return i !== idx; }); });
+  }
+  function handleUpdateFaixa(idx: number, campo: keyof FaixaEntrega, valor: number) {
+    setFaixas(function (prev) {
+      return prev.map(function (f, i) {
+        if (i === idx) return { ...f, [campo]: Math.max(0, valor) };
+        return f;
       });
+    });
   }
 
   if (carregando && tenantId) {
@@ -309,6 +324,98 @@ export default function ConfigDeliveryPage() {
               className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
               maxLength={50}
             />
+          </div>
+
+          {/* Localização da loja (origem do cálculo de distância) */}
+          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
+                <i className="ri-map-pin-2-line text-zinc-600 text-sm" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-800">Localização da loja</h3>
+                <p className="text-xs text-zinc-500">Clique ou arraste o pino até o ponto exato da loja — é a origem das rotas de entrega</p>
+              </div>
+            </div>
+            <MapaPin
+              lat={storeLat}
+              lng={storeLng}
+              onChange={function (lat, lng) { setStoreLat(lat); setStoreLng(lng); }}
+              altura="h-72"
+            />
+            {storeLat != null && storeLng != null ? (
+              <p className="text-[11px] text-zinc-500">
+                <i className="ri-checkbox-circle-line text-emerald-500 mr-1" />
+                Loja marcada em {storeLat.toFixed(5)}, {storeLng.toFixed(5)}
+              </p>
+            ) : (
+              <p className="text-[11px] text-amber-600">
+                <i className="ri-error-warning-line mr-1" />
+                Marque a loja no mapa para habilitar o cálculo por distância.
+              </p>
+            )}
+          </div>
+
+          {/* Faixas de entrega por distância */}
+          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
+                <i className="ri-route-line text-zinc-600 text-sm" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-800">Entrega por distância</h3>
+                <p className="text-xs text-zinc-500">Faixas por km: taxa e tempo máximo. Pedidos além da última faixa são bloqueados.</p>
+              </div>
+            </div>
+
+            {faixas.length > 0 && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 px-1">
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide">Até (km)</span>
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide">Taxa (R$)</span>
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide">Tempo máx (min)</span>
+                  <span />
+                </div>
+                {faixas.map(function (f, idx) {
+                  return (
+                    <div key={idx} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
+                      <input
+                        type="number" min={0} step={0.5} value={f.ate_km}
+                        onChange={function (e) { handleUpdateFaixa(idx, 'ate_km', parseFloat(e.target.value) || 0); }}
+                        className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                      <input
+                        type="number" min={0} step={0.5} value={f.taxa}
+                        onChange={function (e) { handleUpdateFaixa(idx, 'taxa', parseFloat(e.target.value) || 0); }}
+                        className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                      <input
+                        type="number" min={0} step={5} value={f.tempo_max_min}
+                        onChange={function (e) { handleUpdateFaixa(idx, 'tempo_max_min', parseInt(e.target.value) || 0); }}
+                        className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                      <button
+                        onClick={function () { handleRemoveFaixa(idx); }}
+                        className="w-9 h-9 flex items-center justify-center rounded-lg text-red-500 hover:bg-red-50 cursor-pointer transition-colors"
+                        title="Remover faixa"
+                      >
+                        <i className="ri-delete-bin-line text-sm" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <button
+              onClick={handleAddFaixa}
+              className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border-2 border-dashed border-amber-300 rounded-lg cursor-pointer transition-colors"
+            >
+              <i className="ri-add-line" /> Adicionar faixa
+            </button>
+            <p className="text-[11px] text-zinc-400">
+              Ex.: até 2 km → R$ 5,00 / 30 min · até 5 km → R$ 9,00 / 45 min. As faixas são ordenadas por km ao salvar.
+            </p>
           </div>
 
           {/* Pedido Mínimo */}
