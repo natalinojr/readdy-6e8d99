@@ -310,6 +310,7 @@ async function fetchDeliveryConfig(
     setDeliveryFee: (v: number) => void;
     setPaymentMethods: (v: Record<string, boolean>) => void;
     setRetiradaAtivo: (v: boolean) => void;
+    setStoreWhatsapp: (v: string) => void;
     setStoreLocation: (v: StoreLocation | null) => void;
     setTiers: (v: FaixaEntrega[]) => void;
     productionPartsRef: MutableRefObject<ProductionPartsMap | undefined>;
@@ -388,6 +389,9 @@ async function fetchDeliveryConfig(
 
     const ra = dc.retirada_ativo;
     setters.setRetiradaAtivo(ra !== false);
+
+    const ws = dc.whatsapp_loja;
+    setters.setStoreWhatsapp((typeof ws === 'string' || typeof ws === 'number') ? String(ws) : '');
 
     // Entrega por distância: localização da loja + faixas (km → taxa/tempo)
     const sl = dc.store_location;
@@ -493,6 +497,7 @@ export function useDeliveryData(storeSlug?: string) {
   const [paymentMethods, setPaymentMethods] = useState<Record<string, boolean>>({});
   const [modoEntrega, setModoEntrega] = useState<'entrega' | 'retirada'>('entrega');
   const [retiradaAtivo, setRetiradaAtivo] = useState(true);
+  const [storeWhatsapp, setStoreWhatsapp] = useState('');
 
   // Entrega por distância (pin do cliente + faixas configuradas pela loja)
   const [storeLocation, setStoreLocation] = useState<StoreLocation | null>(null);
@@ -531,6 +536,7 @@ export function useDeliveryData(storeSlug?: string) {
     setDeliveryFee(0);
     setPaymentMethods({});
     setRetiradaAtivo(true);
+    setStoreWhatsapp('');
     setCustomer(null);
     setPhone('');
     setCustomerName('');
@@ -578,6 +584,7 @@ export function useDeliveryData(storeSlug?: string) {
           setDeliveryFee,
           setPaymentMethods,
           setRetiradaAtivo,
+          setStoreWhatsapp,
           setStoreLocation,
           setTiers,
           productionPartsRef,
@@ -1425,6 +1432,7 @@ export function useDeliveryData(storeSlug?: string) {
     modoEntrega,
     setModoEntrega,
     retiradaAtivo,
+    storeWhatsapp,
     setPhone,
     setCustomerName,
     setSelectedNeighborhoodId,

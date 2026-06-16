@@ -35,6 +35,7 @@ export default function ConfigDeliveryPage() {
   const [pedidoMinimoAtivo, setPedidoMinimoAtivo] = useState(false);
   const [pedidoMinimoValor, setPedidoMinimoValor] = useState('0');
   const [retiradaAtivo, setRetiradaAtivo] = useState(true);
+  const [whatsappLoja, setWhatsappLoja] = useState('');
   // ── Entrega por distância (loja + faixas) ──
   const [storeLat, setStoreLat] = useState<number | null>(null);
   const [storeLng, setStoreLng] = useState<number | null>(null);
@@ -96,6 +97,7 @@ export default function ConfigDeliveryPage() {
           setPedidoMinimoAtivo(dc.pedido_minimo_ativo === true);
           setPedidoMinimoValor(dc.pedido_minimo_valor ? String(dc.pedido_minimo_valor) : '0');
           setRetiradaAtivo(dc.retirada_ativo !== false); // default true
+          setWhatsappLoja(dc.whatsapp_loja ? String(dc.whatsapp_loja) : '');
           const fp = dc.formas_pagamento;
           if (fp && typeof fp === 'object') {
             setFormasPagamento(fp as Record<string, boolean>);
@@ -183,6 +185,7 @@ export default function ConfigDeliveryPage() {
       pedido_minimo_ativo: pedidoMinimoAtivo,
       pedido_minimo_valor: pedidoMinimoAtivo ? parseFloat(pedidoMinimoValor.replace(',', '.')) || 0 : 0,
       retirada_ativo: retiradaAtivo,
+      whatsapp_loja: whatsappLoja.replace(/\D/g, '') || null,
       formas_pagamento: formasPagamento,
       store_location: (storeLat != null && storeLng != null) ? { lat: storeLat, lng: storeLng } : null,
       delivery_fee_tiers: faixas
@@ -345,6 +348,33 @@ export default function ConfigDeliveryPage() {
               className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
               maxLength={50}
             />
+          </div>
+
+          {/* WhatsApp da loja (botão de contato no app do cliente) */}
+          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-green-100 rounded-lg">
+                <i className="ri-whatsapp-line text-green-600 text-sm" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-800">WhatsApp da loja</h3>
+                <p className="text-xs text-zinc-500">Número exibido como botão de contato para o cliente no delivery (com DDD)</p>
+              </div>
+            </div>
+            <input
+              type="tel"
+              inputMode="numeric"
+              value={whatsappLoja}
+              onChange={function (e) { setWhatsappLoja(e.target.value); }}
+              placeholder="Ex: (11) 99999-9999"
+              className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+              maxLength={20}
+            />
+            <p className="text-[11px] text-zinc-400">
+              {whatsappLoja.replace(/\D/g, '').length >= 10
+                ? 'O cliente verá um botão "Falar com a loja" no topo do delivery.'
+                : 'Deixe em branco para ocultar o botão de WhatsApp no app do cliente.'}
+            </p>
           </div>
 
           {/* Localização da loja (origem do cálculo de distância) */}

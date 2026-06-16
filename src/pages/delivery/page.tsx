@@ -96,6 +96,13 @@ export default function DeliveryPage() {
   const pagamentoSelecionado = data.pagamentoSelecionado;
   const modoEntrega = data.modoEntrega;
   const customer = data.customer;
+  const storeWhatsapp = data.storeWhatsapp;
+  // Link de WhatsApp da loja (botão "Falar com a loja"). Número guardado em dígitos;
+  // prefixa 55 quando não vier com código do país.
+  const lojaWaDigits = (storeWhatsapp || '').replace(/\D/g, '');
+  const lojaWaUrl = lojaWaDigits.length >= 10
+    ? 'https://wa.me/' + (lojaWaDigits.length > 11 && lojaWaDigits.startsWith('55') ? lojaWaDigits : '55' + lojaWaDigits)
+    : '';
 
   // Entrega por distância (pin)
   const distanceMode = data.distanceMode;
@@ -473,6 +480,19 @@ export default function DeliveryPage() {
               )}
             </div>
           </div>
+
+          {/* Falar com a loja (WhatsApp configurado no config-delivery) */}
+          {lojaWaUrl ? (
+            <a
+              href={lojaWaUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 flex items-center justify-center gap-2 w-full py-2 bg-white/20 hover:bg-white/30 text-white text-xs font-bold rounded-xl transition-colors"
+            >
+              <i className="ri-whatsapp-line text-sm" />
+              Falar com a loja
+            </a>
+          ) : null}
 
           {/* Informações do cliente com seletor de endereço */}
           <div className="mt-3 flex items-center gap-2 text-white/80 text-xs">

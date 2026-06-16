@@ -7,6 +7,7 @@ type OrderStatusData = {
   created_at: string;
   updated_at: string;
   out_for_delivery_at: string | null;
+  delivery_sla_min: number | null;
   total_amount: number;
   delivery_fee: number;
   subtotal: number;
@@ -157,6 +158,12 @@ export default function AcompanharPedido(props: Props) {
   const isCancelled = status === 'cancelled';
   const isDelivered = status === 'delivered';
 
+  // Previsão máxima de entrega = horário do pedido + tempo total da faixa de distância (SLA).
+  const previsaoEntregaMs = (orderData.delivery_sla_min != null && orderData.delivery_sla_min > 0)
+    ? new Date(orderData.created_at).getTime() + orderData.delivery_sla_min * 60000
+    : null;
+  const mostrarPrevisao = previsaoEntregaMs != null && !isCancelled && !isDelivered;
+
   return (
     <div>
       {/* Status principal */}
@@ -204,6 +211,19 @@ export default function AcompanharPedido(props: Props) {
           </div>
         )}
       </div>
+
+      {/* Previsão máxima de entrega */}
+      {mostrarPrevisao ? (
+        <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-100 rounded-2xl">
+          <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-xl shrink-0">
+            <i className="ri-time-line text-amber-600 text-lg" />
+          </div>
+          <div>
+            <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">Previsão de entrega até</p>
+            <p className="text-lg font-black text-zinc-800 leading-tight">{formatTime(new Date(previsaoEntregaMs!).toISOString())}</p>
+          </div>
+        </div>
+      ) : null}
 
       {/* Tracker visual */}
       {!isCancelled ? (
