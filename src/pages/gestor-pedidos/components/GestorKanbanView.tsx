@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade } from '@/types/kds';
 import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
 import { sendToPrinter } from '@/lib/printUtils';
@@ -120,6 +120,20 @@ function urgencyBorder(criadoEm: number, status: string): string {
   return 'border-zinc-100';
 }
 
+// Nome do cliente de delivery SEM o endereço. O backend grava destination_name
+// como "Nome - Endereço" (ou "Nome - Retirada"); como o endereço já aparece em
+// bloco próprio no card, removemos o sufixo para não duplicar a informação.
+function nomeClienteDelivery(p: KDSPedido): string {
+  const nome = (p.nomeCliente ?? '').trim();
+  if (!nome) return 'Delivery';
+  const addr = (p.deliveryAddress ?? '').trim();
+  if (addr && nome.endsWith(addr)) {
+    return nome.slice(0, -addr.length).replace(/\s*[-–—]\s*$/, '').trim() || 'Delivery';
+  }
+  // Sem endereço casado (ex.: retirada): corta no primeiro separador " - ".
+  return nome.split(/\s+[-–—]\s+/)[0].trim() || 'Delivery';
+}
+
 function destinoLabel(p: KDSPedido): string {
   if (p.destino === 'mesa') {
     const base = `Mesa ${p.mesaNumero}`;
@@ -128,9 +142,16 @@ function destinoLabel(p: KDSPedido): string {
   }
   if (p.destino === 'nome' && p.nomeCliente) return p.nomeCliente;
   if (p.destino === 'senha' && p.senha) return `Senha ${p.senha}`;
-  if (p.destino === 'delivery' && p.nomeCliente) return p.nomeCliente;
+  if (p.destino === 'delivery' && p.nomeCliente) return nomeClienteDelivery(p);
   if (p.destino === 'delivery') return 'Delivery';
   return 'Balcão';
+}
+
+// SLA de delivery por distância: tempos resolvidos do pedido (ver orders.delivery_*).
+interface SlaInfo { routeMin: number | null; slaMin: number | null }
+
+function fmtHora(ms: number): string {
+  return new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
 // ─── Item status pill inside card ───
@@ -221,6 +242,7 @@ interface CardProps {
   tick: number;
   filtroEstacao?: string;
   isNew?: boolean;
+  slaInfo?: SlaInfo;
 }
 
 function GestorCard({
@@ -236,6 +258,7 @@ function GestorCard({
   tick,
   filtroEstacao,
   isNew,
+  slaInfo,
 }: CardProps) {
   void tick;
   const [showFicha, setShowFicha] = useState(false);
@@ -260,6 +283,25 @@ function GestorCard({
   const isAtrasado = pedido.status !== 'entregue' && pedido.status !== 'pronto' && pedido.status !== 'em_rota' && elapsedMin > 20;
   const isAviso = !isAtrasado && pedido.status !== 'entregue' && pedido.status !== 'pronto' && pedido.status !== 'em_rota' && elapsedMin > 10;
 
+  // SLA de delivery por distância (pedidos do link): tempo total configurado p/ a
+  // faixa (slaMin) e tempo de rota da moto (routeMin). Tempo de deslocamento da
+  // entrega = rota + 5 min; preparo = total − deslocamento.
+  // → horário limite de preparo e horário limite final de entrega.
+  const isLinkDelivery = isDelivery && pedido.deliveryPlatform === 'propria';
+  const slaMin = slaInfo?.slaMin ?? null;
+  let prazoPreparoMs: number | null = null;
+  let prazoEntregaMs: number | null = null;
+  if (isLinkDelivery && slaMin != null && slaMin > 0) {
+    const deslocamentoMin = (slaInfo?.routeMin ?? 0) + 5;
+    const preparoMin = Math.max(0, slaMin - deslocamentoMin);
+    prazoPreparoMs = pedido.criadoEm + preparoMin * 60000;
+    prazoEntregaMs = pedido.criadoEm + slaMin * 60000;
+  }
+  const now = Date.now();
+  const preparoAtrasado = prazoPreparoMs != null && now > prazoPreparoMs
+    && pedido.status !== 'pronto' && pedido.status !== 'em_rota' && pedido.status !== 'entregue';
+  const entregaAtrasada = prazoEntregaMs != null && now > prazoEntregaMs && pedido.status !== 'entregue';
+
   // Resolve o link do Google Maps: usa o pin (lat/lng do pedido) quando existir;
   // senão cai na busca pelo endereço em texto.
   const resolverMapsUrl = async (): Promise<string> => {
@@ -271,17 +313,6 @@ function GestorCard({
     } catch (_e) { /* ignora — usa fallback */ }
     const addr = pedido.deliveryAddress ?? '';
     return addr ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}` : 'https://www.google.com/maps';
-  };
-
-  // Abre a rota no Maps. Abre a aba JA no clique (gesto do usuario) e redireciona
-  // depois do fetch, pra não ser bloqueado por popup blocker.
-  const abrirRotaMaps = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const w = window.open('', '_blank');
-    resolverMapsUrl().then((url) => {
-      if (w) w.location.href = url;
-      else window.open(url, '_blank', 'noopener');
-    });
   };
 
   const handleWhatsAppMotoboy = (e: React.MouseEvent) => {
@@ -489,15 +520,38 @@ function GestorCard({
                   <p className="text-[10px] text-zinc-500 italic">{pedido.notes}</p>
                 </div>
               )}
+              {/* SLA por distância: horário limite de preparo e de entrega */}
+              {(prazoPreparoMs != null || prazoEntregaMs != null) && (
+                <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                  {prazoPreparoMs != null && (
+                    <span
+                      className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border whitespace-nowrap ${
+                        preparoAtrasado
+                          ? 'bg-red-50 text-red-700 border-red-200'
+                          : 'bg-amber-50 text-amber-700 border-amber-200'
+                      }`}
+                      title="Horário limite para o pedido ficar pronto (sair para entrega)"
+                    >
+                      <i className="ri-fire-line text-[10px]" />
+                      Preparo até {fmtHora(prazoPreparoMs)}
+                    </span>
+                  )}
+                  {prazoEntregaMs != null && (
+                    <span
+                      className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border whitespace-nowrap ${
+                        entregaAtrasada
+                          ? 'bg-red-50 text-red-700 border-red-200'
+                          : 'bg-sky-50 text-sky-700 border-sky-200'
+                      }`}
+                      title="Horário limite final para a entrega chegar ao cliente"
+                    >
+                      <i className="ri-motorbike-line text-[10px]" />
+                      Entrega até {fmtHora(prazoEntregaMs)}
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                <button
-                  onClick={abrirRotaMaps}
-                  className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
-                  title="Abrir rota no Google Maps"
-                >
-                  <i className="ri-route-line text-xs" />
-                  Rota
-                </button>
                 <button
                   onClick={handleWhatsAppMotoboy}
                   className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
@@ -800,6 +854,44 @@ export default function GestorKanbanView({
 }: Props) {
   const newPedidoIds = useNewPedidoIds(pedidos);
 
+  // ─── SLA de delivery por distância ───
+  // Busca uma vez (em lote) os tempos gravados no pedido (orders.delivery_route_min /
+  // delivery_sla_min) para os deliveries do link, sem mexer na RPC fn_get_kds_orders.
+  const [slaMap, setSlaMap] = useState<Record<string, SlaInfo>>({});
+  const deliveryIdsKey = useMemo(
+    () =>
+      pedidos
+        .filter((p) => (p.origem === 'delivery' || p.destino === 'delivery') && p.deliveryPlatform === 'propria' && !p.isCancelled)
+        .map((p) => p.id)
+        .sort()
+        .join(','),
+    [pedidos],
+  );
+  useEffect(() => {
+    const ids = deliveryIdsKey ? deliveryIdsKey.split(',') : [];
+    const missing = ids.filter((id) => !(id in slaMap));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('orders')
+        .select('id, delivery_route_min, delivery_sla_min')
+        .in('id', missing);
+      if (cancelled) return;
+      setSlaMap((prev) => {
+        const next = { ...prev };
+        for (const row of (data ?? []) as Array<{ id: string; delivery_route_min: number | null; delivery_sla_min: number | null }>) {
+          next[row.id] = { routeMin: row.delivery_route_min ?? null, slaMin: row.delivery_sla_min ?? null };
+        }
+        // Marca como conhecido (null) o que não voltou, p/ evitar refetch em loop.
+        for (const id of missing) if (!(id in next)) next[id] = { routeMin: null, slaMin: null };
+        return next;
+      });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deliveryIdsKey]);
+
   const handleAvancarUnidade = useCallback(
     (pedidoId: string, itemId: string, unidadeId: string, novoStatus: KDSItemStatus) => {
       if (onAvancarUnidade) onAvancarUnidade(pedidoId, itemId, unidadeId, novoStatus);
@@ -838,6 +930,7 @@ export default function GestorKanbanView({
       tick={tick}
       filtroEstacao={filtroEstacao}
       isNew={newPedidoIds.has(p.id)}
+      slaInfo={slaMap[p.id]}
     />
   );
 

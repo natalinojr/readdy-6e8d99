@@ -246,9 +246,6 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar, onEntre
 
   const enderecoEntrega = (deliveryGeo?.address) || pedido.deliveryAddress || '';
   const temCoordEntrega = !!(deliveryGeo && deliveryGeo.lat != null && deliveryGeo.lng != null);
-  const mapsUrl = temCoordEntrega
-    ? `https://www.google.com/maps/dir/?api=1&destination=${deliveryGeo!.lat},${deliveryGeo!.lng}`
-    : (enderecoEntrega ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(enderecoEntrega)}` : null);
 
   const handlePrint = async () => {
     const html = buildPedidoHTML(pedido, displayTotal);
@@ -389,36 +386,24 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar, onEntre
               {enderecoEntrega && (
                 <p className="text-xs text-zinc-700 leading-snug">{enderecoEntrega}</p>
               )}
-              <div className="flex items-center gap-2">
-                {mapsUrl && (
-                  <button
-                    type="button"
-                    onClick={() => window.open(mapsUrl, '_blank', 'noopener')}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap"
-                  >
-                    <i className="ri-route-line text-sm" />Rota no Google Maps
-                  </button>
-                )}
-                {pedido.customerPhone && (
+              {/* Botão "Rota no Google Maps" removido: a rota é para o motoboy, que não
+                  acessa o Gestor. O endereço/rota chega ao motoboy via WhatsApp no card. */}
+              {pedido.customerPhone && (
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => window.open('https://wa.me/55' + pedido.customerPhone!.replace(/\D/g, ''), '_blank', 'noopener')}
-                    title="WhatsApp do cliente"
-                    className="inline-flex items-center justify-center px-3 py-2 bg-green-500 hover:bg-green-600 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-green-500 hover:bg-green-600 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
                   >
-                    <i className="ri-whatsapp-line text-sm" />
+                    <i className="ri-whatsapp-line text-sm" />WhatsApp do cliente
                   </button>
-                )}
-              </div>
-              {temCoordEntrega ? (
+                </div>
+              )}
+              {temCoordEntrega && (
                 <p className="text-[10px] text-green-600 flex items-center gap-1">
                   <i className="ri-map-pin-fill text-[9px]" />Localização exata marcada pelo cliente
                 </p>
-              ) : enderecoEntrega ? (
-                <p className="text-[10px] text-amber-600 flex items-center gap-1">
-                  <i className="ri-information-line text-[9px]" />Sem pino — abre pela busca do endereço
-                </p>
-              ) : null}
+              )}
             </div>
           )}
 

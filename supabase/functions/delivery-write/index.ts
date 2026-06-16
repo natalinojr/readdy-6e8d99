@@ -39,12 +39,17 @@ function quoteFromTiers(km: number, tiers: FaixaEntrega[]): { taxa: number; temp
   return { taxa: last.taxa, tempoMax: last.tempo_max_min, dentroArea: false };
 }
 
+// Velocidade media urbana de moto p/ estimar o tempo de rota quando o ORS nao
+// retorna duracao (fallback). 25 km/h e conservador p/ cidade pequena.
+const MOTO_KMH = 25;
+
 /**
- * Distancia de rota (km) loja->cliente via OpenRouteService (driving-car).
- * Retorna null em qualquer falha (timeout/quota/sem chave) — o chamador faz fallback haversine.
+ * Rota loja->cliente via OpenRouteService (driving-car): retorna distancia (km)
+ * E duracao estimada (min). Retorna null em qualquer falha (timeout/quota/sem
+ * chave) — o chamador faz fallback haversine + estimativa de tempo por velocidade.
  * ORS usa ordem [lng, lat].
  */
-async function orsRouteKm(storeLat: number, storeLng: number, destLat: number, destLng: number): Promise<number | null> {
+async function orsRoute(storeLat: number, storeLng: number, destLat: number, destLng: number): Promise<{ km: number; durationMin: number } | null> {
   const apiKey = Deno.env.get("ORS_API_KEY");
   if (!apiKey) return null;
   try {
@@ -59,8 +64,14 @@ async function orsRouteKm(storeLat: number, storeLng: number, destLat: number, d
     clearTimeout(timer);
     if (!res.ok) return null;
     const data = await res.json();
-    const meters = data?.routes?.[0]?.summary?.distance;
-    if (typeof meters === "number" && meters >= 0) return meters / 1000;
+    const summary = data?.routes?.[0]?.summary;
+    const meters = summary?.distance;
+    if (typeof meters === "number" && meters >= 0) {
+      const km = meters / 1000;
+      const seconds = summary?.duration;
+      const durationMin = (typeof seconds === "number" && seconds >= 0) ? seconds / 60 : (km / MOTO_KMH) * 60;
+      return { km, durationMin };
+    }
     return null;
   } catch (_e) {
     return null;
@@ -470,7 +481,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           : null;
 
       if (!effectiveClientRequestId) {
-        return jsonErr("Requisicao invalida — client_request_id ausente", 400);
+        return jsonErr("Requisicao invalida - client_request_id ausente", 400);
       }
 
       const itemIds: string[] = [];
@@ -630,14 +641,18 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       let serverDeliveryFee = 0;
       let routeKm: number | null = null;
       let routeTempoMax: number | null = null;
+      // Tempo de rota (min) loja->cliente — a base do horario limite de preparo no Gestor.
+      let routeDurationMin: number | null = null;
 
       if (isRetirada) {
         serverDeliveryFee = 0;
       } else if (hasDistanceConfig && hasPin) {
         // Entrega por distancia: rota real via ORS (fallback haversine x fator de via)
-        const ors = await orsRouteKm(storeLoc.lat, storeLoc.lng, pinLat as number, pinLng as number);
-        const km = ors != null ? ors : haversineKm(storeLoc.lat, storeLoc.lng, pinLat as number, pinLng as number) * ROAD_FACTOR;
+        const ors = await orsRoute(storeLoc.lat, storeLoc.lng, pinLat as number, pinLng as number);
+        const km = ors != null ? ors.km : haversineKm(storeLoc.lat, storeLoc.lng, pinLat as number, pinLng as number) * ROAD_FACTOR;
         routeKm = Math.round(km * 100) / 100;
+        // Tempo de rota da API (min); sem ORS, estima pela distancia e velocidade media.
+        routeDurationMin = Math.round(ors != null ? ors.durationMin : (km / MOTO_KMH) * 60);
         const quote = quoteFromTiers(km, tiers);
         if (!quote || !quote.dentroArea) {
           return new Response(JSON.stringify({
@@ -705,7 +720,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         order_data: {
           tenant_id, session_id: sessionId, number: orderNumber,
           status: "new", origin_type: "delivery", destination_type: "delivery",
-          destination_name: customer_name + " — " + (isRetirada ? "Retirada" : customer_address),
+          destination_name: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
           destination_phone: customer_phone,
           customer_id: realCustomerId, discount_amount: 0, service_fee_amount: 0,
           subtotal: serverSubtotal,
@@ -750,6 +765,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
             delivery_lat: pinLat,
             delivery_lng: pinLng,
             delivery_distance_km: routeKm,
+            delivery_route_min: routeDurationMin,
+            delivery_sla_min: routeTempoMax,
           }).eq("id", orderId);
         } catch { /* nao bloqueia o pedido */ }
       }
@@ -801,7 +818,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
             p_station_key: stationKey, p_station_label: stationKey,
             p_content_type: "ticket_json",
             p_payload: {
-              numero: ticketNum, destino: customer_name + " — " + (isRetirada ? "Retirada" : customer_address),
+              numero: ticketNum, destino: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
               origem: isRetirada ? "retirada" : "delivery",
               impressora_id: stationKey,
               itens: buildTicketItems(stationItems),
@@ -819,7 +836,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           const itemBasePrice = Number(item.item_price ?? 0);
           const receiptItem: Record<string, unknown> = {
             quantidade: itemQty,
-            nome: item.item_name + " — " + fmtPrice(itemBasePrice * itemQty),
+            nome: item.item_name + " - " + fmtPrice(itemBasePrice * itemQty),
           };
           const opts = (item.options as Array<Record<string, unknown>> ?? [])
             .filter((o: Record<string, unknown>) => o.option_name)
@@ -852,7 +869,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           p_content_type: "ticket_json",
           p_payload: {
             numero: ticketNum,
-            destino: (customer_name || "Cliente") + " — " + (isRetirada ? "Retirada" : "Entrega"),
+            destino: (customer_name || "Cliente") + " - " + (isRetirada ? "Retirada" : "Entrega"),
             origem: isRetirada ? "retirada" : "delivery",
             estacao: isRetirada ? "COMPROVANTE RETIRADA" : "COMPROVANTE ENTREGA",
             itens: receiptItems,
@@ -879,6 +896,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           total: serverTotal,
           delivery_fee: serverDeliveryFee,
           distance_km: routeKm,
+          route_min: routeDurationMin,
+          sla_min: routeTempoMax,
           customer_id: realCustomerId,
           payment_method,
           order_type: order_type || "entrega",
