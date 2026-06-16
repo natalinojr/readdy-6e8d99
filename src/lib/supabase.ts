@@ -414,8 +414,42 @@ export async function invokeWithAuth<T = unknown>(
 }
 
 /**
+ * Comprime/redimensiona uma imagem no navegador antes do upload:
+ * - lado maior limitado a maxSize px (mantém proporção)
+ * - exporta JPEG com a qualidade dada
+ * Reduz MUITO o tamanho (e o egress) — uma foto de celular de ~2 MB vira ~150 KB.
+ * Em caso de falha (ou formato que não recomprime bem), devolve o arquivo original.
+ */
+async function compressImage(file: File, maxSize = 1000, quality = 0.7): Promise<Blob> {
+  if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.type === 'image/svg+xml') {
+    return file;
+  }
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { if (bitmap.close) bitmap.close(); return file; }
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    if (bitmap.close) bitmap.close();
+    const blob = await new Promise<Blob | null>(function (resolve) {
+      canvas.toBlob(resolve, 'image/jpeg', quality);
+    });
+    if (!blob) return file;
+    // Se "comprimir" ficou maior que o original (ex.: PNG pequeno), mantém o original.
+    return blob.size < file.size ? blob : file;
+  } catch (_e) {
+    return file;
+  }
+}
+
+/**
  * Faz upload de uma imagem de cardápio (item ou combo) para o Supabase Storage.
- * Retorna a URL pública da imagem.
+ * Comprime no cliente e usa cache longo. Retorna a URL pública da imagem.
  */
 export async function uploadMenuImage(
   file: File,
@@ -423,11 +457,17 @@ export async function uploadMenuImage(
   itemId?: string,
 ): Promise<{ url: string | null; error: Error | null }> {
   const bucket = 'menu-images';
-  const path = `${tenantId}/${itemId ?? 'temp'}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
 
-  const { error: uploadError } = await supabase.storage.from(bucket).upload(path, file, {
-    cacheControl: '3600',
+  const compressed = await compressImage(file);
+  const recomprimido = compressed !== file; // virou JPEG
+  const baseName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '');
+  const safeName = recomprimido ? baseName.replace(/\.[^.]+$/, '') + '.jpg' : baseName;
+  const path = `${tenantId}/${itemId ?? 'temp'}/${Date.now()}-${safeName}`;
+
+  const { error: uploadError } = await supabase.storage.from(bucket).upload(path, compressed, {
+    cacheControl: '31536000', // 1 ano — foto de cardápio quase não muda (cada URL é única por Date.now())
     upsert: true,
+    contentType: recomprimido ? 'image/jpeg' : (file.type || undefined),
   });
 
   if (uploadError) {
