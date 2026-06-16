@@ -289,6 +289,8 @@ export default function DeliveryPage() {
         onRuaChange={data.setStreet}
         numero={addressNumber}
         onNumeroChange={data.setAddressNumber}
+        bairro={data.bairro}
+        onBairroChange={data.setBairro}
         complemento={complement}
         onComplementoChange={data.setComplement}
         referencia={referencePoint}

@@ -217,24 +217,32 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const row = (rows && rows.length > 0) ? rows[0] : null;
       const customer = row ? { id: row.id, phone: row.phone, name: row.name, neighborhood_id: row.neighborhood_id, street: row.street, number: row.number, complement: row.complement, reference_point: row.reference_point, last_used_at: row.last_used_at, delivery_neighborhoods: row.neighborhood_id ? { id: row.neighborhood_id, name: row.neighborhood_name, delivery_fee: row.neighborhood_delivery_fee } : null } : null;
       let addresses: Array<Record<string, unknown>> = [];
-      if (customer) { const { data: addrRows } = await admin.rpc("fn_delivery_get_addresses", { p_customer_id: customer.id, p_tenant_id: tenant_id }); if (addrRows) addresses = addrRows.map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, neighborhood_name: a.neighborhood_name, neighborhood_delivery_fee: Number(a.neighborhood_delivery_fee ?? 0), neighborhood_is_active: a.neighborhood_is_active })); }
+      if (customer) { const { data: addrRows } = await admin.from("delivery_customer_addresses").select("id, label, neighborhood_id, street, number, complement, reference_point, is_default, lat, lng, bairro").eq("customer_id", customer.id).eq("tenant_id", tenant_id).order("is_default", { ascending: false }); if (addrRows) addresses = addrRows.map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, lat: a.lat, lng: a.lng, bairro: a.bairro, neighborhood_name: null, neighborhood_delivery_fee: 0, neighborhood_is_active: true })); }
       return new Response(JSON.stringify({ _v: "v14", customer, addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "save_customer") {
-      const { tenant_id, phone, name, neighborhood_id, street, number, complement, reference_point } = body;
+      const { tenant_id, phone, name, neighborhood_id, street, number, complement, reference_point, bairro, address_lat, address_lng } = body;
       if (!tenant_id || !phone || !name) return jsonErr("tenant_id, phone e name sao obrigatorios", 400);
       const cleanPhone = String(phone).replace(/\D/g, "");
       const { data: rows, error } = await admin.rpc("fn_delivery_save_customer", { p_tenant_id: tenant_id, p_phone: cleanPhone, p_name: name.trim(), p_neighborhood_id: neighborhood_id || null, p_street: street || null, p_number: number || null, p_complement: complement || null, p_reference_point: reference_point || null });
       if (error) throw error;
       const row = (rows && rows.length > 0) ? rows[0] : null;
       const customer = row ? { id: row.id, phone: row.phone, name: row.name, neighborhood_id: row.neighborhood_id, street: row.street, number: row.number, complement: row.complement, reference_point: row.reference_point, last_used_at: row.last_used_at, delivery_neighborhoods: row.neighborhood_id ? { id: row.neighborhood_id, name: row.neighborhood_name, delivery_fee: row.neighborhood_delivery_fee } : null } : null;
-      if (customer && (street || neighborhood_id)) {
+      const sLat = (address_lat != null && address_lat !== "") ? Number(address_lat) : null;
+      const sLng = (address_lng != null && address_lng !== "") ? Number(address_lng) : null;
+      const sHasPin = sLat != null && !Number.isNaN(sLat) && sLng != null && !Number.isNaN(sLng);
+      if (customer && (street || neighborhood_id || sHasPin)) {
         const { data: existingAddr } = await admin.from("delivery_customer_addresses").select("id").eq("customer_id", customer.id).eq("tenant_id", tenant_id).eq("street", street || "").eq("number", number || "").maybeSingle();
-        if (!existingAddr) { const { count: addrCount } = await admin.from("delivery_customer_addresses").select("id", { count: "exact", head: true }).eq("customer_id", customer.id); await admin.from("delivery_customer_addresses").insert({ customer_id: customer.id, tenant_id, label: (addrCount ?? 0) === 0 ? "Principal" : "Endereco " + ((addrCount ?? 0) + 1), neighborhood_id: neighborhood_id || null, street: street || null, number: number || null, complement: complement || null, reference_point: reference_point || null, is_default: (addrCount ?? 0) === 0 }); }
+        if (existingAddr) {
+          await admin.from("delivery_customer_addresses").update({ lat: sHasPin ? sLat : null, lng: sHasPin ? sLng : null, bairro: bairro || null }).eq("id", existingAddr.id);
+        } else {
+          const { count: addrCount } = await admin.from("delivery_customer_addresses").select("id", { count: "exact", head: true }).eq("customer_id", customer.id);
+          await admin.from("delivery_customer_addresses").insert({ customer_id: customer.id, tenant_id, label: (addrCount ?? 0) === 0 ? "Principal" : "Endereco " + ((addrCount ?? 0) + 1), neighborhood_id: neighborhood_id || null, street: street || null, number: number || null, complement: complement || null, reference_point: reference_point || null, bairro: bairro || null, is_default: (addrCount ?? 0) === 0, lat: sHasPin ? sLat : null, lng: sHasPin ? sLng : null });
+        }
       }
       let addresses: Array<Record<string, unknown>> = [];
-      if (customer) { const { data: addrRows } = await admin.rpc("fn_delivery_get_addresses", { p_customer_id: customer.id, p_tenant_id: tenant_id }); if (addrRows) addresses = addrRows.map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, neighborhood_name: a.neighborhood_name, neighborhood_delivery_fee: Number(a.neighborhood_delivery_fee ?? 0), neighborhood_is_active: a.neighborhood_is_active })); }
+      if (customer) { const { data: addrRows } = await admin.from("delivery_customer_addresses").select("id, label, neighborhood_id, street, number, complement, reference_point, is_default, lat, lng, bairro").eq("customer_id", customer.id).eq("tenant_id", tenant_id).order("is_default", { ascending: false }); if (addrRows) addresses = addrRows.map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, lat: a.lat, lng: a.lng, bairro: a.bairro, neighborhood_name: null, neighborhood_delivery_fee: 0, neighborhood_is_active: true })); }
       return new Response(JSON.stringify({ _v: "v14", customer, addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -302,7 +310,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!tenant_id || !order_number) return jsonErr("tenant_id e order_number obrigatorios", 400);
       const { data: o, error } = await admin
         .from("orders")
-        .select("id, number, status, created_at, updated_at, total_amount, delivery_fee, subtotal")
+        .select("id, number, status, created_at, updated_at, total_amount, delivery_fee, subtotal, out_for_delivery_at")
         .eq("tenant_id", tenant_id)
         .eq("number", order_number)
         .maybeSingle();
@@ -316,6 +324,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const order = {
         id: o.id, number: o.number, status: o.status,
         created_at: o.created_at, updated_at: o.updated_at,
+        out_for_delivery_at: o.out_for_delivery_at ?? null,
         total_amount: Number(o.total_amount ?? 0),
         delivery_fee: Number(o.delivery_fee ?? 0),
         subtotal: Number(o.subtotal ?? 0),
@@ -327,8 +336,64 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ _v: "v14", order }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    if (action === "get_customer_addresses" || action === "save_customer_address" || action === "set_default_address" || action === "delete_customer_address") {
-      return new Response(JSON.stringify({ _v: "v14", error: "Action " + action + " ok - v14" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (action === "get_customer_addresses") {
+      const { tenant_id, customer_id } = body;
+      if (!tenant_id || !customer_id) return jsonErr("tenant_id e customer_id obrigatorios", 400);
+      const { data: addrRows } = await admin.from("delivery_customer_addresses").select("id, label, neighborhood_id, street, number, complement, reference_point, is_default, lat, lng, bairro").eq("customer_id", customer_id).eq("tenant_id", tenant_id).order("is_default", { ascending: false });
+      const addresses = (addrRows ?? []).map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, lat: a.lat, lng: a.lng, bairro: a.bairro, neighborhood_name: null, neighborhood_delivery_fee: 0, neighborhood_is_active: true }));
+      return new Response(JSON.stringify({ _v: "v14", addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "save_customer_address") {
+      const { tenant_id, customer_id, address_id, label, neighborhood_id, street, number, complement, reference_point, bairro, address_lat, address_lng } = body;
+      if (!tenant_id || !customer_id) return jsonErr("tenant_id e customer_id obrigatorios", 400);
+      const pinLat = (address_lat != null && address_lat !== "") ? Number(address_lat) : null;
+      const pinLng = (address_lng != null && address_lng !== "") ? Number(address_lng) : null;
+      const fields: Record<string, unknown> = {
+        label: (label || "Endereco").toString().trim() || "Endereco",
+        neighborhood_id: neighborhood_id || null,
+        street: street || null, number: number || null,
+        complement: complement || null, reference_point: reference_point || null,
+        bairro: bairro || null,
+        lat: (pinLat != null && !Number.isNaN(pinLat)) ? pinLat : null,
+        lng: (pinLng != null && !Number.isNaN(pinLng)) ? pinLng : null,
+      };
+      if (address_id) {
+        const { error: updErr } = await admin.from("delivery_customer_addresses").update(fields).eq("id", address_id).eq("customer_id", customer_id).eq("tenant_id", tenant_id);
+        if (updErr) throw updErr;
+      } else {
+        const { count: addrCount } = await admin.from("delivery_customer_addresses").select("id", { count: "exact", head: true }).eq("customer_id", customer_id);
+        const { error: insErr } = await admin.from("delivery_customer_addresses").insert({ customer_id, tenant_id, is_default: (addrCount ?? 0) === 0, ...fields });
+        if (insErr) throw insErr;
+      }
+      const { data: addrRows } = await admin.from("delivery_customer_addresses").select("id, label, neighborhood_id, street, number, complement, reference_point, is_default, lat, lng, bairro").eq("customer_id", customer_id).eq("tenant_id", tenant_id).order("is_default", { ascending: false });
+      const addresses = (addrRows ?? []).map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, lat: a.lat, lng: a.lng, bairro: a.bairro, neighborhood_name: null, neighborhood_delivery_fee: 0, neighborhood_is_active: true }));
+      return new Response(JSON.stringify({ _v: "v14", addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "set_default_address") {
+      const { tenant_id, customer_id, address_id } = body;
+      if (!tenant_id || !customer_id || !address_id) return jsonErr("tenant_id, customer_id e address_id obrigatorios", 400);
+      await admin.from("delivery_customer_addresses").update({ is_default: false }).eq("customer_id", customer_id).eq("tenant_id", tenant_id);
+      const { error: updErr } = await admin.from("delivery_customer_addresses").update({ is_default: true }).eq("id", address_id).eq("customer_id", customer_id).eq("tenant_id", tenant_id);
+      if (updErr) throw updErr;
+      const { data: addrRows } = await admin.from("delivery_customer_addresses").select("id, label, neighborhood_id, street, number, complement, reference_point, is_default, lat, lng, bairro").eq("customer_id", customer_id).eq("tenant_id", tenant_id).order("is_default", { ascending: false });
+      const addresses = (addrRows ?? []).map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, lat: a.lat, lng: a.lng, bairro: a.bairro, neighborhood_name: null, neighborhood_delivery_fee: 0, neighborhood_is_active: true }));
+      return new Response(JSON.stringify({ _v: "v14", addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "delete_customer_address") {
+      const { tenant_id, customer_id, address_id } = body;
+      if (!tenant_id || !customer_id || !address_id) return jsonErr("tenant_id, customer_id e address_id obrigatorios", 400);
+      const { data: delAddr } = await admin.from("delivery_customer_addresses").select("is_default").eq("id", address_id).eq("customer_id", customer_id).maybeSingle();
+      await admin.from("delivery_customer_addresses").delete().eq("id", address_id).eq("customer_id", customer_id).eq("tenant_id", tenant_id);
+      if (delAddr?.is_default) {
+        const { data: firstAddr } = await admin.from("delivery_customer_addresses").select("id").eq("customer_id", customer_id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
+        if (firstAddr) { await admin.from("delivery_customer_addresses").update({ is_default: true }).eq("id", firstAddr.id); }
+      }
+      const { data: addrRows } = await admin.from("delivery_customer_addresses").select("id, label, neighborhood_id, street, number, complement, reference_point, is_default, lat, lng, bairro").eq("customer_id", customer_id).eq("tenant_id", tenant_id).order("is_default", { ascending: false });
+      const addresses = (addrRows ?? []).map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, lat: a.lat, lng: a.lng, bairro: a.bairro, neighborhood_name: null, neighborhood_delivery_fee: 0, neighborhood_is_active: true }));
+      return new Response(JSON.stringify({ _v: "v14", addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "create_delivery_order") {

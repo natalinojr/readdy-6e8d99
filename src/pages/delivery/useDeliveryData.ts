@@ -41,6 +41,7 @@ export type SavedAddress = {
   neighborhood_is_active: boolean;
   lat: number | null;
   lng: number | null;
+  bairro: string | null;
 };
 
 type CardapioItem = {
@@ -463,6 +464,7 @@ export function useDeliveryData(storeSlug?: string) {
   const [addressNumber, setAddressNumber] = useState('');
   const [complement, setComplement] = useState('');
   const [referencePoint, setReferencePoint] = useState('');
+  const [bairro, setBairro] = useState('');
 
   // Endereços salvos (múltiplos)
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
@@ -537,6 +539,7 @@ export function useDeliveryData(storeSlug?: string) {
     setAddressNumber('');
     setComplement('');
     setReferencePoint('');
+    setBairro('');
     setSavedAddresses([]);
     setSelectedAddressId(null);
     setCart([]);
@@ -782,6 +785,7 @@ export function useDeliveryData(storeSlug?: string) {
         number: num.trim() || null,
         complement: comp.trim() || null,
         reference_point: ref.trim() || null,
+        bairro: bairro.trim() || null,
         address_lat: addressLat,
         address_lng: addressLng,
       }),
@@ -886,6 +890,7 @@ export function useDeliveryData(storeSlug?: string) {
           number: num.trim() || null,
           complement: comp.trim() || null,
           reference_point: ref.trim() || null,
+          bairro: bairro.trim() || null,
           address_lat: lat ?? null,
           address_lng: lng ?? null,
         }),
@@ -1195,9 +1200,10 @@ export function useDeliveryData(storeSlug?: string) {
     if (street) enderecoParts.push(street);
     if (addressNumber) enderecoParts.push(addressNumber);
     if (complement) enderecoParts.push('(' + complement + ')');
-    const bairroName = neighborhoods.find(function (n) { return n.id === selectedNeighborhoodId; })?.name || '';
+    const bairroName = bairro.trim() || (neighborhoods.find(function (n) { return n.id === selectedNeighborhoodId; })?.name || '');
     if (bairroName) enderecoParts.push('- ' + bairroName);
     if (city) enderecoParts.push('- ' + city);
+    if (referencePoint.trim()) enderecoParts.push('(Ref: ' + referencePoint.trim() + ')');
     const endereco = enderecoParts.join(' ') || 'Endereço não informado';
 
     const itemsPayload = cart.map(function (ci) {
@@ -1331,10 +1337,12 @@ export function useDeliveryData(storeSlug?: string) {
   useEffect(function () {
     if (!distanceMode || !selectedAddressId) return;
     const addr = savedAddresses.find(function (a) { return a.id === selectedAddressId; });
-    if (addr && typeof addr.lat === 'number' && typeof addr.lng === 'number') {
+    if (!addr) return;
+    if (typeof addr.lat === 'number' && typeof addr.lng === 'number') {
       setAddressLat(addr.lat);
       setAddressLng(addr.lng);
     }
+    setBairro(addr.bairro || '');
   }, [selectedAddressId, savedAddresses, distanceMode]);
 
   const totalItens = cart.reduce(function (s, i) { return s + i.quantidade; }, 0);
@@ -1362,6 +1370,7 @@ export function useDeliveryData(storeSlug?: string) {
           neighborhood_is_active: true,
           lat: null,
           lng: null,
+          bairro: null,
         }]
       : [];
 
@@ -1423,6 +1432,8 @@ export function useDeliveryData(storeSlug?: string) {
     setAddressNumber,
     setComplement,
     setReferencePoint,
+    bairro,
+    setBairro,
     setCategoriaAtiva,
     setShowCart,
     setError: setErrorMsg,

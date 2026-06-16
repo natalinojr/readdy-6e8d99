@@ -10,6 +10,8 @@ interface Props {
   onRuaChange: (v: string) => void;
   numero: string;
   onNumeroChange: (v: string) => void;
+  bairro: string;
+  onBairroChange: (v: string) => void;
   complemento: string;
   onComplementoChange: (v: string) => void;
   referencia: string;
@@ -60,6 +62,7 @@ type FormMode = 'list' | 'add' | 'edit';
 export default function EnderecoPinDelivery(props: Props) {
   const {
     phone, nome, onNomeChange, rua, onRuaChange, numero, onNumeroChange,
+    bairro, onBairroChange,
     complemento, onComplementoChange, referencia, onReferenciaChange,
     storeLat, storeLng, addressLat, addressLng, onPinChange,
     deliveryQuote, foraDeArea, isExistingCustomer,
@@ -92,10 +95,10 @@ export default function EnderecoPinDelivery(props: Props) {
         if (!a) return;
         const road = a.road || a.pedestrian || a.residential || a.footway || a.path || a.cycleway || '';
         const num = a.house_number || '';
-        const bairro = a.suburb || a.neighbourhood || a.quarter || a.city_district || a.village || '';
+        const bairroGeo = a.suburb || a.neighbourhood || a.quarter || a.city_district || a.village || '';
         if (road) onRuaChange(road);
         if (num) onNumeroChange(num);
-        if (bairro && !referencia.trim()) onReferenciaChange('Bairro ' + bairro);
+        if (bairroGeo) onBairroChange(bairroGeo);
       })
       .catch(function () { if (geoReqRef.current === reqId) setAutoEndereco(false); });
   }
@@ -148,7 +151,7 @@ export default function EnderecoPinDelivery(props: Props) {
     setEditingAddressId(null);
     setFormAddressType('casa');
     setFormCustomLabel('');
-    onRuaChange(''); onNumeroChange(''); onComplementoChange(''); onReferenciaChange('');
+    onRuaChange(''); onNumeroChange(''); onBairroChange(''); onComplementoChange(''); onReferenciaChange('');
     setShowErrors(false);
     setGeoError('');
     setFormMode('add');
@@ -161,6 +164,7 @@ export default function EnderecoPinDelivery(props: Props) {
     setFormCustomLabel(t.id === 'outro' ? (addr.label || '') : '');
     onRuaChange(addr.street || '');
     onNumeroChange(addr.number || '');
+    onBairroChange(addr.bairro || '');
     onComplementoChange(addr.complement || '');
     onReferenciaChange(addr.reference_point || '');
     if (typeof addr.lat === 'number' && typeof addr.lng === 'number') {
@@ -323,6 +327,15 @@ export default function EnderecoPinDelivery(props: Props) {
                 (showErrors && !numeroOk ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')}
             />
           </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Bairro</label>
+          <input
+            type="text" value={bairro} onChange={function (e) { onBairroChange(e.target.value); }}
+            placeholder="Ex: Centro" maxLength={60}
+            className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+          />
         </div>
 
         <div>

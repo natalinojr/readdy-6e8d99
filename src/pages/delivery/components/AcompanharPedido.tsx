@@ -6,6 +6,7 @@ type OrderStatusData = {
   status: string;
   created_at: string;
   updated_at: string;
+  out_for_delivery_at: string | null;
   total_amount: number;
   delivery_fee: number;
   subtotal: number;
@@ -22,7 +23,8 @@ const STATUS_STEPS = [
   { key: 'new', label: 'Recebido', icon: 'ri-check-double-line', description: 'Seu pedido foi recebido' },
   { key: 'preparing', label: 'Em preparo', icon: 'ri-restaurant-2-line', description: 'Cozinha preparando' },
   { key: 'ready', label: 'Pronto', icon: 'ri-checkbox-circle-line', description: 'Aguardando entregador' },
-  { key: 'delivered', label: 'Entregue', icon: 'ri-motorbike-line', description: 'Pedido entregue' },
+  { key: 'em_rota', label: 'Em rota', icon: 'ri-motorbike-line', description: 'Saiu para entrega' },
+  { key: 'delivered', label: 'Entregue', icon: 'ri-checkbox-circle-fill', description: 'Pedido entregue' },
 ];
 
 function getStatusLabel(status: string): string {
@@ -30,6 +32,7 @@ function getStatusLabel(status: string): string {
     new: 'Recebido',
     preparing: 'Em preparo',
     ready: 'Pronto',
+    em_rota: 'Em rota',
     delivered: 'Entregue',
     cancelled: 'Cancelado',
     draft: 'Rascunho',
@@ -101,7 +104,7 @@ export default function AcompanharPedido(props: Props) {
   }, [numeroPedido, tenantId]);
 
   function getStepIndex(status: string): number {
-    const order = ['new', 'preparing', 'ready', 'delivered'];
+    const order = ['new', 'preparing', 'ready', 'em_rota', 'delivered'];
     const idx = order.indexOf(status);
     if (idx < 0) return -1;
     return idx;
@@ -145,7 +148,11 @@ export default function AcompanharPedido(props: Props) {
     );
   }
 
-  const status = orderData.status;
+  const rawStatus = orderData.status;
+  // "Em rota" não é um valor do enum — é derivado de out_for_delivery_at (mesma lógica do KDS).
+  const status = (rawStatus !== 'delivered' && rawStatus !== 'cancelled' && orderData.out_for_delivery_at)
+    ? 'em_rota'
+    : rawStatus;
   const currentStep = getStepIndex(status);
   const isCancelled = status === 'cancelled';
   const isDelivered = status === 'delivered';
