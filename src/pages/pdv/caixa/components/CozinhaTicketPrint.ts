@@ -497,5 +497,42 @@ export async function printSimpleReceipt(
 </body>
 </html>`;
 
-  return sendToPrinter(html, impressora, undefined, { suppressBrowserFallback });
+  // ── Versão ESC/POS estruturada (TicketPayload) para a impressora térmica ──
+  // Sem isto, o sendToPrinter mandava o HTML cru e a térmica imprimia o código.
+  // Com o orderData, ele cai no PASSO 1 (agente formata ESC/POS via /print TICKET).
+  const receiptItens: TicketItem[] = [
+    ...carrinho.map((i) => ({
+      quantidade: i.quantidade,
+      nome: `${i.nome} - ${fmtPreco2(i.precoTotal * i.quantidade)}`,
+    })),
+    ...(pedidosVinculados ?? []).flatMap((p) =>
+      p.itens.map((it) => ({
+        quantidade: it.quantidade,
+        nome: `${it.nome} - ${fmtPreco2(it.preco * it.quantidade)}`,
+      })),
+    ),
+  ];
+
+  const obsParts = [
+    `Subtotal: ${fmtPreco2(subtotal + totalVinculados)}`,
+    desconto > 0 ? `Desconto: - ${fmtPreco2(desconto)}` : '',
+    temVinculados ? `Pedidos vinculados: ${pedidosVinculados!.length}` : '',
+    `TOTAL: ${fmtPreco2(totalGeral)}`,
+    ...pagamentos.map((p) => `Pagamento: ${p.formaNome} ${fmtPreco2(p.valor)}`),
+    (troco > 0 && temDinheiro) ? `Troco: ${fmtPreco2(troco)}` : '',
+  ].filter(Boolean);
+
+  const orderData: TicketPayload = {
+    numero: numeroPedido,
+    destino: destinoStr,
+    origem: 'Caixa',
+    impressora_id: impressora?.id || '',
+    itens: receiptItens,
+    data_hora: dataHora,
+    estacao: temVinculados ? 'COMPROVANTE UNIFICADO' : 'COMPROVANTE BALCAO',
+    observacao_geral: obsParts.join('\n'),
+    ...(participantName ? { participant_name: participantName } : {}),
+  };
+
+  return sendToPrinter(html, impressora, orderData, { suppressBrowserFallback });
 }
