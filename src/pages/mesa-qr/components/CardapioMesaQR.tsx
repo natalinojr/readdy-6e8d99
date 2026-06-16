@@ -434,6 +434,8 @@ export default function CardapioMesaQR(props: Props) {
             <img
               src={item.photo_url}
               alt={item.name}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover object-top group-hover:scale-105 transition-transform duration-300"
               onError={function () { handleImgError(item.id); }}
             />
