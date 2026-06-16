@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
+import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 
 interface CartItem {
   cartId: string;
@@ -127,6 +129,7 @@ export default function EditarItemMesaQRModal(props: Props) {
   const [unidades, setUnidades] = useState<UnidadeConfig[]>(reconstruirUnidades);
   const [modalVisible, setModalVisible] = useState(false);
   const [imgErro, setImgErro] = useState(false);
+  const kbInset = useKeyboardInset();
 
   useEffect(function () {
     // Delay mínimo pra animação de entrada
@@ -300,6 +303,7 @@ export default function EditarItemMesaQRModal(props: Props) {
     <div
       className={'fixed inset-0 z-50 flex items-end justify-center transition-opacity duration-300 ' +
         (modalVisible ? 'opacity-100' : 'opacity-0 pointer-events-none')}
+      style={{ paddingBottom: kbInset }}
     >
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={fechar} />
 
@@ -307,6 +311,7 @@ export default function EditarItemMesaQRModal(props: Props) {
         className={'relative w-full max-w-lg bg-white rounded-t-3xl max-h-[85vh] overflow-y-auto transition-transform duration-300 ' +
           (modalVisible ? 'translate-y-0' : 'translate-y-full')}
         style={{ scrollbarWidth: 'thin' }}
+        onFocus={scrollFocusedFieldIntoView}
       >
         {/* Header sticky */}
         <div className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-zinc-100 px-5 py-3 flex items-center justify-between z-10">

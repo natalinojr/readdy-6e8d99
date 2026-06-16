@@ -11,6 +11,7 @@ import CarrinhoDelivery from './components/CarrinhoDelivery';
 import EditarItemMesaQRModal from '../mesa-qr/components/EditarItemMesaQRModal';
 import ModoEntregaDelivery from './components/ModoEntregaDelivery';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
+import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 
 // ── Helpers de ícones de tipo de endereço ─────────────────────────────────────
 
@@ -135,6 +136,9 @@ export default function DeliveryPage() {
 
   // Dropdown de endereço
   const [showAddressDropdown, setShowAddressDropdown] = useState(false);
+
+  // Altura do teclado virtual (para levantar modais/campos acima dele)
+  const kbInset = useKeyboardInset();
 
   // Controle de clique vs scroll
   const categoriaClickRef = useRef(false);
@@ -952,13 +956,24 @@ export default function DeliveryPage() {
           const subtotalModal = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
           const totalModal = subtotalModal + deliveryFee;
           return (
-            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ paddingBottom: kbInset }}>
               <div
                 className="absolute inset-0 bg-black/50 backdrop-blur-sm"
                 onClick={function () { if (!enviando) { setShowPagamentoModal(false); setValorDinheiro(''); setErroValorDinheiro(''); } }}
               />
               <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl p-6 pb-8 z-10 animate-slide-up max-h-[90vh] overflow-y-auto" onFocus={scrollFocusedFieldIntoView}>
                 <div className="w-10 h-1.5 bg-zinc-200 rounded-full mx-auto mb-5 sm:hidden" />
+
+                {/* Voltar */}
+                <button
+                  type="button"
+                  disabled={enviando}
+                  onClick={function () { setShowPagamentoModal(false); setValorDinheiro(''); setErroValorDinheiro(''); }}
+                  className="inline-flex items-center gap-1 text-sm font-bold text-zinc-500 hover:text-zinc-700 cursor-pointer mb-2 -mt-1 disabled:opacity-50 whitespace-nowrap"
+                >
+                  <i className="ri-arrow-left-s-line text-lg" />
+                  Voltar
+                </button>
 
                 <div className="text-center mb-6">
                   <div className="w-14 h-14 flex items-center justify-center mx-auto mb-3 bg-amber-50 rounded-2xl border border-amber-100">

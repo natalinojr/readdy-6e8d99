@@ -1,4 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
+import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 
 interface CartItem {
   cartId: string;
@@ -98,6 +100,7 @@ export default function CardapioMesaQR(props: Props) {
   const [unidades, setUnidades] = useState<UnidadeConfig[]>([{ opcoesSelecionadas: {}, obsSelecionadas: [], obsLivre: '' }]);
   const [imgErros, setImgErros] = useState<Set<string>>(new Set());
   const [modalVisible, setModalVisible] = useState(false);
+  const kbInset = useKeyboardInset();
 
   // ── Mapa de quantidades no carrinho por itemId ──────────────────────────────
 
@@ -510,6 +513,7 @@ export default function CardapioMesaQR(props: Props) {
         <div
           className={'fixed inset-0 z-50 flex items-end justify-center transition-opacity duration-300 ' +
             (modalVisible ? 'opacity-100' : 'opacity-0 pointer-events-none')}
+          style={{ paddingBottom: kbInset }}
         >
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
@@ -520,6 +524,7 @@ export default function CardapioMesaQR(props: Props) {
             className={'relative w-full max-w-lg bg-white rounded-t-3xl max-h-[85vh] overflow-y-auto transition-transform duration-300 ' +
               (modalVisible ? 'translate-y-0' : 'translate-y-full')}
             style={{ scrollbarWidth: 'thin' }}
+            onFocus={scrollFocusedFieldIntoView}
           >
             <div className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-zinc-100 px-5 py-3 flex items-center justify-between z-10">
               <div className="min-w-0">

@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import MapaPin from '@/components/feature/MapaPin';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
+import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 import type { DeliveryQuote, SavedAddress } from '../useDeliveryData';
 
 interface Props {
@@ -81,6 +82,7 @@ export default function EnderecoPinDelivery(props: Props) {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [autoEndereco, setAutoEndereco] = useState(false);
   const geoReqRef = useRef(0);
+  const kbInset = useKeyboardInset();
 
   // Geocodificação reversa (coordenada → endereço) via Nominatim/OSM — preenche rua/número/bairro.
   function aplicarPin(lat: number, lng: number) {
@@ -382,7 +384,11 @@ export default function EnderecoPinDelivery(props: Props) {
         </div>
       </div>
 
-      <div className="flex-1 px-4 py-5 max-w-lg mx-auto w-full space-y-5" onFocus={scrollFocusedFieldIntoView}>
+      <div
+        className="flex-1 px-4 py-5 max-w-lg mx-auto w-full space-y-5"
+        onFocus={scrollFocusedFieldIntoView}
+        style={{ paddingBottom: kbInset ? kbInset + 24 : undefined }}
+      >
         {/* ── LISTA de endereços salvos (cliente existente) ── */}
         {formMode === 'list' && temListaSalva ? (
           <>
