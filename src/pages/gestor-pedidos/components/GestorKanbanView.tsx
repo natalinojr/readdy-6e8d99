@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade } from '@/types/kds';
 import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
 import { sendToPrinter } from '@/lib/printUtils';
+import { supabase } from '@/lib/supabase';
 import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
 
 interface Props {
@@ -259,13 +260,42 @@ function GestorCard({
   const isAtrasado = pedido.status !== 'entregue' && pedido.status !== 'pronto' && pedido.status !== 'em_rota' && elapsedMin > 20;
   const isAviso = !isAtrasado && pedido.status !== 'entregue' && pedido.status !== 'pronto' && pedido.status !== 'em_rota' && elapsedMin > 10;
 
+  // Resolve o link do Google Maps: usa o pin (lat/lng do pedido) quando existir;
+  // senão cai na busca pelo endereço em texto.
+  const resolverMapsUrl = async (): Promise<string> => {
+    try {
+      const { data } = await supabase.from('orders').select('delivery_lat, delivery_lng').eq('id', pedido.id).maybeSingle();
+      if (data && data.delivery_lat != null && data.delivery_lng != null) {
+        return `https://www.google.com/maps/dir/?api=1&destination=${data.delivery_lat},${data.delivery_lng}`;
+      }
+    } catch (_e) { /* ignora — usa fallback */ }
+    const addr = pedido.deliveryAddress ?? '';
+    return addr ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}` : 'https://www.google.com/maps';
+  };
+
+  // Abre a rota no Maps. Abre a aba JA no clique (gesto do usuario) e redireciona
+  // depois do fetch, pra não ser bloqueado por popup blocker.
+  const abrirRotaMaps = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const w = window.open('', '_blank');
+    resolverMapsUrl().then((url) => {
+      if (w) w.location.href = url;
+      else window.open(url, '_blank', 'noopener');
+    });
+  };
+
   const handleWhatsAppMotoboy = (e: React.MouseEvent) => {
     e.stopPropagation();
+    const w = window.open('', '_blank');
     const address = pedido.deliveryAddress ?? '';
     const name = pedido.nomeCliente ?? 'Cliente';
     const notes = pedido.notes ? `\nObs: ${pedido.notes}` : '';
-    const msg = `🚀 *Entrega para ${name}*\n📍 ${address}${notes}`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+    resolverMapsUrl().then((mapsUrl) => {
+      const msg = `🚀 *Entrega para ${name}*\n📍 ${address}${notes}\n🗺️ Rota: ${mapsUrl}`;
+      const wa = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+      if (w) w.location.href = wa;
+      else window.open(wa, '_blank', 'noopener');
+    });
   };
 
   const handleWhatsAppCliente = (e: React.MouseEvent) => {
@@ -459,11 +489,19 @@ function GestorCard({
                   <p className="text-[10px] text-zinc-500 italic">{pedido.notes}</p>
                 </div>
               )}
-              <div className="flex items-center gap-1.5 mt-2">
+              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                <button
+                  onClick={abrirRotaMaps}
+                  className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
+                  title="Abrir rota no Google Maps"
+                >
+                  <i className="ri-route-line text-xs" />
+                  Rota
+                </button>
                 <button
                   onClick={handleWhatsAppMotoboy}
                   className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
-                  title="Compartilhar endereço no WhatsApp"
+                  title="Compartilhar endereço + rota no WhatsApp"
                 >
                   <i className="ri-whatsapp-line text-xs" />
                   Motoboy
