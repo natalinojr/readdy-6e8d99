@@ -479,15 +479,24 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
           setErroCarregamento(null);
 
           // ── Carrega Destaques ────────────────────────────────────────────
+          // NÃO embutir menu_items via PostgREST: o embed sofre o RLS de menu_items
+          // (tenant = auth_tenant_id() = última membership), que zera para admin
+          // multi-loja → destaque aparecia como "(item removido)" / R$ 0,00.
+          // Resolvemos nome/preço pelos itens já carregados via RPC (fn_get_full_menu,
+          // SECURITY DEFINER), que vêm corretos para a loja ativa.
+          const itemsById = new Map<string, DBItem>();
+          for (const it of ((data.items ?? []) as DBItem[])) itemsById.set(it.id, it);
           const { data: highlightsData, error: highlightsError } = await supabase
             .from('menu_highlights')
-            .select('id, item_id, custom_price, custom_description, sort_order, is_active, menu_items(id, category_id, name, description, price, photo_url, is_active)')
+            .select('id, item_id, custom_price, custom_description, sort_order, is_active')
             .eq('tenant_id', effectiveTenantId)
             .eq('is_active', true)
             .order('sort_order', { ascending: true });
           if (!highlightsError && highlightsData) {
             const cats = (data.categories ?? []).map(mapCategoria);
-            setDestaques((highlightsData as unknown as DBHighlight[]).map(h => mapDestaque(h, cats)));
+            setDestaques((highlightsData as unknown as DBHighlight[]).map(h =>
+              mapDestaque({ ...h, menu_items: itemsById.get(h.item_id) ?? null }, cats)
+            ));
           } else if (highlightsError) {
             console.warn('[Cardapio] Destaques load failed:', highlightsError.message);
           }
