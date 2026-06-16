@@ -823,8 +823,12 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
     return jsonErr("Unknown action: " + action, 400);
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.error("[delivery-write v14] error:", errMsg);
-    return new Response(JSON.stringify({ _v: "v14", error: errMsg }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // Extrai a mensagem real mesmo quando o erro e um objeto do Postgrest (sem ser Error)
+    const e = err as Record<string, unknown> | null;
+    const errMsg = (e && typeof e === "object")
+      ? String(e.message || e.details || e.hint || e.code || JSON.stringify(e))
+      : String(err);
+    console.error("[delivery-write v14] error:", errMsg, "| raw:", JSON.stringify(err));
+    return new Response(JSON.stringify({ _v: "v14", error: errMsg, message: errMsg }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });

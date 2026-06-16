@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import MapaPin from '@/components/feature/MapaPin';
 import type { DeliveryQuote, SavedAddress } from '../useDeliveryData';
 
@@ -75,6 +75,30 @@ export default function EnderecoPinDelivery(props: Props) {
   const [geoError, setGeoError] = useState('');
   const [showErrors, setShowErrors] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [autoEndereco, setAutoEndereco] = useState(false);
+  const geoReqRef = useRef(0);
+
+  // Geocodificação reversa (coordenada → endereço) via Nominatim/OSM — preenche rua/número/bairro.
+  function aplicarPin(lat: number, lng: number) {
+    onPinChange(lat, lng);
+    const reqId = ++geoReqRef.current;
+    setAutoEndereco(true);
+    fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&accept-language=pt-BR&lat=' + lat + '&lon=' + lng)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (geoReqRef.current !== reqId) return; // o pino mudou de novo — ignora resposta antiga
+        setAutoEndereco(false);
+        const a = data && data.address ? data.address : null;
+        if (!a) return;
+        const road = a.road || a.pedestrian || a.residential || a.footway || a.path || a.cycleway || '';
+        const num = a.house_number || '';
+        const bairro = a.suburb || a.neighbourhood || a.quarter || a.city_district || a.village || '';
+        if (road) onRuaChange(road);
+        if (num) onNumeroChange(num);
+        if (bairro && !referencia.trim()) onReferenciaChange('Bairro ' + bairro);
+      })
+      .catch(function () { if (geoReqRef.current === reqId) setAutoEndereco(false); });
+  }
 
   // Estado do formulário (add/edit) — o "tipo" e o id em edição
   const [formAddressType, setFormAddressType] = useState('casa');
@@ -106,7 +130,7 @@ export default function EnderecoPinDelivery(props: Props) {
     navigator.geolocation.getCurrentPosition(
       function (pos) {
         setGeoLoading(false);
-        onPinChange(pos.coords.latitude, pos.coords.longitude);
+        aplicarPin(pos.coords.latitude, pos.coords.longitude);
       },
       function (err) {
         setGeoLoading(false);
@@ -202,11 +226,18 @@ export default function EnderecoPinDelivery(props: Props) {
               )}
             </button>
           </div>
-          <MapaPin lat={addressLat} lng={addressLng} onChange={onPinChange} defaultCenter={defaultCenter} altura="h-60" />
-          <p className="text-[11px] text-zinc-500 mt-2 flex items-center gap-1">
-            <i className="ri-information-line text-zinc-400 text-xs" />
-            Toque no mapa (ou arraste o pino) para marcar onde fica sua casa.
-          </p>
+          <MapaPin lat={addressLat} lng={addressLng} onChange={aplicarPin} defaultCenter={defaultCenter} altura="h-60" />
+          {autoEndereco ? (
+            <p className="text-[11px] text-amber-600 mt-2 flex items-center gap-1 font-medium">
+              <i className="ri-loader-4-line animate-spin text-xs" />
+              Buscando o endereço deste ponto...
+            </p>
+          ) : (
+            <p className="text-[11px] text-zinc-500 mt-2 flex items-center gap-1">
+              <i className="ri-information-line text-zinc-400 text-xs" />
+              Toque no mapa para marcar sua casa — preenchemos o endereço; confira embaixo.
+            </p>
+          )}
           {geoError ? (
             <p className="text-[11px] text-amber-600 mt-1.5 flex items-center gap-1">
               <i className="ri-error-warning-line text-xs" />{geoError}
