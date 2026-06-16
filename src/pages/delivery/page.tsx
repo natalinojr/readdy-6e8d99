@@ -301,7 +301,14 @@ export default function DeliveryPage() {
         deliveryQuote={deliveryQuote}
         foraDeArea={foraDeArea}
         isExistingCustomer={!!customer}
+        savedAddresses={savedAddresses}
+        selectedAddressId={selectedAddressId}
         onSalvar={handleSalvarEndereco}
+        onSelecionarEndereco={handleSelecionarEndereco}
+        onSalvarNovoEndereco={handleSalvarNovoEndereco}
+        onDeletarEndereco={handleDeletarEndereco}
+        onSetDefaultAddress={handleSetDefaultAddress}
+        onIrParaCardapio={function () { data.setStep('cardapio'); }}
         onVoltar={function () {
           if (enderecoFromCardapio) {
             setEnderecoFromCardapio(false);
@@ -864,7 +871,7 @@ export default function DeliveryPage() {
                 type="button"
                 onClick={function () {
                   if (foraDeArea) { data.handleIrParaEnderecos(); return; }
-                  const activeMethods = Object.entries(paymentMethods).filter(function (entry) { return entry[1] === true; });
+                  const activeMethods = Object.entries(paymentMethods || {}).filter(function (entry) { return entry[1] === true; });
                   if (activeMethods.length > 0) {
                     setMetodoPagamento('');
                     setValorDinheiro('');
@@ -963,7 +970,7 @@ export default function DeliveryPage() {
                 </div>
 
                 <div className="space-y-2 mb-6">
-                  {Object.entries(paymentMethods).filter(function (entry) { return entry[1] === true; }).map(function (entry) {
+                  {Object.entries(paymentMethods || {}).filter(function (entry) { return entry[1] === true; }).map(function (entry) {
                     const key = entry[0];
                     const methodMap: Record<string, { label: string; icon: string; description: string }> = modoEntrega === 'retirada' ? {
                       dinheiro: { label: 'Dinheiro', icon: 'ri-money-dollar-circle-line', description: 'Informe o valor para calcular o troco' },

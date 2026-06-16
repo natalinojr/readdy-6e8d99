@@ -39,6 +39,8 @@ export type SavedAddress = {
   neighborhood_name: string | null;
   neighborhood_delivery_fee: number;
   neighborhood_is_active: boolean;
+  lat: number | null;
+  lng: number | null;
 };
 
 type CardapioItem = {
@@ -428,6 +430,7 @@ function applyAddressToFields(addr: SavedAddress, setters: {
   setComplement: (v: string) => void;
   setReferencePoint: (v: string) => void;
   setDeliveryFee: (v: number) => void;
+  setAddressPin?: (lat: number, lng: number) => void;
 }) {
   if (addr.neighborhood_id) setters.setSelectedNeighborhoodId(addr.neighborhood_id);
   if (addr.street) setters.setStreet(addr.street);
@@ -435,6 +438,10 @@ function applyAddressToFields(addr: SavedAddress, setters: {
   if (addr.complement) setters.setComplement(addr.complement);
   if (addr.reference_point) setters.setReferencePoint(addr.reference_point);
   setters.setDeliveryFee(addr.neighborhood_delivery_fee);
+  // Modo distância: restaura o pin salvo deste endereço (recalcula taxa/tempo)
+  if (setters.setAddressPin && typeof addr.lat === 'number' && typeof addr.lng === 'number') {
+    setters.setAddressPin(addr.lat, addr.lng);
+  }
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -481,7 +488,7 @@ export function useDeliveryData(storeSlug?: string) {
   const [numeroPedido, setNumeroPedido] = useState('');
   const [orderTotal, setOrderTotal] = useState(0);
   const [pagamentoSelecionado, setPagamentoSelecionado] = useState('');
-  const [paymentMethods, setPaymentMethods] = useState<Record<string, boolean>>();
+  const [paymentMethods, setPaymentMethods] = useState<Record<string, boolean>>({});
   const [modoEntrega, setModoEntrega] = useState<'entrega' | 'retirada'>('entrega');
   const [retiradaAtivo, setRetiradaAtivo] = useState(true);
 
@@ -775,6 +782,8 @@ export function useDeliveryData(storeSlug?: string) {
         number: num.trim() || null,
         complement: comp.trim() || null,
         reference_point: ref.trim() || null,
+        address_lat: addressLat,
+        address_lng: addressLng,
       }),
     })
       .then(function (res) { return res.json(); })
@@ -849,6 +858,8 @@ export function useDeliveryData(storeSlug?: string) {
     comp: string,
     ref: string,
     editAddressId?: string | null,
+    lat?: number | null,
+    lng?: number | null,
   ): Promise<void> {
     return new Promise(function (resolve, reject) {
       if (!tenant || !customer) {
@@ -875,6 +886,8 @@ export function useDeliveryData(storeSlug?: string) {
           number: num.trim() || null,
           complement: comp.trim() || null,
           reference_point: ref.trim() || null,
+          address_lat: lat ?? null,
+          address_lng: lng ?? null,
         }),
       })
         .then(function (res) { return res.json(); })
@@ -1146,7 +1159,8 @@ export function useDeliveryData(storeSlug?: string) {
   // ── Confirmar pedido ─────────────────────────────────────────────────────────
 
   function handleConfirmarPedido(paymentMethod?: string, cashAmount?: string) {
-    if (!tenant || !customer) return;
+    if (!tenant) { setErrorMsg('Erro ao carregar a loja. Recarregue a página.'); return; }
+    if (!customer) { setErrorMsg('Não identificamos seu cadastro. Toque em "Trocar" e confirme seu telefone novamente.'); return; }
     if (cart.length === 0) return;
 
     // Modo distância: bloqueia se fora da área de entrega (sem pin ou além da última faixa)
@@ -1313,6 +1327,16 @@ export function useDeliveryData(storeSlug?: string) {
       ? (deliveryQuote && deliveryQuote.dentroArea ? deliveryQuote.taxa : 0)
       : deliveryFee;
 
+  // Modo distância: ao (re)selecionar um endereço salvo, restaura o pin dele e recalcula a taxa.
+  useEffect(function () {
+    if (!distanceMode || !selectedAddressId) return;
+    const addr = savedAddresses.find(function (a) { return a.id === selectedAddressId; });
+    if (addr && typeof addr.lat === 'number' && typeof addr.lng === 'number') {
+      setAddressLat(addr.lat);
+      setAddressLng(addr.lng);
+    }
+  }, [selectedAddressId, savedAddresses, distanceMode]);
+
   const totalItens = cart.reduce(function (s, i) { return s + i.quantidade; }, 0);
   const totalItensProdutos = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
   const totalValor = totalItensProdutos + effectiveDeliveryFee;
@@ -1336,6 +1360,8 @@ export function useDeliveryData(storeSlug?: string) {
           neighborhood_name: customer.delivery_neighborhoods?.name || null,
           neighborhood_delivery_fee: customer.delivery_neighborhoods?.delivery_fee || 0,
           neighborhood_is_active: true,
+          lat: null,
+          lng: null,
         }]
       : [];
 

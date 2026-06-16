@@ -277,7 +277,57 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ _v: "v14", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    if (action === "get_customer_addresses" || action === "save_customer_address" || action === "set_default_address" || action === "delete_customer_address" || action === "get_order_status" || action === "get_customer_orders") {
+    if (action === "get_customer_orders") {
+      const { tenant_id, phone } = body;
+      if (!tenant_id || !phone) return jsonErr("tenant_id e phone obrigatorios", 400);
+      const cleanPhone = String(phone).replace(/\D/g, "");
+      const { data: rows, error } = await admin
+        .from("orders")
+        .select("id, number, status, created_at, total_amount, delivery_fee")
+        .eq("tenant_id", tenant_id)
+        .eq("destination_phone", cleanPhone)
+        .eq("origin_type", "delivery")
+        .order("created_at", { ascending: false })
+        .limit(30);
+      if (error) throw error;
+      const orders = (rows ?? []).map((o: Record<string, unknown>) => ({
+        id: o.id, number: o.number, status: o.status, created_at: o.created_at,
+        total_amount: Number(o.total_amount ?? 0), delivery_fee: Number(o.delivery_fee ?? 0),
+      }));
+      return new Response(JSON.stringify({ _v: "v14", orders }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "get_order_status") {
+      const { tenant_id, order_number } = body;
+      if (!tenant_id || !order_number) return jsonErr("tenant_id e order_number obrigatorios", 400);
+      const { data: o, error } = await admin
+        .from("orders")
+        .select("id, number, status, created_at, updated_at, total_amount, delivery_fee, subtotal")
+        .eq("tenant_id", tenant_id)
+        .eq("number", order_number)
+        .maybeSingle();
+      if (error) throw error;
+      if (!o) return new Response(JSON.stringify({ _v: "v14", order: null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { data: itemRows } = await admin
+        .from("order_items")
+        .select("id, item_name, item_price, quantity, notes")
+        .eq("order_id", o.id)
+        .eq("tenant_id", tenant_id);
+      const order = {
+        id: o.id, number: o.number, status: o.status,
+        created_at: o.created_at, updated_at: o.updated_at,
+        total_amount: Number(o.total_amount ?? 0),
+        delivery_fee: Number(o.delivery_fee ?? 0),
+        subtotal: Number(o.subtotal ?? 0),
+        items: (itemRows ?? []).map((it: Record<string, unknown>) => ({
+          id: it.id, item_name: it.item_name, item_price: Number(it.item_price ?? 0),
+          quantity: Number(it.quantity ?? 0), notes: it.notes ?? null,
+        })),
+      };
+      return new Response(JSON.stringify({ _v: "v14", order }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "get_customer_addresses" || action === "save_customer_address" || action === "set_default_address" || action === "delete_customer_address") {
       return new Response(JSON.stringify({ _v: "v14", error: "Action " + action + " ok - v14" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
