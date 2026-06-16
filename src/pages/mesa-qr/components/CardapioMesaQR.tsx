@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
+import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 
 interface CartItem {
   cartId: string;
@@ -27,7 +28,7 @@ interface CardapioItem {
   sla_minutes: number | null;
   skip_kds: boolean | null;
   station_id: string | null;
-  promotions?: Array<{ id: string; item_id: string; promotional_price: number; is_active: boolean }>;
+  promotions?: Array<{ id: string; item_id: string; promotional_price: number; is_active: boolean; days_of_week: number[] | null; is_recurring: boolean; specific_date: string | null }>;
 }
 
 interface CardapioCategory {
@@ -94,6 +95,7 @@ export default function CardapioMesaQR(props: Props) {
   const cart = props.cart;
   const onCategoriaAtivaChange = props.onCategoriaAtivaChange;
 
+  const [busca, setBusca] = useState('');
   const [itemSelecionado, setItemSelecionado] = useState<CardapioItem | null>(null);
   const [qtd, setQtd] = useState(1);
   const [unidadeAtiva, setUnidadeAtiva] = useState(0);
@@ -122,6 +124,20 @@ export default function CardapioMesaQR(props: Props) {
     const outOfStockSet = new Set(outOfStockIds);
     return items.filter(function (i) { return !outOfStockSet.has(i.id); });
   }, [items, outOfStockIds]);
+
+  // ── Busca ────────────────────────────────────────────────────────────────────
+  // Resultados ignoram as categorias virtuais (Destaques/Promoção, id "__...")
+  // para não duplicar o mesmo item.
+  const buscaNorm = busca.trim().toLowerCase();
+  const resultadosBusca = useMemo(function () {
+    if (!buscaNorm) return [];
+    return todosItensDisponiveis.filter(function (i) {
+      if ((i.category_id || '').startsWith('__')) return false;
+      const nome = i.name.toLowerCase();
+      const desc = (i.description || '').toLowerCase();
+      return nome.includes(buscaNorm) || desc.includes(buscaNorm);
+    });
+  }, [buscaNorm, todosItensDisponiveis]);
 
   // ── Scroll Spy ───────────────────────────────────────────────────────────────
 
@@ -200,7 +216,7 @@ export default function CardapioMesaQR(props: Props) {
   }
 
   function getPrecoEfetivo(item: CardapioItem) {
-    const promoAtiva = (item.promotions || []).find(function (p) { return p.is_active; });
+    const promoAtiva = rawPromoAtivaHoje(item.promotions);
     return promoAtiva ? promoAtiva.promotional_price : item.price;
   }
 
@@ -408,7 +424,7 @@ export default function CardapioMesaQR(props: Props) {
 
   function renderItemCard(item: CardapioItem) {
     const qtyInCart = cartQtyMap[item.id] || 0;
-    const promoAtiva = (item.promotions || []).find(function (p) { return p.is_active; });
+    const promoAtiva = rawPromoAtivaHoje(item.promotions);
     const precoFinal = promoAtiva ? promoAtiva.promotional_price : item.price;
 
     return (
@@ -479,7 +495,49 @@ export default function CardapioMesaQR(props: Props) {
 
   return (
     <div className="px-4 py-4">
-      {/* Rolagem contínua - todas as categorias em sequência */}
+      {/* Busca */}
+      <div className="relative mb-5">
+        <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm pointer-events-none" />
+        <input
+          type="text"
+          value={busca}
+          onChange={function (e) { setBusca(e.target.value); }}
+          placeholder="Buscar no cardápio..."
+          className="w-full pl-10 pr-9 py-2.5 text-sm border border-zinc-200 rounded-xl bg-white text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400"
+        />
+        {busca ? (
+          <button
+            type="button"
+            onClick={function () { setBusca(''); }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+          >
+            <i className="ri-close-line text-sm" />
+          </button>
+        ) : null}
+      </div>
+
+      {/* Resultados da busca (lista plana) */}
+      {buscaNorm ? (
+        resultadosBusca.length > 0 ? (
+          <div>
+            <p className="text-xs font-bold text-zinc-500 mb-3">
+              {resultadosBusca.length} resultado{resultadosBusca.length > 1 ? 's' : ''} para “{busca.trim()}”
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {resultadosBusca.map(function (item) { return renderItemCard(item); })}
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-16 flex flex-col items-center">
+            <div className="w-16 h-16 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
+              <i className="ri-search-line text-2xl text-zinc-300" />
+            </div>
+            <p className="text-sm font-bold text-zinc-700">Nada encontrado</p>
+            <p className="text-xs text-zinc-500 mt-1">Tente outro termo</p>
+          </div>
+        )
+      ) : (
+      /* Rolagem contínua - todas as categorias em sequência */
       <div className="space-y-8">
         {categoriasOrdenadas.map(function (cat) {
           const catItems = todosItensDisponiveis.filter(function (i) { return i.category_id === cat.id; });
@@ -499,8 +557,9 @@ export default function CardapioMesaQR(props: Props) {
           );
         })}
       </div>
+      )}
 
-      {todosItensDisponiveis.length === 0 ? (
+      {!buscaNorm && todosItensDisponiveis.length === 0 ? (
         <div className="text-center py-16 flex flex-col items-center">
           <div className="w-16 h-16 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
             <i className="ri-inbox-line text-2xl text-zinc-300" />

@@ -297,6 +297,10 @@ export default function DeliveryPage() {
         phone={phone}
         nome={customerName}
         onNomeChange={data.setCustomerName}
+        nascimento={data.dataNascimento}
+        onNascimentoChange={data.setDataNascimento}
+        genero={data.genero}
+        onGeneroChange={data.setGenero}
         rua={street}
         onRuaChange={data.setStreet}
         numero={addressNumber}
@@ -350,6 +354,10 @@ export default function DeliveryPage() {
         phone={phone}
         nome={customerName}
         onNomeChange={data.setCustomerName}
+        nascimento={data.dataNascimento}
+        onNascimentoChange={data.setDataNascimento}
+        genero={data.genero}
+        onGeneroChange={data.setGenero}
         bairroId={selectedNeighborhoodId}
         onBairroChange={data.setSelectedNeighborhoodId}
         rua={street}
@@ -835,7 +843,8 @@ export default function DeliveryPage() {
         {/* Footer do carrinho - sempre visível */}
         {showCart && cart.length > 0 ? (() => {
           const subtotalFooter = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
-          const totalFooter = subtotalFooter + deliveryFee;
+          const voucherDescFooter = Math.min(data.voucherDesconto || 0, subtotalFooter);
+          const totalFooter = Math.max(0, subtotalFooter + deliveryFee - voucherDescFooter);
           return (
             <div className="shrink-0 bg-white border-t border-zinc-100 px-4 py-3 space-y-3 z-30">
               {/* Resumo de totais */}
@@ -869,6 +878,51 @@ export default function DeliveryPage() {
                     </span>
                   </div>
                 ) : null}
+                {voucherDescFooter > 0 ? (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-green-600 flex items-center gap-1">
+                      <i className="ri-coupon-3-line text-[11px]" />Cupom {data.voucherCodigo}
+                    </span>
+                    <span className="text-green-600 font-bold">- R$ {voucherDescFooter.toFixed(2)}</span>
+                  </div>
+                ) : null}
+
+                {/* Cupom / Voucher */}
+                <div className="pt-1">
+                  {data.voucherCodigo ? (
+                    <button
+                      type="button"
+                      onClick={data.handleRemoverVoucher}
+                      className="text-[11px] text-zinc-500 hover:text-red-600 cursor-pointer flex items-center gap-1"
+                    >
+                      <i className="ri-close-circle-line text-xs" />
+                      Remover cupom
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={data.voucherInput}
+                        onChange={function (e) { data.setVoucherInput(e.target.value.toUpperCase()); }}
+                        placeholder="Cupom / voucher"
+                        className="flex-1 min-w-0 px-3 py-2 text-xs border border-zinc-200 rounded-lg uppercase focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={data.handleAplicarVoucher}
+                        disabled={!data.voucherInput.trim() || data.voucherLoading}
+                        className="px-3 py-2 bg-zinc-800 hover:bg-zinc-900 disabled:opacity-50 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1"
+                      >
+                        {data.voucherLoading ? <i className="ri-loader-4-line animate-spin" /> : <i className="ri-coupon-3-line" />}
+                        Aplicar
+                      </button>
+                    </div>
+                  )}
+                  {data.voucherMsg ? (
+                    <p className="text-[11px] text-red-600 mt-1.5">{data.voucherMsg}</p>
+                  ) : null}
+                </div>
+
                 <div className="h-px bg-zinc-100" />
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-bold text-zinc-800">Total</span>
@@ -974,7 +1028,8 @@ export default function DeliveryPage() {
         {/* Modal de seleção de forma de pagamento */}
         {showPagamentoModal ? (() => {
           const subtotalModal = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
-          const totalModal = subtotalModal + deliveryFee;
+          const voucherDescModal = Math.min(data.voucherDesconto || 0, subtotalModal);
+          const totalModal = Math.max(0, subtotalModal + deliveryFee - voucherDescModal);
           return (
             <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ paddingBottom: kbInset }}>
               <div

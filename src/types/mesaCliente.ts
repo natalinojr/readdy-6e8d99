@@ -7,6 +7,10 @@ export interface ItemCardapioPublico {
   categoria: string;
   slaMinutos: number;
   popular?: boolean;
+  /** Quando true, o item está marcado como Destaque do cardápio (menu_highlights ativo) */
+  destaque?: boolean;
+  /** Ordem de exibição entre os destaques (sort_order); menor primeiro */
+  destaqueOrdem?: number;
   /** Quando true, o item tem promoção ativa (preco já reflete o promocional) */
   temPromocao?: boolean;
   /** Preço original antes da promoção (null se não tem promoção ativa) */

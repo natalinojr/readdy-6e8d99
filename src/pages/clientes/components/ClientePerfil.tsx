@@ -157,6 +157,18 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
             <span className="text-zinc-500">Última visita</span>
             <span className="font-semibold text-zinc-700">{fmtData(cliente.ultimaVisita)}</span>
           </div>
+          {cliente.dataNascimento ? (
+            <div className="flex justify-between text-xs">
+              <span className="text-zinc-500">Nascimento</span>
+              <span className="font-semibold text-zinc-700">{String(cliente.dataNascimento).slice(0, 10).split('-').reverse().join('/')}</span>
+            </div>
+          ) : null}
+          {cliente.genero ? (
+            <div className="flex justify-between text-xs">
+              <span className="text-zinc-500">Gênero</span>
+              <span className="font-semibold text-zinc-700 capitalize">{cliente.genero}</span>
+            </div>
+          ) : null}
           <div className="flex justify-between text-xs">
             <span className="text-zinc-500">Dias desde última visita</span>
             <span className={`font-semibold ${dias > 30 ? 'text-red-500' : dias > 14 ? 'text-amber-500' : 'text-green-600'}`}>

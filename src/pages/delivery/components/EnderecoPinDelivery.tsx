@@ -8,6 +8,10 @@ interface Props {
   phone: string;
   nome: string;
   onNomeChange: (v: string) => void;
+  nascimento: string;
+  onNascimentoChange: (v: string) => void;
+  genero: string;
+  onGeneroChange: (v: string) => void;
   rua: string;
   onRuaChange: (v: string) => void;
   numero: string;
@@ -63,7 +67,8 @@ type FormMode = 'list' | 'add' | 'edit';
 
 export default function EnderecoPinDelivery(props: Props) {
   const {
-    phone, nome, onNomeChange, rua, onRuaChange, numero, onNumeroChange,
+    phone, nome, onNomeChange, nascimento, onNascimentoChange, genero, onGeneroChange,
+    rua, onRuaChange, numero, onNumeroChange,
     bairro, onBairroChange,
     complemento, onComplementoChange, referencia, onReferenciaChange,
     storeLat, storeLng, addressLat, addressLng, onPinChange,
@@ -308,6 +313,30 @@ export default function EnderecoPinDelivery(props: Props) {
               className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
                 (showErrors && !nomeOk ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')}
             />
+          </div>
+        ) : null}
+
+        {comNome ? (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nascimento</label>
+              <input
+                type="date" value={nascimento} onChange={function (e) { onNascimentoChange(e.target.value); }}
+                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Gênero</label>
+              <select
+                value={genero} onChange={function (e) { onGeneroChange(e.target.value); }}
+                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all bg-white"
+              >
+                <option value="">Prefiro não dizer</option>
+                <option value="masculino">Masculino</option>
+                <option value="feminino">Feminino</option>
+                <option value="outro">Outro</option>
+              </select>
+            </div>
           </div>
         ) : null}
 

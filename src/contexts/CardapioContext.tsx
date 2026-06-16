@@ -6,6 +6,7 @@ import { useKioskAuth } from '@/contexts/KioskAuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import { notifyReload } from '@/lib/reloadSignal';
+import { promoAtivaHoje } from '@/lib/promoUtils';
 import type { Categoria, Item, Combo, ObservacaoGlobal, GrupoOpcoes, OpcaoItem, PromocaoItem, Destaque } from '@/types/cardapio';
 import type { ItemCardapioPublico } from '@/types/mesaCliente';
 import { saveMenuCache, getMenuCache } from '@/lib/offlineDB';
@@ -935,6 +936,10 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     // Só categorias ativas (não deletadas) — categorias deletadas não aparecem no cardápio público
     const categoriasAtivasIds = new Set(categorias.filter(c => c.ativo).map(c => c.id));
 
+    // Mapa itemId → ordem do destaque (somente destaques ativos)
+    const destaqueOrdemMap = new Map<string, number>();
+    destaques.filter(d => d.ativo).forEach(d => { destaqueOrdemMap.set(d.itemId, d.ordem ?? 0); });
+
     // Itens normais ativos que permitem mesa_qr OU self_service (ou sem canais — retrocompatibilidade)
     const itensAtivosMesaQR = itensAtivos.filter(item =>
       item.canais?.mesa_qr === true ||
@@ -946,7 +951,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     const itensNormais: ItemCardapioPublico[] = itensAtivosMesaQR
       .filter(item => categoriasAtivasIds.has(item.categoriaId))
       .map((item) => {
-        const promoAtiva = item.promocoes.find(p => p.ativo);
+        const promoAtiva = promoAtivaHoje(item.promocoes);
         const categoriaNome = categorias.find(c => c.id === item.categoriaId)?.nome ?? 'Outros';
 
         // Verifica se o item tem observações configuradas (pré-definidas do próprio item)
@@ -960,6 +965,8 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
           categoria: categoriaNome,
           slaMinutos: item.slaMinutos,
           popular: promoAtiva != null,
+          destaque: destaqueOrdemMap.has(item.id),
+          destaqueOrdem: destaqueOrdemMap.get(item.id),
           temPromocao: promoAtiva != null,
           precoOriginal: promoAtiva ? item.preco : null,
           semPreparo: item.semPreparo ?? false,
@@ -993,7 +1000,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
 
     return [...itensNormais, ...combosAtivos];
   },
-    [itensAtivos, categorias, combos],
+    [itensAtivos, categorias, combos, destaques],
   );
 
   return (

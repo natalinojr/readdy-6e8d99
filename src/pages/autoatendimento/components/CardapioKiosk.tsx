@@ -113,6 +113,10 @@ function TecladoVirtual({ value, onChange }: TecladoVirtualProps) {
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
+// Categorias virtuais (não existem no banco) — montadas a partir dos flags do item.
+const CAT_DESTAQUES = '⭐ Destaques';
+const CAT_PROMOCAO = '🔥 Promoção';
+
 interface OpcoesKioskProps {
   item: ItemCardapioPublico;
   onAdicionar: (pedido: Omit<ItemPedidoCliente, 'enviadoKds'>) => void;
@@ -341,12 +345,15 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
     [itensPublicos, itensDesabilitadosIds, itensSemEstoque],
   );
 
+  const temDestaques = useMemo(() => itensDisponiveis.some((i) => i.destaque), [itensDisponiveis]);
+  const temPromocoes = useMemo(() => itensDisponiveis.some((i) => i.temPromocao), [itensDisponiveis]);
+
   const categorias = useMemo(
     () => {
       const nomesUnicos = Array.from(new Set(itensDisponiveis.map((i) => i.categoria)));
       // Ordena pelo sortOrder das categorias do cardápio (contexto)
       const ordemMap = new Map(categoriasCtx.map((c, idx) => [c.nome, c.ordem ?? idx]));
-      return nomesUnicos.sort((a, b) => {
+      const ordenadas = nomesUnicos.sort((a, b) => {
         const oa = ordemMap.get(a) ?? 9999;
         const ob = ordemMap.get(b) ?? 9999;
         // Combos sempre no final
@@ -354,17 +361,36 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
         if (b === 'Combos') return -1;
         return oa - ob;
       });
+      // Destaques sempre em 1º; Promoção logo em seguida (categorias virtuais).
+      const especiais: string[] = [];
+      if (temDestaques) especiais.push(CAT_DESTAQUES);
+      if (temPromocoes) especiais.push(CAT_PROMOCAO);
+      return [...especiais, ...ordenadas];
     },
-    [itensDisponiveis, categoriasCtx],
+    [itensDisponiveis, categoriasCtx, temDestaques, temPromocoes],
   );
 
   const [categoriaAtiva, setCategoriaAtiva] = useState<string>('');
+  const [busca, setBusca] = useState('');
   const [itemModal, setItemModal] = useState<ItemCardapioPublico | null>(null);
 
   // Se ainda não tem categoria ativa (inicial ou depois de filtrar tudo), seleciona a primeira
   const categoriaEfetiva = categoriaAtiva || categorias[0] || '';
 
-  const itens = categoriaEfetiva === '' ? itensDisponiveis : itensDisponiveis.filter((i) => i.categoria === categoriaEfetiva);
+  const buscaNorm = busca.trim().toLowerCase();
+  const itensCategoria = categoriaEfetiva === CAT_DESTAQUES
+    ? itensDisponiveis.filter((i) => i.destaque).sort((a, b) => (a.destaqueOrdem ?? 0) - (b.destaqueOrdem ?? 0))
+    : categoriaEfetiva === CAT_PROMOCAO
+      ? itensDisponiveis.filter((i) => i.temPromocao)
+      : categoriaEfetiva === ''
+        ? itensDisponiveis
+        : itensDisponiveis.filter((i) => i.categoria === categoriaEfetiva);
+
+  // Busca tem prioridade sobre a categoria — varre todo o cardápio disponível.
+  const itens = buscaNorm
+    ? itensDisponiveis.filter((i) =>
+        i.nome.toLowerCase().includes(buscaNorm) || (i.descricao || '').toLowerCase().includes(buscaNorm))
+    : itensCategoria;
   const totalItens = carrinho.reduce((s, i) => s + i.quantidade, 0);
   const totalValor = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
 
@@ -447,6 +473,33 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
 
           {/* Lista de itens */}
           <div className="flex-1 overflow-y-auto p-6 pb-32">
+            {/* Busca */}
+            <div className="relative mb-5">
+              <i className="ri-search-line absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 text-lg pointer-events-none" />
+              <input
+                type="text"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                placeholder="Buscar no cardápio..."
+                className="w-full pl-12 pr-12 py-4 text-lg bg-zinc-800 text-white placeholder-zinc-500 rounded-2xl border-2 border-zinc-700 focus:outline-none focus:border-amber-500"
+              />
+              {busca ? (
+                <button
+                  type="button"
+                  onClick={() => setBusca('')}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white cursor-pointer"
+                >
+                  <i className="ri-close-line text-xl" />
+                </button>
+              ) : null}
+            </div>
+
+            {buscaNorm ? (
+              <p className="text-zinc-400 text-base font-semibold mb-4">
+                {itens.length} resultado{itens.length !== 1 ? 's' : ''} para “{busca.trim()}”
+              </p>
+            ) : null}
+
             <div className="flex flex-col gap-4">
               {itens.map((item) => {
                 const qtd = qtdNoCarrinho(item.id);

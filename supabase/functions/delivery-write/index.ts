@@ -78,6 +78,21 @@ async function orsRoute(storeLat: number, storeLng: number, destLat: number, des
   }
 }
 
+/** Valor aplicável de um voucher sobre um valor de pedido (espelha voucher-write). */
+function voucherApplicable(v: Record<string, any>, orderAmt: number): number {
+  let a = 0;
+  if (v.voucher_type === "gift_card" || v.voucher_type === "cashback") {
+    a = orderAmt > 0 ? Math.min(Number(v.current_balance ?? 0), orderAmt) : Number(v.current_balance ?? 0);
+  } else if (v.voucher_type === "discount") {
+    if (v.discount_type === "fixed") {
+      a = orderAmt > 0 ? Math.min(Number(v.discount_value ?? 0), orderAmt) : Number(v.discount_value ?? 0);
+    } else if (v.discount_type === "percent") {
+      a = orderAmt > 0 ? orderAmt * (Number(v.discount_value ?? 0) / 100) : 0;
+    }
+  }
+  return Math.round(a * 100) / 100;
+}
+
 const RATE_LIMIT_WINDOW_MIN = 10;
 const MAX_ORDERS_PER_PHONE = 3;
 const MAX_ORDERS_PER_IP = 15;
@@ -226,18 +241,38 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const { data: rows, error } = await admin.rpc("fn_delivery_lookup_customer", { p_tenant_id: tenant_id, p_phone: cleanPhone });
       if (error) throw error;
       const row = (rows && rows.length > 0) ? rows[0] : null;
-      const customer = row ? { id: row.id, phone: row.phone, name: row.name, neighborhood_id: row.neighborhood_id, street: row.street, number: row.number, complement: row.complement, reference_point: row.reference_point, last_used_at: row.last_used_at, delivery_neighborhoods: row.neighborhood_id ? { id: row.neighborhood_id, name: row.neighborhood_name, delivery_fee: row.neighborhood_delivery_fee } : null } : null;
+      const customer = row ? { id: row.id, phone: row.phone, name: row.name, neighborhood_id: row.neighborhood_id, street: row.street, number: row.number, complement: row.complement, reference_point: row.reference_point, last_used_at: row.last_used_at, birth_date: null as string | null, gender: null as string | null, delivery_neighborhoods: row.neighborhood_id ? { id: row.neighborhood_id, name: row.neighborhood_name, delivery_fee: row.neighborhood_delivery_fee } : null } : null;
+      // Anexa nascimento/gênero salvos no cadastro de clientes (aba Clientes) p/ pré-preencher.
+      if (customer) {
+        const { data: custRow } = await admin.from("customers").select("birth_date, gender").eq("tenant_id", tenant_id).eq("phone", cleanPhone).limit(1).maybeSingle();
+        if (custRow) { customer.birth_date = custRow.birth_date ?? null; customer.gender = custRow.gender ?? null; }
+      }
       let addresses: Array<Record<string, unknown>> = [];
       if (customer) { const { data: addrRows } = await admin.from("delivery_customer_addresses").select("id, label, neighborhood_id, street, number, complement, reference_point, is_default, lat, lng, bairro").eq("customer_id", customer.id).eq("tenant_id", tenant_id).order("is_default", { ascending: false }); if (addrRows) addresses = addrRows.map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, lat: a.lat, lng: a.lng, bairro: a.bairro, neighborhood_name: null, neighborhood_delivery_fee: 0, neighborhood_is_active: true })); }
       return new Response(JSON.stringify({ _v: "v14", customer, addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "save_customer") {
-      const { tenant_id, phone, name, neighborhood_id, street, number, complement, reference_point, bairro, address_lat, address_lng } = body;
+      const { tenant_id, phone, name, neighborhood_id, street, number, complement, reference_point, bairro, address_lat, address_lng, birth_date, gender } = body;
       if (!tenant_id || !phone || !name) return jsonErr("tenant_id, phone e name sao obrigatorios", 400);
       const cleanPhone = String(phone).replace(/\D/g, "");
       const { data: rows, error } = await admin.rpc("fn_delivery_save_customer", { p_tenant_id: tenant_id, p_phone: cleanPhone, p_name: name.trim(), p_neighborhood_id: neighborhood_id || null, p_street: street || null, p_number: number || null, p_complement: complement || null, p_reference_point: reference_point || null });
       if (error) throw error;
+
+      // Persiste nascimento/gênero no cadastro de clientes (aba Clientes), quando informados.
+      const scGender = (typeof gender === "string" && ["masculino", "feminino", "outro"].includes(gender.trim().toLowerCase())) ? gender.trim().toLowerCase() : null;
+      const scBirth = (typeof birth_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(birth_date.trim())) ? birth_date.trim() : null;
+      if (scGender || scBirth) {
+        const scUpd: Record<string, unknown> = {};
+        if (scBirth) scUpd.birth_date = scBirth;
+        if (scGender) scUpd.gender = scGender;
+        const { data: existingCust } = await admin.from("customers").select("id").eq("tenant_id", tenant_id).eq("phone", cleanPhone).limit(1);
+        if (existingCust && existingCust.length > 0) {
+          await admin.from("customers").update(scUpd).eq("id", existingCust[0].id);
+        } else {
+          await admin.from("customers").insert({ tenant_id, name: name.trim(), phone: cleanPhone, first_visit_at: new Date().toISOString(), visit_count: 0, total_spent: 0, loyalty_points: 0, loyalty_tier: "bronze", accepts_marketing: false, ...scUpd });
+        }
+      }
       const row = (rows && rows.length > 0) ? rows[0] : null;
       const customer = row ? { id: row.id, phone: row.phone, name: row.name, neighborhood_id: row.neighborhood_id, street: row.street, number: row.number, complement: row.complement, reference_point: row.reference_point, last_used_at: row.last_used_at, delivery_neighborhoods: row.neighborhood_id ? { id: row.neighborhood_id, name: row.neighborhood_name, delivery_fee: row.neighborhood_delivery_fee } : null } : null;
       const sLat = (address_lat != null && address_lat !== "") ? Number(address_lat) : null;
@@ -408,6 +443,20 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ _v: "v14", addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (action === "validate_voucher") {
+      const { tenant_id, code, order_amount } = body;
+      if (!tenant_id || !code) return jsonErr("tenant_id e code obrigatorios", 400);
+      const okResp = (obj: Record<string, unknown>) => new Response(JSON.stringify({ _v: "v14", ...obj }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { data: voucher } = await admin.from("vouchers").select("*").eq("tenant_id", tenant_id).eq("code", String(code).trim().toUpperCase()).maybeSingle();
+      if (!voucher) return okResp({ valid: false, applicable_amount: 0, reason: "not_found" });
+      if (voucher.expires_at && new Date(voucher.expires_at) < new Date()) return okResp({ valid: false, applicable_amount: 0, reason: "expired" });
+      if (voucher.status !== "active") return okResp({ valid: false, applicable_amount: 0, reason: voucher.status });
+      if (voucher.voucher_type === "free_item") return okResp({ valid: false, applicable_amount: 0, reason: "free_item_indisponivel" });
+      const applicable = voucherApplicable(voucher, Number(order_amount ?? 0));
+      if (applicable <= 0) return okResp({ valid: false, applicable_amount: 0, reason: "sem_desconto" });
+      return okResp({ valid: true, applicable_amount: applicable, code: voucher.code, voucher_type: voucher.voucher_type });
+    }
+
     if (action === "create_delivery_order") {
       const {
         tenant_id, customer_id, customer_name, customer_phone,
@@ -418,8 +467,18 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         total_amount: _clientTotal,
         notes, payment_method, cash_amount, order_type,
         address_lat, address_lng,
+        birth_date, gender,
+        voucher_code,
         client_request_id,
       } = body;
+
+      // Normaliza gênero p/ os valores aceitos no banco (ou null).
+      const normGender = (typeof gender === "string" && ["masculino", "feminino", "outro"].includes(gender.trim().toLowerCase()))
+        ? gender.trim().toLowerCase()
+        : null;
+      const normBirth = (typeof birth_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(birth_date.trim()))
+        ? birth_date.trim()
+        : null;
 
       if (!tenant_id || !customer_id || !Array.isArray(clientItems) || clientItems.length === 0) {
         return jsonErr("Dados incompletos", 400);
@@ -672,19 +731,37 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         }
       }
 
-      const serverTotal = serverSubtotal + serverDeliveryFee;
+      // Voucher (opcional): valida server-side e calcula o desconto sobre o subtotal.
+      // O resgate efetivo (baixa de saldo + transação) só acontece após criar o pedido.
+      let voucherDiscount = 0;
+      let voucherRow: Record<string, any> | null = null;
+      const vCode = (typeof voucher_code === "string" && voucher_code.trim()) ? voucher_code.trim().toUpperCase() : null;
+      if (vCode) {
+        const { data: v } = await admin.from("vouchers").select("*").eq("tenant_id", tenant_id).eq("code", vCode).maybeSingle();
+        const expirado = v?.expires_at && new Date(v.expires_at) < new Date();
+        if (v && v.status === "active" && !expirado && v.voucher_type !== "free_item") {
+          let d = voucherApplicable(v, serverSubtotal);
+          if (d > serverSubtotal) d = serverSubtotal;
+          if (d > 0) { voucherDiscount = d; voucherRow = v; }
+        }
+      }
+
+      const serverTotal = Math.max(0, serverSubtotal + serverDeliveryFee - voucherDiscount);
 
       let realCustomerId: string | null = null;
       if (cleanPhone) {
         const { data: existingCustomers } = await admin.from("customers").select("id, name").eq("tenant_id", tenant_id).eq("phone", cleanPhone).limit(1);
         if (existingCustomers && existingCustomers.length > 0) {
           realCustomerId = existingCustomers[0].id;
-          if (customer_name && customer_name.trim() && customer_name.trim() !== existingCustomers[0].name) {
-            await admin.from("customers").update({ name: customer_name.trim() }).eq("id", realCustomerId);
-          }
+          const upd: Record<string, unknown> = {};
+          if (customer_name && customer_name.trim() && customer_name.trim() !== existingCustomers[0].name) upd.name = customer_name.trim();
+          if (normBirth) upd.birth_date = normBirth;
+          if (normGender) upd.gender = normGender;
+          if (Object.keys(upd).length > 0) await admin.from("customers").update(upd).eq("id", realCustomerId);
         } else {
           const { data: newCustomer } = await admin.from("customers").insert({
             tenant_id, name: customer_name || "Cliente Delivery", phone: cleanPhone,
+            birth_date: normBirth, gender: normGender,
             first_visit_at: new Date().toISOString(),
             visit_count: 0, total_spent: 0,
             loyalty_points: 0, loyalty_tier: "bronze", accepts_marketing: false,
@@ -723,7 +800,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           status: "new", origin_type: "delivery", destination_type: "delivery",
           destination_name: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
           destination_phone: customer_phone,
-          customer_id: realCustomerId, discount_amount: 0, service_fee_amount: 0,
+          customer_id: realCustomerId, discount_amount: voucherDiscount, service_fee_amount: 0,
           subtotal: serverSubtotal,
           total_amount: serverTotal,
           is_training: false, is_draft: false,
@@ -776,6 +853,20 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         p_order_id: orderId, p_tenant_id: tenant_id, p_items: serverItems,
       });
       if (itemsErr) throw itemsErr;
+
+      // Resgate do voucher (baixa de saldo + transação) — só após o pedido existir.
+      if (voucherRow && voucherDiscount > 0) {
+        try {
+          const isSaldo = voucherRow.voucher_type === "gift_card" || voucherRow.voucher_type === "cashback";
+          const newBalance = isSaldo ? Math.max(0, Number(voucherRow.current_balance ?? 0) - voucherDiscount) : 0;
+          const newStatus = newBalance <= 0 ? "depleted" : "active";
+          await admin.from("vouchers").update({ current_balance: newBalance, status: newStatus }).eq("id", voucherRow.id);
+          await admin.from("voucher_transactions").insert({
+            tenant_id, voucher_id: voucherRow.id, order_id: orderId,
+            transaction_type: "redeemed", amount: voucherDiscount, balance_after: newBalance, processed_by: null,
+          });
+        } catch (_e) { /* nao bloqueia o pedido se o resgate falhar */ }
+      }
 
       const dataHora = new Date().toLocaleString("pt-BR", {
         day: "2-digit", month: "2-digit", year: "numeric",
@@ -857,6 +948,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           (!isRetirada && routeKm != null) ? "Distancia: ~" + routeKm.toFixed(1) + " km" + (routeTempoMax ? " (ate " + routeTempoMax + " min)" : "") : "",
           serverDeliveryFee > 0 ? "Taxa de entrega: " + fmtPrice(serverDeliveryFee) : "",
           "Subtotal: " + fmtPrice(serverSubtotal),
+          voucherDiscount > 0 ? "Desconto voucher" + (vCode ? " (" + vCode + ")" : "") + ": -" + fmtPrice(voucherDiscount) : "",
           "TOTAL: " + fmtPrice(serverTotal),
           "Pagamento: " + (payment_method || "Nao informado"),
           isDinheiro && cash_amount !== undefined && cash_amount !== null && Number(cash_amount) > 0
@@ -896,6 +988,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           id: orderId, number: orderNumber,
           total: serverTotal,
           delivery_fee: serverDeliveryFee,
+          voucher_discount: voucherDiscount,
           distance_km: routeKm,
           route_min: routeDurationMin,
           sla_min: routeTempoMax,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Voucher, VoucherStatus, VoucherType } from '@/types/vouchers';
 import EmitirVoucherModal from './components/EmitirVoucherModal';
@@ -42,16 +42,20 @@ export default function VouchersPage() {
     if (!user?.tenantId) return;
     setLoading(true);
     try {
-      let query = supabase
-        .from('vouchers')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (filterStatus !== 'all') query = query.eq('status', filterStatus);
-      if (filterType !== 'all') query = query.eq('voucher_type', filterType);
-
-      const { data } = await query;
-      setVouchers((data ?? []) as Voucher[]);
+      // Via Edge Function (service role) com active_tenant_id explícito — leitura direta
+      // em `vouchers` é não-confiável p/ admin multi-loja (RLS usa auth_tenant_id() =
+      // última membership). Mesmo padrão do config-delivery.
+      const { data, error } = await invokeWithAuth('voucher-write', {
+        body: {
+          action: 'list_vouchers',
+          active_tenant_id: user.tenantId,
+          status: filterStatus !== 'all' ? filterStatus : undefined,
+          voucher_type: filterType !== 'all' ? filterType : undefined,
+        },
+      });
+      if (!error && data) {
+        setVouchers(((data as { data?: Voucher[] }).data ?? []) as Voucher[]);
+      }
     } finally {
       setLoading(false);
     }

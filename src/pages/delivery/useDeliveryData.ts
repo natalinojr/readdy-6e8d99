@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, type MutableRefObject } from 'react';
 import { supabase } from '@/lib/supabase';
+import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,8 @@ type DeliveryCustomer = {
   complement: string | null;
   reference_point: string | null;
   last_used_at: string;
+  birth_date?: string | null;
+  gender?: string | null;
   delivery_neighborhoods?: Neighborhood | null;
 };
 
@@ -138,6 +141,7 @@ type ProductionPart = {
 type ProductionPartsMap = Record<string, ProductionPart[]>;
 
 const DESTAQUES_CATEGORY_ID = '__destaques__';
+const PROMOCAO_CATEGORY_ID = '__promocao__';
 
 function mergeHighlightsIntoCardapio(
   categories: CardapioCategory[],
@@ -359,9 +363,6 @@ async function fetchDeliveryConfig(
       data.highlights || [],
     );
 
-    setters.setCategories(merged.categories);
-    setters.setItems(merged.items);
-
     // Merge promotions into items
     const allPromotions: Promotion[] = data.promotions || [];
     const mergedItemsWithPromos = merged.items.map(function (item) {
@@ -369,7 +370,23 @@ async function fetchDeliveryConfig(
         promotions: allPromotions.filter(function (p) { return p.item_id === item.id; }),
       });
     });
-    setters.setItems(mergedItemsWithPromos);
+
+    // Categoria virtual "Promoção": itens (não-destaque) com promoção válida HOJE.
+    const promoItems: typeof mergedItemsWithPromos = mergedItemsWithPromos
+      .filter(function (item) {
+        return item.category_id !== DESTAQUES_CATEGORY_ID && rawPromoAtivaHoje(item.promotions) != null;
+      })
+      .map(function (item) { return { ...item, category_id: PROMOCAO_CATEGORY_ID }; });
+
+    let finalCategories = merged.categories;
+    let finalItems = mergedItemsWithPromos;
+    if (promoItems.length > 0) {
+      const promoCategory: CardapioCategory = { id: PROMOCAO_CATEGORY_ID, name: '🔥 Promoção', order_index: -0.5, station_id: null };
+      finalCategories = [promoCategory].concat(merged.categories);
+      finalItems = promoItems.concat(mergedItemsWithPromos);
+    }
+    setters.setCategories(finalCategories);
+    setters.setItems(finalItems);
 
     setters.setOptionGroups(data.option_groups || []);
     setters.setOptions(data.options || []);
@@ -413,8 +430,8 @@ async function fetchDeliveryConfig(
       setters.setTiers([]);
     }
 
-    if (merged.categories && merged.categories.length > 0) {
-      setters.setCategoriaAtiva(merged.categories[0].id);
+    if (finalCategories && finalCategories.length > 0) {
+      setters.setCategoriaAtiva(finalCategories[0].id);
     }
 
     const hoods: Neighborhood[] = data.neighborhoods || [];
@@ -463,6 +480,14 @@ export function useDeliveryData(storeSlug?: string) {
   const [customer, setCustomer] = useState<DeliveryCustomer | null>(null);
   const [phone, setPhone] = useState('');
   const [customerName, setCustomerName] = useState('');
+  const [dataNascimento, setDataNascimento] = useState('');
+  const [genero, setGenero] = useState('');
+  // Voucher aplicado no checkout do delivery
+  const [voucherInput, setVoucherInput] = useState('');
+  const [voucherCodigo, setVoucherCodigo] = useState('');
+  const [voucherDesconto, setVoucherDesconto] = useState(0);
+  const [voucherMsg, setVoucherMsg] = useState('');
+  const [voucherLoading, setVoucherLoading] = useState(false);
   const [selectedNeighborhoodId, setSelectedNeighborhoodId] = useState('');
   const [street, setStreet] = useState('');
   const [addressNumber, setAddressNumber] = useState('');
@@ -540,6 +565,12 @@ export function useDeliveryData(storeSlug?: string) {
     setCustomer(null);
     setPhone('');
     setCustomerName('');
+    setDataNascimento('');
+    setGenero('');
+    setVoucherInput('');
+    setVoucherCodigo('');
+    setVoucherDesconto(0);
+    setVoucherMsg('');
     setSelectedNeighborhoodId('');
     setStreet('');
     setAddressNumber('');
@@ -612,6 +643,8 @@ export function useDeliveryData(storeSlug?: string) {
               const c = lookupData.customer;
               setCustomer(c);
               setCustomerName(c.name);
+              if (c.birth_date) setDataNascimento(String(c.birth_date).slice(0, 10));
+              if (c.gender) setGenero(c.gender);
               setPhone(c.phone);
 
               const addresses = lookupData.addresses || [];
@@ -705,6 +738,8 @@ export function useDeliveryData(storeSlug?: string) {
           const c: DeliveryCustomer = data.customer;
           setCustomer(c);
           setCustomerName(c.name);
+          if (c.birth_date) setDataNascimento(String(c.birth_date).slice(0, 10));
+          if (c.gender) setGenero(c.gender);
           setPhone(c.phone);
 
           // Carrega endereços salvos
@@ -795,6 +830,8 @@ export function useDeliveryData(storeSlug?: string) {
         bairro: bairro.trim() || null,
         address_lat: addressLat,
         address_lng: addressLng,
+        birth_date: dataNascimento || null,
+        gender: genero || null,
       }),
     })
       .then(function (res) { return res.json(); })
@@ -1253,6 +1290,9 @@ export function useDeliveryData(storeSlug?: string) {
         customer_name: customerName,
         customer_phone: phone,
         customer_address: endereco,
+        birth_date: dataNascimento || null,
+        gender: genero || null,
+        voucher_code: voucherCodigo || null,
         neighborhood_name: bairroName,
         neighborhood_id: selectedNeighborhoodId,
         delivery_fee: effectiveDeliveryFee,
@@ -1298,7 +1338,59 @@ export function useDeliveryData(storeSlug?: string) {
     setNumeroPedido('');
     setErrorMsg('');
     setEnderecoFromCardapio(false);
+    setVoucherInput('');
+    setVoucherCodigo('');
+    setVoucherDesconto(0);
+    setVoucherMsg('');
     setStep('cardapio');
+  }
+
+  // ── Voucher (cupom) no checkout do delivery ─────────────────────────────────
+
+  function voucherMotivo(reason?: string): string {
+    if (reason === 'not_found') return 'Cupom não encontrado.';
+    if (reason === 'expired') return 'Cupom expirado.';
+    if (reason === 'depleted') return 'Cupom já utilizado.';
+    if (reason === 'cancelled') return 'Cupom cancelado.';
+    if (reason === 'free_item_indisponivel') return 'Este cupom não é válido para delivery.';
+    if (reason === 'sem_desconto') return 'Cupom sem desconto aplicável a este pedido.';
+    return 'Cupom inválido.';
+  }
+
+  async function handleAplicarVoucher() {
+    const code = voucherInput.trim();
+    if (!code || !tenant) return;
+    const subtotal = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
+    setVoucherLoading(true);
+    setVoucherMsg('');
+    try {
+      const res = await fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'validate_voucher', tenant_id: tenant.id, code, order_amount: subtotal }),
+      });
+      const data = await res.json();
+      if (data && data.valid) {
+        setVoucherCodigo(data.code);
+        setVoucherDesconto(Number(data.applicable_amount) || 0);
+        setVoucherMsg('');
+      } else {
+        setVoucherCodigo('');
+        setVoucherDesconto(0);
+        setVoucherMsg(voucherMotivo(data && data.reason));
+      }
+    } catch (_e) {
+      setVoucherMsg('Erro ao validar o cupom. Tente novamente.');
+    } finally {
+      setVoucherLoading(false);
+    }
+  }
+
+  function handleRemoverVoucher() {
+    setVoucherInput('');
+    setVoucherCodigo('');
+    setVoucherDesconto(0);
+    setVoucherMsg('');
   }
 
   // ── Mudar bairro (no checkout) ──────────────────────────────────────────────
@@ -1398,6 +1490,16 @@ export function useDeliveryData(storeSlug?: string) {
     customerId,
     phone,
     customerName,
+    dataNascimento,
+    genero,
+    voucherInput,
+    setVoucherInput,
+    voucherCodigo,
+    voucherDesconto,
+    voucherMsg,
+    voucherLoading,
+    handleAplicarVoucher,
+    handleRemoverVoucher,
     selectedNeighborhoodId,
     street,
     addressNumber,
@@ -1435,6 +1537,8 @@ export function useDeliveryData(storeSlug?: string) {
     storeWhatsapp,
     setPhone,
     setCustomerName,
+    setDataNascimento,
+    setGenero,
     setSelectedNeighborhoodId,
     setStreet,
     setAddressNumber,

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, type MutableRefObject } from 'react';
 import { useParams } from 'react-router-dom';
 import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
+import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -108,6 +109,7 @@ type Highlight = {
 };
 
 const DESTAQUES_CATEGORY_ID = '__destaques__';
+const PROMOCAO_CATEGORY_ID = '__promocao__';
 
 function mergeHighlightsIntoCardapio(
   categories: CardapioCategory[],
@@ -181,8 +183,6 @@ async function fetchCardapioData(tenantId: string, setters: {
       data.highlights || [],
     );
 
-    setters.setCategories(merged.categories);
-    setters.setItems(merged.items);
     setters.setOptionGroups(data.option_groups || []);
     setters.setOptions(data.options || []);
     setters.setObservations(data.observations || []);
@@ -196,7 +196,23 @@ async function fetchCardapioData(tenantId: string, setters: {
         promotions: allPromotions.filter(function (p) { return p.item_id === item.id; }),
       });
     });
-    setters.setItems(mergedItems);
+
+    // Categoria virtual "Promoção": itens (não-destaque) com promoção válida HOJE.
+    const promoItems: typeof mergedItems = mergedItems
+      .filter(function (item) {
+        return item.category_id !== DESTAQUES_CATEGORY_ID && rawPromoAtivaHoje(item.promotions) != null;
+      })
+      .map(function (item) { return { ...item, category_id: PROMOCAO_CATEGORY_ID }; });
+
+    let finalCategories = merged.categories;
+    let finalItems = mergedItems;
+    if (promoItems.length > 0) {
+      const promoCategory: CardapioCategory = { id: PROMOCAO_CATEGORY_ID, name: '🔥 Promoção', order_index: -0.5, station_id: null };
+      finalCategories = [promoCategory].concat(merged.categories);
+      finalItems = promoItems.concat(mergedItems);
+    }
+    setters.setCategories(finalCategories);
+    setters.setItems(finalItems);
 
     if (data.production_parts) {
       setters.productionPartsRef.current = data.production_parts;
@@ -205,8 +221,8 @@ async function fetchCardapioData(tenantId: string, setters: {
     } else {
       console.warn('[mesa-qr] fetchCardapioData: NENHUM production_parts na resposta!');
     }
-    if (merged.categories && merged.categories.length > 0) {
-      setters.setCategoriaAtiva(merged.categories[0].id);
+    if (finalCategories && finalCategories.length > 0) {
+      setters.setCategoriaAtiva(finalCategories[0].id);
     }
   } catch {
     // Silencioso

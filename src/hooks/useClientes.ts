@@ -15,6 +15,8 @@ export interface ClienteCRM {
   id: string;
   nome: string;
   celular: string;
+  dataNascimento: string | null;
+  genero: string | null;
   primeiraVisita: string;
   ultimaVisita: string;
   totalVisitas: number;
@@ -63,6 +65,8 @@ export function useClientes() {
           id: c.id as string,
           nome: c.nome as string,
           celular: (c.celular as string) ?? '',
+          dataNascimento: (c.dataNascimento as string) ?? null,
+          genero: (c.genero as string) ?? null,
           primeiraVisita: c.primeiraVisita as string,
           ultimaVisita: c.ultimaVisita as string,
           totalVisitas: (c.totalVisitas as number) ?? 0,
