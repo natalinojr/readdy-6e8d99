@@ -2,7 +2,8 @@ import type { KDSPedido, KDSItem, KDSItemStatus } from '@/types/kds';
 import { sendToPrinter } from '@/lib/printUtils';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
 import { useToast } from '@/contexts/ToastContext';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 import PedidoEditHistory from './PedidoEditHistory';
 
 const ORIGEM_LABELS: Record<string, { label: string; cor: string }> = {
@@ -221,6 +222,34 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar, onEntre
   const totalComItens = pedido.itens.reduce((acc, i) => acc + (i.item_price ?? 0) * i.quantidade, 0);
   const displayTotal = pedido.totalAmount > 0 ? pedido.totalAmount : totalComItens;
 
+  // Fase 4: pin/rota do cliente (busca sob demanda; orders_select_by_user_tenant cobre multi-loja)
+  const [deliveryGeo, setDeliveryGeo] = useState<{ lat: number | null; lng: number | null; address: string | null; distanceKm: number | null } | null>(null);
+  useEffect(() => {
+    let cancel = false;
+    if (!isDelivery || !pedido.id) { setDeliveryGeo(null); return; }
+    supabase
+      .from('orders')
+      .select('delivery_lat, delivery_lng, delivery_address, delivery_distance_km')
+      .eq('id', pedido.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancel || !data) return;
+        setDeliveryGeo({
+          lat: data.delivery_lat != null ? Number(data.delivery_lat) : null,
+          lng: data.delivery_lng != null ? Number(data.delivery_lng) : null,
+          address: data.delivery_address ?? null,
+          distanceKm: data.delivery_distance_km != null ? Number(data.delivery_distance_km) : null,
+        });
+      });
+    return () => { cancel = true; };
+  }, [isDelivery, pedido.id]);
+
+  const enderecoEntrega = (deliveryGeo?.address) || pedido.deliveryAddress || '';
+  const temCoordEntrega = !!(deliveryGeo && deliveryGeo.lat != null && deliveryGeo.lng != null);
+  const mapsUrl = temCoordEntrega
+    ? `https://www.google.com/maps/dir/?api=1&destination=${deliveryGeo!.lat},${deliveryGeo!.lng}`
+    : (enderecoEntrega ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(enderecoEntrega)}` : null);
+
   const handlePrint = async () => {
     const html = buildPedidoHTML(pedido, displayTotal);
     const result = await sendToPrinter(html, impressoraPedidos, undefined, { paperWidthPx: 320 });
@@ -346,6 +375,53 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar, onEntre
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Entrega: endereço + rota no mapa (Fase 4 — pin do cliente) */}
+          {isDelivery && (enderecoEntrega || temCoordEntrega) && (
+            <div className="rounded-xl border border-orange-200 bg-orange-50/40 p-3 space-y-2">
+              <p className="text-[10px] font-black text-orange-700 uppercase tracking-wider flex items-center gap-1.5">
+                <i className="ri-map-pin-2-line" />Entrega
+                {temCoordEntrega && deliveryGeo?.distanceKm != null && (
+                  <span className="text-[9px] font-bold text-zinc-500 normal-case tracking-normal">
+                    · ~{deliveryGeo.distanceKm.toFixed(1)} km da loja
+                  </span>
+                )}
+              </p>
+              {enderecoEntrega && (
+                <p className="text-xs text-zinc-700 leading-snug">{enderecoEntrega}</p>
+              )}
+              <div className="flex items-center gap-2">
+                {mapsUrl && (
+                  <button
+                    type="button"
+                    onClick={() => window.open(mapsUrl, '_blank', 'noopener')}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+                  >
+                    <i className="ri-route-line text-sm" />Rota no Google Maps
+                  </button>
+                )}
+                {pedido.customerPhone && (
+                  <button
+                    type="button"
+                    onClick={() => window.open('https://wa.me/55' + pedido.customerPhone!.replace(/\D/g, ''), '_blank', 'noopener')}
+                    title="WhatsApp do cliente"
+                    className="inline-flex items-center justify-center px-3 py-2 bg-green-500 hover:bg-green-600 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
+                  >
+                    <i className="ri-whatsapp-line text-sm" />
+                  </button>
+                )}
+              </div>
+              {temCoordEntrega ? (
+                <p className="text-[10px] text-green-600 flex items-center gap-1">
+                  <i className="ri-map-pin-fill text-[9px]" />Localização exata marcada pelo cliente
+                </p>
+              ) : enderecoEntrega ? (
+                <p className="text-[10px] text-amber-600 flex items-center gap-1">
+                  <i className="ri-information-line text-[9px]" />Sem pino — abre pela busca do endereço
+                </p>
+              ) : null}
+            </div>
+          )}
+
           {kitchenItens.length > 0 && (
             <div>
               <p className="text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
