@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import MapaPin from '@/components/feature/MapaPin';
+import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
 import type { DeliveryQuote, SavedAddress } from '../useDeliveryData';
 
 interface Props {
@@ -381,7 +382,7 @@ export default function EnderecoPinDelivery(props: Props) {
         </div>
       </div>
 
-      <div className="flex-1 px-4 py-5 max-w-lg mx-auto w-full space-y-5">
+      <div className="flex-1 px-4 py-5 max-w-lg mx-auto w-full space-y-5" onFocus={scrollFocusedFieldIntoView}>
         {/* ── LISTA de endereços salvos (cliente existente) ── */}
         {formMode === 'list' && temListaSalva ? (
           <>

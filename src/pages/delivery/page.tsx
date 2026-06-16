@@ -10,6 +10,7 @@ import CardapioMesaQR from '../mesa-qr/components/CardapioMesaQR';
 import CarrinhoDelivery from './components/CarrinhoDelivery';
 import EditarItemMesaQRModal from '../mesa-qr/components/EditarItemMesaQRModal';
 import ModoEntregaDelivery from './components/ModoEntregaDelivery';
+import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
 
 // ── Helpers de ícones de tipo de endereço ─────────────────────────────────────
 
@@ -956,7 +957,7 @@ export default function DeliveryPage() {
                 className="absolute inset-0 bg-black/50 backdrop-blur-sm"
                 onClick={function () { if (!enviando) { setShowPagamentoModal(false); setValorDinheiro(''); setErroValorDinheiro(''); } }}
               />
-              <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl p-6 pb-8 z-10 animate-slide-up">
+              <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl p-6 pb-8 z-10 animate-slide-up max-h-[90vh] overflow-y-auto" onFocus={scrollFocusedFieldIntoView}>
                 <div className="w-10 h-1.5 bg-zinc-200 rounded-full mx-auto mb-5 sm:hidden" />
 
                 <div className="text-center mb-6">
