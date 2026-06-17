@@ -7,7 +7,6 @@ import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import SelecionarLojaPage from '../../pages/selecionar-loja/page';
 import RotaProtegida from './RotaProtegida';
-import AlertaSessaoEsquecida from './AlertaSessaoEsquecida';
 
 // Rotas publicas — acessiveis SEM autenticacao
 const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/autoatendimento', '/mesa/', '/mesa-qr/', '/pedido/'];
@@ -108,7 +107,8 @@ export default function AppLayout() {
         <TopBar onMenuToggle={() => setSidebarOpen((v) => !v)} />
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
           <RotaProtegida>
-            <AlertaSessaoEsquecida />
+            {/* O alerta de sessão esquecida é renderizado apenas no PDV Caixa
+                (src/pages/pdv/caixa/page.tsx), não globalmente. */}
             <Outlet />
           </RotaProtegida>
         </main>
