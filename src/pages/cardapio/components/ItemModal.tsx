@@ -11,6 +11,7 @@ import DeliveryTab from './DeliveryTab';
 import ItemImage from '@/components/base/ItemImage';
 import { uploadMenuImage } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useProducao } from '@/contexts/ProducaoContext';
 import type { Insumo } from '@/contexts/EstoqueContext';
@@ -67,6 +68,8 @@ type TabLocal = 'info' | 'producao' | 'opcoes' | 'promocoes' | 'observacoes' | '
 
 export default function ItemModal({ item, categorias, obsGlobais, estacoes, saving, onSave, onClose }: Props) {
   const { user } = useAuth();
+  const { hasPermissao } = usePermissoes();
+  const podeAlterarPreco = hasPermissao('cardapio_alterar_preco');
   const { insumos } = useEstoque();
   const { recipes, getBatchesByRecipeId } = useProducao();
   const estacoesNomes = estacoes.map(e => e.nome);
@@ -311,11 +314,18 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                   <input
                     type="number"
                     step="0.01"
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 transition-colors"
+                    disabled={!podeAlterarPreco}
+                    title={!podeAlterarPreco ? 'Seu perfil não pode alterar preços' : undefined}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 transition-colors disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
                     placeholder="0,00"
                     value={preco}
                     onChange={e => setPreco(e.target.value)}
                   />
+                  {!podeAlterarPreco && (
+                    <p className="text-[10px] text-zinc-400 mt-1 flex items-center gap-1">
+                      <i className="ri-lock-line" /> Sem permissão para alterar preço
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1.5">

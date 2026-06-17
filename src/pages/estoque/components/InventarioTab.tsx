@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import { useEstoque, type InventarioSession } from '../../../contexts/EstoqueContext';
 import ContagemInventario from './ContagemInventario';
 
@@ -145,6 +146,8 @@ function DetalheSession({ session, onVoltar }: { session: InventarioSession; onV
 export default function InventarioTab() {
   const { inventarioSessions } = useEstoque();
   const { user } = useAuth();
+  const { hasPermissao } = usePermissoes();
+  const podeInventariar = hasPermissao('estoque_inventario');
   const [view, setView] = useState<View>('historico');
   const [sessionDetalhe, setSessionDetalhe] = useState<InventarioSession | null>(null);
   const [startFresh, setStartFresh] = useState(false);
@@ -154,6 +157,7 @@ export default function InventarioTab() {
   const hasDraft = temRascunhoSalvo(tenantId);
 
   const handleNovaContagem = () => {
+    if (!podeInventariar) return;
     if (hasDraft) {
       setShowDraftModal(true);
     } else {
@@ -163,12 +167,14 @@ export default function InventarioTab() {
   };
 
   const handleRetomarRascunho = () => {
+    if (!podeInventariar) return;
     setShowDraftModal(false);
     setStartFresh(false);
     setView('contagem');
   };
 
   const handleNovaContagemLimpa = () => {
+    if (!podeInventariar) return;
     setShowDraftModal(false);
     setStartFresh(true);
     setView('contagem');
@@ -235,13 +241,15 @@ export default function InventarioTab() {
               : `${inventarioSessions.length} contagen${inventarioSessions.length > 1 ? 's' : ''} registrada${inventarioSessions.length > 1 ? 's' : ''}`}
           </p>
         </div>
-        <button
-          onClick={handleNovaContagem}
-          className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors"
-        >
-          <i className="ri-clipboard-line text-sm" />
-          Nova Contagem
-        </button>
+        {podeInventariar && (
+          <button
+            onClick={handleNovaContagem}
+            className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors"
+          >
+            <i className="ri-clipboard-line text-sm" />
+            Nova Contagem
+          </button>
+        )}
       </div>
 
       {/* Lista de sessões */}
@@ -252,13 +260,17 @@ export default function InventarioTab() {
           </div>
           <p className="text-sm font-semibold text-zinc-500 mb-1">Nenhuma contagem ainda</p>
           <p className="text-xs text-zinc-400 mb-4">Clique em "Nova Contagem" para fazer a primeira contagem de inventário</p>
-          <button
-            onClick={handleNovaContagem}
-            className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors inline-flex items-center gap-2"
-          >
-            <i className="ri-clipboard-line" />
-            Iniciar primeira contagem
-          </button>
+          {podeInventariar ? (
+            <button
+              onClick={handleNovaContagem}
+              className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors inline-flex items-center gap-2"
+            >
+              <i className="ri-clipboard-line" />
+              Iniciar primeira contagem
+            </button>
+          ) : (
+            <p className="text-xs text-zinc-400 italic">Seu perfil não tem permissão para realizar inventário.</p>
+          )}
         </div>
       ) : (
         <div className="space-y-2">

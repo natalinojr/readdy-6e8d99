@@ -229,6 +229,7 @@ Deno.serve(async (req: Request) => {
 
   // ── Validar invite code ANTES de qualquer coisa ──────────────────────────
   let inviteId: string | null = null;
+  let inviteValid = false; // true só quando o convite existe e ainda NÃO foi usado
   if (inviteCode) {
     console.log('[setup-tenant] Validando invite code:', inviteCode);
     const validation = await validateInviteCode(supabaseUrl, serviceRoleKey, inviteCode);
@@ -241,11 +242,15 @@ Deno.serve(async (req: Request) => {
       });
     }
     inviteId = validation.inviteId;
-    console.log('[setup-tenant] Invite id:', inviteId, '| alreadyUsed:', validation.alreadyUsed);
+    inviteValid = validation.valid;
+    console.log('[setup-tenant] Invite id:', inviteId, '| valid:', inviteValid, '| alreadyUsed:', validation.alreadyUsed);
   }
 
   // ── Verificar se o usuário já tem uma loja criada ────────────────────────
-  if (isExistingUserFlow && existingUserId) {
+  // REGRA: um usuário que já tem loja PODE criar outra loja, desde que
+  // apresente um convite VÁLIDO e ainda NÃO usado. Sem convite válido,
+  // mantemos o bloqueio anti-abuso de 1 loja por usuário.
+  if (isExistingUserFlow && existingUserId && !(inviteId && inviteValid)) {
     const existingTenantId = await checkExistingTenant(supabaseUrl, serviceRoleKey, existingUserId);
     if (existingTenantId) {
       console.log('[setup-tenant] Usuário já possui tenant:', existingTenantId, '— verificando se invite precisa ser marcado');
@@ -377,14 +382,24 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Estações de cozinha ─────────────────────────────────────────────────
+    // O fn_setup_tenant_bypass NÃO cria mais estações default (evita duplicatas).
+    // Aqui usamos as estações escolhidas no onboarding; se nenhuma, criamos um
+    // par padrão (Cozinha + Bar) para a loja não nascer sem estação nenhuma.
     const stationMap: Record<string, string> = {};
-    if (estacoes.length > 0) {
-      const stationsPayload = estacoes.map((e: any, i: number) => ({
+    const estacoesToCreate: Array<{ id: string; nome: string; cor: string }> =
+      estacoes.length > 0
+        ? estacoes
+        : [
+            { id: '__default_cozinha__', nome: 'Cozinha', cor: '#f97316' },
+            { id: '__default_bar__', nome: 'Bar', cor: '#06b6d4' },
+          ];
+    {
+      const stationsPayload = estacoesToCreate.map((e: any, i: number) => ({
         tenant_id: tenantId, name: e.nome, color: e.cor, sort_order: i, sla_minutes: 15, is_active: true,
       }));
       const stResult = await restInsert(supabaseUrl, serviceRoleKey, 'kitchen_stations', stationsPayload, 'return=representation', insertAuthToken);
       if (stResult.ok && Array.isArray(stResult.data)) {
-        (stResult.data as any[]).forEach((cs: any, i: number) => { if (estacoes[i]) stationMap[estacoes[i].id] = cs.id; });
+        (stResult.data as any[]).forEach((cs: any, i: number) => { if (estacoesToCreate[i]) stationMap[estacoesToCreate[i].id] = cs.id; });
       }
     }
 
@@ -401,20 +416,30 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Itens do cardápio ───────────────────────────────────────────────────
+    // menu_items.category_id é NOT NULL. Inserir um item com categoria não
+    // mapeada faria o LOTE INTEIRO falhar (perdendo todos os itens). Por isso
+    // só enviamos itens cuja categoria foi de fato criada.
     if (itens.length > 0) {
-      const itensPayload = itens.map((it: any) => ({
-        tenant_id: tenantId,
-        category_id: catMap[it.categoriaId] ?? null,
-        name: it.nome,
-        description: it.descricao ?? null,
-        price: it.preco ?? 0,
-        sla_minutes: it.slaMinutos ?? 10,
-        is_active: true,
-        skip_kds: false,
-        sort_order: 0,
-        channels: { cashier: true, waiter: true, delivery: true, self_service: true, table_qr: true },
-      }));
-      await restInsert(supabaseUrl, serviceRoleKey, 'menu_items', itensPayload, 'return=minimal', insertAuthToken);
+      const itensValidos = (itens as any[]).filter((it: any) => catMap[it.categoriaId]);
+      const itensDescartados = itens.length - itensValidos.length;
+      if (itensDescartados > 0) {
+        console.warn(`[setup-tenant] ${itensDescartados} item(ns) ignorado(s): sem categoria correspondente.`);
+      }
+      if (itensValidos.length > 0) {
+        const itensPayload = itensValidos.map((it: any) => ({
+          tenant_id: tenantId,
+          category_id: catMap[it.categoriaId],
+          name: it.nome,
+          description: it.descricao ?? null,
+          price: it.preco ?? 0,
+          sla_minutes: it.slaMinutos ?? 10,
+          is_active: true,
+          skip_kds: false,
+          sort_order: 0,
+          channels: { cashier: true, waiter: true, delivery: true, self_service: true, table_qr: true },
+        }));
+        await restInsert(supabaseUrl, serviceRoleKey, 'menu_items', itensPayload, 'return=minimal', insertAuthToken);
+      }
     }
 
     // ── Mesas ──────────────────────────────────────────────────────────────

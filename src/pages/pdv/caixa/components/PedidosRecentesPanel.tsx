@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { PedidoRecente, PedidoItemDetalhe, UnidadeItem } from '@/types/pdv';
 import ImprimirPedidoModal from './ImprimirPedidoModal';
 import CancelamentoModal from '@/components/feature/CancelamentoModal';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import { useKDS } from '../../../../contexts/KDSContext';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSPedidoStatus } from '@/types/kds';
 import { kdsStatusToPdvStatus, pdvStatusLabel, pdvStatusBadgeCls, formatOrderNumber } from '@/lib/statusMappers';
@@ -293,6 +294,7 @@ interface ItemDetalheRowProps {
 
 function ItemDetalheRow({ item, entreguesLocal, onEntregar, onEditar, onCancelarItem }: ItemDetalheRowProps) {
   const [expanded, setExpanded] = useState(false);
+  const { hasPermissao } = usePermissoes();
 
   const isUnitEntregue = (u: UnidadeItem) =>
     u.status === 'entregue' || entreguesLocal.has(unitKey(item.id, u.unidade));
@@ -306,8 +308,8 @@ function ItemDetalheRow({ item, entreguesLocal, onEntregar, onEditar, onCancelar
   const isSingleEntregueLocal = item.quantidade === 1 && isUnitEntregue(item.unidades[0]);
   const efetivoStatus = itemEfetivoStatus(item, entreguesLocal);
   const cfg = ITEM_STATUS_CFG[efetivoStatus];
-  const podeEditar = efetivoStatus === 'aguardando' && onEditar;
-  const podeCancelarItem = efetivoStatus !== 'entregue' && efetivoStatus !== 'cancelado';
+  const podeEditar = efetivoStatus === 'aguardando' && onEditar && hasPermissao('pdv_editar_item_pos_kds');
+  const podeCancelarItem = efetivoStatus !== 'entregue' && efetivoStatus !== 'cancelado' && hasPermissao('pdv_cancelar_item');
 
   return (
     <div className={`rounded-lg border border-zinc-200 overflow-hidden transition-all ${cfg.borderCls} ${cfg.bgCls} ${allEntregues ? 'opacity-60' : ''}`}>
@@ -730,6 +732,7 @@ interface PedidoCardAgrupadoProps {
 }
 
 function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: PedidoCardAgrupadoProps) {
+  const { hasPermissao } = usePermissoes();
   const [expanded, setExpanded] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
   const [showEstorno, setShowEstorno] = useState(false);
@@ -1077,7 +1080,7 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
                       </div>
                       <span className="text-xs font-bold text-zinc-700">{formatPrice(p.total)}</span>
                       {/* Botão cancelar pedido específico */}
-                      {p.status !== 'cancelado' && p.status !== 'entregue' && (
+                      {p.status !== 'cancelado' && p.status !== 'entregue' && hasPermissao('pdv_cancelar_pedido') && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setCancelandoOrderId(p.id); }}
                           title={`Cancelar pedido #${String(p.numero).padStart(4, '0')}`}
@@ -1216,13 +1219,13 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
                     className="w-7 h-7 flex items-center justify-center text-zinc-500 hover:text-amber-700 border border-zinc-200 hover:border-amber-300 hover:bg-amber-50 rounded-lg cursor-pointer transition-colors">
                     <i className="ri-printer-line text-sm" />
                   </button>
-                  {!isCancelado && isPago && !estornado && (
+                  {!isCancelado && isPago && !estornado && hasPermissao('pdv_estornar_pagamento') && (
                     <button onClick={() => setShowEstorno(true)} title="Estornar"
                       className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-700 border border-red-200 hover:border-red-400 hover:bg-red-50 rounded-lg cursor-pointer transition-colors">
                       <i className="ri-refund-2-line text-sm" />
                     </button>
                   )}
-                  {!isCancelado && !estornado && (statusEfetivo === 'aberto' || statusEfetivo === 'pronto') && pedidosOriginais.some((p) => p.status !== 'cancelado') && (
+                  {!isCancelado && !estornado && (statusEfetivo === 'aberto' || statusEfetivo === 'pronto') && pedidosOriginais.some((p) => p.status !== 'cancelado') && hasPermissao('pdv_cancelar_pedido') && (
                     <button onClick={() => {
                       const alvo = pedidosOriginais.find((p) => p.status !== 'cancelado');
                       if (alvo) setCancelandoOrderId(alvo.id);
@@ -1287,6 +1290,7 @@ interface PedidoCardProps {
 }
 
 function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: PedidoCardProps) {
+  const { hasPermissao } = usePermissoes();
   const [expanded, setExpanded] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
   const [showEstorno, setShowEstorno] = useState(false);
@@ -1699,13 +1703,13 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
                   className="w-7 h-7 flex items-center justify-center text-zinc-500 hover:text-amber-700 border border-zinc-200 hover:border-amber-300 hover:bg-amber-50 rounded-lg cursor-pointer transition-colors">
                   <i className="ri-printer-line text-sm" />
                 </button>
-                {!isCancelado && isPago && !estornado && (
+                {!isCancelado && isPago && !estornado && hasPermissao('pdv_estornar_pagamento') && (
                   <button onClick={() => setShowEstorno(true)} title="Estornar"
                     className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-700 border border-red-200 hover:border-red-400 hover:bg-red-50 rounded-lg cursor-pointer transition-colors">
                     <i className="ri-refund-2-line text-sm" />
                   </button>
                 )}
-                {!isCancelado && !estornado && (statusEfetivo === 'aberto' || statusEfetivo === 'pronto') && (
+                {!isCancelado && !estornado && (statusEfetivo === 'aberto' || statusEfetivo === 'pronto') && hasPermissao('pdv_cancelar_pedido') && (
                   <button onClick={() => setShowCancelamento(true)} title="Cancelar"
                     className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-700 border border-red-200 hover:border-red-400 hover:bg-red-50 rounded-lg cursor-pointer transition-colors">
                     <i className="ri-close-circle-line text-sm" />

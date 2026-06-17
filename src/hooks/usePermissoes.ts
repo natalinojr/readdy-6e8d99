@@ -30,6 +30,17 @@ export type PermissaoKey =
   | 'configuracoes_editar'
   | 'auditoria_ver';
 
+/** Papel do frontend (PT) → role no banco (enum user_role, em inglês).
+ *  A tabela `permissions` grava o role em inglês (manager/cashier/waiter/kitchen),
+ *  então o filtro precisa traduzir antes de comparar. */
+const PAPEL_TO_DB_ROLE: Record<string, string> = {
+  admin: 'admin',
+  gerente: 'manager',
+  caixa: 'cashier',
+  garcom: 'waiter',
+  cozinha: 'kitchen',
+};
+
 /** Permissões padrão por papel (fallback quando não há dados no banco) */
 const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
   admin: [
@@ -126,11 +137,20 @@ export function usePermissoesState(): PermissoesContextValue {
       });
 
       if (!error && data?.success && data.data && data.data.length > 0) {
-        // A edge function já retorna roles em PT (gerente, caixa, garcom, cozinha)
-        const minhas = data.data
-          .filter((r) => r.role === papel && r.allowed)
-          .map((r) => r.permission_key as PermissaoKey);
-        setPermissoes(minhas);
+        // A tabela `permissions` grava o role em INGLÊS (enum user_role).
+        // Aceitamos tanto o role-EN quanto o papel-PT, para ser robusto a
+        // qualquer tradução futura na edge function.
+        const dbRole = PAPEL_TO_DB_ROLE[papel] ?? papel;
+        const linhasDoPapel = data.data.filter((r) => r.role === papel || r.role === dbRole);
+        if (linhasDoPapel.length > 0) {
+          const minhas = linhasDoPapel
+            .filter((r) => r.allowed)
+            .map((r) => r.permission_key as PermissaoKey);
+          setPermissoes(minhas);
+        } else {
+          // Não há linhas salvas para este papel → usa defaults
+          setPermissoes(DEFAULT_PERMISSOES[papel] ?? []);
+        }
       } else {
         // Sem dados no banco → usa defaults
         setPermissoes(DEFAULT_PERMISSOES[papel] ?? []);

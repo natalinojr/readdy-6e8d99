@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { CarrinhoItem } from '../../../../contexts/PDVContext';
 import type { Rodada } from '../types';
 import RelatarProblemaModal from './RelatarProblemaModal';
+import { usePermissoes } from '@/hooks/usePermissoes';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -53,6 +54,7 @@ function ItemRow({ item, novo, onRelatar }: { item: CarrinhoItem; novo?: boolean
 }
 
 export default function ContaMesaView({ rodadas, itensNovos, onFecharConta, onPagarConta, rodadasPagas, mesaNome = 'Mesa' }: Props) {
+  const { hasPermissao } = usePermissoes();
   const [itemRelatar, setItemRelatar] = useState<CarrinhoItem | null>(null);
   const [showConfirmarDescartar, setShowConfirmarDescartar] = useState(false);
 
@@ -205,15 +207,17 @@ export default function ContaMesaView({ rodadas, itensNovos, onFecharConta, onPa
               <span className="hidden sm:inline"> · {fmt(totalAbertoRodadas + totalNovos)}</span>
             </button>
           )}
-          <button
-            onClick={onFecharConta}
-            disabled={!todasPagas || itensNovos.length > 0}
-            className="w-full py-2.5 bg-green-500 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
-          >
-            <i className="ri-door-open-line" />
-            <span className="hidden sm:inline">{todasPagas ? 'Fechar Mesa' : `Aguardando ${rodadas.length - rodadasPagasCount} conta(s)`}</span>
-            <span className="sm:hidden">{todasPagas ? 'Fechar' : `Aguardando ${rodadas.length - rodadasPagasCount}`}</span>
-          </button>
+          {hasPermissao('garcom_fechar_mesa') && (
+            <button
+              onClick={onFecharConta}
+              disabled={!todasPagas || itensNovos.length > 0}
+              className="w-full py-2.5 bg-green-500 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
+            >
+              <i className="ri-door-open-line" />
+              <span className="hidden sm:inline">{todasPagas ? 'Fechar Mesa' : `Aguardando ${rodadas.length - rodadasPagasCount} conta(s)`}</span>
+              <span className="sm:hidden">{todasPagas ? 'Fechar' : `Aguardando ${rodadas.length - rodadasPagasCount}`}</span>
+            </button>
+          )}
         </div>
       </div>
 

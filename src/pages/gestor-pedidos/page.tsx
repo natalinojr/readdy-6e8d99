@@ -3,6 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useKDS } from '@/contexts/KDSContext';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
+import { useToast } from '@/contexts/ToastContext';
 import type { KDSPedido, KDSItem, KDSItemStatus } from '@/types/kds';
 import GestorKanbanView from './components/GestorKanbanView';
 import GestorListView from './components/GestorListView';
@@ -99,6 +101,8 @@ export default function GestorPedidosPage() {
   const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, markOutForDeliveryRemote, reloadOrders, pedidosSalvando } = useKDS();
   const { estado, sessao, loadingSession } = useSessao();
   const { user } = useAuth();
+  const { hasPermissao } = usePermissoes();
+  const { error: toastErrorGestor } = useToast();
 
   const [visualizacao, setVisualizacao] = useState<Visualizacao>('kanban');
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>('todos');
@@ -359,6 +363,10 @@ export default function GestorPedidosPage() {
 
   // ─── Entregar ───
   const handleEntregar = useCallback((pedidoId: string) => {
+    if (!hasPermissao('gestor_pedidos_entregar')) {
+      toastErrorGestor('Sem permissão', 'Seu perfil não pode marcar pedidos como entregues.');
+      return;
+    }
     const pedido = pedidos.find((p) => p.id === pedidoId);
     if (!pedido) return;
     if (pedido.isEditing) return;
@@ -414,10 +422,14 @@ export default function GestorPedidosPage() {
     };
 
     setEntregaModal({ pedido, onConfirm: executar });
-  }, [pedidos, user, setPedidos, updateItemStatusRemote, updatePartStatusRemote]);
+  }, [pedidos, user, setPedidos, updateItemStatusRemote, updatePartStatusRemote, hasPermissao, toastErrorGestor]);
 
   // ─── Entregar Item Individual ───
   const handleEntregarItem = useCallback((pedidoId: string, itemId: string) => {
+    if (!hasPermissao('gestor_pedidos_entregar')) {
+      toastErrorGestor('Sem permissão', 'Seu perfil não pode marcar itens como entregues.');
+      return;
+    }
     const pedido = pedidos.find((p) => p.id === pedidoId);
     if (!pedido) return;
     if (pedido.isEditing) return;
@@ -461,7 +473,7 @@ export default function GestorPedidosPage() {
         updatePartStatusRemote(part.id, itemId, pedidoId, 'entregue');
       }
     });
-  }, [pedidos, user, setPedidos, updateItemStatusRemote, updatePartStatusRemote]);
+  }, [pedidos, user, setPedidos, updateItemStatusRemote, updatePartStatusRemote, hasPermissao, toastErrorGestor]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -1140,6 +1152,10 @@ export default function GestorPedidosPage() {
               }));
             }}
             onEntregarUnidade={(pedidoId, itemId, unidadeId) => {
+              if (!hasPermissao('gestor_pedidos_entregar')) {
+                toastErrorGestor('Sem permissão', 'Seu perfil não pode marcar unidades como entregues.');
+                return;
+              }
               const operador = user?.nome ?? 'Operador';
               const now = Date.now();
               setPedidos((prev) => prev.map((p) => {

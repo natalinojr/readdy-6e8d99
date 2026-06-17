@@ -19,6 +19,7 @@ import DivisaoContaView from './DivisaoContaView';
 import type { DivisaoResultado, DivisaoPersistedState } from './DivisaoContaView';
 import PagarDivisaoModal from './PagarDivisaoModal';
 import HistoricoFechamentoModal from './HistoricoFechamentoModal';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import type { DivisaoPagamentoState } from '../page';
 
 let garcomCartId = 0;
@@ -76,6 +77,7 @@ export default function PedidoView({
   divisaoPagamentoSalvo, onAtualizarDivisaoPag,
   divisaoPersistedState, onDivisaoPersistedChange,
 }: Props) {
+  const { hasPermissao } = usePermissoes();
   const [catAtiva, setCatAtiva] = useState('todas');
   const [busca, setBusca] = useState('');
   const [showCart, setShowCart] = useState(false);
@@ -288,7 +290,7 @@ export default function PedidoView({
                 </span>
               </button>
             )}
-            {!isAvulso && (
+            {!isAvulso && hasPermissao('garcom_fechar_mesa') && (
               <button
                 onClick={() => { if (podeFechar) handleFecharComHistorico(); }}
                 disabled={!podeFechar}
@@ -301,7 +303,7 @@ export default function PedidoView({
             )}
           </div>
         )}
-        {mesaOcupada && todasPagas && (
+        {mesaOcupada && todasPagas && hasPermissao('garcom_fechar_mesa') && (
           <button
             onClick={() => { if (carrinho.length === 0) handleFecharComHistorico(); }}
             disabled={carrinho.length > 0}

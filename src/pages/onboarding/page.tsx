@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ChefHat } from 'lucide-react';
 import { supabase, SUPABASE_URL } from '@/lib/supabase';
 import { useAppMode } from '@/contexts/AppModeContext';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth, SELECTED_TENANT_STORAGE_KEY } from '@/contexts/AuthContext';
 import StepBoasVindas from './components/StepBoasVindas';
 import StepLoja from './components/StepLoja';
 import type { LojaData } from './components/StepLoja';
@@ -230,6 +230,11 @@ export default function OnboardingPage() {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.setItem('erpos_onboarding_done', 'true');
       localStorage.setItem('erpos_loja_nome', state.loja.nomeLoja);
+      // Pré-seleciona a loja recém-criada para entrar NELA (e não na loja antiga,
+      // caso o usuário já tivesse outras). reloadUser respeita essa seleção.
+      if (data?.tenant_id) {
+        try { localStorage.setItem(SELECTED_TENANT_STORAGE_KEY, data.tenant_id); } catch { /* ignore */ }
+      }
       await reloadUser();
       setAppMode('modulos');
       navigate('/modulos', { replace: true });

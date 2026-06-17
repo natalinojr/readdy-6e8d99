@@ -4,6 +4,7 @@ import { useNotificacoes } from '../../../../contexts/NotificacoesContext';
 import { useAuth } from '../../../../contexts/AuthContext';
 import { useAuditoria } from '../../../../contexts/AuditoriaContext';
 import { useAprovacoes } from '../../../../contexts/AprovacoesContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import DescontoAutorizacaoModal from './DescontoAutorizacaoModal';
 import type { DestinoInfo, CarrinhoItem } from '../../../../contexts/PDVContext';
 import { useSystemSettings } from '../../../../hooks/useSystemSettings';
@@ -124,6 +125,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
   const { user } = useAuth();
   const { registrarEvento } = useAuditoria();
   const { addSolicitacao } = useAprovacoes();
+  const { hasPermissao } = usePermissoes();
 
   const [descontoTemp, setDescontoTemp] = useState('');
   const [descontoTipo, setDescontoTipo] = useState<'valor' | 'percentual'>('valor');
@@ -672,7 +674,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
                     </button>
                   </div>
                 </div>
-              ) : (
+              ) : hasPermissao('pdv_desconto') ? (
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-1.5">
                     <i className="ri-shield-keyhole-line text-zinc-400 text-sm flex-shrink-0" />
@@ -714,7 +716,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
                     </button>
                   </div>
                 </div>
-              )}
+              ) : null}
               {descontoAutorizadoPor && (
                 <p className="text-[10px] text-green-600 flex items-center gap-1 pl-5">
                   <i className="ri-shield-check-line" /> Autorizado por {descontoAutorizadoPor}

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Mesa } from '@/types/pdv';
 import { useAuth } from '../../../../contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
 
 interface IdentificacaoData {
   garcomNome: string;
@@ -18,6 +19,7 @@ interface Props {
 
 export default function IdentificacaoMesaModal({ mesa, mesasOcupadas, onConfirmar, onTransferir, onClose }: Props) {
   const { user } = useAuth();
+  const { hasPermissao } = usePermissoes();
   const garcomNome = user?.nome ?? 'Garçom';
   const [numeroPessoasStr, setNumeroPessoasStr] = useState('');
   const [clienteNome, setClienteNome] = useState('');
@@ -123,7 +125,7 @@ export default function IdentificacaoMesaModal({ mesa, mesasOcupadas, onConfirma
             Abrir Mesa {mesa.numero}
           </button>
 
-          {mesasOcupadas.length > 0 && (
+          {mesasOcupadas.length > 0 && hasPermissao('garcom_transferir_mesa') && (
             <button
               onClick={onTransferir}
               className="w-full py-2.5 border border-zinc-200 hover:bg-zinc-50 text-zinc-600 font-semibold rounded-xl transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2 text-sm"

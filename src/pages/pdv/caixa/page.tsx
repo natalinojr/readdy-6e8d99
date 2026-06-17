@@ -3,6 +3,7 @@ import { Clock, Lock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppMode } from '@/contexts/AppModeContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import { PDVProvider, usePDV } from '../../../contexts/PDVContext';
 import { useSessao } from '../../../contexts/SessaoContext';
 import { useKDS } from '../../../contexts/KDSContext';
@@ -129,6 +130,7 @@ function CaixaFechadoView({
   onVoltar: () => void;
 }) {
   const { sessao, estacoesAbertas } = useSessao();
+  const { hasPermissao } = usePermissoes();
 
   return (
     <div className="flex flex-col h-full items-center justify-center p-8 relative overflow-hidden"
@@ -216,13 +218,20 @@ function CaixaFechadoView({
 
         {/* Ações */}
         <div className="space-y-3">
-          <button
-            onClick={onAbrirCaixa}
-            className="w-full flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white font-bold py-3.5 rounded-xl transition-colors cursor-pointer whitespace-nowrap text-sm"
-          >
-            <i className="ri-safe-2-line text-lg" />
-            Abrir Caixa
-          </button>
+          {hasPermissao('pdv_abrir_caixa') ? (
+            <button
+              onClick={onAbrirCaixa}
+              className="w-full flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white font-bold py-3.5 rounded-xl transition-colors cursor-pointer whitespace-nowrap text-sm"
+            >
+              <i className="ri-safe-2-line text-lg" />
+              Abrir Caixa
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-2.5 bg-zinc-50 rounded-xl border border-zinc-200 text-xs text-zinc-500">
+              <i className="ri-lock-line text-sm" />
+              Você não tem permissão para abrir o caixa.
+            </div>
+          )}
           <button
             onClick={onFecharSessao}
             className="w-full flex items-center justify-center gap-2 bg-white/70 hover:bg-white border border-zinc-200 text-zinc-600 font-semibold py-3 rounded-xl transition-colors cursor-pointer whitespace-nowrap text-sm"
@@ -409,6 +418,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   const navigate = useNavigate();
   const { setMode } = useAppMode();
   const { user } = useAuth();
+  const { hasPermissao } = usePermissoes();
   const { total, clearCart, destino, setDestino, addItem, carrinho, removeItem, enviarParaCozinha, finalizarPedido, isCortesia, setCortesia, clearCortesia, cortesiaAutorizadaPor, cortesiaDestinatario, cortesiaMotivo } = usePDV();
   const { success: toastSuccess, error: toastError } = useToast();
   const { pedidos: kdsPedidos } = useKDS();
@@ -887,28 +897,34 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
               <i className="ri-gift-line text-sm" />
               {isCortesia ? 'Cortesia ativa' : 'Cortesia'}
             </button>
-            <button
-              onClick={() => { setTipoMovimento('sangria'); setModal('sangria'); }}
-              className="flex items-center gap-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <i className="ri-arrow-down-circle-line text-sm" />
-              Sangria
-            </button>
-            <button
-              onClick={() => { setTipoMovimento('suprimento'); setModal('sangria'); }}
-              className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <i className="ri-arrow-up-circle-line text-sm" />
-              Suprimento
-            </button>
+            {hasPermissao('pdv_sangria') && (
+              <button
+                onClick={() => { setTipoMovimento('sangria'); setModal('sangria'); }}
+                className="flex items-center gap-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <i className="ri-arrow-down-circle-line text-sm" />
+                Sangria
+              </button>
+            )}
+            {hasPermissao('pdv_sangria') && (
+              <button
+                onClick={() => { setTipoMovimento('suprimento'); setModal('sangria'); }}
+                className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <i className="ri-arrow-up-circle-line text-sm" />
+                Suprimento
+              </button>
+            )}
             <div className="w-px h-5 bg-zinc-200" />
-            <button
-              onClick={handleFecharCaixa}
-              className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-red-600 border border-zinc-200 hover:border-red-300 px-3 py-1.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <i className="ri-door-lock-line text-sm" />
-              Fechar Caixa
-            </button>
+            {hasPermissao('pdv_fechar_caixa') && (
+              <button
+                onClick={handleFecharCaixa}
+                className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-red-600 border border-zinc-200 hover:border-red-300 px-3 py-1.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <i className="ri-door-lock-line text-sm" />
+                Fechar Caixa
+              </button>
+            )}
           </div>
         </div>
 
@@ -926,25 +942,31 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowMobileMenu(false)} />
                 <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-zinc-200 rounded-xl w-48 overflow-hidden">
-                  <button
-                    onClick={() => { setTipoMovimento('sangria'); setModal('sangria'); setShowMobileMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-red-600 hover:bg-red-50 cursor-pointer transition-colors"
-                  >
-                    <i className="ri-arrow-down-circle-line" /> Sangria
-                  </button>
-                  <button
-                    onClick={() => { setTipoMovimento('suprimento'); setModal('sangria'); setShowMobileMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-emerald-600 hover:bg-emerald-50 cursor-pointer transition-colors"
-                  >
-                    <i className="ri-arrow-up-circle-line" /> Suprimento
-                  </button>
+                  {hasPermissao('pdv_sangria') && (
+                    <button
+                      onClick={() => { setTipoMovimento('sangria'); setModal('sangria'); setShowMobileMenu(false); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-red-600 hover:bg-red-50 cursor-pointer transition-colors"
+                    >
+                      <i className="ri-arrow-down-circle-line" /> Sangria
+                    </button>
+                  )}
+                  {hasPermissao('pdv_sangria') && (
+                    <button
+                      onClick={() => { setTipoMovimento('suprimento'); setModal('sangria'); setShowMobileMenu(false); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-emerald-600 hover:bg-emerald-50 cursor-pointer transition-colors"
+                    >
+                      <i className="ri-arrow-up-circle-line" /> Suprimento
+                    </button>
+                  )}
                   <div className="h-px bg-zinc-100" />
-                  <button
-                    onClick={() => { handleFecharCaixa(); setShowMobileMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50 cursor-pointer transition-colors"
-                  >
-                    <i className="ri-door-lock-line" /> Fechar Caixa
-                  </button>
+                  {hasPermissao('pdv_fechar_caixa') && (
+                    <button
+                      onClick={() => { handleFecharCaixa(); setShowMobileMenu(false); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50 cursor-pointer transition-colors"
+                    >
+                      <i className="ri-door-lock-line" /> Fechar Caixa
+                    </button>
+                  )}
                 </div>
               </>
             )}

@@ -144,6 +144,9 @@ const LOJA_KEY = 'erpos_loja_nome';
 const SELECTED_TENANT_KEY = 'erpos_selected_tenant_id';
 
 export const LOJA_NOME_KEY = LOJA_KEY;
+/** Chave do localStorage com o tenant ativo. Exposta para que o onboarding
+ *  possa pré-selecionar a loja recém-criada antes de recarregar o usuário. */
+export const SELECTED_TENANT_STORAGE_KEY = SELECTED_TENANT_KEY;
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 
