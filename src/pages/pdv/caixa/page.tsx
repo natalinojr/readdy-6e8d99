@@ -22,6 +22,7 @@ import PedidosRecentesPanel from './components/PedidosRecentesPanel';
 import MesasPainelCaixa from './components/MesasPainelCaixa';
 import CozinhaPainelCaixa from './components/CozinhaPainelCaixa';
 import SangriaSuprimentoModal from './components/SangriaSuprimentoModal';
+import DeliveryControle from './components/DeliveryControle';
 import AberturaCaixaModal from './components/AberturaCaixaModal';
 import FechamentoCaixaModal from './components/FechamentoCaixaModal';
 import IniciarSessaoModal from './components/IniciarSessaoModal';
@@ -916,6 +917,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
               </button>
             )}
             <div className="w-px h-5 bg-zinc-200" />
+            <DeliveryControle />
             {hasPermissao('pdv_fechar_caixa') && (
               <button
                 onClick={handleFecharCaixa}
@@ -931,6 +933,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
         {/* Mobile actions */}
         <div className="flex md:hidden items-center gap-2">
           <span className="text-sm font-bold text-zinc-900">{timeStr}</span>
+          <DeliveryControle compact />
           <div className="relative">
             <button
               onClick={() => setShowMobileMenu((v) => !v)}

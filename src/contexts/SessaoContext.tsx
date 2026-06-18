@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
 
@@ -214,6 +214,14 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
     if (error) {
       console.error('[SessaoContext] fn_close_session error:', error);
       throw new Error(error.message || 'Erro ao fechar a sessão.');
+    }
+    // Regra: delivery só pode ficar aberto com sessão aberta. Ao fechar a sessão,
+    // força o desligamento do delivery (limpa override manual e pausa). Best-effort.
+    try {
+      const tId = (user as any)?.tenantId;
+      if (tId) await invokeWithAuth('delivery-write', { body: { action: 'set_delivery_state', tenant_id: tId, op: 'force_off' } });
+    } catch (e) {
+      console.warn('[SessaoContext] forçar desligar delivery falhou:', e);
     }
     setSessao(null);
     setCaixa(null);

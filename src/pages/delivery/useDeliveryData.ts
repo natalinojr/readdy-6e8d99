@@ -314,6 +314,8 @@ async function fetchDeliveryConfig(
     setDeliveryFee: (v: number) => void;
     setPaymentMethods: (v: Record<string, boolean>) => void;
     setRetiradaAtivo: (v: boolean) => void;
+    setDeliveryOpenNow: (v: boolean) => void;
+    setDeliveryClosedReason: (v: string | null) => void;
     setStoreWhatsapp: (v: string) => void;
     setStoreLocation: (v: StoreLocation | null) => void;
     setTiers: (v: FaixaEntrega[]) => void;
@@ -406,6 +408,10 @@ async function fetchDeliveryConfig(
 
     const ra = dc.retirada_ativo;
     setters.setRetiradaAtivo(ra !== false);
+
+    // Estado de abertura do delivery (sessão + pausa + agenda + manual), calculado no backend.
+    setters.setDeliveryOpenNow(data.delivery_open_now !== false);
+    setters.setDeliveryClosedReason(data.delivery_closed_reason ?? null);
 
     const ws = dc.whatsapp_loja;
     setters.setStoreWhatsapp((typeof ws === 'string' || typeof ws === 'number') ? String(ws) : '');
@@ -522,6 +528,8 @@ export function useDeliveryData(storeSlug?: string) {
   const [paymentMethods, setPaymentMethods] = useState<Record<string, boolean>>({});
   const [modoEntrega, setModoEntrega] = useState<'entrega' | 'retirada'>('entrega');
   const [retiradaAtivo, setRetiradaAtivo] = useState(true);
+  const [deliveryOpenNow, setDeliveryOpenNow] = useState(true);
+  const [deliveryClosedReason, setDeliveryClosedReason] = useState<string | null>(null);
   const [storeWhatsapp, setStoreWhatsapp] = useState('');
 
   // Entrega por distância (pin do cliente + faixas configuradas pela loja)
@@ -561,6 +569,8 @@ export function useDeliveryData(storeSlug?: string) {
     setDeliveryFee(0);
     setPaymentMethods({});
     setRetiradaAtivo(true);
+    setDeliveryOpenNow(true);
+    setDeliveryClosedReason(null);
     setStoreWhatsapp('');
     setCustomer(null);
     setPhone('');
@@ -615,6 +625,8 @@ export function useDeliveryData(storeSlug?: string) {
           setDeliveryFee,
           setPaymentMethods,
           setRetiradaAtivo,
+          setDeliveryOpenNow,
+          setDeliveryClosedReason,
           setStoreWhatsapp,
           setStoreLocation,
           setTiers,
@@ -1534,6 +1546,8 @@ export function useDeliveryData(storeSlug?: string) {
     modoEntrega,
     setModoEntrega,
     retiradaAtivo,
+    deliveryOpenNow,
+    deliveryClosedReason,
     storeWhatsapp,
     setPhone,
     setCustomerName,

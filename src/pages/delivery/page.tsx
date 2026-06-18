@@ -431,6 +431,17 @@ export default function DeliveryPage() {
   return (
     <div className="min-h-screen bg-white flex justify-center">
       <div className="w-full max-w-lg h-dvh flex flex-col bg-white relative">
+        {/* Banner: delivery fechado (fora do horário / pausado / sem sessão) */}
+        {!data.deliveryOpenNow && (
+          <div className="shrink-0 bg-red-500 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-semibold text-center">
+            <i className="ri-store-2-line text-base shrink-0" />
+            <span>{
+              data.deliveryClosedReason === 'fora_horario' ? 'Estamos fora do horário de funcionamento. Volte mais tarde!'
+              : data.deliveryClosedReason === 'pausado' ? 'A loja está temporariamente pausada. Volte em instantes!'
+              : 'A loja está fechada para pedidos no momento.'
+            }</span>
+          </div>
+        )}
         {/* Header */}
         <div className="bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0 relative">
           <div className="flex items-center justify-between">

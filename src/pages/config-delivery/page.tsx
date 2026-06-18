@@ -56,6 +56,19 @@ export default function ConfigDeliveryPage() {
 
   const [formasPagamento, setFormasPagamento] = useState<Record<string, boolean>>({});
 
+  // ── Horário de funcionamento do delivery (agendamento por dia da semana) ──
+  // 0=Domingo .. 6=Sábado (alinhado ao Date.getDay() / fuso America/Sao_Paulo no backend).
+  const [horarioAtivo, setHorarioAtivo] = useState(false);
+  const [horarios, setHorarios] = useState<{ enabled: boolean; open: string; close: string }[]>(
+    function () { return Array.from({ length: 7 }, function () { return { enabled: false, open: '18:00', close: '23:00' }; }); }
+  );
+
+  function setDiaHorario(idx: number, patch: Partial<{ enabled: boolean; open: string; close: string }>) {
+    setHorarios(function (prev) {
+      return prev.map(function (d, i) { return i === idx ? { ...d, ...patch } : d; });
+    });
+  }
+
   useEffect(function () {
     if (!tenantId) {
       setCarregando(false);
@@ -107,6 +120,27 @@ export default function ConfigDeliveryPage() {
           if (sl && typeof sl === 'object' && typeof sl.lat === 'number' && typeof sl.lng === 'number') {
             setStoreLat(sl.lat);
             setStoreLng(sl.lng);
+          }
+          // Horário de funcionamento do delivery
+          const sched = dc.delivery_schedule;
+          if (sched && typeof sched === 'object') {
+            setHorarioAtivo(sched.enabled === true);
+            const days = sched.days;
+            if (days && typeof days === 'object') {
+              setHorarios(function (prev) {
+                return prev.map(function (d, i) {
+                  const sd = days[String(i)];
+                  if (sd && typeof sd === 'object') {
+                    return {
+                      enabled: sd.enabled === true,
+                      open: typeof sd.open === 'string' ? sd.open : d.open,
+                      close: typeof sd.close === 'string' ? sd.close : d.close,
+                    };
+                  }
+                  return d;
+                });
+              });
+            }
           }
           const tiers = dc.delivery_fee_tiers;
           if (Array.isArray(tiers)) {
@@ -191,6 +225,13 @@ export default function ConfigDeliveryPage() {
       delivery_fee_tiers: faixas
         .filter(function (f) { return f.ate_km > 0; })
         .sort(function (a, b) { return a.ate_km - b.ate_km; }),
+      delivery_schedule: {
+        enabled: horarioAtivo,
+        days: horarios.reduce(function (acc, d, i) {
+          acc[String(i)] = { enabled: d.enabled, open: d.open, close: d.close };
+          return acc;
+        }, {} as Record<string, { enabled: boolean; open: string; close: string }>),
+      },
     };
 
     // Salva via Edge Function (service role + valida que o usuário é admin DESTA loja).
@@ -578,6 +619,90 @@ export default function ConfigDeliveryPage() {
               <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 rounded-lg border border-zinc-100">
                 <i className="ri-information-line text-zinc-400 text-sm" />
                 <span className="text-xs text-zinc-400">Apenas a opção de delivery (entrega) ficará disponível para o cliente</span>
+              </div>
+            )}
+          </div>
+
+          {/* Horário de funcionamento do delivery */}
+          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
+                <i className="ri-time-line text-zinc-600 text-sm" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-800">Horário de funcionamento do delivery</h3>
+                <p className="text-xs text-zinc-500">Programe quando o delivery abre e fecha sozinho. Mesmo no horário, só abre se houver uma sessão de caixa aberta.</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={function () { setHorarioAtivo(function (v) { return !v; }); }}
+                className={'relative w-12 h-7 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
+                  (horarioAtivo ? 'bg-green-500' : 'bg-zinc-200')
+                }
+              >
+                <div className={'absolute top-0.5 w-6 h-6 bg-white rounded-full transition-transform shadow ' +
+                  (horarioAtivo ? 'translate-x-[22px]' : 'translate-x-0.5')
+                } />
+              </button>
+              <span className={'text-sm font-semibold ' + (horarioAtivo ? 'text-green-700' : 'text-zinc-400')}>
+                {horarioAtivo ? 'Agendamento ativado' : 'Agendamento desativado'}
+              </span>
+            </div>
+
+            {horarioAtivo ? (
+              <div className="space-y-2">
+                {['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'].map(function (label, idx) {
+                  const d = horarios[idx];
+                  return (
+                    <div key={idx} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-zinc-100 bg-zinc-50">
+                      <button
+                        type="button"
+                        onClick={function () { setDiaHorario(idx, { enabled: !d.enabled }); }}
+                        className={'relative w-10 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
+                          (d.enabled ? 'bg-green-500' : 'bg-zinc-200')
+                        }
+                      >
+                        <div className={'absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow ' +
+                          (d.enabled ? 'translate-x-[18px]' : 'translate-x-0.5')
+                        } />
+                      </button>
+                      <span className={'text-sm font-semibold w-20 flex-shrink-0 ' + (d.enabled ? 'text-zinc-800' : 'text-zinc-400')}>{label}</span>
+                      {d.enabled ? (
+                        <div className="flex items-center gap-2 flex-1">
+                          <input
+                            type="time"
+                            value={d.open}
+                            onChange={function (e) { setDiaHorario(idx, { open: e.target.value }); }}
+                            className="px-2 py-1.5 rounded-lg border border-zinc-200 text-sm text-zinc-800 bg-white focus:outline-none focus:border-amber-400"
+                          />
+                          <span className="text-zinc-400 text-xs">até</span>
+                          <input
+                            type="time"
+                            value={d.close}
+                            onChange={function (e) { setDiaHorario(idx, { close: e.target.value }); }}
+                            className="px-2 py-1.5 rounded-lg border border-zinc-200 text-sm text-zinc-800 bg-white focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+                      ) : (
+                        <span className="text-xs text-zinc-400 flex-1">Fechado neste dia</span>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 rounded-lg border border-amber-100">
+                  <i className="ri-information-line text-amber-500 text-sm mt-0.5" />
+                  <p className="text-[10px] text-amber-700">
+                    Horário que passa da meia-noite é suportado (ex.: 19:00 até 02:00). Para fechar o delivery por um tempo fora do programado, use o botão de delivery no PDV (abrir / fechar / pausar por X horas).
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 rounded-lg border border-zinc-100">
+                <i className="ri-information-line text-zinc-400 text-sm" />
+                <span className="text-xs text-zinc-400">Sem agendamento: o delivery abre e fecha apenas pelo botão no PDV.</span>
               </div>
             )}
           </div>
