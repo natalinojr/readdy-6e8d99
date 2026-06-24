@@ -1,9 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
 import { useDeliveryLinkReport } from '@/hooks/useDeliveryLinkReport';
-import { useAuth } from '@/contexts/AuthContext';
 
 interface Props { periodo: string; }
 
@@ -12,17 +10,6 @@ const fmt = (v: number) =>
 const fmtKm = (v: number | null) => (v == null ? '—' : v.toFixed(1).replace('.', ',') + ' km');
 
 const CORES = ['#f59e0b', '#10b981', '#06b6d4', '#f97316', '#ef4444', '#8b5cf6'];
-
-// ── Configuração do custo de motoboy (persistida por loja, localStorage) ──
-function loadRate(key: string, tenant: string): number {
-  try {
-    const v = localStorage.getItem(`erpos_motoboy_${key}_${tenant}`);
-    return v ? Number(v) || 0 : 0;
-  } catch { return 0; }
-}
-function saveRate(key: string, tenant: string, v: number) {
-  try { localStorage.setItem(`erpos_motoboy_${key}_${tenant}`, String(v)); } catch { /* ignora */ }
-}
 
 function Kpi({ label, value, sub, icon, accent }: { label: string; value: string; sub?: string; icon: string; accent?: string }) {
   return (
@@ -39,20 +26,17 @@ function Kpi({ label, value, sub, icon, accent }: { label: string; value: string
   );
 }
 
+function CustoCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
+  return (
+    <div className={'rounded-xl px-3 py-2.5 border ' + (accent ?? 'bg-zinc-50 border-zinc-100')}>
+      <span className="block text-[10px] text-zinc-400 font-semibold uppercase">{label}</span>
+      <span className="text-lg font-black text-zinc-700">{value}</span>
+    </div>
+  );
+}
+
 export default function DeliveryTab({ periodo }: Props) {
   const { dados, loading } = useDeliveryLinkReport(periodo);
-  const { user } = useAuth();
-  const tenant = user?.tenantId ?? 'x';
-
-  const [base, setBase] = useState(0);
-  const [porKm, setPorKm] = useState(0);
-  useEffect(() => { setBase(loadRate('base', tenant)); setPorKm(loadRate('km', tenant)); }, [tenant]);
-
-  const custoMotoboy = useMemo(
-    () => dados.entregas * base + dados.entregasKmTotal * porKm,
-    [dados.entregas, dados.entregasKmTotal, base, porKm],
-  );
-  const margemEntrega = dados.taxaArrecadada - custoMotoboy;
 
   if (loading) {
     return (
@@ -74,13 +58,19 @@ export default function DeliveryTab({ periodo }: Props) {
     );
   }
 
+  // Custo com motoboy = taxa de entrega cobrada do cliente (repasse).
+  const custoTotal = dados.taxaArrecadada;
+  const custoMedioEntrega = dados.entregas > 0 ? custoTotal / dados.entregas : 0;
+  const custoMedioKm = dados.entregasKmTotal > 0 ? custoTotal / dados.entregasKmTotal : null;
+  const pctFat = dados.faturamento > 0 ? (custoTotal / dados.faturamento) * 100 : 0;
+
   return (
     <div className="space-y-5">
       {/* KPIs principais */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi label="Pedidos" value={String(dados.totalPedidos)} sub={`${dados.entregas} entrega · ${dados.retiradas} retirada`} icon="ri-shopping-bag-3-line" />
         <Kpi label="Faturamento" value={fmt(dados.faturamento)} sub={`Ticket médio ${fmt(dados.ticketMedio)}`} icon="ri-money-dollar-circle-line" accent="bg-emerald-50 text-emerald-600" />
-        <Kpi label="Taxa de entrega" value={fmt(dados.taxaArrecadada)} sub="arrecadada dos clientes" icon="ri-coins-line" accent="bg-cyan-50 text-cyan-600" />
+        <Kpi label="Custo motoboy" value={fmt(custoTotal)} sub="= taxa de entrega (repasse)" icon="ri-e-bike-2-line" accent="bg-red-50 text-red-600" />
         <Kpi label="Distância" value={fmtKm(dados.distMedia)} sub={`média · máx ${fmtKm(dados.distMax)}`} icon="ri-map-pin-distance-line" accent="bg-orange-50 text-orange-600" />
         <Kpi label="Mais pedem de" value={dados.distMaisPedida ?? '—'} sub="faixa de distância" icon="ri-focus-3-line" accent="bg-violet-50 text-violet-600" />
         <Kpi label="Tempo até sair" value={dados.tempoPreparoMedio != null ? `${dados.tempoPreparoMedio} min` : '—'} sub="pedido → em rota" icon="ri-timer-line" accent="bg-amber-50 text-amber-600" />
@@ -88,48 +78,33 @@ export default function DeliveryTab({ periodo }: Props) {
         <Kpi label="Retiradas" value={String(dados.retiradas)} sub="cliente busca na loja" icon="ri-store-2-line" accent="bg-zinc-100 text-zinc-600" />
       </div>
 
-      {/* Custo de motoboy + margem */}
+      {/* Custo com motoboy — detalhado */}
       <div className="bg-white rounded-2xl border border-zinc-100 p-4">
         <div className="flex items-center gap-2 mb-3">
-          <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+          <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-50 text-red-600">
             <i className="ri-e-bike-2-line text-sm" />
           </div>
           <div>
             <h3 className="text-sm font-bold text-zinc-800">Custo com motoboy</h3>
-            <p className="text-[11px] text-zinc-400">Defina seu custo (só entregas; retirada não conta). Salvo neste navegador.</p>
+            <p className="text-[11px] text-zinc-400">É a taxa de entrega cobrada do cliente e repassada ao motoboy (só entregas; retirada não tem taxa).</p>
           </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
-          <label className="text-xs">
-            <span className="block text-zinc-500 mb-1 font-semibold">R$ fixo por entrega</span>
-            <input
-              type="number" inputMode="decimal" step="0.5" min="0" value={base || ''}
-              onChange={(e) => { const v = parseFloat(e.target.value) || 0; setBase(v); saveRate('base', tenant, v); }}
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 focus:border-amber-400 outline-none font-bold text-zinc-800"
-              placeholder="0,00"
-            />
-          </label>
-          <label className="text-xs">
-            <span className="block text-zinc-500 mb-1 font-semibold">R$ por km</span>
-            <input
-              type="number" inputMode="decimal" step="0.5" min="0" value={porKm || ''}
-              onChange={(e) => { const v = parseFloat(e.target.value) || 0; setPorKm(v); saveRate('km', tenant, v); }}
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 focus:border-amber-400 outline-none font-bold text-zinc-800"
-              placeholder="0,00"
-            />
-          </label>
-          <div className="bg-red-50 rounded-xl px-3 py-2 border border-red-100">
-            <span className="block text-[10px] text-red-500 font-semibold uppercase">Custo motoboy</span>
-            <span className="text-lg font-black text-red-600">{fmt(custoMotoboy)}</span>
-          </div>
-          <div className={(margemEntrega >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100') + ' rounded-xl px-3 py-2 border'}>
-            <span className={(margemEntrega >= 0 ? 'text-emerald-500' : 'text-red-500') + ' block text-[10px] font-semibold uppercase'}>Resultado da taxa</span>
-            <span className={(margemEntrega >= 0 ? 'text-emerald-600' : 'text-red-600') + ' text-lg font-black'}>{fmt(margemEntrega)}</span>
-          </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          <CustoCard label="Custo total" value={fmt(custoTotal)} accent="bg-red-50 border-red-100" />
+          <CustoCard label="Por entrega" value={fmt(custoMedioEntrega)} />
+          <CustoCard label="Por km" value={custoMedioKm != null ? fmt(custoMedioKm) : '—'} />
+          <CustoCard label="% do faturamento" value={`${pctFat.toFixed(1).replace('.', ',')}%`} />
         </div>
-        <p className="text-[11px] text-zinc-400 mt-2">
-          Custo = entregas × fixo + km totais ({dados.entregasKmTotal.toFixed(1).replace('.', ',')} km) × R$/km. Resultado = taxa arrecadada − custo.
-        </p>
+        <h4 className="text-xs font-semibold text-zinc-500 mb-2">Custo por dia</h4>
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={dados.custoPorDia}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="dia" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => 'R$' + v} />
+            <Tooltip formatter={(v: number) => [fmt(v), 'Custo motoboy']} />
+            <Bar dataKey="custo" fill="#ef4444" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
 
       {/* Distância que mais pedem + Horários */}
@@ -141,7 +116,7 @@ export default function DeliveryTab({ periodo }: Props) {
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="faixa" tick={{ fontSize: 11 }} />
               <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v: number) => [`${v} pedido(s)`, 'Pedidos']} />
+              <Tooltip formatter={(v: number, n) => n === 'custo' ? [fmt(v), 'Custo'] : [`${v} pedido(s)`, 'Pedidos']} />
               <Bar dataKey="pedidos" radius={[6, 6, 0, 0]}>
                 {dados.distBuckets.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
               </Bar>
@@ -172,7 +147,7 @@ export default function DeliveryTab({ periodo }: Props) {
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="dia" tick={{ fontSize: 11 }} />
               <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v: number, n) => n === 'receita' ? [fmt(v), 'Receita'] : [`${v}`, 'Pedidos']} />
+              <Tooltip formatter={(v: number) => [`${v}`, 'Pedidos']} />
               <Bar dataKey="pedidos" fill="#10b981" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>

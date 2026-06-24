@@ -4,7 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
-export interface DistBucket { faixa: string; pedidos: number; }
+export interface DistBucket { faixa: string; pedidos: number; custo: number; }
+export interface CustoDia { dia: string; custo: number; pedidos: number; }
 export interface HoraPico { hora: string; pedidos: number; }
 export interface DiaSemana { dia: string; pedidos: number; receita: number; }
 export interface TopCliente { nome: string; pedidos: number; total: number; }
@@ -23,6 +24,7 @@ export interface DeliveryLinkData {
   entregasKmTotal: number;     // soma das distâncias (base p/ custo motoboy por km)
   distMaisPedida: string | null;
   distBuckets: DistBucket[];
+  custoPorDia: CustoDia[];           // taxa (= custo motoboy) somada por dia
   tempoPreparoMedio: number | null;  // created_at → out_for_delivery_at (min)
   horariosPico: HoraPico[];
   porDiaSemana: DiaSemana[];
@@ -41,7 +43,7 @@ const STATUS_LABEL: Record<string, string> = {
 const EMPTY: DeliveryLinkData = {
   totalPedidos: 0, entregas: 0, retiradas: 0, faturamento: 0, ticketMedio: 0,
   taxaArrecadada: 0, distMedia: null, distMax: null, entregasComKm: 0, entregasKmTotal: 0,
-  distMaisPedida: null, distBuckets: [], tempoPreparoMedio: null, horariosPico: [],
+  distMaisPedida: null, distBuckets: [], custoPorDia: [], tempoPreparoMedio: null, horariosPico: [],
   porDiaSemana: [], topClientes: [], porStatus: [],
 };
 
@@ -108,7 +110,11 @@ export function useDeliveryLinkReport(periodo: string) {
 
       let entregas = 0, retiradas = 0, faturamento = 0, taxaArrecadada = 0;
       let entregasKmTotal = 0, entregasComKm = 0, distMax = 0;
-      const buckets = { '0–2 km': 0, '2–4 km': 0, '4–6 km': 0, '6+ km': 0 } as Record<string, number>;
+      const buckets: Record<string, { pedidos: number; custo: number }> = {
+        '0–2 km': { pedidos: 0, custo: 0 }, '2–4 km': { pedidos: 0, custo: 0 },
+        '4–6 km': { pedidos: 0, custo: 0 }, '6+ km': { pedidos: 0, custo: 0 },
+      };
+      const diaCalMap: Record<string, { custo: number; pedidos: number }> = {};
       const horaMap: Record<number, number> = {};
       const diaMap: Record<number, { pedidos: number; receita: number }> = {};
       const clienteMap: Record<string, { pedidos: number; total: number }> = {};
@@ -129,7 +135,8 @@ export function useDeliveryLinkReport(periodo: string) {
           entregasKmTotal += km;
           if (km > distMax) distMax = km;
           const faixa = km <= 2 ? '0–2 km' : km <= 4 ? '2–4 km' : km <= 6 ? '4–6 km' : '6+ km';
-          buckets[faixa] += 1;
+          buckets[faixa].pedidos += 1;
+          buckets[faixa].custo += fee;
         }
 
         const dtBR = new Date(new Date(o.created_at as string).getTime() - 3 * 3600 * 1000);
@@ -138,6 +145,11 @@ export function useDeliveryLinkReport(periodo: string) {
         const dia = dtBR.getUTCDay();
         if (!diaMap[dia]) diaMap[dia] = { pedidos: 0, receita: 0 };
         diaMap[dia].pedidos += 1; diaMap[dia].receita += total;
+
+        const dataCal = new Date(o.created_at as string).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+        if (!diaCalMap[dataCal]) diaCalMap[dataCal] = { custo: 0, pedidos: 0 };
+        diaCalMap[dataCal].custo += fee;
+        diaCalMap[dataCal].pedidos += 1;
 
         const nome = nomeLimpo(o.destination_name as string | null);
         if (!clienteMap[nome]) clienteMap[nome] = { pedidos: 0, total: 0 };
@@ -152,8 +164,11 @@ export function useDeliveryLinkReport(periodo: string) {
         }
       });
 
-      const distBuckets: DistBucket[] = Object.entries(buckets).map(([faixa, pedidos]) => ({ faixa, pedidos }));
+      const distBuckets: DistBucket[] = Object.entries(buckets).map(([faixa, v]) => ({ faixa, pedidos: v.pedidos, custo: v.custo }));
       const distMaisPedida = distBuckets.filter((b) => b.pedidos > 0).sort((a, b) => b.pedidos - a.pedidos)[0]?.faixa ?? null;
+      const custoPorDia: CustoDia[] = Object.entries(diaCalMap)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([d, v]) => ({ dia: d.slice(8, 10) + '/' + d.slice(5, 7), custo: v.custo, pedidos: v.pedidos }));
 
       const horariosPico: HoraPico[] = Array.from({ length: 24 }, (_, i) => ({
         hora: `${String(i).padStart(2, '0')}h`, pedidos: horaMap[i] ?? 0,
@@ -180,7 +195,7 @@ export function useDeliveryLinkReport(periodo: string) {
         distMedia: entregasComKm > 0 ? entregasKmTotal / entregasComKm : null,
         distMax: distMax > 0 ? distMax : null,
         entregasComKm, entregasKmTotal,
-        distMaisPedida, distBuckets,
+        distMaisPedida, distBuckets, custoPorDia,
         tempoPreparoMedio: tempos.length > 0 ? Math.round(tempos.reduce((a, b) => a + b, 0) / tempos.length) : null,
         horariosPico, porDiaSemana, topClientes, porStatus,
       });
