@@ -88,7 +88,6 @@ export default function DeliveryPage() {
   const deliveryFee = data.deliveryFee;
   const totalItens = data.totalItens;
   const totalItensProdutos = data.totalItensProdutos;
-  const totalValor = data.totalValor;
   const tenantId = data.tenantId;
   const customerId = data.customerId;
   const opcoesIndisponiveisIds = data.opcoesIndisponiveisIds;
@@ -1017,8 +1016,9 @@ export default function DeliveryPage() {
                 </div>
                 <span className="text-sm font-bold">Ver pedido</span>
               </div>
+              {/* Só o valor dos produtos — a taxa de entrega entra ao abrir o pedido */}
               <span className="text-sm font-bold">
-                R$ {totalValor.toFixed(2)}
+                R$ {totalItensProdutos.toFixed(2)}
               </span>
             </button>
           </div>
