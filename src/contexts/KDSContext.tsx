@@ -1193,6 +1193,8 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   // ── EDIT LOCK FIX: Agora aceita o payload do Realtime para aplicar mudanças
   // de is_editing instantaneamente no estado local de TODOS os dispositivos.
   const realtimeLeadingFiredRef = useRef(false);
+  // Pula o 1o SUBSCRIBED (mount já fez o load); recargas só em RECONEXÕES seguintes.
+  const kdsSubscribedOnceRef = useRef(false);
 
   /** Payload shape vindo do Supabase Realtime postgres_changes */
   interface RealtimePayload {
@@ -1319,7 +1321,16 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_item_observations', filter: `tenant_id=eq.${tenantId}` }, handleRealtimeChange)
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.info('[KDSContext] Realtime channel subscribed — all order tables active');
+          if (!kdsSubscribedOnceRef.current) {
+            // 1ª assinatura: o load inicial já rodou no mount, não recarrega de novo.
+            kdsSubscribedOnceRef.current = true;
+            console.info('[KDSContext] Realtime channel subscribed — all order tables active');
+          } else {
+            // RECONEXÃO: o Realtime não tem replay — recarrega 1x p/ cobrir o buraco
+            // (eventos perdidos durante a queda da internet). Substitui o poll de 30s.
+            console.info('[KDSContext] Realtime reconectado — re-sincronizando pedidos');
+            if (consecutiveErrorsRef.current < MAX_CONSECUTIVE_ERRORS) loadOrders();
+          }
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.warn('[KDSContext] Realtime channel error, status:', status);
         }
@@ -1428,11 +1439,14 @@ export function KDSProvider({ children }: { children: ReactNode }) {
 
     channelRef.current = channel;
 
+    // Backstop bem longo (5 min): o tempo real vem do Realtime e a re-sincronização
+    // acontece no reconnect (acima) e ao voltar pra aba (abaixo). Esse intervalo é só
+    // uma última rede de segurança — antes era 30s (pesava muito na quota do servidor).
     const pollInterval = setInterval(() => {
       if (consecutiveErrorsRef.current < MAX_CONSECUTIVE_ERRORS) {
         loadOrders();
       }
-    }, 30000);
+    }, 5 * 60 * 1000);
 
     // Recarrega ao voltar para a aba, mas com debounce de 2s para evitar
     // sobrescrever estado local de ações recém-executadas (entregar, etc.)
@@ -1454,6 +1468,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       lockChannel.unsubscribe();
       orderUpdatesChannel.unsubscribe();
       channelRef.current = null;
+      kdsSubscribedOnceRef.current = false; // próxima montagem/loja recomeça do zero
       clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (visibilityDebounce) clearTimeout(visibilityDebounce);
