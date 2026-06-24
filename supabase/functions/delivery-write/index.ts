@@ -1207,6 +1207,34 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         } catch { /* non-blocking */ }
       }
 
+      // Itens "sem preparo" (skip_kds: bebidas, sobremesas prontas) -> ticket de BAR,
+      // agrupado pela station_id real (fallback "bar"). Espelha o printOrderQueue das
+      // outras origens; antes o delivery NAO imprimia esses itens (so no comprovante).
+      const itensBar = serverItems.filter((it: Record<string, unknown>) => it.skip_kds);
+      const barGroups = new Map<string, Array<Record<string, unknown>>>();
+      for (const item of itensBar) {
+        const key = (item.station_id as string) || "bar";
+        if (!barGroups.has(key)) barGroups.set(key, []);
+        barGroups.get(key)!.push(item);
+      }
+      for (const [stationKey, stationItems] of barGroups.entries()) {
+        try {
+          await admin.rpc("enqueue_print_ticket", {
+            p_tenant_id: tenant_id, p_order_id: orderId, p_order_number: orderNumber,
+            p_station_key: stationKey, p_station_label: "Bar",
+            p_content_type: "ticket_json",
+            p_payload: {
+              numero: ticketNum, destino: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
+              origem: isRetirada ? "retirada" : "delivery",
+              impressora_id: stationKey,
+              itens: buildTicketItems(stationItems),
+              data_hora: dataHora,
+            },
+            p_paper_style: "80mm",
+          });
+        } catch { /* non-blocking */ }
+      }
+
       try {
         const receiptItems: Array<Record<string, unknown>> = [];
         for (const item of serverItems) {

@@ -277,6 +277,11 @@ export default function MotoboyListaPage() {
                 </span>
               );
             })() : null}
+            {!o.assumido ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-100 text-orange-700">
+                <i className="ri-user-add-line" /> Sem entregador
+              </span>
+            ) : null}
           </div>
         </div>
         <p className="text-sm font-semibold text-zinc-700">{o.cliente}</p>
@@ -332,7 +337,7 @@ export default function MotoboyListaPage() {
         </div>
 
         {/* Filtros */}
-        <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 pb-0.5">
+        <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 scrollbar-none">
           {FILTROS.map((f) => (
             <button key={f.key} type="button" onClick={() => setFiltro(f.key)}
               className={'shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ' +
