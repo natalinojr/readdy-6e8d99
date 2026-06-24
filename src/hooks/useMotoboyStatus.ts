@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
-export interface MotoboySinal { status: string; note?: string | null; }
+export interface MotoboySinal { status: string; note?: string | null; driverName?: string | null; }
 
 /**
  * Lê `motoboy_status`/`motoboy_note` direto da tabela `orders` (read seguro, sem
@@ -20,14 +20,17 @@ export function useMotoboyStatus(pollMs = 25000): Map<string, MotoboySinal> {
       const desde = new Date(Date.now() - 36 * 3600 * 1000).toISOString();
       const { data } = await supabase
         .from('orders')
-        .select('id, motoboy_status, motoboy_note')
+        .select('id, motoboy_status, motoboy_note, motoboy_driver:delivery_drivers!motoboy_driver_id(name)')
         .eq('tenant_id', tenantId)
         .eq('origin_type', 'delivery')
         .not('motoboy_status', 'is', null)
         .gte('created_at', desde);
       const m = new Map<string, MotoboySinal>();
-      (data ?? []).forEach((o: { id: string; motoboy_status: string | null; motoboy_note: string | null }) => {
-        if (o.motoboy_status) m.set(o.id, { status: o.motoboy_status, note: o.motoboy_note });
+      (data ?? []).forEach((o: { id: string; motoboy_status: string | null; motoboy_note: string | null; motoboy_driver?: { name: string | null } | { name: string | null }[] | null }) => {
+        if (o.motoboy_status) {
+          const drv = Array.isArray(o.motoboy_driver) ? o.motoboy_driver[0] : o.motoboy_driver;
+          m.set(o.id, { status: o.motoboy_status, note: o.motoboy_note, driverName: drv?.name ?? null });
+        }
       });
       setMap(m);
     } catch { /* silencioso */ }

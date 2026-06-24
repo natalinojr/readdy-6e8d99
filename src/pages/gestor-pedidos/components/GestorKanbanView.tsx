@@ -252,7 +252,7 @@ interface CardProps {
   filtroEstacao?: string;
   isNew?: boolean;
   slaInfo?: SlaInfo;
-  motoboySinal?: { status: string; note?: string | null };
+  motoboySinal?: { status: string; note?: string | null; driverName?: string | null };
 }
 
 function GestorCard({
@@ -652,6 +652,7 @@ function GestorCard({
               <div className="flex-1 min-w-0">
                 <p className={'text-[11px] font-bold ' + (motoboySinal.status === 'problema' ? 'text-red-700' : 'text-blue-700')}>
                   {MOTOBOY_SINAL_LABEL[motoboySinal.status] ?? motoboySinal.status}
+                  {motoboySinal.driverName ? <span className="font-semibold"> · {motoboySinal.driverName.split(' ')[0]}</span> : null}
                 </p>
                 {motoboySinal.status === 'problema' && motoboySinal.note ? (
                   <p className="text-[10px] text-red-600">{motoboySinal.note}</p>
