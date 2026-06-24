@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -41,16 +41,19 @@ function makeIcon(grupo: PontoEntrega[]) {
   });
 }
 
+// Enquadra TODOS os pontos só na 1ª vez que o mapa abre. Depois disso NÃO recentraliza
+// (o motoboy controla pan/zoom; refresh de dados não mexe na câmera).
 function AjustarBounds({ pontos }: { pontos: PontoEntrega[] }) {
   const map = useMap();
-  const chave = pontos.map((p) => `${p.lat},${p.lng}`).join('|');
+  const jaEnquadrou = useRef(false);
   useEffect(() => {
+    if (jaEnquadrou.current) return;
     const coords = pontos.filter((p) => p.lat != null && p.lng != null).map((p) => [p.lat as number, p.lng as number] as [number, number]);
     if (coords.length === 0) return;
+    jaEnquadrou.current = true;
     if (coords.length === 1) { map.setView(coords[0], 16); return; }
     map.fitBounds(L.latLngBounds(coords), { padding: [40, 40] });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chave]);
+  }, [pontos, map]);
   return null;
 }
 
