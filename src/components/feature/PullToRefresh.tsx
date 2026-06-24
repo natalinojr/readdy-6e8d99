@@ -56,6 +56,9 @@ export default function PullToRefresh({ children, onRefresh, threshold = 70, dis
 
     const onStart = (e: TouchEvent) => {
       if (refreshing || e.touches.length !== 1) { startY.current = null; return; }
+      // Não engata dentro de áreas que pedem o gesto pra si (ex.: mapa arrastável).
+      const tgt = e.target as Element | null;
+      if (tgt && typeof tgt.closest === 'function' && tgt.closest('[data-no-pull]')) { startY.current = null; return; }
       scrollElRef.current = getScrollableAncestor(e.target as Element);
       if (!atTop()) { startY.current = null; return; }
       startY.current = e.touches[0].clientY;

@@ -92,7 +92,7 @@ export default function MapaEntregas({
   };
 
   return (
-    <div className="fixed inset-0 z-[95] bg-white flex flex-col">
+    <div data-no-pull className="fixed inset-0 z-[95] bg-white flex flex-col">
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100">
         <div>
           <h2 className="text-sm font-black text-zinc-800">Mapa das entregas</h2>
