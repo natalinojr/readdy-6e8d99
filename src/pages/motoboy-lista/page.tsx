@@ -19,6 +19,16 @@ const SINAL_LABEL: Record<string, string> = {
   problema: 'Problema',
 };
 
+// Fases de entrega (ordem de exibição), com cor de fundo leve por grupo.
+interface Fase { key: string; label: string; cardBg: string; dot: string; match: (o: OrderRow) => boolean; }
+const FASES: Fase[] = [
+  { key: 'preparo', label: 'Em preparo', cardBg: 'bg-slate-50 border-slate-200', dot: 'bg-slate-400', match: (o) => !o.motoboy_status && o.status !== 'ready' },
+  { key: 'pronto', label: 'Prontos para retirar', cardBg: 'bg-sky-50 border-sky-200', dot: 'bg-sky-400', match: (o) => !o.motoboy_status && o.status === 'ready' },
+  { key: 'a_caminho_loja', label: 'A caminho da loja', cardBg: 'bg-amber-50 border-amber-200', dot: 'bg-amber-400', match: (o) => o.motoboy_status === 'a_caminho_loja' },
+  { key: 'coletou', label: 'Coletados / em rota', cardBg: 'bg-emerald-50 border-emerald-200', dot: 'bg-emerald-400', match: (o) => o.motoboy_status === 'coletou' },
+  { key: 'problema', label: 'Problema na entrega', cardBg: 'bg-red-50 border-red-200', dot: 'bg-red-400', match: (o) => o.motoboy_status === 'problema' },
+];
+
 interface OrderRow {
   id: string;
   number: string;
@@ -30,6 +40,7 @@ interface OrderRow {
   motoboy_status: string | null;
   meu: boolean;
   assumido: boolean;
+  alertas?: string[];
 }
 
 export default function MotoboyListaPage() {
@@ -196,34 +207,48 @@ export default function MotoboyListaPage() {
             <p className="text-sm font-semibold text-zinc-500 mt-2">Nenhum pedido em aberto agora.</p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {orders.map((o) => (
-              <a key={o.id} href={`/motoboy/${o.id}`}
-                className="block bg-white rounded-2xl border border-zinc-100 p-4 active:bg-zinc-50 transition-colors">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-black text-zinc-800">#{String(o.number).replace(/\D/g, '').slice(-4) || o.number}</span>
-                  <div className="flex items-center gap-1.5">
-                    {o.motoboy_status ? (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">{SINAL_LABEL[o.motoboy_status] ?? o.motoboy_status}</span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600 text-[10px] font-bold">{STATUS_LABEL[o.status] ?? o.status}</span>
-                    )}
+          <div className="space-y-5">
+            {FASES.map((fase) => {
+              const doGrupo = orders.filter(fase.match);
+              if (doGrupo.length === 0) return null;
+              return (
+                <div key={fase.key} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className={'w-2 h-2 rounded-full ' + fase.dot} />
+                    <span className="text-xs font-bold text-zinc-500 uppercase">{fase.label}</span>
+                    <span className="text-[11px] font-bold text-zinc-400">{doGrupo.length}</span>
                   </div>
+                  {doGrupo.map((o) => (
+                    <a key={o.id} href={`/motoboy/${o.id}`}
+                      className={'block rounded-2xl border p-4 active:brightness-95 transition ' + fase.cardBg}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-black text-zinc-800">#{String(o.number).replace(/\D/g, '').slice(-4) || o.number}</span>
+                        <span className="px-2 py-0.5 rounded-full bg-white/70 text-zinc-600 text-[10px] font-bold">
+                          {o.motoboy_status ? (SINAL_LABEL[o.motoboy_status] ?? o.motoboy_status) : (STATUS_LABEL[o.status] ?? o.status)}
+                        </span>
+                      </div>
+                      <p className="text-sm font-semibold text-zinc-700">{o.cliente}</p>
+                      <p className="text-xs text-zinc-500 line-clamp-1">{o.endereco || '—'}</p>
+                      {o.alertas && o.alertas.length > 0 ? (
+                        <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-amber-700">
+                          <i className="ri-alarm-warning-fill text-amber-500" /> Tem {o.alertas.join(', ')}
+                        </p>
+                      ) : null}
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-sm font-black text-zinc-800">{fmt(o.total)}</span>
+                        {o.assumido && !o.meu ? (
+                          <span className="text-[10px] font-bold text-zinc-400">outro entregador</span>
+                        ) : o.meu ? (
+                          <span className="text-[10px] font-bold text-amber-600">seu pedido</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-600">abrir <i className="ri-arrow-right-s-line" /></span>
+                        )}
+                      </div>
+                    </a>
+                  ))}
                 </div>
-                <p className="text-sm font-semibold text-zinc-700">{o.cliente}</p>
-                <p className="text-xs text-zinc-500 line-clamp-1">{o.endereco || '—'}</p>
-                <div className="flex items-center justify-between mt-2">
-                  <span className="text-sm font-black text-zinc-800">{fmt(o.total)}</span>
-                  {o.assumido && !o.meu ? (
-                    <span className="text-[10px] font-bold text-zinc-400">outro entregador</span>
-                  ) : o.meu ? (
-                    <span className="text-[10px] font-bold text-amber-600">seu pedido</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-600">abrir <i className="ri-arrow-right-s-line" /></span>
-                  )}
-                </div>
-              </a>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

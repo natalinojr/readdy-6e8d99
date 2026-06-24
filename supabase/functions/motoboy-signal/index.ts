@@ -36,6 +36,49 @@ async function resolveTenantId(admin: any, body: Record<string, unknown>): Promi
   return data?.id ?? null;
 }
 
+// Alertas "Avisar o motoboy" (Config. do Delivery): categorias/itens marcados que
+// estao presentes nos pedidos. Casa por id (categoria.id = menu_items.category_id;
+// item.id = order_items.item_id). Retorna { [order_id]: ["Bebidas", ...] }.
+// deno-lint-ignore no-explicit-any
+async function alertasPorPedido(admin: any, tenantId: string, orderIds: string[]): Promise<Record<string, string[]>> {
+  const out: Record<string, string[]> = {};
+  if (orderIds.length === 0) return out;
+  const { data: ss } = await admin.from("system_settings").select("delivery_config").eq("tenant_id", tenantId).maybeSingle();
+  const ma = (ss?.delivery_config as Record<string, unknown> | null)?.motoboy_alertas as
+    { categorias?: { id: string; nome: string }[]; itens?: { id: string; nome: string }[] } | undefined;
+  const catNome = new Map<string, string>();
+  (ma?.categorias ?? []).forEach((c) => { if (c?.id) catNome.set(String(c.id), String(c.nome ?? "")); });
+  const itemNome = new Map<string, string>();
+  (ma?.itens ?? []).forEach((i) => { if (i?.id) itemNome.set(String(i.id), String(i.nome ?? "")); });
+  if (catNome.size === 0 && itemNome.size === 0) return out;
+
+  const { data: ois } = await admin.from("order_items")
+    .select("order_id, item_id, item_name").in("order_id", orderIds);
+  const linhas = (ois ?? []) as { order_id: string; item_id: string | null; item_name: string | null }[];
+
+  // category_id de cada item_id (so quando ha categorias marcadas).
+  const catDoItem = new Map<string, string | null>();
+  if (catNome.size > 0) {
+    const itemIds = Array.from(new Set(linhas.map((l) => l.item_id).filter((x): x is string => !!x)));
+    if (itemIds.length > 0) {
+      const { data: mis } = await admin.from("menu_items").select("id, category_id").in("id", itemIds);
+      (mis ?? []).forEach((m: { id: string; category_id: string | null }) => catDoItem.set(m.id, m.category_id));
+    }
+  }
+
+  const sets: Record<string, Set<string>> = {};
+  for (const l of linhas) {
+    const s = (sets[l.order_id] ??= new Set<string>());
+    if (l.item_id) {
+      const catId = catDoItem.get(l.item_id);
+      if (catId && catNome.has(catId)) s.add(catNome.get(catId)!);
+      if (itemNome.has(l.item_id)) s.add(itemNome.get(l.item_id) || (l.item_name ?? ""));
+    }
+  }
+  for (const id of Object.keys(sets)) out[id] = Array.from(sets[id]).filter(Boolean);
+  return out;
+}
+
 function json(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...corsHeaders } });
 }
@@ -92,9 +135,12 @@ serve(async (req) => {
         .eq("tenant_id", tenantId).eq("origin_type", "delivery").in("status", STATUS_ABERTOS)
         .order("created_at", { ascending: true });
 
+      const lista = (orders ?? []) as Record<string, unknown>[];
+      const alertasMap = await alertasPorPedido(admin, tenantId, lista.map((o) => o.id as string));
+
       return json({
         ok: true,
-        orders: (orders ?? []).map((o: Record<string, unknown>) => ({
+        orders: lista.map((o: Record<string, unknown>) => ({
           id: o.id,
           number: o.number,
           cliente: nomeLimpo(o.destination_name as string | null),
@@ -105,6 +151,7 @@ serve(async (req) => {
           motoboy_status: o.motoboy_status ?? null,
           meu: o.motoboy_driver_id === driverId,
           assumido: o.motoboy_driver_id != null,
+          alertas: alertasMap[o.id as string] ?? [],
           created_at: o.created_at,
         })),
       });
@@ -115,13 +162,16 @@ serve(async (req) => {
 
     if (body.action === "get_order") {
       const { data: order, error } = await admin.from("orders")
-        .select("id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, out_for_delivery_at, origin_type")
+        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, out_for_delivery_at, origin_type")
         .eq("id", orderId).maybeSingle();
       if (error || !order) return json({ error: "not_found" }, 200);
       if (order.origin_type !== "delivery") return json({ error: "not_delivery" }, 200);
       const { data: items } = await admin.from("order_items").select("item_name, quantity").eq("order_id", orderId);
+      const alertasMap = await alertasPorPedido(admin, order.tenant_id as string, [orderId]);
+      const { data: tnt } = await admin.from("tenants").select("slug").eq("id", order.tenant_id).maybeSingle();
       return json({
         ok: true,
+        store_slug: tnt?.slug ?? "",
         order: {
           number: order.number,
           cliente: nomeLimpo(order.destination_name as string | null),
@@ -135,6 +185,7 @@ serve(async (req) => {
           motoboy_status: order.motoboy_status ?? null,
           motoboy_note: order.motoboy_note ?? null,
           em_rota: !!order.out_for_delivery_at,
+          alertas: alertasMap[orderId] ?? [],
           itens: (items ?? []).map((i: Record<string, unknown>) => ({ nome: i.item_name, qtd: i.quantity ?? 1 })),
         },
       });

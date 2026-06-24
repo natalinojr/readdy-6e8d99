@@ -49,6 +49,7 @@ interface OrderData {
   pagamento: string;
   status: string;
   motoboy_status: string | null;
+  alertas?: string[];
   itens: { nome: string; qtd: number }[];
 }
 
@@ -67,6 +68,7 @@ export default function MotoboyPage() {
   const [enviando, setEnviando] = useState('');
   const [showProblema, setShowProblema] = useState(false);
   const [motivo, setMotivo] = useState('');
+  const [storeSlug, setStoreSlug] = useState('');
 
   const carregar = useCallback(async () => {
     if (!orderId) { setErro('Link inválido.'); setLoading(false); return; }
@@ -80,6 +82,7 @@ export default function MotoboyPage() {
         setErro(data.error === 'not_found' ? 'Pedido não encontrado.' : 'Não foi possível carregar o pedido.');
       } else {
         setOrder(data.order);
+        if (data.store_slug) setStoreSlug(data.store_slug);
       }
     } catch {
       setErro('Erro de conexão. Tente novamente.');
@@ -151,9 +154,9 @@ export default function MotoboyPage() {
   return (
     <div className="min-h-screen bg-zinc-50 flex justify-center">
       <div className="w-full max-w-md px-4 py-5 space-y-4">
-        {/* Voltar à lista (quando o motoboy entrou pela lista da loja) */}
-        {getMotoboySession()?.store_slug ? (
-          <a href={`/entregas/${getMotoboySession()?.store_slug}`} className="inline-flex items-center gap-1 text-xs font-bold text-zinc-500">
+        {/* Voltar à lista de entregas da loja (slug vem da sessão ou do próprio pedido) */}
+        {(getMotoboySession()?.store_slug || storeSlug) ? (
+          <a href={`/entregas/${getMotoboySession()?.store_slug || storeSlug}`} className="inline-flex items-center gap-1 text-xs font-bold text-zinc-500">
             <i className="ri-arrow-left-line" /> Voltar aos pedidos
           </a>
         ) : null}
@@ -170,6 +173,14 @@ export default function MotoboyPage() {
             </span>
           ) : null}
         </div>
+
+        {/* Alerta "Avisar o motoboy" (ex.: tem bebida) */}
+        {order.alertas && order.alertas.length > 0 ? (
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-2xl p-3">
+            <i className="ri-alarm-warning-fill text-amber-500 text-xl flex-shrink-0" />
+            <p className="text-sm font-bold text-amber-700">Atenção: tem {order.alertas.join(', ')} — confira antes de sair!</p>
+          </div>
+        ) : null}
 
         {/* Dados */}
         <div className="bg-white rounded-2xl border border-zinc-100 p-4 space-y-3">

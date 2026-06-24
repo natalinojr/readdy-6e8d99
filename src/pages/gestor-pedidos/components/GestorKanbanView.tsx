@@ -337,18 +337,9 @@ function GestorCard({
     const fee = pedido.deliveryFee ?? 0;
     const total = pedido.totalAmount ?? 0;
     const valoresLinha = `\n💰 Cobrar do cliente: *${fmtBRL(total)}*${fee > 0 ? `\n🛵 Taxa de entrega: ${fmtBRL(fee)}` : ''}`;
-    // Alerta configurável (Config. do Delivery → "Avisar o motoboy"): categorias
-    // (casadas por nome) e/ou itens (casados por id) que o lojista marcou.
-    const alertas = settings.motoboy_alertas;
-    const catNomes = new Set(alertas.categorias.map((c) => c.nome.toLowerCase()));
-    const itemIds = new Set(alertas.itens.map((i) => i.id));
-    const marcados = new Set<string>();
-    pedido.itens.forEach((i) => {
-      if (i.categoriaNome && catNomes.has(i.categoriaNome.toLowerCase())) marcados.add(i.categoriaNome);
-      if (i.menuItemId && itemIds.has(i.menuItemId)) marcados.add(i.nome);
-    });
-    const bebidaLinha = marcados.size > 0
-      ? `\n⚠️ *ATENÇÃO: este pedido tem ${Array.from(marcados).join(', ')} — não esquecer!*`
+    // Alerta configurável (Config. do Delivery → "Avisar o motoboy").
+    const bebidaLinha = alertasMotoboy.length > 0
+      ? `\n⚠️ *ATENÇÃO: este pedido tem ${alertasMotoboy.join(', ')} — não esquecer!*`
       : '';
     // Aviso de quando o pedido fica pronto (operador estimou no "Iniciar preparo").
     const prontoLinha = estimateMin != null && estimateMin > 0
@@ -395,6 +386,19 @@ function GestorCard({
 
   const { getImpressoraParaEstacao } = useImpressoras();
   const { settings } = useSystemSettings();
+  // Alertas "Avisar o motoboy" (Config. do Delivery): categorias (casadas por nome)
+  // e/ou itens (casados por id) presentes neste pedido. Usado no badge do card e na msg.
+  const alertasMotoboy = useMemo(() => {
+    const alertas = settings.motoboy_alertas;
+    const catNomes = new Set(alertas.categorias.map((c) => c.nome.toLowerCase()));
+    const itemIds = new Set(alertas.itens.map((i) => i.id));
+    const marcados = new Set<string>();
+    pedido.itens.forEach((i) => {
+      if (i.categoriaNome && catNomes.has(i.categoriaNome.toLowerCase())) marcados.add(i.categoriaNome);
+      if (i.menuItemId && itemIds.has(i.menuItemId)) marcados.add(i.nome);
+    });
+    return Array.from(marcados);
+  }, [settings.motoboy_alertas, pedido.itens]);
   const [msgMenu, setMsgMenu] = useState<string[] | null>(null);
   // Modal "Iniciar preparo" do delivery próprio: estima o tempo de preparo e
   // (opcional) avisa o motoboy de quando o pedido fica pronto.
@@ -658,6 +662,16 @@ function GestorCard({
                   <p className="text-[10px] text-red-600">{motoboySinal.note}</p>
                 ) : null}
               </div>
+            </div>
+          )}
+
+          {/* Alerta "Avisar o motoboy" (ex.: tem bebida) */}
+          {isDelivery && alertasMotoboy.length > 0 && (
+            <div className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 bg-amber-50 border border-amber-200">
+              <i className="ri-alarm-warning-fill text-amber-500 text-sm flex-shrink-0" />
+              <p className="text-[11px] font-bold text-amber-700">
+                Tem {alertasMotoboy.join(', ')} — avisar o motoboy
+              </p>
             </div>
           )}
 
