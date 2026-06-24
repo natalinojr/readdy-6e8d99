@@ -6,6 +6,7 @@ import { Truck } from 'lucide-react';
 import MapaPin from '@/components/feature/MapaPin';
 import { useCardapio } from '@/contexts/CardapioContext';
 import type { MotoboyAlertEntry } from '@/contexts/SystemSettingsContext';
+import GerirEntregasTab from './GerirEntregasTab';
 
 interface Neighborhood {
   id: string;
@@ -60,6 +61,7 @@ export default function ConfigDeliveryPage() {
   // Entregadores (motoboys) com acesso à lista de entregas
   const [motoboys, setMotoboys] = useState<DriverRow[]>([]);
   const [motoboysLoading, setMotoboysLoading] = useState(false);
+  const [abaAtiva, setAbaAtiva] = useState<'config' | 'entregas'>('config');
   // Avisar o motoboy: categorias/itens que disparam alerta na msg do motoboy
   const [alertCategorias, setAlertCategorias] = useState<MotoboyAlertEntry[]>([]);
   const [alertItens, setAlertItens] = useState<MotoboyAlertEntry[]>([]);
@@ -437,10 +439,27 @@ export default function ConfigDeliveryPage() {
             <p className="text-xs text-zinc-400">Gerencie bairros, taxas e link público de delivery</p>
           </div>
         </div>
+        {/* Abas */}
+        <div className="flex items-center gap-1 mt-3">
+          {([['config', 'Configurações'], ['entregas', 'Gerir entregas']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setAbaAtiva(key)}
+              className={'px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ' +
+                (abaAtiva === key ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200')}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Conteúdo */}
       <div className="flex-1 overflow-y-auto p-6">
+        {abaAtiva === 'entregas' ? (
+          <GerirEntregasTab tenantId={tenantId} />
+        ) : (
         <div className="max-w-2xl space-y-6">
           {/* Mensagem */}
           {mensagem ? (
@@ -1149,6 +1168,7 @@ export default function ConfigDeliveryPage() {
             </button>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

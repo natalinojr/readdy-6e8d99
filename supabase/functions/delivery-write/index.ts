@@ -474,6 +474,74 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ _v: "v14", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── Loja gere o status da entrega (fallback quando o motoboy nao consegue) ──
+    if (action === "list_delivery_orders" || action === "set_motoboy_status" || action === "clear_motoboy_driver") {
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) return jsonErr("Nao autenticado", 401);
+      const { data: userData, error: userErr } = await admin.auth.getUser(token);
+      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+      const { tenant_id } = body;
+      if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
+      const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
+      if (!membership) return jsonErr("Sem acesso a esta loja.", 403);
+
+      if (action === "list_delivery_orders") {
+        const { data: orders } = await admin.from("orders")
+          .select("id, number, destination_name, delivery_address, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_driver_id, motoboy_updated_at, created_at")
+          .eq("tenant_id", tenant_id).eq("origin_type", "delivery").in("status", ["new", "preparing", "ready"])
+          .order("created_at", { ascending: true });
+        const lista = (orders ?? []) as Record<string, unknown>[];
+        const driverNome: Record<string, string> = {};
+        const dids = Array.from(new Set(lista.map((o) => o.motoboy_driver_id as string | null).filter(Boolean))) as string[];
+        if (dids.length) {
+          const { data: drvs } = await admin.from("delivery_drivers").select("id, name").in("id", dids);
+          (drvs ?? []).forEach((d: { id: string; name: string }) => { driverNome[d.id] = d.name; });
+        }
+        return new Response(JSON.stringify({ _v: "v14", ok: true, orders: lista.map((o) => ({
+          id: o.id, number: o.number,
+          cliente: ((o.destination_name as string | null) ?? "Cliente").split(/\s+[-–—]\s+/)[0].trim() || "Cliente",
+          endereco: o.delivery_address ?? "", total: Number(o.total_amount ?? 0), taxa: Number(o.delivery_fee ?? 0),
+          status: o.status, motoboy_status: o.motoboy_status ?? null, motoboy_note: o.motoboy_note ?? null,
+          driver_id: o.motoboy_driver_id ?? null, driver_nome: o.motoboy_driver_id ? (driverNome[o.motoboy_driver_id as string] ?? null) : null,
+          created_at: o.created_at,
+        })) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const orderId = String(body.order_id || "").trim();
+      if (!orderId) return jsonErr("order_id obrigatorio", 400);
+      // Confere que o pedido e desta loja.
+      const { data: ord } = await admin.from("orders").select("id, motoboy_timeline").eq("id", orderId).eq("tenant_id", tenant_id).maybeSingle();
+      if (!ord) return jsonErr("Pedido nao encontrado nesta loja.", 404);
+
+      if (action === "clear_motoboy_driver") {
+        // Libera o pedido do entregador atual (some/sem acesso) — volta pra fila.
+        const { error } = await admin.from("orders").update({ motoboy_driver_id: null }).eq("id", orderId);
+        if (error) throw error;
+        return new Response(JSON.stringify({ _v: "v14", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // set_motoboy_status: a loja define o status (override, ignora a trava de dono).
+      const signal = String(body.signal || "");
+      if (!["a_caminho_loja", "coletou", "entregou", "problema"].includes(signal)) return jsonErr("signal invalido", 400);
+      const nowIso = new Date().toISOString();
+      const tl = (ord.motoboy_timeline as Record<string, string> | null) ?? {};
+      if (!tl[signal]) tl[signal] = nowIso;
+      const updates: Record<string, unknown> = {
+        motoboy_status: signal,
+        motoboy_note: signal === "problema" ? String(body.motivo ?? "").slice(0, 500) : null,
+        motoboy_updated_at: nowIso,
+        motoboy_timeline: tl,
+        updated_at: nowIso,
+      };
+      if (signal === "coletou") updates.out_for_delivery_at = nowIso;
+      if (signal === "entregou") { updates.status = "delivered"; updates.out_for_delivery_at = nowIso; }
+      const { error: upErr } = await admin.from("orders").update(updates).eq("id", orderId);
+      if (upErr) throw upErr;
+      if (signal === "entregou") await admin.from("order_items").update({ status: "delivered" }).eq("order_id", orderId);
+      return new Response(JSON.stringify({ _v: "v14", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "get_delivery_state" || action === "set_delivery_state") {
       // Estado de abertura do delivery controlado pelo PDV (botao abrir/fechar/pausar).
       // Autoriza qualquer MEMBRO da loja (operador de caixa nao precisa ser admin).

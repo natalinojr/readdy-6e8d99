@@ -171,12 +171,31 @@ serve(async (req) => {
 
     if (body.action === "get_order") {
       const { data: order, error } = await admin.from("orders")
-        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, motoboy_driver_id, out_for_delivery_at, origin_type")
+        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, motoboy_driver_id, motoboy_timeline, out_for_delivery_at, created_at, origin_type")
         .eq("id", orderId).maybeSingle();
       if (error || !order) return json({ error: "not_found" }, 200);
       if (order.origin_type !== "delivery") return json({ error: "not_delivery" }, 200);
-      const { data: items } = await admin.from("order_items").select("item_name, quantity").eq("order_id", orderId);
+      const { data: items } = await admin.from("order_items")
+        .select("item_name, quantity, skip_kds, started_preparing_at, ready_at").eq("order_id", orderId);
       const alertasMap = await alertasPorPedido(admin, order.tenant_id as string, [orderId]);
+
+      // Horarios das fases da COZINHA (agregado dos itens que vao pra cozinha).
+      const cozinhaItens = (items ?? []).filter((i: Record<string, unknown>) => !i.skip_kds);
+      const minTs = (campo: string): string | null => {
+        const ts = cozinhaItens.map((i: Record<string, unknown>) => i[campo] as string | null).filter(Boolean) as string[];
+        return ts.length ? ts.sort()[0] : null;
+      };
+      const maxTs = (campo: string): string | null => {
+        const ts = cozinhaItens.map((i: Record<string, unknown>) => i[campo] as string | null).filter(Boolean) as string[];
+        return ts.length ? ts.sort()[ts.length - 1] : null;
+      };
+      const todosProntos = cozinhaItens.length > 0 && cozinhaItens.every((i: Record<string, unknown>) => !!i.ready_at);
+      const cozinha = {
+        status: order.status,
+        novo_at: order.created_at ?? null,
+        preparo_at: minTs("started_preparing_at"),
+        pronto_at: todosProntos ? maxTs("ready_at") : null,
+      };
       const { data: tnt } = await admin.from("tenants").select("slug, name").eq("id", order.tenant_id).maybeSingle();
       let claimedByName: string | null = null;
       if (order.motoboy_driver_id) {
@@ -201,6 +220,8 @@ serve(async (req) => {
           status: order.status,
           motoboy_status: order.motoboy_status ?? null,
           motoboy_note: order.motoboy_note ?? null,
+          motoboy_timeline: (order.motoboy_timeline as Record<string, string> | null) ?? {},
+          cozinha,
           em_rota: !!order.out_for_delivery_at,
           alertas: alertasMap[orderId] ?? [],
           itens: (items ?? []).map((i: Record<string, unknown>) => ({ nome: i.item_name, qtd: i.quantity ?? 1 })),
@@ -222,12 +243,16 @@ serve(async (req) => {
       const driverId = String(body.driver_id ?? "").trim();
       // Trava de propriedade: a partir do 1o sinal, o pedido fica preso a um entregador.
       // So pode atualizar quem nao tem dono ainda OU o proprio dono.
-      const { data: cur } = await admin.from("orders").select("motoboy_driver_id").eq("id", orderId).maybeSingle();
+      const { data: cur } = await admin.from("orders").select("motoboy_driver_id, motoboy_timeline").eq("id", orderId).maybeSingle();
       if (!cur) return json({ error: "not_found" }, 200);
       const dono = cur.motoboy_driver_id as string | null;
       if (dono && (!driverId || dono !== driverId)) {
         return json({ ok: false, error: "assumido_por_outro" }, 200);
       }
+      // Registra o horario da 1a vez que o pedido entrou nesta fase do motoboy.
+      const tl = (cur.motoboy_timeline as Record<string, string> | null) ?? {};
+      if (!tl[signal]) tl[signal] = nowIso;
+      updates.motoboy_timeline = tl;
       // Registra qual motoboy assumiu o pedido (1o sinal define o dono).
       if (driverId) updates.motoboy_driver_id = driverId;
       if (signal === "coletou") updates.out_for_delivery_at = nowIso;

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 
 function edgeUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
@@ -52,7 +52,15 @@ interface OrderData {
   alertas?: string[];
   claimed_by_id?: string | null;
   claimed_by_name?: string | null;
+  motoboy_timeline?: Record<string, string>;
+  cozinha?: { status: string; novo_at: string | null; preparo_at: string | null; pronto_at: string | null };
   itens: { nome: string; qtd: number }[];
+}
+
+// HH:MM de um ISO (fuso do dispositivo). '' se vazio.
+function horaCurta(iso?: string | null): string {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
 }
 
 const SINAL_LABEL: Record<string, string> = {
@@ -79,6 +87,22 @@ export default function MotoboyPage() {
   const [entrando, setEntrando] = useState(false);
   const [loginErro, setLoginErro] = useState('');
   const [aviso, setAviso] = useState('');
+  // Teclado virtual: empurra a tela pra cima pro campo de "problema" não ficar escondido.
+  const [kbInset, setKbInset] = useState(0);
+  const problemaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const vp = window.visualViewport;
+    if (!vp) return;
+    const update = () => {
+      const kb = Math.max(0, window.innerHeight - vp.height - vp.offsetTop);
+      setKbInset(kb > 120 ? kb : 0);
+    };
+    vp.addEventListener('resize', update);
+    vp.addEventListener('scroll', update);
+    update();
+    return () => { vp.removeEventListener('resize', update); vp.removeEventListener('scroll', update); };
+  }, []);
 
   const carregar = useCallback(async () => {
     if (!orderId) { setErro('Link inválido.'); setLoading(false); return; }
@@ -201,7 +225,7 @@ export default function MotoboyPage() {
 
   return (
     <div className="min-h-screen bg-zinc-50 flex justify-center">
-      <div className="w-full max-w-md px-4 py-5 space-y-4">
+      <div className="w-full max-w-md px-4 py-5 space-y-4" style={{ paddingBottom: kbInset ? kbInset + 24 : undefined }}>
         {/* Voltar à lista de entregas da loja (slug vem da sessão ou do próprio pedido) */}
         {(getMotoboySession()?.store_slug || storeSlug) ? (
           <a href={`/entregas/${getMotoboySession()?.store_slug || storeSlug}`} className="inline-flex items-center gap-1 text-xs font-bold text-zinc-500">
@@ -278,6 +302,49 @@ export default function MotoboyPage() {
           </div>
         </div>
 
+        {/* Andamento: cozinha + fases do motoboy, com horários */}
+        <div className="bg-white rounded-2xl border border-zinc-100 p-4 space-y-3">
+          <p className="text-[11px] text-zinc-400 font-semibold uppercase">Andamento</p>
+          <div className="space-y-1.5">
+            <p className="text-[10px] text-zinc-400 font-semibold uppercase">Cozinha</p>
+            {[
+              { label: 'Recebido', at: order.cozinha?.novo_at },
+              { label: 'Em preparo', at: order.cozinha?.preparo_at },
+              { label: 'Pronto', at: order.cozinha?.pronto_at },
+            ].map((f) => (
+              <div key={f.label} className="flex items-center gap-2 text-sm">
+                <i className={`ri-checkbox-circle-fill text-sm ${f.at ? 'text-emerald-500' : 'text-zinc-200'}`} />
+                <span className={f.at ? 'text-zinc-700' : 'text-zinc-400'}>{f.label}</span>
+                <span className="ml-auto text-xs font-bold text-zinc-500">{horaCurta(f.at) || '—'}</span>
+              </div>
+            ))}
+          </div>
+          <div className="space-y-1.5 border-t border-zinc-100 pt-2">
+            <p className="text-[10px] text-zinc-400 font-semibold uppercase">Entregador</p>
+            {[
+              { label: 'A caminho da loja', key: 'a_caminho_loja' },
+              { label: 'Coletou o pedido', key: 'coletou' },
+              { label: 'Entregou ao cliente', key: 'entregou' },
+            ].map((f) => {
+              const at = order.motoboy_timeline?.[f.key];
+              return (
+                <div key={f.key} className="flex items-center gap-2 text-sm">
+                  <i className={`ri-checkbox-circle-fill text-sm ${at ? 'text-blue-500' : 'text-zinc-200'}`} />
+                  <span className={at ? 'text-zinc-700' : 'text-zinc-400'}>{f.label}</span>
+                  <span className="ml-auto text-xs font-bold text-zinc-500">{horaCurta(at) || '—'}</span>
+                </div>
+              );
+            })}
+            {order.motoboy_timeline?.problema ? (
+              <div className="flex items-center gap-2 text-sm">
+                <i className="ri-alert-fill text-sm text-red-500" />
+                <span className="text-red-600">Problema relatado</span>
+                <span className="ml-auto text-xs font-bold text-zinc-500">{horaCurta(order.motoboy_timeline.problema)}</span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
         {aviso ? (
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-2xl p-3">
             <i className="ri-error-warning-line text-red-500 text-lg flex-shrink-0" />
@@ -325,8 +392,10 @@ export default function MotoboyPage() {
             {showProblema ? (
               <div className="bg-white rounded-2xl border border-red-200 p-3 space-y-2">
                 <textarea
+                  ref={problemaRef}
                   value={motivo}
                   onChange={(e) => setMotivo(e.target.value)}
+                  onFocus={() => { setTimeout(() => problemaRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 350); }}
                   rows={3}
                   placeholder="Descreva o problema (ex.: cliente ausente, endereço não encontrado…)"
                   className="w-full px-3 py-2 rounded-xl border border-zinc-200 focus:border-red-400 outline-none text-sm resize-none"
