@@ -389,37 +389,48 @@ export default function MotoboyPage() {
               <Botao signal={proximo.signal} label={proximo.label} icon={proximo.icon} cor={proximo.cor} />
             ) : null}
 
-            {showProblema ? (
-              <div className="bg-white rounded-2xl border border-red-200 p-3 space-y-2">
-                <textarea
-                  ref={problemaRef}
-                  value={motivo}
-                  onChange={(e) => setMotivo(e.target.value)}
-                  onFocus={() => { setTimeout(() => problemaRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 350); }}
-                  rows={3}
-                  placeholder="Descreva o problema (ex.: cliente ausente, endereço não encontrado…)"
-                  className="w-full px-3 py-2 rounded-xl border border-zinc-200 focus:border-red-400 outline-none text-sm resize-none"
-                />
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => { setShowProblema(false); setMotivo(''); }} className="flex-1 py-2.5 rounded-xl bg-zinc-100 text-zinc-600 text-sm font-semibold">Cancelar</button>
-                  <button
-                    type="button"
-                    disabled={!motivo.trim() || enviando === 'problema'}
-                    onClick={() => sinalizar('problema', motivo.trim())}
-                    className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold disabled:opacity-50"
-                  >
-                    {enviando === 'problema' ? 'Enviando…' : 'Enviar problema'}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button type="button" onClick={() => setShowProblema(true)} className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl border-2 border-red-200 text-red-600 font-bold text-sm">
-                <i className="ri-alert-line text-lg" /> Tive um problema na entrega
-              </button>
-            )}
+            <button type="button" onClick={() => setShowProblema(true)} className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl border-2 border-red-200 text-red-600 font-bold text-sm">
+              <i className="ri-alert-line text-lg" /> Tive um problema na entrega
+            </button>
           </div>
         )}
       </div>
+
+      {/* Modal "problema" ancorado no TOPO: o teclado fica embaixo e nunca cobre o campo. */}
+      {showProblema ? (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-start justify-center p-4"
+          onClick={() => { setShowProblema(false); setMotivo(''); }}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-4 space-y-3 mt-2" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-red-100 rounded-lg shrink-0">
+                <i className="ri-alert-line text-red-600" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-zinc-800">Problema na entrega</h4>
+                <p className="text-xs text-zinc-500">Descreva o que aconteceu.</p>
+              </div>
+            </div>
+            <textarea
+              ref={problemaRef}
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Ex.: cliente ausente, endereço não encontrado…"
+              className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 focus:border-red-400 outline-none text-sm resize-none"
+            />
+            <div className="flex gap-2">
+              <button type="button" onClick={() => { setShowProblema(false); setMotivo(''); }}
+                className="flex-1 py-2.5 rounded-xl bg-zinc-100 text-zinc-600 text-sm font-semibold">Cancelar</button>
+              <button type="button" disabled={!motivo.trim() || enviando === 'problema'}
+                onClick={() => sinalizar('problema', motivo.trim())}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold disabled:opacity-50">
+                {enviando === 'problema' ? 'Enviando…' : 'Enviar problema'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

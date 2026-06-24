@@ -319,7 +319,22 @@ export default function MotoboyListaPage() {
   const pontosMapa = filtrados.map((o) => ({
     id: o.id, number: o.number, cliente: o.cliente, endereco: o.endereco,
     lat: o.lat ?? null, lng: o.lng ?? null, meu: o.meu, atrasado: infoTempo(o, now).atrasado,
+    motoboy_status: o.motoboy_status, assumido: o.assumido, assumido_por: o.assumido_por ?? null,
   }));
+
+  // Motoboy diz "estou a caminho" direto do pin do mapa (assume + sinaliza).
+  const marcarACaminho = async (orderId: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!session) return { ok: false };
+    try {
+      const res = await fetch(edgeUrl(), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'signal', order_id: orderId, signal: 'a_caminho_loja', driver_id: session.driver_id }),
+      });
+      const data = await res.json();
+      if (data.ok) await carregar(session);
+      return data;
+    } catch { return { ok: false, error: 'conexao' }; }
+  };
 
   return (
     <div className="min-h-screen bg-zinc-50 flex justify-center">
@@ -337,7 +352,7 @@ export default function MotoboyListaPage() {
         </div>
 
         {/* Filtros */}
-        <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 scrollbar-none">
+        <div className="flex flex-wrap items-center gap-1.5">
           {FILTROS.map((f) => (
             <button key={f.key} type="button" onClick={() => setFiltro(f.key)}
               className={'shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ' +
@@ -402,7 +417,7 @@ export default function MotoboyListaPage() {
         )}
       </div>
 
-      {showMapa ? <MapaEntregas pontos={pontosMapa} onClose={() => setShowMapa(false)} /> : null}
+      {showMapa ? <MapaEntregas pontos={pontosMapa} onClose={() => setShowMapa(false)} onACaminho={marcarACaminho} /> : null}
     </div>
   );
 }
