@@ -229,6 +229,25 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
     setNovaObs('');
   };
 
+  // Onde o item aparece (3 opções), mapeado pros flags existentes:
+  //  - 'delivery' → somenteDelivery (oculto no presencial; visível no delivery)
+  //  - 'casa'     → delivery_config.ativo=false (oculto no delivery; visível no presencial)
+  //  - 'ambos'    → padrão (visível em tudo)
+  const disponibilidade: 'ambos' | 'delivery' | 'casa' =
+    somenteDelivery ? 'delivery' : (deliveryConfig?.ativo === false ? 'casa' : 'ambos');
+  const setDisponibilidade = (val: 'ambos' | 'delivery' | 'casa') => {
+    if (val === 'delivery') {
+      setSomenteDelivery(true);
+      setDeliveryConfig(d => ({ ...(d ?? { ativo: true }), ativo: true }));
+    } else if (val === 'casa') {
+      setSomenteDelivery(false);
+      setDeliveryConfig(d => ({ ...(d ?? { ativo: false }), ativo: false }));
+    } else {
+      setSomenteDelivery(false);
+      setDeliveryConfig(d => ({ ...(d ?? { ativo: true }), ativo: true }));
+    }
+  };
+
   const handleSave = () => {
     if (!nome.trim() || !preco) return;
     const saved: Item = {
@@ -380,46 +399,38 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                   </select>
                 </div>
 
-                {/* Somente Delivery */}
+                {/* Onde o item aparece: casa, delivery ou ambos */}
                 <div className="col-span-2">
-                  <div
-                    onClick={() => setSomenteDelivery(v => !v)}
-                    className={`flex items-center gap-4 p-4 rounded-xl border cursor-pointer transition-colors select-none ${
-                      somenteDelivery
-                        ? 'bg-orange-50 border-orange-200'
-                        : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300'
-                    }`}
-                  >
-                    <div className="w-9 h-9 flex items-center justify-center rounded-xl flex-shrink-0" style={{ background: somenteDelivery ? '#fff7ed' : '#f4f4f5' }}>
-                      <i className="ri-e-bike-2-line text-lg" style={{ color: somenteDelivery ? '#f97316' : '#a1a1aa' }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-gray-800">Exclusivo PDV Delivery (iFood, 99, etc.)</p>
-                        {somenteDelivery && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 bg-orange-100 text-orange-700 border border-orange-200 rounded-full whitespace-nowrap">
-                            ATIVO
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        {somenteDelivery
-                          ? 'Este item aparece apenas no PDV Delivery (apps de entrega) — não fica visível no caixa, garçom ou autoatendimento.'
-                          : 'Ative para que este item apareça somente no PDV Delivery (apps como iFood, 99), ocultando-o dos demais canais.'}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={e => { e.stopPropagation(); setSomenteDelivery(v => !v); }}
-                      className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-colors cursor-pointer ${
-                        somenteDelivery ? 'bg-orange-500' : 'bg-gray-200'
-                      }`}
-                    >
-                      <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${
-                        somenteDelivery ? 'left-6' : 'left-1'
-                      }`} />
-                    </button>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Onde este item aparece</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      { key: 'ambos', label: 'Casa e delivery', icon: 'ri-restaurant-2-line' },
+                      { key: 'casa', label: 'Só na casa', icon: 'ri-home-4-line' },
+                      { key: 'delivery', label: 'Só delivery', icon: 'ri-e-bike-2-line' },
+                    ] as const).map(opt => {
+                      const sel = disponibilidade === opt.key;
+                      return (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setDisponibilidade(opt.key)}
+                          className={`flex flex-col items-center gap-1 py-3 rounded-xl border text-xs font-semibold transition-colors ${
+                            sel ? 'bg-orange-50 border-orange-300 text-orange-700' : 'bg-zinc-50 border-zinc-200 text-zinc-500 hover:border-zinc-300'
+                          }`}
+                        >
+                          <i className={opt.icon + ' text-lg'} />
+                          {opt.label}
+                        </button>
+                      );
+                    })}
                   </div>
+                  <p className="text-xs text-gray-500 mt-1.5">
+                    {disponibilidade === 'delivery'
+                      ? 'Aparece só no delivery — oculto no caixa, garçom, mesa e autoatendimento.'
+                      : disponibilidade === 'casa'
+                      ? 'Aparece só nos canais presenciais (caixa, garçom, mesa, autoatendimento) — oculto no delivery.'
+                      : 'Aparece em todos os canais — presencial e delivery.'}
+                  </p>
                 </div>
 
                 <div className="col-span-2">

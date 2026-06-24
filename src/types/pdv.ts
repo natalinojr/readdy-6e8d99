@@ -219,6 +219,8 @@ export interface PedidoRecente {
   numeroStr?: string;
   /** KDS-level pedido status — kept in sync with KDSContext, used for accurate badge labels */
   kdsStatus?: import('@/types/kds').KDSPedidoStatus;
+  /** Status da entrega do motoboy (a_caminho_loja/coletou/entregou/problema) — só delivery */
+  motoboyStatus?: string | null;
   /** BUG 2.3: training mode — shows badge */
   isTraining?: boolean;
   destino: 'hora' | 'mesa' | 'delivery' | 'nome' | 'senha' | 'na_hora';

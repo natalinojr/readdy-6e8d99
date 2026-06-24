@@ -4,6 +4,7 @@ import ImprimirPedidoModal from './ImprimirPedidoModal';
 import CancelamentoModal from '@/components/feature/CancelamentoModal';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useKDS } from '../../../../contexts/KDSContext';
+import { useMotoboyStatus } from '@/hooks/useMotoboyStatus';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSPedidoStatus } from '@/types/kds';
 import { kdsStatusToPdvStatus, pdvStatusLabel, pdvStatusBadgeCls, formatOrderNumber } from '@/lib/statusMappers';
 import { formatOrderTime } from '@/lib/dateUtils';
@@ -90,6 +91,22 @@ const ORIGEM_CONFIG: Record<string, { label: string; icon: string; color: string
   mesa:            { label: 'Mesa',            icon: 'ri-restaurant-2-line', color: 'bg-violet-50 text-violet-700 border-violet-200' },
   qr_code:         { label: 'QR CODE',          icon: 'ri-qr-code-line',      color: 'bg-violet-50 text-violet-700 border-violet-200' },
   autoatendimento: { label: 'Autoatendimento', icon: 'ri-tablet-line',       color: 'bg-teal-50   text-teal-700   border-teal-200'   },
+  delivery:        { label: 'Delivery',        icon: 'ri-e-bike-2-line',     color: 'bg-rose-50   text-rose-700   border-rose-200'   },
+};
+
+// Nome do cliente sem o sufixo "- endereço" (delivery grava "nome - endereço - ...").
+function nomeClienteLimpo(nome?: string | null): string {
+  const n = (nome ?? '').trim();
+  if (!n) return '—';
+  return n.split(/\s+[-–—]\s+/)[0].trim() || n;
+}
+
+// Badge do status da entrega (motoboy) por fase.
+const ENTREGA_BADGE: Record<string, { label: string; cls: string; icon: string }> = {
+  a_caminho_loja: { label: 'A caminho da loja', cls: 'bg-blue-100 text-blue-700 border-blue-200', icon: 'ri-store-2-line' },
+  coletou: { label: 'Em rota', cls: 'bg-violet-100 text-violet-700 border-violet-200', icon: 'ri-e-bike-2-line' },
+  entregou: { label: 'Entregue', cls: 'bg-green-100 text-green-700 border-green-200', icon: 'ri-checkbox-circle-line' },
+  problema: { label: 'Problema', cls: 'bg-red-100 text-red-700 border-red-200', icon: 'ri-alert-line' },
 };
 
 const UNIDADE_STATUS_CFG: Record<string, { icon: string; color: string; label: string }> = {
@@ -113,7 +130,7 @@ function destinoLabel(p: PedidoRecente) {
   if (p.destino === 'nome')     return p.nomeCliente ?? '—';
   if (p.destino === 'senha')    return `Senha ${p.senha}${p.nomeCliente ? ` - ${p.nomeCliente}` : ''}`;
   if (p.destino === 'hora')     return 'Balcão';
-  if (p.destino === 'delivery') return `Delivery - ${p.nomeCliente}`;
+  if (p.destino === 'delivery') return nomeClienteLimpo(p.nomeCliente); // só o nome; origem mostra "Delivery"
   return '—';
 }
 
@@ -778,7 +795,7 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
       return pedido.nomeCliente;
     }
     if (pedido.destino === 'delivery') {
-      return pedido.nomeCliente ? `Delivery · ${pedido.nomeCliente}` : 'Delivery';
+      return pedido.nomeCliente ? nomeClienteLimpo(pedido.nomeCliente) : 'Delivery';
     }
     return 'Agrupados';
   }, [pedido.destino, pedido.mesaNumero, pedido.senha, pedido.nomeCliente, (pedido as PedidoRecenteComParticipant).participantToken]);
@@ -968,6 +985,13 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
                 <span className="ml-0.5">· {pedido.garcomNome.split(' ')[0]}</span>
               )}
             </span>
+            {/* Status da entrega (motoboy) */}
+            {pedido.destino === 'delivery' && pedido.motoboyStatus && ENTREGA_BADGE[pedido.motoboyStatus] && (
+              <span className={`flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full border whitespace-nowrap ${ENTREGA_BADGE[pedido.motoboyStatus].cls}`}>
+                <i className={`${ENTREGA_BADGE[pedido.motoboyStatus].icon} text-[9px]`} />
+                {ENTREGA_BADGE[pedido.motoboyStatus].label}
+              </span>
+            )}
             {pedido.isTraining && (
               <span className="flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-yellow-300 text-yellow-900 border border-yellow-400 whitespace-nowrap">
                 <i className="ri-graduation-cap-fill text-[9px]" />TREINO
@@ -1462,6 +1486,13 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
             <i className={`text-zinc-400 text-sm flex-shrink-0 ${expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`} />
           </div>
         </div>
+        {/* Delivery: quebra itens + taxa de entrega */}
+        {pedido.destino === 'delivery' && (pedido.deliveryFee ?? 0) > 0 && (
+          <div className="flex items-center gap-1 text-[10px] text-zinc-500 mb-1.5 -mt-0.5">
+            <i className="ri-e-bike-line text-[10px] text-rose-500" />
+            <span>Itens {formatPrice(Math.max(0, pedido.total - (pedido.deliveryFee ?? 0)))} + Entrega <strong className="text-rose-600">{formatPrice(pedido.deliveryFee ?? 0)}</strong></span>
+          </div>
+        )}
         {/* Badges: fluem em wrap com gap menor pra aproveitar espaço */}
         <div className="flex flex-wrap items-center gap-1 mb-1.5">
           {/* Não exibe destinoLabel quando há badge de participantToken (senha já aparece em evidência) */}
@@ -1496,6 +1527,13 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
               <span className="ml-0.5">· {pedido.garcomNome.split(' ')[0]}</span>
             )}
           </span>
+          {/* Status da entrega (motoboy) */}
+          {pedido.destino === 'delivery' && pedido.motoboyStatus && ENTREGA_BADGE[pedido.motoboyStatus] && (
+            <span className={`flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full border whitespace-nowrap ${ENTREGA_BADGE[pedido.motoboyStatus].cls}`}>
+              <i className={`${ENTREGA_BADGE[pedido.motoboyStatus].icon} text-[9px]`} />
+              {ENTREGA_BADGE[pedido.motoboyStatus].label}
+            </span>
+          )}
           {/* BUG 3.7 FIX: garcom em pedidos de mesa */}
           {pedido.origem !== 'garcom' && pedido.garcomNome && (
             <span className="flex items-center gap-0.5 text-[9px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
@@ -1770,12 +1808,15 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
 // ── Painel principal ─────────────────────────────────────────────────────────
 
 // Filtros: Todos / Em Aberto / Novo (aguardando) / Preparo / Prontos / Entregues / Cancelados
-type Filtro = 'todos' | 'aberto' | 'novo' | 'preparo' | 'pronto' | 'entregue' | 'pago' | 'cancelado';
+type Filtro = 'todos' | 'aberto' | 'novo' | 'preparo' | 'pronto' | 'em_rota' | 'entregue' | 'pago' | 'cancelado';
 
 // Um pedido pode aparecer em múltiplas abas quando tem itens em fases diferentes
 // Ex: pedido com 1 item pronto e 1 em preparo → aparece em "Preparo" E "Prontos"
 function pedidoMatchFiltro(p: PedidoRecente, filtro: Filtro): boolean {
   if (filtro === 'todos') return true;
+  const kdsStatus = (p as PedidoRecente & { kdsStatus?: KDSPedidoStatus }).kdsStatus;
+  // Em rota: pedido de delivery que saiu para entrega (out_for_delivery → kds 'em_rota').
+  if (filtro === 'em_rota') return kdsStatus === 'em_rota';
   // Em Aberto (PDV Caixa) = pedidos que ainda precisam de cobrança do caixa.
   // Um pedido sai de "Em Aberto" quando:
   //   - Foi cancelado (não há cobrança), OU
@@ -1791,7 +1832,7 @@ function pedidoMatchFiltro(p: PedidoRecente, filtro: Filtro): boolean {
     if (p.status === 'cancelado') return false;
     return p.pago === true;
   }
-  if (filtro === 'entregue') return p.status === 'entregue';
+  if (filtro === 'entregue') return p.status === 'entregue' && kdsStatus !== 'em_rota';
   if (filtro === 'cancelado') return p.status === 'cancelado';
   if (filtro === 'pronto') {
     if (p.status === 'pronto') return true;
@@ -1830,6 +1871,7 @@ export default function PedidosRecentesPanel() {
   const [filtro, setFiltro] = useState<Filtro>('aberto');
   const [busca, setBusca] = useState('');
   const { pedidos: kdsPedidos, updateItemStatusRemote, updateUnitStatusRemote, setPedidos, reloadOrders } = useKDS();
+  const motoboyMap = useMotoboyStatus(); // status da entrega (realtime), por order id
 
   const allPedidos = useMemo(
     () => {
@@ -1846,11 +1888,13 @@ export default function PedidosRecentesPanel() {
           }
           return a.criadoEm - b.criadoEm;
         })
-        .map(kdsToRecente);
+        .map(kdsToRecente)
+        // Anexa o status da entrega (motoboy) por order id, pra badge e filtro.
+        .map((p) => ({ ...p, motoboyStatus: motoboyMap.get(p.id)?.status ?? null }));
       // Agrupar pedidos de mesa que compartilham o mesmo table_session_id
       return agruparPedidos(pedidos);
     },
-    [kdsPedidos],
+    [kdsPedidos, motoboyMap],
   );
 
   const handleEntregarRemote = useCallback(
@@ -1944,6 +1988,7 @@ export default function PedidosRecentesPanel() {
   const countNovo      = allPedidos.filter((p) => pedidoMatchFiltro(p, 'novo')).length;
   const countPreparo   = allPedidos.filter((p) => pedidoMatchFiltro(p, 'preparo')).length;
   const countProntos   = allPedidos.filter((p) => pedidoMatchFiltro(p, 'pronto')).length;
+  const countEmRota    = allPedidos.filter((p) => pedidoMatchFiltro(p, 'em_rota')).length;
   const countPago      = allPedidos.filter((p) => pedidoMatchFiltro(p, 'pago')).length;
   const countEntregues = allPedidos.filter((p) => pedidoMatchFiltro(p, 'entregue')).length;
   const countCancelados= allPedidos.filter((p) => pedidoMatchFiltro(p, 'cancelado')).length;
@@ -1954,6 +1999,7 @@ export default function PedidosRecentesPanel() {
     { key: 'novo',      label: 'Novo',      badge: countNovo,      activeCls: 'bg-zinc-700 text-white' },
     { key: 'preparo',   label: 'Preparo',   badge: countPreparo,   activeCls: 'bg-amber-500 text-white' },
     { key: 'pronto',    label: 'Prontos',   badge: countProntos,   activeCls: 'bg-green-500 text-white' },
+    { key: 'em_rota',   label: 'Em rota',   badge: countEmRota,    activeCls: 'bg-violet-500 text-white' },
     { key: 'entregue',  label: 'Entregues', badge: countEntregues },
     { key: 'cancelado', label: 'Cancelados', badge: countCancelados },
     { key: 'todos',     label: 'Todos' },
