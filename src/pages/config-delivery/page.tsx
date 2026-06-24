@@ -14,6 +14,15 @@ interface Neighborhood {
   is_active: boolean;
 }
 
+interface DriverRow {
+  id: string;
+  name: string;
+  phone: string;
+  is_active: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
 /** Faixa de entrega por distância (km) configurável pelo lojista. */
 interface FaixaEntrega {
   ate_km: number;        // distância máxima da faixa (km)
@@ -48,6 +57,9 @@ export default function ConfigDeliveryPage() {
   const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null);
   const [deliveryUrl, setDeliveryUrl] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
+  // Entregadores (motoboys) com acesso à lista de entregas
+  const [motoboys, setMotoboys] = useState<DriverRow[]>([]);
+  const [motoboysLoading, setMotoboysLoading] = useState(false);
   // Avisar o motoboy: categorias/itens que disparam alerta na msg do motoboy
   const [alertCategorias, setAlertCategorias] = useState<MotoboyAlertEntry[]>([]);
   const [alertItens, setAlertItens] = useState<MotoboyAlertEntry[]>([]);
@@ -205,6 +217,12 @@ export default function ConfigDeliveryPage() {
       });
   }, [tenantId]);
 
+  // Carrega entregadores cadastrados desta loja.
+  useEffect(function () {
+    if (tenantId) carregarMotoboys();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
   function handleAddBairro() {
     const nome = newBairroNome.trim();
     if (!nome) return;
@@ -342,6 +360,48 @@ export default function ConfigDeliveryPage() {
     });
   }
 
+  // ── Entregadores (motoboys): carregar / bloquear / liberar / remover ──
+  async function carregarMotoboys() {
+    if (!tenantId) return;
+    setMotoboysLoading(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) { setMotoboysLoading(false); return; }
+      const res = await fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ action: 'list_drivers', tenant_id: tenantId }),
+      });
+      const data = await res.json();
+      if (data.ok) setMotoboys(data.drivers ?? []);
+    } catch (_e) { /* ignora */ } finally {
+      setMotoboysLoading(false);
+    }
+  }
+
+  async function alterarMotoboy(driverId: string, payload: { is_active?: boolean; remover?: boolean }) {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) { setMensagem({ tipo: 'erro', texto: 'Sessão expirada. Entre novamente.' }); return; }
+    try {
+      const res = await fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify(
+          payload.remover
+            ? { action: 'delete_driver', tenant_id: tenantId, driver_id: driverId }
+            : { action: 'set_driver_active', tenant_id: tenantId, driver_id: driverId, is_active: payload.is_active }
+        ),
+      });
+      const data = await res.json();
+      if (data.error) { setMensagem({ tipo: 'erro', texto: 'Erro: ' + (data.message || data.error) }); return; }
+      await carregarMotoboys();
+    } catch (_e) {
+      setMensagem({ tipo: 'erro', texto: 'Erro de conexão.' });
+    }
+  }
+
   if (carregando && tenantId) {
     return (
       <div className="flex flex-col h-full">
@@ -422,6 +482,74 @@ export default function ConfigDeliveryPage() {
                 Copiar
               </button>
             </div>
+          </div>
+
+          {/* Entregadores (motoboys) — link de acesso + liberar/bloquear */}
+          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
+                <i className="ri-e-bike-2-line text-zinc-600 text-sm" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-800">Entregadores (motoboys)</h3>
+                <p className="text-xs text-zinc-500">Compartilhe o link de acesso e libere/bloqueie quem pode ver os pedidos</p>
+              </div>
+            </div>
+
+            {/* Link de acesso dos motoboys */}
+            {tenantSlug ? (
+              <div className="flex items-center gap-2 bg-zinc-50 rounded-xl border border-zinc-200 px-4 py-3">
+                <span className="text-sm text-zinc-700 flex-1 truncate font-mono">{getPublicUrl('/entregas/' + tenantSlug)}</span>
+                <button
+                  type="button"
+                  onClick={function () {
+                    navigator.clipboard.writeText(getPublicUrl('/entregas/' + tenantSlug)).then(function () {
+                      setMensagem({ tipo: 'sucesso', texto: 'Link dos entregadores copiado!' });
+                      setTimeout(function () { setMensagem(null); }, 2000);
+                    });
+                  }}
+                  className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-800 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1"
+                >
+                  <i className="ri-file-copy-line" /> Copiar
+                </button>
+              </div>
+            ) : null}
+
+            {/* Lista de entregadores cadastrados */}
+            {motoboysLoading ? (
+              <p className="text-xs text-zinc-400">Carregando entregadores…</p>
+            ) : motoboys.length === 0 ? (
+              <p className="text-xs text-zinc-400">Nenhum entregador entrou ainda. Envie o link acima — ao entrar com nome e celular, ele aparece aqui.</p>
+            ) : (
+              <div className="space-y-2">
+                {motoboys.map(function (m) {
+                  return (
+                    <div key={m.id} className="flex items-center justify-between gap-2 bg-zinc-50 rounded-xl border border-zinc-100 px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-zinc-800 truncate">{m.name}</p>
+                        <p className="text-xs text-zinc-400">{m.phone}{m.is_active ? '' : ' — bloqueado'}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={function () { alterarMotoboy(m.id, { is_active: !m.is_active }); }}
+                          className={'px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ' + (m.is_active ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-green-100 text-green-700 hover:bg-green-200')}
+                        >
+                          {m.is_active ? 'Bloquear' : 'Liberar'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={function () { if (window.confirm('Remover este entregador?')) alterarMotoboy(m.id, { remover: true }); }}
+                          className="px-2 py-1 rounded-lg text-xs font-bold bg-zinc-100 text-zinc-500 hover:bg-red-100 hover:text-red-600 transition-colors"
+                        >
+                          <i className="ri-delete-bin-line" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Cidade */}

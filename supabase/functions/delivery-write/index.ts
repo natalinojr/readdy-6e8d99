@@ -438,6 +438,42 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ _v: "v14", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── Gestao de motoboys (entregadores) — admin da loja ──────────────────────
+    if (action === "list_drivers" || action === "set_driver_active" || action === "delete_driver") {
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) return jsonErr("Nao autenticado", 401);
+      const { data: userData, error: userErr } = await admin.auth.getUser(token);
+      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+
+      const { tenant_id } = body;
+      if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
+      const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
+      if (!membership || membership.role !== "admin") return jsonErr("Sem permissao de admin para esta loja.", 403);
+
+      if (action === "list_drivers") {
+        const { data: drivers } = await admin.from("delivery_drivers")
+          .select("id, name, phone, is_active, created_at, last_login_at")
+          .eq("tenant_id", tenant_id).order("created_at", { ascending: false });
+        return new Response(JSON.stringify({ _v: "v14", ok: true, drivers: drivers ?? [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const driverId = String(body.driver_id || "").trim();
+      if (!driverId) return jsonErr("driver_id obrigatorio", 400);
+
+      if (action === "delete_driver") {
+        const { error } = await admin.from("delivery_drivers").delete().eq("id", driverId).eq("tenant_id", tenant_id);
+        if (error) throw error;
+        return new Response(JSON.stringify({ _v: "v14", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // set_driver_active
+      const isActive = body.is_active === true;
+      const { error } = await admin.from("delivery_drivers").update({ is_active: isActive }).eq("id", driverId).eq("tenant_id", tenant_id);
+      if (error) throw error;
+      return new Response(JSON.stringify({ _v: "v14", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "get_delivery_state" || action === "set_delivery_state") {
       // Estado de abertura do delivery controlado pelo PDV (botao abrir/fechar/pausar).
       // Autoriza qualquer MEMBRO da loja (operador de caixa nao precisa ser admin).

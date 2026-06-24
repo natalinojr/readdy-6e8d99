@@ -10,12 +10,40 @@ function getOrderIdFromUrl(): string {
   return m ? m[1] : '';
 }
 
+// Sessao do motoboy (login simples por loja), compartilhada com a lista /entregas.
+export const MOTOBOY_SESSION_KEY = 'erpos_motoboy_session';
+export interface MotoboySession { tenant_id: string; driver_id: string; name: string; store_slug?: string; store_name?: string; }
+export function getMotoboySession(): MotoboySession | null {
+  try {
+    const raw = localStorage.getItem(MOTOBOY_SESSION_KEY);
+    return raw ? (JSON.parse(raw) as MotoboySession) : null;
+  } catch { return null; }
+}
+
+// Fluxo sequencial dos sinais do motoboy. A partir do status atual, qual o proximo.
+function proximoBotao(status: string | null) {
+  switch (status) {
+    case null:
+    case '':
+    case 'problema':
+      return { signal: 'a_caminho_loja', label: 'Estou a caminho da loja', icon: 'ri-store-2-line', cor: 'bg-zinc-700 hover:bg-zinc-800' };
+    case 'a_caminho_loja':
+      return { signal: 'coletou', label: 'Coletei o pedido', icon: 'ri-shopping-bag-3-line', cor: 'bg-amber-500 hover:bg-amber-600' };
+    case 'coletou':
+      return { signal: 'entregou', label: 'Entreguei ao cliente', icon: 'ri-checkbox-circle-line', cor: 'bg-green-600 hover:bg-green-700' };
+    default:
+      return null;
+  }
+}
+
 const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 interface OrderData {
   number: string;
   cliente: string;
   endereco: string;
+  lat: number | null;
+  lng: number | null;
   total: number;
   taxa: number;
   pagamento: string;
@@ -67,7 +95,7 @@ export default function MotoboyPage() {
     try {
       const res = await fetch(edgeUrl(), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'signal', order_id: orderId, signal, motivo: motivoTxt }),
+        body: JSON.stringify({ action: 'signal', order_id: orderId, signal, motivo: motivoTxt, driver_id: getMotoboySession()?.driver_id }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -97,8 +125,16 @@ export default function MotoboyPage() {
     );
   }
 
-  const mapsUrl = order.endereco ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.endereco)}` : '';
+  // Prioriza o pin (lat/lng) do cliente; o endereço em texto é só fallback (geocoding pode errar).
+  const mapsUrl =
+    order.lat != null && order.lng != null
+      ? `https://www.google.com/maps/search/?api=1&query=${order.lat}%2C${order.lng}`
+      : order.endereco
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.endereco)}`
+      : '';
   const entregue = order.motoboy_status === 'entregou';
+  // Só o botão da próxima fase aparece (a_caminho → coletei → entreguei).
+  const proximo = proximoBotao(order.motoboy_status);
 
   const Botao = ({ signal, label, icon, cor }: { signal: string; label: string; icon: string; cor: string }) => (
     <button
@@ -115,6 +151,12 @@ export default function MotoboyPage() {
   return (
     <div className="min-h-screen bg-zinc-50 flex justify-center">
       <div className="w-full max-w-md px-4 py-5 space-y-4">
+        {/* Voltar à lista (quando o motoboy entrou pela lista da loja) */}
+        {getMotoboySession()?.store_slug ? (
+          <a href={`/entregas/${getMotoboySession()?.store_slug}`} className="inline-flex items-center gap-1 text-xs font-bold text-zinc-500">
+            <i className="ri-arrow-left-line" /> Voltar aos pedidos
+          </a>
+        ) : null}
         {/* Cabeçalho */}
         <div className="bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-2xl p-4 text-white">
           <div className="flex items-center gap-2 mb-1">
@@ -185,9 +227,9 @@ export default function MotoboyPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            <Botao signal="a_caminho_loja" label="Estou a caminho da loja" icon="ri-store-2-line" cor="bg-zinc-700 hover:bg-zinc-800" />
-            <Botao signal="coletou" label="Coletei o pedido" icon="ri-shopping-bag-3-line" cor="bg-amber-500 hover:bg-amber-600" />
-            <Botao signal="entregou" label="Entreguei ao cliente" icon="ri-checkbox-circle-line" cor="bg-green-600 hover:bg-green-700" />
+            {proximo ? (
+              <Botao signal={proximo.signal} label={proximo.label} icon={proximo.icon} cor={proximo.cor} />
+            ) : null}
 
             {showProblema ? (
               <div className="bg-white rounded-2xl border border-red-200 p-3 space-y-2">
