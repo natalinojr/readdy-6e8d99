@@ -4,6 +4,41 @@ import type { Item } from '@/types/cardapio';
 import ItemModal from './ItemModal';
 import ItemImage from '@/components/base/ItemImage';
 
+type Disponibilidade = 'ambos' | 'casa' | 'delivery';
+function disponibilidadeDe(item: Item): Disponibilidade {
+  if (item.somenteDelivery) return 'delivery';
+  if (item.delivery?.ativo === false) return 'casa';
+  return 'ambos';
+}
+
+// Seletor compacto de onde o item aparece (casa / ambos / delivery), pra usar na tabela.
+function CanalToggle({ item, onChange, disabled }: { item: Item; onChange: (v: Disponibilidade) => void; disabled?: boolean }) {
+  const atual = disponibilidadeDe(item);
+  const opts: { key: Disponibilidade; icon: string; title: string }[] = [
+    { key: 'casa', icon: 'ri-home-4-line', title: 'Só na casa' },
+    { key: 'ambos', icon: 'ri-restaurant-2-line', title: 'Casa e delivery' },
+    { key: 'delivery', icon: 'ri-e-bike-2-line', title: 'Só delivery' },
+  ];
+  return (
+    <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+      {opts.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          title={o.title}
+          disabled={disabled}
+          onClick={(e) => { e.stopPropagation(); onChange(o.key); }}
+          className={`w-7 h-7 flex items-center justify-center text-sm transition-colors disabled:opacity-50 ${
+            atual === o.key ? 'bg-orange-500 text-white' : 'text-gray-400 hover:bg-gray-100'
+          }`}
+        >
+          <i className={o.icon} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function ItensTab() {
   const { itens, categorias, obsGlobais, estacoes, salvarItem, excluirItem, reordenarItens, saving } = useCardapio();
   const [busca, setBusca] = useState('');
@@ -60,6 +95,15 @@ export default function ItensTab() {
 
   const toggleStatus = async (item: Item) => {
     await salvarItem({ ...item, status: item.status === 'ativo' ? 'inativo' : 'ativo' });
+  };
+
+  // Atalho na tabela: define onde o item aparece (casa/delivery/ambos) e salva.
+  const setDisponibilidade = async (item: Item, val: Disponibilidade) => {
+    if (disponibilidadeDe(item) === val) return;
+    const base = item.delivery ?? { ativo: true };
+    if (val === 'delivery') await salvarItem({ ...item, somenteDelivery: true, delivery: { ...base, ativo: true } });
+    else if (val === 'casa') await salvarItem({ ...item, somenteDelivery: false, delivery: { ...base, ativo: false } });
+    else await salvarItem({ ...item, somenteDelivery: false, delivery: { ...base, ativo: true } });
   };
 
   const handleDelete = async (id: string) => {
@@ -338,6 +382,7 @@ export default function ItensTab() {
                 >
                   <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${item.status === 'ativo' ? 'left-5' : 'left-0.5'}`} />
                 </button>
+                <CanalToggle item={item} disabled={saving} onChange={(v) => setDisponibilidade(item, v)} />
                 <div className="flex items-center gap-1 flex-1 justify-end">
                   <button
                     onClick={() => handleDuplicar(item)}
@@ -394,6 +439,7 @@ export default function ItensTab() {
                       <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">SLA</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500">Preço</th>
                       <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">Canal</th>
                       {modoOrdenacao && <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">Ordem</th>}
                       <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500">Ações</th>
                     </tr>
@@ -445,6 +491,11 @@ export default function ItensTab() {
                           >
                             <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${item.status === 'ativo' ? 'left-5' : 'left-0.5'}`} />
                           </button>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <div className="flex justify-center">
+                            <CanalToggle item={item} disabled={saving} onChange={(v) => setDisponibilidade(item, v)} />
+                          </div>
                         </td>
                         {modoOrdenacao && (
                           <td className="px-4 py-3">
@@ -535,6 +586,9 @@ export default function ItensTab() {
                         <span className="text-xs text-orange-600 font-bold">R$ {item.preco.toFixed(2).replace('.', ',')}</span>
                         <span className="text-xs text-gray-400">{categoriaMap[item.categoriaId] ?? '—'}</span>
                         <span className="text-xs text-gray-400">{item.slaMinutos}min</span>
+                      </div>
+                      <div className="mt-1.5">
+                        <CanalToggle item={item} disabled={saving} onChange={(v) => setDisponibilidade(item, v)} />
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">

@@ -300,7 +300,11 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       });
       const itemsMap = new Map<string, Record<string, unknown>>();
       const items = filteredItems.map((item: Record<string, unknown>) => {
-        const mapped = { ...item, station_id: catStationMap.get(item.category_id as string) ?? null };
+        // Preço de delivery sobrescreve o preço de balcão quando configurado (> 0).
+        const dc = item.delivery_config as Record<string, unknown> | null;
+        const precoDelivery = dc && typeof dc === "object" ? Number(dc.preco ?? 0) : 0;
+        const price = precoDelivery > 0 ? precoDelivery : Number(item.price ?? 0);
+        const mapped = { ...item, price, station_id: catStationMap.get(item.category_id as string) ?? null };
         itemsMap.set(item.id as string, mapped); return mapped;
       });
       const options = (optResult.data ?? []).map((o: Record<string, unknown>) => ({ ...o, option_group_id: o.group_id }));
@@ -888,7 +892,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         const dc = mi.delivery_config as Record<string, unknown> | null;
         const deliveryBlocked = dc && typeof dc === "object" && dc.ativo === false;
         if (mi.is_active && !deliveryBlocked) {
-          itemPriceMap.set(mi.id as string, Number(mi.price ?? 0));
+          // Usa o preço de delivery (delivery_config.preco) quando configurado (> 0).
+          const precoDelivery = dc && typeof dc === "object" ? Number(dc.preco ?? 0) : 0;
+          itemPriceMap.set(mi.id as string, precoDelivery > 0 ? precoDelivery : Number(mi.price ?? 0));
           itemNameMap.set(mi.id as string, mi.name as string);
         }
       }
