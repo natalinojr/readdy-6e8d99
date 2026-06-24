@@ -417,20 +417,25 @@ serve(async (req) => {
           return { ...ticket, ...printerFields, escpos_80mm_base64: null, escpos_58mm_base64: null };
         }
 
-        // Data/hora SEMPRE derivada do created_at (timestamptz autoritativo do banco)
-        // no fuso America/Sao_Paulo. A edge roda em UTC, entao o data_hora montado por
-        // alguns canais (ex.: delivery-write) saía +3h. created_at unifica e corrige.
+        // (1) Data/hora SEMPRE derivada do created_at (timestamptz autoritativo) no
+        // fuso America/Sao_Paulo — a edge roda em UTC, entao alguns canais saíam +3h.
+        // (2) Nome do cliente SEM o endereço: delivery-write grava destino como
+        // "Nome - Endereço" (ou "Nome - Retirada/Entrega"); para delivery/retirada
+        // mostramos só o nome (parte antes do primeiro " - ").
         const createdAtIso = ticket.created_at as string | undefined;
-        const payloadTicket = createdAtIso
-          ? {
-              ...payload,
-              data_hora: new Date(createdAtIso).toLocaleString("pt-BR", {
-                timeZone: "America/Sao_Paulo",
-                day: "2-digit", month: "2-digit", year: "numeric",
-                hour: "2-digit", minute: "2-digit", second: "2-digit",
-              }),
-            }
-          : payload;
+        const origemTicket = String(payload.origem || "").toLowerCase();
+        const destinoRaw = payload.destino;
+        const destinoLimpo = (origemTicket === "delivery" || origemTicket === "retirada") && typeof destinoRaw === "string"
+          ? (destinoRaw.split(/\s+[-–—]\s+/)[0].trim() || destinoRaw)
+          : destinoRaw;
+        const payloadTicket: Record<string, unknown> = { ...payload, destino: destinoLimpo };
+        if (createdAtIso) {
+          payloadTicket.data_hora = new Date(createdAtIso).toLocaleString("pt-BR", {
+            timeZone: "America/Sao_Paulo",
+            day: "2-digit", month: "2-digit", year: "numeric",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+          });
+        }
 
         try {
           const escpos80 = formatTicket(payloadTicket, "80mm");

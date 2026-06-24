@@ -42,6 +42,7 @@ import AdminMasterPage from '@/pages/admin-master/page';
 import SelecionarLojaPage from '@/pages/selecionar-loja/page';
 import { lazy } from 'react';
 import PullToRefresh from '@/components/feature/PullToRefresh';
+import MobileKeyboardAssist from '@/components/feature/MobileKeyboardAssist';
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
 const DeliveryPage = lazy(() => import('../pages/delivery/page'));
@@ -49,12 +50,12 @@ const DeliveryPage = lazy(() => import('../pages/delivery/page'));
 const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
   { path: '/mesa/:mesaId', element: <MesaClientePage /> },
-  { path: '/mesa-qr/:qr_token/:session_token', element: <PullToRefresh><MesaQRPage /></PullToRefresh> },
-  { path: '/mesa-qr/:qr_token', element: <PullToRefresh><MesaQRPage /></PullToRefresh> },
-  { path: '/pedido/:qr_token/:session_token', element: <PullToRefresh><MesaQRPage /></PullToRefresh> },
-  { path: '/pedido/:qr_token', element: <PullToRefresh><MesaQRPage /></PullToRefresh> },
-  { path: '/delivery', element: <PullToRefresh><DeliveryPage /></PullToRefresh> },
-  { path: '/:storeSlug-delivery', element: <PullToRefresh><DeliveryPage /></PullToRefresh> },
+  { path: '/mesa-qr/:qr_token/:session_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
+  { path: '/mesa-qr/:qr_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
+  { path: '/pedido/:qr_token/:session_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
+  { path: '/pedido/:qr_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
+  { path: '/delivery', element: <PullToRefresh><MobileKeyboardAssist /><DeliveryPage /></PullToRefresh> },
+  { path: '/:storeSlug-delivery', element: <PullToRefresh><MobileKeyboardAssist /><DeliveryPage /></PullToRefresh> },
   { path: '/autoatendimento', element: <AutoatendimentoPage /> },
   { path: '/totem/:token', element: <TotemPage /> },
   {

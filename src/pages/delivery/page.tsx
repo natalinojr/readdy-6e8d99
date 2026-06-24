@@ -442,8 +442,8 @@ export default function DeliveryPage() {
             }</span>
           </div>
         )}
-        {/* Header */}
-        <div className="bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0 relative">
+        {/* Header (oculto ao ver o pedido, p/ dar mais espaço à lista de itens) */}
+        <div className={"bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0 relative" + (showCart ? " hidden" : "")}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 flex items-center justify-center bg-white/30 rounded-xl">
@@ -500,23 +500,25 @@ export default function DeliveryPage() {
             </div>
           </div>
 
-          {/* Falar com a loja (WhatsApp configurado no config-delivery) */}
-          {lojaWaUrl ? (
-            <a
-              href={lojaWaUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-3 flex items-center justify-center gap-2 w-full py-2 bg-white/20 hover:bg-white/30 text-white text-xs font-bold rounded-xl transition-colors"
-            >
-              <i className="ri-whatsapp-line text-sm" />
-              Falar com a loja
-            </a>
-          ) : null}
-
           {/* Informações do cliente com seletor de endereço */}
           <div className="mt-3 flex items-center gap-2 text-white/80 text-xs">
-            <div className="flex-1 flex flex-wrap gap-x-3 gap-y-1">
-              <span><i className="ri-phone-line text-[10px] mr-1" />{phone}</span>
+            <div className="flex-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="inline-flex items-center gap-1.5">
+                <span><i className="ri-phone-line text-[10px] mr-1" />{phone}</span>
+                {/* Falar com a loja: compacto, ao lado do telefone do cliente */}
+                {lojaWaUrl ? (
+                  <a
+                    href={lojaWaUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-lg transition-colors whitespace-nowrap"
+                    title="Falar com a loja no WhatsApp"
+                  >
+                    <i className="ri-whatsapp-line text-[11px]" />
+                    Falar com a loja
+                  </a>
+                ) : null}
+              </span>
               <span className="hidden sm:inline">
                 <i className={(modoEntrega === 'retirada' ? 'ri-store-2-line' : 'ri-home-4-line') + ' text-[10px] mr-1'} />
                 {modoEntrega === 'retirada' ? 'Retirada na loja' : (enderecoAtual ? enderecoAtual.label + ': ' + enderecoDisplay : enderecoDisplay)}
@@ -648,7 +650,7 @@ export default function DeliveryPage() {
         </div>
 
         {/* Categorias sticky */}
-        {subView === 'cardapio' ? (
+        {subView === 'cardapio' && !showCart ? (
         <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-zinc-100 shrink-0">
           <div className="flex items-center gap-2 px-4 py-3 overflow-x-auto scrollbar-hide">
             {categories.map(function (cat) {

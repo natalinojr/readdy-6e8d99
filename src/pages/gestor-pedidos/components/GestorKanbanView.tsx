@@ -319,7 +319,7 @@ function GestorCard({
     e.stopPropagation();
     const w = window.open('', '_blank');
     const address = pedido.deliveryAddress ?? '';
-    const name = pedido.nomeCliente ?? 'Cliente';
+    const name = nomeClienteDelivery(pedido);
     const notes = pedido.notes ? `\nObs: ${pedido.notes}` : '';
     resolverMapsUrl().then((mapsUrl) => {
       const msg = `🚀 *Entrega para ${name}*\n📍 ${address}${notes}\n🗺️ Rota: ${mapsUrl}`;
@@ -333,7 +333,7 @@ function GestorCard({
     e.stopPropagation();
     const phone = (pedido.customerPhone ?? '').replace(/\D/g, '');
     if (!phone) return;
-    const msg = `Olá ${pedido.nomeCliente ?? ''}! Seu pedido #${String(pedido.numero).padStart(4, '0')} está ${pedido.status === 'em_rota' ? 'a caminho' : pedido.status === 'pronto' ? 'pronto e saindo para entrega' : pedido.status === 'preparo' ? 'em preparo' : pedido.status === 'entregue' ? 'entregue' : 'recebido'}! 🏍️`;
+    const msg = `Olá ${nomeClienteDelivery(pedido)}! Seu pedido #${String(pedido.numero).padStart(4, '0')} está ${pedido.status === 'em_rota' ? 'a caminho' : pedido.status === 'pronto' ? 'pronto e saindo para entrega' : pedido.status === 'preparo' ? 'em preparo' : pedido.status === 'entregue' ? 'entregue' : 'recebido'}! 🏍️`;
     window.open(`https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 

@@ -127,8 +127,8 @@ export default function MesaQRPage() {
   return (
     <div className="min-h-screen bg-white flex justify-center">
       <div className="w-full max-w-lg min-h-screen flex flex-col bg-white relative">
-        {/* Header */}
-        <div className="bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0">
+        {/* Header (oculto ao ver o pedido, p/ dar mais espaço à lista de itens) */}
+        <div className={"bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0" + (showCart ? " hidden" : "")}>
           {/* Senha grande centralizada no topo */}
           {participant && (
             <div className="flex flex-col items-center mb-4">
@@ -174,8 +174,8 @@ export default function MesaQRPage() {
           )}
         </div>
 
-        {/* Categorias sticky */}
-        <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-zinc-100 shrink-0">
+        {/* Categorias sticky (ocultas ao ver o pedido) */}
+        <div className={"sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-zinc-100 shrink-0" + (showCart ? " hidden" : "")}>
           <div className="flex items-center gap-2 px-4 py-3 overflow-x-auto scrollbar-hide">
             {categories.map(function (cat) {
               return (

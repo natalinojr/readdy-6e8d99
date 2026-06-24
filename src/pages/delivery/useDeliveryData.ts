@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, type MutableRefObject } from 'react';
 import { supabase } from '@/lib/supabase';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
+import { loadCart, saveCart } from '@/lib/cartStorage';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -516,8 +517,10 @@ export function useDeliveryData(storeSlug?: string) {
   const [opcoesIndisponiveisIds, setOpcoesIndisponiveisIds] = useState<string[]>([]);
   const [deliveryFee, setDeliveryFee] = useState(0);
 
-  // Carrinho
-  const [cart, setCart] = useState<CartItem[]>([]);
+  // Carrinho (persistido em localStorage p/ sobreviver ao refresh/reload)
+  const cartKey = 'delivery_' + (storeSlug || 'default');
+  const [cart, setCart] = useState<CartItem[]>(() => loadCart<CartItem>(cartKey));
+  useEffect(function () { saveCart(cartKey, cart); }, [cart, cartKey]);
   const [editingItem, setEditingItem] = useState<CartItem | null>(null);
   const [showCart, setShowCart] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -589,7 +592,7 @@ export function useDeliveryData(storeSlug?: string) {
     setBairro('');
     setSavedAddresses([]);
     setSelectedAddressId(null);
-    setCart([]);
+    if (slugChanged) setCart([]); // mantém o carrinho ao recarregar a MESMA loja (refresh)
     setEditingItem(null);
     setShowCart(false);
     setPedidoConfirmado(false);

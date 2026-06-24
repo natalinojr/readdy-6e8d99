@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type MutableRefObject } from 'react';
 import { useParams } from 'react-router-dom';
 import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
+import { loadCart, saveCart } from '@/lib/cartStorage';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -257,8 +258,10 @@ export function useMesaQRData() {
   const [outOfStockIds, setOutOfStockIds] = useState<string[]>([]);
   const [opcoesIndisponiveisIds, setOpcoesIndisponiveisIds] = useState<string[]>([]);
 
-  // Carrinho
-  const [cart, setCart] = useState<CartItem[]>([]);
+  // Carrinho (persistido em localStorage p/ sobreviver ao refresh/reload)
+  const cartKey = 'qr_' + (qrToken || 'default');
+  const [cart, setCart] = useState<CartItem[]>(() => loadCart<CartItem>(cartKey));
+  useEffect(function () { saveCart(cartKey, cart); }, [cart, cartKey]);
   const [editingItem, setEditingItem] = useState<CartItem | null>(null);
   const [showCart, setShowCart] = useState(false);
   const [enviando, setEnviando] = useState(false);
