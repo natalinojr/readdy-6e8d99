@@ -264,11 +264,14 @@ export default function MotoboyListaPage() {
     return (
       <a key={o.id} href={`/motoboy/${o.id}`} className={'block rounded-2xl border p-4 active:brightness-95 transition ' + baseBg + ring}>
         <div className="flex items-center justify-between mb-1 gap-1.5">
-          <span className="text-sm font-black text-zinc-800">#{String(o.number).replace(/\D/g, '').slice(-4) || o.number}</span>
-          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-sm font-black text-zinc-800 shrink-0">#{String(o.number).replace(/\D/g, '').slice(-4) || o.number}</span>
+            {/* Status da cozinha ao lado do número do pedido */}
             <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ' + cozinha.cls}>
               <i className={cozinha.icon} /> {cozinha.label}
             </span>
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
             {o.motoboy_status ? (() => {
               const sb = SINAL_BADGE[o.motoboy_status] ?? { cls: 'bg-zinc-100 text-zinc-600', icon: 'ri-e-bike-2-line' };
               return (

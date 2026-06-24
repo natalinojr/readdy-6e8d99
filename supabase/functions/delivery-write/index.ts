@@ -438,6 +438,31 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ _v: "v14", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── Config do delivery PRA TELA DE GESTAO (leve): so city + delivery_config.
+    // Evita o get_delivery_config (payload do cliente: cardapio inteiro, ~13 queries)
+    // que deixava a aba Delivery lenta. Autenticado (membro da loja).
+    if (action === "get_delivery_settings") {
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) return jsonErr("Nao autenticado", 401);
+      const { data: userData, error: userErr } = await admin.auth.getUser(token);
+      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+      const { tenant_id } = body;
+      if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
+      const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
+      if (!membership) return jsonErr("Sem acesso a esta loja.", 403);
+
+      const { data: ss } = await admin.from("system_settings").select("delivery_city, delivery_config").eq("tenant_id", tenant_id).maybeSingle();
+      const { data: tnt } = await admin.from("tenants").select("slug, name").eq("id", tenant_id).maybeSingle();
+      return new Response(JSON.stringify({
+        _v: "v14",
+        city: ss?.delivery_city ?? "",
+        delivery_config: ss?.delivery_config ?? {},
+        slug: tnt?.slug ?? null,
+        tenant_name: tnt?.name ?? null,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── Gestao de motoboys (entregadores) — admin da loja ──────────────────────
     if (action === "list_drivers" || action === "set_driver_active" || action === "delete_driver") {
       const authHeader = req.headers.get("Authorization") || "";

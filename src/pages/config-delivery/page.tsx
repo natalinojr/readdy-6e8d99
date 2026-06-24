@@ -122,13 +122,20 @@ export default function ConfigDeliveryPage() {
     // Busca slug do tenant para montar o link correto
     const url = getDeliveryWriteUrl();
 
-    // Busca config do delivery + slug do tenant em paralelo
+    // Busca config do delivery (payload LEVE: só city + delivery_config, sem o cardápio)
+    // + slug do tenant em paralelo. Antes usava get_delivery_config (cardápio inteiro,
+    // ~13 queries) — era o que deixava a aba Delivery lenta.
     Promise.all([
-      fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'get_delivery_config', tenant_id: tenantId }),
-      }).then(function (res) { return res.json(); }),
+      (async function () {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (!token) return { error: 'no_token' };
+        return fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ action: 'get_delivery_settings', tenant_id: tenantId }),
+        }).then(function (res) { return res.json(); });
+      })(),
       supabase
         .from('tenants')
         .select('slug')
