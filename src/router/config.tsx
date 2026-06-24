@@ -46,6 +46,7 @@ import MobileKeyboardAssist from '@/components/feature/MobileKeyboardAssist';
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
 const DeliveryPage = lazy(() => import('../pages/delivery/page'));
+const MotoboyPage = lazy(() => import('../pages/motoboy/page'));
 
 const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
@@ -56,6 +57,7 @@ const routes: RouteObject[] = [
   { path: '/pedido/:qr_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
   { path: '/delivery', element: <PullToRefresh><MobileKeyboardAssist /><DeliveryPage /></PullToRefresh> },
   { path: '/:storeSlug-delivery', element: <PullToRefresh><MobileKeyboardAssist /><DeliveryPage /></PullToRefresh> },
+  { path: '/motoboy/:order_id', element: <PullToRefresh><MobileKeyboardAssist /><MotoboyPage /></PullToRefresh> },
   { path: '/autoatendimento', element: <AutoatendimentoPage /> },
   { path: '/totem/:token', element: <TotemPage /> },
   {

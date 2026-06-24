@@ -29,6 +29,7 @@ interface PendingObsAction {
 interface PendingEntregaAction {
   pedido: KDSPedido;
   onConfirm: () => void;
+  modo?: 'entrega' | 'separacao';
 }
 
 interface PendingCancelAction {
@@ -348,17 +349,19 @@ export default function GestorPedidosPage() {
   const handleEmRota = useCallback((pedidoId: string) => {
     const pedido = pedidos.find((p) => p.id === pedidoId);
     if (!pedido || pedido.isEditing) return;
-    // Otimista local
-    setPedidos((prev) =>
-      prev.map((p) => {
-        if (p.id !== pedidoId) return p;
-        return { ...p, status: 'em_rota' as const };
-      }),
-    );
-    // BUG-38 FIX: Persiste out_for_delivery_at no banco com retry + queue (padrao BUG-35).
-    // Em caso de falha de rede, a fila no sessionStorage garante que "Em Rota" sera
-    // persistido assim que a rede voltar — sem depender de .catch() silencioso.
-    markOutForDeliveryRemote(pedidoId);
+    const executar = () => {
+      // Otimista local
+      setPedidos((prev) =>
+        prev.map((p) => {
+          if (p.id !== pedidoId) return p;
+          return { ...p, status: 'em_rota' as const };
+        }),
+      );
+      // BUG-38 FIX: Persiste out_for_delivery_at no banco com retry + queue (padrao BUG-35).
+      markOutForDeliveryRemote(pedidoId);
+    };
+    // Delivery: confere a separação dos itens ANTES de entregar ao motoboy.
+    setEntregaModal({ pedido, modo: 'separacao', onConfirm: executar });
   }, [pedidos, setPedidos, markOutForDeliveryRemote]);
 
   // ─── Entregar ───
@@ -421,7 +424,12 @@ export default function GestorPedidosPage() {
       });
     };
 
-    setEntregaModal({ pedido, onConfirm: executar });
+    // Delivery já foi conferido na transição "Em Rota" — marca entregue direto, sem checklist.
+    if (pedido.destino === 'delivery') {
+      executar();
+    } else {
+      setEntregaModal({ pedido, modo: 'entrega', onConfirm: executar });
+    }
   }, [pedidos, user, setPedidos, updateItemStatusRemote, updatePartStatusRemote, hasPermissao, toastErrorGestor]);
 
   // ─── Entregar Item Individual ───
@@ -694,6 +702,7 @@ export default function GestorPedidosPage() {
       {entregaModal && (
         <EntregaGateModal
           pedido={entregaModal.pedido}
+          modo={entregaModal.modo}
           onConfirm={() => { entregaModal.onConfirm(); setEntregaModal(null); }}
           onCancel={() => setEntregaModal(null)}
         />

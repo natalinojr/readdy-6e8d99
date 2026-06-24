@@ -52,6 +52,28 @@ export default function ConfigDeliveryPage() {
   const [alertCategorias, setAlertCategorias] = useState<MotoboyAlertEntry[]>([]);
   const [alertItens, setAlertItens] = useState<MotoboyAlertEntry[]>([]);
   const [itemBusca, setItemBusca] = useState('');
+  // Mensagens pro cliente (WhatsApp) por fase — pode ter mais de uma por fase
+  const [whatsappMsgs, setWhatsappMsgs] = useState<Record<string, string[]>>({});
+  const FASES_MSG = [
+    { key: 'novo', label: 'Recebido' },
+    { key: 'preparo', label: 'Em preparo' },
+    { key: 'pronto', label: 'Pronto' },
+    { key: 'em_rota', label: 'Em rota' },
+    { key: 'entregue', label: 'Entregue' },
+  ];
+  function setMsgFase(fase: string, idx: number, val: string) {
+    setWhatsappMsgs(function (prev) {
+      const arr = (prev[fase] ?? []).slice();
+      arr[idx] = val;
+      return { ...prev, [fase]: arr };
+    });
+  }
+  function addMsgFase(fase: string) {
+    setWhatsappMsgs(function (prev) { return { ...prev, [fase]: (prev[fase] ?? []).concat(['']) }; });
+  }
+  function removeMsgFase(fase: string, idx: number) {
+    setWhatsappMsgs(function (prev) { return { ...prev, [fase]: (prev[fase] ?? []).filter(function (_, i) { return i !== idx; }) }; });
+  }
 
   const METODOS_PREDEFINIDOS = [
     { key: 'dinheiro', label: 'Dinheiro', icon: 'ri-money-dollar-circle-line' },
@@ -167,6 +189,14 @@ export default function ConfigDeliveryPage() {
             setAlertCategorias(norm(ma.categorias));
             setAlertItens(norm(ma.itens));
           }
+          const wm = dc.whatsapp_msgs;
+          if (wm && typeof wm === 'object') {
+            const normMsgs: Record<string, string[]> = {};
+            for (const k of Object.keys(wm)) {
+              if (Array.isArray(wm[k])) normMsgs[k] = wm[k].filter(function (s: any) { return typeof s === 'string'; });
+            }
+            setWhatsappMsgs(normMsgs);
+          }
         }
       })
       .catch(function () {})
@@ -248,6 +278,14 @@ export default function ConfigDeliveryPage() {
         }, {} as Record<string, { enabled: boolean; open: string; close: string }>),
       },
       motoboy_alertas: { categorias: alertCategorias, itens: alertItens },
+      whatsapp_msgs: (function () {
+        const out: Record<string, string[]> = {};
+        for (const k of Object.keys(whatsappMsgs)) {
+          const arr = (whatsappMsgs[k] ?? []).map(function (s) { return s.trim(); }).filter(Boolean);
+          if (arr.length > 0) out[k] = arr;
+        }
+        return out;
+      })(),
     };
 
     // Salva via Edge Function (service role + valida que o usuário é admin DESTA loja).
@@ -788,32 +826,89 @@ export default function ConfigDeliveryPage() {
                 type="text"
                 value={itemBusca}
                 onChange={function (e) { setItemBusca(e.target.value); }}
-                placeholder="Buscar item para adicionar…"
-                className="w-full px-3 py-2 rounded-xl border border-zinc-200 focus:border-amber-400 outline-none text-sm"
+                placeholder="Buscar item…"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 focus:border-amber-400 outline-none text-sm mb-2"
               />
-              {itemBusca.trim() ? (
-                <div className="mt-2 max-h-40 overflow-y-auto border border-zinc-100 rounded-xl divide-y divide-zinc-50">
-                  {itens
-                    .filter(function (i) { return i.nome.toLowerCase().includes(itemBusca.toLowerCase()) && !alertItens.some(function (x) { return x.id === i.id; }); })
-                    .slice(0, 20)
-                    .map(function (i) {
-                      return (
-                        <button
-                          key={i.id}
-                          type="button"
-                          onClick={function () { setAlertItens(function (prev) { return prev.concat([{ id: i.id, nome: i.nome }]); }); setItemBusca(''); }}
-                          className="w-full text-left px-3 py-2 text-sm text-zinc-600 hover:bg-amber-50 cursor-pointer"
-                        >
-                          {i.nome}
-                        </button>
-                      );
-                    })}
-                  {itens.filter(function (i) { return i.nome.toLowerCase().includes(itemBusca.toLowerCase()); }).length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-zinc-400">Nenhum item encontrado.</p>
-                  ) : null}
-                </div>
-              ) : null}
+              <div className="max-h-56 overflow-y-auto border border-zinc-100 rounded-xl divide-y divide-zinc-50">
+                {(function () {
+                  const busca = itemBusca.trim().toLowerCase();
+                  const lista = itens.filter(function (i) { return !busca || i.nome.toLowerCase().includes(busca); });
+                  if (lista.length === 0) {
+                    return <p className="px-3 py-3 text-xs text-zinc-400">Nenhum item cadastrado.</p>;
+                  }
+                  return lista.map(function (i) {
+                    const sel = alertItens.some(function (x) { return x.id === i.id; });
+                    const catNome = categorias.find(function (c) { return c.id === i.categoriaId; })?.nome;
+                    return (
+                      <button
+                        key={i.id}
+                        type="button"
+                        onClick={function () {
+                          setAlertItens(function (prev) {
+                            return sel ? prev.filter(function (x) { return x.id !== i.id; }) : prev.concat([{ id: i.id, nome: i.nome }]);
+                          });
+                        }}
+                        className={'w-full flex items-center gap-2 px-3 py-2 text-left cursor-pointer transition-colors ' + (sel ? 'bg-amber-50' : 'hover:bg-zinc-50')}
+                      >
+                        <span className={'w-4 h-4 flex items-center justify-center rounded border shrink-0 ' + (sel ? 'bg-amber-500 border-amber-500 text-white' : 'border-zinc-300')}>
+                          {sel ? <i className="ri-check-line text-[10px]" /> : null}
+                        </span>
+                        <span className="flex-1 text-sm text-zinc-700 truncate">{i.nome}</span>
+                        {catNome ? <span className="text-[10px] text-zinc-400 shrink-0">{catNome}</span> : null}
+                      </button>
+                    );
+                  });
+                })()}
+              </div>
             </div>
+          </div>
+
+          {/* Mensagens pro cliente (WhatsApp) por fase */}
+          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
+                <i className="ri-whatsapp-line text-zinc-600 text-sm" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-800">Mensagens pro cliente (WhatsApp)</h3>
+                <p className="text-xs text-zinc-500">Ao clicar no WhatsApp do cliente no gestor, você escolhe entre as mensagens da fase. Variáveis: <code className="text-[10px]">{'{nome}'}</code> <code className="text-[10px]">{'{numero}'}</code> <code className="text-[10px]">{'{total}'}</code> <code className="text-[10px]">{'{taxa}'}</code>.</p>
+              </div>
+            </div>
+            {FASES_MSG.map(function (f) {
+              const lista = whatsappMsgs[f.key] ?? [];
+              return (
+                <div key={f.key} className="border border-zinc-100 rounded-xl p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-zinc-700">{f.label}</span>
+                    <button type="button" onClick={function () { addMsgFase(f.key); }} className="text-[11px] font-bold text-amber-600 hover:text-amber-700 cursor-pointer whitespace-nowrap">
+                      <i className="ri-add-line" /> Adicionar mensagem
+                    </button>
+                  </div>
+                  {lista.length === 0 ? (
+                    <p className="text-[11px] text-zinc-400">Sem mensagem (usa a padrão do sistema).</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {lista.map(function (msg, idx) {
+                        return (
+                          <div key={idx} className="flex items-start gap-2">
+                            <textarea
+                              value={msg}
+                              onChange={function (e) { setMsgFase(f.key, idx, e.target.value); }}
+                              rows={2}
+                              placeholder="Ex.: Olá {nome}! Seu pedido #{numero} está a caminho 🏍️"
+                              className="flex-1 px-3 py-2 rounded-lg border border-zinc-200 focus:border-amber-400 outline-none text-sm resize-none"
+                            />
+                            <button type="button" onClick={function () { removeMsgFase(f.key, idx); }} className="w-7 h-7 flex items-center justify-center text-zinc-400 hover:text-red-500 rounded-lg cursor-pointer shrink-0">
+                              <i className="ri-delete-bin-line text-sm" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* Formas de Pagamento no Delivery */}

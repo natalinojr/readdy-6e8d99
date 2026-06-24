@@ -97,6 +97,7 @@ export interface SystemSettings {
   printers_config: PrinterConfig | null;
   pager_count: number;
   motoboy_alertas: MotoboyAlertas;
+  whatsapp_msgs: Record<string, string[]>;  // mensagens pro cliente por fase (status)
   updated_at?: string;
 }
 
@@ -159,6 +160,7 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   printers_config: null,
   pager_count: 50,
   motoboy_alertas: { categorias: [], itens: [] },
+  whatsapp_msgs: {},
 };
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -190,6 +192,17 @@ function parseRow(data: Record<string, unknown>): SystemSettings {
             .map((e) => ({ id: String((e as { id: unknown }).id), nome: String((e as { nome?: unknown }).nome ?? '') }))
         : [];
       return { categorias: arr(ma?.categorias), itens: arr(ma?.itens) };
+    })(),
+    whatsapp_msgs: (() => {
+      const dc = data.delivery_config as Record<string, unknown> | null | undefined;
+      const wm = dc?.whatsapp_msgs as Record<string, unknown> | undefined;
+      const out: Record<string, string[]> = {};
+      if (wm && typeof wm === 'object') {
+        for (const [k, v] of Object.entries(wm)) {
+          if (Array.isArray(v)) out[k] = v.filter((s) => typeof s === 'string' && s.trim()).map((s) => String(s));
+        }
+      }
+      return out;
     })(),
     service_fee_enabled: (data.service_fee_enabled as boolean) ?? DEFAULT_SETTINGS.service_fee_enabled,
     service_fee_percentage: Number(data.service_fee_percentage ?? DEFAULT_SETTINGS.service_fee_percentage),

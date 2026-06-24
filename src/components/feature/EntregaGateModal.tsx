@@ -5,13 +5,16 @@ interface EntregaGateModalProps {
   pedido: KDSPedido;
   onConfirm: () => void;
   onCancel: () => void;
+  /** 'entrega' (padrão): confirma entrega. 'separacao': confere itens antes de enviar ao motoboy. */
+  modo?: 'entrega' | 'separacao';
 }
 
 function deriveItemLabel(item: KDSItem, idx: number): string {
   return `${idx + 1}. ${item.quantidade > 1 ? `${item.quantidade}x ` : ''}${item.nome}`;
 }
 
-export default function EntregaGateModal({ pedido, onConfirm, onCancel }: EntregaGateModalProps) {
+export default function EntregaGateModal({ pedido, onConfirm, onCancel, modo = 'entrega' }: EntregaGateModalProps) {
+  const sep = modo === 'separacao';
   const modalRef = useRef<HTMLDivElement>(null);
 
   // Ancora o modal no topo para não ficar atrás do teclado virtual no tablet
@@ -85,8 +88,8 @@ export default function EntregaGateModal({ pedido, onConfirm, onCancel }: Entreg
               <i className="ri-check-double-line text-white text-base" />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-white text-sm">Confirmar Entrega — Pedido #{pedido.numero}</h3>
-              <p className="text-zinc-400 text-xs mt-0.5">Confirme item por item antes de marcar entregue.</p>
+              <h3 className="font-bold text-white text-sm">{sep ? 'Conferir separação' : 'Confirmar Entrega'} — Pedido #{pedido.numero}</h3>
+              <p className="text-zinc-400 text-xs mt-0.5">{sep ? 'Confira item por item antes de enviar ao motoboy.' : 'Confirme item por item antes de marcar entregue.'}</p>
             </div>
             <button
               onClick={onCancel}
@@ -104,7 +107,7 @@ export default function EntregaGateModal({ pedido, onConfirm, onCancel }: Entreg
                 style={{ width: totalEntries > 0 ? `${(totalChecked / totalEntries) * 100}%` : '0%' }}
               />
             </div>
-            <span className="text-[10px] font-bold text-zinc-400">{totalChecked}/{totalEntries} entregues</span>
+            <span className="text-[10px] font-bold text-zinc-400">{totalChecked}/{totalEntries} {sep ? 'conferidos' : 'entregues'}</span>
           </div>
         </div>
 
@@ -146,7 +149,7 @@ export default function EntregaGateModal({ pedido, onConfirm, onCancel }: Entreg
                 </div>
                 {isChecked ? (
                   <span className="text-[10px] font-bold text-green-600 whitespace-nowrap flex-shrink-0">
-                    <i className="ri-check-double-line mr-0.5" />Entregue
+                    <i className="ri-check-double-line mr-0.5" />{sep ? 'Conferido' : 'Entregue'}
                   </span>
                 ) : (
                   <span className="text-[10px] text-zinc-400 whitespace-nowrap flex-shrink-0">
@@ -176,7 +179,7 @@ export default function EntregaGateModal({ pedido, onConfirm, onCancel }: Entreg
             }`}
           >
             {allChecked ? (
-              <><i className="ri-check-double-line mr-1" />Confirmar Entrega</>
+              <><i className="ri-check-double-line mr-1" />{sep ? 'Enviar ao motoboy' : 'Confirmar Entrega'}</>
             ) : (
               <><i className="ri-lock-line mr-1" />Confirme todos os itens</>
             )}

@@ -752,6 +752,10 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   const MAX_STATUS_RETRIES = 3;
   const STATUS_RETRY_BASE_DELAY = 500;
   const pendingStatusQueueRef = useRef<PendingStatusUpdate[]>([]);
+  // Anti-flicker: timestamp do último set local de status, por item ('i:'+id) e
+  // pedido ('o:'+id). Protege contra snapshots atrasados (poll/realtime em voo) que
+  // chegam DEPOIS do flush limpar a fila e reverteriam o status pronto→preparo.
+  const recentStatusRef = useRef<Map<string, number>>(new Map());
   const [pendingStatusCount, setPendingStatusCount] = useState(0);
   const pendingFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingFlushLockRef = useRef(false);
@@ -954,6 +958,15 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       const statusRank = (s: KDSItemStatus) => STATUS_ORDER.indexOf(s);
 
       setPedidos((prevPedidos) => {
+        const nowMs = Date.now();
+        // Set local nos últimos 15s protege contra downgrade por snapshot atrasado.
+        const isRecent = (key: string): boolean => {
+          const t = recentStatusRef.current.get(key);
+          if (t == null) return false;
+          if (nowMs - t < 15000) return true;
+          recentStatusRef.current.delete(key);
+          return false;
+        };
         const prevMap = new Map(prevPedidos.map((p) => [p.id, p]));
         return withUnidades.map((newPedido) => {
           const prev = prevMap.get(newPedido.id);
@@ -976,8 +989,8 @@ export function KDSProvider({ children }: { children: ReactNode }) {
                 const prevU = prevItem.unidades?.find((pu) => pu.id === u.id);
                 if (!prevU) return u;
                 const uStatus: KDSItemStatus =
-                  statusRank(prevU.status) > statusRank(u.status) && pendingStatusQueueRef.current.some((q) => q.orderItemId === newItem.id)
-                    ? prevU.status  // BUG-36: só preserva se há gravação pendente
+                  statusRank(prevU.status) > statusRank(u.status) && (pendingStatusQueueRef.current.some((q) => q.orderItemId === newItem.id) || isRecent('i:' + newItem.id))
+                    ? prevU.status  // BUG-36/flicker: preserva se há gravação pendente OU set recente
                     : u.status;
                 return {
                   ...u,
@@ -1008,8 +1021,8 @@ export function KDSProvider({ children }: { children: ReactNode }) {
                 const prevPart = prevItem.partes!.find((pp) => pp.id === newPart.id);
                 if (!prevPart) return newPart;
                 const partStatus: KDSItemStatus =
-                  statusRank(prevPart.status) > statusRank(newPart.status) && pendingStatusQueueRef.current.some((q) => q.orderItemId === newItem.id)
-                    ? prevPart.status  // BUG-36: só preserva se há gravação pendente
+                  statusRank(prevPart.status) > statusRank(newPart.status) && (pendingStatusQueueRef.current.some((q) => q.orderItemId === newItem.id) || isRecent('i:' + newItem.id))
+                    ? prevPart.status  // BUG-36/flicker: preserva se há gravação pendente OU set recente
                     : newPart.status;
                 return {
                   ...newPart,
@@ -1031,8 +1044,8 @@ export function KDSProvider({ children }: { children: ReactNode }) {
               else effectiveStatus = 'novo';
             } else {
               effectiveStatus =
-                statusRank(prevItem.status) > statusRank(newItem.status) && pendingStatusQueueRef.current.some((u) => u.orderItemId === newItem.id)
-                  ? prevItem.status  // BUG-36: só preserva se há gravação pendente
+                statusRank(prevItem.status) > statusRank(newItem.status) && (pendingStatusQueueRef.current.some((u) => u.orderItemId === newItem.id) || isRecent('i:' + newItem.id))
+                  ? prevItem.status  // BUG-36/flicker: preserva se há gravação pendente OU set recente
                   : newItem.status;
             }
 
@@ -1117,8 +1130,8 @@ export function KDSProvider({ children }: { children: ReactNode }) {
                   ? 'em_rota'  // BUG-09: banco diz em_rota (out_for_delivery_at) → promove
                   : allLocalItemsEntregue && mergedPedidoStatus !== 'entregue'
                     ? 'entregue'  // BUG-39: todos os itens locais entregues → preserva durante race condition do Realtime
-                    : prevRank > mergedRank && pendingStatusQueueRef.current.some((u) => u.orderId === newPedido.id)
-                      ? prev.status  // BUG-36: só preserva status local se há gravação pendente na fila de retry
+                    : prevRank > mergedRank && (pendingStatusQueueRef.current.some((u) => u.orderId === newPedido.id) || isRecent('o:' + newPedido.id))
+                      ? prev.status  // BUG-36/flicker: preserva status local se há gravação pendente OU set recente
                       : mergedPedidoStatus;
 
           // Merge editing lock state: preserve local optimistic state if remote hasn't caught up,
@@ -1499,6 +1512,8 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     orderId: string,
     newStatus: KDSItemStatus,
   ) => {
+    recentStatusRef.current.set('i:' + orderItemId, Date.now());
+    recentStatusRef.current.set('o:' + orderId, Date.now());
     const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
     if (!resolvedTenantId) {
       console.warn('[KDSContext] updateItemStatusRemote: no tenantId available, skipping remote update');
@@ -1703,6 +1718,8 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     orderId: string,
     newStatus: KDSItemStatus,
   ) => {
+    recentStatusRef.current.set('i:' + orderItemId, Date.now());
+    recentStatusRef.current.set('o:' + orderId, Date.now());
     const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
     if (!resolvedTenantId) {
       console.warn('[KDSContext] updatePartStatusRemote: no tenantId available, skipping remote update');

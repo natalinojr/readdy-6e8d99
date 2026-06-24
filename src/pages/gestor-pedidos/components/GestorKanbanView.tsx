@@ -339,24 +339,44 @@ function GestorCard({
     const bebidaLinha = marcados.size > 0
       ? `\n⚠️ *ATENÇÃO: este pedido tem ${Array.from(marcados).join(', ')} — não esquecer!*`
       : '';
+    // Link do portal do motoboy (sinalizar a caminho / coletei / entreguei / problema).
+    const portalUrl = `${window.location.origin}/motoboy/${pedido.id}`;
     resolverMapsUrl().then((mapsUrl) => {
-      const msg = `🚀 *Entrega para ${name}*\n📍 ${address}${valoresLinha}${bebidaLinha}${notes}\n🗺️ Rota: ${mapsUrl}`;
+      const msg = `🚀 *Entrega para ${name}*\n📍 ${address}${valoresLinha}${bebidaLinha}${notes}\n🗺️ Rota: ${mapsUrl}\n📲 Atualizar status: ${portalUrl}`;
       const wa = `https://wa.me/?text=${encodeURIComponent(msg)}`;
       if (w) w.location.href = wa;
       else window.open(wa, '_blank', 'noopener');
     });
   };
 
-  const handleWhatsAppCliente = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const fmtBRLmsg = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+  const resolveMsgCliente = (tpl: string) => tpl
+    .replace(/\{nome\}/g, nomeClienteDelivery(pedido))
+    .replace(/\{numero\}/g, String(pedido.numero).padStart(4, '0'))
+    .replace(/\{total\}/g, fmtBRLmsg(pedido.totalAmount ?? 0))
+    .replace(/\{taxa\}/g, fmtBRLmsg(pedido.deliveryFee ?? 0));
+  const abrirWhatsCliente = (msg: string) => {
     const phone = (pedido.customerPhone ?? '').replace(/\D/g, '');
     if (!phone) return;
-    const msg = `Olá ${nomeClienteDelivery(pedido)}! Seu pedido #${String(pedido.numero).padStart(4, '0')} está ${pedido.status === 'em_rota' ? 'a caminho' : pedido.status === 'pronto' ? 'pronto e saindo para entrega' : pedido.status === 'preparo' ? 'em preparo' : pedido.status === 'entregue' ? 'entregue' : 'recebido'}! 🏍️`;
     window.open(`https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+  const handleWhatsAppCliente = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!(pedido.customerPhone ?? '').replace(/\D/g, '')) return;
+    // Mensagens configuradas pra fase (Config. do Delivery). Se 0 usa padrão, se 1 abre, se >1 deixa escolher.
+    const faseMsgs = ((settings.whatsapp_msgs?.[pedido.status] as string[] | undefined) ?? []).map(resolveMsgCliente);
+    if (faseMsgs.length === 0) {
+      abrirWhatsCliente(`Olá ${nomeClienteDelivery(pedido)}! Seu pedido #${String(pedido.numero).padStart(4, '0')} está ${pedido.status === 'em_rota' ? 'a caminho' : pedido.status === 'pronto' ? 'pronto e saindo para entrega' : pedido.status === 'preparo' ? 'em preparo' : pedido.status === 'entregue' ? 'entregue' : 'recebido'}! 🏍️`);
+    } else if (faseMsgs.length === 1) {
+      abrirWhatsCliente(faseMsgs[0]);
+    } else {
+      setMsgMenu(faseMsgs);
+    }
   };
 
   const { getImpressoraParaEstacao } = useImpressoras();
   const { settings } = useSystemSettings();
+  const [msgMenu, setMsgMenu] = useState<string[] | null>(null);
 
   const handlePrint = () => {
     const paymentLine = pedido.origem === 'autoatendimento' && pedido.paymentMethodName
@@ -378,6 +398,24 @@ function GestorCard({
 
   return (
     <>
+      {msgMenu && (
+        <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/50" onClick={(e) => { e.stopPropagation(); setMsgMenu(null); }}>
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-4 space-y-2 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h4 className="text-sm font-bold text-zinc-800 mb-1">Escolha a mensagem</h4>
+            {msgMenu.map((m, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => { abrirWhatsCliente(m); setMsgMenu(null); }}
+                className="w-full text-left px-3 py-2.5 rounded-xl border border-zinc-200 hover:border-green-400 hover:bg-green-50 text-sm text-zinc-700 cursor-pointer whitespace-pre-wrap"
+              >
+                {m}
+              </button>
+            ))}
+            <button type="button" onClick={() => setMsgMenu(null)} className="w-full py-2 text-xs text-zinc-400 cursor-pointer">Cancelar</button>
+          </div>
+        </div>
+      )}
       {showFicha && (
         <FichaTecnicaKDSModal
           itens={itensComPreparo.map((i) => ({ nome: i.nome, quantidade: i.quantidade, menuItemId: i.menuItemId }))}
