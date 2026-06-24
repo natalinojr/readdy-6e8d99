@@ -5,6 +5,14 @@ import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
 import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
+import { useMotoboyStatus } from '@/hooks/useMotoboyStatus';
+
+const MOTOBOY_SINAL_LABEL: Record<string, string> = {
+  a_caminho_loja: 'Motoboy a caminho da loja',
+  coletou: 'Pedido coletado pelo motoboy',
+  entregou: 'Entregue pelo motoboy',
+  problema: 'Problema na entrega',
+};
 
 interface Props {
   pedidos: KDSPedido[];
@@ -244,6 +252,7 @@ interface CardProps {
   filtroEstacao?: string;
   isNew?: boolean;
   slaInfo?: SlaInfo;
+  motoboySinal?: { status: string; note?: string | null };
 }
 
 function GestorCard({
@@ -260,6 +269,7 @@ function GestorCard({
   filtroEstacao,
   isNew,
   slaInfo,
+  motoboySinal,
 }: CardProps) {
   void tick;
   const [showFicha, setShowFicha] = useState(false);
@@ -549,6 +559,21 @@ function GestorCard({
                   <i className="ri-walk-line text-[9px]" /> {pedido.garcomNome.split(' ')[0]}
                 </span>
               )}
+            </div>
+          )}
+
+          {/* Sinal do motoboy (a caminho / coletou / problema) */}
+          {isDelivery && motoboySinal && (
+            <div className={'flex items-start gap-1.5 rounded-lg px-2 py-1.5 border ' + (motoboySinal.status === 'problema' ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200')}>
+              <i className={'text-sm mt-0.5 flex-shrink-0 ' + (motoboySinal.status === 'problema' ? 'ri-alert-fill text-red-500' : 'ri-e-bike-2-line text-blue-500')} />
+              <div className="flex-1 min-w-0">
+                <p className={'text-[11px] font-bold ' + (motoboySinal.status === 'problema' ? 'text-red-700' : 'text-blue-700')}>
+                  {MOTOBOY_SINAL_LABEL[motoboySinal.status] ?? motoboySinal.status}
+                </p>
+                {motoboySinal.status === 'problema' && motoboySinal.note ? (
+                  <p className="text-[10px] text-red-600">{motoboySinal.note}</p>
+                ) : null}
+              </div>
             </div>
           )}
 
@@ -963,6 +988,8 @@ export default function GestorKanbanView({
     [onEntregarUnidade],
   );
 
+  const motoboyMap = useMotoboyStatus();
+
   // Sort: atrasados > aviso > normal, dentro do mesmo status
   const sortedPedidos = [...pedidos].sort((a, b) => {
     const urgA = elapsedMinutes(a.criadoEm);
@@ -988,6 +1015,7 @@ export default function GestorKanbanView({
       filtroEstacao={filtroEstacao}
       isNew={newPedidoIds.has(p.id)}
       slaInfo={slaMap[p.id]}
+      motoboySinal={motoboyMap.get(p.id)}
     />
   );
 
