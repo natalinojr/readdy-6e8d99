@@ -321,8 +321,16 @@ function GestorCard({
     const address = pedido.deliveryAddress ?? '';
     const name = nomeClienteDelivery(pedido);
     const notes = pedido.notes ? `\nObs: ${pedido.notes}` : '';
+    const fmtBRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+    const fee = pedido.deliveryFee ?? 0;
+    const total = pedido.totalAmount ?? 0;
+    const valoresLinha = `\n💰 Cobrar do cliente: *${fmtBRL(total)}*${fee > 0 ? `\n🛵 Taxa de entrega: ${fmtBRL(fee)}` : ''}`;
+    // Sinaliza bebida (categoria/estação com "bebida") p/ o motoboy não esquecer.
+    const temBebida = pedido.itens.some((i) =>
+      /bebida/i.test(i.categoriaNome ?? '') || /bebida/i.test(i.estacao ?? ''));
+    const bebidaLinha = temBebida ? `\n🥤 *ATENÇÃO: este pedido tem BEBIDA — não esquecer!*` : '';
     resolverMapsUrl().then((mapsUrl) => {
-      const msg = `🚀 *Entrega para ${name}*\n📍 ${address}${notes}\n🗺️ Rota: ${mapsUrl}`;
+      const msg = `🚀 *Entrega para ${name}*\n📍 ${address}${valoresLinha}${bebidaLinha}${notes}\n🗺️ Rota: ${mapsUrl}`;
       const wa = `https://wa.me/?text=${encodeURIComponent(msg)}`;
       if (w) w.location.href = wa;
       else window.open(wa, '_blank', 'noopener');
