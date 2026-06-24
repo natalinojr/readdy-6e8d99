@@ -326,9 +326,10 @@ function GestorCard({
     return addr ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}` : 'https://www.google.com/maps';
   };
 
-  const handleWhatsAppMotoboy = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const w = window.open('', '_blank');
+  // Monta e envia a mensagem do motoboy. `estimateMin`: tempo estimado p/ o pedido
+  // ficar pronto (avisa o motoboy quando precisa estar na loja). `win`: janela
+  // pré-aberta no próprio clique (evita o bloqueio de popup no fluxo assíncrono).
+  const enviarMotoboy = (estimateMin: number | null, win: Window | null) => {
     const address = pedido.deliveryAddress ?? '';
     const name = nomeClienteDelivery(pedido);
     const notes = pedido.notes ? `\nObs: ${pedido.notes}` : '';
@@ -349,14 +350,22 @@ function GestorCard({
     const bebidaLinha = marcados.size > 0
       ? `\n⚠️ *ATENÇÃO: este pedido tem ${Array.from(marcados).join(', ')} — não esquecer!*`
       : '';
+    // Aviso de quando o pedido fica pronto (operador estimou no "Iniciar preparo").
+    const prontoLinha = estimateMin != null && estimateMin > 0
+      ? `\n⏱️ *Fica pronto em ~${estimateMin} min* — esteja na loja às ${fmtHora(Date.now() + estimateMin * 60000)}`
+      : '';
     // Link do portal do motoboy (sinalizar a caminho / coletei / entreguei / problema).
     const portalUrl = `${window.location.origin}/motoboy/${pedido.id}`;
     resolverMapsUrl().then((mapsUrl) => {
-      const msg = `🚀 *Entrega para ${name}*\n📍 ${address}${valoresLinha}${bebidaLinha}${notes}\n🗺️ Rota: ${mapsUrl}\n📲 Atualizar status: ${portalUrl}`;
+      const msg = `🚀 *Entrega para ${name}*${prontoLinha}\n📍 ${address}${valoresLinha}${bebidaLinha}${notes}\n🗺️ Rota: ${mapsUrl}\n📲 Atualizar status: ${portalUrl}`;
       const wa = `https://wa.me/?text=${encodeURIComponent(msg)}`;
-      if (w) w.location.href = wa;
+      if (win) win.location.href = wa;
       else window.open(wa, '_blank', 'noopener');
     });
+  };
+  const handleWhatsAppMotoboy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    enviarMotoboy(null, window.open('', '_blank'));
   };
 
   const fmtBRLmsg = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -387,6 +396,10 @@ function GestorCard({
   const { getImpressoraParaEstacao } = useImpressoras();
   const { settings } = useSystemSettings();
   const [msgMenu, setMsgMenu] = useState<string[] | null>(null);
+  // Modal "Iniciar preparo" do delivery próprio: estima o tempo de preparo e
+  // (opcional) avisa o motoboy de quando o pedido fica pronto.
+  const [showIniciarPreparo, setShowIniciarPreparo] = useState(false);
+  const [estimativaMin, setEstimativaMin] = useState('');
 
   const handlePrint = () => {
     const paymentLine = pedido.origem === 'autoatendimento' && pedido.paymentMethodName
@@ -406,8 +419,78 @@ function GestorCard({
     sendToPrinter(html, impressora);
   };
 
+  // Validação do modal "Iniciar preparo": horário previsto de ficar pronto =
+  // agora + estimativa do operador; não pode passar do limite de preparo (SLA).
+  const estMinNum = parseInt(estimativaMin, 10) || 0;
+  const prontoPrevistoMs = Date.now() + estMinNum * 60000;
+  const excedePrazoPreparo = prazoPreparoMs != null && estMinNum > 0 && prontoPrevistoMs > prazoPreparoMs;
+  const iniciarPreparo = (avisarMotoboy: boolean) => {
+    // Abre a aba do WhatsApp ainda dentro do clique (evita bloqueio de popup).
+    const win = avisarMotoboy ? window.open('', '_blank') : null;
+    if (avisarMotoboy) enviarMotoboy(estMinNum > 0 ? estMinNum : null, win);
+    onAvancar();
+    setShowIniciarPreparo(false);
+  };
+
   return (
     <>
+      {showIniciarPreparo && (
+        <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/50" onClick={(e) => { e.stopPropagation(); setShowIniciarPreparo(false); }}>
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h4 className="text-sm font-bold text-zinc-800">Iniciar preparo — Pedido #{String(pedido.numero).padStart(4, '0')}</h4>
+              <p className="text-xs text-zinc-500 mt-0.5">Em quanto tempo este pedido fica pronto para sair? O motoboy é avisado pra estar na loja nesse horário.</p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                value={estimativaMin}
+                onChange={(e) => setEstimativaMin(e.target.value)}
+                placeholder="Ex.: 20"
+                className="w-24 px-3 py-2.5 rounded-xl border border-zinc-200 outline-none focus:border-amber-400 text-sm font-bold text-zinc-800"
+                autoFocus
+              />
+              <span className="text-sm text-zinc-500 font-semibold">minutos</span>
+              {estMinNum > 0 && (
+                <span className="ml-auto text-xs text-zinc-500">Pronto às <strong className="text-zinc-700">{fmtHora(prontoPrevistoMs)}</strong></span>
+              )}
+            </div>
+
+            {prazoPreparoMs != null && (
+              excedePrazoPreparo ? (
+                <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-red-50 border border-red-200">
+                  <i className="ri-alert-line text-red-500 text-sm mt-0.5" />
+                  <p className="text-xs font-semibold text-red-700">
+                    Esse tempo passa do limite de preparo (até {fmtHora(prazoPreparoMs)}) e pode atrasar a entrega. Reduza a estimativa ou agilize o preparo.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-400">Limite de preparo pelo SLA: até <strong className="text-zinc-600">{fmtHora(prazoPreparoMs)}</strong>.</p>
+              )
+            )}
+
+            <div className="flex flex-col gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => iniciarPreparo(true)}
+                className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold flex items-center justify-center gap-1.5"
+              >
+                <i className="ri-whatsapp-line" /> Avisar motoboy e iniciar preparo
+              </button>
+              <button
+                type="button"
+                onClick={() => iniciarPreparo(false)}
+                className="w-full py-3 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-sm font-bold flex items-center justify-center gap-1.5"
+              >
+                <i className="ri-play-fill" /> Só iniciar preparo (sem avisar)
+              </button>
+              <button type="button" onClick={() => setShowIniciarPreparo(false)} className="w-full py-2 text-xs text-zinc-400 cursor-pointer">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
       {msgMenu && (
         <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/50" onClick={(e) => { e.stopPropagation(); setMsgMenu(null); }}>
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-4 space-y-2 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -871,7 +954,12 @@ function GestorCard({
                 </button>
               ) : (
                 <button
-                  onClick={onAvancar}
+                  onClick={isLinkDelivery ? () => {
+                    // Pré-preenche com o tempo de preparo restante sugerido pelo SLA.
+                    const sugestao = prazoPreparoMs != null ? Math.max(0, Math.round((prazoPreparoMs - Date.now()) / 60000)) : 0;
+                    setEstimativaMin(sugestao > 0 ? String(sugestao) : '');
+                    setShowIniciarPreparo(true);
+                  } : onAvancar}
                   className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-1.5"
                 >
                   <i className="ri-play-fill" />Iniciar Preparo
