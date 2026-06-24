@@ -516,6 +516,17 @@ export default function ConfigDeliveryPage() {
             ) : null}
 
             {/* Lista de entregadores cadastrados */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-zinc-500">Cadastrados</span>
+              <button
+                type="button"
+                onClick={carregarMotoboys}
+                disabled={motoboysLoading}
+                className="inline-flex items-center gap-1 text-xs font-bold text-amber-600 disabled:opacity-50"
+              >
+                <i className={'ri-refresh-line' + (motoboysLoading ? ' animate-spin' : '')} /> Atualizar
+              </button>
+            </div>
             {motoboysLoading ? (
               <p className="text-xs text-zinc-400">Carregando entregadores…</p>
             ) : motoboys.length === 0 ? (

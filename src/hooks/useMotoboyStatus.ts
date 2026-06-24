@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -6,13 +6,15 @@ export interface MotoboySinal { status: string; note?: string | null; driverName
 
 /**
  * Lê `motoboy_status`/`motoboy_note` direto da tabela `orders` (read seguro, sem
- * tocar na RPC `fn_get_kds_orders`). Retorna um Map por order id, atualizado por
- * polling. Usado pelo gestor pra mostrar "a caminho da loja" e alerta de problema.
+ * tocar na RPC `fn_get_kds_orders`). Retorna um Map por order id. Atualiza em tempo
+ * real (Realtime no UPDATE de `orders`), sem polling. Usado pelo gestor pra mostrar
+ * "a caminho da loja"/dono do pedido e alerta de problema.
  */
-export function useMotoboyStatus(pollMs = 25000): Map<string, MotoboySinal> {
+export function useMotoboyStatus(): Map<string, MotoboySinal> {
   const { user } = useAuth();
   const tenantId = (user as { tenantId?: string } | null)?.tenantId;
   const [map, setMap] = useState<Map<string, MotoboySinal>>(new Map());
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const carregar = useCallback(async () => {
     if (!tenantId) return;
@@ -37,11 +39,23 @@ export function useMotoboyStatus(pollMs = 25000): Map<string, MotoboySinal> {
   }, [tenantId]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Realtime: o sinal do motoboy chega como UPDATE em `orders`. Recarrega na hora
+  // (debounce p/ coalescer rajadas). É o que torna a atualização instantânea.
   useEffect(() => {
-    if (!tenantId || !pollMs) return;
-    const id = setInterval(carregar, pollMs);
-    return () => clearInterval(id);
-  }, [tenantId, pollMs, carregar]);
+    if (!tenantId) return;
+    const ch = supabase
+      .channel(`motoboy-status-${tenantId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `tenant_id=eq.${tenantId}` }, () => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => { carregar(); }, 300);
+      })
+      .subscribe();
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      supabase.removeChannel(ch);
+    };
+  }, [tenantId, carregar]);
 
   return map;
 }

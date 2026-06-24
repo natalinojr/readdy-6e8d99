@@ -40,6 +40,7 @@ interface OrderRow {
   motoboy_status: string | null;
   meu: boolean;
   assumido: boolean;
+  assumido_por?: string | null;
   alertas?: string[];
 }
 
@@ -237,7 +238,7 @@ export default function MotoboyListaPage() {
                       <div className="flex items-center justify-between mt-2">
                         <span className="text-sm font-black text-zinc-800">{fmt(o.total)}</span>
                         {o.assumido && !o.meu ? (
-                          <span className="text-[10px] font-bold text-zinc-400">outro entregador</span>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-400"><i className="ri-lock-line" /> {o.assumido_por ? `com ${o.assumido_por.split(' ')[0]}` : 'outro entregador'}</span>
                         ) : o.meu ? (
                           <span className="text-[10px] font-bold text-amber-600">seu pedido</span>
                         ) : (

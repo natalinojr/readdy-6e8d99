@@ -50,6 +50,8 @@ interface OrderData {
   status: string;
   motoboy_status: string | null;
   alertas?: string[];
+  claimed_by_id?: string | null;
+  claimed_by_name?: string | null;
   itens: { nome: string; qtd: number }[];
 }
 
@@ -69,6 +71,14 @@ export default function MotoboyPage() {
   const [showProblema, setShowProblema] = useState(false);
   const [motivo, setMotivo] = useState('');
   const [storeSlug, setStoreSlug] = useState('');
+  const [storeName, setStoreName] = useState('');
+  // Sessão do motoboy validada para a loja deste pedido (login pode ser feito aqui mesmo).
+  const [session, setSession] = useState<MotoboySession | null>(null);
+  const [nomeLogin, setNomeLogin] = useState('');
+  const [celularLogin, setCelularLogin] = useState('');
+  const [entrando, setEntrando] = useState(false);
+  const [loginErro, setLoginErro] = useState('');
+  const [aviso, setAviso] = useState('');
 
   const carregar = useCallback(async () => {
     if (!orderId) { setErro('Link inválido.'); setLoading(false); return; }
@@ -83,6 +93,10 @@ export default function MotoboyPage() {
       } else {
         setOrder(data.order);
         if (data.store_slug) setStoreSlug(data.store_slug);
+        if (data.store_name) setStoreName(data.store_name);
+        // Reaproveita a sessão do dispositivo só se for da MESMA loja deste pedido.
+        const sess = getMotoboySession();
+        if (sess && data.store_slug && sess.store_slug === data.store_slug) setSession(sess);
       }
     } catch {
       setErro('Erro de conexão. Tente novamente.');
@@ -98,16 +112,48 @@ export default function MotoboyPage() {
     try {
       const res = await fetch(edgeUrl(), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'signal', order_id: orderId, signal, motivo: motivoTxt, driver_id: getMotoboySession()?.driver_id }),
+        body: JSON.stringify({ action: 'signal', order_id: orderId, signal, motivo: motivoTxt, driver_id: session?.driver_id }),
       });
       const data = await res.json();
       if (data.ok) {
-        setOrder((o) => (o ? { ...o, motoboy_status: signal } : o));
+        setOrder((o) => (o ? { ...o, motoboy_status: signal, claimed_by_id: session?.driver_id ?? o.claimed_by_id } : o));
         setShowProblema(false);
         setMotivo('');
+      } else if (data.error === 'assumido_por_outro') {
+        // Outro entregador assumiu o pedido — recarrega pra refletir e travar.
+        setAviso('Este pedido já está sendo entregue por outro entregador.');
+        carregar();
       }
     } catch { /* ignora */ } finally {
       setEnviando('');
+    }
+  };
+
+  // Login simples (nome + celular) feito no próprio link do pedido.
+  const entrar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginErro('');
+    const phone = celularLogin.replace(/\D/g, '');
+    if (!nomeLogin.trim() || phone.length < 8) { setLoginErro('Informe nome e um celular válido.'); return; }
+    setEntrando(true);
+    try {
+      const res = await fetch(edgeUrl(), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'driver_login', store_slug: storeSlug, name: nomeLogin.trim(), phone }),
+      });
+      const data = await res.json();
+      if (data.blocked) { setLoginErro('Seu acesso a esta loja está bloqueado.'); return; }
+      if (!data.ok || !data.driver) { setLoginErro('Não foi possível entrar. Tente novamente.'); return; }
+      const sess: MotoboySession = {
+        tenant_id: data.tenant_id, driver_id: data.driver.id, name: data.driver.name,
+        store_slug: data.store_slug || storeSlug, store_name: data.store_name || storeName,
+      };
+      localStorage.setItem(MOTOBOY_SESSION_KEY, JSON.stringify(sess));
+      setSession(sess);
+    } catch {
+      setLoginErro('Erro de conexão. Tente novamente.');
+    } finally {
+      setEntrando(false);
     }
   };
 
@@ -138,6 +184,8 @@ export default function MotoboyPage() {
   const entregue = order.motoboy_status === 'entregou';
   // Só o botão da próxima fase aparece (a_caminho → coletei → entreguei).
   const proximo = proximoBotao(order.motoboy_status);
+  // Trava: pedido já assumido por OUTRO entregador (a partir do 1º sinal).
+  const assumidoPorOutro = !!order.claimed_by_id && order.claimed_by_id !== session?.driver_id;
 
   const Botao = ({ signal, label, icon, cor }: { signal: string; label: string; icon: string; cor: string }) => (
     <button
@@ -230,12 +278,44 @@ export default function MotoboyPage() {
           </div>
         </div>
 
+        {aviso ? (
+          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-2xl p-3">
+            <i className="ri-error-warning-line text-red-500 text-lg flex-shrink-0" />
+            <p className="text-sm font-bold text-red-700">{aviso}</p>
+          </div>
+        ) : null}
+
         {/* Ações */}
         {entregue ? (
           <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
             <i className="ri-checkbox-circle-fill text-3xl text-green-500" />
             <p className="text-sm font-bold text-green-700 mt-1">Entrega concluída. Obrigado!</p>
           </div>
+        ) : assumidoPorOutro ? (
+          <div className="bg-zinc-100 border border-zinc-200 rounded-2xl p-4 text-center">
+            <i className="ri-lock-line text-3xl text-zinc-400" />
+            <p className="text-sm font-bold text-zinc-600 mt-1">
+              Pedido sendo entregue por {order.claimed_by_name || 'outro entregador'}.
+            </p>
+            <p className="text-xs text-zinc-400 mt-0.5">Só quem assumiu pode atualizar o status.</p>
+          </div>
+        ) : !session ? (
+          /* Sem sessão: o motoboy se identifica aqui mesmo (nome + celular) antes de atualizar o pedido. */
+          <form onSubmit={entrar} className="bg-white rounded-2xl border border-zinc-100 p-4 space-y-3">
+            <div>
+              <p className="text-sm font-bold text-zinc-800">Identifique-se para atualizar o pedido</p>
+              <p className="text-xs text-zinc-500">Seu nome e celular — só na primeira vez neste aparelho.</p>
+            </div>
+            <input value={nomeLogin} onChange={(e) => setNomeLogin(e.target.value)} placeholder="Seu nome"
+              className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 outline-none focus:border-amber-400 text-sm" maxLength={80} />
+            <input value={celularLogin} onChange={(e) => setCelularLogin(e.target.value)} inputMode="tel" placeholder="Celular (00) 00000-0000"
+              className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 outline-none focus:border-amber-400 text-sm" maxLength={20} />
+            {loginErro ? <p className="text-xs text-red-600">{loginErro}</p> : null}
+            <button type="submit" disabled={entrando}
+              className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm disabled:opacity-50">
+              {entrando ? 'Entrando…' : 'Entrar e continuar'}
+            </button>
+          </form>
         ) : (
           <div className="space-y-2">
             {proximo ? (

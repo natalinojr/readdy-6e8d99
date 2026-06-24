@@ -138,6 +138,14 @@ serve(async (req) => {
       const lista = (orders ?? []) as Record<string, unknown>[];
       const alertasMap = await alertasPorPedido(admin, tenantId, lista.map((o) => o.id as string));
 
+      // Nomes dos entregadores que assumiram pedidos (pra mostrar "com Fulano").
+      const driverNome = new Map<string, string>();
+      const driverIds = Array.from(new Set(lista.map((o) => o.motoboy_driver_id as string | null).filter((x): x is string => !!x)));
+      if (driverIds.length > 0) {
+        const { data: drvs } = await admin.from("delivery_drivers").select("id, name").in("id", driverIds);
+        (drvs ?? []).forEach((d: { id: string; name: string }) => driverNome.set(d.id, d.name));
+      }
+
       return json({
         ok: true,
         orders: lista.map((o: Record<string, unknown>) => ({
@@ -151,6 +159,7 @@ serve(async (req) => {
           motoboy_status: o.motoboy_status ?? null,
           meu: o.motoboy_driver_id === driverId,
           assumido: o.motoboy_driver_id != null,
+          assumido_por: o.motoboy_driver_id ? (driverNome.get(o.motoboy_driver_id as string) ?? null) : null,
           alertas: alertasMap[o.id as string] ?? [],
           created_at: o.created_at,
         })),
@@ -162,17 +171,25 @@ serve(async (req) => {
 
     if (body.action === "get_order") {
       const { data: order, error } = await admin.from("orders")
-        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, out_for_delivery_at, origin_type")
+        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, motoboy_driver_id, out_for_delivery_at, origin_type")
         .eq("id", orderId).maybeSingle();
       if (error || !order) return json({ error: "not_found" }, 200);
       if (order.origin_type !== "delivery") return json({ error: "not_delivery" }, 200);
       const { data: items } = await admin.from("order_items").select("item_name, quantity").eq("order_id", orderId);
       const alertasMap = await alertasPorPedido(admin, order.tenant_id as string, [orderId]);
-      const { data: tnt } = await admin.from("tenants").select("slug").eq("id", order.tenant_id).maybeSingle();
+      const { data: tnt } = await admin.from("tenants").select("slug, name").eq("id", order.tenant_id).maybeSingle();
+      let claimedByName: string | null = null;
+      if (order.motoboy_driver_id) {
+        const { data: drv } = await admin.from("delivery_drivers").select("name").eq("id", order.motoboy_driver_id).maybeSingle();
+        claimedByName = drv?.name ?? null;
+      }
       return json({
         ok: true,
         store_slug: tnt?.slug ?? "",
+        store_name: tnt?.name ?? "",
         order: {
+          claimed_by_id: order.motoboy_driver_id ?? null,
+          claimed_by_name: claimedByName,
           number: order.number,
           cliente: nomeLimpo(order.destination_name as string | null),
           endereco: order.delivery_address ?? "",
@@ -202,8 +219,16 @@ serve(async (req) => {
         motoboy_updated_at: nowIso,
         updated_at: nowIso,
       };
-      // Registra qual motoboy assumiu o pedido (1o sinal define o dono).
       const driverId = String(body.driver_id ?? "").trim();
+      // Trava de propriedade: a partir do 1o sinal, o pedido fica preso a um entregador.
+      // So pode atualizar quem nao tem dono ainda OU o proprio dono.
+      const { data: cur } = await admin.from("orders").select("motoboy_driver_id").eq("id", orderId).maybeSingle();
+      if (!cur) return json({ error: "not_found" }, 200);
+      const dono = cur.motoboy_driver_id as string | null;
+      if (dono && (!driverId || dono !== driverId)) {
+        return json({ ok: false, error: "assumido_por_outro" }, 200);
+      }
+      // Registra qual motoboy assumiu o pedido (1o sinal define o dono).
       if (driverId) updates.motoboy_driver_id = driverId;
       if (signal === "coletou") updates.out_for_delivery_at = nowIso;
       if (signal === "entregou") {
