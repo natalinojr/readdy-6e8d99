@@ -542,6 +542,7 @@ function kdsToRecente(p: KDSPedido): PedidoRecenteComParticipant {
     pago: p.isPaid ?? false,
     kdsStatus: p.status,
     total: p.totalAmount ?? 0,
+    deliveryFee: p.deliveryFee ?? 0,
     criadoEm: hora,
     minutosAtras,
     itensProntos,
@@ -619,6 +620,7 @@ function construirPedidoGrupo(
     numeroStr: numeroStr,
     itensDetalhes: todosItens,
     total: totalAcumulado,
+    deliveryFee: listaOrdenada.reduce((s, p) => s + (p.deliveryFee ?? 0), 0),
     pago: todosPagos,
     status: statusConsolidado,
     pagamentos: todosPagamentos,
@@ -930,6 +932,13 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
               <i className={`text-zinc-400 text-sm flex-shrink-0 ${expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`} />
             </div>
           </div>
+          {/* Delivery: quebra do total (itens + taxa de entrega que compõe a venda) */}
+          {pedido.destino === 'delivery' && (pedido.deliveryFee ?? 0) > 0 && (
+            <div className="flex items-center gap-1 text-[10px] text-zinc-500 mb-1.5 -mt-0.5">
+              <i className="ri-e-bike-line text-[10px] text-rose-500" />
+              <span>Itens {formatPrice(Math.max(0, pedido.total - (pedido.deliveryFee ?? 0)))} + Entrega <strong className="text-rose-600">{formatPrice(pedido.deliveryFee ?? 0)}</strong></span>
+            </div>
+          )}
           {/* Badges: fluem em wrap, gap menor pra aproveitar espaço */}
           <div className="flex flex-wrap items-center gap-1 mb-1.5">
             {/* Nome do cliente (mesa digital via QR code) */}
