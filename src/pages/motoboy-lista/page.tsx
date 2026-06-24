@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { MOTOBOY_SESSION_KEY, getMotoboySession, type MotoboySession } from '@/pages/motoboy/page';
+import MapaEntregas from './MapaEntregas';
 
 function edgeUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
@@ -23,6 +24,13 @@ const SINAL_LABEL: Record<string, string> = {
   coletou: 'Coletado',
   entregou: 'Entregue',
   problema: 'Problema',
+};
+// Badge da fase do motoboy (cor + ícone) — evidencia o status da entrega.
+const SINAL_BADGE: Record<string, { cls: string; icon: string }> = {
+  a_caminho_loja: { cls: 'bg-blue-100 text-blue-700', icon: 'ri-store-2-line' },
+  coletou: { cls: 'bg-violet-100 text-violet-700', icon: 'ri-e-bike-2-line' },
+  entregou: { cls: 'bg-green-100 text-green-700', icon: 'ri-checkbox-circle-line' },
+  problema: { cls: 'bg-red-100 text-red-700', icon: 'ri-alert-line' },
 };
 
 // Fases de entrega (ordem de exibição), com cor de fundo leve por grupo.
@@ -50,6 +58,8 @@ interface OrderRow {
   alertas?: string[];
   sla_min?: number | null;
   created_at?: string | null;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 // Limite (min) abaixo do qual o pedido está "prestes a atrasar".
@@ -85,8 +95,9 @@ export default function MotoboyListaPage() {
   const [loginErro, setLoginErro] = useState('');
 
   // Filtros e ordenação
-  const [filtro, setFiltro] = useState<'todos' | 'sem_entregador' | 'atraso'>('todos');
+  const [filtro, setFiltro] = useState<'todos' | 'meus' | 'sem_entregador' | 'atraso'>('todos');
   const [ordem, setOrdem] = useState<'fase' | 'tempo'>('fase');
+  const [showMapa, setShowMapa] = useState(false);
   // Tick local (sem tocar servidor) pra o contador de tempo andar.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -216,11 +227,15 @@ export default function MotoboyListaPage() {
 
   // ── Lista de pedidos ──
   const abertos = orders.length;
+  const meusCount = orders.filter((o) => o.meu).length;
   const semEntregadorCount = orders.filter((o) => !o.assumido).length;
   const atrasoCount = orders.filter((o) => infoTempo(o, now).atrasado).length;
 
   const passaFiltro = (o: OrderRow) =>
-    filtro === 'todos' ? true : filtro === 'sem_entregador' ? !o.assumido : infoTempo(o, now).atrasado;
+    filtro === 'todos' ? true
+      : filtro === 'meus' ? o.meu
+      : filtro === 'sem_entregador' ? !o.assumido
+      : infoTempo(o, now).atrasado;
   const filtrados = orders.filter(passaFiltro);
   // Ordem por tempo: mais urgente primeiro (sem prazo vai pro fim).
   const porTempo = [...filtrados].sort((a, b) => {
@@ -254,11 +269,14 @@ export default function MotoboyListaPage() {
             <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ' + cozinha.cls}>
               <i className={cozinha.icon} /> {cozinha.label}
             </span>
-            {o.motoboy_status ? (
-              <span className="px-2 py-0.5 rounded-full bg-white/70 text-zinc-600 text-[10px] font-bold">
-                {SINAL_LABEL[o.motoboy_status] ?? o.motoboy_status}
-              </span>
-            ) : null}
+            {o.motoboy_status ? (() => {
+              const sb = SINAL_BADGE[o.motoboy_status] ?? { cls: 'bg-zinc-100 text-zinc-600', icon: 'ri-e-bike-2-line' };
+              return (
+                <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ' + sb.cls}>
+                  <i className={sb.icon} /> {SINAL_LABEL[o.motoboy_status] ?? o.motoboy_status}
+                </span>
+              );
+            })() : null}
           </div>
         </div>
         <p className="text-sm font-semibold text-zinc-700">{o.cliente}</p>
@@ -287,9 +305,16 @@ export default function MotoboyListaPage() {
 
   const FILTROS: { key: typeof filtro; label: string; count: number }[] = [
     { key: 'todos', label: 'Todos', count: abertos },
+    { key: 'meus', label: 'Meus', count: meusCount },
     { key: 'sem_entregador', label: 'Sem entregador', count: semEntregadorCount },
     { key: 'atraso', label: 'Em atraso', count: atrasoCount },
   ];
+
+  // Pontos do mapa = respeitam o filtro ativo (ex.: "Meus" mostra só os seus no mapa).
+  const pontosMapa = filtrados.map((o) => ({
+    id: o.id, number: o.number, cliente: o.cliente, endereco: o.endereco,
+    lat: o.lat ?? null, lng: o.lng ?? null, meu: o.meu, atrasado: infoTempo(o, now).atrasado,
+  }));
 
   return (
     <div className="min-h-screen bg-zinc-50 flex justify-center">
@@ -329,9 +354,14 @@ export default function MotoboyListaPage() {
               </button>
             ))}
           </div>
-          <button type="button" onClick={() => carregar(session)} className="inline-flex items-center gap-1 text-xs font-bold text-amber-600">
-            <i className="ri-refresh-line" /> Atualizar
-          </button>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={() => setShowMapa(true)} className="inline-flex items-center gap-1 text-xs font-bold text-blue-600">
+              <i className="ri-map-2-line" /> Mapa
+            </button>
+            <button type="button" onClick={() => carregar(session)} className="inline-flex items-center gap-1 text-xs font-bold text-amber-600">
+              <i className="ri-refresh-line" /> Atualizar
+            </button>
+          </div>
         </div>
 
         {erro ? <p className="text-xs text-red-600">{erro}</p> : null}
@@ -366,6 +396,8 @@ export default function MotoboyListaPage() {
           </div>
         )}
       </div>
+
+      {showMapa ? <MapaEntregas pontos={pontosMapa} onClose={() => setShowMapa(false)} /> : null}
     </div>
   );
 }

@@ -131,7 +131,7 @@ serve(async (req) => {
       if (!driver.is_active) return json({ ok: false, blocked: true, error: "bloqueado" }, 200);
 
       const { data: orders } = await admin.from("orders")
-        .select("id, number, destination_name, delivery_address, total_amount, delivery_fee, status, motoboy_status, motoboy_driver_id, delivery_sla_min, created_at")
+        .select("id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, status, motoboy_status, motoboy_driver_id, delivery_sla_min, created_at")
         .eq("tenant_id", tenantId).eq("origin_type", "delivery").in("status", STATUS_ABERTOS)
         .order("created_at", { ascending: true });
 
@@ -153,6 +153,8 @@ serve(async (req) => {
           number: o.number,
           cliente: nomeLimpo(o.destination_name as string | null),
           endereco: o.delivery_address ?? "",
+          lat: o.delivery_lat != null ? Number(o.delivery_lat) : null,
+          lng: o.delivery_lng != null ? Number(o.delivery_lng) : null,
           total: Number(o.total_amount ?? 0),
           taxa: Number(o.delivery_fee ?? 0),
           status: o.status,
