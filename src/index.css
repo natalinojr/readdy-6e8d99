@@ -29,6 +29,11 @@ input, textarea, select {
   font-size: max(16px, 1em);
 }
 
+/* Spinner do pull-to-refresh (componente PullToRefresh) */
+@keyframes ptr-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Garante que elementos focados dentro de contêineres scrolláveis fiquem visíveis */
 [data-keyboard-aware] {
   scroll-padding-bottom: 24px;

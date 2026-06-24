@@ -12,6 +12,7 @@ import type { DestinoInfo } from '../../../contexts/PDVContext';
 import type { Item } from '@/types/cardapio';
 import { useCardapio } from '../../../contexts/CardapioContext';
 import { supabase } from '@/lib/supabase';
+import { promoAtivaHoje } from '@/lib/promoUtils';
 import CategoriaNav from './components/CategoriaNav';
 import ItemGridPDV from './components/ItemGridPDV';
 import CarrinhoPanel from './components/CarrinhoPanel';
@@ -686,7 +687,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
       setModal('opcoes');
       return;
     }
-    const promoAtiva = item.promocoes.find((p) => p.ativo);
+    const promoAtiva = promoAtivaHoje(item.promocoes);
     const precoBase = promoAtiva ? promoAtiva.precoPromocional : item.preco;
     const cat = categorias.find((c) => c.id === item.categoriaId);
     addItem({

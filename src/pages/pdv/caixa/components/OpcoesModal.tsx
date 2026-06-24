@@ -6,6 +6,7 @@ import { useObsParaItem } from '@/hooks/useObsParaItem';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useProducao } from '@/contexts/ProducaoContext';
 import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
+import { promoAtivaHoje } from '@/lib/promoUtils';
 
 interface Props {
   item: Item;
@@ -185,7 +186,7 @@ export default function OpcoesModal({
     return cat?.estacaoId ?? undefined;
   }, [categorias, item.categoriaId]);
 
-  const promoAtiva = item.promocoes.find((p) => p.ativo);
+  const promoAtiva = promoAtivaHoje(item.promocoes);
   const precoBase = promoAtiva ? promoAtiva.precoPromocional : item.preco;
 
   const precoTotal = useMemo(() => {

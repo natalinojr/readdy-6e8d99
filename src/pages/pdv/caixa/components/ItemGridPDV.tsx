@@ -4,6 +4,7 @@ import { useEstoque } from '../../../../contexts/EstoqueContext';
 import { useCardapio } from '../../../../contexts/CardapioContext';
 import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
 import type { InsumoFaltando } from '@/hooks/useItensSemEstoque';
+import { promoAtivaHoje } from '@/lib/promoUtils';
 
 interface Props {
   categoriaAtiva: string;
@@ -127,7 +128,7 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
     <div className="h-full overflow-y-auto">
       <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 md:gap-3 px-3 md:px-4 py-3 md:py-4">
         {itens.map((item) => {
-          const promoAtiva = item.promocoes.find((p) => p.ativo);
+          const promoAtiva = promoAtivaHoje(item.promocoes);
           const precoFinal = promoAtiva ? promoAtiva.precoPromocional : item.preco;
           const insumosFaltando = itensSemEstoque.get(item.id) ?? [];
           const semEstoqueInsumo = insumosFaltando.length > 0;

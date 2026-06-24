@@ -41,6 +41,7 @@ import ChecklistTeste from '@/pages/diagnostico/ChecklistTeste';
 import AdminMasterPage from '@/pages/admin-master/page';
 import SelecionarLojaPage from '@/pages/selecionar-loja/page';
 import { lazy } from 'react';
+import PullToRefresh from '@/components/feature/PullToRefresh';
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
 const DeliveryPage = lazy(() => import('../pages/delivery/page'));
@@ -48,12 +49,12 @@ const DeliveryPage = lazy(() => import('../pages/delivery/page'));
 const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
   { path: '/mesa/:mesaId', element: <MesaClientePage /> },
-  { path: '/mesa-qr/:qr_token/:session_token', element: <MesaQRPage /> },
-  { path: '/mesa-qr/:qr_token', element: <MesaQRPage /> },
-  { path: '/pedido/:qr_token/:session_token', element: <MesaQRPage /> },
-  { path: '/pedido/:qr_token', element: <MesaQRPage /> },
-  { path: '/delivery', element: <DeliveryPage /> },
-  { path: '/:storeSlug-delivery', element: <DeliveryPage /> },
+  { path: '/mesa-qr/:qr_token/:session_token', element: <PullToRefresh><MesaQRPage /></PullToRefresh> },
+  { path: '/mesa-qr/:qr_token', element: <PullToRefresh><MesaQRPage /></PullToRefresh> },
+  { path: '/pedido/:qr_token/:session_token', element: <PullToRefresh><MesaQRPage /></PullToRefresh> },
+  { path: '/pedido/:qr_token', element: <PullToRefresh><MesaQRPage /></PullToRefresh> },
+  { path: '/delivery', element: <PullToRefresh><DeliveryPage /></PullToRefresh> },
+  { path: '/:storeSlug-delivery', element: <PullToRefresh><DeliveryPage /></PullToRefresh> },
   { path: '/autoatendimento', element: <AutoatendimentoPage /> },
   { path: '/totem/:token', element: <TotemPage /> },
   {

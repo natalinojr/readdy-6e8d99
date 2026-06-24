@@ -5,6 +5,7 @@ import ItemImage from '@/components/base/ItemImage';
 import { useObsParaItem } from '@/hooks/useObsParaItem';
 import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
 import type { InsumoFaltando } from '@/hooks/useItensSemEstoque';
+import { promoAtivaHoje } from '@/lib/promoUtils';
 
 interface OpcaoSel {
   grupoId: string;
@@ -87,7 +88,7 @@ function ItemOpcoes({
     .every((g) => selecionadas.some((s) => s.grupoId === g.id));
 
   const extraOpcoes = selecionadas.reduce((acc, s) => acc + s.precoAdicional, 0);
-  const promoAtiva = item.promocoes.find((p) => p.ativo);
+  const promoAtiva = promoAtivaHoje(item.promocoes);
   const precoBase = promoAtiva ? promoAtiva.precoPromocional : item.preco;
   const precoFinal = precoBase + extraOpcoes;
 
@@ -348,7 +349,7 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
         ) : (
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
             {itensFiltrados.map((item) => {
-              const promoAtiva = item.promocoes.find((p) => p.ativo);
+              const promoAtiva = promoAtivaHoje(item.promocoes);
               const preco = promoAtiva ? promoAtiva.precoPromocional : item.preco;
               const insumosFaltando: InsumoFaltando[] = itensSemEstoque.get(item.id) ?? [];
               const semEstoque = insumosFaltando.length > 0;

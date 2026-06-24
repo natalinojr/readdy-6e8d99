@@ -10,6 +10,7 @@ import type { InsumoZerando } from '@/hooks/useEstoqueAlertaPDV';
 import type { Rodada } from '../types';
 import { useRodadasMesa } from '../hooks/useRodadasMesa';
 import OpcoesModal from '../../caixa/components/OpcoesModal';
+import { promoAtivaHoje } from '@/lib/promoUtils';
 import ContaMesaView from './ContaMesaView';
 import FecharContaModal from './FecharContaModal';
 import StatusCozinhaView from './StatusCozinhaView';
@@ -151,7 +152,7 @@ export default function PedidoView({
   const showDividirTab = !isAvulso && (mesaNumero && mesaNumero > 0) && rodadasParaConta.length > 0;
 
   const handleQuickAdd = (item: Item) => {
-    const promoAtiva = item.promocoes.find((p) => p.ativo);
+    const promoAtiva = promoAtivaHoje(item.promocoes);
     const preco = promoAtiva ? promoAtiva.precoPromocional : item.preco;
     // Abre modal SÓ se tiver opções obrigatórias OU obs pré-definidas/globais
     const temOpcoesObrigatorias = item.gruposOpcoes.some((g) => g.obrigatorio);
@@ -471,7 +472,7 @@ export default function PedidoView({
           <div className="flex-1 overflow-y-auto px-3 pb-2">
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
               {itens.map((item) => {
-                const promoAtiva = item.promocoes.find((p) => p.ativo);
+                const promoAtiva = promoAtivaHoje(item.promocoes);
                 const preco = promoAtiva ? promoAtiva.precoPromocional : item.preco;
                 const temOpcaoObrig = item.gruposOpcoes.some((g) => g.obrigatorio);
                 const qtdNoCarrinho = carrinho.filter((c) => c.itemId === item.id).reduce((a, c) => a + c.quantidade, 0);

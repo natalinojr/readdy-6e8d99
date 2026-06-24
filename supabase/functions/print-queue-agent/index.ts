@@ -180,7 +180,7 @@ function formatTicket(
   // Pedido # (tamanho normal, só bold)
   out += BOLD_ON + toCp860(`Pedido: #${numero || "---"}`) + BOLD_OFF + LINE_FEED;
 
-  const now = data_hora || new Date().toLocaleString("pt-BR");
+  const now = data_hora || new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
   out += toCp860(now as string) + LINE_FEED;
 
   if (origem) {
@@ -361,22 +361,87 @@ serve(async (req) => {
         }
       }
 
+      // ── Resolve impressora_id -> IP/porta/papel via printers_config (fonte unica: o app) ──
+      // O agente passa a imprimir no IP que vem RESOLVIDO no ticket, sem depender do
+      // config.json local de cada PC. Trocar/criar impressora no app reflete em todos
+      // os PCs automaticamente.
+      const { data: settingsRow } = await supabaseAdmin
+        .from("system_settings")
+        .select("printers_config")
+        .eq("tenant_id", tenant_id)
+        .maybeSingle();
+
+      const printersConfig = (settingsRow?.printers_config as Record<string, unknown> | null) ?? {};
+      const printersList = (printersConfig.impressoras ?? []) as Array<Record<string, unknown>>;
+      const mapaEstacoes = (printersConfig.mapaEstacoes ?? {}) as Record<string, string>;
+      const printerById: Record<string, { ip?: string; porta: number; papel: string; nome?: string }> = {};
+      for (const p of printersList) {
+        const pid = p.id as string | undefined;
+        if (!pid) continue;
+        printerById[pid] = {
+          ip: (p.ip as string) || undefined,
+          porta: (p.porta as number) || (p.port as number) || 9100,
+          papel: ((p.paperStyle as string) || (p.papel as string) || "80mm") === "58mm" ? "58mm" : "80mm",
+          nome: (p.nome as string) || (p.descricao as string) || undefined,
+        };
+      }
+      // Se houver exatamente UMA impressora, ela vira o destino padrao quando a
+      // estacao do ticket nao estiver mapeada (lojas com 1 impressora "so funcionam").
+      const defaultPrinterId = printersList.length === 1 ? (printersList[0].id as string) : "";
+
       // ── GERA ESC/POS PRÉ-FORMATADO ──
       const tickets = (data ?? []).map((ticket: Record<string, unknown>) => {
+        // Resolve estacao -> impressora (id) -> ip/porta/papel.
+        // PDV ja grava impressora_id = id da impressora; canais do cliente gravam o
+        // station_key (precisa passar pelo mapaEstacoes). Cobrimos os dois casos aqui.
+        const directId = (ticket.impressora_id as string) ||
+          ((ticket.payload as Record<string, unknown> | undefined)?.impressora_id as string) || "";
+        const stationKey = (ticket.station_key as string) || "";
+        let printerId = "";
+        if (directId && printerById[directId]) {
+          printerId = directId; // ja e um id de impressora valido
+        } else {
+          printerId = mapaEstacoes[stationKey] || mapaEstacoes[directId] || defaultPrinterId;
+        }
+        const resolved = printerById[printerId] || ({} as { ip?: string; porta?: number; papel?: string; nome?: string });
+        const papelTicket: "80mm" | "58mm" = resolved.papel === "58mm" ? "58mm" : "80mm";
+        const printerFields = {
+          impressora_ip: resolved.ip ?? (ticket.impressora_ip as string | null) ?? null,
+          impressora_port: resolved.porta ?? (ticket.impressora_port as number | null) ?? 9100,
+          impressora_nome: resolved.nome ?? (ticket.impressora_nome as string | null) ?? null,
+          paper_style: papelTicket,
+        };
+
         const payload = ticket.payload as Record<string, unknown> | undefined;
         if (!payload || !payload.itens) {
-          return { ...ticket, escpos_80mm_base64: null, escpos_58mm_base64: null };
+          return { ...ticket, ...printerFields, escpos_80mm_base64: null, escpos_58mm_base64: null };
         }
 
+        // Data/hora SEMPRE derivada do created_at (timestamptz autoritativo do banco)
+        // no fuso America/Sao_Paulo. A edge roda em UTC, entao o data_hora montado por
+        // alguns canais (ex.: delivery-write) saía +3h. created_at unifica e corrige.
+        const createdAtIso = ticket.created_at as string | undefined;
+        const payloadTicket = createdAtIso
+          ? {
+              ...payload,
+              data_hora: new Date(createdAtIso).toLocaleString("pt-BR", {
+                timeZone: "America/Sao_Paulo",
+                day: "2-digit", month: "2-digit", year: "numeric",
+                hour: "2-digit", minute: "2-digit", second: "2-digit",
+              }),
+            }
+          : payload;
+
         try {
-          const escpos80 = formatTicket(payload, "80mm");
-          const escpos58 = formatTicket(payload, "58mm");
+          const escpos80 = formatTicket(payloadTicket, "80mm");
+          const escpos58 = formatTicket(payloadTicket, "58mm");
 
           const bytes80 = latin1ToBytes(escpos80);
           const bytes58 = latin1ToBytes(escpos58);
 
           return {
             ...ticket,
+            ...printerFields,
             escpos_80mm_base64: bytesToBase64(bytes80),
             escpos_58mm_base64: bytesToBase64(bytes58),
             escpos_80mm_size: bytes80.length,
@@ -384,7 +449,7 @@ serve(async (req) => {
           };
         } catch (fmtErr) {
           console.error(`[print-queue-agent] erro formatando ticket ${ticket.id}:`, fmtErr);
-          return { ...ticket, escpos_80mm_base64: null, escpos_58mm_base64: null, format_error: (fmtErr as Error).message };
+          return { ...ticket, ...printerFields, escpos_80mm_base64: null, escpos_58mm_base64: null, format_error: (fmtErr as Error).message };
         }
       });
 
