@@ -36,6 +36,9 @@ export default function GerirEntregasTab({ tenantId }: { tenantId?: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string>(''); // `${orderId}:${signal}`
   const [erro, setErro] = useState('');
+  const [modalProblema, setModalProblema] = useState<string | null>(null); // orderId
+  const [motivoProblema, setMotivoProblema] = useState('');
+  const [modalLiberar, setModalLiberar] = useState<string | null>(null); // orderId
 
   const token = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -60,12 +63,7 @@ export default function GerirEntregasTab({ tenantId }: { tenantId?: string }) {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  const setStatus = async (orderId: string, signal: string) => {
-    let motivo: string | undefined;
-    if (signal === 'problema') {
-      motivo = window.prompt('Qual o problema na entrega?') ?? undefined;
-      if (motivo == null) return; // cancelou
-    }
+  const executarStatus = async (orderId: string, signal: string, motivo?: string) => {
     setBusy(`${orderId}:${signal}`);
     try {
       const t = await token();
@@ -79,8 +77,13 @@ export default function GerirEntregasTab({ tenantId }: { tenantId?: string }) {
     } catch { setErro('Erro de conexão.'); } finally { setBusy(''); }
   };
 
-  const liberarEntregador = async (orderId: string) => {
-    if (!window.confirm('Liberar este pedido do entregador atual? Outro entregador poderá assumir.')) return;
+  // "Problema" abre o modal pra digitar o motivo; as outras fases vão direto.
+  const setStatus = (orderId: string, signal: string) => {
+    if (signal === 'problema') { setMotivoProblema(''); setModalProblema(orderId); return; }
+    executarStatus(orderId, signal);
+  };
+
+  const executarLiberar = async (orderId: string) => {
     setBusy(`${orderId}:liberar`);
     try {
       const t = await token();
@@ -132,7 +135,7 @@ export default function GerirEntregasTab({ tenantId }: { tenantId?: string }) {
                 {o.driver_id ? (
                   <span className="inline-flex items-center gap-1 text-[11px] text-zinc-500">
                     <i className="ri-e-bike-2-line" /> {o.driver_nome || 'entregador'}
-                    <button type="button" onClick={() => liberarEntregador(o.id)} disabled={!!busy}
+                    <button type="button" onClick={() => setModalLiberar(o.id)} disabled={!!busy}
                       className="ml-1 text-[10px] font-bold text-red-500 hover:underline disabled:opacity-50">liberar</button>
                   </span>
                 ) : (
@@ -158,6 +161,60 @@ export default function GerirEntregasTab({ tenantId }: { tenantId?: string }) {
           ))}
         </div>
       )}
+
+      {/* Modal: motivo do problema */}
+      {modalProblema ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4" onClick={() => setModalProblema(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-red-100 rounded-lg shrink-0">
+                <i className="ri-alert-line text-red-600" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-zinc-800">Problema na entrega</h4>
+                <p className="text-xs text-zinc-500">Descreva o que aconteceu — fica registrado no pedido.</p>
+              </div>
+            </div>
+            <textarea
+              value={motivoProblema}
+              onChange={(e) => setMotivoProblema(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Ex.: cliente ausente, endereço não encontrado, motoboy sem acesso…"
+              className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 focus:border-red-400 outline-none text-sm resize-none"
+            />
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setModalProblema(null)}
+                className="flex-1 py-2.5 rounded-xl bg-zinc-100 text-zinc-600 text-sm font-semibold hover:bg-zinc-200">Cancelar</button>
+              <button type="button" disabled={!motivoProblema.trim() || !!busy}
+                onClick={() => { const id = modalProblema; setModalProblema(null); executarStatus(id, 'problema', motivoProblema.trim()); }}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 disabled:opacity-50">Registrar problema</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Modal: confirmar liberar entregador */}
+      {modalLiberar ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4" onClick={() => setModalLiberar(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-amber-100 rounded-lg shrink-0">
+                <i className="ri-e-bike-2-line text-amber-600" />
+              </div>
+              <h4 className="text-sm font-bold text-zinc-800">Liberar entregador</h4>
+            </div>
+            <p className="text-sm text-zinc-600">Tira este pedido do entregador atual. Ele volta pra fila e outro entregador poderá assumir.</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setModalLiberar(null)}
+                className="flex-1 py-2.5 rounded-xl bg-zinc-100 text-zinc-600 text-sm font-semibold hover:bg-zinc-200">Cancelar</button>
+              <button type="button" disabled={!!busy}
+                onClick={() => { const id = modalLiberar; setModalLiberar(null); executarLiberar(id); }}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-50">Liberar</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

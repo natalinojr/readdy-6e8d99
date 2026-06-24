@@ -131,7 +131,7 @@ serve(async (req) => {
       if (!driver.is_active) return json({ ok: false, blocked: true, error: "bloqueado" }, 200);
 
       const { data: orders } = await admin.from("orders")
-        .select("id, number, destination_name, delivery_address, total_amount, delivery_fee, status, motoboy_status, motoboy_driver_id, created_at")
+        .select("id, number, destination_name, delivery_address, total_amount, delivery_fee, status, motoboy_status, motoboy_driver_id, delivery_sla_min, created_at")
         .eq("tenant_id", tenantId).eq("origin_type", "delivery").in("status", STATUS_ABERTOS)
         .order("created_at", { ascending: true });
 
@@ -161,6 +161,7 @@ serve(async (req) => {
           assumido: o.motoboy_driver_id != null,
           assumido_por: o.motoboy_driver_id ? (driverNome.get(o.motoboy_driver_id as string) ?? null) : null,
           alertas: alertasMap[o.id as string] ?? [],
+          sla_min: o.delivery_sla_min != null ? Number(o.delivery_sla_min) : null,
           created_at: o.created_at,
         })),
       });
