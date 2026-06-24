@@ -4,6 +4,8 @@ import { getPublicUrl, getAppUrl } from '@/lib/appUrl';
 import { supabase } from '@/lib/supabase';
 import { Truck } from 'lucide-react';
 import MapaPin from '@/components/feature/MapaPin';
+import { useCardapio } from '@/contexts/CardapioContext';
+import type { MotoboyAlertEntry } from '@/contexts/SystemSettingsContext';
 
 interface Neighborhood {
   id: string;
@@ -27,6 +29,7 @@ function getDeliveryWriteUrl(): string {
 export default function ConfigDeliveryPage() {
   const { user } = useAuth();
   const tenantId = (user as any)?.tenantId as string | undefined;
+  const { categorias, itens } = useCardapio();
 
   const [city, setCity] = useState('');
   const [neighborhoods, setNeighborhoods] = useState<Neighborhood[]>([]);
@@ -45,6 +48,10 @@ export default function ConfigDeliveryPage() {
   const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null);
   const [deliveryUrl, setDeliveryUrl] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
+  // Avisar o motoboy: categorias/itens que disparam alerta na msg do motoboy
+  const [alertCategorias, setAlertCategorias] = useState<MotoboyAlertEntry[]>([]);
+  const [alertItens, setAlertItens] = useState<MotoboyAlertEntry[]>([]);
+  const [itemBusca, setItemBusca] = useState('');
 
   const METODOS_PREDEFINIDOS = [
     { key: 'dinheiro', label: 'Dinheiro', icon: 'ri-money-dollar-circle-line' },
@@ -152,6 +159,14 @@ export default function ConfigDeliveryPage() {
               };
             }));
           }
+          const ma = dc.motoboy_alertas;
+          if (ma && typeof ma === 'object') {
+            const norm = (x: any): MotoboyAlertEntry[] => Array.isArray(x)
+              ? x.filter(function (e: any) { return e && e.id; }).map(function (e: any) { return { id: String(e.id), nome: String(e.nome ?? '') }; })
+              : [];
+            setAlertCategorias(norm(ma.categorias));
+            setAlertItens(norm(ma.itens));
+          }
         }
       })
       .catch(function () {})
@@ -232,6 +247,7 @@ export default function ConfigDeliveryPage() {
           return acc;
         }, {} as Record<string, { enabled: boolean; open: string; close: string }>),
       },
+      motoboy_alertas: { categorias: alertCategorias, itens: alertItens },
     };
 
     // Salva via Edge Function (service role + valida que o usuário é admin DESTA loja).
@@ -705,6 +721,99 @@ export default function ConfigDeliveryPage() {
                 <span className="text-xs text-zinc-400">Sem agendamento: o delivery abre e fecha apenas pelo botão no PDV.</span>
               </div>
             )}
+          </div>
+
+          {/* Avisar o motoboy — categorias/itens que disparam alerta */}
+          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
+                <i className="ri-error-warning-line text-zinc-600 text-sm" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-800">Avisar o motoboy</h3>
+                <p className="text-xs text-zinc-500">Quando o pedido tiver estas categorias ou itens, a mensagem do motoboy mostra um alerta (ex.: &quot;tem bebida&quot;)</p>
+              </div>
+            </div>
+
+            {/* Categorias */}
+            <div>
+              <span className="block text-xs font-semibold text-zinc-500 mb-2">Categorias</span>
+              <div className="flex flex-wrap gap-2">
+                {categorias.length === 0 ? (
+                  <span className="text-xs text-zinc-400">Nenhuma categoria no cardápio.</span>
+                ) : null}
+                {categorias.map(function (c) {
+                  const sel = alertCategorias.some(function (x) { return x.id === c.id; });
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={function () {
+                        setAlertCategorias(function (prev) {
+                          return sel ? prev.filter(function (x) { return x.id !== c.id; }) : prev.concat([{ id: c.id, nome: c.nome }]);
+                        });
+                      }}
+                      className={'px-3 py-1.5 rounded-full text-xs font-bold border cursor-pointer transition-colors ' +
+                        (sel ? 'bg-amber-500 text-white border-amber-500' : 'bg-zinc-50 text-zinc-500 border-zinc-200 hover:border-amber-300')}
+                    >
+                      {sel ? '✓ ' : ''}{c.nome}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Itens específicos */}
+            <div>
+              <span className="block text-xs font-semibold text-zinc-500 mb-2">Itens específicos</span>
+              {alertItens.length > 0 ? (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {alertItens.map(function (it) {
+                    return (
+                      <span key={it.id} className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-xs font-bold">
+                        {it.nome}
+                        <button
+                          type="button"
+                          onClick={function () { setAlertItens(function (prev) { return prev.filter(function (x) { return x.id !== it.id; }); }); }}
+                          className="text-amber-500 hover:text-amber-700 cursor-pointer"
+                        >
+                          <i className="ri-close-line" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : null}
+              <input
+                type="text"
+                value={itemBusca}
+                onChange={function (e) { setItemBusca(e.target.value); }}
+                placeholder="Buscar item para adicionar…"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 focus:border-amber-400 outline-none text-sm"
+              />
+              {itemBusca.trim() ? (
+                <div className="mt-2 max-h-40 overflow-y-auto border border-zinc-100 rounded-xl divide-y divide-zinc-50">
+                  {itens
+                    .filter(function (i) { return i.nome.toLowerCase().includes(itemBusca.toLowerCase()) && !alertItens.some(function (x) { return x.id === i.id; }); })
+                    .slice(0, 20)
+                    .map(function (i) {
+                      return (
+                        <button
+                          key={i.id}
+                          type="button"
+                          onClick={function () { setAlertItens(function (prev) { return prev.concat([{ id: i.id, nome: i.nome }]); }); setItemBusca(''); }}
+                          className="w-full text-left px-3 py-2 text-sm text-zinc-600 hover:bg-amber-50 cursor-pointer"
+                        >
+                          {i.nome}
+                        </button>
+                      );
+                    })}
+                  {itens.filter(function (i) { return i.nome.toLowerCase().includes(itemBusca.toLowerCase()); }).length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-zinc-400">Nenhum item encontrado.</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
 
           {/* Formas de Pagamento no Delivery */}

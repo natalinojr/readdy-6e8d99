@@ -4,6 +4,7 @@ import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
 import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
 import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
+import { useSystemSettings } from '@/hooks/useSystemSettings';
 
 interface Props {
   pedidos: KDSPedido[];
@@ -325,10 +326,19 @@ function GestorCard({
     const fee = pedido.deliveryFee ?? 0;
     const total = pedido.totalAmount ?? 0;
     const valoresLinha = `\n💰 Cobrar do cliente: *${fmtBRL(total)}*${fee > 0 ? `\n🛵 Taxa de entrega: ${fmtBRL(fee)}` : ''}`;
-    // Sinaliza bebida (categoria/estação com "bebida") p/ o motoboy não esquecer.
-    const temBebida = pedido.itens.some((i) =>
-      /bebida/i.test(i.categoriaNome ?? '') || /bebida/i.test(i.estacao ?? ''));
-    const bebidaLinha = temBebida ? `\n🥤 *ATENÇÃO: este pedido tem BEBIDA — não esquecer!*` : '';
+    // Alerta configurável (Config. do Delivery → "Avisar o motoboy"): categorias
+    // (casadas por nome) e/ou itens (casados por id) que o lojista marcou.
+    const alertas = settings.motoboy_alertas;
+    const catNomes = new Set(alertas.categorias.map((c) => c.nome.toLowerCase()));
+    const itemIds = new Set(alertas.itens.map((i) => i.id));
+    const marcados = new Set<string>();
+    pedido.itens.forEach((i) => {
+      if (i.categoriaNome && catNomes.has(i.categoriaNome.toLowerCase())) marcados.add(i.categoriaNome);
+      if (i.menuItemId && itemIds.has(i.menuItemId)) marcados.add(i.nome);
+    });
+    const bebidaLinha = marcados.size > 0
+      ? `\n⚠️ *ATENÇÃO: este pedido tem ${Array.from(marcados).join(', ')} — não esquecer!*`
+      : '';
     resolverMapsUrl().then((mapsUrl) => {
       const msg = `🚀 *Entrega para ${name}*\n📍 ${address}${valoresLinha}${bebidaLinha}${notes}\n🗺️ Rota: ${mapsUrl}`;
       const wa = `https://wa.me/?text=${encodeURIComponent(msg)}`;
@@ -346,6 +356,7 @@ function GestorCard({
   };
 
   const { getImpressoraParaEstacao } = useImpressoras();
+  const { settings } = useSystemSettings();
 
   const handlePrint = () => {
     const paymentLine = pedido.origem === 'autoatendimento' && pedido.paymentMethodName

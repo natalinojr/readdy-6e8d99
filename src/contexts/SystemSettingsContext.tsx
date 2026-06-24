@@ -96,8 +96,12 @@ export interface SystemSettings {
   print_kitchen_copy_enabled: boolean;
   printers_config: PrinterConfig | null;
   pager_count: number;
+  motoboy_alertas: MotoboyAlertas;
   updated_at?: string;
 }
+
+export interface MotoboyAlertEntry { id: string; nome: string; }
+export interface MotoboyAlertas { categorias: MotoboyAlertEntry[]; itens: MotoboyAlertEntry[]; }
 
 // ── Normalizers ───────────────────────────────────────────────────────────────
 
@@ -154,6 +158,7 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   print_kitchen_copy_enabled: true,
   printers_config: null,
   pager_count: 50,
+  motoboy_alertas: { categorias: [], itens: [] },
 };
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -177,6 +182,15 @@ const SystemSettingsContext = createContext<SystemSettingsContextValue>({
 function parseRow(data: Record<string, unknown>): SystemSettings {
   return {
     ...DEFAULT_SETTINGS,
+    motoboy_alertas: (() => {
+      const dc = data.delivery_config as Record<string, unknown> | null | undefined;
+      const ma = dc?.motoboy_alertas as { categorias?: unknown; itens?: unknown } | undefined;
+      const arr = (x: unknown): MotoboyAlertEntry[] => Array.isArray(x)
+        ? x.filter((e) => e && typeof e === 'object' && (e as { id?: unknown }).id)
+            .map((e) => ({ id: String((e as { id: unknown }).id), nome: String((e as { nome?: unknown }).nome ?? '') }))
+        : [];
+      return { categorias: arr(ma?.categorias), itens: arr(ma?.itens) };
+    })(),
     service_fee_enabled: (data.service_fee_enabled as boolean) ?? DEFAULT_SETTINGS.service_fee_enabled,
     service_fee_percentage: Number(data.service_fee_percentage ?? DEFAULT_SETTINGS.service_fee_percentage),
     pdv_caixa_show_service_fee: (data.pdv_caixa_show_service_fee as boolean) ?? DEFAULT_SETTINGS.pdv_caixa_show_service_fee,
