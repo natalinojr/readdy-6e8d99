@@ -264,7 +264,12 @@ export default function EnderecoDelivery(props: Props) {
                 type="date"
                 value={nascimento}
                 onChange={function (e) { onNascimentoChange(e.target.value); }}
-                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+                max={new Date().toISOString().slice(0, 10)}
+                onClick={function (e) {
+                  const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+                  try { el.showPicker?.(); } catch (_e) { /* navegador sem showPicker */ }
+                }}
+                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all cursor-pointer"
               />
             </div>
             <div>

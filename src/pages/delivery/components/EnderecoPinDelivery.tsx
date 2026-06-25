@@ -322,7 +322,14 @@ export default function EnderecoPinDelivery(props: Props) {
               <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nascimento</label>
               <input
                 type="date" value={nascimento} onChange={function (e) { onNascimentoChange(e.target.value); }}
-                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+                max={new Date().toISOString().slice(0, 10)}
+                onClick={function (e) {
+                  // Força a abertura do calendário nativo ao tocar no campo (alguns
+                  // navegadores móveis não abrem só com o foco).
+                  const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+                  try { el.showPicker?.(); } catch (_e) { /* navegador sem showPicker */ }
+                }}
+                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all cursor-pointer"
               />
             </div>
             <div>
@@ -396,7 +403,10 @@ export default function EnderecoPinDelivery(props: Props) {
   const headerTitulo = formMode === 'list' ? 'Seus endereços' : formMode === 'edit' ? 'Editar endereço' : 'Onde você está?';
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
+    // Altura = viewport dinâmico (100dvh encolhe quando o teclado abre); h-screen é
+    // fallback. O conteúdo rola internamente (min-h-0 + overflow-y-auto) para o campo
+    // focado conseguir subir acima do teclado virtual.
+    <div className="h-screen flex flex-col bg-white" style={{ height: '100dvh' }}>
       <div className="bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0">
         <div className="flex items-center gap-3">
           <button
@@ -414,7 +424,7 @@ export default function EnderecoPinDelivery(props: Props) {
       </div>
 
       <div
-        className="flex-1 px-4 py-5 max-w-lg mx-auto w-full space-y-5"
+        className="flex-1 min-h-0 overflow-y-auto px-4 py-5 max-w-lg mx-auto w-full space-y-5"
         onFocus={scrollFocusedFieldIntoView}
         style={{ paddingBottom: kbInset ? kbInset + 24 : undefined }}
       >
