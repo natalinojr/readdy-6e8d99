@@ -1,12 +1,20 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
 import ConfirmModal from '@/components/base/ConfirmModal';
+import type { Item } from '@/types/cardapio';
 
 type Canal = 'casa' | 'ambos' | 'delivery';
 const canalLabel = (val: Canal) =>
   val === 'delivery' ? 'apenas no delivery' : val === 'casa' ? 'apenas no balcão (casa)' : 'no balcão e no delivery';
 const canalIcon = (val: Canal) =>
   val === 'delivery' ? 'ri-e-bike-2-line' : val === 'casa' ? 'ri-home-4-line' : 'ri-restaurant-2-line';
+
+// Canal de um item (espelha disponibilidadeDe do ItensTab/CardapioContext).
+function canalDoItem(item: Item): Canal {
+  if (item.somenteDelivery) return 'delivery';
+  if (item.delivery?.ativo === false) return 'casa';
+  return 'ambos';
+}
 
 interface ModalState {
   open: boolean;
@@ -16,7 +24,20 @@ interface ModalState {
 }
 
 export default function CategoriasTab() {
-  const { categorias, estacoes, criarCategoria, editarCategoria, excluirCategoria, reordenarCategorias, definirCanalCategoria, saving } = useCardapio();
+  const { itens, categorias, estacoes, criarCategoria, editarCategoria, excluirCategoria, reordenarCategorias, definirCanalCategoria, saving } = useCardapio();
+
+  // Canal "atual" de cada categoria: derivado dos itens. Se todos compartilham o
+  // mesmo canal → esse canal (botão fica laranja). Se misturados/vazia → null.
+  const canalDaCategoria = useMemo(() => {
+    const map: Record<string, Canal | null> = {};
+    for (const cat of categorias) {
+      const its = itens.filter(i => i.categoriaId === cat.id);
+      if (its.length === 0) { map[cat.id] = null; continue; }
+      const primeiro = canalDoItem(its[0]);
+      map[cat.id] = its.every(i => canalDoItem(i) === primeiro) ? primeiro : null;
+    }
+    return map;
+  }, [itens, categorias]);
 
   const primeiraEstacao = estacoes[0]?.id ?? '';
   const initialModal: ModalState = { open: false, editId: null, nome: '', estacaoId: primeiraEstacao };
@@ -134,23 +155,32 @@ export default function CategoriasTab() {
                   <i className="ri-file-list-3-line mr-1" />{cat.totalItens} itens
                 </span>
               </div>
-              {/* Canal: aplica casa/ambos/delivery a todos os itens da categoria */}
+              {/* Canal: aplica casa/ambos/delivery a todos os itens da categoria.
+                  O botão do canal atual fica laranja (null = itens com canais mistos). */}
               <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                <span className="text-[11px] text-gray-400">Canal de todos os itens:</span>
+                <span className="text-[11px] text-gray-400">Canal:</span>
                 <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
-                  {CANAIS.map(c => (
-                    <button
-                      key={c.key}
-                      type="button"
-                      title={cat.totalItens === 0 ? 'Categoria sem itens' : c.title}
-                      disabled={saving || cat.totalItens === 0}
-                      onClick={() => setCanalConfirm({ id: cat.id, nome: cat.nome, total: cat.totalItens, val: c.key })}
-                      className="w-7 h-7 flex items-center justify-center text-sm text-gray-400 hover:bg-orange-50 hover:text-orange-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      <i className={c.icon} />
-                    </button>
-                  ))}
+                  {CANAIS.map(c => {
+                    const selecionado = canalDaCategoria[cat.id] === c.key;
+                    return (
+                      <button
+                        key={c.key}
+                        type="button"
+                        title={cat.totalItens === 0 ? 'Categoria sem itens' : c.title}
+                        disabled={saving || cat.totalItens === 0}
+                        onClick={() => setCanalConfirm({ id: cat.id, nome: cat.nome, total: cat.totalItens, val: c.key })}
+                        className={`w-7 h-7 flex items-center justify-center text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer ${
+                          selecionado ? 'bg-orange-500 text-white' : 'text-gray-400 hover:bg-orange-50 hover:text-orange-600'
+                        }`}
+                      >
+                        <i className={c.icon} />
+                      </button>
+                    );
+                  })}
                 </div>
+                {cat.totalItens > 0 && canalDaCategoria[cat.id] === null && (
+                  <span className="text-[10px] text-gray-400 italic">misto</span>
+                )}
               </div>
             </div>
 

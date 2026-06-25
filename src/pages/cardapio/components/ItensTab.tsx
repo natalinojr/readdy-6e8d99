@@ -135,6 +135,16 @@ export default function ItensTab() {
   const canalIcon = (val: Disponibilidade) =>
     val === 'delivery' ? 'ri-e-bike-2-line' : val === 'casa' ? 'ri-home-4-line' : 'ri-restaurant-2-line';
 
+  // Canal "atual" da categoria filtrada (derivado dos itens): se todos compartilham
+  // o mesmo canal → marca o botão em laranja; se misturados/vazia → null.
+  const canalCategoriaFiltrada = useMemo<Disponibilidade | null>(() => {
+    if (!filtroCategoria) return null;
+    const its = itens.filter(i => i.categoriaId === filtroCategoria);
+    if (its.length === 0) return null;
+    const primeiro = disponibilidadeDe(its[0]);
+    return its.every(i => disponibilidadeDe(i) === primeiro) ? primeiro : null;
+  }, [itens, filtroCategoria]);
+
   const handleDuplicar = async (item: Item) => {
     setDuplicando(item.id);
     try {
@@ -329,27 +339,27 @@ export default function ItensTab() {
             Aplicar canal a todos os <strong>{contagemPorCategoria[filtroCategoria] ?? 0}</strong> itens de <strong>{categoriaMap[filtroCategoria]}</strong>:
           </span>
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            <button
-              onClick={() => aplicarCanalCategoria('casa')}
-              disabled={saving}
-              className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:border-orange-300 hover:text-orange-600 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
-            >
-              <i className="ri-home-4-line" /> Só na casa
-            </button>
-            <button
-              onClick={() => aplicarCanalCategoria('ambos')}
-              disabled={saving}
-              className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:border-orange-300 hover:text-orange-600 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
-            >
-              <i className="ri-restaurant-2-line" /> Casa e delivery
-            </button>
-            <button
-              onClick={() => aplicarCanalCategoria('delivery')}
-              disabled={saving}
-              className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:border-orange-300 hover:text-orange-600 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
-            >
-              <i className="ri-e-bike-2-line" /> Só delivery
-            </button>
+            {([
+              { key: 'casa', icon: 'ri-home-4-line', label: 'Só na casa' },
+              { key: 'ambos', icon: 'ri-restaurant-2-line', label: 'Casa e delivery' },
+              { key: 'delivery', icon: 'ri-e-bike-2-line', label: 'Só delivery' },
+            ] as { key: Disponibilidade; icon: string; label: string }[]).map(opt => {
+              const selecionado = canalCategoriaFiltrada === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  onClick={() => aplicarCanalCategoria(opt.key)}
+                  disabled={saving}
+                  className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium border rounded-lg transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap ${
+                    selecionado
+                      ? 'bg-orange-500 text-white border-orange-500'
+                      : 'text-gray-600 bg-white border-gray-200 hover:border-orange-300 hover:text-orange-600'
+                  }`}
+                >
+                  <i className={opt.icon} /> {opt.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}

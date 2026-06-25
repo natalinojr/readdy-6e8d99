@@ -388,6 +388,13 @@ async function fetchDeliveryConfig(
       finalCategories = [promoCategory].concat(merged.categories);
       finalItems = promoItems.concat(mergedItemsWithPromos);
     }
+
+    // Não exibir categorias que ficaram sem NENHUM item disponível no delivery.
+    // finalItems já vem filtrado pelo backend (itens "só balcão" / delivery desativado
+    // são removidos), então uma categoria 100% balcão ficaria vazia — não deve aparecer.
+    const catIdsComItens = new Set(finalItems.map(function (it) { return it.category_id; }));
+    finalCategories = finalCategories.filter(function (c) { return catIdsComItens.has(c.id); });
+
     setters.setCategories(finalCategories);
     setters.setItems(finalItems);
 
