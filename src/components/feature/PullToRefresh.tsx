@@ -56,6 +56,13 @@ export default function PullToRefresh({ children, onRefresh, threshold = 70, dis
 
     const onStart = (e: TouchEvent) => {
       if (refreshing || e.touches.length !== 1) { startY.current = null; return; }
+      // Não engata enquanto o usuário está digitando (teclado aberto): um toque/arrasto
+      // perto do teclado dispararia um reload e faria PERDER o que foi preenchido no
+      // formulário (ex.: tela de endereço do delivery).
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)) {
+        startY.current = null; return;
+      }
       // Não engata dentro de áreas que pedem o gesto pra si (ex.: mapa arrastável).
       const tgt = e.target as Element | null;
       if (tgt && typeof tgt.closest === 'function' && tgt.closest('[data-no-pull]')) { startY.current = null; return; }
