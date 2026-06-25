@@ -88,7 +88,6 @@ export default function EnderecoPinDelivery(props: Props) {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [autoEndereco, setAutoEndereco] = useState(false);
   const geoReqRef = useRef(0);
-  const autoGeoRef = useRef(false);
   const geocodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const kbInset = useKeyboardInset();
 
@@ -173,22 +172,20 @@ export default function EnderecoPinDelivery(props: Props) {
         setGeoLoading(false);
         setGeoError(
           err.code === err.PERMISSION_DENIED
-            ? 'Permissão de localização negada. Toque no mapa para marcar manualmente.'
-            : 'Não foi possível obter sua localização. Toque no mapa para marcar.',
+            ? 'Permissão de localização negada. Arraste o mapa para posicionar o pin.'
+            : 'Não foi possível obter sua localização. Arraste o mapa para posicionar o pin.',
         );
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
   }
 
-  // Ao entrar no modo "adicionar endereço", começa o pin na LOCALIZAÇÃO ATUAL do
-  // usuário (uma vez). Se ele negar a permissão, fica no padrão e ajusta arrastando o
+  // Sempre que ABRIR o formulário de adicionar endereço, começa o pin na LOCALIZAÇÃO
+  // ATUAL do usuário. Se ele negar a permissão, fica no padrão e ajusta arrastando o
   // mapa. (No modo 'edit' mantém o pin do endereço salvo.)
   useEffect(function () {
-    if (formMode === 'add' && !autoGeoRef.current) {
-      autoGeoRef.current = true;
-      usarMinhaLocalizacao();
-    }
+    if (formMode === 'add') usarMinhaLocalizacao();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formMode]);
 
   function abrirNovo() {

@@ -645,7 +645,7 @@ export default function ConfigDeliveryPage() {
               </div>
               <div>
                 <h3 className="text-sm font-bold text-zinc-800">Localização da loja</h3>
-                <p className="text-xs text-zinc-500">Clique ou arraste o pino até o ponto exato da loja — é a origem das rotas de entrega</p>
+                <p className="text-xs text-zinc-500">Arraste o mapa para deixar o pino no ponto exato da loja — é a origem das rotas de entrega</p>
               </div>
             </div>
             <MapaPin
