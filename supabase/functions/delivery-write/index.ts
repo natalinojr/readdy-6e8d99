@@ -526,10 +526,11 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       if (action === "list_delivery_orders") {
         const { data: orders } = await admin.from("orders")
-          .select("id, number, destination_name, destination_phone, delivery_address, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_updated_at, created_at")
+          .select("id, number, destination_name, destination_phone, delivery_address, delivery_platform, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_updated_at, created_at")
           .eq("tenant_id", tenant_id).eq("origin_type", "delivery").in("status", ["new", "preparing", "ready"])
           .order("created_at", { ascending: true });
-        const lista = (orders ?? []) as Record<string, unknown>[];
+        // Retirada na loja NAO e entrega: fica de fora do gestor de entregas (marcada com delivery_platform='retirada').
+        const lista = ((orders ?? []) as Record<string, unknown>[]).filter((o) => o.delivery_platform !== "retirada");
         const driverNome: Record<string, string> = {};
         const dids = Array.from(new Set(lista.map((o) => o.motoboy_driver_id as string | null).filter(Boolean))) as string[];
         if (dids.length) {

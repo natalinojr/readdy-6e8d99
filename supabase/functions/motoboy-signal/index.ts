@@ -131,11 +131,12 @@ serve(async (req) => {
       if (!driver.is_active) return json({ ok: false, blocked: true, error: "bloqueado" }, 200);
 
       const { data: orders } = await admin.from("orders")
-        .select("id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, status, motoboy_status, motoboy_driver_id, delivery_sla_min, created_at")
+        .select("id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, status, motoboy_status, motoboy_driver_id, delivery_sla_min, delivery_platform, created_at")
         .eq("tenant_id", tenantId).eq("origin_type", "delivery").in("status", STATUS_ABERTOS)
         .order("created_at", { ascending: true });
 
-      const lista = (orders ?? []) as Record<string, unknown>[];
+      // Retirada na loja nao tem entrega -> nao aparece pro motoboy (delivery_platform='retirada').
+      const lista = ((orders ?? []) as Record<string, unknown>[]).filter((o) => o.delivery_platform !== "retirada");
       const alertasMap = await alertasPorPedido(admin, tenantId, lista.map((o) => o.id as string));
 
       // Nomes dos entregadores que assumiram pedidos (pra mostrar "com Fulano").
