@@ -40,7 +40,7 @@ function CanalToggle({ item, onChange, disabled }: { item: Item; onChange: (v: D
 }
 
 export default function ItensTab() {
-  const { itens, categorias, obsGlobais, estacoes, salvarItem, excluirItem, reordenarItens, saving } = useCardapio();
+  const { itens, setItens, categorias, obsGlobais, estacoes, salvarItem, excluirItem, reordenarItens, definirCanalCategoria, saving } = useCardapio();
   const [busca, setBusca] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
@@ -94,21 +94,38 @@ export default function ItensTab() {
   };
 
   const toggleStatus = async (item: Item) => {
-    await salvarItem({ ...item, status: item.status === 'ativo' ? 'inativo' : 'ativo' });
+    // Atualização otimista: reflete na UI na hora; salvarItem reconcilia depois.
+    const atualizado = { ...item, status: (item.status === 'ativo' ? 'inativo' : 'ativo') as Item['status'] };
+    setItens(prev => prev.map(i => (i.id === item.id ? atualizado : i)));
+    await salvarItem(atualizado);
   };
 
   // Atalho na tabela: define onde o item aparece (casa/delivery/ambos) e salva.
   const setDisponibilidade = async (item: Item, val: Disponibilidade) => {
     if (disponibilidadeDe(item) === val) return;
     const base = item.delivery ?? { ativo: true };
-    if (val === 'delivery') await salvarItem({ ...item, somenteDelivery: true, delivery: { ...base, ativo: true } });
-    else if (val === 'casa') await salvarItem({ ...item, somenteDelivery: false, delivery: { ...base, ativo: false } });
-    else await salvarItem({ ...item, somenteDelivery: false, delivery: { ...base, ativo: true } });
+    const atualizado =
+      val === 'delivery' ? { ...item, somenteDelivery: true, delivery: { ...base, ativo: true } }
+      : val === 'casa' ? { ...item, somenteDelivery: false, delivery: { ...base, ativo: false } }
+      : { ...item, somenteDelivery: false, delivery: { ...base, ativo: true } };
+    // Atualização otimista: reflete na UI na hora; salvarItem reconcilia depois.
+    setItens(prev => prev.map(i => (i.id === item.id ? atualizado : i)));
+    await salvarItem(atualizado);
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Excluir este item? Esta ação não pode ser desfeita.')) return;
     await excluirItem(id);
+  };
+
+  // Aplica o canal (casa/ambos/delivery) a TODOS os itens da categoria filtrada.
+  const aplicarCanalCategoria = async (val: Disponibilidade) => {
+    if (!filtroCategoria) return;
+    const nome = categoriaMap[filtroCategoria] ?? 'categoria';
+    const total = contagemPorCategoria[filtroCategoria] ?? 0;
+    const label = val === 'delivery' ? 'apenas no delivery' : val === 'casa' ? 'apenas na casa' : 'na casa e no delivery';
+    if (!confirm(`Definir todos os ${total} itens de "${nome}" para aparecerem ${label}?`)) return;
+    await definirCanalCategoria(filtroCategoria, val);
   };
 
   const handleDuplicar = async (item: Item) => {
@@ -297,6 +314,39 @@ export default function ItensTab() {
         </div>
       </div>
 
+      {/* Ação em lote: aplica canal à categoria inteira (só com categoria filtrada) */}
+      {filtroCategoria && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3 bg-orange-50/70 border border-orange-100 rounded-lg px-3 py-2">
+          <span className="text-xs text-gray-600">
+            <i className="ri-stack-line mr-1 text-orange-500" />
+            Aplicar canal a todos os <strong>{contagemPorCategoria[filtroCategoria] ?? 0}</strong> itens de <strong>{categoriaMap[filtroCategoria]}</strong>:
+          </span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button
+              onClick={() => aplicarCanalCategoria('casa')}
+              disabled={saving}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:border-orange-300 hover:text-orange-600 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+            >
+              <i className="ri-home-4-line" /> Só na casa
+            </button>
+            <button
+              onClick={() => aplicarCanalCategoria('ambos')}
+              disabled={saving}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:border-orange-300 hover:text-orange-600 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+            >
+              <i className="ri-restaurant-2-line" /> Casa e delivery
+            </button>
+            <button
+              onClick={() => aplicarCanalCategoria('delivery')}
+              disabled={saving}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:border-orange-300 hover:text-orange-600 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+            >
+              <i className="ri-e-bike-2-line" /> Só delivery
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Modo ordenação hint */}
       {modoOrdenacao && (
         <div className="flex items-center gap-1.5 mb-3 text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
@@ -431,7 +481,7 @@ export default function ItensTab() {
             <>
               {/* Desktop table */}
               <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[880px] text-sm">
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">Item</th>

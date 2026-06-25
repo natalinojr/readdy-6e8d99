@@ -315,7 +315,7 @@ interface CardapioContextValue {
   setCombos: Dispatch<SetStateAction<Combo[]>>;
   setObsGlobais: Dispatch<SetStateAction<ObservacaoGlobal[]>>;
 
-  recarregar: () => Promise<void>;
+  recarregar: (opts?: { silent?: boolean }) => Promise<void>;
   recarregarEstacoes: () => Promise<void>;
 
   // Category CRUD
@@ -328,6 +328,8 @@ interface CardapioContextValue {
   salvarItem: (item: Item) => Promise<void>;
   excluirItem: (id: string) => Promise<void>;
   reordenarItens: (items: Array<{ id: string; sortOrder: number }>) => Promise<void>;
+  // Aplica o canal (casa/ambos/delivery) a todos os itens de uma categoria de uma vez
+  definirCanalCategoria: (categoriaId: string, val: 'ambos' | 'casa' | 'delivery') => Promise<void>;
 
   // Global Obs CRUD
   criarObsGlobal: (texto: string) => Promise<void>;
@@ -393,7 +395,11 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     }
   }, [effectiveTenantId]);
 
-  const recarregar = useCallback(async () => {
+  const recarregar = useCallback(async (opts?: { silent?: boolean }) => {
+    // silent = recarrega os dados em segundo plano SEM acionar o spinner de tela
+    // cheia. Usado após mutações (salvar/excluir/toggle) para não "piscar" a tela
+    // inteira a cada microalteração — o estado `saving` já desabilita os botões.
+    const silent = opts?.silent ?? false;
     if (!effectiveTenantId) {
       setCategorias([]);
       setItens([]);
@@ -404,7 +410,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
       setErroCarregamento(null);
       return;
     }
-    setLoading(true);
+    if (!silent) setLoading(true);
     setErroCarregamento(null);
 
     // Tenta carregar do banco com até 3 tentativas (intervalo de 2s entre elas)
@@ -558,7 +564,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         name: data.nome, station_id: data.estacaoId ?? null,
         sort_order: maxOrdem + 1, is_active: true,
       }, user?.tenantId);
-      if (result?.success) await recarregar();
+      if (result?.success) await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao criar categoria: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -576,7 +582,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         station_id: data.estacaoId ?? cat.estacaoId ?? null,
         sort_order: cat.ordem, is_active: data.ativo ?? cat.ativo,
       }, user?.tenantId);
-      await recarregar();
+      await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao editar categoria: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -588,7 +594,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     try {
       await menuWrite('delete_category', { id }, user?.tenantId);
-      await recarregar();
+      await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao excluir categoria: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -608,7 +614,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
       }, user?.tenantId);
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao reordenar: ${err instanceof Error ? err.message : String(err)}` });
-      await recarregar();
+      await recarregar({ silent: true });
     }
   };
 
@@ -722,7 +728,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      await recarregar();
+      await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao salvar item: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -747,9 +753,32 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
           antes: { preco: item.preco, status: item.status },
         });
       }
-      await recarregar();
+      await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao excluir item: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const definirCanalCategoria = async (categoriaId: string, val: 'ambos' | 'casa' | 'delivery') => {
+    setSaving(true);
+    // Atualização otimista: reflete na UI na hora (mesma lógica de salvarItem).
+    const channels = val === 'delivery'
+      ? { cashier: false, waiter: false, delivery: true, table_qr: false, self_service: false }
+      : { cashier: true, waiter: true, delivery: true, table_qr: true, self_service: true };
+    const deliveryAtivo = val !== 'casa';
+    setItens(prev => prev.map(i => {
+      if (i.categoriaId !== categoriaId) return i;
+      const base = i.delivery ?? { ativo: true };
+      return { ...i, somenteDelivery: val === 'delivery', canais: channels, delivery: { ...base, ativo: deliveryAtivo } };
+    }));
+    try {
+      await menuWrite('set_category_channel', { category_id: categoriaId, disponibilidade: val }, user?.tenantId);
+      await recarregar({ silent: true });
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao aplicar canal à categoria', message: err instanceof Error ? err.message : String(err) });
+      await recarregar({ silent: true }); // reconcilia o estado em caso de falha
     } finally {
       setSaving(false);
     }
@@ -767,7 +796,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
       }, user?.tenantId);
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao reordenar itens: ${err instanceof Error ? err.message : String(err)}` });
-      await recarregar();
+      await recarregar({ silent: true });
     }
   };
 
@@ -777,7 +806,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     try {
       await menuWrite('upsert_global_obs', { text: texto, is_active: true }, user?.tenantId);
-      await recarregar();
+      await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao criar observação: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -797,7 +826,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         excluded_item_ids: data.excludedItemIds ?? obs.excludedItemIds,
         excluded_category_ids: data.excludedCategoryIds ?? obs.excludedCategoryIds,
       }, user?.tenantId);
-      await recarregar();
+      await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao editar observação: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -809,7 +838,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     try {
       await menuWrite('delete_global_obs', { id }, user?.tenantId);
-      await recarregar();
+      await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao excluir observação: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -828,7 +857,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         price: combo.preco, is_active: combo.ativo,
         items: combo.itens.map(ci => ({ item_id: ci.itemId ?? null, name: ci.nome, quantity: ci.quantidade })),
       }, user?.tenantId);
-      await recarregar();
+      await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao salvar combo: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -840,7 +869,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     try {
       await menuWrite('delete_combo', { id }, user?.tenantId);
-      await recarregar();
+      await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao excluir combo: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -862,7 +891,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         is_active: true,
       }, user?.tenantId);
       if (result?.success) {
-        await recarregar();
+        await recarregar({ silent: true });
         addToast({ type: 'success', message: 'Item adicionado aos destaques!' });
       }
     } catch (err) {
@@ -885,7 +914,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         sort_order: dest.ordem,
         is_active: data.ativo ?? dest.ativo,
       }, user?.tenantId);
-      await recarregar();
+      await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao editar destaque: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -897,7 +926,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     try {
       await menuWrite('delete_highlight', { id }, user?.tenantId);
-      await recarregar();
+      await recarregar({ silent: true });
       addToast({ type: 'success', message: 'Item removido dos destaques.' });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao remover destaque: ${err instanceof Error ? err.message : String(err)}` });
@@ -918,7 +947,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
       }, user?.tenantId);
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao reordenar destaques: ${err instanceof Error ? err.message : String(err)}` });
-      await recarregar();
+      await recarregar({ silent: true });
     }
   };
 
@@ -1018,7 +1047,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
       setItens, setCategorias, setCombos, setObsGlobais,
       recarregar, recarregarEstacoes,
       criarCategoria, editarCategoria, excluirCategoria, reordenarCategorias,
-      salvarItem, excluirItem, reordenarItens,
+      salvarItem, excluirItem, reordenarItens, definirCanalCategoria,
       criarObsGlobal, editarObsGlobal, excluirObsGlobal,
       salvarCombo, excluirCombo,
       destaques, adicionarDestaque, editarDestaque, removerDestaque, reordenarDestaques,

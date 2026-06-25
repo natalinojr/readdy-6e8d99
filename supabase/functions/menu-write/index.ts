@@ -179,6 +179,40 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       }
       result = { reordered: true };
     }
+    else if (action === 'set_category_channel') {
+      // Aplica o canal (casa / ambos / delivery) a TODOS os itens de uma categoria
+      // de uma vez. Mexe somente em channels + delivery_config.ativo — não toca em
+      // grupos de opções, promoções nem ficha. Espelha a lógica de salvarItem/
+      // disponibilidadeDe no front (CardapioContext).
+      const { category_id, disponibilidade } = payload as { category_id: string; disponibilidade: 'ambos' | 'casa' | 'delivery' };
+      if (!category_id) return errResp('category_id required', 400);
+      if (!['ambos', 'casa', 'delivery'].includes(disponibilidade)) return errResp('invalid disponibilidade', 400);
+
+      const channels = disponibilidade === 'delivery'
+        ? { cashier: false, waiter: false, delivery: true, table_qr: false, self_service: false }
+        : { cashier: true, waiter: true, delivery: true, table_qr: true, self_service: true };
+      const deliveryAtivo = disponibilidade !== 'casa'; // delivery e ambos = true; casa = false
+
+      const { data: items, error: selErr } = await admin
+        .from('menu_items')
+        .select('id, delivery_config')
+        .eq('category_id', category_id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+      if (selErr) throw new Error(`set_category_channel select: ${selErr.message}`);
+
+      let updated = 0;
+      for (const it of (items ?? [])) {
+        const dc = (it.delivery_config && typeof it.delivery_config === 'object') ? it.delivery_config as Record<string, unknown> : {};
+        const newDc = { ...dc, ativo: deliveryAtivo };
+        const { error: updErr } = await admin.from('menu_items')
+          .update({ channels, delivery_config: newDc, updated_at: now })
+          .eq('id', it.id).eq('tenant_id', tenantId);
+        if (updErr) throw new Error(`set_category_channel update ${it.id}: ${updErr.message}`);
+        updated++;
+      }
+      result = { updated };
+    }
     else if (action === 'upsert_item') {
       const p = payload as any;
       const { id, category_id, name, description, price, sla_minutes, is_active, skip_kds, sort_order, channels, option_groups, promotions, preset_observations, delivery_config, production_parts } = p;
