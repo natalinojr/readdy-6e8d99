@@ -1,5 +1,12 @@
 import { useState } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
+import ConfirmModal from '@/components/base/ConfirmModal';
+
+type Canal = 'casa' | 'ambos' | 'delivery';
+const canalLabel = (val: Canal) =>
+  val === 'delivery' ? 'apenas no delivery' : val === 'casa' ? 'apenas no balcão (casa)' : 'no balcão e no delivery';
+const canalIcon = (val: Canal) =>
+  val === 'delivery' ? 'ri-e-bike-2-line' : val === 'casa' ? 'ri-home-4-line' : 'ri-restaurant-2-line';
 
 interface ModalState {
   open: boolean;
@@ -9,7 +16,7 @@ interface ModalState {
 }
 
 export default function CategoriasTab() {
-  const { categorias, estacoes, criarCategoria, editarCategoria, excluirCategoria, reordenarCategorias, saving } = useCardapio();
+  const { categorias, estacoes, criarCategoria, editarCategoria, excluirCategoria, reordenarCategorias, definirCanalCategoria, saving } = useCardapio();
 
   const primeiraEstacao = estacoes[0]?.id ?? '';
   const initialModal: ModalState = { open: false, editId: null, nome: '', estacaoId: primeiraEstacao };
@@ -59,7 +66,16 @@ export default function CategoriasTab() {
     await excluirCategoria(id);
   };
 
+  // Confirmação (modal bonito) para aplicar o canal a todos os itens da categoria.
+  const [canalConfirm, setCanalConfirm] = useState<{ id: string; nome: string; total: number; val: Canal } | null>(null);
+
   const getEstacaoNome = (id?: string) => estacoes.find(e => e.id === id)?.nome ?? '—';
+
+  const CANAIS: { key: Canal; icon: string; title: string }[] = [
+    { key: 'casa', icon: 'ri-home-4-line', title: 'Só no balcão (casa)' },
+    { key: 'ambos', icon: 'ri-restaurant-2-line', title: 'Balcão e delivery' },
+    { key: 'delivery', icon: 'ri-e-bike-2-line', title: 'Só delivery' },
+  ];
 
   return (
     <div>
@@ -117,6 +133,24 @@ export default function CategoriasTab() {
                 <span className="text-xs text-gray-500">
                   <i className="ri-file-list-3-line mr-1" />{cat.totalItens} itens
                 </span>
+              </div>
+              {/* Canal: aplica casa/ambos/delivery a todos os itens da categoria */}
+              <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                <span className="text-[11px] text-gray-400">Canal de todos os itens:</span>
+                <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+                  {CANAIS.map(c => (
+                    <button
+                      key={c.key}
+                      type="button"
+                      title={cat.totalItens === 0 ? 'Categoria sem itens' : c.title}
+                      disabled={saving || cat.totalItens === 0}
+                      onClick={() => setCanalConfirm({ id: cat.id, nome: cat.nome, total: cat.totalItens, val: c.key })}
+                      className="w-7 h-7 flex items-center justify-center text-sm text-gray-400 hover:bg-orange-50 hover:text-orange-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      <i className={c.icon} />
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -213,6 +247,20 @@ export default function CategoriasTab() {
           </div>
         </div>
       )}
+
+      {/* Confirmação de canal por categoria */}
+      <ConfirmModal
+        isOpen={!!canalConfirm}
+        icon={canalConfirm ? canalIcon(canalConfirm.val) : 'ri-restaurant-2-line'}
+        title="Aplicar canal à categoria"
+        message={canalConfirm ? `Definir todos os ${canalConfirm.total} itens de "${canalConfirm.nome}" para aparecerem ${canalLabel(canalConfirm.val)}?` : ''}
+        confirmLabel="Aplicar"
+        onConfirm={async () => {
+          if (canalConfirm) await definirCanalCategoria(canalConfirm.id, canalConfirm.val);
+          setCanalConfirm(null);
+        }}
+        onCancel={() => setCanalConfirm(null)}
+      />
     </div>
   );
 }

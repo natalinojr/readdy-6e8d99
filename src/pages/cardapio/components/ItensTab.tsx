@@ -3,6 +3,7 @@ import { useCardapio } from '@/contexts/CardapioContext';
 import type { Item } from '@/types/cardapio';
 import ItemModal from './ItemModal';
 import ItemImage from '@/components/base/ItemImage';
+import ConfirmModal from '@/components/base/ConfirmModal';
 
 type Disponibilidade = 'ambos' | 'casa' | 'delivery';
 function disponibilidadeDe(item: Item): Disponibilidade {
@@ -119,14 +120,20 @@ export default function ItensTab() {
   };
 
   // Aplica o canal (casa/ambos/delivery) a TODOS os itens da categoria filtrada.
-  const aplicarCanalCategoria = async (val: Disponibilidade) => {
+  // Abre o modal de confirmação (bonito) em vez do confirm() nativo.
+  const [canalConfirm, setCanalConfirm] = useState<{ nome: string; total: number; val: Disponibilidade } | null>(null);
+
+  const aplicarCanalCategoria = (val: Disponibilidade) => {
     if (!filtroCategoria) return;
     const nome = categoriaMap[filtroCategoria] ?? 'categoria';
     const total = contagemPorCategoria[filtroCategoria] ?? 0;
-    const label = val === 'delivery' ? 'apenas no delivery' : val === 'casa' ? 'apenas na casa' : 'na casa e no delivery';
-    if (!confirm(`Definir todos os ${total} itens de "${nome}" para aparecerem ${label}?`)) return;
-    await definirCanalCategoria(filtroCategoria, val);
+    setCanalConfirm({ nome, total, val });
   };
+
+  const canalLabel = (val: Disponibilidade) =>
+    val === 'delivery' ? 'apenas no delivery' : val === 'casa' ? 'apenas no balcão (casa)' : 'no balcão e no delivery';
+  const canalIcon = (val: Disponibilidade) =>
+    val === 'delivery' ? 'ri-e-bike-2-line' : val === 'casa' ? 'ri-home-4-line' : 'ri-restaurant-2-line';
 
   const handleDuplicar = async (item: Item) => {
     setDuplicando(item.id);
@@ -683,6 +690,20 @@ export default function ItensTab() {
           onClose={() => setModalItem(undefined)}
         />
       )}
+
+      {/* Confirmação de canal por categoria */}
+      <ConfirmModal
+        isOpen={!!canalConfirm}
+        icon={canalConfirm ? canalIcon(canalConfirm.val) : 'ri-restaurant-2-line'}
+        title="Aplicar canal à categoria"
+        message={canalConfirm ? `Definir todos os ${canalConfirm.total} itens de "${canalConfirm.nome}" para aparecerem ${canalLabel(canalConfirm.val)}?` : ''}
+        confirmLabel="Aplicar"
+        onConfirm={async () => {
+          if (canalConfirm && filtroCategoria) await definirCanalCategoria(filtroCategoria, canalConfirm.val);
+          setCanalConfirm(null);
+        }}
+        onCancel={() => setCanalConfirm(null)}
+      />
     </div>
   );
 }
