@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import MapaPin from '@/components/feature/MapaPin';
 import SeletorDataNascimento from '@/components/base/SeletorDataNascimento';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
@@ -88,28 +88,53 @@ export default function EnderecoPinDelivery(props: Props) {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [autoEndereco, setAutoEndereco] = useState(false);
   const geoReqRef = useRef(0);
+  const autoGeoRef = useRef(false);
+  const geocodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const kbInset = useKeyboardInset();
 
+  // Altura da área REALMENTE visível (acima do teclado). Em navegadores sem suporte
+  // a `dvh` (ex.: WebView embutida do WhatsApp), fixamos a altura da tela à
+  // `visualViewport` para o conteúdo rolar corretamente acima do teclado.
+  const [viewportH, setViewportH] = useState<number | null>(null);
+  useEffect(function () {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    function update() { setViewportH(vv!.height); }
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    update();
+    return function () {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, []);
+
   // Geocodificação reversa (coordenada → endereço) via Nominatim/OSM — preenche rua/número/bairro.
+  // O pin/taxa atualiza na hora (onPinChange); a busca do endereço é DEBOUNCED, porque
+  // com o pin seguindo o centro do mapa o onChange dispara a cada arraste e o Nominatim
+  // público limita ~1 req/s.
   function aplicarPin(lat: number, lng: number) {
     onPinChange(lat, lng);
     const reqId = ++geoReqRef.current;
     setAutoEndereco(true);
-    fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&accept-language=pt-BR&lat=' + lat + '&lon=' + lng)
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (data) {
-        if (geoReqRef.current !== reqId) return; // o pino mudou de novo — ignora resposta antiga
-        setAutoEndereco(false);
-        const a = data && data.address ? data.address : null;
-        if (!a) return;
-        const road = a.road || a.pedestrian || a.residential || a.footway || a.path || a.cycleway || '';
-        const num = a.house_number || '';
-        const bairroGeo = a.suburb || a.neighbourhood || a.quarter || a.city_district || a.village || '';
-        if (road) onRuaChange(road);
-        if (num) onNumeroChange(num);
-        if (bairroGeo) onBairroChange(bairroGeo);
-      })
-      .catch(function () { if (geoReqRef.current === reqId) setAutoEndereco(false); });
+    if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
+    geocodeTimerRef.current = setTimeout(function () {
+      fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&accept-language=pt-BR&lat=' + lat + '&lon=' + lng)
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (geoReqRef.current !== reqId) return; // o pino mudou de novo — ignora resposta antiga
+          setAutoEndereco(false);
+          const a = data && data.address ? data.address : null;
+          if (!a) return;
+          const road = a.road || a.pedestrian || a.residential || a.footway || a.path || a.cycleway || '';
+          const num = a.house_number || '';
+          const bairroGeo = a.suburb || a.neighbourhood || a.quarter || a.city_district || a.village || '';
+          if (road) onRuaChange(road);
+          if (num) onNumeroChange(num);
+          if (bairroGeo) onBairroChange(bairroGeo);
+        })
+        .catch(function () { if (geoReqRef.current === reqId) setAutoEndereco(false); });
+    }, 500);
   }
 
   // Estado do formulário (add/edit) — o "tipo" e o id em edição
@@ -155,6 +180,16 @@ export default function EnderecoPinDelivery(props: Props) {
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
   }
+
+  // Ao entrar no modo "adicionar endereço", começa o pin na LOCALIZAÇÃO ATUAL do
+  // usuário (uma vez). Se ele negar a permissão, fica no padrão e ajusta arrastando o
+  // mapa. (No modo 'edit' mantém o pin do endereço salvo.)
+  useEffect(function () {
+    if (formMode === 'add' && !autoGeoRef.current) {
+      autoGeoRef.current = true;
+      usarMinhaLocalizacao();
+    }
+  }, [formMode]);
 
   function abrirNovo() {
     setEditingAddressId(null);
@@ -318,7 +353,8 @@ export default function EnderecoPinDelivery(props: Props) {
         ) : null}
 
         {comNome ? (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-3">
+            {/* Data ocupa a linha inteira — em meia largura o ano ficava cortado. */}
             <div>
               <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nascimento</label>
               <SeletorDataNascimento value={nascimento} onChange={onNascimentoChange} />
@@ -397,7 +433,7 @@ export default function EnderecoPinDelivery(props: Props) {
     // Altura = viewport dinâmico (100dvh encolhe quando o teclado abre); h-screen é
     // fallback. O conteúdo rola internamente (min-h-0 + overflow-y-auto) para o campo
     // focado conseguir subir acima do teclado virtual.
-    <div className="h-screen flex flex-col bg-white" style={{ height: '100dvh' }}>
+    <div className="h-screen flex flex-col bg-white" style={{ height: viewportH ? `${viewportH}px` : '100dvh' }}>
       <div className="bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0">
         <div className="flex items-center gap-3">
           <button

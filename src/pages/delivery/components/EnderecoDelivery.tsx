@@ -258,7 +258,8 @@ export default function EnderecoDelivery(props: Props) {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-3">
+            {/* Data ocupa a linha inteira — em meia largura o ano ficava cortado. */}
             <div>
               <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nascimento</label>
               <SeletorDataNascimento value={nascimento} onChange={onNascimentoChange} />
