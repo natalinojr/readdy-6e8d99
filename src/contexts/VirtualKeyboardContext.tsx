@@ -42,6 +42,22 @@ function isTouchDevice() {
   return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 }
 
+/**
+ * Telas do CLIENTE (delivery / mesa-qr / mesa / pedido) usam o teclado NATIVO do
+ * celular — é mais familiar e o nativo já cuida da visibilidade do campo (com a meta
+ * `interactive-widget` + a barra-espelho do MobileKeyboardAssist). O teclado virtual
+ * QWERTY é só pra totem/autoatendimento e telas de gestão em tablet.
+ */
+function rotaUsaTecladoNativo(): boolean {
+  const p = window.location.pathname;
+  return (
+    p === '/delivery' || p.startsWith('/delivery/') || p.endsWith('-delivery') ||
+    p === '/mesa-qr' || p.startsWith('/mesa-qr/') ||
+    p.startsWith('/mesa/') ||
+    p.startsWith('/pedido/')
+  );
+}
+
 export function VirtualKeyboardProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<VKState>(DEFAULT_STATE);
   const syncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -69,6 +85,7 @@ export function VirtualKeyboardProvider({ children }: { children: ReactNode }) {
     opts?: { mode?: KeyboardMode; label?: string; maxLength?: number; onEnter?: () => void }
   ) => {
     if (!isTouchDevice()) return;
+    if (rotaUsaTecladoNativo()) return; // telas do cliente usam o teclado nativo
 
     // Impede teclado nativo: marca como readOnly enquanto teclado virtual está ativo
     el.readOnly = true;
@@ -120,6 +137,9 @@ export function VirtualKeyboardProvider({ children }: { children: ReactNode }) {
       if (!isInput) return;
 
       const el = target as HTMLInputElement | HTMLTextAreaElement;
+
+      // Nas telas do cliente (delivery/mesa-qr) usa o teclado NATIVO do celular.
+      if (rotaUsaTecladoNativo()) return;
 
       // Verifica se o campo optou por NÃO usar o teclado virtual
       if (el.dataset.nativeKeyboard === 'true') return;
