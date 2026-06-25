@@ -13,11 +13,19 @@ const SINAL_LABEL: Record<string, string> = {
   a_caminho_loja: 'A caminho da loja', coletou: 'Coletado', entregou: 'Entregue', problema: 'Problema',
 };
 
+interface Problema { at: string; text: string; by?: string }
+
 interface OrderRow {
   id: string; number: string; cliente: string; endereco: string; total: number; taxa: number;
   status: string; motoboy_status: string | null; motoboy_note: string | null;
+  problemas?: Problema[];
   driver_id: string | null; driver_nome: string | null;
 }
+
+const horaCurta = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+};
 
 const FASES: { signal: string; label: string; icon: string }[] = [
   { signal: 'a_caminho_loja', label: 'A caminho', icon: 'ri-store-2-line' },
@@ -142,7 +150,28 @@ export default function GerirEntregasTab({ tenantId }: { tenantId?: string }) {
                   <span className="text-[11px] text-zinc-400">sem entregador</span>
                 )}
               </div>
-              {o.motoboy_note ? <p className="text-[11px] text-red-600 mt-1">⚠ {o.motoboy_note}</p> : null}
+              {(() => {
+                // Histórico de problemas relatados (acumula cada relato com sua hora).
+                // Fallback p/ pedidos antigos que só têm motoboy_note (antes do histórico).
+                const probs = (o.problemas && o.problemas.length > 0)
+                  ? o.problemas
+                  : (o.motoboy_note ? [{ at: '', text: o.motoboy_note }] : []);
+                if (probs.length === 0) return null;
+                return (
+                  <div className="mt-1.5 space-y-1">
+                    {probs.map((p, i) => (
+                      <div key={i} className="flex items-start gap-1.5 text-[11px] text-red-600">
+                        <i className="ri-alert-line shrink-0 mt-0.5" />
+                        <span className="leading-snug">
+                          {p.at ? <span className="font-bold tabular-nums">{horaCurta(p.at)} · </span> : null}
+                          {p.text || 'Problema relatado'}
+                          {p.by === 'loja' ? <span className="text-red-400"> (loja)</span> : null}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               <div className="grid grid-cols-4 gap-1.5 mt-2.5">
                 {FASES.map((f) => {
                   const ativo = o.motoboy_status === f.signal;
@@ -204,7 +233,7 @@ export default function GerirEntregasTab({ tenantId }: { tenantId?: string }) {
               </div>
               <h4 className="text-sm font-bold text-zinc-800">Liberar entregador</h4>
             </div>
-            <p className="text-sm text-zinc-600">Tira este pedido do entregador atual. Ele volta pra fila e outro entregador poderá assumir.</p>
+            <p className="text-sm text-zinc-600">Tira este pedido do entregador atual e <strong>volta uma fase</strong> da entrega. Ele fica disponível para o próximo entregador assumir.</p>
             <div className="flex gap-2">
               <button type="button" onClick={() => setModalLiberar(null)}
                 className="flex-1 py-2.5 rounded-xl bg-zinc-100 text-zinc-600 text-sm font-semibold hover:bg-zinc-200">Cancelar</button>

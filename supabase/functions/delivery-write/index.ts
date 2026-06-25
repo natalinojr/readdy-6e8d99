@@ -518,7 +518,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       if (action === "list_delivery_orders") {
         const { data: orders } = await admin.from("orders")
-          .select("id, number, destination_name, delivery_address, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_driver_id, motoboy_updated_at, created_at")
+          .select("id, number, destination_name, delivery_address, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_updated_at, created_at")
           .eq("tenant_id", tenant_id).eq("origin_type", "delivery").in("status", ["new", "preparing", "ready"])
           .order("created_at", { ascending: true });
         const lista = (orders ?? []) as Record<string, unknown>[];
@@ -533,6 +533,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           cliente: ((o.destination_name as string | null) ?? "Cliente").split(/\s+[-–—]\s+/)[0].trim() || "Cliente",
           endereco: o.delivery_address ?? "", total: Number(o.total_amount ?? 0), taxa: Number(o.delivery_fee ?? 0),
           status: o.status, motoboy_status: o.motoboy_status ?? null, motoboy_note: o.motoboy_note ?? null,
+          problemas: Array.isArray(o.motoboy_problems) ? o.motoboy_problems : [],
           driver_id: o.motoboy_driver_id ?? null, driver_nome: o.motoboy_driver_id ? (driverNome[o.motoboy_driver_id as string] ?? null) : null,
           created_at: o.created_at,
         })) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -541,12 +542,42 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const orderId = String(body.order_id || "").trim();
       if (!orderId) return jsonErr("order_id obrigatorio", 400);
       // Confere que o pedido e desta loja.
-      const { data: ord } = await admin.from("orders").select("id, motoboy_timeline").eq("id", orderId).eq("tenant_id", tenant_id).maybeSingle();
+      const { data: ord } = await admin.from("orders").select("id, motoboy_timeline, motoboy_status, motoboy_problems").eq("id", orderId).eq("tenant_id", tenant_id).maybeSingle();
       if (!ord) return jsonErr("Pedido nao encontrado nesta loja.", 404);
 
       if (action === "clear_motoboy_driver") {
-        // Libera o pedido do entregador atual (some/sem acesso) — volta pra fila.
-        const { error } = await admin.from("orders").update({ motoboy_driver_id: null }).eq("id", orderId);
+        // Libera o pedido do entregador atual E volta UMA fase de entrega, para o
+        // próximo motoboy assumir do ponto certo (sem herdar a fase do anterior).
+        // Ex.: "a caminho da loja" → volta a ficar disponível (sem fase);
+        //      "coletou" → volta para "a caminho da loja"; "problema" → "a caminho".
+        const SEQ = ["a_caminho_loja", "coletou", "entregou"];
+        const atual = (ord.motoboy_status as string | null) ?? null;
+        let novo: string | null;
+        if (atual === "problema") {
+          novo = "a_caminho_loja";
+        } else {
+          const i = SEQ.indexOf(atual ?? "");
+          novo = i <= 0 ? null : SEQ[i - 1]; // a_caminho_loja→null, coletou→a_caminho_loja
+        }
+        // Recalcula a timeline mantendo só as fases até a nova (descarta as desfeitas).
+        const oldTl = (ord.motoboy_timeline as Record<string, string> | null) ?? {};
+        const novoIdx = novo ? SEQ.indexOf(novo) : -1;
+        const novaTl: Record<string, string> = {};
+        SEQ.forEach((ph, i) => { if (i <= novoIdx && oldTl[ph]) novaTl[ph] = oldTl[ph]; });
+
+        const nowIso = new Date().toISOString();
+        const updates: Record<string, unknown> = {
+          motoboy_driver_id: null,
+          motoboy_status: novo,
+          motoboy_note: null,
+          motoboy_timeline: novaTl,
+          motoboy_updated_at: nowIso,
+          updated_at: nowIso,
+        };
+        // Se voltou pra antes de "coletou", limpa a marcação de saída pra entrega.
+        if (novo !== "coletou" && novo !== "entregou") updates.out_for_delivery_at = null;
+
+        const { error } = await admin.from("orders").update(updates).eq("id", orderId);
         if (error) throw error;
         return new Response(JSON.stringify({ _v: "v14", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
@@ -557,13 +588,19 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const nowIso = new Date().toISOString();
       const tl = (ord.motoboy_timeline as Record<string, string> | null) ?? {};
       if (!tl[signal]) tl[signal] = nowIso;
+      const motivoTxt = signal === "problema" ? String(body.motivo ?? "").slice(0, 500) : null;
       const updates: Record<string, unknown> = {
         motoboy_status: signal,
-        motoboy_note: signal === "problema" ? String(body.motivo ?? "").slice(0, 500) : null,
+        motoboy_note: motivoTxt,
         motoboy_updated_at: nowIso,
         motoboy_timeline: tl,
         updated_at: nowIso,
       };
+      // Acumula o problema no historico (nao sobrescreve): cada relato fica com sua hora.
+      if (signal === "problema") {
+        const probs = Array.isArray(ord.motoboy_problems) ? (ord.motoboy_problems as unknown[]) : [];
+        updates.motoboy_problems = [...probs, { at: nowIso, text: motivoTxt ?? "", by: "loja" }];
+      }
       if (signal === "coletou") updates.out_for_delivery_at = nowIso;
       if (signal === "entregou") { updates.status = "delivered"; updates.out_for_delivery_at = nowIso; }
       const { error: upErr } = await admin.from("orders").update(updates).eq("id", orderId);

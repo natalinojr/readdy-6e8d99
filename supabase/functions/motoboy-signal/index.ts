@@ -174,7 +174,7 @@ serve(async (req) => {
 
     if (body.action === "get_order") {
       const { data: order, error } = await admin.from("orders")
-        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, motoboy_driver_id, motoboy_timeline, out_for_delivery_at, created_at, origin_type")
+        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_timeline, out_for_delivery_at, created_at, origin_type")
         .eq("id", orderId).maybeSingle();
       if (error || !order) return json({ error: "not_found" }, 200);
       if (order.origin_type !== "delivery") return json({ error: "not_delivery" }, 200);
@@ -223,6 +223,7 @@ serve(async (req) => {
           status: order.status,
           motoboy_status: order.motoboy_status ?? null,
           motoboy_note: order.motoboy_note ?? null,
+          motoboy_problems: Array.isArray(order.motoboy_problems) ? order.motoboy_problems : [],
           motoboy_timeline: (order.motoboy_timeline as Record<string, string> | null) ?? {},
           cozinha,
           em_rota: !!order.out_for_delivery_at,
@@ -246,7 +247,7 @@ serve(async (req) => {
       const driverId = String(body.driver_id ?? "").trim();
       // Trava de propriedade: a partir do 1o sinal, o pedido fica preso a um entregador.
       // So pode atualizar quem nao tem dono ainda OU o proprio dono.
-      const { data: cur } = await admin.from("orders").select("motoboy_driver_id, motoboy_timeline").eq("id", orderId).maybeSingle();
+      const { data: cur } = await admin.from("orders").select("motoboy_driver_id, motoboy_timeline, motoboy_problems").eq("id", orderId).maybeSingle();
       if (!cur) return json({ error: "not_found" }, 200);
       const dono = cur.motoboy_driver_id as string | null;
       if (dono && (!driverId || dono !== driverId)) {
@@ -256,6 +257,11 @@ serve(async (req) => {
       const tl = (cur.motoboy_timeline as Record<string, string> | null) ?? {};
       if (!tl[signal]) tl[signal] = nowIso;
       updates.motoboy_timeline = tl;
+      // Acumula o problema no historico (nao sobrescreve): cada relato fica com sua hora.
+      if (signal === "problema") {
+        const probs = Array.isArray(cur.motoboy_problems) ? (cur.motoboy_problems as unknown[]) : [];
+        updates.motoboy_problems = [...probs, { at: nowIso, text: motivo ?? "", by: "motoboy" }];
+      }
       // Registra qual motoboy assumiu o pedido (1o sinal define o dono).
       if (driverId) updates.motoboy_driver_id = driverId;
       if (signal === "coletou") updates.out_for_delivery_at = nowIso;

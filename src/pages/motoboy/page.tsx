@@ -254,6 +254,56 @@ export default function MotoboyPage() {
           </div>
         ) : null}
 
+        {aviso ? (
+          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-2xl p-3">
+            <i className="ri-error-warning-line text-red-500 text-lg flex-shrink-0" />
+            <p className="text-sm font-bold text-red-700">{aviso}</p>
+          </div>
+        ) : null}
+
+        {/* Ações no TOPO: o motoboy muda a fase sem precisar rolar a página. */}
+        {entregue ? (
+          <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+            <i className="ri-checkbox-circle-fill text-3xl text-green-500" />
+            <p className="text-sm font-bold text-green-700 mt-1">Entrega concluída. Obrigado!</p>
+          </div>
+        ) : assumidoPorOutro ? (
+          <div className="bg-zinc-100 border border-zinc-200 rounded-2xl p-4 text-center">
+            <i className="ri-lock-line text-3xl text-zinc-400" />
+            <p className="text-sm font-bold text-zinc-600 mt-1">
+              Pedido sendo entregue por {order.claimed_by_name || 'outro entregador'}.
+            </p>
+            <p className="text-xs text-zinc-400 mt-0.5">Só quem assumiu pode atualizar o status.</p>
+          </div>
+        ) : !session ? (
+          /* Sem sessão: o motoboy se identifica aqui mesmo (nome + celular) antes de atualizar o pedido. */
+          <form onSubmit={entrar} className="bg-white rounded-2xl border border-zinc-100 p-4 space-y-3">
+            <div>
+              <p className="text-sm font-bold text-zinc-800">Identifique-se para atualizar o pedido</p>
+              <p className="text-xs text-zinc-500">Seu nome e celular — só na primeira vez neste aparelho.</p>
+            </div>
+            <input value={nomeLogin} onChange={(e) => setNomeLogin(e.target.value)} placeholder="Seu nome"
+              className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 outline-none focus:border-amber-400 text-sm" maxLength={80} />
+            <input value={celularLogin} onChange={(e) => setCelularLogin(e.target.value)} inputMode="tel" placeholder="Celular (00) 00000-0000"
+              className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 outline-none focus:border-amber-400 text-sm" maxLength={20} />
+            {loginErro ? <p className="text-xs text-red-600">{loginErro}</p> : null}
+            <button type="submit" disabled={entrando}
+              className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm disabled:opacity-50">
+              {entrando ? 'Entrando…' : 'Entrar e continuar'}
+            </button>
+          </form>
+        ) : (
+          <div className="space-y-2">
+            {proximo ? (
+              <Botao signal={proximo.signal} label={proximo.label} icon={proximo.icon} cor={proximo.cor} />
+            ) : null}
+
+            <button type="button" onClick={() => setShowProblema(true)} className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl border-2 border-red-200 text-red-600 font-bold text-sm">
+              <i className="ri-alert-line text-lg" /> Tive um problema na entrega
+            </button>
+          </div>
+        )}
+
         {/* Dados */}
         <div className="bg-white rounded-2xl border border-zinc-100 p-4 space-y-3">
           <div>
@@ -345,55 +395,6 @@ export default function MotoboyPage() {
           </div>
         </div>
 
-        {aviso ? (
-          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-2xl p-3">
-            <i className="ri-error-warning-line text-red-500 text-lg flex-shrink-0" />
-            <p className="text-sm font-bold text-red-700">{aviso}</p>
-          </div>
-        ) : null}
-
-        {/* Ações */}
-        {entregue ? (
-          <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
-            <i className="ri-checkbox-circle-fill text-3xl text-green-500" />
-            <p className="text-sm font-bold text-green-700 mt-1">Entrega concluída. Obrigado!</p>
-          </div>
-        ) : assumidoPorOutro ? (
-          <div className="bg-zinc-100 border border-zinc-200 rounded-2xl p-4 text-center">
-            <i className="ri-lock-line text-3xl text-zinc-400" />
-            <p className="text-sm font-bold text-zinc-600 mt-1">
-              Pedido sendo entregue por {order.claimed_by_name || 'outro entregador'}.
-            </p>
-            <p className="text-xs text-zinc-400 mt-0.5">Só quem assumiu pode atualizar o status.</p>
-          </div>
-        ) : !session ? (
-          /* Sem sessão: o motoboy se identifica aqui mesmo (nome + celular) antes de atualizar o pedido. */
-          <form onSubmit={entrar} className="bg-white rounded-2xl border border-zinc-100 p-4 space-y-3">
-            <div>
-              <p className="text-sm font-bold text-zinc-800">Identifique-se para atualizar o pedido</p>
-              <p className="text-xs text-zinc-500">Seu nome e celular — só na primeira vez neste aparelho.</p>
-            </div>
-            <input value={nomeLogin} onChange={(e) => setNomeLogin(e.target.value)} placeholder="Seu nome"
-              className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 outline-none focus:border-amber-400 text-sm" maxLength={80} />
-            <input value={celularLogin} onChange={(e) => setCelularLogin(e.target.value)} inputMode="tel" placeholder="Celular (00) 00000-0000"
-              className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 outline-none focus:border-amber-400 text-sm" maxLength={20} />
-            {loginErro ? <p className="text-xs text-red-600">{loginErro}</p> : null}
-            <button type="submit" disabled={entrando}
-              className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm disabled:opacity-50">
-              {entrando ? 'Entrando…' : 'Entrar e continuar'}
-            </button>
-          </form>
-        ) : (
-          <div className="space-y-2">
-            {proximo ? (
-              <Botao signal={proximo.signal} label={proximo.label} icon={proximo.icon} cor={proximo.cor} />
-            ) : null}
-
-            <button type="button" onClick={() => setShowProblema(true)} className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl border-2 border-red-200 text-red-600 font-bold text-sm">
-              <i className="ri-alert-line text-lg" /> Tive um problema na entrega
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Modal "problema" ancorado no TOPO: o teclado fica embaixo e nunca cobre o campo. */}
