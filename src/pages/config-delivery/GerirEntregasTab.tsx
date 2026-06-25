@@ -16,7 +16,7 @@ const SINAL_LABEL: Record<string, string> = {
 interface Problema { at: string; text: string; by?: string }
 
 interface OrderRow {
-  id: string; number: string; cliente: string; endereco: string; total: number; taxa: number;
+  id: string; number: string; cliente: string; telefone?: string; endereco: string; total: number; taxa: number;
   status: string; motoboy_status: string | null; motoboy_note: string | null;
   problemas?: Problema[];
   driver_id: string | null; driver_nome: string | null;
@@ -26,6 +26,16 @@ const horaCurta = (iso: string) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 };
+
+// Telefone só-dígitos → exibição (DD) 9XXXX-XXXX. '' se vazio.
+const fmtTelefone = (d: string) => {
+  if (!d) return '';
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return d;
+};
+// Número internacional p/ WhatsApp (assume Brasil: prefixa 55 se vier sem DDI).
+const waNumero = (d: string) => (d.length <= 11 ? '55' + d : d);
 
 const FASES: { signal: string; label: string; icon: string }[] = [
   { signal: 'a_caminho_loja', label: 'A caminho', icon: 'ri-store-2-line' },
@@ -138,6 +148,19 @@ export default function GerirEntregasTab({ tenantId }: { tenantId?: string }) {
               </div>
               <p className="text-sm font-semibold text-zinc-700">{o.cliente}</p>
               <p className="text-xs text-zinc-500 line-clamp-1">{o.endereco || '—'}</p>
+              {o.telefone ? (
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-xs text-zinc-500 tabular-nums">{fmtTelefone(o.telefone)}</span>
+                  <a href={`tel:+55${o.telefone}`}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-zinc-100 text-zinc-700 text-[11px] font-bold hover:bg-zinc-200">
+                    <i className="ri-phone-line" /> Ligar
+                  </a>
+                  <a href={`https://wa.me/${waNumero(o.telefone)}`} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-green-50 text-green-700 text-[11px] font-bold hover:bg-green-100">
+                    <i className="ri-whatsapp-line" /> WhatsApp
+                  </a>
+                </div>
+              ) : null}
               <div className="flex items-center gap-2 mt-1.5">
                 <span className="text-sm font-black text-zinc-800">{fmt(o.total)}</span>
                 {o.driver_id ? (

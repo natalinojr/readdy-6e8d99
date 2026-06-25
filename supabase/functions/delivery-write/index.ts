@@ -12,6 +12,14 @@ function jsonErr(msg: string, code = 400) {
 
 function fmtPrice(v: number): string { return "R$ " + v.toFixed(2).replace(".", ","); }
 
+// Formata um telefone (so digitos) p/ exibicao: (DD) 9XXXX-XXXX ou (DD) XXXX-XXXX.
+function fmtPhone(digits: string): string {
+  const d = (digits || "").replace(/\D/g, "");
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return d;
+}
+
 // ── Entrega por distancia (pin + faixas) ───────────────────────────────────────
 
 type FaixaEntrega = { ate_km: number; taxa: number; tempo_max_min: number };
@@ -518,7 +526,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       if (action === "list_delivery_orders") {
         const { data: orders } = await admin.from("orders")
-          .select("id, number, destination_name, delivery_address, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_updated_at, created_at")
+          .select("id, number, destination_name, destination_phone, delivery_address, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_updated_at, created_at")
           .eq("tenant_id", tenant_id).eq("origin_type", "delivery").in("status", ["new", "preparing", "ready"])
           .order("created_at", { ascending: true });
         const lista = (orders ?? []) as Record<string, unknown>[];
@@ -531,6 +539,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         return new Response(JSON.stringify({ _v: "v14", ok: true, orders: lista.map((o) => ({
           id: o.id, number: o.number,
           cliente: ((o.destination_name as string | null) ?? "Cliente").split(/\s+[-–—]\s+/)[0].trim() || "Cliente",
+          telefone: ((o.destination_phone as string | null) ?? "").replace(/\D/g, ""),
           endereco: o.delivery_address ?? "", total: Number(o.total_amount ?? 0), taxa: Number(o.delivery_fee ?? 0),
           status: o.status, motoboy_status: o.motoboy_status ?? null, motoboy_note: o.motoboy_note ?? null,
           problemas: Array.isArray(o.motoboy_problems) ? o.motoboy_problems : [],
@@ -1327,6 +1336,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
         const obsGeralParts = [
           "Cliente: " + (customer_name || "Nao informado"),
+          cleanPhone ? "Telefone: " + fmtPhone(cleanPhone) : "",
           isRetirada ? "RETIRADA NA LOJA" : "",
           (!isRetirada && routeKm != null) ? "Distancia: ~" + routeKm.toFixed(1) + " km" + (routeTempoMax ? " (ate " + routeTempoMax + " min)" : "") : "",
           serverDeliveryFee > 0 ? "Taxa de entrega: " + fmtPrice(serverDeliveryFee) : "",
