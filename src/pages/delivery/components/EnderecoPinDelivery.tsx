@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import MapaPin from '@/components/feature/MapaPin';
+import SeletorDataNascimento from '@/components/base/SeletorDataNascimento';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 import type { DeliveryQuote, SavedAddress } from '../useDeliveryData';
@@ -320,17 +321,7 @@ export default function EnderecoPinDelivery(props: Props) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nascimento</label>
-              <input
-                type="date" value={nascimento} onChange={function (e) { onNascimentoChange(e.target.value); }}
-                max={new Date().toISOString().slice(0, 10)}
-                onClick={function (e) {
-                  // Força a abertura do calendário nativo ao tocar no campo (alguns
-                  // navegadores móveis não abrem só com o foco).
-                  const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-                  try { el.showPicker?.(); } catch (_e) { /* navegador sem showPicker */ }
-                }}
-                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all cursor-pointer"
-              />
+              <SeletorDataNascimento value={nascimento} onChange={onNascimentoChange} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Gênero</label>
