@@ -463,9 +463,9 @@ export default function CardapioMesaQR(props: Props) {
         </div>
         <div className="flex-1 min-w-0 flex flex-col justify-between">
           <div>
-            <h3 className="text-sm font-bold text-zinc-800 truncate">{item.name}</h3>
+            <h3 className="text-sm font-bold text-zinc-800 break-words">{item.name}</h3>
             {item.description ? (
-              <p className="text-[11px] text-zinc-500 mt-0.5 line-clamp-2 leading-relaxed">
+              <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed break-words">
                 {item.description}
               </p>
             ) : null}
@@ -589,7 +589,7 @@ export default function CardapioMesaQR(props: Props) {
           >
             <div className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-zinc-100 px-5 py-3 flex items-center justify-between z-10">
               <div className="min-w-0">
-                <h3 className="text-base font-bold text-zinc-800 truncate">{itemSelecionado.name}</h3>
+                <h3 className="text-base font-bold text-zinc-800 break-words">{itemSelecionado.name}</h3>
                 {getPrecoEfetivo(itemSelecionado) < itemSelecionado.price ? (
                   <p className="text-xs text-zinc-500 mt-0.5">
                     <span className="line-through text-zinc-300">R$ {itemSelecionado.price.toFixed(2)}</span>

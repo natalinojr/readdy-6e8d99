@@ -272,7 +272,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         admin.from("menu_categories").select("id, name, station_id").eq("tenant_id", tenantId).eq("is_active", true).order("sort_order", { ascending: true }),
         admin.from("menu_items").select("id, name, description, price, photo_url, category_id, sla_minutes, is_active, skip_kds, delivery_config").eq("tenant_id", tenantId).eq("is_active", true),
         admin.from("option_groups").select("id, name, item_id, is_required, min_selections, max_selections").eq("tenant_id", tenantId).is("deleted_at", null),
-        admin.from("options").select("id, group_id, name, additional_price, is_active").eq("tenant_id", tenantId).eq("is_active", true),
+        admin.from("options").select("id, group_id, name, additional_price, is_active").eq("tenant_id", tenantId).eq("is_active", true).order("sort_order", { ascending: true }),
         admin.from("item_preset_observations").select("id, item_id, text").eq("tenant_id", tenantId).is("deleted_at", null),
         admin.rpc("fn_get_items_sem_estoque", { p_tenant_id: tenantId }),
         admin.rpc("fn_get_opcoes_sem_estoque", { p_tenant_id: tenantId }),
