@@ -277,7 +277,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         admin.rpc("fn_get_items_sem_estoque", { p_tenant_id: tenantId }),
         admin.rpc("fn_get_opcoes_sem_estoque", { p_tenant_id: tenantId }),
         admin.from("item_production_parts").select("item_id, name, station_id").eq("tenant_id", tenantId).is("deleted_at", null).order("sort_order"),
-        admin.from("menu_highlights").select("id, item_id, custom_price, custom_description, sort_order").eq("tenant_id", tenantId).eq("is_active", true).order("sort_order", { ascending: true }),
+        // Destaques do DELIVERY: canal 'ambos' ou 'delivery' (exclui os 'só casa').
+        admin.from("menu_highlights").select("id, item_id, custom_price, custom_description, sort_order").eq("tenant_id", tenantId).eq("is_active", true).neq("channel", "casa").order("sort_order", { ascending: true }),
         admin.from("item_promotions").select("id, item_id, promotional_price, days_of_week, is_recurring, specific_date, is_active").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null),
       ]);
 

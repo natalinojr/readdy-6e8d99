@@ -95,7 +95,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         admin.rpc("fn_get_items_sem_estoque", { p_tenant_id: tenant_id }),
         admin.rpc("fn_get_opcoes_sem_estoque", { p_tenant_id: tenant_id }),
         admin.from("item_production_parts").select("item_id, name, station_id").eq("tenant_id", tenant_id).is("deleted_at", null).order("sort_order"),
-        admin.from("menu_highlights").select("id, item_id, custom_price, custom_description, sort_order").eq("tenant_id", tenant_id).eq("is_active", true).order("sort_order", { ascending: true }),
+        // Destaques da CASA (mesa-qr): canal 'ambos' ou 'casa' (exclui os 'só delivery').
+        admin.from("menu_highlights").select("id, item_id, custom_price, custom_description, sort_order").eq("tenant_id", tenant_id).eq("is_active", true).neq("channel", "delivery").order("sort_order", { ascending: true }),
         admin.from("item_promotions").select("id, item_id, promotional_price, days_of_week, is_recurring, specific_date, is_active").eq("tenant_id", tenant_id).eq("is_active", true).is("deleted_at", null),
       ]);
 

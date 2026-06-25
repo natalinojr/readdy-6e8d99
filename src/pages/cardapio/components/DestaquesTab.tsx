@@ -2,6 +2,13 @@ import { useState, useMemo } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
 import ItemImage from '@/components/base/ItemImage';
 
+type CanalDestaque = 'casa' | 'ambos' | 'delivery';
+const CANAIS_DESTAQUE: { key: CanalDestaque; icon: string; title: string }[] = [
+  { key: 'casa', icon: 'ri-home-4-line', title: 'Só na casa (presencial)' },
+  { key: 'ambos', icon: 'ri-restaurant-2-line', title: 'Casa e delivery' },
+  { key: 'delivery', icon: 'ri-e-bike-2-line', title: 'Só no delivery' },
+];
+
 export default function DestaquesTab() {
   const {
     itens, categorias, destaques,
@@ -202,6 +209,29 @@ export default function DestaquesTab() {
                   {dest.customDescription && (
                     <span className="text-xs text-gray-500 truncate max-w-[200px]">{dest.customDescription}</span>
                   )}
+                  {/* Seletor de canal: onde este destaque aparece */}
+                  <div className="inline-flex items-center gap-1">
+                    <span className="text-[11px] text-gray-400">Aparece em:</span>
+                    <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+                      {CANAIS_DESTAQUE.map(c => {
+                        const selecionado = dest.canal === c.key;
+                        return (
+                          <button
+                            key={c.key}
+                            type="button"
+                            title={c.title}
+                            disabled={saving}
+                            onClick={() => editarDestaque(dest.id, { canal: c.key })}
+                            className={`w-7 h-7 flex items-center justify-center text-sm transition-colors disabled:opacity-50 cursor-pointer ${
+                              selecionado ? 'bg-orange-500 text-white' : 'text-gray-400 hover:bg-orange-50 hover:text-orange-600'
+                            }`}
+                          >
+                            <i className={c.icon} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

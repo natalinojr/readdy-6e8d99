@@ -570,10 +570,12 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       result = { deleted: true };
     }
     else if (action === 'upsert_highlight') {
-      const { id, item_id, custom_price, custom_description, sort_order, is_active } = payload as {
+      const { id, item_id, custom_price, custom_description, sort_order, is_active, channel } = payload as {
         id?: string; item_id: string; custom_price?: number | null;
         custom_description?: string | null; sort_order?: number; is_active?: boolean;
+        channel?: 'casa' | 'ambos' | 'delivery';
       };
+      const safeChannel = (channel === 'casa' || channel === 'delivery') ? channel : 'ambos';
       const { data, error } = await admin.rpc('fn_upsert_menu_highlight', {
         p_tenant_id: tenantId,
         p_id: id ?? null,
@@ -582,6 +584,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         p_custom_description: custom_description ?? null,
         p_sort_order: sort_order ?? 0,
         p_is_active: is_active ?? true,
+        p_channel: safeChannel,
       });
       if (error) throw new Error(`upsert_highlight: ${error.message}`);
       result = data;

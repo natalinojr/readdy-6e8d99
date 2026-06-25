@@ -169,6 +169,9 @@ export interface Destaque {
   customDescription?: string | null;
   ordem: number;
   ativo: boolean;
+  // Canal onde o destaque aparece: 'casa' (só presencial), 'delivery' (só delivery)
+  // ou 'ambos' (padrão). Filtra em itensPublicos (casa) e nas Edge Functions.
+  canal: 'casa' | 'ambos' | 'delivery';
 }
 
 // ─── Ficha Técnica de Combos (combo_ingredients) ─────────────────────────────
