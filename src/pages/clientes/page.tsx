@@ -17,11 +17,15 @@ function diasSemVisita(ultima: string) {
   return Math.floor((Date.now() - new Date(ultima).getTime()) / (1000 * 60 * 60 * 24));
 }
 
-// Verifica se o cliente faz aniversário este mês (baseado na data da primeira visita como proxy)
+// Verifica se o cliente faz aniversário este mês, usando a data de nascimento real.
+// Sem data de nascimento, não há como saber — não conta como aniversariante.
 function aniversarioEsteMes(c: ClienteCRM): boolean {
-  const mesAtual = new Date().getMonth();
-  const mesPrimeira = new Date(c.primeiraVisita).getMonth();
-  return mesPrimeira === mesAtual;
+  if (!c.dataNascimento) return false;
+  // dataNascimento vem como 'YYYY-MM-DD' (coluna date). Lemos o mês direto da string
+  // para evitar deslocamento de fuso (new Date('YYYY-MM-DD') é UTC e pode "pular" o mês).
+  const mesNasc = Number(c.dataNascimento.slice(5, 7));
+  if (!mesNasc) return false;
+  return mesNasc === new Date().getMonth() + 1;
 }
 
 const TAG_STYLE: Record<string, string> = {
