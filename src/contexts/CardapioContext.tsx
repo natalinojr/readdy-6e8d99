@@ -143,6 +143,7 @@ interface DBHighlight {
   custom_description?: string | null;
   sort_order?: number | null;
   is_active?: boolean | null;
+  channel?: string | null;
   menu_items?: DBItem | null;
 }
 
@@ -274,6 +275,7 @@ function mapDestaque(h: DBHighlight, categorias: Categoria[]): Destaque {
     customDescription: h.custom_description ?? null,
     ordem: h.sort_order ?? 0,
     ativo: h.is_active ?? true,
+    canal: (h.channel === 'casa' || h.channel === 'delivery') ? h.channel : 'ambos',
   };
 }
 
@@ -343,7 +345,7 @@ interface CardapioContextValue {
   // Destaques CRUD
   destaques: Destaque[];
   adicionarDestaque: (itemId: string, customPrice?: number | null, customDescription?: string | null) => Promise<void>;
-  editarDestaque: (id: string, data: { customPrice?: number | null; customDescription?: string | null; ativo?: boolean }) => Promise<void>;
+  editarDestaque: (id: string, data: { customPrice?: number | null; customDescription?: string | null; ativo?: boolean; canal?: 'casa' | 'ambos' | 'delivery' }) => Promise<void>;
   removerDestaque: (id: string) => Promise<void>;
   reordenarDestaques: (items: Array<{ id: string; sortOrder: number }>) => Promise<void>;
 
@@ -494,7 +496,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
           for (const it of ((data.items ?? []) as DBItem[])) itemsById.set(it.id, it);
           const { data: highlightsData, error: highlightsError } = await supabase
             .from('menu_highlights')
-            .select('id, item_id, custom_price, custom_description, sort_order, is_active')
+            .select('id, item_id, custom_price, custom_description, sort_order, is_active, channel')
             .eq('tenant_id', effectiveTenantId)
             .eq('is_active', true)
             .order('sort_order', { ascending: true });
@@ -901,10 +903,14 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const editarDestaque = async (id: string, data: { customPrice?: number | null; customDescription?: string | null; ativo?: boolean }) => {
+  const editarDestaque = async (id: string, data: { customPrice?: number | null; customDescription?: string | null; ativo?: boolean; canal?: 'casa' | 'ambos' | 'delivery' }) => {
     const dest = destaques.find(d => d.id === id);
     if (!dest) return;
     setSaving(true);
+    // Atualização otimista do canal (feedback imediato no seletor da aba Destaques).
+    if (data.canal && data.canal !== dest.canal) {
+      setDestaques(prev => prev.map(d => (d.id === id ? { ...d, canal: data.canal! } : d)));
+    }
     try {
       await menuWrite('upsert_highlight', {
         id,
@@ -913,6 +919,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         custom_description: data.customDescription ?? dest.customDescription,
         sort_order: dest.ordem,
         is_active: data.ativo ?? dest.ativo,
+        channel: data.canal ?? dest.canal,
       }, user?.tenantId);
       await recarregar({ silent: true });
     } catch (err) {
@@ -974,9 +981,11 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     // Só categorias ativas (não deletadas) — categorias deletadas não aparecem no cardápio público
     const categoriasAtivasIds = new Set(categorias.filter(c => c.ativo).map(c => c.id));
 
-    // Mapa itemId → ordem do destaque (somente destaques ativos)
+    // Mapa itemId → ordem do destaque (somente destaques ativos e que valem para a
+    // casa — canal 'casa' ou 'ambos'). Destaques exclusivos de delivery não marcam
+    // itens como destaque nas telas presenciais (mesa/autoatendimento).
     const destaqueOrdemMap = new Map<string, number>();
-    destaques.filter(d => d.ativo).forEach(d => { destaqueOrdemMap.set(d.itemId, d.ordem ?? 0); });
+    destaques.filter(d => d.ativo && d.canal !== 'delivery').forEach(d => { destaqueOrdemMap.set(d.itemId, d.ordem ?? 0); });
 
     // Itens normais ativos que permitem mesa_qr OU self_service (ou sem canais — retrocompatibilidade)
     const itensAtivosMesaQR = itensAtivos.filter(item =>

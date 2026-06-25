@@ -448,32 +448,54 @@ async function compressImage(file: File, maxSize = 1000, quality = 0.7): Promise
 }
 
 /**
- * Faz upload de uma imagem de cardápio (item ou combo) para o Supabase Storage.
- * Comprime no cliente e usa cache longo. Retorna a URL pública da imagem.
+ * Faz upload de uma imagem de cardápio (item ou combo).
+ *
+ * Comprime no cliente e envia pela Edge Function `menu-write` (multipart), que grava
+ * no Storage com a SERVICE ROLE. NÃO usamos `supabase.storage.upload` direto porque o
+ * client tem `autoRefreshToken: false`: quando o access token expira (~1h), o upload
+ * direto chega ao Storage como `anon` e a política de INSERT (só `authenticated`) recusa
+ * com "new row violates row-level security policy". Indo pela Edge, usamos um token
+ * renovado (resolveAccessToken) e o service role ignora a RLS do Storage.
  */
 export async function uploadMenuImage(
   file: File,
   tenantId: string,
   itemId?: string,
 ): Promise<{ url: string | null; error: Error | null }> {
-  const bucket = 'menu-images';
+  try {
+    const compressed = await compressImage(file);
+    const recomprimido = compressed !== file; // virou JPEG
+    const baseName = (file.name.replace(/[^a-zA-Z0-9.\-_]/g, '') || 'foto');
+    const safeName = recomprimido ? baseName.replace(/\.[^.]+$/, '') + '.jpg' : baseName;
 
-  const compressed = await compressImage(file);
-  const recomprimido = compressed !== file; // virou JPEG
-  const baseName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '');
-  const safeName = recomprimido ? baseName.replace(/\.[^.]+$/, '') + '.jpg' : baseName;
-  const path = `${tenantId}/${itemId ?? 'temp'}/${Date.now()}-${safeName}`;
+    // Token fresco — o client não renova sozinho (autoRefreshToken:false).
+    const { accessToken, error: tokenErr } = await resolveAccessToken();
+    if (!accessToken) {
+      return { url: null, error: tokenErr ?? new Error('Sessão expirada. Faça login novamente.') };
+    }
 
-  const { error: uploadError } = await supabase.storage.from(bucket).upload(path, compressed, {
-    cacheControl: '31536000', // 1 ano — foto de cardápio quase não muda (cada URL é única por Date.now())
-    upsert: true,
-    contentType: recomprimido ? 'image/jpeg' : (file.type || undefined),
-  });
+    const form = new FormData();
+    form.append('file', compressed, safeName);
+    form.append('tenant_id', tenantId);
+    if (itemId) form.append('item_id', itemId);
 
-  if (uploadError) {
-    return { url: null, error: new Error(uploadError.message) };
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/menu-write`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        apikey: SUPABASE_ANON_KEY,
+        // NÃO definir Content-Type: o browser monta o boundary do multipart sozinho.
+      },
+      body: form,
+    });
+
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+    if (!res.ok || (data as Record<string, unknown>).error) {
+      const msg = (data as Record<string, unknown>).error || (data as Record<string, unknown>).message || `Upload falhou (HTTP ${res.status})`;
+      return { url: null, error: new Error(String(msg)) };
+    }
+    return { url: ((data as Record<string, unknown>).url as string) ?? null, error: null };
+  } catch (e) {
+    return { url: null, error: e instanceof Error ? e : new Error('Erro ao enviar a imagem') };
   }
-
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-  return { url: data?.publicUrl ?? null, error: null };
 }
