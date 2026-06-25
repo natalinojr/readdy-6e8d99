@@ -74,11 +74,16 @@ export default function MapaPin({
   }), [onChange]);
 
   return (
-    <div className={`w-full ${altura} rounded-xl overflow-hidden border border-zinc-200`}>
+    // touchAction:'none' + overscrollBehavior:'contain' impedem que arrastar o mapa
+    // dispare o "pull-to-refresh" do navegador no celular (o Leaflet trata o gesto).
+    <div
+      className={`w-full ${altura} rounded-xl overflow-hidden border border-zinc-200`}
+      style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+    >
       <MapContainer
         center={center}
         zoom={lat != null ? 16 : 13}
-        style={{ height: '100%', width: '100%' }}
+        style={{ height: '100%', width: '100%', touchAction: 'none', overscrollBehavior: 'contain' }}
         scrollWheelZoom
       >
         <TileLayer
