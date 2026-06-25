@@ -52,6 +52,7 @@ function rotaUsaTecladoNativo(): boolean {
   const p = window.location.pathname;
   return (
     p === '/delivery' || p.startsWith('/delivery/') || p.endsWith('-delivery') ||
+    p.startsWith('/motoboy/') || p.startsWith('/entregas/') ||
     p === '/mesa-qr' || p.startsWith('/mesa-qr/') ||
     p.startsWith('/mesa/') ||
     p.startsWith('/pedido/')
