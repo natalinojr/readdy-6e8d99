@@ -417,10 +417,10 @@ export async function invokeWithAuth<T = unknown>(
  * Comprime/redimensiona uma imagem no navegador antes do upload:
  * - lado maior limitado a maxSize px (mantém proporção)
  * - exporta JPEG com a qualidade dada
- * Reduz MUITO o tamanho (e o egress) — uma foto de celular de ~2 MB vira ~150 KB.
+ * Reduz MUITO o tamanho (e o egress) — uma foto de celular de ~2 MB vira ~60-90 KB.
  * Em caso de falha (ou formato que não recomprime bem), devolve o arquivo original.
  */
-async function compressImage(file: File, maxSize = 1000, quality = 0.7): Promise<Blob> {
+async function compressImage(file: File, maxSize = 700, quality = 0.6): Promise<Blob> {
   if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.type === 'image/svg+xml') {
     return file;
   }

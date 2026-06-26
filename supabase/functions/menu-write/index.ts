@@ -93,6 +93,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         .upload(fileName, uint8, {
           contentType: file.type,
           upsert: true,
+          // Cache longo: o nome do arquivo já tem Date.now() (cada upload = URL nova),
+          // então o navegador/CDN pode guardar a foto "para sempre" sem rebaixar a cada
+          // hora. Corta drasticamente o egress de visitas repetidas ao cardápio público.
+          cacheControl: '31536000',
         });
 
       if (uploadError) {
