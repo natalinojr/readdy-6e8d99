@@ -125,7 +125,7 @@ export default function ModoEntregaDelivery(props: Props) {
               <div className="flex-1 text-left">
                 <h3 className="text-lg font-black text-zinc-800 mb-1">Falar com a gente</h3>
                 <p className="text-sm text-zinc-500 mb-3">
-                  Tire dúvidas ou faça seu pedido direto no WhatsApp.
+                  Tire dúvidas direto no WhatsApp
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full border border-emerald-200/60 font-semibold">
