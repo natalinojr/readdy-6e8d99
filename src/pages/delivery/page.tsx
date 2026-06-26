@@ -57,10 +57,10 @@ export default function DeliveryPage() {
   // Captura a origem (utm_source) já na entrada, antes de o cliente navegar pelos passos.
   useEffect(() => { getOrderSource(); }, []);
 
-  // Título da aba = nome da loja (aparece no navegador interno do Instagram/WhatsApp).
+  // Título da aba (aparece no navegador interno do Instagram/WhatsApp).
   useEffect(() => {
     const prev = document.title;
-    if (data.tenant?.name) document.title = data.tenant.name;
+    if (data.tenant?.name) document.title = `Peça online — ${data.tenant.name}`;
     return () => { document.title = prev; };
   }, [data.tenant?.name]);
 
