@@ -4,6 +4,7 @@ interface Props {
   tenantName?: string;
   onSelecionar: (modo: 'entrega' | 'retirada') => void;
   enviando: boolean;
+  waUrl?: string;
 }
 
 export default function ModoEntregaDelivery(props: Props) {
@@ -12,6 +13,7 @@ export default function ModoEntregaDelivery(props: Props) {
   const tenantName = props.tenantName;
   const onSelecionar = props.onSelecionar;
   const enviando = props.enviando;
+  const waUrl = props.waUrl;
 
   return (
     <div className="min-h-screen flex flex-col bg-white">
@@ -107,6 +109,37 @@ export default function ModoEntregaDelivery(props: Props) {
             </div>
           </div>
         </button>
+
+        {/* Falar com a gente (WhatsApp) */}
+        {waUrl ? (
+          <a
+            href={waUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full bg-white rounded-2xl border-2 border-emerald-200 hover:border-emerald-400 p-6 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-emerald-100/50 group block"
+          >
+            <div className="flex items-start gap-5">
+              <div className="w-16 h-16 flex items-center justify-center bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl shrink-0 group-hover:scale-105 transition-transform">
+                <i className="ri-whatsapp-line text-white text-3xl" />
+              </div>
+              <div className="flex-1 text-left">
+                <h3 className="text-lg font-black text-zinc-800 mb-1">Falar com a gente</h3>
+                <p className="text-sm text-zinc-500 mb-3">
+                  Tire dúvidas ou faça seu pedido direto no WhatsApp.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full border border-emerald-200/60 font-semibold">
+                    <i className="ri-chat-3-line text-[10px] mr-1" />
+                    Atendimento no WhatsApp
+                  </span>
+                </div>
+              </div>
+              <div className="w-8 h-8 flex items-center justify-center rounded-full bg-emerald-50 group-hover:bg-emerald-100 transition-colors shrink-0">
+                <i className="ri-arrow-right-s-line text-emerald-500 text-xl" />
+              </div>
+            </div>
+          </a>
+        ) : null}
 
         {enviando ? (
           <div className="flex items-center gap-2 text-amber-600 text-sm font-semibold mt-2">

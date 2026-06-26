@@ -296,6 +296,7 @@ export default function DeliveryPage() {
         tenantName={tenant?.name}
         onSelecionar={handleConfirmarModo}
         enviando={enviando}
+        waUrl={lojaWaUrl}
       />
     );
   }
