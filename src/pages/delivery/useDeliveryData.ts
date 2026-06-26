@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type MutableRefObject } from 'react';
 import { supabase } from '@/lib/supabase';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 import { loadCart, saveCart } from '@/lib/cartStorage';
+import { trackPixel } from '@/lib/metaPixel';
 
 // Origem do pedido (campanha): lê utm_source da URL na 1ª visita e persiste na sessão,
 // pois o cliente navega vários passos antes de fechar o pedido (a query pode se perder).
@@ -1278,6 +1279,13 @@ export function useDeliveryData(storeSlug?: string) {
     const subtotal = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
     const total = subtotal + effectiveDeliveryFee;
 
+    // Pixel da Meta: o cliente iniciou o fechamento do pedido (funil de anúncio).
+    trackPixel('InitiateCheckout', {
+      value: total,
+      currency: 'BRL',
+      num_items: cart.reduce(function (s, i) { return s + i.quantidade; }, 0),
+    });
+
     const enderecoParts: string[] = [];
     if (street) enderecoParts.push(street);
     if (addressNumber) enderecoParts.push(addressNumber);
@@ -1356,8 +1364,11 @@ export function useDeliveryData(storeSlug?: string) {
           setEnviando(false);
           return;
         }
+        const totalConfirmado = data.data?.total || total;
         setNumeroPedido(data.data?.number || '');
-        setOrderTotal(data.data?.total || total);
+        setOrderTotal(totalConfirmado);
+        // Pixel da Meta: PEDIDO CONFIRMADO — evento de conversão principal pro anúncio.
+        trackPixel('Purchase', { value: totalConfirmado, currency: 'BRL' });
         setPedidoConfirmado(true);
         setCart([]);
         setShowCart(false);
