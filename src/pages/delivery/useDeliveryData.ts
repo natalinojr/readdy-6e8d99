@@ -3,6 +3,22 @@ import { supabase } from '@/lib/supabase';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 import { loadCart, saveCart } from '@/lib/cartStorage';
 
+// Origem do pedido (campanha): lê utm_source da URL na 1ª visita e persiste na sessão,
+// pois o cliente navega vários passos antes de fechar o pedido (a query pode se perder).
+// Ex.: link do anúncio no Instagram = ?utm_source=instagram
+const ORDER_SRC_KEY = 'erpos_delivery_src';
+export function getOrderSource(): string | null {
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get('utm_source');
+    if (fromUrl && fromUrl.trim()) {
+      const v = fromUrl.trim().toLowerCase().slice(0, 40);
+      sessionStorage.setItem(ORDER_SRC_KEY, v);
+      return v;
+    }
+    return sessionStorage.getItem(ORDER_SRC_KEY);
+  } catch { return null; }
+}
+
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 type TenantInfo = {
@@ -1330,6 +1346,7 @@ export function useDeliveryData(storeSlug?: string) {
         cash_amount: cashAmountNum > 0 ? cashAmountNum : undefined,
         order_type: modoEntrega,
         client_request_id: clientRequestId,
+        order_source: getOrderSource(),
       }),
     })
       .then(function (res) { return res.json(); })

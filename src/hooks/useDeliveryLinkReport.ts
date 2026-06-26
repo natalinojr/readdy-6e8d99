@@ -10,6 +10,7 @@ export interface HoraPico { hora: string; pedidos: number; }
 export interface DiaSemana { dia: string; pedidos: number; receita: number; }
 export interface TopCliente { nome: string; pedidos: number; total: number; }
 export interface StatusItem { status: string; label: string; pedidos: number; }
+export interface OrigemItem { origem: string; pedidos: number; receita: number; }
 
 export interface DeliveryLinkData {
   totalPedidos: number;
@@ -30,9 +31,21 @@ export interface DeliveryLinkData {
   porDiaSemana: DiaSemana[];
   topClientes: TopCliente[];
   porStatus: StatusItem[];
+  porOrigem: OrigemItem[];
 }
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+// Rótulo amigável para a origem (utm_source) do pedido.
+const ORIGEM_LABEL: Record<string, string> = {
+  instagram: 'Instagram', facebook: 'Facebook', whatsapp: 'WhatsApp',
+  google: 'Google', tiktok: 'TikTok', site: 'Site', bio: 'Link da bio',
+};
+function origemLabel(src: string | null): string {
+  const s = (src ?? '').trim().toLowerCase();
+  if (!s) return 'Direto';
+  return ORIGEM_LABEL[s] ?? (s.charAt(0).toUpperCase() + s.slice(1));
+}
 
 const STATUS_LABEL: Record<string, string> = {
   new: 'Novo', received: 'Recebido', confirmed: 'Confirmado', preparing: 'Em preparo',
@@ -44,7 +57,7 @@ const EMPTY: DeliveryLinkData = {
   totalPedidos: 0, entregas: 0, retiradas: 0, faturamento: 0, ticketMedio: 0,
   taxaArrecadada: 0, distMedia: null, distMax: null, entregasComKm: 0, entregasKmTotal: 0,
   distMaisPedida: null, distBuckets: [], custoPorDia: [], tempoPreparoMedio: null, horariosPico: [],
-  porDiaSemana: [], topClientes: [], porStatus: [],
+  porDiaSemana: [], topClientes: [], porStatus: [], porOrigem: [],
 };
 
 // Nome do cliente sem o endereço (destination_name vem como "Nome - Endereço").
@@ -92,7 +105,7 @@ export function useDeliveryLinkReport(periodo: string) {
 
       const { data, error } = await supabase
         .from('orders')
-        .select('id, total_amount, subtotal, delivery_fee, delivery_distance_km, delivery_platform, destination_name, created_at, out_for_delivery_at, status')
+        .select('id, total_amount, subtotal, delivery_fee, delivery_distance_km, delivery_platform, delivery_source, destination_name, created_at, out_for_delivery_at, status')
         .eq('tenant_id', user.tenantId)
         .eq('origin_type', 'delivery')
         .in('delivery_platform', ['propria', 'retirada'])
@@ -119,6 +132,7 @@ export function useDeliveryLinkReport(periodo: string) {
       const diaMap: Record<number, { pedidos: number; receita: number }> = {};
       const clienteMap: Record<string, { pedidos: number; total: number }> = {};
       const statusMap: Record<string, number> = {};
+      const origemMap: Record<string, { pedidos: number; receita: number }> = {};
       const tempos: number[] = [];
 
       rows.forEach((o) => {
@@ -158,6 +172,10 @@ export function useDeliveryLinkReport(periodo: string) {
         const st = String(o.status ?? 'new');
         statusMap[st] = (statusMap[st] ?? 0) + 1;
 
+        const origem = origemLabel((o as { delivery_source?: string | null }).delivery_source ?? null);
+        if (!origemMap[origem]) origemMap[origem] = { pedidos: 0, receita: 0 };
+        origemMap[origem].pedidos += 1; origemMap[origem].receita += total;
+
         if (!isRetirada && o.out_for_delivery_at) {
           const min = (new Date(o.out_for_delivery_at as string).getTime() - new Date(o.created_at as string).getTime()) / 60000;
           if (min >= 0 && min < 240) tempos.push(min);
@@ -187,6 +205,10 @@ export function useDeliveryLinkReport(periodo: string) {
         .map(([status, pedidos]) => ({ status, label: STATUS_LABEL[status] ?? status, pedidos }))
         .sort((a, b) => b.pedidos - a.pedidos);
 
+      const porOrigem: OrigemItem[] = Object.entries(origemMap)
+        .map(([origem, v]) => ({ origem, pedidos: v.pedidos, receita: v.receita }))
+        .sort((a, b) => b.pedidos - a.pedidos);
+
       setDados({
         totalPedidos: rows.length,
         entregas, retiradas, faturamento,
@@ -197,7 +219,7 @@ export function useDeliveryLinkReport(periodo: string) {
         entregasComKm, entregasKmTotal,
         distMaisPedida, distBuckets, custoPorDia,
         tempoPreparoMedio: tempos.length > 0 ? Math.round(tempos.reduce((a, b) => a + b, 0) / tempos.length) : null,
-        horariosPico, porDiaSemana, topClientes, porStatus,
+        horariosPico, porDiaSemana, topClientes, porStatus, porOrigem,
       });
     } catch (e) {
       console.error('useDeliveryLinkReport:', e);

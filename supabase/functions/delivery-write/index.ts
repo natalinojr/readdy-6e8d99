@@ -823,7 +823,13 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         birth_date, gender,
         voucher_code,
         client_request_id,
+        order_source,
       } = body;
+
+      // Origem do pedido (utm_source do link, ex.: "instagram"). So letras/numeros/._-, minusculo, ate 40 chars.
+      const deliverySource = (typeof order_source === "string" && order_source.trim())
+        ? order_source.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 40) || null
+        : null;
 
       // Normaliza gênero p/ os valores aceitos no banco (ou null).
       const normGender = (typeof gender === "string" && ["masculino", "feminino", "outro"].includes(gender.trim().toLowerCase()))
@@ -1199,6 +1205,11 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       }
 
       if (!orderId) return jsonErr("Falha ao criar pedido", 500);
+
+      // Grava a origem do pedido (utm_source do link, ex.: campanha do Instagram) p/ relatorio.
+      if (deliverySource) {
+        try { await admin.from("orders").update({ delivery_source: deliverySource }).eq("id", orderId); } catch { /* nao bloqueia o pedido */ }
+      }
 
       // Grava o pin do cliente + distancia da rota (delivery por distancia / link do motoboy na Fase 4)
       if (!isRetirada && hasPin) {

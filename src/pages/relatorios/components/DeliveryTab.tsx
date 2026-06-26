@@ -78,6 +78,35 @@ export default function DeliveryTab({ periodo }: Props) {
         <Kpi label="Retiradas" value={String(dados.retiradas)} sub="cliente busca na loja" icon="ri-store-2-line" accent="bg-zinc-100 text-zinc-600" />
       </div>
 
+      {/* Origem dos pedidos (de onde o cliente veio: Instagram, Direto, etc.) */}
+      <div className="bg-white rounded-2xl border border-zinc-100 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+            <i className="ri-share-forward-line text-sm" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-zinc-800">Origem dos pedidos</h3>
+            <p className="text-[11px] text-zinc-400">De onde o cliente veio (link do anúncio com <span className="font-mono">?utm_source=…</span>). "Direto" = sem campanha.</p>
+          </div>
+        </div>
+        <div className="space-y-2">
+          {dados.porOrigem.map((o) => {
+            const pct = dados.totalPedidos > 0 ? (o.pedidos / dados.totalPedidos) * 100 : 0;
+            return (
+              <div key={o.origem} className="flex items-center gap-3">
+                <span className="w-24 text-sm font-semibold text-zinc-700 truncate shrink-0">{o.origem}</span>
+                <div className="flex-1 h-2 bg-zinc-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-violet-500 rounded-full" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="text-xs text-zinc-400 shrink-0 w-12 text-right">{pct.toFixed(0)}%</span>
+                <span className="text-sm font-bold text-zinc-800 shrink-0 w-10 text-right">{o.pedidos}</span>
+                <span className="text-sm font-bold text-zinc-800 shrink-0 w-20 text-right">{fmt(o.receita)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Custo com motoboy — detalhado */}
       <div className="bg-white rounded-2xl border border-zinc-100 p-4">
         <div className="flex items-center gap-2 mb-3">

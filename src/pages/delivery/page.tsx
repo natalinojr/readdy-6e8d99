@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useDeliveryData } from './useDeliveryData';
+import { useDeliveryData, getOrderSource } from './useDeliveryData';
 import IdentificacaoDelivery from './components/IdentificacaoDelivery';
 import EnderecoDelivery from './components/EnderecoDelivery';
 import EnderecoPinDelivery from './components/EnderecoPinDelivery';
@@ -53,6 +53,16 @@ function getStoreSlugFromUrl(): string | undefined {
 export default function DeliveryPage() {
   const storeSlug = getStoreSlugFromUrl();
   const data = useDeliveryData(storeSlug);
+
+  // Captura a origem (utm_source) já na entrada, antes de o cliente navegar pelos passos.
+  useEffect(() => { getOrderSource(); }, []);
+
+  // Título da aba = nome da loja (aparece no navegador interno do Instagram/WhatsApp).
+  useEffect(() => {
+    const prev = document.title;
+    if (data.tenant?.name) document.title = data.tenant.name;
+    return () => { document.title = prev; };
+  }, [data.tenant?.name]);
 
   const step = data.step;
   const tenant = data.tenant;
