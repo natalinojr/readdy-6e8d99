@@ -653,6 +653,7 @@ export default function ConfigDeliveryPage() {
               lng={storeLng}
               onChange={function (lat, lng) { setStoreLat(lat); setStoreLng(lng); }}
               altura="h-72"
+              confirmed={storeLat != null && storeLng != null}
             />
             {storeLat != null && storeLng != null ? (
               <p className="text-[11px] text-zinc-500">

@@ -565,18 +565,20 @@ export function useDeliveryData(storeSlug?: string) {
   const [addressLat, setAddressLat] = useState<number | null>(null);
   const [addressLng, setAddressLng] = useState<number | null>(null);
 
-  const initializedRef = useRef(false);
   const prevStoreSlugRef = useRef<string | undefined>(storeSlug);
   const productionPartsRef = useRef<ProductionPartsMap | undefined>();
 
   // ── Inicializar ──────────────────────────────────────────────────────────────
 
   useEffect(function () {
-    // Re-inicializa se o storeSlug mudar (ex: navegacao entre links de lojas diferentes)
+    // Re-inicializa a cada mudanca de storeSlug E a cada (re)montagem do componente.
+    // NAO usamos mais uma trava "ja inicializou" (initializedRef): combinada com o
+    // duplo-mount do StrictMode em dev (e qualquer remontagem em prod) ela deixava a
+    // tela presa em "Carregando" — o 1o init era cancelado pela limpeza e o 2o nem
+    // rodava. Como as deps sao [storeSlug], este efeito so dispara em mudanca de slug
+    // ou (re)montagem; a flag `cancelled` por execucao garante que apenas o resultado
+    // da ultima execucao aplique o estado.
     const slugChanged = prevStoreSlugRef.current !== storeSlug;
-    if (initializedRef.current && !slugChanged) return;
-
-    initializedRef.current = true;
     prevStoreSlugRef.current = storeSlug;
 
     // Reset states para o novo slug

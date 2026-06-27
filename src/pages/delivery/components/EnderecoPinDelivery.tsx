@@ -114,6 +114,7 @@ export default function EnderecoPinDelivery(props: Props) {
   // público limita ~1 req/s.
   function aplicarPin(lat: number, lng: number) {
     onPinChange(lat, lng);
+    setGeoError(''); // já tem um ponto — some o aviso de "localização desativada"
     const reqId = ++geoReqRef.current;
     setAutoEndereco(true);
     if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
@@ -172,8 +173,8 @@ export default function EnderecoPinDelivery(props: Props) {
         setGeoLoading(false);
         setGeoError(
           err.code === err.PERMISSION_DENIED
-            ? 'Permissão de localização negada. Arraste o mapa para posicionar o pin.'
-            : 'Não foi possível obter sua localização. Arraste o mapa para posicionar o pin.',
+            ? 'Localização desativada. Arraste o mapa até a sua casa e toque em "Confirmar esta localização".'
+            : 'Não conseguimos te localizar. Arraste o mapa até a sua casa e toque em "Confirmar esta localização".',
         );
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
@@ -271,19 +272,24 @@ export default function EnderecoPinDelivery(props: Props) {
               )}
             </button>
           </div>
-          <MapaPin lat={addressLat} lng={addressLng} onChange={aplicarPin} defaultCenter={defaultCenter} altura="h-60" />
+          <MapaPin lat={addressLat} lng={addressLng} onChange={aplicarPin} defaultCenter={defaultCenter} altura="h-60" confirmed={temPin} />
           {autoEndereco ? (
             <p className="text-[11px] text-amber-600 mt-2 flex items-center gap-1 font-medium">
               <i className="ri-loader-4-line animate-spin text-xs" />
               Buscando o endereço deste ponto...
             </p>
+          ) : temPin ? (
+            <p className="text-[11px] text-green-600 mt-2 flex items-center gap-1 font-medium">
+              <i className="ri-check-line text-xs" />
+              Localização marcada — preenchemos o endereço abaixo; confira.
+            </p>
           ) : (
             <p className="text-[11px] text-zinc-500 mt-2 flex items-center gap-1">
               <i className="ri-information-line text-zinc-400 text-xs" />
-              Toque no mapa para marcar sua casa — preenchemos o endereço; confira embaixo.
+              Arraste o mapa até a sua casa e toque em <span className="font-semibold text-amber-600">Confirmar esta localização</span>.
             </p>
           )}
-          {geoError ? (
+          {geoError && !temPin ? (
             <p className="text-[11px] text-amber-600 mt-1.5 flex items-center gap-1">
               <i className="ri-error-warning-line text-xs" />{geoError}
             </p>
