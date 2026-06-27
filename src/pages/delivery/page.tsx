@@ -528,6 +528,20 @@ export default function DeliveryPage() {
                     Falar com a loja
                   </a>
                 ) : null}
+                {/* Sair: encerra a sessão neste aparelho p/ entrar com outro número */}
+                <button
+                  type="button"
+                  onClick={function () {
+                    if (window.confirm('Sair e entrar com outro número? Seu carrinho atual será esvaziado.')) {
+                      data.handleSair();
+                    }
+                  }}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-lg transition-colors whitespace-nowrap"
+                  title="Sair e usar outro número"
+                >
+                  <i className="ri-logout-box-r-line text-[11px]" />
+                  Sair
+                </button>
               </span>
               <span className="hidden sm:inline">
                 <i className={(modoEntrega === 'retirada' ? 'ri-store-2-line' : 'ri-home-4-line') + ' text-[10px] mr-1'} />

@@ -1395,6 +1395,40 @@ export function useDeliveryData(storeSlug?: string) {
     setStep('cardapio');
   }
 
+  // ── Sair / trocar de número ─────────────────────────────────────────────────
+  // Encerra a sessão do cliente neste aparelho: apaga o telefone salvo (auto-login),
+  // limpa carrinho/PIN/endereços e volta pra tela de identificação, pra outra pessoa
+  // (ou o mesmo cliente com outro número) entrar do zero.
+  function handleSair() {
+    try {
+      localStorage.removeItem('delivery_phone');
+      localStorage.removeItem(PIN_STORAGE_KEY);
+    } catch { /* armazenamento indisponível — ignora */ }
+
+    setCart([]); // saveCart remove a chave do carrinho quando vazio
+    setCustomer(null);
+    setPhone('');
+    setCustomerName('');
+    setDataNascimento('');
+    setGenero('');
+    setSavedAddresses([]);
+    setSelectedAddressId(null);
+    setStreet('');
+    setAddressNumber('');
+    setComplement('');
+    setReferencePoint('');
+    setBairro('');
+    setSelectedNeighborhoodId('');
+    setVoucherInput('');
+    setVoucherCodigo('');
+    setVoucherDesconto(0);
+    setVoucherMsg('');
+    setPedidoConfirmado(false);
+    setNumeroPedido('');
+    setErrorMsg('');
+    setStep('identificacao');
+  }
+
   // ── Voucher (cupom) no checkout do delivery ─────────────────────────────────
 
   function voucherMotivo(reason?: string): string {
@@ -1618,6 +1652,7 @@ export function useDeliveryData(storeSlug?: string) {
     handleFecharEdicao,
     handleConfirmarPedido,
     handleNovoPedido,
+    handleSair,
     handleChangeNeighborhood,
     enderecoFromCardapio,
     setEnderecoFromCardapio,
