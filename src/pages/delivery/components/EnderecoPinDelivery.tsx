@@ -181,11 +181,13 @@ export default function EnderecoPinDelivery(props: Props) {
     );
   }
 
-  // Sempre que ABRIR o formulário de adicionar endereço, começa o pin na LOCALIZAÇÃO
-  // ATUAL do usuário. Se ele negar a permissão, fica no padrão e ajusta arrastando o
-  // mapa. (No modo 'edit' mantém o pin do endereço salvo.)
+  // Ao ABRIR o formulário de adicionar endereço, tenta começar o pin na LOCALIZAÇÃO
+  // ATUAL do usuário — MAS só se ainda não houver um pin (ex.: pin restaurado deste
+  // aparelho). Sem isso, a tentativa automática falhava e deixava um aviso "fantasma"
+  // mesmo já tendo um ponto. Se a pessoa negar a permissão, fica no padrão e ajusta
+  // arrastando o mapa. (No modo 'edit' mantém o pin do endereço salvo.)
   useEffect(function () {
-    if (formMode === 'add') usarMinhaLocalizacao();
+    if (formMode === 'add' && !temPin) usarMinhaLocalizacao();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formMode]);
 
@@ -289,7 +291,7 @@ export default function EnderecoPinDelivery(props: Props) {
               Arraste o mapa até a sua casa e toque em <span className="font-semibold text-amber-600">Confirmar esta localização</span>.
             </p>
           )}
-          {geoError && !temPin ? (
+          {geoError ? (
             <p className="text-[11px] text-amber-600 mt-1.5 flex items-center gap-1">
               <i className="ri-error-warning-line text-xs" />{geoError}
             </p>
@@ -338,45 +340,49 @@ export default function EnderecoPinDelivery(props: Props) {
     );
   }
 
-  function renderCamposTexto(comNome: boolean) {
+  // Dados pessoais (só novo cliente): nome, nascimento, gênero — ficam ANTES do mapa.
+  function renderCamposPessoais() {
     return (
       <>
-        {comNome ? (
+        <div>
+          <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+            Seu nome <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text" value={nome} onChange={function (e) { onNomeChange(e.target.value); }}
+            placeholder="Ex: João Silva" maxLength={60}
+            className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
+              (showErrors && !nomeOk ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')}
+          />
+        </div>
+
+        <div className="space-y-3">
+          {/* Data ocupa a linha inteira — em meia largura o ano ficava cortado. */}
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-              Seu nome <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text" value={nome} onChange={function (e) { onNomeChange(e.target.value); }}
-              placeholder="Ex: João Silva" maxLength={60}
-              className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
-                (showErrors && !nomeOk ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')}
-            />
+            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nascimento</label>
+            <SeletorDataNascimento value={nascimento} onChange={onNascimentoChange} />
           </div>
-        ) : null}
-
-        {comNome ? (
-          <div className="space-y-3">
-            {/* Data ocupa a linha inteira — em meia largura o ano ficava cortado. */}
-            <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nascimento</label>
-              <SeletorDataNascimento value={nascimento} onChange={onNascimentoChange} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Gênero</label>
-              <select
-                value={genero} onChange={function (e) { onGeneroChange(e.target.value); }}
-                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all bg-white"
-              >
-                <option value="">Prefiro não dizer</option>
-                <option value="masculino">Masculino</option>
-                <option value="feminino">Feminino</option>
-                <option value="outro">Outro</option>
-              </select>
-            </div>
+          <div>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Gênero</label>
+            <select
+              value={genero} onChange={function (e) { onGeneroChange(e.target.value); }}
+              className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all bg-white"
+            >
+              <option value="">Prefiro não dizer</option>
+              <option value="masculino">Masculino</option>
+              <option value="feminino">Feminino</option>
+              <option value="outro">Outro</option>
+            </select>
           </div>
-        ) : null}
+        </div>
+      </>
+    );
+  }
 
+  // Endereço em texto: rua/número, bairro, complemento, referência — ficam LOGO ABAIXO do mapa.
+  function renderCamposEndereco() {
+    return (
+      <>
         <div className="grid grid-cols-3 gap-3">
           <div className="col-span-2">
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Rua <span className="text-red-500">*</span></label>
@@ -569,7 +575,13 @@ export default function EnderecoPinDelivery(props: Props) {
         ) : (
           /* ── FORM (novo cliente / add / edit) ── */
           <>
-            {renderMapaEEstimativa()}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Celular</label>
+              <input type="tel" value={phone} readOnly className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg bg-zinc-50 text-zinc-600" />
+            </div>
+
+            {/* Dados pessoais (novo cliente) — antes do mapa */}
+            {!isExistingCustomer ? renderCamposPessoais() : null}
 
             {/* Tipo de endereço (só para clientes existentes na lista) */}
             {temListaSalva || formMode === 'edit' ? (
@@ -603,12 +615,11 @@ export default function EnderecoPinDelivery(props: Props) {
               </div>
             ) : null}
 
-            <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Celular</label>
-              <input type="tel" value={phone} readOnly className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg bg-zinc-50 text-zinc-600" />
-            </div>
+            {/* Mapa + taxa estimada — entre os dados pessoais e o endereço */}
+            {renderMapaEEstimativa()}
 
-            {renderCamposTexto(!isExistingCustomer)}
+            {/* Endereço (rua, número, bairro, complemento, referência) — logo abaixo do mapa */}
+            {renderCamposEndereco()}
 
             {error ? (
               <div className="flex items-center gap-2 px-3 py-2.5 bg-red-50 border border-red-100 rounded-lg">
