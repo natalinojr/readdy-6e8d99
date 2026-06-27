@@ -12,6 +12,8 @@ import { usePedidosAgrupados } from '@/hooks/usePedidosAgrupados';
 import type { Voucher } from '@/types/vouchers';
 import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
 import EtapaSelecionarPedidos from './pagamento/EtapaSelecionarPedidos';
+import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
+import CortesiaDetalhesModal from './CortesiaDetalhesModal';
 import type { KDSPedido } from '@/types/kds';
 
 interface VoucherAplicado {
@@ -96,6 +98,12 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     orderId: string;
     orderNumber: string;
   } | null>(null);
+
+  // ── Cortesia (lançada no momento de pagar, com liberação de gerente/admin) ──
+  const [showAutorizacaoCortesia, setShowAutorizacaoCortesia] = useState(false);
+  const [showCortesiaDetalhes, setShowCortesiaDetalhes] = useState(false);
+  const [cortesiaAutorTemp, setCortesiaAutorTemp] = useState<string | null>(null);
+  const [foiCortesia, setFoiCortesia] = useState(false);
 
   // ── Voucher state ──────────────────────────────────────────────────────────
   const [voucherOpen, setVoucherOpen] = useState(false);
@@ -491,6 +499,46 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     }
   };
 
+  // ── Finaliza o pedido do carrinho como cortesia (R$ 0,00) ──
+  // Passa a cortesia explicitamente para o finalizarPedido (sem depender do estado
+  // isCortesia do contexto). Liberação de gerente/admin já validada antes deste ponto.
+  const handleConfirmarCortesia = async (destinatario: string, motivo: string) => {
+    if (confirmandoRef.current) return;
+    confirmandoRef.current = true;
+    setConfirmando(true);
+    setShowCortesiaDetalhes(false);
+
+    const carrinhoSnapshot = [...carrinho];
+    const destinoSnapshot = destino;
+    try {
+      const result = await finalizarPedido([], undefined, {
+        autorizadoPor: cortesiaAutorTemp,
+        destinatario,
+        motivo,
+      });
+      const seq = parseInt(result.number.replace(/\D/g, '').slice(-4)) || 1;
+      setNumeroPedidoFinal(seq);
+      setOrderIdSucesso(result.orderId);
+      marcarComoPago(seq);
+      setCarrinhoParaReimpressao(carrinhoSnapshot);
+      setDestinoParaReimpressao(destinoSnapshot);
+      setParticipantNameParaReimpressao(null);
+      setPedidosVinculadosComprovante([]);
+      setPagamentosFinal([]);
+      setFoiCortesia(true);
+      setSucesso(true);
+      toastSuccess('Cortesia confirmada!', `#${result.number} — registrado como cortesia`);
+      setTimeout(() => reloadOrders(), 500);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[PagamentoModal] handleConfirmarCortesia error:', msg);
+      toastError('Erro ao registrar cortesia', msg);
+    } finally {
+      confirmandoRef.current = false;
+      setConfirmando(false);
+    }
+  };
+
   const handleDismissAlertaParcial = useCallback(() => setAlertaParcial(null), []);
 
   // ── Tela de sucesso tem PRIORIDADE sobre qualquer etapa ──
@@ -525,9 +573,17 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             <i className={`text-3xl ${alertaParcial ? 'ri-alert-line text-amber-500' : 'ri-check-line text-green-500'}`} />
           </div>
           <h2 className="text-xl font-bold text-zinc-900 mb-1">
-            {alertaParcial ? 'Pedido Registrado (com aviso)' : 'Pedido Finalizado!'}
+            {alertaParcial ? 'Pedido Registrado (com aviso)' : foiCortesia ? 'Cortesia Registrada!' : 'Pedido Finalizado!'}
           </h2>
-          <p className="text-zinc-500 text-sm">#{String(numeroPedidoFinal).padStart(4, '0')} · Enviado para o KDS · {formatPrice(totalComDesconto)}</p>
+          <p className="text-zinc-500 text-sm">
+            #{String(numeroPedidoFinal).padStart(4, '0')} · Enviado para o KDS · {foiCortesia ? 'Cortesia · R$ 0,00' : formatPrice(totalComDesconto)}
+          </p>
+          {foiCortesia && cortesiaAutorTemp && (
+            <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 px-2 py-1 rounded-full">
+              <i className="ri-gift-line text-violet-500" />
+              Cortesia autorizada por {cortesiaAutorTemp}
+            </span>
+          )}
           {/* PDV e operador que registrou */}
           <div className="mt-2 flex items-center gap-2 flex-wrap justify-center">
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-500 bg-zinc-100 px-2 py-1 rounded-full">
@@ -595,7 +651,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                         printItems,
                         printDestino,
                         mapaEstacoes,
-                        totalComDesconto,
+                        foiCortesia ? 0 : totalComDesconto,
                       );
                       toastSuccess('Comanda enfileirada', 'A impressora vai imprimir assim que estiver disponível.');
                     } catch (e) {
@@ -609,7 +665,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                 </button>
                 <button
                   onClick={async () => {
-                    const result = await printSimpleReceipt(numeroPedidoFinal, carrinhoParaReimpressao, totalComDesconto, desconto, pagamentosFinal, destinoParaReimpressao, impressora, true, pedidosVinculadosComprovante, participantNameParaReimpressao);
+                    const result = await printSimpleReceipt(numeroPedidoFinal, carrinhoParaReimpressao, foiCortesia ? 0 : totalComDesconto, desconto, pagamentosFinal, destinoParaReimpressao, impressora, true, pedidosVinculadosComprovante, participantNameParaReimpressao);
                     if (!result.success) {
                       toastWarning('Impressão não disponível', result.error || 'Agente local não respondeu. Verifique se o agente está rodando.');
                     }
@@ -1044,7 +1100,18 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-4 border-t border-zinc-200">
+        <div className="px-5 py-4 border-t border-zinc-200 space-y-2">
+          {/* Cortesia — só para o carrinho atual (sem pedidos vinculados) e com liberação gerente/admin */}
+          {carrinho.length > 0 && pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length === 0 && (
+            <button
+              onClick={() => setShowAutorizacaoCortesia(true)}
+              disabled={confirmando}
+              className="w-full py-2.5 border-2 border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap text-sm flex items-center justify-center gap-2"
+            >
+              <i className="ri-gift-line text-base" />
+              Lançar como Cortesia (R$ 0,00)
+            </button>
+          )}
           <button
             onClick={handleFinalizar}
             disabled={restante > 0.01 || confirmando}
@@ -1082,6 +1149,31 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             <p className="text-xs text-zinc-500 mt-0.5">Enviando para o KDS, aguarde</p>
           </div>
         </div>
+      )}
+
+      {/* Cortesia — autorização gerente/admin */}
+      {showAutorizacaoCortesia && (
+        <AutorizacaoGerenteModal
+          titulo="Autorizar Cortesia"
+          descricao="Informe as credenciais de gerente ou admin para liberar este pedido como cortesia (R$ 0,00)."
+          niveisPermitidos={['gerente', 'admin']}
+          tenantId={user?.tenantId ?? ''}
+          onAutorizado={(autorizadoPor) => {
+            setCortesiaAutorTemp(autorizadoPor);
+            setShowAutorizacaoCortesia(false);
+            setShowCortesiaDetalhes(true);
+          }}
+          onCancelar={() => setShowAutorizacaoCortesia(false)}
+        />
+      )}
+
+      {/* Cortesia — destinatário + motivo */}
+      {showCortesiaDetalhes && (
+        <CortesiaDetalhesModal
+          autorizadoPor={cortesiaAutorTemp ?? 'Gerente'}
+          onConfirmar={(destinatario, motivo) => handleConfirmarCortesia(destinatario, motivo)}
+          onCancelar={() => { setShowCortesiaDetalhes(false); setCortesiaAutorTemp(null); }}
+        />
       )}
     </div>
   );

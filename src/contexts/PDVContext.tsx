@@ -100,7 +100,7 @@ interface PDVContextData {
   valorDesconto: number;
   valorTaxaServico: number;
   total: number;
-  finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; paymentGroupId?: string | null }) => Promise<FinalizarResult>;
+  finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; paymentGroupId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }) => Promise<FinalizarResult>;
   enviarParaCozinha: (destinoOverride?: DestinoInfo | null) => Promise<FinalizarResult>;
 }
 
@@ -311,7 +311,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     });
   }, [carrinho, destino]);
 
-  const finalizarPedido = useCallback(async (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; paymentGroupId?: string | null }): Promise<FinalizarResult> => {
+  const finalizarPedido = useCallback(async (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; paymentGroupId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }): Promise<FinalizarResult> => {
     const freshSession = await ensureFreshSession();
     if (!freshSession) {
       throw new Error('Sessao de autenticacao expirada. Por favor, faca login novamente.');
@@ -342,10 +342,12 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       : null;
 
     // ── Cortesia: zeramos o total e aplicamos desconto total ──────────────
-    const cortesiaAtiva = isCortesia;
-    const cortesiaAutor = cortesiaAutorizadaPor;
-    const cortesiaDest = cortesiaDestinatario;
-    const cortesiaMot = cortesiaMotivo;
+    // cortesiaOverride permite acionar a cortesia explicitamente (ex.: no modal de
+    // pagamento) sem depender do estado isCortesia do contexto (evita stale closure).
+    const cortesiaAtiva = cortesiaOverride ? true : isCortesia;
+    const cortesiaAutor = cortesiaOverride ? (cortesiaOverride.autorizadoPor ?? null) : cortesiaAutorizadaPor;
+    const cortesiaDest = cortesiaOverride ? (cortesiaOverride.destinatario ?? null) : cortesiaDestinatario;
+    const cortesiaMot = cortesiaOverride ? (cortesiaOverride.motivo ?? null) : cortesiaMotivo;
     const actualDesconto = cortesiaAtiva ? subtotal : valorDesconto;
     const actualTaxaServico = cortesiaAtiva ? 0 : valorTaxaServico;
     const actualTotal = cortesiaAtiva ? 0 : total;

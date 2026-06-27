@@ -33,7 +33,6 @@ import OfflineStatusBar from '@/components/feature/OfflineStatusBar';
 import AlertaSessaoEsquecida from '@/components/feature/AlertaSessaoEsquecida';
 import EstoqueZerarModal from './components/EstoqueZerarModal';
 import { useEstoqueAlertaPDV, type InsumoZerando } from '@/hooks/useEstoqueAlertaPDV';
-import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
 
 type ModalState = 'none' | 'opcoes' | 'destino' | 'pagamento' | 'sangria'
   | 'iniciar_sessao' | 'abertura_caixa' | 'fechar_sessao' | 'abrir_mesa';
@@ -305,111 +304,6 @@ function AtalhosTeclado() {
   );
 }
 
-/* ─── Modal de detalhes da cortesia (destinatário + motivo) ─── */
-function CortesiaDetalhesModal({
-  autorizadoPor,
-  onConfirmar,
-  onCancelar,
-}: {
-  autorizadoPor: string;
-  onConfirmar: (destinatario: string, motivo: string) => void;
-  onCancelar: () => void;
-}) {
-  const [destinatario, setDestinatario] = useState('');
-  const [motivo, setMotivo] = useState('');
-  const [erro, setErro] = useState('');
-
-  const handleConfirmar = () => {
-    if (!destinatario.trim()) {
-      setErro('Informe o destinatário da cortesia.');
-      return;
-    }
-    if (!motivo.trim() || motivo.trim().length < 5) {
-      setErro('Informe o motivo (mínimo 5 caracteres).');
-      return;
-    }
-    onConfirmar(destinatario.trim(), motivo.trim());
-  };
-
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className="bg-violet-50 border-b border-violet-100 px-5 py-4 flex items-center gap-3">
-          <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-violet-100 flex-shrink-0">
-            <i className="ri-gift-line text-violet-600 text-xl" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-black text-violet-800 leading-none">Detalhes da Cortesia</h2>
-            <p className="text-xs text-violet-600 mt-0.5 leading-snug">Autorizado por: {autorizadoPor}</p>
-          </div>
-          <button
-            onClick={onCancelar}
-            className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-violet-100 text-violet-400 cursor-pointer transition-colors flex-shrink-0"
-          >
-            <i className="ri-close-line text-base" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-4">
-          <div>
-            <label className="block text-[11px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">
-              Para quem <span className="text-red-400">*</span>
-            </label>
-            <input
-              type="text"
-              value={destinatario}
-              onChange={(e) => { setDestinatario(e.target.value); setErro(''); }}
-              placeholder="Ex: João da Silva"
-              className="w-full border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-800 focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">
-              Motivo / observação <span className="text-red-400">*</span>
-            </label>
-            <textarea
-              value={motivo}
-              onChange={(e) => { setMotivo(e.target.value); setErro(''); }}
-              placeholder="Ex: cliente VIP aniversário (mín. 5 caracteres)"
-              rows={3}
-              maxLength={500}
-              className="w-full border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-800 focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 resize-none"
-            />
-            <p className="text-[10px] text-zinc-400 mt-1">{motivo.length}/500 caracteres</p>
-          </div>
-
-          {erro && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
-              <i className="ri-error-warning-line text-red-500 text-sm flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-red-700 font-medium">{erro}</p>
-            </div>
-          )}
-
-          <div className="flex gap-2.5 pt-1">
-            <button
-              type="button"
-              onClick={onCancelar}
-              className="flex-1 py-2.5 border border-zinc-200 text-zinc-600 text-sm font-semibold rounded-xl cursor-pointer hover:bg-zinc-50 transition-colors whitespace-nowrap"
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              onClick={handleConfirmar}
-              className="flex-1 py-2.5 text-sm font-bold rounded-xl whitespace-nowrap transition-colors flex items-center justify-center gap-2 bg-violet-500 hover:bg-violet-600 text-white cursor-pointer"
-            >
-              <i className="ri-check-line text-sm" />
-              Confirmar Cortesia
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ─── PDV Operacional (caixa aberto) ─── */
 interface PDVOperacionalProps {
   onAbrirFechamento: (data: FechamentoData) => void;
@@ -421,7 +315,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   const { setMode } = useAppMode();
   const { user } = useAuth();
   const { hasPermissao } = usePermissoes();
-  const { total, clearCart, destino, setDestino, addItem, carrinho, removeItem, enviarParaCozinha, finalizarPedido, isCortesia, setCortesia, clearCortesia, cortesiaAutorizadaPor, cortesiaDestinatario, cortesiaMotivo } = usePDV();
+  const { total, clearCart, destino, setDestino, addItem, carrinho, removeItem, enviarParaCozinha, finalizarPedido } = usePDV();
   const { success: toastSuccess, error: toastError } = useToast();
   const { pedidos: kdsPedidos } = useKDS();
   // Count real orders from KDS (not the local sequential counter that resets on reload)
@@ -451,12 +345,6 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   const [historicoCaixa, setHistoricoCaixa] = useState<MovimentoCaixa[]>([]);
   const [totalVendasSessao, setTotalVendasSessao] = useState(0);
   const [pendingAction, setPendingAction] = useState<'cozinha' | 'pagamento' | null>(null);
-  const [showAutorizacaoCortesia, setShowAutorizacaoCortesia] = useState(false);
-  const [showCortesiaDetalhes, setShowCortesiaDetalhes] = useState(false);
-  const [cortesiaAutorizadoPorTemp, setCortesiaAutorizadoPorTemp] = useState<string | null>(null);
-  const [cortesiaDestinatarioInput, setCortesiaDestinatarioInput] = useState('');
-  const [cortesiaMotivoInput, setCortesiaMotivoInput] = useState('');
-  const [isFinalizandoCortesia, setIsFinalizandoCortesia] = useState(false);
   // Alerta de estoque zerando
   const [insumosZerandoAlerta, setInsumosZerandoAlerta] = useState<InsumoZerando[]>([]);
   const [acaoAposEstoqueConfirmar, setAcaoAposEstoqueConfirmar] = useState<(() => void) | null>(null);
@@ -584,25 +472,6 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [carrinho.length, modal]);
 
-  // ── Cortesia: finaliza sem modal de pagamento ────────────────────────────
-  const handleFinalizarCortesia = useCallback(async (destinoAtual: DestinoInfo | null) => {
-    if (!destinoAtual) {
-      setPendingAction('pagamento'); // cortesia também precisa de destino
-      setModal('destino');
-      return;
-    }
-    setIsFinalizandoCortesia(true);
-    try {
-      const result = await finalizarPedido([]);
-      const numStr = result?.number || `P${Date.now()}`;
-      toastSuccess('Cortesia confirmada!', `#${numStr} — pedido registrado como cortesia`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toastError('Erro ao registrar cortesia', msg);
-    } finally {
-      setIsFinalizandoCortesia(false);
-    }
-  }, [finalizarPedido, toastSuccess, toastError]);
 
   // After destino is confirmed and we were waiting to pay
   // Chamado pelo DestinoModal quando o operador seleciona uma mesa livre
@@ -628,11 +497,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
     // Se tinha uma ação pendente, continua o fluxo
     if (pendingAction === 'pagamento') {
       setPendingAction(null);
-      if (isCortesia) {
-        setTimeout(() => handleFinalizarCortesia(destino), 50);
-      } else {
-        setTimeout(() => setModal('pagamento'), 50);
-      }
+      setTimeout(() => setModal('pagamento'), 50);
     } else if (pendingAction === 'cozinha') {
       setPendingAction(null);
       setIsEnviandoCozinha(true);
@@ -648,18 +513,14 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
         })
         .finally(() => setIsEnviandoCozinha(false));
     }
-  }, [mesaParaAbrir, pendingAction, setDestino, enviarParaCozinha, isCortesia, handleFinalizarCortesia]);
+  }, [mesaParaAbrir, pendingAction, setDestino, enviarParaCozinha]);
 
   const handleDestinoConfirm = useCallback((d: DestinoInfo) => {
     setDestino(d);
     setModal('none');
     if (pendingAction === 'pagamento') {
       setPendingAction(null);
-      if (isCortesia) {
-        setTimeout(() => handleFinalizarCortesia(d), 50);
-      } else {
-        setTimeout(() => setModal('pagamento'), 50);
-      }
+      setTimeout(() => setModal('pagamento'), 50);
     } else if (pendingAction === 'cozinha') {
       setPendingAction(null);
       setIsEnviandoCozinha(true);
@@ -677,7 +538,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
         })
         .finally(() => setIsEnviandoCozinha(false));
     }
-  }, [pendingAction, setDestino, enviarParaCozinha, isCortesia, handleFinalizarCortesia]);
+  }, [pendingAction, setDestino, enviarParaCozinha]);
 
   const handleItemClick = (item: Item) => {
     const temOpcoes = item.gruposOpcoes.length > 0;
@@ -772,10 +633,6 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   // Finalizar: check destino first
   const handlePagar = () => {
     const executarPagamento = () => {
-      if (isCortesia) {
-        handleFinalizarCortesia(destino);
-        return;
-      }
       if (!destino) {
         setPendingAction('pagamento');
         setModal('destino');
@@ -881,24 +738,6 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
           </div>
           <div className="flex items-center gap-2">
             <AtalhosTeclado />
-            {/* Botão Cortesia — exclusivo do PDV Caixa */}
-            <button
-              onClick={() => {
-                if (isCortesia) {
-                  clearCortesia();
-                } else {
-                  setShowAutorizacaoCortesia(true);
-                }
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                isCortesia
-                  ? 'bg-violet-600 text-white'
-                  : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
-              }`}
-            >
-              <i className="ri-gift-line text-sm" />
-              {isCortesia ? 'Cortesia ativa' : 'Cortesia'}
-            </button>
             {hasPermissao('pdv_sangria') && (
               <button
                 onClick={() => { setTipoMovimento('sangria'); setModal('sangria'); }}
@@ -1147,57 +986,6 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
           ))}
         </div>
       </div>
-
-      {/* Modal de autorização de cortesia */}
-      {showAutorizacaoCortesia && (
-        <AutorizacaoGerenteModal
-          titulo="Autorizar Cortesia"
-          descricao="Informe as credenciais de gerente ou admin para liberar o pedido como cortesia (R$ 0,00)."
-          niveisPermitidos={['gerente', 'admin']}
-          tenantId={user?.tenantId ?? ''}
-          onAutorizado={(autorizadoPor) => {
-            setCortesiaAutorizadoPorTemp(autorizadoPor);
-            setShowAutorizacaoCortesia(false);
-            setShowCortesiaDetalhes(true);
-          }}
-          onCancelar={() => setShowAutorizacaoCortesia(false)}
-        />
-      )}
-
-      {/* Modal de detalhes da cortesia (destinatário + motivo) */}
-      {showCortesiaDetalhes && (
-        <CortesiaDetalhesModal
-          autorizadoPor={cortesiaAutorizadoPorTemp ?? 'Gerente'}
-          onConfirmar={(destinatario, motivo) => {
-            setCortesia(true, cortesiaAutorizadoPorTemp, destinatario, motivo);
-            setShowCortesiaDetalhes(false);
-            setCortesiaDestinatarioInput('');
-            setCortesiaMotivoInput('');
-          }}
-          onCancelar={() => {
-            setShowCortesiaDetalhes(false);
-            setCortesiaAutorizadoPorTemp(null);
-          }}
-        />
-      )}
-
-      {/* Loading cortesia */}
-      {isFinalizandoCortesia && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-2xl p-8 flex flex-col items-center gap-4 shadow-2xl min-w-[260px]">
-            <div className="w-16 h-16 flex items-center justify-center bg-violet-50 rounded-full">
-              <svg className="animate-spin w-8 h-8 text-violet-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-              </svg>
-            </div>
-            <div className="text-center">
-              <p className="text-base font-bold text-zinc-800">Registrando cortesia...</p>
-              <p className="text-sm text-zinc-400 mt-0.5">Aguarde um momento</p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modal de alerta de estoque zerando */}
       {insumosZerandoAlerta.length > 0 && (
