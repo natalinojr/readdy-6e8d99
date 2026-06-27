@@ -257,11 +257,13 @@ export default function EnderecoPinDelivery(props: Props) {
     else onVoltar();
   }
 
-  // Novo cliente (sem cadastro) — salva via save_customer e vai pro cardápio
+  // Novo cliente (sem cadastro) — salva via save_customer e vai pro cardápio.
+  // `podeAvancar` já exige o nome preenchido (nomeOk), então enviamos o que o cliente
+  // digitou, sem nenhum nome assumido pelo sistema.
   function salvarNovoCliente() {
     setShowErrors(true);
     if (!podeAvancar) return;
-    onSalvar(nome.trim() || 'Cliente', '', rua, numero, complemento, referencia);
+    onSalvar(nome.trim(), '', rua, numero, complemento, referencia);
   }
 
   // Cliente existente — adiciona/edita endereço na lista

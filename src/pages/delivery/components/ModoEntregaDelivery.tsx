@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 interface Props {
   customerName: string;
   phone: string;
@@ -5,6 +7,9 @@ interface Props {
   onSelecionar: (modo: 'entrega' | 'retirada') => void;
   enviando: boolean;
   waUrl?: string;
+  /** Cliente já cadastrado? Se NÃO, pedimos o nome aqui (vale p/ delivery e retirada). */
+  isExistingCustomer: boolean;
+  onNomeChange: (v: string) => void;
 }
 
 export default function ModoEntregaDelivery(props: Props) {
@@ -14,6 +19,20 @@ export default function ModoEntregaDelivery(props: Props) {
   const onSelecionar = props.onSelecionar;
   const enviando = props.enviando;
   const waUrl = props.waUrl;
+  const isExistingCustomer = props.isExistingCustomer;
+  const onNomeChange = props.onNomeChange;
+
+  // O nome é digitado pelo cliente — o sistema NUNCA assume um nome. Para cliente novo,
+  // exigimos o nome antes de escolher como receber (inclusive na retirada, que antes
+  // pulava essa etapa e gravava "Cliente Retirada" sozinho).
+  const [nomeErro, setNomeErro] = useState(false);
+  const precisaNome = !isExistingCustomer;
+  const nomeOk = customerName.trim().length > 0;
+
+  function escolher(modo: 'entrega' | 'retirada') {
+    if (precisaNome && !nomeOk) { setNomeErro(true); return; }
+    onSelecionar(modo);
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-white">
@@ -44,10 +63,31 @@ export default function ModoEntregaDelivery(props: Props) {
 
       {/* Opções */}
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-8 max-w-lg mx-auto w-full gap-4">
+        {/* Nome (cliente novo) — o cliente digita; o sistema não assume nenhum nome */}
+        {precisaNome ? (
+          <div className="w-full">
+            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+              Seu nome <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={customerName}
+              onChange={function (e) { onNomeChange(e.target.value); if (nomeErro && e.target.value.trim()) setNomeErro(false); }}
+              placeholder="Ex: João Silva"
+              maxLength={60}
+              className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
+                (nomeErro ? 'border-red-300 bg-red-50/40' : 'border-zinc-200')}
+            />
+            {nomeErro ? (
+              <p className="text-[11px] text-red-500 font-medium mt-1.5">Digite seu nome para continuar.</p>
+            ) : null}
+          </div>
+        ) : null}
+
         {/* Delivery */}
         <button
           type="button"
-          onClick={function () { onSelecionar('entrega'); }}
+          onClick={function () { escolher('entrega'); }}
           disabled={enviando}
           className="w-full bg-white rounded-2xl border-2 border-amber-200 hover:border-amber-400 p-6 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-amber-100/50 disabled:opacity-50 disabled:cursor-wait group"
         >
@@ -80,7 +120,7 @@ export default function ModoEntregaDelivery(props: Props) {
         {/* Retirada */}
         <button
           type="button"
-          onClick={function () { onSelecionar('retirada'); }}
+          onClick={function () { escolher('retirada'); }}
           disabled={enviando}
           className="w-full bg-white rounded-2xl border-2 border-green-200 hover:border-green-400 p-6 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-green-100/50 disabled:opacity-50 disabled:cursor-wait group"
         >

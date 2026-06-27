@@ -1137,6 +1137,9 @@ export function useDeliveryData(storeSlug?: string) {
         setStep('cardapio');
       } else {
         if (!tenant) return;
+        // O nome vem do cliente (exigido na tela de modo de entrega). NUNCA assumimos
+        // um nome: sem nome, não salva — volta a pedir.
+        if (!customerName.trim()) { setErrorMsg('Digite seu nome para continuar.'); return; }
         const cleanPhone = phone.replace(/\D/g, '');
 
         setEnviando(true);
@@ -1148,7 +1151,7 @@ export function useDeliveryData(storeSlug?: string) {
             action: 'save_customer',
             tenant_id: tenant.id,
             phone: cleanPhone,
-            name: customerName.trim() || 'Cliente Retirada',
+            name: customerName.trim(),
             neighborhood_id: null,
             street: null,
             number: null,

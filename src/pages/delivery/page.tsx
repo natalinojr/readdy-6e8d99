@@ -297,6 +297,8 @@ export default function DeliveryPage() {
         onSelecionar={handleConfirmarModo}
         enviando={enviando}
         waUrl={lojaWaUrl}
+        isExistingCustomer={!!customer}
+        onNomeChange={data.setCustomerName}
       />
     );
   }

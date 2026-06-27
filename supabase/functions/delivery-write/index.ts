@@ -1120,8 +1120,13 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           if (normGender) upd.gender = normGender;
           if (Object.keys(upd).length > 0) await admin.from("customers").update(upd).eq("id", realCustomerId);
         } else {
+          // O nome vem do cliente — o sistema NUNCA inventa um nome. Sem nome, recusa
+          // (o app já exige o nome antes de chegar aqui).
+          if (!customer_name || !String(customer_name).trim()) {
+            return jsonErr("Nome do cliente e obrigatorio.", 400);
+          }
           const { data: newCustomer } = await admin.from("customers").insert({
-            tenant_id, name: customer_name || "Cliente Delivery", phone: cleanPhone,
+            tenant_id, name: String(customer_name).trim(), phone: cleanPhone,
             birth_date: normBirth, gender: normGender,
             first_visit_at: new Date().toISOString(),
             visit_count: 0, total_spent: 0,
