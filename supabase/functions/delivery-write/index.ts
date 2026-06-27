@@ -1174,7 +1174,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           tenant_id, session_id: sessionId, number: orderNumber,
           status: "new", origin_type: "delivery", destination_type: "delivery",
           destination_name: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
-          destination_phone: customer_phone,
+          // Normaliza para dígitos: todas as buscas (get_customer_orders, rate-limit, motoboy)
+          // comparam por telefone sem máscara. Gravar formatado some do histórico do cliente.
+          destination_phone: cleanPhone || null,
           customer_id: realCustomerId, discount_amount: voucherDiscount, service_fee_amount: 0,
           subtotal: serverSubtotal,
           total_amount: serverTotal,
