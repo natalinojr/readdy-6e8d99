@@ -20,6 +20,14 @@ interface Props {
    * compatível com a config da loja, onde o pin sempre já existe).
    */
   confirmed?: boolean;
+  /**
+   * Posição TRAVADA pelo cliente? Quando `true`, o mapa não arrasta (evita mudar o
+   * ponto sem querer) e o botão vira "Editar posição". Quando `false`, o cliente pode
+   * arrastar e aparece o botão "Salvar posição". Controlado de fora (lift state).
+   */
+  locked?: boolean;
+  /** Alterna o travamento da posição (true = travar/salvar, false = destravar/editar). */
+  onToggleLock?: (next: boolean) => void;
 }
 
 /** Mantém uma referência viva à instância do mapa para ler o centro de fora (botão Confirmar). */
@@ -40,6 +48,20 @@ function CentroComoPin({ onChange }: { onChange: (lat: number, lng: number) => v
     dragend() { const c = map.getCenter(); onChange(c.lat, c.lng); },
     zoomend() { const c = map.getCenter(); onChange(c.lat, c.lng); },
   });
+  return null;
+}
+
+/**
+ * Liga/desliga a interação do mapa de forma REATIVA. As props do MapContainer
+ * (`dragging`, `scrollWheelZoom`) só valem na montagem — então, pra travar de verdade
+ * quando o cliente "salva a posição", precisamos chamar enable()/disable() nos handlers.
+ */
+function TravaInteracao({ interativo }: { interativo: boolean }) {
+  const map = useMap();
+  useEffect(() => {
+    const handlers = [map.dragging, map.scrollWheelZoom, map.touchZoom, map.doubleClickZoom, map.boxZoom, map.keyboard];
+    handlers.forEach((h) => { if (h) { if (interativo) h.enable(); else h.disable(); } });
+  }, [interativo, map]);
   return null;
 }
 
@@ -67,12 +89,16 @@ export default function MapaPin({
   altura = 'h-72',
   readOnly = false,
   confirmed = true,
+  locked = false,
+  onToggleLock,
 }: Props) {
   const center: [number, number] = (lat != null && lng != null) ? [lat, lng] : defaultCenter;
   const mapRef = useRef<LeafletMap | null>(null);
 
   // Pin "não confirmado": cinza/fantasma, pra não dar falsa sensação de já-marcado.
   const pinPendente = !readOnly && !confirmed;
+  // Mapa interativo (arrasta/segue o centro) só quando NÃO está travado pelo cliente.
+  const interativo = !readOnly && !locked;
 
   // Registra o CENTRO atual como pin (funciona mesmo quando a geolocalização é
   // bloqueada — caso comum na WebView do WhatsApp/Instagram, onde o `dragend` pode
@@ -95,14 +121,15 @@ export default function MapaPin({
         center={center}
         zoom={lat != null ? 16 : 13}
         style={{ height: '100%', width: '100%', touchAction: 'none', overscrollBehavior: 'contain' }}
-        scrollWheelZoom
-        dragging={!readOnly}
+        scrollWheelZoom={interativo}
+        dragging={interativo}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        {!readOnly && <CentroComoPin onChange={onChange} />}
+        {interativo && <CentroComoPin onChange={onChange} />}
+        <TravaInteracao interativo={interativo} />
         <Recentralizar lat={lat} lng={lng} />
         <GuardaMapa mapRef={mapRef} />
       </MapContainer>
@@ -123,16 +150,27 @@ export default function MapaPin({
         <div className={'w-1.5 h-1.5 rounded-full ring-2 ring-white/70 ' + (pinPendente ? 'bg-zinc-500/80' : 'bg-orange-600/80')} />
       </div>
 
-      {/* Instrução no topo enquanto o ponto não foi confirmado */}
-      {pinPendente && (
-        <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 z-[1000] bg-black/60 text-white text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap">
-          Arraste o mapa até o ponto certo
-        </div>
+      {/* Instrução no topo: sem ponto → arraste até o lugar; travado → selo "posição
+          salva"; destravado → dica de que dá pra ajustar arrastando. */}
+      {!readOnly && (
+        pinPendente ? (
+          <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 z-[1000] bg-black/60 text-white text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap">
+            Arraste o mapa até o ponto certo
+          </div>
+        ) : locked ? (
+          <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 z-[1000] inline-flex items-center gap-1 bg-green-600/90 text-white text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap">
+            <i className="ri-lock-line text-xs" />Posição salva
+          </div>
+        ) : (
+          <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 z-[1000] inline-flex items-center gap-1 bg-black/55 text-white text-[10px] font-medium px-2.5 py-1 rounded-full whitespace-nowrap">
+            <i className="ri-drag-move-2-line text-xs" />Arraste o mapa para ajustar
+          </div>
+        )
       )}
 
-      {/* Embaixo: quando ainda não há ponto, o botão de confirmar o centro; quando já
-          há ponto, uma dica neutra de que dá pra ajustar arrastando (sem um selo de
-          "confirmado" permanente, que poluía a tela já que o GPS marca sozinho). */}
+      {/* Embaixo: sem ponto → confirmar o centro. Com ponto: se o pai controla o
+          travamento (onToggleLock), mostra "Salvar/Editar posição"; senão (ex.: config
+          da loja) não há botão extra — o arraste já basta. */}
       {!readOnly && (
         pinPendente ? (
           <button
@@ -142,11 +180,25 @@ export default function MapaPin({
           >
             <i className="ri-check-line text-sm" />Confirmar esta localização
           </button>
-        ) : (
-          <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 z-[1000] inline-flex items-center gap-1 bg-black/55 text-white text-[10px] font-medium px-2.5 py-1 rounded-full whitespace-nowrap">
-            <i className="ri-drag-move-2-line text-xs" />Arraste o mapa para ajustar
-          </div>
-        )
+        ) : onToggleLock ? (
+          locked ? (
+            <button
+              type="button"
+              onClick={function () { onToggleLock(false); }}
+              className="absolute bottom-2 left-1/2 -translate-x-1/2 z-[1000] inline-flex items-center gap-1.5 bg-white hover:bg-zinc-50 text-zinc-700 text-xs font-bold px-4 py-2 rounded-full shadow-lg border border-zinc-200 cursor-pointer transition-colors whitespace-nowrap"
+            >
+              <i className="ri-pencil-line text-sm" />Editar posição
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={function () { onToggleLock(true); }}
+              className="absolute bottom-2 left-1/2 -translate-x-1/2 z-[1000] inline-flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg cursor-pointer transition-colors whitespace-nowrap"
+            >
+              <i className="ri-save-line text-sm" />Salvar posição
+            </button>
+          )
+        ) : null
       )}
     </div>
   );

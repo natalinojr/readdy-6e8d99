@@ -88,6 +88,10 @@ export default function EnderecoPinDelivery(props: Props) {
   const [showErrors, setShowErrors] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [autoEndereco, setAutoEndereco] = useState(false);
+  // Posição travada pelo cliente: só vira `true` quando ele toca "Salvar posição" no
+  // mapa. O GPS marca o pin sozinho ao abrir, mas NÃO trava — assim a frase "Localização
+  // marcada" não aparece antes de o cliente confirmar de propósito.
+  const [posLocked, setPosLocked] = useState(false);
   const geoReqRef = useRef(0);
   const geocodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const kbInset = useKeyboardInset();
@@ -146,6 +150,7 @@ export default function EnderecoPinDelivery(props: Props) {
   // público limita ~1 req/s.
   function aplicarPin(lat: number, lng: number) {
     onPinChange(lat, lng);
+    setPosLocked(false); // mudou o ponto → precisa salvar a posição de novo
     setGeoError(''); // já tem um ponto — some o aviso de "localização desativada"
     const reqId = ++geoReqRef.current;
     setAutoEndereco(true);
@@ -159,7 +164,7 @@ export default function EnderecoPinDelivery(props: Props) {
           const a = data && data.address ? data.address : null;
           if (!a) return;
           const road = a.road || a.pedestrian || a.residential || a.footway || a.path || a.cycleway || '';
-          const num = a.house_number || '';
+          const num = String(a.house_number || '').replace(/\D/g, ''); // campo de número só aceita dígitos
           const bairroGeo = a.suburb || a.neighbourhood || a.quarter || a.city_district || a.village || '';
           if (road) onRuaChange(road);
           if (num) onNumeroChange(num);
@@ -175,10 +180,11 @@ export default function EnderecoPinDelivery(props: Props) {
   const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
 
   const temPin = addressLat != null && addressLng != null;
+  const posOk = temPin && posLocked; // ponto marcado E salvo (travado) pelo cliente
   const nomeOk = isExistingCustomer || nome.trim().length > 0;
   const ruaOk = rua.trim().length > 0;
   const numeroOk = numero.trim().length > 0;
-  const podeAvancar = temPin && nomeOk && ruaOk && numeroOk && !foraDeArea;
+  const podeAvancar = posOk && nomeOk && ruaOk && numeroOk && !foraDeArea;
 
   const defaultCenter: [number, number] | undefined =
     (storeLat != null && storeLng != null) ? [storeLat, storeLng] : undefined;
@@ -230,6 +236,7 @@ export default function EnderecoPinDelivery(props: Props) {
     onRuaChange(''); onNumeroChange(''); onBairroChange(''); onComplementoChange(''); onReferenciaChange('');
     setShowErrors(false);
     setGeoError('');
+    setPosLocked(false);
     setFormMode('add');
   }
 
@@ -243,11 +250,13 @@ export default function EnderecoPinDelivery(props: Props) {
     onBairroChange(addr.bairro || '');
     onComplementoChange(addr.complement || '');
     onReferenciaChange(addr.reference_point || '');
-    if (typeof addr.lat === 'number' && typeof addr.lng === 'number') {
-      onPinChange(addr.lat, addr.lng);
+    const temPosSalva = typeof addr.lat === 'number' && typeof addr.lng === 'number';
+    if (temPosSalva) {
+      onPinChange(addr.lat as number, addr.lng as number);
     }
     setShowErrors(false);
     setGeoError('');
+    setPosLocked(temPosSalva); // endereço já tinha posição → entra travado (toca "Editar" pra mexer)
     setFormMode('edit');
   }
 
@@ -270,7 +279,7 @@ export default function EnderecoPinDelivery(props: Props) {
   async function salvarEndereco() {
     setShowErrors(true);
     const labelEfetivo = getEffectiveLabel();
-    if (!temPin || !ruaOk || !numeroOk || foraDeArea || !labelEfetivo) return;
+    if (!posOk || !ruaOk || !numeroOk || foraDeArea || !labelEfetivo) return;
     try {
       await onSalvarNovoEndereco(labelEfetivo, '', rua, numero, complemento, referencia, editingAddressId, addressLat, addressLng);
       setFormMode('list');
@@ -308,21 +317,35 @@ export default function EnderecoPinDelivery(props: Props) {
               )}
             </button>
           </div>
-          <MapaPin lat={addressLat} lng={addressLng} onChange={aplicarPin} defaultCenter={defaultCenter} altura="h-60" confirmed={temPin} />
+          <MapaPin
+            lat={addressLat}
+            lng={addressLng}
+            onChange={aplicarPin}
+            defaultCenter={defaultCenter}
+            altura="h-60"
+            confirmed={temPin}
+            locked={posLocked}
+            onToggleLock={function (n) { setPosLocked(n); }}
+          />
           {autoEndereco ? (
             <p className="text-[11px] text-amber-600 mt-2 flex items-center gap-1 font-medium">
               <i className="ri-loader-4-line animate-spin text-xs" />
               Buscando o endereço deste ponto...
             </p>
-          ) : temPin ? (
+          ) : !temPin ? (
+            <p className="text-[11px] text-zinc-500 mt-2 flex items-center gap-1">
+              <i className="ri-information-line text-zinc-400 text-xs" />
+              Arraste o mapa até a sua casa e toque em <span className="font-semibold text-amber-600">Confirmar esta localização</span>.
+            </p>
+          ) : posLocked ? (
             <p className="text-[11px] text-green-600 mt-2 flex items-center gap-1 font-medium">
               <i className="ri-check-line text-xs" />
-              Localização marcada — preenchemos o endereço abaixo; confira.
+              Localização salva. Confira o endereço preenchido abaixo.
             </p>
           ) : (
             <p className="text-[11px] text-zinc-500 mt-2 flex items-center gap-1">
               <i className="ri-information-line text-zinc-400 text-xs" />
-              Arraste o mapa até a sua casa e toque em <span className="font-semibold text-amber-600">Confirmar esta localização</span>.
+              Confira o endereço e toque em <span className="font-semibold text-green-600">Salvar posição</span> no mapa.
             </p>
           )}
           {geoError ? (
@@ -332,6 +355,8 @@ export default function EnderecoPinDelivery(props: Props) {
           ) : null}
           {showErrors && !temPin ? (
             <p className="text-[10px] text-red-500 mt-1 font-medium">Marque sua localização no mapa.</p>
+          ) : showErrors && !posLocked ? (
+            <p className="text-[10px] text-red-500 mt-1 font-medium">Toque em "Salvar posição" no mapa.</p>
           ) : null}
         </div>
 
@@ -430,7 +455,8 @@ export default function EnderecoPinDelivery(props: Props) {
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Número <span className="text-red-500">*</span></label>
             <input
-              type="text" value={numero} onChange={function (e) { onNumeroChange(e.target.value); }}
+              type="text" inputMode="numeric" pattern="[0-9]*"
+              value={numero} onChange={function (e) { onNumeroChange(e.target.value.replace(/\D/g, '')); }}
               placeholder="123" maxLength={10}
               className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
                 (showErrors && !numeroOk ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')}
@@ -677,7 +703,11 @@ export default function EnderecoPinDelivery(props: Props) {
               </button>
               {showErrors && !podeAvancar && !enviando ? (
                 <p className="text-center text-[11px] text-red-500 font-medium">
-                  {foraDeArea ? 'Endereço fora da área de entrega.' : 'Marque o local no mapa e preencha nome, rua e número.'}
+                  {foraDeArea
+                    ? 'Endereço fora da área de entrega.'
+                    : !posOk
+                    ? 'Marque o local no mapa e toque em "Salvar posição".'
+                    : 'Preencha nome, rua e número.'}
                 </p>
               ) : null}
               <button
