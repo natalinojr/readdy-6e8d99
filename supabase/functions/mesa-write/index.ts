@@ -116,6 +116,20 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         }
       }
 
+      // A estação de produção fica na CATEGORIA (menu_categories.station_id), não no item.
+      // Propagamos para cada item para que o roteamento de impressão do mesa-qr
+      // (queueOrderForPrint -> print-queue-agent.mapaEstacoes) resolva a impressora certa.
+      // Sem isso, os itens chegam com station_id nulo e caem nos fallbacks genéricos
+      // "cozinha-padrao"/"bar", que só imprimem por acaso em lojas com 1 impressora.
+      const categoryStationMap = new Map<string, string | null>();
+      for (const c of (catResult.data ?? []) as Array<{ id: string; station_id: string | null }>) {
+        categoryStationMap.set(c.id, c.station_id ?? null);
+      }
+      const itemsWithStation = ((itemResult.data ?? []) as Array<Record<string, unknown>>).map((it) => ({
+        ...it,
+        station_id: categoryStationMap.get(it.category_id as string) ?? null,
+      }));
+
       const productionPartsMap = new Map<string, Array<{ name: string; station_id: string }>>();
       if (partesResult?.data) {
         for (const p of partesResult.data as Array<{ item_id: string; name: string; station_id: string }>) {
@@ -140,7 +154,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
               item_photo_url: item.photo_url,
               item_description: item.description,
               item_category_id: item.category_id,
-              item_station_id: item.station_id,
+              item_station_id: categoryStationMap.get(item.category_id as string) ?? null,
               item_skip_kds: item.skip_kds,
               item_sla_minutes: item.sla_minutes,
             });
@@ -160,7 +174,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       return new Response(JSON.stringify({
         categories: catResult.data ?? [],
-        items: itemResult.data ?? [],
+        items: itemsWithStation,
         option_groups: ogResult.data ?? [],
         options,
         observations: obsResult.data ?? [],
