@@ -34,8 +34,19 @@ export function scrollFocusedFieldIntoView(e: FocusEvent<HTMLElement>): void {
   const ajustar = () => {
     if (document.activeElement !== target) return;
     const vv = window.visualViewport;
+    const layoutH = window.innerHeight;
     const visTop = vv ? vv.offsetTop : 0;
-    const visBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const vvH = vv ? vv.height : layoutH;
+
+    // Alguns navegadores embutidos (WebView do Instagram/Facebook) NÃO encolhem a
+    // visualViewport quando o teclado abre — ele só sobrepõe. Nesses casos a conta
+    // normal acha que o campo está visível e não rola nada. Detectamos pelo fato de
+    // a viewport não ter encolhido e assumimos que o teclado cobre ~45% de baixo,
+    // empurrando o campo para a metade de cima (que fica visível).
+    const tecladoEncolheViewport = (layoutH - vvH) > 120;
+    const visBottom = tecladoEncolheViewport
+      ? (visTop + vvH)
+      : (visTop + layoutH * 0.55);
     const rect = target.getBoundingClientRect();
     const margem = 28; // folga acima do teclado / do topo
 

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import type { FocusEvent } from 'react';
 import MapaPin from '@/components/feature/MapaPin';
 import SeletorDataNascimento from '@/components/base/SeletorDataNascimento';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
@@ -90,6 +91,37 @@ export default function EnderecoPinDelivery(props: Props) {
   const geoReqRef = useRef(0);
   const geocodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const kbInset = useKeyboardInset();
+
+  // Há um campo de texto focado? Usado só como FALLBACK quando o teclado não é
+  // detectado pela visualViewport (WebView do Instagram/Facebook não encolhe a tela):
+  // nesse caso adicionamos um respiro no rodapé pra os últimos campos conseguirem
+  // subir acima do teclado ao rolar. Em navegadores normais o kbInset cuida disso.
+  const [campoFocado, setCampoFocado] = useState(false);
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handleFormFocus(e: FocusEvent<HTMLElement>) {
+    scrollFocusedFieldIntoView(e);
+    const tag = (e.target as HTMLElement).tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+      if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+      setCampoFocado(true);
+    }
+  }
+
+  function handleFormBlur() {
+    // Pequeno atraso: ao pular de um campo pro outro, o blur vem antes do próximo
+    // focus — não removemos o respiro nesse intervalo pra não dar "pulo" na tela.
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+    blurTimerRef.current = setTimeout(function () {
+      const ae = document.activeElement;
+      const t = ae ? ae.tagName : '';
+      if (t !== 'INPUT' && t !== 'TEXTAREA' && t !== 'SELECT') setCampoFocado(false);
+    }, 80);
+  }
+
+  // Respiro inferior: usa o teclado medido (kbInset) quando disponível; senão, quando
+  // há campo focado, cai num valor fixo grande o bastante pra criar área de rolagem.
+  const respiroInferior = kbInset ? kbInset + 24 : (campoFocado ? '50vh' : undefined);
 
   // Altura da área REALMENTE visível (acima do teclado). Em navegadores sem suporte
   // a `dvh` (ex.: WebView embutida do WhatsApp), fixamos a altura da tela à
@@ -461,8 +493,9 @@ export default function EnderecoPinDelivery(props: Props) {
 
       <div
         className="flex-1 min-h-0 overflow-y-auto px-4 py-5 max-w-lg mx-auto w-full space-y-5"
-        onFocus={scrollFocusedFieldIntoView}
-        style={{ paddingBottom: kbInset ? kbInset + 24 : undefined }}
+        onFocus={handleFormFocus}
+        onBlur={handleFormBlur}
+        style={{ paddingBottom: respiroInferior }}
       >
         {/* ── LISTA de endereços salvos (cliente existente) ── */}
         {formMode === 'list' && temListaSalva ? (

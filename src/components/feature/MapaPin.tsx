@@ -130,7 +130,9 @@ export default function MapaPin({
         </div>
       )}
 
-      {/* Ação principal embaixo: confirmar o ponto que está no centro (ou aviso de OK) */}
+      {/* Embaixo: quando ainda não há ponto, o botão de confirmar o centro; quando já
+          há ponto, uma dica neutra de que dá pra ajustar arrastando (sem um selo de
+          "confirmado" permanente, que poluía a tela já que o GPS marca sozinho). */}
       {!readOnly && (
         pinPendente ? (
           <button
@@ -141,8 +143,8 @@ export default function MapaPin({
             <i className="ri-check-line text-sm" />Confirmar esta localização
           </button>
         ) : (
-          <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 z-[1000] inline-flex items-center gap-1 bg-green-600/90 text-white text-[10px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap">
-            <i className="ri-check-line text-xs" />Localização confirmada
+          <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 z-[1000] inline-flex items-center gap-1 bg-black/55 text-white text-[10px] font-medium px-2.5 py-1 rounded-full whitespace-nowrap">
+            <i className="ri-drag-move-2-line text-xs" />Arraste o mapa para ajustar
           </div>
         )
       )}
