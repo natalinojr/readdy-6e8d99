@@ -167,7 +167,7 @@ export default function TrafegoPagoPage() {
   const handleConnect = useCallback(async () => {
     setConnecting(true);
     setError(null);
-    const { data, error: err } = await invokeWithAuth<{ success: boolean; app_id: string }>(
+    const { data, error: err } = await invokeWithAuth<{ success: boolean; app_id: string; config_id?: string | null }>(
       'meta-connect',
       { body: { action: 'config' } },
     );
@@ -179,10 +179,14 @@ export default function TrafegoPagoPage() {
     const redirectUri = window.location.origin + window.location.pathname;
     const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
     sessionStorage.setItem(OAUTH_STATE_KEY, state);
+    // Login do Facebook para Empresas usa config_id; login clássico usa scope.
+    const grant = data.config_id
+      ? `config_id=${encodeURIComponent(data.config_id)}`
+      : 'scope=ads_read';
     const url =
       `https://www.facebook.com/v20.0/dialog/oauth?client_id=${data.app_id}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-      `&scope=ads_read&response_type=code&state=${state}`;
+      `&${grant}&response_type=code&state=${state}`;
     window.location.href = url;
   }, []);
 

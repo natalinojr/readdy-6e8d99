@@ -41,9 +41,13 @@ Deno.serve(async (req: Request) => {
     const action = String(body.action ?? '')
     const appId = requiredEnv('META_APP_ID')
 
-    // ── config: o frontend pega o app_id (público) pra montar a URL de login ──
+    // ── config: o frontend pega o app_id + config_id (públicos) pra montar a URL de login ──
     if (action === 'config') {
-      return json({ success: true, app_id: appId })
+      return json({
+        success: true,
+        app_id: appId,
+        config_id: Deno.env.get('META_LOGIN_CONFIG_ID')?.trim() || null,
+      })
     }
 
     const admin = createClient(
