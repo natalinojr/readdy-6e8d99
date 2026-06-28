@@ -151,7 +151,13 @@ export default function CancelamentoModal({
       setEtapa('sucesso');
       onConcluido();
     } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Erro ao cancelar');
+      const msg =
+        e instanceof Error
+          ? e.message
+          : typeof e === 'object' && e !== null && 'message' in e && typeof (e as { message: unknown }).message === 'string'
+            ? (e as { message: string }).message
+            : 'Erro ao cancelar';
+      setErro(msg);
       setEtapa('erro');
     } finally {
       setExecutando(false);
