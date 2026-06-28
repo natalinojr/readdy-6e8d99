@@ -77,8 +77,10 @@ Deno.serve(async (req: Request) => {
     if (action === 'exchange') {
       const { tenant_id, code, redirect_uri, connected_by_user_id, connected_by_name } = body
       if (!tenant_id || !code || !redirect_uri) {
+        console.error('[meta-connect] exchange faltando campos:', { has_tenant: !!tenant_id, has_code: !!code, has_redirect: !!redirect_uri })
         return json({ success: false, error: 'tenant_id, code e redirect_uri são obrigatórios' }, 400)
       }
+      console.log('[meta-connect] exchange início | tenant:', tenant_id, '| redirect:', redirect_uri)
       const appSecret = requiredEnv('META_APP_SECRET')
 
       // 1) code → token de curta duração
@@ -112,6 +114,11 @@ Deno.serve(async (req: Request) => {
       const acctsBody = await acctsResp.json().catch(() => ({}))
       const accounts = parseAccounts(acctsBody.data)
       const selected = accounts[0] ?? null
+      console.log(
+        '[meta-connect] adaccounts | status:', acctsResp.status,
+        '| count:', accounts.length,
+        '| raw:', JSON.stringify(acctsBody).slice(0, 600),
+      )
 
       // 4) salva a conexão (uma por loja)
       const { error } = await admin

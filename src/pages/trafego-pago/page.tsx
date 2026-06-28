@@ -110,7 +110,9 @@ export default function TrafegoPagoPage() {
   }, [tenantId, user?.nome]);
 
   // ── Ao montar: trata retorno do OAuth (?code=) ou carrega status ──
+  // Espera o tenant carregar antes de processar — senão o code é trocado com tenant vazio.
   useEffect(() => {
+    if (!tenantId) return;
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const returnedState = params.get('state');
