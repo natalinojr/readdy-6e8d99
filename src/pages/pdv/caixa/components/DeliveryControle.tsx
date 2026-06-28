@@ -1,9 +1,15 @@
 import { useState } from 'react';
-import { useDeliveryState, type DeliveryOp } from '@/hooks/useDeliveryState';
+import { type DeliveryOp, type UseDeliveryStateReturn } from '@/hooks/useDeliveryState';
 
 interface DeliveryControleProps {
   /** Estilo compacto p/ a barra mobile (só ícone + status curto). */
   compact?: boolean;
+  /**
+   * Estado de delivery vindo do `useDeliveryState` (chamado UMA vez no
+   * caixa/page.tsx e compartilhado entre as variantes desktop/mobile, que ficam
+   * as duas montadas no DOM). Evita dois polls/canais em paralelo.
+   */
+  ctl: UseDeliveryStateReturn;
 }
 
 function fmtHora(iso: string | null): string {
@@ -27,8 +33,8 @@ const PAUSAS_RAPIDAS: { label: string; minutos: number }[] = [
   { label: '4 horas', minutos: 240 },
 ];
 
-export default function DeliveryControle({ compact = false }: DeliveryControleProps) {
-  const { state, loading, acting, refresh, setOp } = useDeliveryState();
+export default function DeliveryControle({ compact = false, ctl }: DeliveryControleProps) {
+  const { state, loading, acting, refresh, setOp } = ctl;
   const [modalOpen, setModalOpen] = useState(false);
   const [erro, setErro] = useState('');
   const [customHoras, setCustomHoras] = useState('');

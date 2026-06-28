@@ -7,6 +7,8 @@ import { useKDS } from '@/contexts/KDSContext';
 import { usePedidosAgrupados } from '@/hooks/usePedidosAgrupados';
 import type { DestinoInfo } from '@/contexts/PDVContext';
 import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
+import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
+import CortesiaDetalhesModal from '@/pages/pdv/caixa/components/CortesiaDetalhesModal';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -60,6 +62,11 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   const [itensPrincipalDb, setItensPrincipalDb] = useState<ItemPedido[]>([]);
   const [loadingItens, setLoadingItens] = useState(false);
   const [buscaPedidos, setBuscaPedidos] = useState('');
+  // ── Cortesia (com liberação de gerente/admin) ──
+  const [showAutorizacaoCortesia, setShowAutorizacaoCortesia] = useState(false);
+  const [showCortesiaDetalhes, setShowCortesiaDetalhes] = useState(false);
+  const [cortesiaAutorTemp, setCortesiaAutorTemp] = useState<string | null>(null);
+  const [foiCortesia, setFoiCortesia] = useState(false);
 
   // Tenta usar itens do KDS primeiro (já carregados, sem nova query)
   const itensPrincipalKds = useMemo<ItemPedido[]>(() => {
@@ -348,6 +355,42 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     }
   };
 
+  // ── Lança o(s) pedido(s) como cortesia (R$ 0,00) ──
+  // Zera o pedido existente (e os vinculados selecionados) via RPC SECURITY DEFINER.
+  // Liberação de gerente/admin já validada antes deste ponto.
+  const handleConfirmarCortesia = async (destinatario: string, motivo: string) => {
+    if (confirmando) return;
+    setConfirmando(true);
+    setShowCortesiaDetalhes(false);
+    try {
+      const todosVinculados = [...pedidosRelacionadosFiltrados, ...outrosPedidosAbertos]
+        .filter((p) => pedidosSelecionados.has(p.id));
+      const idsParaCortesia = [orderId, ...todosVinculados.map((p) => p.id)];
+      for (const oid of idsParaCortesia) {
+        const { data, error } = await supabase.rpc('fn_cortesia_marcar_pedido', {
+          p_order_id: oid,
+          p_tenant_id: user?.tenantId,
+          p_autorizado_por: cortesiaAutorTemp,
+          p_destinatario: destinatario,
+          p_motivo: motivo,
+        });
+        if (error) throw error;
+        const res = data as { ok?: boolean; error?: string } | null;
+        if (!res?.ok) throw new Error(res?.error || 'Falha ao registrar cortesia');
+      }
+      setPedidos((prev) => prev.map((p) => (idsParaCortesia.includes(p.id) ? { ...p, isPaid: true } : p)));
+      setFoiCortesia(true);
+      setSucesso(true);
+      toastSuccess('Cortesia confirmada!', `${idsParaCortesia.length} pedido(s) registrado(s) como cortesia`);
+      onSuccess(orderId, '');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toastError('Erro ao registrar cortesia', msg);
+    } finally {
+      setConfirmando(false);
+    }
+  };
+
   const ICON_MAP: Record<string, string> = {
     dinheiro: 'ri-money-dollar-circle-line',
     credito:  'ri-bank-card-line',
@@ -475,9 +518,15 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
           <div className="w-16 h-16 flex items-center justify-center bg-emerald-100 rounded-full mb-4">
             <i className="ri-check-double-line text-3xl text-emerald-500" />
           </div>
-          <h2 className="text-xl font-bold text-zinc-900 mb-1">Pagamento Registrado!</h2>
+          <h2 className="text-xl font-bold text-zinc-900 mb-1">{foiCortesia ? 'Cortesia Registrada!' : 'Pagamento Registrado!'}</h2>
           <p className="text-zinc-500 text-sm mb-1">#{String(numeroDisplay).padStart(4, '0')} · {destinoDisplay}</p>
-          <p className="text-2xl font-black text-emerald-600 mt-2">{fmt(totalEfetivo)}</p>
+          <p className={`text-2xl font-black mt-2 ${foiCortesia ? 'text-violet-600' : 'text-emerald-600'}`}>{foiCortesia ? 'Cortesia · R$ 0,00' : fmt(totalEfetivo)}</p>
+          {foiCortesia && cortesiaAutorTemp && (
+            <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 px-2 py-1 rounded-full">
+              <i className="ri-gift-line text-violet-500" />
+              Autorizada por {cortesiaAutorTemp}
+            </span>
+          )}
           {troco > 0 && (
             <div className="mt-4 w-full bg-emerald-50 border border-emerald-200 rounded-xl p-3">
               <p className="text-emerald-700 font-bold text-lg">{fmt(troco)}</p>
@@ -830,7 +879,16 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-4 border-t border-zinc-100 flex-shrink-0">
+        <div className="px-5 py-4 border-t border-zinc-100 flex-shrink-0 space-y-2">
+          {/* Cortesia — zera o(s) pedido(s) com liberação de gerente/admin */}
+          <button
+            onClick={() => setShowAutorizacaoCortesia(true)}
+            disabled={confirmando}
+            className="w-full py-2.5 border-2 border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap text-sm flex items-center justify-center gap-2"
+          >
+            <i className="ri-gift-line text-base" />
+            Lançar como Cortesia (R$ 0,00)
+          </button>
           <button
             onClick={handleFinalizar}
             disabled={confirmando || (
@@ -857,6 +915,31 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
           </button>
         </div>
       </div>
+
+      {/* Cortesia — autorização gerente/admin */}
+      {showAutorizacaoCortesia && (
+        <AutorizacaoGerenteModal
+          titulo="Autorizar Cortesia"
+          descricao="Informe as credenciais de gerente ou admin para lançar este pedido como cortesia (R$ 0,00)."
+          niveisPermitidos={['gerente', 'admin']}
+          tenantId={user?.tenantId ?? ''}
+          onAutorizado={(autorizadoPor) => {
+            setCortesiaAutorTemp(autorizadoPor);
+            setShowAutorizacaoCortesia(false);
+            setShowCortesiaDetalhes(true);
+          }}
+          onCancelar={() => setShowAutorizacaoCortesia(false)}
+        />
+      )}
+
+      {/* Cortesia — destinatário + motivo */}
+      {showCortesiaDetalhes && (
+        <CortesiaDetalhesModal
+          autorizadoPor={cortesiaAutorTemp ?? 'Gerente'}
+          onConfirmar={(destinatario, motivo) => handleConfirmarCortesia(destinatario, motivo)}
+          onCancelar={() => { setShowCortesiaDetalhes(false); setCortesiaAutorTemp(null); }}
+        />
+      )}
     </div>
   );
 }

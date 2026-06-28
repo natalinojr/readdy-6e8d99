@@ -33,6 +33,7 @@ import OfflineStatusBar from '@/components/feature/OfflineStatusBar';
 import AlertaSessaoEsquecida from '@/components/feature/AlertaSessaoEsquecida';
 import EstoqueZerarModal from './components/EstoqueZerarModal';
 import { useEstoqueAlertaPDV, type InsumoZerando } from '@/hooks/useEstoqueAlertaPDV';
+import { useDeliveryState } from '@/hooks/useDeliveryState';
 
 type ModalState = 'none' | 'opcoes' | 'destino' | 'pagamento' | 'sangria'
   | 'iniciar_sessao' | 'abertura_caixa' | 'fechar_sessao' | 'abrir_mesa';
@@ -349,6 +350,10 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   const [insumosZerandoAlerta, setInsumosZerandoAlerta] = useState<InsumoZerando[]>([]);
   const [acaoAposEstoqueConfirmar, setAcaoAposEstoqueConfirmar] = useState<(() => void) | null>(null);
   const { verificarEstoque } = useEstoqueAlertaPDV();
+  // Estado de delivery: 1 instância compartilhada entre as variantes desktop/mobile
+  // do DeliveryControle (as duas ficam montadas no DOM). Antes cada uma criava seu
+  // próprio poll/canal, dobrando as invocações de Edge Function.
+  const deliveryCtl = useDeliveryState();
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isEnviandoCozinha, setIsEnviandoCozinha] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -757,7 +762,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
               </button>
             )}
             <div className="w-px h-5 bg-zinc-200" />
-            <DeliveryControle />
+            <DeliveryControle ctl={deliveryCtl} />
             {hasPermissao('pdv_fechar_caixa') && (
               <button
                 onClick={handleFecharCaixa}
@@ -773,7 +778,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
         {/* Mobile actions */}
         <div className="flex md:hidden items-center gap-2">
           <span className="text-sm font-bold text-zinc-900">{timeStr}</span>
-          <DeliveryControle compact />
+          <DeliveryControle compact ctl={deliveryCtl} />
           <div className="relative">
             <button
               onClick={() => setShowMobileMenu((v) => !v)}
