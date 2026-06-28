@@ -77,6 +77,7 @@ export interface CashSession {
   num_pedidos: number;
   num_cancelados: number;
   num_cortesias: number;
+  valor_cortesias: number;
   total_descontos: number;
   total_troco: number;
   cash_register: CashRegisterInfo | null;
@@ -154,7 +155,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
           const sessionIds = sessData.map((s) => s.id).filter(Boolean);
 
           let registersMap: Record<string, any[]> = {};
-          let ordersMap: Record<string, { total: number; count: number; cancelados: number; cortesias: number }> = {};
+          let ordersMap: Record<string, { total: number; count: number; cancelados: number; cortesias: number; valor_cortesias: number }> = {};
           let ordersResultData: any[] = [];
           let ordersById = new Map<string, any>();
           let pmMap = new Map<string, { name: string; type: string }>();
@@ -171,7 +172,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
                 .in('session_id', sessionIds),
               supabase
                 .from('orders')
-                .select('id, session_id, number, total_amount, status, is_cortesia, created_at, origin_type, origin_user_id')
+                .select('id, session_id, number, total_amount, subtotal, status, is_cortesia, created_at, origin_type, origin_user_id')
                 .eq('tenant_id', user.tenantId)
                 .in('session_id', sessionIds)
                 .eq('is_training', false)
@@ -191,11 +192,12 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
               ordersResultData = ordersResult.data;
               for (const o of ordersResult.data) {
                 const sid = o.session_id;
-                if (!ordersMap[sid]) ordersMap[sid] = { total: 0, count: 0, cancelados: 0, cortesias: 0 };
+                if (!ordersMap[sid]) ordersMap[sid] = { total: 0, count: 0, cancelados: 0, cortesias: 0, valor_cortesias: 0 };
                 if (o.status === 'cancelled') {
                   ordersMap[sid].cancelados += 1;
                 } else if (o.is_cortesia) {
                   ordersMap[sid].cortesias += 1;
+                  ordersMap[sid].valor_cortesias += Number(o.subtotal ?? 0);
                   ordersMap[sid].count += 1;
                 } else {
                   ordersMap[sid].total += Number(o.total_amount ?? 0);
@@ -304,7 +306,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
           rawSessions = sessData.map((sess: any) => {
             const regs = registersMap[sess.id] ?? [];
             const cr = regs[0] ?? null;
-            const ords = ordersMap[sess.id] ?? { total: 0, count: 0, cancelados: 0, cortesias: 0 };
+            const ords = ordersMap[sess.id] ?? { total: 0, count: 0, cancelados: 0, cortesias: 0, valor_cortesias: 0 };
             const sessPayments = paymentsBySession.get(sess.id) ?? [];
             const sessDiscountsTotal = discountsBySession.get(sess.id) ?? 0;
 
@@ -424,6 +426,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
               num_pedidos: ords.count,
               num_cancelados: ords.cancelados,
               num_cortesias: ords.cortesias,
+              valor_cortesias: ords.valor_cortesias,
               total_descontos: sessDiscountsTotal,
               total_troco,
               cash_register: cr,
@@ -552,6 +555,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
         ...s,
         num_cancelados: s.num_cancelados ?? 0,
         num_cortesias: s.num_cortesias ?? 0,
+        valor_cortesias: s.valor_cortesias ?? 0,
         total_descontos: s.total_descontos ?? 0,
         total_troco: s.total_troco ?? 0,
         por_forma_pagamento: s.por_forma_pagamento ?? [],

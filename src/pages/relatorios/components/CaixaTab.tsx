@@ -1182,6 +1182,9 @@ export default function CaixaTab() {
                     <span className="text-zinc-500">Cortesias</span>
                     <span className={`font-semibold ${sessao.num_cortesias > 0 ? 'text-violet-600' : 'text-zinc-400'}`}>
                       {sessao.num_cortesias}
+                      {sessao.valor_cortesias > 0 && (
+                        <span className="text-violet-500"> · {fmt(sessao.valor_cortesias)}</span>
+                      )}
                     </span>
                   </div>
                   <div className="flex justify-between text-xs">
