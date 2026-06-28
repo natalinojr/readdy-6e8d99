@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ShoppingCart, Coffee, Tablet, Monitor, UtensilsCrossed,
   LayoutGrid, Package, BarChart3, Users, Settings, LogOut, ChefHat,
   Shield, Heart, HelpCircle, ClipboardList, Bell, Truck, ArrowLeft, DollarSign,
-  Tag, Gift, Bug, ShieldCheck,
+  Tag, Gift, Bug, ShieldCheck, Megaphone,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAprovacoes } from '../../contexts/AprovacoesContext';
@@ -57,6 +57,7 @@ const navSections: NavSection[] = [
       { label: 'Pedidos',               icon: ClipboardList,   path: '/pedidos' },
       { label: 'Delivery',              icon: Truck,           path: '/config-delivery', permissao: 'configuracoes_editar' },
       { label: 'Relatórios',            icon: BarChart3,       path: '/relatorios',    permissao: 'relatorio_financeiro' },
+      { label: 'Tráfego Pago',          icon: Megaphone,       path: '/trafego-pago',  permissao: 'relatorio_financeiro' },
       { label: 'Cardápio',              icon: UtensilsCrossed, path: '/cardapio',      permissao: 'cardapio_editar' },
       { label: 'Estoque',               icon: Package,         path: '/estoque',       permissao: 'estoque_movimentar' },
       { label: 'Financeiro',            icon: DollarSign,      path: '/financeiro',    permissao: 'relatorio_financeiro' },

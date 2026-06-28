@@ -40,6 +40,8 @@ import QADashboard from '@/pages/diagnostico/QADashboard';
 import ChecklistTeste from '@/pages/diagnostico/ChecklistTeste';
 import AdminMasterPage from '@/pages/admin-master/page';
 import SelecionarLojaPage from '@/pages/selecionar-loja/page';
+import TrafegoPagoPage from '@/pages/trafego-pago/page';
+import PrivacidadePage from '@/pages/privacidade/page';
 import { lazy } from 'react';
 import PullToRefresh from '@/components/feature/PullToRefresh';
 import MobileKeyboardAssist from '@/components/feature/MobileKeyboardAssist';
@@ -51,6 +53,7 @@ const MotoboyListaPage = lazy(() => import('../pages/motoboy-lista/page'));
 
 const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
+  { path: '/privacidade', element: <PrivacidadePage /> },
   { path: '/mesa/:mesaId', element: <MesaClientePage /> },
   { path: '/mesa-qr/:qr_token/:session_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
   { path: '/mesa-qr/:qr_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
@@ -80,6 +83,7 @@ const routes: RouteObject[] = [
       { path: 'mesas', element: <MesasPage /> },
       { path: 'relatorios', element: <RelatoriosPage /> },
       { path: 'pedidos', element: <PedidosPage /> },
+      { path: 'trafego-pago', element: <TrafegoPagoPage /> },
       { path: 'estoque', element: <EstoquePage /> },
       { path: 'aprovacoes', element: <AprovacoesPage /> },
       { path: 'configuracoes', element: <ConfiguracoesPage /> },
