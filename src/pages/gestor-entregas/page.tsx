@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useGestorEntregas } from './hooks/useGestorEntregas';
 import { COLUNAS, colunaDe, prazoInfo, type ColunaId } from './utils';
 import EntregaCard from './components/EntregaCard';
@@ -6,6 +7,7 @@ import ProblemaModal from './components/ProblemaModal';
 import LiberarModal from './components/LiberarModal';
 
 export default function GestorEntregasPage() {
+  const navigate = useNavigate();
   const { orders, loading, erro, busy, now, recarregar, setStatus, liberar } = useGestorEntregas();
   const [modalProblema, setModalProblema] = useState<string | null>(null);
   const [modalLiberar, setModalLiberar] = useState<string | null>(null);
@@ -26,7 +28,15 @@ export default function GestorEntregasPage() {
       {/* Cabeçalho */}
       <div className="px-4 md:px-6 py-4 flex-shrink-0 bg-white border-b border-zinc-100">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 md:gap-3">
+            <button
+              onClick={() => navigate('/modulos')}
+              title="Voltar aos Módulos"
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 transition-colors cursor-pointer flex-shrink-0"
+            >
+              <i className="ri-arrow-left-line text-base" />
+            </button>
+            <div className="w-px h-5 bg-zinc-200 flex-shrink-0" />
             <div className="w-8 h-8 flex items-center justify-center bg-orange-100 rounded-lg">
               <i className="ri-e-bike-2-line text-orange-600 text-sm" />
             </div>
