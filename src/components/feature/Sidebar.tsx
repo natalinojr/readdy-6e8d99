@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ShoppingCart, Coffee, Tablet, Monitor, UtensilsCrossed,
   LayoutGrid, Package, BarChart3, Users, Settings, LogOut, ChefHat,
   Shield, Heart, HelpCircle, ClipboardList, Bell, Truck, ArrowLeft, DollarSign,
-  Tag, Gift, Bug, ShieldCheck, Megaphone,
+  Tag, Gift, Bug, ShieldCheck, Megaphone, Bike,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAprovacoes } from '../../contexts/AprovacoesContext';
@@ -55,6 +55,7 @@ const navSections: NavSection[] = [
     title: 'Gestão',
     items: [
       { label: 'Pedidos',               icon: ClipboardList,   path: '/pedidos' },
+      { label: 'Gestor de Entregas',    icon: Bike,            path: '/gestor-entregas' },
       { label: 'Delivery',              icon: Truck,           path: '/config-delivery', permissao: 'configuracoes_editar' },
       { label: 'Relatórios',            icon: BarChart3,       path: '/relatorios',    permissao: 'relatorio_financeiro' },
       { label: 'Tráfego Pago',          icon: Megaphone,       path: '/trafego-pago',  permissao: 'relatorio_financeiro' },

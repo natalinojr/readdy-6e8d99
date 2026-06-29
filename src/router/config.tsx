@@ -9,6 +9,7 @@ import PDVDeliveryPage from '../pages/pdv/delivery/page';
 import PDVCaixaPage from '../pages/pdv/caixa/page';
 import KDSPage from '../pages/kds/page';
 import GestorPedidosPage from '../pages/gestor-pedidos/page';
+import GestorEntregasPage from '../pages/gestor-entregas/page';
 import GarcomPage from '../pages/pdv/garcom/page';
 import MesasPage from '../pages/mesas/page';
 import RelatoriosPage from '../pages/relatorios/page';
@@ -80,6 +81,7 @@ const routes: RouteObject[] = [
       { path: 'pdv/delivery', element: <PDVDeliveryPage /> },
       { path: 'kds', element: <KDSPage /> },
       { path: 'gestor-pedidos', element: <GestorPedidosPage /> },
+      { path: 'gestor-entregas', element: <GestorEntregasPage /> },
       { path: 'mesas', element: <MesasPage /> },
       { path: 'relatorios', element: <RelatoriosPage /> },
       { path: 'pedidos', element: <PedidosPage /> },

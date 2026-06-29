@@ -513,7 +513,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     }
 
     // ── Loja gere o status da entrega (fallback quando o motoboy nao consegue) ──
-    if (action === "list_delivery_orders" || action === "set_motoboy_status" || action === "clear_motoboy_driver") {
+    if (action === "list_delivery_orders" || action === "list_delivery_board" || action === "set_motoboy_status" || action === "clear_motoboy_driver") {
       const authHeader = req.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
       if (!token) return jsonErr("Nao autenticado", 401);
@@ -546,6 +546,48 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           problemas: Array.isArray(o.motoboy_problems) ? o.motoboy_problems : [],
           driver_id: o.motoboy_driver_id ?? null, driver_nome: o.motoboy_driver_id ? (driverNome[o.motoboy_driver_id as string] ?? null) : null,
           created_at: o.created_at,
+        })) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (action === "list_delivery_board") {
+        // Kanban do "Gestor de Entregas": como o list_delivery_orders, mas inclui os
+        // ENTREGUES recentes (coluna final) e so entrega PROPRIA (exclui iFood/retirada).
+        // Campos extras: delivery_sla_min, motoboy_timeline, out_for_delivery_at.
+        const { data: orders } = await admin.from("orders")
+          .select("id, number, destination_name, destination_phone, delivery_address, delivery_platform, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_updated_at, out_for_delivery_at, delivery_sla_min, motoboy_timeline, created_at, updated_at")
+          .eq("tenant_id", tenant_id).eq("origin_type", "delivery").in("status", ["new", "preparing", "ready", "delivered"])
+          .order("created_at", { ascending: true });
+        const RECENTE_MS = 3 * 60 * 60 * 1000; // entregues nas ultimas 3h ficam na coluna "Entregue"
+        const agora = Date.now();
+        const lista = ((orders ?? []) as Record<string, unknown>[]).filter((o) => {
+          // So entrega propria (propria ou sem plataforma); fora iFood e retirada.
+          const plat = o.delivery_platform as string | null;
+          if (plat && plat !== "propria") return false;
+          if (o.status === "delivered") {
+            const ref = (o.motoboy_updated_at as string | null) ?? (o.updated_at as string | null);
+            const t = ref ? new Date(ref).getTime() : 0;
+            return !!t && (agora - t) <= RECENTE_MS;
+          }
+          return true;
+        });
+        const driverNome: Record<string, string> = {};
+        const dids = Array.from(new Set(lista.map((o) => o.motoboy_driver_id as string | null).filter(Boolean))) as string[];
+        if (dids.length) {
+          const { data: drvs } = await admin.from("delivery_drivers").select("id, name").in("id", dids);
+          (drvs ?? []).forEach((d: { id: string; name: string }) => { driverNome[d.id] = d.name; });
+        }
+        return new Response(JSON.stringify({ _v: "v15", ok: true, orders: lista.map((o) => ({
+          id: o.id, number: o.number,
+          cliente: ((o.destination_name as string | null) ?? "Cliente").split(/\s+[-–—]\s+/)[0].trim() || "Cliente",
+          telefone: ((o.destination_phone as string | null) ?? "").replace(/\D/g, ""),
+          endereco: o.delivery_address ?? "", total: Number(o.total_amount ?? 0), taxa: Number(o.delivery_fee ?? 0),
+          status: o.status, motoboy_status: o.motoboy_status ?? null, motoboy_note: o.motoboy_note ?? null,
+          problemas: Array.isArray(o.motoboy_problems) ? o.motoboy_problems : [],
+          driver_id: o.motoboy_driver_id ?? null, driver_nome: o.motoboy_driver_id ? (driverNome[o.motoboy_driver_id as string] ?? null) : null,
+          created_at: o.created_at, motoboy_updated_at: o.motoboy_updated_at ?? null,
+          out_for_delivery_at: o.out_for_delivery_at ?? null,
+          delivery_sla_min: o.delivery_sla_min != null ? Number(o.delivery_sla_min) : null,
+          motoboy_timeline: (o.motoboy_timeline && typeof o.motoboy_timeline === "object") ? o.motoboy_timeline : {},
         })) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
