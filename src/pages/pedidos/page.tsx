@@ -319,6 +319,7 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
     })),
     itensDetalhes: o.itens.map((item) => {
       const opcoes = item.options?.map((op) => op.option_name) ?? [];
+      const opcoesDetalhadas = item.options?.map((op) => ({ nome: op.option_name, preco: Number(op.additional_price ?? 0) })) ?? [];
       const obs = item.notes ?? item.observations?.[0]?.text;
       // Um item "sem cozinha" só é aquele que NUNCA entrou no KDS:
       // não tem estação E não tem nenhum registro de KDS (entered_kds_at, preparo, pronto).
@@ -388,6 +389,7 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
         preco: Number(item.preco) || 0,
         estacao: item.station_name ?? '',
         opcoes,
+        opcoesDetalhadas,
         observacao: obs,
         unidades,
       };

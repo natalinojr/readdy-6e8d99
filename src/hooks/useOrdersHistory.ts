@@ -28,7 +28,7 @@ export interface DBOrderItem {
   started_preparing_at?: string | null;
   ready_at?: string | null;
   delivered_at?: string | null;
-  options?: { option_name: string; group_name: string }[];
+  options?: { option_name: string; group_name: string; additional_price?: number | null }[];
   observations?: { text: string }[];
   units?: DBOrderItemUnit[];
 }
@@ -109,7 +109,7 @@ interface RPCItem {
   ready_at?: string | null;
   delivered_at?: string | null;
   operator_name?: string | null;
-  options?: { option_name: string; group_name: string }[] | null;
+  options?: { option_name: string; group_name: string; additional_price?: number | null }[] | null;
   observations?: { text: string }[] | null;
   units?: RPCUnit[] | null;
 }
@@ -236,7 +236,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
                 started_preparing_at,
                 ready_at,
                 delivered_at,
-                order_item_options ( option_name, group_name ),
+                order_item_options ( option_name, group_name, additional_price ),
                 order_item_observations ( text ),
                 order_item_units (
                   id, unit_number, status,
@@ -343,7 +343,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
               started_preparing_at,
               ready_at,
               delivered_at,
-              order_item_options ( option_name, group_name ),
+              order_item_options ( option_name, group_name, additional_price ),
               order_item_observations ( text ),
               order_item_units (
                 id, unit_number, status,
@@ -472,7 +472,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
               started_preparing_at,
               ready_at,
               delivered_at,
-              order_item_options ( option_name, group_name ),
+              order_item_options ( option_name, group_name, additional_price ),
               order_item_observations ( text ),
               order_item_units (
                 id, unit_number, status,
@@ -650,7 +650,7 @@ interface DirectQueryItem {
   started_preparing_at?: string | null;
   ready_at?: string | null;
   delivered_at?: string | null;
-  order_item_options?: { option_name: string; group_name: string }[] | null;
+  order_item_options?: { option_name: string; group_name: string; additional_price?: number | null }[] | null;
   order_item_observations?: { text: string }[] | null;
   order_item_units?: {
     id: string;

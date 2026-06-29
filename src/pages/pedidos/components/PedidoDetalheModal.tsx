@@ -261,6 +261,63 @@ function SlaCardLive({ fromTs, toTs, staticMins, icon, label, alertMins, warnMin
   );
 }
 
+// ─── Barra de proporção do SLA (segmentos por etapa, com tempo no hover) ───────
+interface SlaSegment {
+  key: string;
+  label: string;
+  /** Duração da etapa em segundos; null/0 = etapa não exibida. */
+  secs: number | null;
+  barClass: string;
+}
+
+function SlaTimelineBar({ segments }: { segments: SlaSegment[] }) {
+  const [hovered, setHovered] = useState<string | null>(null);
+  const visible = segments.filter((s): s is SlaSegment & { secs: number } => (s.secs ?? 0) > 0);
+  const total = visible.reduce((a, s) => a + s.secs, 0);
+
+  if (total === 0) {
+    return (
+      <div className="relative h-3 bg-zinc-100 rounded-full overflow-hidden">
+        <div className="absolute inset-0 bg-zinc-200 rounded-full" />
+      </div>
+    );
+  }
+
+  let acc = 0;
+  const positioned = visible.map((s) => {
+    const left = (acc / total) * 100;
+    const width = (s.secs / total) * 100;
+    acc += s.secs;
+    return { ...s, width, center: left + width / 2 };
+  });
+  const active = positioned.find((s) => s.key === hovered) ?? null;
+
+  return (
+    <div className="relative">
+      {active && (
+        <div className="absolute -top-9 z-10 -translate-x-1/2 pointer-events-none" style={{ left: `${active.center}%` }}>
+          <div className="px-2 py-1 rounded-lg bg-zinc-800 text-white text-[10px] font-semibold whitespace-nowrap shadow-lg">
+            {active.label}: {fmtDuration(active.secs)}
+          </div>
+          <div className="w-2 h-2 bg-zinc-800 rotate-45 mx-auto -mt-1" />
+        </div>
+      )}
+      <div className="relative h-3 bg-zinc-100 rounded-full overflow-hidden flex">
+        {positioned.map((s, i) => (
+          <div
+            key={s.key}
+            className={`h-full ${s.barClass} transition-opacity cursor-default ${hovered && hovered !== s.key ? 'opacity-40' : ''} ${i === 0 ? 'rounded-l-full' : ''} ${i === positioned.length - 1 ? 'rounded-r-full' : ''}`}
+            style={{ width: `${s.width}%` }}
+            onMouseEnter={() => setHovered(s.key)}
+            onMouseLeave={() => setHovered(null)}
+            title={`${s.label}: ${fmtDuration(s.secs)}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 interface TimelineStep {
   label: string; icon: string; done: boolean; active: boolean; time?: string; duracao?: string | null;
 }
@@ -529,6 +586,31 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
   const isAtrasado = pedido.atrasado === true;
   const isNoPrazo = pedido.atrasado === false && fase === 'entregue';
 
+  // Segmentos da barra de SLA — derivados dos MESMOS timestamps dos cards abaixo,
+  // para que a proporção exibida bata com os tempos reais de cada etapa. Fallback
+  // para os minutos pré-calculados (slaX) quando os timestamps não estão completos.
+  const secsBetween = (a: string | null | undefined, b: string | null | undefined): number | null => {
+    const x = parseTs(a), y = parseTs(b);
+    return x != null && y != null && y >= x ? Math.round((y - x) / 1000) : null;
+  };
+  const slaSegments: (SlaSegment & { visible: boolean })[] = [
+    {
+      key: 'espera', label: 'Espera fila', barClass: 'bg-zinc-400',
+      secs: secsBetween(criadoTs, ultimoInicioPreparoTs) ?? (pedido.slaEspera !== undefined ? pedido.slaEspera * 60 : null),
+      visible: pedido.slaEspera !== undefined,
+    },
+    {
+      key: 'cozinha', label: 'Produção cozinha', barClass: isAtrasado ? 'bg-red-400' : 'bg-amber-400',
+      secs: secsBetween(primeiroInicioPreparoTs, ultimoProntoTs) ?? (pedido.slaCozinha !== undefined ? pedido.slaCozinha * 60 : null),
+      visible: pedido.slaCozinha !== undefined,
+    },
+    {
+      key: 'entrega', label: 'Entrega', barClass: 'bg-sky-400',
+      secs: secsBetween(prontoTs, entregueTs) ?? (pedido.slaEntrega !== undefined ? pedido.slaEntrega * 60 : null),
+      visible: pedido.slaEntrega !== undefined,
+    },
+  ].filter((s) => s.visible);
+
   return (
     <div className="space-y-5">
       {isGrupo && (
@@ -622,26 +704,7 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
                   <span className="text-zinc-400">meta: {pedido.slaAlvo}min</span>
                   {pedido.tempoAberto > pedido.slaAlvo ? <span className="text-red-500 font-bold">real: {pedido.tempoAberto}min (+{pedido.tempoAberto - pedido.slaAlvo}min)</span> : <span className="text-emerald-600 font-bold">real: {pedido.tempoAberto}min</span>}
                 </div>
-                <div className="relative h-3 bg-zinc-100 rounded-full overflow-hidden">
-                  <div className="absolute inset-0 bg-zinc-200 rounded-full" />
-                  {(() => {
-                    const espera = pedido.slaEspera ?? 0;
-                    const cozinha = pedido.slaCozinha ?? 0;
-                    const entrega = pedido.slaEntrega ?? 0;
-                    const total = espera + cozinha + entrega;
-                    if (total === 0) return null;
-                    const esperaPct = (espera / total) * 100;
-                    const cozinhaPct = (cozinha / total) * 100;
-                    const entregaPct = (entrega / total) * 100;
-                    return (
-                      <>
-                        {espera > 0 && <div className="absolute left-0 top-0 h-full bg-zinc-400 rounded-l-full" style={{ width: `${esperaPct}%` }} />}
-                        {cozinha > 0 && <div className={`absolute top-0 h-full ${isAtrasado ? 'bg-red-400' : 'bg-amber-400'}`} style={{ left: `${esperaPct}%`, width: `${cozinhaPct}%` }} />}
-                        {entrega > 0 && <div className="absolute top-0 h-full bg-sky-400" style={{ left: `${esperaPct + cozinhaPct}%`, width: `${entregaPct}%`, borderTopRightRadius: entregaPct >= 99 ? '9999px' : undefined, borderBottomRightRadius: entregaPct >= 99 ? '9999px' : undefined }} />}
-                      </>
-                    );
-                  })()}
-                </div>
+                <SlaTimelineBar segments={slaSegments} />
                 <div className="flex gap-3 flex-wrap">
                   {pedido.slaEspera !== undefined && <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-zinc-400 flex-shrink-0" /><span className="text-[10px] text-zinc-500">Espera fila</span></div>}
                   {pedido.slaCozinha !== undefined && <div className="flex items-center gap-1"><div className={`w-2.5 h-2.5 rounded-sm flex-shrink-0 ${isAtrasado ? 'bg-red-400' : 'bg-amber-400'}`} /><span className="text-[10px] text-zinc-500">Produção cozinha</span></div>}
@@ -675,11 +738,41 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
                     <span className="w-5 h-5 flex items-center justify-center bg-zinc-200 rounded-full text-[10px] font-bold text-zinc-600 flex-shrink-0">{item.quantidade}</span>
                     <span className="text-sm font-bold text-zinc-900">{item.nome}</span>
                   </div>
-                  {item.opcoes.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1.5 ml-7">
-                      {item.opcoes.map((opc, i) => <span key={i} className="text-[10px] bg-white border border-zinc-200 text-zinc-600 px-2 py-0.5 rounded-full font-medium">{opc}</span>)}
-                    </div>
-                  )}
+                  {(() => {
+                    const detal = item.opcoesDetalhadas;
+                    if (detal && detal.length > 0) {
+                      // item.preco JÁ inclui os adicionais → mostra base + cada adicional
+                      // (a soma reconcilia com o valor unitário exibido à direita).
+                      const totalAdicionais = detal.reduce((a, o) => a + o.preco, 0);
+                      const precoBase = item.preco - totalAdicionais;
+                      return (
+                        <div className="mt-1.5 ml-7 space-y-1">
+                          {totalAdicionais > 0 && (
+                            <div className="flex items-center justify-between gap-2 max-w-[280px] text-[10px] text-zinc-400">
+                              <span>Item base</span>
+                              <span className="tabular-nums">R$ {precoBase.toFixed(2)}</span>
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-1">
+                            {detal.map((o, i) => (
+                              <span key={i} className="inline-flex items-center gap-1 text-[10px] bg-white border border-zinc-200 text-zinc-600 px-2 py-0.5 rounded-full font-medium">
+                                {o.nome}
+                                {o.preco > 0 && <span className="text-emerald-600 font-semibold">+R$ {o.preco.toFixed(2)}</span>}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    }
+                    if (item.opcoes.length > 0) {
+                      return (
+                        <div className="flex flex-wrap gap-1 mt-1.5 ml-7">
+                          {item.opcoes.map((opc, i) => <span key={i} className="text-[10px] bg-white border border-zinc-200 text-zinc-600 px-2 py-0.5 rounded-full font-medium">{opc}</span>)}
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                   {item.observacao && (
                     <div className="flex items-center gap-1.5 mt-1.5 ml-7">
                       <i className="ri-chat-3-line text-amber-500 text-xs" />

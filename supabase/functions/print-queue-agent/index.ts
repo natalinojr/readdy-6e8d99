@@ -329,6 +329,42 @@ serve(async (req) => {
 
       console.log(`[print-queue-agent] POLL tenant=${tenant_id.slice(0, 8)}... limit=${limit}`);
 
+      // ── Reclaim de tickets travados em "printing" ──
+      // O poll marca o ticket como "printing" ANTES de o agente confirmar. Se o
+      // agente cair / perder conexao / o PC desligar depois de pegar mas antes de
+      // confirmar, o ticket ficaria preso em "printing" para sempre (o poll so
+      // busca "pending") e nunca seria impresso — perda silenciosa.
+      // Aqui devolvemos para "pending" qualquer ticket preso em "printing" ha mais
+      // de RECLAIM_STALE_MS sem atualizacao. Como o select de "pending" abaixo roda
+      // na mesma chamada, o ticket recuperado ja sai impresso neste mesmo poll.
+      // Incrementamos retry_count para que um ticket "veneno" (que sempre derruba o
+      // agente) nao fique em loop infinito — apos 5 reclaims ele para de ser pego.
+      const RECLAIM_STALE_MS = 2 * 60 * 1000; // 2 min
+      const staleThreshold = new Date(Date.now() - RECLAIM_STALE_MS).toISOString();
+      const { data: stuck } = await supabaseAdmin
+        .from("print_queue")
+        .select("id, retry_count")
+        .eq("tenant_id", tenant_id)
+        .eq("status", "printing")
+        .lt("retry_count", 5)
+        .lt("updated_at", staleThreshold);
+
+      if (stuck && stuck.length > 0) {
+        console.log(`[print-queue-agent] reclaim: ${stuck.length} ticket(s) travado(s) em printing -> pending`);
+        const nowIso = new Date().toISOString();
+        for (const s of stuck as Array<{ id: string; retry_count: number | null }>) {
+          await supabaseAdmin
+            .from("print_queue")
+            .update({
+              status: "pending",
+              retry_count: (s.retry_count ?? 0) + 1,
+              last_error: "Reclaim: agente caiu/desconectou antes de confirmar a impressao",
+              updated_at: nowIso,
+            })
+            .eq("id", s.id);
+        }
+      }
+
       const { data, error } = await supabaseAdmin
         .from("print_queue")
         .select("*")

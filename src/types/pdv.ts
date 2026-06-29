@@ -57,6 +57,8 @@ export interface PedidoItemDetalhe {
   preco: number;
   estacao: string;
   opcoes: string[];
+  /** Adicionais com o preço de cada um (additional_price). Permite estratificar o valor do item. */
+  opcoesDetalhadas?: { nome: string; preco: number }[];
   observacao?: string;
   unidades: UnidadeItem[];
   /** Order ID this item belongs to — needed for grouped cards */
