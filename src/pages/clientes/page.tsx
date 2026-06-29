@@ -16,6 +16,22 @@ function fmtMoeda(v: number) {
 function diasSemVisita(ultima: string) {
   return Math.floor((Date.now() - new Date(ultima).getTime()) / (1000 * 60 * 60 * 24));
 }
+// Aniversário (dia/mês) a partir de 'YYYY-MM-DD'. Lê direto da string p/ evitar
+// deslocamento de fuso (new Date('YYYY-MM-DD') é UTC e pode "pular" o dia).
+function fmtAniversario(d: string | null): string {
+  if (!d) return '—';
+  const [, mes, dia] = d.slice(0, 10).split('-');
+  return dia && mes ? `${dia}/${mes}` : '—';
+}
+// Abre o WhatsApp do cliente (mesmo padrão do ClientePerfil): wa.me/55<dígitos>.
+function abrirWhatsApp(cliente: ClienteCRM) {
+  const numero = (cliente.celular ?? '').replace(/\D/g, '');
+  if (!numero) return;
+  const msg = encodeURIComponent(
+    `Olá, ${cliente.nome.split(' ')[0]}! Tudo bem? Sentimos sua falta por aqui. Venha nos visitar e aproveite nossas novidades! 😊`,
+  );
+  window.open(`https://wa.me/55${numero}?text=${msg}`, '_blank');
+}
 
 // Verifica se o cliente faz aniversário este mês, usando a data de nascimento real.
 // Sem data de nascimento, não há como saber — não conta como aniversariante.
@@ -45,17 +61,18 @@ const FILTROS: { id: Filtro; label: string; icon?: string; count?: (c: ClienteCR
 ];
 
 function exportarCSV(clientes: ClienteCRM[]) {
-  const headers = ['Nome', 'Celular', 'Tags', 'Visitas', 'Total Gasto (R$)', 'Ticket Médio (R$)', 'Primeira Visita', 'Última Visita', 'Dias sem Visita'];
+  const headers = ['Nome', 'Celular', 'Aniversário', 'Tags', 'Compras', 'Total Gasto (R$)', 'Ticket Médio (R$)', 'Primeira Compra', 'Última Compra', 'Dias sem Comprar'];
   const rows = clientes.map(c => [
     c.nome,
     c.celular || '',
+    fmtAniversario(c.dataNascimento),
     c.tags.join(', '),
     c.totalVisitas,
     c.valorTotal.toFixed(2).replace('.', ','),
     c.ticketMedio.toFixed(2).replace('.', ','),
-    fmtData(c.primeiraVisita),
-    fmtData(c.ultimaVisita),
-    diasSemVisita(c.ultimaVisita),
+    c.totalVisitas === 0 ? '' : fmtData(c.primeiraVisita),
+    c.totalVisitas === 0 ? '' : fmtData(c.ultimaVisita),
+    c.totalVisitas === 0 ? '' : diasSemVisita(c.ultimaVisita),
   ]);
   const csv = [headers, ...rows].map(r => r.join(';')).join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -194,7 +211,7 @@ export default function ClientesPage() {
           {[
             { label: 'Total de clientes', value: String(clientes.length), icon: 'ri-user-line', color: 'text-amber-600 bg-amber-50' },
             { label: 'Gasto total', value: fmtMoeda(totalGasto), icon: 'ri-money-dollar-circle-line', color: 'text-green-600 bg-green-50' },
-            { label: 'Visitas por cliente', value: mediaVisitas, icon: 'ri-map-pin-line', color: 'text-sky-600 bg-sky-50' },
+            { label: 'Compras por cliente', value: mediaVisitas, icon: 'ri-shopping-bag-3-line', color: 'text-sky-600 bg-sky-50' },
             { label: 'Ticket médio geral', value: fmtMoeda(ticketMedioGeral), icon: 'ri-receipt-line', color: 'text-zinc-600 bg-zinc-100' },
           ].map((s) => (
             <div key={s.label} className="bg-zinc-50 rounded-xl px-3 md:px-4 py-3 flex items-center gap-2 md:gap-3">
@@ -242,7 +259,7 @@ export default function ClientesPage() {
             onChange={(e) => setOrdenar(e.target.value as typeof ordenar)}
           >
             <option value="recente">Mais recentes</option>
-            <option value="visitas">Mais visitas</option>
+            <option value="visitas">Mais compras</option>
             <option value="gasto">Maior gasto</option>
           </select>
         </div>
@@ -373,10 +390,12 @@ export default function ClientesPage() {
                   <tr className="bg-zinc-50 border-b border-zinc-100">
                     <th className="text-left px-5 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Cliente</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Tags</th>
-                    <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Visitas</th>
+                    <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider" title="Quantidade de vendas finalizadas (pagas) vinculadas ao cliente">Compras</th>
                     <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Total gasto</th>
                     <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Ticket médio</th>
-                    <th className="text-right px-5 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Última visita</th>
+                    <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Aniversário</th>
+                    <th className="text-right px-5 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Última compra</th>
+                    <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -430,18 +449,44 @@ export default function ClientesPage() {
                         <td className="px-4 py-3 text-right">
                           <span className="text-sm text-zinc-600">{fmtMoeda(cliente.ticketMedio)}</span>
                         </td>
+                        <td className="px-4 py-3 text-center">
+                          {cliente.dataNascimento ? (
+                            <span className={`inline-flex items-center gap-1 text-xs font-medium ${isAniversario ? 'text-amber-600 font-bold' : 'text-zinc-600'}`}>
+                              {isAniversario && <i className="ri-cake-line text-[11px]" />}
+                              {fmtAniversario(cliente.dataNascimento)}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-zinc-300">—</span>
+                          )}
+                        </td>
                         <td className="px-5 py-3 text-right">
-                          <p className="text-sm text-zinc-600">{fmtData(cliente.ultimaVisita)}</p>
-                          <p className={`text-[11px] ${dias > 30 ? 'text-red-500' : dias > 14 ? 'text-amber-500' : 'text-green-600'}`}>
-                            {dias === 0 ? 'hoje' : `há ${dias} dias`}
-                          </p>
+                          {cliente.totalVisitas === 0 ? (
+                            <span className="text-xs text-zinc-400 italic">Sem compras</span>
+                          ) : (
+                            <>
+                              <p className="text-sm text-zinc-600">{fmtData(cliente.ultimaVisita)}</p>
+                              <p className={`text-[11px] ${dias > 30 ? 'text-red-500' : dias > 14 ? 'text-amber-500' : 'text-green-600'}`}>
+                                {dias === 0 ? 'hoje' : `há ${dias} dias`}
+                              </p>
+                            </>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); abrirWhatsApp(cliente); }}
+                            disabled={!cliente.celular}
+                            title={cliente.celular ? 'Enviar mensagem no WhatsApp' : 'Cliente sem telefone'}
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-green-600 hover:bg-green-50 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition-colors"
+                          >
+                            <i className="ri-whatsapp-line text-base" />
+                          </button>
                         </td>
                       </tr>
                     );
                   })}
                   {lista.length === 0 && !loading && (
                     <tr>
-                      <td colSpan={6} className="px-5 py-12 text-center text-zinc-400 text-sm">
+                      <td colSpan={8} className="px-5 py-12 text-center text-zinc-400 text-sm">
                         {clientes.length === 0 ? 'Nenhum cliente cadastrado ainda' : 'Nenhum cliente encontrado para os filtros selecionados'}
                       </td>
                     </tr>
@@ -478,14 +523,29 @@ export default function ClientesPage() {
                           <span key={tag} className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full capitalize ${TAG_STYLE[tag] ?? ''}`}>{tag}</span>
                         ))}
                       </div>
-                      <p className="text-xs text-zinc-400">{cliente.celular || '—'} · {cliente.totalVisitas} visitas</p>
+                      <p className="text-xs text-zinc-400">
+                        {cliente.celular || '—'} · {cliente.totalVisitas} compra{cliente.totalVisitas === 1 ? '' : 's'}
+                        {cliente.dataNascimento && <> · 🎂 {fmtAniversario(cliente.dataNascimento)}</>}
+                      </p>
                     </div>
                     <div className="text-right flex-shrink-0">
                       <p className="text-sm font-bold text-zinc-800">{fmtMoeda(cliente.valorTotal)}</p>
-                      <p className={`text-[10px] ${dias > 30 ? 'text-red-500' : dias > 14 ? 'text-amber-500' : 'text-green-600'}`}>
-                        {dias === 0 ? 'hoje' : `há ${dias}d`}
-                      </p>
+                      {cliente.totalVisitas === 0 ? (
+                        <p className="text-[10px] text-zinc-400 italic">Sem compras</p>
+                      ) : (
+                        <p className={`text-[10px] ${dias > 30 ? 'text-red-500' : dias > 14 ? 'text-amber-500' : 'text-green-600'}`}>
+                          {dias === 0 ? 'hoje' : `há ${dias}d`}
+                        </p>
+                      )}
                     </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); abrirWhatsApp(cliente); }}
+                      disabled={!cliente.celular}
+                      title={cliente.celular ? 'Enviar mensagem no WhatsApp' : 'Cliente sem telefone'}
+                      className="flex items-center justify-center w-9 h-9 rounded-lg text-green-600 hover:bg-green-50 disabled:opacity-30 cursor-pointer transition-colors flex-shrink-0"
+                    >
+                      <i className="ri-whatsapp-line text-lg" />
+                    </button>
                   </div>
                 );
               })}
