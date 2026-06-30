@@ -28,6 +28,8 @@ export interface EntregaPedido {
   out_for_delivery_at: string | null;
   delivery_sla_min: number | null;
   motoboy_timeline: Record<string, string>;
+  lat: number | null;
+  lng: number | null;
 }
 
 /**

@@ -554,7 +554,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         // ENTREGUES recentes (coluna final) e so entrega PROPRIA (exclui iFood/retirada).
         // Campos extras: delivery_sla_min, motoboy_timeline, out_for_delivery_at.
         const { data: orders } = await admin.from("orders")
-          .select("id, number, destination_name, destination_phone, delivery_address, delivery_platform, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_updated_at, out_for_delivery_at, delivery_sla_min, motoboy_timeline, created_at, updated_at")
+          .select("id, number, destination_name, destination_phone, delivery_address, delivery_platform, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_updated_at, out_for_delivery_at, delivery_sla_min, motoboy_timeline, delivery_lat, delivery_lng, created_at, updated_at")
           .eq("tenant_id", tenant_id).eq("origin_type", "delivery").in("status", ["new", "preparing", "ready", "delivered"])
           .order("created_at", { ascending: true });
         const RECENTE_MS = 3 * 60 * 60 * 1000; // entregues nas ultimas 3h ficam na coluna "Entregue"
@@ -588,6 +588,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           out_for_delivery_at: o.out_for_delivery_at ?? null,
           delivery_sla_min: o.delivery_sla_min != null ? Number(o.delivery_sla_min) : null,
           motoboy_timeline: (o.motoboy_timeline && typeof o.motoboy_timeline === "object") ? o.motoboy_timeline : {},
+          lat: o.delivery_lat != null ? Number(o.delivery_lat) : null,
+          lng: o.delivery_lng != null ? Number(o.delivery_lng) : null,
         })) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
