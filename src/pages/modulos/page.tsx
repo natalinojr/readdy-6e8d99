@@ -282,6 +282,9 @@ export default function ModulosPage() {
   useEffect(() => {
     if (user?.perfil === 'totem') {
       navigate('/autoatendimento', { replace: true });
+    } else if (user?.perfil === 'gestor_entregas') {
+      // Perfil restrito: vai direto pro único módulo permitido.
+      navigate('/gestor-entregas', { replace: true });
     }
   }, [user?.perfil, navigate]);
 

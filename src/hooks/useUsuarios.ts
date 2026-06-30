@@ -9,6 +9,7 @@ const ROLE_MAP: Record<string, PerfilUsuario> = {
   cashier: 'caixa',
   waiter: 'garcom',
   kitchen: 'cozinha',
+  delivery_manager: 'gestor_entregas',
   tablet: 'totem',
 };
 
@@ -18,6 +19,7 @@ const ROLE_MAP_REVERSE: Record<PerfilUsuario, string> = {
   caixa: 'cashier',
   garcom: 'waiter',
   cozinha: 'kitchen',
+  gestor_entregas: 'delivery_manager',
   totem: 'tablet',
 };
 

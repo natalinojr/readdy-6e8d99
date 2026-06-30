@@ -12,7 +12,7 @@ interface Props {
   onLimparPIN?: () => Promise<{ success: boolean; error?: string }>;
 }
 
-const PERFIS_NORMAIS: PerfilUsuario[] = ['admin', 'gerente', 'caixa', 'garcom', 'cozinha'];
+const PERFIS_NORMAIS: PerfilUsuario[] = ['admin', 'gerente', 'caixa', 'garcom', 'cozinha', 'gestor_entregas'];
 const PERFIS_TODOS: PerfilUsuario[] = [...PERFIS_NORMAIS, 'totem'];
 
 export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefinirPIN, onLimparPIN }: Props) {

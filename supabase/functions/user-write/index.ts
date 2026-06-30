@@ -79,7 +79,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       const roleMap: Record<string, string> = {
         admin: 'admin', gerente: 'manager', caixa: 'cashier',
-        garcom: 'waiter', cozinha: 'kitchen', totem: 'tablet',
+        garcom: 'waiter', cozinha: 'kitchen', gestor_entregas: 'delivery_manager', totem: 'tablet',
       };
 
       const isTotem = perfil === 'totem';

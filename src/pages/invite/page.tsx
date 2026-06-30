@@ -19,6 +19,8 @@ const PERFIL_LABEL: Record<UserPerfil, string> = {
   caixa: 'Operador de Caixa',
   garcom: 'Garçom',
   cozinha: 'Cozinha / KDS',
+  gestor_entregas: 'Gestor de Entregas',
+  totem: 'Totem',
 };
 
 const PERFIL_ROTA: Record<UserPerfil, string> = {
@@ -27,6 +29,8 @@ const PERFIL_ROTA: Record<UserPerfil, string> = {
   caixa: '/pdv/caixa',
   garcom: '/pdv/garcom',
   cozinha: '/kds',
+  gestor_entregas: '/gestor-entregas',
+  totem: '/autoatendimento',
 };
 
 const PERFIL_COLOR: Record<UserPerfil, string> = {
@@ -35,6 +39,8 @@ const PERFIL_COLOR: Record<UserPerfil, string> = {
   caixa: 'text-amber-600 bg-amber-50',
   garcom: 'text-emerald-600 bg-emerald-50',
   cozinha: 'text-sky-600 bg-sky-50',
+  gestor_entregas: 'text-orange-600 bg-orange-50',
+  totem: 'text-orange-600 bg-orange-50',
 };
 
 function decodeToken(token: string): InviteToken | null {

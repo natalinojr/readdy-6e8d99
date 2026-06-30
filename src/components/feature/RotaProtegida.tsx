@@ -40,6 +40,12 @@ export default function RotaProtegida({ children }: Props) {
   const { hasPermissao, loading } = usePermissoes();
   const location = useLocation();
 
+  // Perfil restrito "Gestor de Entregas": só pode ficar no módulo de entregas.
+  // Qualquer outra rota interna devolve pro kanban (independe das permissões).
+  if (user?.perfil === 'gestor_entregas' && !location.pathname.startsWith('/gestor-entregas')) {
+    return <Navigate to="/gestor-entregas" replace />;
+  }
+
   // Enquanto carrega permissões, não bloqueia (evita flash de redirect)
   if (loading) return <>{children}</>;
 

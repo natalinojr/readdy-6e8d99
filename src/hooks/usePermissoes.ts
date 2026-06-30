@@ -3,7 +3,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
 
-export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha';
+export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas';
 
 export type PermissaoKey =
   | 'pdv_abrir_caixa'
@@ -23,6 +23,7 @@ export type PermissaoKey =
   | 'kds_acessar'
   | 'gestor_pedidos_acessar'
   | 'gestor_pedidos_entregar'
+  | 'gestor_entregas_acessar'
   | 'relatorio_financeiro'
   | 'relatorio_estoque'
   | 'clientes_ver'
@@ -39,6 +40,7 @@ const PAPEL_TO_DB_ROLE: Record<string, string> = {
   caixa: 'cashier',
   garcom: 'waiter',
   cozinha: 'kitchen',
+  gestor_entregas: 'delivery_manager',
 };
 
 /** Permissões padrão por papel (fallback quando não há dados no banco) */
@@ -48,7 +50,7 @@ const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
     'pdv_cancelar_pedido', 'pdv_cancelar_item', 'pdv_editar_item_pos_kds', 'pdv_estornar_pagamento',
     'garcom_fechar_mesa', 'garcom_transferir_mesa', 'cardapio_editar', 'cardapio_alterar_preco',
     'estoque_movimentar', 'estoque_inventario', 'kds_acessar', 'gestor_pedidos_acessar',
-    'gestor_pedidos_entregar', 'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver',
+    'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver',
     'usuarios_gerenciar', 'configuracoes_editar', 'auditoria_ver',
   ],
   gerente: [
@@ -56,7 +58,7 @@ const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
     'pdv_cancelar_pedido', 'pdv_cancelar_item', 'pdv_estornar_pagamento',
     'garcom_fechar_mesa', 'garcom_transferir_mesa', 'cardapio_editar',
     'estoque_movimentar', 'estoque_inventario', 'kds_acessar', 'gestor_pedidos_acessar',
-    'gestor_pedidos_entregar', 'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
+    'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
   ],
   caixa: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_cancelar_item',
@@ -66,6 +68,9 @@ const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
   ],
   cozinha: [
     'kds_acessar', 'gestor_pedidos_acessar', 'gestor_pedidos_entregar',
+  ],
+  gestor_entregas: [
+    'gestor_entregas_acessar',
   ],
 };
 
