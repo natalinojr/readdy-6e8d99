@@ -7,6 +7,7 @@ import MapaPin from '@/components/feature/MapaPin';
 import { useCardapio } from '@/contexts/CardapioContext';
 import type { MotoboyAlertEntry } from '@/contexts/SystemSettingsContext';
 import GerirEntregasTab from './GerirEntregasTab';
+import QrCodeDelivery from './QrCodeDelivery';
 
 interface Neighborhood {
   id: string;
@@ -508,6 +509,9 @@ export default function ConfigDeliveryPage() {
                 Copiar
               </button>
             </div>
+            {deliveryUrl ? (
+              <QrCodeDelivery url={deliveryUrl} nomeArquivo={`qrcode-delivery-${tenantSlug || 'loja'}`} />
+            ) : null}
           </div>
 
           {/* Entregadores (motoboys) — link de acesso + liberar/bloquear */}
