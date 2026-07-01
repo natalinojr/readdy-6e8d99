@@ -48,6 +48,17 @@ export function colunaDe(o: EntregaPedido): ColunaId {
   return 'preparo';
 }
 
+/**
+ * O pedido tem algum problema registrado? Cobre as três origens:
+ * status atual `problema`, histórico do motoboy (`motoboy_problems`) e
+ * observação do tipo "problema" lançada no gestor (`delivery_notes`).
+ */
+export function temProblema(o: EntregaPedido): boolean {
+  return o.motoboy_status === 'problema'
+    || (o.problemas?.length ?? 0) > 0
+    || (o.delivery_notes?.some((n) => n.kind === 'problema') ?? false);
+}
+
 /** Próxima fase de entrega que o gestor pode acionar (override `set_motoboy_status`). */
 export function proximaFase(o: EntregaPedido): { signal: string; label: string; icon: string } | null {
   if (o.status === 'delivered' || o.motoboy_status === 'entregou') return null;

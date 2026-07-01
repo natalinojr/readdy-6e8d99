@@ -1,5 +1,5 @@
 import type { EntregaPedido } from '../hooks/useGestorEntregas';
-import { fmtMoeda, fmtTelefone, waNumero, horaCurta, proximaFase, prazoInfo } from '../utils';
+import { fmtMoeda, fmtTelefone, waNumero, horaCurta, proximaFase, prazoInfo, temProblema } from '../utils';
 
 interface Props {
   pedido: EntregaPedido;
@@ -23,7 +23,8 @@ const stop = (e: React.MouseEvent) => e.stopPropagation();
 export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, onProblema, onLiberar }: Props) {
   const prazo = prazoInfo(o, now);
   const prox = proximaFase(o);
-  const temProblema = o.motoboy_status === 'problema';
+  const problemaAtivo = o.motoboy_status === 'problema';
+  const problemaRegistrado = temProblema(o);
   const entregue = o.status === 'delivered' || o.motoboy_status === 'entregou';
   const tl = o.motoboy_timeline || {};
   const algumBusy = !!busy && busy.startsWith(o.id + ':');
@@ -37,12 +38,17 @@ export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, 
     <div
       onClick={() => onAbrir(o.id)}
       title="Ver detalhes do pedido"
-      className={`bg-white rounded-xl border p-3 space-y-2 transition-shadow hover:shadow-md cursor-pointer ${temProblema ? 'border-red-300 ring-1 ring-red-200' : 'border-zinc-200'}`}
+      className={`bg-white rounded-xl border p-3 space-y-2 transition-shadow hover:shadow-md cursor-pointer ${problemaRegistrado ? 'border-red-300 ring-1 ring-red-200' : 'border-zinc-200'}`}
     >
       {/* Cabeçalho: nº + hora + prazo */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <span className="text-sm font-black text-zinc-800">{numCurto(o.number)}</span>
+          {problemaRegistrado && (
+            <span className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700" title="Problema registrado neste pedido">
+              <i className="ri-alert-fill" /> Problema
+            </span>
+          )}
           <span className="text-[10px] text-zinc-400" title="Pedido criado">{horaCurta(o.created_at)}</span>
           {totalRegistros > 0 && (
             <span className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-zinc-100 text-zinc-500" title="Registros (problemas/observações)">
@@ -133,7 +139,7 @@ export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, 
           ) : (
             <span className="flex-1 text-center text-[10px] text-zinc-400 py-2">Aguardando a cozinha finalizar</span>
           )}
-          {!temProblema && (
+          {!problemaAtivo && (
             <button type="button" disabled={algumBusy} onClick={(e) => { stop(e); onProblema(o.id); }} title="Marcar problema na entrega"
               className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50">
               <i className="ri-alert-line text-sm" />

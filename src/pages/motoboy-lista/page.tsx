@@ -58,6 +58,7 @@ interface OrderRow {
   alertas?: string[];
   sla_min?: number | null;
   created_at?: string | null;
+  motoboy_updated_at?: string | null;
   lat?: number | null;
   lng?: number | null;
 }
@@ -226,17 +227,25 @@ export default function MotoboyListaPage() {
   }
 
   // ── Lista de pedidos ──
-  const abertos = orders.length;
-  const meusCount = orders.filter((o) => o.meu).length;
-  const semEntregadorCount = orders.filter((o) => !o.assumido).length;
-  const atrasoCount = orders.filter((o) => infoTempo(o, now).atrasado).length;
+  // Separa em aberto (fluxo ativo) dos concluídos (entregues) — estes vão numa seção à parte.
+  const emAberto = orders.filter((o) => o.status !== 'delivered');
+  const concluidos = orders.filter((o) => o.status === 'delivered');
+  const abertos = emAberto.length;
+  const meusCount = emAberto.filter((o) => o.meu).length;
+  const semEntregadorCount = emAberto.filter((o) => !o.assumido).length;
+  const atrasoCount = emAberto.filter((o) => infoTempo(o, now).atrasado).length;
 
   const passaFiltro = (o: OrderRow) =>
     filtro === 'todos' ? true
       : filtro === 'meus' ? o.meu
       : filtro === 'sem_entregador' ? !o.assumido
       : infoTempo(o, now).atrasado;
-  const filtrados = orders.filter(passaFiltro);
+  const filtrados = emAberto.filter(passaFiltro);
+  // Concluídos exibidos: respeita "Meus"; some nos filtros de trabalho em aberto (sem entregador / atraso).
+  const concluidosVisiveis = (filtro === 'meus' ? concluidos.filter((o) => o.meu) : concluidos)
+    .slice()
+    .sort((a, b) => (b.motoboy_updated_at ?? b.created_at ?? '').localeCompare(a.motoboy_updated_at ?? a.created_at ?? ''));
+  const mostrarConcluidos = (filtro === 'todos' || filtro === 'meus') && concluidosVisiveis.length > 0;
   // Ordem por tempo: mais urgente primeiro (sem prazo vai pro fim).
   const porTempo = [...filtrados].sort((a, b) => {
     const ta = infoTempo(a, now), tb = infoTempo(b, now);
@@ -258,18 +267,21 @@ export default function MotoboyListaPage() {
   };
 
   const renderCard = (o: OrderRow, baseBg: string) => {
+    const concluido = o.status === 'delivered';
     const ti = infoTempo(o, now);
-    const ring = ti.atrasado ? ' ring-2 ring-red-300' : ti.quase ? ' ring-2 ring-amber-300' : '';
+    const ring = concluido ? '' : ti.atrasado ? ' ring-2 ring-red-300' : ti.quase ? ' ring-2 ring-amber-300' : '';
     const cozinha = COZINHA_BADGE[o.status] ?? { label: STATUS_LABEL[o.status] ?? o.status, cls: 'bg-zinc-100 text-zinc-600', icon: 'ri-restaurant-line' };
     return (
       <a key={o.id} href={`/motoboy/${o.id}`} className={'block rounded-2xl border p-4 active:brightness-95 transition ' + baseBg + ring}>
         <div className="flex items-center justify-between mb-1 gap-1.5">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-sm font-black text-zinc-800 shrink-0">#{String(o.number).replace(/\D/g, '').slice(-4) || o.number}</span>
-            {/* Status da cozinha ao lado do número do pedido */}
-            <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ' + cozinha.cls}>
-              <i className={cozinha.icon} /> {cozinha.label}
-            </span>
+            {/* Status da cozinha ao lado do número do pedido (oculto quando já entregue) */}
+            {!concluido ? (
+              <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ' + cozinha.cls}>
+                <i className={cozinha.icon} /> {cozinha.label}
+              </span>
+            ) : null}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap justify-end">
             {o.motoboy_status ? (() => {
@@ -297,7 +309,7 @@ export default function MotoboyListaPage() {
         <div className="flex items-center justify-between mt-2 gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-sm font-black text-zinc-800 shrink-0">{fmt(o.total)}</span>
-            <ChipTempo o={o} />
+            {concluido ? null : <ChipTempo o={o} />}
           </div>
           {o.assumido && !o.meu ? (
             <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-400 shrink-0"><i className="ri-lock-line" /> {o.assumido_por ? `com ${o.assumido_por.split(' ')[0]}` : 'outro entregador'}</span>
@@ -393,7 +405,7 @@ export default function MotoboyListaPage() {
           <div className="bg-white rounded-2xl border border-zinc-100 p-8 text-center">
             <i className="ri-inbox-line text-3xl text-zinc-300" />
             <p className="text-sm font-semibold text-zinc-500 mt-2">
-              {orders.length === 0 ? 'Nenhum pedido em aberto agora.' : 'Nenhum pedido neste filtro.'}
+              {emAberto.length === 0 ? 'Nenhum pedido em aberto agora.' : 'Nenhum pedido neste filtro.'}
             </p>
           </div>
         ) : ordem === 'tempo' ? (
@@ -418,6 +430,18 @@ export default function MotoboyListaPage() {
             })}
           </div>
         )}
+
+        {/* Concluídos: entregues recentes — só pra o motoboy saber o que já foi feito. */}
+        {mostrarConcluidos ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-green-500" />
+              <span className="text-xs font-bold text-zinc-500 uppercase">Entregues</span>
+              <span className="text-[11px] font-bold text-zinc-400">{concluidosVisiveis.length}</span>
+            </div>
+            {concluidosVisiveis.map((o) => renderCard(o, 'bg-green-50 border-green-200'))}
+          </div>
+        ) : null}
       </div>
 
       {showMapa ? <MapaEntregas pontos={pontosMapa} onClose={() => setShowMapa(false)} onACaminho={marcarACaminho} /> : null}

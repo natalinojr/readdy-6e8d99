@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGestorEntregas, type EntregaPedido } from './hooks/useGestorEntregas';
-import { COLUNAS, colunaDe, prazoInfo, type ColunaId } from './utils';
+import { COLUNAS, colunaDe, prazoInfo, temProblema, type ColunaId } from './utils';
 import EntregaCard from './components/EntregaCard';
 import EntregaDetalheModal from './components/EntregaDetalheModal';
 import ProblemaModal from './components/ProblemaModal';
@@ -24,6 +24,7 @@ export default function GestorEntregasPage() {
   const [fEntregador, setFEntregador] = useState<string>('todos'); // 'todos' | 'sem' | driver_id
   const [fFase, setFFase] = useState<ColunaId | 'todas'>('todas');
   const [fAtraso, setFAtraso] = useState(false);
+  const [fProblema, setFProblema] = useState(false);
 
   const estaAtrasado = (o: EntregaPedido) => !!prazoInfo(o, now)?.atrasado;
 
@@ -40,8 +41,9 @@ export default function GestorEntregasPage() {
     if (fEntregador === 'sem') { if (o.driver_id) return false; }
     else if (fEntregador !== 'todos') { if (o.driver_id !== fEntregador) return false; }
     if (fAtraso && !estaAtrasado(o)) return false;
+    if (fProblema && !temProblema(o)) return false;
     return true;
-  }), [orders, fEntregador, fAtraso, now]);
+  }), [orders, fEntregador, fAtraso, fProblema, now]);
 
   const porColuna = useMemo(() => {
     const g: Record<ColunaId, EntregaPedido[]> = { preparo: [], pronto: [], a_caminho: [], coletado: [], entregue: [] };
@@ -56,7 +58,7 @@ export default function GestorEntregasPage() {
   // Contadores do cabeçalho (sobre todos os pedidos, sem os filtros).
   const emAndamento = orders.filter((o) => o.status !== 'delivered' && o.motoboy_status !== 'entregou');
   const atrasadosCount = emAndamento.filter(estaAtrasado).length;
-  const comProblema = orders.filter((o) => o.motoboy_status === 'problema').length;
+  const comProblema = orders.filter(temProblema).length;
 
   const pontosMapa: PontoGestor[] = baseFiltrada.map((o) => ({
     id: o.id, number: o.number, cliente: o.cliente, endereco: o.endereco,
@@ -142,8 +144,15 @@ export default function GestorEntregasPage() {
             <span className={`text-[10px] px-1 rounded-full ${fAtraso ? 'bg-white/25' : 'bg-red-100'}`}>{atrasadosCount}</span>
           </button>
 
-          {(fEntregador !== 'todos' || fFase !== 'todas' || fAtraso) && (
-            <button onClick={() => { setFEntregador('todos'); setFFase('todas'); setFAtraso(false); }}
+          {/* Com problema */}
+          <button onClick={() => setFProblema((v) => !v)}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center gap-1 border ${fProblema ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-amber-700 border-amber-200 hover:bg-amber-50'}`}>
+            <i className="ri-alert-line" /> Com problema
+            <span className={`text-[10px] px-1 rounded-full ${fProblema ? 'bg-white/25' : 'bg-amber-100'}`}>{comProblema}</span>
+          </button>
+
+          {(fEntregador !== 'todos' || fFase !== 'todas' || fAtraso || fProblema) && (
+            <button onClick={() => { setFEntregador('todos'); setFFase('todas'); setFAtraso(false); setFProblema(false); }}
               className="text-xs text-amber-600 hover:text-amber-700 font-semibold ml-1">Limpar</button>
           )}
         </div>
@@ -152,7 +161,7 @@ export default function GestorEntregasPage() {
       </div>
 
       {/* Kanban */}
-      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4 md:p-6">
+      <div className={'flex-1 overflow-x-auto overflow-y-hidden p-4 md:p-6' + (umaFase ? '' : ' snap-x snap-mandatory')}>
         {loading && orders.length === 0 ? (
           <div className="flex items-center justify-center py-20 w-full">
             <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
@@ -168,7 +177,7 @@ export default function GestorEntregasPage() {
             {colunasVisiveis.map((col) => {
               const lista = porColuna[col.id];
               return (
-                <div key={col.id} className={`flex flex-col h-full ${umaFase ? 'w-full' : 'w-[280px] flex-shrink-0'}`}>
+                <div key={col.id} className={`flex flex-col h-full ${umaFase ? 'w-full' : 'w-[86vw] max-w-[320px] sm:w-[280px] flex-shrink-0 snap-start'}`}>
                   <div className={`flex items-center justify-between px-3 py-2 rounded-xl border mb-2 ${col.head}`}>
                     <div className="flex items-center gap-1.5">
                       <span className={`w-2 h-2 rounded-full ${col.dot}`} />

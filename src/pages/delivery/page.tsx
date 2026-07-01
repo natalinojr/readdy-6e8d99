@@ -113,6 +113,14 @@ export default function DeliveryPage() {
     ? 'https://wa.me/' + (lojaWaDigits.length > 11 && lojaWaDigits.startsWith('55') ? lojaWaDigits : '55' + lojaWaDigits)
     : '';
 
+  // Iniciais da loja para o "logo" do header (1ª letra das 2 primeiras palavras)
+  const lojaIniciais = (data.tenant?.name || 'DL')
+    .split(/\s+/)
+    .slice(0, 2)
+    .map(function (w: string) { return w.charAt(0); })
+    .join('')
+    .toUpperCase();
+
   // Entrega por distância (pin)
   const distanceMode = data.distanceMode;
   const deliveryQuote = data.deliveryQuote;
@@ -152,6 +160,9 @@ export default function DeliveryPage() {
 
   // Dropdown de endereço
   const [showAddressDropdown, setShowAddressDropdown] = useState(false);
+
+  // Menu de perfil no header (telefone, histórico, sair)
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   // Altura do teclado virtual (para levantar modais/campos acima dele)
   const kbInset = useKeyboardInset();
@@ -235,6 +246,14 @@ export default function DeliveryPage() {
       setSubView('cardapio');
     }
   }, [data.step]);
+
+  // Badge de pedidos em andamento no header — busca uma vez ao chegar no cardápio
+  useEffect(function () {
+    if (data.step === 'cardapio' && customerId && tenantId && phone) {
+      fetchActiveOrders();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.step, customerId, tenantId, phone]);
 
   // ── Renderização ──
 
@@ -455,104 +474,129 @@ export default function DeliveryPage() {
           </div>
         )}
         {/* Header (oculto ao ver o pedido, p/ dar mais espaço à lista de itens) */}
-        <div className={"bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0 relative" + (showCart ? " hidden" : "")}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 flex items-center justify-center bg-white/30 rounded-xl">
-                <i className="ri-motorbike-line text-white text-sm" />
+        <div className={"shrink-0" + (showCart ? " hidden" : "")}>
+          {/* Hero: marca da loja + status + ações */}
+          <div className="relative bg-gradient-to-br from-amber-500 via-orange-500 to-orange-600 px-4 pt-5 pb-12">
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{ background: 'radial-gradient(circle at 85% -20%, rgba(255,255,255,.25), transparent 45%)' }}
+            />
+            <div className="relative flex items-center gap-3">
+              <div className="w-11 h-11 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0">
+                <span className="text-orange-600 font-black text-base">{lojaIniciais}</span>
               </div>
-              <div>
-                <h1 className="text-white text-lg font-black leading-tight">Cardápio Delivery</h1>
-                <p className="text-white/80 text-xs">
-                  Olá, <strong className="text-white">{customerName}</strong>
+              <div className="flex-1 min-w-0">
+                <h1 className="text-white text-base font-black leading-tight truncate">{tenant?.name || 'Delivery'}</h1>
+                <p className="text-white/85 text-[11px] mt-0.5 flex items-center gap-1.5 min-w-0">
+                  {data.deliveryOpenNow ? (
+                    <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 bg-white/20 rounded-full font-bold text-[10px] text-white">
+                      <span className="w-1.5 h-1.5 bg-green-300 rounded-full" />
+                      Aberto
+                    </span>
+                  ) : (
+                    <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 bg-black/20 rounded-full font-bold text-[10px] text-white">
+                      <span className="w-1.5 h-1.5 bg-red-400 rounded-full" />
+                      Fechado
+                    </span>
+                  )}
+                  <span className="truncate">Olá, {(customerName || '').split(' ')[0]} 👋</span>
                 </p>
               </div>
-            </div>
-            <div className="text-right">
-              <p className="text-white/70 text-[10px] uppercase tracking-wider font-bold">{tenant?.name || 'Delivery'}</p>
-              {modoEntrega === 'retirada' ? (
-                <div className="inline-flex items-center gap-1.5">
-                  <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-green-500/30 rounded-full border border-green-400/40 mt-1">
-                    <i className="ri-store-2-line text-[10px] text-white" />
-                    <span className="text-white text-[10px] font-bold whitespace-nowrap">Retirada</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleAlterarModo}
-                    className="mt-1 px-2 py-1 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap"
-                    title="Trocar modo de entrega"
-                  >
-                    <i className="ri-arrow-left-right-line text-[10px]" />
-                    Trocar
-                  </button>
-                </div>
-              ) : (
-                <div className="inline-flex items-center gap-1.5">
-                  <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-white/20 rounded-full border border-white/30 mt-1">
-                    <i className="ri-map-pin-line text-[10px] text-white" />
-                    <span className="text-white text-[10px] font-bold max-w-[140px] truncate">
-                      {distanceMode
-                        ? (deliveryQuote
-                            ? '~' + deliveryQuote.km.toFixed(1) + ' km'
-                            : 'Marcar no mapa')
-                        : (bairroAtual ? bairroAtual.name : 'Sem bairro')}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleAlterarModo}
-                    className="mt-1 px-2 py-1 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap"
-                    title="Trocar modo de entrega"
-                  >
-                    <i className="ri-arrow-left-right-line text-[10px]" />
-                    Trocar
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
 
-          {/* Informações do cliente com seletor de endereço */}
-          <div className="mt-3 flex items-center gap-2 text-white/80 text-xs">
-            <div className="flex-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="inline-flex items-center gap-1.5">
-                <span><i className="ri-phone-line text-[10px] mr-1" />{phone}</span>
-                {/* Falar com a loja: compacto, ao lado do telefone do cliente */}
-                {lojaWaUrl ? (
-                  <a
-                    href={lojaWaUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-lg transition-colors whitespace-nowrap"
-                    title="Falar com a loja no WhatsApp"
-                  >
-                    <i className="ri-whatsapp-line text-[11px]" />
-                    Falar com a loja
-                  </a>
-                ) : null}
-                {/* Sair: encerra a sessão neste aparelho p/ entrar com outro número */}
+              {/* Meus pedidos (badge = pedidos em andamento) */}
+              {customerId ? (
                 <button
                   type="button"
                   onClick={function () {
-                    if (window.confirm('Sair e entrar com outro número? Seu carrinho atual será esvaziado.')) {
-                      data.handleSair();
-                    }
+                    setSubView(activeOrders.length > 0 ? 'acompanhar_input' : 'historico');
+                    fetchActiveOrders();
                   }}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-lg transition-colors whitespace-nowrap"
-                  title="Sair e usar outro número"
+                  className="relative w-9 h-9 flex items-center justify-center bg-white/20 hover:bg-white/30 border border-white/25 rounded-xl text-white cursor-pointer transition-colors shrink-0"
+                  title="Meus pedidos"
                 >
-                  <i className="ri-logout-box-r-line text-[11px]" />
-                  Sair
+                  <i className="ri-file-list-3-line text-[15px]" />
+                  {activeOrders.length > 0 ? (
+                    <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 flex items-center justify-center bg-white text-orange-600 text-[9px] font-black rounded-full">
+                      {activeOrders.length}
+                    </span>
+                  ) : null}
                 </button>
-              </span>
-              <span className="hidden sm:inline">
-                <i className={(modoEntrega === 'retirada' ? 'ri-store-2-line' : 'ri-home-4-line') + ' text-[10px] mr-1'} />
-                {modoEntrega === 'retirada' ? 'Retirada na loja' : (enderecoAtual ? enderecoAtual.label + ': ' + enderecoDisplay : enderecoDisplay)}
-              </span>
+              ) : null}
+
+              {/* Perfil: telefone, histórico, sair */}
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={function () { setShowProfileMenu(!showProfileMenu); }}
+                  className="w-9 h-9 flex items-center justify-center bg-white/20 hover:bg-white/30 border border-white/25 rounded-xl text-white cursor-pointer transition-colors"
+                  title="Meu perfil"
+                >
+                  <i className="ri-user-3-line text-[15px]" />
+                </button>
+                {showProfileMenu ? (
+                  <>
+                    <div className="fixed inset-0 z-[40]" onClick={function () { setShowProfileMenu(false); }} />
+                    <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-lg border border-zinc-100 z-[50] overflow-hidden">
+                      <div className="px-3 py-2.5 border-b border-zinc-100">
+                        <p className="text-xs font-bold text-zinc-800 truncate">{customerName}</p>
+                        <p className="text-[10px] text-zinc-400"><i className="ri-phone-line mr-1" />{phone}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={function () { setShowProfileMenu(false); setSubView('historico'); }}
+                        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer transition-colors"
+                      >
+                        <i className="ri-history-line text-sm text-zinc-400" />
+                        Histórico de pedidos
+                      </button>
+                      {/* Sair: encerra a sessão neste aparelho p/ entrar com outro número */}
+                      <button
+                        type="button"
+                        onClick={function () {
+                          setShowProfileMenu(false);
+                          if (window.confirm('Sair e entrar com outro número? Seu carrinho atual será esvaziado.')) {
+                            data.handleSair();
+                          }
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer transition-colors border-t border-zinc-100"
+                      >
+                        <i className="ri-logout-box-r-line text-sm" />
+                        Sair (usar outro número)
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
             </div>
+          </div>
+
+          {/* Card flutuante: modo de entrega + endereço + taxa/região/loja */}
+          <div className="relative z-30 -mt-8 mx-4 mb-2 bg-white rounded-2xl shadow-lg border border-zinc-100">
+            <div className="flex items-center gap-2 px-2.5 py-2.5">
+              {/* Toggle Entrega/Retirada */}
+              <div className="flex bg-zinc-100 rounded-xl p-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={function () { if (modoEntrega === 'retirada') handleAlterarModo(); }}
+                  className={'flex items-center gap-1 px-2.5 py-1.5 rounded-[10px] text-[11px] font-bold cursor-pointer transition-colors ' +
+                    (modoEntrega !== 'retirada' ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700')}
+                >
+                  <i className="ri-e-bike-2-line text-xs" />
+                  Entrega
+                </button>
+                <button
+                  type="button"
+                  onClick={function () { if (modoEntrega !== 'retirada') handleAlterarModo(); }}
+                  className={'flex items-center gap-1 px-2.5 py-1.5 rounded-[10px] text-[11px] font-bold cursor-pointer transition-colors ' +
+                    (modoEntrega === 'retirada' ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700')}
+                >
+                  <i className="ri-store-2-line text-xs" />
+                  Retirada
+                </button>
+              </div>
 
             {modoEntrega !== 'retirada' ? (
-              <div className="relative">
+              <div className="relative flex-1 min-w-0">
                 <button
                   type="button"
                   onClick={function () {
@@ -562,11 +606,16 @@ export default function DeliveryPage() {
                       handleIrParaEnderecos();
                     }
                   }}
-                  className="px-2.5 py-1.5 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1"
+                  className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-zinc-50 cursor-pointer transition-colors text-left min-w-0"
                 >
-                  <i className="ri-pencil-line text-[10px]" />
-                  {hasAnyAddresses ? (enderecoAtual ? enderecoAtual.label : 'Endereços') : 'Editar'}
-                  {hasAnyAddresses ? <i className={'ri-arrow-down-s-line text-[10px] transition-transform ' + (showAddressDropdown ? 'rotate-180' : '')} /> : null}
+                  <i className="ri-map-pin-2-fill text-amber-500 text-sm shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-400">Entregar em</span>
+                    <span className="block text-xs font-bold text-zinc-800 truncate">
+                      {enderecoAtual ? enderecoAtual.label + ' · ' + enderecoDisplay : enderecoDisplay}
+                    </span>
+                  </span>
+                  <i className={'ri-arrow-down-s-line text-zinc-400 shrink-0 transition-transform ' + (showAddressDropdown ? 'rotate-180' : '')} />
                 </button>
 
                 {/* Dropdown de endereços */}
@@ -646,33 +695,60 @@ export default function DeliveryPage() {
                   </>
                 ) : null}
               </div>
-            ) : null}
-          </div>
-
-          {/* Botões Acompanhar Pedido e Histórico */}
-          {customerId ? (
-            <div className="mt-3 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={function () {
-                  setSubView('acompanhar_input');
-                  fetchActiveOrders();
-                }}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap border border-white/20"
-              >
-                <i className="ri-time-line text-sm" />
-                Acompanhar pedido
-              </button>
-              <button
-                type="button"
-                onClick={function () { setSubView('historico'); }}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap border border-white/20"
-              >
-                <i className="ri-history-line text-sm" />
-                Histórico
-              </button>
+            ) : (
+              <div className="flex-1 min-w-0 px-1.5">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">Retirar na loja</p>
+                <p className="text-xs font-bold text-zinc-800 truncate">{tenant?.name || 'Balcão da loja'}</p>
+              </div>
+            )}
             </div>
-          ) : null}
+
+            {/* Rodapé do card: taxa / região / falar com a loja */}
+            <div className="flex items-stretch border-t border-zinc-100">
+              <div className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[11px] font-semibold text-zinc-500">
+                <i className="ri-truck-line text-amber-500 text-[13px]" />
+                {modoEntrega === 'retirada'
+                  ? 'Sem taxa'
+                  : (distanceMode
+                      ? (deliveryQuote ? (deliveryQuote.taxa > 0 ? 'R$ ' + deliveryQuote.taxa.toFixed(2) : 'Grátis') : 'A calcular')
+                      : (deliveryFee > 0 ? 'R$ ' + deliveryFee.toFixed(2) : 'Grátis'))}
+              </div>
+              <div className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[11px] font-semibold text-zinc-500 border-l border-zinc-100 min-w-0">
+                {modoEntrega === 'retirada' ? (
+                  <>
+                    <i className="ri-store-2-line text-amber-500 text-[13px]" />
+                    <span className="truncate">Balcão</span>
+                  </>
+                ) : distanceMode ? (
+                  <>
+                    <i className="ri-route-line text-amber-500 text-[13px]" />
+                    <span className="truncate">
+                      {deliveryQuote
+                        ? '~' + deliveryQuote.km.toFixed(1) + ' km' + (deliveryQuote.tempoMax > 0 ? ' · até ' + deliveryQuote.tempoMax + ' min' : '')
+                        : 'Marcar no mapa'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <i className="ri-map-pin-line text-amber-500 text-[13px]" />
+                    <span className="truncate">{bairroAtual ? bairroAtual.name : 'Sem bairro'}</span>
+                  </>
+                )}
+              </div>
+              {lojaWaUrl ? (
+                <a
+                  href={lojaWaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[11px] font-bold text-green-600 hover:bg-green-50 border-l border-zinc-100 transition-colors"
+                  title="Falar com a loja no WhatsApp"
+                >
+                  <i className="ri-whatsapp-line text-[13px]" />
+                  Loja
+                </a>
+              ) : null}
+            </div>
+          </div>
         </div>
 
         {/* Categorias sticky */}
