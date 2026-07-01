@@ -136,7 +136,6 @@ export default function DeliveryPage() {
   const setEnderecoFromCardapio = data.setEnderecoFromCardapio;
   const handleIrParaEnderecos = data.handleIrParaEnderecos;
   const handleConfirmarModo = data.handleConfirmarModo;
-  const handleAlterarModo = data.handleAlterarModo;
   const handleAdicionar = data.handleAdicionar;
   const handleAlterarQtd = data.handleAlterarQtd;
   const handleRemover = data.handleRemover;
@@ -573,11 +572,12 @@ export default function DeliveryPage() {
           {/* Card flutuante: modo de entrega + endereço + taxa/região/loja */}
           <div className="relative z-30 -mt-8 mx-4 mb-2 bg-white rounded-2xl shadow-lg border border-zinc-100">
             <div className="flex items-center gap-2 px-2.5 py-2.5">
-              {/* Toggle Entrega/Retirada */}
+              {/* Toggle Entrega/Retirada — troca direto, sem voltar à tela de modo:
+                  retirada é instantânea; entrega só abre a tela de endereço se não houver um */}
               <div className="flex bg-zinc-100 rounded-xl p-0.5 shrink-0">
                 <button
                   type="button"
-                  onClick={function () { if (modoEntrega === 'retirada') handleAlterarModo(); }}
+                  onClick={function () { if (modoEntrega === 'retirada') handleConfirmarModo('entrega'); }}
                   className={'flex items-center gap-1 px-2.5 py-1.5 rounded-[10px] text-[11px] font-bold cursor-pointer transition-colors ' +
                     (modoEntrega !== 'retirada' ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700')}
                 >
@@ -586,7 +586,7 @@ export default function DeliveryPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={function () { if (modoEntrega !== 'retirada') handleAlterarModo(); }}
+                  onClick={function () { if (modoEntrega !== 'retirada') handleConfirmarModo('retirada'); }}
                   className={'flex items-center gap-1 px-2.5 py-1.5 rounded-[10px] text-[11px] font-bold cursor-pointer transition-colors ' +
                     (modoEntrega === 'retirada' ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700')}
                 >
