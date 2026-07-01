@@ -50,6 +50,7 @@ interface OrderData {
   status: string;
   motoboy_status: string | null;
   alertas?: string[];
+  delivery_notes?: { at: string; kind: string; text: string; autor?: string | null }[];
   claimed_by_id?: string | null;
   claimed_by_name?: string | null;
   motoboy_timeline?: Record<string, string>;
@@ -258,6 +259,21 @@ export default function MotoboyPage() {
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-2xl p-3">
             <i className="ri-error-warning-line text-red-500 text-lg flex-shrink-0" />
             <p className="text-sm font-bold text-red-700">{aviso}</p>
+          </div>
+        ) : null}
+
+        {/* Observações da loja (registradas no gestor de entregas) */}
+        {order.delivery_notes && order.delivery_notes.length > 0 ? (
+          <div className="bg-sky-50 border border-sky-200 rounded-2xl p-3 space-y-2">
+            <p className="text-[11px] text-sky-600 font-bold uppercase flex items-center gap-1">
+              <i className="ri-chat-1-line" /> Observações da loja
+            </p>
+            {order.delivery_notes.map((n, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <i className={`${n.kind === 'problema' ? 'ri-alert-line text-red-500' : 'ri-information-line text-sky-500'} shrink-0 mt-0.5`} />
+                <p className="text-sm text-zinc-700 whitespace-pre-wrap">{n.text}</p>
+              </div>
+            ))}
           </div>
         ) : null}
 

@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
 
     const { data: voucher, error: fetchErr } = await admin
       .from('vouchers')
-      .select('*, tenant:tenants(name, logo_url, phone, address, city)')
+      .select('*, tenant:tenants(name, slug, logo_url, phone, address, city)')
       .eq('claim_token', token)
       .maybeSingle();
 
@@ -92,6 +92,7 @@ Deno.serve(async (req) => {
         store: voucher.tenant
           ? {
               name: voucher.tenant.name,
+              slug: voucher.tenant.slug,
               logo_url: voucher.tenant.logo_url,
               phone: voucher.tenant.phone,
               address: voucher.tenant.address,

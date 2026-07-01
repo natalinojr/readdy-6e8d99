@@ -20,6 +20,24 @@ export function getOrderSource(): string | null {
   } catch { return null; }
 }
 
+// Cupom vindo do link do voucher (?voucher=CODIGO — ex.: botão "Pedir no Delivery"
+// da página pública /voucher/:token). Mesmo padrão do utm_source: persiste na
+// sessão e é aplicado automaticamente quando o carrinho tiver itens.
+const URL_VOUCHER_KEY = 'erpos_delivery_voucher';
+export function getUrlVoucher(): string | null {
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get('voucher');
+    if (fromUrl && fromUrl.trim()) {
+      const v = fromUrl.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 30);
+      if (v) { sessionStorage.setItem(URL_VOUCHER_KEY, v); return v; }
+    }
+    return sessionStorage.getItem(URL_VOUCHER_KEY);
+  } catch { return null; }
+}
+function clearUrlVoucher() {
+  try { sessionStorage.removeItem(URL_VOUCHER_KEY); } catch { /* noop */ }
+}
+
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 type TenantInfo = {
@@ -513,8 +531,8 @@ export function useDeliveryData(storeSlug?: string) {
   const [customerName, setCustomerName] = useState('');
   const [dataNascimento, setDataNascimento] = useState('');
   const [genero, setGenero] = useState('');
-  // Voucher aplicado no checkout do delivery
-  const [voucherInput, setVoucherInput] = useState('');
+  // Voucher aplicado no checkout do delivery (pré-preenchido se veio de ?voucher= no link)
+  const [voucherInput, setVoucherInput] = useState(() => getUrlVoucher() ?? '');
   const [voucherCodigo, setVoucherCodigo] = useState('');
   const [voucherDesconto, setVoucherDesconto] = useState(0);
   const [voucherMsg, setVoucherMsg] = useState('');
@@ -1452,6 +1470,21 @@ export function useDeliveryData(storeSlug?: string) {
     return 'Cupom inválido.';
   }
 
+  // Auto-aplica o cupom vindo do link do voucher assim que houver itens no carrinho
+  // (uma única tentativa automática; se falhar — ex.: pedido mínimo — o campo fica
+  // preenchido e a mensagem explica, e o cliente pode tocar "Aplicar" depois).
+  const autoVoucherTried = useRef(false);
+  useEffect(function () {
+    if (autoVoucherTried.current || voucherCodigo || voucherLoading) return;
+    const code = voucherInput.trim();
+    if (!code || !tenant || getUrlVoucher() !== code) return;
+    const subtotal = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
+    if (subtotal <= 0) return;
+    autoVoucherTried.current = true;
+    handleAplicarVoucher();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, tenant, voucherCodigo, voucherInput]);
+
   async function handleAplicarVoucher() {
     const code = voucherInput.trim();
     if (!code || !tenant) return;
@@ -1486,6 +1519,7 @@ export function useDeliveryData(storeSlug?: string) {
     setVoucherCodigo('');
     setVoucherDesconto(0);
     setVoucherMsg('');
+    clearUrlVoucher(); // remoção manual não deve "ressuscitar" o cupom do link
   }
 
   // ── Mudar bairro (no checkout) ──────────────────────────────────────────────

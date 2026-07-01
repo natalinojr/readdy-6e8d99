@@ -157,7 +157,7 @@ export default function VoucherLinkPage() {
             <div className="flex items-center justify-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
               <i className="ri-checkbox-circle-fill text-emerald-500 text-lg" />
               <p className="text-xs font-bold text-emerald-700">
-                Voucher ativado! Apresente o código na loja.
+                Voucher ativado! {voucher.store?.slug ? 'Use no delivery ou apresente o código na loja.' : 'Apresente o código na loja.'}
               </p>
             </div>
           )}
@@ -236,6 +236,17 @@ export default function VoucherLinkPage() {
               <p className="text-[11px] text-zinc-400 pt-1">{voucher.notes}</p>
             )}
           </div>
+
+          {/* Pedir no delivery com o cupom já aplicado */}
+          {ativo && voucher.store?.slug && (
+            <a
+              href={`/${voucher.store.slug}-delivery?voucher=${encodeURIComponent(voucher.code)}`}
+              className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 hover:bg-amber-600 rounded-2xl text-sm font-bold text-white cursor-pointer transition-colors"
+            >
+              <i className="ri-e-bike-2-line text-lg" />
+              Pedir no Delivery com o voucher
+            </a>
+          )}
         </div>
       </div>
 

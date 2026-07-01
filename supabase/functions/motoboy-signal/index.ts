@@ -131,12 +131,23 @@ serve(async (req) => {
       if (!driver.is_active) return json({ ok: false, blocked: true, error: "bloqueado" }, 200);
 
       const { data: orders } = await admin.from("orders")
-        .select("id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, status, motoboy_status, motoboy_driver_id, delivery_sla_min, delivery_platform, created_at")
-        .eq("tenant_id", tenantId).eq("origin_type", "delivery").in("status", STATUS_ABERTOS)
+        .select("id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, status, motoboy_status, motoboy_driver_id, motoboy_updated_at, delivery_sla_min, delivery_platform, created_at, updated_at")
+        .eq("tenant_id", tenantId).eq("origin_type", "delivery").in("status", [...STATUS_ABERTOS, "delivered"])
         .order("created_at", { ascending: true });
 
       // Retirada na loja nao tem entrega -> nao aparece pro motoboy (delivery_platform='retirada').
-      const lista = ((orders ?? []) as Record<string, unknown>[]).filter((o) => o.delivery_platform !== "retirada");
+      // Entregues: mostra so os recentes (ultimas 3h) pro motoboy saber o que ja foi feito.
+      const RECENTE_MS = 3 * 60 * 60 * 1000;
+      const agoraTs = Date.now();
+      const lista = ((orders ?? []) as Record<string, unknown>[]).filter((o) => {
+        if (o.delivery_platform === "retirada") return false;
+        if (o.status === "delivered") {
+          const ref = (o.motoboy_updated_at as string | null) ?? (o.updated_at as string | null);
+          const t = ref ? new Date(ref).getTime() : 0;
+          return !!t && (agoraTs - t) <= RECENTE_MS;
+        }
+        return true;
+      });
       const alertasMap = await alertasPorPedido(admin, tenantId, lista.map((o) => o.id as string));
 
       // Nomes dos entregadores que assumiram pedidos (pra mostrar "com Fulano").
@@ -166,6 +177,7 @@ serve(async (req) => {
           alertas: alertasMap[o.id as string] ?? [],
           sla_min: o.delivery_sla_min != null ? Number(o.delivery_sla_min) : null,
           created_at: o.created_at,
+          motoboy_updated_at: o.motoboy_updated_at ?? null,
         })),
       });
     }
@@ -175,7 +187,7 @@ serve(async (req) => {
 
     if (body.action === "get_order") {
       const { data: order, error } = await admin.from("orders")
-        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_timeline, out_for_delivery_at, created_at, origin_type")
+        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, motoboy_problems, delivery_notes, motoboy_driver_id, motoboy_timeline, out_for_delivery_at, created_at, origin_type")
         .eq("id", orderId).maybeSingle();
       if (error || !order) return json({ error: "not_found" }, 200);
       if (order.origin_type !== "delivery") return json({ error: "not_delivery" }, 200);
@@ -225,6 +237,7 @@ serve(async (req) => {
           motoboy_status: order.motoboy_status ?? null,
           motoboy_note: order.motoboy_note ?? null,
           motoboy_problems: Array.isArray(order.motoboy_problems) ? order.motoboy_problems : [],
+          delivery_notes: Array.isArray(order.delivery_notes) ? order.delivery_notes : [],
           motoboy_timeline: (order.motoboy_timeline as Record<string, string> | null) ?? {},
           cozinha,
           em_rota: !!order.out_for_delivery_at,

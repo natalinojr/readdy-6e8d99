@@ -192,6 +192,8 @@ export interface VoucherClaimPublic {
   notes: string | null;
   store: {
     name: string;
+    /** Slug da loja — usado para montar o link do delivery (/{slug}-delivery) */
+    slug: string | null;
     logo_url: string | null;
     phone: string | null;
     address: string | null;
