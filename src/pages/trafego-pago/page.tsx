@@ -233,9 +233,11 @@ export default function TrafegoPagoPage() {
     }
     const redirectUri = window.location.origin + window.location.pathname;
     const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
-    const grant = data.config_id
-      ? `config_id=${encodeURIComponent(data.config_id)}`
-      : 'scope=ads_read';
+    // Login clássico (scope=ads_read) lista as contas pelo acesso PESSOAL do usuário,
+    // não por portfólio — assim contas de outros negócios (ex.: Vila Leste) aparecem.
+    // (O config_id do "Login para Empresas" filtrava por portfólio e escondia essas contas.)
+    const grant = 'scope=ads_read';
+    void data.config_id;
     const url =
       `https://www.facebook.com/v20.0/dialog/oauth?client_id=${data.app_id}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
