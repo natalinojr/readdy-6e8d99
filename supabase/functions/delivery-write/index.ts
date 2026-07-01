@@ -914,8 +914,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const { data: voucher } = await admin.from("vouchers").select("*").eq("tenant_id", tenant_id).eq("code", String(code).trim().toUpperCase()).maybeSingle();
       if (!voucher) return okResp({ valid: false, applicable_amount: 0, reason: "not_found" });
       if (voucher.expires_at && new Date(voucher.expires_at) < new Date()) return okResp({ valid: false, applicable_amount: 0, reason: "expired" });
+      if (voucher.valid_from && new Date(voucher.valid_from) > new Date()) return okResp({ valid: false, applicable_amount: 0, reason: "not_yet_valid" });
       if (voucher.status !== "active") return okResp({ valid: false, applicable_amount: 0, reason: voucher.status });
       if (voucher.voucher_type === "free_item") return okResp({ valid: false, applicable_amount: 0, reason: "free_item_indisponivel" });
+      // Pedido mínimo próprio do voucher (independente do mínimo geral do delivery)
+      const vMinOrder = Number(voucher.min_order_amount ?? 0);
+      if (vMinOrder > 0 && Number(order_amount ?? 0) < vMinOrder) {
+        return okResp({ valid: false, applicable_amount: 0, reason: "below_min_order", min_order_amount: vMinOrder });
+      }
       const applicable = voucherApplicable(voucher, Number(order_amount ?? 0));
       if (applicable <= 0) return okResp({ valid: false, applicable_amount: 0, reason: "sem_desconto" });
       return okResp({ valid: true, applicable_amount: applicable, code: voucher.code, voucher_type: voucher.voucher_type });
@@ -1211,7 +1217,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (vCode) {
         const { data: v } = await admin.from("vouchers").select("*").eq("tenant_id", tenant_id).eq("code", vCode).maybeSingle();
         const expirado = v?.expires_at && new Date(v.expires_at) < new Date();
-        if (v && v.status === "active" && !expirado && v.voucher_type !== "free_item") {
+        const aindaNaoVale = v?.valid_from && new Date(v.valid_from) > new Date();
+        const abaixoMinimo = Number(v?.min_order_amount ?? 0) > 0 && serverSubtotal < Number(v.min_order_amount);
+        if (v && v.status === "active" && !expirado && !aindaNaoVale && !abaixoMinimo && v.voucher_type !== "free_item") {
           let d = voucherApplicable(v, serverSubtotal);
           if (d > serverSubtotal) d = serverSubtotal;
           if (d > 0) { voucherDiscount = d; voucherRow = v; }
@@ -1351,9 +1359,16 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (voucherRow && voucherDiscount > 0) {
         try {
           const isSaldo = voucherRow.voucher_type === "gift_card" || voucherRow.voucher_type === "cashback";
-          const newBalance = isSaldo ? Math.max(0, Number(voucherRow.current_balance ?? 0) - voucherDiscount) : 0;
-          const newStatus = newBalance <= 0 ? "depleted" : "active";
-          await admin.from("vouchers").update({ current_balance: newBalance, status: newStatus }).eq("id", voucherRow.id);
+          const vMaxUses = Math.max(1, Number(voucherRow.max_uses ?? 1));
+          const vNewUseCount = Number(voucherRow.use_count ?? 0) + 1;
+          // Espelha o voucher-write: saldo esgota gift_card/cashback; discount consome por nº de usos.
+          const newBalance = isSaldo
+            ? Math.max(0, Number(voucherRow.current_balance ?? 0) - voucherDiscount)
+            : (vNewUseCount >= vMaxUses ? 0 : Number(voucherRow.current_balance ?? 0));
+          const newStatus = isSaldo
+            ? (newBalance <= 0 ? "depleted" : "active")
+            : (vNewUseCount >= vMaxUses ? "depleted" : "active");
+          await admin.from("vouchers").update({ current_balance: newBalance, status: newStatus, use_count: vNewUseCount }).eq("id", voucherRow.id);
           await admin.from("voucher_transactions").insert({
             tenant_id, voucher_id: voucherRow.id, order_id: orderId,
             transaction_type: "redeemed", amount: voucherDiscount, balance_after: newBalance, processed_by: null,

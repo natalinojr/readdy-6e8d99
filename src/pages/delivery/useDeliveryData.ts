@@ -1436,11 +1436,17 @@ export function useDeliveryData(storeSlug?: string) {
 
   // ── Voucher (cupom) no checkout do delivery ─────────────────────────────────
 
-  function voucherMotivo(reason?: string): string {
+  function voucherMotivo(reason?: string, minOrder?: number): string {
+    if (reason === 'below_min_order') {
+      return minOrder && minOrder > 0
+        ? `Este cupom vale para pedidos a partir de ${minOrder.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`
+        : 'O pedido não atingiu o valor mínimo deste cupom.';
+    }
     if (reason === 'not_found') return 'Cupom não encontrado.';
     if (reason === 'expired') return 'Cupom expirado.';
     if (reason === 'depleted') return 'Cupom já utilizado.';
     if (reason === 'cancelled') return 'Cupom cancelado.';
+    if (reason === 'not_yet_valid') return 'Este cupom ainda não está vigente.';
     if (reason === 'free_item_indisponivel') return 'Este cupom não é válido para delivery.';
     if (reason === 'sem_desconto') return 'Cupom sem desconto aplicável a este pedido.';
     return 'Cupom inválido.';
@@ -1466,7 +1472,7 @@ export function useDeliveryData(storeSlug?: string) {
       } else {
         setVoucherCodigo('');
         setVoucherDesconto(0);
-        setVoucherMsg(voucherMotivo(data && data.reason));
+        setVoucherMsg(voucherMotivo(data && data.reason, data && Number(data.min_order_amount)));
       }
     } catch (_e) {
       setVoucherMsg('Erro ao validar o cupom. Tente novamente.');

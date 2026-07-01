@@ -48,6 +48,7 @@ import PullToRefresh from '@/components/feature/PullToRefresh';
 import MobileKeyboardAssist from '@/components/feature/MobileKeyboardAssist';
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
+const VoucherLinkPage = lazy(() => import('../pages/voucher-link/page'));
 const DeliveryPage = lazy(() => import('../pages/delivery/page'));
 const MotoboyPage = lazy(() => import('../pages/motoboy/page'));
 const MotoboyListaPage = lazy(() => import('../pages/motoboy-lista/page'));
@@ -56,6 +57,7 @@ const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
   { path: '/privacidade', element: <PrivacidadePage /> },
   { path: '/mesa/:mesaId', element: <MesaClientePage /> },
+  { path: '/voucher/:token', element: <VoucherLinkPage /> },
   { path: '/mesa-qr/:qr_token/:session_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
   { path: '/mesa-qr/:qr_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
   { path: '/pedido/:qr_token/:session_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },

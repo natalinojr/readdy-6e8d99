@@ -34,9 +34,24 @@ export interface Voucher {
   free_item_id: string | null;
 
   issued_at: string;
+  /** Início da vigência (null = imediato) */
+  valid_from: string | null;
   expires_at: string | null;
 
   status: VoucherStatus;
+
+  /** Token do link público de ativação (/voucher/:token) — null se não gerado */
+  claim_token: string | null;
+  /** Quando o cliente abriu o link pela 1ª vez ("acionado") */
+  claimed_at: string | null;
+  /** Quantas vezes o link foi aberto */
+  claim_count: number;
+  /** Limite de usos (discount/free_item) */
+  max_uses: number;
+  /** Quantas vezes já foi resgatado */
+  use_count: number;
+  /** Pedido mínimo próprio do voucher (null = sem mínimo) */
+  min_order_amount: number | null;
 
   /** Destinatário (opcional) */
   customer_id: string | null;
@@ -83,6 +98,14 @@ export interface IssueVoucherPayload {
   discount_value?: number | null;
   free_item_id?: string | null;
   expires_at?: string | null;
+  /** Início da vigência (null = imediato) */
+  valid_from?: string | null;
+  /** Limite de usos (default 1) */
+  max_uses?: number;
+  /** Pedido mínimo próprio do voucher */
+  min_order_amount?: number | null;
+  /** Gera claim_token para link público de ativação */
+  generate_claim_link?: boolean;
   customer_id?: string | null;
   customer_name?: string | null;
   customer_email?: string | null;
@@ -105,6 +128,8 @@ export interface ValidateVoucherResult {
   /** Valor máximo que pode ser descontado neste pedido */
   applicable_amount: number;
   reason?: string;
+  /** Presente quando reason === 'below_min_order' */
+  min_order_amount?: number;
 }
 
 export interface RedeemVoucherPayload {
@@ -143,4 +168,33 @@ export interface GetVoucherTransactionsPayload {
   action: 'get_voucher_transactions';
   active_tenant_id?: string;
   voucher_id: string;
+}
+
+// ── Página pública /voucher/:token (Edge Function voucher-claim) ──────────────
+
+/** Payload público retornado pela voucher-claim — sem ids internos/tenant */
+export interface VoucherClaimPublic {
+  code: string;
+  voucher_type: VoucherType;
+  discount_type: VoucherDiscountType | null;
+  discount_value: number | null;
+  original_amount: number;
+  current_balance: number;
+  valid_from: string | null;
+  expires_at: string | null;
+  min_order_amount: number | null;
+  status: VoucherStatus;
+  not_yet_valid: boolean;
+  claimed_at: string | null;
+  use_count: number;
+  max_uses: number;
+  customer_name: string | null;
+  notes: string | null;
+  store: {
+    name: string;
+    logo_url: string | null;
+    phone: string | null;
+    address: string | null;
+    city: string | null;
+  } | null;
 }

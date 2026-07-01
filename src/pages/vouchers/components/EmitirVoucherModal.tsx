@@ -22,6 +22,8 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [createdLink, setCreatedLink] = useState('');
+  const [linkCopiado, setLinkCopiado] = useState(false);
 
   const [form, setForm] = useState({
     voucher_type: 'gift_card' as VoucherType,
@@ -33,6 +35,8 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
     customer_name: '',
     customer_email: '',
     notes: '',
+    generate_claim_link: false,
+    min_order_amount: '' as string | number,
   });
 
   function set(field: string, value: unknown) {
@@ -59,6 +63,8 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
         customer_name: form.customer_name.trim() || null,
         customer_email: form.customer_email.trim() || null,
         notes: form.notes.trim() || null,
+        generate_claim_link: form.generate_claim_link,
+        min_order_amount: Number(form.min_order_amount) > 0 ? Number(form.min_order_amount) : null,
       };
 
       if (form.code.trim()) payload.code = form.code.trim().toUpperCase();
@@ -71,8 +77,12 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
       const { data, error: fnErr } = await invokeWithAuth('voucher-write', { body: payload });
       if (fnErr) throw fnErr;
 
-      const code = (data as { data?: { code?: string } })?.data?.code ?? '';
+      const created = (data as { data?: { code?: string; claim_token?: string | null } })?.data;
+      const code = created?.code ?? '';
       setSuccess(`Voucher ${code} emitido com sucesso!`);
+      if (created?.claim_token) {
+        setCreatedLink(`${window.location.origin}/voucher/${created.claim_token}`);
+      }
 
       // Auditoria
       const typeLabels: Record<VoucherType, string> = {
@@ -95,7 +105,10 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
         detalhes: form.notes || undefined,
       });
 
-      setTimeout(() => onSaved(), 1500);
+      // Com link de ativação, mantém o modal aberto para o usuário copiar o link
+      if (!created?.claim_token) {
+        setTimeout(() => onSaved(), 1500);
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -126,8 +139,37 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
             </div>
           )}
           {success && (
-            <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-              <i className="ri-checkbox-circle-line" />{success}
+            <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 space-y-2">
+              <div className="flex items-center gap-2">
+                <i className="ri-checkbox-circle-line" />{success}
+              </div>
+              {createdLink && (
+                <div className="flex items-center justify-between gap-2 bg-white border border-green-200 rounded-lg px-3 py-2">
+                  <p className="text-[11px] font-mono text-zinc-600 break-all">{createdLink}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(createdLink).then(() => {
+                        setLinkCopiado(true);
+                        setTimeout(() => setLinkCopiado(false), 2000);
+                      });
+                    }}
+                    className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 bg-green-100 hover:bg-green-200 rounded-lg text-xs font-bold text-green-700 cursor-pointer transition-colors"
+                  >
+                    <i className={linkCopiado ? 'ri-check-line' : 'ri-file-copy-line'} />
+                    {linkCopiado ? 'Copiado' : 'Copiar link'}
+                  </button>
+                </div>
+              )}
+              {createdLink && (
+                <button
+                  type="button"
+                  onClick={() => onSaved()}
+                  className="w-full py-2 rounded-lg text-xs font-bold text-green-700 bg-green-100 hover:bg-green-200 cursor-pointer transition-colors"
+                >
+                  Concluir
+                </button>
+              )}
             </div>
           )}
 
@@ -226,6 +268,25 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
             </div>
           </div>
 
+          {/* Pedido mínimo */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 mb-1">Pedido mínimo (R$)</label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={form.min_order_amount}
+                onChange={(e) => set('min_order_amount', e.target.value)}
+                placeholder="Sem mínimo"
+                className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-400"
+              />
+            </div>
+            <p className="text-[10px] text-zinc-400 self-end pb-2">
+              Mínimo só deste voucher — independente do mínimo geral do delivery.
+            </p>
+          </div>
+
           {/* Cliente */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -249,6 +310,22 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
               />
             </div>
           </div>
+
+          {/* Link de ativação */}
+          <label className="flex items-start gap-2.5 p-3 bg-amber-50 border border-amber-200 rounded-xl cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.generate_claim_link}
+              onChange={(e) => set('generate_claim_link', e.target.checked)}
+              className="mt-0.5 accent-amber-500 cursor-pointer"
+            />
+            <span>
+              <span className="block text-xs font-bold text-amber-800">Gerar link de ativação</span>
+              <span className="block text-[10px] text-amber-700/80 leading-tight mt-0.5">
+                Cria um link para enviar ao cliente (WhatsApp etc.) — o voucher é ativado automaticamente quando ele abrir.
+              </span>
+            </span>
+          </label>
 
           {/* Observações */}
           <div>

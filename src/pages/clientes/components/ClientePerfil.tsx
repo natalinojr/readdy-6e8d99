@@ -1,5 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useClientePedidos, type ClienteCRM } from '@/hooks/useClientes';
+import { invokeWithAuth } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
+import type { Voucher } from '@/types/vouchers';
+import EnviarVoucherModal from './EnviarVoucherModal';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -34,13 +38,55 @@ const ORIGEM_LABEL: Record<string, string> = {
   delivery: 'Delivery',
 };
 
-type Aba = 'historico' | 'frequencia';
+type Aba = 'historico' | 'frequencia' | 'vouchers';
+
+const VOUCHER_STATUS_BADGE: Record<string, { label: string; cls: string }> = {
+  active: { label: 'Ativo', cls: 'bg-green-100 text-green-700' },
+  depleted: { label: 'Usado', cls: 'bg-zinc-100 text-zinc-500' },
+  expired: { label: 'Expirado', cls: 'bg-red-100 text-red-600' },
+  cancelled: { label: 'Cancelado', cls: 'bg-zinc-100 text-zinc-400' },
+};
+
+function voucherValorLabel(v: Voucher): string {
+  if (v.voucher_type === 'discount') {
+    return v.discount_type === 'percent' ? `${v.discount_value}% OFF` : `${fmtMoeda(v.discount_value ?? 0)} OFF`;
+  }
+  if (v.voucher_type === 'gift_card') return `Vale ${fmtMoeda(v.current_balance)}`;
+  if (v.voucher_type === 'cashback') return `Cashback ${fmtMoeda(v.current_balance)}`;
+  return 'Item grátis';
+}
 
 export default function ClientePerfil({ cliente, onClose }: Props) {
+  const { user } = useAuth();
   const dias = diasSemVisita(cliente.ultimaVisita);
   const { pedidos, loading: loadingPedidos } = useClientePedidos(cliente.id);
   const [aba, setAba] = useState<Aba>('historico');
   const [msgCopiada, setMsgCopiada] = useState(false);
+  const [showEnviarVoucher, setShowEnviarVoucher] = useState(false);
+  const [vouchers, setVouchers] = useState<Voucher[]>([]);
+  const [loadingVouchers, setLoadingVouchers] = useState(false);
+  const [vouchersCarregados, setVouchersCarregados] = useState(false);
+
+  const loadVouchers = useCallback(async () => {
+    if (!user?.tenantId) return;
+    setLoadingVouchers(true);
+    try {
+      const { data, error } = await invokeWithAuth('voucher-write', {
+        body: { action: 'list_vouchers', active_tenant_id: user.tenantId, customer_id: cliente.id },
+      });
+      if (!error && data) {
+        setVouchers(((data as { data?: Voucher[] }).data ?? []) as Voucher[]);
+      }
+      setVouchersCarregados(true);
+    } finally {
+      setLoadingVouchers(false);
+    }
+  }, [user?.tenantId, cliente.id]);
+
+  // Carrega vouchers ao abrir a aba (lazy)
+  useEffect(() => {
+    if (aba === 'vouchers' && !vouchersCarregados) loadVouchers();
+  }, [aba, vouchersCarregados, loadVouchers]);
 
   // Gráfico de frequência mensal de visitas
   const frequenciaMensal = useMemo(() => {
@@ -180,6 +226,13 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
         {/* Ações rápidas */}
         <div className="px-6 mt-4">
           <p className="text-xs font-bold text-zinc-700 uppercase tracking-wider mb-2.5">Ações Rápidas</p>
+          <button
+            onClick={() => setShowEnviarVoucher(true)}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 mb-2 bg-amber-500 hover:bg-amber-600 rounded-xl text-xs font-bold text-white cursor-pointer transition-colors"
+          >
+            <i className="ri-coupon-3-line text-base" />
+            Enviar Voucher com link de ativação
+          </button>
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={abrirWhatsApp}
@@ -224,6 +277,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
             {([
               { id: 'historico', label: 'Histórico', icon: 'ri-file-list-3-line' },
               { id: 'frequencia', label: 'Frequência', icon: 'ri-bar-chart-line' },
+              { id: 'vouchers', label: 'Vouchers', icon: 'ri-coupon-3-line' },
             ] as { id: Aba; label: string; icon: string }[]).map((tab) => (
               <button
                 key={tab.id}
@@ -370,8 +424,76 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
               )}
             </div>
           )}
+          {/* Aba Vouchers */}
+          {aba === 'vouchers' && (
+            <div className="pb-6">
+              <p className="text-xs font-bold text-zinc-700 uppercase tracking-wider mb-3">
+                Vouchers do Cliente
+                {!loadingVouchers && <span className="ml-1 text-zinc-400 font-normal">({vouchers.length})</span>}
+              </p>
+
+              {loadingVouchers ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : vouchers.length === 0 ? (
+                <div className="text-center py-8 text-zinc-400 text-xs">
+                  Nenhum voucher enviado para este cliente ainda
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {vouchers.map((v) => {
+                    const badge = VOUCHER_STATUS_BADGE[v.status] ?? { label: v.status, cls: 'bg-zinc-100 text-zinc-500' };
+                    return (
+                      <div key={v.id} className="bg-zinc-50 rounded-xl p-3">
+                        <div className="flex justify-between items-center mb-1.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-mono font-bold text-zinc-800 text-xs tracking-wider truncate">{v.code}</span>
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${badge.cls}`}>{badge.label}</span>
+                          </div>
+                          <span className="text-xs font-bold text-amber-600 flex-shrink-0">{voucherValorLabel(v)}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+                          {v.expires_at && (
+                            <span><i className="ri-calendar-line mr-0.5" />até {fmtData(v.expires_at)}</span>
+                          )}
+                          <span>
+                            <i className="ri-repeat-line mr-0.5" />
+                            usado {v.use_count ?? 0}x{(v.max_uses ?? 1) > 1 ? ` de ${v.max_uses}` : ''}
+                          </span>
+                          {(v.min_order_amount ?? 0) > 0 && (
+                            <span><i className="ri-shopping-basket-line mr-0.5" />mín. {fmtMoeda(v.min_order_amount ?? 0)}</span>
+                          )}
+                          {v.claim_token && (
+                            v.claimed_at ? (
+                              <span className="text-emerald-600 font-semibold">
+                                <i className="ri-eye-line mr-0.5" />link aberto em {fmtData(v.claimed_at)}
+                              </span>
+                            ) : (
+                              <span className="text-zinc-400">
+                                <i className="ri-eye-off-line mr-0.5" />link ainda não aberto
+                              </span>
+                            )
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Modal Enviar Voucher */}
+      {showEnviarVoucher && (
+        <EnviarVoucherModal
+          cliente={cliente}
+          onClose={() => setShowEnviarVoucher(false)}
+          onSent={() => { setAba('vouchers'); loadVouchers(); }}
+        />
+      )}
     </div>
   );
 }

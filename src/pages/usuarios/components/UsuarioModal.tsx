@@ -24,7 +24,7 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
   const [ativo, setAtivo] = useState(usuario?.ativo ?? true);
   const [senha, setSenha] = useState('');
   const [showSenha, setShowSenha] = useState(false);
-  const [erros, setErros] = useState<Record<string, string>>();
+  const [erros, setErros] = useState<Record<string, string>>({});
   const [salvando, setSalvando] = useState(false);
   const [extraErro, setExtraErro] = useState<string | null>(null);
 

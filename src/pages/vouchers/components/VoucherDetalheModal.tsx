@@ -77,6 +77,16 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
     ? (voucher.current_balance / voucher.original_amount) * 100
     : 0;
 
+  const claimLink = voucher.claim_token ? `${window.location.origin}/voucher/${voucher.claim_token}` : null;
+  const [linkCopiado, setLinkCopiado] = useState(false);
+  function copiarLink() {
+    if (!claimLink) return;
+    navigator.clipboard.writeText(claimLink).then(() => {
+      setLinkCopiado(true);
+      setTimeout(() => setLinkCopiado(false), 2000);
+    });
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white rounded-2xl w-full max-w-lg mx-4 overflow-hidden flex flex-col max-h-[85vh]">
@@ -139,8 +149,36 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
               </div>
               <div>
                 <p className="text-xs text-zinc-400">Validade</p>
-                <p className="text-xs font-semibold text-zinc-600">{voucher.expires_at ? formatDate(voucher.expires_at) : 'Sem validade'}</p>
+                <p className="text-xs font-semibold text-zinc-600">
+                  {voucher.valid_from ? `${formatDate(voucher.valid_from)} → ` : ''}
+                  {voucher.expires_at ? formatDate(voucher.expires_at) : 'Sem validade'}
+                </p>
               </div>
+              <div>
+                <p className="text-xs text-zinc-400">Usos</p>
+                <p className="text-xs font-semibold text-zinc-600">
+                  {voucher.use_count ?? 0}{(voucher.max_uses ?? 1) > 1 ? ` de ${voucher.max_uses}` : (voucher.use_count ?? 0) > 0 ? '' : ' (uso único)'}
+                </p>
+              </div>
+              {(voucher.min_order_amount ?? 0) > 0 && (
+                <div>
+                  <p className="text-xs text-zinc-400">Pedido mínimo</p>
+                  <p className="text-xs font-semibold text-zinc-600">{formatCurrency(voucher.min_order_amount ?? 0)}</p>
+                </div>
+              )}
+              {voucher.claim_token && (
+                <div>
+                  <p className="text-xs text-zinc-400">Link de ativação</p>
+                  {voucher.claimed_at ? (
+                    <p className="text-xs font-semibold text-emerald-600">
+                      Aberto em {formatDate(voucher.claimed_at)}
+                      {(voucher.claim_count ?? 0) > 1 ? ` (${voucher.claim_count} visualizações)` : ''}
+                    </p>
+                  ) : (
+                    <p className="text-xs font-semibold text-zinc-400">Ainda não aberto pelo cliente</p>
+                  )}
+                </div>
+              )}
               {voucher.customer_name && (
                 <div className="col-span-2">
                   <p className="text-xs text-zinc-400">Cliente</p>
@@ -156,6 +194,25 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
               )}
             </div>
           </div>
+
+          {/* Link de ativação */}
+          {claimLink && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-0.5">Link de ativação</p>
+                  <p className="text-[11px] text-amber-800/80 font-mono break-all">{claimLink}</p>
+                </div>
+                <button
+                  onClick={copiarLink}
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs font-bold text-amber-700 hover:bg-amber-100 cursor-pointer transition-colors"
+                >
+                  <i className={`${linkCopiado ? 'ri-check-line text-emerald-600' : 'ri-file-copy-line'}`} />
+                  {linkCopiado ? 'Copiado' : 'Copiar'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Histórico de transações */}
           <div>

@@ -37,6 +37,15 @@ export default function VouchersPage() {
   const [search, setSearch] = useState('');
   const [emitirOpen, setEmitirOpen] = useState(false);
   const [detalheVoucher, setDetalheVoucher] = useState<Voucher | null>(null);
+  const [linkCopiadoId, setLinkCopiadoId] = useState<string | null>(null);
+
+  function copiarLink(v: Voucher) {
+    if (!v.claim_token) return;
+    navigator.clipboard.writeText(`${window.location.origin}/voucher/${v.claim_token}`).then(() => {
+      setLinkCopiadoId(v.id);
+      setTimeout(() => setLinkCopiadoId(null), 2000);
+    });
+  }
 
   const loadVouchers = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -207,6 +216,15 @@ export default function VouchersPage() {
                     >
                       <td className="px-4 py-3">
                         <span className="font-mono font-bold text-zinc-800 text-xs tracking-wider">{v.code}</span>
+                        {v.claim_token && (
+                          <span
+                            className={`block text-[10px] mt-0.5 ${v.claimed_at ? 'text-emerald-600' : 'text-zinc-400'}`}
+                            title={v.claimed_at ? `Cliente abriu o link em ${formatDate(v.claimed_at)}` : 'Cliente ainda não abriu o link'}
+                          >
+                            <i className={`${v.claimed_at ? 'ri-eye-line' : 'ri-eye-off-line'} mr-0.5`} />
+                            {v.claimed_at ? 'link aberto' : 'link não aberto'}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${typeCfg.color}`}>
@@ -235,7 +253,11 @@ export default function VouchersPage() {
                             {formatCurrency(v.current_balance)}
                           </span>
                         ) : (
-                          <span className="text-zinc-400 text-xs">—</span>
+                          <span className="text-zinc-500 text-xs font-semibold">
+                            {(v.use_count ?? 0) > 0 || (v.max_uses ?? 1) > 1
+                              ? `${v.use_count ?? 0}/${v.max_uses ?? 1} usos`
+                              : '—'}
+                          </span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-center text-xs text-zinc-500">{formatDate(v.issued_at)}</td>
@@ -255,15 +277,26 @@ export default function VouchersPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                        {v.status === 'active' && (
-                          <button
-                            onClick={() => cancelVoucher(v)}
-                            className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer transition-colors"
-                            title="Cancelar voucher"
-                          >
-                            <i className="ri-close-circle-line text-sm" />
-                          </button>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {v.claim_token && (
+                            <button
+                              onClick={() => copiarLink(v)}
+                              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-amber-50 text-zinc-400 hover:text-amber-600 cursor-pointer transition-colors"
+                              title="Copiar link de ativação"
+                            >
+                              <i className={`${linkCopiadoId === v.id ? 'ri-check-line text-emerald-500' : 'ri-link'} text-sm`} />
+                            </button>
+                          )}
+                          {v.status === 'active' && (
+                            <button
+                              onClick={() => cancelVoucher(v)}
+                              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer transition-colors"
+                              title="Cancelar voucher"
+                            >
+                              <i className="ri-close-circle-line text-sm" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

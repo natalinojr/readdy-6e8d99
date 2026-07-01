@@ -20,6 +20,13 @@ function generateVoucherCode(prefix = 'GC'): string {
   return `${prefix}-${seg(4)}-${seg(4)}`;
 }
 
+/** Token URL-safe do link de ativação (36 chars hex, imprevisível) */
+function generateClaimToken(): string {
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 Deno.serve({ verify_jwt: false }, async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
@@ -72,7 +79,9 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const {
         voucher_type, original_amount, code: customCode,
         discount_type, discount_value, free_item_id,
-        expires_at, customer_id, customer_name, customer_email,
+        expires_at, valid_from, max_uses, generate_claim_link,
+        min_order_amount,
+        customer_id, customer_name, customer_email,
         notes, order_id,
       } = body;
 
@@ -124,6 +133,12 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (existing) return json({ error: 'Voucher code already exists for this tenant' }, 409);
       }
 
+      // Limite de usos (>= 1) — relevante para discount/free_item multi-uso
+      const finalMaxUses = Math.max(1, Math.floor(Number(max_uses ?? 1)) || 1);
+
+      // Pedido mínimo próprio do voucher (independente do mínimo geral do delivery)
+      const finalMinOrder = Number(min_order_amount) > 0 ? Number(min_order_amount) : null;
+
       const { data: voucher, error: insertErr } = await admin
         .from('vouchers')
         .insert({
@@ -136,6 +151,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           discount_value: discount_value ?? null,
           free_item_id: free_item_id ?? null,
           expires_at: expires_at ?? null,
+          valid_from: valid_from ?? null,
+          max_uses: finalMaxUses,
+          min_order_amount: finalMinOrder,
+          claim_token: generate_claim_link ? generateClaimToken() : null,
           status: 'active',
           customer_id: customer_id ?? null,
           customer_name: customer_name ?? null,
@@ -201,12 +220,29 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         return json({ valid: false, voucher: null, applicable_amount: 0, reason: 'expired' });
       }
 
+      // Verifica início de validade (voucher agendado ainda não vigente)
+      if (voucher.valid_from && new Date(voucher.valid_from) > new Date()) {
+        return json({ valid: false, voucher: null, applicable_amount: 0, reason: 'not_yet_valid' });
+      }
+
       if (voucher.status !== 'active') {
         return json({
           valid: false,
           voucher: null,
           applicable_amount: 0,
           reason: voucher.status, // 'depleted', 'cancelled', 'expired'
+        });
+      }
+
+      // Pedido mínimo do voucher (só valida quando o valor do pedido foi informado)
+      const minOrder = Number(voucher.min_order_amount ?? 0);
+      if (minOrder > 0 && order_amount != null && Number(order_amount) < minOrder) {
+        return json({
+          valid: false,
+          voucher: null,
+          applicable_amount: 0,
+          reason: 'below_min_order',
+          min_order_amount: minOrder,
         });
       }
 
@@ -244,7 +280,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     // Usa o voucher em um pagamento — desconta saldo e registra transação
     // ════════════════════════════════════════════════════════════════════════
     if (action === 'redeem_voucher') {
-      const { code, amount, order_id } = body;
+      const { code, amount, order_id, order_amount } = body;
 
       if (!code || amount == null) {
         return json({ error: 'code and amount are required' }, 400);
@@ -271,8 +307,19 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         return json({ error: 'Voucher has expired' }, 422);
       }
 
+      // Verifica início de validade
+      if (voucher.valid_from && new Date(voucher.valid_from) > new Date()) {
+        return json({ error: 'Voucher is not yet valid' }, 422);
+      }
+
       if (voucher.status !== 'active') {
         return json({ error: `Voucher is ${voucher.status}` }, 422);
+      }
+
+      // Pedido mínimo do voucher (safety-net; a validação principal é no validate)
+      const redeemMinOrder = Number(voucher.min_order_amount ?? 0);
+      if (redeemMinOrder > 0 && order_amount != null && Number(order_amount) < redeemMinOrder) {
+        return json({ error: 'Order amount below voucher minimum', min_order_amount: redeemMinOrder }, 422);
       }
 
       // Para gift_card e cashback: verifica saldo suficiente
@@ -289,16 +336,24 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       // Para discount: o amount é o desconto calculado (não desconta do saldo de forma recorrente)
       // Para free_item: amount = 0, apenas registra o uso
 
-      const newBalance = ['gift_card', 'cashback'].includes(voucher.voucher_type)
-        ? voucher.current_balance - amount
-        : 0; // discount e free_item ficam com saldo 0 após uso (uso único)
+      const maxUses = Math.max(1, Number(voucher.max_uses ?? 1));
+      const newUseCount = Number(voucher.use_count ?? 0) + 1;
 
-      const newStatus = newBalance <= 0 ? 'depleted' : 'active';
+      let newBalance: number;
+      let newStatus: string;
+      if (['gift_card', 'cashback'].includes(voucher.voucher_type)) {
+        newBalance = voucher.current_balance - amount;
+        newStatus = newBalance <= 0 ? 'depleted' : 'active';
+      } else {
+        // discount e free_item: consumo por número de usos (max_uses)
+        newStatus = newUseCount >= maxUses ? 'depleted' : 'active';
+        newBalance = newStatus === 'depleted' ? 0 : voucher.current_balance;
+      }
 
-      // Atualiza saldo e status
+      // Atualiza saldo, status e contagem de usos
       const { error: updateErr } = await admin
         .from('vouchers')
-        .update({ current_balance: newBalance, status: newStatus })
+        .update({ current_balance: newBalance, status: newStatus, use_count: newUseCount })
         .eq('id', voucher.id);
 
       if (updateErr) throw updateErr;

@@ -240,13 +240,17 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         },
       });
       if (fnErr) throw fnErr;
-      const result = data as { valid: boolean; voucher: Voucher | null; applicable_amount: number; reason?: string };
+      const result = data as { valid: boolean; voucher: Voucher | null; applicable_amount: number; reason?: string; min_order_amount?: number };
       if (!result.valid) {
         const reasons: Record<string, string> = {
           not_found: 'Voucher não encontrado',
           expired: 'Voucher expirado',
           depleted: 'Saldo esgotado',
           cancelled: 'Voucher cancelado',
+          not_yet_valid: 'Voucher ainda não está vigente',
+          below_min_order: result.min_order_amount
+            ? `Pedido mínimo de ${formatPrice(result.min_order_amount)} para este voucher`
+            : 'Pedido abaixo do mínimo deste voucher',
         };
         setVoucherError(reasons[result.reason ?? ''] ?? 'Voucher inválido');
         return;
