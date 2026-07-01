@@ -46,8 +46,33 @@ window.addEventListener('error', (event) => {
 
 // ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ──
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+// ── Callback do login da Meta (popup) ──
+// Se esta janela é um popup aberto pelo fluxo OAuth e voltou com ?code=,
+// devolve o código pra janela principal e se fecha — sem renderizar o app
+// (assim não passa pelo roteador, que redirecionaria pro /modulos).
+const isMetaOAuthPopup = (() => {
+  try {
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    const oauthError = params.get('error_description') || params.get('error')
+    if (window.opener && window.opener !== window && (code || oauthError)) {
+      window.opener.postMessage(
+        { type: 'meta_oauth', code, state: params.get('state'), error: oauthError },
+        window.location.origin,
+      )
+      window.close()
+      return true
+    }
+  } catch {
+    /* ignora — segue renderizando o app normalmente */
+  }
+  return false
+})()
+
+if (!isMetaOAuthPopup) {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  )
+}
