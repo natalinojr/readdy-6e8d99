@@ -180,7 +180,6 @@ export default function TrafegoPagoPage() {
     }
     const redirectUri = window.location.origin + window.location.pathname;
     const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
-    sessionStorage.setItem(OAUTH_STATE_KEY, state);
     // Login do Facebook para Empresas usa config_id; login clássico usa scope.
     const grant = data.config_id
       ? `config_id=${encodeURIComponent(data.config_id)}`
@@ -189,8 +188,48 @@ export default function TrafegoPagoPage() {
       `https://www.facebook.com/v20.0/dialog/oauth?client_id=${data.app_id}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&${grant}&response_type=code&state=${state}`;
-    window.location.href = url;
-  }, []);
+
+    // Abre o login num popup: a janela principal NÃO recarrega (não cai no /modulos).
+    const w = 600, h = 750;
+    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
+    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
+    const popup = window.open(url, 'meta_oauth', `width=${w},height=${h},left=${left},top=${top}`);
+
+    // Popup bloqueado → fallback pro redirect clássico.
+    if (!popup) {
+      sessionStorage.setItem(OAUTH_STATE_KEY, state);
+      window.location.href = url;
+      return;
+    }
+
+    let timer = 0;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.data?.type !== 'meta_oauth') return;
+      window.removeEventListener('message', onMessage);
+      window.clearInterval(timer);
+      try { popup.close(); } catch { /* ignora */ }
+      setConnecting(false);
+      if (event.data.error) {
+        setError(`Conexão cancelada na Meta: ${event.data.error}`);
+        return;
+      }
+      if (event.data.state !== state) {
+        setError('Falha na verificação de segurança. Tente conectar novamente.');
+        return;
+      }
+      handleExchange(event.data.code as string);
+    };
+    window.addEventListener('message', onMessage);
+
+    // Se o usuário fechar o popup sem concluir, libera o botão.
+    timer = window.setInterval(() => {
+      if (popup.closed) {
+        window.clearInterval(timer);
+        window.removeEventListener('message', onMessage);
+        setConnecting(false);
+      }
+    }, 800);
+  }, [handleExchange]);
 
   // ── Troca a conta de anúncios acompanhada ──
   const handleSelectAccount = useCallback(async (adAccountId: string) => {
