@@ -63,43 +63,57 @@ Deno.serve(async (req: Request) => {
     const requested = String(body.date_preset ?? 'last_7d')
     const datePreset = ALLOWED_DATE_PRESETS.has(requested) ? requested : 'last_7d'
 
-    const fields = [
-      'campaign_name', 'spend', 'impressions', 'reach',
-      'clicks', 'cpc', 'ctr', 'actions',
+    const campaignFields = [
+      'campaign_name', 'spend', 'impressions', 'reach', 'frequency',
+      'clicks', 'inline_link_clicks', 'cpc', 'ctr', 'cpm', 'actions',
     ].join(',')
+    const dailyFields = ['spend', 'impressions', 'reach', 'clicks', 'actions'].join(',')
 
-    const url =
-      `https://graph.facebook.com/${GRAPH_VERSION}/${conn.ad_account_id}/insights` +
-      `?level=campaign&fields=${fields}&date_preset=${datePreset}` +
-      `&access_token=${encodeURIComponent(conn.access_token)}`
+    const base = `https://graph.facebook.com/${GRAPH_VERSION}/${conn.ad_account_id}/insights`
+    const token = encodeURIComponent(conn.access_token)
 
-    const response = await fetch(url)
-    const responseBody = await response.json().catch(() => ({}))
+    // Duas consultas em paralelo:
+    //  1) por campanha (tabela + ranking);  2) por dia (série pros gráficos).
+    const campaignUrl =
+      `${base}?level=campaign&fields=${campaignFields}&date_preset=${datePreset}&limit=200&access_token=${token}`
+    const dailyUrl =
+      `${base}?fields=${dailyFields}&date_preset=${datePreset}&time_increment=1&limit=500&access_token=${token}`
 
-    if (!response.ok) {
-      console.error('[meta-ads-insights] Meta error:', response.status, responseBody)
-      return json(
-        {
-          ok: false,
-          status: response.status,
-          error: responseBody?.error ?? responseBody,
-        },
-        502,
-      )
+    const [campResp, dailyResp] = await Promise.all([fetch(campaignUrl), fetch(dailyUrl)])
+    const campBody = await campResp.json().catch(() => ({}))
+    const dailyBody = await dailyResp.json().catch(() => ({}))
+
+    if (!campResp.ok) {
+      console.error('[meta-ads-insights] Meta error:', campResp.status, campBody)
+      return json({ ok: false, status: campResp.status, error: campBody?.error ?? campBody }, 502)
     }
 
-    const rows = Array.isArray(responseBody.data) ? responseBody.data : []
-
+    const rows = Array.isArray(campBody.data) ? campBody.data : []
     const campaigns = rows.map((row: Record<string, unknown>) => ({
       campaign: String(row.campaign_name ?? '(sem nome)'),
       spend: Number(row.spend ?? 0),
       impressions: Number(row.impressions ?? 0),
       reach: Number(row.reach ?? 0),
+      frequency: Number(row.frequency ?? 0),
       clicks: Number(row.clicks ?? 0),
+      link_clicks: Number(row.inline_link_clicks ?? 0),
       cpc: Number(row.cpc ?? 0),
       ctr: Number(row.ctr ?? 0),
+      cpm: Number(row.cpm ?? 0),
       results: simplifyActions(row.actions),
     }))
+
+    const dailyRows = Array.isArray(dailyBody.data) ? dailyBody.data : []
+    const daily = dailyRows
+      .map((row: Record<string, unknown>) => ({
+        date: String(row.date_start ?? ''),
+        spend: Number(row.spend ?? 0),
+        impressions: Number(row.impressions ?? 0),
+        reach: Number(row.reach ?? 0),
+        clicks: Number(row.clicks ?? 0),
+        results: simplifyActions(row.actions).reduce((s, a) => s + a.value, 0),
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date))
 
     return json({
       ok: true,
@@ -108,6 +122,7 @@ Deno.serve(async (req: Request) => {
       ad_account_name: conn.ad_account_name,
       count: campaigns.length,
       campaigns,
+      daily,
     })
   } catch (err) {
     console.error('[meta-ads-insights] Error:', err)
