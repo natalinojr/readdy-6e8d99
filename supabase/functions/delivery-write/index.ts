@@ -513,7 +513,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     }
 
     // ── Loja gere o status da entrega (fallback quando o motoboy nao consegue) ──
-    if (action === "list_delivery_orders" || action === "list_delivery_board" || action === "set_motoboy_status" || action === "clear_motoboy_driver") {
+    if (action === "list_delivery_orders" || action === "list_delivery_board" || action === "get_delivery_order" || action === "add_delivery_note" || action === "set_motoboy_status" || action === "clear_motoboy_driver") {
       const authHeader = req.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
       if (!token) return jsonErr("Nao autenticado", 401);
@@ -554,7 +554,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         // ENTREGUES recentes (coluna final) e so entrega PROPRIA (exclui iFood/retirada).
         // Campos extras: delivery_sla_min, motoboy_timeline, out_for_delivery_at.
         const { data: orders } = await admin.from("orders")
-          .select("id, number, destination_name, destination_phone, delivery_address, delivery_platform, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, motoboy_driver_id, motoboy_updated_at, out_for_delivery_at, delivery_sla_min, motoboy_timeline, delivery_lat, delivery_lng, created_at, updated_at")
+          .select("id, number, destination_name, destination_phone, delivery_address, delivery_platform, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, delivery_notes, motoboy_driver_id, motoboy_updated_at, out_for_delivery_at, delivery_sla_min, motoboy_timeline, delivery_lat, delivery_lng, created_at, updated_at")
           .eq("tenant_id", tenant_id).eq("origin_type", "delivery").in("status", ["new", "preparing", "ready", "delivered"])
           .order("created_at", { ascending: true });
         const RECENTE_MS = 3 * 60 * 60 * 1000; // entregues nas ultimas 3h ficam na coluna "Entregue"
@@ -583,6 +583,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           endereco: o.delivery_address ?? "", total: Number(o.total_amount ?? 0), taxa: Number(o.delivery_fee ?? 0),
           status: o.status, motoboy_status: o.motoboy_status ?? null, motoboy_note: o.motoboy_note ?? null,
           problemas: Array.isArray(o.motoboy_problems) ? o.motoboy_problems : [],
+          delivery_notes: Array.isArray(o.delivery_notes) ? o.delivery_notes : [],
           driver_id: o.motoboy_driver_id ?? null, driver_nome: o.motoboy_driver_id ? (driverNome[o.motoboy_driver_id as string] ?? null) : null,
           created_at: o.created_at, motoboy_updated_at: o.motoboy_updated_at ?? null,
           out_for_delivery_at: o.out_for_delivery_at ?? null,
@@ -595,7 +596,72 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       const orderId = String(body.order_id || "").trim();
       if (!orderId) return jsonErr("order_id obrigatorio", 400);
-      // Confere que o pedido e desta loja.
+
+      if (action === "get_delivery_order") {
+        // Detalhe completo p/ o modal do Gestor de Entregas: fases da cozinha + entrega,
+        // itens, financeiro, historico de problemas e observacoes.
+        const { data: o } = await admin.from("orders")
+          .select("id, number, destination_name, destination_phone, delivery_address, delivery_platform, total_amount, delivery_fee, status, motoboy_status, motoboy_note, motoboy_problems, delivery_notes, motoboy_driver_id, motoboy_updated_at, out_for_delivery_at, delivery_sla_min, motoboy_timeline, delivery_lat, delivery_lng, created_at")
+          .eq("id", orderId).eq("tenant_id", tenant_id).maybeSingle();
+        if (!o) return jsonErr("Pedido nao encontrado nesta loja.", 404);
+        const { data: items } = await admin.from("order_items")
+          .select("item_name, quantity, item_price, skip_kds, started_preparing_at, ready_at").eq("order_id", orderId);
+        // Fases da COZINHA (agregado dos itens que vao pra cozinha) — mesmo criterio do motoboy-signal.
+        const cozinhaItens = ((items ?? []) as Record<string, unknown>[]).filter((i) => !i.skip_kds);
+        const minTs = (campo: string): string | null => {
+          const ts = cozinhaItens.map((i) => i[campo] as string | null).filter(Boolean) as string[];
+          return ts.length ? ts.sort()[0] : null;
+        };
+        const maxTs = (campo: string): string | null => {
+          const ts = cozinhaItens.map((i) => i[campo] as string | null).filter(Boolean) as string[];
+          return ts.length ? ts.sort()[ts.length - 1] : null;
+        };
+        const todosProntos = cozinhaItens.length > 0 && cozinhaItens.every((i) => !!i.ready_at);
+        const cozinha = {
+          novo_at: o.created_at ?? null,
+          preparo_at: minTs("started_preparing_at"),
+          pronto_at: todosProntos ? maxTs("ready_at") : null,
+        };
+        const driverNomeDet = o.motoboy_driver_id
+          ? (await admin.from("delivery_drivers").select("name").eq("id", o.motoboy_driver_id as string).maybeSingle()).data?.name ?? null
+          : null;
+        return new Response(JSON.stringify({ _v: "v16", ok: true, order: {
+          id: o.id, number: o.number,
+          cliente: ((o.destination_name as string | null) ?? "Cliente").split(/\s+[-–—]\s+/)[0].trim() || "Cliente",
+          telefone: ((o.destination_phone as string | null) ?? "").replace(/\D/g, ""),
+          endereco: o.delivery_address ?? "", total: Number(o.total_amount ?? 0), taxa: Number(o.delivery_fee ?? 0),
+          status: o.status, motoboy_status: o.motoboy_status ?? null,
+          driver_nome: driverNomeDet,
+          created_at: o.created_at, out_for_delivery_at: o.out_for_delivery_at ?? null,
+          delivery_sla_min: o.delivery_sla_min != null ? Number(o.delivery_sla_min) : null,
+          motoboy_timeline: (o.motoboy_timeline && typeof o.motoboy_timeline === "object") ? o.motoboy_timeline : {},
+          cozinha,
+          itens: ((items ?? []) as Record<string, unknown>[]).map((i) => ({
+            nome: i.item_name ?? "", quantidade: Number(i.quantity ?? 1), preco: Number(i.item_price ?? 0),
+          })),
+          problemas: Array.isArray(o.motoboy_problems) ? o.motoboy_problems : [],
+          delivery_notes: Array.isArray(o.delivery_notes) ? o.delivery_notes : [],
+        } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (action === "add_delivery_note") {
+        // Registra problema OU observacao (so log — NAO mexe na fase). Grava autor.
+        const kind = String(body.kind || "");
+        if (kind !== "problema" && kind !== "observacao") return jsonErr("kind invalido", 400);
+        const text = String(body.text ?? "").trim().slice(0, 1000);
+        if (!text) return jsonErr("texto obrigatorio", 400);
+        const autor = String(body.autor ?? "").slice(0, 120) || null;
+        const { data: cur } = await admin.from("orders").select("delivery_notes").eq("id", orderId).eq("tenant_id", tenant_id).maybeSingle();
+        if (!cur) return jsonErr("Pedido nao encontrado nesta loja.", 404);
+        const notes = Array.isArray(cur.delivery_notes) ? (cur.delivery_notes as unknown[]) : [];
+        const nowIso = new Date().toISOString();
+        const novo = [...notes, { at: nowIso, kind, text, autor }];
+        const { error } = await admin.from("orders").update({ delivery_notes: novo, updated_at: nowIso }).eq("id", orderId).eq("tenant_id", tenant_id);
+        if (error) throw error;
+        return new Response(JSON.stringify({ _v: "v16", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Confere que o pedido e desta loja (clear/set).
       const { data: ord } = await admin.from("orders").select("id, motoboy_timeline, motoboy_status, motoboy_problems").eq("id", orderId).eq("tenant_id", tenant_id).maybeSingle();
       if (!ord) return jsonErr("Pedido nao encontrado nesta loja.", 404);
 
@@ -653,7 +719,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       // Acumula o problema no historico (nao sobrescreve): cada relato fica com sua hora.
       if (signal === "problema") {
         const probs = Array.isArray(ord.motoboy_problems) ? (ord.motoboy_problems as unknown[]) : [];
-        updates.motoboy_problems = [...probs, { at: nowIso, text: motivoTxt ?? "", by: "loja" }];
+        const autorProb = String(body.autor ?? "").slice(0, 120) || null;
+        updates.motoboy_problems = [...probs, { at: nowIso, text: motivoTxt ?? "", by: "loja", autor: autorProb }];
       }
       if (signal === "coletou") updates.out_for_delivery_at = nowIso;
       if (signal === "entregou") { updates.status = "delivered"; updates.out_for_delivery_at = nowIso; }

@@ -7,7 +7,30 @@ function getDeliveryWriteUrl(): string {
   return base + '/functions/v1/delivery-write';
 }
 
-export interface ProblemaEntrega { at: string; text: string; by?: string }
+export interface ProblemaEntrega { at: string; text: string; by?: string; autor?: string | null }
+export type NotaKind = 'problema' | 'observacao';
+export interface NotaEntrega { at: string; kind: NotaKind; text: string; autor?: string | null }
+
+export interface EntregaDetalhe {
+  id: string;
+  number: string;
+  cliente: string;
+  telefone: string;
+  endereco: string;
+  total: number;
+  taxa: number;
+  status: string;
+  motoboy_status: string | null;
+  driver_nome: string | null;
+  created_at: string;
+  out_for_delivery_at: string | null;
+  delivery_sla_min: number | null;
+  motoboy_timeline: Record<string, string>;
+  cozinha: { novo_at: string | null; preparo_at: string | null; pronto_at: string | null };
+  itens: { nome: string; quantidade: number; preco: number }[];
+  problemas: ProblemaEntrega[];
+  delivery_notes: NotaEntrega[];
+}
 
 export interface EntregaPedido {
   id: string;
@@ -21,6 +44,7 @@ export interface EntregaPedido {
   motoboy_status: string | null;
   motoboy_note: string | null;
   problemas: ProblemaEntrega[];
+  delivery_notes: NotaEntrega[];
   driver_id: string | null;
   driver_nome: string | null;
   created_at: string;
@@ -130,5 +154,36 @@ export function useGestorEntregas() {
     } catch { setErro('Erro de conexão.'); } finally { setBusy(''); }
   }, [tenantId, token, carregar]);
 
-  return { orders, loading, erro, busy, now, recarregar: () => carregar(), setStatus, liberar };
+  // Nome do operador logado — gravado como autor do problema/observação.
+  const autor = (user as { nome?: string } | null)?.nome ?? null;
+
+  const fetchDetalhe = useCallback(async (orderId: string): Promise<EntregaDetalhe | null> => {
+    try {
+      const t = await token();
+      const res = await fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t },
+        body: JSON.stringify({ action: 'get_delivery_order', tenant_id: tenantId, order_id: orderId }),
+      });
+      const data = await res.json();
+      return data.ok ? (data.order as EntregaDetalhe) : null;
+    } catch { return null; }
+  }, [tenantId, token]);
+
+  const addNote = useCallback(async (orderId: string, kind: NotaKind, text: string): Promise<boolean> => {
+    setBusy(`${orderId}:nota`);
+    try {
+      const t = await token();
+      const res = await fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t },
+        body: JSON.stringify({ action: 'add_delivery_note', tenant_id: tenantId, order_id: orderId, kind, text, autor }),
+      });
+      const data = await res.json();
+      if (data.ok) { await carregar(true); return true; }
+      return false;
+    } catch { return false; } finally { setBusy(''); }
+  }, [tenantId, token, autor, carregar]);
+
+  return { orders, loading, erro, busy, now, autor, recarregar: () => carregar(), setStatus, liberar, fetchDetalhe, addNote };
 }

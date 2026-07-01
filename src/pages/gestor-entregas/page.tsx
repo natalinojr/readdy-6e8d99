@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useGestorEntregas, type EntregaPedido } from './hooks/useGestorEntregas';
 import { COLUNAS, colunaDe, prazoInfo, type ColunaId } from './utils';
 import EntregaCard from './components/EntregaCard';
+import EntregaDetalheModal from './components/EntregaDetalheModal';
 import ProblemaModal from './components/ProblemaModal';
 import LiberarModal from './components/LiberarModal';
 import MapaEntregasGestor, { type PontoGestor } from './components/MapaEntregasGestor';
@@ -13,9 +14,10 @@ const FASE_CURTA: Record<ColunaId, string> = {
 
 export default function GestorEntregasPage() {
   const navigate = useNavigate();
-  const { orders, loading, erro, busy, now, recarregar, setStatus, liberar } = useGestorEntregas();
+  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote } = useGestorEntregas();
   const [modalProblema, setModalProblema] = useState<string | null>(null);
   const [modalLiberar, setModalLiberar] = useState<string | null>(null);
+  const [detalheId, setDetalheId] = useState<string | null>(null);
   const [showMapa, setShowMapa] = useState(false);
 
   // Filtros
@@ -180,6 +182,7 @@ export default function GestorEntregasPage() {
                     ) : (
                       lista.map((o) => (
                         <EntregaCard key={o.id} pedido={o} now={now} busy={busy}
+                          onAbrir={(id) => setDetalheId(id)}
                           onAvancar={setStatus}
                           onProblema={(id) => setModalProblema(id)}
                           onLiberar={(id) => setModalLiberar(id)} />
@@ -192,6 +195,17 @@ export default function GestorEntregasPage() {
           </div>
         )}
       </div>
+
+      {detalheId && (
+        <EntregaDetalheModal
+          orderId={detalheId}
+          autor={autor}
+          busy={busy}
+          fetchDetalhe={fetchDetalhe}
+          onAddNote={addNote}
+          onClose={() => setDetalheId(null)}
+        />
+      )}
 
       {showMapa && <MapaEntregasGestor pontos={pontosMapa} onClose={() => setShowMapa(false)} />}
 
