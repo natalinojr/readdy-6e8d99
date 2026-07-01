@@ -611,11 +611,19 @@ export default function CardapioMesaQR(props: Props) {
 
             {(itemSelecionado.photo_url && !imgErros.has(itemSelecionado.id)) ? (
               <div className="px-5 pt-4">
-                <div className="w-full h-40 rounded-xl overflow-hidden bg-zinc-100">
+                {/* Foto inteira (object-contain) sobre a própria foto desfocada de fundo —
+                    nenhuma proporção de imagem fica cortada nem com faixas pretas/escuras */}
+                <div className="relative w-full h-44 rounded-xl overflow-hidden bg-zinc-100">
+                  <img
+                    src={itemSelecionado.photo_url}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-60"
+                  />
                   <img
                     src={itemSelecionado.photo_url}
                     alt={itemSelecionado.name}
-                    className="w-full h-full object-cover object-top"
+                    className="relative w-full h-full object-contain"
                     onError={function () { handleImgError(itemSelecionado.id); }}
                   />
                 </div>
