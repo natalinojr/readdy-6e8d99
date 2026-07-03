@@ -9,6 +9,7 @@ import type { DestinoInfo } from '@/contexts/PDVContext';
 import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
 import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
 import CortesiaDetalhesModal from '@/pages/pdv/caixa/components/CortesiaDetalhesModal';
+import DescontoAutorizacaoModal from '@/pages/pdv/caixa/components/DescontoAutorizacaoModal';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -67,6 +68,30 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   const [showCortesiaDetalhes, setShowCortesiaDetalhes] = useState(false);
   const [cortesiaAutorTemp, setCortesiaAutorTemp] = useState<string | null>(null);
   const [foiCortesia, setFoiCortesia] = useState(false);
+
+  // ── Voucher ──────────────────────────────────────────────────────────────
+  const [voucherOpen, setVoucherOpen] = useState(false);
+  const [voucherCode, setVoucherCode] = useState('');
+  const [voucherLoading, setVoucherLoading] = useState(false);
+  const [voucherAplicado, setVoucherAplicado] = useState<{ code: string; applicable_amount: number; tipo: string } | null>(null);
+  const [voucherError, setVoucherError] = useState('');
+
+  // ── Desconto manual (com autorização) ────────────────────────────────────
+  const [descontoOpen, setDescontoOpen] = useState(false);
+  const [descontoInput, setDescontoInput] = useState('');
+  const [descontoTipoManual, setDescontoTipoManual] = useState<'valor' | 'percentual'>('valor');
+  const [descontoManual, setDescontoManual] = useState(0);
+  const [descontoAutorizadoPor, setDescontoAutorizadoPor] = useState<string | null>(null);
+  const [showDescontoAuth, setShowDescontoAuth] = useState(false);
+  const [descontoPendente, setDescontoPendente] = useState(0);
+  const [descontoError, setDescontoError] = useState('');
+
+  // ── Box de dados do cliente (campos avulsos) ─────────────────────────────
+  const [clienteOpen, setClienteOpen] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerCpf, setCustomerCpf] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
 
   // Tenta usar itens do KDS primeiro (já carregados, sem nova query)
   const itensPrincipalKds = useMemo<ItemPedido[]>(() => {
@@ -229,9 +254,75 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
 
   const totalEfetivo = total + totalPedidosSelecionados;
 
+  // Desconto/voucher só quando é UM pedido só (sem pedidos vinculados) — evita ter que
+  // distribuir o desconto proporcionalmente entre vários pedidos.
+  const semLinkados = totalPedidosSelecionados <= 0.001;
+  const voucherValor = semLinkados ? (voucherAplicado?.applicable_amount ?? 0) : 0;
+  const descontoManualValor = semLinkados ? descontoManual : 0;
+  const descontoTotal = voucherValor + descontoManualValor;
+  const totalAPagar = Math.max(0, totalEfetivo - descontoTotal);
+
   const totalPago = pagamentos.reduce((acc, p) => acc + p.valor, 0);
-  const restante = Math.max(0, totalEfetivo - totalPago);
-  const troco = totalPago > totalEfetivo ? totalPago - totalEfetivo : 0;
+  const restante = Math.max(0, totalAPagar - totalPago);
+  const troco = totalPago > totalAPagar ? totalPago - totalAPagar : 0;
+
+  // Base do desconto manual (valor efetivo já menos o voucher)
+  const baseDesconto = Math.max(0, totalEfetivo - voucherValor);
+
+  async function handleValidarVoucher() {
+    if (!voucherCode.trim()) return;
+    setVoucherLoading(true);
+    setVoucherError('');
+    try {
+      const { data, error: fnErr } = await invokeWithAuth('voucher-write', {
+        body: { action: 'validate_voucher', active_tenant_id: user?.tenantId, code: voucherCode.trim().toUpperCase(), order_amount: totalEfetivo },
+      });
+      if (fnErr) throw fnErr;
+      const result = data as { valid: boolean; voucher: { code: string; voucher_type: string } | null; applicable_amount: number; reason?: string; min_order_amount?: number };
+      if (!result.valid) {
+        const reasons: Record<string, string> = {
+          not_found: 'Voucher não encontrado', expired: 'Voucher expirado', depleted: 'Saldo esgotado',
+          cancelled: 'Voucher cancelado', not_yet_valid: 'Voucher ainda não vigente',
+          below_min_order: result.min_order_amount ? `Pedido mínimo de ${fmt(result.min_order_amount)}` : 'Pedido abaixo do mínimo',
+        };
+        setVoucherError(reasons[result.reason ?? ''] ?? 'Voucher inválido');
+        return;
+      }
+      setVoucherAplicado({ code: result.voucher!.code, applicable_amount: result.applicable_amount, tipo: result.voucher!.voucher_type });
+      setPagamentos([]);
+    } catch {
+      setVoucherError('Erro ao validar voucher');
+    } finally {
+      setVoucherLoading(false);
+    }
+  }
+
+  function handleRemoverVoucher() {
+    setVoucherAplicado(null);
+    setVoucherCode('');
+    setVoucherError('');
+    setPagamentos([]);
+  }
+
+  function handleAplicarDesconto() {
+    setDescontoError('');
+    const n = parseFloat(descontoInput.replace(',', '.'));
+    if (!n || n <= 0) { setDescontoError('Informe um valor de desconto'); return; }
+    if (descontoTipoManual === 'percentual' && n > 100) { setDescontoError('Percentual máximo é 100%'); return; }
+    let valor = descontoTipoManual === 'percentual' ? baseDesconto * (n / 100) : n;
+    valor = Math.min(Math.round(valor * 100) / 100, baseDesconto);
+    if (valor <= 0) { setDescontoError('Desconto inválido para este total'); return; }
+    setDescontoPendente(valor);
+    setShowDescontoAuth(true);
+  }
+
+  function handleRemoverDesconto() {
+    setDescontoManual(0);
+    setDescontoAutorizadoPor(null);
+    setDescontoInput('');
+    setDescontoError('');
+    setPagamentos([]);
+  }
 
   const handleAddPagamento = () => {
     const v = parseFloat(valorInput.replace(',', '.'));
@@ -259,19 +350,19 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     if (pagamentos.length === 0 && formaId) {
       const v = parseFloat(valorInput.replace(',', '.'));
       const forma = formasAtivas.find((f) => f.id === formaId);
-      if (forma && !isNaN(v) && v >= totalEfetivo) {
-        const trocoCalc = forma.exigeTroco && v > totalEfetivo ? v - totalEfetivo : undefined;
-        pagamentosFinais = [{ formaId: forma.id, formaNome: forma.nome, valor: totalEfetivo, troco: trocoCalc }];
+      if (forma && !isNaN(v) && v >= totalAPagar) {
+        const trocoCalc = forma.exigeTroco && v > totalAPagar ? v - totalAPagar : undefined;
+        pagamentosFinais = [{ formaId: forma.id, formaNome: forma.nome, valor: totalAPagar, troco: trocoCalc }];
         setPagamentos(pagamentosFinais);
       } else if (forma && restante <= 0.01) {
-        pagamentosFinais = [{ formaId: forma.id, formaNome: forma.nome, valor: totalEfetivo }];
+        pagamentosFinais = [{ formaId: forma.id, formaNome: forma.nome, valor: totalAPagar }];
         setPagamentos(pagamentosFinais);
       }
     }
 
     if (pagamentosFinais.length === 0) return;
 
-    const restanteCheck = totalEfetivo - pagamentosFinais.reduce((acc, p) => acc + p.valor, 0);
+    const restanteCheck = totalAPagar - pagamentosFinais.reduce((acc, p) => acc + p.valor, 0);
     if (restanteCheck > 0.01) return;
 
     setConfirmando(true);
@@ -283,6 +374,57 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
       const paymentGroupId: string | null = totalPedidosPagando > 1
         ? crypto.randomUUID()
         : null;
+
+      // ── Desconto/voucher no pedido principal (só quando é um pedido só) ──
+      // Ajusta discount_amount + total_amount do pedido para que os pagamentos
+      // cubram o novo total (senão o pedido ficaria "parcialmente pago").
+      if (semLinkados && descontoTotal > 0.001) {
+        const novoTotal = Math.max(0, total - descontoTotal);
+        const { error: discErr } = await invokeWithAuth('order-write', {
+          body: {
+            action: 'apply_discount',
+            order_id: orderId,
+            tenant_id: user?.tenantId,
+            discount_type: 'fixed',
+            discount_value: descontoTotal,
+            coupon_code: voucherAplicado?.code ?? null,
+            requires_approval: descontoManual > 0,
+            approved_by: descontoAutorizadoPor ?? null,
+            reason: voucherAplicado
+              ? `Voucher ${voucherAplicado.code}${descontoManual > 0 ? ' + desconto manual' : ''}`
+              : 'Desconto no PDV Caixa (pagamento rápido)',
+            new_discount_amount: descontoTotal,
+            new_total_amount: novoTotal,
+          },
+        });
+        if (discErr) throw discErr;
+        // Resgata o voucher (baixa saldo/uso) vinculando ao pedido
+        if (voucherAplicado) {
+          await invokeWithAuth('voucher-write', {
+            body: {
+              action: 'redeem_voucher',
+              active_tenant_id: user?.tenantId,
+              code: voucherAplicado.code,
+              amount: voucherAplicado.applicable_amount,
+              order_id: orderId,
+            },
+          });
+        }
+      }
+
+      // ── Dados do cliente (cpf/e-mail/telefone) no pedido ──
+      if (customerCpf.trim() || customerEmail.trim() || customerPhone.trim()) {
+        await invokeWithAuth('order-write', {
+          body: {
+            action: 'update_order_customer',
+            order_id: orderId,
+            tenant_id: user?.tenantId,
+            customer_cpf: customerCpf.trim() || null,
+            customer_email: customerEmail.trim() || null,
+            customer_phone: customerPhone.trim() || null,
+          },
+        });
+      }
 
       // Registra pagamento do pedido principal
       for (const pag of pagamentosFinais) {
@@ -344,7 +486,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
       );
 
       const totalPedidos = todosPedidosVinculados.length + 1;
-      toastSuccess('Pagamento registrado!', `${totalPedidos} pedido(s) pago(s) · ${fmt(totalEfetivo)}`);
+      toastSuccess('Pagamento registrado!', `${totalPedidos} pedido(s) pago(s) · ${fmt(totalAPagar)}`);
       setSucesso(true);
       onSuccess(orderId, pagamentosFinais[0]?.formaId ?? '');
     } catch (err) {
@@ -771,9 +913,131 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
           )}
 
           {/* Total */}
-          <div className="flex items-center justify-between bg-zinc-50 rounded-xl px-4 py-3 border border-zinc-200">
-            <span className="text-sm font-semibold text-zinc-600">Total do pedido</span>
-            <span className="text-xl font-black text-zinc-900">{fmt(totalEfetivo)}</span>
+          <div className="bg-zinc-50 rounded-xl px-4 py-3 border border-zinc-200">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-zinc-600">Total do pedido</span>
+              <span className={`font-black text-zinc-900 ${descontoTotal > 0 ? 'text-sm line-through text-zinc-400' : 'text-xl'}`}>{fmt(totalEfetivo)}</span>
+            </div>
+            {descontoTotal > 0 && (
+              <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-zinc-200">
+                <span className="text-sm font-bold text-emerald-600">A pagar (-{fmt(descontoTotal)})</span>
+                <span className="text-xl font-black text-emerald-600">{fmt(totalAPagar)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* ── Desconto / Voucher / Cliente ─────────────────────────────────── */}
+          {semLinkados ? (
+            <>
+              {/* Desconto */}
+              <div className="border border-zinc-200 rounded-xl overflow-hidden">
+                <button onClick={() => setDescontoOpen((v) => !v)} className="w-full flex items-center justify-between px-4 py-2.5 bg-zinc-50 hover:bg-zinc-100 cursor-pointer transition-colors">
+                  <span className="flex items-center gap-2 text-sm font-semibold text-zinc-700">
+                    <i className="ri-percent-line text-amber-500" />
+                    {descontoManual > 0 ? <span className="text-amber-600">Desconto: -{fmt(descontoManual)}</span> : 'Desconto'}
+                  </span>
+                  <i className={`${descontoOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-zinc-400`} />
+                </button>
+                {descontoOpen && (
+                  <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
+                    {descontoManual > 0 ? (
+                      <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                        <div>
+                          <p className="text-sm font-bold text-amber-700">-{fmt(descontoManual)}</p>
+                          <p className="text-xs text-amber-500">{descontoAutorizadoPor ? `Autorizado por ${descontoAutorizadoPor}` : 'Autorizado'}</p>
+                        </div>
+                        <button onClick={handleRemoverDesconto} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-amber-100 text-amber-400 cursor-pointer" title="Remover desconto"><i className="ri-close-line text-sm" /></button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1">
+                          {(['valor', 'percentual'] as const).map((t) => (
+                            <button key={t} type="button" onClick={() => setDescontoTipoManual(t)} className={`flex-1 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors ${descontoTipoManual === t ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}>{t === 'valor' ? 'Valor (R$)' : 'Percentual (%)'}</button>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <input type="number" min={0} step="0.01" value={descontoInput} onChange={(e) => { setDescontoInput(e.target.value); setDescontoError(''); }} onKeyDown={(e) => e.key === 'Enter' && handleAplicarDesconto()} placeholder={descontoTipoManual === 'percentual' ? '10' : '5,00'} className="flex-1 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                          <button onClick={handleAplicarDesconto} disabled={!descontoInput.trim()} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap flex items-center gap-1.5"><i className="ri-shield-check-line" />Aplicar</button>
+                        </div>
+                        {descontoError && <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><i className="ri-error-warning-line" />{descontoError}</div>}
+                        <p className="text-[10px] text-zinc-400">O desconto exige autorização de gerente/admin.</p>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Voucher */}
+              <div className="border border-zinc-200 rounded-xl overflow-hidden">
+                <button onClick={() => setVoucherOpen((v) => !v)} className="w-full flex items-center justify-between px-4 py-2.5 bg-zinc-50 hover:bg-zinc-100 cursor-pointer transition-colors">
+                  <span className="flex items-center gap-2 text-sm font-semibold text-zinc-700">
+                    <i className="ri-gift-line text-rose-500" />
+                    {voucherAplicado ? <span className="text-rose-600">Voucher: -{fmt(voucherValor)}</span> : 'Voucher / Gift Card'}
+                  </span>
+                  <i className={`${voucherOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-zinc-400`} />
+                </button>
+                {voucherOpen && (
+                  <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
+                    {voucherAplicado ? (
+                      <div className="flex items-center justify-between bg-rose-50 border border-rose-200 rounded-xl px-4 py-3">
+                        <div>
+                          <span className="font-mono font-bold text-rose-700 text-sm tracking-wider">{voucherAplicado.code}</span>
+                          <p className="text-xs text-rose-500">Desconto: <strong>{fmt(voucherAplicado.applicable_amount)}</strong></p>
+                        </div>
+                        <button onClick={handleRemoverVoucher} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-rose-100 text-rose-400 cursor-pointer" title="Remover voucher"><i className="ri-close-line text-sm" /></button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex gap-2">
+                          <input type="text" value={voucherCode} onChange={(e) => { setVoucherCode(e.target.value.toUpperCase()); setVoucherError(''); }} onKeyDown={(e) => e.key === 'Enter' && handleValidarVoucher()} placeholder="Ex: GC-A3F9-X2K1" className="flex-1 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-400 font-mono tracking-wider uppercase" />
+                          <button onClick={handleValidarVoucher} disabled={!voucherCode.trim() || voucherLoading} className="px-4 py-2 bg-rose-500 hover:bg-rose-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap flex items-center gap-1.5">{voucherLoading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <i className="ri-check-line" />}Aplicar</button>
+                        </div>
+                        {voucherError && <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><i className="ri-error-warning-line" />{voucherError}</div>}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="text-[11px] text-zinc-400 text-center bg-zinc-50 border border-zinc-100 rounded-lg py-2">
+              Desconto e voucher ficam disponíveis ao cobrar um pedido por vez.
+            </p>
+          )}
+
+          {/* Dados do cliente */}
+          <div className="border border-zinc-200 rounded-xl overflow-hidden">
+            <button onClick={() => setClienteOpen((v) => !v)} className="w-full flex items-center justify-between px-4 py-2.5 bg-zinc-50 hover:bg-zinc-100 cursor-pointer transition-colors">
+              <span className="flex items-center gap-2 text-sm font-semibold text-zinc-700">
+                <i className="ri-user-3-line text-zinc-400" />
+                {customerName || customerPhone || customerCpf || customerEmail ? <span className="text-emerald-600">Dados do cliente salvos</span> : 'Dados do cliente'}
+                <span className="text-[10px] text-zinc-400 font-medium">Opcional</span>
+              </span>
+              <i className={`${clienteOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-zinc-400`} />
+            </button>
+            {clienteOpen && (
+              <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">Nome</label>
+                    <input type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Nome do cliente" maxLength={80} className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">Telefone</label>
+                    <input type="tel" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="(00) 00000-0000" maxLength={20} className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">CPF</label>
+                    <input type="text" value={customerCpf} onChange={(e) => setCustomerCpf(e.target.value)} placeholder="000.000.000-00" maxLength={14} className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">E-mail</label>
+                    <input type="email" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="cliente@email.com" className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  </div>
+                </div>
+                <p className="text-[10px] text-zinc-400">CPF, telefone e e-mail são salvos no pedido para nota fiscal e histórico.</p>
+              </div>
+            )}
           </div>
 
           {/* Formas de pagamento */}
@@ -895,7 +1159,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
               pagamentos.length === 0
                 ? (() => {
                     const v = parseFloat(valorInput.replace(',', '.'));
-                    return !formaId || isNaN(v) || v < totalEfetivo;
+                    return !formaId || isNaN(v) || v < totalAPagar;
                   })()
                 : restante > 0.01
             )}
@@ -909,7 +1173,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             ) : (
               <>
                 <i className="ri-check-double-line" />
-                Confirmar Pagamento · {fmt(totalEfetivo)}
+                Confirmar Pagamento · {fmt(totalAPagar)}
               </>
             )}
           </button>
@@ -938,6 +1202,27 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
           autorizadoPor={cortesiaAutorTemp ?? 'Gerente'}
           onConfirmar={(destinatario, motivo) => handleConfirmarCortesia(destinatario, motivo)}
           onCancelar={() => { setShowCortesiaDetalhes(false); setCortesiaAutorTemp(null); }}
+        />
+      )}
+
+      {/* Desconto — autorização gerente/admin */}
+      {showDescontoAuth && (
+        <DescontoAutorizacaoModal
+          valorDesconto={descontoPendente}
+          operadorNome={user?.nome ?? 'Operador'}
+          onAutorizadoSenha={(autorizadorNome) => {
+            setDescontoManual(descontoPendente);
+            setDescontoAutorizadoPor(autorizadorNome);
+            setShowDescontoAuth(false);
+            setPagamentos([]);
+            toastSuccess('Desconto autorizado', `${fmt(descontoPendente)} por ${autorizadorNome}`);
+          }}
+          onFalhouSenha={() => { /* o modal já exibe as tentativas */ }}
+          onEnviarNotificacao={() => {
+            setShowDescontoAuth(false);
+            toastError('Solicitação enviada', 'Aguarde a aprovação do gerente/admin para aplicar o desconto.');
+          }}
+          onClose={() => setShowDescontoAuth(false)}
         />
       )}
     </div>

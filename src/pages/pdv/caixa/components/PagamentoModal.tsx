@@ -14,6 +14,7 @@ import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
 import EtapaSelecionarPedidos from './pagamento/EtapaSelecionarPedidos';
 import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
 import CortesiaDetalhesModal from './CortesiaDetalhesModal';
+import DescontoAutorizacaoModal from './DescontoAutorizacaoModal';
 import type { KDSPedido } from '@/types/kds';
 
 interface VoucherAplicado {
@@ -112,10 +113,22 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const [voucherAplicado, setVoucherAplicado] = useState<VoucherAplicado | null>(null);
   const [voucherError, setVoucherError] = useState('');
 
-  // BUG 3.8: campos de cliente CPF/email
+  // Box de dados do cliente (campos avulsos — nome/telefone/CPF/e-mail)
   const [dadosClienteOpen, setDadosClienteOpen] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
   const [customerCpf, setCustomerCpf] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
+
+  // ── Desconto manual (com autorização de gerente/admin) ──────────────────────
+  const [descontoOpen, setDescontoOpen] = useState(false);
+  const [descontoInput, setDescontoInput] = useState('');
+  const [descontoTipoManual, setDescontoTipoManual] = useState<'valor' | 'percentual'>('valor');
+  const [descontoManual, setDescontoManual] = useState(0);
+  const [descontoAutorizadoPor, setDescontoAutorizadoPor] = useState<string | null>(null);
+  const [showDescontoAuth, setShowDescontoAuth] = useState(false);
+  const [descontoPendente, setDescontoPendente] = useState(0);
+  const [descontoError, setDescontoError] = useState('');
 
   const [carrinhoParaReimpressao, setCarrinhoParaReimpressao] = useState<import('../../../../contexts/PDVContext').CarrinhoItem[]>([]);
   const [destinoParaReimpressao, setDestinoParaReimpressao] = useState<import('../../../../contexts/PDVContext').DestinoInfo | null>(null);
@@ -154,9 +167,32 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
 
   const totalEfetivo = etapa === 'pagar' ? totalSelecionado : total;
 
-  // Total com desconto de voucher aplicado
+  // Total com desconto de voucher + desconto manual aplicados
   const desconto = voucherAplicado?.applicable_amount ?? 0;
-  const totalComDesconto = Math.max(0, totalEfetivo - desconto);
+  const totalComDesconto = Math.max(0, totalEfetivo - desconto - descontoManual);
+
+  // Base do desconto manual: valor efetivo já menos o voucher (não deixa passar do total)
+  const baseDesconto = Math.max(0, totalEfetivo - desconto);
+
+  function handleAplicarDesconto() {
+    setDescontoError('');
+    const n = parseFloat(descontoInput.replace(',', '.'));
+    if (!n || n <= 0) { setDescontoError('Informe um valor de desconto'); return; }
+    let valor = descontoTipoManual === 'percentual' ? baseDesconto * (n / 100) : n;
+    if (descontoTipoManual === 'percentual' && n > 100) { setDescontoError('Percentual máximo é 100%'); return; }
+    valor = Math.min(Math.round(valor * 100) / 100, baseDesconto);
+    if (valor <= 0) { setDescontoError('Desconto inválido para este total'); return; }
+    setDescontoPendente(valor);
+    setShowDescontoAuth(true);
+  }
+
+  function handleRemoverDesconto() {
+    setDescontoManual(0);
+    setDescontoAutorizadoPor(null);
+    setDescontoInput('');
+    setDescontoError('');
+    setPagamentos([]);
+  }
 
   // ── Pedidos abertos para vinculação manual ──
   const todosPedidosAbertos = useMemo(() => {
@@ -392,11 +428,18 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
 
       // 1. Cria o pedido do carrinho se estiver selecionado
       if (effectiveIncluirCarrinho && carrinhoSnapshot.length > 0) {
-        const result = await finalizarPedido(pagamentosComTroco, {
-          customerCpf: customerCpf || undefined,
-          customerEmail: customerEmail || undefined,
-          paymentGroupId,
-        });
+        const result = await finalizarPedido(
+          pagamentosComTroco,
+          {
+            customerCpf: customerCpf || undefined,
+            customerEmail: customerEmail || undefined,
+            customerName: customerName || undefined,
+            customerPhone: customerPhone || undefined,
+            paymentGroupId,
+          },
+          undefined,
+          descontoManual > 0 ? { amount: descontoManual, authorizedBy: descontoAutorizadoPor } : undefined,
+        );
         const numeroStr = result.number;
         const seq = parseInt(numeroStr.replace(/\D/g, '').slice(-4)) || 1;
         numeroPedidoLocal = seq;
@@ -863,6 +906,94 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             </div>
           </div>
 
+          {/* ── Desconto (com autorização) ──────────────────────────────────── */}
+          <div className="border border-zinc-200 rounded-xl overflow-hidden">
+            <button
+              onClick={() => setDescontoOpen((v) => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-zinc-50 hover:bg-zinc-100 cursor-pointer transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 flex items-center justify-center text-amber-500">
+                  <i className="ri-percent-line text-base" />
+                </div>
+                <span className="text-sm font-semibold text-zinc-700">
+                  {descontoManual > 0 ? (
+                    <span className="text-amber-600">Desconto aplicado: -{formatPrice(descontoManual)}</span>
+                  ) : (
+                    'Desconto'
+                  )}
+                </span>
+              </div>
+              <i className={`${descontoOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-zinc-400`} />
+            </button>
+
+            {descontoOpen && (
+              <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
+                {descontoManual > 0 ? (
+                  <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                    <div>
+                      <p className="text-sm font-bold text-amber-700">-{formatPrice(descontoManual)}</p>
+                      <p className="text-xs text-amber-500">
+                        {descontoAutorizadoPor ? `Autorizado por ${descontoAutorizadoPor}` : 'Autorizado'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleRemoverDesconto}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-amber-100 text-amber-400 cursor-pointer transition-colors"
+                      title="Remover desconto"
+                    >
+                      <i className="ri-close-line text-sm" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1">
+                      {(['valor', 'percentual'] as const).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setDescontoTipoManual(t)}
+                          className={`flex-1 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors ${descontoTipoManual === t ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                        >
+                          {t === 'valor' ? 'Valor (R$)' : 'Percentual (%)'}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={descontoInput}
+                        onChange={(e) => { setDescontoInput(e.target.value); setDescontoError(''); }}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAplicarDesconto()}
+                        placeholder={descontoTipoManual === 'percentual' ? '10' : '5,00'}
+                        className="flex-1 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                      <button
+                        onClick={handleAplicarDesconto}
+                        disabled={!descontoInput.trim()}
+                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1.5"
+                      >
+                        <i className="ri-shield-check-line" />
+                        Aplicar
+                      </button>
+                    </div>
+                    {descontoError && (
+                      <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                        <i className="ri-error-warning-line" />
+                        {descontoError}
+                      </div>
+                    )}
+                    <p className="text-[10px] text-zinc-400">
+                      O desconto exige autorização de gerente/admin (PIN ou notificação).
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* ── Voucher / Gift Card ─────────────────────────────────────────── */}
           <div className="border border-zinc-200 rounded-xl overflow-hidden">
             <button
@@ -962,9 +1093,9 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                   <i className="ri-user-3-line text-base" />
                 </div>
                 <span className="text-sm font-semibold text-zinc-700">
-                  {customerCpf || customerEmail
+                  {customerName || customerPhone || customerCpf || customerEmail
                     ? <span className="text-emerald-600">Dados do cliente salvos</span>
-                    : 'Dados do cliente (CPF / E-mail)'}
+                    : 'Dados do cliente'}
                 </span>
                 <span className="text-[10px] text-zinc-400 font-medium">Opcional</span>
               </div>
@@ -974,6 +1105,28 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             {dadosClienteOpen && (
               <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">Nome</label>
+                    <input
+                      type="text"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="Nome do cliente"
+                      maxLength={80}
+                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">Telefone</label>
+                    <input
+                      type="tel"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      placeholder="(00) 00000-0000"
+                      maxLength={20}
+                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
                   <div>
                     <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">CPF</label>
                     <input
@@ -997,7 +1150,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                   </div>
                 </div>
                 <p className="text-[10px] text-zinc-400">
-                  CPF e e-mail são salvos junto ao pedido para emissão de nota fiscal e histórico do cliente.
+                  Salvos junto ao pedido para nota fiscal e histórico do cliente.
                 </p>
               </div>
             )}
@@ -1177,6 +1330,27 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
           autorizadoPor={cortesiaAutorTemp ?? 'Gerente'}
           onConfirmar={(destinatario, motivo) => handleConfirmarCortesia(destinatario, motivo)}
           onCancelar={() => { setShowCortesiaDetalhes(false); setCortesiaAutorTemp(null); }}
+        />
+      )}
+
+      {/* Desconto — autorização gerente/admin */}
+      {showDescontoAuth && (
+        <DescontoAutorizacaoModal
+          valorDesconto={descontoPendente}
+          operadorNome={operadorNome}
+          onAutorizadoSenha={(autorizadorNome) => {
+            setDescontoManual(descontoPendente);
+            setDescontoAutorizadoPor(autorizadorNome);
+            setShowDescontoAuth(false);
+            setPagamentos([]);
+            toastSuccess('Desconto autorizado', `${formatPrice(descontoPendente)} por ${autorizadorNome}`);
+          }}
+          onFalhouSenha={() => { /* o modal já exibe as tentativas */ }}
+          onEnviarNotificacao={() => {
+            setShowDescontoAuth(false);
+            toastWarning('Solicitação enviada', 'Aguarde a aprovação do gerente/admin para aplicar o desconto.');
+          }}
+          onClose={() => setShowDescontoAuth(false)}
         />
       )}
     </div>

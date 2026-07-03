@@ -775,6 +775,26 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (action === "update_order_customer") {
+      // Salva dados avulsos do cliente em um pedido já criado (box de dados do
+      // cliente na tela de pagamento rápido). Colunas existentes em orders:
+      // customer_cpf, customer_email, destination_phone. (Não há coluna customer_name.)
+      const { order_id, customer_cpf, customer_email, customer_phone } = body;
+      if (!order_id) return new Response(JSON.stringify({ error: "order_id is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { data: ocCust } = await admin.from("orders").select("id, tenant_id").eq("id", order_id).maybeSingle();
+      if (!ocCust) return new Response(JSON.stringify({ error: "Pedido nao encontrado" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const custTenantId = ocCust.tenant_id as string;
+      const { data: custMembership } = await admin.from("user_tenants").select("tenant_id").eq("user_id", jwtUserId).eq("tenant_id", custTenantId).maybeSingle();
+      if (!custMembership) return new Response(JSON.stringify({ error: "Acesso negado a este pedido" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const custUpd: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (customer_cpf != null && String(customer_cpf).trim()) custUpd.customer_cpf = String(customer_cpf).trim();
+      if (customer_email != null && String(customer_email).trim()) custUpd.customer_email = String(customer_email).trim();
+      if (customer_phone != null && String(customer_phone).trim()) custUpd.destination_phone = String(customer_phone).trim();
+      const { error: custErr } = await admin.from("orders").update(custUpd).eq("id", order_id);
+      if (custErr) throw new Error(`update_order_customer: ${custErr.message}`);
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "apply_discount") {
       const { order_id, discount_type, discount_value, original_percent, coupon_code, promotion_id, requires_approval, approved_by, approved_at, approval_notes, reason, new_discount_amount, new_total_amount } = body;
       if (!order_id || !discount_type || discount_value == null) return new Response(JSON.stringify({ error: "order_id, discount_type e discount_value sao obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });

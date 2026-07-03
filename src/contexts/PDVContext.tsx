@@ -100,7 +100,7 @@ interface PDVContextData {
   valorDesconto: number;
   valorTaxaServico: number;
   total: number;
-  finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }) => Promise<FinalizarResult>;
+  finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }) => Promise<FinalizarResult>;
   enviarParaCozinha: (destinoOverride?: DestinoInfo | null) => Promise<FinalizarResult>;
 }
 
@@ -311,7 +311,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     });
   }, [carrinho, destino]);
 
-  const finalizarPedido = useCallback(async (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }): Promise<FinalizarResult> => {
+  const finalizarPedido = useCallback(async (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }): Promise<FinalizarResult> => {
     const freshSession = await ensureFreshSession();
     if (!freshSession) {
       throw new Error('Sessao de autenticacao expirada. Por favor, faca login novamente.');
@@ -348,9 +348,13 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     const cortesiaAutor = cortesiaOverride ? (cortesiaOverride.autorizadoPor ?? null) : cortesiaAutorizadaPor;
     const cortesiaDest = cortesiaOverride ? (cortesiaOverride.destinatario ?? null) : cortesiaDestinatario;
     const cortesiaMot = cortesiaOverride ? (cortesiaOverride.motivo ?? null) : cortesiaMotivo;
-    const actualDesconto = cortesiaAtiva ? subtotal : valorDesconto;
+    // Desconto extra aplicado direto na tela de pagamento (autorizado), somado ao
+    // desconto do carrinho. Reduz o total_amount do pedido (o voucher, quando houver,
+    // continua sendo resgatado à parte).
+    const extraDesc = cortesiaAtiva ? 0 : Math.max(0, extraDiscount?.amount ?? 0);
+    const actualDesconto = cortesiaAtiva ? subtotal : (valorDesconto + extraDesc);
     const actualTaxaServico = cortesiaAtiva ? 0 : valorTaxaServico;
-    const actualTotal = cortesiaAtiva ? 0 : total;
+    const actualTotal = cortesiaAtiva ? 0 : Math.max(0, total - extraDesc);
 
     // ── Cortesia: monta notes estruturado ──
     let cortesiaNotesStr: string | null = null;
@@ -388,7 +392,13 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       customer_name: (customerData?.customerName?.trim() || (destino?.tipo === 'mesa' ? destino?.nomeCliente : null)) ?? null,
       table_session_id: tableSessionId,
       is_cortesia: cortesiaAtiva ? true : undefined,
-      notes: cortesiaAtiva ? cortesiaNotesStr : undefined,
+      // Audita quem autorizou o desconto aplicado na tela de pagamento (via notes,
+      // já que não passamos pela coluna dedicada aqui).
+      notes: cortesiaAtiva
+        ? cortesiaNotesStr
+        : (extraDesc > 0 && extraDiscount?.authorizedBy
+            ? `Desconto R$ ${extraDesc.toFixed(2)} autorizado por: ${extraDiscount.authorizedBy}`
+            : undefined),
       cortesia_authorized_by: cortesiaAtiva ? (cortesiaAutor ?? undefined) : undefined,
     }, { offlinePayments, stationToImpressoraId: mapaEstacoes });
 
