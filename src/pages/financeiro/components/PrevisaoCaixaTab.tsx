@@ -252,6 +252,7 @@ export default function PrevisaoCaixaTab() {
   const [loading, setLoading] = useState(true);
   const [projection, setProjection] = useState<DayPoint[]>([]);
   const [saldoAtual, setSaldoAtual] = useState(0);
+  const [saldoSource, setSaldoSource] = useState<'banco' | 'razao'>('razao');
   const [totalRecebiveis, setTotalRecebiveis] = useState(0);
   const [totalSaidas, setTotalSaidas] = useState(0);
   const [totalEntradas, setTotalEntradas] = useState(0);
@@ -281,7 +282,7 @@ export default function PrevisaoCaixaTab() {
     const todayStr = localDateKey(today);
     const endDateStr = localDateKey(endDate);
 
-    const [payablesRes, cashFlowsRes, pastFlowsRes, receivablesRes, payrollRes] = await Promise.all([
+    const [payablesRes, cashFlowsRes, pastFlowsRes, receivablesRes, payrollRes, bankAccountsRes] = await Promise.all([
       supabase
         .from('fin_accounts_payable')
         .select('due_date, amount, description')
@@ -318,12 +319,26 @@ export default function PrevisaoCaixaTab() {
         .in('status', ['pending', 'processing'])
         .gte('paid_date', todayStr)
         .lte('paid_date', endDateStr),
+
+      supabase
+        .from('fin_bank_accounts')
+        .select('current_balance')
+        .eq('tenant_id', user.tenantId)
+        .eq('is_active', true),
     ]);
 
-    const currentBalance = (pastFlowsRes.data ?? []).reduce((acc, f) => {
+    // P5: saldo inicial da projeção.
+    // Preferimos o saldo bancário real (fin_bank_accounts) quando os bancos estão em uso;
+    // se ainda não há saldo em banco (contas não configuradas / sem income routing),
+    // caímos no proxy do livro-razão (fin_cash_flow acumulado até ontem).
+    const bankBalance = (bankAccountsRes.data ?? []).reduce((s, b) => s + Number(b.current_balance ?? 0), 0);
+    const ledgerBalance = (pastFlowsRes.data ?? []).reduce((acc, f) => {
       return acc + (f.type === 'income' ? Number(f.amount) : -Number(f.amount));
     }, 0);
+    const usaBanco = Math.abs(bankBalance) > 0.001;
+    const currentBalance = usaBanco ? bankBalance : ledgerBalance;
     setSaldoAtual(currentBalance);
+    setSaldoSource(usaBanco ? 'banco' : 'razao');
 
     // Mapa dia a dia com 5 categorias separadas
     const dayMap: Record<string, {
@@ -601,7 +616,7 @@ export default function PrevisaoCaixaTab() {
             icon: 'ri-bank-line',
             color: saldoAtual >= 0 ? 'text-green-700' : 'text-red-700',
             bg: saldoAtual >= 0 ? 'bg-green-50' : 'bg-red-50',
-            sub: 'Movimentações realizadas',
+            sub: saldoSource === 'banco' ? 'Saldo real das contas bancárias' : 'Estimado pelo caixa (configure os bancos p/ saldo real)',
           },
           {
             label: 'Recebíveis D+N',

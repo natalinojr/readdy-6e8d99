@@ -314,6 +314,16 @@ export default function ReceitasTab() {
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-5">
 
+      {/* P4: rótulo — esta aba mede FATURAMENTO (venda), não caixa recebido */}
+      <div className="flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
+        <i className="ri-information-line mt-0.5" />
+        <span>
+          <strong>Faturamento por venda:</strong> pedidos entregues no período (base de vendas).
+          Difere do <strong>recebido em caixa</strong> da Visão Geral e da DRE — vendas no cartão a prazo
+          entram aqui na data da venda, mas no caixa só quando o dinheiro cai.
+        </span>
+      </div>
+
       {/* ── KPIs ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         <KpiCard

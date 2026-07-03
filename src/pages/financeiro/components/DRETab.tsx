@@ -302,14 +302,18 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
     (s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0
   );
 
-  const feeMap: Record<string, number> = {};
-  (payMethodsRes.data ?? []).forEach((m: Record<string, unknown>) => {
-    feeMap[m.id as string] = Number(m.fee_percentage ?? 0);
-  });
-  const taxasMaquininha = (paymentsRes.data ?? []).reduce((s, p) => {
-    const fee = feeMap[p.payment_method_id ?? ''] ?? 0;
-    return s + Number(p.amount) * (fee / 100);
-  }, 0);
+  // P7: taxas de cartão vêm do livro-razão (auto_card_fee) — criadas na venda à vista
+  // e na liquidação de recebíveis a prazo (BUG-43). Antes recalculava payments × fee,
+  // que não cobria cartão a prazo e podia divergir do razão.
+  const { data: cardFeeRows } = await supabase
+    .from('fin_cash_flow')
+    .select('amount')
+    .eq('tenant_id', tenantId)
+    .eq('type', 'expense')
+    .eq('origin', 'auto_card_fee')
+    .gte('date', startDate)
+    .lte('date', endDate);
+  const taxasMaquininha = (cardFeeRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
   const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime);
 
@@ -505,14 +509,18 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     (s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0
   );
 
-  const feeMap: Record<string, number> = {};
-  (payMethodsRes.data ?? []).forEach((m: Record<string, unknown>) => {
-    feeMap[m.id as string] = Number(m.fee_percentage ?? 0);
-  });
-  const taxasMaquininha = (paymentsRes.data ?? []).reduce((s, p) => {
-    const fee = feeMap[p.payment_method_id ?? ''] ?? 0;
-    return s + Number(p.amount) * (fee / 100);
-  }, 0);
+  // P7: taxas de cartão vêm do livro-razão (auto_card_fee) — criadas na venda à vista
+  // e na liquidação de recebíveis a prazo (BUG-43). Antes recalculava payments × fee,
+  // que não cobria cartão a prazo e podia divergir do razão.
+  const { data: cardFeeRows } = await supabase
+    .from('fin_cash_flow')
+    .select('amount')
+    .eq('tenant_id', tenantId)
+    .eq('type', 'expense')
+    .eq('origin', 'auto_card_fee')
+    .gte('date', startDate)
+    .lte('date', endDate);
+  const taxasMaquininha = (cardFeeRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
   const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime);
 
@@ -1468,13 +1476,13 @@ export default function DRETab() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {(dreMode === 'caixa' ? [
             { icon: 'ri-shopping-bag-line', label: 'Receitas', desc: 'Livro-razão (fin_cash_flow): auto_sale + entradas manuais' },
-            { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Compras pagas no módulo Estoque' },
-            { icon: 'ri-bill-line', label: 'Despesas', desc: 'Contas a Pagar pagas + categoria DRE' },
+            { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Custo dos produtos vendidos (consumo via ficha técnica)' },
+            { icon: 'ri-bill-line', label: 'Despesas', desc: 'Contas a Pagar pagas + categoria DRE (compras excluídas)' },
             { icon: 'ri-price-tag-3-line', label: 'Deduções', desc: 'Cancelamentos e descontos dos pedidos' },
           ] : [
             { icon: 'ri-shopping-bag-line', label: 'Receitas', desc: 'Livro-razão (fin_cash_flow): auto_sale + entradas manuais (recebíveis são saldo, já contabilizados)' },
-            { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Todas as compras pela data de compra (pagas ou não)' },
-            { icon: 'ri-bill-line', label: 'Despesas', desc: 'Todas as contas com vencimento no período (pagas, pendentes, vencidas)' },
+            { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Custo dos produtos vendidos (consumo via ficha técnica)' },
+            { icon: 'ri-bill-line', label: 'Despesas', desc: 'Todas as contas com vencimento no período — compras excluídas (evita dupla contagem)' },
             { icon: 'ri-price-tag-3-line', label: 'Deduções', desc: 'Cancelamentos e descontos dos pedidos' },
           ]).map((f) => (
             <div key={f.label} className="flex items-start gap-2">

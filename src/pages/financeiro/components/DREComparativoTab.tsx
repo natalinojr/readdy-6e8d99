@@ -30,8 +30,25 @@ interface DRESnapshot {
   descontos: number;
   cmvCompras: number;
   cmvComprasPendentes: number;
+  cmvTeorico: number; // P2: CMV por consumo (custo dos produtos vendidos)
   despesasPorCategoria: Record<string, number>;
   despesasAPagar: number;
+}
+
+// P2: CMV por consumo (Σ order_items.unit_cost × qtd) — igual nos dois regimes.
+async function fetchCmvConsumoComp(tenantId: string, startDate: string, endDateTime: string): Promise<number> {
+  const { data } = await supabase
+    .from('order_items')
+    .select('unit_cost, quantity, orders!inner(tenant_id, created_at, is_paid, status, is_training, is_draft)')
+    .eq('orders.tenant_id', tenantId)
+    .eq('orders.is_paid', true)
+    .eq('orders.is_training', false)
+    .eq('orders.is_draft', false)
+    .not('orders.status', 'in', '("cancelled","draft")')
+    .gte('orders.created_at', startDate)
+    .lte('orders.created_at', endDateTime);
+  return ((data ?? []) as Array<Record<string, unknown>>)
+    .reduce((s, r) => s + Number(r.unit_cost ?? 0) * Number(r.quantity ?? 0), 0);
 }
 
 interface DRECat {
@@ -57,7 +74,7 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string):
       .lte('created_at', endDateTime),
     supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('status', 'cancelled').gte('created_at', startDate).lte('created_at', endDateTime),
     supabase.from('orders').select('discount_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).not('status', 'in', '("cancelled","draft")').gte('created_at', startDate).lte('created_at', endDateTime),
-    supabase.from('fin_accounts_payable').select('dre_category_id, amount, paid_amount').eq('tenant_id', tenantId).eq('status', 'paid').gte('paid_date', startDate).lte('paid_date', endDate),
+    supabase.from('fin_accounts_payable').select('dre_category_id, amount, paid_amount').eq('tenant_id', tenantId).eq('status', 'paid').or('reference_type.is.null,reference_type.neq.purchase').gte('paid_date', startDate).lte('paid_date', endDate),
     supabase.from('fin_purchases').select('total_amount, payment_status').eq('tenant_id', tenantId).in('payment_status', ['paid', 'partial']).gte('purchase_date', startDate).lte('purchase_date', endDate),
   ]);
 
@@ -69,13 +86,14 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string):
   const cancelamentos = (cancelledRes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
   const descontos = (descontosRes.data ?? []).reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
   const cmvCompras = (purchasesRes.data ?? []).reduce((s, p) => s + Number(p.total_amount), 0);
+  const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime);
   const despesasPorCategoria: Record<string, number> = {};
   (billsRes.data ?? []).forEach(b => {
     const key = b.dre_category_id ?? '__sem__';
     despesasPorCategoria[key] = (despesasPorCategoria[key] ?? 0) + Number(b.paid_amount ?? b.amount);
   });
 
-  return { receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento, receitaAReceber: 0, cancelamentos, descontos, cmvCompras, cmvComprasPendentes: 0, despesasPorCategoria, despesasAPagar: 0 };
+  return { receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento, receitaAReceber: 0, cancelamentos, descontos, cmvCompras, cmvComprasPendentes: 0, cmvTeorico, despesasPorCategoria, despesasAPagar: 0 };
 }
 
 async function fetchCompetencia(tenantId: string, startDate: string, endDate: string): Promise<DRESnapshot> {
@@ -85,7 +103,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
     supabase.from('fin_receivable_installments').select('amount').eq('tenant_id', tenantId).eq('status', 'pending').gte('due_date', startDate).lte('due_date', endDate),
     supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('status', 'cancelled').gte('created_at', startDate).lte('created_at', endDateTime),
     supabase.from('orders').select('discount_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).not('status', 'in', '("cancelled","draft")').gte('created_at', startDate).lte('created_at', endDateTime),
-    supabase.from('fin_accounts_payable').select('dre_category_id, amount, status').eq('tenant_id', tenantId).in('status', ['pending', 'paid', 'overdue']).gte('due_date', startDate).lte('due_date', endDate),
+    supabase.from('fin_accounts_payable').select('dre_category_id, amount, status').eq('tenant_id', tenantId).in('status', ['pending', 'paid', 'overdue']).or('reference_type.is.null,reference_type.neq.purchase').gte('due_date', startDate).lte('due_date', endDate),
     supabase.from('fin_purchases').select('total_amount, payment_status').eq('tenant_id', tenantId).gte('purchase_date', startDate).lte('purchase_date', endDate),
   ]);
 
@@ -100,6 +118,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
   const allPurchases = purchasesRes.data ?? [];
   const cmvCompras = allPurchases.reduce((s, p) => s + Number(p.total_amount), 0);
   const cmvComprasPendentes = allPurchases.filter(p => p.payment_status === 'pending').reduce((s, p) => s + Number(p.total_amount), 0);
+  const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime);
   const despesasPorCategoria: Record<string, number> = {};
   let despesasAPagar = 0;
   (billsRes.data ?? []).forEach(b => {
@@ -108,13 +127,13 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
     if (b.status === 'pending' || b.status === 'overdue') despesasAPagar += Number(b.amount);
   });
 
-  return { receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento, receitaAReceber, cancelamentos, descontos, cmvCompras, cmvComprasPendentes, despesasPorCategoria, despesasAPagar };
+  return { receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento, receitaAReceber, cancelamentos, descontos, cmvCompras, cmvComprasPendentes, cmvTeorico, despesasPorCategoria, despesasAPagar };
 }
 
 function calcDRE(d: DRESnapshot, mode: 'caixa' | 'competencia') {
   const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento;
   const receitaBruta = mode === 'competencia' ? receitaRecebida + d.receitaAReceber : receitaRecebida;
-  const cmv = mode === 'competencia' ? d.cmvCompras + d.cmvComprasPendentes : d.cmvCompras;
+  const cmv = d.cmvTeorico; // P2: CMV por consumo — igual nos dois regimes
   const receitaLiquida = receitaBruta - d.cancelamentos - d.descontos;
   const lucroBruto = receitaLiquida - cmv;
   const totalDespesas = Object.entries(d.despesasPorCategoria).filter(([k]) => k !== '__sem__').reduce((s, [, v]) => s + v, 0);
@@ -372,9 +391,9 @@ export default function DREComparativoTab() {
             )}
             {compData.cmvComprasPendentes > 0 && (
               <div className="bg-white border border-orange-100 rounded-xl p-3">
-                <p className="text-xs font-semibold text-orange-700">CMV Pendente</p>
+                <p className="text-xs font-semibold text-orange-700">Compras a Pagar</p>
                 <p className="text-base font-black text-orange-800 mt-0.5">{formatCurrency(compData.cmvComprasPendentes)}</p>
-                <p className="text-xs text-orange-400 mt-0.5">Compras não pagas incluídas na competência</p>
+                <p className="text-xs text-orange-400 mt-0.5">Compras não pagas no período (estoque, não CMV)</p>
               </div>
             )}
           </div>
@@ -430,10 +449,8 @@ export default function DREComparativoTab() {
 
             {/* ── CUSTOS ── */}
             <SectionHeader label="Custos" />
-            <CompRow label="CMV — Compras de Insumos" caixaVal={caixa.cmv} compVal={comp.cmv} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
-            {compData.cmvComprasPendentes > 0 && (
-              <CompRow label="  └ CMV Pendente (não pago)" caixaVal={0} compVal={compData.cmvComprasPendentes} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg highlight />
-            )}
+            <CompRow label="CMV — Custo dos Produtos Vendidos" caixaVal={caixa.cmv} compVal={comp.cmv} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
+            {/* P2: CMV por consumo é igual nos dois regimes; não há mais "CMV pendente" */}
             {costCats.map(cat => {
               const cv = caixaData.despesasPorCategoria[cat.id] ?? 0;
               const pv = compData.despesasPorCategoria[cat.id] ?? 0;

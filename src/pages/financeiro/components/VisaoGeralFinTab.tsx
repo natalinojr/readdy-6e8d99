@@ -463,13 +463,13 @@ export default function VisaoGeralFinTab() {
         {/* KPI Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4">
           <MetricCard
-            label="Receita Hoje"
+            label="Receita Hoje (caixa)"
             value={formatCurrency(dashboard.receitaHoje)}
             icon="ri-sun-line"
             color="bg-amber-100 text-amber-600"
           />
           <MetricCard
-            label="Receita do Mês"
+            label="Receita do Mês (caixa)"
             value={formatCurrency(dashboard.receitaMes)}
             icon="ri-calendar-line"
             color="bg-green-100 text-green-600"

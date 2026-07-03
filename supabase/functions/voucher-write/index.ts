@@ -35,7 +35,11 @@ Deno.serve({ verify_jwt: false }, async (req) => {
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
   const authHeader = req.headers.get('Authorization') ?? '';
 
-  const effectiveServiceKey = serviceRoleKey.length > 100 ? serviceRoleKey : anonKey;
+  // >= 40 (não > 100): as novas chaves do Supabase (sb_secret_…) são curtas (~50 chars),
+  // diferente do JWT service_role legado (~200+). O limiar antigo de 100 rejeitava a
+  // chave nova e caía na anon → INSERT dava "permission denied (42501)". Mesmo critério
+  // do delivery-write (que funciona).
+  const effectiveServiceKey = serviceRoleKey.length >= 40 ? serviceRoleKey : anonKey;
   const admin = createClient(supabaseUrl, effectiveServiceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });

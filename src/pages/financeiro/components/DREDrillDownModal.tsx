@@ -35,7 +35,7 @@ const TYPE_LABELS: Record<string, string> = {
   receita_autoatendimento: 'Autoatendimento',
   receita_manual: 'Entradas Manuais',
   receita_a_receber: 'Receita a Realizar',
-  cmv: 'CMV — Compras de Insumos',
+  cmv: 'CMV — Custo dos Produtos Vendidos',
   cancelamentos: 'Cancelamentos',
   descontos: 'Descontos Concedidos',
   custo_pessoal: 'Custo com Pessoal',
@@ -170,56 +170,40 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
 
     // ── CMV ──
     else if (type === 'cmv') {
-      // Buscar compras do período
-      const { data: purchases } = await supabase
-        .from('fin_purchases')
-        .select('id,purchase_date,supplier,total_amount,payment_status,invoice_number')
-        .eq('tenant_id', user.tenantId)
-        .gte('purchase_date', start.slice(0, 10))
-        .lte('purchase_date', end.slice(0, 10))
-        .order('purchase_date', { ascending: false });
+      // P2: CMV por consumo — custo dos itens vendidos (order_items.unit_cost × qtd),
+      // agrupado por produto. Não usa mais compras (fin_purchases).
+      const { data: rows } = await supabase
+        .from('order_items')
+        .select('item_name, quantity, unit_cost, orders!inner(tenant_id, created_at, is_paid, status, is_training, is_draft)')
+        .eq('orders.tenant_id', user.tenantId)
+        .eq('orders.is_paid', true)
+        .eq('orders.is_training', false)
+        .eq('orders.is_draft', false)
+        .not('orders.status', 'in', '(cancelled,draft)')
+        .gte('orders.created_at', start.slice(0, 10))
+        .lte('orders.created_at', end);
 
-      // Buscar itens das compras com classificação DRE
-      const { data: purchaseItems } = await supabase
-        .from('fin_purchase_items')
-        .select('id,purchase_id,description,quantity,unit_price,total_price,dre_category_id,ingredient_id,ingredients(name,unit)')
-        .in('purchase_id', (purchases ?? []).map(p => p.id));
+      const agg: Record<string, { qty: number; cost: number }> = {};
+      for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
+        const name = (r.item_name as string) || 'Item';
+        const qty = Number(r.quantity ?? 0);
+        const uc = Number(r.unit_cost ?? 0);
+        if (!agg[name]) agg[name] = { qty: 0, cost: 0 };
+        agg[name].qty += qty;
+        agg[name].cost += uc * qty;
+      }
 
-      // Buscar categorias DRE para mostrar nomes
-      const { data: dreCats } = await supabase
-        .from('fin_dre_categories')
-        .select('id,name')
-        .eq('tenant_id', user.tenantId)
-        .eq('is_active', true);
-
-      const dreCatMap: Record<string, string> = {};
-      (dreCats ?? []).forEach((c: Record<string, unknown>) => {
-        dreCatMap[c.id as string] = c.name as string;
-      });
-
-      // Agrupar por compra, mostrando itens
-      result = (purchases ?? []).map((p: Record<string, unknown>) => {
-        const items = (purchaseItems ?? []).filter((i: Record<string, unknown>) => i.purchase_id === p.id);
-        const itemDesc = items.length > 0
-          ? items.map((i: Record<string, unknown>) => {
-              const catId = i.dre_category_id as string | null;
-              const catName = catId ? (dreCatMap[catId] || 'Classificado') : 'CMV';
-              return `${i.description} (${Number(i.quantity)} ${(i.ingredients as Record<string, unknown>)?.unit || 'un'}) [${catName}]`;
-            }).join(', ')
-          : 'Compra de insumos';
-        return {
-          id: p.id as string,
-          date: p.purchase_date as string,
-          description: `${p.supplier || 'Fornecedor'} — ${itemDesc}`,
-          amount: Number(p.total_amount),
-          source: 'Compras',
-          extra: {
-            NF: String(p.invoice_number || '—'),
-            Status: String(p.payment_status || ''),
-            Itens: String(items.length),
-          },
-        };
-      });
+      result = Object.entries(agg)
+        .filter(([, v]) => v.cost > 0)
+        .sort((a, b) => b[1].cost - a[1].cost)
+        .map(([name, v], idx) => ({
+          id: `cmv-${idx}`,
+          date: start.slice(0, 10),
+          description: name,
+          amount: v.cost,
+          source: 'Consumo (ficha técnica)',
+          extra: { Qtd: v.qty, 'Custo unit.': Number((v.cost / (v.qty || 1)).toFixed(2)) },
+        }));
     }
 
     // ── CUSTO PESSOAL ──
