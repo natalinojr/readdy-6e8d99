@@ -9,7 +9,6 @@ import type { DestinoInfo } from '@/contexts/PDVContext';
 import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
 import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
 import CortesiaDetalhesModal from '@/pages/pdv/caixa/components/CortesiaDetalhesModal';
-import DescontoAutorizacaoModal from '@/pages/pdv/caixa/components/DescontoAutorizacaoModal';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -1205,24 +1204,21 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         />
       )}
 
-      {/* Desconto — autorização gerente/admin */}
+      {/* Desconto — autorização gerente/admin (PIN OU e-mail+senha) */}
       {showDescontoAuth && (
-        <DescontoAutorizacaoModal
-          valorDesconto={descontoPendente}
-          operadorNome={user?.nome ?? 'Operador'}
-          onAutorizadoSenha={(autorizadorNome) => {
+        <AutorizacaoGerenteModal
+          titulo="Autorizar Desconto"
+          descricao={`Libere o desconto de ${fmt(descontoPendente)} com credenciais de gerente ou admin.`}
+          niveisPermitidos={['gerente', 'admin']}
+          tenantId={user?.tenantId ?? ''}
+          onAutorizado={(autorizadoPor) => {
             setDescontoManual(descontoPendente);
-            setDescontoAutorizadoPor(autorizadorNome);
+            setDescontoAutorizadoPor(autorizadoPor);
             setShowDescontoAuth(false);
             setPagamentos([]);
-            toastSuccess('Desconto autorizado', `${fmt(descontoPendente)} por ${autorizadorNome}`);
+            toastSuccess('Desconto autorizado', `${fmt(descontoPendente)} por ${autorizadoPor}`);
           }}
-          onFalhouSenha={() => { /* o modal já exibe as tentativas */ }}
-          onEnviarNotificacao={() => {
-            setShowDescontoAuth(false);
-            toastError('Solicitação enviada', 'Aguarde a aprovação do gerente/admin para aplicar o desconto.');
-          }}
-          onClose={() => setShowDescontoAuth(false)}
+          onCancelar={() => setShowDescontoAuth(false)}
         />
       )}
     </div>

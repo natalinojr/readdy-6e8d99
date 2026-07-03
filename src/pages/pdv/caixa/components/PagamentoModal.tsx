@@ -14,7 +14,6 @@ import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
 import EtapaSelecionarPedidos from './pagamento/EtapaSelecionarPedidos';
 import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
 import CortesiaDetalhesModal from './CortesiaDetalhesModal';
-import DescontoAutorizacaoModal from './DescontoAutorizacaoModal';
 import type { KDSPedido } from '@/types/kds';
 
 interface VoucherAplicado {
@@ -1333,24 +1332,21 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         />
       )}
 
-      {/* Desconto — autorização gerente/admin */}
+      {/* Desconto — autorização gerente/admin (PIN OU e-mail+senha) */}
       {showDescontoAuth && (
-        <DescontoAutorizacaoModal
-          valorDesconto={descontoPendente}
-          operadorNome={operadorNome}
-          onAutorizadoSenha={(autorizadorNome) => {
+        <AutorizacaoGerenteModal
+          titulo="Autorizar Desconto"
+          descricao={`Libere o desconto de ${formatPrice(descontoPendente)} com credenciais de gerente ou admin.`}
+          niveisPermitidos={['gerente', 'admin']}
+          tenantId={user?.tenantId ?? ''}
+          onAutorizado={(autorizadoPor) => {
             setDescontoManual(descontoPendente);
-            setDescontoAutorizadoPor(autorizadorNome);
+            setDescontoAutorizadoPor(autorizadoPor);
             setShowDescontoAuth(false);
             setPagamentos([]);
-            toastSuccess('Desconto autorizado', `${formatPrice(descontoPendente)} por ${autorizadorNome}`);
+            toastSuccess('Desconto autorizado', `${formatPrice(descontoPendente)} por ${autorizadoPor}`);
           }}
-          onFalhouSenha={() => { /* o modal já exibe as tentativas */ }}
-          onEnviarNotificacao={() => {
-            setShowDescontoAuth(false);
-            toastWarning('Solicitação enviada', 'Aguarde a aprovação do gerente/admin para aplicar o desconto.');
-          }}
-          onClose={() => setShowDescontoAuth(false)}
+          onCancelar={() => setShowDescontoAuth(false)}
         />
       )}
     </div>
