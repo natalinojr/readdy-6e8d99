@@ -59,7 +59,11 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
         active_tenant_id: user?.tenantId,
         voucher_type: form.voucher_type,
         original_amount: form.original_amount !== '' ? Number(form.original_amount) : 0,
-        expires_at: form.expires_at || null,
+        // A validade é uma data pura (YYYY-MM-DD). Sem hora, o banco a guarda como
+        // meia-noite UTC e, no horário de Brasília (-3h), ela "volta" para o dia
+        // anterior às 21:00. Fixamos o FIM do dia no fuso local (23:59:59) para o
+        // voucher valer até o fim do dia escolhido.
+        expires_at: form.expires_at ? new Date(`${form.expires_at}T23:59:59`).toISOString() : null,
         customer_name: form.customer_name.trim() || null,
         customer_email: form.customer_email.trim() || null,
         notes: form.notes.trim() || null,
