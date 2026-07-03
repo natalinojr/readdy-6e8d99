@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef } f
 import type { ReactNode } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useOrdersPing } from '@/hooks/useOrdersPing';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade, KDSPagamento, KDSSubParte } from '../types/kds';
@@ -1272,6 +1273,12 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       loadOrders();
     }, 40);
   }, [loadOrders]);
+
+  // ── Ping instantâneo via trigger no banco (canal público orders-ping) ─────
+  // Caminho principal de "pedido novo apareceu": não passa por RLS por linha
+  // nem pela publicação — mesmo mecanismo que deixou a impressão instantânea.
+  // O postgres_changes acima continua como camada de payload (lock de edição).
+  useOrdersPing(user?.tenantId, () => handleRealtimeChange());
 
   // ── Efeito 1: carrega estações quando o tenant muda ───────────────────────
   useEffect(() => {

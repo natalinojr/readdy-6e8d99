@@ -58,6 +58,34 @@ interface DREData {
   receitaAReceber: number;
   despesasAPagar: number;
   cmvComprasPendentes: number;
+  // P2: CMV teórico por consumo (Σ order_items.unit_cost × qtd) e cobertura de ficha técnica.
+  // Só é confiável com cobertura alta; serve de comparação com o CMV por compras.
+  cmvTeorico?: number;
+  fichaCobertura?: number; // % de itens vendidos com custo (unit_cost > 0)
+}
+
+// P2: calcula CMV teórico (consumo) e cobertura de ficha técnica no período.
+async function fetchCmvConsumo(tenantId: string, startDate: string, endDateTime: string): Promise<{ cmvTeorico: number; fichaCobertura: number }> {
+  const { data } = await supabase
+    .from('order_items')
+    .select('unit_cost, quantity, orders!inner(tenant_id, created_at, is_paid, status, is_training, is_draft)')
+    .eq('orders.tenant_id', tenantId)
+    .eq('orders.is_paid', true)
+    .eq('orders.is_training', false)
+    .eq('orders.is_draft', false)
+    .not('orders.status', 'in', '(cancelled,draft)')
+    .gte('orders.created_at', startDate)
+    .lte('orders.created_at', endDateTime);
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  let cmvTeorico = 0;
+  let comCusto = 0;
+  for (const r of rows) {
+    const uc = Number(r.unit_cost ?? 0);
+    const qty = Number(r.quantity ?? 0);
+    if (uc > 0) { comCusto++; cmvTeorico += uc * qty; }
+  }
+  const fichaCobertura = rows.length > 0 ? (comCusto / rows.length) * 100 : 0;
+  return { cmvTeorico, fichaCobertura };
 }
 
 type DREMode = 'caixa' | 'competencia';
@@ -130,6 +158,9 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .select('dre_category_id, category, paid_amount, amount')
       .eq('tenant_id', tenantId)
       .eq('status', 'paid')
+      // P1: exclui contas geradas por compras — o custo delas já entra via CMV (fin_purchases).
+      // Sem isso a compra é contada 2x (CMV + despesa). Mesmo critério da aba Despesas.
+      .or('reference_type.is.null,reference_type.neq.purchase')
       .gte('paid_date', startDate)
       .lte('paid_date', endDate),
 
@@ -154,7 +185,8 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
 
     supabase
       .from('payment_methods')
-      .select('id, fee_percentage, days_to_receive'),
+      .select('id, fee_percentage, days_to_receive')
+      .eq('tenant_id', tenantId), // P6: escopo multi-tenant
 
     // BUG-42: Recebíveis liquidados no período (cartão a prazo cujo dinheiro entrou)
     supabase
@@ -279,6 +311,8 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
     return s + Number(p.amount) * (fee / 100);
   }, 0);
 
+  const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime);
+
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
     receitaManual,
@@ -287,6 +321,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
     receitaAReceber: 0,
     despesasAPagar: 0,
     cmvComprasPendentes: 0,
+    cmvTeorico, fichaCobertura,
   };
 }
 
@@ -362,6 +397,8 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .select('dre_category_id, category, amount, paid_amount, status')
       .eq('tenant_id', tenantId)
       .in('status', ['pending', 'paid', 'overdue'])
+      // P1: exclui contas geradas por compras (custo já entra via CMV = fin_purchases).
+      .or('reference_type.is.null,reference_type.neq.purchase')
       .gte('due_date', startDate)
       .lte('due_date', endDate),
 
@@ -385,7 +422,8 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
 
     supabase
       .from('payment_methods')
-      .select('id, fee_percentage'),
+      .select('id, fee_percentage')
+      .eq('tenant_id', tenantId), // P6: escopo multi-tenant
   ]);
 
   if (autoSaleRes.error) console.error('[DRE-Comp] Auto-sale fin_cash_flow:', autoSaleRes.error.message);
@@ -476,6 +514,8 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     return s + Number(p.amount) * (fee / 100);
   }, 0);
 
+  const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime);
+
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
     receitaManual,
@@ -484,6 +524,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     receitaAReceber,
     despesasAPagar,
     cmvComprasPendentes,
+    cmvTeorico, fichaCobertura,
   };
 }
 
@@ -800,9 +841,7 @@ export default function DRETab() {
       const receitaBase = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento;
       // BUG-41: receitaAReceber não soma na receita (é saldo, não receita adicional)
       const receita = receitaBase;
-      const cmv = dreMode === 'competencia'
-        ? d.cmvCompras + d.cmvComprasPendentes
-        : d.cmvCompras;
+      const cmv = d.cmvTeorico ?? 0; // P2: CMV por consumo (custo dos produtos vendidos)
       const despesas = Object.entries(d.despesasPorCategoria)
         .filter(([k]) => k !== '__sem_categoria__')
         .reduce((s, [, v]) => s + v, 0) + cmv + d.custoPessoal + (d.taxasMaquininha ?? 0);
@@ -835,9 +874,10 @@ export default function DRETab() {
   // (criado no momento da venda). Somar recebíveis duplicaria vendas a prazo.
   const receitaBruta = receitaRecebida;
 
-  const cmvTotal = dreMode === 'competencia'
-    ? data.cmvCompras + data.cmvComprasPendentes
-    : data.cmvCompras;
+  // P2: CMV = Custo dos Produtos Vendidos (consumo real via ficha técnica, Σ unit_cost × qtd).
+  // Regime-agnóstico: o custo do que foi vendido não depende de quando a compra foi paga.
+  // Compras entram como estoque/caixa, não no CMV. Confiabilidade depende da cobertura de ficha (ver aviso).
+  const cmvTotal = data.cmvTeorico ?? 0;
 
   const receitaLiquida = receitaBruta - data.cancelamentos - data.descontos;
   const lucroBruto = receitaLiquida - cmvTotal;
@@ -878,9 +918,7 @@ export default function DRETab() {
 
   const prevReceitaBruta = prevReceitaRecebida;
 
-  const prevCmvTotal = dreMode === 'competencia'
-    ? (prevData?.cmvCompras ?? 0) + (prevData?.cmvComprasPendentes ?? 0)
-    : (prevData?.cmvCompras ?? 0);
+  const prevCmvTotal = prevData?.cmvTeorico ?? 0;
 
   const prevReceitaLiquida = prevReceitaBruta - (prevData?.cancelamentos ?? 0) - (prevData?.descontos ?? 0);
   const prevLucroBruto = prevReceitaLiquida - prevCmvTotal;
@@ -1009,7 +1047,7 @@ export default function DRETab() {
             <div>
               <p className="text-xs font-semibold text-indigo-800">Regime de Competência ativo</p>
               <p className="text-xs text-indigo-700 mt-0.5">
-                Receitas incluem todas as vendas do período, independente de quando o dinheiro entra. Os recebíveis pendentes aparecem como <strong>saldo</strong> (não somam na receita bruta). Despesas incluem <strong>todas</strong> as contas com vencimento no mês (pagas, pendentes e vencidas). CMV considera todas as compras pela data de compra.
+                Receitas incluem todas as vendas do período, independente de quando o dinheiro entra. Os recebíveis pendentes aparecem como <strong>saldo</strong> (não somam na receita bruta). Despesas incluem <strong>todas</strong> as contas com vencimento no mês (pagas, pendentes e vencidas). O CMV é o custo dos produtos vendidos (consumo por ficha técnica), igual nos dois regimes.
               </p>
             </div>
           </div>
@@ -1033,10 +1071,10 @@ export default function DRETab() {
             <div className="bg-white border border-amber-100 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-1">
                 <div className="w-2 h-2 rounded-full bg-amber-400" />
-                <p className="text-xs font-semibold text-amber-700">CMV Pendente</p>
+                <p className="text-xs font-semibold text-amber-700">Compras a Pagar</p>
               </div>
               <p className="text-sm font-bold text-amber-800">{formatCurrency(data.cmvComprasPendentes)}</p>
-              <p className="text-xs text-amber-400 mt-0.5">Compras não pagas no período</p>
+              <p className="text-xs text-amber-400 mt-0.5">Compras não pagas no período (estoque)</p>
             </div>
           </div>
         </div>
@@ -1258,20 +1296,37 @@ export default function DRETab() {
               {/* ── CUSTOS ── */}
               <SectionHeader label="Custos" />
               <DRERow
-                label="CMV — Compras de Insumos"
+                label="CMV — Custo dos Produtos Vendidos"
                 atual={cmvTotal}
                 anterior={prevCmvTotal}
                 receitaBruta={receitaBruta}
                 isNeg
                 depth={1}
-                origin={dreMode === 'competencia'
-                  ? 'Todas as compras pela data de compra (pagas + pendentes)'
-                  : 'Compras pagas no módulo Estoque'}
+                origin="Custo dos insumos consumidos nas vendas (ficha técnica × qtd vendida)"
                 badge={dreMode === 'competencia' ? 'Competência' : undefined}
                 badgeColor="bg-orange-100 text-orange-600"
                 clickable={cmvTotal > 0}
                 onClick={cmvTotal > 0 ? () => setDrillDown({ type: 'cmv' }) : undefined}
               />
+              {/* P2: CMV aqui é baseado em COMPRAS, não no custo do que foi vendido.
+                  O CMV correto (consumo via ficha técnica) só é confiável com cobertura alta. */}
+              {typeof data.fichaCobertura === 'number' && (
+                <tr>
+                  <td colSpan={5} className="px-3 pb-2">
+                    <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${
+                      data.fichaCobertura < 70 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-zinc-50 text-zinc-500 border border-zinc-200'
+                    }`}>
+                      <i className="ri-information-line mt-0.5" />
+                      <span>
+                        CMV = <strong>custo dos produtos vendidos</strong> (consumo por ficha técnica).
+                        Compras do período (entram no estoque, não no CMV): <strong>{formatCurrency(data.cmvCompras)}</strong>
+                        {' '}· cobertura de ficha técnica: <strong>{(data.fichaCobertura).toFixed(0)}%</strong>.
+                        {data.fichaCobertura < 70 && ' ⚠ Cobertura baixa — o CMV está subestimado até você cadastrar as fichas técnicas dos itens vendidos.'}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              )}
               {hasDynCats && costCats.length > 0 && (
                 <CatTreeRows
                   cats={costCats}

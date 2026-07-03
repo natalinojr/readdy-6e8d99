@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useOrdersPing } from '@/hooks/useOrdersPing';
 
 function getDeliveryWriteUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
@@ -99,6 +100,13 @@ export function useGestorEntregas() {
   // Realtime: refetch debounced a cada mudança em `orders` da loja (mesmo padrão do
   // useMotoboyStatus). Backstop 90s + reload ao voltar pra aba.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Ping instantâneo via trigger no banco (orders-ping) — não depende de RLS
+  // por linha nem do cold start do postgres_changes.
+  useOrdersPing(tenantId, () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => carregar(true), 600);
+  });
   useEffect(() => {
     if (!tenantId) return;
     const agendar = () => {

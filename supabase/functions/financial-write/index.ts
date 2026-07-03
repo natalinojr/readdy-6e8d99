@@ -278,6 +278,9 @@ Deno.serve(async (req) => {
           return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
         }
 
+        // P3: origin='auto_bill_payment' (não 'manual'). Com 'manual', a conta paga era
+        // contada 2x em Despesas (fin_accounts_payable pago + fin_cash_flow manual).
+        // A lista de exclusão em useFinanceiro/useDespesas já espera 'auto_bill_payment'.
         await supabase.from('fin_cash_flow').insert({
           tenant_id,
           type: 'expense',
@@ -285,7 +288,7 @@ Deno.serve(async (req) => {
           description: (bill as Record<string, unknown>).description,
           category: (bill as Record<string, unknown>).category || 'Conta a Pagar',
           cost_center_id: (bill as Record<string, unknown>).cost_center_id,
-          origin: 'manual',
+          origin: 'auto_bill_payment',
           reference_id: id,
           date: paid_date,
         });

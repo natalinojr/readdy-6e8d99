@@ -10,6 +10,7 @@ import { supabase } from '@/lib/supabase';
 import type { KDSPedido } from '@/types/kds';
 import { useOrdersHistory } from '@/hooks/useOrdersHistory';
 import type { DBOrder } from '@/hooks/useOrdersHistory';
+import { useOrdersPing } from '@/hooks/useOrdersPing';
 import { useSessions } from '@/hooks/useSessions';
 import { useSessao } from '@/contexts/SessaoContext';
 import ModoFaturamentoToggle from '@/components/feature/ModoFaturamentoToggle';
@@ -608,6 +609,19 @@ export default function PedidosPage() {
   // um reload — agrupado por um debounce para não recarregar em rajada. 100%
   // orientado a eventos (sem poll). O botão de atualizar manual cobre o caso
   // raro de um evento realtime perdido.
+  // Ping instantâneo via trigger no banco (orders-ping) — cobre o buraco do
+  // postgres_changes (RLS por linha + cold start). Reusa o mesmo debounce de 800ms.
+  const pingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useOrdersPing(user?.tenantId, () => {
+    const shouldLive = modo === 'sessao' || (modoPeriodo === 'preset' && presetAtivo === 'hoje');
+    if (!shouldLive) return;
+    if (pingDebounceRef.current) clearTimeout(pingDebounceRef.current);
+    pingDebounceRef.current = setTimeout(() => {
+      reloadOrders(hookDateFrom, hookDateTo, hookSessionId ?? null);
+    }, 800);
+  });
+  useEffect(() => () => { if (pingDebounceRef.current) clearTimeout(pingDebounceRef.current); }, []);
+
   useEffect(() => {
     const shouldLive = modo === 'sessao' || (modoPeriodo === 'preset' && presetAtivo === 'hoje');
     if (!shouldLive || !user?.tenantId) return;

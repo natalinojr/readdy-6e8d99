@@ -71,6 +71,18 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       return json({ error: 'Multiple tenants found — active_tenant_id required' }, 403);
     }
 
+    // O auth.uid do usuário logado nem sempre corresponde a uma linha em public.users
+    // (ex.: staff de outra loja com ids próprios, conta-dono multi-loja). issued_by/
+    // processed_by têm FK -> users(id); usá-los sem esse cuidado gera 42503 (FK) no
+    // insert. Como são campos apenas informativos, resolvemos um id seguro (null se
+    // não existir em public.users).
+    const { data: issuerRow } = await admin
+      .from('users')
+      .select('id')
+      .eq('id', user.id)
+      .maybeSingle();
+    const issuerId: string | null = issuerRow ? user.id : null;
+
     // ════════════════════════════════════════════════════════════════════════
     // ACTION: issue_voucher
     // Cria um novo voucher/gift card
@@ -159,7 +171,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           customer_id: customer_id ?? null,
           customer_name: customer_name ?? null,
           customer_email: customer_email ?? null,
-          issued_by: user.id,
+          issued_by: issuerId,
           order_id: order_id ?? null,
           notes: notes ?? null,
         })
@@ -176,7 +188,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         transaction_type: 'issued',
         amount: original_amount,
         balance_after: original_amount,
-        processed_by: user.id,
+        processed_by: issuerId,
       });
 
       return json({ data: voucher });
@@ -214,7 +226,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
             transaction_type: 'expired',
             amount: voucher.current_balance,
             balance_after: 0,
-            processed_by: user.id,
+            processed_by: issuerId,
           });
         }
         return json({ valid: false, voucher: null, applicable_amount: 0, reason: 'expired' });
@@ -368,7 +380,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           transaction_type: 'redeemed',
           amount,
           balance_after: newBalance,
-          processed_by: user.id,
+          processed_by: issuerId,
         })
         .select('id')
         .maybeSingle();
@@ -420,7 +432,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         transaction_type: 'cancelled',
         amount: voucher.current_balance,
         balance_after: 0,
-        processed_by: user.id,
+        processed_by: issuerId,
       });
 
       return json({ ok: true });
@@ -521,7 +533,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         transaction_type: 'refunded',
         amount,
         balance_after: newBalance,
-        processed_by: user.id,
+        processed_by: issuerId,
       });
 
       return json({ ok: true, balance_after: newBalance });
@@ -529,6 +541,11 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
     return json({ error: `Unknown action: ${action}` }, 400);
   } catch (err) {
-    return json({ error: String(err) }, 500);
+    // Nunca retornar "[object Object]": PostgrestError e afins são objetos.
+    const e = err as { message?: string; code?: string; details?: string; hint?: string };
+    const msg = e?.message
+      ? `${e.message}${e.code ? ` (${e.code})` : ''}${e.details ? ` — ${e.details}` : ''}`
+      : (err instanceof Error ? err.message : JSON.stringify(err));
+    return json({ error: msg }, 500);
   }
 });
