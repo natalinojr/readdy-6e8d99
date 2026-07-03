@@ -387,11 +387,14 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             discount_type: 'fixed',
             discount_value: descontoTotal,
             coupon_code: voucherAplicado?.code ?? null,
-            requires_approval: descontoManual > 0,
-            approved_by: descontoAutorizadoPor ?? null,
+            // approved_by é UUID (FK users) — a autorização já foi validada na UI;
+            // o NOME do autorizador vai em approval_notes/reason (texto).
+            requires_approval: false,
+            approved_by: null,
+            approval_notes: descontoManual > 0 && descontoAutorizadoPor ? `Desconto autorizado por: ${descontoAutorizadoPor}` : null,
             reason: voucherAplicado
-              ? `Voucher ${voucherAplicado.code}${descontoManual > 0 ? ' + desconto manual' : ''}`
-              : 'Desconto no PDV Caixa (pagamento rápido)',
+              ? `Voucher ${voucherAplicado.code}${descontoManual > 0 ? ` + desconto (aut. ${descontoAutorizadoPor ?? '—'})` : ''}`
+              : `Desconto no PDV Caixa (pagamento rápido)${descontoAutorizadoPor ? ` — aut. ${descontoAutorizadoPor}` : ''}`,
             new_discount_amount: descontoTotal,
             new_total_amount: novoTotal,
           },

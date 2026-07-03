@@ -428,13 +428,18 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
             tenant_id: user.tenantId,
             discount_type: 'manual_value',
             discount_value: actualDesconto,
-            requires_approval: true,
-            approved_by: cortesiaAtiva ? (cortesiaAutor ?? 'Cortesia') : 'Gerente',
+            // approved_by é UUID (FK users) — a autorização já foi validada na UI;
+            // gravamos o NOME do autorizador em approval_notes/reason (texto), não aqui.
+            requires_approval: false,
+            approved_by: null,
             new_discount_amount: actualDesconto,
             new_total_amount: actualTotal,
+            approval_notes: cortesiaAtiva
+              ? `Cortesia autorizada por: ${cortesiaAutor ?? 'Gerente'}`
+              : (extraDiscount?.authorizedBy ? `Desconto autorizado por: ${extraDiscount.authorizedBy}` : null),
             reason: cortesiaAtiva
               ? (cortesiaNotesStr ?? `Cortesia autorizada por: ${cortesiaAutor ?? 'Gerente'}`)
-              : 'Desconto autorizado no PDV Caixa',
+              : `Desconto autorizado no PDV Caixa${extraDiscount?.authorizedBy ? ` (${extraDiscount.authorizedBy})` : ''}`,
           },
         });
         if (discErr) console.warn('[PDVContext] apply_discount error (non-blocking):', discErr);
