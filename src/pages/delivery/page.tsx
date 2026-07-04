@@ -441,6 +441,7 @@ export default function DeliveryPage() {
         onNovoPedido={handleNovoPedido}
         paymentMethod={pagamentoSelecionado}
         modoEntrega={modoEntrega}
+        resumo={data.resumoConfirmacao}
       />
     );
   }

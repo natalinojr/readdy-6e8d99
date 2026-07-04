@@ -37,6 +37,7 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
     notes: '',
     generate_claim_link: false,
     min_order_amount: '' as string | number,
+    max_uses: '1' as string | number,
   });
 
   function set(field: string, value: unknown) {
@@ -69,6 +70,7 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
         notes: form.notes.trim() || null,
         generate_claim_link: form.generate_claim_link,
         min_order_amount: Number(form.min_order_amount) > 0 ? Number(form.min_order_amount) : null,
+        max_uses: Math.max(1, Math.floor(Number(form.max_uses)) || 1),
       };
 
       if (form.code.trim()) payload.code = form.code.trim().toUpperCase();
@@ -275,7 +277,7 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
             </div>
           </div>
 
-          {/* Pedido mínimo */}
+          {/* Pedido mínimo + Quantas vezes pode usar */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-zinc-600 mb-1">Pedido mínimo (R$)</label>
@@ -288,10 +290,23 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
                 placeholder="Sem mínimo"
                 className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-400"
               />
+              <p className="text-[10px] text-zinc-400 mt-1">Independente do mínimo geral do delivery.</p>
             </div>
-            <p className="text-[10px] text-zinc-400 self-end pb-2">
-              Mínimo só deste voucher — independente do mínimo geral do delivery.
-            </p>
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 mb-1">Quantas vezes pode usar?</label>
+              <input
+                type="number"
+                min={1}
+                max={99}
+                step={1}
+                value={form.max_uses}
+                onChange={(e) => set('max_uses', e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-400"
+              />
+              <p className="text-[10px] text-zinc-400 mt-1">
+                {Number(form.max_uses) > 1 ? `Vale para ${form.max_uses} usos.` : 'Uso único (padrão).'}
+              </p>
+            </div>
           </div>
 
           {/* Cliente */}

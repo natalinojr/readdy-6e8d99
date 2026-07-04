@@ -14,6 +14,8 @@ interface Props {
   onNovoPedido: () => void;
   paymentMethod?: string;
   modoEntrega?: 'entrega' | 'retirada';
+  /** Resumo de valores (subtotal, desconto do cupom, taxa) capturado ao confirmar */
+  resumo?: { subtotal: number; desconto: number; deliveryFee: number; voucherCodigo: string } | null;
 }
 
 export default function ConfirmacaoDelivery(props: Props) {
@@ -26,6 +28,7 @@ export default function ConfirmacaoDelivery(props: Props) {
   const onNovoPedido = props.onNovoPedido;
   const paymentMethod = props.paymentMethod;
   const modoEntrega = props.modoEntrega || 'entrega';
+  const resumo = props.resumo;
 
   const [abaAtiva, setAbaAtiva] = useState<TabOption>('acompanhar');
   const [trackingNumero, setTrackingNumero] = useState(numeroPedido);
@@ -51,16 +54,40 @@ export default function ConfirmacaoDelivery(props: Props) {
           {phone ? 'Acompanhe abaixo o status do seu pedido' : 'Seu pedido foi enviado para a cozinha'}
         </p>
 
-        <div className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 rounded-full border border-amber-200/60 mb-4">
-          <span className="text-xs font-bold text-amber-700">
-            Total: R$ {orderTotal.toFixed(2)}
-          </span>
-          {deliveryFee > 0 ? (
-            <span className="text-[10px] text-amber-500">
-              (taxa R$ {deliveryFee.toFixed(2)})
+        {resumo && resumo.desconto > 0 ? (
+          /* Detalhamento com desconto do cupom */
+          <div className="mx-auto max-w-[260px] mb-4 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-left space-y-1.5">
+            <div className="flex justify-between text-xs">
+              <span className="text-zinc-500">Subtotal</span>
+              <span className="font-semibold text-zinc-700">R$ {resumo.subtotal.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-xs text-emerald-600">
+              <span className="flex items-center gap-1"><i className="ri-coupon-3-line" />Cupom {resumo.voucherCodigo}</span>
+              <span className="font-bold">- R$ {resumo.desconto.toFixed(2)}</span>
+            </div>
+            {resumo.deliveryFee > 0 ? (
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-500">Taxa de entrega</span>
+                <span className="font-semibold text-zinc-700">R$ {resumo.deliveryFee.toFixed(2)}</span>
+              </div>
+            ) : null}
+            <div className="flex justify-between text-sm font-black pt-1.5 border-t border-zinc-200">
+              <span className="text-zinc-800">Total</span>
+              <span className="text-amber-600">R$ {orderTotal.toFixed(2)}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 rounded-full border border-amber-200/60 mb-4">
+            <span className="text-xs font-bold text-amber-700">
+              Total: R$ {orderTotal.toFixed(2)}
             </span>
-          ) : null}
-        </div>
+            {deliveryFee > 0 ? (
+              <span className="text-[10px] text-amber-500">
+                (taxa R$ {deliveryFee.toFixed(2)})
+              </span>
+            ) : null}
+          </div>
+        )}
 
         {paymentMethod ? (
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 rounded-full border border-green-200/60 mb-4 mx-2">

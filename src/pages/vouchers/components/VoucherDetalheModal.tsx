@@ -234,7 +234,12 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
                           <i className={`${cfg.icon} text-sm`} />
                         </div>
                         <div>
-                          <p className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</p>
+                          <p className={`text-xs font-semibold ${cfg.color}`}>
+                            {cfg.label}
+                            {tx.transaction_type === 'redeemed' && tx.customer_name && (
+                              <span className="text-zinc-500 font-normal"> · por {tx.customer_name}</span>
+                            )}
+                          </p>
                           <p className="text-[10px] text-zinc-400">{formatDate(tx.created_at)}</p>
                         </div>
                       </div>

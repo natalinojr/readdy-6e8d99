@@ -569,6 +569,8 @@ export function useDeliveryData(storeSlug?: string) {
   const [pedidoConfirmado, setPedidoConfirmado] = useState(false);
   const [numeroPedido, setNumeroPedido] = useState('');
   const [orderTotal, setOrderTotal] = useState(0);
+  // Resumo de valores capturado NO MOMENTO da confirmação (o carrinho é limpo depois)
+  const [resumoConfirmacao, setResumoConfirmacao] = useState<{ subtotal: number; desconto: number; deliveryFee: number; voucherCodigo: string } | null>(null);
   const [pagamentoSelecionado, setPagamentoSelecionado] = useState('');
   const [paymentMethods, setPaymentMethods] = useState<Record<string, boolean>>({});
   const [modoEntrega, setModoEntrega] = useState<'entrega' | 'retirada'>('entrega');
@@ -644,6 +646,7 @@ export function useDeliveryData(storeSlug?: string) {
     setPedidoConfirmado(false);
     setNumeroPedido('');
     setOrderTotal(0);
+    setResumoConfirmacao(null);
     setPagamentoSelecionado('');
     setModoEntrega('entrega');
     setStoreLocation(null);
@@ -1392,6 +1395,9 @@ export function useDeliveryData(storeSlug?: string) {
         const totalConfirmado = data.data?.total || total;
         setNumeroPedido(data.data?.number || '');
         setOrderTotal(totalConfirmado);
+        // Desconto real aplicado pelo backend (voucher) = bruto - total confirmado.
+        const descontoAplicado = Math.max(0, (subtotal + effectiveDeliveryFee) - totalConfirmado);
+        setResumoConfirmacao({ subtotal, desconto: descontoAplicado, deliveryFee: effectiveDeliveryFee, voucherCodigo });
         // Pixel da Meta: PEDIDO CONFIRMADO — evento de conversão principal pro anúncio.
         trackPixel('Purchase', { value: totalConfirmado, currency: 'BRL' });
         setPedidoConfirmado(true);
@@ -1659,6 +1665,7 @@ export function useDeliveryData(storeSlug?: string) {
     pedidoConfirmado,
     numeroPedido,
     orderTotal,
+    resumoConfirmacao,
     deliveryFee: effectiveDeliveryFee,
     totalItens,
     totalItensProdutos,

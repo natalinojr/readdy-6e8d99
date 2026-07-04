@@ -83,6 +83,8 @@ export interface VoucherTransaction {
 
   processed_by: string | null;
   created_at: string;
+  /** Nome do cliente do pedido que usou o voucher (só em transações 'redeemed') */
+  customer_name?: string | null;
 }
 
 // ── Payloads para a Edge Function voucher-write ───────────────────────────────

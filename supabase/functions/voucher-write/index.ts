@@ -465,8 +465,24 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    // ACTION: list_customer_vouchers
+    // Vouchers de um cliente: emitidos PARA ele OU resgatados via pedido dele.
+    // ════════════════════════════════════════════════════════════════════════
+    if (action === 'list_customer_vouchers') {
+      const { customer_id } = body;
+      if (!customer_id) return json({ error: 'customer_id is required' }, 400);
+      const { data, error } = await admin.rpc('fn_get_customer_vouchers', {
+        p_tenant_id: tenantId,
+        p_customer_id: customer_id,
+      });
+      if (error) throw error;
+      return json({ data });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     // ACTION: get_voucher_transactions
-    // Retorna o histórico de transações de um voucher
+    // Retorna o histórico de transações de um voucher — enriquece os resgates
+    // (redeemed) com o NOME DO CLIENTE do pedido (quem usou o voucher).
     // ════════════════════════════════════════════════════════════════════════
     if (action === 'get_voucher_transactions') {
       const { voucher_id } = body;
@@ -482,14 +498,37 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       if (!voucher) return json({ error: 'Voucher not found' }, 404);
 
-      const { data, error } = await admin
+      const { data: txns, error } = await admin
         .from('voucher_transactions')
         .select('*')
         .eq('voucher_id', voucher_id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      return json({ data });
+
+      // Resolve o nome do cliente pelo pedido (order_id -> orders.customer_id -> customers.name)
+      const orderIds = [...new Set((txns ?? []).map((t: { order_id: string | null }) => t.order_id).filter(Boolean))] as string[];
+      const nameByOrder: Record<string, string | null> = {};
+      if (orderIds.length > 0) {
+        const { data: orders } = await admin.from('orders').select('id, customer_id').in('id', orderIds);
+        const custIds = [...new Set((orders ?? []).map((o: { customer_id: string | null }) => o.customer_id).filter(Boolean))] as string[];
+        const nameById: Record<string, string> = {};
+        if (custIds.length > 0) {
+          const { data: custs } = await admin.from('customers').select('id, name').in('id', custIds);
+          for (const c of custs ?? []) nameById[(c as { id: string }).id] = (c as { name: string }).name;
+        }
+        for (const o of orders ?? []) {
+          const oo = o as { id: string; customer_id: string | null };
+          nameByOrder[oo.id] = oo.customer_id ? (nameById[oo.customer_id] ?? null) : null;
+        }
+      }
+
+      const enriched = (txns ?? []).map((t: { order_id: string | null }) => ({
+        ...t,
+        customer_name: t.order_id ? (nameByOrder[t.order_id] ?? null) : null,
+      }));
+
+      return json({ data: enriched });
     }
 
     // ════════════════════════════════════════════════════════════════════════
