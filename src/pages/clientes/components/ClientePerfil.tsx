@@ -128,6 +128,45 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
     });
   };
 
+  // ── WhatsApp com voucher específico (mensagem de uso pronta) ────────────────
+  const lojaNome = user?.loja || 'nossa loja';
+
+  function descricaoVoucher(v: Voucher): string {
+    if (v.voucher_type === 'discount') {
+      return v.discount_type === 'percent'
+        ? `${v.discount_value}% de desconto`
+        : `${fmtMoeda(v.discount_value ?? 0)} de desconto`;
+    }
+    if (v.voucher_type === 'gift_card') return `um vale-presente de ${fmtMoeda(v.current_balance)}`;
+    if (v.voucher_type === 'cashback') return `um cashback de ${fmtMoeda(v.current_balance)}`;
+    return 'um item grátis';
+  }
+
+  function mensagemVoucher(v: Voucher): string {
+    const primeiro = cliente.nome.split(' ')[0];
+    const desc = descricaoVoucher(v);
+    const link = v.claim_token ? `${window.location.origin}/voucher/${v.claim_token}` : null;
+    const minimo = (v.min_order_amount ?? 0) > 0 ? ` Válido em pedidos a partir de ${fmtMoeda(v.min_order_amount ?? 0)}.` : '';
+    const validade = v.expires_at ? ` Aproveite até ${fmtData(v.expires_at)}.` : '';
+    if (link) {
+      return `🎁 Olá, ${primeiro}! Você tem ${desc} esperando na ${lojaNome}!\n\nToque no link para ativar e usar seu voucher:\n${link}\n${minimo}${validade}\n\nEsperamos você! 😊`;
+    }
+    return `🎁 Olá, ${primeiro}! Você tem ${desc} na ${lojaNome}. Use o código *${v.code}* no seu pedido.${minimo}${validade}\n\nEsperamos você! 😊`;
+  }
+
+  function abrirWhatsAppVoucher(v: Voucher) {
+    if (!cliente.celular) return;
+    const numero = cliente.celular.replace(/\D/g, '');
+    window.open(`https://wa.me/55${numero}?text=${encodeURIComponent(mensagemVoucher(v))}`, '_blank');
+  }
+
+  function copiarMensagemVoucher(v: Voucher) {
+    navigator.clipboard.writeText(mensagemVoucher(v)).then(() => {
+      setMsgCopiada(true);
+      setTimeout(() => setMsgCopiada(false), 2000);
+    });
+  }
+
   const itensMaisComprados = useMemo(() => {
     const map = new Map<string, number>();
     pedidos.forEach((p) => {
@@ -476,6 +515,28 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
                             )
                           )}
                         </div>
+
+                        {/* Enviar este voucher pelo WhatsApp (mensagem de uso pronta) */}
+                        {v.status === 'active' && (
+                          <div className="flex items-center gap-2 mt-2.5 pt-2.5 border-t border-zinc-200/70">
+                            <button
+                              onClick={() => abrirWhatsAppVoucher(v)}
+                              disabled={!cliente.celular}
+                              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-green-500 hover:bg-green-600 rounded-lg text-xs font-bold text-white cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={cliente.celular ? 'Enviar este voucher pelo WhatsApp' : 'Cliente sem telefone'}
+                            >
+                              <i className="ri-whatsapp-line text-sm" />
+                              Enviar no WhatsApp
+                            </button>
+                            <button
+                              onClick={() => copiarMensagemVoucher(v)}
+                              className="flex items-center justify-center gap-1.5 px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-bold text-zinc-600 hover:bg-zinc-100 cursor-pointer transition-colors"
+                              title="Copiar a mensagem deste voucher"
+                            >
+                              <i className={`${msgCopiada ? 'ri-check-line text-emerald-600' : 'ri-file-copy-line'} text-sm`} />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

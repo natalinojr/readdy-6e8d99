@@ -624,7 +624,9 @@ export function useDeliveryData(storeSlug?: string) {
     setCustomerName('');
     setDataNascimento('');
     setGenero('');
-    setVoucherInput('');
+    // Preserva o cupom que veio no link (?voucher=) — o reset da sessão não pode
+    // apagar o código, senão a auto-aplicação nunca acontece.
+    setVoucherInput(getUrlVoucher() ?? '');
     setVoucherCodigo('');
     setVoucherDesconto(0);
     setVoucherMsg('');
@@ -1473,17 +1475,20 @@ export function useDeliveryData(storeSlug?: string) {
   // Auto-aplica o cupom vindo do link do voucher assim que houver itens no carrinho
   // (uma única tentativa automática; se falhar — ex.: pedido mínimo — o campo fica
   // preenchido e a mensagem explica, e o cliente pode tocar "Aplicar" depois).
-  const autoVoucherTried = useRef(false);
+  // Retenta conforme o carrinho CRESCE (ex.: cruzar o pedido mínimo do cupom) —
+  // guarda o último subtotal tentado p/ não spammar validate a cada mudança.
+  const autoVoucherLastSubtotal = useRef(-1);
   useEffect(function () {
-    if (autoVoucherTried.current || voucherCodigo || voucherLoading) return;
+    if (voucherCodigo || voucherLoading) return;
     const code = voucherInput.trim();
     if (!code || !tenant || getUrlVoucher() !== code) return;
     const subtotal = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
     if (subtotal <= 0) return;
-    autoVoucherTried.current = true;
+    if (subtotal <= autoVoucherLastSubtotal.current) return;
+    autoVoucherLastSubtotal.current = subtotal;
     handleAplicarVoucher();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, tenant, voucherCodigo, voucherInput]);
+  }, [cart, tenant, voucherCodigo, voucherInput, voucherLoading]);
 
   async function handleAplicarVoucher() {
     const code = voucherInput.trim();
