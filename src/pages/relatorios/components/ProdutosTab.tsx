@@ -634,7 +634,7 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
                             </span>
                           </td>
                           <td className="px-4 py-3">
-                            <p className="font-medium text-zinc-800 truncate max-w-[180px]">{item.nome}</p>
+                            <p title={item.nome} className="font-medium text-zinc-800 truncate max-w-[180px]">{item.nome}</p>
                           </td>
                           <td className="px-4 py-3">
                             <span className="text-[10px] px-2 py-0.5 bg-zinc-100 text-zinc-500 rounded-full">{item.categoria}</span>
@@ -828,7 +828,7 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
                                 }`}>{idx + 1}</span>
                               </td>
                               <td className="px-4 py-3">
-                                <p className={`font-medium truncate max-w-[140px] ${isSelected ? 'text-amber-700' : 'text-zinc-800'}`}>{item.nome}</p>
+                                <p title={item.nome} className={`font-medium truncate max-w-[140px] ${isSelected ? 'text-amber-700' : 'text-zinc-800'}`}>{item.nome}</p>
                                 <p className="text-[10px] text-zinc-400 mt-0.5">{item.categoria}</p>
                               </td>
                               <td className="px-4 py-3 text-right font-semibold text-zinc-800">{item.qtd}</td>
