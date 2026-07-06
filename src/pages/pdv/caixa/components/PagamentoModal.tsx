@@ -475,9 +475,15 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         };
       });
 
-      for (const { orderId, pagamentos: pg } of pagamentosParaPedidosExistentes) {
-        await pagarPedidoExistente(orderId, pg, paymentGroupId);
-      }
+      // Paga todos os pedidos existentes EM PARALELO (cada um é um pedido/linha
+      // diferente no banco, então não há corrida de dados). Dentro de cada pedido,
+      // os métodos de pagamento continuam sequenciais (ver pagarPedidoExistente).
+      // Isso troca N chamadas de rede em série por ~1 tempo de rede no total.
+      await Promise.all(
+        pagamentosParaPedidosExistentes.map(({ orderId, pagamentos: pg }) =>
+          pagarPedidoExistente(orderId, pg, paymentGroupId),
+        ),
+      );
 
       // Resgatar voucher se aplicado
       if (voucherAplicado) {
