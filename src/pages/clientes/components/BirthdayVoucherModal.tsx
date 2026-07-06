@@ -116,9 +116,9 @@ export default function BirthdayVoucherModal({ aniversariantesMes, onClose, onGe
     const primeiro = item.name.split(' ')[0];
     const validade = cfg.validity_days;
     const msg = encodeURIComponent(
-      `Olá, ${primeiro}! 🎂 Feliz aniversário! Preparamos um presente pra você: use o código *${item.code}* e ganhe ${labelDesconto(cfg)}`
+      `Olá, ${primeiro}! \u{1F382} Feliz aniversário! Preparamos um presente pra você: use o código *${item.code}* e ganhe ${labelDesconto(cfg)}`
       + (cfg.min_order_amount > 0 ? ` (em pedidos acima de ${fmtMoeda(cfg.min_order_amount)})` : '')
-      + `. Válido por ${validade} dias. Te esperamos! 🥳`,
+      + `. Válido por ${validade} dias. Te esperamos! \u{1F973}`,
     );
     window.open(`https://wa.me/55${numero}?text=${msg}`, '_blank');
   };

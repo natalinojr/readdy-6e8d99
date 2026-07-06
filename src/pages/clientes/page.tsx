@@ -61,18 +61,18 @@ function isInativo(c: ClienteCRM): boolean {
 function mensagemWhatsApp(c: ClienteCRM): string {
   const nome = c.nome.split(' ')[0];
   if (aniversarioEsteMes(c)) {
-    return `Olá, ${nome}! 🎂 Passando para desejar um feliz aniversário! Queremos comemorar com você — venha nos visitar e aproveite um mimo especial da casa. 🥳`;
+    return `Olá, ${nome}! \u{1F382} Passando para desejar um feliz aniversário! Queremos comemorar com você — venha nos visitar e aproveite um mimo especial da casa. \u{1F973}`;
   }
   if (c.totalVisitas === 0) {
-    return `Olá, ${nome}! Que bom ter você na nossa lista. 😊 Ainda não teve a chance de experimentar nossos pratos? Venha nos conhecer, vamos adorar te receber!`;
+    return `Olá, ${nome}! Que bom ter você na nossa lista. \u{1F60A} Ainda não teve a chance de experimentar nossos pratos? Venha nos conhecer, vamos adorar te receber!`;
   }
   if (isInativo(c)) {
-    return `Olá, ${nome}! Sentimos sua falta por aqui. 💛 Já faz um tempinho desde sua última visita — preparamos novidades que você vai gostar. Que tal passar para conferir?`;
+    return `Olá, ${nome}! Sentimos sua falta por aqui. \u{1F49B} Já faz um tempinho desde sua última visita — preparamos novidades que você vai gostar. Que tal passar para conferir?`;
   }
   if (c.tags.includes('vip') || c.tags.includes('frequente')) {
-    return `Olá, ${nome}! Obrigado por ser um cliente tão especial. 🙌 Temos novidades no cardápio que combinam com o seu gosto — venha experimentar!`;
+    return `Olá, ${nome}! Obrigado por ser um cliente tão especial. \u{1F64C} Temos novidades no cardápio que combinam com o seu gosto — venha experimentar!`;
   }
-  return `Olá, ${nome}! Tudo bem? Passando para lembrar que estamos com novidades por aqui. Venha nos visitar e aproveitar! 😊`;
+  return `Olá, ${nome}! Tudo bem? Passando para lembrar que estamos com novidades por aqui. Venha nos visitar e aproveitar! \u{1F60A}`;
 }
 // Abre o WhatsApp do cliente (mesmo padrão do ClientePerfil): wa.me/55<dígitos>.
 function abrirWhatsApp(cliente: ClienteCRM) {

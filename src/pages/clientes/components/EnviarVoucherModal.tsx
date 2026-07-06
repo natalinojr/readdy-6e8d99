@@ -54,6 +54,8 @@ export default function EnviarVoucherModal({ cliente, onClose, onSent }: Props) 
   const [error, setError] = useState('');
   const [voucherCriado, setVoucherCriado] = useState<Voucher | null>(null);
   const [linkCopiado, setLinkCopiado] = useState(false);
+  // Mensagem editável: null = usa o texto padrão; string = texto que o operador ajustou.
+  const [mensagemEditada, setMensagemEditada] = useState<string | null>(null);
 
   const primeiroNome = cliente.nome.split(' ')[0];
 
@@ -73,9 +75,12 @@ export default function EnviarVoucherModal({ cliente, onClose, onSent }: Props) 
     ? ` em pedidos a partir de R$ ${minimoNum.toFixed(2).replace('.', ',')}`
     : '';
 
+  // Emojis via escape Unicode (\u{...}) — ASCII puro, imune a corrupção de encoding no build.
   const mensagemWhats = voucherCriado
-    ? `🎁 Olá, ${primeiroNome}! Você ganhou ${descricaoOferta} na ${user?.loja || 'nossa loja'}${trechoMinimo}!\n\nToque no link para ativar seu voucher:\n${link}\n\nVálido até ${fmtDataBR(fim)}. Esperamos você! 😊`
+    ? `\u{1F381} Olá, ${primeiroNome}! Você ganhou ${descricaoOferta} na ${user?.loja || 'nossa loja'}${trechoMinimo}!\n\nToque no link para ativar seu voucher:\n${link}\n\nVálido até ${fmtDataBR(fim)}. Esperamos você! \u{1F60A}`
     : '';
+  // Texto efetivamente enviado: o editado pelo operador, ou o padrão.
+  const mensagemFinal = mensagemEditada ?? mensagemWhats;
 
   async function handleCriar(e: React.FormEvent) {
     e.preventDefault();
@@ -139,11 +144,11 @@ export default function EnviarVoucherModal({ cliente, onClose, onSent }: Props) 
   const abrirWhatsApp = () => {
     if (!cliente.celular) return;
     const numero = cliente.celular.replace(/\D/g, '');
-    window.open(`https://wa.me/55${numero}?text=${encodeURIComponent(mensagemWhats)}`, '_blank');
+    window.open(`https://wa.me/55${numero}?text=${encodeURIComponent(mensagemFinal)}`, '_blank');
   };
 
   const copiarLink = () => {
-    navigator.clipboard.writeText(mensagemWhats).then(() => {
+    navigator.clipboard.writeText(mensagemFinal).then(() => {
       setLinkCopiado(true);
       setTimeout(() => setLinkCopiado(false), 2000);
     });
@@ -323,6 +328,29 @@ export default function EnviarVoucherModal({ cliente, onClose, onSent }: Props) 
             <div className="bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2.5">
               <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-1">Link de ativação</p>
               <p className="text-xs text-zinc-600 break-all font-mono">{link}</p>
+            </div>
+
+            {/* Mensagem editável */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Mensagem</p>
+                {mensagemEditada !== null && (
+                  <button
+                    type="button"
+                    onClick={() => setMensagemEditada(null)}
+                    className="text-[10px] font-semibold text-amber-600 hover:text-amber-700 cursor-pointer"
+                  >
+                    Restaurar padrão
+                  </button>
+                )}
+              </div>
+              <textarea
+                value={mensagemFinal}
+                onChange={(e) => setMensagemEditada(e.target.value)}
+                rows={6}
+                className="w-full text-xs border border-zinc-200 rounded-xl px-3 py-2 text-zinc-700 focus:outline-none focus:border-amber-400 transition-colors resize-none leading-relaxed"
+              />
+              <p className="text-[10px] text-zinc-400 mt-1">Edite à vontade. O link precisa continuar na mensagem para o cliente ativar o voucher.</p>
             </div>
 
             <div className="grid grid-cols-2 gap-2">

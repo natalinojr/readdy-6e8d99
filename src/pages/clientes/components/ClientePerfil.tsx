@@ -148,10 +148,11 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
     const link = v.claim_token ? `${window.location.origin}/voucher/${v.claim_token}` : null;
     const minimo = (v.min_order_amount ?? 0) > 0 ? ` Válido em pedidos a partir de ${fmtMoeda(v.min_order_amount ?? 0)}.` : '';
     const validade = v.expires_at ? ` Aproveite até ${fmtData(v.expires_at)}.` : '';
+    // Emojis via escape Unicode (ASCII puro) — imune a corrupção de encoding no build.
     if (link) {
-      return `🎁 Olá, ${primeiro}! Você tem ${desc} esperando na ${lojaNome}!\n\nToque no link para ativar e usar seu voucher:\n${link}\n${minimo}${validade}\n\nEsperamos você! 😊`;
+      return `\u{1F381} Olá, ${primeiro}! Você tem ${desc} esperando na ${lojaNome}!\n\nToque no link para ativar e usar seu voucher:\n${link}\n${minimo}${validade}\n\nEsperamos você! \u{1F60A}`;
     }
-    return `🎁 Olá, ${primeiro}! Você tem ${desc} na ${lojaNome}. Use o código *${v.code}* no seu pedido.${minimo}${validade}\n\nEsperamos você! 😊`;
+    return `\u{1F381} Olá, ${primeiro}! Você tem ${desc} na ${lojaNome}. Use o código *${v.code}* no seu pedido.${minimo}${validade}\n\nEsperamos você! \u{1F60A}`;
   }
 
   function abrirWhatsAppVoucher(v: Voucher) {
