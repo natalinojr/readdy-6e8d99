@@ -477,7 +477,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
                 </div>
               ) : vouchers.length === 0 ? (
                 <div className="text-center py-8 text-zinc-400 text-xs">
-                  Nenhum voucher enviado para este cliente ainda
+                  Nenhum voucher emitido para este cliente ainda
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -488,10 +488,12 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
                         <div className="flex justify-between items-center mb-1.5">
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="font-mono font-bold text-zinc-800 text-xs tracking-wider truncate">{v.code}</span>
-                            {/* Enviado = emitido para este cliente; Usou = resgatado num pedido dele */}
+                            {/* Emitido = criado para este cliente (NÃO significa que foi enviado);
+                                Usou = resgatado num pedido dele. O envio de WhatsApp não é registrado,
+                                então não dá para afirmar "Enviado" só porque o voucher existe. */}
                             {v.customer_id === cliente.id ? (
                               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 bg-sky-50 text-sky-600 border border-sky-200">
-                                <i className="ri-send-plane-line mr-0.5" />Enviado
+                                <i className="ri-price-tag-3-line mr-0.5" />Emitido
                               </span>
                             ) : (
                               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 bg-emerald-50 text-emerald-600 border border-emerald-200">
