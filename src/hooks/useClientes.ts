@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
 export interface PedidoCliente {
@@ -15,8 +15,14 @@ export interface ClienteCRM {
   id: string;
   nome: string;
   celular: string;
+  email: string | null;
+  cpf: string | null;
   dataNascimento: string | null;
   genero: string | null;
+  notes: string | null;
+  manualTags: string[];
+  aceitaMarketing: boolean;
+  ultimoContato: string | null;
   primeiraVisita: string;
   ultimaVisita: string;
   totalVisitas: number;
@@ -27,7 +33,24 @@ export interface ClienteCRM {
   tags: string[];
 }
 
+// Campos editáveis do cadastro/CRM enviados ao customer-write.
+export interface ClientePatch {
+  name?: string;
+  phone?: string;
+  birth_date?: string | null;
+  gender?: string | null;
+  email?: string | null;
+  cpf?: string | null;
+  notes?: string | null;
+  manual_tags?: string[];
+  accepts_marketing?: boolean;
+}
+
 function computeTags(c: Omit<ClienteCRM, 'tags' | 'itensFavoritos' | 'pedidos'>): string[] {
+  // Cliente cadastrado mas que nunca comprou não é "inativo"/"frequente" —
+  // é um lead novo. Classificar por recência aqui distorceria o CRM.
+  if (c.totalVisitas === 0) return ['novo'];
+
   const tags: string[] = [];
   const diasSemVisita = Math.floor(
     (Date.now() - new Date(c.ultimaVisita).getTime()) / (1000 * 60 * 60 * 24),
@@ -65,8 +88,14 @@ export function useClientes() {
           id: c.id as string,
           nome: c.nome as string,
           celular: (c.celular as string) ?? '',
+          email: (c.email as string) ?? null,
+          cpf: (c.cpf as string) ?? null,
           dataNascimento: (c.dataNascimento as string) ?? null,
           genero: (c.genero as string) ?? null,
+          notes: (c.notes as string) ?? null,
+          manualTags: (c.manualTags as string[]) ?? [],
+          aceitaMarketing: !!c.aceitaMarketing,
+          ultimoContato: (c.ultimoContato as string) ?? null,
           primeiraVisita: c.primeiraVisita as string,
           ultimaVisita: c.ultimaVisita as string,
           totalVisitas: (c.totalVisitas as number) ?? 0,
@@ -75,7 +104,7 @@ export function useClientes() {
         };
         return {
           ...base,
-          itensFavoritos: [],
+          itensFavoritos: (c.itensFavoritos as string[]) ?? [],
           pedidos: [],
           tags: computeTags(base),
         };
@@ -94,7 +123,31 @@ export function useClientes() {
     carregar();
   }, [carregar]);
 
-  return { clientes, loading, error, recarregar: carregar };
+  // Edita cadastro/CRM via Edge Function (respeita RLS multi-loja) e recarrega.
+  const atualizarCliente = useCallback(async (customerId: string, patch: ClientePatch) => {
+    if (!user?.tenantId) throw new Error('Sem loja ativa');
+    const { data, error: invErr } = await invokeWithAuth('customer-write', {
+      body: { action: 'update_customer', active_tenant_id: user.tenantId, customer_id: customerId, ...patch },
+    });
+    if (invErr) throw new Error(typeof invErr === 'string' ? invErr : JSON.stringify(invErr));
+    const resp = data as { error?: string };
+    if (resp?.error) throw new Error(resp.error);
+    await carregar();
+  }, [user?.tenantId, carregar]);
+
+  // Marca clientes como contatados agora (anti-spam). Não recarrega a lista.
+  const registrarContato = useCallback(async (customerIds: string[]) => {
+    if (!user?.tenantId || customerIds.length === 0) return;
+    try {
+      await invokeWithAuth('customer-write', {
+        body: { action: 'touch_contact', active_tenant_id: user.tenantId, customer_ids: customerIds },
+      });
+    } catch (e) {
+      console.warn('[useClientes] registrarContato falhou (não bloqueante):', e);
+    }
+  }, [user?.tenantId]);
+
+  return { clientes, loading, error, recarregar: carregar, atualizarCliente, registrarContato };
 }
 
 export function useClientePedidos(clienteId: string | null) {

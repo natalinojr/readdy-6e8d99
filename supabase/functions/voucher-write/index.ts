@@ -582,6 +582,64 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       return json({ ok: true, balance_after: newBalance });
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    // ACTION: get_birthday_config
+    // Lê a config de voucher de aniversário da loja (system_settings.birthday_voucher_config).
+    // ════════════════════════════════════════════════════════════════════════
+    if (action === 'get_birthday_config') {
+      const { data: row } = await admin
+        .from('system_settings')
+        .select('birthday_voucher_config')
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+      const defaults = { enabled: false, discount_type: 'percent', discount_value: 15, min_order_amount: 0, validity_days: 15, only_opt_in: false, message: null };
+      return json({ data: { ...defaults, ...((row?.birthday_voucher_config as Record<string, unknown>) ?? {}) } });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ACTION: set_birthday_config
+    // Salva a config (a loja define desconto, gasto mínimo, validade, automação).
+    // ════════════════════════════════════════════════════════════════════════
+    if (action === 'set_birthday_config') {
+      const cfg = (body.config ?? {}) as Record<string, unknown>;
+      const dtype = ['percent', 'fixed', 'gift_card'].includes(String(cfg.discount_type)) ? String(cfg.discount_type) : 'percent';
+      const dval = Math.max(0, Number(cfg.discount_value) || 0);
+      if (dval <= 0) return json({ error: 'discount_value deve ser maior que zero' }, 400);
+      if (dtype === 'percent' && dval > 100) return json({ error: 'desconto percentual não pode passar de 100' }, 400);
+      const validity = Math.min(365, Math.max(1, Math.floor(Number(cfg.validity_days) || 15)));
+      const minOrder = Math.max(0, Number(cfg.min_order_amount) || 0);
+      const clean = {
+        enabled: !!cfg.enabled,
+        discount_type: dtype,
+        discount_value: dval,
+        min_order_amount: minOrder,
+        validity_days: validity,
+        only_opt_in: !!cfg.only_opt_in,
+        message: cfg.message ? String(cfg.message).slice(0, 500) : null,
+      };
+      const { error: upErr } = await admin
+        .from('system_settings')
+        .update({ birthday_voucher_config: clean })
+        .eq('tenant_id', tenantId);
+      if (upErr) throw upErr;
+      return json({ data: clean });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ACTION: generate_birthday_vouchers
+    // Gera manualmente os vouchers de aniversário (padrão: mês inteiro).
+    // Idempotente — não duplica quem já recebeu no ano.
+    // ════════════════════════════════════════════════════════════════════════
+    if (action === 'generate_birthday_vouchers') {
+      const scope = body.scope === 'today' ? 'today' : 'month';
+      const { data, error: genErr } = await admin.rpc('fn_generate_birthday_vouchers', {
+        p_tenant_id: tenantId,
+        p_scope: scope,
+      });
+      if (genErr) throw genErr;
+      return json({ data });
+    }
+
     return json({ error: `Unknown action: ${action}` }, 400);
   } catch (err) {
     // Nunca retornar "[object Object]": PostgrestError e afins são objetos.
