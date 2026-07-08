@@ -129,6 +129,7 @@ export default function EditarItemMesaQRModal(props: Props) {
   const [unidades, setUnidades] = useState<UnidadeConfig[]>(reconstruirUnidades);
   const [modalVisible, setModalVisible] = useState(false);
   const [imgErro, setImgErro] = useState(false);
+  const [tentouSalvar, setTentouSalvar] = useState(false);
   const kbInset = useKeyboardInset();
 
   useEffect(function () {
@@ -243,8 +244,35 @@ export default function EditarItemMesaQRModal(props: Props) {
     return total;
   }
 
+  // Mínimo de opções exigido por um grupo. Grupo obrigatório exige ao menos 1
+  // (ou min_selections, se maior); grupo opcional respeita apenas min_selections.
+  function minExigido(g: OptionGroup) {
+    const base = g.min_selections != null ? g.min_selections : 0;
+    return g.is_required ? Math.max(1, base) : base;
+  }
+
+  // Retorna os grupos de uma unidade que ainda não atingiram o mínimo exigido.
+  function gruposFaltando(cfg: UnidadeConfig) {
+    return gruposDoItem(cartItem.itemId).filter(function (g) {
+      const min = minExigido(g);
+      if (min <= 0) return false;
+      const sel = cfg.opcoesSelecionadas[g.id] || [];
+      return sel.length < min;
+    });
+  }
+
   function handleSalvar() {
     if (!itemOriginal) return;
+
+    // Bloqueia se alguma unidade não atendeu aos grupos obrigatórios.
+    for (let i = 0; i < unidades.length; i++) {
+      if (gruposFaltando(unidades[i]).length > 0) {
+        setTentouSalvar(true);
+        setUnidadeAtiva(i);
+        return;
+      }
+    }
+
     let precoTotalGeral = 0;
     const allOpcoes: CartItem['opcoes'] = [];
     const allObsTag: string[] = [];
@@ -422,12 +450,18 @@ export default function EditarItemMesaQRModal(props: Props) {
           {hasOptions ? (
             <div className="space-y-4">
               {gruposDoItem(cartItem.itemId).map(function (grupo) {
+                const minGrupo = minExigido(grupo);
+                const selGrupo = cfgAtual.opcoesSelecionadas[grupo.id] || [];
+                const faltando = tentouSalvar && selGrupo.length < minGrupo;
                 return (
                   <div key={grupo.id}>
                     <div className="flex items-center gap-2 mb-3">
                       <span className="text-sm font-bold text-zinc-800">{grupo.name}</span>
                       {grupo.is_required ? (
-                        <span className="text-[10px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded-md border border-red-100">
+                        <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-md border ' +
+                          (faltando
+                            ? 'text-white bg-red-600 border-red-600'
+                            : 'text-red-600 bg-red-50 border-red-100')}>
                           Obrigatório
                         </span>
                       ) : null}
@@ -435,6 +469,11 @@ export default function EditarItemMesaQRModal(props: Props) {
                         <span className="text-[10px] text-zinc-400">Máx {grupo.max_selections}</span>
                       ) : null}
                     </div>
+                    {faltando ? (
+                      <p className="text-[11px] font-semibold text-red-600 -mt-2 mb-2">
+                        {minGrupo > 1 ? 'Selecione ao menos ' + minGrupo + ' opções' : 'Selecione 1 opção'}
+                      </p>
+                    ) : null}
                     <div className="space-y-1.5">
                       {opcoesDoGrupo(grupo.id).map(function (op) {
                         const sel = cfgAtual.opcoesSelecionadas[grupo.id] || [];
