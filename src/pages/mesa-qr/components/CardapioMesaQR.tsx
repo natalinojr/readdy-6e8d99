@@ -102,6 +102,7 @@ export default function CardapioMesaQR(props: Props) {
   const [unidades, setUnidades] = useState<UnidadeConfig[]>([{ opcoesSelecionadas: {}, obsSelecionadas: [], obsLivre: '' }]);
   const [imgErros, setImgErros] = useState<Set<string>>(new Set());
   const [modalVisible, setModalVisible] = useState(false);
+  const [tentouAdicionar, setTentouAdicionar] = useState(false);
   const kbInset = useKeyboardInset();
 
   // ── Mapa de quantidades no carrinho por itemId ──────────────────────────────
@@ -272,6 +273,7 @@ export default function CardapioMesaQR(props: Props) {
     setQtd(1);
     setUnidadeAtiva(0);
     setUnidades([{ opcoesSelecionadas: {}, obsSelecionadas: [], obsLivre: '' }]);
+    setTentouAdicionar(false);
     setModalVisible(true);
   }
 
@@ -282,6 +284,7 @@ export default function CardapioMesaQR(props: Props) {
       setUnidades([{ opcoesSelecionadas: {}, obsSelecionadas: [], obsLivre: '' }]);
       setUnidadeAtiva(0);
       setQtd(1);
+      setTentouAdicionar(false);
     }, 300);
   }
 
@@ -363,8 +366,36 @@ export default function CardapioMesaQR(props: Props) {
     });
   }
 
+  // Mínimo de opções exigido por um grupo. Grupo obrigatório exige ao menos 1
+  // (ou min_selections, se maior); grupo opcional respeita apenas min_selections.
+  function minExigido(g: OptionGroup) {
+    const base = g.min_selections != null ? g.min_selections : 0;
+    return g.is_required ? Math.max(1, base) : base;
+  }
+
+  // Retorna os grupos de uma unidade que ainda não atingiram o mínimo exigido.
+  function gruposFaltando(cfg: UnidadeConfig) {
+    if (!itemSelecionado) return [];
+    return gruposDoItem(itemSelecionado.id).filter(function (g) {
+      const min = minExigido(g);
+      if (min <= 0) return false;
+      const sel = cfg.opcoesSelecionadas[g.id] || [];
+      return sel.length < min;
+    });
+  }
+
   function handleAdicionar() {
     if (!itemSelecionado) return;
+
+    // Bloqueia se alguma unidade não atendeu aos grupos obrigatórios.
+    for (let i = 0; i < unidades.length; i++) {
+      if (gruposFaltando(unidades[i]).length > 0) {
+        setTentouAdicionar(true);
+        setUnidadeAtiva(i);
+        return;
+      }
+    }
+
     const now = Date.now();
     const precoEfetivo = getPrecoEfetivo(itemSelecionado);
     for (let i = 0; i < unidades.length; i++) {
@@ -699,12 +730,18 @@ export default function CardapioMesaQR(props: Props) {
               {hasOptions ? (
                 <div className="space-y-4">
                   {gruposDoItem(itemSelecionado.id).map(function (grupo) {
+                    const minGrupo = minExigido(grupo);
+                    const selGrupo = cfgAtual.opcoesSelecionadas[grupo.id] || [];
+                    const faltando = tentouAdicionar && selGrupo.length < minGrupo;
                     return (
                       <div key={grupo.id}>
                         <div className="flex items-center gap-2 mb-3">
                           <span className="text-sm font-bold text-zinc-800">{grupo.name}</span>
                           {grupo.is_required ? (
-                            <span className="text-[10px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded-md border border-red-100">
+                            <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-md border ' +
+                              (faltando
+                                ? 'text-white bg-red-600 border-red-600'
+                                : 'text-red-600 bg-red-50 border-red-100')}>
                               Obrigatório
                             </span>
                           ) : null}
@@ -712,6 +749,11 @@ export default function CardapioMesaQR(props: Props) {
                             <span className="text-[10px] text-zinc-400">Máx {grupo.max_selections}</span>
                           ) : null}
                         </div>
+                        {faltando ? (
+                          <p className="text-[11px] font-semibold text-red-600 -mt-2 mb-2">
+                            {minGrupo > 1 ? 'Selecione ao menos ' + minGrupo + ' opções' : 'Selecione 1 opção'}
+                          </p>
+                        ) : null}
                         <div className="space-y-1.5">
                           {opcoesDoGrupo(grupo.id).map(function (op) {
                             const sel = cfgAtual.opcoesSelecionadas[grupo.id] || [];
