@@ -80,6 +80,10 @@ interface Props {
   onVerCarrinho: () => void;
   cart: CartItem[];
   onCategoriaAtivaChange?: (id: string) => void;
+  /** ID de item vindo de link de divulgação (?item=): abre o item direto ao carregar. */
+  deepLinkItemId?: string | null;
+  /** Chamado assim que o deep link foi processado (para o pai limpar o estado/URL). */
+  onDeepLinkConsumed?: () => void;
 }
 
 export default function CardapioMesaQR(props: Props) {
@@ -287,6 +291,27 @@ export default function CardapioMesaQR(props: Props) {
       setTentouAdicionar(false);
     }, 300);
   }
+
+  // ── Deep link (?item=<id>): abre o item direto ao carregar o cardápio ─────────
+  // Diferente do clique normal, SEMPRE abre o modal (mesmo item sem opções), para o
+  // cliente ver o produto (foto, preço, descrição) antes de adicionar. Roda uma vez.
+  const deepLinkDoneRef = useRef(false);
+  useEffect(function () {
+    const alvo = props.deepLinkItemId;
+    if (!alvo || deepLinkDoneRef.current) return;
+    if (!items || items.length === 0) return; // aguarda o cardápio carregar
+    deepLinkDoneRef.current = true;
+    if (props.onDeepLinkConsumed) props.onDeepLinkConsumed();
+    const item = items.find(function (i) { return i.id === alvo; });
+    if (!item) return; // item inexistente/indisponível: ignora silenciosamente
+    if (item.category_id && onCategoriaAtivaChange) onCategoriaAtivaChange(item.category_id);
+    setItemSelecionado(item);
+    setQtd(1);
+    setUnidadeAtiva(0);
+    setUnidades([{ opcoesSelecionadas: {}, obsSelecionadas: [], obsLivre: '' }]);
+    setTentouAdicionar(false);
+    setModalVisible(true);
+  }, [props.deepLinkItemId, items, onCategoriaAtivaChange]);
 
   function ajustarQtd(novaQtd: number) {
     const q = Math.max(1, novaQtd);

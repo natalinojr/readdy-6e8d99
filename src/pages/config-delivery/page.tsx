@@ -59,6 +59,8 @@ export default function ConfigDeliveryPage() {
   const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null);
   const [deliveryUrl, setDeliveryUrl] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
+  // Item selecionado para gerar link de divulgação (?item=<id>)
+  const [itemLinkSelId, setItemLinkSelId] = useState('');
   // Entregadores (motoboys) com acesso à lista de entregas
   const [motoboys, setMotoboys] = useState<DriverRow[]>([]);
   const [motoboysLoading, setMotoboysLoading] = useState(false);
@@ -512,6 +514,72 @@ export default function ConfigDeliveryPage() {
             {deliveryUrl ? (
               <QrCodeDelivery url={deliveryUrl} nomeArquivo={`qrcode-delivery-${tenantSlug || 'loja'}`} />
             ) : null}
+          </div>
+
+          {/* Divulgar um item específico do cardápio */}
+          <div className="bg-white rounded-2xl border border-zinc-200 p-5 mt-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 flex items-center justify-center bg-amber-500 rounded-lg">
+                <i className="ri-price-tag-3-line text-white text-sm" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-800">Divulgar um item específico</h3>
+                <p className="text-xs text-zinc-500">Gere um link que abre direto no item — ótimo para redes sociais e WhatsApp</p>
+              </div>
+            </div>
+
+            <select
+              value={itemLinkSelId}
+              onChange={function (e) { setItemLinkSelId(e.target.value); }}
+              className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-amber-300 cursor-pointer"
+            >
+              <option value="">Selecione um item do cardápio…</option>
+              {categorias
+                .slice()
+                .sort(function (a, b) { return (a.ordem ?? 0) - (b.ordem ?? 0); })
+                .map(function (cat) {
+                  const itensCat = itens
+                    .filter(function (i) { return i.status === 'ativo' && i.categoriaId === cat.id; })
+                    .sort(function (a, b) { return a.nome.localeCompare(b.nome); });
+                  if (itensCat.length === 0) return null;
+                  return (
+                    <optgroup key={cat.id} label={cat.nome}>
+                      {itensCat.map(function (i) {
+                        return <option key={i.id} value={i.id}>{i.nome}</option>;
+                      })}
+                    </optgroup>
+                  );
+                })}
+            </select>
+
+            {itemLinkSelId && deliveryUrl ? (function () {
+              const itemLink = deliveryUrl + '?item=' + itemLinkSelId;
+              const nomeItem = itens.find(function (i) { return i.id === itemLinkSelId; })?.nome ?? 'item';
+              const slugItem = nomeItem.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+              return (
+                <div className="mt-3">
+                  <div className="flex items-center gap-2 bg-amber-50 rounded-xl border border-amber-200 px-4 py-3">
+                    <span className="text-sm text-zinc-700 flex-1 truncate font-mono">{itemLink}</span>
+                    <button
+                      type="button"
+                      onClick={function () {
+                        navigator.clipboard.writeText(itemLink).then(function () {
+                          setMensagem({ tipo: 'sucesso', texto: 'Link do item copiado!' });
+                          setTimeout(function () { setMensagem(null); }, 2000);
+                        });
+                      }}
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1"
+                    >
+                      <i className="ri-file-copy-line" />
+                      Copiar
+                    </button>
+                  </div>
+                  <QrCodeDelivery url={itemLink} nomeArquivo={'item-' + (tenantSlug || 'loja') + (slugItem ? '-' + slugItem : '')} />
+                </div>
+              );
+            })() : (
+              <p className="text-xs text-zinc-400 mt-2">Quem abrir o link cai direto na página do item, pronto para adicionar ao carrinho.</p>
+            )}
           </div>
 
           {/* Entregadores (motoboys) — link de acesso + liberar/bloquear */}

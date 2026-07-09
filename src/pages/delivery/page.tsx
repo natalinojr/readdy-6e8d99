@@ -163,6 +163,20 @@ export default function DeliveryPage() {
   // Menu de perfil no header (telefone, histórico, sair)
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
+  // Deep link de divulgação de item (?item=<id>): abre o item direto ao carregar
+  const [deepLinkItemId, setDeepLinkItemId] = useState<string | null>(function () {
+    try { return new URLSearchParams(window.location.search).get('item'); } catch { return null; }
+  });
+  function handleDeepLinkConsumed() {
+    setDeepLinkItemId(null);
+    // Remove o ?item= da URL para não reabrir em refresh/navegação
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete('item');
+      window.history.replaceState({}, '', u.pathname + u.search + u.hash);
+    } catch { /* ignore */ }
+  }
+
   // Altura do teclado virtual (para levantar modais/campos acima dele)
   const kbInset = useKeyboardInset();
 
@@ -950,6 +964,8 @@ export default function DeliveryPage() {
                   onVerCarrinho={function () { data.setShowCart(true); }}
                   cart={cart}
                   onCategoriaAtivaChange={handleCategoriaAtivaChange}
+                  deepLinkItemId={deepLinkItemId}
+                  onDeepLinkConsumed={handleDeepLinkConsumed}
                 />
               )}
             </>
