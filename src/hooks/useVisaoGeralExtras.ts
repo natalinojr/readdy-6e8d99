@@ -66,7 +66,10 @@ export function useVisaoGeralExtras(periodo: string) {
           .from('order_items')
           .select('item_name, item_price, quantity, item_id, menu_items!order_items_item_id_fkey(category_id, menu_categories(name))')
           .in('order_id', orderIds)
-          .eq('tenant_id', user.tenantId);
+          .eq('tenant_id', user.tenantId)
+          // Exclui itens cancelados: o pedido não é cancelado, mas um item dele pode ter sido.
+          // Sem isso o faturamento por categoria diverge do líquido (total_amount já exclui cancelados).
+          .neq('status', 'cancelled');
 
         if (itemsErr) {
           // Fallback sem join de categoria
@@ -74,7 +77,8 @@ export function useVisaoGeralExtras(periodo: string) {
             .from('order_items')
             .select('item_name, item_price, quantity')
             .in('order_id', orderIds)
-            .eq('tenant_id', user.tenantId);
+            .eq('tenant_id', user.tenantId)
+            .neq('status', 'cancelled');
 
           const catMap: Record<string, CategoryRevenue> = {};
           (itemsFallback ?? []).forEach((oi) => {

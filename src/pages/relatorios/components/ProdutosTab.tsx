@@ -34,6 +34,51 @@ const ABC_STYLE: Record<ClasseABC, { badge: string; label: string; desc: string 
 
 const fmt = formatCurrency;
 
+// ── Normalização de nome de item ──────────────────────────────────────────────
+// Itens com múltiplas unidades rastreadas no KDS são gravados como order_items
+// separados com sufixo " (Un. N)" (ex.: "Hamburguer de Bacon (Un. 1)"). No ranking
+// são o MESMO produto do cardápio — remove o sufixo e faz trim para agrupar/somar
+// (também unifica variações de espaço em branco no fim do nome).
+export function normalizarNomeItem(nome: string): string {
+  return nome.replace(/\s*\(Un\.\s*\d+\)\s*$/i, '').trim();
+}
+
+interface TopItemMerged {
+  item_name: string;
+  category_name?: string;
+  total_qty: number;
+  total_revenue: number;
+  avg_price?: number;
+}
+
+/** Une linhas do top_items que são unidades do mesmo item (somando qtd/receita). */
+function mergeUnidades(
+  topItems: Array<{ item_name: string; total_qty: number; total_revenue: number; category_name?: string; avg_price?: number }>,
+): TopItemMerged[] {
+  const map = new Map<string, TopItemMerged>();
+  for (const it of topItems) {
+    const nome = normalizarNomeItem(it.item_name);
+    const key = `${nome}::${it.category_name ?? ''}`;
+    const prev = map.get(key);
+    if (prev) {
+      prev.total_qty += it.total_qty;
+      prev.total_revenue += Number(it.total_revenue);
+    } else {
+      map.set(key, {
+        item_name: nome,
+        category_name: it.category_name,
+        total_qty: it.total_qty,
+        total_revenue: Number(it.total_revenue),
+      });
+    }
+  }
+  // Preço médio recalculado após somar (receita / qtd)
+  return Array.from(map.values()).map((m) => ({
+    ...m,
+    avg_price: m.total_qty > 0 ? m.total_revenue / m.total_qty : 0,
+  }));
+}
+
 // Períodos rápidos para override local
 const PERIODOS_RAPIDOS = ['7 dias', '30 dias', '3 meses', '6 meses', '12 meses'] as const;
 type PeriodoRapido = typeof PERIODOS_RAPIDOS[number];
@@ -81,16 +126,21 @@ function useItemEvolucao(itemNome: string | null, dias: number) {
       const from = new Date();
       from.setDate(from.getDate() - dias);
 
+      // itemNome vem NORMALIZADO (sem sufixo " (Un. N)"). Busca o nome base e todas as
+      // variações de unidade via prefixo (ilike) e confirma no JS pelo nome normalizado
+      // (evita falsos positivos como "Coca" casar com "Coca-Cola").
       const { data: items } = await supabase
         .from('order_items')
-        .select('item_name, quantity, item_price, orders!inner(created_at, status, tenant_id)')
+        .select('item_name, quantity, item_price, status, orders!inner(created_at, status, tenant_id)')
         .eq('tenant_id', user.tenantId)
-        .eq('item_name', itemNome)
+        .ilike('item_name', `${itemNome}%`)
+        .neq('status', 'cancelled')
         .gte('orders.created_at', from.toISOString())
         .eq('orders.status', 'delivered');
 
       const weekMap = new Map<string, { qtd: number; receita: number }>();
       (items ?? []).forEach((oi: Record<string, unknown>) => {
+        if (normalizarNomeItem(String(oi.item_name ?? '')) !== itemNome) return;
         const order = oi.orders as { created_at: string } | null;
         if (!order) return;
         const d = new Date(order.created_at);
@@ -226,16 +276,18 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
     : periodoGlobalParaDias(periodo);
   const { data: evolucao, loading: evolLoading } = useItemEvolucao(itemSelecionado, dias);
 
+  // top_items com unidades do mesmo item já somadas (ex.: "X (Un. 1)" + "X (Un. 2)" → "X")
+  const topItens = useMemo(() => mergeUnidades(report?.top_items ?? []), [report]);
+  const topItensAnt = useMemo(() => mergeUnidades(reportAnterior?.top_items ?? []), [reportAnterior]);
+
   // Categorias disponíveis
   const categorias = useMemo(() => {
-    if (!report?.top_items) return [];
-    const cats = new Set(report.top_items.map(i => i.category_name ?? 'Sem categoria'));
+    const cats = new Set(topItens.map(i => i.category_name ?? 'Sem categoria'));
     return Array.from(cats).sort();
-  }, [report]);
+  }, [topItens]);
 
   const itens = useMemo(() => {
-    if (!report?.top_items) return [];
-    return report.top_items
+    return topItens
       .map((item, idx) => ({
         pos: idx + 1,
         nome: item.item_name,
@@ -250,22 +302,22 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
         return matchBusca && matchCat;
       })
       .sort((a, b) => b[sortBy] - a[sortBy]);
-  }, [report, busca, sortBy, categoriaFiltro]);
+  }, [topItens, busca, sortBy, categoriaFiltro]);
 
-  // Mapa de itens do período anterior para comparativo
+  // Mapa de itens do período anterior para comparativo (por nome normalizado)
   const itensAntMap = useMemo(() => {
     const map = new Map<string, { qtd: number; receita: number }>();
-    (reportAnterior?.top_items ?? []).forEach(i => {
+    topItensAnt.forEach(i => {
       map.set(i.item_name, { qtd: i.total_qty, receita: Number(i.total_revenue) });
     });
     return map;
-  }, [reportAnterior]);
+  }, [topItensAnt]);
 
   // Dados por categoria
   const dadosPorCategoria = useMemo(() => {
-    if (!report?.top_items) return [];
+    if (topItens.length === 0) return [];
     const catMap = new Map<string, { qtd: number; receita: number; itens: number }>();
-    report.top_items.forEach(item => {
+    topItens.forEach(item => {
       const cat = item.category_name ?? 'Sem categoria';
       const prev = catMap.get(cat) ?? { qtd: 0, receita: 0, itens: 0 };
       catMap.set(cat, {
@@ -277,7 +329,7 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
     return Array.from(catMap.entries())
       .map(([cat, d]) => ({ categoria: cat, ...d }))
       .sort((a, b) => b.receita - a.receita);
-  }, [report]);
+  }, [topItens]);
 
   // Classificação ABC
   const itensComABC = useMemo(() => {

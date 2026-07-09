@@ -393,6 +393,7 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
         opcoesDetalhadas,
         observacao: obs,
         unidades,
+        cancelado: item.status === 'cancelled',
       };
     }),
   };

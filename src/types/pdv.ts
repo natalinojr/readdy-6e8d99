@@ -63,6 +63,8 @@ export interface PedidoItemDetalhe {
   unidades: UnidadeItem[];
   /** Order ID this item belongs to — needed for grouped cards */
   orderId?: string;
+  /** Item cancelado (order_items.status = 'cancelled') — não entra no total do pedido */
+  cancelado?: boolean;
 }
 
 // ─── Bill Splitting (table_session_participants) ──────────────────────────────

@@ -460,8 +460,14 @@ function PagamentoDetalhado({ pedido, isConsolidated }: { pedido: PedidoRecente;
     );
   }
 
-  // amount já é o valor cobrado (convenção do banco), tanto no consolidado quanto no individual
-  const totalPago = pedido.pagamentos.reduce((acc, p) => acc + p.amount, 0);
+  // amount já é o valor cobrado (convenção do banco), tanto no consolidado quanto no individual.
+  // Em pagamento conjunto (ver nota abaixo) o pedido principal grava o amount do grupo inteiro;
+  // aqui limitamos à parte deste pedido para não exibir um total maior que o pedido.
+  const totalPago = pedido.pagamentos.reduce((acc, p) => {
+    const pExt = p as PagamentoPedido;
+    const conjunto = !isConsolidated && !!pExt.payment_group_id && p.amount > pedido.total + 0.01;
+    return acc + (conjunto ? pedido.total : p.amount);
+  }, 0);
 
   return (
     <div className="space-y-3">
@@ -481,8 +487,15 @@ function PagamentoDetalhado({ pedido, isConsolidated }: { pedido: PedidoRecente;
           const canal = canalRegistro(cashRegisterId, pedido.origem);
           const trocoRaw = pgExtended.change_amount != null ? pgExtended.change_amount : null;
           const troco = trocoRaw != null && trocoRaw > 0 ? trocoRaw : null;
+          // Pagamento conjunto: em pedidos pagos juntos, o pedido PRINCIPAL grava no seu
+          // pagamento o amount do GRUPO inteiro (soma de todos os pedidos), enquanto os
+          // vinculados gravam só o deles. Ao ver um único pedido, o amount do principal
+          // (ex.: R$135) não corresponde ao total do pedido (ex.: R$102). Nesse caso
+          // exibimos a parte deste pedido (pedido.total) e sinalizamos o pagamento conjunto.
+          // No modo consolidado (card unificado) o amount já foi ajustado em consolidatePayments.
+          const pagamentoConjunto = !isConsolidated && !!pgExtended.payment_group_id && pg.amount > pedido.total + 0.01;
           // amount já é o valor cobrado (convenção do banco); valor entregue = cobrado + troco
-          const valorCobrado = pg.amount;
+          const valorCobrado = pagamentoConjunto ? pedido.total : pg.amount;
           const valorEntregue = ehDinheiro ? valorCobrado + (trocoRaw ?? 0) : null;
           const nomePg = paymentMethodLabel(pg.payment_method_name, pgExtended.payment_method_type ?? null, pgExtended.change_amount ?? null);
 
@@ -505,6 +518,15 @@ function PagamentoDetalhado({ pedido, isConsolidated }: { pedido: PedidoRecente;
                   <p className="text-[10px] text-zinc-400">valor cobrado</p>
                 </div>
               </div>
+
+              {pagamentoConjunto && (
+                <div className="mt-3 pt-3 border-t border-zinc-200/60 flex items-start gap-1.5">
+                  <i className="ri-links-line text-amber-500 text-xs mt-0.5" />
+                  <span className="text-[11px] text-zinc-500 leading-snug">
+                    Pago em conjunto com outros pedidos — pagamento total de <strong className="text-zinc-700">R$ {pg.amount.toFixed(2)}</strong>. Valor acima é a parte deste pedido.
+                  </span>
+                </div>
+              )}
 
               {ehDinheiro && (
                 <div className="mt-3 pt-3 border-t border-emerald-200/60 space-y-2">
@@ -579,8 +601,10 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
   })();
   const inicioPreparoTs = primeiroInicioPreparoTs;
   const prontoTs = minMaxTs(todasUnidades.map((u) => u._prontoTs)).max ? new Date(minMaxTs(todasUnidades.map((u) => u._prontoTs)).max!).toISOString() : null;
-  const itensProntosReal = pedido.itensDetalhes.reduce((acc, item) => acc + item.unidades.filter((u) => u.status === 'pronto' || u.status === 'entregue').length, 0);
-  const itensTotalReal = pedido.itensDetalhes.reduce((acc, item) => acc + item.quantidade, 0);
+  const itensAtivos = pedido.itensDetalhes.filter((item) => !item.cancelado);
+  const itensCancelados = pedido.itensDetalhes.filter((item) => item.cancelado);
+  const itensProntosReal = itensAtivos.reduce((acc, item) => acc + item.unidades.filter((u) => u.status === 'pronto' || u.status === 'entregue').length, 0);
+  const itensTotalReal = itensAtivos.reduce((acc, item) => acc + item.quantidade, 0);
   const prontosPct = itensTotalReal > 0 ? Math.round((itensProntosReal / itensTotalReal) * 100) : 0;
   const hasSla = pedido.slaEspera !== undefined || pedido.slaCozinha !== undefined;
   const isAtrasado = pedido.atrasado === true;
@@ -731,12 +755,13 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
         <p className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-3">Itens do pedido ({itensTotalReal} {itensTotalReal === 1 ? 'item' : 'itens'})</p>
         <div className="space-y-4">
           {pedido.itensDetalhes.map((item: PedidoItemDetalhe) => (
-            <div key={item.id} className="border border-zinc-100 rounded-xl overflow-hidden">
-              <div className="flex items-start justify-between p-3.5 bg-zinc-50">
+            <div key={item.id} className={`border rounded-xl overflow-hidden ${item.cancelado ? 'border-red-200 bg-red-50/30' : 'border-zinc-100'}`}>
+              <div className={`flex items-start justify-between p-3.5 ${item.cancelado ? 'bg-red-50/50' : 'bg-zinc-50'}`}>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="w-5 h-5 flex items-center justify-center bg-zinc-200 rounded-full text-[10px] font-bold text-zinc-600 flex-shrink-0">{item.quantidade}</span>
-                    <span className="text-sm font-bold text-zinc-900">{item.nome}</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-bold flex-shrink-0 ${item.cancelado ? 'bg-red-200 text-red-700' : 'bg-zinc-200 text-zinc-600'}`}>{item.quantidade}</span>
+                    <span className={`text-sm font-bold ${item.cancelado ? 'text-red-400 line-through' : 'text-zinc-900'}`}>{item.nome}</span>
+                    {item.cancelado && <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200"><i className="ri-close-circle-line text-[9px]" />Cancelado</span>}
                   </div>
                   {(() => {
                     const detal = item.opcoesDetalhadas;
@@ -781,11 +806,17 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
                   )}
                 </div>
                 <div className="text-right ml-3 flex-shrink-0">
-                  <p className="text-sm font-bold text-zinc-800">R$ {(item.preco * item.quantidade).toFixed(2)}</p>
+                  <p className={`text-sm font-bold ${item.cancelado ? 'text-red-400 line-through' : 'text-zinc-800'}`}>R$ {(item.preco * item.quantidade).toFixed(2)}</p>
                   <p className="text-[10px] text-zinc-400">R$ {item.preco.toFixed(2)} /un.</p>
                   {item.estacao && <div className="flex items-center gap-1 justify-end mt-1"><i className="ri-map-pin-2-line text-zinc-400 text-xs" /><span className="text-[10px] text-zinc-400">{item.estacao}</span></div>}
                 </div>
               </div>
+              {item.cancelado ? (
+                <div className="flex items-center gap-2 px-3.5 py-2.5">
+                  <i className="ri-close-circle-line text-red-500 text-sm" />
+                  <span className="text-xs text-red-600 font-medium">Item cancelado — não incluído no total do pedido</span>
+                </div>
+              ) : (
               <div className="divide-y divide-zinc-50">
                 {item.unidades.map((un) => {
                   const tPreparo = diffMin(un._iniciadoPreparoTs, un._prontoTs);
@@ -815,6 +846,7 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
                   );
                 })}
               </div>
+              )}
             </div>
           ))}
         </div>
@@ -825,13 +857,19 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
           <div>
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-3">Resumo financeiro</p>
             <div className="space-y-2">
-              {pedido.itensDetalhes.map((item) => (
+              {itensAtivos.map((item) => (
                 <div key={item.id} className="flex items-center justify-between text-xs">
                   <span className="text-zinc-600">{item.quantidade}x {item.nome}</span>
                   <span className="text-zinc-800 font-semibold">R$ {(item.preco * item.quantidade).toFixed(2)}</span>
                 </div>
               ))}
-              {descontoReal > 0 && <div className="flex items-center justify-between text-xs text-red-600"><span className="flex items-center gap-1"><i className="ri-price-tag-3-line" />Desconto</span><span className="font-semibold">- R$ {descontoReal.toFixed(2)}</span></div>}
+              {itensCancelados.map((item) => (
+                <div key={item.id} className="flex items-center justify-between text-xs">
+                  <span className="text-red-400 line-through flex items-center gap-1.5">{item.quantidade}x {item.nome}<span className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 no-underline"><i className="ri-close-circle-line text-[8px]" />Cancelado</span></span>
+                  <span className="text-red-400 line-through font-semibold">R$ {(item.preco * item.quantidade).toFixed(2)}</span>
+                </div>
+              ))}
+              {descontoReal > 0 &&<div className="flex items-center justify-between text-xs text-red-600"><span className="flex items-center gap-1"><i className="ri-price-tag-3-line" />Desconto</span><span className="font-semibold">- R$ {descontoReal.toFixed(2)}</span></div>}
               {(descontoReal > 0 || serviceFeeReal > 0 || tipReal > 0) && <div className="flex items-center justify-between text-xs text-zinc-500 border-t border-zinc-200 pt-2"><span>Subtotal</span><span className="font-semibold">R$ {subtotalReal.toFixed(2)}</span></div>}
               {serviceFeeReal > 0 && <div className="flex items-center justify-between text-xs text-zinc-600"><span className="flex items-center gap-1"><i className="ri-service-line" />Taxa de serviço</span><span className="font-semibold">+ R$ {serviceFeeReal.toFixed(2)}</span></div>}
               {tipReal > 0 && <div className="flex items-center justify-between text-xs text-zinc-600"><span className="flex items-center gap-1"><i className="ri-hand-coin-line" />Gorjeta</span><span className="font-semibold">+ R$ {tipReal.toFixed(2)}</span></div>}
