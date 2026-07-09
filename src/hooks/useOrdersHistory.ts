@@ -350,7 +350,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
                 operator_id, started_preparing_at, ready_at, delivered_at
               )
             ),
-            payments ( id, amount, change_amount, is_refunded, payment_method_id, cash_register_id, operator_name, payment_methods ( name, type ) )
+            payments ( id, amount, change_amount, is_refunded, payment_method_id, cash_register_id, operator_name, payment_group_id, payment_methods ( name, type ) )
           `)
           .eq('tenant_id', user.tenantId)
           .eq('is_training', false)

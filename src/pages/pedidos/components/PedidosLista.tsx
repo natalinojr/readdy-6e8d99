@@ -63,6 +63,7 @@ function contarUnidadesPorStatus(pedido: PedidoRecente): { status: string; count
   let totalUnidades = 0;
 
   pedido.itensDetalhes.forEach((item) => {
+    if (item.cancelado) return; // item cancelado não conta como unidade pendente/pronta
     const unidades = item.unidades ?? [];
     if (unidades.length === 0) {
       // Fallback: usa o status do item como uma unidade
@@ -283,10 +284,11 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
           const isGrupo = (pedido.pedidoIds ?? []).length > 1;
           const qtdPedidosGrupo = pedido.pedidoIds?.length ?? 1;
           const itensProntosReal = pedido.itensDetalhes.reduce((acc, item) => {
+            if (item.cancelado) return acc; // item cancelado não entra na contagem
             const prontas = item.unidades?.filter((u) => u.status === 'pronto' || u.status === 'entregue').length ?? 0;
             return acc + prontas;
           }, 0);
-          const itensTotalReal = pedido.itensDetalhes.reduce((acc, item) => acc + item.quantidade, 0);
+          const itensTotalReal = pedido.itensDetalhes.reduce((acc, item) => acc + (item.cancelado ? 0 : item.quantidade), 0);
           const prontosPctReal = itensTotalReal > 0 ? Math.round((itensProntosReal / itensTotalReal) * 100) : 0;
 
           const isAtrasado = pedido.atrasado === true;
