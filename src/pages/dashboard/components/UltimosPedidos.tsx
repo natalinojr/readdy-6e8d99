@@ -124,8 +124,10 @@ const DetalheModal = memo(function DetalheModal({ pedido, onClose }: { pedido: D
                   (pg.payment_method_name ?? '').toLowerCase().includes('dinheiro');
                 const canal = canalRegistro(pg, pedido.origin);
                 const troco = pg.change_amount != null && pg.change_amount > 0 ? pg.change_amount : null;
+                // Valor entregue em espécie = o que esta forma cobriu + o troco.
+                // Em pagamento dividido, usar pg.amount (não o total do pedido).
                 const valorPago = isDinheiro && pg.amount > 0
-                  ? pedido.total + (troco ?? 0)
+                  ? pg.amount + (troco ?? 0)
                   : null;
 
                 return (

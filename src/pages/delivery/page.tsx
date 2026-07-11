@@ -569,6 +569,7 @@ export default function DeliveryPage() {
               outOfStockIds={outOfStockIds}
               opcoesIndisponiveisIds={opcoesIndisponiveisIds}
               onAdicionar={handleAdicionar}
+              onAlterarQtd={handleAlterarQtd}
               onVerCarrinho={function () { data.setStep('identificacao'); }}
               cart={cart}
               onCategoriaAtivaChange={handleCategoriaAtivaChange}
@@ -1116,6 +1117,7 @@ export default function DeliveryPage() {
                   outOfStockIds={outOfStockIds}
                   opcoesIndisponiveisIds={opcoesIndisponiveisIds}
                   onAdicionar={handleAdicionar}
+                  onAlterarQtd={handleAlterarQtd}
                   onVerCarrinho={function () { data.setShowCart(true); }}
                   cart={cart}
                   onCategoriaAtivaChange={handleCategoriaAtivaChange}

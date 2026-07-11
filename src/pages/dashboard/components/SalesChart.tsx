@@ -2,12 +2,17 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 interface Props {
   data: Array<{ hora: string; valor: number }>;
+  lastUpdated?: Date | null;
 }
 
 const formatBRL = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(v);
 
-export default function SalesChart({ data }: Props) {
+export default function SalesChart({ data, lastUpdated }: Props) {
+  const horaAtualizacao = lastUpdated
+    ? lastUpdated.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : null;
+
   return (
     <div className="bg-white border border-zinc-100 rounded-xl p-5 flex flex-col">
       <div className="flex items-center justify-between mb-5">
@@ -15,9 +20,10 @@ export default function SalesChart({ data }: Props) {
           <h3 className="text-sm font-semibold text-zinc-800">Vendas por Hora</h3>
           <p className="text-xs text-zinc-400 mt-0.5">Movimento do dia de hoje</p>
         </div>
-        {data.length > 0 && (
-          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-600">
-            Dados reais
+        {horaAtualizacao && (
+          <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            Atualizado {horaAtualizacao}
           </span>
         )}
       </div>

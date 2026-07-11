@@ -220,6 +220,7 @@ export default function MesaQRPage() {
               outOfStockIds={outOfStockIds}
               opcoesIndisponiveisIds={opcoesIndisponiveisIds}
               onAdicionar={handleAdicionar}
+              onAlterarQtd={handleAlterarQtd}
               onVerCarrinho={function () { data.setShowCart(true); }}
               cart={cart}
               onCategoriaAtivaChange={handleCategoriaAtivaChange}

@@ -373,6 +373,23 @@ export async function queueOrderForPrint(
     }
   }
 
+  // — Itens de bar cuja estacao coincide com uma estacao de cozinha do pedido
+  //   entram no MESMO ticket (evita 1 impressao por bebida quando, ex., Guarana
+  //   e skip_kds=false e Coca skip_kds=true mas ambos vao pra estacao Bebidas) —
+  const barGroupedByStation = new Map<string, OrderItemForPrint[]>();
+  for (const item of itensBar) {
+    const key = item.station_id || 'bar'; // fallback "bar" so se nao tiver station_id
+    if (!barGroupedByStation.has(key)) barGroupedByStation.set(key, []);
+    barGroupedByStation.get(key)!.push(item);
+  }
+  for (const [stationKey, barItems] of [...barGroupedByStation.entries()]) {
+    if (groupedByStation.has(stationKey)) {
+      console.log(`[queueOrderForPrint] Bar: estacao ${stationKey} ja tem ticket de cozinha -> mesclando ${barItems.length} item(ns) de bar no mesmo ticket`);
+      groupedByStation.get(stationKey)!.push(...barItems);
+      barGroupedByStation.delete(stationKey);
+    }
+  }
+
   console.log(`[queueOrderForPrint] Separacao: estacoes_cozinha=${groupedByStation.size}, bar=${itensBar.length}`);
   groupedByStation.forEach((stationItems, stKey) => {
     const partesInfo = stationItems.map((si) => {
@@ -423,15 +440,8 @@ export async function queueOrderForPrint(
   }
 
   // — Ticket do bar (bebidas, sobremesas, etc.) agrupado por station_id real —
-  if (itensBar.length > 0) {
-    // Agrupar itens de bar pela station_id real (vinda da categoria), nao hardcoded "bar"
-    const barGroupedByStation = new Map<string, OrderItemForPrint[]>();
-    for (const item of itensBar) {
-      const key = item.station_id || 'bar'; // fallback "bar" so se nao tiver station_id
-      if (!barGroupedByStation.has(key)) barGroupedByStation.set(key, []);
-      barGroupedByStation.get(key)!.push(item);
-    }
-
+  //   (somente estacoes que NAO foram mescladas num ticket de cozinha acima)
+  if (barGroupedByStation.size > 0) {
     for (const [estacaoId, barStationItems] of barGroupedByStation.entries()) {
       const impressoraIdBar = resolveImpressoraId(estacaoId);
 

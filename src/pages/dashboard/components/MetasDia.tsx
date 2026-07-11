@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Meta {
   id: string;
@@ -20,11 +21,13 @@ interface Props {
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
-const STORAGE_KEY = 'dashboard_metas_dia';
+// Chave por tenant — evita que a meta de uma loja apareça em outra no mesmo navegador
+const storageKey = (tenantId: string | null | undefined) =>
+  `dashboard_metas_dia:${tenantId ?? 'default'}`;
 
-function loadMetas(): { faturamento: number; pedidos: number; ticket: number } {
+function loadMetas(tenantId: string | null | undefined): { faturamento: number; pedidos: number; ticket: number } {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey(tenantId));
     if (raw) return JSON.parse(raw);
   } catch {
     // ignore
@@ -32,18 +35,20 @@ function loadMetas(): { faturamento: number; pedidos: number; ticket: number } {
   return { faturamento: 3000, pedidos: 50, ticket: 60 };
 }
 
-function saveMetas(m: { faturamento: number; pedidos: number; ticket: number }) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(m));
+function saveMetas(tenantId: string | null | undefined, m: { faturamento: number; pedidos: number; ticket: number }) {
+  localStorage.setItem(storageKey(tenantId), JSON.stringify(m));
 }
 
 export default function MetasDia({ faturamentoHoje, pedidosHoje, ticketMedio }: Props) {
+  const { user } = useAuth();
+  const tenantId = user?.tenantId;
   const [editando, setEditando] = useState(false);
-  const [metas, setMetas] = useState(loadMetas);
+  const [metas, setMetas] = useState(() => loadMetas(tenantId));
   const [draft, setDraft] = useState(metas);
 
   const salvarMetas = () => {
     setMetas(draft);
-    saveMetas(draft);
+    saveMetas(tenantId, draft);
     setEditando(false);
   };
 

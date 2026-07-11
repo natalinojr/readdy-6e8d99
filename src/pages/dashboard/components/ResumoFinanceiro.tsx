@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { todayBrasilia, getTodayBrasiliaRange } from '@/lib/dateUtils';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -38,7 +39,7 @@ const ORIGEM_ICON: Record<string, string> = {
   self_service: 'ri-tv-line',
 };
 
-export default function ResumoFinanceiro() {
+export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: number }) {
   const { user } = useAuth();
   const [data, setData] = useState<FinancialSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,8 +48,11 @@ export default function ResumoFinanceiro() {
     if (!user?.tenantId) return;
     setLoading(true);
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const in7 = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+      // Datas em fuso de Brasília — evita "virar o dia" às 21h (UTC) e zerar o card
+      const today = todayBrasilia();
+      const { fromTs, toTs } = getTodayBrasiliaRange();
+      const [ty, tm, td] = today.split('-').map(Number);
+      const in7 = new Date(Date.UTC(ty, tm - 1, td + 7)).toISOString().split('T')[0];
 
       // Receita do dia — pagamentos registrados hoje (apenas de pedidos entregues)
       const { data: pagamentos } = await supabase
@@ -57,8 +61,8 @@ export default function ResumoFinanceiro() {
         .eq('orders.tenant_id', user.tenantId)
         .eq('orders.status', 'delivered')
         .eq('is_refunded', false)
-        .gte('created_at', `${today}T00:00:00`)
-        .lte('created_at', `${today}T23:59:59`);
+        .gte('created_at', fromTs)
+        .lte('created_at', toTs);
 
       const receitaPaga = (pagamentos ?? []).reduce((s: number, p: { amount: number }) => s + Number(p.amount), 0);
 
@@ -71,8 +75,8 @@ export default function ResumoFinanceiro() {
         .eq('status', 'delivered')
         .eq('is_training', false)
         .eq('is_draft', false)
-        .gte('created_at', `${today}T00:00:00`)
-        .lte('created_at', `${today}T23:59:59`);
+        .gte('created_at', fromTs)
+        .lte('created_at', toTs);
 
       const receitaPendente = (pedidosPendentes ?? []).reduce((s: number, p: { total_amount: number }) => s + Number(p.total_amount), 0);
 
@@ -124,7 +128,7 @@ export default function ResumoFinanceiro() {
     }
   }, [user?.tenantId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   if (loading) {
     return (

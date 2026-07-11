@@ -112,5 +112,5 @@ export function useVisaoGeralExtras(periodo: string) {
 
   useEffect(() => { load(); }, [load]);
 
-  return { data, loading };
+  return { data, loading, reload: load };
 }

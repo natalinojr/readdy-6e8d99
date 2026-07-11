@@ -1,3 +1,4 @@
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DollarSign, ShoppingBag, Receipt, LayoutGrid, Timer, Clock } from 'lucide-react';
 import MetricCard from './components/MetricCard';
@@ -17,6 +18,7 @@ import DashboardModoToggle from './components/DashboardModoToggle';
 import { useDashboardMetrics } from '../../hooks/useDashboardMetrics';
 import { useVisaoGeralExtras } from '../../hooks/useVisaoGeralExtras';
 import { useStockCriticalAlerts } from '../../hooks/useStockCriticalAlerts';
+import { useOrdersPing } from '../../hooks/useOrdersPing';
 import { useAuth } from '../../contexts/AuthContext';
 import { useKDS } from '../../contexts/KDSContext';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
@@ -33,12 +35,35 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { data: m, loading, error: metricsError, reload } = useDashboardMetrics();
-  const { data: extras, loading: extrasLoading } = useVisaoGeralExtras('Hoje');
-  const { alertas: alertasCriticos, loading: alertasCriticosLoading } = useStockCriticalAlerts();
+  const { data: extras, loading: extrasLoading, reload: reloadExtras } = useVisaoGeralExtras('Hoje');
+  const { alertas: alertasCriticos, loading: alertasCriticosLoading, reload: reloadAlertas } = useStockCriticalAlerts();
   const { pedidos: kdsPedidos } = useKDS();
   const { modo } = useModoFaturamento();
-  const { metrics: sessaoMetrics, loading: sessaoLoading } = useSessaoFaturamento();
+  const { metrics: sessaoMetrics, loading: sessaoLoading, reload: reloadSessao } = useSessaoFaturamento();
   const { sessao } = useSessao();
+
+  // refreshKey propaga para componentes que buscam dados por conta própria
+  // (HorariosPico, ResumoFinanceiro, ValidadeAlertas).
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  const reloadAll = useCallback(() => {
+    reload();
+    reloadExtras();
+    reloadSessao();
+    reloadAlertas?.();
+    setRefreshKey((k) => k + 1);
+    setLastUpdated(new Date());
+  }, [reload, reloadExtras, reloadSessao, reloadAlertas]);
+
+  // Tempo real: cada mudança de pedido dispara um ping; recarrega com debounce
+  // de 2,5s para agrupar rajadas de eventos (mesmo canal do KDS/impressão).
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useOrdersPing(user?.tenantId, () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { reloadAll(); }, 2500);
+  });
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   // SLA médio real da cozinha baseado nos pedidos ativos
   const slaMediaCozinha = (() => {
@@ -71,6 +96,9 @@ export default function Dashboard() {
   const pedidosAbertosCount = m?.pedidos_abertos_count ?? 0;
 
   const isLoading = loading || (modo === 'sessao' && sessaoLoading);
+
+  // Carimba o horário da última atualização quando novos dados chegam
+  useEffect(() => { if (m) setLastUpdated(new Date()); }, [m]);
 
   // Label contextual para o período
   const periodoLabel = modo === 'sessao'
@@ -147,7 +175,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-zinc-900">
-            {greeting}, <span className="text-amber-500">{user?.nome.split(' ')[0]}</span>!
+            {greeting}, <span className="text-amber-500">{user?.nome?.split(' ')[0] ?? ''}</span>!
           </h1>
           <p className="text-sm text-zinc-500 mt-0.5">
             {isLoading
@@ -160,7 +188,7 @@ export default function Dashboard() {
         <div className="flex items-center gap-3">
           <DashboardModoToggle />
           <button
-            onClick={reload}
+            onClick={reloadAll}
             disabled={isLoading}
             className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer disabled:opacity-50"
           >
@@ -213,7 +241,7 @@ export default function Dashboard() {
       {/* Chart + Status */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
-          <SalesChart data={m?.vendas_por_hora ?? []} />
+          <SalesChart data={m?.vendas_por_hora ?? []} lastUpdated={lastUpdated} />
         </div>
         <div>
           <PedidosStatus
@@ -241,9 +269,9 @@ export default function Dashboard() {
             pedidosHoje={pedidosHoje}
             ticketMedio={ticketMedio}
           />
-          <ResumoFinanceiro />
+          <ResumoFinanceiro refreshKey={refreshKey} />
           <EstoqueAlertas alertas={m?.alertas_estoque ?? []} />
-          <ValidadeAlertas />
+          <ValidadeAlertas refreshKey={refreshKey} />
         </div>
       </div>
 
@@ -261,7 +289,7 @@ export default function Dashboard() {
       </div>
 
       {/* Horários de Pico */}
-      <HorariosPico />
+      <HorariosPico refreshKey={refreshKey} />
 
       {/* Alertas Financeiros */}
       <AlertasFinanceiros />

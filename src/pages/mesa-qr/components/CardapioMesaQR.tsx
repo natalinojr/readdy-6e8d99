@@ -78,6 +78,8 @@ interface Props {
   opcoesIndisponiveisIds: string[];
   onAdicionar: (item: CartItem) => void;
   onVerCarrinho: () => void;
+  /** Ajusta a quantidade de uma linha do carrinho (habilita o stepper −/+ no card do item). */
+  onAlterarQtd?: (cartId: string, delta: number) => void;
   cart: CartItem[];
   onCategoriaAtivaChange?: (id: string) => void;
   /** ID de item vindo de link de divulgação (?item=): abre o item direto ao carregar. */
@@ -250,29 +252,10 @@ export default function CardapioMesaQR(props: Props) {
   }
 
   function abrirModal(item: CardapioItem) {
-    const groups = gruposDoItem(item.id);
-    const hasObs = obsDoItem(item.id).length > 0;
-
-    // Se não tem opções nem observações pré-configuradas, adiciona direto
-    if (groups.length === 0 && !hasObs) {
-      const now = Date.now();
-      const precoEfetivo = getPrecoEfetivo(item);
-      onAdicionar({
-        cartId: 'cart-' + item.id + '-' + now + '-0',
-        itemId: item.id,
-        name: item.name,
-        precoBase: precoEfetivo,
-        precoTotal: precoEfetivo,
-        quantidade: 1,
-        opcoes: [],
-        observacoes: [],
-        observacaoLivre: '',
-        skipKds: item.skip_kds !== null ? item.skip_kds : false,
-        stationId: item.station_id,
-      });
-      return;
-    }
-
+    // Sempre abre o modal — mesmo item sem opções/observações pré-configuradas.
+    // O modal tem o campo "Outra observação" livre, então todo item aceita
+    // observação (ex.: "sem cebola" num item simples). Antes, item simples era
+    // adicionado direto e o cliente não tinha onde escrever.
     setItemSelecionado(item);
     setQtd(1);
     setUnidadeAtiva(0);
@@ -478,20 +461,61 @@ export default function CardapioMesaQR(props: Props) {
     };
   }, [modalVisible]);
 
+  // Última linha do carrinho de um item (é nela que o stepper do card mexe)
+  function ultimaLinhaDoItem(itemId: string): CartItem | null {
+    for (let i = cart.length - 1; i >= 0; i--) {
+      if (cart[i].itemId === itemId) return cart[i];
+    }
+    return null;
+  }
+
   function renderItemCard(item: CardapioItem) {
     const qtyInCart = cartQtyMap[item.id] || 0;
     const promoAtiva = rawPromoAtivaHoje(item.promotions);
     const precoFinal = promoAtiva ? promoAtiva.promotional_price : item.price;
+    const onAlterarQtd = props.onAlterarQtd;
 
+    // Card é <div role="button"> (não <button>) porque o stepper −/+ aninha
+    // botões dentro dele — botão dentro de botão é HTML inválido.
     return (
-      <button
+      <div
         key={item.id}
-        type="button"
+        role="button"
+        tabIndex={0}
         onClick={function () { abrirModal(item); }}
+        onKeyDown={function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrirModal(item); } }}
         className="text-left bg-white rounded-2xl border border-zinc-100 p-3 flex gap-3 hover:border-zinc-200 transition-all duration-200 cursor-pointer group relative"
       >
-        {/* Badge de quantidade no carrinho */}
-        {qtyInCart > 0 ? (
+        {/* Stepper −/+ quando o item já está no carrinho; senão badge de PROMO */}
+        {qtyInCart > 0 && onAlterarQtd ? (
+          <div className="absolute top-2 right-2 z-10 flex items-center gap-0.5 bg-white border border-amber-200 rounded-full shadow-sm px-0.5 py-0.5">
+            <button
+              type="button"
+              aria-label={'Tirar 1 ' + item.name}
+              onClick={function (e) {
+                e.stopPropagation();
+                const linha = ultimaLinhaDoItem(item.id);
+                if (linha) onAlterarQtd(linha.cartId, -1);
+              }}
+              className="w-6 h-6 flex items-center justify-center rounded-full text-amber-600 hover:bg-amber-50 cursor-pointer transition-colors"
+            >
+              <i className={(qtyInCart === 1 ? 'ri-delete-bin-line text-[13px]' : 'ri-subtract-line text-sm')} />
+            </button>
+            <span className="min-w-[16px] text-center text-xs font-black text-zinc-800">{qtyInCart}</span>
+            <button
+              type="button"
+              aria-label={'Adicionar mais 1 ' + item.name}
+              onClick={function (e) {
+                e.stopPropagation();
+                const linha = ultimaLinhaDoItem(item.id);
+                if (linha) onAlterarQtd(linha.cartId, 1); // repete a última configuração
+              }}
+              className="w-6 h-6 flex items-center justify-center rounded-full text-amber-600 hover:bg-amber-50 cursor-pointer transition-colors"
+            >
+              <i className="ri-add-line text-sm" />
+            </button>
+          </div>
+        ) : qtyInCart > 0 ? (
           <div className="absolute top-2 right-2 z-10 w-5 h-5 flex items-center justify-center bg-amber-500 text-white text-[10px] font-black rounded-full">
             {qtyInCart}
           </div>
@@ -539,7 +563,7 @@ export default function CardapioMesaQR(props: Props) {
             </div>
           </div>
         </div>
-      </button>
+      </div>
     );
   }
 

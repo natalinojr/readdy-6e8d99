@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
 import { useVisaoGeralExtras } from '@/hooks/useVisaoGeralExtras';
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -22,8 +22,15 @@ function textIntensidade(valor: number, max: number): string {
   return 'text-zinc-500';
 }
 
-export default function HorariosPico() {
-  const { data: extras, loading } = useVisaoGeralExtras('30 dias');
+export default function HorariosPico({ refreshKey = 0 }: { refreshKey?: number }) {
+  const { data: extras, loading, reload } = useVisaoGeralExtras('30 dias');
+
+  // Recarrega quando o dashboard pede refresh (botão Atualizar / tempo real)
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) { firstRender.current = false; return; }
+    reload();
+  }, [refreshKey, reload]);
 
   const horaAtual = new Date().getHours();
   const diaAtual = new Date().getDay();
@@ -57,7 +64,7 @@ export default function HorariosPico() {
     return (
       <div className="bg-white rounded-xl border border-zinc-100 p-5 animate-pulse">
         <div className="h-4 bg-zinc-100 rounded w-32 mb-4" />
-        <div className="grid grid-cols-17 gap-1">
+        <div className="grid grid-cols-[repeat(17,minmax(0,1fr))] gap-1">
           {Array.from({ length: 17 }).map((_, i) => (
             <div key={i} className="h-8 bg-zinc-100 rounded" />
           ))}
@@ -85,7 +92,7 @@ export default function HorariosPico() {
           {dadosHoraAtual && dadosHoraAtual.orders > 0 && (
             <div className="text-right">
               <p className="text-[10px] text-zinc-400">Agora ({horaAtual}h)</p>
-              <p className="text-xs font-bold text-amber-600">{dadosHoraAtual.orders} ped. (média)</p>
+              <p className="text-xs font-bold text-amber-600">{dadosHoraAtual.orders} ped. (30d)</p>
             </div>
           )}
           {proximoPico && (
@@ -156,7 +163,7 @@ export default function HorariosPico() {
                   <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 hidden group-hover:block z-20 pointer-events-none">
                     <div className="bg-zinc-900 text-white text-[10px] rounded-lg px-2.5 py-1.5 whitespace-nowrap shadow-lg">
                       <p className="font-semibold">{h}:00 — {h + 1}:00</p>
-                      <p className="text-zinc-300">{orders} pedido{orders !== 1 ? 's' : ''} (média)</p>
+                      <p className="text-zinc-300">{orders} pedido{orders !== 1 ? 's' : ''} em 30 dias</p>
                     </div>
                     <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-zinc-900 rotate-45" />
                   </div>
@@ -182,7 +189,7 @@ export default function HorariosPico() {
           <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
             <i className="ri-fire-fill text-amber-500 text-xs" />
             <span className="text-xs font-semibold text-amber-700">
-              Pico histórico: {picoHoje.hour}h ({picoHoje.orders} pedidos/dia em média)
+              Pico: {picoHoje.hour}h ({picoHoje.orders} pedidos em 30 dias)
             </span>
           </div>
         )}

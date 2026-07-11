@@ -27,7 +27,10 @@ export default function MetricCard({
   return (
     <div
       onClick={onClick}
-      className={`bg-white border border-zinc-100 rounded-xl p-5 ${onClick ? 'cursor-pointer hover:border-rose-200 hover:shadow-sm transition-all' : ''}`}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+      className={`bg-white border border-zinc-100 rounded-xl p-5 ${onClick ? 'cursor-pointer hover:border-rose-200 hover:shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-rose-200' : ''}`}
     >
       <div className="flex items-start justify-between">
         <div className="flex-1">

@@ -14,7 +14,7 @@ interface ExpiryAlert {
   status: 'expired' | 'critical' | 'warning' | 'ok';
 }
 
-const ValidadeAlertas = memo(function ValidadeAlertas() {
+const ValidadeAlertas = memo(function ValidadeAlertas({ refreshKey = 0 }: { refreshKey?: number }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [alerts, setAlerts] = useState<ExpiryAlert[]>([]);
@@ -25,6 +25,7 @@ const ValidadeAlertas = memo(function ValidadeAlertas() {
     supabase
       .from('ingredient_expiry_alerts')
       .select('*')
+      .eq('tenant_id', user.tenantId)
       .in('status', ['expired', 'critical', 'warning'])
       .order('days_until_expiry', { ascending: true })
       .limit(6)
@@ -32,7 +33,7 @@ const ValidadeAlertas = memo(function ValidadeAlertas() {
         setAlerts((data ?? []) as ExpiryAlert[]);
         setLoading(false);
       });
-  }, [user?.tenantId]);
+  }, [user?.tenantId, refreshKey]);
 
   const expired = alerts.filter((a) => a.status === 'expired').length;
   const critical = alerts.filter((a) => a.status === 'critical').length;

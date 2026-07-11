@@ -260,7 +260,13 @@ export async function sendToPrinter(
   if (orderData) {
     console.log('[printUtils] PASSO 1: Tentando agente local com orderData JSON...');
     try {
-      const agentResult = await sendTicketToAgent(orderData, 3000);
+      // Inclui ip/port da impressora no payload: se o config.json do agente não
+      // conhecer o impressora_id do sistema, ele usa o ip como fallback em vez
+      // de responder 400 (o que derrubava o fluxo pro envio de HTML cru).
+      const payloadToSend = impressora?.ip?.trim()
+        ? ({ ...orderData, ip: impressora.ip.trim(), port: 9100 } as TicketPayload)
+        : orderData;
+      const agentResult = await sendTicketToAgent(payloadToSend, 3000);
       if (agentResult.success) {
         console.log('[printUtils] PASSO 1: Agente local imprimiu com sucesso via orderData! Bytes:', agentResult.bytes_sent);
         return { success: true };

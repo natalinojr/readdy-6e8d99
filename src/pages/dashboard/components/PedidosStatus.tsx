@@ -22,7 +22,7 @@ const PedidosStatus = memo(function PedidosStatus({ novos, emPreparo, prontos, e
   return (
     <div className="bg-white border border-zinc-100 rounded-xl p-5">
       <h3 className="text-sm font-semibold text-zinc-800 mb-1">Pedidos Agora</h3>
-      <p className="text-xs text-zinc-400 mb-5">Status em tempo real da sessão</p>
+      <p className="text-xs text-zinc-400 mb-5">Status dos pedidos de hoje</p>
       <div className="space-y-3">
         {statuses.map((s) => (
           <div key={s.key} className={`flex items-center justify-between px-4 py-3 rounded-xl ${s.bg}`}>
@@ -37,7 +37,7 @@ const PedidosStatus = memo(function PedidosStatus({ novos, emPreparo, prontos, e
         ))}
       </div>
       <div className="mt-4 pt-4 border-t border-zinc-100 flex justify-between items-center">
-        <span className="text-xs text-zinc-400">Total da sessão</span>
+        <span className="text-xs text-zinc-400">Total de hoje</span>
         <span className="text-sm font-bold text-zinc-800">{total} pedido{total !== 1 ? 's' : ''}</span>
       </div>
     </div>
