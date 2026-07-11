@@ -136,11 +136,17 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const [pedidosVinculadosComprovante, setPedidosVinculadosComprovante] = useState<import('./ComprovantePrint').PedidoVinculadoComprovante[]>([]);
 
   // ── Etapa seleção de pedidos ──
-  const temPedidosRelacionados = pedidosRelacionados.length > 0;
-  // Estado de etapa: começa como 'selecionar_conta' se tem pedidos relacionados, senão 'pagar'
-  const [etapa, setEtapa] = useState<'selecionar_conta' | 'pagar'>(
-    temPedidosRelacionados ? 'selecionar_conta' : 'pagar',
-  );
+  // O pagamento SEMPRE começa direto na tela de pagar. A tela de "Selecionar
+  // Pedidos para Pagar" (agrupar vários pedidos do mesmo cliente/mesa) só abre
+  // sob demanda, pelo botão "Vincular Pedidos".
+  //
+  // Antes ela abria automaticamente quando o destino tinha pedidos "não pagos" —
+  // o que incluía pedidos RECÉM-pagos ainda não sincronizados (marcarComoPago é
+  // local; isPaid só atualiza no reload ~500ms depois). Isso fazia a tela abrir
+  // sozinha após um pagamento e, quando o pedido fantasma sumia, ficar travada e
+  // vazia ("Nenhum pedido para pagar"). Ir sempre direto ao pagamento elimina
+  // as duas situações sem perder o agrupamento (que continua no botão manual).
+  const [etapa, setEtapa] = useState<'selecionar_conta' | 'pagar'>('pagar');
   const [modoVincularManual, setModoVincularManual] = useState(false);
   const [totalSelecionado, setTotalSelecionado] = useState(total);
   const [pedidosExistentesSelecionados, setPedidosExistentesSelecionados] = useState<PedidoAgrupado[]>([]);
@@ -149,20 +155,6 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   useEffect(() => {
     reloadPedidosAgrupados();
   }, [reloadPedidosAgrupados]);
-
-  // Recalcula etapa automaticamente quando pedidos relacionados mudam
-  // ATENÇÃO: só redireciona se ainda não houve nenhuma seleção confirmada pelo usuário
-  // (pedidosExistentesSelecionados vazio = usuário ainda não passou pela tela de seleção)
-  useEffect(() => {
-    if (
-      etapa === 'pagar' &&
-      temPedidosRelacionados &&
-      !modoVincularManual &&
-      pedidosExistentesSelecionados.length === 0
-    ) {
-      setEtapa('selecionar_conta');
-    }
-  }, [temPedidosRelacionados, etapa, modoVincularManual, pedidosExistentesSelecionados.length]);
 
   const totalEfetivo = etapa === 'pagar' ? totalSelecionado : total;
 
@@ -769,12 +761,10 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
           setEtapa('pagar');
         }}
         onClose={() => {
+          // Cancelar a vinculação sempre volta para a tela de pagamento
+          // (a seleção é um sub-passo opcional, nunca o ponto de entrada).
           setModoVincularManual(false);
-          if (!temPedidosRelacionados) {
-            setEtapa('pagar');
-          } else {
-            onClose();
-          }
+          setEtapa('pagar');
         }}
       />
     );
@@ -805,10 +795,10 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200 bg-zinc-50">
           <div className="flex items-center gap-2">
-            {(temPedidosRelacionados || modoVincularManual) && (
+            {modoVincularManual && (
               <button
                 onClick={() => {
-                  setModoVincularManual(false);
+                  // Volta para a seleção de vinculação (mantém o modo manual ativo)
                   setEtapa('selecionar_conta');
                   setPagamentos([]);
                 }}
