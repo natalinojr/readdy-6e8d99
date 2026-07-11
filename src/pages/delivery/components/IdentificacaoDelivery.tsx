@@ -39,140 +39,106 @@ export default function IdentificacaoDelivery(props: Props) {
   const digitsOnly = phone.replace(/\D/g, '');
   const isValid = digitsOnly.length >= 10;
 
+  // Iniciais da loja para o "logo" (mesma linguagem do header do cardápio / modo de entrega)
+  const iniciais = (tenantName || 'DL')
+    .split(/\s+/)
+    .slice(0, 2)
+    .map(function (w) { return w.charAt(0); })
+    .join('')
+    .toUpperCase();
+
   return (
-    <div className="min-h-screen flex font-sans">
-      {/* Left panel — desktop only */}
-      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden">
-        <img
-          src="https://readdy.ai/api/search-image?query=food%20delivery%20concept%20with%20scooter%20and%20brown%20paper%20bags%20on%20a%20minimalist%20warm%20beige%20background%2C%20modern%20flat%20lay%20composition%2C%20soft%20natural%20lighting%2C%20food%20delivery%20app%20aesthetic%2C%20warm%20amber%20and%20terracotta%20tones%2C%20clean%20editorial%20style&width=800&height=1200&seq=erpos-delivery-left-01&orientation=portrait"
-          alt="Delivery"
-          className="absolute inset-0 w-full h-full object-cover object-top"
+    <div className="min-h-screen flex flex-col bg-white">
+      {/* Hero gradiente — mesma identidade do header do cardápio / modo de entrega */}
+      <div className="relative bg-gradient-to-br from-amber-500 via-orange-500 to-orange-600 px-4 pt-6 pb-14 shrink-0">
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ background: 'radial-gradient(circle at 85% -20%, rgba(255,255,255,.25), transparent 45%)' }}
         />
-        <div className="absolute inset-0 bg-gradient-to-br from-zinc-950/70 via-zinc-900/50 to-amber-900/30" />
-        <div className="relative z-10 flex flex-col justify-between p-12 w-full">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 flex items-center justify-center bg-amber-500 rounded-xl">
-              <i className="ri-motorbike-line text-zinc-950 text-lg" />
-            </div>
-            <span className="text-white font-bold text-xl tracking-wide">ERPOS V2</span>
+
+        {props.onVoltar ? (
+          <button
+            type="button"
+            onClick={props.onVoltar}
+            className="relative z-10 inline-flex items-center gap-0.5 text-white/90 hover:text-white text-xs font-bold cursor-pointer transition-colors mb-3 max-w-lg mx-auto w-full"
+          >
+            <i className="ri-arrow-left-s-line text-base" />
+            Voltar ao cardápio
+          </button>
+        ) : null}
+
+        <div className="relative flex items-center gap-3 max-w-lg mx-auto w-full">
+          <div className="w-10 h-10 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0">
+            <span className="text-orange-600 font-black text-sm">{iniciais}</span>
           </div>
-          <div>
-            <h2 className="text-white text-3xl font-bold leading-snug mb-4">
-              Peça do conforto<br />da sua casa
-            </h2>
-            <p className="text-zinc-300 text-sm leading-relaxed">
-              Faça seu pedido online e receba em casa.
-              Rápido, fácil e com taxa de entrega justa.
-            </p>
-            <div className="flex flex-wrap gap-2 mt-6">
-              {['Delivery Rápido', 'Pedido Online', 'Pagamento na Entrega'].map(function (tag) {
-                return (
-                  <span key={tag} className="text-xs bg-white/10 text-white px-3 py-1 rounded-full border border-white/20">
-                    {tag}
-                  </span>
-                );
-              })}
-            </div>
+          <div className="min-w-0">
+            <h1 className="text-white text-sm font-black leading-tight truncate">{tenantName || 'Delivery'}</h1>
+            <p className="text-white/80 text-[11px]">Peça online</p>
           </div>
+        </div>
+        <div className="relative text-center mt-5">
+          <h2 className="text-white text-xl font-black">Qual o seu celular?</h2>
+          <p className="text-white/85 text-xs mt-1">
+            {city ? 'Para receber seu pedido em ' + city : 'Digite seu número para começar'}
+          </p>
         </div>
       </div>
 
-      {/* Right panel */}
-      <div
-        className="flex-1 flex flex-col items-center px-6 py-12 relative overflow-y-auto"
-        style={{
-          background: 'linear-gradient(to bottom, #fef3c7 0%, #fde68a 0%, rgba(253,230,138,0.35) 18%, rgba(251,191,36,0.12) 38%, rgba(255,255,255,0.6) 60%, #ffffff 100%)',
-        }}
-      >
-        <div className="absolute inset-x-0 top-0 h-40 pointer-events-none" style={{ background: 'linear-gradient(to bottom, rgba(245,158,11,0.15), transparent)' }} />
+      {/* Sheet branca sobreposta */}
+      <div className="flex-1 -mt-8 relative z-10 bg-white rounded-t-3xl px-4 pt-5 pb-8">
+        <div className="w-10 h-1 bg-zinc-200 rounded-full mx-auto mb-5" />
 
-        <div className="w-full max-w-sm relative z-10">
-          {props.onVoltar ? (
-            <button
-              type="button"
-              onClick={props.onVoltar}
-              className="inline-flex items-center gap-1 text-sm font-bold text-zinc-600 hover:text-zinc-800 cursor-pointer mb-4 transition-colors whitespace-nowrap"
-            >
-              <i className="ri-arrow-left-s-line text-lg" />
-              Voltar ao cardápio
-            </button>
+        <div className="max-w-lg mx-auto w-full">
+          <div className="mb-4">
+            <label className="block text-xs font-bold text-zinc-600 mb-1.5">
+              Seu WhatsApp / Celular <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="tel"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={phone}
+              onChange={function (e) { handleChange(e.target.value); }}
+              onKeyDown={function (e) { if (e.key === 'Enter') handleSubmit(); }}
+              placeholder="(11) 99999-9999"
+              maxLength={15}
+              className="w-full px-3.5 py-2.5 text-sm border-[1.5px] border-zinc-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+            />
+            <p className="text-[11px] text-zinc-400 mt-1.5">
+              Se já pediu antes, seus dados são carregados automaticamente.
+            </p>
+          </div>
+
+          {error ? (
+            <div className="flex items-center gap-2 px-3 py-2.5 mb-4 bg-red-50 border border-red-100 rounded-2xl">
+              <i className="ri-error-warning-line text-red-500 text-sm" />
+              <p className="text-xs text-red-600">{error}</p>
+            </div>
           ) : null}
 
-          <div className="flex items-center gap-3 mb-10 lg:hidden">
-            <div className="w-9 h-9 flex items-center justify-center bg-amber-500 rounded-xl">
-              <i className="ri-motorbike-line text-zinc-950 text-base" />
-            </div>
-            <span className="text-zinc-900 font-bold text-lg tracking-wide">ERPOS V2</span>
-          </div>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!isValid || enviando}
+            className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-sm font-black cursor-pointer transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            style={{ boxShadow: '0 6px 16px rgba(245,158,11,.35)' }}
+          >
+            {enviando ? (
+              <>
+                <i className="ri-loader-4-line animate-spin" />
+                Buscando...
+              </>
+            ) : (
+              <>
+                Continuar
+                <i className="ri-arrow-right-line" />
+              </>
+            )}
+          </button>
 
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-xl shadow-amber-500/5 p-6 md:p-8">
-            <div className="flex items-center justify-center gap-2 mb-6">
-              <div className="w-7 h-7 flex items-center justify-center bg-amber-500 rounded-lg">
-                <i className="ri-motorbike-line text-white text-sm" />
-              </div>
-              <span className="text-2xl font-black text-zinc-900">
-                {tenantName || 'Delivery'}
-              </span>
-            </div>
-
-            <h1 className="text-xl font-bold text-zinc-900 mb-1 text-center">
-              Qual o seu celular?
-            </h1>
-            <p className="text-sm text-zinc-500 mb-6 text-center">
-              {city ? 'Digite seu número para pedir em ' + city : 'Digite seu número para começar'}
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-                  Seu WhatsApp / Celular
-                </label>
-                <input
-                  type="tel"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={phone}
-                  onChange={function (e) { handleChange(e.target.value); }}
-                  onKeyDown={function (e) { if (e.key === 'Enter') handleSubmit(); }}
-                  placeholder="(11) 99999-9999"
-                  className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all bg-white/60"
-                  maxLength={15}
-                />
-                <p className="text-[10px] text-zinc-400 mt-1">
-                  Se já pediu antes, seus dados serão carregados automaticamente
-                </p>
-              </div>
-
-              {error ? (
-                <div className="flex items-center gap-2 px-3 py-2.5 bg-red-50 border border-red-100 rounded-lg">
-                  <i className="ri-error-warning-line text-red-500 text-sm" />
-                  <p className="text-xs text-red-600">{error}</p>
-                </div>
-              ) : null}
-
-              <button
-                type="button"
-                onClick={handleSubmit}
-                disabled={!isValid || enviando}
-                className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-60 disabled:hover:bg-amber-500 text-zinc-950 font-bold py-2.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap text-sm flex items-center justify-center gap-2"
-              >
-                {enviando ? (
-                  <>
-                    <i className="ri-loader-4-line animate-spin text-sm" />
-                    Buscando...
-                  </>
-                ) : (
-                  <>
-                    <i className="ri-search-line text-sm" />
-                    Buscar / Cadastrar
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          <p className="text-center text-[11px] text-zinc-400 mt-6">
-            Seus dados ficam salvos para o próximo pedido.
+          <p className="text-center text-[10.5px] text-zinc-400 mt-3">
+            <i className="ri-lock-line mr-0.5" />
+            Seus dados ficam salvos para agilizar o próximo pedido.
           </p>
         </div>
       </div>
