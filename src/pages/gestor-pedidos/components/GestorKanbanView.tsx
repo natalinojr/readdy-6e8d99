@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade } from '@/types/kds';
 import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
-import { printPedidoGestor } from '@/pages/gestor-pedidos/lib/printPedido';
+import { reprintPedidoGestor } from '@/pages/gestor-pedidos/lib/printPedido';
+import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
@@ -384,7 +385,8 @@ function GestorCard({
     }
   };
 
-  const { getImpressoraParaEstacao } = useImpressoras();
+  const { getImpressoraParaEstacao, mapaEstacoes } = useImpressoras();
+  const { user } = useAuth();
   const { settings } = useSystemSettings();
   // Alertas "Avisar o motoboy" (Config. do Delivery): categorias (casadas por nome)
   // e/ou itens (casados por id) presentes neste pedido. Usado no badge do card e na msg.
@@ -406,10 +408,14 @@ function GestorCard({
   const [estimativaMin, setEstimativaMin] = useState('');
 
   const handlePrint = () => {
-    // Imprime no formato do ticket de cozinha (JSON estruturado → agente local
-    // formata em ESC/POS). Enviar HTML cru fazia a térmica imprimir código-fonte.
-    const impressora = getImpressoraParaEstacao(PRINTER_KEY_GESTOR_PEDIDOS);
-    printPedidoGestor(pedido, impressora);
+    // Reimprime o pedido com o MESMO fluxo da chegada: 1 ticket por estação de
+    // cozinha, ticket de bar e (delivery) o comprovante grampeado — via print_queue.
+    reprintPedidoGestor({
+      pedido,
+      tenantId: user?.tenantId ?? '',
+      mapaEstacoes,
+      impressoraFallback: getImpressoraParaEstacao(PRINTER_KEY_GESTOR_PEDIDOS),
+    });
   };
 
   // Validação do modal "Iniciar preparo": horário previsto de ficar pronto =

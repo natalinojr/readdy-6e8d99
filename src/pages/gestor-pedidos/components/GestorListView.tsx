@@ -2,7 +2,8 @@ import { useState, useMemo } from 'react';
 import type { KDSPedido, KDSItem } from '@/types/kds';
 import { formatOrderNumber } from '@/lib/statusMappers';
 import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
-import { printPedidoGestor } from '@/pages/gestor-pedidos/lib/printPedido';
+import { reprintPedidoGestor } from '@/pages/gestor-pedidos/lib/printPedido';
+import { useAuth } from '@/contexts/AuthContext';
 import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
 
 interface Props {
@@ -227,7 +228,8 @@ function RowDetail({ pedido, filtroEstacao, onEntregarItem }: { pedido: KDSPedid
 
 export default function GestorListView({ pedidos, onAvancar, onEmRota, onEntregar, onCancelar, onOpenDetail, onEntregarItem, tick, filtroEstacao }: Props) {
   void tick;
-  const { getImpressoraParaEstacao } = useImpressoras();
+  const { getImpressoraParaEstacao, mapaEstacoes } = useImpressoras();
+  const { user } = useAuth();
   const [fichaItens, setFichaItens] = useState<{ nome: string; quantidade: number; menuItemId?: string }[] | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('tempo');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -261,9 +263,13 @@ export default function GestorListView({ pedidos, onAvancar, onEmRota, onEntrega
   }, [pedidos, sortKey, sortDir]);
 
   const handlePrint = (p: KDSPedido) => {
-    // Ticket no formato da cozinha via agente local (HTML cru saía como código na térmica)
-    const impressora = getImpressoraParaEstacao(PRINTER_KEY_GESTOR_PEDIDOS);
-    printPedidoGestor(p, impressora);
+    // Reimprime com o mesmo fluxo da chegada (tickets por estação + comprovante delivery)
+    reprintPedidoGestor({
+      pedido: p,
+      tenantId: user?.tenantId ?? '',
+      mapaEstacoes,
+      impressoraFallback: getImpressoraParaEstacao(PRINTER_KEY_GESTOR_PEDIDOS),
+    });
   };
 
   function SortTh({ label, col }: { label: string; col: SortKey }) {

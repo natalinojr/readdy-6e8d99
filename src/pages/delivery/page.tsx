@@ -166,6 +166,9 @@ export default function DeliveryPage() {
   // Menu de perfil no header (telefone, histórico, sair)
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
+  // Confirmação de "Sair (usar outro número)" — modal próprio, não window.confirm
+  const [showSairConfirm, setShowSairConfirm] = useState(false);
+
   // Deep link de divulgação de item (?item=<id>): abre o item direto ao carregar
   const [deepLinkItemId, setDeepLinkItemId] = useState<string | null>(function () {
     try { return new URLSearchParams(window.location.search).get('item'); } catch { return null; }
@@ -722,9 +725,7 @@ export default function DeliveryPage() {
                         type="button"
                         onClick={function () {
                           setShowProfileMenu(false);
-                          if (window.confirm('Sair e entrar com outro número? Seu carrinho atual será esvaziado.')) {
-                            data.handleSair();
-                          }
+                          setShowSairConfirm(true);
                         }}
                         className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer transition-colors border-t border-zinc-100"
                       >
@@ -1313,6 +1314,48 @@ export default function DeliveryPage() {
         ) : null}
 
         {/* Modal de seleção de forma de pagamento */}
+        {/* Modal: confirmar saída (trocar de número) */}
+        {showSairConfirm ? (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+            <div
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+              onClick={function () { setShowSairConfirm(false); }}
+            />
+            <div className="relative w-full sm:max-w-sm bg-white rounded-t-3xl sm:rounded-2xl p-6 pb-8 z-10 animate-slide-up">
+              <div className="w-10 h-1.5 bg-zinc-200 rounded-full mx-auto mb-5 sm:hidden" />
+
+              <div className="text-center mb-6">
+                <div className="w-14 h-14 flex items-center justify-center mx-auto mb-3 bg-red-50 rounded-2xl border border-red-100">
+                  <i className="ri-logout-box-r-line text-2xl text-red-500" />
+                </div>
+                <h3 className="text-base font-black text-zinc-800 mb-1">Sair e usar outro número?</h3>
+                <p className="text-xs text-zinc-500 leading-relaxed">
+                  Seus dados deixam de ficar salvos neste aparelho
+                  {cart.length > 0 ? ' e o carrinho atual será esvaziado' : ''}.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={function () { setShowSairConfirm(false); data.handleSair(); }}
+                  className="w-full py-3 rounded-2xl bg-red-500 hover:bg-red-600 text-white text-sm font-black cursor-pointer transition-colors flex items-center justify-center gap-2"
+                >
+                  <i className="ri-logout-box-r-line" />
+                  Sair
+                </button>
+                <button
+                  type="button"
+                  onClick={function () { setShowSairConfirm(false); }}
+                  className="w-full py-3 rounded-2xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-sm font-bold cursor-pointer transition-colors"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {showPagamentoModal ? (() => {
           const subtotalModal = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
           const voucherDescModal = Math.min(data.voucherDesconto || 0, subtotalModal);
