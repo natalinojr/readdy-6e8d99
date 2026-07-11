@@ -159,6 +159,10 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (settingsLoading) return;
     if (!tenantId) return;
+    // CRÍTICO: settings ainda pertencem a outra loja (troca de loja em andamento).
+    // Sincronizar aqui copiaria a config de impressoras da loja anterior — e o
+    // auto-save gravaria essa cópia no banco da loja atual.
+    if (settings.tenant_id !== tenantId) return;
 
     let cfg = settings.printers_config;
     if (!cfg || !cfg.impressoras || !Array.isArray(cfg.impressoras)) {
@@ -258,6 +262,8 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
     // So dispara auto-save apos a inicializacao inicial (evita salvar estado vazio no primeiro render)
     if (!initializedRef.current) return;
     if (!tenantId) return;
+    // Nao salva enquanto as settings em memoria forem de outra loja
+    if (settings.tenant_id !== tenantId) return;
     // Se nao tem nada configurado ainda, nao salva
     if (impressoras.length === 0 && Object.keys(mapaEstacoes).length === 0) return;
 
@@ -293,7 +299,7 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
         clearTimeout(autoSaveTimerRef.current);
       }
     };
-  }, [impressoras, mapaEstacoes, printTemplates, salvar, tenantId]);
+  }, [impressoras, mapaEstacoes, printTemplates, salvar, tenantId, settings.tenant_id]);
 
   const getImpressoraParaEstacao = useCallback(
     (estacao: string): Impressora | undefined => {

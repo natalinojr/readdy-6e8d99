@@ -29,7 +29,7 @@ export default function ModoEntregaDelivery(props: Props) {
   const precisaNome = !isExistingCustomer;
   const nomeOk = customerName.trim().length > 0;
 
-  // Design "Opção 2": grid de seleção + botão "Ver o cardápio"
+  // Design "Opção 2": grid de seleção + botão "Continuar"
   const [modoSel, setModoSel] = useState<'entrega' | 'retirada'>('entrega');
 
   // Iniciais da loja para o "logo" (mesma linguagem do header do cardápio)
@@ -173,8 +173,8 @@ export default function ModoEntregaDelivery(props: Props) {
               </>
             ) : (
               <>
-                <i className="ri-restaurant-2-line" />
-                Ver o cardápio
+                Continuar
+                <i className="ri-arrow-right-line" />
               </>
             )}
           </button>

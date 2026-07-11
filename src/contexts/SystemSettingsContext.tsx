@@ -9,7 +9,7 @@
  * componentes consomem via useSystemSettings() que agora lê do contexto.
  */
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
@@ -184,6 +184,7 @@ const SystemSettingsContext = createContext<SystemSettingsContextValue>({
 function parseRow(data: Record<string, unknown>): SystemSettings {
   return {
     ...DEFAULT_SETTINGS,
+    tenant_id: (data.tenant_id as string) ?? undefined,
     motoboy_alertas: (() => {
       const dc = data.delivery_config as Record<string, unknown> | null | undefined;
       const ma = dc?.motoboy_alertas as { categorias?: unknown; itens?: unknown } | undefined;
@@ -245,10 +246,18 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
   const { kioskSession } = useKioskAuth();
   const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
+  // Tenant cujas settings estão (ou estão sendo) carregadas no estado.
+  // Impede que as settings de uma loja "vazem" para outra ao trocar de loja.
+  const activeTenantRef = useRef<string | null>(null);
 
   const carregar = useCallback(async () => {
     const tenantId = user?.tenantId ?? kioskSession?.tenantId;
     if (!tenantId) { setLoading(false); return; }
+    // Trocou de loja: descarta imediatamente as settings da loja anterior
+    if (activeTenantRef.current !== tenantId) {
+      activeTenantRef.current = tenantId;
+      setSettings({ ...DEFAULT_SETTINGS });
+    }
     setLoading(true);
     try {
       const { data } = await supabase
@@ -256,11 +265,17 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
         .select('*')
         .eq('tenant_id', tenantId)
         .maybeSingle();
-      if (data) setSettings(parseRow(data as Record<string, unknown>));
+      // Resposta chegou depois de nova troca de loja → ignora
+      if (activeTenantRef.current !== tenantId) return;
+      // Sem linha no banco: usa defaults, mas marca o tenant para que os
+      // consumidores (ex.: ImpressorasContext) saibam que a carga terminou.
+      setSettings(data
+        ? parseRow(data as Record<string, unknown>)
+        : { ...DEFAULT_SETTINGS, tenant_id: tenantId });
     } catch (e) {
       console.error('[SystemSettings] load error:', e);
     } finally {
-      setLoading(false);
+      if (activeTenantRef.current === tenantId) setLoading(false);
     }
   }, [user?.tenantId, kioskSession?.tenantId]);
 
@@ -290,10 +305,14 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
         table: 'system_settings',
         filter: `tenant_id=eq.${tenantId}`,
       }, (payload) => {
-        // Atualiza diretamente do payload sem nova query
-        if (payload.new) {
-          setSettings(parseRow(payload.new as Record<string, unknown>));
-        } else {
+        // Atualiza diretamente do payload sem nova query.
+        // Ignora eventos de canal antigo entregues após troca de loja.
+        const row = payload.new as Record<string, unknown> | undefined;
+        if (row && row.tenant_id === tenantId) {
+          if (activeTenantRef.current === tenantId) {
+            setSettings(parseRow(row));
+          }
+        } else if (!row) {
           carregar();
         }
       })
