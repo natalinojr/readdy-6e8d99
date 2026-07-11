@@ -25,6 +25,18 @@ Deno.serve(async (req) => {
 
     if (!tenant_id) return new Response(JSON.stringify({ error: 'tenant_id required' }), { status: 400, headers: corsHeaders });
 
+    // Valida que o usuario pertence ao tenant informado (antes qualquer
+    // usuario autenticado podia escrever em qualquer tenant via service role)
+    const { data: membership } = await supabase
+      .from('user_tenants')
+      .select('tenant_id')
+      .eq('user_id', user.id)
+      .eq('tenant_id', tenant_id)
+      .maybeSingle();
+    if (!membership) {
+      return new Response(JSON.stringify({ error: 'Usuario nao pertence ao tenant informado' }), { status: 403, headers: corsHeaders });
+    }
+
     let result;
 
     switch (action) {
@@ -188,26 +200,35 @@ Deno.serve(async (req) => {
 
           for (const item of items as Array<Record<string, unknown>>) {
             if (item.ingredient_id) {
-              const stockQty = Number(item.quantity ?? 0);
-              await supabase.from('stock_movements').insert({
-                tenant_id, ingredient_id: item.ingredient_id, type: 'in', quantity: stockQty,
-                reason: `Compra: ${purchase.supplier} - NF ${purchase.invoice_number || 'S/N'}`, operator_id: user.id,
+              // quantity vem em UNIDADES DE COMPRA (caixa/fardo); units_per_package
+              // converte para unidades de estoque (contrato exibido na UI da compra:
+              // "qty x upp = total unid."). Antes entrava a quantidade crua.
+              const purchaseQty = Number(item.quantity ?? 0);
+              const unitsPerPkg = Number(item.units_per_package ?? item.purchase_factor ?? 1) || 1;
+              const stockQty = purchaseQty * (unitsPerPkg > 1 ? unitsPerPkg : 1);
+
+              // Movimentacao via RPC (insere movimento + atualiza current_stock
+              // atomicamente — antes era insert direto + read-modify-write racy)
+              const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
+                p_tenant_id: tenant_id, p_ingredient_id: item.ingredient_id,
+                p_type: 'in', p_quantity: stockQty, p_unit: null,
+                p_reason: `Compra: ${purchase.supplier} - NF ${purchase.invoice_number || 'S/N'}`,
+                p_notes: null, p_order_id: null, p_operator_id: user.id, p_batch_id: null,
               });
-              const { data: ing } = await supabase.from('ingredients').select('current_stock, supplier, supplier_id').eq('id', item.ingredient_id).single();
-              if (ing) {
-                const updatePayload: Record<string, unknown> = { current_stock: (ing.current_stock || 0) + stockQty };
-                if (purchase.supplier) updatePayload.supplier = purchase.supplier;
-                if (supplierRecord?.id) updatePayload.supplier_id = supplierRecord.id;
-                await supabase.from('ingredients').update(updatePayload).eq('id', item.ingredient_id);
+              if (mvErr) console.error('[purchase-write] create_purchase fn_add_stock_movement error:', mvErr.message ?? mvErr);
+
+              const supplierPayload: Record<string, unknown> = {};
+              if (purchase.supplier) supplierPayload.supplier = purchase.supplier;
+              if (supplierRecord?.id) supplierPayload.supplier_id = supplierRecord.id;
+              if (Object.keys(supplierPayload).length > 0) {
+                await supabase.from('ingredients').update(supplierPayload).eq('id', item.ingredient_id).eq('tenant_id', tenant_id);
               }
 
-              // Custo unitário real = (total_price + freight_allocated) / quantity
-              // quantity já é a quantidade em unidades de estoque (convertida no frontend)
+              // Custo por UNIDADE DE ESTOQUE = (total + frete) / (qty x upp)
               const itemTotalPrice = Number(item.total_price ?? 0);
               const freightAllocated = Number(item.freight_allocated ?? 0);
               const totalWithFreight = itemTotalPrice + freightAllocated;
-              const qty = Number(item.quantity ?? 1);
-              const realUnitPrice = qty > 0 ? totalWithFreight / qty : Number(item.unit_price ?? 0);
+              const realUnitPrice = stockQty > 0 ? totalWithFreight / stockQty : Number(item.unit_price ?? 0);
 
               if (realUnitPrice > 0) {
                 await supabase.rpc('fn_update_ingredient_price_from_purchase', {
@@ -318,46 +339,9 @@ Deno.serve(async (req) => {
         const confirmedAt = new Date().toISOString();
         await supabase.from('fin_purchases').update({ delivery_confirmed_at: confirmedAt, delivery_notes: delivery_notes || null }).eq('id', purchase_id).eq('tenant_id', tenant_id);
 
-        let supplierRecord: { id: string } | null = null;
-        if (purchase.supplier) {
-          const { data: sup } = await supabase.from('fin_suppliers').select('id').eq('tenant_id', tenant_id).ilike('name', purchase.supplier.trim()).maybeSingle();
-          supplierRecord = sup;
-        }
-
-        const items = (purchase.items ?? []) as Array<Record<string, unknown>>;
-        for (const item of items) {
-          if (item.ingredient_id) {
-            const stockQty = Number(item.quantity ?? 0);
-            await supabase.from('stock_movements').insert({
-              tenant_id, ingredient_id: item.ingredient_id, type: 'in', quantity: stockQty,
-              reason: `Recebimento confirmado: ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`,
-              operator_id: user.id,
-            });
-            const { data: ing } = await supabase.from('ingredients').select('current_stock, supplier, supplier_id').eq('id', item.ingredient_id).single();
-            if (ing) {
-              const updatePayload: Record<string, unknown> = { current_stock: (ing.current_stock || 0) + stockQty };
-              if (purchase.supplier) updatePayload.supplier = purchase.supplier;
-              if (supplierRecord?.id) updatePayload.supplier_id = supplierRecord.id;
-              await supabase.from('ingredients').update(updatePayload).eq('id', item.ingredient_id);
-            }
-
-            // Custo unitário real com frete rateado
-            // quantity já é a quantidade em unidades de estoque (não precisa multiplicar por units_per_package)
-            const itemTotalPrice = Number(item.total_price ?? 0);
-            const freightAllocated = Number(item.freight_allocated ?? 0);
-            const totalWithFreight = itemTotalPrice + freightAllocated;
-            const qty = Number(item.quantity ?? 1);
-            const realUnitPrice = qty > 0 ? totalWithFreight / qty : Number(item.unit_price ?? 0);
-
-            if (realUnitPrice > 0) {
-              await supabase.rpc('fn_update_ingredient_price_from_purchase', {
-                p_ingredient_id: item.ingredient_id, p_tenant_id: tenant_id,
-                p_purchase_unit_price: realUnitPrice,
-                p_purchase_date: purchase.purchase_date,
-              });
-            }
-          }
-        }
+        // O estoque entra na CRIACAO da compra (create_purchase). Confirmar o
+        // recebimento aqui nao repete a entrada — o fluxo com ajuste de
+        // quantidades recebidas e o edge purchase-confirm-delivery.
 
         await supabase.from('fin_accounts_payable').update({ delivery_confirmed: true, delivery_confirmed_at: confirmedAt })
           .eq('reference_id', purchase_id).eq('tenant_id', tenant_id).neq('status', 'paid');
@@ -383,27 +367,23 @@ Deno.serve(async (req) => {
         const purchaseItems = (purchase.items ?? []) as Array<Record<string, unknown>>;
         for (const item of purchaseItems) {
           if (item.ingredient_id) {
-            const stockQty = Number(item.quantity ?? 0);
+            const purchaseQty = Number(item.quantity ?? 0);
+            const unitsPerPkg = Number(item.units_per_package ?? 1) || 1;
+            const stockQty = purchaseQty * (unitsPerPkg > 1 ? unitsPerPkg : 1);
             if (stockQty > 0) {
-              await supabase.from('stock_movements').insert({
-                tenant_id,
-                ingredient_id: item.ingredient_id,
-                type: 'out',
-                quantity: stockQty,
-                reason: `Estorno de compra excluída: ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`,
-                operator_id: user.id,
+              // Estorno via RPC. O tipo antigo 'out' nao existe no enum
+              // stock_movement_type — o insert falhava silenciosamente e o
+              // estorno ficava sem registro de movimento.
+              const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
+                p_tenant_id: tenant_id,
+                p_ingredient_id: item.ingredient_id,
+                p_type: 'manual_out',
+                p_quantity: stockQty,
+                p_unit: null,
+                p_reason: `Estorno de compra excluída: ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`,
+                p_notes: null, p_order_id: null, p_operator_id: user.id, p_batch_id: null,
               });
-
-              const { data: ing } = await supabase
-                .from('ingredients')
-                .select('current_stock')
-                .eq('id', item.ingredient_id)
-                .maybeSingle();
-
-              if (ing) {
-                const newStock = Math.max(0, (ing.current_stock || 0) - stockQty);
-                await supabase.from('ingredients').update({ current_stock: newStock }).eq('id', item.ingredient_id);
-              }
+              if (mvErr) console.error('[purchase-write] delete_purchase estorno error:', mvErr.message ?? mvErr);
             }
           }
         }

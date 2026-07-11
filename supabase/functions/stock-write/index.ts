@@ -320,69 +320,28 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const { items, operator_id, operator_name } = body;
       if (!Array.isArray(items)) throw new Error('items must be array');
 
-      const comDiferenca = items.filter((i: {diferenca: number}) => i.diferenca !== 0);
-      const valorAjuste = body.valor_ajuste_liquido ?? 0;
-
-      // Registrar movimentos de ajuste para itens com diferença
-      // Suporta tanto camelCase (insumoId, qtdContada) quanto snake_case (ingredient_id, qtd_contada)
-      // BUG-31: Passa diferença COM SINAL (negativo = perda, positivo = ganho)
-      // para que fn_add_stock_movement registre a direção correta do ajuste
-      for (const item of items) {
-        if (item.diferenca === 0) continue;
-        const ingredientId = item.insumoId ?? item.ingredient_id;
-        const { error: rpcErr } = await admin.rpc('fn_add_stock_movement', {
-          p_tenant_id: tenantId,
-          p_ingredient_id: ingredientId,
-          p_type: 'inventory_adjustment',
-          p_quantity: item.diferenca,
-          p_unit: null,
-          p_reason: item.reason ?? 'Ajuste de Inventario',
-          p_notes: null,
-          p_order_id: null,
-          p_operator_id: operator_id ?? user.id,
-          p_batch_id: null,
-        });
-        if (rpcErr) console.error('[stock-write] confirm_inventory fn_add_stock_movement error:', extractErrorMessage(rpcErr));
+      // RPC transacional: recalcula o delta contra o estoque VIVO (FOR UPDATE),
+      // grava movimentos + sessao numa unica transacao e numera via MAX+1 sob
+      // advisory lock. Substitui os dois loops nao-atomicos que sobrescreviam
+      // current_stock com snapshot velho do front.
+      const { data: rpcData, error: rpcErr } = await admin.rpc('fn_confirm_inventory', {
+        p_tenant_id: tenantId,
+        p_operator_id: operator_id ?? user.id,
+        p_operator_name: operator_name ?? 'Operador',
+        p_items: items,
+      });
+      if (rpcErr) throw new Error(extractErrorMessage(rpcErr));
+      const result = rpcData as Record<string, unknown> | null;
+      if (!result || result.success !== true) {
+        throw new Error((result?.error as string) ?? 'Falha ao confirmar inventario');
       }
 
-      // Atualizar estoque atual de todos os itens contados
-      for (const item of items) {
-        const ingredientId = item.insumoId ?? item.ingredient_id;
-        const qtdContada = item.qtdContada ?? item.qtd_contada;
-        const { error: updErr } = await admin
-          .from('ingredients')
-          .update({ current_stock: qtdContada, updated_at: new Date().toISOString() })
-          .eq('id', ingredientId)
-          .eq('tenant_id', tenantId);
-        if (updErr) console.error('[stock-write] confirm_inventory update error:', extractErrorMessage(updErr));
-      }
-
-      try {
-        const { data: countData, error: countErr } = await admin.rpc('fn_get_inventory_sessions', {
-          p_tenant_id: tenantId,
-          p_limit: 1000,
-        });
-        if (countErr) console.error('[stock-write] confirm_inventory fn_get_inventory_sessions count error:', extractErrorMessage(countErr));
-        const sessionCount = Array.isArray(countData) ? countData.length : 0;
-        const numero = sessionCount + 1;
-
-        const { data: insertData, error: sessionErr } = await admin.rpc('fn_insert_inventory_session', {
-          p_tenant_id: tenantId,
-          p_numero: numero,
-          p_operator_name: operator_name ?? 'Operador',
-          p_status: 'confirmado',
-          p_itens_contados: items.length,
-          p_itens_com_diferenca: comDiferenca.length,
-          p_valor_ajuste_liquido: valorAjuste,
-          p_items: items,
-        });
-        if (sessionErr) console.error('[stock-write] confirm_inventory fn_insert_inventory_session error:', extractErrorMessage(sessionErr));
-        else console.log('[stock-write] confirm_inventory session inserted id:', insertData);
-      } catch (e) {
-        console.error('[stock-write] confirm_inventory inventory_sessions insert error:', extractErrorMessage(e));
-      }
-
-      return new Response(JSON.stringify({ ok: true, adjusted: comDiferenca.length }), {
+      return new Response(JSON.stringify({
+        ok: true,
+        adjusted: result.adjusted ?? 0,
+        numero: result.numero ?? null,
+        valor_ajuste_liquido: result.valor_ajuste_liquido ?? 0,
+      }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }

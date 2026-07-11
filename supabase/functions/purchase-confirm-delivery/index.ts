@@ -25,6 +25,18 @@ Deno.serve(async (req) => {
 
     if (!tenant_id) return new Response(JSON.stringify({ error: 'tenant_id required' }), { status: 400, headers: corsHeaders });
 
+    // Valida que o usuario pertence ao tenant informado (antes qualquer
+    // usuario autenticado podia confirmar recebimentos de qualquer tenant)
+    const { data: membership } = await supabase
+      .from('user_tenants')
+      .select('tenant_id')
+      .eq('user_id', user.id)
+      .eq('tenant_id', tenant_id)
+      .maybeSingle();
+    if (!membership) {
+      return new Response(JSON.stringify({ error: 'Usuario nao pertence ao tenant informado' }), { status: 403, headers: corsHeaders });
+    }
+
     const { purchase_id, delivery_notes, received_items } = payload;
     if (!purchase_id) return new Response(JSON.stringify({ error: 'purchase_id required' }), { status: 400, headers: corsHeaders });
 
@@ -81,29 +93,42 @@ Deno.serve(async (req) => {
       newTotalAmount += receivedTotal;
 
       if (item.ingredient_id) {
-        const stockQty = receivedQty;
-        await supabase.from('stock_movements').insert({
-          tenant_id,
-          ingredient_id: item.ingredient_id,
-          type: 'in',
-          quantity: stockQty,
-          reason: `Recebimento confirmado: ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`,
-          operator_id: user.id,
-        });
+        // O estoque ja entrou por completo na CRIACAO da compra (purchase-write
+        // create_purchase). Aqui aplicamos apenas o DELTA entre o recebido e o
+        // pedido — antes a entrada era repetida por inteiro (dupla contagem).
+        // quantity/received_quantity estao em unidades de COMPRA; units_per_package
+        // converte para unidades de estoque.
+        const unitsPerPkg = Number(item.units_per_package ?? 1) || 1;
+        const factor = unitsPerPkg > 1 ? unitsPerPkg : 1;
+        const deltaStock = (receivedQty - originalQty) * factor;
 
-        const { data: ing } = await supabase.from('ingredients').select('current_stock, supplier, supplier_id').eq('id', item.ingredient_id).single();
-        if (ing) {
-          const updatePayload: Record<string, unknown> = { current_stock: (ing.current_stock || 0) + stockQty };
-          if (purchase.supplier) updatePayload.supplier = purchase.supplier;
-          if (supplierRecord?.id) updatePayload.supplier_id = supplierRecord.id;
-          await supabase.from('ingredients').update(updatePayload).eq('id', item.ingredient_id);
+        if (deltaStock !== 0) {
+          const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
+            p_tenant_id: tenant_id,
+            p_ingredient_id: item.ingredient_id,
+            p_type: deltaStock > 0 ? 'in' : 'manual_out',
+            p_quantity: Math.abs(deltaStock),
+            p_unit: null,
+            p_reason: `Ajuste no recebimento: ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`,
+            p_notes: `recebido=${receivedQty} pedido=${originalQty} upp=${factor}`,
+            p_order_id: null,
+            p_operator_id: user.id,
+            p_batch_id: null,
+          });
+          if (mvErr) console.error('[purchase-confirm-delivery] ajuste fn_add_stock_movement error:', mvErr.message ?? mvErr);
         }
 
-        // Custo unitário real com frete rateado baseado na quantidade RECEBIDA
+        const supplierPayload: Record<string, unknown> = {};
+        if (purchase.supplier) supplierPayload.supplier = purchase.supplier;
+        if (supplierRecord?.id) supplierPayload.supplier_id = supplierRecord.id;
+        if (Object.keys(supplierPayload).length > 0) {
+          await supabase.from('ingredients').update(supplierPayload).eq('id', item.ingredient_id).eq('tenant_id', tenant_id);
+        }
+
+        // Custo por UNIDADE DE ESTOQUE com frete rateado, baseado no RECEBIDO
         const freightAllocated = Number(item.freight_allocated ?? 0);
         const totalWithFreight = receivedTotal + freightAllocated;
-        const unitsPerPkg = Number(item.units_per_package ?? 1);
-        const totalUnits = stockQty * (unitsPerPkg > 1 ? unitsPerPkg : 1);
+        const totalUnits = receivedQty * factor;
         const realUnitPrice = totalUnits > 0 ? totalWithFreight / totalUnits : unitPrice;
 
         if (realUnitPrice > 0) {
