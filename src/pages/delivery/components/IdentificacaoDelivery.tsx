@@ -6,6 +6,8 @@ interface Props {
   error: string;
   city?: string;
   tenantName?: string;
+  /** Volta para a vitrine/cardápio (quando o cliente chegou pela tela de preview). */
+  onVoltar?: () => void;
 }
 
 export default function IdentificacaoDelivery(props: Props) {
@@ -85,6 +87,17 @@ export default function IdentificacaoDelivery(props: Props) {
         <div className="absolute inset-x-0 top-0 h-40 pointer-events-none" style={{ background: 'linear-gradient(to bottom, rgba(245,158,11,0.15), transparent)' }} />
 
         <div className="w-full max-w-sm relative z-10">
+          {props.onVoltar ? (
+            <button
+              type="button"
+              onClick={props.onVoltar}
+              className="inline-flex items-center gap-1 text-sm font-bold text-zinc-600 hover:text-zinc-800 cursor-pointer mb-4 transition-colors whitespace-nowrap"
+            >
+              <i className="ri-arrow-left-s-line text-lg" />
+              Voltar ao cardápio
+            </button>
+          ) : null}
+
           <div className="flex items-center gap-3 mb-10 lg:hidden">
             <div className="w-9 h-9 flex items-center justify-center bg-amber-500 rounded-xl">
               <i className="ri-motorbike-line text-zinc-950 text-base" />

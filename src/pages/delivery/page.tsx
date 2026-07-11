@@ -316,6 +316,7 @@ export default function DeliveryPage() {
         error={error}
         city={city}
         tenantName={tenant?.name}
+        onVoltar={function () { data.setStep('preview'); }}
       />
     );
   }
@@ -457,6 +458,146 @@ export default function DeliveryPage() {
         modoEntrega={modoEntrega}
         resumo={data.resumoConfirmacao}
       />
+    );
+  }
+
+  // ── Vitrine (preview) ──
+  // Primeira tela para tráfego novo (anúncio): mostra o cardápio real e deixa
+  // montar o carrinho ANTES de pedir telefone/endereço. O carrinho persiste;
+  // ao "Continuar", cai no fluxo de identificação e depois no cardápio normal.
+  if (step === 'preview') {
+    const subtotalPreview = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
+    return (
+      <div className="min-h-screen bg-white flex justify-center">
+        <div className="w-full max-w-lg h-dvh flex flex-col bg-white relative">
+          {/* Banner: delivery fechado */}
+          {!data.deliveryOpenNow && (
+            <div className="shrink-0 bg-red-500 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-semibold text-center">
+              <i className="ri-store-2-line text-base shrink-0" />
+              <span>{
+                data.deliveryClosedReason === 'fora_horario' ? 'Estamos fora do horário de funcionamento. Volte mais tarde!'
+                : data.deliveryClosedReason === 'pausado' ? 'A loja está temporariamente pausada. Volte em instantes!'
+                : 'A loja está fechada para pedidos no momento.'
+              }</span>
+            </div>
+          )}
+
+          {/* Header enxuto: marca da loja + status + entrar */}
+          <div className="shrink-0">
+            <div className="relative bg-gradient-to-br from-amber-500 via-orange-500 to-orange-600 px-4 pt-5 pb-5">
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{ background: 'radial-gradient(circle at 85% -20%, rgba(255,255,255,.25), transparent 45%)' }}
+              />
+              <div className="relative flex items-center gap-3">
+                <div className="w-11 h-11 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0">
+                  <span className="text-orange-600 font-black text-base">{lojaIniciais}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h1 className="text-white text-base font-black leading-tight truncate">{tenant?.name || 'Delivery'}</h1>
+                  <p className="text-white/85 text-[11px] mt-0.5 flex items-center gap-1.5 min-w-0">
+                    {data.deliveryOpenNow ? (
+                      <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 bg-white/20 rounded-full font-bold text-[10px] text-white">
+                        <span className="w-1.5 h-1.5 bg-green-300 rounded-full" />
+                        Aberto
+                      </span>
+                    ) : (
+                      <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 bg-black/20 rounded-full font-bold text-[10px] text-white">
+                        <span className="w-1.5 h-1.5 bg-red-400 rounded-full" />
+                        Fechado
+                      </span>
+                    )}
+                    <span className="truncate">Cardápio · peça em minutos</span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={function () { data.setStep('identificacao'); }}
+                  className="shrink-0 inline-flex items-center gap-1 px-3 h-9 bg-white/20 hover:bg-white/30 border border-white/25 rounded-xl text-white text-xs font-bold cursor-pointer transition-colors"
+                  title="Já sou cliente"
+                >
+                  <i className="ri-user-3-line text-[15px]" />
+                  Entrar
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Categorias sticky */}
+          <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-zinc-100 shrink-0">
+            <div className="flex items-center gap-2 px-4 py-3 overflow-x-auto scrollbar-hide">
+              {categories.map(function (cat) {
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={function () { scrollToCategoria(cat.id); }}
+                    className={'shrink-0 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap cursor-pointer transition-all duration-200 ' +
+                      (categoriaAtiva === cat.id
+                        ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-sm'
+                        : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/60')
+                    }
+                  >
+                    {cat.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Cardápio (montar carrinho já funciona) */}
+          <div className="flex-1 overflow-y-auto">
+            <CardapioMesaQR
+              categoriaAtiva={categoriaAtiva}
+              categories={categories}
+              items={items}
+              optionGroups={optionGroups}
+              options={options}
+              observations={observations}
+              outOfStockIds={outOfStockIds}
+              opcoesIndisponiveisIds={opcoesIndisponiveisIds}
+              onAdicionar={handleAdicionar}
+              onVerCarrinho={function () { data.setStep('identificacao'); }}
+              cart={cart}
+              onCategoriaAtivaChange={handleCategoriaAtivaChange}
+              deepLinkItemId={deepLinkItemId}
+              onDeepLinkConsumed={handleDeepLinkConsumed}
+            />
+          </div>
+
+          {/* Barra de continuar / dica */}
+          {cart.length > 0 ? (
+            <div className="shrink-0 bg-white border-t border-zinc-100 px-4 py-3 z-30">
+              <button
+                type="button"
+                onClick={function () { data.setStep('identificacao'); }}
+                className="w-full flex items-center justify-between gap-2 px-4 py-3 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold rounded-xl cursor-pointer transition-colors"
+              >
+                <span className="flex items-center gap-2 text-sm">
+                  <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1 bg-zinc-900 text-white text-xs font-black rounded-full">
+                    {totalItens}
+                  </span>
+                  Continuar pedido
+                </span>
+                <span className="flex items-center gap-1 text-sm">
+                  R$ {subtotalPreview.toFixed(2)}
+                  <i className="ri-arrow-right-line text-base" />
+                </span>
+              </button>
+              <p className="text-center text-[10px] text-zinc-400 mt-1.5">
+                Você informa telefone e endereço no próximo passo.
+              </p>
+            </div>
+          ) : (
+            <div className="shrink-0 bg-white border-t border-zinc-100 px-4 py-3 text-center z-30">
+              <p className="text-xs text-zinc-400 flex items-center justify-center gap-1.5">
+                <i className="ri-hand-heart-line text-amber-500" />
+                Toque num item para começar seu pedido
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
     );
   }
 

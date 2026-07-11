@@ -151,7 +151,7 @@ export type CartItem = {
   subproducao?: Array<{ nome: string; estacaoId: string }>;
 };
 
-type Step = 'loading' | 'identificacao' | 'modo_entrega' | 'endereco' | 'cardapio' | 'confirmacao' | 'erro_config';
+type Step = 'loading' | 'preview' | 'identificacao' | 'modo_entrega' | 'endereco' | 'cardapio' | 'confirmacao' | 'erro_config';
 
 type Highlight = {
   id: string;
@@ -763,7 +763,10 @@ export function useDeliveryData(storeSlug?: string) {
           }
         }
 
-        setStep('identificacao');
+        // Tráfego novo (sem telefone salvo ou lookup falhou): mostra o cardápio
+        // primeiro (vitrine). O telefone só é pedido no checkout — quem vem de
+        // anúncio quer ver comida/preço antes de cadastrar, senão abandona.
+        setStep('preview');
       } catch (err) {
         if (!cancelled) {
           setErrorMsg(err instanceof Error ? err.message : 'Erro ao carregar configuração');
