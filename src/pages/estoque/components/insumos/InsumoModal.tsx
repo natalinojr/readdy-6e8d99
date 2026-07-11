@@ -76,7 +76,7 @@ export default function InsumoModal({ insumo, categoriasDisponiveis, onClose, on
       estoqueMinimo: parseFloat(estoqueMinimo.replace(',', '.')) || 0,
       purchaseUnit: usePurchaseUnit ? purchaseUnit.trim() : null,
       purchaseFactor: usePurchaseUnit ? (parseFloat(purchaseFactor) || 1) : 1,
-      dreCategoryId: null,
+      dreCategoryId: insumo?.dreCategoryId ?? null,
     });
     onClose();
   };

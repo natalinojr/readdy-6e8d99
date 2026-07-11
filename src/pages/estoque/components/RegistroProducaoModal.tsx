@@ -76,8 +76,13 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
   const fatorEscala = useMemo(() => {
     const prod = Number(producedQty);
     if (prod <= 0 || isNaN(prod)) return 1;
-    return prod;
-  }, [producedQty]);
+    // A ficha define insumos para produzir 1 recipe.unit. A quantidade digitada
+    // está em producedUnit — sem normalizar, digitar 10 kg e trocar o select
+    // para g virava fator 10000 (baixa de insumos ×1000).
+    if (!recipe || producedUnit === recipe.unit) return prod;
+    const normalizado = convertUnit(prod, producedUnit, recipe.unit);
+    return normalizado !== null && normalizado > 0 ? normalizado : prod;
+  }, [producedQty, producedUnit, recipe]);
 
   /** quantitiesUsed sempre recalculado da ficha — nunca do draft */
   const [quantitiesUsed, setQuantitiesUsed] = useState<Record<string, number>>(() => {
@@ -116,12 +121,12 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
       const next: Record<string, number> = { ...prev };
       recipe.items.forEach((it) => {
         if (manualOverrides.has(it.ingredientId)) return;
-        const totalQty = it.quantity * prod;
+        const totalQty = it.quantity * fatorEscala;
         next[it.ingredientId] = Number(totalQty.toFixed(4));
       });
       return next;
     });
-  }, [producedQty, recipe, manualOverrides]);
+  }, [producedQty, recipe, manualOverrides, fatorEscala]);
 
   // Auto-salva rascunho a cada mudanca (apenas dados de producao, NAO quantitiesUsed)
   useEffect(() => {

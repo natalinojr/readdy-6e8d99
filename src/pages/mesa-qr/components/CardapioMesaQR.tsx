@@ -80,6 +80,8 @@ interface Props {
   onVerCarrinho: () => void;
   /** Ajusta a quantidade de uma linha do carrinho (habilita o stepper −/+ no card do item). */
   onAlterarQtd?: (cartId: string, delta: number) => void;
+  /** Remove uma linha do carrinho — necessário p/ editar (tocar num item já no carrinho). */
+  onRemover?: (cartId: string) => void;
   cart: CartItem[];
   onCategoriaAtivaChange?: (id: string) => void;
   /** ID de item vindo de link de divulgação (?item=): abre o item direto ao carregar. */
@@ -109,6 +111,9 @@ export default function CardapioMesaQR(props: Props) {
   const [imgErros, setImgErros] = useState<Set<string>>(new Set());
   const [modalVisible, setModalVisible] = useState(false);
   const [tentouAdicionar, setTentouAdicionar] = useState(false);
+  // Linhas do carrinho que o modal está EDITando (vazio = modo "adicionar novo").
+  // Ao confirmar em modo edição, essas linhas são removidas e recriadas.
+  const [editingCartIds, setEditingCartIds] = useState<string[]>([]);
   const kbInset = useKeyboardInset();
 
   // ── Mapa de quantidades no carrinho por itemId ──────────────────────────────
@@ -251,21 +256,69 @@ export default function CardapioMesaQR(props: Props) {
     return total;
   }
 
+  // Reconstrói as UnidadeConfig a partir das linhas do carrinho de um item,
+  // expandindo `quantidade` (linha com qtd 3 → 3 unidades editáveis).
+  function unidadesFromCart(itemId: string): { unidades: UnidadeConfig[]; cartIds: string[] } {
+    const linhas = cart.filter(function (c) { return c.itemId === itemId; });
+    const arr: UnidadeConfig[] = [];
+    linhas.forEach(function (l) {
+      const opcoesSelecionadas: Record<string, string[]> = {};
+      l.opcoes.forEach(function (o) {
+        if (!o.opcaoId) return;
+        const op = options.find(function (x) { return x.id === o.opcaoId; });
+        const grupoId = op ? op.option_group_id : null;
+        if (!grupoId) return;
+        if (!opcoesSelecionadas[grupoId]) opcoesSelecionadas[grupoId] = [];
+        opcoesSelecionadas[grupoId].push(o.opcaoId);
+      });
+      const cfg: UnidadeConfig = {
+        opcoesSelecionadas,
+        obsSelecionadas: l.observacoes.slice(),
+        obsLivre: l.observacaoLivre || '',
+      };
+      const n = Math.max(1, l.quantidade);
+      for (let k = 0; k < n; k++) {
+        // Cópia por unidade (não compartilhar referência de arrays/objetos)
+        arr.push({
+          opcoesSelecionadas: Object.keys(opcoesSelecionadas).reduce(function (acc, gid) {
+            acc[gid] = opcoesSelecionadas[gid].slice();
+            return acc;
+          }, {} as Record<string, string[]>),
+          obsSelecionadas: cfg.obsSelecionadas.slice(),
+          obsLivre: cfg.obsLivre,
+        });
+      }
+    });
+    return { unidades: arr, cartIds: linhas.map(function (l) { return l.cartId; }) };
+  }
+
   function abrirModal(item: CardapioItem) {
     // Sempre abre o modal — mesmo item sem opções/observações pré-configuradas.
     // O modal tem o campo "Outra observação" livre, então todo item aceita
-    // observação (ex.: "sem cebola" num item simples). Antes, item simples era
-    // adicionado direto e o cliente não tinha onde escrever.
+    // observação (ex.: "sem cebola" num item simples).
     setItemSelecionado(item);
-    setQtd(1);
     setUnidadeAtiva(0);
-    setUnidades([{ opcoesSelecionadas: {}, obsSelecionadas: [], obsLivre: '' }]);
     setTentouAdicionar(false);
+
+    // Item JÁ no carrinho → abre em modo EDIÇÃO: carrega quantidade e
+    // configuração atuais; ao confirmar, as linhas antigas são substituídas.
+    // (Só se o pai fornece onRemover; senão, comportamento antigo de "adicionar".)
+    const rebuilt = props.onRemover ? unidadesFromCart(item.id) : { unidades: [], cartIds: [] };
+    if (rebuilt.unidades.length > 0) {
+      setUnidades(rebuilt.unidades);
+      setQtd(rebuilt.unidades.length);
+      setEditingCartIds(rebuilt.cartIds);
+    } else {
+      setUnidades([{ opcoesSelecionadas: {}, obsSelecionadas: [], obsLivre: '' }]);
+      setQtd(1);
+      setEditingCartIds([]);
+    }
     setModalVisible(true);
   }
 
   function fecharModal() {
     setModalVisible(false);
+    setEditingCartIds([]);
     setTimeout(function () {
       setItemSelecionado(null);
       setUnidades([{ opcoesSelecionadas: {}, obsSelecionadas: [], obsLivre: '' }]);
@@ -292,6 +345,7 @@ export default function CardapioMesaQR(props: Props) {
     setQtd(1);
     setUnidadeAtiva(0);
     setUnidades([{ opcoesSelecionadas: {}, obsSelecionadas: [], obsLivre: '' }]);
+    setEditingCartIds([]);
     setTentouAdicionar(false);
     setModalVisible(true);
   }, [props.deepLinkItemId, items, onCategoriaAtivaChange]);
@@ -402,6 +456,12 @@ export default function CardapioMesaQR(props: Props) {
         setUnidadeAtiva(i);
         return;
       }
+    }
+
+    // Modo edição: remove as linhas antigas deste item antes de recriar
+    // (evita duplicar — era o bug: item já no carrinho somava em vez de editar).
+    if (editingCartIds.length > 0 && props.onRemover) {
+      editingCartIds.forEach(function (id) { props.onRemover!(id); });
     }
 
     const now = Date.now();
@@ -899,8 +959,12 @@ export default function CardapioMesaQR(props: Props) {
                 className="w-full flex items-center justify-between bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-5 py-3.5 rounded-xl cursor-pointer transition-all"
               >
                 <div className="flex items-center gap-2">
-                  <i className="ri-add-line text-sm" />
-                  <span className="text-sm font-bold">{qtd > 1 ? 'Adicionar ' + qtd + ' unidades' : 'Adicionar ao pedido'}</span>
+                  <i className={(editingCartIds.length > 0 ? 'ri-check-line' : 'ri-add-line') + ' text-sm'} />
+                  <span className="text-sm font-bold">{
+                    editingCartIds.length > 0
+                      ? (qtd > 1 ? 'Atualizar ' + qtd + ' unidades' : 'Atualizar item')
+                      : (qtd > 1 ? 'Adicionar ' + qtd + ' unidades' : 'Adicionar ao pedido')
+                  }</span>
                 </div>
                 <span className="text-sm font-bold">
                   R$ {calcularPrecoTotal().toFixed(2)}

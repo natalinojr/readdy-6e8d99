@@ -221,6 +221,7 @@ export default function MesaQRPage() {
               opcoesIndisponiveisIds={opcoesIndisponiveisIds}
               onAdicionar={handleAdicionar}
               onAlterarQtd={handleAlterarQtd}
+              onRemover={handleRemover}
               onVerCarrinho={function () { data.setShowCart(true); }}
               cart={cart}
               onCategoriaAtivaChange={handleCategoriaAtivaChange}

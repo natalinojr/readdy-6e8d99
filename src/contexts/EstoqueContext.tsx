@@ -704,21 +704,27 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     const isNew = !insumo.id;
     const existing = insumo.id ? insumos.find((i) => i.id === insumo.id) : null;
 
-    const body = {
+    // Campo ausente no body = stock-write preserva o valor atual do banco.
+    // current_stock NUNCA é enviado em edição: estoque só muda por movimentação
+    // (fn_add_stock_movement) ou inventário — antes, editar um insumo zerava o estoque.
+    const body: Record<string, unknown> = {
       action: 'upsert_ingredient',
       tenant_id: user.tenantId,
       id: insumo.id ?? null,
       name: insumo.nome,
-      unit: FRONT_UNIT_MAP[insumo.unidade ?? 'un'] ?? 'unit',
-      unit_price: insumo.precoUnitario ?? 0,
-      price_source: insumo.priceSource ?? 'manual',
-      min_stock: insumo.estoqueMinimo ?? 0,
-      current_stock: insumo.estoqueAtual ?? 0,
-      category: insumo.categoria ?? '',
-      purchase_unit: insumo.purchaseUnit ?? null,
-      purchase_factor: insumo.purchaseFactor ?? 1,
-      usage_type: insumo.usageType ?? 'final',
     };
+    if (insumo.unidade !== undefined || isNew) body.unit = FRONT_UNIT_MAP[insumo.unidade ?? 'un'] ?? 'unit';
+    if (insumo.precoUnitario !== undefined || isNew) body.unit_price = insumo.precoUnitario ?? 0;
+    if (insumo.priceSource !== undefined || isNew) body.price_source = insumo.priceSource ?? 'manual';
+    if (insumo.estoqueMinimo !== undefined || isNew) body.min_stock = insumo.estoqueMinimo ?? 0;
+    if (isNew) body.current_stock = insumo.estoqueAtual ?? 0;
+    if (insumo.categoria !== undefined || isNew) body.category = insumo.categoria ?? '';
+    if ('purchaseUnit' in insumo || isNew) body.purchase_unit = insumo.purchaseUnit ?? null;
+    if (insumo.purchaseFactor !== undefined || isNew) body.purchase_factor = insumo.purchaseFactor ?? 1;
+    if (insumo.usageType !== undefined || isNew) body.usage_type = insumo.usageType ?? 'final';
+    if ('dreCategoryId' in insumo) body.dre_category_id = insumo.dreCategoryId ?? null;
+    if ('supplierId' in insumo) body.supplier_id = insumo.supplierId ?? null;
+    if ('fornecedor' in insumo) body.supplier = insumo.fornecedor ?? '';
 
     let resultData: unknown = null;
 

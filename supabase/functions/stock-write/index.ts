@@ -256,22 +256,42 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
     if (action === 'upsert_ingredient') {
       const { id, name, unit, unit_price, min_stock, current_stock, category, supplier, supplier_id, purchase_unit, purchase_factor, dre_category_id, usage_type, price_source } = body;
+
+      // Em edicao, campo AUSENTE no body preserva o valor atual do banco
+      // (null explicito continua limpando). fn_upsert_ingredient sobrescreve
+      // todas as colunas, entao um update parcial apagava supplier/supplier_id/
+      // dre_category_id e zerava current_stock.
+      let existing: Record<string, unknown> = {};
+      if (id) {
+        const { data: exRow, error: exErr } = await admin
+          .from('ingredients')
+          .select('unit, unit_price, min_stock, current_stock, category, supplier, supplier_id, purchase_unit, purchase_factor, dre_category_id, usage_type, price_source')
+          .eq('id', id)
+          .eq('tenant_id', tenantId)
+          .maybeSingle();
+        if (exErr) throw new Error(extractErrorMessage(exErr));
+        existing = (exRow as Record<string, unknown>) ?? {};
+      }
+      const val = (sent: unknown, key: string, fallback: unknown) =>
+        sent !== undefined ? sent : (existing[key] !== undefined && existing[key] !== null ? existing[key] : fallback);
+
+      const rawFactor = val(purchase_factor, 'purchase_factor', 1);
       const { data: rpcData, error: rpcErr } = await admin.rpc('fn_upsert_ingredient', {
         p_tenant_id: tenantId,
         p_id: id ?? null,
         p_name: name,
-        p_unit: UNIT_MAP[unit] ?? 'unit',
-        p_unit_price: unit_price ?? 0,
-        p_min_stock: min_stock ?? 0,
-        p_current_stock: current_stock ?? 0,
-        p_category: category ?? '',
-        p_supplier: supplier ?? '',
-        p_usage_type: usage_type ?? 'final',
-        p_purchase_unit: purchase_unit ?? null,
-        p_purchase_factor: purchase_factor != null ? Number(purchase_factor) : 1,
-        p_supplier_id: supplier_id ?? null,
-        p_dre_category_id: dre_category_id ?? null,
-        p_price_source: price_source ?? 'manual',
+        p_unit: unit !== undefined ? (UNIT_MAP[unit] ?? 'unit') : ((existing.unit as string) ?? 'unit'),
+        p_unit_price: val(unit_price, 'unit_price', 0),
+        p_min_stock: val(min_stock, 'min_stock', 0),
+        p_current_stock: val(current_stock, 'current_stock', 0),
+        p_category: val(category, 'category', ''),
+        p_supplier: val(supplier, 'supplier', ''),
+        p_usage_type: val(usage_type, 'usage_type', 'final'),
+        p_purchase_unit: purchase_unit !== undefined ? purchase_unit : ((existing.purchase_unit as string | null) ?? null),
+        p_purchase_factor: rawFactor != null ? Number(rawFactor) : 1,
+        p_supplier_id: supplier_id !== undefined ? supplier_id : ((existing.supplier_id as string | null) ?? null),
+        p_dre_category_id: dre_category_id !== undefined ? dre_category_id : ((existing.dre_category_id as string | null) ?? null),
+        p_price_source: val(price_source, 'price_source', 'manual'),
       });
       if (rpcErr) {
         if (isUniqueViolation(rpcErr)) {

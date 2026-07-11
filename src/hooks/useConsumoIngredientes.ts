@@ -78,7 +78,8 @@ function classifyMovement(
   /* vendas diretas (PDV) */
   if (type === 'theoretical_out') return { bucket: 'vendas', isConsumo: true };
 
-  /* perda */
+  /* perda — o tipo 'loss' é perda por definição, independente do reason */
+  if (type === 'loss') return { bucket: 'perda', isConsumo: true };
   if (r.includes('perda') || r.includes('descarte') || r.includes('quebra') || r.includes('dano') || r.includes('estrago')) {
     return { bucket: 'perda', isConsumo: true };
   }
