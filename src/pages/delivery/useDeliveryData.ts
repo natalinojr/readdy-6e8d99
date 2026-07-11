@@ -396,14 +396,22 @@ async function fetchDeliveryConfig(
     // Logo da loja (tenants.logo_url) — a edge function não retorna; busca direto
     // via select anônimo (mesma permissão do resolveTenantIdBySlug). Falhou = sem logo,
     // as telas caem no fallback de iniciais.
+    // IMPORTANTE: com timeout (2s) — `supabase.from()` passa pelo lock de sessão do
+    // supabase-js, que pode TRAVAR (várias abas / volta do background). Sem o timeout,
+    // isso prenderia o carregamento do delivery inteiro. Logo é secundário: se demorar, segue sem.
     let tenantInfo: TenantInfo = data.tenant;
     try {
-      const { data: t } = await supabase
+      const logoPromise = supabase
         .from('tenants')
         .select('logo_url')
         .eq('id', data.tenant.id)
-        .maybeSingle();
-      tenantInfo = { ...data.tenant, logo_url: t?.logo_url || null };
+        .maybeSingle()
+        .then(function (r) { return r.data?.logo_url || null; });
+      const timeoutPromise = new Promise<null>(function (resolve) {
+        setTimeout(function () { resolve(null); }, 2000);
+      });
+      const logoUrl = await Promise.race([logoPromise, timeoutPromise]);
+      tenantInfo = { ...data.tenant, logo_url: logoUrl };
     } catch (_e) { /* segue sem logo */ }
 
     setters.setTenant(tenantInfo);

@@ -87,6 +87,9 @@ export default function AcompanharPedido(props: Props) {
           setLoading(false);
           return;
         }
+        // Limpa erro anterior: o polling (10s) se recupera sozinho de um blip de
+        // rede (ex.: voltar do background) sem exigir "Tentar novamente" do cliente.
+        setError('');
         setOrderData(data.order);
         setLoading(false);
       })

@@ -334,7 +334,9 @@ export async function printKitchenTicket(
 }
 
 function fmtPreco2(v: number) {
-  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  // .replace do NBSP: toLocaleString(currency) separa "R$" do valor com um espaço
+  // não-quebrável (U+00A0) que a impressora térmica (CP860) imprime como "á".
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }).replace(/\u00A0/g, ' ');
 }
 
 export async function printSimpleReceipt(

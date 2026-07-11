@@ -296,12 +296,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
+    // getSession() pode TRAVAR: o supabase-js usa navigator.locks p/ sincronizar a
+    // sessão entre abas; com várias abas abertas ou ao voltar do background (celular),
+    // o lock pode não liberar e getSession() nunca resolve → o overlay "Carregando
+    // sessão..." fica preso cobrindo TODA a UI, inclusive a página pública do delivery.
+    // Guard: se em 3s getSession() não respondeu, libera a UI como "sem sessão".
+    // Quando o lock trava de verdade, getSession() nunca resolve, então o guard
+    // (settled) não descarta nenhuma sessão válida — só destrava a tela.
+    let settled = false;
+    const finish = (userId: string | undefined) => {
+      if (settled) return;
+      settled = true;
+      handleSession(userId);
+    };
+    const sessionTimeout = setTimeout(() => {
+      console.warn('[AuthContext] getSession() demorou demais (lock?) — liberando a UI como sem sessão');
+      finish(undefined);
+    }, 3000);
+
     supabase.auth.getSession().then(({ data: { session } }) => {
-      handleSession(session?.user?.id);
+      clearTimeout(sessionTimeout);
+      finish(session?.user?.id);
     }).catch((err) => {
+      clearTimeout(sessionTimeout);
       // Se getSession falhar (ex: token corrompido), trata como sem sessão
       console.warn('[AuthContext] getSession falhou:', (err as Error).message ?? err);
-      handleSession(undefined);
+      finish(undefined);
     });
 
     const {
@@ -328,7 +348,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       handleSession(session?.user?.id);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(sessionTimeout);
+      settled = true;
+      subscription.unsubscribe();
+    };
   }, [handleSession]);
 
   useEffect(() => {

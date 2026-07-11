@@ -14,7 +14,9 @@ type PedidoComParticipant = PedidoRecente & {
 };
 
 function fmt(v: number) {
-  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  // Remove o espaço não-quebrável (U+00A0) do toLocaleString: a térmica (CP860)
+  // o imprime como "á" (ex.: "R$á8,00").
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }).replace(/\u00A0/g, ' ');
 }
 
 function destinoLabel(p: PedidoRecente): string {
