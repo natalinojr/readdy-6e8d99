@@ -1,5 +1,6 @@
 import type { KDSPedido, KDSItem, KDSItemStatus } from '@/types/kds';
 import { sendToPrinter } from '@/lib/printUtils';
+import { buildGestorTicketPayload } from '@/pages/gestor-pedidos/lib/printPedido';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useState, useEffect } from 'react';
@@ -248,8 +249,11 @@ export default function PedidoDetailModal({ pedido, onClose, onCancelar, onEntre
   const temCoordEntrega = !!(deliveryGeo && deliveryGeo.lat != null && deliveryGeo.lng != null);
 
   const handlePrint = async () => {
+    // Payload estruturado → agente local imprime no formato do ticket de cozinha;
+    // o HTML fica só como fallback do navegador.
+    const payload = buildGestorTicketPayload(pedido, impressoraPedidos);
     const html = buildPedidoHTML(pedido, displayTotal);
-    const result = await sendToPrinter(html, impressoraPedidos, undefined, { paperWidthPx: 320 });
+    const result = await sendToPrinter(html, impressoraPedidos, payload, { paperWidthPx: 320 });
     if (!result.success && !result.fallbackToBrowser) {
       toastError('Erro na impressão', result.error || 'Não foi possível imprimir');
     }

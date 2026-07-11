@@ -6,6 +6,8 @@ interface Props {
   error: string;
   city?: string;
   tenantName?: string;
+  /** Logo da loja (Configurações → Dados da Loja). Ausente = iniciais. */
+  logoUrl?: string | null;
   /** Volta para a vitrine/cardápio (quando o cliente chegou pela tela de preview). */
   onVoltar?: () => void;
 }
@@ -68,8 +70,12 @@ export default function IdentificacaoDelivery(props: Props) {
         ) : null}
 
         <div className="relative flex items-center gap-3 max-w-lg mx-auto w-full">
-          <div className="w-10 h-10 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0">
-            <span className="text-orange-600 font-black text-sm">{iniciais}</span>
+          <div className="w-10 h-10 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0 overflow-hidden">
+            {props.logoUrl ? (
+              <img src={props.logoUrl} alt={tenantName || 'Logo'} className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-orange-600 font-black text-sm">{iniciais}</span>
+            )}
           </div>
           <div className="min-w-0">
             <h1 className="text-white text-sm font-black leading-tight truncate">{tenantName || 'Delivery'}</h1>

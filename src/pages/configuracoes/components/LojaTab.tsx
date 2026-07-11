@@ -20,6 +20,40 @@ const estadosBR = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','
 
 const EMPTY: ConfigLoja = { nome: '', cnpj: '', telefone: '', email: '', endereco: '', cidade: '', estado: 'SP', cep: '', logoUrl: '' };
 
+// ── Compressão do logo ────────────────────────────────────────────────────────
+// O logo vai pro banco como data-URL (tenants.logo_url) e é baixado a cada visita
+// do delivery — sem comprimir, uma foto de câmera vira ~2MB por visita. Redimensiona
+// pra no máx. 512px e re-encoda em WebP (todos os consumidores são <img> de navegador;
+// se o navegador não encodar WebP, o canvas devolve PNG). Só troca se ficar menor.
+const LOGO_MAX_PX = 512;
+// Acima disso, logos antigos (salvos antes da compressão) são recomprimidos ao salvar.
+const LOGO_RECOMPRESS_BYTES = 150 * 1024;
+
+async function compressLogoDataUrl(dataUrl: string): Promise<string> {
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('logo inválido'));
+      i.src = dataUrl;
+    });
+    const scale = Math.min(1, LOGO_MAX_PX / Math.max(img.width, img.height, 1));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, 0, w, h);
+    let out = canvas.toDataURL('image/webp', 0.85);
+    if (!out.startsWith('data:image/webp')) out = canvas.toDataURL('image/png');
+    return out.length < dataUrl.length ? out : dataUrl;
+  } catch {
+    return dataUrl; // falha na compressão nunca pode impedir o upload
+  }
+}
+
 export default function LojaTab() {
   const { user } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
@@ -61,6 +95,14 @@ export default function LojaTab() {
     setSaving(true);
     setErro('');
 
+    // Logos salvos antes da compressão existir podem estar enormes (~2MB) —
+    // recomprime na hora do salvar, então basta reabrir e salvar pra sanear.
+    let logoUrl = form.logoUrl;
+    if (logoUrl.startsWith('data:') && logoUrl.length > LOGO_RECOMPRESS_BYTES) {
+      logoUrl = await compressLogoDataUrl(logoUrl);
+      if (logoUrl !== form.logoUrl) set('logoUrl', logoUrl);
+    }
+
     const { data, error } = await invokeWithAuth<{ success: boolean; error?: string }>('config-write', {
       body: {
         action: 'update_tenant',
@@ -68,7 +110,7 @@ export default function LojaTab() {
         name: form.nome,
         cnpj: form.cnpj,
         address: form.endereco,
-        logo_url: form.logoUrl,
+        logo_url: logoUrl,
         phone: form.telefone,
         email: form.email,
         city: form.cidade,
@@ -162,7 +204,11 @@ export default function LojaTab() {
                     if (!file) return;
                     if (file.size > 2 * 1024 * 1024) { alert('Arquivo muito grande. Máx. 2MB.'); return; }
                     const reader = new FileReader();
-                    reader.onload = (ev) => { if (ev.target?.result) set('logoUrl', ev.target.result as string); };
+                    reader.onload = (ev) => {
+                      const raw = ev.target?.result;
+                      if (typeof raw !== 'string') return;
+                      compressLogoDataUrl(raw).then((v) => set('logoUrl', v));
+                    };
                     reader.readAsDataURL(file);
                   }}
                 />
@@ -176,7 +222,7 @@ export default function LojaTab() {
                   Remover logo
                 </button>
               )}
-              <p className="text-[10px] text-zinc-400">PNG, JPG ou WebP, máx. 2MB — recomendado 512×512px</p>
+              <p className="text-[10px] text-zinc-400">PNG, JPG ou WebP, máx. 2MB — otimizado automaticamente para 512px</p>
             </div>
           </div>
         </div>

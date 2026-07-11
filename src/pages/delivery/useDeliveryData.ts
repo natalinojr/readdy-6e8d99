@@ -43,6 +43,8 @@ function clearUrlVoucher() {
 type TenantInfo = {
   id: string;
   name: string;
+  /** Logo da loja (Configurações → Dados da Loja). Ausente = mostrar iniciais. */
+  logo_url?: string | null;
 };
 
 type Neighborhood = {
@@ -391,7 +393,20 @@ async function fetchDeliveryConfig(
     const data = await res.json();
     if (data.error) throw new Error(data.message || data.error);
 
-    setters.setTenant(data.tenant);
+    // Logo da loja (tenants.logo_url) — a edge function não retorna; busca direto
+    // via select anônimo (mesma permissão do resolveTenantIdBySlug). Falhou = sem logo,
+    // as telas caem no fallback de iniciais.
+    let tenantInfo: TenantInfo = data.tenant;
+    try {
+      const { data: t } = await supabase
+        .from('tenants')
+        .select('logo_url')
+        .eq('id', data.tenant.id)
+        .maybeSingle();
+      tenantInfo = { ...data.tenant, logo_url: t?.logo_url || null };
+    } catch (_e) { /* segue sem logo */ }
+
+    setters.setTenant(tenantInfo);
     setters.setCity(data.city || '');
     setters.setNeighborhoods(data.neighborhoods || []);
 
@@ -488,7 +503,7 @@ async function fetchDeliveryConfig(
       setters.setDeliveryFee(hoods[0].delivery_fee);
     }
 
-    return { tenant: data.tenant as TenantInfo, retiradaAtivo: ra !== false };
+    return { tenant: tenantInfo, retiradaAtivo: ra !== false };
   } catch (err) {
     throw err;
   }

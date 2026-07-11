@@ -113,6 +113,9 @@ export default function DeliveryPage() {
     ? 'https://wa.me/' + (lojaWaDigits.length > 11 && lojaWaDigits.startsWith('55') ? lojaWaDigits : '55' + lojaWaDigits)
     : '';
 
+  // Logo da loja (Configurações → Dados da Loja); sem logo, cai nas iniciais
+  const lojaLogo = data.tenant?.logo_url || '';
+
   // Iniciais da loja para o "logo" do header (1ª letra das 2 primeiras palavras)
   const lojaIniciais = (data.tenant?.name || 'DL')
     .split(/\s+/)
@@ -316,6 +319,7 @@ export default function DeliveryPage() {
         error={error}
         city={city}
         tenantName={tenant?.name}
+        logoUrl={lojaLogo}
         onVoltar={function () { data.setStep('preview'); }}
       />
     );
@@ -327,6 +331,7 @@ export default function DeliveryPage() {
         customerName={customerName}
         phone={phone}
         tenantName={tenant?.name}
+        logoUrl={lojaLogo}
         onSelecionar={handleConfirmarModo}
         enviando={enviando}
         waUrl={lojaWaUrl}
@@ -490,8 +495,12 @@ export default function DeliveryPage() {
                 style={{ background: 'radial-gradient(circle at 85% -20%, rgba(255,255,255,.25), transparent 45%)' }}
               />
               <div className="relative flex items-center gap-3">
-                <div className="w-11 h-11 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0">
-                  <span className="text-orange-600 font-black text-base">{lojaIniciais}</span>
+                <div className="w-11 h-11 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0 overflow-hidden">
+                  {lojaLogo ? (
+                    <img src={lojaLogo} alt={tenant?.name || 'Logo'} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-orange-600 font-black text-base">{lojaIniciais}</span>
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <h1 className="text-white text-base font-black leading-tight truncate">{tenant?.name || 'Delivery'}</h1>
@@ -637,8 +646,12 @@ export default function DeliveryPage() {
               style={{ background: 'radial-gradient(circle at 85% -20%, rgba(255,255,255,.25), transparent 45%)' }}
             />
             <div className="relative flex items-center gap-3">
-              <div className="w-11 h-11 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0">
-                <span className="text-orange-600 font-black text-base">{lojaIniciais}</span>
+              <div className="w-11 h-11 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0 overflow-hidden">
+                {lojaLogo ? (
+                  <img src={lojaLogo} alt={tenant?.name || 'Logo'} className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-orange-600 font-black text-base">{lojaIniciais}</span>
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <h1 className="text-white text-base font-black leading-tight truncate">{tenant?.name || 'Delivery'}</h1>

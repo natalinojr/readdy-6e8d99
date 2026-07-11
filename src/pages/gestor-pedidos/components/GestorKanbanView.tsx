@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade } from '@/types/kds';
 import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
-import { sendToPrinter } from '@/lib/printUtils';
+import { printPedidoGestor } from '@/pages/gestor-pedidos/lib/printPedido';
 import { supabase } from '@/lib/supabase';
 import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
@@ -406,21 +406,10 @@ function GestorCard({
   const [estimativaMin, setEstimativaMin] = useState('');
 
   const handlePrint = () => {
-    const paymentLine = pedido.origem === 'autoatendimento' && pedido.paymentMethodName
-      ? `<p style="font-weight:bold;border:1px solid #000;padding:4px;margin:4px 0;">&#128179; Pagar na entrega: ${pedido.paymentMethodName}</p>`
-      : '';
-    const numStr = String(pedido.numero).padStart(4, '0');
-    const destLabel = destinoLabel(pedido);
-    const garcomLine = pedido.garcomNome ? `<p>Gar&ccedil;om: ${pedido.garcomNome}</p>` : '';
-    const addressLine = pedido.deliveryAddress ? `<p>📍 ${pedido.deliveryAddress}</p>` : '';
-    const itensHtml = pedido.itens.map((i) => {
-      const opts = i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => `${o.obrigatorio ? '' : '+ '}${o.opcaoNome}`).join(', ')}</div>` : '';
-      const obs = i.observacoes?.length ? `<div style="color:red;font-weight:bold;font-size:11px">${i.observacoes.map((o) => '&#9888; ' + o).join('<br/>')}</div>` : '';
-      return `<div style="margin:4px 0"><strong>${i.quantidade}x ${i.nome}</strong>${i.categoriaNome ? ` <small>(${i.categoriaNome})</small>` : ''}${opts}${obs}</div>`;
-    }).join('');
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Pedido #${numStr}</title><style>body{font-family:monospace;font-size:12px;padding:16px}h2{margin:0 0 4px}hr{border:1px dashed #000}p{margin:2px 0;font-size:11px}</style></head><body><h2>Pedido #${numStr}</h2><p>${destLabel} &mdash; ${origemInfo.label}</p>${garcomLine}${addressLine}${paymentLine}<hr/>${itensHtml}<hr/><small>${new Date().toLocaleString('pt-BR')}</small></body></html>`;
+    // Imprime no formato do ticket de cozinha (JSON estruturado → agente local
+    // formata em ESC/POS). Enviar HTML cru fazia a térmica imprimir código-fonte.
     const impressora = getImpressoraParaEstacao(PRINTER_KEY_GESTOR_PEDIDOS);
-    sendToPrinter(html, impressora);
+    printPedidoGestor(pedido, impressora);
   };
 
   // Validação do modal "Iniciar preparo": horário previsto de ficar pronto =

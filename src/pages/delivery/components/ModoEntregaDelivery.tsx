@@ -4,6 +4,8 @@ interface Props {
   customerName: string;
   phone: string;
   tenantName?: string;
+  /** Logo da loja (Configurações → Dados da Loja). Ausente = iniciais. */
+  logoUrl?: string | null;
   onSelecionar: (modo: 'entrega' | 'retirada') => void;
   enviando: boolean;
   waUrl?: string;
@@ -56,8 +58,12 @@ export default function ModoEntregaDelivery(props: Props) {
           style={{ background: 'radial-gradient(circle at 85% -20%, rgba(255,255,255,.25), transparent 45%)' }}
         />
         <div className="relative flex items-center gap-3 max-w-lg mx-auto w-full">
-          <div className="w-10 h-10 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0">
-            <span className="text-orange-600 font-black text-sm">{iniciais}</span>
+          <div className="w-10 h-10 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0 overflow-hidden">
+            {props.logoUrl ? (
+              <img src={props.logoUrl} alt={tenantName || 'Logo'} className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-orange-600 font-black text-sm">{iniciais}</span>
+            )}
           </div>
           <div className="min-w-0">
             <h1 className="text-white text-sm font-black leading-tight truncate">{tenantName || 'Delivery'}</h1>

@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import type { KDSPedido, KDSItem } from '@/types/kds';
 import { formatOrderNumber } from '@/lib/statusMappers';
 import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
-import { sendToPrinter } from '@/lib/printUtils';
+import { printPedidoGestor } from '@/pages/gestor-pedidos/lib/printPedido';
 import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
 
 interface Props {
@@ -261,16 +261,9 @@ export default function GestorListView({ pedidos, onAvancar, onEmRota, onEntrega
   }, [pedidos, sortKey, sortDir]);
 
   const handlePrint = (p: KDSPedido) => {
-    const numStr = String(p.numero).padStart(4, '0');
-    const garcomLine = p.garcomNome ? `<p>Gar&ccedil;om: ${p.garcomNome}</p>` : '';
-    const itensHtml = p.itens.map((i) => {
-      const opts = i.opcoes?.length ? `<div style="padding-left:10px;font-size:11px">${i.opcoes.map((o) => `${o.obrigatorio ? '' : '+ '}${o.opcaoNome}`).join(', ')}</div>` : '';
-      const obs = i.observacoes?.length ? `<div style="color:red;font-weight:bold;font-size:11px">${i.observacoes.map((o) => '&#9888; ' + o).join('<br/>')}</div>` : '';
-      return `<div style="margin:4px 0"><strong>${i.quantidade}x ${i.nome}</strong>${opts}${obs}</div>`;
-    }).join('');
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Pedido #${numStr}</title><style>body{font-family:monospace;font-size:12px;padding:16px}h2{margin:0 0 4px}hr{border:1px dashed #000}p{margin:2px 0;font-size:11px}</style></head><body><h2>Pedido #${numStr}</h2><p>${destinoStr(p)} &mdash; ${p.origem}</p>${garcomLine}<hr/>${itensHtml}<hr/><small>${new Date().toLocaleString('pt-BR')}</small></body></html>`;
+    // Ticket no formato da cozinha via agente local (HTML cru saía como código na térmica)
     const impressora = getImpressoraParaEstacao(PRINTER_KEY_GESTOR_PEDIDOS);
-    sendToPrinter(html, impressora);
+    printPedidoGestor(p, impressora);
   };
 
   function SortTh({ label, col }: { label: string; col: SortKey }) {
