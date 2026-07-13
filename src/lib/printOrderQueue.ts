@@ -141,6 +141,7 @@ async function enqueueTicket(
   stationKey: string,
   stationLabel: string,
   payload: TicketPayload,
+  force = false,
 ): Promise<void> {
   try {
     const impressoraId = (payload as Record<string, unknown>).impressora_id as string | undefined;
@@ -155,6 +156,7 @@ async function enqueueTicket(
       p_content_type: 'ticket_json',
       p_payload: payload as unknown as Record<string, unknown>,
       p_paper_style: '80mm',
+      p_force: force,
     });
 
     if (error) {
@@ -206,6 +208,8 @@ export async function queueOrderForPrint(
   total?: number,
   paraViagem?: boolean,
   senha?: string,
+  /** Reimpressão manual: pula a dedup da print_queue e sempre gera ticket novo */
+  force?: boolean,
 ): Promise<void> {
   console.log(`[queueOrderForPrint] INICIO pedido #${orderNumber}, ${items.length} itens, origem=${origin}${senha ? ', senha=' + senha : ''}`);
   items.forEach((it, idx) => {
@@ -418,6 +422,7 @@ export async function queueOrderForPrint(
         estacaoId,
         stationLabel,
         payload,
+        force,
       ),
     );
   }
@@ -461,6 +466,7 @@ export async function queueOrderForPrint(
           estacaoId,
           stationLabelBar,
           payload,
+          force,
         ),
       );
     }

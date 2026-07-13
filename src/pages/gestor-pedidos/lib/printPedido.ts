@@ -126,6 +126,7 @@ async function enqueueDeliveryReceipt(pedido: KDSPedido, tenantId: string): Prom
       observacao_geral: obsGeralParts.join('\n'),
     },
     p_paper_style: '80mm',
+    p_force: true, // reimpressão manual: pula a dedup da print_queue
   });
 }
 
@@ -197,6 +198,7 @@ export async function reprintPedidoGestor(opts: ReprintOptions): Promise<PrintRe
       pedido.totalAmount,
       undefined,
       senha,
+      true, // reimpressão manual: pula a dedup da print_queue
     );
 
     // Delivery/retirada: também reimprime o comprovante que vai grampeado

@@ -598,7 +598,7 @@ export default function PedidosPage() {
     anoSelecionado, anoApenas,
   ]);
 
-  const { orders: dbOrders, loading: loadingSessaoOrders, reload: reloadOrders } = useOrdersHistory(
+  const { orders: dbOrders, loading: loadingSessaoOrders, truncated: ordersTruncated, reload: reloadOrders } = useOrdersHistory(
     hookDateFrom,
     hookDateTo,
     hookSessionId,
@@ -1088,6 +1088,18 @@ export default function PedidosPage() {
             >
               <i className="ri-close-line" /> Voltar à sessão atual
             </button>
+          </div>
+        )}
+
+        {/* Aviso: período estourou o teto de carregamento — números parciais */}
+        {ordersTruncated && (
+          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">
+            <i className="ri-error-warning-line flex-shrink-0 text-red-500" />
+            <span>
+              Este período tem mais pedidos do que o limite de carregamento (5.000) — os totais e a
+              exportação abaixo estão <strong>incompletos</strong>. Use um período menor ou os Relatórios
+              (que calculam no servidor).
+            </span>
           </div>
         )}
 

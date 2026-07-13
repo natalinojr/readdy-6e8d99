@@ -896,7 +896,7 @@ export default function DeliveryPage() {
                     <i className="ri-route-line text-amber-500 text-[13px]" />
                     <span className="truncate">
                       {deliveryQuote
-                        ? '~' + deliveryQuote.km.toFixed(1) + ' km' + (deliveryQuote.tempoMax > 0 ? ' · até ' + deliveryQuote.tempoMax + ' min' : '')
+                        ? '~' + deliveryQuote.km.toFixed(1) + ' km' + (deliveryQuote.tempoMax > 0 ? ' · ' + deliveryQuote.tempoMax + ' min' : '')
                         : 'Marcar no mapa'}
                     </span>
                   </>
@@ -1165,7 +1165,7 @@ export default function DeliveryPage() {
                     <span className="text-[10px] text-zinc-400 flex items-center gap-1">
                       <i className="ri-route-line text-[9px]" />
                       ~{deliveryQuote.km.toFixed(1)} km
-                      {deliveryQuote.tempoMax > 0 ? ' • até ' + deliveryQuote.tempoMax + ' min' : ''}
+                      {deliveryQuote.tempoMax > 0 ? ' • ' + deliveryQuote.tempoMax + ' min' : ''}
                     </span>
                   </div>
                 ) : null}

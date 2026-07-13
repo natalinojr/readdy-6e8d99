@@ -831,6 +831,27 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         .select("id, item_name, item_price, quantity, notes")
         .eq("order_id", o.id)
         .eq("tenant_id", tenant_id);
+      // Adicionais/opcoes por item — o cliente ver o que compoe o valor de cada item.
+      // (item_price ja inclui os adicionais; aqui detalhamos so para exibicao.)
+      const itemIds = (itemRows ?? []).map((it: Record<string, unknown>) => it.id as string);
+      const optsByItem = new Map<string, Array<Record<string, unknown>>>();
+      if (itemIds.length > 0) {
+        const { data: optRows } = await admin
+          .from("order_item_options")
+          .select("order_item_id, option_name, group_name, additional_price")
+          .in("order_item_id", itemIds)
+          .eq("tenant_id", tenant_id);
+        for (const op of optRows ?? []) {
+          const key = op.order_item_id as string;
+          const arr = optsByItem.get(key) ?? [];
+          arr.push({
+            option_name: (op.option_name as string) ?? "",
+            group_name: (op.group_name as string) ?? null,
+            additional_price: Number(op.additional_price ?? 0),
+          });
+          optsByItem.set(key, arr);
+        }
+      }
       const order = {
         id: o.id, number: o.number, status: o.status,
         created_at: o.created_at, updated_at: o.updated_at,
@@ -842,6 +863,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         items: (itemRows ?? []).map((it: Record<string, unknown>) => ({
           id: it.id, item_name: it.item_name, item_price: Number(it.item_price ?? 0),
           quantity: Number(it.quantity ?? 0), notes: it.notes ?? null,
+          options: optsByItem.get(it.id as string) ?? [],
         })),
       };
       return new Response(JSON.stringify({ _v: "v14", order }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });

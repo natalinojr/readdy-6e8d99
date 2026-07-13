@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 
 function edgeUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
@@ -229,9 +230,9 @@ export default function MotoboyPage() {
       <div className="w-full max-w-md px-4 py-5 space-y-4" style={{ paddingBottom: kbInset ? kbInset + 24 : undefined }}>
         {/* Voltar à lista de entregas da loja (slug vem da sessão ou do próprio pedido) */}
         {(getMotoboySession()?.store_slug || storeSlug) ? (
-          <a href={`/entregas/${getMotoboySession()?.store_slug || storeSlug}`} className="inline-flex items-center gap-1 text-xs font-bold text-zinc-500">
+          <Link to={`/entregas/${getMotoboySession()?.store_slug || storeSlug}`} className="inline-flex items-center gap-1 text-xs font-bold text-zinc-500">
             <i className="ri-arrow-left-line" /> Voltar aos pedidos
-          </a>
+          </Link>
         ) : null}
         {/* Cabeçalho */}
         <div className="bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-2xl p-4 text-white">

@@ -1,5 +1,5 @@
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useModoTreino } from '../../contexts/ModoTreinoContext';
 import { useAppMode } from '../../contexts/AppModeContext';
@@ -7,6 +7,16 @@ import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import SelecionarLojaPage from '../../pages/selecionar-loja/page';
 import RotaProtegida from './RotaProtegida';
+
+// Fallback leve enquanto o chunk da página (lazy) carrega — mantém a moldura
+// (sidebar/topbar) visível em vez de piscar a tela inteira.
+function PageLoader() {
+  return (
+    <div className="w-full h-full flex items-center justify-center py-20">
+      <div className="w-7 h-7 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+}
 
 // Rotas publicas — acessiveis SEM autenticacao
 const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/autoatendimento', '/mesa/', '/mesa-qr/', '/pedido/'];
@@ -68,7 +78,9 @@ export default function AppLayout() {
         )}
         <div className="flex-1 overflow-hidden">
           <RotaProtegida>
-            <Outlet />
+            <Suspense fallback={<PageLoader />}>
+              <Outlet />
+            </Suspense>
           </RotaProtegida>
         </div>
       </div>
@@ -109,7 +121,9 @@ export default function AppLayout() {
           <RotaProtegida>
             {/* O alerta de sessão esquecida é renderizado apenas no PDV Caixa
                 (src/pages/pdv/caixa/page.tsx), não globalmente. */}
-            <Outlet />
+            <Suspense fallback={<PageLoader />}>
+              <Outlet />
+            </Suspense>
           </RotaProtegida>
         </main>
       </div>

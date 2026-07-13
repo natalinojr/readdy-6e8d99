@@ -11,7 +11,14 @@ type OrderStatusData = {
   total_amount: number;
   delivery_fee: number;
   subtotal: number;
-  items: Array<{ id: string; item_name: string; item_price: number; quantity: number; notes: string | null }>;
+  items: Array<{
+    id: string;
+    item_name: string;
+    item_price: number;
+    quantity: number;
+    notes: string | null;
+    options?: Array<{ option_name: string; group_name: string | null; additional_price: number }>;
+  }>;
 };
 
 interface Props {
@@ -295,15 +302,38 @@ export default function AcompanharPedido(props: Props) {
         <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">Itens do pedido</h4>
         <div className="space-y-2">
           {orderData.items.map(function (item) {
+            const opcoes = item.options ?? [];
             return (
-              <div key={item.id} className="flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-xs font-bold text-zinc-800 w-5 text-center shrink-0">{item.quantity}x</span>
-                  <span className="text-xs text-zinc-700 truncate">{item.item_name}</span>
+              <div key={item.id}>
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start gap-2 min-w-0">
+                    <span className="text-xs font-bold text-zinc-800 w-5 text-center shrink-0">{item.quantity}x</span>
+                    <span className="text-xs text-zinc-700 break-words">{item.item_name}</span>
+                  </div>
+                  <span className="text-xs font-bold text-zinc-800 shrink-0 ml-3">
+                    R$ {(item.item_price * item.quantity).toFixed(2)}
+                  </span>
                 </div>
-                <span className="text-xs font-bold text-zinc-800 shrink-0 ml-3">
-                  R$ {(item.item_price * item.quantity).toFixed(2)}
-                </span>
+                {/* Adicionais/opções: o que compõe o valor do item. O valor exibido no
+                    item já os inclui; aqui detalhamos cada um. */}
+                {opcoes.length > 0 ? (
+                  <div className="ml-7 mt-1 space-y-0.5">
+                    {opcoes.map(function (op, i) {
+                      return (
+                        <div key={i} className="flex items-start justify-between gap-2">
+                          <span className="text-[11px] text-zinc-500 break-words">
+                            + {op.option_name}
+                          </span>
+                          {op.additional_price > 0 ? (
+                            <span className="text-[11px] font-medium text-zinc-500 shrink-0">
+                              R$ {op.additional_price.toFixed(2)}
+                            </span>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             );
           })}

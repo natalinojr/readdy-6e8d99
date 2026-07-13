@@ -74,6 +74,11 @@ export default defineConfig({
   build: {
     sourcemap: true,
     outDir: 'out',
+    // Sem manualChunks: com todas as rotas em lazy (ver src/router/config.tsx),
+    // o Vite já divide automaticamente por rota e cria chunks compartilhados só
+    // para quem realmente usa. Assim gráficos (recharts/chart.js) e mapas (leaflet)
+    // ficam nos chunks das telas do ERP e NÃO entram no caminho inicial do
+    // catálogo do cliente nem do painel do motoboy.
   },
   resolve: {
     alias: {

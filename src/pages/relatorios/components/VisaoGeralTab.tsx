@@ -502,6 +502,41 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
           </div>
         </div>
       )}
+
+      {/* Top complementos */}
+      {(() => {
+        const complementos = (report!.top_options ?? []).filter((o) => Number(o.total_revenue) > 0);
+        if (complementos.length === 0) return null;
+        const maxRev = Number(complementos[0]?.total_revenue) || 1;
+        return (
+          <div className="bg-white border border-zinc-100 rounded-xl p-4 md:p-5">
+            <div className="flex items-center justify-between mb-3 md:mb-4">
+              <h3 className="text-sm font-semibold text-zinc-800">Top Complementos</h3>
+              <span className="text-[10px] text-zinc-400">Adicionais escolhidos · por valor</span>
+            </div>
+            <div className="space-y-2">
+              {complementos.slice(0, 8).map((op, idx) => (
+                <div key={op.option_name} className="flex items-center gap-2 md:gap-3">
+                  <span className={`w-5 h-5 md:w-6 md:h-6 flex items-center justify-center rounded-full text-[10px] font-black flex-shrink-0 ${
+                    idx === 0 ? 'bg-emerald-100 text-emerald-700' : idx === 1 ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-50 text-zinc-400'
+                  }`}>{idx + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-xs font-medium text-zinc-700 truncate">{op.option_name}</span>
+                      <span className="text-xs font-semibold text-zinc-800 ml-2 whitespace-nowrap">{fmt(Number(op.total_revenue))}</span>
+                    </div>
+                    <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-400 rounded-full transition-all"
+                        style={{ width: `${(Number(op.total_revenue) / maxRev) * 100}%` }} />
+                    </div>
+                  </div>
+                  <span className="text-xs font-bold text-zinc-500 w-7 text-right flex-shrink-0">{op.total_qty}x</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -9,6 +9,7 @@ export interface SalesReportData {
   avg_ticket: number;
   orders_by_day: Array<{ day: string; orders: number; revenue: number }>;
   top_items: Array<{ item_name: string; total_qty: number; total_revenue: number; category_name?: string; avg_price?: number }>;
+  top_options: Array<{ option_name: string; total_qty: number; total_revenue: number }>;
   by_destination: Array<{ destination: string; orders: number; revenue: number }>;
   by_payment: Array<{ payment_method: string; payment_type: string; total: number; count: number }>;
 }
@@ -97,6 +98,7 @@ export function useSalesReportBySession(sessionId: string | null) {
         avg_ticket: report.avg_ticket ?? 0,
         orders_by_day: report.orders_by_day ?? [],
         top_items: report.top_items ?? [],
+        top_options: report.top_options ?? [],
         by_destination: report.by_destination ?? [],
         by_payment: report.by_payment ?? [],
       });

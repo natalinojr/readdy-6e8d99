@@ -38,6 +38,23 @@ function clearUrlVoucher() {
   try { sessionStorage.removeItem(URL_VOUCHER_KEY); } catch { /* noop */ }
 }
 
+// Etapa (step) persistida por loja p/ o cliente voltar ONDE PAROU ao retornar do
+// segundo plano do navegador (Instagram/WhatsApp costumam descartar a aba). Só
+// restauramos as etapas de vitrine ('preview'/'cardapio'), que funcionam sem
+// exigir cliente/endereço carregado — evita cair num estado quebrado. Fica em
+// sessionStorage (por aba): some quando o cliente fecha de vez, sobrevive à volta.
+type ResumableStep = 'preview' | 'cardapio';
+const RESUMABLE_STEPS: ResumableStep[] = ['preview', 'cardapio'];
+function stepStorageKey(slug?: string): string {
+  return 'delivery_step_' + (slug || 'default');
+}
+function loadSavedStep(slug?: string): ResumableStep | null {
+  try {
+    const v = sessionStorage.getItem(stepStorageKey(slug));
+    return (v && (RESUMABLE_STEPS as string[]).includes(v)) ? (v as ResumableStep) : null;
+  } catch { return null; }
+}
+
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 type TenantInfo = {
@@ -586,6 +603,19 @@ export function useDeliveryData(storeSlug?: string) {
   const cartKey = 'delivery_' + (storeSlug || 'default');
   const [cart, setCart] = useState<CartItem[]>(() => loadCart<CartItem>(cartKey));
   useEffect(function () { saveCart(cartKey, cart); }, [cart, cartKey]);
+
+  // Persiste a etapa de vitrine para o cliente voltar onde parou (ver loadSavedStep).
+  // Ao confirmar o pedido ('confirmacao') limpamos, senão a volta cairia num pedido já feito.
+  useEffect(function () {
+    try {
+      const key = stepStorageKey(storeSlug);
+      if ((RESUMABLE_STEPS as string[]).includes(step)) {
+        sessionStorage.setItem(key, step);
+      } else if (step === 'confirmacao') {
+        sessionStorage.removeItem(key);
+      }
+    } catch { /* noop */ }
+  }, [step, storeSlug]);
   const [editingItem, setEditingItem] = useState<CartItem | null>(null);
   const [showCart, setShowCart] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -682,6 +712,9 @@ export function useDeliveryData(storeSlug?: string) {
     setAddressLng(storedPin ? storedPin.lng : null);
 
     let cancelled = false;
+    // Se o cliente estava navegando o cardápio/vitrine e voltou do 2º plano,
+    // restaura essa etapa em vez de recomeçar do zero. Só vale p/ a MESMA loja.
+    const savedStep = slugChanged ? null : loadSavedStep(storeSlug);
 
     async function init() {
       try {
@@ -762,6 +795,9 @@ export function useDeliveryData(storeSlug?: string) {
 
               localStorage.setItem('delivery_phone', c.phone);
 
+              // Cliente estava navegando o cardápio e voltou do 2º plano: retoma lá.
+              if (savedStep === 'cardapio') { setStep('cardapio'); return; }
+
               const temEndereco = addresses.length > 0 || (c.neighborhood_id && c.street);
 
               if (temEndereco) {
@@ -789,7 +825,8 @@ export function useDeliveryData(storeSlug?: string) {
         // Tráfego novo (sem telefone salvo ou lookup falhou): mostra o cardápio
         // primeiro (vitrine). O telefone só é pedido no checkout — quem vem de
         // anúncio quer ver comida/preço antes de cadastrar, senão abandona.
-        setStep('preview');
+        // Se voltou do 2º plano numa etapa de vitrine, retoma nela.
+        setStep(savedStep ?? 'preview');
       } catch (err) {
         if (!cancelled) {
           setErrorMsg(err instanceof Error ? err.message : 'Erro ao carregar configuração');

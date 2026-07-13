@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { MOTOBOY_SESSION_KEY, getMotoboySession, type MotoboySession } from '@/pages/motoboy/page';
 import MapaEntregas from './MapaEntregas';
 
@@ -272,7 +272,7 @@ export default function MotoboyListaPage() {
     const ring = concluido ? '' : ti.atrasado ? ' ring-2 ring-red-300' : ti.quase ? ' ring-2 ring-amber-300' : '';
     const cozinha = COZINHA_BADGE[o.status] ?? { label: STATUS_LABEL[o.status] ?? o.status, cls: 'bg-zinc-100 text-zinc-600', icon: 'ri-restaurant-line' };
     return (
-      <a key={o.id} href={`/motoboy/${o.id}`} className={'block rounded-2xl border p-4 active:brightness-95 transition ' + baseBg + ring}>
+      <Link key={o.id} to={`/motoboy/${o.id}`} className={'block rounded-2xl border p-4 active:brightness-95 transition ' + baseBg + ring}>
         <div className="flex items-center justify-between mb-1 gap-1.5">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-sm font-black text-zinc-800 shrink-0">#{String(o.number).replace(/\D/g, '').slice(-4) || o.number}</span>
@@ -319,7 +319,7 @@ export default function MotoboyListaPage() {
             <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-600 shrink-0">abrir <i className="ri-arrow-right-s-line" /></span>
           )}
         </div>
-      </a>
+      </Link>
     );
   };
 

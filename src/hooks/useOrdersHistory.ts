@@ -166,12 +166,15 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
   const { user } = useAuth();
   const [orders, setOrders] = useState<DBOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  // Modo histórico atingiu o teto de segurança — resultado incompleto
+  const [truncated, setTruncated] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async (from?: string, to?: string, sid?: string | null) => {
     if (!user?.tenantId) return;
 
     setLoading(true);
+    setTruncated(false);
     try {
       let rawOrders: RPCOrder[] = [];
 
@@ -302,70 +305,95 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
 
         console.log('[useOrdersHistory] historic mode — querying:', { from: fromTs, to: toTs, tenant: user.tenantId });
 
-        let query = supabase
-          .from('orders')
-          .select(`
-            id,
-            number,
-            status,
-            subtotal,
-            discount_amount,
-            service_fee_amount,
-            tip_amount,
-            total_amount,
-            origin_type,
-            destination_type,
-            destination_name,
-            cancel_reason,
-            cancelled_at,
-            table_number,
-            created_at,
-            updated_at,
-            origin_user_id,
-            is_training,
-            is_draft,
-            is_paid,
-            waiter_name,
-            delivery_platform,
-            delivery_fee,
-            session_id,
-            session:sessions(id, number),
-            order_items (
+        // Paginado em lotes: o .limit(500) antigo cortava períodos longos em
+        // silêncio e as métricas/CSV da tela subestimavam a realidade em loja
+        // de volume. Teto de segurança de 5000 pedidos, sinalizado via
+        // `truncated` quando atingido.
+        const PAGE_SIZE = 500;
+        const MAX_ORDERS = 5000;
+        const collected: DirectQueryOrder[] = [];
+        let pageError: { message: string; code?: string } | null = null;
+
+        for (let page = 0; page * PAGE_SIZE < MAX_ORDERS; page++) {
+          let query = supabase
+            .from('orders')
+            .select(`
               id,
-              item_name,
-              item_price,
-              quantity,
+              number,
               status,
-              notes,
-              station_id,
-              operator_id,
-              entered_kds_at,
-              started_preparing_at,
-              ready_at,
-              delivered_at,
-              order_item_options ( option_name, group_name, additional_price ),
-              order_item_observations ( text ),
-              order_item_units (
-                id, unit_number, status,
-                operator_id, started_preparing_at, ready_at, delivered_at
-              )
-            ),
-            payments ( id, amount, change_amount, is_refunded, payment_method_id, cash_register_id, operator_name, payment_group_id, payment_methods ( name, type ) )
-          `)
-          .eq('tenant_id', user.tenantId)
-          .eq('is_training', false)
-          .eq('is_draft', false)
-          .neq('status', 'draft')
-          .order('created_at', { ascending: false })
-          .limit(500);
+              subtotal,
+              discount_amount,
+              service_fee_amount,
+              tip_amount,
+              total_amount,
+              origin_type,
+              destination_type,
+              destination_name,
+              cancel_reason,
+              cancelled_at,
+              table_number,
+              created_at,
+              updated_at,
+              origin_user_id,
+              is_training,
+              is_draft,
+              is_paid,
+              waiter_name,
+              delivery_platform,
+              delivery_fee,
+              session_id,
+              session:sessions(id, number),
+              order_items (
+                id,
+                item_name,
+                item_price,
+                quantity,
+                status,
+                notes,
+                station_id,
+                operator_id,
+                entered_kds_at,
+                started_preparing_at,
+                ready_at,
+                delivered_at,
+                order_item_options ( option_name, group_name, additional_price ),
+                order_item_observations ( text ),
+                order_item_units (
+                  id, unit_number, status,
+                  operator_id, started_preparing_at, ready_at, delivered_at
+                )
+              ),
+              payments ( id, amount, change_amount, is_refunded, payment_method_id, cash_register_id, operator_name, payment_group_id, payment_methods ( name, type ) )
+            `)
+            .eq('tenant_id', user.tenantId)
+            .eq('is_training', false)
+            .eq('is_draft', false)
+            .neq('status', 'draft')
+            .order('created_at', { ascending: false })
+            .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
 
-        if (fromTs) query = query.gte('created_at', fromTs);
-        if (toTs) query = query.lte('created_at', toTs);
+          if (fromTs) query = query.gte('created_at', fromTs);
+          if (toTs) query = query.lte('created_at', toTs);
 
-        const { data, error } = await query;
+          const { data: pageData, error: pageErr } = await query;
 
-        if (error) {
-          console.error('[useOrdersHistory] direct query error:', error.message, error.code);
+          if (pageErr) {
+            pageError = pageErr;
+            break;
+          }
+
+          const rows = (pageData ?? []) as DirectQueryOrder[];
+          collected.push(...rows);
+          if (rows.length < PAGE_SIZE) break;
+          if (collected.length >= MAX_ORDERS) {
+            console.warn(`[useOrdersHistory] historic mode — atingiu o teto de ${MAX_ORDERS} pedidos; resultado truncado`);
+            setTruncated(true);
+            break;
+          }
+        }
+
+        if (pageError && collected.length === 0) {
+          console.error('[useOrdersHistory] direct query error:', pageError.message, pageError.code);
           // Fallback: tenta RPC com filtro de data via query simples
           try {
             const { data: fallbackData, error: fallbackErr } = await supabase
@@ -417,12 +445,16 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
           return;
         }
 
-        console.log('[useOrdersHistory] historic mode — direct query returned:', data?.length ?? 0, 'orders');
+        if (pageError) {
+          // Erro no meio da paginação: usa o que veio, mas sinaliza parcial
+          console.warn('[useOrdersHistory] historic mode — falha ao paginar, resultado parcial:', pageError.message);
+          setTruncated(true);
+        }
 
-        if (!Array.isArray(data)) return;
+        console.log('[useOrdersHistory] historic mode — direct query returned:', collected.length, 'orders');
 
         // Histórico: mapeia direto sem passar pela RPC
-        const mapped = await mapDirectQueryOrders(data as DirectQueryOrder[], user.tenantId);
+        const mapped = await mapDirectQueryOrders(collected, user.tenantId);
         setOrders(mapped);
         return;
       }
@@ -532,7 +564,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
     };
   }, [load, dateFrom, dateTo, sessionId]);
 
-  return { orders, loading, reload: load };
+  return { orders, loading, truncated, reload: load };
 }
 
 // ─── Mappers ───────────────────────────────────────────────────────────────────
