@@ -247,7 +247,7 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
   const [periodoOverride, setPeriodoOverride] = useState<PeriodoRapido | null>(null);
   const [itemSelecionado, setItemSelecionado] = useState<string | null>(null);
   const [modoGrafico, setModoGrafico] = useState<'qtd' | 'receita'>('qtd');
-  const [abaAtiva, setAbaAtiva] = useState<'ranking' | 'abc' | 'categorias'>('ranking');
+  const [abaAtiva, setAbaAtiva] = useState<'ranking' | 'abc' | 'categorias' | 'complementos'>('ranking');
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todas');
 
   const periodoEfetivo = periodoOverride ?? periodo;
@@ -369,6 +369,29 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
     }));
   }, [itens, sortBy]);
 
+  // ── Complementos (adicionais) — vem do agregado top_options da RPC ──
+  // Só complementos que geram valor (additional_price > 0). % é sobre a receita
+  // de complementos (não sobre o faturamento), para o rateio somar 100%.
+  const complementos = useMemo(() => {
+    const list = (report?.top_options ?? [])
+      .filter(o => Number(o.total_revenue) > 0)
+      .map(o => ({
+        nome: o.option_name,
+        qtd: Number(o.total_qty),
+        receita: Number(o.total_revenue),
+      }))
+      .filter(o => o.nome.toLowerCase().includes(busca.toLowerCase()))
+      .sort((a, b) => b[sortBy] - a[sortBy]);
+    return list.map((o, idx) => ({ ...o, pos: idx + 1 }));
+  }, [report, busca, sortBy]);
+  const totalReceitaComplementos = complementos.reduce((s, o) => s + o.receita, 0);
+  const totalQtdComplementos = complementos.reduce((s, o) => s + o.qtd, 0);
+  const topComplementos = useMemo(() => complementos.slice(0, 10).map(o => ({
+    nome: o.nome.length > 22 ? o.nome.slice(0, 22) + '…' : o.nome,
+    nomeCompleto: o.nome,
+    valor: sortBy === 'receita' ? o.receita : o.qtd,
+  })), [complementos, sortBy]);
+
   useEffect(() => {
     if (itens.length > 0 && !itemSelecionado) {
       setItemSelecionado(itens[0].nome);
@@ -460,8 +483,9 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
         {([
           { id: 'ranking', label: 'Ranking', icon: 'ri-trophy-line' },
           { id: 'categorias', label: 'Por Categoria', icon: 'ri-folder-chart-line' },
+          { id: 'complementos', label: 'Complementos', icon: 'ri-add-circle-line' },
           { id: 'abc', label: 'Análise ABC', icon: 'ri-pie-chart-line' },
-        ] as { id: 'ranking' | 'abc' | 'categorias'; label: string; icon: string }[]).map((tab) => (
+        ] as { id: 'ranking' | 'abc' | 'categorias' | 'complementos'; label: string; icon: string }[]).map((tab) => (
           <button
             key={tab.id}
             onClick={() => setAbaAtiva(tab.id)}
@@ -471,7 +495,7 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
           >
             <i className={`${tab.icon} text-sm`} />
             <span className="hidden sm:inline">{tab.label}</span>
-            <span className="sm:hidden">{tab.id === 'ranking' ? 'Ranking' : tab.id === 'categorias' ? 'Categ.' : 'ABC'}</span>
+            <span className="sm:hidden">{tab.id === 'ranking' ? 'Ranking' : tab.id === 'categorias' ? 'Categ.' : tab.id === 'complementos' ? 'Compl.' : 'ABC'}</span>
           </button>
         ))}
       </div>
@@ -1031,6 +1055,152 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── ABA: Complementos (adicionais) ── */}
+      {abaAtiva === 'complementos' && (
+        <div className="space-y-4">
+          {complementos.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 bg-white border border-zinc-100 rounded-xl text-zinc-400">
+              <i className="ri-add-circle-line text-3xl text-zinc-200 mb-2" />
+              <p className="text-sm">Nenhum complemento com valor no período</p>
+              <p className="text-xs text-zinc-400 mt-1">Adicionais pagos (batata, molhos, bebidas…) aparecem aqui</p>
+            </div>
+          ) : (
+            <>
+              {/* Totais */}
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                {[
+                  { label: 'Complementos distintos', value: complementos.length.toString(), icon: 'ri-list-check', color: 'text-zinc-700 bg-zinc-50' },
+                  { label: 'Unidades vendidas', value: totalQtdComplementos.toString(), icon: 'ri-stack-line', color: 'text-emerald-700 bg-emerald-50' },
+                  { label: 'Receita em complementos', value: fmt(totalReceitaComplementos), icon: 'ri-money-dollar-circle-line', color: 'text-emerald-700 bg-emerald-50' },
+                ].map(s => (
+                  <div key={s.label} className="bg-white border border-zinc-100 rounded-xl p-4 flex items-center gap-3">
+                    <div className={`w-9 h-9 flex items-center justify-center rounded-xl flex-shrink-0 ${s.color}`}>
+                      <i className={`${s.icon} text-base`} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xl font-bold text-zinc-900">{s.value}</p>
+                      <p className="text-xs text-zinc-500 mt-0.5">{s.label}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Controles: busca + ordenação */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex items-center gap-2 bg-white border border-zinc-200 rounded-lg px-3 py-2 flex-1 max-w-xs">
+                  <div className="w-4 h-4 flex items-center justify-center text-zinc-400"><Search size={14} /></div>
+                  <input
+                    type="text"
+                    placeholder="Buscar complemento..."
+                    value={busca}
+                    onChange={e => setBusca(e.target.value)}
+                    className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none"
+                  />
+                </div>
+                <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 self-start">
+                  <button
+                    onClick={() => setSortBy('receita')}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${sortBy === 'receita' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                  >
+                    Por Receita
+                  </button>
+                  <button
+                    onClick={() => setSortBy('qtd')}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${sortBy === 'qtd' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                  >
+                    Por Quantidade
+                  </button>
+                </div>
+              </div>
+
+              {/* Gráfico de barras horizontal top 10 complementos */}
+              {topComplementos.length > 0 && (
+                <div className="bg-white border border-zinc-100 rounded-xl p-5">
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-zinc-800">Top 10 Complementos</h3>
+                    <p className="text-xs text-zinc-400">{sortBy === 'receita' ? 'Por receita gerada' : 'Por quantidade vendida'}</p>
+                  </div>
+                  <div style={{ height: Math.max(180, topComplementos.length * 32) }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={topComplementos} layout="vertical" margin={{ top: 0, right: 60, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" horizontal={false} />
+                        <XAxis
+                          type="number"
+                          tick={{ fontSize: 9, fill: '#a1a1aa' }}
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={v => sortBy === 'receita' ? (v >= 1000 ? `R$${(v / 1000).toFixed(0)}k` : `R$${v}`) : String(v)}
+                        />
+                        <YAxis type="category" dataKey="nome" tick={{ fontSize: 10, fill: '#52525b' }} axisLine={false} tickLine={false} width={110} />
+                        <Tooltip
+                          formatter={(val: number) => [sortBy === 'receita' ? fmt(val) : `${val} unidades`, sortBy === 'receita' ? 'Receita' : 'Quantidade']}
+                          contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 11 }}
+                        />
+                        <Bar dataKey="valor" radius={[0, 4, 4, 0]} maxBarSize={22}>
+                          {topComplementos.map((_, i) => (
+                            <Cell key={i} fill={i === 0 ? '#10b981' : i === 1 ? '#34d399' : i === 2 ? '#6ee7b7' : '#a7f3d0'} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+
+              {/* Tabela de complementos */}
+              <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
+                {complementos.length === 0 ? (
+                  <div className="py-12 text-center text-zinc-400 text-sm">Nenhum complemento encontrado</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-zinc-50 border-b border-zinc-100">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-semibold text-zinc-500">#</th>
+                          <th className="px-4 py-3 text-left font-semibold text-zinc-500">Complemento</th>
+                          <th className="px-4 py-3 text-right font-semibold text-zinc-500">Qtd.</th>
+                          <th className="px-4 py-3 text-right font-semibold text-zinc-500">Receita</th>
+                          <th className="px-4 py-3 text-right font-semibold text-zinc-500">%</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-50">
+                        {complementos.map((op, idx) => {
+                          const pct = totalReceitaComplementos > 0 ? ((op.receita / totalReceitaComplementos) * 100).toFixed(1) : '0.0';
+                          return (
+                            <tr key={op.nome} className="hover:bg-zinc-50 transition-colors">
+                              <td className="px-4 py-3">
+                                <span className={`w-6 h-6 flex items-center justify-center rounded-full text-[10px] font-bold ${
+                                  idx === 0 ? 'bg-emerald-100 text-emerald-700' :
+                                  idx === 1 ? 'bg-zinc-100 text-zinc-600' :
+                                  idx === 2 ? 'bg-teal-100 text-teal-600' : 'text-zinc-400'
+                                }`}>{idx + 1}</span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <p title={op.nome} className="font-medium text-zinc-800 truncate max-w-[220px]">{op.nome}</p>
+                              </td>
+                              <td className="px-4 py-3 text-right font-semibold text-zinc-800">{op.qtd}</td>
+                              <td className="px-4 py-3 text-right font-bold text-zinc-900">{fmt(op.receita)}</td>
+                              <td className="px-4 py-3 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <div className="w-10 h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${pct}%` }} />
+                                  </div>
+                                  <span className="text-zinc-500 w-7 text-right">{pct}%</span>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
