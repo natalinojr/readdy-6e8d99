@@ -4,6 +4,7 @@ import { AppRoutes } from './router';
 import { AppProviders } from './providers/AppProviders';
 import ToastContainer from './components/base/ToastContainer';
 import { Suspense } from 'react';
+import { useWakeLock } from './hooks/useWakeLock';
 
 // ─── Fallback de crash de render ────────────────────────────────────────────
 function ErroAplicacao({ error }: { error?: Error }) {
@@ -74,6 +75,11 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
 // ─── App ─────────────────────────────────────────────────────────────────────
 function App() {
+  // Mantém a tela do dispositivo ligada enquanto o sistema estiver aberto
+  // (essencial em tablets, que apagam a tela por inatividade). A própria
+  // Screen Wake Lock API só age quando a aba está visível e é liberada ao sair.
+  useWakeLock();
+
   return (
     <ErrorBoundary fallback={(err) => <ErroAplicacao error={err} />}>
       <AppProviders>
