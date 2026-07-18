@@ -373,7 +373,9 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
                 return {
                   id: p.id,
                   hora: p.created_at,
-                  valor_venda: Number(order?.total_amount ?? 0),
+                  // valor_venda = o quanto desta venda entrou EM ESPÉCIE (p.amount), não o
+                  // total do pedido — que pode ter parte em cartão. Mesmo critério da RPC.
+                  valor_venda: Number(p.amount ?? 0),
                   valor_pago: Number(p.amount ?? 0) + Number(p.change_amount ?? 0),
                   troco: Number(p.change_amount ?? 0),
                   operador: p.operator_name ?? null,
@@ -522,10 +524,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
             const pedidosUnicos = [...new Set(pedidosNums)];
             const totalVenda = lista.reduce((s, t) => s + t.valor_venda, 0);
             const totalTroco = lista.reduce((s, t) => s + t.troco, 0);
-            // Pagamento conjunto: o pedido principal grava o amount do GRUPO inteiro e os
-            // vinculados gravam o deles, então somar valor_pago (amount+troco) conta em dobro.
-            // O recebido real do grupo = venda total + troco entregue uma única vez.
-            const totalPago = totalVenda + totalTroco;
+            const totalPago = lista.reduce((s, t) => s + t.valor_pago, 0);
 
             agrupadas.push({
               ...primeiro,

@@ -428,15 +428,25 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         });
       }
 
+      // Cada pedido do grupo grava só a SUA parte do valor recebido (proporcional ao
+      // próprio total), senão a soma das linhas de payments conta o grupo em dobro.
+      // O principal fica com o resto (valor - partes dos vinculados) para absorver o
+      // arredondamento e fechar exatamente com o que foi recebido.
+      const valoresVinculados = todosPedidosVinculados.map((pedido) =>
+        pagamentosFinais.map((pag) => Number((pag.valor * (pedido.total / totalEfetivo)).toFixed(2))),
+      );
+
       // Registra pagamento do pedido principal
-      for (const pag of pagamentosFinais) {
+      for (let j = 0; j < pagamentosFinais.length; j++) {
+        const pag = pagamentosFinais[j];
+        const somaVinculados = valoresVinculados.reduce((s, valores) => s + valores[j], 0);
         const { error: payErr } = await invokeWithAuth('order-write', {
           body: {
             action: 'record_payment',
             order_id: orderId,
             tenant_id: user?.tenantId,
             payment_method_id: pag.formaId,
-            amount: pag.valor,
+            amount: Number((pag.valor - somaVinculados).toFixed(2)),
             change_amount: pag.troco ?? 0,
             operator_name: user?.nome ?? null,
             paid_by_pdv: paidByPdv,
@@ -448,21 +458,20 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         }
       }
 
-      // Registra pagamentos dos pedidos vinculados (distribui proporcionalmente)
+      // Registra pagamentos dos pedidos vinculados
       if (todosPedidosVinculados.length > 0) {
-        const proporcao = todosPedidosVinculados.map((p) => p.total / totalEfetivo);
         const vinculadoErrors: string[] = [];
         for (let i = 0; i < todosPedidosVinculados.length; i++) {
           const pedido = todosPedidosVinculados[i];
-          const prop = proporcao[i];
-          for (const pag of pagamentosFinais) {
+          for (let j = 0; j < pagamentosFinais.length; j++) {
+            const pag = pagamentosFinais[j];
             const { error: payErr } = await invokeWithAuth('order-write', {
               body: {
                 action: 'record_payment',
                 order_id: pedido.id,
                 tenant_id: user?.tenantId,
                 payment_method_id: pag.formaId,
-                amount: Number((pag.valor * prop).toFixed(2)),
+                amount: valoresVinculados[i][j],
                 change_amount: 0,
                 operator_name: user?.nome ?? null,
                 paid_by_pdv: paidByPdv,

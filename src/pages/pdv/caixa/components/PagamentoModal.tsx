@@ -417,33 +417,14 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       // trata como se o carrinho atual fosse o único pedido a pagar
       const effectiveIncluirCarrinho = incluirCarrinho || pedidosExistentesSelecionados.length === 0;
 
-      // 1. Cria o pedido do carrinho se estiver selecionado
-      if (effectiveIncluirCarrinho && carrinhoSnapshot.length > 0) {
-        const result = await finalizarPedido(
-          pagamentosComTroco,
-          {
-            customerCpf: customerCpf || undefined,
-            customerEmail: customerEmail || undefined,
-            customerName: customerName || undefined,
-            customerPhone: customerPhone || undefined,
-            paymentGroupId,
-          },
-          undefined,
-          descontoManual > 0 ? { amount: descontoManual, authorizedBy: descontoAutorizadoPor } : undefined,
-        );
-        const numeroStr = result.number;
-        const seq = parseInt(numeroStr.replace(/\D/g, '').slice(-4)) || 1;
-        numeroPedidoLocal = seq;
-        orderIdLocal = result.orderId;
-        setNumeroPedidoFinal(seq);
-        setOrderIdSucesso(result.orderId);
-        marcarComoPago(seq);
-      }
-
-      // 2. Paga os pedidos existentes selecionados (distribui os pagamentos proporcionalmente)
-      // O troco é do pagamento total — não deve ser proporcionalizado entre pedidos
+      // 1. Distribui os pagamentos entre os pedidos existentes (proporcional ao total
+      // de cada um). O troco é do pagamento total — não deve ser proporcionalizado.
       const totalTrocoDistribuido = pagamentosComTroco.reduce((acc, p) => acc + (p.troco ?? 0), 0);
-      let trocoJaAtribuido = false;
+      // O troco é entregue UMA vez, então só um pedido do grupo pode gravá-lo. Quando o
+      // carrinho vira pedido ele já grava (pagamentosCarrinho herda p.troco), então os
+      // existentes não repetem — senão o change_amount entra em dobro no fechamento.
+      const carrinhoVaiGravarTroco = effectiveIncluirCarrinho && carrinhoSnapshot.length > 0;
+      let trocoJaAtribuido = carrinhoVaiGravarTroco;
 
       const pagamentosParaPedidosExistentes = pedidosExistentes.map((pedido) => {
         const proporcao = pedido.total / totalEfetivo;
@@ -467,7 +448,39 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         };
       });
 
-      // Paga todos os pedidos existentes EM PARALELO (cada um é um pedido/linha
+      // Cada pedido do grupo grava só a SUA parte do valor recebido, senão a soma das
+      // linhas de payments conta o grupo em dobro. O carrinho fica com o resto (valor
+      // recebido - partes dos existentes): assim absorve o arredondamento e a soma
+      // fecha exatamente com o que entrou.
+      const pagamentosCarrinho = pagamentosComTroco.map((p, j) => {
+        const somaExistentes = pagamentosParaPedidosExistentes.reduce((s, e) => s + e.pagamentos[j].valor, 0);
+        return { ...p, valor: Number((p.valor - somaExistentes).toFixed(2)) };
+      });
+
+      // 2. Cria o pedido do carrinho se estiver selecionado
+      if (effectiveIncluirCarrinho && carrinhoSnapshot.length > 0) {
+        const result = await finalizarPedido(
+          pagamentosCarrinho,
+          {
+            customerCpf: customerCpf || undefined,
+            customerEmail: customerEmail || undefined,
+            customerName: customerName || undefined,
+            customerPhone: customerPhone || undefined,
+            paymentGroupId,
+          },
+          undefined,
+          descontoManual > 0 ? { amount: descontoManual, authorizedBy: descontoAutorizadoPor } : undefined,
+        );
+        const numeroStr = result.number;
+        const seq = parseInt(numeroStr.replace(/\D/g, '').slice(-4)) || 1;
+        numeroPedidoLocal = seq;
+        orderIdLocal = result.orderId;
+        setNumeroPedidoFinal(seq);
+        setOrderIdSucesso(result.orderId);
+        marcarComoPago(seq);
+      }
+
+      // 3. Paga todos os pedidos existentes EM PARALELO (cada um é um pedido/linha
       // diferente no banco, então não há corrida de dados). Dentro de cada pedido,
       // os métodos de pagamento continuam sequenciais (ver pagarPedidoExistente).
       // Isso troca N chamadas de rede em série por ~1 tempo de rede no total.

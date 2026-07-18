@@ -651,28 +651,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       try {
         const { data: movements } = await admin.from("cash_movements").select("type, amount").eq("cash_register_id", cash_register_id);
         const netMovements = (movements ?? []).reduce((sum: number, m: { type: string; amount: number }) => { return sum + (m.type === "in" ? Number(m.amount) : -Number(m.amount)); }, 0);
-        const { data: cashPayments } = await admin.from("payments").select("id, amount, payment_group_id, payment_methods(type), orders(total_amount, status)").eq("cash_register_id", cash_register_id).eq("is_refunded", false);
+        const { data: cashPayments } = await admin.from("payments").select("id, amount, payment_methods(type), orders(status)").eq("cash_register_id", cash_register_id).eq("is_refunded", false);
         // Considera apenas pagamentos em dinheiro de pedidos validos (nao cancelados/draft).
-        type CashPay = { id: string; amount: number; payment_group_id: string | null; payment_methods: { type: string } | null; orders: { total_amount: number; status: string } | null };
+        type CashPay = { id: string; amount: number; payment_methods: { type: string } | null; orders: { status: string } | null };
         const cashOnly = (cashPayments ?? []).filter((p: CashPay) => p.payment_methods?.type === "cash" && p.orders && p.orders.status !== "cancelled" && p.orders.status !== "draft");
-        // Agrupa por payment_group_id (pedidos pagos JUNTOS). O pagamento principal grava
-        // amount = total do GRUPO e os vinculados gravam o deles, entao somar p.amount conta
-        // em dobro. Em grupos usamos a venda real dos pedidos; avulsos usam p.amount (parciais).
-        const cashGroups = new Map<string, CashPay[]>();
-        for (const p of cashOnly) {
-          const key = p.payment_group_id ?? `single:${p.id}`;
-          const arr = cashGroups.get(key) ?? [];
-          arr.push(p);
-          cashGroups.set(key, arr);
-        }
-        let cashTotal = 0;
-        for (const arr of cashGroups.values()) {
-          if (arr.length > 1) {
-            cashTotal += arr.reduce((s, p) => s + Number(p.orders?.total_amount ?? 0), 0);
-          } else {
-            cashTotal += Number(arr[0].amount ?? 0);
-          }
-        }
+        // Cada linha de payments grava a parte real daquele pedido naquele metodo (fix
+        // 2026-07-17), entao somar p.amount das linhas em dinheiro da a especie que
+        // entrou na gaveta — sem contar cartao de pedido com split nem inflar parcial.
+        const cashTotal = cashOnly.reduce((s: number, p: CashPay) => s + Number(p.amount ?? 0), 0);
         closingExpected = Number(crCheck.opening_value ?? 0) + netMovements + cashTotal;
       } catch { /* non-blocking */ }
       const closingActual = closing_value ?? 0;
