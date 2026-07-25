@@ -373,6 +373,19 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
   const [categoriaAtiva, setCategoriaAtiva] = useState<string>('');
   const [busca, setBusca] = useState('');
   const [itemModal, setItemModal] = useState<ItemCardapioPublico | null>(null);
+  const [atualizando, setAtualizando] = useState(false);
+
+  // Atualização manual do cardápio (silenciosa: não aciona o spinner de tela cheia
+  // nem perde a categoria/scroll — só mostra o ícone girando no próprio botão).
+  const handleAtualizar = async () => {
+    if (atualizando) return;
+    setAtualizando(true);
+    try {
+      await recarregar({ silent: true });
+    } finally {
+      setAtualizando(false);
+    }
+  };
 
   // Se ainda não tem categoria ativa (inicial ou depois de filtrar tudo), seleciona a primeira
   const categoriaEfetiva = categoriaAtiva || categorias[0] || '';
@@ -473,25 +486,37 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
 
           {/* Lista de itens */}
           <div className="flex-1 overflow-y-auto p-6 pb-32">
-            {/* Busca */}
-            <div className="relative mb-5">
-              <i className="ri-search-line absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 text-lg pointer-events-none" />
-              <input
-                type="text"
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar no cardápio..."
-                className="w-full pl-12 pr-12 py-4 text-lg bg-zinc-800 text-white placeholder-zinc-500 rounded-2xl border-2 border-zinc-700 focus:outline-none focus:border-amber-500"
-              />
-              {busca ? (
-                <button
-                  type="button"
-                  onClick={() => setBusca('')}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white cursor-pointer"
-                >
-                  <i className="ri-close-line text-xl" />
-                </button>
-              ) : null}
+            {/* Busca + atualizar cardápio */}
+            <div className="flex items-center gap-3 mb-5">
+              <div className="relative flex-1">
+                <i className="ri-search-line absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 text-lg pointer-events-none" />
+                <input
+                  type="text"
+                  value={busca}
+                  onChange={(e) => setBusca(e.target.value)}
+                  placeholder="Buscar no cardápio..."
+                  className="w-full pl-12 pr-12 py-4 text-lg bg-zinc-800 text-white placeholder-zinc-500 rounded-2xl border-2 border-zinc-700 focus:outline-none focus:border-amber-500"
+                />
+                {busca ? (
+                  <button
+                    type="button"
+                    onClick={() => setBusca('')}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white cursor-pointer"
+                  >
+                    <i className="ri-close-line text-xl" />
+                  </button>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={handleAtualizar}
+                disabled={atualizando}
+                title="Atualizar cardápio"
+                className="flex-shrink-0 flex items-center gap-2 px-5 py-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white font-semibold text-base rounded-2xl border-2 border-zinc-700 cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                <i className={`ri-refresh-line text-lg ${atualizando ? 'animate-spin' : ''}`} />
+                {atualizando ? 'Atualizando...' : 'Atualizar'}
+              </button>
             </div>
 
             {buscaNorm ? (
