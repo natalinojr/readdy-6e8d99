@@ -6,6 +6,7 @@ import { useKDS, buildKDSPedido } from '../../contexts/KDSContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSystemSettings } from '../../hooks/useSystemSettings';
 import { useKioskAuth } from '../../contexts/KioskAuthContext';
+import { useCardapio } from '../../contexts/CardapioContext';
 import { invokeWithAuth, supabase } from '../../lib/supabase';
 import { useOrderSubmit, PartialOrderError } from '../../hooks/useOrderSubmit';
 import { useWakeLock } from '../../hooks/useWakeLock';
@@ -103,6 +104,7 @@ function AutoatendimentoPageInner() {
   const { user, logout } = useAuth();
   const { settings } = useSystemSettings();
   const { kioskSession } = useKioskAuth();
+  const { recarregar: recarregarCardapio } = useCardapio();
   const navigate = useNavigate();
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen();
 
@@ -163,6 +165,22 @@ function AutoatendimentoPageInner() {
     const interval = setInterval(updateHeartbeat, 2 * 60 * 1000);
     return () => clearInterval(interval);
   }, [kioskSession?.kioskUserId, user?.id]);
+
+  // ── Auto-refresh do cardápio no totem ──────────────────────────────────────
+  // O CardapioContext só carrega o menu no mount e após edições feitas NO MESMO
+  // dispositivo. Como o totem fica ligado o dia todo e os preços/itens são
+  // editados no admin (outro dispositivo), sem isto o totem mostraria dados
+  // antigos em memória indefinidamente. Recarrega (silencioso, sem piscar):
+  //  - toda vez que volta à tela inicial (entre um cliente e outro);
+  //  - periodicamente a cada 3 min como rede de segurança.
+  useEffect(() => {
+    if (etapa === 'welcome') recarregarCardapio({ silent: true });
+  }, [etapa, recarregarCardapio]);
+
+  useEffect(() => {
+    const interval = setInterval(() => recarregarCardapio({ silent: true }), 3 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [recarregarCardapio]);
 
   // ── BUG-10: Auto-sync de pedidos offline no kiosk ──────────────────────────
   // O totem não passa pelo AppLayout/TopBar (que tem auto-sync global),
