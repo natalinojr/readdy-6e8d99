@@ -62,6 +62,20 @@ export function convertUnit(
   return qty; // un → un
 }
 
+/** Converte para kg aproximando 1 l = 1 kg (densidade da água).
+ *  Use APENAS em métricas de rendimento/perda, onde misturar massa e volume é
+ *  inevitável (ex: 715 g de queijo + 285 ml de leite numa mesma ficha).
+ *  Retorna null para 'un' e para unidades desconhecidas — sem peso conhecido não
+ *  há como somar, e o chamador deve omitir a métrica em vez de chutar. */
+export function toKgAprox(qty: number, unit: string): number | null {
+  const u = normalizeUnit(unit);
+  if (u === 'kg') return qty;
+  if (u === 'g') return qty / 1000;
+  if (u === 'l') return qty;
+  if (u === 'ml') return qty / 1000;
+  return null;
+}
+
 /** Verifica se duas unidades são do mesmo grupo (conversíveis entre si) */
 export function sameUnitGroup(a: string, b: string): boolean {
   const ua = normalizeUnit(a);

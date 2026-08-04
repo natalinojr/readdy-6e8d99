@@ -3,7 +3,7 @@ import { useProducao } from '@/contexts/ProducaoContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useIngredientCategories } from '@/hooks/useIngredientCategories';
 import type { ProductionRecipe, UnidadeEstoque } from '@/types/estoque';
-import { convertUnit, sameUnitGroup, convertUnitCost } from '@/lib/unitConversion';
+import { convertUnit, sameUnitGroup, convertUnitCost, toKgAprox } from '@/lib/unitConversion';
 
 interface Props {
   recipe: ProductionRecipe | null;
@@ -204,24 +204,26 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
     return s + it.quantity * (convertedCost ?? insumo?.precoUnitario ?? 0);
   }, 0);
 
-  // Rendimento esperado (só quando unidade de saída é massa/volume)
-  const rendimentoEsperado = useMemo(() => {
+  // Total de insumos da ficha em kg (1 l = 1 kg). null se algum insumo for 'un'
+  // — sem peso conhecido nao da para somar, e chutar produz rendimento absurdo.
+  const totalInsumosKg = useMemo(() => {
     if (items.length === 0) return null;
-    const totalInsumosKg = items.reduce((sum, it) => {
-      const conv = convertUnit(it.quantity, it.unit, 'kg');
-      return sum + (conv ?? it.quantity);
-    }, 0);
-    if (totalInsumosKg <= 0) return null;
+    let total = 0;
+    for (const it of items) {
+      const conv = toKgAprox(it.quantity, it.unit);
+      if (conv === null) return null;
+      total += conv;
+    }
+    return total > 0 ? total : null;
+  }, [items]);
 
-    let produtoKg = 0;
-    if (unidade === 'kg') produtoKg = 1;
-    else if (unidade === 'g') produtoKg = 0.001;
-    else if (unidade === 'l') produtoKg = 1;
-    else if (unidade === 'ml') produtoKg = 0.001;
-    else return null; // 'un' — nao calcula rendimento % automaticamente
-
-    return ((produtoKg / totalInsumosKg) * 100);
-  }, [items, unidade]);
+  // Rendimento esperado (só quando saída e insumos têm peso conhecido)
+  const rendimentoEsperado = useMemo(() => {
+    if (totalInsumosKg === null) return null;
+    const produtoKg = toKgAprox(1, unidade);
+    if (produtoKg === null) return null; // 'un' — nao calcula rendimento %
+    return (produtoKg / totalInsumosKg) * 100;
+  }, [totalInsumosKg, unidade]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -321,9 +323,13 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             </p>
           </div>
 
-          <p className="text-[10px] text-zinc-400">
-            Os insumos abaixo representam o consumo para produzir <strong>1 {unidade}</strong> do produto. Na producao, o sistema multiplica automaticamente pela quantidade produzida e cria o produto no estoque.
-          </p>
+          <div className="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
+            <p className="text-[10px] text-zinc-500 leading-relaxed">
+              Lance a receita para <strong className="text-zinc-700">1 {unidade}</strong> de saida — nao a batelada inteira.
+              Os insumos nao precisam somar 1 {unidade}: se 10 kg de insumo rendem 8 kg de produto, lance 1,25 kg por kg.
+              Na producao voce digita quanto produziu e o sistema multiplica estes valores, baixa os insumos e cria o produto no estoque.
+            </p>
+          </div>
 
           {/* Checklist de passos */}
           <div>
@@ -545,15 +551,26 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                   R$ {custoTotalInsumos.toFixed(2)}
                 </span>
               </div>
-              {rendimentoEsperado !== null && (
-                <div className="flex items-center justify-between pt-2 border-t border-amber-200/50">
-                  <span className="text-xs font-semibold text-amber-800">
-                    Rendimento esperado
-                  </span>
-                  <span className="text-sm font-bold text-amber-700">
-                    {rendimentoEsperado.toFixed(1)}%
-                  </span>
+              {rendimentoEsperado !== null && totalInsumosKg !== null && (
+                <div className="pt-2 border-t border-amber-200/50">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-amber-800">
+                      Rendimento esperado
+                    </span>
+                    <span className="text-sm font-bold text-amber-700">
+                      {rendimentoEsperado.toFixed(1)}%
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-amber-600 mt-0.5">
+                    Entram {totalInsumosKg.toFixed(3)} kg de insumos para sair 1 {unidade}
+                    {rendimentoEsperado > 105 && ' — saida maior que a entrada, revise as quantidades'}
+                  </p>
                 </div>
+              )}
+              {rendimentoEsperado === null && (
+                <p className="text-[10px] text-amber-600 pt-2 border-t border-amber-200/50">
+                  Rendimento nao calculado: ha insumo (ou saida) em <strong>un</strong>, que nao tem peso conhecido.
+                </p>
               )}
               <p className="text-[10px] text-amber-600">
                 Custo e rendimento por unidade de produto. Na producao, o sistema multiplica automaticamente pela quantidade produzida.

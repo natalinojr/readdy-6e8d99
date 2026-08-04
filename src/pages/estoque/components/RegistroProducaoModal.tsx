@@ -4,7 +4,7 @@ import { useEstoque } from '@/contexts/EstoqueContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import { supabase } from '@/lib/supabase';
-import { convertUnit, getRelatedUnits, convertUnitCost, sameUnitGroup } from '@/lib/unitConversion';
+import { convertUnit, getRelatedUnits, convertUnitCost, sameUnitGroup, toKgAprox } from '@/lib/unitConversion';
 import type { NovaBateladaComEstoque } from '@/contexts/ProducaoContext';
 
 interface Props {
@@ -186,48 +186,49 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     setProducedUnit(newUnit);
   }, [producedQty, producedUnit]);
 
-  // Total bruto de insumos usados (em kg)
+  // Total bruto de insumos usados (em kg, 1 l = 1 kg).
+  // null quando algum insumo esta em 'un' — sem peso conhecido, somar seria chute.
   const totalBrutoKg = useMemo(() => {
-    if (!recipe) return 0;
-    return recipe.items.reduce((sum, it) => {
+    if (!recipe) return null;
+    let total = 0;
+    for (const it of recipe.items) {
       const qty = quantitiesUsed[it.ingredientId] ?? 0;
       const unit = unitsUsed[it.ingredientId] ?? it.unit;
-      const conv = convertUnit(qty, unit, 'kg');
-      return sum + (conv ?? qty);
-    }, 0);
+      const conv = toKgAprox(qty, unit);
+      if (conv === null) return null;
+      total += conv;
+    }
+    return total;
   }, [recipe, quantitiesUsed, unitsUsed]);
 
   // Total bruto de insumos ESPERADOS pela ficha (em kg) para a quantidade produzida
   const totalEsperadoKg = useMemo(() => {
-    if (!recipe) return 0;
-    return recipe.items.reduce((sum, it) => {
-      const expectedQty = it.quantity * fatorEscala;
-      const conv = convertUnit(expectedQty, it.unit, 'kg');
-      return sum + (conv ?? expectedQty);
-    }, 0);
+    if (!recipe) return null;
+    let total = 0;
+    for (const it of recipe.items) {
+      const conv = toKgAprox(it.quantity * fatorEscala, it.unit);
+      if (conv === null) return null;
+      total += conv;
+    }
+    return total;
   }, [recipe, fatorEscala]);
 
   // Produto gerado em kg (quando unidade permite conversao)
   const produtoGeradoKg = useMemo(() => {
     if (!recipe || !producedQty || Number(producedQty) <= 0) return null;
-    const prod = Number(producedQty);
-    if (producedUnit === 'kg') return prod;
-    if (producedUnit === 'g') return prod * 0.001;
-    if (producedUnit === 'l') return prod;
-    if (producedUnit === 'ml') return prod * 0.001;
-    if (producedUnit === 'un') return null;
-    return null;
+    return toKgAprox(Number(producedQty), producedUnit);
   }, [recipe, producedQty, producedUnit]);
 
   // Rendimento real (%)
   const yieldActual = useMemo(() => {
-    if (totalBrutoKg <= 0 || produtoGeradoKg === null || produtoGeradoKg <= 0) return null;
+    if (totalBrutoKg === null || totalBrutoKg <= 0) return null;
+    if (produtoGeradoKg === null || produtoGeradoKg <= 0) return null;
     return (produtoGeradoKg / totalBrutoKg) * 100;
   }, [totalBrutoKg, produtoGeradoKg]);
 
   // Perda em kg
   const perdaKg = useMemo(() => {
-    if (totalBrutoKg <= 0) return null;
+    if (totalBrutoKg === null || totalBrutoKg <= 0) return null;
 
     // Caso 1: produto tem peso conhecido (kg, g, l, ml)
     if (produtoGeradoKg !== null && produtoGeradoKg > 0) {
@@ -236,7 +237,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     }
 
     // Caso 2: produto em unidades — perda = excesso de insumo vs esperado pela ficha
-    if (totalEsperadoKg > 0) {
+    if (totalEsperadoKg !== null && totalEsperadoKg > 0) {
       const diff = totalBrutoKg - totalEsperadoKg;
       return diff > 0.0001 ? diff : 0;
     }
@@ -245,27 +246,25 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
   }, [totalBrutoKg, produtoGeradoKg, totalEsperadoKg]);
 
   const perdaPercent = useMemo(() => {
-    if (totalBrutoKg <= 0 || perdaKg === null) return null;
+    if (totalBrutoKg === null || totalBrutoKg <= 0 || perdaKg === null) return null;
     return (perdaKg / totalBrutoKg) * 100;
   }, [perdaKg, totalBrutoKg]);
 
   // Rendimento esperado da ficha
   const yieldExpected = useMemo(() => {
     if (!recipe || recipe.items.length === 0) return null;
-    const totalInsumosKg = recipe.items.reduce((sum, it) => {
-      const conv = convertUnit(it.quantity, it.unit, 'kg');
-      return sum + (conv ?? it.quantity);
-    }, 0);
+    const produtoEsperadoKg = toKgAprox(1, recipe.unit);
+    if (produtoEsperadoKg === null) return null;
+
+    let totalInsumosKg = 0;
+    for (const it of recipe.items) {
+      const conv = toKgAprox(it.quantity, it.unit);
+      if (conv === null) return null;
+      totalInsumosKg += conv;
+    }
     if (totalInsumosKg <= 0) return null;
 
-    let produtoEsperadoKg = 0;
-    if (recipe.unit === 'kg') produtoEsperadoKg = 1;
-    else if (recipe.unit === 'g') produtoEsperadoKg = 0.001;
-    else if (recipe.unit === 'l') produtoEsperadoKg = 1;
-    else if (recipe.unit === 'ml') produtoEsperadoKg = 0.001;
-    else return null;
-
-    return ((produtoEsperadoKg / totalInsumosKg) * 100);
+    return (produtoEsperadoKg / totalInsumosKg) * 100;
   }, [recipe]);
 
   // Validacao de estoque
@@ -315,7 +314,8 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
   }, [recipe, quantitiesUsed, unitsUsed, insumos]);
 
   const perdaValue = useMemo(() => {
-    if (perdaKg === null || perdaKg <= 0 || totalBrutoKg <= 0) return 0;
+    if (perdaKg === null || perdaKg <= 0) return 0;
+    if (totalBrutoKg === null || totalBrutoKg <= 0) return 0;
     return totalCost * (perdaKg / totalBrutoKg);
   }, [perdaKg, totalBrutoKg, totalCost]);
 
