@@ -532,15 +532,6 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
         </div>
 
         <div className="p-5 space-y-5">
-          {/* Info da ficha */}
-          <div className="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
-            <p className="text-[10px] text-zinc-400">
-              <strong className="text-zinc-600">Receitas</strong> multiplica os insumos que saem do estoque.{' '}
-              <strong className="text-zinc-600">Rendeu</strong> e o que voce pesou e entra no estoque.
-              A diferenca entre os dois e a perda do processo.
-            </p>
-          </div>
-
           {/* Checklist de passos */}
           {totalSteps > 0 && (
             <div>
@@ -603,7 +594,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
               <input
                 type="number"
                 min="0.01"
-                step="any"
+                step="0.5"
                 value={receitas}
                 onChange={(e) => setReceitas(e.target.value)}
                 placeholder="1"
