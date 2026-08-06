@@ -81,6 +81,8 @@ function dbRecipeToFrontend(db: Record<string, unknown>): ProductionRecipe {
     tenantId: String(db.tenant_id ?? db.tenantId ?? ''),
     name: String(db.name ?? ''),
     unit: String(db.unit ?? 'kg') as ProductionRecipe['unit'],
+    // Fichas antigas (e o default da coluna) sao 1 — comportamento preservado.
+    outputQuantity: Number(db.output_quantity ?? db.outputQuantity ?? 1) || 1,
     instructions: String(db.instructions ?? ''),
     steps,
     items,
@@ -127,6 +129,8 @@ function dbBatchToFrontend(db: Record<string, unknown>): ProductionBatch {
 export interface NovaFichaProducao {
   name: string;
   unit: 'kg' | 'g' | 'l' | 'ml' | 'un';
+  /** Quanto a receita rende, na unidade de saida. Os itens sao para ESTE volume. */
+  outputQuantity: number;
   instructions: string;
   steps: Array<{ id?: string; text: string }>;
   items: Array<{
@@ -362,7 +366,7 @@ export function ProducaoProvider({ children }: { children: ReactNode }) {
         tenant_id: tenantId,
         name: nova.name,
         unit: nova.unit,
-        output_quantity: 1,
+        output_quantity: nova.outputQuantity > 0 ? nova.outputQuantity : 1,
         instructions: nova.instructions,
         category: nova.category,
         min_stock: nova.minStock ?? 0,
@@ -408,7 +412,8 @@ export function ProducaoProvider({ children }: { children: ReactNode }) {
         recipe_id: id,
         name: changes.name,
         unit: changes.unit,
-        output_quantity: 1,
+        // undefined => a RPC faz COALESCE e mantem o valor atual
+        output_quantity: changes.outputQuantity,
         instructions: changes.instructions,
         category: changes.category,
         min_stock: changes.minStock,

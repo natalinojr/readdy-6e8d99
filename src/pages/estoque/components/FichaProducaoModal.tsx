@@ -33,6 +33,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
   const isEditing = !!recipe;
   const [nome, setNome] = useState(recipe?.name ?? '');
   const [unidade, setUnidade] = useState<UnidadeEstoque>(recipe?.unit ?? 'kg');
+  const [rendimento, setRendimento] = useState<number>(recipe?.outputQuantity ?? 1);
   const [categoria, setCategoria] = useState(recipe?.category ?? '');
   const [minStock, setMinStock] = useState<number>(recipe?.minStock ?? 0);
   const [items, setItems] = useState<FormItem[]>(
@@ -149,6 +150,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
     if (!nome.trim()) return;
     if (items.length === 0) return;
     if (items.some((it) => it.quantity <= 0)) return;
+    if (!(rendimento > 0)) return;
 
     setSaving(true);
     try {
@@ -156,6 +158,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
         await updateRecipe(recipe.id, {
           name: nome.trim(),
           unit: unidade,
+          outputQuantity: rendimento,
           category: categoria.trim() || undefined,
           minStock,
           instructions: '',
@@ -175,6 +178,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
         await addRecipe({
           name: nome.trim(),
           unit: unidade,
+          outputQuantity: rendimento,
           category: categoria.trim() || undefined,
           minStock,
           instructions: '',
@@ -193,7 +197,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
     }
   };
 
-  // Custo total dos insumos da ficha (para 1 unidade)
+  // Custo total dos insumos da ficha (para a batelada inteira = `rendimento` unidades)
   const custoTotalInsumos = items.reduce((s, it) => {
     const insumo = insumos.find((i) => i.id === it.ingredientId);
     const convertedCost = convertUnitCost(
@@ -217,13 +221,16 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
     return total > 0 ? total : null;
   }, [items]);
 
+  // Custo por 1 unidade de saída — é o que vira `unit_price` do produto acabado
+  const custoPorUnidade = rendimento > 0 ? custoTotalInsumos / rendimento : 0;
+
   // Rendimento esperado (só quando saída e insumos têm peso conhecido)
   const rendimentoEsperado = useMemo(() => {
-    if (totalInsumosKg === null) return null;
-    const produtoKg = toKgAprox(1, unidade);
+    if (totalInsumosKg === null || !(rendimento > 0)) return null;
+    const produtoKg = toKgAprox(rendimento, unidade);
     if (produtoKg === null) return null; // 'un' — nao calcula rendimento %
     return (produtoKg / totalInsumosKg) * 100;
-  }, [totalInsumosKg, unidade]);
+  }, [totalInsumosKg, unidade, rendimento]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -277,6 +284,29 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             </div>
           </div>
 
+          {/* Rendimento da receita */}
+          <div>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+              Esta receita rende <span className="text-red-400">*</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="0.001"
+                step="any"
+                value={rendimento || ''}
+                onChange={(e) => setRendimento(Number(e.target.value))}
+                placeholder="Ex: 400"
+                className="w-32 text-sm font-semibold border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400 text-center"
+              />
+              <span className="text-sm font-semibold text-zinc-600">{unidade}</span>
+            </div>
+            <p className="text-[10px] text-zinc-400 mt-1">
+              Lance a batelada real que voce faz. Os insumos abaixo sao para <strong>esta</strong> quantidade
+              — nao precisa converter para 1 {unidade}.
+            </p>
+          </div>
+
           {/* Categoria */}
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
@@ -325,9 +355,11 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
 
           <div className="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
             <p className="text-[10px] text-zinc-500 leading-relaxed">
-              Lance a receita para <strong className="text-zinc-700">1 {unidade}</strong> de saida — nao a batelada inteira.
-              Os insumos nao precisam somar 1 {unidade}: se 10 kg de insumo rendem 8 kg de produto, lance 1,25 kg por kg.
-              Na producao voce digita quanto produziu e o sistema multiplica estes valores, baixa os insumos e cria o produto no estoque.
+              Os insumos abaixo sao o que entra para render{' '}
+              <strong className="text-zinc-700">{rendimento > 0 ? rendimento : '—'} {unidade}</strong>.
+              Eles nao precisam somar esse valor — a diferenca e a perda do processo.
+              Na producao voce digita quanto produziu de fato e o sistema reescala a receita, baixa os
+              insumos e da entrada do produto no estoque.
             </p>
           </div>
 
@@ -402,7 +434,8 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
           {/* Insumos da ficha */}
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-2">
-              Insumos brutos por unidade <span className="text-red-400">*</span>
+              Insumos brutos para render {rendimento > 0 ? rendimento : '—'} {unidade}{' '}
+              <span className="text-red-400">*</span>
             </label>
 
             {/* Busca + filtros */}
@@ -545,10 +578,18 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             <div className="bg-amber-50 border border-amber-100 rounded-lg p-4 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-amber-800">
-                  Custo total dos insumos (por 1 {unidade})
+                  Custo da batelada ({rendimento > 0 ? rendimento : '—'} {unidade})
                 </span>
                 <span className="text-sm font-bold text-amber-700">
                   R$ {custoTotalInsumos.toFixed(2)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-amber-800">
+                  Custo por 1 {unidade} do produto
+                </span>
+                <span className="text-sm font-bold text-amber-700">
+                  R$ {custoPorUnidade.toFixed(4)}
                 </span>
               </div>
               {rendimentoEsperado !== null && totalInsumosKg !== null && (
@@ -562,7 +603,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                     </span>
                   </div>
                   <p className="text-[10px] text-amber-600 mt-0.5">
-                    Entram {totalInsumosKg.toFixed(3)} kg de insumos para sair 1 {unidade}
+                    Entram {totalInsumosKg.toFixed(3)} kg de insumos para sair {rendimento} {unidade}
                     {rendimentoEsperado > 105 && ' — saida maior que a entrada, revise as quantidades'}
                   </p>
                 </div>
@@ -573,7 +614,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                 </p>
               )}
               <p className="text-[10px] text-amber-600">
-                Custo e rendimento por unidade de produto. Na producao, o sistema multiplica automaticamente pela quantidade produzida.
+                Na producao, o sistema reescala a receita pela quantidade que voce produziu de fato.
               </p>
             </div>
           )}
@@ -592,6 +633,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             disabled={
               saving ||
               !nome.trim() ||
+              !(rendimento > 0) ||
               items.length === 0 ||
               items.some((it) => it.quantity <= 0)
             }

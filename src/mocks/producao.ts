@@ -6,6 +6,7 @@ export const mockProductionRecipes: ProductionRecipe[] = [
     tenantId: 'tenant-1',
     name: 'Carne Moída Cozida',
     unit: 'kg',
+    outputQuantity: 1,
     instructions: '',
     steps: [
       { id: 'stp-001-1', text: 'Ligar o fogo médio e aquecer a panela' },
@@ -27,6 +28,7 @@ export const mockProductionRecipes: ProductionRecipe[] = [
     tenantId: 'tenant-1',
     name: 'Guacamole Pronto',
     unit: 'kg',
+    outputQuantity: 1,
     instructions: '',
     steps: [
       { id: 'stp-002-1', text: 'Descascar os abacates e retirar o caroço' },
@@ -50,6 +52,7 @@ export const mockProductionRecipes: ProductionRecipe[] = [
     tenantId: 'tenant-1',
     name: 'Frango Desfiado',
     unit: 'kg',
+    outputQuantity: 1,
     instructions: '',
     steps: [
       { id: 'stp-003-1', text: 'Lavar o peito de frango' },
@@ -93,6 +96,7 @@ export const mockProductionRecipes: ProductionRecipe[] = [
     tenantId: 'tenant-1',
     name: 'Creme de Cebola',
     unit: 'kg',
+    outputQuantity: 1,
     instructions: '',
     steps: [
       { id: 'stp-005-1', text: 'Descascar e picar as cebolas' },

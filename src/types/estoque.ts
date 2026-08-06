@@ -157,7 +157,7 @@ export interface ProductionRecipeItem {
   id: string;
   ingredientId: string;
   ingredientName: string;
-  /** Quantidade de insumo por unidade de produto (a ficha sempre define para 1 unidade) */
+  /** Quantidade de insumo para render `ProductionRecipe.outputQuantity` de produto */
   quantity: number;
   unit: string;          // unidade do insumo
   unitCost: number;      // custo unitario no momento da consulta
@@ -173,6 +173,10 @@ export interface ProductionRecipe {
   tenantId: string;
   name: string;
   unit: UnidadeEstoque;
+  /** Escala da receita: os `items` rendem esta quantidade de `unit`.
+   *  Ex: 200 g de cheddar + 0,2 l de leite rendem 400 g -> outputQuantity = 400.
+   *  Fichas antigas valem 1 (default da coluna `production_recipes.output_quantity`). */
+  outputQuantity: number;
   instructions: string;        // modo de preparo resumido (legado / opcional)
   steps: ProductionRecipeStep[];
   items: ProductionRecipeItem[];

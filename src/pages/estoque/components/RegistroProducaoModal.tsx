@@ -75,13 +75,20 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
 
   const fatorEscala = useMemo(() => {
     const prod = Number(producedQty);
-    if (prod <= 0 || isNaN(prod)) return 1;
-    // A ficha define insumos para produzir 1 recipe.unit. A quantidade digitada
-    // está em producedUnit — sem normalizar, digitar 10 kg e trocar o select
-    // para g virava fator 10000 (baixa de insumos ×1000).
-    if (!recipe || producedUnit === recipe.unit) return prod;
-    const normalizado = convertUnit(prod, producedUnit, recipe.unit);
-    return normalizado !== null && normalizado > 0 ? normalizado : prod;
+    if (prod <= 0 || isNaN(prod) || !recipe) return 1;
+
+    // A quantidade digitada está em producedUnit — sem normalizar, digitar 10 kg
+    // e trocar o select para g virava fator 10000 (baixa de insumos ×1000).
+    let normalizado = prod;
+    if (producedUnit !== recipe.unit) {
+      const conv = convertUnit(prod, producedUnit, recipe.unit);
+      if (conv !== null && conv > 0) normalizado = conv;
+    }
+
+    // A ficha rende `outputQuantity` unidades, não 1. Produzir exatamente uma
+    // receita => fator 1. Fichas antigas têm outputQuantity = 1 e não mudam.
+    const base = recipe.outputQuantity > 0 ? recipe.outputQuantity : 1;
+    return normalizado / base;
   }, [producedQty, producedUnit, recipe]);
 
   /** quantitiesUsed sempre recalculado da ficha — nunca do draft */
@@ -253,7 +260,8 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
   // Rendimento esperado da ficha
   const yieldExpected = useMemo(() => {
     if (!recipe || recipe.items.length === 0) return null;
-    const produtoEsperadoKg = toKgAprox(1, recipe.unit);
+    const base = recipe.outputQuantity > 0 ? recipe.outputQuantity : 1;
+    const produtoEsperadoKg = toKgAprox(base, recipe.unit);
     if (produtoEsperadoKg === null) return null;
 
     let totalInsumosKg = 0;
@@ -509,9 +517,12 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
           {/* Info da ficha */}
           <div className="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
             <p className="text-[10px] text-zinc-400">
-              Ficha define os insumos para produzir{' '}
-              <strong className="text-zinc-600">1 {recipe.unit}</strong>{' '}
-              do produto. O sistema recalcula automaticamente ao digitar a quantidade produzida.
+              A ficha rende{' '}
+              <strong className="text-zinc-600">
+                {recipe.outputQuantity > 0 ? recipe.outputQuantity : 1} {recipe.unit}
+              </strong>{' '}
+              por receita. Digite quanto voce produziu de fato — o sistema reescala os insumos
+              automaticamente.
             </p>
           </div>
 
