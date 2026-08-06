@@ -3,7 +3,7 @@ import { useProducao } from '@/contexts/ProducaoContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useIngredientCategories } from '@/hooks/useIngredientCategories';
 import type { ProductionRecipe, UnidadeEstoque } from '@/types/estoque';
-import { convertUnit, sameUnitGroup, convertUnitCost, toKgAprox } from '@/lib/unitConversion';
+import { convertUnit, sameUnitGroup, convertUnitCost } from '@/lib/unitConversion';
 
 interface Props {
   recipe: ProductionRecipe | null;
@@ -235,27 +235,6 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
     return s + it.quantity * (convertedCost ?? insumo?.precoUnitario ?? 0);
   }, 0);
 
-  // Total de insumos da ficha em kg (1 l = 1 kg). null se algum insumo for 'un'
-  // — sem peso conhecido nao da para somar, e chutar produz rendimento absurdo.
-  const totalInsumosKg = useMemo(() => {
-    if (items.length === 0) return null;
-    let total = 0;
-    for (const it of items) {
-      const conv = toKgAprox(it.quantity, it.unit);
-      if (conv === null) return null;
-      total += conv;
-    }
-    return total > 0 ? total : null;
-  }, [items]);
-
-  // Quanto a receita PODE render, no maximo (perda zero). Nao e o rendimento —
-  // esse so se sabe pesando, na producao. Serve so de referencia ao cadastrar.
-  const tetoRendimento = useMemo(() => {
-    if (totalInsumosKg === null) return null;
-    if (unidade === 'kg' || unidade === 'l') return totalInsumosKg;
-    if (unidade === 'g' || unidade === 'ml') return totalInsumosKg * 1000;
-    return null; // 'un' — sem peso conhecido
-  }, [totalInsumosKg, unidade]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -381,14 +360,6 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             </div>
             <p className="text-[10px] text-zinc-400 mt-1">
               Quando o estoque deste produto atingir este nivel, o sistema alertara para producao.
-            </p>
-          </div>
-
-          <div className="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
-            <p className="text-[10px] text-zinc-500 leading-relaxed">
-              Lance abaixo <strong className="text-zinc-700">uma receita</strong> — as quantidades de insumo
-              bruto que voce usa de uma vez. Quanto isso rende nao se declara aqui: e pesado na producao,
-              onde voce informa quantas receitas fez e quanto saiu de fato.
             </p>
           </div>
 
@@ -601,7 +572,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             )}
           </div>
 
-          {/* Resumo: custo da receita + teto teorico de saida */}
+          {/* Resumo: custo da receita */}
           {items.length > 0 && (
             <div className="bg-amber-50 border border-amber-100 rounded-lg p-4 space-y-2">
               <div className="flex items-center justify-between">
@@ -612,28 +583,6 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                   R$ {custoTotalInsumos.toFixed(2)}
                 </span>
               </div>
-              {tetoRendimento !== null && (
-                <div className="pt-2 border-t border-amber-200/50">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-amber-800">
-                      Entra de insumo
-                    </span>
-                    <span className="text-sm font-bold text-amber-700">
-                      {tetoRendimento.toFixed(tetoRendimento >= 100 ? 0 : 3)} {unidade}
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-amber-600 mt-0.5">
-                    Teto teorico de saida, com perda zero. O rendimento real e o que voce pesar na
-                    producao — o sistema calcula a perda comparando os dois.
-                  </p>
-                </div>
-              )}
-              {tetoRendimento === null && (
-                <p className="text-[10px] text-amber-600 pt-2 border-t border-amber-200/50">
-                  Ha insumo (ou saida) em <strong>un</strong>, sem peso conhecido — o sistema nao consegue
-                  estimar o teto de saida nem calcular perda por peso.
-                </p>
-              )}
             </div>
           )}
         </div>
