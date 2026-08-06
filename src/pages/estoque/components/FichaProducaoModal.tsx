@@ -28,12 +28,14 @@ interface FormStep {
 export default function FichaProducaoModal({ recipe, onClose }: Props) {
   const { addRecipe, updateRecipe } = useProducao();
   const { insumos } = useEstoque();
-  const { names: categoriasDisponiveis } = useIngredientCategories();
+  const { names: categoriasDisponiveis, addCategory } = useIngredientCategories();
 
   const isEditing = !!recipe;
   const [nome, setNome] = useState(recipe?.name ?? '');
   const [unidade, setUnidade] = useState<UnidadeEstoque>(recipe?.unit ?? 'kg');
   const [categoria, setCategoria] = useState(recipe?.category ?? '');
+  const [criandoCategoria, setCriandoCategoria] = useState(false);
+  const [novaCategoria, setNovaCategoria] = useState('');
   const [minStock, setMinStock] = useState<number>(recipe?.minStock ?? 0);
   const [items, setItems] = useState<FormItem[]>(
     recipe?.items.map((it) => ({
@@ -51,6 +53,16 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
   const [buscaInsumo, setBuscaInsumo] = useState('');
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('');
   const [novoPasso, setNovoPasso] = useState('');
+
+  // Inclui a categoria atual da ficha mesmo que ainda nao exista como categoria
+  // formal (ex: digitada antes desta tela ter virado dropdown) — senao o select
+  // cairia silenciosamente em "Sem categoria" ao abrir uma ficha existente.
+  const categoriasParaSelect = useMemo(() => {
+    if (categoria && !categoriasDisponiveis.includes(categoria)) {
+      return [categoria, ...categoriasDisponiveis];
+    }
+    return categoriasDisponiveis;
+  }, [categoriasDisponiveis, categoria]);
 
   const insumosDisponiveis = useMemo(() => {
     return insumos.filter((i) => !items.some((it) => it.ingredientId === i.id));
@@ -115,6 +127,21 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
 
   const removeItem = (tempId: string) => {
     setItems((prev) => prev.filter((it) => it.tempId !== tempId));
+  };
+
+  const handleAddCategoria = async () => {
+    const nome = novaCategoria.trim();
+    if (!nome) return;
+    // Categoria ja existente (comparacao case-insensitive): so seleciona, nao duplica.
+    const existente = categoriasDisponiveis.find((c) => c.toLowerCase() === nome.toLowerCase());
+    if (existente) {
+      setCategoria(existente);
+    } else {
+      await addCategory(nome);
+      setCategoria(nome);
+    }
+    setNovaCategoria('');
+    setCriandoCategoria(false);
   };
 
   const addStep = () => {
@@ -287,20 +314,49 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
               Categoria do produto acabado
             </label>
-            <div className="flex items-center gap-2">
-              <input
-                list="cat-producao"
-                value={categoria}
-                onChange={(e) => setCategoria(e.target.value)}
-                placeholder="Ex: Produtos Produzidos"
-                className="flex-1 text-xs border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
-              />
-              <datalist id="cat-producao">
-                {categoriasDisponiveis.map((cat) => (
-                  <option key={cat} value={cat} />
-                ))}
-              </datalist>
-            </div>
+            {criandoCategoria ? (
+              <div className="flex items-center gap-2">
+                <input
+                  autoFocus
+                  value={novaCategoria}
+                  onChange={(e) => setNovaCategoria(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddCategoria(); }}
+                  placeholder="Nome da nova categoria"
+                  className="flex-1 text-xs border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  onClick={handleAddCategoria}
+                  disabled={!novaCategoria.trim()}
+                  className="px-3 py-2.5 bg-amber-500 text-white text-xs font-medium rounded-lg hover:bg-amber-600 disabled:opacity-40 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  Adicionar
+                </button>
+                <button
+                  onClick={() => { setCriandoCategoria(false); setNovaCategoria(''); }}
+                  className="w-9 h-9 flex items-center justify-center text-zinc-400 hover:text-zinc-600 cursor-pointer flex-shrink-0"
+                >
+                  <i className="ri-close-line text-lg" />
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <select
+                  value={categoria}
+                  onChange={(e) => {
+                    if (e.target.value === '__nova__') { setCriandoCategoria(true); return; }
+                    setCategoria(e.target.value);
+                  }}
+                  className="w-full text-xs border border-zinc-200 rounded-lg px-3 py-2.5 pr-8 focus:outline-none focus:border-amber-400 bg-white appearance-none cursor-pointer"
+                >
+                  <option value="">Sem categoria</option>
+                  {categoriasParaSelect.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                  <option value="__nova__">+ Nova categoria...</option>
+                </select>
+                <i className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-400 text-sm" />
+              </div>
+            )}
             <p className="text-[10px] text-zinc-400 mt-1">
               Ao registrar a producao, o produto sera criado no estoque com essa categoria.
             </p>
