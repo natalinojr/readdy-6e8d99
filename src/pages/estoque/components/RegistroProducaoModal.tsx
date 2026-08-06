@@ -111,7 +111,11 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     return new Set();
   });
 
-  // Auto-calculate ingredient quantities based on how many recipes were made
+  // Auto-calculate ingredient quantities based on how many recipes were made.
+  // `it.quantity` esta na unidade DA FICHA (it.unit) — se o usuario trocou o
+  // select para outra unidade do mesmo grupo (ex: g -> kg) SEM editar o valor
+  // (o que nao marca manualOverrides), precisa converter para essa unidade
+  // antes de gravar, senao o numero fica certo na unidade errada.
   useEffect(() => {
     if (!recipe) return;
 
@@ -119,12 +123,16 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
       const next: Record<string, number> = { ...prev };
       recipe.items.forEach((it) => {
         if (manualOverrides.has(it.ingredientId)) return;
-        const totalQty = it.quantity * fatorEscala;
-        next[it.ingredientId] = Number(totalQty.toFixed(4));
+        const totalQtyNaUnidadeDaFicha = it.quantity * fatorEscala;
+        const unidadeExibida = unitsUsed[it.ingredientId] ?? it.unit;
+        const convertido = unidadeExibida === it.unit
+          ? totalQtyNaUnidadeDaFicha
+          : convertUnit(totalQtyNaUnidadeDaFicha, it.unit, unidadeExibida);
+        next[it.ingredientId] = Number((convertido ?? totalQtyNaUnidadeDaFicha).toFixed(4));
       });
       return next;
     });
-  }, [recipe, manualOverrides, fatorEscala]);
+  }, [recipe, manualOverrides, fatorEscala, unitsUsed]);
 
   // Auto-salva rascunho a cada mudanca (apenas dados de producao, NAO quantitiesUsed)
   useEffect(() => {
@@ -158,6 +166,18 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
       return next;
     });
     setQuantitiesUsed((prev) => ({ ...prev, [ingredientId]: val }));
+  }, []);
+
+  // Volta o insumo para calculo automatico (quantidade da ficha x receitas).
+  // Remover do Set aciona de novo o useEffect de auto-calculo, que recalcula
+  // esse item porque ele deixou de estar em manualOverrides.
+  const resetParaAutomatico = useCallback((ingredientId: string) => {
+    setManualOverrides((prev) => {
+      if (!prev.has(ingredientId)) return prev;
+      const next = new Set(prev);
+      next.delete(ingredientId);
+      return next;
+    });
   }, []);
 
   const updateUnitUsed = useCallback((ingredientId: string, newUnit: string) => {
@@ -521,100 +541,6 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
             </p>
           </div>
 
-          {/* Receitas feitas — multiplica os insumos */}
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-              Quantas receitas voce fez? <span className="text-red-400">*</span>
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min="0.01"
-                step="any"
-                value={receitas}
-                onChange={(e) => setReceitas(e.target.value)}
-                placeholder="1"
-                className="w-24 text-sm font-semibold border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400 text-center"
-              />
-              <span className="text-[10px] text-zinc-400">
-                {fatorEscala === 1
-                  ? 'uma receita da ficha'
-                  : `insumos da ficha x ${fatorEscala}`}
-              </span>
-            </div>
-          </div>
-
-          {/* Quanto rendeu — entra no estoque */}
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-              Quanto rendeu? <span className="text-red-400">*</span>
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={producedQty}
-                onChange={(e) => setProducedQty(e.target.value)}
-                placeholder="Pese o produto pronto"
-                className="flex-1 text-xs border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
-              />
-              <select
-                value={producedUnit}
-                onChange={(e) => updateProducedUnit(e.target.value)}
-                className="text-xs border border-zinc-200 rounded-lg px-2 py-2.5 focus:outline-none focus:border-amber-400 bg-white"
-              >
-                {relatedUnits.map((u) => (
-                  <option key={u} value={u}>{u}</option>
-                ))}
-              </select>
-            </div>
-            <p className="text-[10px] text-zinc-400 mt-1">
-              Entra no estoque como <strong>{recipe.name}</strong>. E daqui que sai o custo por {recipe.unit}.
-            </p>
-          </div>
-
-          {/* Rendimento e perda */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="bg-zinc-50 border border-zinc-200 rounded-lg p-3">
-              <label className="block text-xs font-semibold text-zinc-600 mb-1">
-                Rendimento real
-              </label>
-              <p className="text-lg font-bold text-zinc-800">
-                {yieldActual !== null ? `${yieldActual.toFixed(1)}%` : '—'}
-              </p>
-              {yieldExpected !== null && yieldActual !== null && (
-                <p className={`text-[10px] mt-0.5 ${
-                  yieldActual < yieldExpected * 0.8 ? 'text-red-500' : 'text-zinc-400'
-                }`}>
-                  Media de {yieldExpectedN} producao{yieldExpectedN > 1 ? 'es' : ''}: {yieldExpected.toFixed(1)}%
-                  {yieldActual < yieldExpected * 0.8 && ' · Bem abaixo do normal!'}
-                </p>
-              )}
-              {yieldExpected === null && (
-                <p className="text-[10px] mt-0.5 text-zinc-400">
-                  Sem historico ainda — a partir da 2a producao aparece a media para comparar.
-                </p>
-              )}
-            </div>
-            {perdaKg !== null && perdaKg > 0 && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-xs font-semibold text-red-700 flex items-center gap-1">
-                    <i className="ri-alert-line" />
-                    Perda
-                  </p>
-                  <span className="text-sm font-bold text-red-700">
-                    {perdaPercent?.toFixed(1)}%
-                  </span>
-                </div>
-                <p className="text-[10px] text-red-600">
-                  {perdaKg.toFixed(3)} kg · Custo: {fmt(perdaValue)}
-                </p>
-              </div>
-            )}
-          </div>
-
           {/* Checklist de passos */}
           {totalSteps > 0 && (
             <div>
@@ -667,6 +593,29 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
               )}
             </div>
           )}
+
+          {/* Receitas feitas — multiplica os insumos */}
+          <div>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+              Quantas receitas? <span className="text-red-400">*</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="0.01"
+                step="any"
+                value={receitas}
+                onChange={(e) => setReceitas(e.target.value)}
+                placeholder="1"
+                className="w-24 text-sm font-semibold border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400 text-center"
+              />
+              <span className="text-[10px] text-zinc-400">
+                {fatorEscala === 1
+                  ? 'uma receita da ficha'
+                  : `insumos da ficha x ${fatorEscala}`}
+              </span>
+            </div>
+          </div>
 
           {/* Alerta global de estoque insuficiente */}
           {hasStockErrors && (
@@ -742,9 +691,14 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
                       <p className="text-xs font-medium text-zinc-700 truncate">
                         {it.ingredientName}
                         {isManual && (
-                          <span className="ml-1.5 text-[10px] text-amber-600 font-normal">
-                            (ajustado)
-                          </span>
+                          <button
+                            onClick={() => resetParaAutomatico(it.ingredientId)}
+                            title="Voltar a calcular automaticamente pelas receitas"
+                            className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] text-amber-600 hover:text-amber-700 font-normal cursor-pointer"
+                          >
+                            <i className="ri-refresh-line text-[10px]" />
+                            ajustado — voltar automatico
+                          </button>
                         )}
                       </p>
                       <p className="text-[10px] text-zinc-400">
@@ -794,6 +748,77 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
                 );
               })}
             </div>
+          </div>
+
+          {/* Quanto rendeu — entra no estoque */}
+          <div>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+              Quanto rendeu? <span className="text-red-400">*</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={producedQty}
+                onChange={(e) => setProducedQty(e.target.value)}
+                placeholder="Pese o produto pronto"
+                className="flex-1 text-xs border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
+              />
+              <select
+                value={producedUnit}
+                onChange={(e) => updateProducedUnit(e.target.value)}
+                className="text-xs border border-zinc-200 rounded-lg px-2 py-2.5 focus:outline-none focus:border-amber-400 bg-white"
+              >
+                {relatedUnits.map((u) => (
+                  <option key={u} value={u}>{u}</option>
+                ))}
+              </select>
+            </div>
+            <p className="text-[10px] text-zinc-400 mt-1">
+              Entra no estoque como <strong>{recipe.name}</strong>. E daqui que sai o custo por {recipe.unit}.
+            </p>
+          </div>
+
+          {/* Rendimento e perda */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="bg-zinc-50 border border-zinc-200 rounded-lg p-3">
+              <label className="block text-xs font-semibold text-zinc-600 mb-1">
+                Rendimento real
+              </label>
+              <p className="text-lg font-bold text-zinc-800">
+                {yieldActual !== null ? `${yieldActual.toFixed(1)}%` : '—'}
+              </p>
+              {yieldExpected !== null && yieldActual !== null && (
+                <p className={`text-[10px] mt-0.5 ${
+                  yieldActual < yieldExpected * 0.8 ? 'text-red-500' : 'text-zinc-400'
+                }`}>
+                  Media de {yieldExpectedN} producao{yieldExpectedN > 1 ? 'es' : ''}: {yieldExpected.toFixed(1)}%
+                  {yieldActual < yieldExpected * 0.8 && ' · Bem abaixo do normal!'}
+                </p>
+              )}
+              {yieldExpected === null && (
+                <p className="text-[10px] mt-0.5 text-zinc-400">
+                  Sem historico ainda — a partir da 2a producao aparece a media para comparar.
+                </p>
+              )}
+            </div>
+            {perdaKg !== null && perdaKg > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs font-semibold text-red-700 flex items-center gap-1">
+                    <i className="ri-alert-line" />
+                    Perda
+                  </p>
+                  <span className="text-sm font-bold text-red-700">
+                    {perdaPercent?.toFixed(1)}%
+                  </span>
+                </div>
+                <p className="text-[10px] text-red-600">
+                  {perdaKg.toFixed(3)} kg · Custo: {fmt(perdaValue)}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Observacoes */}

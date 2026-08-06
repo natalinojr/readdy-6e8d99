@@ -26,7 +26,7 @@ const FULL_SCREEN_PROTECTED = ['/modulos'];
 const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas'];
 
 export default function AppLayout() {
-  const { isAuthenticated, needsTenantSelection } = useAuth();
+  const { isAuthenticated, needsTenantSelection, loading } = useAuth();
   const location = useLocation();
   const { isModoTreino } = useModoTreino();
   const { mode, setMode } = useAppMode();
@@ -48,17 +48,28 @@ export default function AppLayout() {
     return <Outlet />;
   }
 
-  // 2. Protecao de autenticacao
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+  // 2. Enquanto a sessao ainda esta sendo restaurada (F5), NAO decide nada.
+  // Sem este guard, um F5 em qualquer rota (ex: /estoque) cai aqui com
+  // isAuthenticated=false por uma fracao de segundo (antes do getSession()
+  // resolver), redireciona para /login com `replace` — destruindo a rota
+  // original do historico — e so DEPOIS a sessao e restaurada. Como a Login
+  // page manda quem ja esta autenticado para /modulos, o usuario perdia a
+  // pagina em que estava e sempre voltava para /modulos no F5.
+  if (loading) {
+    return null; // o overlay "Carregando sessao..." do AuthContext ja cobre a tela
   }
 
-  // 3. Selecao de loja obrigatoria — bloqueia TUDO ate escolher
+  // 3. Protecao de autenticacao
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  }
+
+  // 4. Selecao de loja obrigatoria — bloqueia TUDO ate escolher
   if (needsTenantSelection) {
     return <SelecionarLojaPage />;
   }
 
-  // 4. Full-screen protegidas (modulos) — sem sidebar
+  // 5. Full-screen protegidas (modulos) — sem sidebar
   if (isFullScreenProtected) {
     return <Outlet />;
   }

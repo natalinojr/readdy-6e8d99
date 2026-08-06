@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { ChefHat, Eye, EyeOff, AlertCircle, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -45,7 +45,16 @@ export default function Login() {
   const { login, isAuthenticated } = useAuth();
   const { setMode: setAppMode } = useAppMode();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
+
+  // Rota que o AppLayout guardou antes de mandar pro login (F5 numa rota
+  // protegida, sessao expirada no meio da navegacao etc). So aceita path
+  // interno (comeca com "/") — nunca redireciona para URL externa.
+  const destinoAposLogin = (() => {
+    const from = (location.state as { from?: string } | null)?.from;
+    return from && from.startsWith('/') ? from : '/modulos';
+  })();
   const [mode, setMode] = useState<'email' | 'matricula'>('email');
   const [identifier, setIdentifier] = useState('');
   const [senha, setSenha] = useState('');
@@ -66,7 +75,7 @@ export default function Login() {
     setLoginsRecentes(getLoginsRecentes());
   }, []);
 
-  if (isAuthenticated) { navigate('/modulos', { replace: true }); return null; }
+  if (isAuthenticated) { navigate(destinoAposLogin, { replace: true }); return null; }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,8 +86,8 @@ export default function Login() {
     setLoading(false);
     if (result) {
       salvarLoginRecente(identifier.trim(), mode);
-      setAppMode('modulos');
-      navigate('/modulos', { replace: true });
+      if (destinoAposLogin === '/modulos') setAppMode('modulos');
+      navigate(destinoAposLogin, { replace: true });
     } else {
       setError('Credenciais inválidas. Verifique e tente novamente.');
     }
