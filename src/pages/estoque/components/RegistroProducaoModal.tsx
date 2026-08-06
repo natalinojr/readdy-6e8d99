@@ -19,6 +19,8 @@ const fmt = formatCurrency;
 interface DraftData {
   producedQty: string;
   producedUnit: string;
+  /** Quantas vezes a receita da ficha foi feita nesta batelada */
+  receitas?: string;
   notes: string;
   stepsCompleted: string[];
   savedAt: string;
@@ -58,7 +60,7 @@ function clearDraft(recipeId: string) {
 }
 
 export default function RegistroProducaoModal({ recipeId, onClose, operador }: Props) {
-  const { getRecipeById, addBatchWithStock } = useProducao();
+  const { getRecipeById, addBatchWithStock, getBatchesByRecipeId } = useProducao();
   const { insumos, upsertInsumo, reloadInsumos, reloadMovimentacoes } = useEstoque();
   const { user } = useAuth();
   const recipe = getRecipeById(recipeId);
@@ -67,29 +69,20 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
 
   const [producedQty, setProducedQty] = useState(draft?.producedQty ?? '');
   const [producedUnit, setProducedUnit] = useState(draft?.producedUnit ?? recipe?.unit ?? 'kg');
+  const [receitas, setReceitas] = useState(draft?.receitas ?? '1');
   const [notes, setNotes] = useState(draft?.notes ?? '');
   const [saving, setSaving] = useState(false);
   const [saveErrors, setSaveErrors] = useState<string[]>([]);
 
   const [manualOverrides, setManualOverrides] = useState<Set<string>>(new Set());
 
+  // O que multiplica os insumos é QUANTAS RECEITAS foram feitas — não o quanto
+  // rendeu. A ficha não declara rendimento (ele varia e só se sabe pesando), então
+  // não existe denominador para derivar o fator a partir da quantidade produzida.
   const fatorEscala = useMemo(() => {
-    const prod = Number(producedQty);
-    if (prod <= 0 || isNaN(prod) || !recipe) return 1;
-
-    // A quantidade digitada está em producedUnit — sem normalizar, digitar 10 kg
-    // e trocar o select para g virava fator 10000 (baixa de insumos ×1000).
-    let normalizado = prod;
-    if (producedUnit !== recipe.unit) {
-      const conv = convertUnit(prod, producedUnit, recipe.unit);
-      if (conv !== null && conv > 0) normalizado = conv;
-    }
-
-    // A ficha rende `outputQuantity` unidades, não 1. Produzir exatamente uma
-    // receita => fator 1. Fichas antigas têm outputQuantity = 1 e não mudam.
-    const base = recipe.outputQuantity > 0 ? recipe.outputQuantity : 1;
-    return normalizado / base;
-  }, [producedQty, producedUnit, recipe]);
+    const n = Number(receitas);
+    return n > 0 && !isNaN(n) ? n : 1;
+  }, [receitas]);
 
   /** quantitiesUsed sempre recalculado da ficha — nunca do draft */
   const [quantitiesUsed, setQuantitiesUsed] = useState<Record<string, number>>(() => {
@@ -118,11 +111,9 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     return new Set();
   });
 
-  // Auto-calculate ingredient quantities based on produced amount
+  // Auto-calculate ingredient quantities based on how many recipes were made
   useEffect(() => {
     if (!recipe) return;
-    const prod = Number(producedQty);
-    if (prod <= 0 || isNaN(prod)) return;
 
     setQuantitiesUsed((prev) => {
       const next: Record<string, number> = { ...prev };
@@ -133,7 +124,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
       });
       return next;
     });
-  }, [producedQty, recipe, manualOverrides, fatorEscala]);
+  }, [recipe, manualOverrides, fatorEscala]);
 
   // Auto-salva rascunho a cada mudanca (apenas dados de producao, NAO quantitiesUsed)
   useEffect(() => {
@@ -141,11 +132,12 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     saveDraft(recipe.id, {
       producedQty,
       producedUnit,
+      receitas,
       notes,
       stepsCompleted: Array.from(stepsCompleted),
       savedAt: new Date().toISOString(),
     });
-  }, [recipe, producedQty, producedUnit, notes, stepsCompleted]);
+  }, [recipe, producedQty, producedUnit, receitas, notes, stepsCompleted]);
 
   // Resto do componente continua igual...
   // ... existing code ...
@@ -257,23 +249,24 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     return (perdaKg / totalBrutoKg) * 100;
   }, [perdaKg, totalBrutoKg]);
 
-  // Rendimento esperado da ficha
+  // Rendimento esperado = MEDIA DAS PRODUCOES ANTERIORES desta ficha.
+  // Antes era derivado de um rendimento declarado na ficha; como a ficha nao
+  // declara mais (o rendimento se pesa, nao se afirma), a referencia honesta e o
+  // historico. Sem historico, nao ha esperado — e isso e dito na tela.
   const yieldExpected = useMemo(() => {
-    if (!recipe || recipe.items.length === 0) return null;
-    const base = recipe.outputQuantity > 0 ? recipe.outputQuantity : 1;
-    const produtoEsperadoKg = toKgAprox(base, recipe.unit);
-    if (produtoEsperadoKg === null) return null;
+    if (!recipe) return null;
+    const anteriores = getBatchesByRecipeId(recipe.id)
+      .map((b) => b.yieldPercentActual)
+      .filter((y): y is number => y != null && y > 0);
+    if (anteriores.length === 0) return null;
+    return anteriores.reduce((s, y) => s + y, 0) / anteriores.length;
+  }, [recipe, getBatchesByRecipeId]);
 
-    let totalInsumosKg = 0;
-    for (const it of recipe.items) {
-      const conv = toKgAprox(it.quantity, it.unit);
-      if (conv === null) return null;
-      totalInsumosKg += conv;
-    }
-    if (totalInsumosKg <= 0) return null;
-
-    return (produtoEsperadoKg / totalInsumosKg) * 100;
-  }, [recipe]);
+  const yieldExpectedN = useMemo(() => {
+    if (!recipe) return 0;
+    return getBatchesByRecipeId(recipe.id)
+      .filter((b) => b.yieldPercentActual != null && b.yieldPercentActual > 0).length;
+  }, [recipe, getBatchesByRecipeId]);
 
   // Validacao de estoque
   const stockErrors = useMemo(() => {
@@ -331,6 +324,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
 
   const handleSave = async () => {
     if (!producedQty || Number(producedQty) <= 0) return;
+    if (!(Number(receitas) > 0)) return;
     if (totalSteps > 0 && !allStepsDone) return;
     if (hasStockErrors) return;
 
@@ -487,7 +481,11 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
   const completedCount = stepsCompleted.size;
   const totalSteps = recipe.steps?.length ?? 0;
   const allStepsDone = totalSteps > 0 && completedCount === totalSteps;
-  const canRegister = Number(producedQty) > 0 && (totalSteps === 0 || allStepsDone) && !hasStockErrors;
+  const canRegister =
+    Number(producedQty) > 0 &&
+    Number(receitas) > 0 &&
+    (totalSteps === 0 || allStepsDone) &&
+    !hasStockErrors;
 
   const relatedUnits = getRelatedUnits(recipe.unit);
 
@@ -517,19 +515,39 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
           {/* Info da ficha */}
           <div className="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
             <p className="text-[10px] text-zinc-400">
-              A ficha rende{' '}
-              <strong className="text-zinc-600">
-                {recipe.outputQuantity > 0 ? recipe.outputQuantity : 1} {recipe.unit}
-              </strong>{' '}
-              por receita. Digite quanto voce produziu de fato — o sistema reescala os insumos
-              automaticamente.
+              <strong className="text-zinc-600">Receitas</strong> multiplica os insumos que saem do estoque.{' '}
+              <strong className="text-zinc-600">Rendeu</strong> e o que voce pesou e entra no estoque.
+              A diferenca entre os dois e a perda do processo.
             </p>
           </div>
 
-          {/* Quantidade produzida */}
+          {/* Receitas feitas — multiplica os insumos */}
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-              Quantidade produzida <span className="text-red-400">*</span>
+              Quantas receitas voce fez? <span className="text-red-400">*</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="0.01"
+                step="any"
+                value={receitas}
+                onChange={(e) => setReceitas(e.target.value)}
+                placeholder="1"
+                className="w-24 text-sm font-semibold border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400 text-center"
+              />
+              <span className="text-[10px] text-zinc-400">
+                {fatorEscala === 1
+                  ? 'uma receita da ficha'
+                  : `insumos da ficha x ${fatorEscala}`}
+              </span>
+            </div>
+          </div>
+
+          {/* Quanto rendeu — entra no estoque */}
+          <div>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+              Quanto rendeu? <span className="text-red-400">*</span>
             </label>
             <div className="flex gap-2">
               <input
@@ -538,7 +556,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
                 step="0.01"
                 value={producedQty}
                 onChange={(e) => setProducedQty(e.target.value)}
-                placeholder="Ex: 10"
+                placeholder="Pese o produto pronto"
                 className="flex-1 text-xs border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
               />
               <select
@@ -551,6 +569,9 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
                 ))}
               </select>
             </div>
+            <p className="text-[10px] text-zinc-400 mt-1">
+              Entra no estoque como <strong>{recipe.name}</strong>. E daqui que sai o custo por {recipe.unit}.
+            </p>
           </div>
 
           {/* Rendimento e perda */}
@@ -566,8 +587,13 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
                 <p className={`text-[10px] mt-0.5 ${
                   yieldActual < yieldExpected * 0.8 ? 'text-red-500' : 'text-zinc-400'
                 }`}>
-                  Esperado: {yieldExpected.toFixed(1)}%
-                  {yieldActual < yieldExpected * 0.8 && ' · Abaixo do esperado!'}
+                  Media de {yieldExpectedN} producao{yieldExpectedN > 1 ? 'es' : ''}: {yieldExpected.toFixed(1)}%
+                  {yieldActual < yieldExpected * 0.8 && ' · Bem abaixo do normal!'}
+                </p>
+              )}
+              {yieldExpected === null && (
+                <p className="text-[10px] mt-0.5 text-zinc-400">
+                  Sem historico ainda — a partir da 2a producao aparece a media para comparar.
                 </p>
               )}
             </div>
