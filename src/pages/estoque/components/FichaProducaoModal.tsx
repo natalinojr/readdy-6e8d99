@@ -385,7 +385,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                   <input
                     value={step.text}
                     onChange={(e) => updateStep(step.id, e.target.value)}
-                    className="flex-1 text-xs bg-transparent text-zinc-700 focus:outline-none"
+                    className="flex-1 text-xs bg-white text-zinc-700 border border-zinc-200 rounded-md px-2 py-1.5 focus:outline-none focus:border-amber-400"
                   />
                   <div className="flex items-center gap-0.5 flex-shrink-0">
                     <button
