@@ -593,7 +593,11 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
             <div className="flex items-center gap-2">
               <input
                 type="number"
-                min="0.01"
+                // O grid das setas parte de `min` — com min="0.01" e step="0.5" o
+                // primeiro clique ia para 1.01 (nearest step, le-se como "+0,01"),
+                // so dai emplacava no +0,5. min="0.5" alinha o grid (0.5, 1, 1.5...)
+                // com o valor padrao "1".
+                min="0.5"
                 step="0.5"
                 value={receitas}
                 onChange={(e) => setReceitas(e.target.value)}
