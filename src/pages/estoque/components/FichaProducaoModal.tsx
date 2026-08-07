@@ -4,6 +4,7 @@ import { useEstoque } from '@/contexts/EstoqueContext';
 import { useIngredientCategories } from '@/hooks/useIngredientCategories';
 import type { ProductionRecipe, UnidadeEstoque } from '@/types/estoque';
 import { convertUnit, sameUnitGroup, convertUnitCost } from '@/lib/unitConversion';
+import { formatCurrencyPreciso } from '@/lib/formatters';
 
 interface Props {
   recipe: ProductionRecipe | null;
@@ -484,7 +485,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                         {insumo.nome}
                       </span>
                       <span className="text-[10px] text-zinc-400 mt-0.5">
-                        {insumo.unidade} · R$ {insumo.precoUnitario.toFixed(2)}
+                        {insumo.unidade} · {formatCurrencyPreciso(insumo.precoUnitario)}
                         {insumo.categoria ? ` · ${insumo.categoria}` : ''}
                       </span>
                     </button>
@@ -529,7 +530,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                           {it.ingredientName}
                         </p>
                         <p className="text-[10px] text-zinc-400">
-                          Custo: R$ {(convertedCost ?? insumo?.precoUnitario ?? 0).toFixed(2)}/{it.unit}
+                          Custo: {formatCurrencyPreciso(convertedCost ?? insumo?.precoUnitario ?? 0)}/{it.unit}
                           {insumo && it.unit !== insumo.unidade && (
                             <span className="text-zinc-300 ml-1">
                               (cadastrado em {insumo.unidade})

@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useProducao } from '@/contexts/ProducaoContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { formatCurrency } from '@/lib/formatters';
+import { formatCurrency, formatCurrencyPreciso } from '@/lib/formatters';
 import { supabase } from '@/lib/supabase';
 import { convertUnit, getRelatedUnits, convertUnitCost, sameUnitGroup, toKgAprox } from '@/lib/unitConversion';
 import type { NovaBateladaComEstoque } from '@/contexts/ProducaoContext';
@@ -180,11 +180,16 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     });
   }, []);
 
-  // "So tenho 340g de cheddar, nao os 360g que a receita pede" — reescala TUDO
-  // a partir da quantidade que a pessoa ajustou na mao neste insumo: descobre
-  // quantas receitas aquele valor representa e aplica esse fator em `receitas`
-  // e em todos os outros insumos (limpando os overrides, inclusive o deste
-  // item — o novo fator ja o reproduz, dentro do arredondamento).
+  // "So tenho 340g de cheddar, nao os 360g que a receita pede" — reescala os
+  // OUTROS insumos a partir da quantidade que a pessoa ajustou na mao neste
+  // item: descobre quantas receitas aquele valor representa e aplica esse
+  // fator em `receitas` e nos demais insumos.
+  //
+  // O item de referencia PERMANECE manual (nao entra no Set vazio) — ele NAO
+  // pode ser recalculado a partir do fator, porque `receitas` e arredondado
+  // pra exibicao (ex: 200/360 = 0,5556) e multiplicar de volta (360*0,5556 =
+  // 200,016) desvia do valor exato que a pessoa acabou de digitar. Foi
+  // exatamente esse desvio que o usuario reportou como bug.
   const reescalarPelaQuantidade = useCallback((ingredientId: string) => {
     if (!recipe) return;
     const it = recipe.items.find((i) => i.ingredientId === ingredientId);
@@ -204,7 +209,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     if (!(fatorImplicito > 0)) return;
 
     setReceitas(String(Number(fatorImplicito.toFixed(4))));
-    setManualOverrides(new Set());
+    setManualOverrides(new Set([ingredientId]));
   }, [recipe, quantitiesUsed, unitsUsed]);
 
   const updateUnitUsed = useCallback((ingredientId: string, newUnit: string) => {
@@ -882,7 +887,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
                   Custo unitario do produto gerado
                 </span>
                 <span className="text-base font-black text-emerald-700">
-                  {fmt(unitCost)}/{producedUnit}
+                  {formatCurrencyPreciso(unitCost)}/{producedUnit}
                 </span>
               </div>
             )}

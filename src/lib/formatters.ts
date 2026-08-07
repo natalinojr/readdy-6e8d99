@@ -9,6 +9,35 @@ export function formatCurrency(value: number): string {
 /** Alias curto para formatCurrency — use em componentes de relatório */
 export const fmt = formatCurrency;
 
+/**
+ * Formata moeda usando o minimo de casas decimais necessario pro valor NAO
+ * sumir como "R$0,00". Custo por grama/mililitro costuma ser fracao de
+ * centavo (ex: um insumo a R$27/kg custa R$0,027/g) — 2 casas fixas escondem
+ * esse valor atras de zero. So escalona alem de 2 casas quando 2 casas
+ * arredondariam pra zero; um valor que já aparece em 2 casas (ex: R$0,03)
+ * fica como está.
+ */
+export function formatCurrencyPreciso(value: number, maxDecimals = 6): string {
+  if (!Number.isFinite(value) || value === 0) return formatCurrency(0);
+
+  for (let decimals = 2; decimals < maxDecimals; decimals++) {
+    if (Number(value.toFixed(decimals)) !== 0) {
+      return value.toLocaleString('pt-BR', {
+        style: 'currency',
+        currency: 'BRL',
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      });
+    }
+  }
+  return value.toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: maxDecimals,
+    maximumFractionDigits: maxDecimals,
+  });
+}
+
 export function formatPercent(value: number, decimals = 1): string {
   return value.toFixed(decimals) + '%';
 }

@@ -3,7 +3,7 @@ import { X, Calendar } from 'lucide-react';
 import { useProducao } from '@/contexts/ProducaoContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { formatCurrency, formatPercent } from '@/lib/formatters';
+import { formatCurrency, formatCurrencyPreciso, formatPercent } from '@/lib/formatters';
 import { convertUnit } from '@/lib/unitConversion';
 import FichaProducaoModal from './FichaProducaoModal';
 import RegistroProducaoModal from './RegistroProducaoModal';
@@ -576,7 +576,7 @@ function ListaProducoes({
                         {fmt(batch.totalCost)}
                       </td>
                       <td className="px-4 py-3 text-right text-zinc-600">
-                        {fmt(batch.unitCost)}/{batch.unit}
+                        {formatCurrencyPreciso(batch.unitCost)}/{batch.unit}
                       </td>
                       <td className="px-4 py-3 text-center text-zinc-600">
                         {batch.producedBy}
