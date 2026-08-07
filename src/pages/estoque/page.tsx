@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Package, AlertTriangle } from 'lucide-react';
 import InsumosTab from './components/InsumosTab';
 import MovimentacoesTab from './components/MovimentacoesTab';
@@ -14,6 +15,8 @@ import CardapioExportImportModal from '../../components/feature/CardapioExportIm
 
 type Tab = 'insumos' | 'movimentacoes' | 'inventario' | 'cmv' | 'producao' | 'fornecedores' | 'validade' | 'consumo';
 
+const VALID_TABS: Tab[] = ['insumos', 'movimentacoes', 'inventario', 'cmv', 'producao', 'fornecedores', 'validade', 'consumo'];
+
 const tabs: { id: Tab; label: string; badge?: string }[] = [
   { id: 'insumos', label: 'Estoque' },
   { id: 'movimentacoes', label: 'Movimentações' },
@@ -26,7 +29,15 @@ const tabs: { id: Tab; label: string; badge?: string }[] = [
 ];
 
 export default function EstoquePage() {
-  const [tab, setTab] = useState<Tab>('insumos');
+  // Aba guardada na URL (?tab=producao) — nao em useState puro. Sem isso, sair
+  // da pagina (outro modulo) e voltar remonta o componente e reseta pra
+  // "insumos" sempre, mesmo se o usuario estava em Producao. Mesmo padrao ja
+  // usado em ConfiguracoesPage.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get('tab') as Tab | null;
+  const tab: Tab = rawTab && VALID_TABS.includes(rawTab) ? rawTab : 'insumos';
+  const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: true });
+
   const [showExportImport, setShowExportImport] = useState(false);
   const { insumos, insumosEsgotados, reloadInsumos } = useEstoque();
 
