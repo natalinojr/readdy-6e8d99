@@ -180,6 +180,33 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     });
   }, []);
 
+  // "So tenho 340g de cheddar, nao os 360g que a receita pede" — reescala TUDO
+  // a partir da quantidade que a pessoa ajustou na mao neste insumo: descobre
+  // quantas receitas aquele valor representa e aplica esse fator em `receitas`
+  // e em todos os outros insumos (limpando os overrides, inclusive o deste
+  // item — o novo fator ja o reproduz, dentro do arredondamento).
+  const reescalarPelaQuantidade = useCallback((ingredientId: string) => {
+    if (!recipe) return;
+    const it = recipe.items.find((i) => i.ingredientId === ingredientId);
+    if (!it || it.quantity <= 0) return;
+
+    const qtyEditada = quantitiesUsed[ingredientId] ?? 0;
+    if (qtyEditada <= 0) return;
+    const unidadeEditada = unitsUsed[ingredientId] ?? it.unit;
+
+    // Converte de volta pra unidade da ficha pra achar o fator implicito.
+    const qtyNaUnidadeDaFicha = unidadeEditada === it.unit
+      ? qtyEditada
+      : convertUnit(qtyEditada, unidadeEditada, it.unit);
+    if (qtyNaUnidadeDaFicha === null) return;
+
+    const fatorImplicito = qtyNaUnidadeDaFicha / it.quantity;
+    if (!(fatorImplicito > 0)) return;
+
+    setReceitas(String(Number(fatorImplicito.toFixed(4))));
+    setManualOverrides(new Set());
+  }, [recipe, quantitiesUsed, unitsUsed]);
+
   const updateUnitUsed = useCallback((ingredientId: string, newUnit: string) => {
     setUnitsUsed((prev) => {
       const oldUnit = prev[ingredientId];
@@ -738,6 +765,15 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
                           <option key={u} value={u}>{u}</option>
                         ))}
                       </select>
+                      {isManual && (
+                        <button
+                          onClick={() => reescalarPelaQuantidade(it.ingredientId)}
+                          title="Usar esta quantidade para reescalar as receitas e todos os outros insumos"
+                          className="w-7 h-7 flex items-center justify-center text-amber-600 hover:text-amber-700 hover:bg-amber-100 rounded-md cursor-pointer transition-colors flex-shrink-0"
+                        >
+                          <i className="ri-equalizer-line text-sm" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

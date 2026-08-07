@@ -97,8 +97,13 @@ function ListaFichas({
   const batchCountForRecipe = (recipeId: string) =>
     batches.filter((b) => b.recipeId === recipeId).length;
 
-  // Custo estimado ao usar os preços ATUAIS dos insumos do estoque
-  const custoEstimadoPorUnidade = useMemo(() => {
+  // Custo estimado de UMA RECEITA (os insumos da ficha), usando os precos ATUAIS
+  // do estoque. NAO e custo por unidade de saida — a ficha nao declara rendimento
+  // (ele se pesa no registro de producao, nao se afirma aqui), entao nao ha como
+  // dividir por g/kg/l/un sem um numero inventado. O custo por unidade real so
+  // existe DEPOIS de uma producao pesada (RegistroProducaoModal.unitCost), e e
+  // esse que alimenta a ficha tecnica.
+  const custoEstimadoPorReceita = useMemo(() => {
     const map = new Map<string, number>();
     for (const recipe of recipes) {
       let total = 0;
@@ -181,7 +186,7 @@ function ListaFichas({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {fichasFiltradas.map((recipe) => {
-            const custoUnit = custoEstimadoPorUnidade.get(recipe.id) ?? 0;
+            const custoReceita = custoEstimadoPorReceita.get(recipe.id) ?? 0;
             const batchCount = batchCountForRecipe(recipe.id);
             return (
               <div
@@ -244,9 +249,9 @@ function ListaFichas({
                 {/* Footer */}
                 <div className="flex items-center justify-between pt-3 border-t border-zinc-100">
                   <div className="text-[10px]">
-                    <span className="text-zinc-400">Custo estimado:</span>{' '}
+                    <span className="text-zinc-400">Custo estimado (1 receita):</span>{' '}
                     <span className="font-semibold text-zinc-700">
-                      {fmt(custoUnit)}/{recipe.unit}
+                      {fmt(custoReceita)}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">
