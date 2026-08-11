@@ -49,6 +49,7 @@ const ChecklistTeste = lazy(() => import('@/pages/diagnostico/ChecklistTeste'));
 const AdminMasterPage = lazy(() => import('@/pages/admin-master/page'));
 const SelecionarLojaPage = lazy(() => import('@/pages/selecionar-loja/page'));
 const TrafegoPagoPage = lazy(() => import('@/pages/trafego-pago/page'));
+const TarefasPage = lazy(() => import('@/pages/tarefas/page'));
 const PrivacidadePage = lazy(() => import('@/pages/privacidade/page'));
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
@@ -92,6 +93,7 @@ const routes: RouteObject[] = [
       { path: 'relatorios', element: <RelatoriosPage /> },
       { path: 'pedidos', element: <PedidosPage /> },
       { path: 'trafego-pago', element: <TrafegoPagoPage /> },
+      { path: 'tarefas', element: <TarefasPage /> },
       { path: 'estoque', element: <EstoquePage /> },
       { path: 'aprovacoes', element: <AprovacoesPage /> },
       { path: 'configuracoes', element: <ConfiguracoesPage /> },

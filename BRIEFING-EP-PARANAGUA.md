@@ -40,13 +40,29 @@ Cinco fontes de dados que **não conversam entre si** — essa é a raiz de quas
 
 ### CMV teórico × real (calculado: vendas TOTVS × ficha técnica + CMV iFood da planilha)
 
-| | Junho | Julho | Bimestre |
-|---|---:|---:|---:|
-| CMV teórico | ~35,6% | ~36,3% | ~36,0% |
-| CMV real | 46,2% | 34,9% | 39,3% |
-| **Fator (real ÷ teórico)** | **1,30** | **0,96** | **1,09** |
+Revisado em 2026-08-08, após remover a dupla contagem de linhas-componente (armadilha 8)
+e incluir abril/maio (exports TOTVS completos dos 4 meses):
 
-**Leitura:** junho é anomalia, julho é normal, o bimestre roda em 1,09 — dentro do padrão.
+| | Abril | Maio | Junho | Julho | Quadrimestre |
+|---|---:|---:|---:|---:|---:|
+| CMV teórico | 33,8% | 33,1% | 32,3% | 34,4% | 33,5% |
+| CMV real | 36,4% | 29,8% | 46,2% | 34,9% | 36,4% |
+| **Fator (real ÷ teórico)** | **1,08** | **0,90** | **1,43** | **1,01** | **1,09** |
+
+Pares (anulam o efeito do calendário de compras): abril+maio **0,99** · maio+junho
+**1,15** · junho+julho **1,17**.
+
+O teórico **não inclui** embalagens/hortifruti/secos (sem ficha), então um fator
+estrutural de ~1,05–1,10 é esperado mesmo com operação limpa.
+
+**Leitura:** abril–maio rodaram limpos (par 0,99). O vazamento é de JUNHO e é real —
+R$ 5,3 mil de consumo acima da ficha num mês só (chope 1,7–2 mil confirmado por barril;
+o resto: mussarela, contagens de virada de mês e itens sem ficha). Julho voltou ao normal.
+
+Preços de tabela estáveis abril→junho: burrito classic 38 · 4 quesos 38 · pollo 35 ·
+barbacoa 41 · california 42 · nachos 37,99 · bowl pronto 27 · chope 2 por 25 · coca lata 8.
+Médias realizadas de julho ~5% menores: 29/07 foi aniversário da loja, tudo a R$ 25,90
+(e foi o melhor dia do mês — R$ 5,5 mil).
 A oscilação vem de **calendário de compra**, não de desperdício: junho comprou 52,9% da receita
 e empilhou R$ 2.508 de estoque; julho comprou 33,8% e queimou R$ 693.
 
@@ -95,6 +111,30 @@ Cada uma delas produziu uma conclusão errada que precisou ser corrigida durante
 7. **Estoque final subavaliado ≠ hipótese confirmada.** Valorizei os 51 itens contados em
    30/06 em ~R$ 7.809 contra R$ 7.293 lançados — diferença de 7%, dentro do ruído.
    O estoque estava certo; o excesso de junho é real.
+
+9. **Duas linhas com preços diferentes podem ser DUAS METADES de UM produto, não dois produtos.**
+   As SKUs "BURRITO X PROMO PR" (preço ~cheio) e "BURRITO X PR PROMO" (preço ~50%, ordem das
+   palavras invertida!) pareciam duas vendas de burrito inteiro pela metade. Eram na verdade
+   as 2 metades do **Duo Mex** (burrito com 2 sabores, 2º sabor a 50%): contagem bate 1:1
+   (51/51 em julho, 53/53 em agosto) e a soma das duas linhas = o preço real de UM burrito
+   (ex.: 37,99 + 20,49 = R$ 58,48). Um relatório inicial tratou isso como "burrito vendido a
+   metade do preço" e recomendou restringir a promoção — errado: é um produto saudável
+   (tíquete R$ 57, CMV 37%, crescendo). **Só percebi porque o dono corrigiu de próprio
+   punho** ("dá lucro bruto de R$30 aproximadamente cada"), batendo com a conta refeita.
+   → *Antes de julgar uma promoção "ruim", perguntar: essas duas linhas de preço diferente
+   são dois eventos de venda, ou duas partes registradas de UM evento? Checar se as
+   contagens batem 1:1 mês a mês — é o sinal mais forte de "são a mesma venda".*
+
+8. **O export do TOTVS repete o MESMO nome de produto em linhas-componente de combo.**
+   "BURRITO CLASSIC" aparece em 3 linhas: 60 vendas reais a R$ 35,78 (subgrupo M - BURRITOS,
+   unidade UN) + 41 componentes a R$ 0,01 (subgrupo COMBOS, unidade BAL). Agregar por nome
+   antes de filtrar dilui o preço médio (21,26 em vez de 35,78) e dobra o custo (o
+   componente já está no custo do combo).
+   Cuidados que nenhum marcador isolado resolve: componentes do barbacoa saem a **R$ 4,01**
+   (não 0,01), e o Bowl Básico é unidade **BAL mas é venda real**.
+   → *Regra que funcionou: componente = preço unitário < R$ 0,50 OU custo de ficha > 1,8×
+   o preço unitário da linha. Exceção: proteína do Bowl Básico (CHILLIBW/FRANGOBW/BARBABW/
+   PERNILBW), cujo custo NÃO está no pai e deve ser somado ao teórico.*
 
 ---
 
