@@ -46,6 +46,37 @@ window.addEventListener('error', (event) => {
 
 // ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ──
 
+// ── Rede de segurança: "Failed to fetch dynamically imported module" ──
+//    Cada push no main dispara um deploy (ver CLAUDE.md), trocando os
+//    arquivos de cada tela (code-split por rota). Um PDV/tablet ligado o
+//    turno inteiro (useWakeLock existe por isso) pode ter uma aba aberta
+//    desde ANTES do deploy — ao navegar pra uma tela ainda não carregada
+//    nela, o navegador busca o arquivo antigo, que já não existe (404), e
+//    o Vite dispara `vite:preloadError` no window. Sem isso, a única saída
+//    era o operador clicar manualmente em "Recarregar página" na tela de
+//    erro — inaceitável num caixa em operação.
+//    Guarda via sessionStorage: recarrega no máximo 1x por staleness. Se o
+//    reload não resolver (erro persiste == problema real, não só staleness),
+//    a 2ª falha NÃO recarrega de novo — sobe pro ErrorBoundary normal, sinal
+//    de que precisa de atenção humana em vez de reload silencioso em loop.
+const CHUNK_RELOAD_GUARD_KEY = 'erpos_chunk_reload_attempted'
+
+window.addEventListener('vite:preloadError', (event) => {
+  if (sessionStorage.getItem(CHUNK_RELOAD_GUARD_KEY)) return
+  sessionStorage.setItem(CHUNK_RELOAD_GUARD_KEY, '1')
+  event.preventDefault()
+  window.location.reload()
+})
+
+// Ficou de pé por alguns segundos sem novo preloadError — o reload (se
+// houve) funcionou. Libera a guarda pra um deploy futuro poder recarregar
+// de novo (senão essa aba só se recuperaria automaticamente 1x na vida).
+setTimeout(() => {
+  sessionStorage.removeItem(CHUNK_RELOAD_GUARD_KEY)
+}, 5000)
+
+// ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ──
+
 // ── Callback do login da Meta (popup) ──
 // Se esta janela é um popup aberto pelo fluxo OAuth e voltou com ?code=,
 // devolve o código pra janela principal e se fecha — sem renderizar o app
