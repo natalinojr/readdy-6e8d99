@@ -107,7 +107,18 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
   });
 
   const [stepsCompleted, setStepsCompleted] = useState<Set<string>>(() => {
-    if (draft?.stepsCompleted) return new Set(draft.stepsCompleted);
+    if (draft?.stepsCompleted && recipe) {
+      // So aceita do draft os passos que AINDA existem na ficha atual. Editar
+      // os passos de uma ficha regrava todos os IDs (fn_production_crud faz
+      // DELETE + re-INSERT em production_recipe_steps), entao um draft salvo
+      // antes dessa edicao carrega IDs orfaos. Sem este filtro, o Set cresce
+      // pra alem de recipe.steps.length (ex: 14 concluidos / 7 passos) e
+      // `completedCount === totalSteps` nunca fecha — mesmo com TODOS os
+      // passos visiveis marcados, "Registrar producao" fica bloqueado pra
+      // sempre. Foi exatamente o bug reportado (ficha "Pasta de abacate").
+      const idsAtuais = new Set(recipe.steps?.map((s) => s.id) ?? []);
+      return new Set(draft.stepsCompleted.filter((id) => idsAtuais.has(id)));
+    }
     return new Set();
   });
 
