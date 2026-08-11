@@ -1,8 +1,27 @@
 # Plano — Módulo de Gestão de Tarefas (ERPOS V2)
 
-Criado em: 2026-08-11. Status: **Fase 1 IMPLEMENTADA em 2026-08-11** (banco + RPCs + task-write no ar; front pendente de push). Fases 2–4 pendentes.
+Criado em: 2026-08-11. Status: **Fases 1, 2 e 3 IMPLEMENTADAS em 2026-08-11** (backend no ar; front pendente de push). Fase 4 pendente.
 
-> Fase 1 entregue: migrações `create_tasks_module` e `create_tasks_read_rpcs` aplicadas; Edge Function `task-write` v1 ativa; front em `src/pages/tarefas/` (view Lista + drawer), rota `/tarefas`, card em `/modulos` (id `tarefas`, perfis admin/gerente). Trigger de seed de status testado no banco. Kanban/Calendário aparecem desabilitados ("em breve").
+> **Fase 1** — migrações `create_tasks_module` e `create_tasks_read_rpcs` aplicadas; Edge Function `task-write` v1 ativa; rota `/tarefas`, card em `/modulos` (id `tarefas`, perfis admin/gerente); view Lista + TaskDrawer.
+>
+> **Fase 2** — campos personalizados completos (12 tipos, `CamposCustomManager` + `CampoInput`/`CampoBadge`, flag `show_on_card`, campos globais ou por lista); view Kanban com drag & drop nativo HTML5 (sem dependência nova) que move entre colunas e reordena via `sort_order` fracionário; agrupamento flexível por status/prioridade/responsável/dropdown custom nas views Lista e Kanban.
+>
+> **Fase 3** — view Calendário (mês/semana, arrastar para remarcar, clique no dia cria tarefa, painel lateral "Sem data"); Minhas Tarefas cross-listas agrupada por vencimento (atrasadas/hoje/7 dias/mais tarde/sem data); seletor de recorrência no drawer; barra de filtros (busca, prioridade, responsável, etiquetas, ocultar concluídas); subtarefas na UI (aninhadas na Lista, criação no drawer).
+>
+> **Limitação conhecida:** o drag & drop usa a API nativa do HTML5, que não funciona em toque. Em tablet/celular, use o dropdown de status no drawer (Kanban) e o campo de data (Calendário) — ambos fazem a mesma coisa.
+
+## Arquivos do módulo (implementado)
+
+```
+src/pages/tarefas/
+  page.tsx                      -- shell: sidebar de listas, seletor de view, filtros
+  hooks/useTarefas.ts           -- dados + write() + realtime tasks-ping + reset na troca de loja
+  lib/agrupamento.ts            -- agrupar/filtrar/sort_order fracionário/payload de movimentação
+  components/
+    ViewLista.tsx  ViewKanban.tsx  ViewCalendario.tsx  MinhasTarefas.tsx
+    TaskCard.tsx   TaskDrawer.tsx  FiltrosBar.tsx  CamposCustomManager.tsx
+    campos/CampoInput.tsx (editor por tipo)  campos/CampoBadge.tsx (leitura)
+```
 
 Objetivo: módulo de gestão de tarefas multi-visão (Lista, Kanban, Calendário) com classificação flexível via **campos personalizados** estilo ClickUp, integrado à arquitetura existente (multi-tenant, Supabase, Edge Functions).
 

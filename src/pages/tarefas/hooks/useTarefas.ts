@@ -28,6 +28,42 @@ export interface TaskTag {
   color: string;
 }
 
+export type CampoTipo =
+  | 'text' | 'textarea' | 'number' | 'currency' | 'date' | 'checkbox'
+  | 'dropdown' | 'labels' | 'user' | 'rating' | 'url' | 'phone';
+
+export interface CampoOpcao {
+  id: string;
+  label: string;
+  color: string;
+}
+
+export interface CampoCustom {
+  id: string;
+  /** null = campo global do tenant (vale para todas as listas) */
+  list_id: string | null;
+  name: string;
+  field_type: CampoTipo;
+  options: CampoOpcao[];
+  show_on_card: boolean;
+  sort_order: number;
+}
+
+export const CAMPO_TIPOS: Array<{ value: CampoTipo; label: string; temOpcoes: boolean }> = [
+  { value: 'text', label: 'Texto curto', temOpcoes: false },
+  { value: 'textarea', label: 'Texto longo', temOpcoes: false },
+  { value: 'number', label: 'Número', temOpcoes: false },
+  { value: 'currency', label: 'Moeda (R$)', temOpcoes: false },
+  { value: 'date', label: 'Data', temOpcoes: false },
+  { value: 'checkbox', label: 'Caixa de seleção', temOpcoes: false },
+  { value: 'dropdown', label: 'Lista suspensa', temOpcoes: true },
+  { value: 'labels', label: 'Múltipla escolha', temOpcoes: true },
+  { value: 'user', label: 'Pessoa', temOpcoes: false },
+  { value: 'rating', label: 'Avaliação (1-5)', temOpcoes: false },
+  { value: 'url', label: 'Link', temOpcoes: false },
+  { value: 'phone', label: 'Telefone', temOpcoes: false },
+];
+
 export interface TaskRow {
   id: string;
   list_id: string;
@@ -120,6 +156,7 @@ export function useTarefas() {
   const [lists, setLists] = useState<TaskList[]>([]);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [tags, setTags] = useState<TaskTag[]>([]);
+  const [campos, setCampos] = useState<CampoCustom[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Reset na troca de loja: o tenantId em ref garante que respostas antigas não vazem
@@ -130,10 +167,11 @@ export function useTarefas() {
     if (!tenantId) return;
     const requestTenant = tenantId;
     try {
-      const [listsRes, tasksRes, tagsRes] = await Promise.all([
+      const [listsRes, tasksRes, tagsRes, camposRes] = await Promise.all([
         supabase.rpc('fn_get_task_lists', { p_tenant_id: tenantId }),
         supabase.rpc('fn_get_tasks', { p_tenant_id: tenantId }),
         supabase.rpc('fn_get_task_tags', { p_tenant_id: tenantId }),
+        supabase.rpc('fn_get_task_custom_fields', { p_tenant_id: tenantId }),
       ]);
       if (tenantRef.current !== requestTenant) return; // trocou de loja no meio
       if (listsRes.error) throw listsRes.error;
@@ -141,6 +179,7 @@ export function useTarefas() {
       setLists((listsRes.data as TaskList[]) ?? []);
       setTasks((tasksRes.data as TaskRow[]) ?? []);
       setTags((tagsRes.data as TaskTag[]) ?? []);
+      setCampos((camposRes.data as CampoCustom[]) ?? []);
       setError(null);
     } catch (e) {
       console.error('[useTarefas] reload error:', e);
@@ -155,6 +194,7 @@ export function useTarefas() {
     setLists([]);
     setTasks([]);
     setTags([]);
+    setCampos([]);
     setLoading(true);
     reload();
   }, [reload]);
@@ -207,5 +247,5 @@ export function useTarefas() {
     [tenantId],
   );
 
-  return { lists, tasks, tags, loading, error, reload, write, fetchDetail };
+  return { lists, tasks, tags, campos, loading, error, reload, write, fetchDetail };
 }

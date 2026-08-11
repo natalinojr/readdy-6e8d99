@@ -1,22 +1,35 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Plus, Trash2, Send, Flag, CalendarDays, User as UserIcon, Tag, CheckSquare, Clock } from 'lucide-react';
+import { X, Plus, Trash2, Send, Flag, CalendarDays, User as UserIcon, Tag, CheckSquare, Clock, Repeat, GitBranch, SlidersHorizontal } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
-import type { TaskDetail, TaskList, TaskTag } from '../hooks/useTarefas';
+import type { CampoCustom, TaskDetail, TaskList, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
-
-interface UsuarioOption {
-  id: string;
-  nome: string;
-}
+import type { UsuarioOption } from '../lib/agrupamento';
+import { camposDaLista } from '../lib/agrupamento';
+import CampoInput from './campos/CampoInput';
 
 interface TaskDrawerProps {
   taskId: string;
   lists: TaskList[];
   tags: TaskTag[];
+  campos: CampoCustom[];
   usuarios: UsuarioOption[];
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; id?: string; error?: string }>;
   fetchDetail: (taskId: string) => Promise<TaskDetail | null>;
   onClose: () => void;
+  onOpenTask?: (taskId: string) => void;
+}
+
+const RECORRENCIAS: Array<{ value: string; label: string; rec: { freq: string; interval: number } | null }> = [
+  { value: 'nenhuma', label: 'Não se repete', rec: null },
+  { value: 'daily-1', label: 'Todo dia', rec: { freq: 'daily', interval: 1 } },
+  { value: 'weekly-1', label: 'Toda semana', rec: { freq: 'weekly', interval: 1 } },
+  { value: 'weekly-2', label: 'A cada 2 semanas', rec: { freq: 'weekly', interval: 2 } },
+  { value: 'monthly-1', label: 'Todo mês', rec: { freq: 'monthly', interval: 1 } },
+];
+
+function chaveRecorrencia(rec: { freq?: string; interval?: number } | null): string {
+  if (!rec?.freq) return 'nenhuma';
+  return `${rec.freq}-${rec.interval ?? 1}`;
 }
 
 const ACTIVITY_LABEL: Record<string, string> = {
@@ -32,13 +45,14 @@ function fmtDateTime(iso: string): string {
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-export default function TaskDrawer({ taskId, lists, tags, usuarios, write, fetchDetail, onClose }: TaskDrawerProps) {
+export default function TaskDrawer({ taskId, lists, tags, campos, usuarios, write, fetchDetail, onClose, onOpenTask }: TaskDrawerProps) {
   const toast = useToast();
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [newChecklistItem, setNewChecklistItem] = useState('');
+  const [newSubtask, setNewSubtask] = useState('');
   const [newComment, setNewComment] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -59,6 +73,7 @@ export default function TaskDrawer({ taskId, lists, tags, usuarios, write, fetch
 
   const list = detail ? lists.find((l) => l.id === detail.list_id) : undefined;
   const statuses = list?.statuses ?? [];
+  const camposVisiveis = detail ? camposDaLista(campos, detail.list_id) : [];
 
   const update = async (payload: Record<string, unknown>) => {
     setSaving(true);
@@ -178,7 +193,55 @@ export default function TaskDrawer({ taskId, lists, tags, usuarios, write, fetch
                 className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
               />
             </label>
+            <label className="flex flex-col gap-1 col-span-2">
+              <span className="text-xs text-slate-500 flex items-center gap-1"><Repeat size={12} /> Recorrência</span>
+              <select
+                value={chaveRecorrencia(detail.recurrence)}
+                onChange={(e) => {
+                  const opcao = RECORRENCIAS.find((r) => r.value === e.target.value);
+                  update({ recurrence: opcao?.rec ?? null });
+                }}
+                className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+              >
+                {RECORRENCIAS.map((r) => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </select>
+              {detail.recurrence?.freq && (
+                <span className="text-[11px] text-slate-400">
+                  Ao concluir, a próxima ocorrência é criada automaticamente.
+                </span>
+              )}
+            </label>
           </div>
+
+          {/* Campos personalizados */}
+          {camposVisiveis.length > 0 && (
+            <div>
+              <span className="text-xs text-slate-500 flex items-center gap-1 mb-2">
+                <SlidersHorizontal size={12} /> Campos personalizados
+              </span>
+              <div className="space-y-2.5">
+                {camposVisiveis.map((campo) => (
+                  <div key={campo.id} className="grid grid-cols-[110px_1fr] gap-2 items-start">
+                    <span className="text-xs text-slate-500 pt-2 truncate" title={campo.name}>{campo.name}</span>
+                    <CampoInput
+                      campo={campo}
+                      value={detail.field_values?.[campo.id]}
+                      usuarios={usuarios}
+                      onChange={async (value) => {
+                        setSaving(true);
+                        const res = await write('set_field_value', { task_id: taskId, field_id: campo.id, value });
+                        setSaving(false);
+                        if (!res.success) toast.error('Erro ao salvar campo', res.error);
+                        else load();
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Tags */}
           <div>
@@ -257,6 +320,62 @@ export default function TaskDrawer({ taskId, lists, tags, usuarios, write, fetch
               />
             </form>
           </div>
+
+          {/* Subtarefas (1 nível) */}
+          {!detail.parent_task_id && (
+            <div>
+              <span className="text-xs text-slate-500 flex items-center gap-1 mb-1.5">
+                <GitBranch size={12} /> Subtarefas {detail.subtasks.length > 0 && `(${detail.subtasks.length})`}
+              </span>
+              <div className="space-y-1">
+                {detail.subtasks.map((sub) => (
+                  <div
+                    key={sub.id}
+                    onClick={() => onOpenTask?.(sub.id)}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer"
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        sub.status_category === 'done' ? 'bg-emerald-400' : 'bg-slate-300'
+                      }`}
+                    />
+                    <span className={`text-sm flex-1 truncate ${sub.status_category === 'done' ? 'line-through text-slate-400' : 'text-slate-600'}`}>
+                      {sub.title}
+                    </span>
+                    {sub.due_date && (
+                      <span className="text-[11px] text-slate-400 shrink-0">
+                        {new Date(sub.due_date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const t = newSubtask.trim();
+                  if (!t || !detail) return;
+                  setNewSubtask('');
+                  const res = await write('create_task', {
+                    list_id: detail.list_id,
+                    title: t,
+                    parent_task_id: taskId,
+                  });
+                  if (!res.success) toast.error('Erro ao criar subtarefa', res.error);
+                  else load();
+                }}
+                className="flex items-center gap-2 mt-1.5 px-2"
+              >
+                <Plus size={14} className="text-slate-400" />
+                <input
+                  value={newSubtask}
+                  onChange={(e) => setNewSubtask(e.target.value)}
+                  placeholder="Adicionar subtarefa…"
+                  className="flex-1 text-sm outline-none py-1 border-b border-transparent focus:border-indigo-300"
+                />
+              </form>
+            </div>
+          )}
 
           {/* Comentários */}
           <div>
