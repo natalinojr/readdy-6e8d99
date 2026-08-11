@@ -360,6 +360,43 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       });
     }
 
+    if (action === 'get_theoretical_stock') {
+      const { dates } = body;
+      if (!Array.isArray(dates) || dates.length === 0) {
+        return new Response(JSON.stringify({ error: 'dates deve ser um array de datas (YYYY-MM-DD), nao vazio' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const { data: rpcData, error: rpcErr } = await admin.rpc('fn_get_theoretical_stock_at_dates', {
+        p_tenant_id: tenantId,
+        p_dates: dates,
+      });
+      if (rpcErr) throw new Error(extractErrorMessage(rpcErr));
+      const result = rpcData as { success?: boolean; data?: unknown[] } | null;
+      return new Response(JSON.stringify({ data: result?.data ?? [] }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (action === 'get_inventory_sessions_range') {
+      const { from, to } = body;
+      if (!from || !to) {
+        return new Response(JSON.stringify({ error: 'from e to (YYYY-MM-DD) sao obrigatorios' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const { data: rpcData, error: rpcErr } = await admin.rpc('fn_get_inventory_sessions_range', {
+        p_tenant_id: tenantId,
+        p_from: from,
+        p_to: to,
+      });
+      if (rpcErr) throw new Error(extractErrorMessage(rpcErr));
+      const result = rpcData as { success?: boolean; data?: unknown[] } | null;
+      return new Response(JSON.stringify({ data: result?.data ?? [] }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (action === 'deduct_sale') {
       const { deductions, order_id } = body;
       if (!Array.isArray(deductions)) throw new Error('deductions must be array');

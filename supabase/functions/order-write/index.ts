@@ -330,7 +330,7 @@ async function deductStockForOrderItem(admin: ReturnType<typeof createClient>, t
   for (const d of deductions) {
     const { data: existingMoves } = await admin.from("stock_movements").select("id").eq("order_id", orderId).eq("ingredient_id", d.ingredient_id).eq("type", "theoretical_out").ilike("reason", `%:${orderItemId}`).limit(1);
     if (existingMoves && existingMoves.length > 0) { continue; }
-    allMoves.push({ tenant_id: tenantId, ingredient_id: d.ingredient_id, type: "theoretical_out", quantity: d.quantity, unit: d.unit, reason: `item_sale:${orderItem.item_id ?? orderItem.combo_id}:${orderItemId}`, order_id: orderId, operator_id: operatorId });
+    allMoves.push({ tenant_id: tenantId, ingredient_id: d.ingredient_id, type: "theoretical_out", quantity: d.quantity, signed_quantity: -d.quantity, unit: d.unit, reason: `item_sale:${orderItem.item_id ?? orderItem.combo_id}:${orderItemId}`, order_id: orderId, operator_id: operatorId });
     deltaMap.set(d.ingredient_id, (deltaMap.get(d.ingredient_id) ?? 0) - d.quantity);
   }
   if (allMoves.length === 0) return;
@@ -378,6 +378,7 @@ async function restockForOrderItem(admin: ReturnType<typeof createClient>, tenan
       ingredient_id: ingredientId,
       type: "in",
       quantity: outQty,
+      signed_quantity: outQty,
       unit: outUnit,
       reason: `Estorno pedido #${orderId.slice(0, 8)}`,
       order_id: orderId,

@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Package, AlertTriangle } from 'lucide-react';
 import InsumosTab from './components/InsumosTab';
 import MovimentacoesTab from './components/MovimentacoesTab';
+import EstoqueTeoricoTab from './components/EstoqueTeoricoTab';
 import InventarioTab from './components/InventarioTab';
 import CmvTab from './components/CmvTab';
 import ProducaoTab from './components/ProducaoTab';
@@ -13,13 +14,14 @@ import ConsumoIngredientesTab from '../relatorios/components/ConsumoIngredientes
 import { useEstoque } from '../../contexts/EstoqueContext';
 import CardapioExportImportModal from '../../components/feature/CardapioExportImportModal';
 
-type Tab = 'insumos' | 'movimentacoes' | 'inventario' | 'cmv' | 'producao' | 'fornecedores' | 'validade' | 'consumo';
+type Tab = 'insumos' | 'movimentacoes' | 'teorico' | 'inventario' | 'cmv' | 'producao' | 'fornecedores' | 'validade' | 'consumo';
 
-const VALID_TABS: Tab[] = ['insumos', 'movimentacoes', 'inventario', 'cmv', 'producao', 'fornecedores', 'validade', 'consumo'];
+const VALID_TABS: Tab[] = ['insumos', 'movimentacoes', 'teorico', 'inventario', 'cmv', 'producao', 'fornecedores', 'validade', 'consumo'];
 
 const tabs: { id: Tab; label: string; badge?: string }[] = [
   { id: 'insumos', label: 'Estoque' },
   { id: 'movimentacoes', label: 'Movimentações' },
+  { id: 'teorico', label: 'Estoque Teórico' },
   { id: 'inventario', label: 'Inventário' },
   { id: 'cmv', label: 'CMV / Fichas' },
   { id: 'producao', label: 'Produção' },
@@ -114,6 +116,7 @@ export default function EstoquePage() {
 
           {tab === 'insumos' && <InsumosTab />}
           {tab === 'movimentacoes' && <MovimentacoesTab />}
+          {tab === 'teorico' && <EstoqueTeoricoTab />}
           {tab === 'inventario' && <InventarioTab />}
           {tab === 'cmv' && <CmvTab />}
           {tab === 'producao' && <ProducaoTab />}
