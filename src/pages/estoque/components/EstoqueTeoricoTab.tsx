@@ -130,6 +130,19 @@ export default function EstoqueTeoricoTab() {
     return map;
   }, [sessaoPorData]);
 
+  // Ordenacao ao clicar no cabecalho de uma coluna de data
+  const [sortDate, setSortDate] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const toggleSort = (iso: string) => {
+    if (sortDate === iso) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortDate(iso);
+      setSortDir('asc');
+    }
+  };
+
   // Agrupa as celulas teoricas por insumo — uma linha por insumo, uma coluna por data
   const linhas = useMemo(() => {
     const porInsumo = new Map<string, {
@@ -144,13 +157,48 @@ export default function EstoqueTeoricoTab() {
       }
       row.celulas.set(cell.date, { valor: cell.theoretical_stock, unreliable: cell.unreliable });
     }
-    let arr = Array.from(porInsumo.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    let arr = Array.from(porInsumo.values());
     if (busca.trim()) {
       const q = busca.toLowerCase();
       arr = arr.filter((r) => r.nome.toLowerCase().includes(q));
     }
     return arr;
   }, [theoreticalRows, busca]);
+
+  // Setoriza por categoria (ordem alfabetica, "Sem categoria" por ultimo). Dentro
+  // de cada categoria: ordena pela coluna de data clicada, ou por nome por padrao.
+  const grupos = useMemo(() => {
+    const porCategoria = new Map<string, typeof linhas>();
+    for (const row of linhas) {
+      const cat = row.categoria?.trim() || 'Sem categoria';
+      const arr = porCategoria.get(cat) ?? [];
+      arr.push(row);
+      porCategoria.set(cat, arr);
+    }
+    const ordenarGrupo = (arr: typeof linhas) => {
+      const copia = [...arr];
+      if (sortDate) {
+        copia.sort((a, b) => {
+          const va = a.celulas.get(sortDate)?.valor;
+          const vb = b.celulas.get(sortDate)?.valor;
+          if (va == null && vb == null) return 0;
+          if (va == null) return 1; // sem valor sempre vai pro fim
+          if (vb == null) return -1;
+          return sortDir === 'asc' ? va - vb : vb - va;
+        });
+      } else {
+        copia.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+      }
+      return copia;
+    };
+    return Array.from(porCategoria.entries())
+      .sort(([a], [b]) => {
+        if (a === 'Sem categoria') return 1;
+        if (b === 'Sem categoria') return -1;
+        return a.localeCompare(b, 'pt-BR');
+      })
+      .map(([categoria, itens]) => ({ categoria, itens: ordenarGrupo(itens) }));
+  }, [linhas, sortDate, sortDir]);
 
   const adicionarData = (iso: string) => {
     setSelectedDates((prev) => (prev.includes(iso) ? prev : [...prev, iso]));
@@ -177,8 +225,9 @@ export default function EstoqueTeoricoTab() {
           <div>
             <h3 className="text-sm font-bold text-zinc-900">Estoque teórico por data</h3>
             <p className="text-[11px] text-zinc-400 mt-0.5">
-              Reconstrói quanto cada insumo tinha, teoricamente, no final de cada data escolhida —
-              a partir do estoque atual menos as movimentações que aconteceram depois.
+              O que a teoria previa pro final de cada data — vendas, compras e produção, sem
+              contar nenhuma correção de contagem feita naquele mesmo dia. Ative o ícone de
+              lista numa coluna pra comparar com o que foi contado de verdade.
             </p>
           </div>
           <div className="relative">
@@ -258,15 +307,23 @@ export default function EstoqueTeoricoTab() {
                     </th>
                     {datesOrdenadas.map((iso) => {
                       const temSessao = sessaoPorData.has(iso);
+                      const ordenandoPorEssa = sortDate === iso;
                       return (
-                        <th key={iso} className="text-right font-semibold text-zinc-500 px-3 py-2.5 border-b border-zinc-100 whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <span>{formatDateShort(iso)}</span>
+                        <th key={iso} className="text-center font-semibold text-zinc-500 px-3 py-2.5 border-b border-zinc-100 whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => toggleSort(iso)}
+                              title="Ordenar por esta data"
+                              className={`flex items-center gap-1 cursor-pointer hover:text-amber-600 ${ordenandoPorEssa ? 'text-amber-600' : ''}`}
+                            >
+                              {formatDateShort(iso)}
+                              <i className={`ri-arrow-${ordenandoPorEssa && sortDir === 'desc' ? 'down' : 'up'}-line text-[10px] ${ordenandoPorEssa ? 'opacity-100' : 'opacity-0'}`} />
+                            </button>
                             {temSessao && (
                               <button
                                 onClick={() => toggleRealCount(iso)}
                                 title={showRealCount[iso] ? 'Ocultar contagem real deste dia' : 'Mostrar contagem real deste dia'}
-                                className={`w-5 h-5 flex items-center justify-center rounded-full cursor-pointer transition-colors ${
+                                className={`w-5 h-5 flex items-center justify-center rounded-full cursor-pointer transition-colors flex-shrink-0 ${
                                   showRealCount[iso]
                                     ? 'bg-emerald-100 text-emerald-700'
                                     : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200'
@@ -281,47 +338,59 @@ export default function EstoqueTeoricoTab() {
                     })}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-50">
-                  {linhas.length === 0 ? (
+                {linhas.length === 0 ? (
+                  <tbody>
                     <tr>
                       <td colSpan={datesOrdenadas.length + 1} className="text-center py-10 text-zinc-400">
                         Nenhum insumo encontrado
                       </td>
                     </tr>
-                  ) : (
-                    linhas.map((row) => (
-                      <tr key={row.id} className="hover:bg-zinc-50/50">
-                        <td className="px-3 py-2.5 font-medium text-zinc-700 sticky left-0 bg-white whitespace-nowrap">
-                          {row.nome}
-                          <span className="text-zinc-400 font-normal ml-1">({row.unidade})</span>
+                  </tbody>
+                ) : (
+                  grupos.map((grupo) => (
+                    <tbody key={grupo.categoria} className="divide-y divide-zinc-50">
+                      <tr>
+                        <td
+                          colSpan={datesOrdenadas.length + 1}
+                          className="px-3 py-1.5 bg-amber-50/60 text-[10px] font-bold text-amber-700 uppercase tracking-wide sticky left-0"
+                        >
+                          {grupo.categoria}
                         </td>
-                        {datesOrdenadas.map((iso) => {
-                          const cel = row.celulas.get(iso);
-                          const real = showRealCount[iso] ? contagemPorDataEInsumo.get(iso)?.get(row.id) : undefined;
-                          return (
-                            <td key={iso} className="px-3 py-2.5 text-right whitespace-nowrap">
-                              {cel?.unreliable ? (
-                                <span className="text-zinc-300" title="Sinal de alguma movimentacao historica desconhecido — nao da pra confiar neste numero">
-                                  —
-                                </span>
-                              ) : (
-                                <span className="font-semibold text-zinc-700">
-                                  {cel?.valor != null ? formatQty(cel.valor) : '—'}
-                                </span>
-                              )}
-                              {real && (
-                                <div className={`text-[10px] mt-0.5 ${real.diferenca === 0 ? 'text-zinc-400' : real.diferenca < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                                  Real: {formatQty(real.qtdContada)}
-                                  {real.diferenca !== 0 && ` (${real.diferenca > 0 ? '+' : ''}${formatQty(real.diferenca)})`}
-                                </div>
-                              )}
-                            </td>
-                          );
-                        })}
                       </tr>
-                    ))
-                  )}
-                </tbody>
+                      {grupo.itens.map((row) => (
+                        <tr key={row.id} className="hover:bg-zinc-50/50">
+                          <td className="px-3 py-2.5 font-medium text-zinc-700 sticky left-0 bg-white whitespace-nowrap">
+                            {row.nome}
+                            <span className="text-zinc-400 font-normal ml-1">({row.unidade})</span>
+                          </td>
+                          {datesOrdenadas.map((iso) => {
+                            const cel = row.celulas.get(iso);
+                            const real = showRealCount[iso] ? contagemPorDataEInsumo.get(iso)?.get(row.id) : undefined;
+                            return (
+                              <td key={iso} className="px-3 py-2.5 text-center whitespace-nowrap">
+                                {cel?.unreliable ? (
+                                  <span className="text-zinc-300" title="Sinal de alguma movimentacao historica desconhecido — nao da pra confiar neste numero">
+                                    —
+                                  </span>
+                                ) : (
+                                  <span className="font-semibold text-zinc-700">
+                                    {cel?.valor != null ? `${formatQty(cel.valor)} ${row.unidade}` : '—'}
+                                  </span>
+                                )}
+                                {real && (
+                                  <div className={`text-[10px] mt-0.5 ${real.diferenca === 0 ? 'text-zinc-400' : real.diferenca < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                                    Real: {formatQty(real.qtdContada)} {row.unidade}
+                                    {real.diferenca !== 0 && ` (${real.diferenca > 0 ? '+' : ''}${formatQty(real.diferenca)})`}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  ))
+                )}
               </table>
             </div>
           )}
