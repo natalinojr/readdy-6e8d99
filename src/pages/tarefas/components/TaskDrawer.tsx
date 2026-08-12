@@ -1,22 +1,34 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Plus, Trash2, Send, Flag, CalendarDays, User as UserIcon, Tag, CheckSquare, Clock, Repeat, GitBranch, SlidersHorizontal } from 'lucide-react';
+import { X, Plus, Trash2, Flag, CalendarDays, User as UserIcon, Tag, CheckSquare, Clock, Repeat, GitBranch, SlidersHorizontal, Paperclip, Download, ListChecks, Loader2 } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
-import type { CampoCustom, TaskDetail, TaskList, TaskTag } from '../hooks/useTarefas';
+import type { CampoCustom, ChecklistTemplate, TaskAnexo, TaskDetail, TaskList, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
 import { camposDaLista } from '../lib/agrupamento';
 import CampoInput from './campos/CampoInput';
+import ComentarioInput from './ComentarioInput';
 
 interface TaskDrawerProps {
   taskId: string;
   lists: TaskList[];
   tags: TaskTag[];
   campos: CampoCustom[];
+  templates: ChecklistTemplate[];
   usuarios: UsuarioOption[];
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; id?: string; error?: string }>;
   fetchDetail: (taskId: string) => Promise<TaskDetail | null>;
+  fetchAnexos: (taskId: string) => Promise<TaskAnexo[]>;
+  enviarAnexo: (file: File, taskId: string) => Promise<{ success: boolean; error?: string }>;
+  abrirAnexo: (attachmentId: string) => Promise<string | null>;
   onClose: () => void;
   onOpenTask?: (taskId: string) => void;
+}
+
+function formatarTamanho(bytes: number | null): string {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 const RECORRENCIAS: Array<{ value: string; label: string; rec: { freq: string; interval: number } | null }> = [
@@ -45,26 +57,32 @@ function fmtDateTime(iso: string): string {
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-export default function TaskDrawer({ taskId, lists, tags, campos, usuarios, write, fetchDetail, onClose, onOpenTask }: TaskDrawerProps) {
+export default function TaskDrawer({
+  taskId, lists, tags, campos, templates, usuarios,
+  write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo, onClose, onOpenTask,
+}: TaskDrawerProps) {
   const toast = useToast();
   const [detail, setDetail] = useState<TaskDetail | null>(null);
+  const [anexos, setAnexos] = useState<TaskAnexo[]>([]);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [newChecklistItem, setNewChecklistItem] = useState('');
   const [newSubtask, setNewSubtask] = useState('');
-  const [newComment, setNewComment] = useState('');
   const [saving, setSaving] = useState(false);
+  const [enviandoAnexo, setEnviandoAnexo] = useState(false);
+  const [mostrarTemplates, setMostrarTemplates] = useState(false);
 
   const load = useCallback(async () => {
-    const d = await fetchDetail(taskId);
+    const [d, a] = await Promise.all([fetchDetail(taskId), fetchAnexos(taskId)]);
     if (d) {
       setDetail(d);
       setTitle(d.title);
       setDescription(d.description ?? '');
     }
+    setAnexos(a);
     setLoading(false);
-  }, [taskId, fetchDetail]);
+  }, [taskId, fetchDetail, fetchAnexos]);
 
   useEffect(() => {
     setLoading(true);
@@ -279,9 +297,41 @@ export default function TaskDrawer({ taskId, lists, tags, campos, usuarios, writ
 
           {/* Checklist */}
           <div>
-            <span className="text-xs text-slate-500 block mb-1.5">
-              Checklist {detail.checklist.length > 0 && `(${detail.checklist.filter((c) => c.is_done).length}/${detail.checklist.length})`}
-            </span>
+            <div className="flex items-center justify-between mb-1.5 relative">
+              <span className="text-xs text-slate-500">
+                Checklist {detail.checklist.length > 0 && `(${detail.checklist.filter((c) => c.is_done).length}/${detail.checklist.length})`}
+              </span>
+              {templates.length > 0 && (
+                <button
+                  onClick={() => setMostrarTemplates((v) => !v)}
+                  className="text-[11px] text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                >
+                  <ListChecks size={12} /> Usar template
+                </button>
+              )}
+              {mostrarTemplates && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setMostrarTemplates(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-30 w-56 bg-white rounded-lg border border-slate-200 shadow-lg overflow-hidden">
+                    {templates.map((tpl) => (
+                      <button
+                        key={tpl.id}
+                        onClick={async () => {
+                          setMostrarTemplates(false);
+                          const res = await write('apply_checklist_template', { task_id: taskId, template_id: tpl.id });
+                          if (!res.success) toast.error('Erro ao aplicar template', res.error);
+                          else load();
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-50 last:border-0"
+                      >
+                        <span className="text-xs text-slate-700 block">{tpl.name}</span>
+                        <span className="text-[10px] text-slate-400">{tpl.items.length} itens</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
             <div className="space-y-1">
               {detail.checklist.map((item) => (
                 <div key={item.id} className="flex items-center gap-2 group">

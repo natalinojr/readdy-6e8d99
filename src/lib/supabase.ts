@@ -499,3 +499,53 @@ export async function uploadMenuImage(
     return { url: null, error: e instanceof Error ? e : new Error('Erro ao enviar a imagem') };
   }
 }
+
+/**
+ * Envia um anexo de tarefa pela Edge Function `task-write` (multipart).
+ *
+ * Mesmo motivo do `uploadMenuImage`: não dá para usar `supabase.storage.upload`
+ * direto porque o client roda com `autoRefreshToken: false` — um token expirado
+ * chega ao Storage como `anon` e a RLS recusa. O bucket `task-attachments` é
+ * privado; a leitura sai por URL assinada (ação `sign_attachment`).
+ */
+export async function uploadTaskAttachment(
+  file: File,
+  tenantId: string,
+  taskId: string,
+): Promise<{ id: string | null; error: Error | null }> {
+  try {
+    const MAX_BYTES = 10 * 1024 * 1024;
+    if (file.size > MAX_BYTES) {
+      return { id: null, error: new Error('Arquivo maior que 10 MB.') };
+    }
+
+    const { accessToken, error: tokenErr } = await resolveAccessToken();
+    if (!accessToken) {
+      return { id: null, error: tokenErr ?? new Error('Sessão expirada. Faça login novamente.') };
+    }
+
+    const form = new FormData();
+    form.append('file', file, file.name);
+    form.append('tenant_id', tenantId);
+    form.append('task_id', taskId);
+
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/task-write`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        apikey: SUPABASE_ANON_KEY,
+        // NÃO definir Content-Type: o browser monta o boundary do multipart sozinho.
+      },
+      body: form,
+    });
+
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+    if (!res.ok || (data as Record<string, unknown>).error) {
+      const msg = (data as Record<string, unknown>).error ?? `Upload falhou (HTTP ${res.status})`;
+      return { id: null, error: new Error(String(msg)) };
+    }
+    return { id: ((data as Record<string, unknown>).id as string) ?? null, error: null };
+  } catch (e) {
+    return { id: null, error: e instanceof Error ? e : new Error('Erro ao enviar o anexo') };
+  }
+}

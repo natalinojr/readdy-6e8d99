@@ -94,19 +94,73 @@ Deno.serve({ verify_jwt: false }, async (req) => {
   if (userError || !user) return json({ error: 'Unauthorized' }, 401);
 
   try {
-    const body = await req.json();
-    const { action } = body;
-    if (!action) return json({ error: 'action is required' }, 400);
-
     // ── Resolve tenant por membership (nunca confiar só no body) ──
-    const requestedTenantId: string | null = body.active_tenant_id ?? body.tenant_id ?? null;
+    // Vem antes de ler o corpo porque o upload multipart também precisa do tenant.
     const { data: tenantRows, error: tenantErr } = await admin
       .from('user_tenants').select('tenant_id, role').eq('user_id', user.id);
     if (tenantErr) return json({ error: `Tenant lookup failed: ${errMsg(tenantErr)}` }, 500);
     if (!tenantRows?.length) return json({ error: 'User does not belong to any tenant' }, 403);
 
-    const match = requestedTenantId ? tenantRows.find((r) => r.tenant_id === requestedTenantId) : null;
-    const tenantId: string = match?.tenant_id ?? tenantRows[0].tenant_id;
+    const resolveTenant = (requested: string | null): string => {
+      const match = requested ? tenantRows.find((r) => r.tenant_id === requested) : null;
+      return match?.tenant_id ?? tenantRows[0].tenant_id;
+    };
+
+    // ── Upload de anexo (multipart) ──
+    // Uploads NÃO podem ir pelo storage do client: ele roda com autoRefreshToken:false,
+    // então um token expirado chega ao Storage como `anon` e a RLS recusa. Aqui usamos
+    // o service role. Mesmo padrão do menu-write.
+    const contentType = req.headers.get('content-type') ?? '';
+    if (contentType.includes('multipart/form-data')) {
+      const formData = await req.formData();
+      const file = formData.get('file') as File | null;
+      const taskId = formData.get('task_id') as string | null;
+      const tenantId = resolveTenant((formData.get('tenant_id') as string | null) ?? null);
+
+      if (!file) return json({ error: 'Nenhum arquivo enviado' }, 400);
+      if (!taskId) return json({ error: 'task_id é obrigatório' }, 400);
+
+      const { data: taskRow } = await admin
+        .from('tasks').select('id').eq('id', taskId).eq('tenant_id', tenantId).maybeSingle();
+      if (!taskRow) return json({ error: 'Tarefa não encontrada neste tenant' }, 404);
+
+      const nomeSeguro = (file.name.replace(/[^a-zA-Z0-9.\-_ ]/g, '') || 'arquivo').slice(0, 120);
+      const filePath = `${tenantId}/${taskId}/${Date.now()}-${nomeSeguro}`;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+
+      const { error: upErr } = await admin.storage
+        .from('task-attachments')
+        .upload(filePath, bytes, { contentType: file.type || 'application/octet-stream', upsert: false });
+      if (upErr) return json({ error: `Falha no upload: ${errMsg(upErr)}` }, 500);
+
+      const { data: att, error: attErr } = await admin.from('task_attachments').insert({
+        tenant_id: tenantId,
+        task_id: taskId,
+        file_name: nomeSeguro,
+        file_path: filePath,
+        mime_type: file.type || null,
+        size_bytes: file.size,
+        uploaded_by: user.id,
+      }).select('id').single();
+      if (attErr) {
+        // Não deixa arquivo órfão no bucket se a linha falhar
+        await admin.storage.from('task-attachments').remove([filePath]);
+        return json({ error: errMsg(attErr) }, 500);
+      }
+
+      await admin.from('task_activity').insert({
+        tenant_id: tenantId, task_id: taskId, user_id: user.id,
+        action: 'attachment_added', payload: { file_name: nomeSeguro },
+      });
+
+      return json({ success: true, id: att.id, file_path: filePath });
+    }
+
+    const body = await req.json();
+    const { action } = body;
+    if (!action) return json({ error: 'action is required' }, 400);
+
+    const tenantId: string = resolveTenant(body.active_tenant_id ?? body.tenant_id ?? null);
 
     console.log('[task-write]', action, 'user:', user.id, 'tenant:', tenantId);
 
@@ -114,6 +168,32 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       await admin.from('task_activity').insert({
         tenant_id: tenantId, task_id: taskId, user_id: user.id, action: act, payload,
       });
+    };
+
+    /**
+     * Cria notificações persistidas para os destinatários (o contexto de
+     * notificação do app é em memória e por perfil — não serve para avisar
+     * uma pessoa específica). Nunca notifica quem causou a ação.
+     */
+    const notify = async (
+      userIds: Array<string | null | undefined>,
+      taskId: string,
+      type: 'assigned' | 'mentioned' | 'commented',
+      payload: Record<string, unknown> = {},
+    ) => {
+      const destinos = [...new Set(userIds.filter((id): id is string => !!id && id !== user.id))];
+      if (!destinos.length) return;
+      // Só notifica quem realmente pertence ao tenant
+      const { data: membros } = await admin
+        .from('user_tenants').select('user_id').eq('tenant_id', tenantId).in('user_id', destinos);
+      const validos = (membros ?? []).map((m: { user_id: string }) => m.user_id);
+      if (!validos.length) return;
+      await admin.from('task_notifications').insert(
+        validos.map((uid) => ({
+          tenant_id: tenantId, user_id: uid, task_id: taskId,
+          type, actor_id: user.id, payload,
+        })),
+      );
     };
 
     // Garante que um registro pertence ao tenant resolvido
@@ -213,6 +293,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           );
         }
         await logActivity(data.id, 'created', { title });
+        if (assignee_id) await notify([assignee_id], data.id, 'assigned', { title });
         return json({ success: true, id: data.id });
       }
 
@@ -268,6 +349,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }
         if (patch.assignee_id !== undefined && patch.assignee_id !== current.assignee_id) {
           await logActivity(task_id, 'assignee_changed', { to: patch.assignee_id });
+          await notify([patch.assignee_id as string | null], task_id, 'assigned', { title: current.title });
         }
         if (patch.due_date !== undefined && patch.due_date !== current.due_date) {
           await logActivity(task_id, 'due_date_changed', { to: patch.due_date });
@@ -336,10 +418,21 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { task_id, body: commentBody, mentions } = body;
         if (!task_id || !commentBody) return json({ error: 'task_id and body are required' }, 400);
         await assertOwned('tasks', task_id);
+        const listaMencoes: string[] = Array.isArray(mentions) ? mentions : [];
         const { data, error } = await admin.from('task_comments')
-          .insert({ tenant_id: tenantId, task_id, user_id: user.id, body: commentBody, mentions: mentions ?? [] })
+          .insert({ tenant_id: tenantId, task_id, user_id: user.id, body: commentBody, mentions: listaMencoes })
           .select('id').single();
         if (error) return json({ error: errMsg(error) }, 500);
+
+        const { data: tarefa } = await admin
+          .from('tasks').select('title, assignee_id').eq('id', task_id).maybeSingle();
+        const trecho = String(commentBody).slice(0, 140);
+        // Mencionados têm prioridade; o responsável recebe o aviso genérico de comentário
+        await notify(listaMencoes, task_id, 'mentioned', { title: tarefa?.title, trecho });
+        const responsavel = tarefa?.assignee_id as string | null | undefined;
+        if (responsavel && !listaMencoes.includes(responsavel)) {
+          await notify([responsavel], task_id, 'commented', { title: tarefa?.title, trecho });
+        }
         return json({ success: true, id: data.id });
       }
       case 'delete_comment': {
@@ -418,6 +511,140 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           if (error) return json({ error: errMsg(error) }, 500);
         }
         return json({ success: true });
+      }
+
+      // ═══ Notificações ═══
+      case 'mark_notification_read': {
+        const { notification_id } = body;
+        // Filtra por user_id: ninguém marca a notificação de outro como lida
+        const { error } = await admin.from('task_notifications')
+          .update({ is_read: true })
+          .eq('id', notification_id).eq('user_id', user.id).eq('tenant_id', tenantId);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+      case 'mark_all_notifications_read': {
+        const { error } = await admin.from('task_notifications')
+          .update({ is_read: true })
+          .eq('user_id', user.id).eq('tenant_id', tenantId).eq('is_read', false);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+
+      // ═══ Views salvas ═══
+      case 'create_view': {
+        const { name, list_id, view_type, group_by, filters, is_shared } = body;
+        if (!name) return json({ error: 'name is required' }, 400);
+        if (list_id) await assertOwned('task_lists', list_id);
+        const { data, error } = await admin.from('task_views').insert({
+          tenant_id: tenantId,
+          list_id: list_id ?? null,
+          user_id: is_shared ? null : user.id, // null = visível para a equipe
+          name,
+          view_type: view_type ?? 'lista',
+          group_by: group_by ?? 'status',
+          filters: filters ?? {},
+          sort_order: Date.now(),
+          created_by: user.id,
+        }).select('id').single();
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true, id: data.id });
+      }
+      case 'update_view': {
+        const { view_id, ...rest } = body;
+        const view = await assertOwned('task_views', view_id);
+        // Views pessoais só o dono edita; compartilhadas, quem criou
+        if (view.user_id && view.user_id !== user.id) {
+          return json({ error: 'Esta view pertence a outro usuário' }, 403);
+        }
+        const patch: Record<string, unknown> = {};
+        for (const k of ['name', 'view_type', 'group_by', 'filters', 'sort_order']) {
+          if (rest[k] !== undefined) patch[k] = rest[k];
+        }
+        if (rest.is_shared !== undefined) patch.user_id = rest.is_shared ? null : user.id;
+        const { error } = await admin.from('task_views').update(patch).eq('id', view_id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+      case 'delete_view': {
+        const { view_id } = body;
+        const view = await assertOwned('task_views', view_id);
+        if (view.user_id && view.user_id !== user.id) {
+          return json({ error: 'Esta view pertence a outro usuário' }, 403);
+        }
+        const { error } = await admin.from('task_views').delete().eq('id', view_id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+
+      // ═══ Anexos (o upload em si é multipart, tratado antes do switch) ═══
+      case 'sign_attachment': {
+        const { attachment_id } = body;
+        const att = await assertOwned('task_attachments', attachment_id);
+        // Bucket privado: gera URL temporária em vez de expor o arquivo
+        const { data, error } = await admin.storage
+          .from('task-attachments')
+          .createSignedUrl(att.file_path as string, 3600);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true, url: data.signedUrl });
+      }
+      case 'delete_attachment': {
+        const { attachment_id } = body;
+        const att = await assertOwned('task_attachments', attachment_id);
+        await admin.storage.from('task-attachments').remove([att.file_path as string]);
+        const { error } = await admin.from('task_attachments').delete().eq('id', attachment_id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+
+      // ═══ Templates de checklist ═══
+      case 'create_checklist_template': {
+        const { name, items } = body;
+        if (!name) return json({ error: 'name is required' }, 400);
+        const limpos = (Array.isArray(items) ? items : [])
+          .map((i: unknown) => String(i).trim()).filter(Boolean);
+        const { data, error } = await admin.from('task_checklist_templates')
+          .insert({ tenant_id: tenantId, name, items: limpos, created_by: user.id })
+          .select('id').single();
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true, id: data.id });
+      }
+      case 'update_checklist_template': {
+        const { template_id, name, items } = body;
+        await assertOwned('task_checklist_templates', template_id);
+        const patch: Record<string, unknown> = {};
+        if (name !== undefined) patch.name = name;
+        if (items !== undefined) {
+          patch.items = (Array.isArray(items) ? items : [])
+            .map((i: unknown) => String(i).trim()).filter(Boolean);
+        }
+        const { error } = await admin.from('task_checklist_templates').update(patch).eq('id', template_id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+      case 'delete_checklist_template': {
+        const { template_id } = body;
+        await assertOwned('task_checklist_templates', template_id);
+        const { error } = await admin.from('task_checklist_templates').delete().eq('id', template_id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+      case 'apply_checklist_template': {
+        const { task_id, template_id } = body;
+        await assertOwned('tasks', task_id);
+        const tpl = await assertOwned('task_checklist_templates', template_id);
+        const itens = (tpl.items as string[]) ?? [];
+        if (!itens.length) return json({ success: true, added: 0 });
+        // Acrescenta ao checklist existente, sem apagar o que já está lá
+        const base = Date.now();
+        const { error } = await admin.from('task_checklist_items').insert(
+          itens.map((title, i) => ({
+            tenant_id: tenantId, task_id, title, sort_order: base + i,
+          })),
+        );
+        if (error) return json({ error: errMsg(error) }, 500);
+        await logActivity(task_id, 'checklist_template_applied', { template: tpl.name, itens: itens.length });
+        return json({ success: true, added: itens.length });
       }
 
       default:

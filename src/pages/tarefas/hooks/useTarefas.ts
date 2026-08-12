@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { supabase, invokeWithAuth, uploadTaskAttachment } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -139,6 +139,46 @@ export interface TaskDetail {
   field_values: Record<string, unknown>;
 }
 
+export interface TaskNotificacao {
+  id: string;
+  type: 'assigned' | 'mentioned' | 'commented';
+  task_id: string;
+  task_title: string | null;
+  actor_id: string | null;
+  actor_name: string | null;
+  payload: Record<string, unknown>;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface TaskViewSalva {
+  id: string;
+  list_id: string | null;
+  user_id: string | null;
+  name: string;
+  view_type: 'lista' | 'kanban' | 'calendario' | 'minhas';
+  group_by: string;
+  filters: Record<string, unknown>;
+  is_shared: boolean;
+}
+
+export interface ChecklistTemplate {
+  id: string;
+  name: string;
+  items: string[];
+}
+
+export interface TaskAnexo {
+  id: string;
+  file_name: string;
+  file_path: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_by_name: string | null;
+  created_at: string;
+}
+
 export const PRIORIDADES: Array<{ value: number; label: string; color: string }> = [
   { value: 0, label: 'Sem prioridade', color: '#94a3b8' },
   { value: 1, label: 'Baixa', color: '#64748b' },
@@ -157,6 +197,9 @@ export function useTarefas() {
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [tags, setTags] = useState<TaskTag[]>([]);
   const [campos, setCampos] = useState<CampoCustom[]>([]);
+  const [notificacoes, setNotificacoes] = useState<TaskNotificacao[]>([]);
+  const [views, setViews] = useState<TaskViewSalva[]>([]);
+  const [templates, setTemplates] = useState<ChecklistTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Reset na troca de loja: o tenantId em ref garante que respostas antigas não vazem
@@ -167,11 +210,14 @@ export function useTarefas() {
     if (!tenantId) return;
     const requestTenant = tenantId;
     try {
-      const [listsRes, tasksRes, tagsRes, camposRes] = await Promise.all([
+      const [listsRes, tasksRes, tagsRes, camposRes, notifRes, viewsRes, tplRes] = await Promise.all([
         supabase.rpc('fn_get_task_lists', { p_tenant_id: tenantId }),
         supabase.rpc('fn_get_tasks', { p_tenant_id: tenantId }),
         supabase.rpc('fn_get_task_tags', { p_tenant_id: tenantId }),
         supabase.rpc('fn_get_task_custom_fields', { p_tenant_id: tenantId }),
+        supabase.rpc('fn_get_task_notifications', { p_tenant_id: tenantId }),
+        supabase.rpc('fn_get_task_views', { p_tenant_id: tenantId }),
+        supabase.rpc('fn_get_task_checklist_templates', { p_tenant_id: tenantId }),
       ]);
       if (tenantRef.current !== requestTenant) return; // trocou de loja no meio
       if (listsRes.error) throw listsRes.error;
@@ -180,6 +226,9 @@ export function useTarefas() {
       setTasks((tasksRes.data as TaskRow[]) ?? []);
       setTags((tagsRes.data as TaskTag[]) ?? []);
       setCampos((camposRes.data as CampoCustom[]) ?? []);
+      setNotificacoes((notifRes.data as TaskNotificacao[]) ?? []);
+      setViews((viewsRes.data as TaskViewSalva[]) ?? []);
+      setTemplates((tplRes.data as ChecklistTemplate[]) ?? []);
       setError(null);
     } catch (e) {
       console.error('[useTarefas] reload error:', e);
@@ -195,6 +244,9 @@ export function useTarefas() {
     setTasks([]);
     setTags([]);
     setCampos([]);
+    setNotificacoes([]);
+    setViews([]);
+    setTemplates([]);
     setLoading(true);
     reload();
   }, [reload]);
@@ -212,6 +264,22 @@ export function useTarefas() {
       supabase.removeChannel(channel);
     };
   }, [tenantId, reload]);
+
+  // Realtime: notificações endereçadas a mim (canal por usuário)
+  const meuId = user?.id ?? null;
+  useEffect(() => {
+    if (!meuId || !tenantId) return;
+    const channel = supabase
+      .channel(`task-notify:${meuId}`)
+      .on('broadcast', { event: 'task_notification' }, async () => {
+        const { data } = await supabase.rpc('fn_get_task_notifications', { p_tenant_id: tenantId });
+        if (tenantRef.current === tenantId) setNotificacoes((data as TaskNotificacao[]) ?? []);
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [meuId, tenantId]);
 
   const write = useCallback(
     async (action: string, payload: Record<string, unknown> = {}): Promise<{ success: boolean; id?: string; error?: string }> => {
@@ -247,5 +315,48 @@ export function useTarefas() {
     [tenantId],
   );
 
-  return { lists, tasks, tags, campos, loading, error, reload, write, fetchDetail };
+  // ── Anexos ──
+  const fetchAnexos = useCallback(
+    async (taskId: string): Promise<TaskAnexo[]> => {
+      if (!tenantId) return [];
+      const { data, error: rpcError } = await supabase.rpc('fn_get_task_attachments', {
+        p_tenant_id: tenantId,
+        p_task_id: taskId,
+      });
+      if (rpcError) {
+        console.error('[useTarefas] fetchAnexos error:', rpcError);
+        return [];
+      }
+      return (data as TaskAnexo[]) ?? [];
+    },
+    [tenantId],
+  );
+
+  const enviarAnexo = useCallback(
+    async (file: File, taskId: string): Promise<{ success: boolean; error?: string }> => {
+      if (!tenantId) return { success: false, error: 'Sem loja ativa' };
+      const { id, error: upError } = await uploadTaskAttachment(file, tenantId, taskId);
+      if (upError || !id) return { success: false, error: upError?.message ?? 'Falha no upload' };
+      return { success: true };
+    },
+    [tenantId],
+  );
+
+  /** Bucket privado: a URL de download é assinada sob demanda (1h). */
+  const abrirAnexo = useCallback(
+    async (attachmentId: string): Promise<string | null> => {
+      if (!tenantId) return null;
+      const { data } = await invokeWithAuth<{ success?: boolean; url?: string }>('task-write', {
+        body: { action: 'sign_attachment', active_tenant_id: tenantId, attachment_id: attachmentId },
+      });
+      return data?.url ?? null;
+    },
+    [tenantId],
+  );
+
+  return {
+    lists, tasks, tags, campos, notificacoes, views, templates,
+    loading, error, reload, write, fetchDetail,
+    fetchAnexos, enviarAnexo, abrirAnexo,
+  };
 }
