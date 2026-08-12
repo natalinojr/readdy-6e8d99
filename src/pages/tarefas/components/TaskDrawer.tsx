@@ -371,6 +371,69 @@ export default function TaskDrawer({
             </form>
           </div>
 
+          {/* Anexos */}
+          <div>
+            <span className="text-xs text-slate-500 flex items-center gap-1 mb-1.5">
+              <Paperclip size={12} /> Anexos {anexos.length > 0 && `(${anexos.length})`}
+            </span>
+            <div className="space-y-1">
+              {anexos.map((a) => (
+                <div key={a.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-slate-200 group">
+                  <Paperclip size={13} className="text-slate-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs text-slate-700 truncate block">{a.file_name}</span>
+                    <span className="text-[10px] text-slate-400">
+                      {formatarTamanho(a.size_bytes)}
+                      {a.uploaded_by_name && ` · ${a.uploaded_by_name}`}
+                    </span>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const url = await abrirAnexo(a.id);
+                      if (url) window.open(url, '_blank', 'noopener');
+                      else toast.error('Não foi possível abrir o anexo');
+                    }}
+                    className="p-1 text-slate-400 hover:text-indigo-500"
+                    title="Baixar"
+                  >
+                    <Download size={13} />
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Remover "${a.file_name}"?`)) return;
+                      const res = await write('delete_attachment', { attachment_id: a.id });
+                      if (!res.success) toast.error('Erro ao remover anexo', res.error);
+                      else load();
+                    }}
+                    className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition"
+                    title="Remover"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <label className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500 hover:text-indigo-600 cursor-pointer px-2 py-1">
+              {enviandoAnexo ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+              {enviandoAnexo ? 'Enviando…' : 'Anexar arquivo (até 10 MB)'}
+              <input
+                type="file"
+                className="hidden"
+                disabled={enviandoAnexo}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = ''; // permite reenviar o mesmo arquivo
+                  if (!file) return;
+                  setEnviandoAnexo(true);
+                  const res = await enviarAnexo(file, taskId);
+                  setEnviandoAnexo(false);
+                  if (!res.success) toast.error('Erro ao anexar', res.error);
+                  else load();
+                }}
+              />
+            </label>
+          </div>
+
           {/* Subtarefas (1 nível) */}
           {!detail.parent_task_id && (
             <div>
@@ -441,26 +504,14 @@ export default function TaskDrawer({
                 </div>
               ))}
             </div>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (!newComment.trim()) return;
-                await write('add_comment', { task_id: taskId, body: newComment.trim() });
-                setNewComment('');
-                load();
+            <ComentarioInput
+              usuarios={usuarios}
+              onEnviar={async (body, mentions) => {
+                const res = await write('add_comment', { task_id: taskId, body, mentions });
+                if (!res.success) toast.error('Erro ao comentar', res.error);
+                else load();
               }}
-              className="flex items-center gap-2 mt-2"
-            >
-              <input
-                value={newComment}
-                onChange={(e) => setNewComment(e.target.value)}
-                placeholder="Escrever comentário…"
-                className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300"
-              />
-              <button type="submit" className="p-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40" disabled={!newComment.trim()}>
-                <Send size={14} />
-              </button>
-            </form>
+            />
           </div>
 
           {/* Atividade */}
