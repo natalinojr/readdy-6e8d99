@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, SlidersHorizontal } from 'lucide-react';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, SlidersHorizontal, ListChecks } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUsuarios } from '@/hooks/useUsuarios';
@@ -10,8 +10,11 @@ import ViewCalendario from './components/ViewCalendario';
 import MinhasTarefas from './components/MinhasTarefas';
 import TaskDrawer from './components/TaskDrawer';
 import CamposCustomManager from './components/CamposCustomManager';
+import TemplatesManager from './components/TemplatesManager';
+import NotificacoesInbox from './components/NotificacoesInbox';
+import ViewsSalvas from './components/ViewsSalvas';
 import FiltrosBar from './components/FiltrosBar';
-import type { GroupBy } from './lib/agrupamento';
+import type { Filtros, GroupBy } from './lib/agrupamento';
 import { FILTROS_VAZIOS, aplicarFiltros } from './lib/agrupamento';
 
 const CORES_LISTA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#64748b'];
@@ -28,7 +31,10 @@ const VIEWS: Array<{ id: View; label: string; icon: typeof ListTodo }> = [
 export default function TarefasPage() {
   const toast = useToast();
   const { user } = useAuth();
-  const { lists, tasks, tags, campos, loading, error, write, fetchDetail } = useTarefas();
+  const {
+    lists, tasks, tags, campos, notificacoes, views, templates,
+    loading, error, write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo,
+  } = useTarefas();
   const { usuarios } = useUsuarios();
 
   const [view, setView] = useState<View>('lista');
@@ -38,6 +44,7 @@ export default function TarefasPage() {
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [showNewList, setShowNewList] = useState(false);
   const [showCampos, setShowCampos] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [newListColor, setNewListColor] = useState(CORES_LISTA[0]);
 
@@ -126,12 +133,18 @@ export default function TarefasPage() {
         </div>
 
         {lists.length > 0 && (
-          <div className="px-3 py-2.5 border-t border-slate-100">
+          <div className="px-3 py-2.5 border-t border-slate-100 space-y-0.5">
             <button
               onClick={() => setShowCampos(true)}
               className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
             >
               <SlidersHorizontal size={13} /> Campos personalizados
+            </button>
+            <button
+              onClick={() => setShowTemplates(true)}
+              className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
+            >
+              <ListChecks size={13} /> Templates de checklist
             </button>
           </div>
         )}
@@ -171,7 +184,7 @@ export default function TarefasPage() {
             ))}
           </div>
 
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
             <FiltrosBar
               filtros={filtros}
               onFiltros={setFiltros}
@@ -182,6 +195,28 @@ export default function TarefasPage() {
               usuarios={usuariosAtivos}
               campos={campos}
               list={selectedList}
+            />
+            <ViewsSalvas
+              views={views}
+              list={selectedList}
+              viewAtual={view}
+              groupBy={groupBy}
+              filtros={filtros}
+              meuId={user?.id ?? null}
+              write={write}
+              onAplicar={(v) => {
+                setView(v.view_type as View);
+                setGroupBy(v.group_by as GroupBy);
+                setFiltros({ ...FILTROS_VAZIOS, ...(v.filters as Partial<Filtros>) });
+                if (v.list_id) setSelectedListId(v.list_id);
+              }}
+            />
+            <NotificacoesInbox
+              notificacoes={notificacoes}
+              tasks={tasks}
+              meuId={user?.id ?? null}
+              write={write}
+              onOpenTask={setOpenTaskId}
             />
           </div>
         </div>
@@ -310,6 +345,15 @@ export default function TarefasPage() {
         />
       )}
 
+      {/* ── Templates de checklist ── */}
+      {showTemplates && (
+        <TemplatesManager
+          templates={templates}
+          write={write}
+          onClose={() => setShowTemplates(false)}
+        />
+      )}
+
       {/* ── Drawer de detalhe ── */}
       {openTaskId && (
         <TaskDrawer
@@ -317,9 +361,13 @@ export default function TarefasPage() {
           lists={lists}
           tags={tags}
           campos={campos}
+          templates={templates}
           usuarios={usuariosAtivos}
           write={write}
           fetchDetail={fetchDetail}
+          fetchAnexos={fetchAnexos}
+          enviarAnexo={enviarAnexo}
+          abrirAnexo={abrirAnexo}
           onClose={() => setOpenTaskId(null)}
           onOpenTask={setOpenTaskId}
         />

@@ -1,6 +1,6 @@
 # Plano — Módulo de Gestão de Tarefas (ERPOS V2)
 
-Criado em: 2026-08-11. Status: **Fases 1, 2 e 3 IMPLEMENTADAS em 2026-08-11** (backend no ar; front pendente de push). Fase 4 pendente.
+Criado em: 2026-08-11. Status: **MÓDULO COMPLETO — Fases 1 a 4 implementadas em 2026-08-11** (backend no ar; front pendente de push).
 
 > **Fase 1** — migrações `create_tasks_module` e `create_tasks_read_rpcs` aplicadas; Edge Function `task-write` v1 ativa; rota `/tarefas`, card em `/modulos` (id `tarefas`, perfis admin/gerente); view Lista + TaskDrawer.
 >
@@ -8,7 +8,11 @@ Criado em: 2026-08-11. Status: **Fases 1, 2 e 3 IMPLEMENTADAS em 2026-08-11** (b
 >
 > **Fase 3** — view Calendário (mês/semana, arrastar para remarcar, clique no dia cria tarefa, painel lateral "Sem data"); Minhas Tarefas cross-listas agrupada por vencimento (atrasadas/hoje/7 dias/mais tarde/sem data); seletor de recorrência no drawer; barra de filtros (busca, prioridade, responsável, etiquetas, ocultar concluídas); subtarefas na UI (aninhadas na Lista, criação no drawer).
 >
+> **Fase 4** — notificações persistidas por usuário (`task_notifications` + canal `task-notify:<user_id>`), disparadas ao atribuir responsável, mencionar com `@` num comentário ou comentar na tarefa de alguém; alertas de atrasadas/vence-hoje derivados no cliente (sem cron); caixa de notificações no cabeçalho; views salvas (`task_views`, pessoais ou compartilhadas com a equipe); anexos em bucket privado com URL assinada; templates de checklist aplicáveis em 1 clique.
+>
 > **Limitação conhecida:** o drag & drop usa a API nativa do HTML5, que não funciona em toque. Em tablet/celular, use o dropdown de status no drawer (Kanban) e o campo de data (Calendário) — ambos fazem a mesma coisa.
+>
+> **Desvio consciente do plano original:** o plano dizia "integrar ao `NotificacoesProvider`". Esse contexto é estado em memória endereçado por *perfil*, então notificar uma pessoa específica por ele não funcionaria (o aviso apareceria só para quem fez a ação). As notificações do módulo são persistidas em tabela própria e entregues por canal por usuário. Ver a entrada de 2026-08-11 em `AI_SYSTEM_MAP.md` → Histórico de soluções.
 
 ## Arquivos do módulo (implementado)
 
@@ -20,8 +24,11 @@ src/pages/tarefas/
   components/
     ViewLista.tsx  ViewKanban.tsx  ViewCalendario.tsx  MinhasTarefas.tsx
     TaskCard.tsx   TaskDrawer.tsx  FiltrosBar.tsx  CamposCustomManager.tsx
+    NotificacoesInbox.tsx  ViewsSalvas.tsx  TemplatesManager.tsx  ComentarioInput.tsx
     campos/CampoInput.tsx (editor por tipo)  campos/CampoBadge.tsx (leitura)
 ```
+
+Upload de anexo: `uploadTaskAttachment()` em `src/lib/supabase.ts` (multipart → Edge Function → service_role).
 
 Objetivo: módulo de gestão de tarefas multi-visão (Lista, Kanban, Calendário) com classificação flexível via **campos personalizados** estilo ClickUp, integrado à arquitetura existente (multi-tenant, Supabase, Edge Functions).
 
@@ -139,8 +146,8 @@ Kanban com drag & drop (status + reordenar); manager de campos custom + editores
 **Fase 3 — Calendário + recorrência + Minhas Tarefas**
 View calendário mês/semana com drag para remarcar; painel "Sem data"; recorrência (criação da próxima ocorrência na conclusão); visão Minhas Tarefas; realtime `tasks-ping`.
 
-**Fase 4 — Refinos**
-Subtarefas na UI (expansão na lista, contador no card); notificações de menção/atribuição/vencimento integradas ao `NotificacoesProvider`; filtros salvos/views nomeadas (`task_views`); anexos via Storage; templates de checklist (abertura/fechamento de loja).
+**Fase 4 — Refinos** ✅
+Subtarefas na UI; notificações de menção/atribuição/comentário persistidas + alertas de vencimento; views salvas (`task_views`); anexos via Storage privado; templates de checklist.
 
 Cada fase termina com: `npm run type-check` (não aumentar a contagem de erros — baseline ~350), `npm run build`, teste manual local. Commit/push só quando o usuário pedir.
 
