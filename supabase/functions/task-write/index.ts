@@ -194,6 +194,36 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           type, actor_id: user.id, payload,
         })),
       );
+
+      // Push: chega mesmo com o app fechado (é o que faz o celular valer a pena).
+      // Falha aqui nunca pode derrubar a escrita — a notificação no app já foi gravada.
+      try {
+        const titulos: Record<string, string> = {
+          assigned: 'Nova tarefa para você',
+          mentioned: 'Mencionaram você',
+          commented: 'Novo comentário',
+        };
+        await fetch(`${supabaseUrl}/functions/v1/send-push`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${serviceRoleKey}`,
+          },
+          body: JSON.stringify({
+            action: 'send',
+            user_ids: validos,
+            tenant_id: tenantId,
+            payload: {
+              titulo: titulos[type] ?? 'Tarefas',
+              corpo: String(payload.title ?? 'Abra para ver os detalhes'),
+              url: `/tarefas?task=${taskId}`,
+              task_id: taskId,
+            },
+          }),
+        });
+      } catch (e) {
+        console.error('[task-write] push falhou (ignorado):', e instanceof Error ? e.message : e);
+      }
     };
 
     // Garante que um registro pertence ao tenant resolvido

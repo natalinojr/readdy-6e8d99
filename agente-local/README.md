@@ -10,7 +10,8 @@ A Supabase (nuvem) nao consegue acessar IPs privados da sua rede local. Entao a 
 
 Este agente roda **no proprio computador do restaurante** e:
 1. Recebe os pedidos de impressao diretamente do navegador via `localhost:9876` (quando o PDV esta no mesmo PC)
-2. Faz **polling na fila centralizada do Supabase** para imprimir pedidos vindos de qualquer dispositivo (tablet, celular, caixa, etc.)
+2. Escuta a fila centralizada do Supabase via **Realtime** (v3.1+) e imprime **no instante** em que o pedido entra na fila, vindo de qualquer dispositivo (tablet, celular, caixa, etc.)
+3. Mantem um **polling** periodico como rede de seguranca (fallback), caso a conexao Realtime caia momentaneamente.
 
 ## Requisitos
 
@@ -62,8 +63,10 @@ Edite o arquivo `config.json` na mesma pasta do agente. Ele aceita **quantas imp
   ],
   "print_queue_enabled": true,
   "supabase_url": "https://mdghhjemzdmeuqpzuyzx.supabase.co",
+  "supabase_anon_key": "sb_publishable_...",
   "tenant_id": "SEU-TENANT-ID-AQUI",
-  "poll_interval_ms": 3000
+  "poll_interval_ms": 15000,
+  "realtime_enabled": true
 }
 ```
 
@@ -77,10 +80,15 @@ Edite o arquivo `config.json` na mesma pasta do agente. Ele aceita **quantas imp
 | `impressoras[].ip` | IP da impressora na rede local |
 | `impressoras[].porta` | Porta TCP (geralmente 9100 para impressoras termicas) |
 | `impressoras[].papel` | Largura do papel: "80mm" ou "58mm" |
-| `print_queue_enabled` | **NOVO v3** — habilita polling da fila centralizada do Supabase |
-| `supabase_url` | **NOVO v3** — URL do projeto Supabase (copie do .env) |
-| `tenant_id` | **NOVO v3** — UUID do tenant/restaurante (veja em Configuracoes > Loja) |
-| `poll_interval_ms` | **NOVO v3** — Intervalo de polling em ms (padrao: 3000) |
+| `print_queue_enabled` | **v3** — habilita a fila centralizada do Supabase |
+| `supabase_url` | **v3** — URL do projeto Supabase (copie do .env) |
+| `supabase_anon_key` | **v3** — chave publishable/anon do Supabase. **Obrigatoria** para o Realtime funcionar (sem ela, so funciona o polling) |
+| `tenant_id` / `tenant_ids` | **v3** — UUID do tenant/restaurante (use `tenant_ids: []` para varios). Veja em Configuracoes > Loja |
+| `poll_interval_ms` | **v3** — Intervalo do polling de fallback em ms (padrao: 15000). Com o Realtime ativo, este so atua como rede de seguranca. **Ignorado se `polling_enabled: false`** |
+| `realtime_enabled` | **NOVO v3.1** — `true` (padrao) imprime no instante do pedido via Supabase Realtime. Se `false`, usa apenas polling |
+| `polling_enabled` | **NOVO v3.2** — `true` (padrao) mantem o polling como rede de seguranca. **`false` = modo so-Realtime**: imprime apenas no broadcast `new_job` (um unico poll no boot limpa backlog), sem bater na edge function periodicamente. Economiza chamadas de Edge Function. **Atencao:** com `false`, se o Realtime nao conectar (ex.: sem `npm install`), nada sera impresso |
+
+> **Atualizando de uma versao anterior (v3.0 → v3.1):** depois de copiar o novo `index.js` e `package.json`, **rode `npm install` nesta pasta** (ou execute o `instalar.bat` de novo) para baixar a dependencia de Realtime (`@supabase/supabase-js`). Garanta que o `config.json` tenha `supabase_anon_key`. Por fim, **reinicie o servico** "ERPOS Print Agent". Se o `npm install` nao for rodado, o agente continua funcionando normalmente, porem so com o polling (sem impressao instantanea).
 
 > **Dica:** O config.json e recarregado automaticamente! Voce pode editar enquanto o agente esta rodando — nao precisa reiniciar o servico.
 
@@ -98,10 +106,14 @@ Usuario confirma pedido no ERPOS (de qualquer dispositivo)
 ERPOS salva o ticket na tabela print_queue no Supabase
         |
         v
-Agente local (PC da cozinha) faz polling a cada 3s
+Trigger no banco emite broadcast Realtime "new_job"
         |
         v
-Agente busca tickets pendentes do Supabase
+Agente local (PC da cozinha) recebe o aviso NA HORA (Realtime)
+   (o polling de fallback tambem cobre, caso a conexao caia)
+        |
+        v
+Agente busca o(s) ticket(s) pendente(s) do Supabase
         |
         v
 Agente formata ESC/POS e imprime na impressora local

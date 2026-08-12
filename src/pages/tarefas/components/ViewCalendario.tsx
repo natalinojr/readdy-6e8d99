@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, CalendarOff, Plus } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
+import { useIsMobile } from '../lib/mobile';
 import TaskCard from './TaskCard';
 
 interface ViewCalendarioProps {
@@ -50,8 +51,16 @@ export default function ViewCalendario({
   list, tasks, campos, usuarios, write, onOpenTask,
 }: ViewCalendarioProps) {
   const toast = useToast();
+  const celular = useIsMobile();
   const [referencia, setReferencia] = useState(() => new Date());
-  const [modo, setModo] = useState<'mes' | 'semana'>('mes');
+  // No celular a grade de 7 colunas fica ilegível — começa na semana.
+  const [modo, setModo] = useState<'mes' | 'semana'>(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches ? 'semana' : 'mes',
+  );
+  const [diaSelecionado, setDiaSelecionado] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
   const [arrastandoId, setArrastandoId] = useState<string | null>(null);
   const [diaAlvo, setDiaAlvo] = useState<string | null>(null);
   const [criandoEm, setCriandoEm] = useState<string | null>(null);
@@ -109,6 +118,145 @@ export default function ViewCalendario({
   const tituloPeriodo = modo === 'mes'
     ? referencia.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
     : `${dias[0].toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} – ${dias[6].toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}`;
+
+  // ══ Celular: modo agenda (faixa de dias + tarefas do dia escolhido) ══
+  if (celular) {
+    const diasDaSemana = gerarGradeSemana(referencia);
+    const doDiaSelecionado = (porDia.get(diaSelecionado) ?? []).slice().sort(
+      (a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''),
+    );
+    const dataSel = new Date(`${diaSelecionado}T12:00:00`);
+
+    return (
+      <div className="space-y-3">
+        {/* Faixa da semana */}
+        <div className="bg-white rounded-xl border border-slate-200 p-2">
+          <div className="flex items-center justify-between mb-2 px-1">
+            <button onClick={() => navegar(-1)} className="p-2 -m-1 rounded-lg text-slate-500 active:bg-slate-100">
+              <ChevronLeft size={18} />
+            </button>
+            <span className="text-sm font-semibold text-slate-700 capitalize">
+              {referencia.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+            </span>
+            <button onClick={() => navegar(1)} className="p-2 -m-1 rounded-lg text-slate-500 active:bg-slate-100">
+              <ChevronRight size={18} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-7 gap-1">
+            {diasDaSemana.map((dia) => {
+              const chave = chaveDia(dia);
+              const qtd = (porDia.get(chave) ?? []).length;
+              const ehHoje = chave === hojeChave;
+              const selecionado = chave === diaSelecionado;
+              return (
+                <button
+                  key={chave}
+                  onClick={() => setDiaSelecionado(chave)}
+                  onDragOver={(e) => {
+                    if (!arrastandoId) return;
+                    e.preventDefault();
+                    setDiaAlvo(chave);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (arrastandoId) remarcar(arrastandoId, chave);
+                  }}
+                  className={`flex flex-col items-center py-2 rounded-lg transition ${
+                    selecionado ? 'bg-indigo-600 text-white' : diaAlvo === chave ? 'bg-indigo-50' : 'active:bg-slate-100'
+                  }`}
+                >
+                  <span className={`text-[10px] uppercase ${selecionado ? 'text-indigo-100' : 'text-slate-400'}`}>
+                    {DIAS_SEMANA[dia.getDay()]}
+                  </span>
+                  <span
+                    className={`text-sm font-semibold mt-0.5 ${
+                      selecionado ? 'text-white' : ehHoje ? 'text-indigo-600' : 'text-slate-700'
+                    }`}
+                  >
+                    {dia.getDate()}
+                  </span>
+                  <span
+                    className={`w-1 h-1 rounded-full mt-1 ${
+                      qtd > 0 ? (selecionado ? 'bg-white' : 'bg-indigo-400') : 'bg-transparent'
+                    }`}
+                  />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Tarefas do dia escolhido */}
+        <div>
+          <div className="flex items-center justify-between mb-2 px-1">
+            <span className="text-xs font-semibold text-slate-600 capitalize">
+              {dataSel.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}
+            </span>
+            <span className="text-xs text-slate-400">{doDiaSelecionado.length}</span>
+          </div>
+
+          <div className="space-y-2">
+            {doDiaSelecionado.map((task) => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                campos={campos}
+                usuarios={usuarios}
+                onOpen={onOpenTask}
+              />
+            ))}
+            {doDiaSelecionado.length === 0 && (
+              <p className="text-xs text-slate-400 text-center py-6 bg-white rounded-xl border border-slate-200">
+                Nada marcado para este dia.
+              </p>
+            )}
+          </div>
+
+          {list && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                criarNoDia(diaSelecionado);
+              }}
+              className="flex items-center gap-2 mt-2 bg-white rounded-xl border border-slate-200 px-3 py-2.5"
+            >
+              <Plus size={16} className="text-slate-300 shrink-0" />
+              <input
+                value={criandoEm === diaSelecionado ? novoTitulo : ''}
+                onFocus={() => setCriandoEm(diaSelecionado)}
+                onChange={(e) => setNovoTitulo(e.target.value)}
+                placeholder="Nova tarefa neste dia…"
+                className="flex-1 text-sm bg-transparent outline-none placeholder:text-slate-400"
+              />
+            </form>
+          )}
+        </div>
+
+        {/* Sem data */}
+        {semData.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1.5 mb-2 px-1 text-xs font-semibold text-slate-600">
+              <CalendarOff size={13} className="text-slate-400" />
+              Sem data
+              <span className="text-slate-400 font-normal">{semData.length}</span>
+            </div>
+            <div className="space-y-2">
+              {semData.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  campos={campos}
+                  usuarios={usuarios}
+                  onOpen={onOpenTask}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex gap-4 items-start">

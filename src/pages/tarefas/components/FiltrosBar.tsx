@@ -30,8 +30,9 @@ export default function FiltrosBar({
 
   return (
     <div className="flex items-center gap-2">
-      {/* Busca */}
-      <div className="relative">
+      {/* Busca — no celular ela vive dentro do painel de filtros, para o
+          cabeçalho caber numa linha só */}
+      <div className="relative hidden md:block">
         <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
         <input
           value={filtros.busca}
@@ -46,7 +47,7 @@ export default function FiltrosBar({
         <select
           value={groupBy}
           onChange={(e) => onGroupBy(e.target.value as GroupBy)}
-          className="text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white outline-none focus:border-indigo-300 text-slate-600"
+          className="hidden md:block text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white outline-none focus:border-indigo-300 text-slate-600"
           title={`Agrupar por ${rotuloAgrupamento(groupBy, campos)}`}
         >
           <option value="status">Agrupar: Status</option>
@@ -92,6 +93,31 @@ export default function FiltrosBar({
                   </button>
                 )}
               </div>
+
+              {/* Busca e agrupamento no celular (no desktop ficam na barra) */}
+              <div className="relative md:hidden">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={filtros.busca}
+                  onChange={(e) => onFiltros({ ...filtros, busca: e.target.value })}
+                  placeholder="Buscar tarefa…"
+                  className="w-full pl-7 pr-2 py-2 text-xs rounded-lg border border-slate-200 outline-none focus:border-indigo-300"
+                />
+              </div>
+              {mostrarAgrupamento && (
+                <select
+                  value={groupBy}
+                  onChange={(e) => onGroupBy(e.target.value as GroupBy)}
+                  className="md:hidden w-full text-xs px-2 py-2 rounded-lg border border-slate-200 bg-white outline-none focus:border-indigo-300 text-slate-600"
+                >
+                  <option value="status">Agrupar: Status</option>
+                  <option value="priority">Agrupar: Prioridade</option>
+                  <option value="assignee">Agrupar: Responsável</option>
+                  {agrupaveis.map((c) => (
+                    <option key={c.id} value={`field:${c.id}`}>Agrupar: {c.name}</option>
+                  ))}
+                </select>
+              )}
 
               <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
                 <input

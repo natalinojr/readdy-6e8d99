@@ -67,7 +67,7 @@ export default function ViewLista({
       <div key={task.id}>
         <div
           onClick={() => onOpenTask(task.id)}
-          className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 cursor-pointer group"
+          className="flex items-center gap-3 px-4 py-3.5 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer group"
           style={{ paddingLeft: `${16 + nivel * 22}px` }}
         >
           {subtarefas.length > 0 ? (
@@ -94,7 +94,7 @@ export default function ViewLista({
             checked={concluida}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => alternarConclusao(task, e.target.checked)}
-            className="rounded-full border-slate-300 text-emerald-500 focus:ring-emerald-400 shrink-0"
+            className="rounded-full border-slate-300 text-emerald-500 focus:ring-emerald-400 shrink-0 w-5 h-5 md:w-4 md:h-4"
           />
 
           <span className={`flex-1 text-sm truncate ${concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>

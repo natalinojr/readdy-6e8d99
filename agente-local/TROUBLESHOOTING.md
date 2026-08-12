@@ -1,5 +1,38 @@
 # Solução de Problemas - Agente de Impressão
 
+## Problema: "Todo dia a impressora para e eu preciso reiniciar o agente"
+
+### Sintomas
+- De manhã (ou depois de um tempo) os pedidos param de sair na impressora.
+- Os tickets ficam em `print_queue.status = 'pending'` acumulando, sem virar `printing`.
+- **Reiniciar o agente resolve na hora** — e o problema volta no dia seguinte.
+
+### Causa
+O agente roda em **modo só-Realtime** (`polling_enabled: false`). O Realtime usa um
+**websocket**. Quando o PC **dorme/hiberna à noite** ou a **rede oscila**, o socket fica
+"zumbi" (parece vivo mas não recebe mais nada). Nas versões antigas (≤ v3.2) não havia
+fallback nem reconexão automática → o agente ficava "rodando" sem imprimir até o restart manual.
+
+### Solução definitiva (v3.3.0+)
+A partir da **v3.3.0** o agente se auto-recupera e **não precisa mais de restart manual**:
+1. **Safety-net poll sempre ligado** — mesmo em modo Realtime, um poll lento (padrão 60s,
+   `safety_poll_interval_ms`) garante a impressão mesmo se o Realtime morrer.
+2. **Watchdog do Realtime** (`realtime_watchdog_ms`, padrão 60s) — detecta socket zumbi e
+   força a reconexão sozinho, restaurando a impressão instantânea.
+3. **Crash guards** — um erro solto não derruba mais o processo.
+
+**Como aplicar em cada PC:**
+1. Copiar o `index.js` novo (v3.3.0) para a pasta do agente no PC (ex.: `C:\ERPOS\agente-local\`).
+2. Conferir que o agente está como **Serviço do Windows** (rode `instalar.bat` como admin se ainda não estiver — isso garante auto-start no boot e auto-restart em caso de crash).
+3. Reiniciar o serviço **"ERPOS Print Agent"** (services.msc) — ou rodar `node index.js`.
+4. Validar em `http://localhost:9876/health`: deve mostrar `"version":"3.3.0"`,
+   `"realtime_healthy":true` e `"realtime_watchdog":true`.
+
+> Dica: deixe o **plano de energia do Windows** como "Alto desempenho" / nunca suspender,
+> para o PC da loja não dormir durante o expediente.
+
+---
+
 ## Problema: Agente inicia mas não imprime nada
 
 ### Sintomas

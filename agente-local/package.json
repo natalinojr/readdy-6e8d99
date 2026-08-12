@@ -9,7 +9,9 @@
     "uninstall-service": "node service-uninstall.js"
   },
   "dependencies": {
-    "node-windows": "^1.0.0-beta.8"
+    "@supabase/supabase-js": "2.57.4",
+    "node-windows": "^1.0.0-beta.8",
+    "ws": "^8.18.0"
   },
   "engines": {
     "node": ">=16.0.0"

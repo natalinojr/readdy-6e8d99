@@ -12,3 +12,6 @@ out/
 .vercel
 .tools/
 .npm-cache/
+
+# Config local do Codex — contém token de acesso pessoal
+.codex/

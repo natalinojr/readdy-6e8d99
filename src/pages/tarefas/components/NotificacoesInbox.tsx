@@ -1,11 +1,14 @@
-import { useState, useMemo } from 'react';
-import { Bell, AtSign, UserPlus, MessageSquare, AlertCircle, Sun, CheckCheck } from 'lucide-react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import { Bell, AtSign, UserPlus, MessageSquare, AlertCircle, Sun, CheckCheck, BellRing, BellOff, Send, Loader2 } from 'lucide-react';
+import { useToast } from '@/contexts/ToastContext';
+import { ativarPush, desativarPush, enviarPushTeste, estadoPush, type EstadoPush } from '@/lib/push';
 import type { TaskNotificacao, TaskRow } from '../hooks/useTarefas';
 
 interface NotificacoesInboxProps {
   notificacoes: TaskNotificacao[];
   tasks: TaskRow[];
   meuId: string | null;
+  tenantId: string | null;
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; id?: string; error?: string }>;
   onOpenTask: (taskId: string) => void;
 }
@@ -22,6 +25,29 @@ const ROTULO: Record<TaskNotificacao['type'], string> = {
   commented: 'comentou na sua tarefa',
 };
 
+/**
+ * Alertas de prazo derivados das tarefas já carregadas — sem tabela e sem cron,
+ * então nunca ficam desatualizados. Exportado para o selo da navegação reusar.
+ */
+export function calcularVencimentos(tasks: TaskRow[], meuId: string | null) {
+  const atrasadas: TaskRow[] = [];
+  const hoje: TaskRow[] = [];
+  if (!meuId) return { atrasadas, hoje };
+
+  const hojeRef = new Date();
+  hojeRef.setHours(0, 0, 0, 0);
+  for (const t of tasks) {
+    if (t.assignee_id !== meuId || !t.due_date) continue;
+    if (t.status_category === 'done' || t.status_category === 'cancelled') continue;
+    const due = new Date(t.due_date);
+    due.setHours(0, 0, 0, 0);
+    const dias = Math.round((due.getTime() - hojeRef.getTime()) / 86400000);
+    if (dias < 0) atrasadas.push(t);
+    else if (dias === 0) hoje.push(t);
+  }
+  return { atrasadas, hoje };
+}
+
 function tempoRelativo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const min = Math.floor(diff / 60000);
@@ -35,31 +61,32 @@ function tempoRelativo(iso: string): string {
 }
 
 export default function NotificacoesInbox({
-  notificacoes, tasks, meuId, write, onOpenTask,
+  notificacoes, tasks, meuId, tenantId, write, onOpenTask,
 }: NotificacoesInboxProps) {
+  const toast = useToast();
   const [aberto, setAberto] = useState(false);
+  const [push, setPush] = useState<EstadoPush | null>(null);
+  const [ocupado, setOcupado] = useState(false);
 
-  /**
-   * Vencimentos não são persistidos: derivam das tarefas já carregadas, então
-   * estão sempre corretos sem depender de nenhum job agendado.
-   */
-  const vencimentos = useMemo(() => {
-    if (!meuId) return { atrasadas: [] as TaskRow[], hoje: [] as TaskRow[] };
-    const hojeRef = new Date();
-    hojeRef.setHours(0, 0, 0, 0);
-    const atrasadas: TaskRow[] = [];
-    const hoje: TaskRow[] = [];
-    for (const t of tasks) {
-      if (t.assignee_id !== meuId || !t.due_date) continue;
-      if (t.status_category === 'done' || t.status_category === 'cancelled') continue;
-      const due = new Date(t.due_date);
-      due.setHours(0, 0, 0, 0);
-      const dias = Math.round((due.getTime() - hojeRef.getTime()) / 86400000);
-      if (dias < 0) atrasadas.push(t);
-      else if (dias === 0) hoje.push(t);
-    }
-    return { atrasadas, hoje };
-  }, [tasks, meuId]);
+  const atualizarEstadoPush = useCallback(() => {
+    estadoPush().then(setPush).catch(() => setPush('nao-suportado'));
+  }, []);
+
+  useEffect(() => {
+    if (aberto) atualizarEstadoPush();
+  }, [aberto, atualizarEstadoPush]);
+
+  const alternarPush = async () => {
+    if (!tenantId) return;
+    setOcupado(true);
+    const r = push === 'ativo' ? await desativarPush(tenantId) : await ativarPush(tenantId);
+    setOcupado(false);
+    if (!r.ok) toast.error('Notificações', r.erro);
+    else if (push !== 'ativo') toast.success('Avisos ativados neste aparelho');
+    atualizarEstadoPush();
+  };
+
+  const vencimentos = useMemo(() => calcularVencimentos(tasks, meuId), [tasks, meuId]);
 
   const naoLidas = notificacoes.filter((n) => !n.is_read).length;
   const totalBadge = naoLidas + vencimentos.atrasadas.length;
@@ -102,6 +129,54 @@ export default function NotificacoesInbox({
                 >
                   <CheckCheck size={12} /> Marcar todas como lidas
                 </button>
+              )}
+            </div>
+
+            {/* Avisos no aparelho (Web Push) */}
+            <div className="px-3 py-2 border-b border-slate-100 bg-slate-50/60">
+              {push === 'precisa-instalar' ? (
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  <strong>Para receber avisos no iPhone</strong>, instale o app pelo botão
+                  Compartilhar → Adicionar à Tela de Início.
+                </p>
+              ) : push === 'nao-suportado' ? (
+                <p className="text-[11px] text-slate-400">Este navegador não suporta avisos.</p>
+              ) : push === 'negado' ? (
+                <p className="text-[11px] text-slate-500">
+                  Avisos bloqueados. Libere as notificações nas configurações do navegador.
+                </p>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={alternarPush}
+                    disabled={ocupado || push === null}
+                    className={`flex items-center gap-1.5 text-[11px] font-medium px-2 py-1.5 rounded-lg border transition disabled:opacity-50 ${
+                      push === 'ativo'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                        : 'border-indigo-200 bg-white text-indigo-600'
+                    }`}
+                  >
+                    {ocupado ? <Loader2 size={12} className="animate-spin" />
+                      : push === 'ativo' ? <BellRing size={12} /> : <BellOff size={12} />}
+                    {push === 'ativo' ? 'Avisos ativos neste aparelho' : 'Ativar avisos neste aparelho'}
+                  </button>
+                  {push === 'ativo' && (
+                    <button
+                      onClick={async () => {
+                        if (!tenantId) return;
+                        setOcupado(true);
+                        const r = await enviarPushTeste(tenantId);
+                        setOcupado(false);
+                        if (!r.ok) toast.error('Teste falhou', r.erro);
+                      }}
+                      disabled={ocupado}
+                      className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-indigo-600 px-1.5 py-1.5 disabled:opacity-50"
+                      title="Enviar uma notificação de teste"
+                    >
+                      <Send size={11} /> Testar
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 

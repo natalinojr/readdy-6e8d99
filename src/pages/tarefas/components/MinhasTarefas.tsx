@@ -108,14 +108,14 @@ export default function MinhasTarefas({
                   <div
                     key={task.id}
                     onClick={() => onOpenTask(task.id)}
-                    className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 cursor-pointer"
+                    className="flex items-center gap-3 px-4 py-3.5 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer"
                   >
                     <input
                       type="checkbox"
                       checked={false}
                       onClick={(e) => e.stopPropagation()}
                       onChange={() => concluir(task)}
-                      className="rounded-full border-slate-300 text-emerald-500 focus:ring-emerald-400"
+                      className="rounded-full border-slate-300 text-emerald-500 focus:ring-emerald-400 w-5 h-5 md:w-4 md:h-4 shrink-0"
                       title="Marcar como concluída"
                     />
                     <div className="flex-1 min-w-0">

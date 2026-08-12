@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { supabase } from './lib/supabase'
+import { registerServiceWorker } from './lib/pwa'
 
 // ── Rede de segurança: captura erros de refresh token do Supabase que
 //    escapem do try-catch interno. Ao invés de redirecionar bruscamente,
@@ -106,4 +107,6 @@ if (!isMetaOAuthPopup) {
       <App />
     </StrictMode>,
   )
+  // PWA: instalável na tela inicial do celular. Só registra em produção.
+  registerServiceWorker()
 }

@@ -5,6 +5,23 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 
+// Realtime (opcional) — carregado de forma tolerante: se as dependencias
+// ainda nao foram instaladas (npm install) o agente continua funcionando
+// apenas com polling, sem derrubar o servico.
+let createClient = null;
+let WS = null;
+try {
+  ({ createClient } = require('@supabase/supabase-js'));
+} catch (_) {
+  createClient = null;
+}
+try {
+  WS = require('ws');
+  if (WS && !globalThis.WebSocket) globalThis.WebSocket = WS;
+} catch (_) {
+  WS = null;
+}
+
 // ============================================
 // AGENTE LOCAL DE IMPRESSAO — ERPOS v3
 // Suporta múltiplas impressoras via config.json
@@ -23,8 +40,17 @@ let config = {
   supabase_url: '',
   supabase_anon_key: '',
   tenant_id: '',
-  poll_interval_ms: 3000,        // polling da fila a cada 3s
+  poll_interval_ms: 3000,        // polling da fila a cada 3s (fallback do realtime)
   print_queue_enabled: false,    // habilitar polling da fila centralizada
+  realtime_enabled: true,        // escutar inserts da fila via Supabase Realtime (impressao instantanea)
+  realtime_debounce_ms: 250,     // agrupa varios tickets do mesmo pedido em um unico poll
+  // Rede de seguranca: mesmo em modo "so Realtime" (polling_enabled=false) rodamos
+  // um poll lento garantido. Se o websocket do Realtime "morrer" (PC dormiu, wifi
+  // oscilou) o agente continua imprimindo em ate safety_poll_interval_ms, SEM
+  // precisar de reinicio manual. 60s/tenant e desprezivel pra cota de Edge Function.
+  safety_poll_interval_ms: 60000,
+  // Watchdog que detecta canal Realtime caido/zumbi e forca a reconexao.
+  realtime_watchdog_ms: 60000,
 };
 
 const MAX_BODY_SIZE = 5 * 1024 * 1024; // 5MB max
@@ -33,6 +59,19 @@ function log(msg) {
   const ts = new Date().toISOString();
   console.log(`[${ts}] ${msg}`);
 }
+
+// ============================================
+// Crash guards — NUNCA derrubar o processo por um erro solto.
+// Sem isto, no Node 15+ uma unhandledRejection encerra o agente; rodando
+// como Servico Windows ate volta, mas em modo Realtime-only podia parar de
+// imprimir ate o restart. Aqui logamos e seguimos vivos.
+// ============================================
+process.on('uncaughtException', (err) => {
+  try { log(`[FATAL] uncaughtException (ignorado, agente segue): ${err && err.stack ? err.stack : err}`); } catch (_) {}
+});
+process.on('unhandledRejection', (reason) => {
+  try { log(`[FATAL] unhandledRejection (ignorado, agente segue): ${reason && reason.stack ? reason.stack : reason}`); } catch (_) {}
+});
 
 function loadConfig() {
   try {
@@ -287,6 +326,10 @@ const CP860 = ESC + '\x74\x03';
  * permanecem como estão (fallback para byte direto).
  */
 function utf8ToCp860(str) {
+  // NBSP (U+00A0) -> espaco normal. O toLocaleString('pt-BR',{currency}) do front
+  // insere um NBSP entre "R$" e o valor; sem isto o byte 0xA0 saia impresso como
+  // "a" acentuado (glifo 0xA0 da CP860), gerando "R$a8,00" nos comprovantes.
+  str = str.replace(/\u00A0/g, ' ');
   const map = {
     'á': '\xA0', 'Á': '\x86', 'à': '\x85', 'À': '\x91',
     'â': '\x83', 'Â': '\x8F', 'ã': '\x84', 'Ã': '\x8E',
@@ -482,9 +525,22 @@ function formatTicket(body, impressora) {
 
 let pollingInterval = null;
 let isProcessingQueue = false;
+let rerunRequested = false;
+
+/** Resolve a lista de tenant_ids validos (suporta tenant_ids[] ou tenant_id legado). */
+function getValidTenantIds() {
+  const tenantIds = (config.tenant_ids && config.tenant_ids.length > 0)
+    ? config.tenant_ids
+    : (config.tenant_id ? [config.tenant_id] : []);
+  return tenantIds.filter(function (tid) {
+    return tid && tid.trim() !== '' && tid !== 'SEU-TENANT-ID-AQUI';
+  });
+}
 
 async function processPrintQueue() {
-  if (isProcessingQueue) return;
+  // Se ja esta processando, marca para rodar de novo ao terminar (evita perder
+  // tickets que chegam via realtime durante uma impressao em andamento).
+  if (isProcessingQueue) { rerunRequested = true; return; }
   if (!config.print_queue_enabled || !config.supabase_url) {
     return;
   }
@@ -528,29 +584,42 @@ async function processPrintQueue() {
           try {
             log(`[Queue] Imprimindo ticket #${ticket.order_number} (${ticket.station_key})`);
 
-            // ── NOVO ROTEAMENTO (v3.1): impressora_id como rota principal ──
-            // O sistema define impressora_id. O agente apenas resolve esse ID
-            // para IP/porta no config.json, sem roteamento por station_key.
+            // ── ROTEAMENTO (v3.2): IP RESOLVIDO no ticket pela edge function ──
+            // A edge `print-queue-agent` resolve impressora_id -> IP/porta/papel a
+            // partir do printers_config (cadastrado no app) e manda isso no ticket.
+            // O agente imprime nesse IP direto. O config.json local vira apenas
+            // FALLBACK de compatibilidade — trocar impressora no app NAO exige mais
+            // editar o config.json de cada PC.
             const requestedImpressoraId = ticket.impressora_id || ticket.payload?.impressora_id || '';
-            if (!requestedImpressoraId) {
-              log(`[Queue] ERRO: ticket #${ticket.order_number} sem impressora_id definido pelo sistema (station=${ticket.station_key})`);
-              await confirmTicket(ticket.id, 'failed', 'Ticket sem impressora_id definido pelo sistema');
+
+            let printerIp = ticket.impressora_ip || null;
+            let printerPort = ticket.impressora_port || 9100;
+            let printerName = ticket.impressora_nome || requestedImpressoraId || 'impressora';
+            let papel = ticket.paper_style === '58mm' ? '58mm' : (ticket.paper_style || '80mm');
+            let resolvedBy = 'ticket (printers_config)';
+
+            if (!printerIp) {
+              // Fallback: resolve pelo config.json local (modo antigo).
+              const impressora = requestedImpressoraId ? findImpressora(requestedImpressoraId) : null;
+              if (impressora) {
+                printerIp = impressora.ip;
+                printerPort = impressora.porta || 9100;
+                printerName = impressora.nome || printerName;
+                papel = impressora.papel || papel;
+                resolvedBy = `config.json (id="${requestedImpressoraId}")`;
+              }
+            }
+
+            if (!printerIp) {
+              log(`[Queue] ERRO: ticket #${ticket.order_number} sem IP de impressora (nao resolvido pelo sistema nem no config.json; id="${requestedImpressoraId}", station=${ticket.station_key})`);
+              await confirmTicket(ticket.id, 'failed', `Impressora nao resolvida (id="${requestedImpressoraId}")`);
               continue;
             }
 
-            const impressora = findImpressora(requestedImpressoraId);
-            if (!impressora) {
-              log(`[Queue] ERRO: impressora_id "${requestedImpressoraId}" nao encontrado no config.json para ticket #${ticket.order_number}`);
-              await confirmTicket(ticket.id, 'failed', `Impressora "${requestedImpressoraId}" nao configurada no agente`);
-              continue;
-            }
-            const resolvedBy = `impressora_id="${requestedImpressoraId}"`;
-            log(`[Queue] Impressora resolvida: ${impressora.nome} (${impressora.ip}:${impressora.porta || 9100}) via ${resolvedBy}`);
+            log(`[Queue] Impressora resolvida: ${printerName} (${printerIp}:${printerPort}) via ${resolvedBy}`);
 
             // ── USA ESC/POS PRE-FORMATADO PELA EDGE FUNCTION ──
-            // O layout do ticket agora é gerado remotamente pela print-queue-agent.
-            // Alterar o layout = deploy na edge function, sem tocar nos PCs das lojas.
-            const papel = impressora?.papel || '80mm';
+            // O layout do ticket é gerado remotamente pela print-queue-agent.
             const b64Key = papel === '58mm' ? 'escpos_58mm_base64' : 'escpos_80mm_base64';
             const escPosBase64 = ticket[b64Key];
 
@@ -563,17 +632,16 @@ async function processPrintQueue() {
             const escPosBuffer = Buffer.from(escPosBase64, 'base64');
             log(`[Queue] ESC/POS decodificado: ${escPosBuffer.length} bytes (${papel}, via edge)`);
 
-            // Tenta imprimir somente na impressora escolhida pelo sistema.
+            // Imprime no IP resolvido (do ticket ou, em fallback, do config.json).
             let printed = false;
             try {
-              await sendToPrinterTcp(impressora.ip, impressora.porta || 9100, escPosBuffer, config.default_timeout_ms || 10000);
+              await sendToPrinterTcp(printerIp, printerPort, escPosBuffer, config.default_timeout_ms || 10000);
               printed = true;
-              log(`[Queue] Ticket #${ticket.order_number} impresso com sucesso (${impressora.nome})`);
+              log(`[Queue] Ticket #${ticket.order_number} impresso com sucesso (${printerName})`);
               await confirmTicket(ticket.id, 'printed');
             } catch (primaryErr) {
               const primaryMsg = primaryErr instanceof Error ? primaryErr.message : 'Erro desconhecido';
-              log(`[Queue] Impressora primaria (${impressora.nome}) falhou: ${primaryMsg}`);
-
+              log(`[Queue] Impressora (${printerName}) falhou: ${primaryMsg}`);
 
               if (!printed) {
                 await confirmTicket(ticket.id, 'failed', primaryMsg);
@@ -594,6 +662,11 @@ async function processPrintQueue() {
     log(`[Queue] Erro no polling: ${msg}`);
   } finally {
     isProcessingQueue = false;
+    // Algum ticket chegou enquanto processavamos? Roda mais uma rodada.
+    if (rerunRequested) {
+      rerunRequested = false;
+      setTimeout(processPrintQueue, 100);
+    }
   }
 }
 
@@ -613,8 +686,15 @@ async function confirmTicket(queueId, status, errorMsg) {
 
 function startQueuePolling() {
   if (pollingInterval) return;
-  log('[Queue] Iniciando polling da fila centralizada...');
-  pollingInterval = setInterval(processPrintQueue, config.poll_interval_ms || 3000);
+  // polling_enabled !== false => polling "rapido" (rede de seguranca + fallback).
+  // polling_enabled === false  => ainda rodamos um poll LENTO de seguranca, pra que
+  // uma queda do Realtime nao pare a impressao ate alguem reiniciar na mao.
+  const fast = config.polling_enabled !== false;
+  const interval = fast
+    ? (config.poll_interval_ms || 3000)
+    : (config.safety_poll_interval_ms || 60000);
+  log(`[Queue] Iniciando ${fast ? 'polling' : 'safety-net poll (modo Realtime)'} a cada ${interval}ms...`);
+  pollingInterval = setInterval(processPrintQueue, interval);
   // Executa imediatamente na inicialização
   processPrintQueue();
 }
@@ -625,6 +705,158 @@ function stopQueuePolling() {
     pollingInterval = null;
     log('[Queue] Polling da fila centralizada parado');
   }
+}
+
+// ============================================
+// Realtime — impressao instantanea
+// O banco (trigger trg_print_queue_notify) emite um broadcast
+// 'new_job' no canal publico "print-jobs:<tenant_id>" a cada
+// INSERT na print_queue. Aqui apenas escutamos esse aviso e
+// disparamos um poll imediato (que ja busca/imprime/confirma).
+// O polling continua ativo como rede de seguranca (fallback).
+// ============================================
+
+let supabaseClient = null;
+let realtimeChannels = [];
+let immediatePollTimer = null;
+let realtimeWatchdog = null;
+let lastRealtimeStart = 0;
+
+function realtimeConnected() {
+  return realtimeChannels.length > 0;
+}
+
+/** Agrupa varios avisos (1 pedido = varios tickets) em um unico poll. */
+function scheduleImmediatePoll() {
+  if (immediatePollTimer) return;
+  immediatePollTimer = setTimeout(() => {
+    immediatePollTimer = null;
+    processPrintQueue();
+  }, config.realtime_debounce_ms || 250);
+}
+
+function startRealtime() {
+  if (config.realtime_enabled === false) {
+    log('[Realtime] Desabilitado no config (realtime_enabled=false) — usando apenas polling');
+    return;
+  }
+  if (!createClient) {
+    log('[Realtime] Modulo @supabase/supabase-js ausente — rode "npm install" nesta pasta para ativar a impressao instantanea. Por enquanto usando apenas polling.');
+    return;
+  }
+  if (!config.supabase_url || !config.supabase_anon_key) {
+    log('[Realtime] supabase_url ou supabase_anon_key ausentes no config.json — Realtime desativado (usando polling).');
+    return;
+  }
+
+  const tenantIds = getValidTenantIds();
+  if (tenantIds.length === 0) {
+    log('[Realtime] Nenhum tenant_id valido — Realtime desativado.');
+    return;
+  }
+
+  try {
+    supabaseClient = createClient(config.supabase_url, config.supabase_anon_key, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      realtime: WS ? { transport: WS } : undefined,
+    });
+  } catch (e) {
+    log(`[Realtime] Falha ao criar cliente Supabase: ${e.message} — usando apenas polling`);
+    supabaseClient = null;
+    return;
+  }
+
+  tenantIds.forEach((tid) => {
+    const topic = `print-jobs:${tid}`;
+    try {
+      const channel = supabaseClient.channel(topic, { config: { private: false } });
+      channel.on('broadcast', { event: 'new_job' }, (msg) => {
+        const jid = msg && msg.payload && msg.payload.id ? String(msg.payload.id).slice(0, 8) : '?';
+        log(`[Realtime] new_job tenant=${tid.slice(0, 8)}... job=${jid} -> imprimindo agora`);
+        scheduleImmediatePoll();
+      });
+      channel.subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          log(`[Realtime] Inscrito no canal print-jobs:${tid.slice(0, 8)}...`);
+        } else if (status === 'CHANNEL_ERROR') {
+          log(`[Realtime] Erro no canal ${tid.slice(0, 8)}...: ${err && err.message ? err.message : 'desconhecido'} (reconecta automaticamente)`);
+        } else if (status === 'TIMED_OUT') {
+          log(`[Realtime] Timeout no canal ${tid.slice(0, 8)}... — reconectando`);
+        } else if (status === 'CLOSED') {
+          log(`[Realtime] Canal ${tid.slice(0, 8)}... fechado`);
+        }
+      });
+      realtimeChannels.push(channel);
+    } catch (e) {
+      log(`[Realtime] Erro ao inscrever no canal de ${tid.slice(0, 8)}...: ${e.message}`);
+    }
+  });
+
+  lastRealtimeStart = Date.now();
+  log(`[Realtime] ATIVO — escutando ${realtimeChannels.length} canal(is). Impressao dispara no momento do pedido.`);
+}
+
+// ============================================
+// Watchdog do Realtime — reconecta socket "zumbi".
+// Depois que o PC dorme/acorda ou a rede oscila, o websocket pode ficar
+// aparentemente vivo mas sem receber nada. Aqui checamos o estado real dos
+// canais; se algum nao estiver "joined", derrubamos e reabrimos a conexao
+// (com backoff) e disparamos um poll pra recuperar o que ficou parado.
+// (O safety-net poll ja garante a impressao; isto restaura a impressao INSTANTANEA.)
+// ============================================
+function realtimeUnhealthy() {
+  if (realtimeChannels.length === 0) return true;
+  for (const ch of realtimeChannels) {
+    let st;
+    try { st = ch && ch.state; } catch (_) { st = undefined; }
+    // 'joined' = ok; 'joining' logo apos (re)conectar tambem e aceitavel.
+    if (st !== 'joined' && st !== 'joining') return true;
+  }
+  return false;
+}
+
+function startRealtimeWatchdog() {
+  if (realtimeWatchdog) return;
+  if (config.realtime_enabled === false || !createClient) return;
+  realtimeWatchdog = setInterval(() => {
+    try {
+      if (config.realtime_enabled === false || !createClient) return;
+      if (getValidTenantIds().length === 0) return;
+      // Backoff: nao reconecta nos primeiros ~30s apos um (re)start.
+      if (Date.now() - lastRealtimeStart < 30000) return;
+      if (realtimeUnhealthy()) {
+        log('[Realtime] Watchdog: conexao nao saudavel (socket zumbi?) — reconectando...');
+        stopRealtime();
+        startRealtime();
+        // recupera o que ficou parado durante a queda
+        scheduleImmediatePoll();
+      }
+    } catch (e) {
+      log(`[Realtime] Watchdog erro (ignorado): ${e && e.message ? e.message : e}`);
+    }
+  }, config.realtime_watchdog_ms || 60000);
+}
+
+function stopRealtimeWatchdog() {
+  if (realtimeWatchdog) {
+    clearInterval(realtimeWatchdog);
+    realtimeWatchdog = null;
+  }
+}
+
+function stopRealtime() {
+  if (immediatePollTimer) {
+    clearTimeout(immediatePollTimer);
+    immediatePollTimer = null;
+  }
+  if (supabaseClient) {
+    try {
+      realtimeChannels.forEach((ch) => { try { supabaseClient.removeChannel(ch); } catch (_) {} });
+      supabaseClient.realtime.disconnect();
+    } catch (_) {}
+  }
+  realtimeChannels = [];
+  supabaseClient = null;
 }
 
 // ============================================
@@ -651,11 +883,18 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 200, {
       status: 'ok',
       agent: 'erpos-print-agent',
-      version: '3.0.0',
+      version: '3.3.0',
       impressoras_count: config.impressoras.length,
       config_loaded: fs.existsSync(CONFIG_PATH),
       queue_enabled: config.print_queue_enabled,
       queue_polling: !!pollingInterval,
+      polling_enabled: config.polling_enabled !== false,
+      safety_poll_interval_ms: config.safety_poll_interval_ms || 60000,
+      realtime_enabled: config.realtime_enabled !== false,
+      realtime_connected: realtimeConnected(),
+      realtime_channels: realtimeChannels.length,
+      realtime_healthy: realtimeConnected() ? !realtimeUnhealthy() : false,
+      realtime_watchdog: !!realtimeWatchdog,
     });
     return;
   }
@@ -666,6 +905,8 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 200, {
       enabled: config.print_queue_enabled,
       polling: !!pollingInterval,
+      realtime_connected: realtimeConnected(),
+      realtime_channels: realtimeChannels.length,
       tenant_ids: tids,
       interval_ms: config.poll_interval_ms,
     });
@@ -766,7 +1007,7 @@ watchConfig();
 
 server.listen(config.agent_port, '127.0.0.1', () => {
   log(`============================================`);
-  log(`ERPOS Print Agent v3.0.0`);
+  log(`ERPOS Print Agent v3.3.0`);
   log(`Listening on http://127.0.0.1:${config.agent_port}`);
   log(`Endpoints:`);
   log(`  GET  /health       — health check`);
@@ -782,13 +1023,25 @@ server.listen(config.agent_port, '127.0.0.1', () => {
   const validTenantIds = tenantIds.filter(function(tid) { return tid && tid.trim() !== '' && tid !== 'SEU-TENANT-ID-AQUI'; });
 
   if (config.print_queue_enabled && config.supabase_url && validTenantIds.length > 0) {
+    // polling_enabled=false => modo "so Realtime": imprime no instante do pedido
+    // (broadcast new_job), sem ficar batendo na edge function a cada X segundos.
+    const pollingEnabled = config.polling_enabled !== false;
     log('');
     log('>>> FILA CENTRALIZADA ATIVA <<<');
-    log(`    Polling a cada ${config.poll_interval_ms}ms para ${validTenantIds.length} tenant(s)`);
+    if (pollingEnabled) {
+      log(`    Polling (fallback) a cada ${config.poll_interval_ms}ms para ${validTenantIds.length} tenant(s)`);
+    } else {
+      log(`    Modo Realtime — impressao instantanea + safety-net poll a cada ${config.safety_poll_interval_ms || 60000}ms para ${validTenantIds.length} tenant(s)`);
+    }
     validTenantIds.forEach(function(tid) { log(`      - ${tid.slice(0,8)}...`); });
     log(`    Edge Function: ${config.supabase_url}/functions/v1/print-queue-agent`);
     log('');
+    // SEMPRE inicia um poll (rapido se polling_enabled, lento como rede de seguranca
+    // se modo Realtime). Garante que uma queda do Realtime nunca pare a impressao
+    // ate alguem reiniciar na mao — causa raiz do "todo dia preciso reiniciar".
     startQueuePolling();
+    startRealtime();
+    startRealtimeWatchdog();
   } else if (config.print_queue_enabled && (!config.supabase_url || validTenantIds.length === 0)) {
     log('');
     log('!!! AVISO: print_queue_enabled=true mas configuracao incompleta !!!');
@@ -800,11 +1053,15 @@ server.listen(config.agent_port, '127.0.0.1', () => {
 // Graceful shutdown
 process.on('SIGINT', () => {
   log('Shutting down...');
+  stopRealtimeWatchdog();
+  stopRealtime();
   stopQueuePolling();
   server.close(() => process.exit(0));
 });
 process.on('SIGTERM', () => {
   log('Shutting down...');
+  stopRealtimeWatchdog();
+  stopRealtime();
   stopQueuePolling();
   server.close(() => process.exit(0));
 });

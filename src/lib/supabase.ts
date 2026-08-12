@@ -514,8 +514,19 @@ export async function uploadTaskAttachment(
   taskId: string,
 ): Promise<{ id: string | null; error: Error | null }> {
   try {
+    // Imagem (inclusive foto tirada na hora pela câmera do celular) é comprimida
+    // antes de sair: uma foto de 12 MP passa de 4 MB e estouraria o limite —
+    // e, no 4G da loja, o upload demoraria demais. 1400px preserva leitura de
+    // documento/nota fiscal, que é o uso típico de anexo aqui.
+    const enviar: Blob = file.type.startsWith('image/')
+      ? await compressImage(file, 1400, 0.72)
+      : file;
+    const nomeFinal = enviar !== file && !/\.(jpe?g)$/i.test(file.name)
+      ? file.name.replace(/\.[^.]+$/, '') + '.jpg'
+      : file.name;
+
     const MAX_BYTES = 10 * 1024 * 1024;
-    if (file.size > MAX_BYTES) {
+    if (enviar.size > MAX_BYTES) {
       return { id: null, error: new Error('Arquivo maior que 10 MB.') };
     }
 
@@ -525,7 +536,7 @@ export async function uploadTaskAttachment(
     }
 
     const form = new FormData();
-    form.append('file', file, file.name);
+    form.append('file', enviar, nomeFinal);
     form.append('tenant_id', tenantId);
     form.append('task_id', taskId);
 

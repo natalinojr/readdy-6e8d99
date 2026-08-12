@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Plus, Trash2, Flag, CalendarDays, User as UserIcon, Tag, CheckSquare, Clock, Repeat, GitBranch, SlidersHorizontal, Paperclip, Download, ListChecks, Loader2 } from 'lucide-react';
+import { X, Plus, Trash2, Flag, CalendarDays, User as UserIcon, Tag, CheckSquare, Clock, Repeat, GitBranch, SlidersHorizontal, Paperclip, Download, ListChecks, Loader2, Camera } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, ChecklistTemplate, TaskAnexo, TaskDetail, TaskList, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
 import { camposDaLista } from '../lib/agrupamento';
+import { useVoltarFecha } from '../lib/mobile';
 import CampoInput from './campos/CampoInput';
 import ComentarioInput from './ComentarioInput';
 
@@ -89,6 +90,9 @@ export default function TaskDrawer({
     load();
   }, [load]);
 
+  // No celular, o botão voltar do Android fecha a tarefa em vez de sair da tela.
+  useVoltarFecha(true, onClose);
+
   const list = detail ? lists.find((l) => l.id === detail.list_id) : undefined;
   const statuses = list?.statuses ?? [];
   const camposVisiveis = detail ? camposDaLista(campos, detail.list_id) : [];
@@ -170,7 +174,7 @@ export default function TaskDrawer({
               <select
                 value={detail.status_id ?? ''}
                 onChange={(e) => update({ status_id: e.target.value })}
-                className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                className="border border-slate-200 rounded-lg px-2 py-2.5 md:py-1.5 bg-white"
               >
                 {statuses.map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
@@ -182,7 +186,7 @@ export default function TaskDrawer({
               <select
                 value={detail.priority}
                 onChange={(e) => update({ priority: Number(e.target.value) })}
-                className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                className="border border-slate-200 rounded-lg px-2 py-2.5 md:py-1.5 bg-white"
               >
                 {PRIORIDADES.map((p) => (
                   <option key={p.value} value={p.value}>{p.label}</option>
@@ -194,7 +198,7 @@ export default function TaskDrawer({
               <select
                 value={detail.assignee_id ?? ''}
                 onChange={(e) => update({ assignee_id: e.target.value || null })}
-                className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                className="border border-slate-200 rounded-lg px-2 py-2.5 md:py-1.5 bg-white"
               >
                 <option value="">Ninguém</option>
                 {usuarios.map((u) => (
@@ -208,7 +212,7 @@ export default function TaskDrawer({
                 type="date"
                 value={detail.due_date ? detail.due_date.slice(0, 10) : ''}
                 onChange={(e) => update({ due_date: e.target.value ? `${e.target.value}T12:00:00Z` : null })}
-                className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                className="border border-slate-200 rounded-lg px-2 py-2.5 md:py-1.5 bg-white"
               />
             </label>
             <label className="flex flex-col gap-1 col-span-2">
@@ -219,7 +223,7 @@ export default function TaskDrawer({
                   const opcao = RECORRENCIAS.find((r) => r.value === e.target.value);
                   update({ recurrence: opcao?.rec ?? null });
                 }}
-                className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                className="border border-slate-200 rounded-lg px-2 py-2.5 md:py-1.5 bg-white"
               >
                 {RECORRENCIAS.map((r) => (
                   <option key={r.value} value={r.value}>{r.label}</option>
@@ -334,12 +338,12 @@ export default function TaskDrawer({
             </div>
             <div className="space-y-1">
               {detail.checklist.map((item) => (
-                <div key={item.id} className="flex items-center gap-2 group">
+                <div key={item.id} className="flex items-center gap-2.5 group py-1.5 md:py-0">
                   <input
                     type="checkbox"
                     checked={item.is_done}
                     onChange={(e) => write('update_checklist_item', { item_id: item.id, is_done: e.target.checked }).then(load)}
-                    className="rounded border-slate-300"
+                    className="rounded border-slate-300 w-5 h-5 md:w-4 md:h-4 shrink-0"
                   />
                   <span className={`text-sm flex-1 ${item.is_done ? 'line-through text-slate-400' : 'text-slate-700'}`}>{item.title}</span>
                   <button
@@ -413,25 +417,57 @@ export default function TaskDrawer({
                 </div>
               ))}
             </div>
-            <label className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500 hover:text-indigo-600 cursor-pointer px-2 py-1">
-              {enviandoAnexo ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-              {enviandoAnexo ? 'Enviando…' : 'Anexar arquivo (até 10 MB)'}
-              <input
-                type="file"
-                className="hidden"
-                disabled={enviandoAnexo}
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = ''; // permite reenviar o mesmo arquivo
-                  if (!file) return;
-                  setEnviandoAnexo(true);
-                  const res = await enviarAnexo(file, taskId);
-                  setEnviandoAnexo(false);
-                  if (!res.success) toast.error('Erro ao anexar', res.error);
-                  else load();
-                }}
-              />
-            </label>
+            {/* Câmera primeiro: no chão da loja, o anexo é quase sempre uma foto
+                (prova de execução, nota do fornecedor). Imagens são comprimidas
+                antes de subir — ver uploadTaskAttachment. */}
+            <div className="flex items-center gap-2 mt-2">
+              <label className="md:hidden flex-1 flex items-center justify-center gap-1.5 text-xs font-medium text-indigo-600 border border-indigo-200 bg-indigo-50 rounded-lg py-2.5 active:bg-indigo-100 cursor-pointer">
+                {enviandoAnexo ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+                {enviandoAnexo ? 'Enviando…' : 'Tirar foto'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  disabled={enviandoAnexo}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!file) return;
+                    setEnviandoAnexo(true);
+                    const res = await enviarAnexo(file, taskId);
+                    setEnviandoAnexo(false);
+                    if (!res.success) toast.error('Erro ao anexar', res.error);
+                    else load();
+                  }}
+                />
+              </label>
+
+              <label className="flex-1 md:flex-none flex items-center justify-center md:justify-start gap-1.5 text-xs text-slate-500 hover:text-indigo-600 cursor-pointer border md:border-0 border-slate-200 rounded-lg py-2.5 md:py-1 md:px-2 active:bg-slate-50">
+                {enviandoAnexo && <Loader2 size={13} className="animate-spin md:hidden" />}
+                <Paperclip size={13} className="md:hidden" />
+                <Plus size={13} className="hidden md:block" />
+                <span className="md:hidden">Arquivo</span>
+                <span className="hidden md:inline">
+                  {enviandoAnexo ? 'Enviando…' : 'Anexar arquivo (até 10 MB)'}
+                </span>
+                <input
+                  type="file"
+                  className="hidden"
+                  disabled={enviandoAnexo}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = ''; // permite reenviar o mesmo arquivo
+                    if (!file) return;
+                    setEnviandoAnexo(true);
+                    const res = await enviarAnexo(file, taskId);
+                    setEnviandoAnexo(false);
+                    if (!res.success) toast.error('Erro ao anexar', res.error);
+                    else load();
+                  }}
+                />
+              </label>
+            </div>
           </div>
 
           {/* Subtarefas (1 nível) */}

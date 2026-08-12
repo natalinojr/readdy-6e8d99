@@ -7,6 +7,7 @@ import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import SelecionarLojaPage from '../../pages/selecionar-loja/page';
 import RotaProtegida from './RotaProtegida';
+import InstallPWA from './InstallPWA';
 
 // Fallback leve enquanto o chunk da página (lazy) carrega — mantém a moldura
 // (sidebar/topbar) visível em vez de piscar a tela inteira.
@@ -138,6 +139,8 @@ export default function AppLayout() {
           </RotaProtegida>
         </main>
       </div>
+      {/* Convite para instalar na tela inicial (só aparece no celular) */}
+      <InstallPWA />
     </div>
   );
 }
