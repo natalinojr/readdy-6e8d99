@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight } from 'lucide-react';
-import type { CampoCustom, TaskList, TaskRow } from '../hooks/useTarefas';
+import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check } from 'lucide-react';
+import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { GroupBy, UsuarioOption } from '../lib/agrupamento';
 import { agruparTarefas, payloadMoverGrupo } from '../lib/agrupamento';
 import type { ColunaDef, ColunaId } from '../lib/colunas';
 import { carregarColunasVisiveis, colunasDisponiveis, salvarColunasVisiveis } from '../lib/colunas';
 import CampoBadge from './campos/CampoBadge';
+import CampoInput from './campos/CampoInput';
 import ColumnsMenu from './ColumnsMenu';
 import { iniciais, rotuloVencimento } from './TaskCard';
 
@@ -15,9 +16,15 @@ interface ViewListaProps {
   tasks: TaskRow[];
   campos: CampoCustom[];
   usuarios: UsuarioOption[];
+  tags: TaskTag[];
   groupBy: GroupBy;
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; id?: string; error?: string }>;
   onOpenTask: (taskId: string) => void;
+}
+
+/** Colunas cujo valor dá pra editar direto na linha, sem abrir a tarefa. */
+function ehEditavel(id: ColunaId): boolean {
+  return id === 'responsavel' || id === 'vencimento' || id === 'prioridade' || id === 'etiquetas' || id.startsWith('campo:');
 }
 
 function celulaColuna(
@@ -96,17 +103,21 @@ function celulaColuna(
   }
 }
 
+const EDITOR_INPUT_CLS = 'w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-indigo-300';
+
 export default function ViewLista({
-  list, tasks, campos, usuarios, groupBy, write, onOpenTask,
+  list, tasks, campos, usuarios, tags, groupBy, write, onOpenTask,
 }: ViewListaProps) {
   const [quickAdd, setQuickAdd] = useState<Record<string, string>>({});
   const [recolhidos, setRecolhidos] = useState<Set<string>>(new Set());
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
   const [colunasVisiveis, setColunasVisiveis] = useState<ColunaId[]>(() => carregarColunasVisiveis(list.id));
+  const [editando, setEditando] = useState<{ taskId: string; col: ColunaId } | null>(null);
 
   // Ao trocar de lista, recarrega a preferência salva (cada lista tem a sua).
   useEffect(() => {
     setColunasVisiveis(carregarColunasVisiveis(list.id));
+    setEditando(null);
   }, [list.id]);
 
   const alterarColunas = (colunas: ColunaId[]) => {
@@ -145,6 +156,108 @@ export default function ViewLista({
       ? list.statuses.find((s) => s.category === 'done')
       : list.statuses.find((s) => s.category !== 'done' && s.category !== 'cancelled');
     if (destino) await write('update_task', { task_id: task.id, status_id: destino.id });
+  };
+
+  const toggleTag = async (task: TaskRow, tagId: string) => {
+    const atuais = task.tags.map((t) => t.id);
+    const proximas = atuais.includes(tagId) ? atuais.filter((t) => t !== tagId) : [...atuais, tagId];
+    await write('update_task', { task_id: task.id, tag_ids: proximas });
+  };
+
+  const renderEditor = (coluna: ColunaDef, task: TaskRow) => {
+    if (coluna.id.startsWith('campo:')) {
+      const fieldId = coluna.id.slice('campo:'.length);
+      const campo = campos.find((c) => c.id === fieldId);
+      if (!campo) return null;
+      return (
+        <CampoInput
+          campo={campo}
+          value={task.field_values?.[fieldId]}
+          usuarios={usuarios}
+          onChange={async (value) => {
+            await write('set_field_value', { task_id: task.id, field_id: fieldId, value });
+            setEditando(null);
+          }}
+        />
+      );
+    }
+
+    switch (coluna.id) {
+      case 'responsavel':
+        return (
+          <select
+            autoFocus
+            value={task.assignee_id ?? ''}
+            onChange={(e) => {
+              write('update_task', { task_id: task.id, assignee_id: e.target.value || null });
+              setEditando(null);
+            }}
+            className={EDITOR_INPUT_CLS}
+          >
+            <option value="">Ninguém</option>
+            {usuarios.map((u) => (
+              <option key={u.id} value={u.id}>{u.nome}</option>
+            ))}
+          </select>
+        );
+
+      case 'vencimento':
+        return (
+          <input
+            autoFocus
+            type="date"
+            defaultValue={task.due_date ? task.due_date.slice(0, 10) : ''}
+            onChange={(e) => {
+              write('update_task', { task_id: task.id, due_date: e.target.value ? `${e.target.value}T12:00:00Z` : null });
+              setEditando(null);
+            }}
+            className={EDITOR_INPUT_CLS}
+          />
+        );
+
+      case 'prioridade':
+        return (
+          <select
+            autoFocus
+            value={task.priority}
+            onChange={(e) => {
+              write('update_task', { task_id: task.id, priority: Number(e.target.value) });
+              setEditando(null);
+            }}
+            className={EDITOR_INPUT_CLS}
+          >
+            {PRIORIDADES.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        );
+
+      case 'etiquetas':
+        return (
+          <div className="flex flex-col gap-1 max-h-56 overflow-y-auto w-44">
+            {tags.length === 0 && <span className="text-xs text-slate-400 px-1 py-1">Nenhuma etiqueta criada</span>}
+            {tags.map((t) => {
+              const on = task.tags.some((tt) => tt.id === t.id);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => toggleTag(task, t.id)}
+                  className="w-full flex items-center gap-2 px-1.5 py-1 rounded-lg text-xs text-left hover:bg-slate-50"
+                >
+                  <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${on ? '' : 'border-slate-300'}`} style={on ? { backgroundColor: t.color, borderColor: t.color } : undefined}>
+                    {on && <Check size={10} className="text-white" />}
+                  </span>
+                  <span className="truncate text-slate-600">{t.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        );
+
+      default:
+        return null;
+    }
   };
 
   const renderLinha = (task: TaskRow, nivel: number) => {
@@ -193,14 +306,33 @@ export default function ViewLista({
           {task.recurrence?.freq && <Repeat size={11} className="text-slate-300 shrink-0" />}
 
           <div className="hidden md:flex items-center shrink-0">
-            {colunas.map((c) => (
-              <div key={c.id} style={{ width: c.larguraPx }} className="px-2 text-xs text-slate-500 text-right truncate">
-                {celulaColuna(c, task, subtarefas.length, usuarios, campos)}
-              </div>
-            ))}
+            {colunas.map((c) => {
+              const editavel = ehEditavel(c.id);
+              const emEdicao = editando?.taskId === task.id && editando.col === c.id;
+              return (
+                <div key={c.id} style={{ width: c.larguraPx }} className="relative px-2 shrink-0">
+                  {emEdicao ? (
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <div className="fixed inset-0 z-40" onClick={() => setEditando(null)} />
+                      <div className="absolute right-0 top-1/2 -translate-y-1/2 z-50 bg-white rounded-lg border border-slate-200 shadow-lg p-1.5">
+                        {renderEditor(c, task)}
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={editavel ? (e) => { e.stopPropagation(); setEditando({ taskId: task.id, col: c.id }); } : undefined}
+                      className={`w-full text-xs text-slate-500 text-right truncate ${editavel ? 'rounded px-1 -mx-1 hover:bg-slate-100 hover:text-slate-700 cursor-pointer' : 'cursor-default'}`}
+                    >
+                      {celulaColuna(c, task, subtarefas.length, usuarios, campos)}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
-          {/* No celular não há espaço pra tabela — mantém um resumo compacto das colunas ativas */}
+          {/* No celular não há espaço pra tabela — mantém um resumo compacto das colunas ativas (edição continua só pelo desktop) */}
           <div className="flex md:hidden items-center gap-2.5 text-xs text-slate-400 shrink-0">
             {colunas.map((c) => (
               <span key={c.id}>{celulaColuna(c, task, subtarefas.length, usuarios, campos)}</span>

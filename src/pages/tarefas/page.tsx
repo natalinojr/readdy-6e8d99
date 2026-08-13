@@ -151,6 +151,7 @@ export default function TarefasPage() {
               tasks={tarefasVisiveis}
               campos={campos}
               usuarios={usuariosAtivos}
+              tags={tags}
               groupBy={groupBy}
               write={write}
               onOpenTask={setOpenTaskId}
