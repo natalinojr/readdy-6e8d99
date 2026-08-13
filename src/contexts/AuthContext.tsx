@@ -345,6 +345,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // O @supabase/auth-js tem seu PRÓPRIO listener interno de visibilitychange
+      // (GoTrueClient._onVisibilityChanged, ativo mesmo com autoRefreshToken:false)
+      // que, toda vez que a janela recupera o foco, relê a sessão do localStorage
+      // e — se ainda for válida e não estiver perto de expirar — reemite 'SIGNED_IN'
+      // pra reafirmar a MESMA sessão, sem token novo. Sem este guard, handleSession()
+      // rodava de novo a cada Alt+Tab, setLoading(true) desmontava toda a árvore de
+      // rotas via AppLayout (`if (loading) return null`, fix do bug de F5) e qualquer
+      // modal aberto (estado local, ex: FichaProducaoModal) sumia da tela sozinho.
+      // Só ignora quando é o MESMO usuário já carregado — um login novo (ou troca de
+      // usuário) sempre tem authUserIdRef.current nulo ou diferente, e continua
+      // passando por handleSession normalmente.
+      if (_event === 'SIGNED_IN' && session.user?.id && session.user.id === authUserIdRef.current) {
+        return;
+      }
+
       handleSession(session?.user?.id);
     });
 
