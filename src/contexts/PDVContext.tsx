@@ -11,6 +11,45 @@ import { useToast } from './ToastContext';
 import { useNavigate } from 'react-router-dom';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
 
+// Persistência do carrinho do caixa (localStorage) — protege contra perda de
+// pedido em andamento ao trocar de janela/app (ex.: abrir o WhatsApp), F5
+// acidental ou a aba ser suspensa pelo sistema. Restaurado ao montar o PDV;
+// limpo quando o pedido é enviado/finalizado ou o carrinho é esvaziado.
+interface PersistedPDVState {
+  carrinho: CarrinhoItem[];
+  destino: DestinoInfo | null;
+  desconto: number;
+  taxaServico: boolean;
+}
+
+function pdvStorageKey(tenantId: string) {
+  return `erpos_pdv_caixa_${tenantId}`;
+}
+
+function loadPDVState(tenantId: string): PersistedPDVState | null {
+  try {
+    const raw = localStorage.getItem(pdvStorageKey(tenantId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.carrinho)) return null;
+    return parsed as PersistedPDVState;
+  } catch {
+    return null;
+  }
+}
+
+function savePDVState(tenantId: string, state: PersistedPDVState): void {
+  try {
+    if (!state.carrinho.length && !state.destino) {
+      localStorage.removeItem(pdvStorageKey(tenantId));
+    } else {
+      localStorage.setItem(pdvStorageKey(tenantId), JSON.stringify(state));
+    }
+  } catch {
+    /* armazenamento indisponível (modo privado etc.) — ignora */
+  }
+}
+
 export interface OpcaoSelecionada {
   grupoId: string;
   grupoNome: string;
@@ -121,6 +160,26 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
   const [destino, setDestino] = useState<DestinoInfo | null>(null);
   const [desconto, setDesconto] = useState(0);
   const [taxaServico, setTaxaServico] = useState(() => sysSettings.service_fee_enabled ?? false);
+  const pdvHydratedRef = useRef(false);
+
+  // Restaura carrinho salvo assim que soubermos o tenant (ver PersistedPDVState acima).
+  useEffect(() => {
+    if (pdvHydratedRef.current || !user?.tenantId) return;
+    pdvHydratedRef.current = true;
+    const saved = loadPDVState(user.tenantId);
+    if (saved && saved.carrinho.length > 0) {
+      setCarrinho(saved.carrinho);
+      setDestino(saved.destino);
+      setDesconto(saved.desconto);
+      setTaxaServico(saved.taxaServico);
+    }
+  }, [user?.tenantId]);
+
+  // Persiste a cada mudança (só depois de restaurar, senão sobrescreve o salvo com estado vazio inicial)
+  useEffect(() => {
+    if (!pdvHydratedRef.current || !user?.tenantId) return;
+    savePDVState(user.tenantId, { carrinho, destino, desconto, taxaServico });
+  }, [carrinho, destino, desconto, taxaServico, user?.tenantId]);
   const [numeroPedidoSeq, setNumeroPedidoSeq] = useState(0);
   const [ultimoNumeroPedido, setUltimoNumeroPedido] = useState('—');
   const [pedidosPagos, setPedidosPagos] = useState<Set<number>>(new Set());
@@ -233,7 +292,14 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     setTaxaServico(sysSettings.service_fee_enabled ?? false);
     setIsCortesia(false);
     setCortesiaAutorizadaPor(null);
-  }, [sysSettings.service_fee_enabled]);
+    if (user?.tenantId) {
+      try {
+        localStorage.removeItem(pdvStorageKey(user.tenantId));
+      } catch {
+        /* ignora */
+      }
+    }
+  }, [sysSettings.service_fee_enabled, user?.tenantId]);
 
   const toggleTaxaServico = useCallback(() => setTaxaServico((v) => !v), []);
 
