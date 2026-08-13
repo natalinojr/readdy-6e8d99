@@ -549,6 +549,8 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                     insumo?.unidade ?? it.unit,
                     it.unit
                   );
+                  const custoUnitario = convertedCost ?? insumo?.precoUnitario ?? 0;
+                  const custoTotalItem = it.quantity * custoUnitario;
                   return (
                     <div
                       key={it.tempId}
@@ -559,13 +561,18 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                           {it.ingredientName}
                         </p>
                         <p className="text-[10px] text-zinc-400">
-                          Custo: {formatCurrencyPreciso(convertedCost ?? insumo?.precoUnitario ?? 0)}/{it.unit}
+                          Custo: {formatCurrencyPreciso(custoUnitario)}/{it.unit}
                           {insumo && it.unit !== insumo.unidade && (
                             <span className="text-zinc-300 ml-1">
                               (cadastrado em {insumo.unidade})
                             </span>
                           )}
                         </p>
+                        {it.quantity > 0 && (
+                          <p className="text-[10px] text-amber-600 font-semibold">
+                            Total: {formatCurrencyPreciso(custoTotalItem)}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <input
