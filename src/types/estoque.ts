@@ -161,6 +161,7 @@ export interface ProductionRecipeItem {
   quantity: number;
   unit: string;          // unidade do insumo
   unitCost: number;      // custo unitario no momento da consulta
+  notes?: string;
 }
 
 export interface ProductionRecipeStep {

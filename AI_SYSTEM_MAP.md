@@ -1113,3 +1113,22 @@ Correções (defesa em profundidade):
 - **Fontes no front** (deploy via Vercel, valem sem tocar nos PCs): `fmtPreco2` (`CozinhaTicketPrint.ts` — comprovante balcão da foto), `fmtPreco` (`ComprovantePrint.tsx`), `fmt` (`ImprimirPedidoModal.tsx`) ganharam `.replace(/ /g, ' ')`. O `delivery-write` (`fmtPrice`) e o `printPedido.ts` do gestor já usavam `"R$ " + toFixed` (espaço normal), então não tinham o bug.
 
 **Pegadinha de edição:** NBSP é invisível no source; nunca colar o caractere literal — usar sempre o escape ` ` em regex/replace (senão vira no-op silencioso). Teste unitário confirmou: entrada "R$<NBSP>8,00 Guaraná" → byte após "R$" = 0x20 (espaço) e o "á" de Guaraná segue mapeado p/ 0xA0 (correto).
+
+### 2026-08-11 — FEATURE: observação por insumo na Ficha de Produção
+
+Pedido: poder anotar uma observação livre em cada insumo ao adicioná-lo numa ficha de produção (ex: "usar sempre fresco", "cortar em cubos pequenos").
+
+Implementação: coluna `notes text` nova em `production_recipe_items` (não existia nenhum campo de texto livre por item). `fn_production_crud` (`list_recipes`, `get_recipe`, `create_recipe`, `update_recipe`) passou a ler/gravar `notes` nos 4 pontos que lidam com items; `delete_recipe`, `list_batches`, `create_batch`, `delete_batch` ficaram byte-a-byte iguais. Front: `ProductionRecipeItem.notes?`, `NovaFichaProducao.items[].notes?`, `ProducaoContext` (`dbItemToFrontend`, `addRecipe`, `updateRecipe`) threadeando o campo, e em `FichaProducaoModal.tsx` um botão de nota (ícone `ri-sticky-note-line`, fica âmbar quando há texto) por item que abre um textarea inline — aberto por padrão quando o item já tem observação salva (mesmo padrão de "abrir se já tem conteúdo" usado em outros lugares do app, ex. `expandedPriceId` do InsumosTab).
+
+Verificação: round-trip via `DO $$ ... RAISE EXCEPTION` (rollback automático) confirmando que `notes` persiste em create → update → get_recipe; `tsc --noEmit` manteve baseline de 324 erros pré-existentes; build sem erros novos no preview local.
+
+### 2026-08-12 — BUG: nome de insumo não atualiza em fichas de produção já cadastradas
+
+Sintoma: editar o nome de um insumo no Estoque não refletia nas fichas de produção que já usam esse insumo. Causa: `production_recipe_items.ingredient_name` é uma cópia gravada no momento em que o item é adicionado (`create_recipe`/`update_recipe` em `fn_production_crud`), e os pontos de LEITURA (`list_recipes`, `get_recipe`) devolviam essa cópia congelada em vez do nome atual.
+
+**Escopo verificado (não é bug em todo lugar que "puxa o nome do insumo"):**
+- **Ficha de Produção** (`production_recipe_items`) — era o bug real. Fix: `list_recipes`/`get_recipe` passaram a `LEFT JOIN ingredients i ON i.id = ri.ingredient_id` e retornar `COALESCE(i.name, ri.ingredient_name)` — nome ao vivo, com fallback pro nome congelado só se o insumo tiver sido apagado. Front não precisou de nenhuma mudança (já consome o campo que a RPC devolve).
+- **Ficha Técnica do cardápio** (`item_ingredients`, RPC `fn_get_item_ingredients`) — **já** fazia `JOIN ingredients i ON i.id = ii.ingredient_id` e devolvia `i.name`; não tinha o bug.
+- **`production_batch_items`** (histórico de produções já realizadas) — mantido intocado de propósito: é um registro histórico (como um item de pedido), faz sentido congelar o nome de quando a produção ocorreu, igual a preço em nota fiscal.
+
+Verificação: round-trip com `DO $$ ... RAISE EXCEPTION` — criou ficha de teste, renomeou o insumo real "Tomate" → "NOME_RENOMEADO_TESTE" DENTRO da transação, confirmou que `get_recipe` e `list_recipes` já devolviam o nome novo, e o rollback do `RAISE EXCEPTION` desfez tanto a ficha de teste quanto o rename — zero efeito permanente no banco.

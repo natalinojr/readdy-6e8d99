@@ -24,6 +24,7 @@ interface FormItem {
    *  da virgula ("1,50" vira "1,5") e o "0" some sozinho (0 || '' = '' em JS). */
   quantityText: string;
   unit: string;
+  notes: string;
 }
 
 /** Aceita virgula OU ponto como separador decimal (usuario BR digita virgula). */
@@ -64,7 +65,13 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
       quantity: it.quantity,
       quantityText: formatQtyInput(it.quantity),
       unit: it.unit,
+      notes: it.notes ?? '',
     })) ?? []
+  );
+  const [notasAbertas, setNotasAbertas] = useState<Set<string>>(
+    () => new Set(
+      (recipe?.items ?? []).filter((it) => it.notes).map((it) => it.id)
+    )
   );
   const [steps, setSteps] = useState<FormStep[]>(
     recipe?.steps?.map((s) => ({ id: s.id, text: s.text })) ?? []
@@ -117,6 +124,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
           quantity: 0,
           quantityText: '',
           unit: unidadeInsumo,
+          notes: '',
         },
       ]);
       setBuscaInsumo('');
@@ -153,6 +161,21 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
 
   const removeItem = (tempId: string) => {
     setItems((prev) => prev.filter((it) => it.tempId !== tempId));
+  };
+
+  const toggleNota = (tempId: string) => {
+    setNotasAbertas((prev) => {
+      const next = new Set(prev);
+      if (next.has(tempId)) next.delete(tempId);
+      else next.add(tempId);
+      return next;
+    });
+  };
+
+  const updateItemNotes = (tempId: string, text: string) => {
+    setItems((prev) =>
+      prev.map((it) => (it.tempId === tempId ? { ...it, notes: text } : it))
+    );
   };
 
   const handleAddCategoria = async () => {
@@ -224,6 +247,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             quantity: it.quantity,
             unit: it.unit,
             unitCost: 0,
+            notes: it.notes,
           })),
         });
       } else {
@@ -241,6 +265,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             ingredientName: it.ingredientName,
             quantity: it.quantity,
             unit: it.unit,
+            notes: it.notes,
           })),
         });
       }
@@ -551,54 +576,77 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                   );
                   const custoUnitario = convertedCost ?? insumo?.precoUnitario ?? 0;
                   const custoTotalItem = it.quantity * custoUnitario;
+                  const notaAberta = notasAbertas.has(it.tempId);
                   return (
                     <div
                       key={it.tempId}
-                      className="flex items-center gap-3 bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2.5"
+                      className="bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2.5"
                     >
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-zinc-700 truncate">
-                          {it.ingredientName}
-                        </p>
-                        <p className="text-[10px] text-zinc-400">
-                          Custo: {formatCurrencyPreciso(custoUnitario)}/{it.unit}
-                          {insumo && it.unit !== insumo.unidade && (
-                            <span className="text-zinc-300 ml-1">
-                              (cadastrado em {insumo.unidade})
-                            </span>
-                          )}
-                        </p>
-                        {it.quantity > 0 && (
-                          <p className="text-[10px] text-amber-600 font-semibold">
-                            Total: {formatCurrencyPreciso(custoTotalItem)}
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-zinc-700 truncate">
+                            {it.ingredientName}
                           </p>
-                        )}
+                          <p className="text-[10px] text-zinc-400">
+                            Custo: {formatCurrencyPreciso(custoUnitario)}/{it.unit}
+                            {insumo && it.unit !== insumo.unidade && (
+                              <span className="text-zinc-300 ml-1">
+                                (cadastrado em {insumo.unidade})
+                              </span>
+                            )}
+                          </p>
+                          {it.quantity > 0 && (
+                            <p className="text-[10px] text-amber-600 font-semibold">
+                              Total: {formatCurrencyPreciso(custoTotalItem)}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={it.quantityText}
+                            onChange={(e) => updateItemQuantity(it.tempId, e.target.value)}
+                            placeholder="Qtd"
+                            className="w-20 text-xs border border-zinc-200 rounded-md px-2 py-1.5 focus:outline-none focus:border-amber-400 text-center"
+                          />
+                          <select
+                            value={it.unit}
+                            onChange={(e) => changeItemUnit(it.tempId, e.target.value)}
+                            className="text-xs border border-zinc-200 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:border-amber-400"
+                          >
+                            {unidadesCompat.map((u) => (
+                              <option key={u} value={u}>{u}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => toggleNota(it.tempId)}
+                            title="Observação"
+                            className={`w-6 h-6 flex items-center justify-center cursor-pointer transition-colors ${
+                              notaAberta || it.notes
+                                ? 'text-amber-500 hover:text-amber-600'
+                                : 'text-zinc-400 hover:text-zinc-600'
+                            }`}
+                          >
+                            <i className="ri-sticky-note-line text-sm" />
+                          </button>
+                          <button
+                            onClick={() => removeItem(it.tempId)}
+                            className="w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-red-500 cursor-pointer transition-colors"
+                          >
+                            <i className="ri-close-line text-sm" />
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={it.quantityText}
-                          onChange={(e) => updateItemQuantity(it.tempId, e.target.value)}
-                          placeholder="Qtd"
-                          className="w-20 text-xs border border-zinc-200 rounded-md px-2 py-1.5 focus:outline-none focus:border-amber-400 text-center"
+                      {notaAberta && (
+                        <textarea
+                          value={it.notes}
+                          onChange={(e) => updateItemNotes(it.tempId, e.target.value)}
+                          placeholder="Observação sobre este insumo (ex: usar sempre fresco, cortar em cubos pequenos)..."
+                          rows={2}
+                          className="w-full mt-2 text-xs border border-zinc-200 rounded-md px-2 py-1.5 focus:outline-none focus:border-amber-400 resize-none"
                         />
-                        <select
-                          value={it.unit}
-                          onChange={(e) => changeItemUnit(it.tempId, e.target.value)}
-                          className="text-xs border border-zinc-200 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:border-amber-400"
-                        >
-                          {unidadesCompat.map((u) => (
-                            <option key={u} value={u}>{u}</option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={() => removeItem(it.tempId)}
-                          className="w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-red-500 cursor-pointer transition-colors"
-                        >
-                          <i className="ri-close-line text-sm" />
-                        </button>
-                      </div>
+                      )}
                     </div>
                   );
                 })}

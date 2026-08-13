@@ -55,6 +55,7 @@ function dbItemToFrontend(db: Record<string, unknown>): ProductionRecipeItem {
     quantity: Number(db.quantity ?? 0),
     unit: String(db.unit ?? 'kg'),
     unitCost: Number(db.unit_cost ?? db.unitCost ?? 0),
+    notes: (db.notes as string | null) ?? undefined,
   };
 }
 
@@ -138,6 +139,7 @@ export interface NovaFichaProducao {
     ingredientName: string;
     quantity: number;
     unit: string;
+    notes?: string;
   }>;
   category?: string;
   minStock?: number;
@@ -376,6 +378,7 @@ export function ProducaoProvider({ children }: { children: ReactNode }) {
           quantity: it.quantity,
           unit: it.unit,
           unit_cost: 0,
+          notes: it.notes || null,
         })),
         steps: nova.steps.map((s) => ({ text: s.text })),
       },
@@ -398,6 +401,7 @@ export function ProducaoProvider({ children }: { children: ReactNode }) {
       quantity: it.quantity,
       unit: it.unit,
       unit_cost: it.unitCost,
+      notes: it.notes || null,
     }));
 
     const steps = changes.steps?.map((s) => ({ text: s.text }));
