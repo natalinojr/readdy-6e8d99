@@ -430,7 +430,7 @@ export default function InsumosTab() {
                     <ThOrdenavel label="Categoria" sortKey="categoria" align="left" current={sortKey} dir={sortDir} onSort={toggleSort} />
                     <ThOrdenavel label="Preço Unit." sortKey="preco" align="right" current={sortKey} dir={sortDir} onSort={toggleSort} />
                     <ThOrdenavel label="Estoque Atual" sortKey="estoque" align="center" current={sortKey} dir={sortDir} onSort={toggleSort} />
-                    <ThOrdenavel label="Valor em Estoque" sortKey="valor" align="right" current={sortKey} dir={sortDir} onSort={toggleSort} />
+                    <ThOrdenavel label="Valor em Estoque" sortKey="valor" align="center" current={sortKey} dir={sortDir} onSort={toggleSort} />
                     <ThOrdenavel label="Status" sortKey="status" align="center" current={sortKey} dir={sortDir} onSort={toggleSort} />
                     <th className="px-4 py-3 text-right font-semibold text-zinc-500">Ações</th>
                   </tr>
@@ -511,7 +511,7 @@ export default function InsumosTab() {
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="px-4 py-3 text-center">
                           <p className="font-semibold text-zinc-800">{fmtValor(insumo.estoqueAtual * insumo.precoUnitario)}</p>
                         </td>
                         <td className="px-4 py-3 text-center">
@@ -605,6 +605,10 @@ export default function InsumosTab() {
                       <p className="text-[10px] text-zinc-400">Preço</p>
                       <p className="text-sm font-bold text-zinc-800">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(insumo.precoUnitario)}</p>
                       <p className="text-[10px] text-zinc-400">/{insumo.unidade}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] text-zinc-400">Valor em estoque</p>
+                      <p className="text-sm font-bold text-zinc-800">{fmtValor(insumo.estoqueAtual * insumo.precoUnitario)}</p>
                     </div>
                   </div>
 
