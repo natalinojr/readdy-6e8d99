@@ -16,6 +16,33 @@ import { statusEstoque, barColor, barWidth, diasParaRuptura, exportarInsumosCSV 
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
 import ItensIndisponiveisPanel from './ItensIndisponiveisPanel';
 
+type SortKey = 'nome' | 'categoria' | 'preco' | 'estoque' | 'valor' | 'status';
+
+/** Cabecalho de coluna clicavel — ordena a tabela por essa coluna ao clicar. */
+function ThOrdenavel({
+  label, sortKey, align, current, dir, onSort,
+}: {
+  label: string; sortKey: SortKey; align: 'left' | 'right' | 'center';
+  current: SortKey | null; dir: 'asc' | 'desc'; onSort: (key: SortKey) => void;
+}) {
+  const ativo = current === sortKey;
+  // Classes Tailwind precisam ser strings literais completas (JIT scan) — nao da
+  // pra montar "text-${align}" dinamicamente, por isso o lookup explicito abaixo.
+  const alignText = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+  const justify = align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start';
+  return (
+    <th className={`px-4 py-3 font-semibold text-zinc-500 ${alignText}`}>
+      <button
+        onClick={() => onSort(sortKey)}
+        className={`flex items-center gap-1 cursor-pointer hover:text-amber-600 w-full ${justify} ${ativo ? 'text-amber-600' : ''}`}
+      >
+        {label}
+        <i className={`ri-arrow-${ativo && dir === 'desc' ? 'down' : 'up'}-line text-[10px] ${ativo ? 'opacity-100' : 'opacity-0'}`} />
+      </button>
+    </th>
+  );
+}
+
 export default function InsumosTab() {
   const { insumos, insumosEsgotados, marcarInsumoEsgotado, upsertInsumo, reloadInsumos, addMovimentacao, inventarioSessions } = useEstoque();
   const { recipes, batches } = useProducao();
@@ -106,7 +133,7 @@ export default function InsumosTab() {
 
 
 
-  const insumosVisiveis = useMemo(() => insumos.filter((i) => {
+  const insumosFiltrados = useMemo(() => insumos.filter((i) => {
     const matchBusca = i.nome.toLowerCase().includes(busca.toLowerCase());
     const matchCat = categoriaFiltro === 'Todas' || i.categoria === categoriaFiltro;
     const st = statusEstoque(i).label;
@@ -114,6 +141,44 @@ export default function InsumosTab() {
     const matchStatus = filtroStatus === 'Todos' || st === filtroStatus || (filtroStatus === 'Esgotado' && esgotado);
     return matchBusca && matchCat && matchStatus;
   }), [insumos, busca, categoriaFiltro, filtroStatus, insumosEsgotados]);
+
+  // Ordenacao ao clicar no cabecalho de uma coluna
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo: 2, Ok: 3 };
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+
+  const insumosVisiveis = useMemo(() => {
+    if (!sortKey) return insumosFiltrados;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const arr = [...insumosFiltrados];
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case 'nome':
+          return dir * a.nome.localeCompare(b.nome, 'pt-BR');
+        case 'categoria':
+          return dir * (resolveCategoria(a) ?? '').localeCompare(resolveCategoria(b) ?? '', 'pt-BR');
+        case 'preco':
+          return dir * (a.precoUnitario - b.precoUnitario);
+        case 'estoque':
+          return dir * (a.estoqueAtual - b.estoqueAtual);
+        case 'valor':
+          return dir * (a.estoqueAtual * a.precoUnitario - b.estoqueAtual * b.precoUnitario);
+        case 'status': {
+          const sa = insumosEsgotados.includes(a.id) ? 'Esgotado' : statusEstoque(a).label;
+          const sb = insumosEsgotados.includes(b.id) ? 'Esgotado' : statusEstoque(b).label;
+          return dir * ((STATUS_RANK[sa] ?? 9) - (STATUS_RANK[sb] ?? 9));
+        }
+        default:
+          return 0;
+      }
+    });
+    return arr;
+  }, [insumosFiltrados, sortKey, sortDir, resolveCategoria, insumosEsgotados]);
 
   const alertas = insumos.filter((i) => i.estoqueAtual <= i.estoqueMinimo && i.estoqueMinimo > 0).length;
   const qtdEsgotados = insumosEsgotados.length;
@@ -361,11 +426,12 @@ export default function InsumosTab() {
               <table className="w-full text-xs">
                 <thead className="bg-zinc-50 border-b border-zinc-100">
                   <tr>
-                    <th className="px-4 py-3 text-left font-semibold text-zinc-500">Insumo</th>
-                    <th className="px-4 py-3 text-left font-semibold text-zinc-500">Categoria</th>
-                    <th className="px-4 py-3 text-right font-semibold text-zinc-500">Preço Unit.</th>
-                    <th className="px-4 py-3 text-center font-semibold text-zinc-500">Estoque Atual</th>
-                    <th className="px-4 py-3 text-center font-semibold text-zinc-500">Status</th>
+                    <ThOrdenavel label="Insumo" sortKey="nome" align="left" current={sortKey} dir={sortDir} onSort={toggleSort} />
+                    <ThOrdenavel label="Categoria" sortKey="categoria" align="left" current={sortKey} dir={sortDir} onSort={toggleSort} />
+                    <ThOrdenavel label="Preço Unit." sortKey="preco" align="right" current={sortKey} dir={sortDir} onSort={toggleSort} />
+                    <ThOrdenavel label="Estoque Atual" sortKey="estoque" align="center" current={sortKey} dir={sortDir} onSort={toggleSort} />
+                    <ThOrdenavel label="Valor em Estoque" sortKey="valor" align="right" current={sortKey} dir={sortDir} onSort={toggleSort} />
+                    <ThOrdenavel label="Status" sortKey="status" align="center" current={sortKey} dir={sortDir} onSort={toggleSort} />
                     <th className="px-4 py-3 text-right font-semibold text-zinc-500">Ações</th>
                   </tr>
                 </thead>
@@ -445,6 +511,9 @@ export default function InsumosTab() {
                             )}
                           </div>
                         </td>
+                        <td className="px-4 py-3 text-right">
+                          <p className="font-semibold text-zinc-800">{fmtValor(insumo.estoqueAtual * insumo.precoUnitario)}</p>
+                        </td>
                         <td className="px-4 py-3 text-center">
                           {esgotado ? (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-red-700 bg-red-100 border border-red-200 animate-pulse">ESGOTADO</span>
@@ -456,10 +525,8 @@ export default function InsumosTab() {
                           <div className="flex items-center justify-end gap-1">
                             <button onClick={() => setHistoricoModal(insumo)} title="Histórico de compras" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors"><History size={12} /></button>
                             <button onClick={() => setEntradaRapida(insumo)} title="Entrada rápida" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-green-50 text-zinc-400 hover:text-green-600 cursor-pointer transition-colors"><i className="ri-add-circle-line text-sm" /></button>
-                            {!esgotado ? (
+                            {!esgotado && (
                               <button onClick={() => setConfirmEsgotado(insumo)} title="Marcar como esgotado" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-600 cursor-pointer transition-colors"><i className="ri-forbid-2-line text-sm" /></button>
-                            ) : (
-                              <span className="text-[9px] font-bold text-red-500 px-1.5">ESGOTADO</span>
                             )}
                             <button onClick={() => setModal(insumo)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-amber-50 text-zinc-400 hover:text-amber-600 cursor-pointer transition-colors"><Edit2 size={12} /></button>
                             <button onClick={() => setConfirmExcluir(insumo)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer transition-colors" title="Excluir"><Trash2 size={12} /></button>

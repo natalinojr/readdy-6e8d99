@@ -287,6 +287,13 @@ Pergunta do usuário (com screenshot): "as perdas de produção não deveriam es
 - **Unidade de exibição:** perda vem em kg do front; convertida pra unidade de estoque do produto acabado quando possível (`convert_unit`); se a saída for `un` (kg não converte pra unidade discreta), grava em kg mesmo — melhor que sumir.
 - **Verificação:** round-trip real via `DO`+`RAISE EXCEPTION` (rollback proposital, nada persiste): batelada de teste (2kg tomate → 1,5kg chilli, perda 0,5kg) gerou `movements_count=3`, a 3ª linha exatamente `{type: loss, unit: kg, reason: "Perda em produção: TESTE ROLLBACK PERDA", quantity: 0.5}`. Estoque do produto acabado subiu **exatamente** 1,5kg (não descontado 2x pela perda). Confirmado `count=0` de sobra e estoque de volta ao valor original depois. Assinatura/grants/SECURITY DEFINER preservados (`CREATE OR REPLACE` com defaults idênticos). **Zero mudança de front necessária** — a UI já sabia exibir isso, só faltava o dado.
 
+### 2026-08-11 — Aba Estoque (InsumosTab): valor em estoque por linha + ordenação por coluna + tira duplicação de "ESGOTADO"
+
+- **Coluna nova "Valor em Estoque"** (`estoqueAtual × precoUnitario` por insumo) — a tela já tinha o TOTAL agregado no card de resumo (`valorTotalEstoque`), faltava por linha.
+- **Ordenação ao clicar no cabeçalho** — mesmo padrão já confirmado com o usuário na aba Estoque Teórico (clique = ordenar, não abrir filtro de valor). Componente `ThOrdenavel` reutilizável dentro do arquivo. Ordenação por status usa um rank de urgência (Esgotado > Crítico > Baixo > Ok), não alfabético.
+- **Bug de duplicação removido:** a coluna "Ações" mostrava um badge de texto "ESGOTADO" no lugar do botão "marcar como esgotado" quando o insumo já estava esgotado — duplicava a mesma informação que a coluna "Status" já mostra (com o badge correto, colorido). Ações agora só tem os botões; quando esgotado, o botão "marcar como esgotado" simplesmente some (nada substitui).
+- **Verificação:** tsc 324 (= baseline — o único erro em `InsumosTab.tsx` no relatório já existia antes, é sobre tipagem de `dreCategories`, não relacionado a esta mudança). Ordenação simulada em Node (valor, status por urgência, categoria) bateu como esperado. Vite sem erro de console.
+
 ### 2026-08-11 — Estoque Teórico: correção de fundo (colapsava com a contagem real no dia do ajuste) + UX
 
 Sintoma (usuário): data 11/08, "Abacate" — teórico mostrou 1, mas devia mostrar 1,2 (a contagem real do próprio dia foi o que deixou em 1).
