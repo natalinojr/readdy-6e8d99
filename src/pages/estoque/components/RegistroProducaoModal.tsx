@@ -787,6 +787,12 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
                           </span>
                         )}
                       </p>
+                      {it.notes && (
+                        <p className="text-[10px] text-amber-600 mt-0.5 flex items-start gap-1">
+                          <i className="ri-sticky-note-line flex-shrink-0 mt-0.5" />
+                          <span>{it.notes}</span>
+                        </p>
+                      )}
                       {stockError && (
                         <p className="text-[10px] text-red-600 mt-0.5 flex items-center gap-1">
                           <i className="ri-error-warning-line" />

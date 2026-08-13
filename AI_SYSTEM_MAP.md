@@ -1122,6 +1122,8 @@ Implementação: coluna `notes text` nova em `production_recipe_items` (não exi
 
 Verificação: round-trip via `DO $$ ... RAISE EXCEPTION` (rollback automático) confirmando que `notes` persiste em create → update → get_recipe; `tsc --noEmit` manteve baseline de 324 erros pré-existentes; build sem erros novos no preview local.
 
+**Follow-up (mesmo dia):** a observação não aparecia na hora de registrar a produção — `RegistroProducaoModal.tsx` (linha ~769) lista `recipe.items` e mostrava só `it.ingredientName`, nunca lia `it.notes` (o dado já vinha certo da RPC, só faltava exibir). Adicionado um parágrafo condicional com ícone `ri-sticky-note-line` logo abaixo da linha de custo/estoque de cada insumo.
+
 ### 2026-08-12 — BUG: nome de insumo não atualiza em fichas de produção já cadastradas
 
 Sintoma: editar o nome de um insumo no Estoque não refletia nas fichas de produção que já usam esse insumo. Causa: `production_recipe_items.ingredient_name` é uma cópia gravada no momento em que o item é adicionado (`create_recipe`/`update_recipe` em `fn_production_crud`), e os pontos de LEITURA (`list_recipes`, `get_recipe`) devolviam essa cópia congelada em vez do nome atual.
