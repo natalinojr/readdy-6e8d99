@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight } from 'lucide-react';
 import type { CampoCustom, TaskList, TaskRow } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { GroupBy, UsuarioOption } from '../lib/agrupamento';
-import { agruparTarefas, camposDaLista, payloadMoverGrupo } from '../lib/agrupamento';
+import { agruparTarefas, payloadMoverGrupo } from '../lib/agrupamento';
+import type { ColunaDef, ColunaId } from '../lib/colunas';
+import { carregarColunasVisiveis, colunasDisponiveis, salvarColunasVisiveis } from '../lib/colunas';
 import CampoBadge from './campos/CampoBadge';
+import ColumnsMenu from './ColumnsMenu';
 import { iniciais, rotuloVencimento } from './TaskCard';
 
 interface ViewListaProps {
@@ -17,17 +20,105 @@ interface ViewListaProps {
   onOpenTask: (taskId: string) => void;
 }
 
+function celulaColuna(
+  coluna: ColunaDef,
+  task: TaskRow,
+  subtarefasCount: number,
+  usuarios: UsuarioOption[],
+  campos: CampoCustom[],
+) {
+  if (coluna.id.startsWith('campo:')) {
+    const fieldId = coluna.id.slice('campo:'.length);
+    const campo = campos.find((c) => c.id === fieldId);
+    if (!campo) return <span className="text-slate-300">—</span>;
+    const valor = task.field_values?.[fieldId];
+    if (valor === undefined || valor === null || valor === '') return <span className="text-slate-300">—</span>;
+    return <CampoBadge campo={campo} value={valor} usuarios={usuarios} />;
+  }
+
+  switch (coluna.id) {
+    case 'responsavel':
+      return task.assignee_name ? (
+        <span className="flex items-center gap-1.5 justify-end">
+          <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[9px] font-semibold shrink-0">
+            {iniciais(task.assignee_name)}
+          </span>
+          <span className="truncate">{task.assignee_name}</span>
+        </span>
+      ) : <span className="text-slate-300">—</span>;
+
+    case 'vencimento': {
+      const due = rotuloVencimento(task);
+      return due ? <span className={due.className}>{due.text}</span> : <span className="text-slate-300">—</span>;
+    }
+
+    case 'prioridade': {
+      const prio = PRIORIDADES.find((p) => p.value === task.priority);
+      return task.priority > 0 && prio ? (
+        <span className="flex items-center gap-1 justify-end">
+          <Flag size={11} style={{ color: prio.color }} />
+          {prio.label}
+        </span>
+      ) : <span className="text-slate-300">—</span>;
+    }
+
+    case 'etiquetas':
+      return task.tags.length > 0 ? (
+        <span className="flex flex-wrap gap-1 justify-end">
+          {task.tags.map((tag) => (
+            <span key={tag.id} className="px-1.5 py-0.5 rounded-full text-[10px] font-medium text-white" style={{ backgroundColor: tag.color }}>
+              {tag.name}
+            </span>
+          ))}
+        </span>
+      ) : <span className="text-slate-300">—</span>;
+
+    case 'checklist':
+      return task.checklist_total > 0 ? (
+        <span className="flex items-center gap-1 justify-end"><CheckSquare size={11} />{task.checklist_done}/{task.checklist_total}</span>
+      ) : <span className="text-slate-300">—</span>;
+
+    case 'subtarefas':
+      return subtarefasCount > 0 ? (
+        <span className="flex items-center gap-1 justify-end"><GitBranch size={11} />{subtarefasCount}</span>
+      ) : <span className="text-slate-300">—</span>;
+
+    case 'comentarios':
+      return task.comment_count > 0 ? (
+        <span className="flex items-center gap-1 justify-end"><MessageSquare size={11} />{task.comment_count}</span>
+      ) : <span className="text-slate-300">—</span>;
+
+    case 'criada_em':
+      return <span>{new Date(task.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>;
+
+    default:
+      return null;
+  }
+}
+
 export default function ViewLista({
   list, tasks, campos, usuarios, groupBy, write, onOpenTask,
 }: ViewListaProps) {
   const [quickAdd, setQuickAdd] = useState<Record<string, string>>({});
   const [recolhidos, setRecolhidos] = useState<Set<string>>(new Set());
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+  const [colunasVisiveis, setColunasVisiveis] = useState<ColunaId[]>(() => carregarColunasVisiveis(list.id));
+
+  // Ao trocar de lista, recarrega a preferência salva (cada lista tem a sua).
+  useEffect(() => {
+    setColunasVisiveis(carregarColunasVisiveis(list.id));
+  }, [list.id]);
+
+  const alterarColunas = (colunas: ColunaId[]) => {
+    setColunasVisiveis(colunas);
+    salvarColunasVisiveis(list.id, colunas);
+  };
 
   // Só tarefas-raiz nos grupos; subtarefas aparecem aninhadas na sua tarefa-pai.
   const raizes = tasks.filter((t) => !t.parent_task_id);
   const grupos = agruparTarefas(raizes, groupBy, list, usuarios, campos);
-  const colunas = camposDaLista(campos, list.id).filter((c) => c.show_on_card);
+  const todasColunas = colunasDisponiveis(campos, list.id);
+  const colunas = todasColunas.filter((c) => colunasVisiveis.includes(c.id));
 
   const handleQuickAdd = async (chave: string, grupoKey: string | null) => {
     const title = (quickAdd[chave] ?? '').trim();
@@ -57,8 +148,6 @@ export default function ViewLista({
   };
 
   const renderLinha = (task: TaskRow, nivel: number) => {
-    const due = rotuloVencimento(task);
-    const prio = PRIORIDADES.find((p) => p.value === task.priority);
     const concluida = task.status_category === 'done';
     const subtarefas = tasks.filter((t) => t.parent_task_id === task.id);
     const aberta = expandidas.has(task.id);
@@ -101,35 +190,21 @@ export default function ViewLista({
             {task.title}
           </span>
 
-          <div className="flex items-center gap-2.5 text-xs text-slate-400 shrink-0">
+          {task.recurrence?.freq && <Repeat size={11} className="text-slate-300 shrink-0" />}
+
+          <div className="hidden md:flex items-center shrink-0">
             {colunas.map((c) => (
-              <CampoBadge key={c.id} campo={c} value={task.field_values?.[c.id]} usuarios={usuarios} />
+              <div key={c.id} style={{ width: c.larguraPx }} className="px-2 text-xs text-slate-500 text-right truncate">
+                {celulaColuna(c, task, subtarefas.length, usuarios, campos)}
+              </div>
             ))}
-            {task.tags.map((tag) => (
-              <span key={tag.id} className="px-1.5 py-0.5 rounded-full text-[10px] font-medium text-white" style={{ backgroundColor: tag.color }}>
-                {tag.name}
-              </span>
+          </div>
+
+          {/* No celular não há espaço pra tabela — mantém um resumo compacto das colunas ativas */}
+          <div className="flex md:hidden items-center gap-2.5 text-xs text-slate-400 shrink-0">
+            {colunas.map((c) => (
+              <span key={c.id}>{celulaColuna(c, task, subtarefas.length, usuarios, campos)}</span>
             ))}
-            {task.recurrence?.freq && <Repeat size={11} />}
-            {subtarefas.length > 0 && (
-              <span className="flex items-center gap-0.5"><GitBranch size={11} />{subtarefas.length}</span>
-            )}
-            {task.checklist_total > 0 && (
-              <span className="flex items-center gap-0.5"><CheckSquare size={11} />{task.checklist_done}/{task.checklist_total}</span>
-            )}
-            {task.comment_count > 0 && (
-              <span className="flex items-center gap-0.5"><MessageSquare size={11} />{task.comment_count}</span>
-            )}
-            {task.priority > 0 && prio && <Flag size={12} style={{ color: prio.color }} />}
-            {due && <span className={due.className}>{due.text}</span>}
-            {task.assignee_name && (
-              <span
-                className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-semibold"
-                title={task.assignee_name}
-              >
-                {iniciais(task.assignee_name)}
-              </span>
-            )}
           </div>
         </div>
 
@@ -140,6 +215,21 @@ export default function ViewLista({
 
   return (
     <div className="space-y-6">
+      <div className="hidden md:flex items-center justify-end gap-1">
+        <ColumnsMenu disponiveis={todasColunas} visiveis={colunasVisiveis} onChange={alterarColunas} />
+      </div>
+
+      {colunas.length > 0 && (
+        <div className="hidden md:flex items-center px-4 -mb-4">
+          <span className="flex-1" />
+          {colunas.map((c) => (
+            <div key={c.id} style={{ width: c.larguraPx }} className="px-2 text-[11px] font-medium text-slate-400 text-right truncate">
+              {c.label}
+            </div>
+          ))}
+        </div>
+      )}
+
       {grupos.map((grupo) => {
         const chave = grupo.key ?? '__vazio';
         const recolhido = recolhidos.has(chave);
