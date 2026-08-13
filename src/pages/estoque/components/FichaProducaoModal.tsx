@@ -163,6 +163,19 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
     setItems((prev) => prev.filter((it) => it.tempId !== tempId));
   };
 
+  const moveItem = (tempId: string, dir: -1 | 1) => {
+    setItems((prev) => {
+      const idx = prev.findIndex((it) => it.tempId === tempId);
+      if (idx < 0) return prev;
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const arr = [...prev];
+      const [item] = arr.splice(idx, 1);
+      arr.splice(newIdx, 0, item);
+      return arr;
+    });
+  };
+
   const toggleNota = (tempId: string) => {
     setNotasAbertas((prev) => {
       const next = new Set(prev);
@@ -564,7 +577,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
               </div>
             ) : (
               <div className="space-y-2">
-                {items.map((it) => {
+                {items.map((it, idx) => {
                   const insumo = insumos.find((i) => i.id === it.ingredientId);
                   const unidadesCompat = UNIDADES.filter((u) =>
                     sameUnitGroup(u, insumo?.unidade ?? it.unit)
@@ -583,6 +596,24 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                       className="bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2.5"
                     >
                       <div className="flex items-center gap-3">
+                        <div className="flex flex-col gap-0.5 flex-shrink-0">
+                          <button
+                            onClick={() => moveItem(it.tempId, -1)}
+                            disabled={idx === 0}
+                            title="Mover para cima"
+                            className="w-5 h-4 flex items-center justify-center text-zinc-400 hover:text-zinc-600 disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer"
+                          >
+                            <i className="ri-arrow-up-s-line text-sm" />
+                          </button>
+                          <button
+                            onClick={() => moveItem(it.tempId, 1)}
+                            disabled={idx === items.length - 1}
+                            title="Mover para baixo"
+                            className="w-5 h-4 flex items-center justify-center text-zinc-400 hover:text-zinc-600 disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer"
+                          >
+                            <i className="ri-arrow-down-s-line text-sm" />
+                          </button>
+                        </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-zinc-700 truncate">
                             {it.ingredientName}

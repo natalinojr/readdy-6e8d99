@@ -1124,6 +1124,16 @@ Verificação: round-trip via `DO $$ ... RAISE EXCEPTION` (rollback automático)
 
 **Follow-up (mesmo dia):** a observação não aparecia na hora de registrar a produção — `RegistroProducaoModal.tsx` (linha ~769) lista `recipe.items` e mostrava só `it.ingredientName`, nunca lia `it.notes` (o dado já vinha certo da RPC, só faltava exibir). Adicionado um parágrafo condicional com ícone `ri-sticky-note-line` logo abaixo da linha de custo/estoque de cada insumo.
 
+### 2026-08-13 — FEATURE: reordenar insumos na lista da Ficha de Produção
+
+Pedido: poder mudar a posição de um insumo na lista de insumos já adicionados, na criação/edição de ficha de produção.
+
+A tabela `production_recipe_items` não tinha nenhuma coluna de ordem — sem isso, reordenar so na tela (`FichaProducaoModal.tsx`) seria cosmético: ao salvar e recarregar, a ordem visual se perderia, porque `list_recipes`/`get_recipe` não tinham `ORDER BY` explícito nos items (dependiam da ordem física das linhas, não garantida). Igual ao padrão já usado em `production_recipe_steps.step_order`.
+
+Implementação: coluna `item_order int NOT NULL DEFAULT 0` (backfill por `created_at` para fichas já cadastradas); `create_recipe`/`update_recipe` gravam `item_order` sequencial na ordem em que o array `items` chega no payload (mesmo loop `v_item_idx` que os `steps` já usavam com `v_step_idx`); `list_recipes`/`get_recipe` passaram a `ORDER BY ri.item_order` no `jsonb_agg` dos items. Front: `moveItem(tempId, dir)` em `FichaProducaoModal.tsx` (idêntico ao `moveStep` que já existia para os passos de preparo) + duas setinhas (`ri-arrow-up-s-line`/`ri-arrow-down-s-line`) por item — como `handleSave` já envia `items` na ordem do array local, a nova ordem persiste automaticamente sem mudança nenhuma no `ProducaoContext`.
+
+Verificação: round-trip via `DO $$ ... RAISE EXCEPTION` — criou ficha de teste com 2 insumos (A, B), confirmou ordem inicial, chamou `update_recipe` com a ordem invertida (B, A) e confirmou que `get_recipe` devolveu na nova ordem; rollback automático não deixou nada no banco. `tsc --noEmit` manteve baseline de 324; build sem erros novos.
+
 ### 2026-08-12 — BUG: nome de insumo não atualiza em fichas de produção já cadastradas
 
 Sintoma: editar o nome de um insumo no Estoque não refletia nas fichas de produção que já usam esse insumo. Causa: `production_recipe_items.ingredient_name` é uma cópia gravada no momento em que o item é adicionado (`create_recipe`/`update_recipe` em `fn_production_crud`), e os pontos de LEITURA (`list_recipes`, `get_recipe`) devolviam essa cópia congelada em vez do nome atual.
