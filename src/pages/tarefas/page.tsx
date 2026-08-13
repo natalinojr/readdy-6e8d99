@@ -253,8 +253,9 @@ export default function TarefasPage() {
           )}
         </div>
 
-        {lists.length > 0 && (
-          <div className="px-3 py-2.5 border-t border-slate-100 space-y-0.5">
+        {/* Sempre visível — antes ficava escondido até existir 1ª lista, e o
+            usuário não tinha nenhum jeito de descobrir que a opção existia. */}
+        <div className="px-3 py-2.5 border-t border-slate-100 space-y-0.5">
             <button
               onClick={() => setShowCampos(true)}
               className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
@@ -267,8 +268,7 @@ export default function TarefasPage() {
             >
               <ListChecks size={13} /> Templates de checklist
             </button>
-          </div>
-        )}
+        </div>
       </aside>
 
       {/* ── Conteúdo ── */}
@@ -371,6 +371,8 @@ export default function TarefasPage() {
             if (view === 'minhas') setView('lista');
           }}
           onNovaLista={() => setShowNewList(true)}
+          onCampos={() => setShowCampos(true)}
+          onTemplates={() => setShowTemplates(true)}
           onClose={() => setShowListasSheet(false)}
         />
       )}

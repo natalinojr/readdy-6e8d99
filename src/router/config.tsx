@@ -57,6 +57,7 @@ const VoucherLinkPage = lazy(() => import('../pages/voucher-link/page'));
 const DeliveryPage = lazy(() => import('../pages/delivery/page'));
 const MotoboyPage = lazy(() => import('../pages/motoboy/page'));
 const MotoboyListaPage = lazy(() => import('../pages/motoboy-lista/page'));
+const _TesteMobileNav = lazy(() => import('../pages/tarefas/_TesteMobileNav'));
 
 const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
@@ -71,6 +72,7 @@ const routes: RouteObject[] = [
   { path: '/:storeSlug-delivery', element: <PullToRefresh><MobileKeyboardAssist /><DeliveryPage /></PullToRefresh> },
   { path: '/motoboy/:order_id', element: <PullToRefresh><MobileKeyboardAssist /><MotoboyPage /></PullToRefresh> },
   { path: '/entregas/:storeSlug', element: <PullToRefresh><MobileKeyboardAssist /><MotoboyListaPage /></PullToRefresh> },
+  { path: '/_teste-mobile-nav', element: <_TesteMobileNav /> },
   { path: '/autoatendimento', element: <AutoatendimentoPage /> },
   { path: '/totem/:token', element: <TotemPage /> },
   {

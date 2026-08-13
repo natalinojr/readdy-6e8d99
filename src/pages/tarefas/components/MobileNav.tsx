@@ -1,4 +1,4 @@
-import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X } from 'lucide-react';
+import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks } from 'lucide-react';
 import type { TaskList } from '../hooks/useTarefas';
 import { useVoltarFecha } from '../lib/mobile';
 
@@ -59,11 +59,20 @@ interface ListasSheetProps {
   selectedId: string | null;
   onSelecionar: (id: string) => void;
   onNovaLista: () => void;
+  onCampos: () => void;
+  onTemplates: () => void;
   onClose: () => void;
 }
 
-/** Seletor de listas em folha, substituindo a sidebar fixa no celular. */
-export function ListasSheet({ lists, selectedId, onSelecionar, onNovaLista, onClose }: ListasSheetProps) {
+/**
+ * Seletor de listas em folha, substituindo a sidebar fixa no celular. Também
+ * é onde ficam os atalhos de configuração (campos personalizados, templates
+ * de checklist) — no desktop eles vivem na mesma sidebar das listas, então
+ * faz sentido agrupar aqui a versão mobile também.
+ */
+export function ListasSheet({
+  lists, selectedId, onSelecionar, onNovaLista, onCampos, onTemplates, onClose,
+}: ListasSheetProps) {
   useVoltarFecha(true, onClose);
 
   return (
@@ -112,6 +121,29 @@ export function ListasSheet({ lists, selectedId, onSelecionar, onNovaLista, onCl
             <Plus size={16} className="shrink-0" />
             <span className="text-sm font-medium">Nova lista</span>
           </button>
+
+          <div className="mt-1 pt-1 border-t border-slate-100">
+            <button
+              onClick={() => {
+                onClose();
+                onCampos();
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left text-slate-600 active:bg-slate-50"
+            >
+              <SlidersHorizontal size={16} className="shrink-0 text-slate-400" />
+              <span className="text-sm">Campos personalizados</span>
+            </button>
+            <button
+              onClick={() => {
+                onClose();
+                onTemplates();
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left text-slate-600 active:bg-slate-50"
+            >
+              <ListChecks size={16} className="shrink-0 text-slate-400" />
+              <span className="text-sm">Templates de checklist</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
