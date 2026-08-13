@@ -121,8 +121,11 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (!taskId) return json({ error: 'task_id é obrigatório' }, 400);
 
       const { data: taskRow } = await admin
-        .from('tasks').select('id').eq('id', taskId).eq('tenant_id', tenantId).maybeSingle();
+        .from('tasks').select('id, created_by, assignee_id').eq('id', taskId).eq('tenant_id', tenantId).maybeSingle();
       if (!taskRow) return json({ error: 'Tarefa não encontrada neste tenant' }, 404);
+      if (taskRow.created_by !== user.id && taskRow.assignee_id !== user.id) {
+        return json({ error: 'Você não tem permissão para anexar arquivos nesta tarefa' }, 403);
+      }
 
       const nomeSeguro = (file.name.replace(/[^a-zA-Z0-9.\-_ ]/g, '') || 'arquivo').slice(0, 120);
       const filePath = `${tenantId}/${taskId}/${Date.now()}-${nomeSeguro}`;
@@ -234,6 +237,24 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       return data as Record<string, unknown>;
     };
 
+    // Listas (e o que pertence só a elas: status, campos por lista) são
+    // pessoais — só quem criou pode gerenciar.
+    const assertListOwner = async (listId: string): Promise<Record<string, unknown>> => {
+      const list = await assertOwned('task_lists', listId);
+      if (list.created_by !== user.id) throw new Error('Você não tem permissão para editar esta lista');
+      return list;
+    };
+
+    // Tarefa é visível/editável por quem criou (dono da lista) OU pelo
+    // responsável (é assim que ela "compartilha" com outro usuário).
+    const assertTaskAccess = async (taskId: string): Promise<Record<string, unknown>> => {
+      const task = await assertOwned('tasks', taskId);
+      if (task.created_by !== user.id && task.assignee_id !== user.id) {
+        throw new Error('Você não tem permissão para editar esta tarefa');
+      }
+      return task;
+    };
+
     switch (action) {
       // ═══ Listas ═══
       case 'create_list': {
@@ -247,7 +268,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'update_list': {
         const { list_id, ...rest } = body;
-        await assertOwned('task_lists', list_id);
+        await assertListOwner(list_id);
         const patch: Record<string, unknown> = {};
         for (const k of ['name', 'color', 'icon', 'sort_order', 'is_archived']) {
           if (rest[k] !== undefined) patch[k] = rest[k];
@@ -261,7 +282,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'create_status': {
         const { list_id, name, color, category, sort_order } = body;
         if (!list_id || !name) return json({ error: 'list_id and name are required' }, 400);
-        await assertOwned('task_lists', list_id);
+        await assertListOwner(list_id);
         const { data, error } = await admin.from('task_statuses')
           .insert({ tenant_id: tenantId, list_id, name, color: color ?? '#94a3b8', category: category ?? 'todo', sort_order: sort_order ?? 99 })
           .select('id').single();
@@ -270,7 +291,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'update_status': {
         const { status_id, ...rest } = body;
-        await assertOwned('task_statuses', status_id);
+        const status = await assertOwned('task_statuses', status_id);
+        await assertListOwner(status.list_id as string);
         const patch: Record<string, unknown> = {};
         for (const k of ['name', 'color', 'category', 'sort_order']) {
           if (rest[k] !== undefined) patch[k] = rest[k];
@@ -281,9 +303,11 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'delete_status': {
         const { status_id, reassign_to } = body;
-        await assertOwned('task_statuses', status_id);
+        const status = await assertOwned('task_statuses', status_id);
+        await assertListOwner(status.list_id as string);
         if (reassign_to) {
-          await assertOwned('task_statuses', reassign_to);
+          const reassignStatus = await assertOwned('task_statuses', reassign_to);
+          await assertListOwner(reassignStatus.list_id as string);
           await admin.from('tasks').update({ status_id: reassign_to }).eq('status_id', status_id).eq('tenant_id', tenantId);
         }
         const { error } = await admin.from('task_statuses').delete().eq('id', status_id);
@@ -295,7 +319,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'create_task': {
         const { list_id, title, description, status_id, priority, assignee_id, start_date, due_date, due_has_time, parent_task_id, recurrence, sort_order, tag_ids } = body;
         if (!list_id || !title) return json({ error: 'list_id and title are required' }, 400);
-        await assertOwned('task_lists', list_id);
+        await assertListOwner(list_id);
         let resolvedStatus = status_id ?? null;
         if (!resolvedStatus) {
           const { data: st } = await admin.from('task_statuses')
@@ -329,11 +353,21 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       case 'update_task': {
         const { task_id, ...rest } = body;
-        const current = await assertOwned('tasks', task_id);
+        const current = await assertTaskAccess(task_id);
         const patch: Record<string, unknown> = {};
         const editable = ['title', 'description', 'status_id', 'priority', 'assignee_id', 'start_date', 'due_date', 'due_has_time', 'list_id', 'sort_order', 'recurrence', 'is_archived', 'parent_task_id'];
         for (const k of editable) {
           if (rest[k] !== undefined) patch[k] = rest[k];
+        }
+
+        // Atalho para concluir sem saber o status_id da lista — quem só é
+        // responsável (tarefa compartilhada) não enxerga a lista de quem criou,
+        // então não tem como escolher o status "feito" manualmente.
+        if (rest.mark_done && patch.status_id === undefined) {
+          const { data: doneStatus } = await admin.from('task_statuses')
+            .select('id').eq('list_id', current.list_id).eq('category', 'done')
+            .order('sort_order').limit(1).maybeSingle();
+          if (doneStatus) patch.status_id = doneStatus.id;
         }
 
         // Mudança de status: registra atividade e trata conclusão/recorrência
@@ -362,7 +396,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
                   due_has_time: current.due_has_time,
                   recurrence: rec,
                   sort_order: Date.now(),
-                  created_by: user.id,
+                  // Herda o dono original (a lista é dele), não quem completou —
+                  // senão o dono perde a visão da própria recorrência quando
+                  // quem marca "concluído" é o responsável, não ele.
+                  created_by: current.created_by,
                 }).select('id').single();
                 if (next) {
                   const { data: st } = await admin.from('task_statuses')
@@ -407,7 +444,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       case 'delete_task': {
         const { task_id } = body;
-        await assertOwned('tasks', task_id);
+        const current = await assertOwned('tasks', task_id);
+        if (current.created_by !== user.id) return json({ error: 'Só quem criou a tarefa pode arquivá-la' }, 403);
         const { error } = await admin.from('tasks').update({ is_archived: true }).eq('id', task_id);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
@@ -417,7 +455,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'add_checklist_item': {
         const { task_id, title } = body;
         if (!task_id || !title) return json({ error: 'task_id and title are required' }, 400);
-        await assertOwned('tasks', task_id);
+        await assertTaskAccess(task_id);
         const { data, error } = await admin.from('task_checklist_items')
           .insert({ tenant_id: tenantId, task_id, title, sort_order: Date.now() })
           .select('id').single();
@@ -426,7 +464,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'update_checklist_item': {
         const { item_id, ...rest } = body;
-        await assertOwned('task_checklist_items', item_id);
+        const item = await assertOwned('task_checklist_items', item_id);
+        await assertTaskAccess(item.task_id as string);
         const patch: Record<string, unknown> = {};
         for (const k of ['title', 'is_done', 'sort_order']) {
           if (rest[k] !== undefined) patch[k] = rest[k];
@@ -437,7 +476,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'delete_checklist_item': {
         const { item_id } = body;
-        await assertOwned('task_checklist_items', item_id);
+        const item = await assertOwned('task_checklist_items', item_id);
+        await assertTaskAccess(item.task_id as string);
         const { error } = await admin.from('task_checklist_items').delete().eq('id', item_id);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
@@ -447,7 +487,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'add_comment': {
         const { task_id, body: commentBody, mentions } = body;
         if (!task_id || !commentBody) return json({ error: 'task_id and body are required' }, 400);
-        await assertOwned('tasks', task_id);
+        await assertTaskAccess(task_id);
         const listaMencoes: string[] = Array.isArray(mentions) ? mentions : [];
         const { data, error } = await admin.from('task_comments')
           .insert({ tenant_id: tenantId, task_id, user_id: user.id, body: commentBody, mentions: listaMencoes })
@@ -506,7 +546,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { name, field_type, list_id, options, show_on_card } = body;
         if (!name || !field_type) return json({ error: 'name and field_type are required' }, 400);
         if (!FIELD_TYPES.includes(field_type)) return json({ error: `field_type inválido: ${field_type}` }, 400);
-        if (list_id) await assertOwned('task_lists', list_id);
+        if (list_id) await assertListOwner(list_id);
         const { data, error } = await admin.from('task_custom_fields')
           .insert({ tenant_id: tenantId, name, field_type, list_id: list_id ?? null, options: options ?? [], show_on_card: show_on_card ?? false, sort_order: Date.now() })
           .select('id').single();
@@ -526,7 +566,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'set_field_value': {
         const { task_id, field_id, value } = body;
-        await assertOwned('tasks', task_id);
+        await assertTaskAccess(task_id);
         const field = await assertOwned('task_custom_fields', field_id);
         const validationError = validateFieldValue(
           field.field_type as string, value,
@@ -565,7 +605,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'create_view': {
         const { name, list_id, view_type, group_by, filters, is_shared } = body;
         if (!name) return json({ error: 'name is required' }, 400);
-        if (list_id) await assertOwned('task_lists', list_id);
+        if (list_id) await assertListOwner(list_id);
         const { data, error } = await admin.from('task_views').insert({
           tenant_id: tenantId,
           list_id: list_id ?? null,
@@ -611,6 +651,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'sign_attachment': {
         const { attachment_id } = body;
         const att = await assertOwned('task_attachments', attachment_id);
+        await assertTaskAccess(att.task_id as string);
         // Bucket privado: gera URL temporária em vez de expor o arquivo
         const { data, error } = await admin.storage
           .from('task-attachments')
@@ -621,6 +662,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'delete_attachment': {
         const { attachment_id } = body;
         const att = await assertOwned('task_attachments', attachment_id);
+        await assertTaskAccess(att.task_id as string);
         await admin.storage.from('task-attachments').remove([att.file_path as string]);
         const { error } = await admin.from('task_attachments').delete().eq('id', attachment_id);
         if (error) return json({ error: errMsg(error) }, 500);
@@ -661,7 +703,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'apply_checklist_template': {
         const { task_id, template_id } = body;
-        await assertOwned('tasks', task_id);
+        await assertTaskAccess(task_id);
         const tpl = await assertOwned('task_checklist_templates', template_id);
         const itens = (tpl.items as string[]) ?? [];
         if (!itens.length) return json({ success: true, added: 0 });

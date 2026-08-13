@@ -1,8 +1,8 @@
-import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks } from 'lucide-react';
+import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks, Users } from 'lucide-react';
 import type { TaskList } from '../hooks/useTarefas';
 import { useVoltarFecha } from '../lib/mobile';
 
-export type ViewTarefas = 'lista' | 'kanban' | 'calendario' | 'minhas';
+export type ViewTarefas = 'lista' | 'kanban' | 'calendario' | 'minhas' | 'compartilhadas';
 
 interface BottomNavProps {
   view: ViewTarefas;
@@ -59,6 +59,7 @@ interface ListasSheetProps {
   selectedId: string | null;
   onSelecionar: (id: string) => void;
   onNovaLista: () => void;
+  onCompartilhadas: () => void;
   onCampos: () => void;
   onTemplates: () => void;
   onClose: () => void;
@@ -71,7 +72,7 @@ interface ListasSheetProps {
  * faz sentido agrupar aqui a versão mobile também.
  */
 export function ListasSheet({
-  lists, selectedId, onSelecionar, onNovaLista, onCampos, onTemplates, onClose,
+  lists, selectedId, onSelecionar, onNovaLista, onCompartilhadas, onCampos, onTemplates, onClose,
 }: ListasSheetProps) {
   useVoltarFecha(true, onClose);
 
@@ -123,6 +124,16 @@ export function ListasSheet({
           </button>
 
           <div className="mt-1 pt-1 border-t border-slate-100">
+            <button
+              onClick={() => {
+                onClose();
+                onCompartilhadas();
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left text-slate-600 active:bg-slate-50"
+            >
+              <Users size={16} className="shrink-0 text-slate-400" />
+              <span className="text-sm">Tarefas compartilhadas</span>
+            </button>
             <button
               onClick={() => {
                 onClose();

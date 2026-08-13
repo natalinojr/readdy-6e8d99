@@ -67,6 +67,10 @@ export const CAMPO_TIPOS: Array<{ value: CampoTipo; label: string; temOpcoes: bo
 export interface TaskRow {
   id: string;
   list_id: string;
+  /** Nome/cor da lista — a lista em si só é carregada se eu for o dono; tarefas
+   *  compartilhadas comigo vivem em listas de outra pessoa, então vêm embutidos aqui. */
+  list_name: string | null;
+  list_color: string | null;
   parent_task_id: string | null;
   title: string;
   status_id: string | null;
@@ -81,6 +85,7 @@ export interface TaskRow {
   recurrence: { freq?: string; interval?: number } | null;
   completed_at: string | null;
   created_at: string;
+  created_by: string | null;
   tags: TaskTag[];
   checklist_total: number;
   checklist_done: number;

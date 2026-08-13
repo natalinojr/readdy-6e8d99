@@ -12,6 +12,8 @@ interface MinhasTarefasProps {
   campos: CampoCustom[];
   usuarios: UsuarioOption[];
   meuId: string | null;
+  /** true = só o que outra pessoa me atribuiu (tarefas de listas que não são minhas). */
+  apenasCompartilhadas?: boolean;
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; id?: string; error?: string }>;
   onOpenTask: (taskId: string) => void;
 }
@@ -40,18 +42,20 @@ function classificar(task: TaskRow): Balde {
 }
 
 export default function MinhasTarefas({
-  tasks, lists, campos, usuarios, meuId, write, onOpenTask,
+  tasks, lists, campos, usuarios, meuId, apenasCompartilhadas = false, write, onOpenTask,
 }: MinhasTarefasProps) {
-  // Cross-listas: só o que está atribuído a mim e ainda em aberto
+  // Cross-listas: só o que está atribuído a mim e ainda em aberto. Em
+  // "Compartilhadas", só o que veio de uma lista de outra pessoa.
   const minhas = useMemo(
     () =>
       tasks.filter(
         (t) =>
           t.assignee_id === meuId &&
           t.status_category !== 'done' &&
-          t.status_category !== 'cancelled',
+          t.status_category !== 'cancelled' &&
+          (!apenasCompartilhadas || t.created_by !== meuId),
       ),
-    [tasks, meuId],
+    [tasks, meuId, apenasCompartilhadas],
   );
 
   const agrupadas = useMemo(() => {
@@ -68,10 +72,10 @@ export default function MinhasTarefas({
     return mapa;
   }, [minhas]);
 
+  // mark_done deixa o servidor resolver o status "feito" — tarefa compartilhada
+  // vem de uma lista de outra pessoa, que não está em `lists` (só vejo as minhas).
   const concluir = async (task: TaskRow) => {
-    const lista = lists.find((l) => l.id === task.list_id);
-    const done = lista?.statuses.find((s) => s.category === 'done');
-    if (done) await write('update_task', { task_id: task.id, status_id: done.id });
+    await write('update_task', { task_id: task.id, mark_done: true });
   };
 
   if (!meuId) {
@@ -82,7 +86,9 @@ export default function MinhasTarefas({
     return (
       <div className="text-center py-16">
         <CheckCircle2 size={40} className="mx-auto text-emerald-300 mb-3" />
-        <p className="text-sm text-slate-500">Nada atribuído a você no momento.</p>
+        <p className="text-sm text-slate-500">
+          {apenasCompartilhadas ? 'Ninguém compartilhou uma tarefa com você ainda.' : 'Nada atribuído a você no momento.'}
+        </p>
       </div>
     );
   }
@@ -101,7 +107,11 @@ export default function MinhasTarefas({
             </div>
             <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
               {grupo.map((task) => {
+                // Lista de outra pessoa não vem em `lists` (só vejo as minhas) —
+                // nesse caso usa nome/cor que já vieram embutidos na tarefa.
                 const lista = lists.find((l) => l.id === task.list_id);
+                const nomeLista = lista?.name ?? task.list_name;
+                const corLista = lista?.color ?? task.list_color ?? '#94a3b8';
                 const prio = PRIORIDADES.find((p) => p.value === task.priority);
                 const camposNoCard = campos.filter((c) => c.show_on_card && task.field_values?.[c.id] != null);
                 return (
@@ -120,10 +130,10 @@ export default function MinhasTarefas({
                     />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-slate-700 truncate">{task.title}</p>
-                      {lista && (
+                      {nomeLista && (
                         <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: lista.color }} />
-                          {lista.name}
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: corLista }} />
+                          {nomeLista}
                         </span>
                       )}
                     </div>

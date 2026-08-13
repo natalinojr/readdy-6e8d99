@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, SlidersHorizontal, ListChecks } from 'lucide-react';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, SlidersHorizontal, ListChecks } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUsuarios } from '@/hooks/useUsuarios';
@@ -23,7 +23,7 @@ import { atualizarBadge } from '@/lib/pwa';
 
 const CORES_LISTA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#64748b'];
 
-type View = 'lista' | 'kanban' | 'calendario' | 'minhas';
+type View = 'lista' | 'kanban' | 'calendario' | 'minhas' | 'compartilhadas';
 
 const VIEWS_DESKTOP: Array<{ id: View; label: string; icon: typeof ListTodo }> = [
   { id: 'lista', label: 'Lista', icon: ListTodo },
@@ -88,9 +88,11 @@ export default function TarefasPage() {
 
   const selectedList = lists.find((l) => l.id === selectedListId) ?? lists[0] ?? null;
 
-  // "Minhas" é cross-listas; as demais views são escopadas na lista selecionada.
+  // "Minhas"/"Compartilhadas" são cross-listas; as demais views são escopadas na lista selecionada.
   const tarefasVisiveis = useMemo(() => {
-    const base = view === 'minhas' ? tasks : tasks.filter((t) => t.list_id === selectedList?.id);
+    const base = view === 'minhas' || view === 'compartilhadas'
+      ? tasks
+      : tasks.filter((t) => t.list_id === selectedList?.id);
     return aplicarFiltros(base, filtros);
   }, [tasks, view, selectedList?.id, filtros]);
 
@@ -131,19 +133,20 @@ export default function TarefasPage() {
 
       {error && !loading && <p className="text-sm text-red-500">Erro ao carregar tarefas: {error}</p>}
 
-      {!loading && !error && view === 'minhas' && (
+      {!loading && !error && (view === 'minhas' || view === 'compartilhadas') && (
         <MinhasTarefas
           tasks={tarefasVisiveis}
           lists={lists}
           campos={campos}
           usuarios={usuariosAtivos}
           meuId={user?.id ?? null}
+          apenasCompartilhadas={view === 'compartilhadas'}
           write={write}
           onOpenTask={setOpenTaskId}
         />
       )}
 
-      {!loading && !error && view !== 'minhas' && selectedList && (
+      {!loading && !error && view !== 'minhas' && view !== 'compartilhadas' && selectedList && (
         <>
           {view === 'lista' && (
             <ViewLista
@@ -181,7 +184,7 @@ export default function TarefasPage() {
         </>
       )}
 
-      {!loading && !error && view !== 'minhas' && !selectedList && (
+      {!loading && !error && view !== 'minhas' && view !== 'compartilhadas' && !selectedList && (
         <div className="text-center py-16">
           <ClipboardList size={40} className="mx-auto text-slate-300 mb-3" />
           <p className="text-sm text-slate-500 mb-4">Organize o trabalho da equipe em listas de tarefas.</p>
@@ -222,6 +225,15 @@ export default function TarefasPage() {
           >
             <UserCheck size={14} className="shrink-0" />
             <span className="flex-1">Minhas tarefas</span>
+          </button>
+          <button
+            onClick={() => setView('compartilhadas')}
+            className={`w-full flex items-center gap-2 px-4 py-2 text-sm text-left transition ${
+              view === 'compartilhadas' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <Users size={14} className="shrink-0" />
+            <span className="flex-1">Tarefas compartilhadas</span>
           </button>
 
           <div className="px-4 pt-3 pb-1">
@@ -279,6 +291,10 @@ export default function TarefasPage() {
             {view === 'minhas' ? (
               <>
                 <UserCheck size={16} className="text-indigo-500 shrink-0" /> Minhas tarefas
+              </>
+            ) : view === 'compartilhadas' ? (
+              <>
+                <Users size={16} className="text-indigo-500 shrink-0" /> Tarefas compartilhadas
               </>
             ) : (
               <>
@@ -372,6 +388,7 @@ export default function TarefasPage() {
             if (view === 'minhas') setView('lista');
           }}
           onNovaLista={() => setShowNewList(true)}
+          onCompartilhadas={() => setView('compartilhadas')}
           onCampos={() => setShowCampos(true)}
           onTemplates={() => setShowTemplates(true)}
           onClose={() => setShowListasSheet(false)}
