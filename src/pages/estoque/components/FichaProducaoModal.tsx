@@ -18,7 +18,24 @@ interface FormItem {
   ingredientId: string;
   ingredientName: string;
   quantity: number;
+  /** Texto exatamente como a pessoa esta digitando (ex: "0,05", "1,50"). Ver
+   *  parseQty/formatQtyInput — sem isso, o campo controlado re-renderiza a
+   *  cada tecla a partir do NUMBER ja arredondado, apagando zeros a direita
+   *  da virgula ("1,50" vira "1,5") e o "0" some sozinho (0 || '' = '' em JS). */
+  quantityText: string;
   unit: string;
+}
+
+/** Aceita virgula OU ponto como separador decimal (usuario BR digita virgula). */
+function parseQty(raw: string): number {
+  const n = Number(raw.replace(',', '.').trim());
+  return isNaN(n) ? 0 : n;
+}
+
+/** Formata um numero pra reexibir no campo de texto — virgula, sem notacao cientifica. */
+function formatQtyInput(n: number): string {
+  if (!n) return '';
+  return String(n).replace('.', ',');
 }
 
 interface FormStep {
@@ -38,12 +55,14 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
   const [criandoCategoria, setCriandoCategoria] = useState(false);
   const [novaCategoria, setNovaCategoria] = useState('');
   const [minStock, setMinStock] = useState<number>(recipe?.minStock ?? 0);
+  const [minStockText, setMinStockText] = useState<string>(formatQtyInput(recipe?.minStock ?? 0));
   const [items, setItems] = useState<FormItem[]>(
     recipe?.items.map((it) => ({
       tempId: it.id,
       ingredientId: it.ingredientId,
       ingredientName: it.ingredientName,
       quantity: it.quantity,
+      quantityText: formatQtyInput(it.quantity),
       unit: it.unit,
     })) ?? []
   );
@@ -96,6 +115,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
           ingredientId: insumoId,
           ingredientName: insumoNome,
           quantity: 0,
+          quantityText: '',
           unit: unidadeInsumo,
         },
       ]);
@@ -104,9 +124,12 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
     []
   );
 
-  const updateItem = (tempId: string, field: keyof FormItem, value: unknown) => {
+  const updateItemQuantity = (tempId: string, raw: string) => {
+    // So aceita digitos + no maximo 1 separador decimal (virgula ou ponto) —
+    // deixa passar estados intermediarios de digitacao ("0", "0,", "0,0").
+    if (!/^\d*[.,]?\d*$/.test(raw)) return;
     setItems((prev) =>
-      prev.map((it) => (it.tempId === tempId ? { ...it, [field]: value } : it))
+      prev.map((it) => (it.tempId === tempId ? { ...it, quantityText: raw, quantity: parseQty(raw) } : it))
     );
   };
 
@@ -117,9 +140,11 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
         const insumo = insumos.find((i) => i.id === it.ingredientId);
         if (!insumo) return { ...it, unit: newUnit };
         const conv = convertUnit(it.quantity, it.unit, newUnit);
+        const novaQuantidade = conv !== null ? conv : it.quantity;
         return {
           ...it,
-          quantity: conv !== null ? conv : it.quantity,
+          quantity: novaQuantidade,
+          quantityText: formatQtyInput(novaQuantidade),
           unit: newUnit,
         };
       })
@@ -349,11 +374,15 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             </label>
             <div className="flex items-center gap-2">
               <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={minStock || ''}
-                onChange={(e) => setMinStock(Number(e.target.value))}
+                type="text"
+                inputMode="decimal"
+                value={minStockText}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (!/^\d*[.,]?\d*$/.test(raw)) return;
+                  setMinStockText(raw);
+                  setMinStock(parseQty(raw));
+                }}
                 placeholder="Ex: 5"
                 className="w-28 text-xs border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
               />
@@ -540,13 +569,10 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={it.quantity || ''}
-                          onChange={(e) =>
-                            updateItem(it.tempId, 'quantity', Number(e.target.value))
-                          }
+                          type="text"
+                          inputMode="decimal"
+                          value={it.quantityText}
+                          onChange={(e) => updateItemQuantity(it.tempId, e.target.value)}
                           placeholder="Qtd"
                           className="w-20 text-xs border border-zinc-200 rounded-md px-2 py-1.5 focus:outline-none focus:border-amber-400 text-center"
                         />

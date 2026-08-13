@@ -15,6 +15,18 @@ interface Props {
 
 const fmt = formatCurrency;
 
+/** Aceita virgula OU ponto como separador decimal (usuario BR digita virgula). */
+function parseQty(raw: string): number {
+  const n = Number(raw.replace(',', '.').trim());
+  return isNaN(n) ? 0 : n;
+}
+
+/** Formata um numero pra reexibir no campo de texto — virgula, sem notacao cientifica. */
+function formatQtyInput(n: number): string {
+  if (!n) return '';
+  return String(n).replace('.', ',');
+}
+
 /** Draft minimal — nunca persiste quantitiesUsed para evitar valores errados */
 interface DraftData {
   producedQty: string;
@@ -95,6 +107,22 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     return map;
   });
 
+  /** Texto exatamente como a pessoa esta digitando em cada campo de
+   *  quantidade — separado de `quantitiesUsed` (number). Sem isso, o campo
+   *  controlado re-renderiza a cada tecla a partir do NUMBER ja arredondado:
+   *  "1,50" vira "1,5" assim que digitado, e o "0" inicial some sozinho
+   *  (0 || '' = '' em JS) — impossivel digitar "0,05". Mesmo bug e mesmo fix
+   *  de FichaProducaoModal.tsx (2026-08-11). */
+  const [quantitiesUsedText, setQuantitiesUsedText] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    if (recipe) {
+      recipe.items.forEach((it) => {
+        map[it.ingredientId] = formatQtyInput(Number(it.quantity.toFixed(4)));
+      });
+    }
+    return map;
+  });
+
   /** unitsUsed sempre da ficha — nunca do draft */
   const [unitsUsed, setUnitsUsed] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {};
@@ -130,19 +158,25 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
   useEffect(() => {
     if (!recipe) return;
 
-    setQuantitiesUsed((prev) => {
-      const next: Record<string, number> = { ...prev };
-      recipe.items.forEach((it) => {
-        if (manualOverrides.has(it.ingredientId)) return;
-        const totalQtyNaUnidadeDaFicha = it.quantity * fatorEscala;
-        const unidadeExibida = unitsUsed[it.ingredientId] ?? it.unit;
-        const convertido = unidadeExibida === it.unit
-          ? totalQtyNaUnidadeDaFicha
-          : convertUnit(totalQtyNaUnidadeDaFicha, it.unit, unidadeExibida);
-        next[it.ingredientId] = Number((convertido ?? totalQtyNaUnidadeDaFicha).toFixed(4));
-      });
-      return next;
+    // Calcula os dois mapas (number + texto exibido) juntos, fora dos updaters
+    // funcionais — os dois setState abaixo so precisam mesclar por cima do
+    // que ja existia (itens manuais ficam intocados).
+    const valores: Record<string, number> = {};
+    const textos: Record<string, string> = {};
+    recipe.items.forEach((it) => {
+      if (manualOverrides.has(it.ingredientId)) return;
+      const totalQtyNaUnidadeDaFicha = it.quantity * fatorEscala;
+      const unidadeExibida = unitsUsed[it.ingredientId] ?? it.unit;
+      const convertido = unidadeExibida === it.unit
+        ? totalQtyNaUnidadeDaFicha
+        : convertUnit(totalQtyNaUnidadeDaFicha, it.unit, unidadeExibida);
+      const valor = Number((convertido ?? totalQtyNaUnidadeDaFicha).toFixed(4));
+      valores[it.ingredientId] = valor;
+      textos[it.ingredientId] = formatQtyInput(valor);
     });
+
+    setQuantitiesUsed((prev) => ({ ...prev, ...valores }));
+    setQuantitiesUsedText((prev) => ({ ...prev, ...textos }));
   }, [recipe, manualOverrides, fatorEscala, unitsUsed]);
 
   // Auto-salva rascunho a cada mudanca (apenas dados de producao, NAO quantitiesUsed)
@@ -170,13 +204,17 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
     });
   }, []);
 
-  const updateQtyUsed = useCallback((ingredientId: string, val: number) => {
+  const updateQtyUsedText = useCallback((ingredientId: string, raw: string) => {
+    // So aceita digitos + no maximo 1 separador decimal — deixa passar
+    // estados intermediarios de digitacao ("0", "0,", "0,0").
+    if (!/^\d*[.,]?\d*$/.test(raw)) return;
     setManualOverrides((prev) => {
       const next = new Set(prev);
       next.add(ingredientId);
       return next;
     });
-    setQuantitiesUsed((prev) => ({ ...prev, [ingredientId]: val }));
+    setQuantitiesUsedText((prev) => ({ ...prev, [ingredientId]: raw }));
+    setQuantitiesUsed((prev) => ({ ...prev, [ingredientId]: parseQty(raw) }));
   }, []);
 
   // Volta o insumo para calculo automatico (quantidade da ficha x receitas).
@@ -230,7 +268,9 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
       const oldQty = quantitiesUsed[ingredientId] ?? 0;
       const converted = convertUnit(oldQty, oldUnit, newUnit);
       if (converted !== null && converted > 0) {
-        setQuantitiesUsed((qPrev) => ({ ...qPrev, [ingredientId]: Number(converted.toFixed(4)) }));
+        const valor = Number(converted.toFixed(4));
+        setQuantitiesUsed((qPrev) => ({ ...qPrev, [ingredientId]: valor }));
+        setQuantitiesUsedText((tPrev) => ({ ...tPrev, [ingredientId]: formatQtyInput(valor) }));
       }
       return { ...prev, [ingredientId]: newUnit };
     });
@@ -757,13 +797,10 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={qty || ''}
-                        onChange={(e) =>
-                          updateQtyUsed(it.ingredientId, Number(e.target.value))
-                        }
+                        type="text"
+                        inputMode="decimal"
+                        value={quantitiesUsedText[it.ingredientId] ?? ''}
+                        onChange={(e) => updateQtyUsedText(it.ingredientId, e.target.value)}
                         className={`w-20 text-xs border rounded-md px-2 py-1.5 focus:outline-none text-center ${
                           stockError
                             ? 'border-red-300 focus:border-red-400'
