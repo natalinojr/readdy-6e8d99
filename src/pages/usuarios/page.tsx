@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { Plus, Search, Edit2, ShieldCheck, MoreVertical, KeyRound, UserX, UserCheck, Trash2 } from 'lucide-react';
+import { Plus, Search, Edit2, ShieldCheck, MoreVertical, KeyRound, UserX, UserCheck, Trash2, Building2 } from 'lucide-react';
 import { perfilConfig, type PerfilUsuario } from '@/constants/usuarios';
 import { useUsuarios, type UsuarioReal } from '@/hooks/useUsuarios';
+import { supabase } from '@/lib/supabase';
 import UsuarioModal from './components/UsuarioModal';
+import AcessoMultiLojaModal from './components/AcessoMultiLojaModal';
 
 function fmtData(d: string | null) {
   if (!d) return 'Nunca';
@@ -161,11 +163,20 @@ export default function UsuariosPage() {
   const [statusFiltro, setStatusFiltro] = useState<'todos' | 'ativo' | 'inativo'>('todos');
   const [modal, setModal] = useState<ModalState>(null);
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'erro' } | null>(null);
+  const [multiLojaDisponivel, setMultiLojaDisponivel] = useState(false);
+  const [mostrarMultiLoja, setMostrarMultiLoja] = useState(false);
 
   const showToast = (msg: string, tipo: 'ok' | 'erro') => {
     setToast({ msg, tipo });
     setTimeout(() => setToast(null), 3000);
   };
+
+  useEffect(() => {
+    supabase.rpc('fn_get_my_admin_tenants').then(({ data }) => {
+      const lojas = (data as unknown[]) ?? [];
+      setMultiLojaDisponivel(lojas.length >= 2);
+    });
+  }, []);
 
   const filtrados = usuarios.filter((u) => {
     const emailDisplay = u.email?.includes('@totem.erpos.local') || u.email?.includes('@erpos.local') ? '' : (u.email ?? '');
@@ -243,6 +254,14 @@ export default function UsuariosPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {multiLojaDisponivel && (
+              <button
+                onClick={() => setMostrarMultiLoja(true)}
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white text-zinc-600 text-xs font-semibold rounded-lg hover:bg-zinc-50 cursor-pointer transition-colors whitespace-nowrap">
+                <Building2 size={13} />
+                <span className="hidden sm:inline">Acesso entre lojas</span>
+              </button>
+            )}
             <button
               onClick={exportarCSV}
               className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white text-zinc-600 text-xs font-semibold rounded-lg hover:bg-zinc-50 cursor-pointer transition-colors whitespace-nowrap">
@@ -509,6 +528,8 @@ export default function UsuariosPage() {
           }}
         />
       )}
+
+      {mostrarMultiLoja && <AcessoMultiLojaModal onClose={() => setMostrarMultiLoja(false)} />}
     </div>
   );
 }
