@@ -1,5 +1,16 @@
-import type { CampoCustom, TaskList, TaskRow } from '../hooks/useTarefas';
+import type { CampoCustom, TaskList, TaskRow, TaskStatus } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
+
+/** Rótulo/cor genéricos por categoria — usados quando as tarefas vêm de mais
+ *  de uma pasta (Minhas/Compartilhadas/Todas) e não há um `list.statuses` único
+ *  pra agrupar; cada pasta tem seus próprios status por trás da mesma categoria. */
+const CATEGORIAS_GENERICAS: Array<{ key: TaskStatus['category']; label: string; color: string }> = [
+  { key: 'backlog', label: 'Backlog', color: '#a1a1aa' },
+  { key: 'todo', label: 'A fazer', color: '#94a3b8' },
+  { key: 'in_progress', label: 'Em andamento', color: '#3b82f6' },
+  { key: 'done', label: 'Concluído', color: '#22c55e' },
+  { key: 'cancelled', label: 'Cancelado', color: '#ef4444' },
+];
 
 export interface UsuarioOption {
   id: string;
@@ -96,7 +107,20 @@ export function agruparTarefas(
   const ordenar = (arr: TaskRow[]) => [...arr].sort((a, b) => a.sort_order - b.sort_order);
 
   if (groupBy === 'status') {
-    const statuses = list?.statuses ?? [];
+    if (!list) {
+      // Sem uma pasta única: agrupa pela categoria (mesma em qualquer pasta),
+      // não pelo status_id exato (que varia de pasta pra pasta).
+      const principais: Array<TaskStatus['category']> = ['todo', 'in_progress', 'done'];
+      return CATEGORIAS_GENERICAS
+        .filter((c) => principais.includes(c.key) || tasks.some((t) => t.status_category === c.key))
+        .map((c) => ({
+          key: c.key,
+          label: c.label,
+          color: c.color,
+          tasks: ordenar(tasks.filter((t) => t.status_category === c.key)),
+        }));
+    }
+    const statuses = list.statuses ?? [];
     return statuses.map((s) => ({
       key: s.id,
       label: s.name,
@@ -157,13 +181,21 @@ export function agruparTarefas(
 /**
  * Payload de escrita para mover uma tarefa de grupo. Retorna null quando o
  * agrupamento não é editável por arrasto.
+ *
+ * `list` é quem decide o que `destino` significa no agrupamento por status:
+ * com uma pasta única, `destino` é o status_id real dela; sem pasta única
+ * (Minhas/Compartilhadas/Todas), `destino` é a categoria genérica (ver
+ * CATEGORIAS_GENERICAS) e o backend resolve o status_id certo pela pasta de
+ * CADA tarefa (ver `status_category` em task-write).
  */
 export function payloadMoverGrupo(
   groupBy: GroupBy,
   destino: string | null,
+  list: TaskList | null = null,
 ): { action: 'update_task' | 'set_field_value'; patch: Record<string, unknown> } | null {
   if (groupBy === 'status') {
     if (!destino) return null; // status é obrigatório
+    if (!list) return { action: 'update_task', patch: { status_category: destino } };
     return { action: 'update_task', patch: { status_id: destino } };
   }
   if (groupBy === 'priority') {

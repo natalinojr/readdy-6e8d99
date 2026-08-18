@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bookmark, BookmarkPlus, Trash2, Users, Lock, Check } from 'lucide-react';
+import { Bookmark, BookmarkPlus, Trash2, Check } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { TaskList, TaskViewSalva } from '../hooks/useTarefas';
 import type { Filtros, GroupBy } from '../lib/agrupamento';
@@ -26,10 +26,9 @@ export default function ViewsSalvas({
   const [aberto, setAberto] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [nome, setNome] = useState('');
-  const [compartilhar, setCompartilhar] = useState(false);
   const [aplicadaId, setAplicadaId] = useState<string | null>(null);
 
-  // Views globais (sem lista) + as da lista atual
+  // Views globais (sem pasta) + as da pasta atual
   const visiveis = views.filter((v) => v.list_id === null || v.list_id === list?.id);
 
   const salvar = async () => {
@@ -42,7 +41,6 @@ export default function ViewsSalvas({
       view_type: viewAtual,
       group_by: groupBy,
       filters: filtros,
-      is_shared: compartilhar,
     });
     setSalvando(false);
     if (!res.success) {
@@ -50,9 +48,8 @@ export default function ViewsSalvas({
       return;
     }
     setNome('');
-    setCompartilhar(false);
     setAberto(false);
-    toast.success('View salva', compartilhar ? 'Visível para toda a equipe.' : 'Visível só para você.');
+    toast.success('View salva');
   };
 
   return (
@@ -85,11 +82,6 @@ export default function ViewsSalvas({
                     }}
                     className="flex-1 flex items-center gap-1.5 text-left min-w-0"
                   >
-                    {v.is_shared ? (
-                      <Users size={11} className="text-slate-400 shrink-0" />
-                    ) : (
-                      <Lock size={11} className="text-slate-400 shrink-0" />
-                    )}
                     <span className="text-xs text-slate-700 truncate">{v.name}</span>
                     {aplicadaId === v.id && <Check size={11} className="text-indigo-500 shrink-0" />}
                   </button>
@@ -127,15 +119,6 @@ export default function ViewsSalvas({
                 placeholder="Nome da view"
                 className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-indigo-300"
               />
-              <label className="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={compartilhar}
-                  onChange={(e) => setCompartilhar(e.target.checked)}
-                  className="rounded border-slate-300"
-                />
-                Compartilhar com a equipe
-              </label>
               <button
                 onClick={salvar}
                 disabled={!nome.trim() || salvando}

@@ -12,7 +12,10 @@ import ColumnsMenu from './ColumnsMenu';
 import { iniciais, rotuloVencimento } from './TaskCard';
 
 interface ViewListaProps {
-  list: TaskList;
+  /** null = tarefas de mais de uma pasta (Minhas/Compartilhadas/Todas). */
+  list: TaskList | null;
+  /** Chave pras preferências de coluna quando `list` é null (uma por visão agregada). */
+  chaveColunas?: string;
   tasks: TaskRow[];
   campos: CampoCustom[];
   usuarios: UsuarioOption[];
@@ -98,6 +101,14 @@ function celulaColuna(
     case 'criada_em':
       return <span>{new Date(task.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>;
 
+    case 'pasta':
+      return task.list_name ? (
+        <span className="flex items-center gap-1.5 justify-end truncate">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: task.list_color ?? '#94a3b8' }} />
+          <span className="truncate">{task.list_name}</span>
+        </span>
+      ) : <span className="text-slate-300">—</span>;
+
     default:
       return null;
   }
@@ -106,32 +117,44 @@ function celulaColuna(
 const EDITOR_INPUT_CLS = 'w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-indigo-300';
 
 export default function ViewLista({
-  list, tasks, campos, usuarios, tags, groupBy, write, onOpenTask,
+  list, chaveColunas, tasks, campos, usuarios, tags, groupBy, write, onOpenTask,
 }: ViewListaProps) {
+  const chaveArmazenamento = list?.id ?? chaveColunas ?? 'agregado';
+  // Em visão agregada mostra de qual pasta cada tarefa é por padrão — numa
+  // pasta só isso é óbvio pelo contexto, então fica fora do padrão.
+  const colunasPadrao = list ? undefined : (['responsavel', 'vencimento', 'prioridade', 'pasta'] as ColunaId[]);
+
   const [quickAdd, setQuickAdd] = useState<Record<string, string>>({});
   const [recolhidos, setRecolhidos] = useState<Set<string>>(new Set());
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
-  const [colunasVisiveis, setColunasVisiveis] = useState<ColunaId[]>(() => carregarColunasVisiveis(list.id));
+  const [colunasVisiveis, setColunasVisiveis] = useState<ColunaId[]>(() =>
+    carregarColunasVisiveis(chaveArmazenamento, colunasPadrao),
+  );
   const [editando, setEditando] = useState<{ taskId: string; col: ColunaId } | null>(null);
 
-  // Ao trocar de lista, recarrega a preferência salva (cada lista tem a sua).
+  // Ao trocar de pasta/visão, recarrega a preferência salva (cada uma tem a sua).
   useEffect(() => {
-    setColunasVisiveis(carregarColunasVisiveis(list.id));
+    setColunasVisiveis(carregarColunasVisiveis(chaveArmazenamento, colunasPadrao));
     setEditando(null);
-  }, [list.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chaveArmazenamento]);
 
   const alterarColunas = (colunas: ColunaId[]) => {
     setColunasVisiveis(colunas);
-    salvarColunasVisiveis(list.id, colunas);
+    salvarColunasVisiveis(chaveArmazenamento, colunas);
   };
 
   // Só tarefas-raiz nos grupos; subtarefas aparecem aninhadas na sua tarefa-pai.
   const raizes = tasks.filter((t) => !t.parent_task_id);
   const grupos = agruparTarefas(raizes, groupBy, list, usuarios, campos);
-  const todasColunas = colunasDisponiveis(campos, list.id);
+  const todasColunas = colunasDisponiveis(campos, list?.id ?? null);
   const colunas = todasColunas.filter((c) => colunasVisiveis.includes(c.id));
 
+  // Visão agregada mistura tarefas de pastas diferentes — não dá pra saber
+  // em qual criar uma tarefa nova aqui, então quem quer criar usa o botão
+  // "Nova tarefa" (escolhe a pasta primeiro).
   const handleQuickAdd = async (chave: string, grupoKey: string | null) => {
+    if (!list) return;
     const title = (quickAdd[chave] ?? '').trim();
     if (!title) return;
     setQuickAdd((prev) => ({ ...prev, [chave]: '' }));
@@ -151,11 +174,12 @@ export default function ViewLista({
     }
   };
 
+  // Backend resolve o status_id certo pela lista de CADA tarefa — funciona
+  // igual com uma pasta só ou espalhado por várias (Minhas/Todas).
   const alternarConclusao = async (task: TaskRow, concluir: boolean) => {
-    const destino = concluir
-      ? list.statuses.find((s) => s.category === 'done')
-      : list.statuses.find((s) => s.category !== 'done' && s.category !== 'cancelled');
-    if (destino) await write('update_task', { task_id: task.id, status_id: destino.id });
+    await write('update_task', concluir
+      ? { task_id: task.id, status_category: 'done' }
+      : { task_id: task.id, status_action: 'undone' });
   };
 
   const toggleTag = async (task: TaskRow, tagId: string) => {
@@ -365,7 +389,7 @@ export default function ViewLista({
       {grupos.map((grupo) => {
         const chave = grupo.key ?? '__vazio';
         const recolhido = recolhidos.has(chave);
-        const podeAdicionar = payloadMoverGrupo(groupBy, grupo.key) !== null || groupBy === 'status';
+        const podeAdicionar = list !== null && (payloadMoverGrupo(groupBy, grupo.key, list) !== null || groupBy === 'status');
 
         return (
           <div key={chave}>

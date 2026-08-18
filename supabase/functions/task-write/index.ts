@@ -368,14 +368,25 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           if (rest[k] !== undefined) patch[k] = rest[k];
         }
 
-        // Atalho para concluir sem saber o status_id da lista — quem só é
-        // responsável (tarefa compartilhada) não enxerga a lista de quem criou,
-        // então não tem como escolher o status "feito" manualmente.
-        if (rest.mark_done && patch.status_id === undefined) {
-          const { data: doneStatus } = await admin.from('task_statuses')
-            .select('id').eq('list_id', current.list_id).eq('category', 'done')
-            .order('sort_order').limit(1).maybeSingle();
-          if (doneStatus) patch.status_id = doneStatus.id;
+        // Resolve o status pelo NOME DA CATEGORIA em vez do id — necessário
+        // sempre que quem está escrevendo não enxerga os status da lista (tarefa
+        // compartilhada) ou nem sabe a qual lista a tarefa pertence (visões
+        // agregadas como "Minhas"/"Todas", que misturam tarefas de várias
+        // pastas com status_id diferentes por trás do mesmo "Concluído").
+        if (patch.status_id === undefined) {
+          if (rest.status_category) {
+            const { data: resolvido } = await admin.from('task_statuses')
+              .select('id').eq('list_id', current.list_id).eq('category', rest.status_category)
+              .order('sort_order').limit(1).maybeSingle();
+            if (resolvido) patch.status_id = resolvido.id;
+          } else if (rest.status_action === 'undone') {
+            // "Desmarcar" não tem uma categoria única de destino — pega o
+            // primeiro status não-terminal da própria lista da tarefa.
+            const { data: resolvido } = await admin.from('task_statuses')
+              .select('id').eq('list_id', current.list_id).not('category', 'in', '(done,cancelled)')
+              .order('sort_order').limit(1).maybeSingle();
+            if (resolvido) patch.status_id = resolvido.id;
+          }
         }
 
         // Mudança de status: registra atividade e trata conclusão/recorrência

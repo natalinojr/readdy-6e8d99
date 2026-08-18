@@ -7,7 +7,7 @@ import type { CampoCustom } from '../hooks/useTarefas';
  */
 export type ColunaId =
   | 'responsavel' | 'vencimento' | 'prioridade' | 'etiquetas'
-  | 'checklist' | 'subtarefas' | 'comentarios' | 'criada_em'
+  | 'checklist' | 'subtarefas' | 'comentarios' | 'criada_em' | 'pasta'
   | `campo:${string}`;
 
 export interface ColunaDef {
@@ -25,6 +25,7 @@ export const COLUNAS_NATIVAS: ColunaDef[] = [
   { id: 'subtarefas', label: 'Subtarefas', larguraPx: 90 },
   { id: 'comentarios', label: 'Comentários', larguraPx: 100 },
   { id: 'criada_em', label: 'Criada em', larguraPx: 100 },
+  { id: 'pasta', label: 'Pasta', larguraPx: 140 },
 ];
 
 /** Default = o que já aparecia antes de existir esse menu (não muda a experiência de quem já usa). */
@@ -38,24 +39,24 @@ export function colunasDisponiveis(campos: CampoCustom[], listId: string | null)
   return [...COLUNAS_NATIVAS, ...doCampos];
 }
 
-function chaveStorage(listId: string): string {
-  return `erpos_tarefas_colunas_${listId}`;
+function chaveStorage(chave: string): string {
+  return `erpos_tarefas_colunas_${chave}`;
 }
 
-export function carregarColunasVisiveis(listId: string): ColunaId[] {
+export function carregarColunasVisiveis(chave: string, padrao: ColunaId[] = COLUNAS_PADRAO): ColunaId[] {
   try {
-    const bruto = localStorage.getItem(chaveStorage(listId));
-    if (!bruto) return COLUNAS_PADRAO;
+    const bruto = localStorage.getItem(chaveStorage(chave));
+    if (!bruto) return padrao;
     const arr = JSON.parse(bruto);
-    return Array.isArray(arr) ? (arr as ColunaId[]) : COLUNAS_PADRAO;
+    return Array.isArray(arr) ? (arr as ColunaId[]) : padrao;
   } catch {
-    return COLUNAS_PADRAO;
+    return padrao;
   }
 }
 
-export function salvarColunasVisiveis(listId: string, colunas: ColunaId[]): void {
+export function salvarColunasVisiveis(chave: string, colunas: ColunaId[]): void {
   try {
-    localStorage.setItem(chaveStorage(listId), JSON.stringify(colunas));
+    localStorage.setItem(chaveStorage(chave), JSON.stringify(colunas));
   } catch {
     /* localStorage indisponível (modo privado etc.) — segue sem persistir */
   }

@@ -50,7 +50,7 @@ export default function ViewKanban({
       return;
     }
 
-    const mov = payloadMoverGrupo(groupBy, grupo.key);
+    const mov = payloadMoverGrupo(groupBy, grupo.key, list);
     if (!mov) {
       toast.error('Não é possível mover para esta coluna');
       return;
@@ -94,8 +94,6 @@ export default function ViewKanban({
       });
     }
   };
-
-  if (!list) return null;
 
   return (
     <div className="flex gap-3 items-start overflow-x-auto pb-4">
@@ -162,22 +160,24 @@ export default function ViewKanban({
                 </div>
               ))}
 
-              {/* Quick add na coluna */}
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  criarNaColuna(grupo);
-                }}
-                className="flex items-center gap-1.5 px-1 pt-1"
-              >
-                <Plus size={13} className="text-slate-300 shrink-0" />
-                <input
-                  value={quickAdd[chave] ?? ''}
-                  onChange={(e) => setQuickAdd((prev) => ({ ...prev, [chave]: e.target.value }))}
-                  placeholder="Nova tarefa…"
-                  className="flex-1 text-xs bg-transparent outline-none placeholder:text-slate-400 py-1"
-                />
-              </form>
+              {/* Quick add na coluna — só faz sentido com uma pasta certa pra criar dentro */}
+              {list && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    criarNaColuna(grupo);
+                  }}
+                  className="flex items-center gap-1.5 px-1 pt-1"
+                >
+                  <Plus size={13} className="text-slate-300 shrink-0" />
+                  <input
+                    value={quickAdd[chave] ?? ''}
+                    onChange={(e) => setQuickAdd((prev) => ({ ...prev, [chave]: e.target.value }))}
+                    placeholder="Nova tarefa…"
+                    className="flex-1 text-xs bg-transparent outline-none placeholder:text-slate-400 py-1"
+                  />
+                </form>
+              )}
             </div>
           </div>
         );
