@@ -24,7 +24,7 @@ const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/autoatendimento', '
 // Rotas full-screen protegidas — sem sidebar/topbar, MAS exigem auth + tenant
 const FULL_SCREEN_PROTECTED = ['/modulos'];
 // Terminais — full-screen com UI propria
-const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas'];
+const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas', '/tarefas'];
 
 export default function AppLayout() {
   const { isAuthenticated, needsTenantSelection, loading } = useAuth();

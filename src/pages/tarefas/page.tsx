@@ -1,7 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, SlidersHorizontal, ListChecks } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, SlidersHorizontal, ListChecks, ArrowLeft } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAppMode } from '@/contexts/AppModeContext';
 import { useUsuarios } from '@/hooks/useUsuarios';
 import PullToRefresh from '@/components/feature/PullToRefresh';
 import { useTarefas } from './hooks/useTarefas';
@@ -34,7 +36,16 @@ const VIEWS_DESKTOP: Array<{ id: View; label: string; icon: typeof ListTodo }> =
 export default function TarefasPage() {
   const toast = useToast();
   const { user } = useAuth();
+  const { setMode } = useAppMode();
+  const navigate = useNavigate();
   const celular = useIsMobile();
+
+  // A rota /tarefas roda em modo terminal (sem sidebar/topbar do ERPOS) — o
+  // único jeito de sair é este botão.
+  const voltarModulos = () => {
+    setMode('modulos');
+    navigate('/modulos');
+  };
   const {
     lists, tasks, tags, campos, notificacoes, views, templates,
     loading, error, reload, write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo,
@@ -120,9 +131,10 @@ export default function TarefasPage() {
     if (res.id) setSelectedListId(res.id);
   };
 
-  // O AppLayout já dá padding (p-4) no celular — aqui só o vertical, para não dobrar.
+  // /tarefas roda em modo terminal (ver TERMINAL_ROUTES no AppLayout) — sem
+  // sidebar/topbar do ERPOS, então o padding horizontal é só nosso mesmo.
   const conteudo = (
-    <div className="px-0 md:px-6 py-3 md:py-5 pb-24 md:pb-5">
+    <div className="px-4 md:px-6 py-3 md:py-5 pb-24 md:pb-5">
       {loading && (
         <div className="animate-pulse space-y-3 max-w-3xl">
           <div className="h-5 bg-slate-200 rounded w-32" />
@@ -203,6 +215,14 @@ export default function TarefasPage() {
     <div className="flex h-full min-h-0">
       {/* ── Sidebar de listas (desktop) ── */}
       <aside className="hidden md:flex w-60 shrink-0 border-r border-slate-200 bg-white flex-col">
+        <div className="px-3 py-2 border-b border-slate-100">
+          <button
+            onClick={voltarModulos}
+            className="w-full flex items-center gap-1.5 px-1 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
+          >
+            <ArrowLeft size={14} /> Voltar aos módulos
+          </button>
+        </div>
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
             <ClipboardList size={16} className="text-indigo-500" /> Tarefas
@@ -286,7 +306,14 @@ export default function TarefasPage() {
 
       {/* ── Conteúdo ── */}
       <main className="flex-1 min-w-0 overflow-auto bg-slate-50">
-        <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-slate-200 px-0 md:px-6 py-2.5 md:py-3 flex flex-wrap items-center gap-2 md:gap-3">
+        <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-slate-200 px-4 md:px-6 py-2.5 md:py-3 flex flex-wrap items-center gap-2 md:gap-3">
+          <button
+            onClick={voltarModulos}
+            className="md:hidden p-1.5 -ml-1.5 rounded-lg text-slate-500 active:bg-slate-200 shrink-0"
+            title="Voltar aos módulos"
+          >
+            <ArrowLeft size={18} />
+          </button>
           <h1 className="text-sm md:text-base font-semibold text-slate-800 truncate flex items-center gap-2 min-w-0">
             {view === 'minhas' ? (
               <>
