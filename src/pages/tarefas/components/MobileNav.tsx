@@ -1,8 +1,9 @@
-import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks, Users } from 'lucide-react';
-import type { TaskList } from '../hooks/useTarefas';
+import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks, Users, Layers } from 'lucide-react';
+import type { NoPasta } from '../lib/pastas';
 import { useVoltarFecha } from '../lib/mobile';
+import ArvorePastas from './ArvorePastas';
 
-export type ViewTarefas = 'lista' | 'kanban' | 'calendario' | 'minhas' | 'compartilhadas';
+export type ViewTarefas = 'lista' | 'kanban' | 'calendario' | 'minhas' | 'compartilhadas' | 'todas';
 
 interface BottomNavProps {
   view: ViewTarefas;
@@ -16,7 +17,7 @@ const ABAS: Array<{ id: ViewTarefas | 'listas'; label: string; icon: typeof User
   { id: 'minhas', label: 'Minhas', icon: UserCheck },
   { id: 'lista', label: 'Lista', icon: ListTodo },
   { id: 'calendario', label: 'Agenda', icon: CalendarDays },
-  { id: 'listas', label: 'Listas', icon: ClipboardList },
+  { id: 'listas', label: 'Pastas', icon: ClipboardList },
 ];
 
 /**
@@ -55,24 +56,28 @@ export function BottomNav({ view, onView, onAbrirListas, pendencias }: BottomNav
 }
 
 interface ListasSheetProps {
-  lists: TaskList[];
+  arvorePastas: NoPasta[];
+  temPastas: boolean;
   selectedId: string | null;
   onSelecionar: (id: string) => void;
   onNovaLista: () => void;
+  onNovaSubpasta: (parentId: string) => void;
   onCompartilhadas: () => void;
+  onTodas: () => void;
   onCampos: () => void;
   onTemplates: () => void;
   onClose: () => void;
 }
 
 /**
- * Seletor de listas em folha, substituindo a sidebar fixa no celular. Também
+ * Seletor de pastas em folha, substituindo a sidebar fixa no celular. Também
  * é onde ficam os atalhos de configuração (campos personalizados, templates
- * de checklist) — no desktop eles vivem na mesma sidebar das listas, então
+ * de checklist) — no desktop eles vivem na mesma sidebar das pastas, então
  * faz sentido agrupar aqui a versão mobile também.
  */
 export function ListasSheet({
-  lists, selectedId, onSelecionar, onNovaLista, onCompartilhadas, onCampos, onTemplates, onClose,
+  arvorePastas, temPastas, selectedId, onSelecionar, onNovaLista, onNovaSubpasta,
+  onCompartilhadas, onTodas, onCampos, onTemplates, onClose,
 }: ListasSheetProps) {
   useVoltarFecha(true, onClose);
 
@@ -88,29 +93,41 @@ export function ListasSheet({
         </div>
 
         <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 shrink-0">
-          <span className="text-sm font-semibold text-slate-800">Listas</span>
+          <span className="text-sm font-semibold text-slate-800">Pastas</span>
           <button onClick={onClose} className="p-1.5 -m-1.5 text-slate-400 active:text-slate-600">
             <X size={18} />
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto py-1">
-          {lists.map((l) => (
-            <button
-              key={l.id}
-              onClick={() => {
-                onSelecionar(l.id);
-                onClose();
-              }}
-              className={`w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-slate-50 ${
-                selectedId === l.id ? 'text-indigo-700 font-medium bg-indigo-50/50' : 'text-slate-700'
-              }`}
-            >
-              <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: l.color }} />
-              <span className="flex-1 truncate text-sm">{l.name}</span>
-              {l.open_count > 0 && <span className="text-xs text-slate-400">{l.open_count}</span>}
-            </button>
-          ))}
+          <button
+            onClick={() => {
+              onClose();
+              onTodas();
+            }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-slate-600 active:bg-slate-50"
+          >
+            <Layers size={16} className="shrink-0 text-slate-400" />
+            <span className="text-sm">Todas as tarefas</span>
+          </button>
+
+          <ArvorePastas
+            nos={arvorePastas}
+            selectedId={selectedId}
+            onSelecionar={(id) => {
+              onSelecionar(id);
+              onClose();
+            }}
+            onNovaSubpasta={(parentId) => {
+              onClose();
+              onNovaSubpasta(parentId);
+            }}
+            compacto
+          />
+
+          {!temPastas && (
+            <p className="px-4 py-3 text-xs text-slate-400">Nenhuma pasta ainda.</p>
+          )}
 
           <button
             onClick={() => {
@@ -120,7 +137,7 @@ export function ListasSheet({
             className="w-full flex items-center gap-3 px-4 py-3.5 text-left text-indigo-600 active:bg-slate-50"
           >
             <Plus size={16} className="shrink-0" />
-            <span className="text-sm font-medium">Nova lista</span>
+            <span className="text-sm font-medium">Nova pasta</span>
           </button>
 
           <div className="mt-1 pt-1 border-t border-slate-100">

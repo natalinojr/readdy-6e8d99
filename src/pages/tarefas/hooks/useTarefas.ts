@@ -18,6 +18,8 @@ export interface TaskList {
   color: string;
   icon: string | null;
   sort_order: number;
+  /** Pasta-mãe — null = pasta raiz. Profundidade ilimitada. */
+  parent_list_id: string | null;
   statuses: TaskStatus[];
   open_count: number;
 }

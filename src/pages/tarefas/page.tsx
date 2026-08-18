@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, SlidersHorizontal, ListChecks, ArrowLeft } from 'lucide-react';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, ArrowLeft } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -17,15 +17,17 @@ import TemplatesManager from './components/TemplatesManager';
 import NotificacoesInbox, { calcularVencimentos } from './components/NotificacoesInbox';
 import ViewsSalvas from './components/ViewsSalvas';
 import FiltrosBar from './components/FiltrosBar';
+import ArvorePastas from './components/ArvorePastas';
 import { BottomNav, ListasSheet } from './components/MobileNav';
 import type { Filtros, GroupBy } from './lib/agrupamento';
 import { FILTROS_VAZIOS, aplicarFiltros } from './lib/agrupamento';
+import { montarArvorePastas } from './lib/pastas';
 import { useIsMobile } from './lib/mobile';
 import { atualizarBadge } from '@/lib/pwa';
 
 const CORES_LISTA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#64748b'];
 
-type View = 'lista' | 'kanban' | 'calendario' | 'minhas' | 'compartilhadas';
+type View = 'lista' | 'kanban' | 'calendario' | 'minhas' | 'compartilhadas' | 'todas';
 
 const VIEWS_DESKTOP: Array<{ id: View; label: string; icon: typeof ListTodo }> = [
   { id: 'lista', label: 'Lista', icon: ListTodo },
@@ -66,6 +68,9 @@ export default function TarefasPage() {
   const [showListasSheet, setShowListasSheet] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [newListColor, setNewListColor] = useState(CORES_LISTA[0]);
+  const [newListParentId, setNewListParentId] = useState<string | null>(null);
+
+  const arvorePastas = useMemo(() => montarArvorePastas(lists), [lists]);
 
   // Clique na notificação push abre em /tarefas?task=<id>: abre a tarefa e
   // limpa o parâmetro, para um F5 depois não reabrir o mesmo drawer.
@@ -99,9 +104,9 @@ export default function TarefasPage() {
 
   const selectedList = lists.find((l) => l.id === selectedListId) ?? lists[0] ?? null;
 
-  // "Minhas"/"Compartilhadas" são cross-listas; as demais views são escopadas na lista selecionada.
+  // "Minhas"/"Compartilhadas"/"Todas" são cross-pastas; as demais views são escopadas na pasta selecionada.
   const tarefasVisiveis = useMemo(() => {
-    const base = view === 'minhas' || view === 'compartilhadas'
+    const base = view === 'minhas' || view === 'compartilhadas' || view === 'todas'
       ? tasks
       : tasks.filter((t) => t.list_id === selectedList?.id);
     return aplicarFiltros(base, filtros);
@@ -121,14 +126,20 @@ export default function TarefasPage() {
   const criarLista = async () => {
     const name = newListName.trim();
     if (!name) return;
-    const res = await write('create_list', { name, color: newListColor });
+    const res = await write('create_list', { name, color: newListColor, parent_list_id: newListParentId });
     if (!res.success) {
-      toast.error('Erro ao criar lista', res.error);
+      toast.error('Erro ao criar pasta', res.error);
       return;
     }
     setShowNewList(false);
     setNewListName('');
+    setNewListParentId(null);
     if (res.id) setSelectedListId(res.id);
+  };
+
+  const abrirNovaPasta = (parentId: string | null) => {
+    setNewListParentId(parentId);
+    setShowNewList(true);
   };
 
   // /tarefas roda em modo terminal (ver TERMINAL_ROUTES no AppLayout) — sem
@@ -145,20 +156,20 @@ export default function TarefasPage() {
 
       {error && !loading && <p className="text-sm text-red-500">Erro ao carregar tarefas: {error}</p>}
 
-      {!loading && !error && (view === 'minhas' || view === 'compartilhadas') && (
+      {!loading && !error && (view === 'minhas' || view === 'compartilhadas' || view === 'todas') && (
         <MinhasTarefas
           tasks={tarefasVisiveis}
           lists={lists}
           campos={campos}
           usuarios={usuariosAtivos}
           meuId={user?.id ?? null}
-          apenasCompartilhadas={view === 'compartilhadas'}
+          modo={view === 'minhas' ? 'minhas' : view === 'compartilhadas' ? 'compartilhadas' : 'todas'}
           write={write}
           onOpenTask={setOpenTaskId}
         />
       )}
 
-      {!loading && !error && view !== 'minhas' && view !== 'compartilhadas' && selectedList && (
+      {!loading && !error && view !== 'minhas' && view !== 'compartilhadas' && view !== 'todas' && selectedList && (
         <>
           {view === 'lista' && (
             <ViewLista
@@ -196,15 +207,15 @@ export default function TarefasPage() {
         </>
       )}
 
-      {!loading && !error && view !== 'minhas' && view !== 'compartilhadas' && !selectedList && (
+      {!loading && !error && view !== 'minhas' && view !== 'compartilhadas' && view !== 'todas' && !selectedList && (
         <div className="text-center py-16">
           <ClipboardList size={40} className="mx-auto text-slate-300 mb-3" />
-          <p className="text-sm text-slate-500 mb-4">Organize o trabalho da equipe em listas de tarefas.</p>
+          <p className="text-sm text-slate-500 mb-4">Organize suas tarefas em pastas — quantas quiser, dentro umas das outras.</p>
           <button
-            onClick={() => setShowNewList(true)}
+            onClick={() => abrirNovaPasta(null)}
             className="px-4 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium active:bg-indigo-700"
           >
-            Criar primeira lista
+            Criar primeira pasta
           </button>
         </div>
       )}
@@ -228,9 +239,9 @@ export default function TarefasPage() {
             <ClipboardList size={16} className="text-indigo-500" /> Tarefas
           </h2>
           <button
-            onClick={() => setShowNewList(true)}
+            onClick={() => abrirNovaPasta(null)}
             className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-indigo-500"
-            title="Nova lista"
+            title="Nova pasta"
           >
             <Plus size={16} />
           </button>
@@ -255,33 +266,33 @@ export default function TarefasPage() {
             <Users size={14} className="shrink-0" />
             <span className="flex-1">Tarefas compartilhadas</span>
           </button>
+          <button
+            onClick={() => setView('todas')}
+            className={`w-full flex items-center gap-2 px-4 py-2 text-sm text-left transition ${
+              view === 'todas' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <Layers size={14} className="shrink-0" />
+            <span className="flex-1">Todas as tarefas</span>
+          </button>
 
           <div className="px-4 pt-3 pb-1">
-            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Listas</span>
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Pastas</span>
           </div>
 
-          {lists.map((l) => (
-            <button
-              key={l.id}
-              onClick={() => {
-                setSelectedListId(l.id);
-                if (view === 'minhas') setView('lista');
-              }}
-              className={`w-full flex items-center gap-2 px-4 py-2 text-sm text-left transition ${
-                view !== 'minhas' && selectedList?.id === l.id
-                  ? 'bg-indigo-50 text-indigo-700 font-medium'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: l.color }} />
-              <span className="flex-1 truncate">{l.name}</span>
-              {l.open_count > 0 && <span className="text-xs text-slate-400">{l.open_count}</span>}
-            </button>
-          ))}
+          <ArvorePastas
+            nos={arvorePastas}
+            selectedId={view !== 'minhas' && view !== 'compartilhadas' && view !== 'todas' ? selectedList?.id ?? null : null}
+            onSelecionar={(id) => {
+              setSelectedListId(id);
+              if (view === 'minhas' || view === 'compartilhadas' || view === 'todas') setView('lista');
+            }}
+            onNovaSubpasta={abrirNovaPasta}
+          />
 
           {!loading && lists.length === 0 && (
             <p className="px-4 py-6 text-xs text-slate-400 text-center">
-              Nenhuma lista ainda.<br />Crie a primeira com o botão +
+              Nenhuma pasta ainda.<br />Crie a primeira com o botão +
             </p>
           )}
         </div>
@@ -322,6 +333,10 @@ export default function TarefasPage() {
             ) : view === 'compartilhadas' ? (
               <>
                 <Users size={16} className="text-indigo-500 shrink-0" /> Tarefas compartilhadas
+              </>
+            ) : view === 'todas' ? (
+              <>
+                <Layers size={16} className="text-indigo-500 shrink-0" /> Todas as tarefas
               </>
             ) : (
               <>
@@ -408,14 +423,17 @@ export default function TarefasPage() {
 
       {showListasSheet && (
         <ListasSheet
-          lists={lists}
-          selectedId={selectedList?.id ?? null}
+          arvorePastas={arvorePastas}
+          temPastas={lists.length > 0}
+          selectedId={view !== 'minhas' && view !== 'compartilhadas' && view !== 'todas' ? selectedList?.id ?? null : null}
           onSelecionar={(id) => {
             setSelectedListId(id);
-            if (view === 'minhas') setView('lista');
+            if (view === 'minhas' || view === 'compartilhadas' || view === 'todas') setView('lista');
           }}
-          onNovaLista={() => setShowNewList(true)}
+          onNovaLista={() => abrirNovaPasta(null)}
+          onNovaSubpasta={abrirNovaPasta}
           onCompartilhadas={() => setView('compartilhadas')}
+          onTodas={() => setView('todas')}
           onCampos={() => setShowCampos(true)}
           onTemplates={() => setShowTemplates(true)}
           onClose={() => setShowListasSheet(false)}
@@ -424,9 +442,11 @@ export default function TarefasPage() {
 
       {/* ── Modal: nova lista ── */}
       {showNewList && (
-        <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/30 p-4" onClick={() => setShowNewList(false)}>
+        <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/30 p-4" onClick={() => { setShowNewList(false); setNewListParentId(null); }}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-slate-800 mb-3">Nova lista de tarefas</h3>
+            <h3 className="text-sm font-semibold text-slate-800 mb-3">
+              {newListParentId ? `Nova subpasta em "${lists.find((l) => l.id === newListParentId)?.name}"` : 'Nova pasta'}
+            </h3>
             <input
               autoFocus
               value={newListName}
@@ -446,7 +466,7 @@ export default function TarefasPage() {
               ))}
             </div>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setShowNewList(false)} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">
+              <button onClick={() => { setShowNewList(false); setNewListParentId(null); }} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">
                 Cancelar
               </button>
               <button

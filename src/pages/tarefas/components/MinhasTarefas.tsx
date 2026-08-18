@@ -6,14 +6,20 @@ import type { UsuarioOption } from '../lib/agrupamento';
 import CampoBadge from './campos/CampoBadge';
 import { iniciais } from './TaskCard';
 
+type ModoMinhasTarefas = 'minhas' | 'compartilhadas' | 'todas';
+
 interface MinhasTarefasProps {
   tasks: TaskRow[];
   lists: TaskList[];
   campos: CampoCustom[];
   usuarios: UsuarioOption[];
   meuId: string | null;
-  /** true = só o que outra pessoa me atribuiu (tarefas de listas que não são minhas). */
-  apenasCompartilhadas?: boolean;
+  /**
+   * 'minhas' = atribuídas a mim (de qualquer pasta); 'compartilhadas' = só as
+   * que vieram de pasta de outra pessoa; 'todas' = tudo que é meu — pastas que
+   * criei + o que me atribuíram — independente de pasta.
+   */
+  modo?: ModoMinhasTarefas;
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; id?: string; error?: string }>;
   onOpenTask: (taskId: string) => void;
 }
@@ -42,20 +48,20 @@ function classificar(task: TaskRow): Balde {
 }
 
 export default function MinhasTarefas({
-  tasks, lists, campos, usuarios, meuId, apenasCompartilhadas = false, write, onOpenTask,
+  tasks, lists, campos, usuarios, meuId, modo = 'minhas', write, onOpenTask,
 }: MinhasTarefasProps) {
-  // Cross-listas: só o que está atribuído a mim e ainda em aberto. Em
-  // "Compartilhadas", só o que veio de uma lista de outra pessoa.
+  // Cross-pastas, sempre só o que está em aberto. "Minhas" = atribuídas a mim;
+  // "Compartilhadas" = só o que veio de pasta de outra pessoa; "Todas" = tudo
+  // que é meu, seja porque criei a pasta ou porque fui marcado como responsável.
   const minhas = useMemo(
     () =>
-      tasks.filter(
-        (t) =>
-          t.assignee_id === meuId &&
-          t.status_category !== 'done' &&
-          t.status_category !== 'cancelled' &&
-          (!apenasCompartilhadas || t.created_by !== meuId),
-      ),
-    [tasks, meuId, apenasCompartilhadas],
+      tasks.filter((t) => {
+        if (t.status_category === 'done' || t.status_category === 'cancelled') return false;
+        if (modo === 'todas') return t.created_by === meuId || t.assignee_id === meuId;
+        if (modo === 'compartilhadas') return t.assignee_id === meuId && t.created_by !== meuId;
+        return t.assignee_id === meuId;
+      }),
+    [tasks, meuId, modo],
   );
 
   const agrupadas = useMemo(() => {
@@ -87,7 +93,11 @@ export default function MinhasTarefas({
       <div className="text-center py-16">
         <CheckCircle2 size={40} className="mx-auto text-emerald-300 mb-3" />
         <p className="text-sm text-slate-500">
-          {apenasCompartilhadas ? 'Ninguém compartilhou uma tarefa com você ainda.' : 'Nada atribuído a você no momento.'}
+          {modo === 'compartilhadas'
+            ? 'Ninguém compartilhou uma tarefa com você ainda.'
+            : modo === 'todas'
+              ? 'Nenhuma tarefa em aberto.'
+              : 'Nada atribuído a você no momento.'}
         </p>
       </div>
     );

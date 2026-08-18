@@ -121,8 +121,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (!taskId) return json({ error: 'task_id é obrigatório' }, 400);
 
       const { data: taskRow } = await admin
-        .from('tasks').select('id, created_by, assignee_id').eq('id', taskId).eq('tenant_id', tenantId).maybeSingle();
-      if (!taskRow) return json({ error: 'Tarefa não encontrada neste tenant' }, 404);
+        .from('tasks').select('id, created_by, assignee_id').eq('id', taskId).maybeSingle();
+      if (!taskRow) return json({ error: 'Tarefa não encontrada' }, 404);
       if (taskRow.created_by !== user.id && taskRow.assignee_id !== user.id) {
         return json({ error: 'Você não tem permissão para anexar arquivos nesta tarefa' }, 403);
       }
@@ -229,11 +229,15 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
     };
 
-    // Garante que um registro pertence ao tenant resolvido
+    // Busca um registro do módulo de tarefas por id. Sem filtro de tenant de
+    // propósito: tarefas são do usuário, não da loja — quem criou uma pasta
+    // com a Loja A ativa continua dono dela depois de trocar pra Loja B.
+    // A autorização de verdade vem de created_by/assignee_id (assertListOwner,
+    // assertTaskAccess e os checks manuais logo abaixo), nunca do tenant_id.
     const assertOwned = async (table: string, id: string): Promise<Record<string, unknown>> => {
-      const { data, error } = await admin.from(table).select('*').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
+      const { data, error } = await admin.from(table).select('*').eq('id', id).maybeSingle();
       if (error) throw new Error(errMsg(error));
-      if (!data) throw new Error(`${table}: registro não encontrado neste tenant`);
+      if (!data) throw new Error(`${table}: registro não encontrado`);
       return data as Record<string, unknown>;
     };
 
@@ -258,10 +262,14 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     switch (action) {
       // ═══ Listas ═══
       case 'create_list': {
-        const { name, color, icon } = body;
+        const { name, color, icon, parent_list_id } = body;
         if (!name) return json({ error: 'name is required' }, 400);
+        if (parent_list_id) await assertListOwner(parent_list_id);
         const { data, error } = await admin.from('task_lists')
-          .insert({ tenant_id: tenantId, name, color: color ?? '#6366f1', icon: icon ?? null, created_by: user.id })
+          .insert({
+            tenant_id: tenantId, name, color: color ?? '#6366f1', icon: icon ?? null,
+            parent_list_id: parent_list_id ?? null, created_by: user.id,
+          })
           .select('id').single();
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true, id: data.id });
@@ -308,7 +316,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (reassign_to) {
           const reassignStatus = await assertOwned('task_statuses', reassign_to);
           await assertListOwner(reassignStatus.list_id as string);
-          await admin.from('tasks').update({ status_id: reassign_to }).eq('status_id', status_id).eq('tenant_id', tenantId);
+          await admin.from('tasks').update({ status_id: reassign_to }).eq('status_id', status_id);
         }
         const { error } = await admin.from('task_statuses').delete().eq('id', status_id);
         if (error) return json({ error: errMsg(error) }, 500);
@@ -374,8 +382,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         let createdNextId: string | null = null;
         if (patch.status_id && patch.status_id !== current.status_id) {
           const { data: newStatus } = await admin.from('task_statuses')
-            .select('id, name, category').eq('id', patch.status_id).eq('tenant_id', tenantId).maybeSingle();
-          if (!newStatus) return json({ error: 'status inexistente neste tenant' }, 400);
+            .select('id, name, category').eq('id', patch.status_id).maybeSingle();
+          if (!newStatus) return json({ error: 'status inexistente' }, 400);
           await logActivity(task_id, 'status_changed', { to: newStatus.name });
           if (newStatus.category === 'done') {
             patch.completed_at = new Date().toISOString();
@@ -519,14 +527,15 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { name, color } = body;
         if (!name) return json({ error: 'name is required' }, 400);
         const { data, error } = await admin.from('task_tags')
-          .insert({ tenant_id: tenantId, name, color: color ?? '#64748b' })
+          .insert({ tenant_id: tenantId, name, color: color ?? '#64748b', created_by: user.id })
           .select('id').single();
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true, id: data.id });
       }
       case 'update_tag': {
         const { tag_id, ...rest } = body;
-        await assertOwned('task_tags', tag_id);
+        const tag = await assertOwned('task_tags', tag_id);
+        if (tag.created_by !== user.id) return json({ error: 'Esta etiqueta é de outro usuário' }, 403);
         const patch: Record<string, unknown> = {};
         for (const k of ['name', 'color']) if (rest[k] !== undefined) patch[k] = rest[k];
         const { error } = await admin.from('task_tags').update(patch).eq('id', tag_id);
@@ -535,7 +544,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'delete_tag': {
         const { tag_id } = body;
-        await assertOwned('task_tags', tag_id);
+        const tag = await assertOwned('task_tags', tag_id);
+        if (tag.created_by !== user.id) return json({ error: 'Esta etiqueta é de outro usuário' }, 403);
         const { error } = await admin.from('task_tags').delete().eq('id', tag_id);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
@@ -548,14 +558,15 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (!FIELD_TYPES.includes(field_type)) return json({ error: `field_type inválido: ${field_type}` }, 400);
         if (list_id) await assertListOwner(list_id);
         const { data, error } = await admin.from('task_custom_fields')
-          .insert({ tenant_id: tenantId, name, field_type, list_id: list_id ?? null, options: options ?? [], show_on_card: show_on_card ?? false, sort_order: Date.now() })
+          .insert({ tenant_id: tenantId, name, field_type, list_id: list_id ?? null, options: options ?? [], show_on_card: show_on_card ?? false, sort_order: Date.now(), created_by: user.id })
           .select('id').single();
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true, id: data.id });
       }
       case 'update_field': {
         const { field_id, ...rest } = body;
-        await assertOwned('task_custom_fields', field_id);
+        const field = await assertOwned('task_custom_fields', field_id);
+        if (field.created_by !== user.id) return json({ error: 'Este campo é de outro usuário' }, 403);
         const patch: Record<string, unknown> = {};
         for (const k of ['name', 'options', 'show_on_card', 'sort_order', 'is_archived']) {
           if (rest[k] !== undefined) patch[k] = rest[k];
@@ -589,27 +600,27 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         // Filtra por user_id: ninguém marca a notificação de outro como lida
         const { error } = await admin.from('task_notifications')
           .update({ is_read: true })
-          .eq('id', notification_id).eq('user_id', user.id).eq('tenant_id', tenantId);
+          .eq('id', notification_id).eq('user_id', user.id);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
       }
       case 'mark_all_notifications_read': {
         const { error } = await admin.from('task_notifications')
           .update({ is_read: true })
-          .eq('user_id', user.id).eq('tenant_id', tenantId).eq('is_read', false);
+          .eq('user_id', user.id).eq('is_read', false);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
       }
 
       // ═══ Views salvas ═══
       case 'create_view': {
-        const { name, list_id, view_type, group_by, filters, is_shared } = body;
+        const { name, list_id, view_type, group_by, filters } = body;
         if (!name) return json({ error: 'name is required' }, 400);
         if (list_id) await assertListOwner(list_id);
         const { data, error } = await admin.from('task_views').insert({
           tenant_id: tenantId,
           list_id: list_id ?? null,
-          user_id: is_shared ? null : user.id, // null = visível para a equipe
+          user_id: user.id,
           name,
           view_type: view_type ?? 'lista',
           group_by: group_by ?? 'status',
@@ -623,15 +634,11 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'update_view': {
         const { view_id, ...rest } = body;
         const view = await assertOwned('task_views', view_id);
-        // Views pessoais só o dono edita; compartilhadas, quem criou
-        if (view.user_id && view.user_id !== user.id) {
-          return json({ error: 'Esta view pertence a outro usuário' }, 403);
-        }
+        if (view.created_by !== user.id) return json({ error: 'Esta view é de outro usuário' }, 403);
         const patch: Record<string, unknown> = {};
         for (const k of ['name', 'view_type', 'group_by', 'filters', 'sort_order']) {
           if (rest[k] !== undefined) patch[k] = rest[k];
         }
-        if (rest.is_shared !== undefined) patch.user_id = rest.is_shared ? null : user.id;
         const { error } = await admin.from('task_views').update(patch).eq('id', view_id);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
@@ -639,9 +646,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'delete_view': {
         const { view_id } = body;
         const view = await assertOwned('task_views', view_id);
-        if (view.user_id && view.user_id !== user.id) {
-          return json({ error: 'Esta view pertence a outro usuário' }, 403);
-        }
+        if (view.created_by !== user.id) return json({ error: 'Esta view é de outro usuário' }, 403);
         const { error } = await admin.from('task_views').delete().eq('id', view_id);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
@@ -683,7 +688,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'update_checklist_template': {
         const { template_id, name, items } = body;
-        await assertOwned('task_checklist_templates', template_id);
+        const template0 = await assertOwned('task_checklist_templates', template_id);
+        if (template0.created_by !== user.id) return json({ error: 'Este template é de outro usuário' }, 403);
         const patch: Record<string, unknown> = {};
         if (name !== undefined) patch.name = name;
         if (items !== undefined) {
@@ -696,7 +702,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'delete_checklist_template': {
         const { template_id } = body;
-        await assertOwned('task_checklist_templates', template_id);
+        const template1 = await assertOwned('task_checklist_templates', template_id);
+        if (template1.created_by !== user.id) return json({ error: 'Este template é de outro usuário' }, 403);
         const { error } = await admin.from('task_checklist_templates').delete().eq('id', template_id);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
