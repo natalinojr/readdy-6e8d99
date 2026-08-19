@@ -299,11 +299,51 @@ export function useTarefas() {
         console.error(`[useTarefas] ${action} falhou:`, msg);
         return { success: false, error: msg };
       }
+
+      // Mostra a tarefa nova na hora, sem esperar o reload completo (7 RPCs
+      // em paralelo) nem o round-trip do broadcast do realtime — os dois
+      // ainda rolam logo em seguida, mas só pra confirmar/completar campos
+      // (responsável, tags…), que já nascem vazios/óbvios mesmo.
+      if (action === 'create_task' && data.id) {
+        const listId = payload.list_id as string;
+        const lista = lists.find((l) => l.id === listId);
+        const statusId = (payload.status_id as string | undefined) ?? lista?.statuses[0]?.id ?? null;
+        const status = lista?.statuses.find((s) => s.id === statusId) ?? null;
+        const otimista: TaskRow = {
+          id: data.id,
+          list_id: listId,
+          list_name: lista?.name ?? null,
+          list_color: lista?.color ?? null,
+          parent_task_id: (payload.parent_task_id as string | undefined) ?? null,
+          title: String(payload.title ?? ''),
+          status_id: statusId,
+          status_category: status?.category ?? null,
+          priority: Number(payload.priority ?? 0),
+          assignee_id: (payload.assignee_id as string | undefined) ?? null,
+          assignee_name: null,
+          start_date: (payload.start_date as string | undefined) ?? null,
+          due_date: (payload.due_date as string | undefined) ?? null,
+          due_has_time: Boolean(payload.due_has_time),
+          sort_order: Number(payload.sort_order ?? Date.now()),
+          recurrence: (payload.recurrence as TaskRow['recurrence']) ?? null,
+          completed_at: null,
+          created_at: new Date().toISOString(),
+          created_by: user?.id ?? null,
+          tags: [],
+          checklist_total: 0,
+          checklist_done: 0,
+          subtask_total: 0,
+          comment_count: 0,
+          field_values: {},
+        };
+        setTasks((prev) => [...prev, otimista]);
+      }
+
       // Recarrega em background (o broadcast também dispara, mas garante consistência)
       reload();
       return { success: true, id: data.id };
     },
-    [tenantId, reload],
+    [tenantId, reload, lists, user?.id],
   );
 
   const fetchDetail = useCallback(
