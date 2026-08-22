@@ -388,23 +388,41 @@ export async function queueOrderForPrint(
     console.log(`[queueOrderForPrint]   estacao[${stKey}]: ${stationItems.length} itens -> ${partesInfo}`);
   });
 
-  // — Coleta todas as promessas de enfileiramento (cozinha + bar) para disparar em paralelo —
-  // Isso garante que tickets de bebidas cheguem na fila ao mesmo tempo que os de cozinha,
-  // evitando o delay de 1-3s que ocorria por conta do encadeamento sequencial de awaits.
+  // — Agrupar itens de bar pela station_id real (vinda da categoria), nao hardcoded "bar" —
+  const barGroupedByStation = new Map<string, OrderItemForPrint[]>();
+  for (const item of itensBar) {
+    const key = item.station_id || 'bar'; // fallback "bar" so se nao tiver station_id
+    if (!barGroupedByStation.has(key)) barGroupedByStation.set(key, []);
+    barGroupedByStation.get(key)!.push(item);
+  }
+
+  // — Mesclar cozinha + bar por estacao ANTES de enfileirar —
+  // Um item de cozinha (skip_kds=false, ex. suco) e um item de bar (skip_kds=true, ex.
+  // refrigerante) podem cair na MESMA estacao fisica (ex. BAR). Gerar 2 tickets separados
+  // para a mesma (order_id, station_key) causa uma corrida na dedup de `enqueue_print_ticket`
+  // (SELECT-then-INSERT sem lock): quem grava por ultimo "deduplica" contra o primeiro e o
+  // outro payload e perdido silenciosamente (bug real: pedido saiu sem o suco na Vila Leste
+  // em 2026-08-22). Por isso mesclamos num unico ticket por estacao.
+  const allStationKeys = new Set<string>([...groupedByStation.keys(), ...barGroupedByStation.keys()]);
+
+  console.log(`[queueOrderForPrint] Gerando ${allStationKeys.size} ticket(s) por estacao (cozinha+bar mesclados)...`);
   const enqueuePromises: Promise<void>[] = [];
 
-  // — Ticket por estacao de cozinha —
-  console.log(`[queueOrderForPrint] Gerando ${groupedByStation.size} ticket(s) de cozinha...`);
-  for (const [estacaoId, stationItems] of groupedByStation.entries()) {
-    const impressoraId = resolveImpressoraId(estacaoId);
+  for (const estacaoId of allStationKeys) {
+    const kitchenItems = groupedByStation.get(estacaoId) ?? [];
+    const barItems = barGroupedByStation.get(estacaoId) ?? [];
+    const hasBar = barItems.length > 0;
 
+    const impressoraId = resolveImpressoraId(estacaoId);
     const estacaoNome = stationNameMap.get(estacaoId);
+    const extraLabel = hasBar ? (estacaoNome || 'BAR') : undefined;
+
     const payload = getTicketPayload(
       orderNumber,
       origin,
       destino,
-      buildTicketItems(stationItems),
-      undefined,
+      buildTicketItems([...kitchenItems, ...barItems]),
+      extraLabel,
       impressoraId,
       estacaoNome,
       total,
@@ -412,8 +430,11 @@ export async function queueOrderForPrint(
       senha,
     );
 
-    const stationLabel = estacaoNome ? `${estacaoNome}` : destinoToString(destino);
-    console.log(`[queueOrderForPrint]   Enfileirando ticket estacao=${estacaoId} (${estacaoNome || '?'}) impressora=${impressoraId} itens=${stationItems.length}`);
+    const stationLabel = hasBar
+      ? (estacaoNome ? `${destinoToString(destino)} — ${estacaoNome}` : `${destinoToString(destino)} — BAR`)
+      : (estacaoNome ? estacaoNome : destinoToString(destino));
+
+    console.log(`[queueOrderForPrint]   Enfileirando ticket estacao=${estacaoId} (${estacaoNome || '?'}) impressora=${impressoraId} itens=${kitchenItems.length + barItems.length} (cozinha=${kitchenItems.length}, bar=${barItems.length})`);
     enqueuePromises.push(
       enqueueTicket(
         tenantId,
@@ -427,52 +448,7 @@ export async function queueOrderForPrint(
     );
   }
 
-  // — Ticket do bar (bebidas, sobremesas, etc.) agrupado por station_id real —
-  if (itensBar.length > 0) {
-    // Agrupar itens de bar pela station_id real (vinda da categoria), nao hardcoded "bar"
-    const barGroupedByStation = new Map<string, OrderItemForPrint[]>();
-    for (const item of itensBar) {
-      const key = item.station_id || 'bar'; // fallback "bar" so se nao tiver station_id
-      if (!barGroupedByStation.has(key)) barGroupedByStation.set(key, []);
-      barGroupedByStation.get(key)!.push(item);
-    }
-
-    for (const [estacaoId, barStationItems] of barGroupedByStation.entries()) {
-      const impressoraIdBar = resolveImpressoraId(estacaoId);
-
-      const estacaoNomeBar = stationNameMap.get(estacaoId);
-      const payload = getTicketPayload(
-        orderNumber,
-        origin,
-        destino,
-        buildTicketItems(barStationItems),
-        estacaoNomeBar || 'BAR',
-        impressoraIdBar,
-        estacaoNomeBar,
-        total,
-        paraViagem,
-        senha,
-      );
-
-      const stationLabelBar = estacaoNomeBar
-        ? `${destinoToString(destino)} — ${estacaoNomeBar}`
-        : `${destinoToString(destino)} — BAR`;
-
-      enqueuePromises.push(
-        enqueueTicket(
-          tenantId,
-          orderId,
-          orderNumber,
-          estacaoId,
-          stationLabelBar,
-          payload,
-          force,
-        ),
-      );
-    }
-  }
-
-  // Dispara todos os enqueues em paralelo — cozinha e bar ao mesmo tempo
+  // Dispara todos os enqueues em paralelo — uma unica chamada por estacao, sem colisao de station_key
   await Promise.all(enqueuePromises);
 
   console.log(`[queueOrderForPrint] FIM pedido #${orderNumber}`);
