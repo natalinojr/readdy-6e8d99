@@ -233,7 +233,7 @@ export default function KDSLogin({ onLoginSuccess }: Props) {
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold truncate">{op.nome.split(' ')[0]}</p>
-                            <p className="text-[9px] text-zinc-500 truncate">{op.perfil === 'supervisor' ? 'Supervisor' : 'Operador'}</p>
+                            <p className="text-[9px] text-zinc-500 truncate">{String(op.perfil) === 'supervisor' ? 'Supervisor' : 'Operador'}</p>
                           </div>
                           {sel && <i className="ri-check-line text-amber-400 flex-shrink-0 text-xs" />}
                         </button>

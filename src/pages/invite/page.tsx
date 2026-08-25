@@ -20,6 +20,7 @@ const PERFIL_LABEL: Record<UserPerfil, string> = {
   garcom: 'Garçom',
   cozinha: 'Cozinha / KDS',
   gestor_entregas: 'Gestor de Entregas',
+  tarefas: 'Tarefas',
   totem: 'Totem',
 };
 
@@ -30,6 +31,7 @@ const PERFIL_ROTA: Record<UserPerfil, string> = {
   garcom: '/pdv/garcom',
   cozinha: '/kds',
   gestor_entregas: '/gestor-entregas',
+  tarefas: '/tarefas',
   totem: '/autoatendimento',
 };
 
@@ -40,6 +42,7 @@ const PERFIL_COLOR: Record<UserPerfil, string> = {
   garcom: 'text-emerald-600 bg-emerald-50',
   cozinha: 'text-sky-600 bg-sky-50',
   gestor_entregas: 'text-orange-600 bg-orange-50',
+  tarefas: 'text-indigo-600 bg-indigo-50',
   totem: 'text-orange-600 bg-orange-50',
 };
 

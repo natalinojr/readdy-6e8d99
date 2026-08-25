@@ -46,6 +46,11 @@ export default function RotaProtegida({ children }: Props) {
     return <Navigate to="/gestor-entregas" replace />;
   }
 
+  // Perfil restrito "Tarefas": só pode ficar no módulo de tarefas.
+  if (user?.perfil === 'tarefas' && !location.pathname.startsWith('/tarefas')) {
+    return <Navigate to="/tarefas" replace />;
+  }
+
   // Enquanto carrega permissões, não bloqueia (evita flash de redirect)
   if (loading) return <>{children}</>;
 

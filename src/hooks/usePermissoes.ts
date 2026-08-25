@@ -3,7 +3,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
 
-export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas';
+export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas';
 
 export type PermissaoKey =
   | 'pdv_abrir_caixa'
@@ -41,6 +41,7 @@ const PAPEL_TO_DB_ROLE: Record<string, string> = {
   garcom: 'waiter',
   cozinha: 'kitchen',
   gestor_entregas: 'delivery_manager',
+  tarefas: 'tasks_only',
 };
 
 /** Permissões padrão por papel (fallback quando não há dados no banco) */
@@ -72,6 +73,9 @@ const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
   gestor_entregas: [
     'gestor_entregas_acessar',
   ],
+  // Sem PermissaoKey nenhuma — o módulo de Tarefas não usa esse sistema, e o
+  // resto do app fica bloqueado pelo hard-lock de rota (RotaProtegida).
+  tarefas: [],
 };
 
 export interface PermissoesContextValue {
@@ -120,10 +124,12 @@ export function usePermissoesState(): PermissoesContextValue {
       return;
     }
 
-    // Usuário com perfil totem/kiosk logado normalmente — não chama config-write
-    // pois o role 'totem' não tem permissão para get_permissions
+    // Usuário com perfil totem/kiosk/tarefas logado normalmente — não chama
+    // config-write pois esses roles não têm permissão para get_permissions
+    // (tarefas também não precisa: o módulo não usa PermissaoKey, e o resto
+    // do app já fica bloqueado pelo hard-lock de rota em RotaProtegida)
     const papelStr: string = papel;
-    if (papelStr === 'totem' || papelStr === 'kiosk' || papelStr === 'tablet') {
+    if (papelStr === 'totem' || papelStr === 'kiosk' || papelStr === 'tablet' || papelStr === 'tarefas') {
       setPermissoes([]);
       setLoading(false);
       return;

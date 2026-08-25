@@ -5,7 +5,7 @@ import { ensureFreshSession } from '@/lib/supabase';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export type UserPerfil = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'totem';
+export type UserPerfil = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem';
 
 export interface TenantOption {
   tenantId: string;
@@ -67,6 +67,7 @@ const DB_TO_FRONTEND_ROLE: Record<string, UserPerfil> = {
   waiter: 'garcom',
   kitchen: 'cozinha',
   delivery_manager: 'gestor_entregas',
+  tasks_only: 'tarefas',
   tablet: 'totem',
 };
 

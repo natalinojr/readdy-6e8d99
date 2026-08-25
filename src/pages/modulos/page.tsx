@@ -115,7 +115,7 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-indigo-50',
     acentoBorder: 'border-indigo-200/70',
     tag: 'Admin',
-    perfis: ['admin', 'gerente'],
+    perfis: ['admin', 'gerente', 'tarefas'],
   },
   {
     id: 'gestao',
@@ -298,6 +298,8 @@ export default function ModulosPage() {
     } else if (user?.perfil === 'gestor_entregas') {
       // Perfil restrito: vai direto pro único módulo permitido.
       navigate('/gestor-entregas', { replace: true });
+    } else if (user?.perfil === 'tarefas') {
+      navigate('/tarefas', { replace: true });
     }
   }, [user?.perfil, navigate]);
 

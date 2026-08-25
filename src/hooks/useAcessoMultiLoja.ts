@@ -10,6 +10,7 @@ const ROLE_MAP: Record<string, PerfilUsuario> = {
   waiter: 'garcom',
   kitchen: 'cozinha',
   delivery_manager: 'gestor_entregas',
+  tasks_only: 'tarefas',
   tablet: 'totem',
 };
 
@@ -20,6 +21,7 @@ const ROLE_MAP_REVERSE: Record<PerfilUsuario, string> = {
   garcom: 'waiter',
   cozinha: 'kitchen',
   gestor_entregas: 'delivery_manager',
+  tarefas: 'tasks_only',
   totem: 'tablet',
 };
 

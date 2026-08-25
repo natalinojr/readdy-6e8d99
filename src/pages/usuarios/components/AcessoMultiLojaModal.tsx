@@ -3,7 +3,7 @@ import { X, Building2, Check, Loader2 } from 'lucide-react';
 import { perfilConfig, type PerfilUsuario } from '@/constants/usuarios';
 import { useAcessoMultiLoja } from '@/hooks/useAcessoMultiLoja';
 
-const PERFIS_ATRIBUIVEIS: PerfilUsuario[] = ['admin', 'gerente', 'caixa', 'garcom', 'cozinha', 'gestor_entregas'];
+const PERFIS_ATRIBUIVEIS: PerfilUsuario[] = ['admin', 'gerente', 'caixa', 'garcom', 'cozinha', 'gestor_entregas', 'tarefas'];
 
 interface CelulaProps {
   perfilAtual: PerfilUsuario | null;
