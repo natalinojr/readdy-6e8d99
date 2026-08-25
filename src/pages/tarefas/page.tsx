@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, ArrowLeft } from 'lucide-react';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -13,6 +13,7 @@ import ViewCalendario from './components/ViewCalendario';
 import TaskDrawer from './components/TaskDrawer';
 import CamposCustomManager from './components/CamposCustomManager';
 import TemplatesManager from './components/TemplatesManager';
+import StatusManager from './components/StatusManager';
 import NotificacoesInbox, { calcularVencimentos } from './components/NotificacoesInbox';
 import ViewsSalvas from './components/ViewsSalvas';
 import FiltrosBar from './components/FiltrosBar';
@@ -75,6 +76,7 @@ export default function TarefasPage() {
   const [showNewList, setShowNewList] = useState(false);
   const [showCampos, setShowCampos] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showStatus, setShowStatus] = useState(false);
   const [showListasSheet, setShowListasSheet] = useState(false);
   const [showEscolherPasta, setShowEscolherPasta] = useState(false);
   const [newListName, setNewListName] = useState('');
@@ -333,6 +335,14 @@ export default function TarefasPage() {
             usuário não tinha nenhum jeito de descobrir que a opção existia. */}
         <div className="px-3 py-2.5 border-t border-slate-100 space-y-0.5">
             <button
+              onClick={() => setShowStatus(true)}
+              disabled={!selectedList}
+              title={selectedList ? undefined : 'Selecione uma pasta primeiro'}
+              className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-indigo-600 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-500"
+            >
+              <Waypoints size={13} /> Status da pasta
+            </button>
+            <button
               onClick={() => setShowCampos(true)}
               className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
             >
@@ -467,6 +477,7 @@ export default function TarefasPage() {
           onNovaSubpasta={abrirNovaPasta}
           onCompartilhadas={() => setOrigem('compartilhadas')}
           onTodas={() => setOrigem('todas')}
+          onStatus={() => setShowStatus(true)}
           onCampos={() => setShowCampos(true)}
           onTemplates={() => setShowTemplates(true)}
           onClose={() => setShowListasSheet(false)}
@@ -542,6 +553,15 @@ export default function TarefasPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Status da pasta ── */}
+      {showStatus && selectedList && (
+        <StatusManager
+          list={selectedList}
+          write={write}
+          onClose={() => setShowStatus(false)}
+        />
       )}
 
       {/* ── Campos personalizados ── */}
