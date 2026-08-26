@@ -147,11 +147,15 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
     setDetailInstallments([]);
     if (p.payment_status === 'partial' || p.payment_status === 'pending') {
       setLoadingInstallments(true);
+      // Busca pelo VÍNCULO, não pelo texto da descrição: o ilike antigo
+      // (`%fornecedor%NF%`) trazia as parcelas de TODAS as compras do mesmo
+      // fornecedor, inflando a lista de parcelas exibida no detalhe.
       const { data } = await supabase
         .from('fin_accounts_payable')
         .select('id,installment_number,installments,amount,due_date,status,paid_date,paid_amount')
         .eq('tenant_id', user!.tenantId)
-        .ilike('description', `%${p.supplier}%${p.invoice_number ? p.invoice_number : ''}%`)
+        .eq('reference_id', p.id)
+        .eq('reference_type', 'purchase')
         .order('installment_number');
       setDetailInstallments((data ?? []) as BillInstallment[]);
       setLoadingInstallments(false);

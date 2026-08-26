@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBillsPayable } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
 
 interface ContaVencida {
@@ -11,7 +12,8 @@ interface ContaVencida {
   amount: number;
   paid_amount: number | null;
   due_date: string;
-  status: 'overdue' | 'pending';
+  // 'partial' = paga em parte e ainda em aberto — também pode estar vencida
+  status: 'overdue' | 'pending' | 'partial';
   dre_category_id: string | null;
   dre_category_name?: string;
   days_overdue: number;
@@ -44,6 +46,10 @@ const AGE_LABELS: Record<AgeFilter, string> = {
   '60+': 'Mais de 60d',
 };
 
+// Saldo ainda devido: com pagamento parcial, `amount` deixa de ser o que falta
+const saldoDevedor = (c: { amount: number; paid_amount?: number | null }) =>
+  Math.max(0, Number(c.amount ?? 0) - Number(c.paid_amount ?? 0));
+
 function ageColor(days: number) {
   if (days <= 7) return { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700', badge: 'bg-amber-100 text-amber-700' };
   if (days <= 30) return { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge: 'bg-orange-100 text-orange-700' };
@@ -53,9 +59,15 @@ function ageColor(days: number) {
 
 export default function ContasVencidasPanel() {
   const { user } = useAuth();
-  const today = new Date().toISOString().split('T')[0];
+  const { pay } = useBillsPayable();
+  // Data LOCAL: toISOString() é UTC e, após as 21h no horário de Brasília,
+  // já retorna o dia seguinte — o que fazia "vencidas até hoje" incluir contas
+  // que vencem amanhã.
+  const hojeDate = new Date();
+  const today = `${hojeDate.getFullYear()}-${String(hojeDate.getMonth() + 1).padStart(2, '0')}-${String(hojeDate.getDate()).padStart(2, '0')}`;
 
   const [contas, setContas] = useState<ContaVencida[]>([]);
+  const [payError, setPayError] = useState<string | null>(null);
   const [dreCats, setDreCats] = useState<DRECat[]>([]);
   const [loading, setLoading] = useState(true);
   const [ageFilter, setAgeFilter] = useState<AgeFilter>('all');
@@ -77,7 +89,9 @@ export default function ContasVencidasPanel() {
         .from('fin_accounts_payable')
         .select('id, description, supplier, category, amount, paid_amount, due_date, status, dre_category_id')
         .eq('tenant_id', user.tenantId)
-        .in('status', ['overdue', 'pending'])
+        // 'partial' incluído: conta paga pela metade e vencida é a de MAIOR
+        // risco (o fornecedor já cobrou parte) e sumia inteira desta tela.
+        .in('status', ['overdue', 'pending', 'partial'])
         .lt('due_date', today)
         .order('due_date', { ascending: true }),
 
@@ -169,21 +183,26 @@ export default function ContasVencidasPanel() {
   }, [contas, search, catFilter, ageFilter, sortField, sortDir]);
 
   const impacto = useMemo<ImpactoDRE>(() => {
-    const totalVencido = contas.filter(c => c.status === 'overdue').reduce((s, c) => s + c.amount, 0);
-    const totalPendente = contas.filter(c => c.status === 'pending').reduce((s, c) => s + c.amount, 0);
+    // Todas as contas desta tela já estão VENCIDAS (a query filtra due_date <
+    // hoje). O que muda entre elas é quanto ainda se deve: saldo = amount −
+    // paid_amount. Somar `amount` cheio superestimava a dívida, e a separação
+    // por `status` deixava as 'partial' fora dos dois totais.
+    const totalVencido = contas.reduce((s, c) => s + saldoDevedor(c), 0);
+    const totalPendente = 0;
 
     const catMap: Record<string, { name: string; total: number; count: number }> = {};
     let semCategoria = 0;
 
     contas.forEach(c => {
+      const saldo = saldoDevedor(c);
       if (c.dre_category_id && c.dre_category_name) {
         if (!catMap[c.dre_category_id]) {
           catMap[c.dre_category_id] = { name: c.dre_category_name, total: 0, count: 0 };
         }
-        catMap[c.dre_category_id].total += c.amount;
+        catMap[c.dre_category_id].total += saldo;
         catMap[c.dre_category_id].count += 1;
       } else {
-        semCategoria += c.amount;
+        semCategoria += saldo;
       }
     });
 
@@ -204,24 +223,35 @@ export default function ContasVencidasPanel() {
     return <i className={`${sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} text-red-500 ml-1 text-xs`} />;
   };
 
+  // Pagamento passa pelo `pay_bill` (Edge Function), NUNCA por update direto:
+  // o update cru quitava a conta incondicionalmente (ressuscitando o P11), não
+  // lançava a despesa em fin_cash_flow (auto_bill_payment), não debitava o banco
+  // e não gerava a próxima ocorrência de conta recorrente — o dinheiro saía da
+  // tela mas não do sistema.
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!payModal) return;
+    const valor = Number(payForm.paid_amount);
+    if (!(valor > 0)) return;
     setPayingId(payModal.id);
-    const { error } = await supabase
-      .from('fin_accounts_payable')
-      .update({
-        status: 'paid',
-        paid_date: payForm.paid_date,
-        paid_amount: Number(payForm.paid_amount),
-        payment_method: payForm.payment_method,
-      })
-      .eq('id', payModal.id);
-    if (!error) {
-      setContas(prev => prev.filter(c => c.id !== payModal.id));
+    setPayError(null);
+    try {
+      await pay(payModal.id, payForm.paid_date, valor, payForm.payment_method);
+      const restante = Math.max(0, Number(payModal.amount ?? 0) - Number(payModal.paid_amount ?? 0) - valor);
+      // Pagamento parcial mantém a conta na lista (ainda vencida e em aberto)
+      if (restante < 0.005) {
+        setContas(prev => prev.filter(c => c.id !== payModal.id));
+      } else {
+        setContas(prev => prev.map(c => c.id === payModal.id
+          ? { ...c, status: 'partial', paid_amount: Number(c.paid_amount ?? 0) + valor }
+          : c));
+      }
+      setPayModal(null);
+    } catch (err) {
+      setPayError(err instanceof Error ? err.message : 'Erro ao registrar o pagamento');
+    } finally {
+      setPayingId(null);
     }
-    setPayingId(null);
-    setPayModal(null);
   };
 
   const uniqueDreCats = useMemo(() => {
@@ -481,7 +511,11 @@ export default function ContasVencidasPanel() {
                         <button
                           onClick={() => {
                             setPayModal(c);
-                            setPayForm(f => ({ ...f, paid_amount: String(c.amount), paid_date: today }));
+                            setPayError(null);
+                            // Sugere o SALDO devedor, não o valor original —
+                            // senão numa conta parcial o campo já vem propondo
+                            // pagar de novo o que já foi pago.
+                            setPayForm(f => ({ ...f, paid_amount: String(saldoDevedor(c)), paid_date: today }));
                           }}
                           disabled={payingId === c.id}
                           className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-green-200 whitespace-nowrap font-semibold transition-colors disabled:opacity-50"
@@ -569,6 +603,12 @@ export default function ContasVencidasPanel() {
                   ))}
                 </select>
               </div>
+              {payError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                  <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-red-700">{payError}</p>
+                </div>
+              )}
               <div className="flex gap-3 pt-2">
                 <button
                   type="button" onClick={() => setPayModal(null)}

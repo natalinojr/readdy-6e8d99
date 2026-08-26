@@ -131,6 +131,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const [form, setForm] = useState(emptyForm);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkPaying, setBulkPaying] = useState(false);
+  const [bulkPayError, setBulkPayError] = useState<string | null>(null);
+  const [payError, setPayError] = useState<string | null>(null);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -151,12 +153,27 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const handleBulkPay = async () => {
     if (selectedIds.size === 0) return;
     setBulkPaying(true);
-    const today = new Date().toISOString().split('T')[0];
+    setBulkPayError(null);
+    // Data LOCAL (não toISOString, que é UTC e vira o dia seguinte após as 21h)
+    const hoje = new Date();
+    const today = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(hoje.getDate()).padStart(2, '0')}`;
+    const falhas: string[] = [];
     for (const id of Array.from(selectedIds)) {
       const bill = billsDoMes.find((b) => b.id === id);
-      if (bill && bill.status !== 'paid') {
-        await pay(id, today, bill.amount, 'Dinheiro');
+      if (!bill || bill.status === 'paid') continue;
+      // Paga o SALDO devedor, não o valor cheio: numa conta parcial o valor
+      // original já foi pago em parte — mandar `amount` lançaria a diferença
+      // de novo no caixa e no banco.
+      const valor = saldoRestante(bill);
+      if (!(valor > 0)) continue;
+      try {
+        await pay(id, today, valor, 'Dinheiro');
+      } catch (err) {
+        falhas.push(`${bill.description}: ${err instanceof Error ? err.message : 'erro'}`);
       }
+    }
+    if (falhas.length > 0) {
+      setBulkPayError(`${falhas.length} conta(s) não foram pagas — ${falhas[0]}${falhas.length > 1 ? ` (e mais ${falhas.length - 1})` : ''}`);
     }
     setSelectedIds(new Set());
     setBulkPaying(false);
@@ -164,7 +181,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
   const selectedTotal = Array.from(selectedIds).reduce((sum, id) => {
     const b = billsDoMes.find((x) => x.id === id);
-    return sum + (b?.amount ?? 0);
+    return sum + (b ? saldoRestante(b) : 0);
   }, 0);
   const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_amount: '', payment_method: 'Dinheiro' });
 
@@ -296,8 +313,15 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!payModal) return;
-    await pay(payModal.id, payForm.paid_date, Number(payForm.paid_amount), payForm.payment_method);
-    setPayModal(null);
+    setPayError(null);
+    try {
+      await pay(payModal.id, payForm.paid_date, Number(payForm.paid_amount), payForm.payment_method);
+      setPayModal(null);
+    } catch (err) {
+      // `pay` agora lança: recusa do backend (valor acima do saldo, conta já
+      // quitada) precisa aparecer, não fechar o modal fingindo sucesso.
+      setPayError(err instanceof Error ? err.message : 'Erro ao registrar o pagamento');
+    }
   };
 
   // Lista unificada de fornecedores: cadastrados + os que aparecem nas contas (retrocompatibilidade)
@@ -641,6 +665,16 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
         </div>
       )}
 
+      {bulkPayError && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2">
+          <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-red-700 flex-1">{bulkPayError}</p>
+          <button onClick={() => setBulkPayError(null)} className="text-red-400 hover:text-red-600 cursor-pointer flex-shrink-0">
+            <i className="ri-close-line text-sm" />
+          </button>
+        </div>
+      )}
+
       {/* Tabela (desktop) / Cards (mobile) */}
       <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
         {/* Desktop table */}
@@ -765,6 +799,20 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                       {(() => {
                         const dreId = (b as BillPayable & { dre_category_id?: string }).dre_category_id;
                         const dreCat = dreId ? dreCats.find(c => c.id === dreId) : null;
+                        // Conta de compra não se vincula a categoria de despesa:
+                        // vai para a DRE pelo CMV (a DRE exclui reference_type
+                        // 'purchase' justamente para não contar o custo 2×).
+                        if (b.reference_type === 'purchase') {
+                          return (
+                            <span
+                              className="text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full flex items-center gap-1 w-fit whitespace-nowrap"
+                              title="Mercadoria entra na DRE pelo CMV, não por categoria de despesa"
+                            >
+                              <i className="ri-shopping-cart-2-line text-xs" />
+                              via CMV
+                            </span>
+                          );
+                        }
                         return dreCat ? (
                           <span className="text-xs font-medium text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full flex items-center gap-1 w-fit whitespace-nowrap">
                             <i className="ri-folder-chart-line text-xs" />
@@ -1170,6 +1218,12 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                   {['Dinheiro', 'PIX', 'Cartão Débito', 'Cartão Crédito', 'Transferência', 'Boleto'].map(m => <option key={m}>{m}</option>)}
                 </select>
               </div>
+              {payError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                  <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-red-700">{payError}</p>
+                </div>
+              )}
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setPayModal(null)}
                   className="flex-1 py-2.5 border border-zinc-200 rounded-lg text-sm font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">Cancelar</button>

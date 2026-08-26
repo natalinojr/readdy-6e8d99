@@ -24,8 +24,16 @@ interface Props {
   onSaved: () => void;
 }
 
-export default function ContasPagarDREModal({ bills, onClose, onSaved }: Props) {
+export default function ContasPagarDREModal({ bills: allBills, onClose, onSaved }: Props) {
   const { user } = useAuth();
+
+  // Contas geradas por COMPRA não entram aqui: a DRE as exclui de propósito
+  // (`reference_type.neq.purchase` em DRETab/DREComparativoTab) porque o custo
+  // de mercadoria já é contabilizado pelo CMV — contar as duas coisas seria
+  // dupla contagem (fix P1). Pedir vínculo delas era trabalho sem efeito e
+  // aparecia como "5 sem categoria DRE" em vermelho, sugerindo pendência.
+  const purchaseBills = allBills.filter(b => b.reference_type === 'purchase');
+  const bills = allBills.filter(b => b.reference_type !== 'purchase');
   const [dreCats, setDreCats] = useState<DRECat[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -137,6 +145,18 @@ export default function ContasPagarDREModal({ bills, onClose, onSaved }: Props) 
             </div>
           )}
         </div>
+
+        {/* Explica por que as contas de compra não aparecem na lista */}
+        {purchaseBills.length > 0 && (
+          <div className="px-6 py-2.5 bg-indigo-50 border-b border-indigo-100 flex items-start gap-2 flex-shrink-0">
+            <i className="ri-information-line text-indigo-500 mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-indigo-800">
+              <span className="font-semibold">{purchaseBills.length} conta{purchaseBills.length > 1 ? 's' : ''} de compra</span>
+              {' '}não aparece{purchaseBills.length > 1 ? 'm' : ''} aqui — mercadoria entra na DRE pelo <strong>CMV</strong>,
+              não por categoria de despesa. Classificá-la aqui contaria o custo duas vezes.
+            </p>
+          </div>
+        )}
 
         {/* Toolbar */}
         <div className="flex items-center gap-3 px-6 py-3 border-b border-zinc-100 flex-shrink-0 flex-wrap">

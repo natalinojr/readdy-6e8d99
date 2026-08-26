@@ -279,6 +279,15 @@ Deno.serve(async (req) => {
         if (!(paymentAmount > 0)) {
           return new Response(JSON.stringify({ error: 'Valor do pagamento deve ser maior que zero' }), { status: 400, headers: corsHeaders });
         }
+        // Trava o pagamento no saldo devedor: sem isso, pagar em lote uma conta
+        // parcial lançava a diferença de novo no caixa e no banco (dinheiro que
+        // saiu do relatório sem ter saído da conta).
+        const remainingBefore = Math.round((billAmount - alreadyPaid) * 100) / 100;
+        if (paymentAmount > remainingBefore + 0.005) {
+          return new Response(JSON.stringify({
+            error: `Valor acima do saldo devedor (${remainingBefore.toFixed(2)}). Já foram pagos ${alreadyPaid.toFixed(2)} de ${billAmount.toFixed(2)}.`,
+          }), { status: 400, headers: corsHeaders });
+        }
 
         const newPaidTotal = Math.round((alreadyPaid + paymentAmount) * 100) / 100;
         // Tolerância de meio centavo evita que arredondamento deixe a conta eternamente 'partial'

@@ -313,9 +313,14 @@ export function useBillsPayable() {
     fetchBills();
   };
 
+  // Lança em caso de erro: antes o resultado era ignorado, então uma recusa do
+  // pay_bill (conta já quitada, valor inválido, falha de rede) passava
+  // despercebida — o modal fechava e o usuário achava que tinha pago.
   const pay = async (id: string, paid_date: string, paid_amount: number, payment_method: string) => {
-    await invokeFinancial('pay_bill', user!.tenantId, { id, paid_date, paid_amount, payment_method });
-    fetchBills();
+    const result = await invokeFinancial('pay_bill', user!.tenantId, { id, paid_date, paid_amount, payment_method });
+    await fetchBills();
+    if (result?.error) throw new Error(String(result.error));
+    return result;
   };
 
   const remove = async (id: string) => {
