@@ -22,6 +22,17 @@ interface CatalogItem {
   notes?: string | null;
   is_active: boolean;
   dre_category?: { id: string; name: string; group_type: string } | null;
+  // Vínculo com o estoque (apresentação do fornecedor)
+  ingredient_id?: string | null;
+  purchase_unit?: string | null;
+  pack_count?: number | null;
+  pack_size?: number | null;
+}
+
+interface Ingredient {
+  id: string;
+  name: string;
+  unit: string;
 }
 
 const UNIT_OPTIONS = [
@@ -37,6 +48,11 @@ const emptyForm = {
   default_supplier: '',
   supplier_id: '',
   notes: '',
+  // Vínculo com o estoque
+  ingredient_id: '',
+  purchase_unit: 'cx',
+  pack_count: '',
+  pack_size: '',
 };
 
 interface Props {
@@ -58,14 +74,17 @@ export default function CatalogoComprasModal({ onClose }: Props) {
   const [supplierOpen, setSupplierOpen] = useState(false);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
+  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [ingredientOpen, setIngredientOpen] = useState(false);
+  const [ingredientSearch, setIngredientSearch] = useState('');
 
   const loadData = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
-    const [catRes, dreRes] = await Promise.all([
+    const [catRes, dreRes, ingRes] = await Promise.all([
       supabase
         .from('fin_purchase_catalog')
-        .select('id, name, description, default_unit, dre_category_id, default_supplier, supplier_id, notes, is_active, dre_category:fin_dre_categories(id, name, group_type)')
+        .select('id, name, description, default_unit, dre_category_id, default_supplier, supplier_id, notes, is_active, ingredient_id, purchase_unit, pack_count, pack_size, dre_category:fin_dre_categories(id, name, group_type)')
         .eq('tenant_id', user.tenantId)
         .order('name'),
       supabase
@@ -75,9 +94,15 @@ export default function CatalogoComprasModal({ onClose }: Props) {
         .eq('is_active', true)
         .order('group_type')
         .order('sort_order'),
+      supabase
+        .from('ingredients')
+        .select('id,name,unit')
+        .eq('tenant_id', user.tenantId)
+        .order('name'),
     ]);
-    setItems((catRes.data ?? []) as CatalogItem[]);
+    setItems((catRes.data ?? []) as unknown as CatalogItem[]);
     setDreCategories(dreRes.data ?? []);
+    setIngredients((ingRes.data ?? []) as Ingredient[]);
     setLoading(false);
   }, [user?.tenantId]);
 
@@ -87,6 +112,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
     setEditingId(null);
     setForm(emptyForm);
     setSupplierSearch('');
+    setIngredientSearch('');
     setShowForm(true);
   };
 
@@ -100,8 +126,17 @@ export default function CatalogoComprasModal({ onClose }: Props) {
       default_supplier: item.default_supplier ?? '',
       supplier_id: item.supplier_id ?? '',
       notes: item.notes ?? '',
+      ingredient_id: item.ingredient_id ?? '',
+      purchase_unit: item.purchase_unit ?? 'cx',
+      pack_count: item.pack_count != null ? String(item.pack_count) : '',
+      pack_size: item.pack_size != null ? String(item.pack_size) : '',
     });
     setSupplierSearch(item.default_supplier ?? '');
+    setIngredientSearch(
+      item.ingredient_id
+        ? (ingredients.find((ing) => ing.id === item.ingredient_id)?.name ?? '')
+        : '',
+    );
     setShowForm(true);
   };
 
@@ -117,6 +152,11 @@ export default function CatalogoComprasModal({ onClose }: Props) {
       default_supplier: form.default_supplier.trim() || null,
       supplier_id: form.supplier_id || null,
       notes: form.notes.trim() || null,
+      // Vínculo com o estoque — null quando não há insumo vinculado
+      ingredient_id: form.ingredient_id || null,
+      purchase_unit: form.ingredient_id ? (form.purchase_unit || null) : null,
+      pack_count: form.ingredient_id && form.pack_count !== '' ? Number(form.pack_count) : null,
+      pack_size: form.ingredient_id && form.pack_size !== '' ? Number(form.pack_size) : null,
       updated_at: new Date().toISOString(),
     };
 
@@ -188,6 +228,23 @@ export default function CatalogoComprasModal({ onClose }: Props) {
     s.toLowerCase().includes(supplierSearch.toLowerCase()),
   );
 
+  const filteredIngredients = ingredients.filter((ing) =>
+    ing.name.toLowerCase().includes(ingredientSearch.toLowerCase()),
+  );
+
+  // Insumo selecionado no formulário (para exibir unidade e conversão)
+  const selectedIngredient = form.ingredient_id
+    ? ingredients.find((ing) => ing.id === form.ingredient_id) ?? null
+    : null;
+
+  // Conversão ao vivo: 1 cx = 12 × 1,5 kg = 18 kg
+  const packCountNum = Number(form.pack_count);
+  const packSizeNum = Number(form.pack_size);
+  const conversionTotal = packCountNum > 0 && packSizeNum > 0 ? packCountNum * packSizeNum : 0;
+
+  const formatQty = (n: number) =>
+    n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+
   const getDRELabel = (item: CatalogItem) => {
     if (!item.dre_category_id) return null;
     const cat = item.dre_category;
@@ -198,6 +255,24 @@ export default function CatalogoComprasModal({ onClose }: Props) {
         ? 'bg-orange-100 text-orange-700'
         : 'bg-zinc-100 text-zinc-600';
     return <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${color}`}>{cat.name}</span>;
+  };
+
+  // Badge do vínculo com estoque na lista (ex.: "→ Requeijão · cx 12×1,5kg")
+  const getStockBadge = (item: CatalogItem) => {
+    if (!item.ingredient_id) return null;
+    const ing = ingredients.find((i) => i.id === item.ingredient_id);
+    const name = ing?.name ?? 'Insumo';
+    const unit = ing?.unit ?? '';
+    const hasPack = item.pack_count != null && item.pack_size != null;
+    const packText = hasPack
+      ? ` · ${item.purchase_unit ?? 'cx'} ${formatQty(Number(item.pack_count))}×${formatQty(Number(item.pack_size))}${unit}`
+      : '';
+    return (
+      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 inline-flex items-center gap-1">
+        <i className="ri-box-3-line" />
+        → {name}{packText}
+      </span>
+    );
   };
 
   const costCats = dreCategories.filter((c) => c.group_type === 'cost');
@@ -342,6 +417,117 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                 )}
               </div>
 
+              {/* Vínculo com estoque (opcional) */}
+              <div className="border border-zinc-200 rounded-xl bg-white p-3">
+                <label className="text-[10px] font-semibold text-zinc-500 block mb-1">
+                  <i className="ri-box-3-line text-emerald-500 mr-0.5" />
+                  Vínculo com estoque (opcional)
+                </label>
+                <div className="relative">
+                  <input
+                    value={ingredientSearch}
+                    onChange={(e) => {
+                      setIngredientSearch(e.target.value);
+                      // Digitar limpa a seleção — só a escolha na lista vincula
+                      setForm((f) => ({ ...f, ingredient_id: '' }));
+                      setIngredientOpen(true);
+                    }}
+                    onFocus={() => setIngredientOpen(true)}
+                    placeholder="Buscar insumo do estoque..."
+                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                  />
+                  {form.ingredient_id && selectedIngredient && (
+                    <span className="absolute right-8 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                      estoque em {selectedIngredient.unit}
+                    </span>
+                  )}
+                  {form.ingredient_id && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForm((f) => ({ ...f, ingredient_id: '', pack_count: '', pack_size: '' }));
+                        setIngredientSearch('');
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded hover:bg-zinc-100 text-zinc-400 cursor-pointer"
+                      title="Remover vínculo"
+                    >
+                      <i className="ri-close-line text-sm" />
+                    </button>
+                  )}
+                  {ingredientOpen && !form.ingredient_id && filteredIngredients.length > 0 && (
+                    <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg max-h-40 overflow-y-auto">
+                      {filteredIngredients.map((ing) => (
+                        <button
+                          key={ing.id}
+                          type="button"
+                          onClick={() => {
+                            setIngredientSearch(ing.name);
+                            setForm((f) => ({ ...f, ingredient_id: ing.id }));
+                            setIngredientOpen(false);
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 cursor-pointer flex items-center justify-between gap-2"
+                        >
+                          <span>{ing.name}</span>
+                          <span className="text-[10px] text-zinc-400">{ing.unit}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {form.ingredient_id && selectedIngredient && (
+                  <div className="mt-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="text-[10px] font-semibold text-zinc-500 block mb-1">Unidade de compra</label>
+                        <select
+                          value={form.purchase_unit}
+                          onChange={(e) => setForm((f) => ({ ...f, purchase_unit: e.target.value }))}
+                          className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                        >
+                          {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold text-zinc-500 block mb-1">Unid. por embalagem</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={form.pack_count}
+                          onChange={(e) => setForm((f) => ({ ...f, pack_count: e.target.value }))}
+                          placeholder="Ex: 12"
+                          className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold text-zinc-500 block mb-1">
+                          {selectedIngredient.unit} por unid.
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={form.pack_size}
+                          onChange={(e) => setForm((f) => ({ ...f, pack_size: e.target.value }))}
+                          placeholder="Ex: 1,5"
+                          className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                        />
+                      </div>
+                    </div>
+                    {conversionTotal > 0 && (
+                      <p className="text-[11px] text-emerald-700 font-semibold mt-1.5 flex items-center gap-1">
+                        <i className="ri-arrow-left-right-line" />
+                        1 {form.purchase_unit} = {formatQty(packCountNum)} × {formatQty(packSizeNum)} {selectedIngredient.unit} = {formatQty(conversionTotal)} {selectedIngredient.unit} no estoque
+                      </p>
+                    )}
+                    <p className="text-[10px] text-zinc-400 mt-1">
+                      Compras desta apresentação dão entrada automática no estoque do insumo.
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {/* Descrição + Obs */}
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -430,6 +616,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                         {item.default_unit}
                       </span>
                       {getDRELabel(item)}
+                      {getStockBadge(item)}
                       {!item.dre_category_id && (
                         <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-semibold">
                           CMV

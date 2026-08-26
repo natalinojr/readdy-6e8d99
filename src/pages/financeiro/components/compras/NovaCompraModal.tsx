@@ -16,7 +16,9 @@ interface CustomInstallment { tempId: string; due_date: string; amount: number; 
 interface CostCenter { id: string; name: string; }
 interface BankAccount { id: string; name: string; }
 
-// Item unificado: pode ser insumo (ingredient_id) ou item do catálogo (catalog_id)
+// Item unificado: pode ser insumo (ingredient_id) ou item do catálogo (catalog_id).
+// Item de catálogo pode ser uma APRESENTAÇÃO: aponta para um insumo e carrega a
+// embalagem do fornecedor (cx 12×1,5kg) — escolher preenche tudo de uma vez.
 interface UnifiedItem {
   id: string;
   name: string;
@@ -25,6 +27,11 @@ interface UnifiedItem {
   dre_category_id?: string | null;
   dre_category_name?: string | null;
   default_supplier?: string | null;
+  ingredient_id?: string | null;         // apresentação → insumo de estoque
+  purchase_unit?: string | null;         // cx, fardo...
+  pack_count?: number | null;            // unidades por embalagem
+  pack_size?: number | null;             // conteúdo de cada unidade (unid. de estoque)
+  merchandise_category_id?: string | null;
 }
 
 function genId() {
@@ -117,7 +124,7 @@ export default function NovaCompraModal({
     if (!user?.tenantId) return;
     supabase
       .from('fin_purchase_catalog')
-      .select('id, name, default_unit, dre_category_id, default_supplier, dre_category:fin_dre_categories(id, name)')
+      .select('id, name, default_unit, dre_category_id, default_supplier, ingredient_id, purchase_unit, pack_count, pack_size, merchandise_category_id, dre_category:fin_dre_categories(id, name)')
       .eq('tenant_id', user.tenantId)
       .eq('is_active', true)
       .order('name')
@@ -130,6 +137,11 @@ export default function NovaCompraModal({
           dre_category_id: c.dre_category_id as string | null,
           dre_category_name: (c.dre_category as { name?: string } | null)?.name ?? null,
           default_supplier: c.default_supplier as string | null,
+          ingredient_id: c.ingredient_id as string | null,
+          purchase_unit: c.purchase_unit as string | null,
+          pack_count: c.pack_count != null ? Number(c.pack_count) : null,
+          pack_size: c.pack_size != null ? Number(c.pack_size) : null,
+          merchandise_category_id: c.merchandise_category_id as string | null,
         }));
         setCatalogItems(cats);
       });
@@ -180,6 +192,8 @@ export default function NovaCompraModal({
         total_price: it.total_price,
         unit_label: it.unit_label ?? 'un',
         units_per_package: it.units_per_package,
+        pack_count: it.pack_count,
+        pack_size: it.pack_size,
         cost_center_id: it.cost_center_id ?? '',
         discount_per_unit: it.discount_per_unit,
         merchandise_category_id: it.merchandise_category_id,
@@ -309,6 +323,13 @@ export default function NovaCompraModal({
         const net = Math.max(0, Number(updated.unit_price ?? 0) - Number(updated.discount_per_unit ?? 0));
         updated.total_price = Math.round(Number(updated.quantity ?? 0) * net * 100) / 100;
       }
+      if (field === 'pack_count' || field === 'pack_size') {
+        // Embalagem desdobrada: conversão = unidades × conteúdo de cada uma.
+        // pack_size vazio = 1 (a unidade interna já é a unidade de estoque).
+        const count = Number(updated.pack_count ?? 0);
+        const size = Number(updated.pack_size ?? 0);
+        updated.units_per_package = count > 0 ? count * (size > 0 ? size : 1) : undefined;
+      }
       if (field === 'ingredient_id') {
         const ing = ingredients.find((ig) => ig.id === value);
         if (ing) {
@@ -343,20 +364,46 @@ export default function NovaCompraModal({
         const ing = ingredients.find((g) => g.id === unified.id);
         if (ing?.purchase_unit && Number(ing.purchase_factor ?? 0) > 1) {
           updated.unit_label = ing.purchase_unit;
+          // A memória do insumo guarda só o fator total (kg/cx); expõe como
+          // "fator × 1" nos campos desdobrados — o usuário ajusta se quiser.
+          updated.pack_count = Number(ing.purchase_factor);
+          updated.pack_size = undefined;
           updated.units_per_package = Number(ing.purchase_factor);
         } else {
           updated.unit_label = unified.unit || 'un';
+          updated.pack_count = undefined;
+          updated.pack_size = undefined;
           updated.units_per_package = undefined;
         }
       } else {
         (updated as Record<string, unknown>).catalog_id = unified.id;
-        updated.ingredient_id = undefined;
-        updated.unit_label = unified.unit || 'un';
+        if (unified.ingredient_id) {
+          // APRESENTAÇÃO: catálogo ligado a um insumo — carrega o vínculo de
+          // estoque e a embalagem do fornecedor de uma vez só.
+          updated.ingredient_id = unified.ingredient_id;
+          updated.unit_label = unified.purchase_unit || unified.unit || 'un';
+          if (unified.pack_count && unified.pack_count > 0) {
+            updated.pack_count = unified.pack_count;
+            updated.pack_size = unified.pack_size ?? 1;
+            updated.units_per_package = unified.pack_count * (unified.pack_size ?? 1);
+          }
+          if (unified.merchandise_category_id) {
+            updated.merchandise_category_id = unified.merchandise_category_id;
+          }
+        } else {
+          updated.ingredient_id = undefined;
+          updated.unit_label = unified.unit || 'un';
+        }
       }
       updated.description = unified.name;
       (updated as Record<string, unknown>).dre_category_id = unified.dre_category_id ?? null;
       return updated;
     }));
+    // Apresentação com fornecedor padrão preenche o fornecedor da compra
+    // (só quando o campo ainda está vazio — nunca sobrescreve escolha do usuário)
+    if (unified.type === 'catalog' && unified.default_supplier) {
+      setForm((f) => (f.supplier.trim() ? f : { ...f, supplier: unified.default_supplier! }));
+    }
     setItemSearch((prev) => ({ ...prev, [idx]: unified.name }));
     setItemDropdownOpen((prev) => ({ ...prev, [idx]: false }));
   };
@@ -1091,23 +1138,31 @@ export default function NovaCompraModal({
                       </select>
                     </div>
                     <div>
-                      {/* O rótulo fala a língua do estoque: "kg por cx" deixa claro
-                          que aqui vai o CONTEÚDO da embalagem na unidade de estoque
-                          (cx de 16×1kg → 16; cx de 9×0,5kg → 4,5), não a contagem
-                          de pacotes. "Unid./embalagem" confundia exatamente isso. */}
+                      {/* Embalagem desdobrada como na nota fiscal: "12 × 1,5kg".
+                          Primeiro campo = unidades dentro da embalagem; segundo =
+                          conteúdo de CADA unidade na unidade de estoque do insumo.
+                          O sistema multiplica — sem conta de cabeça (cx 9×0,5kg
+                          entrava errado como "9" no campo único antigo). */}
                       <label className="text-[10px] font-semibold text-zinc-500 block mb-1 whitespace-nowrap"
-                        title={`Quanto entra no estoque a cada 1 ${item.unit_label ?? 'un'} comprada`}>
+                        title={`Conteúdo de 1 ${item.unit_label ?? 'un'}: quantas unidades vêm dentro × quanto cada uma tem`}>
                         {(() => {
                           const su = stockUnitFor(item);
-                          return su && item.unit_label && su !== item.unit_label
-                            ? `${su} por ${item.unit_label}`
-                            : 'Unid./embalagem';
+                          return `Embalagem (unid. × ${su ?? 'conteúdo'})`;
                         })()}
                       </label>
-                      <input type="number" min="0.001" step="0.001" placeholder="—"
-                        value={item.units_per_package ?? ''}
-                        onChange={(e) => updateItem(idx, 'units_per_package', e.target.value ? Number(e.target.value) : undefined)}
-                        className="w-full border border-zinc-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                      <div className="flex items-center gap-1">
+                        <input type="number" min="1" step="1" placeholder="12"
+                          title="Unidades dentro da embalagem"
+                          value={item.pack_count ?? ''}
+                          onChange={(e) => updateItem(idx, 'pack_count', e.target.value ? Number(e.target.value) : undefined)}
+                          className="w-1/2 border border-zinc-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                        <span className="text-[10px] text-zinc-400 font-semibold">×</span>
+                        <input type="number" min="0.001" step="0.001" placeholder="1"
+                          title={`Conteúdo de cada unidade, em ${stockUnitFor(item) ?? 'unid. de estoque'}`}
+                          value={item.pack_size ?? ''}
+                          onChange={(e) => updateItem(idx, 'pack_size', e.target.value ? Number(e.target.value) : undefined)}
+                          className="w-1/2 border border-zinc-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                      </div>
                     </div>
                     <div>
                       <label className="text-[10px] font-semibold text-zinc-500 block mb-1">Preço unit.</label>
@@ -1179,7 +1234,11 @@ export default function NovaCompraModal({
                               <i className="ri-arrow-right-line text-emerald-500 mr-0.5" />
                               {upp > 0 ? (
                                 <span className="text-zinc-500">
-                                  {Number(item.quantity)} {item.unit_label ?? 'un'} × {upp} {su} ={' '}
+                                  {Number(item.quantity)} {item.unit_label ?? 'un'} ×{' '}
+                                  {item.pack_count && item.pack_count > 0
+                                    ? `(${item.pack_count}×${String(item.pack_size ?? 1).replace('.', ',')} ${su})`
+                                    : `${upp} ${su}`}{' '}
+                                  ={' '}
                                 </span>
                               ) : null}
                               <span className="font-bold text-emerald-700">

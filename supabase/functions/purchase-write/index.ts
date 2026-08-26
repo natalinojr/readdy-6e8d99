@@ -29,6 +29,8 @@ interface ComputedItem {
   final_unit_cost: number;
   cost_per_base_unit: number | null;
   notes: string | null;
+  pack_count: number | null;
+  pack_size: number | null;
 }
 
 // Normalização dos itens: o total da compra é derivado dos itens (líquidos de
@@ -43,7 +45,14 @@ function computePurchaseItems(tenant_id: string, items: unknown): ComputedItem[]
     const quantity = Number(item.quantity ?? 0);
     const unitPrice = Number(item.unit_price ?? 0);
     const discountPerUnit = Number(item.discount_per_unit ?? 0);
-    const unitsPerPkg = Number(item.units_per_package ?? item.purchase_factor ?? 1) || 1;
+    // Embalagem desdobrada: pack_count unidades × pack_size (conteúdo de cada
+    // uma na unidade de ESTOQUE). Quando presente, é a fonte da conversão —
+    // cx 12×1,5kg → 18 kg/cx. pack_size vazio = 1 (unidade já é a de estoque).
+    const packCount = Number(item.pack_count ?? 0);
+    const packSize = Number(item.pack_size ?? 0);
+    const unitsPerPkg = packCount > 0
+      ? packCount * (packSize > 0 ? packSize : 1)
+      : Number(item.units_per_package ?? item.purchase_factor ?? 1) || 1;
     const freightAllocated = Number(item.freight_allocated ?? 0);
 
     // Preço unitário de compra já líquido do desconto por unidade
@@ -74,6 +83,8 @@ function computePurchaseItems(tenant_id: string, items: unknown): ComputedItem[]
       final_unit_cost: finalUnitCost,
       cost_per_base_unit: costPerBaseUnit,
       notes: item.notes ? String(item.notes) : null,
+      pack_count: packCount > 0 ? packCount : null,
+      pack_size: packCount > 0 ? (packSize > 0 ? packSize : 1) : null,
     };
   });
 }
@@ -184,6 +195,68 @@ async function applyStockAndPricing(
         p_purchase_unit_price: realUnitPrice,
         p_purchase_date: purchase.purchase_date || new Date().toISOString().split('T')[0],
       });
+    }
+  }
+}
+
+// Auto-cadastro de APRESENTAÇÕES no catálogo: cada compra com insumo +
+// embalagem desdobrada (pack_count/pack_size) registra o SKU do fornecedor
+// ("Requeijão — Fornecedor A (cx 12×1,5kg)") apontando para o insumo.
+// Na próxima compra, escolher a apresentação preenche tudo de uma vez —
+// o catálogo se constrói sozinho, sem cadastro manual.
+async function upsertCatalogPresentations(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  tenant_id: string,
+  // deno-lint-ignore no-explicit-any
+  purchase: any,
+  computedItems: ComputedItem[],
+  supplierId: string | null,
+) {
+  if (!supplierId) return;
+  for (const item of computedItems) {
+    if (!item.ingredient_id || !item.pack_count || !(item.pack_count > 0)) continue;
+    try {
+      // Já existe apresentação idêntica (mesmo insumo, fornecedor e embalagem)?
+      const { data: existing } = await supabase
+        .from('fin_purchase_catalog')
+        .select('id')
+        .eq('tenant_id', tenant_id)
+        .eq('ingredient_id', item.ingredient_id)
+        .eq('supplier_id', supplierId)
+        .eq('pack_count', item.pack_count)
+        .eq('pack_size', item.pack_size ?? 1)
+        .limit(1)
+        .maybeSingle();
+      if (existing) continue;
+
+      const { data: ing } = await supabase
+        .from('ingredients')
+        .select('name, unit')
+        .eq('id', item.ingredient_id)
+        .eq('tenant_id', tenant_id)
+        .maybeSingle();
+      const stockUnit = ing?.unit ?? 'un';
+      const sizeStr = String(item.pack_size ?? 1).replace('.', ',');
+      const name = `${ing?.name ?? item.description} — ${purchase.supplier} (${item.unit_label ?? 'cx'} ${item.pack_count}×${sizeStr}${stockUnit})`;
+
+      const { error: insErr } = await supabase.from('fin_purchase_catalog').insert({
+        tenant_id,
+        name,
+        ingredient_id: item.ingredient_id,
+        default_unit: stockUnit,
+        purchase_unit: item.unit_label ?? 'cx',
+        pack_count: item.pack_count,
+        pack_size: item.pack_size ?? 1,
+        default_supplier: purchase.supplier,
+        supplier_id: supplierId,
+        merchandise_category_id: item.merchandise_category_id ?? null,
+        is_active: true,
+      });
+      if (insErr) console.error('[purchase-write] auto-apresentação:', insErr.message ?? insErr);
+    } catch (e) {
+      // Falha aqui nunca pode derrubar a compra — é conveniência, não contrato.
+      console.error('[purchase-write] auto-apresentação exception:', String(e));
     }
   }
 }
@@ -516,6 +589,7 @@ Deno.serve(async (req) => {
           if (itemsError) throw itemsError;
 
           await applyStockAndPricing(supabase, tenant_id, purchase, computedItems, user, supplierRecord?.id ?? null);
+          await upsertCatalogPresentations(supabase, tenant_id, purchase, computedItems, supplierRecord?.id ?? null);
         }
 
         await createBillsForPurchase(supabase, tenant_id, purchase, purchaseData, {
@@ -627,6 +701,7 @@ Deno.serve(async (req) => {
           if (itemsError) throw itemsError;
 
           await applyStockAndPricing(supabase, tenant_id, updated, computedItems, user, supplierRecord?.id ?? null);
+          await upsertCatalogPresentations(supabase, tenant_id, updated, computedItems, supplierRecord?.id ?? null);
         }
 
         await createBillsForPurchase(supabase, tenant_id, updated, purchaseData, {

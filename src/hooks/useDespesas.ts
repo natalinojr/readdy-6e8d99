@@ -86,6 +86,13 @@ export function useDespesas(filters: DespesasFilters) {
     const { startDate, endDate, categories, sources, statuses, search, minAmount, maxAmount } = filters;
     const endDateTime = endDate + 'T23:59:59';
 
+    // Data local de hoje (YYYY-MM-DD) para derivar "vencido" pela DATA:
+    // o banco nunca grava status='overdue' — uma conta não paga fica 'pending'
+    // para sempre. Vencido = não pago E due_date < hoje; Pendente = não pago
+    // E ainda no prazo. Mutuamente exclusivos, vencido tem prioridade.
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
     // Busca paralela de todas as fontes
     const [billsRes, purchasesRes, payrollRes, cashflowRes, anticipationRes] = await Promise.all([
       // Contas a pagar (pagas, pendentes, vencidas) — excluir geradas automaticamente por compras
@@ -132,13 +139,36 @@ export function useDespesas(filters: DespesasFilters) {
         .lte('created_at', endDateTime),
     ]);
 
+    // Parcelas das compras não pagas: uma compra está VENCIDA se qualquer
+    // parcela em aberto passou do vencimento (fin_purchases.due_date sozinho
+    // não serve — é a data da 1ª parcela e não acompanha os pagamentos).
+    const unpaidPurchaseIds = (purchasesRes.data ?? [])
+      .filter(p => p.payment_status !== 'paid')
+      .map(p => p.id);
+    const overduePurchaseIds = new Set<string>();
+    if (unpaidPurchaseIds.length > 0) {
+      const { data: purchaseBills } = await supabase
+        .from('fin_accounts_payable')
+        .select('reference_id, status, due_date')
+        .eq('tenant_id', user.tenantId)
+        .eq('reference_type', 'purchase')
+        .in('reference_id', unpaidPurchaseIds)
+        .neq('status', 'paid')
+        .lt('due_date', todayStr);
+      (purchaseBills ?? []).forEach(b => {
+        if (b.reference_id) overduePurchaseIds.add(b.reference_id);
+      });
+    }
+
     const allItems: DespesaItem[] = [];
 
     // Contas a pagar
     (billsRes.data ?? []).forEach(b => {
       const isPaid = b.status === 'paid';
       const amount = isPaid ? Number(b.paid_amount ?? b.amount) : Number(b.amount);
-      const status: DespesaStatus = b.status === 'overdue' ? 'overdue' : isPaid ? 'paid' : 'pending';
+      const status: DespesaStatus = isPaid
+        ? 'paid'
+        : (b.due_date && b.due_date < todayStr) ? 'overdue' : 'pending';
       allItems.push({
         id: `bill_${b.id}`,
         source: 'bill',
@@ -157,7 +187,9 @@ export function useDespesas(filters: DespesasFilters) {
 
     // Compras
     (purchasesRes.data ?? []).forEach(p => {
-      const status: DespesaStatus = p.payment_status === 'paid' ? 'paid' : p.payment_status === 'partial' ? 'pending' : 'pending';
+      const status: DespesaStatus = p.payment_status === 'paid'
+        ? 'paid'
+        : overduePurchaseIds.has(p.id) ? 'overdue' : 'pending';
       allItems.push({
         id: `purchase_${p.id}`,
         source: 'purchase',

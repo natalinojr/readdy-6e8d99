@@ -108,7 +108,9 @@ export interface PurchaseItem {
   unit_price: number;
   total_price: number;
   unit_label?: string;          // ex: 'fardo', 'caixa', 'kg', 'un'
-  units_per_package?: number;   // ex: 12 (unidades por fardo)
+  units_per_package?: number;   // conteúdo da embalagem em unid. de ESTOQUE (= pack_count × pack_size)
+  pack_count?: number;          // unidades dentro da embalagem (ex.: 12 potes/cx)
+  pack_size?: number;           // conteúdo de cada unidade, na unid. de estoque (ex.: 1.5 kg/pote)
   cost_center_id?: string;      // centro de custo por item
   freight_allocated?: number;   // frete rateado neste item
   ingredient?: { id: string; name: string; unit: string };

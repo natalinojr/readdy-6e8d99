@@ -307,17 +307,19 @@ export default function DespesasTab() {
           color="bg-green-100 text-green-600"
           sub={summary && summary.total > 0 ? `${((summary.paid / summary.total) * 100).toFixed(0)}% do total` : ''}
         />
-        <KpiCard
-          label="Pendente"
-          value={formatCurrency(summary?.pending ?? 0)}
-          icon="ri-time-line"
-          color="bg-amber-100 text-amber-600"
-        />
+        {/* Vencido antes de Pendente: vencido = prazo estourado, exige ação */}
         <KpiCard
           label="Vencido"
           value={formatCurrency(summary?.overdue ?? 0)}
           icon="ri-alarm-warning-line"
           color="bg-red-100 text-red-600"
+        />
+        <KpiCard
+          label="Pendente"
+          value={formatCurrency(summary?.pending ?? 0)}
+          icon="ri-time-line"
+          color="bg-amber-100 text-amber-600"
+          sub="no prazo, a vencer"
         />
       </div>
 
@@ -815,10 +817,12 @@ export default function DespesasTab() {
           <div>
             <h3 className="text-sm font-semibold text-zinc-800 mb-3">Por Status</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Vencido primeiro: é o que exige ação imediata. Pendente = falta
+                  pagar mas ainda no prazo; Vencido = falta pagar e o prazo passou. */}
               {([
-                { status: 'paid' as DespesaStatus, label: 'Pago', color: 'bg-green-500', value: summary.paid },
-                { status: 'pending' as DespesaStatus, label: 'Pendente', color: 'bg-amber-500', value: summary.pending },
                 { status: 'overdue' as DespesaStatus, label: 'Vencido', color: 'bg-red-500', value: summary.overdue },
+                { status: 'pending' as DespesaStatus, label: 'Pendente', color: 'bg-amber-500', value: summary.pending },
+                { status: 'paid' as DespesaStatus, label: 'Pago', color: 'bg-green-500', value: summary.paid },
               ]).map(s => {
                 const pct = summary.total > 0 ? (s.value / summary.total) * 100 : 0;
                 return (

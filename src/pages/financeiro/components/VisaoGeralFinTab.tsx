@@ -426,12 +426,31 @@ export default function VisaoGeralFinTab() {
   const margemReal = dashboard.receitaMes > 0 ? (dashboard.lucroEstimado / dashboard.receitaMes) * 100 : 0;
   const ratioAPagarReceita = dashboard.receitaMes > 0 ? (dashboard.totalAPagar / dashboard.receitaMes) * 100 : 0;
 
-  if (dashboard.contasVencendo.length > 0) {
+  // contasVencendo vem do banco com TUDO que vence até +7 dias, incluindo o que
+  // JÁ passou do prazo. Separar: vencida (dívida em atraso) ≠ vencendo em breve.
+  const hojeStr = (() => {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+  })();
+  const contasVencidas = dashboard.contasVencendo.filter((b) => b.due_date && b.due_date < hojeStr);
+  const contasAVencer = dashboard.contasVencendo.filter((b) => !b.due_date || b.due_date >= hojeStr);
+  const totalVencidas = contasVencidas.reduce((s, b) => s + Number(b.amount ?? 0) - Number(b.paid_amount ?? 0), 0);
+  const totalAVencer = contasAVencer.reduce((s, b) => s + Number(b.amount ?? 0) - Number(b.paid_amount ?? 0), 0);
+
+  if (contasVencidas.length > 0) {
     healthAlerts.push({
       type: 'danger',
       icon: 'ri-alarm-warning-line',
-      title: `${dashboard.contasVencendo.length} conta(s) vencendo em 7 dias`,
-      desc: `Total: ${formatCurrency(dashboard.totalAPagar)} — risco de inadimplência`,
+      title: `${contasVencidas.length} conta(s) VENCIDA(S)`,
+      desc: `Total em atraso: ${formatCurrency(totalVencidas)} — regularize para evitar juros`,
+    });
+  }
+  if (contasAVencer.length > 0) {
+    healthAlerts.push({
+      type: 'warning',
+      icon: 'ri-calendar-event-line',
+      title: `${contasAVencer.length} conta(s) vencendo em 7 dias`,
+      desc: `Total: ${formatCurrency(totalAVencer)}`,
     });
   }
   if (!crescPos) {
@@ -582,13 +601,45 @@ export default function VisaoGeralFinTab() {
                 </div>
               </div>
             )}
-            {dashboard.contasVencendo.length > 0 && (
+            {/* Vencidas (prazo estourado) vêm antes e em vermelho; "vencendo em
+                breve" fica âmbar — eram misturadas sob o mesmo rótulo. */}
+            {contasVencidas.length > 0 && (
+              <div className="space-y-1.5 mb-2">
+                <p className="text-xs font-semibold text-red-600 mb-2 flex items-center gap-1">
+                  <i className="ri-alarm-warning-line" /> Vencidas:
+                </p>
+                {contasVencidas.slice(0, 3).map(b => (
+                  <div key={b.id} className="flex items-center justify-between bg-red-50 rounded-lg px-3 py-1.5">
+                    <span className="text-xs text-red-700 truncate max-w-[120px]">
+                      {b.description}
+                      {b.due_date && (
+                        <span className="text-red-400 ml-1">
+                          ({new Date(b.due_date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })})
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-xs font-bold text-red-600 whitespace-nowrap ml-2">{formatCurrency(b.amount)}</span>
+                  </div>
+                ))}
+                {contasVencidas.length > 3 && (
+                  <p className="text-[10px] text-red-400">+{contasVencidas.length - 3} outra(s) vencida(s)</p>
+                )}
+              </div>
+            )}
+            {contasAVencer.length > 0 && (
               <div className="space-y-1.5">
                 <p className="text-xs font-semibold text-zinc-500 mb-2">Vencendo em breve:</p>
-                {dashboard.contasVencendo.slice(0, 3).map(b => (
-                  <div key={b.id} className="flex items-center justify-between bg-red-50 rounded-lg px-3 py-1.5">
-                    <span className="text-xs text-red-700 truncate max-w-[120px]">{b.description}</span>
-                    <span className="text-xs font-bold text-red-600 whitespace-nowrap ml-2">{formatCurrency(b.amount)}</span>
+                {contasAVencer.slice(0, 3).map(b => (
+                  <div key={b.id} className="flex items-center justify-between bg-amber-50 rounded-lg px-3 py-1.5">
+                    <span className="text-xs text-amber-700 truncate max-w-[120px]">
+                      {b.description}
+                      {b.due_date && (
+                        <span className="text-amber-400 ml-1">
+                          ({new Date(b.due_date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })})
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-xs font-bold text-amber-600 whitespace-nowrap ml-2">{formatCurrency(b.amount)}</span>
                   </div>
                 ))}
               </div>

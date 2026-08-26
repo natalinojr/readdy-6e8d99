@@ -239,6 +239,20 @@ margemLiquida     = resultadoOperacional / receitaBruta × 100
 RPCs relevantes: `fn_get_cmv_report`, `fn_bank_credit`, `fn_bank_debit`, `fn_record_payment_bypass`, `fn_update_ingredient_price_from_purchase`, `fn_update_ingredient_stock`.
 Edge Functions: `financial-write` (~47 actions), `purchase-write`, `purchase-confirm-delivery`, `stone-conciliation`, `pix-payment`, `implementation-write`, `order-write` (integração de venda).
 
+### Unidades de compra × estoque e apresentações (2026-08-26)
+
+**Princípio:** o estoque de cada insumo vive numa ÚNICA unidade base (`ingredients.unit` — kg, un, L). Caixa/fardo/pote são linguagem de **compra**; a linha da compra faz a tradução.
+
+**Embalagem desdobrada** (`fin_purchase_items.pack_count` × `pack_size`): "cx 12×1,5kg" entra como 12 e 1,5 — o sistema calcula `units_per_package = 18` (kg por cx), que segue sendo a verdade para entrada de estoque e `cost_per_base_unit`. `pack_size` vazio = 1 (a unidade interna já é a de estoque). Motivo: o campo único obrigava conta de cabeça e induzia erro em embalagens de meio quilo (cx 9×0,5kg era digitada como 9 em vez de 4,5).
+
+**Apresentações no catálogo** (`fin_purchase_catalog.ingredient_id` + `purchase_unit` + `pack_count`/`pack_size`): o catálogo virou catálogo de SKUs por fornecedor. Duas apresentações ("Requeijão — Forn. A (cx 12×1,5kg)" e "Requeijão — Forn. B (cx 6×1kg)") apontam para o MESMO insumo; escolher uma no modal de compra preenche insumo, embalagem, categoria e fornecedor de uma vez. FK tenant-safe `(ingredient_id, tenant_id) → ingredients(id, tenant_id)` (novo unique `ingredients_id_tenant_uk`).
+
+**Auto-cadastro:** `purchase-write` (`upsertCatalogPresentations`) cria a apresentação automaticamente em toda compra com insumo + fornecedor + embalagem desdobrada (dedup por insumo+fornecedor+pack). O catálogo se constrói sozinho com o uso. Falha nesse passo nunca derruba a compra.
+
+**Sincronização de tela:** o `EstoqueContext` é global e confiava só no Realtime — que fica MUDO para admin multi-loja (RLS `get_user_tenant_id()` = última membership). `ComprasTab` agora chama `reloadInsumos()`/`reloadMovimentacoes()` após criar/editar/excluir/receber compra.
+
+Migration: `supabase/migrations/purchase_pack_breakdown_and_catalog_sku.sql` (aplicada via função temporária — MCP fora do ar).
+
 ### Edição de compra (`update_purchase`, 2026-08-26)
 
 `purchase-write` ganhou a action `update_purchase`, ao lado de `create_purchase`/`delete_purchase`. A lógica de cálculo (custo por item, resolução de fornecedor, herança de categoria, entrada de estoque, geração de contas a pagar) foi extraída para funções compartilhadas (`computePurchaseItems`, `resolveOrCreateSupplier`, `inheritMerchandiseCategories`, `applyStockAndPricing`, `reverseStockForItems`, `createBillsForPurchase`) — create e update chamam as mesmas, para não duplicar bug.
