@@ -1,7 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { SUPABASE_URL } from '@/lib/supabase';
+import { notifyReload, subscribeReload } from '@/lib/reloadSignal';
+
+// Mesmo canal do useIngredientCategories: Estoque e Compras leem a MESMA lista,
+// então mexer nela numa tela precisa refletir na outra.
+const CHANNEL = 'ingredient_categories';
 
 /**
  * Categorias de MERCADORIA (Bebidas, Hortifruti, Proteínas - El Patron...).
@@ -41,8 +46,18 @@ export function useMerchandiseCategories() {
   const { user } = useAuth();
   const [categories, setCategories] = useState<MerchandiseCategory[]>([]);
   const [loading, setLoading] = useState(false);
+  const [tick, setTick] = useState(0);
+  const mountedRef = useRef(true);
 
   const tenantId = user?.tenantId;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const unsub = subscribeReload(CHANNEL, () => {
+      if (mountedRef.current) setTick((t) => t + 1);
+    });
+    return () => { mountedRef.current = false; unsub(); };
+  }, []);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -64,7 +79,7 @@ export function useMerchandiseCategories() {
     }
   }, [tenantId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, tick]);
 
   const upsert = useCallback(async (data: { id?: string; name: string; sort_order?: number }) => {
     if (!tenantId) return { error: 'Sem tenant' };
@@ -74,16 +89,34 @@ export function useMerchandiseCategories() {
       sort_order: data.sort_order,
     });
     await load();
+    if (!json?.error) notifyReload(CHANNEL);
     return json;
   }, [tenantId, load]);
 
-  /** Soft delete: compras já lançadas continuam apontando para a categoria. */
+  /** Soft delete: insumos e compras já classificados continuam com a categoria. */
   const remove = useCallback(async (id: string) => {
     if (!tenantId) return { error: 'Sem tenant' };
     const json = await callFinancialWrite('delete_merchandise_category', tenantId, { id });
     await load();
+    if (!json?.error) notifyReload(CHANNEL);
     return json;
   }, [tenantId, load]);
 
-  return { categories, loading, load, upsert, remove };
+  /**
+   * Mescla `fromId` em `toId`: move insumos e itens de compra e desativa a origem.
+   * É como o usuário colapsa duplicatas herdadas ("Mercearia" → "Secos").
+   * Retorna `{ data: { moved_ingredients, moved_purchase_items } }`.
+   */
+  const merge = useCallback(async (fromId: string, toId: string) => {
+    if (!tenantId) return { error: 'Sem tenant' };
+    const json = await callFinancialWrite('merge_merchandise_category', tenantId, {
+      from_id: fromId,
+      to_id: toId,
+    });
+    await load();
+    if (!json?.error) notifyReload(CHANNEL);
+    return json;
+  }, [tenantId, load]);
+
+  return { categories, loading, load, upsert, remove, merge };
 }

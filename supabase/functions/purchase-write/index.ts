@@ -214,6 +214,50 @@ Deno.serve(async (req) => {
           purchaseData.total_amount = Math.round((itemsSubtotal + freightAmount) * 100) / 100;
         }
 
+        // Fornecedor por FK: resolve pelo nome dentro DESTE tenant e cria se não
+        // existir. Antes o vínculo era só o texto + um ilike solto, que falhava
+        // silenciosamente em nomes com espaço duplo/sobrando.
+        let supplierRecord: { id: string } | null = null;
+        const supplierName = String(purchaseData.supplier ?? '').trim();
+        if (supplierName) {
+          purchaseData.supplier = supplierName;
+          const { data: sup } = await supabase
+            .from('fin_suppliers').select('id')
+            .eq('tenant_id', tenant_id).ilike('name', supplierName).maybeSingle();
+          if (sup) {
+            supplierRecord = sup;
+          } else {
+            const { data: created, error: supErr } = await supabase
+              .from('fin_suppliers')
+              .insert({ tenant_id, name: supplierName, is_active: true })
+              .select('id').single();
+            if (supErr) console.error('[purchase-write] criar fornecedor:', supErr.message ?? supErr);
+            else supplierRecord = created;
+          }
+          if (supplierRecord?.id) purchaseData.supplier_id = supplierRecord.id;
+        }
+
+        // Categoria de mercadoria: se o front não mandou, herda a do insumo —
+        // estoque e compras compartilham a MESMA lista (fin_merchandise_categories).
+        const ingredientIds = computedItems
+          .map((it) => (it.ingredient_id ? String(it.ingredient_id) : null))
+          .filter((v): v is string => Boolean(v));
+        if (ingredientIds.length > 0) {
+          const { data: ings } = await supabase
+            .from('ingredients')
+            .select('id, merchandise_category_id')
+            .eq('tenant_id', tenant_id)
+            .in('id', ingredientIds);
+          const catByIngredient = new Map(
+            (ings ?? []).map((g: Record<string, unknown>) => [g.id as string, g.merchandise_category_id as string | null]),
+          );
+          for (const it of computedItems) {
+            if (!it.merchandise_category_id && it.ingredient_id) {
+              it.merchandise_category_id = catByIngredient.get(String(it.ingredient_id)) ?? null;
+            }
+          }
+        }
+
         const hasCustomInstallments = Array.isArray(custom_installments) && custom_installments.length >= 2;
         const isLegacyInstallment = !hasCustomInstallments && installment_count && installment_count > 1;
         const isInstallment = hasCustomInstallments || isLegacyInstallment;
@@ -230,12 +274,6 @@ Deno.serve(async (req) => {
           const itemsToInsert = computedItems.map((it) => ({ ...it, purchase_id: purchase.id }));
           const { error: itemsError } = await supabase.from('fin_purchase_items').insert(itemsToInsert);
           if (itemsError) throw itemsError;
-
-          let supplierRecord: { id: string } | null = null;
-          if (purchase.supplier) {
-            const { data: sup } = await supabase.from('fin_suppliers').select('id').eq('tenant_id', tenant_id).ilike('name', purchase.supplier.trim()).maybeSingle();
-            supplierRecord = sup;
-          }
 
           for (const item of computedItems) {
             if (item.ingredient_id) {

@@ -10,14 +10,18 @@ interface Props {
  * Não confundir com o plano de contas do DRE — aqui é só o agrupamento do que é comprado.
  */
 export default function CategoriasMercadoriaModal({ onClose }: Props) {
-  const { categories, loading, upsert, remove } = useMerchandiseCategories();
+  const { categories, loading, upsert, remove, merge } = useMerchandiseCategories();
 
   const [newName, setNewName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  // Mesclagem: qual categoria é a origem e para onde ela vai
+  const [mergeId, setMergeId] = useState<string | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const handleAdd = async () => {
     const name = newName.trim();
@@ -37,7 +41,45 @@ export default function CategoriasMercadoriaModal({ onClose }: Props) {
     setEditingId(id);
     setEditingName(name);
     setConfirmId(null);
+    setMergeId(null);
     setError(null);
+  };
+
+  /** Abre o seletor de destino inline na própria linha. */
+  const startMerge = (id: string) => {
+    setMergeId(id);
+    setMergeTargetId('');
+    setEditingId(null);
+    setConfirmId(null);
+    setError(null);
+    setSuccess(null);
+  };
+
+  const cancelMerge = () => {
+    setMergeId(null);
+    setMergeTargetId('');
+  };
+
+  const handleMerge = async () => {
+    if (!mergeId || !mergeTargetId || saving) return;
+    const from = categories.find((c) => c.id === mergeId);
+    const to = categories.find((c) => c.id === mergeTargetId);
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    const res = await merge(mergeId, mergeTargetId);
+    setSaving(false);
+    if (res?.error) {
+      setError(String(res.error));
+      return;
+    }
+    const moved = res?.data ?? {};
+    const ing = Number(moved.moved_ingredients ?? 0);
+    const items = Number(moved.moved_purchase_items ?? 0);
+    setSuccess(
+      `${ing} insumo${ing !== 1 ? 's' : ''} e ${items} ${items !== 1 ? 'itens' : 'item'} de compra movido${items !== 1 ? 's' : ''} de «${from?.name ?? ''}» para «${to?.name ?? ''}».`
+    );
+    cancelMerge();
   };
 
   const handleSaveEdit = async () => {
@@ -108,6 +150,17 @@ export default function CategoriasMercadoriaModal({ onClose }: Props) {
             <i className="ri-error-warning-line text-red-500 text-sm mt-px" />
             <p className="text-xs text-red-600 font-semibold flex-1">{error}</p>
             <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 cursor-pointer">
+              <i className="ri-close-line text-sm" />
+            </button>
+          </div>
+        )}
+
+        {/* Sucesso da mesclagem */}
+        {success && (
+          <div className="mx-6 mt-3 px-3 py-2 bg-emerald-50 border border-emerald-100 rounded-lg flex items-start gap-2 flex-shrink-0">
+            <i className="ri-checkbox-circle-line text-emerald-500 text-sm mt-px" />
+            <p className="text-xs text-emerald-700 font-semibold flex-1">{success}</p>
+            <button onClick={() => setSuccess(null)} className="text-emerald-400 hover:text-emerald-600 cursor-pointer">
               <i className="ri-close-line text-sm" />
             </button>
           </div>
@@ -189,12 +242,60 @@ export default function CategoriasMercadoriaModal({ onClose }: Props) {
                         </button>
                       </div>
                     </>
+                  ) : mergeId === cat.id ? (
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-zinc-800 truncate">{cat.name}</p>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Mesclar em qual categoria?</p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <select
+                          value={mergeTargetId}
+                          autoFocus
+                          onChange={(e) => { setMergeTargetId(e.target.value); setError(null); }}
+                          className="flex-1 min-w-0 border border-zinc-200 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        >
+                          <option value="">Escolha o destino...</option>
+                          {/* A origem nunca aparece como destino */}
+                          {categories.filter((c) => c.id !== cat.id).map((c) => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={handleMerge}
+                          disabled={saving || !mergeTargetId}
+                          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap"
+                        >
+                          Mesclar
+                        </button>
+                        <button
+                          onClick={cancelMerge}
+                          disabled={saving}
+                          className="px-3 py-1.5 border border-zinc-200 rounded-lg text-xs font-semibold text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                      {mergeTargetId && (
+                        <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5 mt-2">
+                          Todos os insumos e compras de «{cat.name}» passam para «
+                          {categories.find((c) => c.id === mergeTargetId)?.name}». «{cat.name}» sai da lista.
+                          Não dá para desfazer.
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-zinc-800 truncate">{cat.name}</p>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => startMerge(cat.id)}
+                          disabled={saving || categories.length < 2}
+                          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 disabled:opacity-40 cursor-pointer"
+                          title="Mesclar em outra categoria"
+                        >
+                          <i className="ri-git-merge-line text-sm" />
+                        </button>
                         <button
                           onClick={() => startEdit(cat.id, cat.name)}
                           className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 cursor-pointer"
@@ -203,7 +304,7 @@ export default function CategoriasMercadoriaModal({ onClose }: Props) {
                           <i className="ri-edit-line text-sm" />
                         </button>
                         <button
-                          onClick={() => { setConfirmId(cat.id); setEditingId(null); setError(null); }}
+                          onClick={() => { setConfirmId(cat.id); setEditingId(null); setMergeId(null); setError(null); }}
                           className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-300 hover:text-red-500 cursor-pointer"
                           title="Excluir"
                         >

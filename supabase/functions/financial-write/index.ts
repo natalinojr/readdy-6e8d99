@@ -457,6 +457,53 @@ Deno.serve(async (req) => {
         break;
       }
 
+      case 'merge_merchandise_category': {
+        // Move tudo de `from_id` para `to_id` e desativa a origem.
+        // É como o usuário colapsa duplicatas ("Mercearia" → "Secos").
+        const { from_id, to_id } = payload;
+        if (!from_id || !to_id || from_id === to_id) {
+          return new Response(JSON.stringify({ error: 'Selecione duas categorias diferentes' }), { status: 400, headers: corsHeaders });
+        }
+
+        // Garante que AMBAS pertencem a este tenant antes de mover qualquer coisa
+        const { data: both, error: bothErr } = await supabase
+          .from('fin_merchandise_categories')
+          .select('id')
+          .eq('tenant_id', tenant_id)
+          .in('id', [from_id, to_id]);
+        if (bothErr || (both ?? []).length !== 2) {
+          return new Response(JSON.stringify({ error: 'Categoria não encontrada nesta loja' }), { status: 404, headers: corsHeaders });
+        }
+
+        const { count: movedIngredients } = await supabase
+          .from('ingredients')
+          .update({ merchandise_category_id: to_id }, { count: 'exact' })
+          .eq('tenant_id', tenant_id)
+          .eq('merchandise_category_id', from_id);
+
+        const { count: movedItems } = await supabase
+          .from('fin_purchase_items')
+          .update({ merchandise_category_id: to_id }, { count: 'exact' })
+          .eq('tenant_id', tenant_id)
+          .eq('merchandise_category_id', from_id);
+
+        result = await supabase
+          .from('fin_merchandise_categories')
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq('id', from_id)
+          .eq('tenant_id', tenant_id)
+          .select()
+          .single();
+
+        if (result?.error) {
+          return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
+        }
+        return new Response(
+          JSON.stringify({ data: { moved_ingredients: movedIngredients ?? 0, moved_purchase_items: movedItems ?? 0 } }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
       case 'delete_merchandise_category': {
         // Soft delete: itens de compra já lançados continuam apontando para a categoria.
         result = await supabase

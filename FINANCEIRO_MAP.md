@@ -205,6 +205,34 @@ margemLiquida     = resultadoOperacional / receitaBruta × 100
 
 ---
 
+## 8b. Taxonomia única: categorias de mercadoria e fornecedores (2026-08-26)
+
+**Problema:** existiam **três** listas de categoria concorrentes — `ingredients.category` (texto livre), `ingredient_categories` (lista de sugestão do cadastro de insumo) e `fin_merchandise_categories` (compras) — e elas já haviam divergido (o estoque tinha Panificação/Mercearia/Chips; as compras tinham Chope/Sucos/Tortilha/Secos). Sem uma taxonomia comum é impossível calcular **CMV por categoria**, porque `Compras + Estoque inicial − Estoque final` exige que os três termos falem a mesma língua.
+
+**Solução — FK como fonte de verdade + texto espelhado por trigger.** ~40 pontos do front leem `ingredients.category` como TEXTO (relatórios, CSVs, filtros) e duas RPCs que nem estão versionadas no repo (`fn_get_ingredients`, `fn_get_ingredients_consumo`) o retornam. Trocar tudo por UUID de uma vez quebraria demais. Então:
+
+- `fin_merchandise_categories` é a **lista única** (estoque + compras). `ingredient_categories` foi absorvida e não é mais lida.
+- `ingredients.merchandise_category_id` é a **fonte de verdade**; `ingredients.category` continua existindo como **espelho**.
+- **`trg_sync_ingredient_category`** (BEFORE INSERT/UPDATE em `ingredients`) sincroniza nos DOIS sentidos:
+  - FK definida → escreve o texto;
+  - só texto (caminhos legados: `fn_upsert_ingredient`, `bulk_insert_ingredients`, `import-menu-template`) → resolve/cria a categoria e preenche a FK.
+- **`trg_propagate_merchandise_category_rename`** (AFTER UPDATE OF name) propaga rename/merge para o texto dos insumos.
+- Ambas as funções são `SECURITY DEFINER` owned by `postgres` (as tabelas não têm FORCE RLS, então a trigger escreve normalmente).
+- Action **`merge_merchandise_category`** permite colapsar duplicatas (move insumos + itens de compra, desativa a origem).
+
+> Consequência prática: nenhum código de leitura precisou mudar. `useIngredientCategories` foi reapontado para a lista única mantendo a interface idêntica.
+
+**Fornecedores — FK tenant-safe.** O vínculo era por **nome** com `ilike`, que falhava silenciosamente em nomes com espaço duplo/sobrando (ex.: `Alvino␣␣dos Passos Junior`). Pior: **36 insumos** (24 em EP Paranaguá + 12 em EP PAR MALL) tinham `supplier_id` apontando para fornecedores de **outra loja**.
+
+- Corrigido: os fornecedores foram recriados na loja certa (pelo nome em `ingredients.supplier`) e os vínculos reapontados. EP Paranaguá saiu de 0 → 6 fornecedores.
+- `fin_purchases.supplier_id` criado; `purchase-write` resolve **ou cria** o fornecedor do tenant e grava a FK.
+- **Trava contra recorrência:** FKs compostas `(supplier_id, tenant_id) → fin_suppliers(id, tenant_id)` e `(merchandise_category_id, tenant_id) → fin_merchandise_categories(id, tenant_id)` em `ingredients`, `fin_purchase_items` e `fin_purchase_catalog`. Cross-tenant agora é **erro**, não vazamento silencioso.
+- ⚠️ Por causa disso, `import-menu-template` **não copia mais `supplier_id`** do template (o id é de outro tenant e violaria a FK); só o nome em `supplier`.
+
+> Pendente: `fin_purchase_catalog.merchandise_category_id` existe mas ainda não é preenchido pela UI do catálogo; `AlertasReposicao` agrupa só por texto de fornecedor, ignorando a FK.
+
+---
+
 ## 9. Tabelas do módulo (schema `public`)
 `fin_cash_flow`, `fin_accounts_payable`, `fin_receivable_installments`, `fin_anticipations`, `fin_purchases`, `fin_purchase_items`, `fin_purchase_catalog`, `fin_merchandise_categories`, `fin_suppliers`, `fin_cost_centers`, `fin_dre_categories`, `fin_bank_accounts`, `fin_bank_transactions`, `fin_bank_statement_imports`, `fin_bank_statements`, `fin_reconciliation_rules`, `fin_budgets`, `fin_budget_items`, `fin_income_routing`, `fin_investment_settings`, `fin_implementation_costs`, `fin_implementation_columns`, `fin_stone_config`, `fin_stone_imports`, `fin_pix_payments`, `fin_payable_aging`(view), `fin_receivable_aging`(view), `hr_employees`, `hr_payroll`, `hr_payroll_custom_fields`.
 

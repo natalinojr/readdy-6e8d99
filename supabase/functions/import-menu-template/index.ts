@@ -166,7 +166,11 @@ serve(async (req) => {
       const rows = filtered.map((i: Record<string, unknown>) => {
         const newId = generateUUID();
         ingredientMap[i.id as string] = newId;
-        return { id: newId, tenant_id, name: getRenamed('insumos', i.name as string), unit: i.unit, unit_price: i.unit_price ?? 0, min_stock: i.min_stock ?? 0, current_stock: i.current_stock ?? 0, is_depleted: i.is_depleted ?? false, category: i.category ?? null, supplier: i.supplier ?? null, price_source: i.price_source ?? null, last_purchase_price: i.last_purchase_price ?? null, last_purchase_date: i.last_purchase_date ?? null, purchase_unit: i.purchase_unit ?? null, purchase_factor: i.purchase_factor ?? 1, supplier_id: i.supplier_id ?? null, dre_category_id: i.dre_category_id ?? null, usage_type: i.usage_type ?? 'final', created_at: now, updated_at: now };
+        return { id: newId, tenant_id, name: getRenamed('insumos', i.name as string), unit: i.unit, unit_price: i.unit_price ?? 0, min_stock: i.min_stock ?? 0, current_stock: i.current_stock ?? 0, is_depleted: i.is_depleted ?? false, category: i.category ?? null, supplier: i.supplier ?? null, price_source: i.price_source ?? null, last_purchase_price: i.last_purchase_price ?? null, last_purchase_date: i.last_purchase_date ?? null, purchase_unit: i.purchase_unit ?? null, purchase_factor: i.purchase_factor ?? 1,
+          // supplier_id NÃO é copiado do template: o id pertence ao tenant de origem
+          // e a FK (supplier_id, tenant_id) rejeitaria o insert. O nome em `supplier`
+          // é preservado e o vínculo é refeito na primeira compra desse fornecedor.
+          supplier_id: null, dre_category_id: i.dre_category_id ?? null, usage_type: i.usage_type ?? 'final', created_at: now, updated_at: now };
       });
       if (rows.length > 0) {
         const { error } = await supabase.from("ingredients").insert(rows);

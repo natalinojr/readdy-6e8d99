@@ -1,14 +1,43 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { supabase, SUPABASE_URL } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { notifyReload, subscribeReload } from '@/lib/reloadSignal';
 
+/**
+ * Categorias de insumo.
+ *
+ * ⚠️ Desde 2026-08-26 este hook lê `fin_merchandise_categories` — a MESMA lista
+ * usada pelas compras. Antes existiam três fontes concorrentes (o texto livre em
+ * `ingredients.category`, a tabela de sugestões `ingredient_categories` e a lista
+ * de mercadoria do financeiro), que já haviam divergido entre si.
+ *
+ * A interface pública foi mantida idêntica de propósito, para não mexer nas telas
+ * de Estoque que consomem este hook. A tabela antiga `ingredient_categories` não
+ * é mais lida (seu conteúdo foi absorvido na migração).
+ */
 export interface IngredientCategory {
   id: string;
   name: string;
 }
 
 const CHANNEL = 'ingredient_categories';
+
+async function callFinancialWrite(action: string, tenantId: string, payload: Record<string, unknown>) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) return { error: 'Sessão expirada' };
+
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/financial-write`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'apikey': import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY as string,
+    },
+    body: JSON.stringify({ action, tenant_id: tenantId, payload }),
+  });
+  return await res.json();
+}
 
 export function useIngredientCategories() {
   const { user } = useAuth();
@@ -33,32 +62,13 @@ export function useIngredientCategories() {
     setLoading(true);
 
     try {
-      // Usa invokeWithAuth (passa JWT automaticamente) para garantir autenticação
-      const { data: fnData, error: fnErr } = await invokeWithAuth<{
-        success: boolean;
-        data?: IngredientCategory[];
-        error?: string;
-      }>('config-write', {
-        body: {
-          action: 'list_ingredient_categories',
-          tenant_id: user.tenantId,
-        },
-      });
-
-      if (!fnErr && fnData?.success && Array.isArray(fnData.data)) {
-        if (mountedRef.current) {
-          setCategories(fnData.data);
-          setLoading(false);
-        }
-        return;
-      }
-
-      // Fallback: query direta
-      console.warn('[useIngredientCategories] edge function falhou, tentando direto:', fnErr || fnData?.error);
+      // Leitura direta: a RLS de fin_merchandise_categories já permite SELECT por tenant
       const { data, error } = await supabase
-        .from('ingredient_categories')
+        .from('fin_merchandise_categories')
         .select('id, name')
         .eq('tenant_id', user.tenantId)
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
         .order('name', { ascending: true });
 
       if (error) {
@@ -85,38 +95,23 @@ export function useIngredientCategories() {
       return null;
     }
 
-    // Usa invokeWithAuth para garantir autenticação correta
-    const { data: fnData, error: fnErr } = await invokeWithAuth<{ success: boolean; data?: IngredientCategory; error?: string }>('config-write', {
-      body: {
-        action: 'create_ingredient_category',
-        tenant_id: user.tenantId,
-        name: trimmed,
-      },
-    });
-
-    if (fnErr || !fnData?.success || !fnData.data) {
-      console.error('[useIngredientCategories] addCategory error:', fnErr || fnData?.error);
+    const json = await callFinancialWrite('upsert_merchandise_category', user.tenantId, { name: trimmed });
+    if (json?.error || !json?.data) {
+      console.error('[useIngredientCategories] addCategory error:', json?.error);
       return null;
     }
 
     notifyReload(CHANNEL);
-    return fnData.data as IngredientCategory;
+    return json.data as IngredientCategory;
   }, [user?.tenantId, categories]);
 
   const removeCategory = useCallback(async (id: string): Promise<boolean> => {
     if (!user?.tenantId) return false;
 
-    // Usa invokeWithAuth para garantir autenticação correta
-    const { data, error } = await invokeWithAuth<{ success: boolean; error?: string }>('config-write', {
-      body: {
-        action: 'delete_ingredient_category',
-        tenant_id: user.tenantId,
-        id,
-      },
-    });
-
-    if (error || !data?.success) {
-      console.error('[useIngredientCategories] removeCategory error:', error || data?.error);
+    // Soft delete: insumos e compras já classificados mantêm a categoria
+    const json = await callFinancialWrite('delete_merchandise_category', user.tenantId, { id });
+    if (json?.error) {
+      console.error('[useIngredientCategories] removeCategory error:', json.error);
       return false;
     }
 
