@@ -213,6 +213,13 @@ export default function NovaCompraModal({
   const [itemSearch, setItemSearch] = useState<Record<number, string>>({});
   const itemDropdownRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
+  // Dropdown de fornecedor (substitui <datalist>: o navegador renderiza a lista
+  // nativa no tema do sistema — no Windows em modo escuro sai preta com texto
+  // branco, destoando do resto do formulário. Um dropdown próprio segue o
+  // mesmo estilo do dropdown de Item logo abaixo.)
+  const [supplierDropdownOpen, setSupplierDropdownOpen] = useState(false);
+  const supplierDropdownRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       Object.entries(itemDropdownRefs.current).forEach(([idx, ref]) => {
@@ -220,6 +227,9 @@ export default function NovaCompraModal({
           setItemDropdownOpen((prev) => ({ ...prev, [Number(idx)]: false }));
         }
       });
+      if (supplierDropdownRef.current && !supplierDropdownRef.current.contains(e.target as Node)) {
+        setSupplierDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -490,19 +500,39 @@ export default function NovaCompraModal({
           )}
           {/* Linha 1: Fornecedor + NF + Data + Pagamento */}
           <div className="grid grid-cols-4 gap-2">
-            <div className="col-span-2">
+            <div className="col-span-2 relative" ref={supplierDropdownRef}>
               <label className="text-xs font-semibold text-zinc-600 block mb-1">Fornecedor *</label>
               <input
                 required value={form.supplier}
-                onChange={(e) => { setForm((f) => ({ ...f, supplier: e.target.value })); setValidationErrors(prev => { const n = {...prev}; delete n.supplier; return n; }); }}
-                list="suppliers-list"
+                onChange={(e) => { setForm((f) => ({ ...f, supplier: e.target.value })); setValidationErrors(prev => { const n = {...prev}; delete n.supplier; return n; }); setSupplierDropdownOpen(true); }}
+                onFocus={() => setSupplierDropdownOpen(true)}
+                autoComplete="off"
                 className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 ${validationErrors.supplier ? 'border-red-400 bg-red-50/30' : 'border-zinc-200'}`}
                 placeholder="Nome do fornecedor"
               />
               {validationErrors.supplier && <p className="text-xs text-red-600 mt-0.5 flex items-center gap-1"><i className="ri-error-warning-line" />{validationErrors.supplier}</p>}
-              <datalist id="suppliers-list">
-                {suppliers.map((s) => <option key={s} value={s} />)}
-              </datalist>
+              {supplierDropdownOpen && (() => {
+                const filtered = suppliers.filter((s) => s.toLowerCase().includes(form.supplier.trim().toLowerCase()));
+                if (filtered.length === 0) return null;
+                return (
+                  <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
+                    {filtered.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => {
+                          setForm((f) => ({ ...f, supplier: s }));
+                          setValidationErrors(prev => { const n = { ...prev }; delete n.supplier; return n; });
+                          setSupplierDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs font-semibold text-zinc-800 hover:bg-amber-50 cursor-pointer"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
             <div>
               <label className="text-xs font-semibold text-zinc-600 block mb-1">Nota Fiscal</label>
