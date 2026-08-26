@@ -4,6 +4,7 @@ import { useSuppliers } from '@/hooks/useSuppliers';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
+import { useEstoque } from '@/contexts/EstoqueContext';
 import { formatCurrency } from '@/lib/formatters';
 import type { Purchase } from '@/types/financeiro';
 import ComprasRelatorioPanel from './ComprasRelatorioPanel';
@@ -50,6 +51,11 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const { centers } = useCostCenters();
   const { accounts: bankAccounts } = useBankAccounts();
   const { names: supplierNames } = useSuppliers();
+  // O EstoqueContext é global e se atualiza por Realtime — mas para admin
+  // multi-loja o Realtime é filtrado pela RLS (get_user_tenant_id() = última
+  // membership) e fica MUDO na loja errada. Compra mexe em estoque, então
+  // recarregamos o contexto explicitamente após cada operação.
+  const { reloadInsumos, reloadMovimentacoes } = useEstoque();
 
   const [activeView, setActiveView] = useState<'lista' | 'relatorio' | 'centrocusto'>('lista');
   const [showModal, setShowModal] = useState(false);
@@ -67,7 +73,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const [editInstallments, setEditInstallments] = useState<{ due_date: string; amount: number }[]>([]);
   const [checkingEdit, setCheckingEdit] = useState<string | null>(null);
   const [editBlockedMessage, setEditBlockedMessage] = useState<string | null>(null);
-  const [ingredients, setIngredients] = useState<{ id: string; name: string; unit: string }[]>([]);
+  const [ingredients, setIngredients] = useState<{ id: string; name: string; unit: string; purchase_unit?: string | null; purchase_factor?: number | null }[]>([]);
   const [flashId, setFlashId] = useState<string | undefined>(highlightId);
   const highlightRowRef = useRef<HTMLTableRowElement | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -126,9 +132,11 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
 
   const loadIngredients = async () => {
     if (!user?.tenantId || ingredients.length > 0) return;
+    // purchase_unit/purchase_factor = última embalagem usada na compra deste
+    // insumo (ex.: 'cx' de 16) — pré-preenche o modal na próxima compra.
     const { data } = await supabase
       .from('ingredients')
-      .select('id,name,unit')
+      .select('id,name,unit,purchase_unit,purchase_factor')
       .eq('tenant_id', user.tenantId)
       .order('name');
     setIngredients(data ?? []);
@@ -150,20 +158,29 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
     }
   };
 
+  // Compra mexe em estoque — sincroniza o EstoqueContext sem depender do Realtime
+  const refreshEstoque = () => {
+    reloadInsumos();
+    reloadMovimentacoes();
+  };
+
   const handleDeliveryConfirmed = () => {
     setDetailPurchase(null);
     refreshPurchases();
+    refreshEstoque();
   };
 
   const handleDeleted = () => {
     setDetailPurchase(null);
     refreshPurchases();
+    refreshEstoque();
   };
 
   const handleSubmit = async (payload: Record<string, unknown>) => {
     await create(payload, registrarEvento);
     setShowModal(false);
     setPage(1);
+    refreshEstoque();
   };
 
   // Verifica se a compra pode ser editada e, se puder, busca as parcelas
@@ -206,6 +223,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
     await update(editPurchase.id, payload, registrarEvento);
     setEditPurchase(null);
     setPage(1);
+    refreshEstoque();
   };
 
   // Filtered & sorted

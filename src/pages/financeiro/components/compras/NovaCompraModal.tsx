@@ -5,7 +5,13 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMerchandiseCategories } from '@/hooks/useMerchandiseCategories';
 
-interface IngredientOption { id: string; name: string; unit: string; }
+interface IngredientOption {
+  id: string;
+  name: string;
+  unit: string;                     // unidade de ESTOQUE (kg, un, L...)
+  purchase_unit?: string | null;    // última embalagem comprada (cx, fardo...)
+  purchase_factor?: number | null;  // quanto entra no estoque por embalagem
+}
 interface CustomInstallment { tempId: string; due_date: string; amount: number; }
 interface CostCenter { id: string; name: string; }
 interface BankAccount { id: string; name: string; }
@@ -331,17 +337,35 @@ export default function NovaCompraModal({
       if (unified.type === 'ingredient') {
         updated.ingredient_id = unified.id;
         (updated as Record<string, unknown>).catalog_id = undefined;
+        // Pré-preenche com a embalagem da ÚLTIMA compra deste insumo
+        // (ex.: 'cx' de 16) — o purchase-write grava isso no insumo a cada
+        // compra. Sem histórico, cai na unidade de estoque com fator vazio.
+        const ing = ingredients.find((g) => g.id === unified.id);
+        if (ing?.purchase_unit && Number(ing.purchase_factor ?? 0) > 1) {
+          updated.unit_label = ing.purchase_unit;
+          updated.units_per_package = Number(ing.purchase_factor);
+        } else {
+          updated.unit_label = unified.unit || 'un';
+          updated.units_per_package = undefined;
+        }
       } else {
         (updated as Record<string, unknown>).catalog_id = unified.id;
         updated.ingredient_id = undefined;
+        updated.unit_label = unified.unit || 'un';
       }
       updated.description = unified.name;
-      updated.unit_label = unified.unit || 'un';
       (updated as Record<string, unknown>).dre_category_id = unified.dre_category_id ?? null;
       return updated;
     }));
     setItemSearch((prev) => ({ ...prev, [idx]: unified.name }));
     setItemDropdownOpen((prev) => ({ ...prev, [idx]: false }));
+  };
+
+  // Unidade de ESTOQUE do insumo ligado à linha (kg, un, L...) — usada para
+  // rotular a conversão embalagem → estoque de forma explícita.
+  const stockUnitFor = (item: Partial<PurchaseItem>): string | null => {
+    if (!item.ingredient_id) return null;
+    return ingredients.find((g) => g.id === item.ingredient_id)?.unit ?? null;
   };
 
   const addItem = () => {
@@ -1067,10 +1091,20 @@ export default function NovaCompraModal({
                       </select>
                     </div>
                     <div>
-                      <label className="text-[10px] font-semibold text-zinc-500 block mb-1 whitespace-nowrap">
-                        Unid./embalagem
+                      {/* O rótulo fala a língua do estoque: "kg por cx" deixa claro
+                          que aqui vai o CONTEÚDO da embalagem na unidade de estoque
+                          (cx de 16×1kg → 16; cx de 9×0,5kg → 4,5), não a contagem
+                          de pacotes. "Unid./embalagem" confundia exatamente isso. */}
+                      <label className="text-[10px] font-semibold text-zinc-500 block mb-1 whitespace-nowrap"
+                        title={`Quanto entra no estoque a cada 1 ${item.unit_label ?? 'un'} comprada`}>
+                        {(() => {
+                          const su = stockUnitFor(item);
+                          return su && item.unit_label && su !== item.unit_label
+                            ? `${su} por ${item.unit_label}`
+                            : 'Unid./embalagem';
+                        })()}
                       </label>
-                      <input type="number" min="1" step="1" placeholder="—"
+                      <input type="number" min="0.001" step="0.001" placeholder="—"
                         value={item.units_per_package ?? ''}
                         onChange={(e) => updateItem(idx, 'units_per_package', e.target.value ? Number(e.target.value) : undefined)}
                         className="w-full border border-zinc-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
@@ -1133,14 +1167,27 @@ export default function NovaCompraModal({
                     <div className={`${costCenterMode === 'per_item' ? '' : 'ml-auto'} flex items-center gap-3`}>
                       {/* Info embalagem + custo real */}
                       <div className="flex flex-col gap-0.5">
-                        {item.units_per_package && Number(item.units_per_package) > 1 && (
-                          <div className="text-[10px] text-zinc-400 whitespace-nowrap">
-                            {Number(item.quantity ?? 1)} {item.unit_label ?? 'un'} × {item.units_per_package} unid.
-                            <span className="font-semibold text-zinc-600 ml-1">
-                              = {Number(item.quantity ?? 1) * Number(item.units_per_package)} unid. total
-                            </span>
-                          </div>
-                        )}
+                        {/* Conversão explícita: o que ENTRA no estoque com esta linha.
+                            É a resposta à pergunta "cadê minhas 48 unidades?" antes
+                            mesmo de salvar. */}
+                        {item.ingredient_id && Number(item.quantity ?? 0) > 0 && (() => {
+                          const su = stockUnitFor(item) ?? 'un';
+                          const upp = Number(item.units_per_package ?? 0);
+                          const entrada = Number(item.quantity ?? 0) * (upp > 0 ? upp : 1);
+                          return (
+                            <div className="text-[10px] whitespace-nowrap bg-emerald-50 border border-emerald-200 rounded-md px-1.5 py-0.5 w-fit">
+                              <i className="ri-arrow-right-line text-emerald-500 mr-0.5" />
+                              {upp > 0 ? (
+                                <span className="text-zinc-500">
+                                  {Number(item.quantity)} {item.unit_label ?? 'un'} × {upp} {su} ={' '}
+                                </span>
+                              ) : null}
+                              <span className="font-bold text-emerald-700">
+                                entram {entrada} {su} no estoque
+                              </span>
+                            </div>
+                          );
+                        })()}
                         {Number(item.unit_price ?? 0) > 0 && (
                           <div className="text-[10px] whitespace-nowrap flex flex-col gap-0.5">
                             {/* VU final: custo de 1 unidade de COMPRA (caixa/fardo),
@@ -1159,7 +1206,7 @@ export default function NovaCompraModal({
                             {/* R$ por unidade de ESTOQUE — é o número que vira custo do insumo */}
                             {Number(item.units_per_package ?? 1) > 1 && (
                               <div>
-                                <span className="text-zinc-400">Custo p/ unid. de estoque: </span>
+                                <span className="text-zinc-400">Custo por {stockUnitFor(item) ?? 'unid. de estoque'}: </span>
                                 <span className="text-zinc-700 font-semibold">
                                   {formatCurrency(realUnitCost(item, idx))}
                                 </span>

@@ -165,6 +165,12 @@ async function applyStockAndPricing(
     const supplierPayload: Record<string, unknown> = {};
     if (purchase.supplier) supplierPayload.supplier = purchase.supplier;
     if (supplierId) supplierPayload.supplier_id = supplierId;
+    // Memoriza a embalagem desta compra no insumo (ex.: 'cx' de 16) — o modal
+    // de Nova Compra pré-preenche unidade e fator com isso na próxima vez.
+    if (item.unit_label) {
+      supplierPayload.purchase_unit = item.unit_label;
+      supplierPayload.purchase_factor = item.units_per_package;
+    }
     if (Object.keys(supplierPayload).length > 0) {
       await supabase.from('ingredients').update(supplierPayload).eq('id', item.ingredient_id).eq('tenant_id', tenant_id);
     }
