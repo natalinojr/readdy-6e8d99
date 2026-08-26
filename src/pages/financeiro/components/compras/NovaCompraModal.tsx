@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { formatCurrency } from '@/lib/formatters';
-import type { PurchaseItem } from '@/types/financeiro';
+import type { Purchase, PurchaseItem } from '@/types/financeiro';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMerchandiseCategories } from '@/hooks/useMerchandiseCategories';
@@ -88,10 +88,19 @@ interface Props {
   onLoadIngredients: () => void;
   onSubmit: (payload: Record<string, unknown>) => Promise<void>;
   onClose: () => void;
+  // Modo edição: quando presente, o formulário abre pré-preenchido com os
+  // dados da compra e o submit chama update em vez de create (decidido pelo
+  // pai via `onSubmit` — este componente só muda título/rótulos/pré-preenchimento).
+  // O backend só aceita editar compras sem recebimento confirmado e sem
+  // nenhum pagamento registrado; o pai já filtra isso antes de abrir o modal.
+  editingPurchase?: Purchase;
+  // Parcelas já existentes da compra (para o modo "Parcelado"), na ordem.
+  editingInstallments?: Array<{ due_date: string; amount: number }>;
 }
 
 export default function NovaCompraModal({
   suppliers, ingredients, centers, bankAccounts, onLoadIngredients, onSubmit, onClose,
+  editingPurchase, editingInstallments,
 }: Props) {
   const { user } = useAuth();
   const [catalogItems, setCatalogItems] = useState<UnifiedItem[]>([]);
@@ -137,24 +146,74 @@ export default function NovaCompraModal({
   // Categorias de mercadoria (Bebidas, Hortifruti, Proteínas...) — gerenciáveis pelo usuário
   const { categories: merchandiseCategories } = useMerchandiseCategories();
 
-  const [form, setForm] = useState(emptyForm);
-  const [items, setItems] = useState<Partial<PurchaseItem>[]>([
-    { description: '', quantity: 1, unit_price: 0, total_price: 0, unit_label: 'un', units_per_package: undefined, cost_center_id: '' },
-  ]);
-  const [paymentMode, setPaymentMode] = useState<'avista' | 'aprazo' | 'parcelado'>('avista');
-  const [firstDueDate, setFirstDueDate] = useState('');
-  const [customInstallments, setCustomInstallments] = useState<CustomInstallment[]>([
-    { tempId: genId(), due_date: '', amount: 0 },
-    { tempId: genId(), due_date: '', amount: 0 },
-  ]);
+  const [form, setForm] = useState(() => {
+    if (!editingPurchase) return emptyForm;
+    const p = editingPurchase as Purchase & Record<string, unknown>;
+    return {
+      supplier: p.supplier ?? '',
+      invoice_number: p.invoice_number ?? '',
+      purchase_date: p.purchase_date ?? getLocalDateString(),
+      payment_method: p.payment_method ?? 'Dinheiro',
+      // Recalculado a partir de paymentMode no submit — o valor aqui só
+      // segura o estado inicial (o backend já garante que uma compra editável
+      // nunca está 'paid').
+      payment_status: p.payment_status ?? 'pending',
+      due_date: p.due_date ?? '',
+      cost_center_id: p.cost_center_id ?? '',
+      notes: p.notes ?? '',
+      bank_account_id: (p.bank_account_id as string) ?? '',
+    };
+  });
+  const [items, setItems] = useState<Partial<PurchaseItem>[]>(() => {
+    if (editingPurchase?.items && editingPurchase.items.length > 0) {
+      return editingPurchase.items.map((it) => ({
+        description: it.description ?? '',
+        ingredient_id: it.ingredient_id,
+        quantity: it.quantity,
+        unit_price: it.unit_price,
+        total_price: it.total_price,
+        unit_label: it.unit_label ?? 'un',
+        units_per_package: it.units_per_package,
+        cost_center_id: it.cost_center_id ?? '',
+        discount_per_unit: it.discount_per_unit,
+        merchandise_category_id: it.merchandise_category_id,
+        notes: it.notes,
+      }));
+    }
+    // unit_price começa undefined (não 0): com 0 o campo mostrava um "0" fixo que
+    // o usuário tinha que apagar toda vez antes de digitar o preço de verdade.
+    return [{ description: '', quantity: 1, unit_price: undefined, total_price: 0, unit_label: 'un', units_per_package: undefined, cost_center_id: '' }];
+  });
+  const [paymentMode, setPaymentMode] = useState<'avista' | 'aprazo' | 'parcelado'>(() => {
+    if (editingPurchase?.payment_status === 'partial') return 'parcelado';
+    if (editingPurchase?.payment_status === 'pending') return 'aprazo';
+    return 'avista';
+  });
+  const [firstDueDate, setFirstDueDate] = useState(() => editingPurchase?.due_date ?? '');
+  const [customInstallments, setCustomInstallments] = useState<CustomInstallment[]>(() => {
+    if (editingInstallments && editingInstallments.length > 0) {
+      return editingInstallments.map((i) => ({ tempId: genId(), due_date: i.due_date, amount: Number(i.amount) }));
+    }
+    return [
+      { tempId: genId(), due_date: '', amount: 0 },
+      { tempId: genId(), due_date: '', amount: 0 },
+    ];
+  });
   const [costCenterMode, setCostCenterMode] = useState<CostCenterMode>('total');
   const [submitting, setSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   // ─── Frete ───────────────────────────────────────────────────────────────
-  const [freightAmount, setFreightAmount] = useState<number>(0);
-  const [freightMode, setFreightMode] = useState<'auto' | 'manual'>('auto');
-  const [freightPerItem, setFreightPerItem] = useState<Record<number, number>>({});
+  const [freightAmount, setFreightAmount] = useState<number>(() => Number(editingPurchase?.freight_amount ?? 0));
+  // Em edição, o modo começa 'manual' com o rateio ORIGINAL de cada item — não
+  // recalcula proporcionalmente, para não alterar valores que o usuário não mexeu.
+  const [freightMode, setFreightMode] = useState<'auto' | 'manual'>(() => (editingPurchase ? 'manual' : 'auto'));
+  const [freightPerItem, setFreightPerItem] = useState<Record<number, number>>(() => {
+    if (!editingPurchase?.items) return {};
+    const map: Record<number, number> = {};
+    editingPurchase.items.forEach((it, idx) => { map[idx] = Number(it.freight_allocated ?? 0); });
+    return map;
+  });
 
   const subtotalAmount = items.reduce((s, i) => s + Number(i.total_price ?? 0), 0);
   const totalAmount = subtotalAmount + (freightAmount || 0);
@@ -287,7 +346,7 @@ export default function NovaCompraModal({
 
   const addItem = () => {
     setItems((prev) => [...prev, {
-      description: '', quantity: 1, unit_price: 0, total_price: 0,
+      description: '', quantity: 1, unit_price: undefined, total_price: 0,
       unit_label: 'un', units_per_package: undefined, cost_center_id: '',
     }]);
     onLoadIngredients();
@@ -453,7 +512,7 @@ export default function NovaCompraModal({
       <div className="bg-white rounded-2xl w-full max-w-3xl flex flex-col" style={{ maxHeight: 'calc(100vh - 16px)' }}>
         <div className="flex items-center justify-between px-6 py-3 border-b border-zinc-100 flex-shrink-0">
           <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-zinc-900">Nova Compra</h3>
+            <h3 className="font-semibold text-zinc-900">{editingPurchase ? 'Editar Compra' : 'Nova Compra'}</h3>
             {Object.keys(validationErrors).length > 0 && (
               <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
                 <i className="ri-error-warning-line" />
@@ -1161,7 +1220,7 @@ export default function NovaCompraModal({
                   <i className="ri-loader-4-line animate-spin" />
                   Salvando...
                 </>
-              ) : 'Salvar Compra'}
+              ) : editingPurchase ? 'Salvar Alterações' : 'Salvar Compra'}
             </button>
           </div>
         </form>

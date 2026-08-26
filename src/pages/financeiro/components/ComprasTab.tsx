@@ -45,7 +45,7 @@ interface ComprasTabProps {
 
 export default function ComprasTab({ highlightId, onHighlightConsumed }: ComprasTabProps) {
   const { user } = useAuth();
-  const { purchases, loading, create, refresh: refreshPurchases } = usePurchases();
+  const { purchases, loading, create, update, refresh: refreshPurchases } = usePurchases();
   const { registrarEvento } = useAuditoria();
   const { centers } = useCostCenters();
   const { accounts: bankAccounts } = useBankAccounts();
@@ -58,6 +58,15 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const [detailPurchase, setDetailPurchase] = useState<Purchase | null>(null);
   const [detailInstallments, setDetailInstallments] = useState<BillInstallment[]>([]);
   const [loadingInstallments, setLoadingInstallments] = useState(false);
+
+  // Edição de compra: só é liberada quando nada da compra ainda se moveu
+  // (sem recebimento confirmado, sem pagamento registrado) — checado antes de
+  // abrir o modal, e reforçado pelo backend (update_purchase devolve 409 se
+  // as condições mudaram entre o clique e o envio).
+  const [editPurchase, setEditPurchase] = useState<Purchase | null>(null);
+  const [editInstallments, setEditInstallments] = useState<{ due_date: string; amount: number }[]>([]);
+  const [checkingEdit, setCheckingEdit] = useState<string | null>(null);
+  const [editBlockedMessage, setEditBlockedMessage] = useState<string | null>(null);
   const [ingredients, setIngredients] = useState<{ id: string; name: string; unit: string }[]>([]);
   const [flashId, setFlashId] = useState<string | undefined>(highlightId);
   const highlightRowRef = useRef<HTMLTableRowElement | null>(null);
@@ -157,6 +166,48 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
     setPage(1);
   };
 
+  // Verifica se a compra pode ser editada e, se puder, busca as parcelas
+  // (nenhuma delas paga — já checado aqui) para pré-preencher o modal.
+  const openEdit = async (p: Purchase) => {
+    setEditBlockedMessage(null);
+    if (p.delivery_confirmed_at) {
+      setEditBlockedMessage(`"${p.supplier}": recebimento já confirmado — não é possível editar. Exclua e lance novamente para corrigir.`);
+      return;
+    }
+    if (p.payment_status === 'paid') {
+      setEditBlockedMessage(`"${p.supplier}": compra já paga — não é possível editar. Exclua e lance novamente para corrigir.`);
+      return;
+    }
+    setCheckingEdit(p.id);
+    try {
+      const { data } = await supabase
+        .from('fin_accounts_payable')
+        .select('id,installment_number,installments,amount,due_date,status,paid_date,paid_amount')
+        .eq('tenant_id', user!.tenantId)
+        .eq('reference_id', p.id)
+        .eq('reference_type', 'purchase')
+        .order('installment_number');
+      const bills = (data ?? []) as BillInstallment[];
+      const hasPayment = bills.some((b) => b.status === 'paid' || Number(b.paid_amount ?? 0) > 0);
+      if (hasPayment) {
+        setEditBlockedMessage(`"${p.supplier}": já existe pagamento registrado nesta compra — não é possível editar. Exclua e lance novamente para corrigir.`);
+        return;
+      }
+      setEditInstallments(bills.map((b) => ({ due_date: b.due_date, amount: Number(b.amount) })));
+      setEditPurchase(p);
+      loadIngredients();
+    } finally {
+      setCheckingEdit(null);
+    }
+  };
+
+  const handleEditSubmit = async (payload: Record<string, unknown>) => {
+    if (!editPurchase) return;
+    await update(editPurchase.id, payload, registrarEvento);
+    setEditPurchase(null);
+    setPage(1);
+  };
+
   // Filtered & sorted
   const filtered = useMemo(() => {
     let result = [...purchases];
@@ -185,7 +236,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
     });
 
     return result;
-  }, [purchases, search, filterStatus, filterPayment, filterDateFrom, filterDateTo, sortField, sortDir]);
+  }, [purchases, search, filterStatus, filterPayment, filterDateFrom, filterDateTo, filterDelivery, sortField, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -276,6 +327,16 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
 
       {activeView === 'lista' && (
         <>
+          {editBlockedMessage && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
+              <i className="ri-lock-line text-amber-500 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-amber-800 flex-1">{editBlockedMessage}</p>
+              <button onClick={() => setEditBlockedMessage(null)} className="text-amber-500 hover:text-amber-700 cursor-pointer flex-shrink-0">
+                <i className="ri-close-line text-sm" />
+              </button>
+            </div>
+          )}
+
           {/* KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
             {[
@@ -485,6 +546,16 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                           <i className="ri-eye-line text-sm" />
                         </button>
                         <button
+                          onClick={() => openEdit(p)}
+                          disabled={checkingEdit === p.id}
+                          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-amber-50 text-zinc-400 hover:text-amber-600 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-wait"
+                          title="Editar compra"
+                        >
+                          {checkingEdit === p.id
+                            ? <i className="ri-loader-4-line animate-spin text-sm" />
+                            : <i className="ri-pencil-line text-sm" />}
+                        </button>
+                        <button
                           onClick={() => { setDetailPurchase(p); setDetailInstallments([]); }}
                           className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer transition-colors"
                           title="Excluir compra"
@@ -598,6 +669,21 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
           onLoadIngredients={loadIngredients}
           onSubmit={handleSubmit}
           onClose={() => setShowModal(false)}
+        />
+      )}
+
+      {/* Editar compra modal */}
+      {editPurchase && (
+        <NovaCompraModal
+          suppliers={suppliers}
+          ingredients={ingredients}
+          centers={centers}
+          bankAccounts={bankAccounts}
+          onLoadIngredients={loadIngredients}
+          onSubmit={handleEditSubmit}
+          onClose={() => setEditPurchase(null)}
+          editingPurchase={editPurchase}
+          editingInstallments={editInstallments}
         />
       )}
     </div>

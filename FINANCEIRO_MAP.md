@@ -238,3 +238,13 @@ margemLiquida     = resultadoOperacional / receitaBruta × 100
 
 RPCs relevantes: `fn_get_cmv_report`, `fn_bank_credit`, `fn_bank_debit`, `fn_record_payment_bypass`, `fn_update_ingredient_price_from_purchase`, `fn_update_ingredient_stock`.
 Edge Functions: `financial-write` (~47 actions), `purchase-write`, `purchase-confirm-delivery`, `stone-conciliation`, `pix-payment`, `implementation-write`, `order-write` (integração de venda).
+
+### Edição de compra (`update_purchase`, 2026-08-26)
+
+`purchase-write` ganhou a action `update_purchase`, ao lado de `create_purchase`/`delete_purchase`. A lógica de cálculo (custo por item, resolução de fornecedor, herança de categoria, entrada de estoque, geração de contas a pagar) foi extraída para funções compartilhadas (`computePurchaseItems`, `resolveOrCreateSupplier`, `inheritMerchandiseCategories`, `applyStockAndPricing`, `reverseStockForItems`, `createBillsForPurchase`) — create e update chamam as mesmas, para não duplicar bug.
+
+**Guarda de segurança:** só edita quando a compra original **não teve nenhum efeito colateral ainda** — nem recebimento confirmado (`delivery_confirmed_at`), nem qualquer pagamento registrado (`payment_status='paid'` na criação, ou qualquer `fin_accounts_payable` vinculada com `status='paid'`/`paid_amount>0`). Fora dessas condições, `update_purchase` devolve **409** com mensagem explicando; o front orienta a excluir e lançar de novo (a exclusão já reverte estoque/contas corretamente).
+
+Quando aceita: estorna o estoque da versão antiga (`manual_out`), apaga as contas a pagar/caixa antigas (nenhuma tinha pagamento, garantido pela guarda) e os itens antigos, e recria tudo com os dados novos — mesmo caminho do `create_purchase`.
+
+Front: `ComprasTab.tsx` tem botão de editar (lápis) na coluna Ações — checa a elegibilidade (via `fin_accounts_payable` do `reference_id`) antes de abrir o modal; se bloqueado, mostra banner explicando por quê. `compras/NovaCompraModal.tsx` ganhou os props `editingPurchase`/`editingInstallments` para pré-preencher o formulário. Hook `usePurchases` ganhou `update(id, payload, auditFn)`.

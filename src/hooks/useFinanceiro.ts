@@ -386,6 +386,39 @@ export function usePurchases() {
     return result;
   };
 
+  // Edição só é aceita pelo backend quando NADA da compra original se moveu
+  // ainda (sem recebimento confirmado, sem pagamento registrado) — nesses
+  // casos o edge devolve 409 com uma mensagem explicando por que não dá,
+  // e a UI deve orientar a excluir e lançar de novo.
+  const update = async (id: string, payload: Record<string, unknown>, auditFn?: (p: import('@/contexts/AuditoriaContext').RegistrarEventoParams) => void) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/purchase-write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ action: 'update_purchase', tenant_id: user!.tenantId, payload: { ...payload, id } }),
+    });
+    const result = await res.json();
+    if (!res.ok || result.error) {
+      const errMsg = typeof result.error === 'string' ? result.error : JSON.stringify(result.error || result);
+      throw new Error(errMsg);
+    } else if (auditFn && user) {
+      const totalAmount = Number(payload.total_amount ?? 0);
+      const supplier = String(payload.supplier ?? '');
+      auditFn({
+        tipo: 'compra_registrada',
+        severidade: 'info',
+        usuario: user.nome,
+        perfil: user.perfil,
+        descricao: `Compra editada: ${supplier} — R$ ${totalAmount.toFixed(2)}`,
+        entidade: 'Financeiro / Compras',
+        entidadeId: supplier,
+        depois: { total: totalAmount, fornecedor: supplier },
+      });
+    }
+    fetchPurchases();
+    return result;
+  };
+
   const remove = async (id: string, auditFn?: (p: import('@/contexts/AuditoriaContext').RegistrarEventoParams) => void) => {
     const purchase = purchases.find((p) => p.id === id);
     const { data: { session } } = await supabase.auth.getSession();
@@ -412,7 +445,7 @@ export function usePurchases() {
     fetchPurchases();
   };
 
-  return { purchases, loading, create, remove, refresh: fetchPurchases, _auditRef: auditRef };
+  return { purchases, loading, create, update, remove, refresh: fetchPurchases, _auditRef: auditRef };
 }
 
 // ─── Suppliers ────────────────────────────────────────────────────────────────
