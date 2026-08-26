@@ -11,6 +11,7 @@ import ComprasCentroCustoPanel from './compras/ComprasCentroCustoPanel';
 import DetalhePurchaseModal from './compras/DetalhePurchaseModal';
 import NovaCompraModal from './compras/NovaCompraModal';
 import CatalogoComprasModal from './compras/CatalogoComprasModal';
+import CategoriasMercadoriaModal from './compras/CategoriasMercadoriaModal';
 
 interface BillInstallment {
   id: string;
@@ -53,6 +54,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const [activeView, setActiveView] = useState<'lista' | 'relatorio' | 'centrocusto'>('lista');
   const [showModal, setShowModal] = useState(false);
   const [showCatalogo, setShowCatalogo] = useState(false);
+  const [showCategorias, setShowCategorias] = useState(false);
   const [detailPurchase, setDetailPurchase] = useState<Purchase | null>(null);
   const [detailInstallments, setDetailInstallments] = useState<BillInstallment[]>([]);
   const [loadingInstallments, setLoadingInstallments] = useState(false);
@@ -253,6 +255,12 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
             className="flex items-center gap-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
           >
             <i className="ri-archive-line" /> Catálogo de Itens
+          </button>
+          <button
+            onClick={() => setShowCategorias(true)}
+            className="flex items-center gap-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
+          >
+            <i className="ri-price-tag-3-line" /> Categorias
           </button>
           <button
             onClick={() => { setShowModal(true); loadIngredients(); }}
@@ -573,6 +581,11 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
       {/* Catálogo de itens */}
       {showCatalogo && (
         <CatalogoComprasModal onClose={() => setShowCatalogo(false)} />
+      )}
+
+      {/* Categorias de mercadoria */}
+      {showCategorias && (
+        <CategoriasMercadoriaModal onClose={() => setShowCategorias(false)} />
       )}
 
       {/* Nova compra modal */}

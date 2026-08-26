@@ -3,6 +3,7 @@ import { formatCurrency } from '@/lib/formatters';
 import type { PurchaseItem } from '@/types/financeiro';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMerchandiseCategories } from '@/hooks/useMerchandiseCategories';
 
 interface IngredientOption { id: string; name: string; unit: string; }
 interface CustomInstallment { tempId: string; due_date: string; amount: number; }
@@ -133,6 +134,9 @@ export default function NovaCompraModal({
     })),
   ];
 
+  // Categorias de mercadoria (Bebidas, Hortifruti, Proteínas...) — gerenciáveis pelo usuário
+  const { categories: merchandiseCategories } = useMerchandiseCategories();
+
   const [form, setForm] = useState(emptyForm);
   const [items, setItems] = useState<Partial<PurchaseItem>[]>([
     { description: '', quantity: 1, unit_price: 0, total_price: 0, unit_label: 'un', units_per_package: undefined, cost_center_id: '' },
@@ -167,7 +171,12 @@ export default function NovaCompraModal({
     return freightMode === 'auto' ? autoFreightPerItem(idx) : (freightPerItem[idx] ?? 0);
   };
 
-  // Custo unitário real = (total_price + frete_item) / (qty * units_per_package ou qty)
+  // Preço unitário de compra já líquido do desconto por unidade
+  const netUnitPrice = (item: Partial<PurchaseItem>): number =>
+    Math.max(0, Number(item.unit_price ?? 0) - Number(item.discount_per_unit ?? 0));
+
+  // Custo por unidade de ESTOQUE = (total líquido + frete_item) / (qty * units_per_package)
+  // Espelha exatamente o cálculo do purchase-write (cost_per_base_unit).
   const realUnitCost = (item: Partial<PurchaseItem>, idx: number): number => {
     const itemTotal = Number(item.total_price ?? 0);
     const freight = getFreightForItem(idx);
@@ -177,6 +186,13 @@ export default function NovaCompraModal({
     const totalUnits = qty * (unitsPerPkg > 1 ? unitsPerPkg : 1);
     if (totalUnits === 0) return 0;
     return totalWithFreight / totalUnits;
+  };
+
+  // VU final = custo de UMA unidade de compra (caixa/fardo) com frete rateado
+  const finalUnitCost = (item: Partial<PurchaseItem>, idx: number): number => {
+    const qty = Number(item.quantity ?? 0);
+    const net = netUnitPrice(item);
+    return qty > 0 ? net + getFreightForItem(idx) / qty : net;
   };
 
   // Ao mudar para manual, inicializa com os valores automáticos
@@ -213,8 +229,10 @@ export default function NovaCompraModal({
     setItems((prev) => prev.map((item, i) => {
       if (i !== idx) return item;
       const updated = { ...item, [field]: value };
-      if (field === 'quantity' || field === 'unit_price') {
-        updated.total_price = Number(updated.quantity ?? 0) * Number(updated.unit_price ?? 0);
+      if (field === 'quantity' || field === 'unit_price' || field === 'discount_per_unit') {
+        // Total já líquido do desconto por unidade (mesma conta do purchase-write)
+        const net = Math.max(0, Number(updated.unit_price ?? 0) - Number(updated.discount_per_unit ?? 0));
+        updated.total_price = Math.round(Number(updated.quantity ?? 0) * net * 100) / 100;
       }
       if (field === 'ingredient_id') {
         const ing = ingredients.find((ig) => ig.id === value);
@@ -226,7 +244,7 @@ export default function NovaCompraModal({
       return updated;
     }));
     // Recalcular frete manual ao mudar item
-    if (freightMode === 'manual' && freightAmount > 0 && (field === 'quantity' || field === 'unit_price')) {
+    if (freightMode === 'manual' && freightAmount > 0 && (field === 'quantity' || field === 'unit_price' || field === 'discount_per_unit')) {
       setTimeout(() => {
         setFreightPerItem((prev) => {
           const newMap = { ...prev };
@@ -986,6 +1004,38 @@ export default function NovaCompraModal({
                       </div>
                     </div>
                   </div>
+
+                  {/* Linha 3: Desconto por unidade + Categoria de mercadoria + Observação */}
+                  <div className="grid grid-cols-4 gap-2">
+                    <div>
+                      <label className="text-[10px] font-semibold text-zinc-500 block mb-1 whitespace-nowrap">
+                        Desconto/unid.
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-semibold">R$</span>
+                        <input type="number" step="0.01" min="0" placeholder="0,00"
+                          value={item.discount_per_unit ?? ''}
+                          onChange={(e) => updateItem(idx, 'discount_per_unit', e.target.value ? Number(e.target.value) : 0)}
+                          className="w-full border border-zinc-200 rounded-lg pl-6 pr-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold text-zinc-500 block mb-1">Categoria</label>
+                      <select value={item.merchandise_category_id ?? ''}
+                        onChange={(e) => updateItem(idx, 'merchandise_category_id', e.target.value)}
+                        className="w-full border border-zinc-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white">
+                        <option value="">—</option>
+                        {merchandiseCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-[10px] font-semibold text-zinc-500 block mb-1">Observação</label>
+                      <input placeholder="Opcional" value={item.notes ?? ''}
+                        onChange={(e) => updateItem(idx, 'notes', e.target.value)}
+                        className="w-full border border-zinc-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                    </div>
+                  </div>
+
                   {costCenterMode === 'per_item' && (
                     <div>
                       <label className="text-[10px] font-semibold text-zinc-500 block mb-1">Centro de Custo</label>
@@ -1010,26 +1060,28 @@ export default function NovaCompraModal({
                           </div>
                         )}
                         {Number(item.unit_price ?? 0) > 0 && (
-                          <div className="text-[10px] whitespace-nowrap">
-                            {freightAmount > 0 ? (
-                              <>
-                                <span className="text-zinc-400">Custo unit. s/ frete: </span>
-                                <span className="text-zinc-600 font-semibold">
-                                  {formatCurrency(Number(item.unit_price ?? 0) / Math.max(1, Number(item.units_per_package ?? 1)))}
+                          <div className="text-[10px] whitespace-nowrap flex flex-col gap-0.5">
+                            {/* VU final: custo de 1 unidade de COMPRA (caixa/fardo),
+                                já líquido de desconto e com o frete rateado. */}
+                            <div>
+                              <span className="text-zinc-400">VU final ({item.unit_label ?? 'un'}): </span>
+                              <span className="text-amber-700 font-bold">
+                                {formatCurrency(finalUnitCost(item, idx))}
+                              </span>
+                              {Number(item.discount_per_unit ?? 0) > 0 && (
+                                <span className="text-emerald-600 ml-1">
+                                  (−{formatCurrency(Number(item.discount_per_unit))}/un.)
                                 </span>
-                                <span className="mx-1 text-zinc-300">|</span>
-                                <span className="text-amber-600">c/ frete: </span>
-                                <span className="text-amber-700 font-bold">
+                              )}
+                            </div>
+                            {/* R$ por unidade de ESTOQUE — é o número que vira custo do insumo */}
+                            {Number(item.units_per_package ?? 1) > 1 && (
+                              <div>
+                                <span className="text-zinc-400">Custo p/ unid. de estoque: </span>
+                                <span className="text-zinc-700 font-semibold">
                                   {formatCurrency(realUnitCost(item, idx))}
                                 </span>
-                              </>
-                            ) : (
-                              <>
-                                <span className="text-zinc-400">Custo unit.: </span>
-                                <span className="text-zinc-700 font-semibold">
-                                  {formatCurrency(Number(item.unit_price ?? 0) / Math.max(1, Number(item.units_per_package ?? 1)))}
-                                </span>
-                              </>
+                              </div>
                             )}
                           </div>
                         )}

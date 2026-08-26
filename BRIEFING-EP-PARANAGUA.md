@@ -9,8 +9,15 @@
 
 ## 1. A loja e as fontes de dados
 
-Franquia El Patrón (mexicano), praça de alimentação de shopping, aberta em **abril/2026**
-(março foi pré-operacional). Existe uma unidade irmã (EP Ipanema) com transferências de caixa.
+Franquia El Patrón (mexicano), praça de alimentação de shopping, aberta no **fim de julho/2025**
+(aniversário: 29/07). A planilha financeira/DRE só acompanha **a partir de abril/2026** — ou seja,
+abril–julho/2026 são os meses 9–12 de operação, **não** um ramp-up de loja nova. Existe uma unidade
+irmã (EP Ipanema) com transferências de caixa.
+
+> Correção de 2026-08-22: versões anteriores deste briefing diziam "aberta em abril/2026". Estava
+> errado — confundi o início da planilha com a abertura. A lista de clientes do Goomer (pedidos
+> desde 16/08/2025) revelou o erro e o dono confirmou. Consequência: "melhor mês da história" só
+> pode ser afirmado para o período acompanhado (abr–jul/2026); meses anteriores não têm dado.
 
 Cinco fontes de dados que **não conversam entre si** — essa é a raiz de quase todo problema:
 
@@ -29,7 +36,40 @@ Cinco fontes de dados que **não conversam entre si** — essa é a raiz de quas
 
 ## 2. Números estabelecidos (use como baseline / caso de teste)
 
-### DRE por competência
+### Série completa de 13 meses (DRE do contador jul/25–mar/26 + planilha do dono abr–jul/26)
+
+Adicionado em 2026-08-23, a partir de `EPPARMALL_DRE2025_19.01.2026_OFICIAL.xlsx` e
+`DRE_EP IPANEMA E PARANAGUA_03.2026.xlsx` (pasta Análise DRE).
+
+| Mês | Receita bruta | Resultado | Obs |
+|---|---:|---:|---|
+| Jul/25 | 6.657 | −28.728 | abertura (1 semana); estoque inicial 26,7 mil lançado como custo |
+| Ago/25 | **69.200** | +10.278 | **recorde histórico** |
+| Set/25 | 62.987 | +2.718 | |
+| Out/25 | 45.699 | −10.615 | |
+| Nov/25 | 51.004 | +2.065 | Festa do Rocio (evento, R$ 4.680) |
+| Dez/25 | 50.594 | −12.650 | aluguel em dobro |
+| Jan/26 | 42.267 | **−9.588** | contador mostra +5.804 — **erro**: estoque inicial de 15.392 fora da soma do CMV |
+| Fev/26 | 36.961 | −2.413 | |
+| Mar/26 | 42.800 | −6.333 | |
+| Abr/26 | 42.188 | +2.937 | início da planilha do dono |
+| Mai/26 | 42.518 | +3.100 | |
+| Jun/26 | 37.715 | −2.996 | vale (−45% vs ago/25) |
+| Jul/26 | 60.322 | +10.114 | 3º melhor mês; primeiro mês com tráfego pago relevante |
+
+- Receita 12 meses cheios: **R$ 584 mil** (média 48,7 mil). Resultado acumulado 13 meses:
+  **≈ −42 mil** corrigido (−27 mil no arquivo do contador), mais aporte de sócio de 10.041 em jan/26.
+- **Ponto de equilíbrio ≈ R$ 44 mil/mês (≈ 1.470/dia)**: fixo ~25 mil ÷ (1 − 7,5% deduções − 36% CMV).
+  6 dos 12 meses ficaram abaixo. → **KPI nº 1 para o ERPOS.**
+- CMV mensal de 2025 no arquivo do contador = compras do mês (sem ajuste de estoque) → só o
+  semestre é confiável: 35,4% (ago–dez, excl. estoque de abertura). Jan–mar/26 já usa EI/EF.
+- Publicidade local ago/25–fev/26: **R$ 205 em 7 meses** (receita caiu 45%). Jul/26: R$ 1.387 (+60%).
+- Canal Goomer (delivery próprio): 2.179 (set/25) → 298 (jun/26) → 2.632 (jul/26). iFood: 15% da
+  receita em jul/26 (era 7–10%).
+- Loja irmã EP Ipanema (mesmo arquivo): 35,0 → 26,9 → 20,3 mil (jan→mar/26), −6,7 mil em março.
+- Painel: https://claude.ai/code/artifact/91425688-9342-4b9d-82b7-d4f2a4cababb.
+
+### DRE por competência (planilha do dono)
 
 | | Abril | Maio | Junho | Julho |
 |---|---:|---:|---:|---:|
@@ -235,7 +275,7 @@ Só depois, Fase 2: ERPOS assume a frente de venda. Pré-requisitos a responder 
 | Cancelar TOTVS (se ERPOS assumir) | 480 |
 | Juros e multas evitados | ~250 |
 
-Contexto: o resultado acumulado da loja em 5 meses foi **R$ 4.235**. Os itens acima somam
+Contexto: o resultado acumulado no período acompanhado (abr–jul/2026, 4 meses) foi **R$ 4.235**. Os itens acima somam
 mais que isso por mês.
 
 ---

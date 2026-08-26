@@ -164,6 +164,56 @@ Deno.serve(async (req) => {
         const freightAmount = Number(purchaseData.freight_amount ?? 0);
         if (!freightAmount) purchaseData.freight_amount = 0;
 
+        // Normalização dos itens ANTES de gravar a compra: o total da compra é
+        // derivado dos itens (líquidos de desconto) + frete, para que cabeçalho e
+        // linhas nunca divirjam, independente da versão do front que chamou.
+        //
+        // Colunas são listadas explicitamente de propósito: o spread do payload
+        // deixava campos que não existem na tabela (ex.: catalog_id) chegarem ao
+        // insert e derrubarem a criação da compra inteira (PGRST204).
+        const computedItems = (Array.isArray(items) ? items : []).map((item: Record<string, unknown>) => {
+          const quantity = Number(item.quantity ?? 0);
+          const unitPrice = Number(item.unit_price ?? 0);
+          const discountPerUnit = Number(item.discount_per_unit ?? 0);
+          const unitsPerPkg = Number(item.units_per_package ?? item.purchase_factor ?? 1) || 1;
+          const freightAllocated = Number(item.freight_allocated ?? 0);
+
+          // Preço unitário de compra já líquido do desconto por unidade
+          const netUnitPrice = Math.max(0, unitPrice - discountPerUnit);
+          const totalPrice = Math.round(quantity * netUnitPrice * 100) / 100;
+
+          // VU final = custo de UMA unidade de compra (caixa/fardo) com frete rateado
+          const finalUnitCost = quantity > 0 ? netUnitPrice + freightAllocated / quantity : netUnitPrice;
+
+          // Custo por unidade de ESTOQUE (R$/kg, R$/un) — é o "R$/kg/unidade" da planilha
+          const stockUnits = quantity * unitsPerPkg;
+          const costPerBaseUnit = stockUnits > 0 ? (totalPrice + freightAllocated) / stockUnits : null;
+
+          return {
+            tenant_id,
+            ingredient_id: item.ingredient_id || null,
+            description: item.description ?? '',
+            quantity,
+            unit_price: unitPrice,
+            total_price: totalPrice,
+            freight_allocated: freightAllocated,
+            unit_label: (item.unit_label ?? item.purchase_unit) || null,
+            units_per_package: unitsPerPkg,
+            cost_center_id: item.cost_center_id || null,
+            dre_category_id: item.dre_category_id || null,
+            merchandise_category_id: item.merchandise_category_id || null,
+            discount_per_unit: discountPerUnit,
+            final_unit_cost: finalUnitCost,
+            cost_per_base_unit: costPerBaseUnit,
+            notes: item.notes || null,
+          };
+        });
+
+        if (computedItems.length > 0) {
+          const itemsSubtotal = computedItems.reduce((s, it) => s + Number(it.total_price ?? 0), 0);
+          purchaseData.total_amount = Math.round((itemsSubtotal + freightAmount) * 100) / 100;
+        }
+
         const hasCustomInstallments = Array.isArray(custom_installments) && custom_installments.length >= 2;
         const isLegacyInstallment = !hasCustomInstallments && installment_count && installment_count > 1;
         const isInstallment = hasCustomInstallments || isLegacyInstallment;
@@ -176,19 +226,8 @@ Deno.serve(async (req) => {
 
         if (purchaseError) throw purchaseError;
 
-        if (items && items.length > 0) {
-          const itemsToInsert = items.map((item: Record<string, unknown>) => {
-            const { purchase_unit: _pu, purchase_qty: _pq, purchase_factor: _pf, ...rest } = item as Record<string, unknown>;
-            return {
-              ...rest,
-              purchase_id: purchase.id,
-              tenant_id,
-              ingredient_id: item.ingredient_id || null,
-              freight_allocated: Number(item.freight_allocated ?? 0),
-              unit_label: item.purchase_unit || null,
-              units_per_package: Number(item.purchase_factor ?? 1) || 1,
-            };
-          });
+        if (computedItems.length > 0) {
+          const itemsToInsert = computedItems.map((it) => ({ ...it, purchase_id: purchase.id }));
           const { error: itemsError } = await supabase.from('fin_purchase_items').insert(itemsToInsert);
           if (itemsError) throw itemsError;
 
@@ -198,14 +237,12 @@ Deno.serve(async (req) => {
             supplierRecord = sup;
           }
 
-          for (const item of items as Array<Record<string, unknown>>) {
+          for (const item of computedItems) {
             if (item.ingredient_id) {
               // quantity vem em UNIDADES DE COMPRA (caixa/fardo); units_per_package
               // converte para unidades de estoque (contrato exibido na UI da compra:
               // "qty x upp = total unid."). Antes entrava a quantidade crua.
-              const purchaseQty = Number(item.quantity ?? 0);
-              const unitsPerPkg = Number(item.units_per_package ?? item.purchase_factor ?? 1) || 1;
-              const stockQty = purchaseQty * (unitsPerPkg > 1 ? unitsPerPkg : 1);
+              const stockQty = item.quantity * item.units_per_package;
 
               // Movimentacao via RPC (insere movimento + atualiza current_stock
               // atomicamente — antes era insert direto + read-modify-write racy)
@@ -224,11 +261,9 @@ Deno.serve(async (req) => {
                 await supabase.from('ingredients').update(supplierPayload).eq('id', item.ingredient_id).eq('tenant_id', tenant_id);
               }
 
-              // Custo por UNIDADE DE ESTOQUE = (total + frete) / (qty x upp)
-              const itemTotalPrice = Number(item.total_price ?? 0);
-              const freightAllocated = Number(item.freight_allocated ?? 0);
-              const totalWithFreight = itemTotalPrice + freightAllocated;
-              const realUnitPrice = stockQty > 0 ? totalWithFreight / stockQty : Number(item.unit_price ?? 0);
+              // Custo por UNIDADE DE ESTOQUE já calculado em computedItems
+              // (= (total líquido + frete) / (qty x upp)), o "R$/kg" da planilha.
+              const realUnitPrice = Number(item.cost_per_base_unit ?? 0) || Number(item.unit_price ?? 0);
 
               if (realUnitPrice > 0) {
                 await supabase.rpc('fn_update_ingredient_price_from_purchase', {

@@ -258,10 +258,15 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     setSearch(''); setFilterRecurring('all'); setPage(1);
   };
 
+  // Saldo ainda devido de uma conta: com pagamento parcial, `amount` deixa de ser
+  // o que falta pagar — o que falta é o total menos o que já foi pago.
+  const saldoRestante = (b: BillPayable) =>
+    Math.max(0, Number(b.amount ?? 0) - Number(b.paid_amount ?? 0));
+
   // KPIs do mês selecionado
-  const totalPendente = billsDoMes.filter(b => b.status !== 'paid').reduce((s, b) => s + b.amount, 0);
-  const totalVencido = billsDoMes.filter(b => b.status === 'overdue').reduce((s, b) => s + b.amount, 0);
-  const totalPago = billsDoMes.filter(b => b.status === 'paid').reduce((s, b) => s + b.amount, 0);
+  const totalPendente = billsDoMes.filter(b => b.status !== 'paid').reduce((s, b) => s + saldoRestante(b), 0);
+  const totalVencido = billsDoMes.filter(b => b.status === 'overdue').reduce((s, b) => s + saldoRestante(b), 0);
+  const totalPago = billsDoMes.reduce((s, b) => s + Number(b.paid_amount ?? 0), 0);
   const totalRecorrentes = billsDoMes.filter(b => b.is_recurring).length;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -489,7 +494,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-            {[['all', 'Todas'], ['pending', 'Pend.'], ['overdue', 'Venc.'], ['paid', 'Pago']].map(([v, l]) => (
+            {[['all', 'Todas'], ['pending', 'Pend.'], ['partial', 'Parcial'], ['overdue', 'Venc.'], ['paid', 'Pago']].map(([v, l]) => (
               <button key={v} onClick={() => { setFilterStatus(v); setPage(1); }}
                 className={`px-2.5 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${filterStatus === v ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
                 {l}
@@ -809,7 +814,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                       <div className="flex items-center gap-1.5">
                         {b.status !== 'paid' && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); setPayModal(b); setPayForm(f => ({ ...f, paid_amount: String(b.amount) })); }}
+                            onClick={(e) => { e.stopPropagation(); setPayModal(b); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(b)) })); }}
                             className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded-lg cursor-pointer hover:bg-green-200 whitespace-nowrap"
                           >
                             <i className="ri-check-line" /> Pagar
@@ -896,7 +901,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                       <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                         {b.status !== 'paid' && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); setPayModal(b); setPayForm(f => ({ ...f, paid_amount: String(b.amount) })); }}
+                            onClick={(e) => { e.stopPropagation(); setPayModal(b); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(b)) })); }}
                             className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-green-200 whitespace-nowrap font-semibold"
                           >
                             <i className="ri-check-line" /> Pagar
@@ -1114,7 +1119,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
         <ContasPagarDetalheModal
           bill={detalheModal}
           onClose={() => setDetalheModal(null)}
-          onPay={() => { setPayModal(detalheModal); setPayForm(f => ({ ...f, paid_amount: String(detalheModal.amount) })); }}
+          onPay={() => { setPayModal(detalheModal); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(detalheModal)) })); }}
           onNavigateToCompras={onNavigateToCompras}
         />
       )}
@@ -1133,12 +1138,25 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
               <div className="bg-zinc-50 rounded-xl p-3">
                 <p className="text-sm font-medium text-zinc-800">{payModal.description}</p>
                 <p className="text-xs text-zinc-500 mt-1">Valor original: {formatCurrency(payModal.amount)}</p>
+                {Number(payModal.paid_amount ?? 0) > 0 && (
+                  <p className="text-xs text-amber-700 mt-1 font-medium">
+                    Já pago: {formatCurrency(Number(payModal.paid_amount ?? 0))}
+                    {' · '}Falta: {formatCurrency(saldoRestante(payModal))}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="text-xs font-semibold text-zinc-600 block mb-1">Valor Pago</label>
                 <input type="number" step="0.01" value={payForm.paid_amount}
                   onChange={e => setPayForm(f => ({ ...f, paid_amount: e.target.value }))}
                   className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                {Number(payForm.paid_amount) > 0 && Number(payForm.paid_amount) < saldoRestante(payModal) - 0.005 && (
+                  <p className="text-xs text-amber-700 mt-1.5 flex items-start gap-1">
+                    <i className="ri-information-line mt-0.5" />
+                    Pagamento parcial: a conta continua em aberto com saldo de{' '}
+                    {formatCurrency(saldoRestante(payModal) - Number(payForm.paid_amount))}.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="text-xs font-semibold text-zinc-600 block mb-1">Data do Pagamento</label>

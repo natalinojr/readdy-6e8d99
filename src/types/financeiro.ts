@@ -112,6 +112,13 @@ export interface PurchaseItem {
   cost_center_id?: string;      // centro de custo por item
   freight_allocated?: number;   // frete rateado neste item
   ingredient?: { id: string; name: string; unit: string };
+
+  // Custo real da linha (calculado e congelado pelo purchase-write)
+  discount_per_unit?: number;       // desconto por unidade de COMPRA
+  final_unit_cost?: number;         // VU final = (preço − desconto) + frete/unid.
+  cost_per_base_unit?: number;      // R$ por unidade de ESTOQUE (o "R$/kg")
+  merchandise_category_id?: string; // categoria de mercadoria (Bebidas, Hortifruti...)
+  notes?: string;                   // observação desta linha
 }
 
 export interface Purchase {

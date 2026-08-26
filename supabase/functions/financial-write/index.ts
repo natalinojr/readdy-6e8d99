@@ -265,9 +265,33 @@ Deno.serve(async (req) => {
           return new Response(JSON.stringify({ error: 'Bill not found' }), { status: 404, headers: corsHeaders });
         }
 
+        // PAGAMENTO PARCIAL: antes o status ia para 'paid' incondicionalmente, então
+        // uma conta paga a menor era quitada e o saldo devedor sumia. Agora paid_amount
+        // ACUMULA os pagamentos e a conta só fecha quando cobre o valor total.
+        const billRec = bill as Record<string, unknown>;
+        const billAmount = Number(billRec.amount ?? 0);
+        const alreadyPaid = Number(billRec.paid_amount ?? 0);
+        const paymentAmount = Math.round(Number(paid_amount ?? 0) * 100) / 100;
+
+        if (billRec.status === 'paid') {
+          return new Response(JSON.stringify({ error: 'Conta já está quitada' }), { status: 409, headers: corsHeaders });
+        }
+        if (!(paymentAmount > 0)) {
+          return new Response(JSON.stringify({ error: 'Valor do pagamento deve ser maior que zero' }), { status: 400, headers: corsHeaders });
+        }
+
+        const newPaidTotal = Math.round((alreadyPaid + paymentAmount) * 100) / 100;
+        // Tolerância de meio centavo evita que arredondamento deixe a conta eternamente 'partial'
+        const isSettled = newPaidTotal >= billAmount - 0.005;
+
         result = await supabase
           .from('fin_accounts_payable')
-          .update({ status: 'paid', paid_date, paid_amount, payment_method })
+          .update({
+            status: isSettled ? 'paid' : 'partial',
+            paid_date,
+            paid_amount: newPaidTotal,
+            payment_method,
+          })
           .eq('id', id)
           .eq('tenant_id', tenant_id)
           .select()
@@ -284,7 +308,7 @@ Deno.serve(async (req) => {
         await supabase.from('fin_cash_flow').insert({
           tenant_id,
           type: 'expense',
-          amount: paid_amount,
+          amount: paymentAmount,
           description: (bill as Record<string, unknown>).description,
           category: (bill as Record<string, unknown>).category || 'Conta a Pagar',
           cost_center_id: (bill as Record<string, unknown>).cost_center_id,
@@ -297,7 +321,7 @@ Deno.serve(async (req) => {
         if (targetBankAccountId) {
           await supabase.rpc('fn_bank_debit', {
             p_bank_account_id: targetBankAccountId,
-            p_amount: paid_amount,
+            p_amount: paymentAmount,
             p_description: `Pagamento: ${(bill as Record<string, unknown>).description}`,
             p_reference_type: 'bill_payment',
             p_reference_id: id,
@@ -314,7 +338,8 @@ Deno.serve(async (req) => {
             .eq('reference_type', 'purchase');
 
           const allBills = sibling_bills ?? [];
-          const allPaid = (allBills as Array<{ id: string; status: string }>).every((b) => b.id === id ? true : b.status === 'paid');
+          // A própria conta conta como quitada só se o pagamento cobriu o total
+          const allPaid = (allBills as Array<{ id: string; status: string }>).every((b) => b.id === id ? isSettled : b.status === 'paid');
           const anyPaid = (allBills as Array<{ id: string; status: string }>).some((b) => b.id === id ? true : b.status === 'paid');
           const newPurchaseStatus = allPaid ? 'paid' : anyPaid ? 'partial' : 'pending';
 
@@ -325,7 +350,9 @@ Deno.serve(async (req) => {
             .eq('tenant_id', tenant_id);
         }
 
-        if ((bill as Record<string, unknown>).is_recurring) {
+        // Só gera a próxima ocorrência quando a atual foi de fato quitada;
+        // um pagamento parcial não deve adiantar o mês seguinte.
+        if ((bill as Record<string, unknown>).is_recurring && isSettled) {
           const currentDue = new Date((bill as Record<string, unknown>).due_date as string);
           const nextDue = new Date(currentDue.getFullYear(), currentDue.getMonth() + 1, currentDue.getDate());
           const nextDueStr = nextDue.toISOString().split('T')[0];
@@ -384,6 +411,61 @@ Deno.serve(async (req) => {
         } else {
           result = await supabase.from('fin_suppliers').insert({ ...data, tenant_id }).select().single();
         }
+        break;
+      }
+
+      // ── Merchandise categories ────────────────────────────────────────────
+      // Categorias de MERCADORIA (Bebidas, Hortifruti, Proteínas...) — lista
+      // gerenciável pelo usuário. Não confundir com fin_dre_categories, que é
+      // plano de contas (inclui Aluguel, Salário etc.).
+      case 'list_merchandise_categories': {
+        const { data, error } = await supabase
+          .from('fin_merchandise_categories')
+          .select('*')
+          .eq('tenant_id', tenant_id)
+          .eq('is_active', true)
+          .order('sort_order')
+          .order('name');
+        if (error) {
+          console.error('[list_merchandise_categories] error:', error.message);
+          return new Response(JSON.stringify({ error: extractErrorMessage(error) }), { status: 500, headers: corsHeaders });
+        }
+        return new Response(JSON.stringify({ data: data ?? [] }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      case 'upsert_merchandise_category': {
+        const { id, name, sort_order } = payload;
+        const cleanName = String(name ?? '').trim();
+        if (!cleanName) {
+          return new Response(JSON.stringify({ error: 'Nome da categoria é obrigatório' }), { status: 400, headers: corsHeaders });
+        }
+        const data: Record<string, unknown> = { name: cleanName, updated_at: new Date().toISOString() };
+        if (sort_order !== undefined) data.sort_order = Number(sort_order) || 0;
+
+        if (id) {
+          result = await supabase.from('fin_merchandise_categories').update(data).eq('id', id).eq('tenant_id', tenant_id).select().single();
+        } else {
+          result = await supabase.from('fin_merchandise_categories').insert({ ...data, tenant_id }).select().single();
+        }
+        if (result?.error) {
+          // índice único (tenant_id, lower(name))
+          const msg = String(result.error.code) === '23505'
+            ? `Já existe uma categoria chamada "${cleanName}"`
+            : extractErrorMessage(result.error);
+          return new Response(JSON.stringify({ error: msg }), { status: 400, headers: corsHeaders });
+        }
+        break;
+      }
+
+      case 'delete_merchandise_category': {
+        // Soft delete: itens de compra já lançados continuam apontando para a categoria.
+        result = await supabase
+          .from('fin_merchandise_categories')
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq('id', payload.id)
+          .eq('tenant_id', tenant_id)
+          .select()
+          .single();
         break;
       }
 
