@@ -394,16 +394,9 @@ export default function NovaCompraModal({
         errors.parcelas_total = `Total das parcelas (${formatCurrency(totalParcelas)}) difere do total da compra (${formatCurrency(totalAmount)})`;
       }
     }
-    if (costCenterMode === 'total' && !form.cost_center_id) {
-      errors.cost_center = 'Selecione um centro de custo para a compra';
-    }
-    if (costCenterMode === 'per_item') {
-      items.forEach((item, idx) => {
-        if (!item.cost_center_id) {
-          errors[`item_${idx}_cost_center`] = `Item ${idx + 1}: selecione o centro de custo`;
-        }
-      });
-    }
+    // Centro de custo é opcional — "Nenhum" é uma opção válida oferecida pelo
+    // próprio select, então não pode ser bloqueada aqui (bug encontrado em
+    // teste real: a compra ficava presa mesmo com "Nenhum" selecionado).
     return errors;
   };
 
