@@ -8,7 +8,9 @@ import {
 } from 'recharts';
 
 interface DayDetail {
-  tipo: 'recebivel' | 'conta_pagar' | 'folha' | 'manual_entrada' | 'manual_saida';
+  // 'auto_entrada' = entrada de caixa com origin automático (auto_sale, auto_suprimento…),
+  // que antes era rotulada erradamente como "Entrada Manual".
+  tipo: 'recebivel' | 'auto_entrada' | 'conta_pagar' | 'folha' | 'manual_entrada' | 'manual_saida';
   descricao: string;
   valor: number;
 }
@@ -17,8 +19,8 @@ interface DayPoint {
   date: string;
   label: string;
   // Entradas separadas
-  entradasAuto: number;      // recebíveis D+N (verde claro)
-  entradasManuais: number;   // entradas manuais (verde escuro)
+  entradasAuto: number;      // entradas automáticas: recebíveis D+N + fin_cash_flow com origin auto_* (verde claro)
+  entradasManuais: number;   // entradas manuais: fin_cash_flow origin 'manual' (verde escuro)
   // Saídas separadas
   saidasFolha: number;       // folha (vermelho claro)
   saidasContas: number;      // contas a pagar (vermelho escuro)
@@ -43,12 +45,14 @@ interface Receivable {
 interface Payable {
   due_date: string;
   amount: number;
+  paid_amount: number | null;
+  status: string;
   description: string;
 }
 
 interface PayrollEntry {
   net_salary: number;
-  paid_date: string | null;
+  status: string;
   reference_month: string;
   employee_name: string;
 }
@@ -79,11 +83,17 @@ const SERIES_COLORS = {
 
 const TIPO_CONFIG: Record<DayDetail['tipo'], { label: string; color: string; icon: string; sinal: '+' | '-'; textColor: string }> = {
   recebivel:      { label: 'Recebível D+N',   color: SERIES_COLORS.entradasAuto,    icon: 'ri-bank-card-line',  sinal: '+', textColor: 'text-green-600' },
+  auto_entrada:   { label: 'Entrada Automática', color: SERIES_COLORS.entradasAuto, icon: 'ri-store-2-line',    sinal: '+', textColor: 'text-green-600' },
   manual_entrada: { label: 'Entrada Manual',  color: SERIES_COLORS.entradasManuais, icon: 'ri-add-circle-line', sinal: '+', textColor: 'text-green-800' },
   conta_pagar:    { label: 'Conta a Pagar',   color: SERIES_COLORS.saidasContas,    icon: 'ri-bill-line',       sinal: '-', textColor: 'text-red-700' },
   folha:          { label: 'Folha de Pagto',  color: SERIES_COLORS.saidasFolha,     icon: 'ri-team-line',       sinal: '-', textColor: 'text-red-400' },
   manual_saida:   { label: 'Saída Manual',    color: SERIES_COLORS.saidasManuais,   icon: 'ri-subtract-line',   sinal: '-', textColor: 'text-orange-600' },
 };
+
+// Tipos de detalhe que somam ENTRADA de caixa. Centralizado porque agora são
+// três (recebível, entrada automática do razão e entrada manual) e a lista era
+// repetida em dois pontos da tela.
+const ENTRADA_TIPOS: DayDetail['tipo'][] = ['recebivel', 'auto_entrada', 'manual_entrada'];
 
 function addDays(date: Date, days: number) {
   const d = new Date(date);
@@ -101,6 +111,39 @@ function localDateKey(d: Date) {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/** Competência 'YYYY-MM' de uma data local */
+function monthKey(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Data de pagamento PROJETADA de uma folha pendente.
+ *
+ * PORQUÊ: `hr_payroll` NÃO tem coluna de "data prevista de pagamento" — só
+ * `paid_date`, que fica NULL até o `pay_payroll` quitar a folha. Filtrar a
+ * previsão por `paid_date` (como era feito) descartava 100% das folhas
+ * pendentes, porque em SQL `NULL >= data` é NULL. A única âncora temporal
+ * disponível numa folha pendente é a COMPETÊNCIA (`reference_month`, texto
+ * 'YYYY-MM').
+ *
+ * ESCOLHA: projetamos no 5º dia do mês SEGUINTE ao da competência — é o prazo
+ * legal da CLT (art. 459 §1º) e o que a loja pratica.
+ * LIMITAÇÃO: a lei fala em 5º dia ÚTIL; aqui usamos o dia 5 corrido, apenas
+ * empurrando para segunda-feira quando cai no fim de semana (não há calendário
+ * de feriados no sistema). O erro fica em poucos dias, dentro do mesmo mês.
+ */
+function payrollProjectedDate(referenceMonth: string): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec((referenceMonth ?? '').slice(0, 7));
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]); // 1-12; como Date usa mês 0-based, `month` já é o mês SEGUINTE
+  const d = new Date(year, month, 5);
+  const dow = d.getDay();
+  if (dow === 0) d.setDate(d.getDate() + 1);      // domingo → segunda
+  else if (dow === 6) d.setDate(d.getDate() + 2); // sábado  → segunda
+  return localDateKey(d);
 }
 
 // Tooltip customizado para o gráfico
@@ -140,8 +183,9 @@ function DayDetailPanel({
   const totalEntradas = point.totalEntradas;
   const totalSaidas = point.totalSaidas;
 
-  const entradas = point.detalhes.filter((d) => d.tipo === 'recebivel' || d.tipo === 'manual_entrada');
-  const saidas = point.detalhes.filter((d) => d.tipo !== 'recebivel' && d.tipo !== 'manual_entrada');
+  // Tipos que representam ENTRADA de caixa (o resto é saída).
+  const entradas = point.detalhes.filter((d) => ENTRADA_TIPOS.includes(d.tipo));
+  const saidas = point.detalhes.filter((d) => !ENTRADA_TIPOS.includes(d.tipo));
 
   return (
     <div className="bg-white border border-zinc-200 rounded-xl flex flex-col h-full overflow-hidden">
@@ -282,12 +326,23 @@ export default function PrevisaoCaixaTab() {
     const todayStr = localDateKey(today);
     const endDateStr = localDateKey(endDate);
 
+    // Janela de COMPETÊNCIA da folha: uma folha de competência M é paga em M+1,
+    // então para cobrir [hoje, fim do horizonte] precisamos das competências
+    // desde o mês anterior ao de hoje até o mês do fim do horizonte.
+    // O limite inferior (6 meses) é só uma trava de volume — folhas pendentes
+    // mais antigas que isso são caso de saneamento, não de previsão.
+    const payrollMinMonth = monthKey(new Date(today.getFullYear(), today.getMonth() - 6, 1));
+    const payrollMaxMonth = monthKey(endDate);
+
     const [payablesRes, cashFlowsRes, pastFlowsRes, receivablesRes, payrollRes, bankAccountsRes] = await Promise.all([
+      // Contas a pagar: 'partial' TAMBÉM é dívida em aberto (invariante §8:
+      // saldo devedor = amount − paid_amount). Filtrar só por 'pending' fazia a
+      // conta paga pela metade sumir INTEIRA da previsão.
       supabase
         .from('fin_accounts_payable')
-        .select('due_date, amount, description')
+        .select('due_date, amount, paid_amount, status, description')
         .eq('tenant_id', user.tenantId)
-        .eq('status', 'pending')
+        .in('status', ['pending', 'partial'])
         .gte('due_date', todayStr)
         .lte('due_date', endDateStr),
 
@@ -312,13 +367,17 @@ export default function PrevisaoCaixaTab() {
         .gte('due_date', todayStr)
         .lte('due_date', endDateStr),
 
+      // Folha pendente: filtrada por COMPETÊNCIA, não por `paid_date`.
+      // `paid_date` é NULL enquanto a folha não é paga, e `NULL >= data` em SQL
+      // é NULL → o filtro antigo devolvia SEMPRE vazio (nenhum centavo de folha
+      // entrava na previsão, apesar do rótulo "contas a pagar + folha").
       supabase
         .from('hr_payroll')
-        .select('net_salary, paid_date, reference_month, employee_name')
+        .select('net_salary, status, reference_month, employee_name')
         .eq('tenant_id', user.tenantId)
-        .in('status', ['pending', 'processing'])
-        .gte('paid_date', todayStr)
-        .lte('paid_date', endDateStr),
+        .in('status', ['pending', 'processing', 'partial'])
+        .gte('reference_month', payrollMinMonth)
+        .lte('reference_month', payrollMaxMonth),
 
       supabase
         .from('fin_bank_accounts')
@@ -363,31 +422,58 @@ export default function PrevisaoCaixaTab() {
     }
 
     // Contas a pagar → saídas contas (vermelho escuro)
+    // Projetamos o SALDO DEVEDOR (amount − paid_amount), não o valor cheio:
+    // uma conta com pagamento parcial só deve pressionar o caixa pelo que falta.
     (payablesRes.data ?? []).forEach((p: Payable) => {
       const k = p.due_date;
-      if (dayMap[k]) {
-        dayMap[k].saidasContas += Number(p.amount);
+      const saldoDevedor = Number(p.amount) - Number(p.paid_amount ?? 0);
+      if (dayMap[k] && saldoDevedor > 0.005) {
+        dayMap[k].saidasContas += saldoDevedor;
         dayMap[k].detalhes.push({
           tipo: 'conta_pagar',
-          descricao: p.description ?? 'Conta a pagar',
-          valor: Number(p.amount),
+          descricao: p.status === 'partial'
+            ? `${p.description ?? 'Conta a pagar'} (saldo restante)`
+            : (p.description ?? 'Conta a pagar'),
+          valor: saldoDevedor,
         });
       }
     });
 
-    // Fluxo de caixa → entradas manuais (verde escuro) ou saídas (laranja)
-    // Origens automáticas de compras (auto_purchase) vão para saidasContas, não saidasManuais
+    // Fluxo de caixa → classificado por `origin` (§1 do FINANCEIRO_MAP), tanto
+    // nas SAÍDAS quanto nas ENTRADAS. Antes só as saídas olhavam o `origin`:
+    // toda entrada futura era carimbada "Entrada Manual", inclusive `auto_sale`
+    // e `auto_suprimento`, o que fazia legenda, série do gráfico e tabela mentirem.
     const AUTO_PURCHASE_ORIGINS = ['auto_purchase', 'auto_bill_payment'];
+    const isManualOrigin = (origin?: string) => !origin || origin === 'manual';
     (cashFlowsRes.data ?? []).forEach((f: CashFlowEntry) => {
       const k = f.date;
+      // Assimetria proposital entre os dois caminhos de saldo inicial:
+      // • saldo BANCÁRIO (`current_balance`) já é o saldo de AGORA, então os
+      //   lançamentos de hoje no razão já estão embutidos nele — somá-los de
+      //   novo no dayMap seria dupla contagem;
+      // • saldo do RAZÃO é acumulado só até ONTEM (`.lt('date', todayStr)`),
+      //   então os lançamentos de hoje precisam entrar no dayMap.
+      // Contas a pagar / recebíveis de hoje continuam entrando nos dois casos:
+      // são previsões (ainda não liquidadas), não estão no saldo do banco.
+      if (usaBanco && k === todayStr) return;
       if (dayMap[k]) {
         if (f.type === 'income') {
-          dayMap[k].entradasManuais += Number(f.amount);
-          dayMap[k].detalhes.push({
-            tipo: 'manual_entrada',
-            descricao: f.description || 'Entrada manual',
-            valor: Number(f.amount),
-          });
+          if (isManualOrigin(f.origin)) {
+            dayMap[k].entradasManuais += Number(f.amount);
+            dayMap[k].detalhes.push({
+              tipo: 'manual_entrada',
+              descricao: f.description || 'Entrada manual',
+              valor: Number(f.amount),
+            });
+          } else {
+            // auto_sale (venda / liquidação de recebível), auto_suprimento etc.
+            dayMap[k].entradasAuto += Number(f.amount);
+            dayMap[k].detalhes.push({
+              tipo: 'auto_entrada',
+              descricao: f.description || 'Entrada automática (venda/recebimento)',
+              valor: Number(f.amount),
+            });
+          }
         } else if (f.origin && AUTO_PURCHASE_ORIGINS.includes(f.origin)) {
           // Compras e pagamentos de contas automáticos → saídas contas (vermelho escuro)
           dayMap[k].saidasContas += Number(f.amount);
@@ -423,13 +509,23 @@ export default function PrevisaoCaixaTab() {
     setPendingReceivables(receivables);
 
     // Folha → saídas folha (vermelho claro)
+    // A data de saída é PROJETADA a partir da competência (ver payrollProjectedDate).
+    // Folha vencida e ainda pendente (data projetada no passado) é jogada em HOJE:
+    // continua sendo dívida a pagar e some da previsão se for descartada.
+    // LIMITAÇÃO: `hr_payroll` não tem `paid_amount`; para status 'partial'
+    // projetamos o líquido cheio (superestima o que falta pagar) e sinalizamos
+    // isso na descrição do detalhe.
     (payrollRes.data ?? []).forEach((p: PayrollEntry) => {
-      const k = p.paid_date;
-      if (k && dayMap[k]) {
+      const projetada = payrollProjectedDate(p.reference_month);
+      if (!projetada) return;
+      const k = projetada < todayStr ? todayStr : projetada;
+      if (dayMap[k]) {
         dayMap[k].saidasFolha += Number(p.net_salary);
+        const sufixo = projetada < todayStr ? ' — em atraso' : '';
+        const parcial = p.status === 'partial' ? ' (parcial: valor cheio)' : '';
         dayMap[k].detalhes.push({
           tipo: 'folha',
-          descricao: `Folha ${p.reference_month}${p.employee_name ? ` — ${p.employee_name}` : ''}`,
+          descricao: `Folha ${p.reference_month}${p.employee_name ? ` — ${p.employee_name}` : ''}${sufixo}${parcial}`,
           valor: Number(p.net_salary),
         });
       }
@@ -437,7 +533,10 @@ export default function PrevisaoCaixaTab() {
 
     // Monta array de projeção
     let accumulated = currentBalance;
-    let sumRecebiveis = 0;
+    // O KPI "Recebíveis D+N" continua sendo SÓ parcelas de cartão a liquidar —
+    // não pode ser lido de `entradasAuto`, que agora agrega também as entradas
+    // automáticas do razão (auto_sale/auto_suprimento).
+    const sumRecebiveis = receivables.reduce((s, r) => s + Number(r.amount), 0);
     let sumSaidas = 0;
     let sumEntradas = 0;
     const points: DayPoint[] = [];
@@ -449,7 +548,6 @@ export default function PrevisaoCaixaTab() {
         const totalEnt = vals.entradasAuto + vals.entradasManuais;
         const totalSai = vals.saidasContas + vals.saidasFolha + vals.saidasManuais;
         accumulated += totalEnt - totalSai;
-        sumRecebiveis += vals.entradasAuto;
         sumSaidas += totalSai;
         sumEntradas += vals.entradasManuais;
 
@@ -511,16 +609,19 @@ export default function PrevisaoCaixaTab() {
     return Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
   }, [pendingReceivables]);
 
-  // Handler de clique no gráfico
-  const handleChartClick = (data: { activePayload?: { payload: DayPoint }[] }) => {
-    if (data?.activePayload?.[0]?.payload) {
-      const point = data.activePayload[0].payload as DayPoint;
+  // Handler de clique no gráfico.
+  // O parâmetro é `unknown` porque o tipo público do recharts (MouseHandlerDataParam)
+  // não declara `activePayload`, embora o objeto o traga em runtime — tipar
+  // explicitamente quebrava a atribuição a `onClick`.
+  const handleChartClick = (data: unknown) => {
+    const point = (data as { activePayload?: { payload: DayPoint }[] } | undefined)?.activePayload?.[0]?.payload;
+    if (point) {
       setSelectedDay((prev) => prev?.date === point.date ? null : point);
     }
   };
 
   const SERIES_LABELS = {
-    entradasAuto: 'Recebíveis D+N',
+    entradasAuto: 'Entradas Automáticas',
     entradasManuais: 'Entradas Manuais',
     saidasFolha: 'Folha de Pagto',
     saidasContas: 'Contas a Pagar',
@@ -574,7 +675,7 @@ export default function PrevisaoCaixaTab() {
           {/* Entradas */}
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: SERIES_COLORS.entradasAuto }} />
-            <span className="text-xs text-zinc-600">Recebíveis D+N <span className="text-zinc-400">(verde claro)</span></span>
+            <span className="text-xs text-zinc-600">Entradas Automáticas <span className="text-zinc-400">(recebíveis D+N, vendas, suprimento — verde claro)</span></span>
           </div>
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: SERIES_COLORS.entradasManuais }} />
@@ -927,7 +1028,7 @@ export default function PrevisaoCaixaTab() {
             <div className="flex items-center gap-3 text-xs text-zinc-400">
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full inline-block" style={{ background: SERIES_COLORS.entradasAuto }} />
-                Recebíveis
+                Automáticas
               </span>
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full inline-block" style={{ background: SERIES_COLORS.entradasManuais }} />
@@ -951,7 +1052,7 @@ export default function PrevisaoCaixaTab() {
             <table className="w-full text-sm">
               <thead className="bg-zinc-50">
                 <tr>
-                  {['Data', 'Recebíveis D+N', 'Entradas Manuais', 'Contas a Pagar', 'Folha', 'Saldo do Dia', 'Saldo Acumulado'].map((h) => (
+                  {['Data', 'Entradas Automáticas', 'Entradas Manuais', 'Contas a Pagar', 'Folha', 'Saldo do Dia', 'Saldo Acumulado'].map((h) => (
                     <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-zinc-500 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -1000,7 +1101,7 @@ export default function PrevisaoCaixaTab() {
                           <div className="space-y-1">
                             {p.detalhes.map((d, idx) => {
                               const cfg = TIPO_CONFIG[d.tipo];
-                              const isEntrada = d.tipo === 'recebivel' || d.tipo === 'manual_entrada';
+                              const isEntrada = ENTRADA_TIPOS.includes(d.tipo);
                               return (
                                 <div key={idx} className="flex items-center justify-between text-xs py-0.5">
                                   <div className="flex items-center gap-2">

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, SUPABASE_URL } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import type { BillPayable } from '@/types/financeiro';
@@ -38,6 +38,7 @@ export default function ContasPagarDREModal({ bills: allBills, onClose, onSaved 
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(0);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [filterUnlinked, setFilterUnlinked] = useState(true);
   const [search, setSearch] = useState('');
 
@@ -83,23 +84,53 @@ export default function ContasPagarDREModal({ bills: allBills, onClose, onSaved 
   const handleSave = async () => {
     if (!user?.tenantId) return;
     setSaving(true);
-    let count = 0;
-    const entries = Object.entries(assignments);
-    for (const [billId, catId] of entries) {
-      if (!catId) continue;
-      await supabase
-        .from('fin_accounts_payable')
-        .update({ dre_category_id: catId })
-        .eq('id', billId)
-        .eq('tenant_id', user.tenantId);
-      count++;
+    setSaveError(null);
+
+    // Escrita via Edge Function (service_role), em LOTE. Antes eram N updates
+    // diretos na tabela, e `count++` corria mesmo quando o update falhava —
+    // a tela dizia "N vínculos salvos" sem ter salvo nada. Para usuário
+    // multi-loja o update direto ainda podia afetar zero linhas em silêncio
+    // (RLS `*_auth_uid` resolve o tenant com LIMIT 1 sem ORDER BY).
+    const assignmentsList = Object.entries(assignments)
+      .filter(([, catId]) => !!catId)
+      .map(([bill_id, dre_category_id]) => ({ bill_id, dre_category_id }));
+
+    if (assignmentsList.length === 0) {
+      setSaving(false);
+      return;
     }
-    setSaved(count);
-    setSaving(false);
-    setTimeout(() => {
-      onSaved();
-      onClose();
-    }, 800);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error('Sessão expirada');
+
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/financial-write`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'apikey': import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY as string,
+        },
+        body: JSON.stringify({
+          action: 'bulk_update_bill_dre_category',
+          tenant_id: user.tenantId,
+          payload: { assignments: assignmentsList },
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.error) throw new Error(String(json?.error ?? 'Erro ao salvar os vínculos'));
+
+      setSaved(Number(json?.data?.updated ?? assignmentsList.length));
+      setSaving(false);
+      setTimeout(() => {
+        onSaved();
+        onClose();
+      }, 800);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Erro ao salvar os vínculos');
+      setSaving(false);
+    }
   };
 
   // Agrupar categorias por grupo
@@ -246,6 +277,16 @@ export default function ContasPagarDREModal({ bills: allBills, onClose, onSaved 
             </table>
           )}
         </div>
+
+        {saveError && (
+          <div className="px-6 py-2.5 bg-red-50 border-t border-red-200 flex items-start gap-2 flex-shrink-0">
+            <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-red-700 flex-1">{saveError}</p>
+            <button onClick={() => setSaveError(null)} className="text-red-400 hover:text-red-600 cursor-pointer flex-shrink-0">
+              <i className="ri-close-line text-sm" />
+            </button>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-zinc-100 flex-shrink-0 bg-zinc-50">

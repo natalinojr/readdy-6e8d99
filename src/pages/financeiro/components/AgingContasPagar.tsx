@@ -30,6 +30,10 @@ interface Props {
   onBucketClick: (label: string | null) => void;
 }
 
+// Saldo ainda devido de uma conta (amount − o que já foi pago)
+const saldoDevedor = (b: BillPayable) =>
+  Math.max(0, Number(b.amount ?? 0) - Number(b.paid_amount ?? 0));
+
 const BUCKET_DEFS = [
   { label: 'A vencer', minDays: -9999, maxDays: -1, color: 'border-green-200', bgColor: 'bg-green-50', textColor: 'text-green-700', barColor: 'bg-green-400' },
   { label: 'Vence hoje', minDays: 0, maxDays: 0, color: 'border-amber-200', bgColor: 'bg-amber-50', textColor: 'text-amber-700', barColor: 'bg-amber-400' },
@@ -44,8 +48,11 @@ function buildBuckets(bills: BillPayable[]): AgingBucket[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // Aging deve refletir o SALDO devedor: depois do fix P11, `paid_amount`
+  // acumula e uma conta de R$1.000 com R$900 pagos ainda entrava no bucket
+  // valendo R$1.000 — distorcendo faixas, % de inadimplência e o alerta de 20%.
   const unpaid = bills.filter((b) => b.status !== 'paid');
-  const grandTotal = unpaid.reduce((s, b) => s + Number(b.amount), 0);
+  const grandTotal = unpaid.reduce((s, b) => s + saldoDevedor(b), 0);
 
   return BUCKET_DEFS.map((def) => {
     const items = unpaid.filter((b) => {
@@ -54,7 +61,7 @@ function buildBuckets(bills: BillPayable[]): AgingBucket[] {
       const days = Math.floor((today.getTime() - due.getTime()) / 86400000);
       return days >= def.minDays && days <= def.maxDays;
     });
-    const total = items.reduce((s, b) => s + Number(b.amount), 0);
+    const total = items.reduce((s, b) => s + saldoDevedor(b), 0);
     return {
       ...def,
       count: items.length,
@@ -76,7 +83,7 @@ function buildSupplierAging(bills: BillPayable[]): SupplierAging[] {
     if (!map[key]) {
       map[key] = { supplier: key, total: 0, overdue: 0, pending: 0, oldestDue: b.due_date ?? '', count: 0 };
     }
-    const amount = Number(b.amount);
+    const amount = saldoDevedor(b);
     map[key].total += amount;
     map[key].count += 1;
 

@@ -317,6 +317,7 @@ function TransactionRow({ tx }: { tx: BankTransaction }) {
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function BancosContasTab() {
   const { accounts, loading, upsert, remove, setDefault, totalBalance } = useBankAccounts();
+  const [pendingDefaultName, setPendingDefaultName] = useState<string | null>(null);
   const { routings, upsert: upsertRouting } = useIncomeRouting();
   const { methods: paymentMethods } = usePaymentMethods();
 
@@ -341,6 +342,17 @@ export default function BancosContasTab() {
     });
     setRoutingMap(map);
   }, [routings]);
+
+  // Ver handleSubmit: só existe para resolver o id da conta recém-criada que o
+  // usuário marcou como padrão.
+  useEffect(() => {
+    if (!pendingDefaultName) return;
+    const created = accounts.find(a => a.name.trim().toLowerCase() === pendingDefaultName);
+    if (!created) return;
+    setPendingDefaultName(null);
+    if (!created.is_default) setDefault(created.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts, pendingDefaultName]);
 
   const openNew = () => {
     setEditAccount(null);
@@ -372,7 +384,42 @@ export default function BancosContasTab() {
       return;
     }
 
-    await upsert({ ...form, id: editAccount?.id });
+    // O saldo NUNCA é gravado direto na edição da conta. Dois motivos:
+    // 1) sem lastro: gravar current_balance não cria linha em fin_bank_transactions,
+    //    então o extrato deixa de bater com o saldo;
+    // 2) LOST UPDATE: openEdit faz setForm({...acc}), logo qualquer edição (cor, nome)
+    //    regravaria o saldo da hora em que o modal abriu — desfazendo qualquer
+    //    débito/crédito ocorrido nesse meio-tempo.
+    // O ajuste de saldo tem o caminho correto ao lado: "Lançamento Manual"
+    // (bank_manual_transaction → fn_bank_debit/fn_bank_credit).
+    // Na CRIAÇÃO o saldo inicial continua valendo (é o ponto de partida da conta).
+    const payload: Partial<BankAccount> = { ...form, id: editAccount?.id };
+    if (editAccount) {
+      delete payload.current_balance;
+      delete payload.initial_balance;
+    }
+
+    const result = await upsert(payload);
+    if (result && 'error' in result && result.error) {
+      setSaving(false);
+      setSaveError(String(result.error));
+      return;
+    }
+
+    // O checkbox "Conta Padrão" passa pelo upsert_bank_account, que só faz UPDATE
+    // NESTA conta — quem zera o is_default das outras é set_default_bank_account.
+    // Sem esta chamada o sistema ficava com duas contas padrão.
+    if (form.is_default && !editAccount?.is_default) {
+      if (editAccount) {
+        await setDefault(editAccount.id);
+      } else {
+        // Na criação ainda não temos o id (upsert não devolve o registro);
+        // marcamos o nome e um effect chama set_default_bank_account assim que a
+        // lista recarregada trouxer a conta nova.
+        setPendingDefaultName(trimmedName);
+      }
+    }
+
     setSaving(false);
     setShowModal(false);
     setForm(emptyForm);
@@ -921,28 +968,36 @@ export default function BancosContasTab() {
                 </div>
               )}
 
-              <div>
-                <label className="text-xs font-semibold text-zinc-600 block mb-1">
-                  {editAccount ? 'Saldo Atual' : 'Saldo Inicial'}
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editAccount ? (form.current_balance ?? 0) : (form.initial_balance ?? 0)}
-                  onChange={e => {
-                    const val = Number(e.target.value);
-                    if (editAccount) {
-                      setForm(f => ({ ...f, current_balance: val }));
-                    } else {
+              {/* Saldo só é editável na CRIAÇÃO. Na edição ele é apenas informativo:
+                  todo movimento precisa de lastro em fin_bank_transactions, senão o
+                  extrato não bate com o saldo (e havia risco de desfazer débitos). */}
+              {editAccount ? (
+                <div>
+                  <label className="text-xs font-semibold text-zinc-600 block mb-1">Saldo Atual</label>
+                  <div className="w-full border border-zinc-200 bg-zinc-50 rounded-lg px-3 py-2 text-sm font-semibold text-zinc-700">
+                    {formatCurrency(Number(editAccount.current_balance ?? 0))}
+                  </div>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    O saldo não é editado aqui. Ele muda apenas por lançamento — use
+                    <strong> Lançamento Manual</strong> para registrar um ajuste, assim ele fica no extrato.
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <label className="text-xs font-semibold text-zinc-600 block mb-1">Saldo Inicial</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={form.initial_balance ?? 0}
+                    onChange={e => {
+                      const val = Number(e.target.value);
                       setForm(f => ({ ...f, initial_balance: val, current_balance: val }));
-                    }
-                  }}
-                  className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                />
-                <p className="text-xs text-zinc-400 mt-1">
-                  {editAccount ? 'Ajuste manual do saldo atual' : 'Saldo que já existe nessa conta hoje'}
-                </p>
-              </div>
+                    }}
+                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <p className="text-xs text-zinc-400 mt-1">Saldo que já existe nessa conta hoje</p>
+                </div>
+              )}
 
               <div>
                 <label className="text-xs font-semibold text-zinc-600 block mb-2">Cor de Identificação</label>

@@ -1,5 +1,8 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useCashFlow, useBillsPayable, useReceivableInstallments } from '@/hooks/useFinanceiro';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
+import { todayBrasilia } from '@/lib/dateUtils';
 import { formatCurrency } from '@/lib/formatters';
 import type { CashFlowEntry } from '@/types/financeiro';
 
@@ -15,6 +18,12 @@ interface DiaCalendario {
   date: string;
   day: number;
   isCurrentMonth: boolean;
+  /**
+   * Dia pertence ao PERÍODO EXIBIDO (mês, no modo mensal; a semana inteira, no
+   * modo semanal). Antes tudo usava `isCurrentMonth`, então numa semana que
+   * cruzava a virada de mês metade dos dias ficava fora dos totais do resumo.
+   */
+  isInPeriod: boolean;
   isToday: boolean;
   isFuture: boolean;
   entradas: number;
@@ -27,14 +36,28 @@ interface DiaCalendario {
   contasReceber: { desc: string; amount: number; status: string }[];
 }
 
+/**
+ * Data local no formato YYYY-MM-DD.
+ * Usamos isto no lugar de `toISOString().split('T')[0]`, que devolve a data em
+ * UTC: num fuso negativo (Brasília, -03) das 21h à meia-noite o "hoje" virava
+ * amanhã e nenhuma célula do calendário casava com o dia corrente.
+ */
+function localDateKey(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function getMonthBounds(year: number, month: number) {
   const first = new Date(year, month, 1);
   const last = new Date(year, month + 1, 0);
   const start = new Date(year, month, 1 - first.getDay());
   const end = new Date(year, month + 1, 6 - last.getDay());
   return {
-    startStr: start.toISOString().split('T')[0],
-    endStr: end.toISOString().split('T')[0],
+    startStr: localDateKey(start),
+    endStr: localDateKey(end),
+    periodStartStr: localDateKey(first),
     start,
     end,
   };
@@ -47,14 +70,16 @@ function getWeekBounds(baseDate: Date) {
   const end = new Date(start);
   end.setDate(start.getDate() + 6);
   return {
-    startStr: start.toISOString().split('T')[0],
-    endStr: end.toISOString().split('T')[0],
+    startStr: localDateKey(start),
+    endStr: localDateKey(end),
+    periodStartStr: localDateKey(start),
     start,
     end,
   };
 }
 
 export default function CalendarioFluxoCaixa() {
+  const { user } = useAuth();
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -75,9 +100,56 @@ export default function CalendarioFluxoCaixa() {
   const { bills, loading: loadingBills } = useBillsPayable();
   const { installments, loading: loadingRec } = useReceivableInstallments();
 
-  const todayStr = today.toISOString().split('T')[0];
+  // "Hoje" pelo fuso de Brasília (helper canônico do projeto). Antes usava
+  // `toISOString()`, que é UTC: das 21h à meia-noite o dia corrente era
+  // classificado como FUTURO e passava a somar contas a pagar como "previsão"
+  // num dia já realizado.
+  const todayStr = todayBrasilia();
 
-  const buildDias = useCallback((start: Date, end: Date, currentMonth: number): DiaCalendario[] => {
+  // ── Saldo de abertura do período ───────────────────────────────────────────
+  // O acumulado começava em ZERO no dia 1, então o alerta "N dias com saldo
+  // projetado negativo" disparava mesmo com caixa sobrando. Aqui buscamos o
+  // acumulado do razão (fin_cash_flow) ANTES do primeiro dia do período — mesmo
+  // proxy usado pela aba Previsão quando não há saldo bancário.
+  // Nota: não usamos `fin_bank_accounts.current_balance` porque ele é o saldo de
+  // HOJE; não serve de abertura para um mês passado ou futuro.
+  const [saldoAbertura, setSaldoAbertura] = useState(0);
+  const [aberturaCarregada, setAberturaCarregada] = useState(false);
+  const periodStartStr = activeBounds.periodStartStr;
+
+  useEffect(() => {
+    let cancelado = false;
+    if (!user?.tenantId) return;
+    setAberturaCarregada(false);
+    (async () => {
+      const { data, error } = await supabase
+        .from('fin_cash_flow')
+        .select('amount, type')
+        .eq('tenant_id', user.tenantId)
+        .lt('date', periodStartStr);
+      if (cancelado) return;
+      if (error) {
+        console.error('[CalendarioFluxoCaixa] Erro ao calcular saldo de abertura:', error.message);
+        setSaldoAbertura(0);
+      } else {
+        setSaldoAbertura(
+          (data ?? []).reduce(
+            (acc, f) => acc + (f.type === 'income' ? Number(f.amount) : -Number(f.amount)),
+            0
+          )
+        );
+      }
+      setAberturaCarregada(true);
+    })();
+    return () => { cancelado = true; };
+  }, [user?.tenantId, periodStartStr]);
+
+  const buildDias = useCallback((
+    start: Date,
+    end: Date,
+    currentMonth: number,
+    scope: 'mes' | 'semana',
+  ): DiaCalendario[] => {
     const result: DiaCalendario[] = [];
 
     const entriesByDate = new Map<string, CashFlowEntry[]>();
@@ -87,26 +159,50 @@ export default function CalendarioFluxoCaixa() {
       entriesByDate.set(e.date, list);
     });
 
+    // `amount` cheio escondia pagamentos parciais: uma conta paga pela metade
+    // pressionava o caixa pelo valor inteiro. Invariante §8 do FINANCEIRO_MAP:
+    // saldo devedor = amount − paid_amount.
     const billsByDate = new Map<string, { desc: string; amount: number; status: string }[]>();
     bills.forEach(b => {
       const list = billsByDate.get(b.due_date) ?? [];
-      list.push({ desc: b.description, amount: b.amount, status: b.status });
+      // Em 'partial' o que ainda pesa no caixa é o saldo restante; nos demais
+      // status o próprio `amount` já é o número a exibir (pendente/vencida = tudo
+      // em aberto; paga = valor total da conta quitada).
+      const saldoDevedor = Number(b.amount) - Number(b.paid_amount ?? 0);
+      list.push({
+        desc: b.description,
+        amount: b.status === 'partial' ? saldoDevedor : Number(b.amount),
+        status: b.status,
+      });
       billsByDate.set(b.due_date, list);
     });
 
     const recByDate = new Map<string, { desc: string; amount: number; status: string }[]>();
     installments.forEach(r => {
-      const list = recByDate.get(r.due_date) ?? [];
-      list.push({ desc: r.description || 'Parcela a receber', amount: r.amount, status: r.status });
-      recByDate.set(r.due_date, list);
+      const dueKey = r.due_date;
+      if (!dueKey) return;
+      const list = recByDate.get(dueKey) ?? [];
+      list.push({
+        desc: r.order_number ? `Pedido ${r.order_number}` : (r.payment_method_name || 'Parcela a receber'),
+        amount: r.amount,
+        status: r.status,
+      });
+      recByDate.set(dueKey, list);
     });
 
-    let saldoAcumulado = 0;
+    // Status de conta a pagar que ainda representam dívida em aberto.
+    // 'partial' estava fora e por isso a conta paga pela metade sumia da previsão.
+    const EM_ABERTO = ['pending', 'partial'];
+
+    let saldoAcumulado = saldoAbertura;
     const current = new Date(start);
     while (current <= end) {
-      const dateStr = current.toISOString().split('T')[0];
+      const dateStr = localDateKey(current);
       const dayNum = current.getDate();
       const isCurrentMonth = current.getMonth() === currentMonth;
+      // No modo semanal TODOS os dias exibidos pertencem ao período, mesmo os
+      // que caem no mês vizinho numa semana que cruza a virada de mês.
+      const isInPeriod = scope === 'semana' ? true : isCurrentMonth;
       const isToday = dateStr === todayStr;
       const isFuture = dateStr > todayStr;
 
@@ -116,14 +212,18 @@ export default function CalendarioFluxoCaixa() {
 
       const contasPagar = billsByDate.get(dateStr) ?? [];
       const contasReceber = recByDate.get(dateStr) ?? [];
-      const prevSaidas = isFuture ? contasPagar.filter(c => c.status === 'pending').reduce((s, c) => s + c.amount, 0) : 0;
-      const prevEntradas = isFuture ? contasReceber.filter(c => c.status === 'pending').reduce((s, c) => s + c.amount, 0) : 0;
+      const prevSaidas = isFuture
+        ? contasPagar.filter(c => EM_ABERTO.includes(c.status)).reduce((s, c) => s + c.amount, 0)
+        : 0;
+      const prevEntradas = isFuture
+        ? contasReceber.filter(c => c.status === 'pending').reduce((s, c) => s + c.amount, 0)
+        : 0;
 
       const totalEntradas = entradas + prevEntradas;
       const totalSaidas = saidas + prevSaidas;
       const saldoDia = totalEntradas - totalSaidas;
 
-      if (isCurrentMonth) {
+      if (isInPeriod) {
         saldoAcumulado += saldoDia;
       }
 
@@ -131,13 +231,14 @@ export default function CalendarioFluxoCaixa() {
         date: dateStr,
         day: dayNum,
         isCurrentMonth,
+        isInPeriod,
         isToday,
         isFuture,
         entradas: totalEntradas,
         saidas: totalSaidas,
         saldo: saldoDia,
-        saldoAcumulado: isCurrentMonth ? saldoAcumulado : undefined,
-        saldoNegativo: isFuture && isCurrentMonth && saldoAcumulado < 0,
+        saldoAcumulado: isInPeriod ? saldoAcumulado : undefined,
+        saldoNegativo: isFuture && isInPeriod && saldoAcumulado < 0,
         movimentacoes: movs,
         contasPagar,
         contasReceber,
@@ -147,15 +248,15 @@ export default function CalendarioFluxoCaixa() {
     }
 
     return result;
-  }, [entries, bills, installments, todayStr]);
+  }, [entries, bills, installments, todayStr, saldoAbertura]);
 
   const diasMensal = useMemo(
-    () => buildDias(monthBounds.start, monthBounds.end, viewMonth),
+    () => buildDias(monthBounds.start, monthBounds.end, viewMonth, 'mes'),
     [buildDias, monthBounds, viewMonth]
   );
 
   const diasSemanal = useMemo(
-    () => buildDias(weekBounds.start, weekBounds.end, weekBounds.start.getMonth()),
+    () => buildDias(weekBounds.start, weekBounds.end, weekBounds.start.getMonth(), 'semana'),
     [buildDias, weekBounds]
   );
 
@@ -199,16 +300,20 @@ export default function CalendarioFluxoCaixa() {
     setWeekBase(d);
   }, []);
 
-  const resumoMes = useMemo(() => {
-    const diasMes = dias.filter(d => d.isCurrentMonth);
-    const entradas = diasMes.reduce((s, d) => s + d.entradas, 0);
-    const saidas = diasMes.reduce((s, d) => s + d.saidas, 0);
+  // Resumo do PERÍODO EXIBIDO: no modo mensal são os dias do mês; no semanal,
+  // os 7 dias da semana (antes filtrava por `isCurrentMonth`, então numa semana
+  // que cruzava a virada de mês metade dos dias não entrava nos totais).
+  const resumoPeriodo = useMemo(() => {
+    const diasPeriodo = dias.filter(d => d.isInPeriod);
+    const entradas = diasPeriodo.reduce((s, d) => s + d.entradas, 0);
+    const saidas = diasPeriodo.reduce((s, d) => s + d.saidas, 0);
     const saldo = entradas - saidas;
-    const prevEntradas = diasMes.filter(d => d.isFuture).reduce((s, d) => s + d.entradas, 0);
-    const prevSaidas = diasMes.filter(d => d.isFuture).reduce((s, d) => s + d.saidas, 0);
-    const diasNegativosCount = diasMes.filter(d => d.saldoNegativo).length;
-    return { entradas, saidas, saldo, prevEntradas, prevSaidas, diasNegativosCount };
-  }, [dias]);
+    const prevEntradas = diasPeriodo.filter(d => d.isFuture).reduce((s, d) => s + d.entradas, 0);
+    const prevSaidas = diasPeriodo.filter(d => d.isFuture).reduce((s, d) => s + d.saidas, 0);
+    const diasNegativosCount = diasPeriodo.filter(d => d.saldoNegativo).length;
+    const saldoFinal = saldoAbertura + saldo;
+    return { entradas, saidas, saldo, prevEntradas, prevSaidas, diasNegativosCount, saldoFinal };
+  }, [dias, saldoAbertura]);
 
   const isLoading = loadingCF || loadingBills || loadingRec;
 
@@ -271,16 +376,17 @@ export default function CalendarioFluxoCaixa() {
       </div>
 
       {/* Alerta de dias com saldo negativo */}
-      {resumoMes.diasNegativosCount > 0 && (
+      {aberturaCarregada && resumoPeriodo.diasNegativosCount > 0 && (
         <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
           <div className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5">
             <i className="ri-error-warning-line text-red-500 text-base" />
           </div>
           <div>
             <p className="text-sm font-semibold text-red-700">
-              {resumoMes.diasNegativosCount} {resumoMes.diasNegativosCount === 1 ? 'dia futuro com saldo projetado negativo' : 'dias futuros com saldo projetado negativo'}
+              {resumoPeriodo.diasNegativosCount} {resumoPeriodo.diasNegativosCount === 1 ? 'dia futuro com saldo projetado negativo' : 'dias futuros com saldo projetado negativo'}
             </p>
             <p className="text-xs text-red-500 mt-0.5">
+              Projeção a partir do saldo de abertura de {formatCurrency(saldoAbertura)} (caixa acumulado até o início do período).
               Verifique as contas a pagar e entradas previstas para evitar problemas de caixa.
             </p>
           </div>
@@ -291,24 +397,27 @@ export default function CalendarioFluxoCaixa() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 md:gap-3">
         <div className="bg-white rounded-xl border border-zinc-200 p-3">
           <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-semibold">Entradas</p>
-          <p className="text-sm font-bold text-green-600 mt-0.5">{formatCurrency(resumoMes.entradas)}</p>
+          <p className="text-sm font-bold text-green-600 mt-0.5">{formatCurrency(resumoPeriodo.entradas)}</p>
         </div>
         <div className="bg-white rounded-xl border border-zinc-200 p-3">
           <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-semibold">Saídas</p>
-          <p className="text-sm font-bold text-red-500 mt-0.5">{formatCurrency(resumoMes.saidas)}</p>
+          <p className="text-sm font-bold text-red-500 mt-0.5">{formatCurrency(resumoPeriodo.saidas)}</p>
         </div>
         <div className="bg-white rounded-xl border border-zinc-200 p-3">
-          <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-semibold">Saldo</p>
-          <p className={`text-sm font-bold mt-0.5 ${resumoMes.saldo >= 0 ? 'text-amber-600' : 'text-red-500'}`}>
-            {formatCurrency(resumoMes.saldo)}
+          <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-semibold">Saldo do Período</p>
+          <p className={`text-sm font-bold mt-0.5 ${resumoPeriodo.saldo >= 0 ? 'text-amber-600' : 'text-red-500'}`}>
+            {formatCurrency(resumoPeriodo.saldo)}
+          </p>
+          <p className="text-[10px] text-zinc-400 mt-0.5">
+            Abertura {formatCurrency(saldoAbertura)} → {formatCurrency(resumoPeriodo.saldoFinal)}
           </p>
         </div>
         <div className="bg-white rounded-xl border border-zinc-200 p-3">
           <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-semibold">Previsão Futura</p>
           <p className="text-sm font-bold text-zinc-600 mt-0.5">
-            <span className="text-green-600">+{formatCurrency(resumoMes.prevEntradas)}</span>
+            <span className="text-green-600">+{formatCurrency(resumoPeriodo.prevEntradas)}</span>
             <span className="text-zinc-300 mx-1">/</span>
-            <span className="text-red-500">-{formatCurrency(resumoMes.prevSaidas)}</span>
+            <span className="text-red-500">-{formatCurrency(resumoPeriodo.prevSaidas)}</span>
           </p>
         </div>
       </div>
@@ -577,8 +686,13 @@ function DiaModal({ dia, onClose }: { dia: DiaCalendario; onClose: () => void })
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-zinc-800 truncate">{c.desc}</p>
-                      <p className="text-[10px] text-zinc-400">
-                        {c.status === 'overdue' ? 'Vencida' : c.status === 'pending' ? 'Pendente' : 'Paga'}
+                      {/* 'partial' caía no ramo final e aparecia escrita "Paga",
+                          escondendo que ainda há saldo devedor. */}
+                      <p className={`text-[10px] ${c.status === 'partial' ? 'text-amber-600 font-semibold' : 'text-zinc-400'}`}>
+                        {c.status === 'overdue' ? 'Vencida'
+                          : c.status === 'pending' ? 'Pendente'
+                          : c.status === 'partial' ? 'Parcial (saldo restante)'
+                          : 'Paga'}
                       </p>
                     </div>
                     <p className="text-sm font-bold text-red-500 whitespace-nowrap">-{formatCurrency(c.amount)}</p>

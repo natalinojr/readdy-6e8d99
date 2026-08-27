@@ -2,7 +2,7 @@
 
 > Documento vivo. É a fonte única para entender a aba **Financeiro**: telas, dados, fluxos, conexões com Estoque/Faturamento, a DRE e os problemas conhecidos.
 > **Sempre confirme no código atual antes de afirmar** — atualize este arquivo quando algo mudar.
-> Última revisão: **2026-08-26** (Fase 1 de compras: bugs P9/P10/P11 corrigidos + correção conceitual do CMV — ver §7 e §10).
+> Última revisão: **2026-08-26** (Fase 1-2 de compras + **auditoria completa do módulo**: P9–P30 — ver §7).
 
 Arquivos-base: `src/pages/financeiro/`, `src/hooks/useFinanceiro.ts`, `useDespesas.ts`, `useReceitas.ts`, `useFinanceiroAlertas.ts`, `src/types/financeiro.ts`, Edge Functions `financial-write`, `purchase-write`, `purchase-confirm-delivery`, `order-write` (integração de venda), RPC `fn_get_cmv_report`.
 
@@ -182,6 +182,60 @@ margemLiquida     = resultadoOperacional / receitaBruta × 100
 - **✅ 🟠 P10 — Unidade e R$/kg eram destruídos em toda compra.** `purchase-write` lia `item.purchase_unit`/`item.purchase_factor`, nomes que **nenhum** front envia (ambos os modais mandam `unit_label`/`units_per_package`), e sobrescrevia com `null`/`1`. Efeito medido: de 25 itens gravados, só 4 tinham unidade. A conversão para estoque não era afetada (lia do objeto cru), só a linha persistida. **Fix:** aceita os dois nomes, com fallback.
 - **✅ 🔴 P11 — `pay_bill` quitava conta paga pela metade.** `update({ status: 'paid' })` incondicional, ignorando `paid_amount < amount`, sem saldo residual — o valor a pagar restante simplesmente sumia. **Fix:** `paid_amount` agora **acumula** os pagamentos; `status='partial'` enquanto não cobrir o total (tolerância de meio centavo); recorrente só gera o mês seguinte quando quitada; rejeita pagar conta já quitada (409) e valor ≤ 0 (400). **Deployado: `financial-write` (2026-08-26).**
 - **⏳ 🔴 P12 — DRE usa CMV teórico (ficha técnica) em vez do CMV real.** Ver §4c para a regra correta e a validação numérica. **Bloqueado por:** falta de snapshot mensal de estoque valorizado. Regime de caixa é destravável antes do de competência.
+
+### Auditoria completa do módulo (2026-08-26, tarde)
+
+Revisão sistemática de todas as abas. Classes de bug recorrentes encontradas: **(a)** status derivado de campo do banco que ninguém atualiza em vez de derivado por DATA; **(b)** somas ignorando `paid_amount` depois que o P11 fez ele ACUMULAR; **(c)** `status='partial'` não previsto em filtros; **(d)** datas em UTC (`toISOString()`) numa loja que fatura à noite; **(e)** queries sem paginação truncadas em ~1000 linhas em silêncio.
+
+**Contas a pagar / vencidas**
+- **✅ 🔴 P13 — Pagar pela aba "Contas Vencidas" não tirava o dinheiro do sistema.** `ContasVencidasPanel.handlePay` gravava DIRETO na tabela: quitava conta paga pela metade (ressuscitando o P11), **não** inseria `fin_cash_flow auto_bill_payment`, **não** chamava `fn_bank_debit`, não gerava a recorrente e não filtrava `tenant_id`. Agora usa `useBillsPayable().pay()`.
+- **✅ 🔴 P14 — Pagamento em LOTE pagava o valor cheio de conta parcial.** Conta de R$1.000 com R$600 pagos recebia mais R$1.000 no caixa e no banco. Agora paga `saldoRestante(bill)`.
+- **✅ 🔴 P15 — `pay_bill` não limitava o pagamento ao saldo devedor.** Agora recusa (400) com o saldo na mensagem.
+- **✅ 🔴 P16 — Erro de pagamento era engolido.** `useBillsPayable.pay` ignorava o retorno de `invokeFinancial` → o modal fechava fingindo sucesso. Agora **lança**, e os dois modais exibem o erro.
+- **✅ 🟠 P17 — Contas `partial` sumiam do painel de vencidas** (`.in('status',['overdue','pending'])`) e os totais somavam `amount` cheio. Corrigido; o modal também passa a sugerir o SALDO, não o valor original.
+- **✅ 🟠 P18 — Aging ignorava pagamento parcial** (`AgingContasPagar`): conta de R$1.000 com R$900 pagos entrava no bucket valendo R$1.000, distorcendo faixas, % de inadimplência e o alerta de 20%.
+- **✅ 🟡 P19 — A tabela não mostrava o saldo devedor** de conta parcial (exibia só o valor original).
+- **✅ 🟡 P20 — Detalhe da compra buscava parcelas por TEXTO** (`.ilike('description','%fornecedor%NF%')`) → trazia parcelas de TODAS as compras do mesmo fornecedor. Agora por `reference_id`+`reference_type`.
+
+**DRE**
+- **✅ 🔴 P21 — Cancelamentos e descontos deduzidos DUAS vezes.** `receitaBruta` vem de `paymentsMatched`, que já exclui cancelados e já é líquida de desconto; a fórmula subtraía de novo. Agora `receitaLiquida = receitaBruta`, e as duas linhas viram **informativas** (rotuladas como tal na tela).
+- **✅ 🔴 P22 — Regime de caixa ignorava contas `partial`.** Conta de R$10.000 com R$6.000 pagos entrava com ZERO no mês em que o dinheiro saiu. Agora `.in('status',['paid','partial'])` somando `paid_amount`. Idem no Comparativo e no drill-down. *(Limitação de schema: `paid_date` guarda só a data do ÚLTIMO pagamento — conta paga em 2 meses aparece inteira no mês final. Corrigir exige ledger de pagamentos.)*
+- **✅ 🟠 P23 — Item de compra com `dre_category_id` burlava o P1.** `billsRes` exclui `reference_type='purchase'`, mas o ITEM com categoria era somado em `despesasPorCategoria` → mercadoria virava despesa E CMV. Agora todo item de compra vai só para `cmvCompras`.
+- **✅ 🟠 P24 — Despesas SEM categoria DRE sumiam do resultado.** Iam para `__sem_categoria__` e nunca eram subtraídas; o aviso amarelo mostrava o valor sem descontá-lo. Agora entram no total (com linha própria).
+- **✅ 🟠 P25 — Folha entrava no regime de CAIXA sem estar paga.** Agora `.eq('status','paid')` no caixa; competência segue por `reference_month`.
+- **✅ 🔴 P26 — DRE Comparativo contava venda a prazo DUAS vezes** (`receitaRecebida + receitaAReceber`) e **não subtraía folha nem taxa de cartão** — o "Resultado Líquido" dele não batia com a aba DRE. Ambos corrigidos; "a receber" virou linha informativa.
+
+**Fluxo de caixa / Previsão / Receitas**
+- **✅ 🔴 P27 — Datas em UTC gravavam dado errado no razão.** `new Date().toISOString().split('T')[0]` das 21h à meia-noite locais já retorna o dia seguinte: o botão "Hoje" mostrava tela vazia, o preset "Mês" pulava de mês no dia 31, e **lançamento manual era salvo com a data de amanhã**. Agora tudo usa `todayBrasilia()` de `src/lib/dateUtils.ts` (helper canônico). No `ReceitasTab` as datas eram `const` de nível de MÓDULO — congelavam no carregamento do bundle (PWA aberto por dias); viraram funções.
+- **✅ 🔴 P28 — Previsão: a folha NUNCA entrava.** Filtrava `paid_date` (NULL enquanto pendente) → `NULL >= data` é NULL → resultado vazio por construção. Agora projeta por `reference_month` no dia 5 do mês seguinte (CLT art. 459 §1º), empurrando para segunda em fim de semana; folha atrasada cai em hoje. *(Limitação: `hr_payroll` não tem `paid_amount` nem data prevista.)*
+- **✅ 🔴 P29 — Receitas contava pedido entregue e NÃO PAGO.** `is_paid` era selecionado e nunca aplicado — comanda em aberto/fiado entrava como receita recebida. Agora `.eq('is_paid', true)`, alinhado ao contrato do §5.
+- **✅ 🟠 P30 — Queries sem paginação truncadas em ~1000 linhas SEM ERRO.** Novo helper `src/lib/fetchAllRows.ts` (padrão de `useOrdersHistory`), aplicado em `useReceitas`. **Ainda falta aplicar** em `list_cash_flow` (financial-write) e nas queries de `fin_purchase_items`/`payments` da DRE — ver backlog.
+- **✅ 🟡 Diversos:** filtro de categoria do Fluxo de Caixa agora deriva dos dados (a lista fixa não cobria "Taxas de Cartao", "Folha de Pagamento" etc.); `originLabel` completado; "Média Diária" das Receitas dividia pelo mês inteiro (no dia 5 mostrava 1/6 do real); Previsão rotulava toda entrada como "manual"; Calendário partia de saldo ZERO no alerta de negativo, tratava `partial` como "Paga" e o resumo semanal usava o mês.
+
+### Migração das escritas diretas → Edge Function (2026-08-26)
+
+**O problema real, medido:** a política que de fato restringe (`*_auth_uid`) usa
+`tenant_id = (SELECT tenant_id FROM user_tenants WHERE user_id = auth.uid() LIMIT 1)` — **sem `ORDER BY`**. Para um usuário com várias lojas (há um com **4** no banco) o Postgres devolve uma membership arbitrária: nas demais lojas a escrita direta afeta **zero linhas, sem erro**. O usuário clica em salvar e nada acontece.
+
+Por isso as escritas estão sendo movidas para `financial-write` (roda como `service_role`, valida a membership e escopa por `tenant_id`), uma de cada vez:
+
+| # | Origem | Status | Action usada |
+|---|---|---|---|
+| 1 | `useReceitas` → receita manual (`fin_cash_flow`) | ✅ | `insert_cash_flow` (já existia) |
+| 2 | `ContasPagarDREModal` → vínculo DRE (`fin_accounts_payable`) | ✅ | **`bulk_update_bill_dre_category`** (nova, em lote) |
+| 3 | `OrcamentosTab` (`fin_budgets` + `fin_budget_items`) | ✅ | **`upsert_budget` / `update_budget_status` / `delete_budget`** (novas) |
+| 4 | `usePayrollCustomFields` (`hr_payroll_custom_fields`) | ✅ | **`upsert_payroll_custom_field` / `delete_payroll_custom_field`** (novas) |
+| 5 | `useRH` (`hr_employees`, `hr_payroll`) | ✅ | **`upsert_employee` / `delete_employee` / `update_employee_vacation` / `update_employee_thirteenth` / `upsert_payroll` / `delete_payroll` / `bulk_insert_payroll`** (novas) |
+
+Ganhos além do isolamento: o vínculo DRE em lote contava `count++` mesmo quando o update falhava (dizia "N salvos" sem ter salvo nada); orçamento e itens agora são gravados **atomicamente** (antes o orçamento podia ficar com valor cheio e zero itens, virando compra vazia); campos de folha passaram a filtrar `tenant_id` no update/delete (antes só `id`).
+
+**Leituras continuam diretas** — não são o problema, e a RLS de SELECT funciona.
+
+> ✅ **Migração COMPLETA em 2026-08-26.** Varredura automatizada em `src/**` confirma: **zero** `.insert/.update/.delete` direto em tabelas `fin_*`/`hr_*`. Só restam leituras (`.select`), que são legítimas.
+>
+> **Próximo passo possível (não executado):** converter as políticas `deny_direct_write_*` de PERMISSIVE para **RESTRICTIVE**, aí a tranca passa a valer de verdade. Antes de virar essa chave, testar o módulo inteiro em produção por alguns dias — se algum caminho de escrita tiver escapado da varredura, ele passa a falhar.
+
+> **Sobre as políticas `deny_direct_write_*`:** verificado em 2026-08-26 que TODAS são **PERMISSIVAS**. Como políticas permissivas se somam por OR, uma com `using(false)` **não bloqueia nada** — as escritas diretas do front funcionam. Elas dão falsa sensação de proteção. Torná-las RESTRICTIVE quebraria RH, orçamentos e outros caminhos que escrevem direto; decisão consciente de não mexer agora.
 
 ### Backlog restante
 - **P12 (prioridade):** refazer o CMV da DRE conforme §4c. Pré-requisito: snapshot mensal de estoque valorizado.

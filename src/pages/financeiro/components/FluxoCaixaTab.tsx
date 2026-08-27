@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useCashFlow, useCostCenters } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
+import { todayBrasilia } from '@/lib/dateUtils';
 import type { CashFlowEntry } from '@/types/financeiro';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -16,23 +17,35 @@ const PERIODS = [
   { label: 'Personalizado', value: 'custom' },
 ];
 
+// Datas SEMPRE no fuso de Brasília: `toISOString()` devolve UTC e, das 21h à
+// meia-noite locais, já retorna o dia seguinte — o botão "Hoje" mostrava a tela
+// vazia e o preset "Mês" pulava para o mês seguinte no dia 31.
 function getPeriodDates(period: string, customStart: string, customEnd: string) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayBrasilia();
   if (period === 'today') return { start: today, end: today };
   if (period === 'week') {
-    const d = new Date(); d.setDate(d.getDate() - 7);
+    const [y, m, d0] = today.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1, d0 - 7));
     return { start: d.toISOString().split('T')[0], end: today };
   }
   if (period === 'month') return { start: today.slice(0, 7) + '-01', end: today };
   return { start: customStart, end: customEnd };
 }
 
+// Categorias sugeridas no MODAL de lançamento manual. O filtro da lista NÃO usa
+// esta lista — ele deriva das categorias realmente presentes no razão, senão
+// "Taxas de Cartao", "Folha de Pagamento" etc. ficavam inalcançáveis no filtro.
 const CATEGORIES = ['Vendas', 'Compras', 'Conta a Pagar', 'Antecipação', 'Sangria', 'Suprimento', 'Outros'];
 const PAGE_SIZE = 15;
 
+// Vocabulário completo de `fin_cash_flow.origin` (ver FINANCEIRO_MAP §1).
+// Faltavam auto_bill_payment/auto_card_fee/auto_payroll/auto_suprimento — o CSV
+// exportava o slug cru nessas linhas.
 const originLabel: Record<string, string> = {
   manual: 'Manual', auto_sale: 'Venda', auto_purchase: 'Compra',
-  auto_sangria: 'Sangria', auto_anticipation: 'Antecipação',
+  auto_sangria: 'Sangria', auto_suprimento: 'Suprimento',
+  auto_bill_payment: 'Conta paga', auto_card_fee: 'Taxa de cartão',
+  auto_payroll: 'Folha', auto_anticipation: 'Antecipação',
 };
 
 export default function FluxoCaixaTab() {
@@ -42,7 +55,7 @@ export default function FluxoCaixaTab() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
     type: 'expense', amount: '', description: '', category: 'Outros',
-    date: new Date().toISOString().split('T')[0], notes: '', cost_center_id: '',
+    date: todayBrasilia(), notes: '', cost_center_id: '',
     payment_method_id: '',
   });
 
@@ -69,7 +82,7 @@ export default function FluxoCaixaTab() {
     }
     await insert({ ...form, amount: Number(form.amount), origin: 'manual' } as Partial<CashFlowEntry>);
     setShowModal(false);
-    setForm({ type: 'expense', amount: '', description: '', category: 'Outros', date: new Date().toISOString().split('T')[0], notes: '', cost_center_id: '', payment_method_id: '' });
+    setForm({ type: 'expense', amount: '', description: '', category: 'Outros', date: todayBrasilia(), notes: '', cost_center_id: '', payment_method_id: '' });
     setPage(1);
   };
 
@@ -95,6 +108,15 @@ export default function FluxoCaixaTab() {
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const activeFiltersCount = [filterType !== 'all', filterCategory !== 'all'].filter(Boolean).length;
+
+  // Categorias do FILTRO derivadas dos dados: o razão recebe categorias que a
+  // lista fixa não conhece (Taxas de Cartao, Folha de Pagamento, Taxas
+  // Bancárias, Estornos e a categoria livre da conta a pagar).
+  const categoriasPresentes = useMemo(() => {
+    const set = new Set<string>();
+    entries.forEach(e => { if (e.category) set.add(e.category); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [entries]);
 
   const clearFilters = () => {
     setSearch(''); setFilterType('all'); setFilterCategory('all'); setPage(1);
@@ -361,7 +383,7 @@ export default function FluxoCaixaTab() {
                   className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
                 >
                   <option value="all">Todas as categorias</option>
-                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  {categoriasPresentes.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               {activeFiltersCount > 0 && (

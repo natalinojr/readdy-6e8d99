@@ -1,5 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, SUPABASE_URL } from '@/lib/supabase';
+import { fetchAllRows } from '@/lib/fetchAllRows';
+
+// Formato das linhas lidas nas queries paginadas (o helper é genérico, então
+// o tipo precisa ser declarado aqui em vez de inferido pelo supabase-js).
+interface OrderRow {
+  id: string; number: number | null; total_amount: number;
+  is_paid: boolean | null; paid_at: string | null; created_at: string;
+  origin_type: string | null; destination_type: string | null;
+  table_number: number | null; waiter_name: string | null;
+  status: string; payment_method: string | null;
+}
+interface CashFlowRow {
+  id: string; description: string; amount: number; date: string;
+  category: string | null; origin: string | null;
+  payment_method_id: string | null; notes: string | null; created_at: string;
+}
 import { useAuth } from '@/contexts/AuthContext';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -71,24 +87,35 @@ export function useReceitas(filters: ReceitasFilters) {
     setLoading(true);
 
     const { startDate, endDate, categories, sources, search, minAmount, maxAmount } = filters;
-    const startISO = startDate + 'T00:00:00';
-    const endISO = endDate + 'T23:59:59';
+    // Fuso EXPLÍCITO de Brasília: sem o offset, 'T23:59:59' é interpretado como
+    // UTC contra um timestamptz e o período fechava às 20:59 do horário local —
+    // todo o faturamento das 21h à meia-noite do último dia caía fora.
+    const startISO = startDate + 'T00:00:00-03:00';
+    const endISO = endDate + 'T23:59:59-03:00';
 
+    // PAGINADO: sem .range() o PostgREST corta em ~1000 linhas SEM ERRO, e o
+    // total da aba simplesmente parava de crescer em períodos longos
+    // ("Últimos 3 Meses", "Este Ano") sem nada indicar o truncamento.
     const [ordersRes, manualRes] = await Promise.all([
       // Pedidos entregues (fonte única de verdade: status = 'delivered')
-      supabase
+      fetchAllRows<OrderRow>((from, to) => supabase
         .from('orders')
         .select('id, number, total_amount, is_paid, paid_at, created_at, origin_type, destination_type, table_number, waiter_name, status, payment_method')
         .eq('tenant_id', user.tenantId)
         .eq('status', 'delivered')
+        // is_paid era SELECIONADO e nunca aplicado: comanda entregue e não
+        // fechada (fiado, mesa aberta) entrava como receita recebida, inflando
+        // a aba. Contrato do FINANCEIRO_MAP §5: delivered AND is_paid.
+        .eq('is_paid', true)
         .eq('is_training', false)
         .neq('status', 'cancelled')
         .gte('created_at', startISO)
         .lte('created_at', endISO)
-        .order('created_at', { ascending: false }),
+        .order('created_at', { ascending: false })
+        .range(from, to)),
 
       // Receitas manuais no fin_cash_flow
-      supabase
+      fetchAllRows<CashFlowRow>((from, to) => supabase
         .from('fin_cash_flow')
         .select('id, description, amount, date, category, origin, payment_method_id, notes, created_at')
         .eq('tenant_id', user.tenantId)
@@ -96,13 +123,14 @@ export function useReceitas(filters: ReceitasFilters) {
         .eq('origin', 'manual')
         .gte('date', startDate)
         .lte('date', endDate)
-        .order('date', { ascending: false }),
+        .order('date', { ascending: false })
+        .range(from, to)),
     ]);
 
     const allItems: ReceitaItem[] = [];
 
     // Pedidos pagos
-    (ordersRes.data ?? []).forEach(o => {
+    (ordersRes.rows ?? []).forEach(o => {
       const paidDate = o.paid_at ? o.paid_at.slice(0, 10) : o.created_at.slice(0, 10);
       const originType = (o.origin_type as string) || 'pdv';
       const destType = (o.destination_type as string) || '';
@@ -127,7 +155,7 @@ export function useReceitas(filters: ReceitasFilters) {
     });
 
     // Receitas manuais
-    (manualRes.data ?? []).forEach(c => {
+    (manualRes.rows ?? []).forEach(c => {
       allItems.push({
         id: `manual_${c.id}`,
         source: 'manual',
@@ -137,7 +165,7 @@ export function useReceitas(filters: ReceitasFilters) {
         date: c.date,
         status: 'received',
         reference_id: c.id,
-        notes: c.notes,
+        notes: c.notes ?? undefined,
         created_at: c.created_at,
       });
     });
@@ -243,17 +271,42 @@ export function useInsertReceitaManual() {
     if (!user?.tenantId) return { error: 'Sem tenant' };
     setSaving(true);
     try {
-      const { error } = await supabase.from('fin_cash_flow').insert({
-        tenant_id: user.tenantId,
-        type: 'income',
-        origin: 'manual',
-        description: data.description,
-        amount: data.amount,
-        date: data.date,
-        category: data.category,
-        notes: data.notes || null,
+      // Escrita via Edge Function (service_role), NÃO direto na tabela.
+      // O insert direto dependia da política RLS `*_auth_uid`, que resolve o
+      // tenant com `SELECT ... FROM user_tenants WHERE user_id = auth.uid()
+      // LIMIT 1` — sem ORDER BY. Para um usuário com várias lojas isso sorteia
+      // UMA membership: nas demais o insert afetava zero linhas, sem erro
+      // nenhum (o usuário salvava e nada acontecia).
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return { error: 'Sessão expirada' };
+
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/financial-write`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'apikey': import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY as string,
+        },
+        body: JSON.stringify({
+          action: 'insert_cash_flow',
+          tenant_id: user.tenantId,
+          payload: {
+            type: 'income',
+            origin: 'manual',
+            description: data.description,
+            amount: data.amount,
+            date: data.date,
+            category: data.category,
+            notes: data.notes || null,
+          },
+        }),
       });
-      return { error: error?.message ?? null };
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.error) {
+        return { error: String(json?.error ?? 'Erro ao salvar a receita') };
+      }
+      return { error: null };
     } finally {
       setSaving(false);
     }

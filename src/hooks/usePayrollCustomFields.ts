@@ -1,5 +1,29 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, SUPABASE_URL } from '@/lib/supabase';
+
+/**
+ * Escrita via Edge Function (service_role). O update/delete direto filtrava
+ * apenas por `id`, sem `tenant_id` — dependia 100% da RLS, que neste projeto
+ * resolve o tenant com LIMIT 1 sobre user_tenants (sem ORDER BY) e é frágil
+ * para admin multi-loja. Erros também eram só logados no console.
+ */
+async function callFinancialWrite(action: string, tenantId: string, payload: Record<string, unknown>) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) return { error: 'Sessão expirada' };
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/financial-write`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'apikey': import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY as string,
+    },
+    body: JSON.stringify({ action, tenant_id: tenantId, payload }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json?.error) return { error: String(json?.error ?? 'Erro na operação') };
+  return { data: json?.data ?? null };
+}
 import { useAuth } from '@/contexts/AuthContext';
 
 export interface PayrollCustomField {
@@ -39,26 +63,21 @@ export function usePayrollCustomFields() {
   useEffect(() => { fetchFields(); }, [fetchFields]);
 
   const upsert = async (payload: Partial<PayrollCustomField>) => {
-    if (!user?.tenantId) return;
-    const record = {
-      ...payload,
-      tenant_id: user.tenantId,
-      updated_at: new Date().toISOString(),
-    };
-    if (record.id) {
-      const { error } = await supabase.from('hr_payroll_custom_fields').update(record).eq('id', record.id);
-      if (error) console.error('[usePayrollCustomFields] Erro ao atualizar:', error.message);
-    } else {
-      const { error } = await supabase.from('hr_payroll_custom_fields').insert(record);
-      if (error) console.error('[usePayrollCustomFields] Erro ao inserir:', error.message);
-    }
-    fetchFields();
+    if (!user?.tenantId) return { error: 'Sem tenant' };
+    const { tenant_id: _t, created_at: _c, updated_at: _u, ...data } = payload;
+    void _t; void _c; void _u;
+    const { error } = await callFinancialWrite('upsert_payroll_custom_field', user.tenantId, data);
+    if (error) console.error('[usePayrollCustomFields] Erro ao salvar:', error);
+    await fetchFields();
+    return { error: error ?? null };
   };
 
   const remove = async (id: string) => {
-    if (!user?.tenantId) return;
-    await supabase.from('hr_payroll_custom_fields').update({ is_active: false }).eq('id', id);
-    fetchFields();
+    if (!user?.tenantId) return { error: 'Sem tenant' };
+    const { error } = await callFinancialWrite('delete_payroll_custom_field', user.tenantId, { id });
+    if (error) console.error('[usePayrollCustomFields] Erro ao remover:', error);
+    await fetchFields();
+    return { error: error ?? null };
   };
 
   const proventos = fields.filter(f => f.type === 'provento');

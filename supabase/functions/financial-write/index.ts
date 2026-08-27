@@ -251,6 +251,38 @@ Deno.serve(async (req) => {
         break;
       }
 
+      case 'bulk_update_bill_dre_category': {
+        // Vínculo em LOTE de categoria DRE. Antes o front fazia N updates
+        // diretos na tabela (um por conta) e contava todos como salvos sem
+        // olhar o erro — e, para usuário multi-loja, a RLS `*_auth_uid`
+        // (LIMIT 1 sobre user_tenants, sem ORDER BY) podia afetar zero linhas
+        // silenciosamente na loja "errada".
+        const assignments = payload?.assignments as Array<{ bill_id: string; dre_category_id: string | null }> | undefined;
+        if (!Array.isArray(assignments) || assignments.length === 0) {
+          return new Response(JSON.stringify({ error: 'Nenhum vínculo informado' }), { status: 400, headers: corsHeaders });
+        }
+
+        let updated = 0;
+        const failures: string[] = [];
+        for (const a of assignments) {
+          if (!a?.bill_id) continue;
+          const { error: updErr, count } = await supabase
+            .from('fin_accounts_payable')
+            .update({ dre_category_id: a.dre_category_id || null }, { count: 'exact' })
+            .eq('id', a.bill_id)
+            .eq('tenant_id', tenant_id);
+          if (updErr) failures.push(extractErrorMessage(updErr));
+          else updated += count ?? 0;
+        }
+
+        if (failures.length > 0) {
+          return new Response(JSON.stringify({
+            error: `${failures.length} vínculo(s) falharam: ${failures[0]}`,
+          }), { status: 500, headers: corsHeaders });
+        }
+        return new Response(JSON.stringify({ data: { updated } }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
       case 'pay_bill': {
         const { id, paid_date, paid_amount, payment_method, bank_account_id } = payload;
 
@@ -721,6 +753,101 @@ Deno.serve(async (req) => {
       }
 
       // ── Convert Budget to Purchase ────────────────────────────────────────
+      // ── Budgets (orçamentos) ──────────────────────────────────────────────
+      // Escrita centralizada aqui em vez de direto do front: `fin_budget_items`
+      // NÃO tem coluna tenant_id, então o insert direto ficava à mercê da RLS
+      // `fin_budgets_*`, que resolve o tenant com LIMIT 1 sobre user_tenants —
+      // para admin multi-loja isso podia gravar zero linhas em silêncio.
+      case 'upsert_budget': {
+        const { id, items, ...data } = payload as Record<string, unknown> & {
+          id?: string;
+          items?: Array<Record<string, unknown>>;
+        };
+
+        let budgetId = id;
+        if (id) {
+          const upd = await supabase.from('fin_budgets')
+            .update({ ...data }).eq('id', id).eq('tenant_id', tenant_id).select().maybeSingle();
+          if (upd.error) {
+            return new Response(JSON.stringify({ error: extractErrorMessage(upd.error) }), { status: 500, headers: corsHeaders });
+          }
+          if (!upd.data) {
+            return new Response(JSON.stringify({ error: 'Orçamento não encontrado nesta loja' }), { status: 404, headers: corsHeaders });
+          }
+        } else {
+          const ins = await supabase.from('fin_budgets')
+            .insert({ ...data, tenant_id, created_by: user.id }).select().maybeSingle();
+          if (ins.error || !ins.data) {
+            return new Response(JSON.stringify({ error: extractErrorMessage(ins.error ?? 'Falha ao criar orçamento') }), { status: 500, headers: corsHeaders });
+          }
+          budgetId = (ins.data as Record<string, unknown>).id as string;
+        }
+
+        // Itens: substituição completa. Sem eles o orçamento fica com valor
+        // cheio e zero itens — e convertido em compra nasce vazio, sem entrada
+        // de estoque. Por isso a falha aqui é ERRO, não aviso.
+        if (Array.isArray(items)) {
+          const del = await supabase.from('fin_budget_items').delete().eq('budget_id', budgetId);
+          if (del.error) {
+            return new Response(JSON.stringify({ error: extractErrorMessage(del.error) }), { status: 500, headers: corsHeaders });
+          }
+          const rows = items
+            .filter((i) => String(i.descricao ?? '').trim())
+            .map((i) => ({
+              budget_id: budgetId,
+              descricao: i.descricao,
+              quantidade: Number(i.quantidade ?? 0),
+              unidade: i.unidade ?? null,
+              valor_unitario: Number(i.valor_unitario ?? 0),
+              valor_total: Number(i.quantidade ?? 0) * Number(i.valor_unitario ?? 0),
+            }));
+          if (rows.length > 0) {
+            const insItems = await supabase.from('fin_budget_items').insert(rows);
+            if (insItems.error) {
+              return new Response(JSON.stringify({ error: `Itens não gravados: ${extractErrorMessage(insItems.error)}` }), { status: 500, headers: corsHeaders });
+            }
+          }
+        }
+
+        return new Response(JSON.stringify({ data: { id: budgetId } }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      case 'update_budget_status': {
+        const { id, status } = payload as { id?: string; status?: string };
+        if (!id || !status) {
+          return new Response(JSON.stringify({ error: 'id e status são obrigatórios' }), { status: 400, headers: corsHeaders });
+        }
+        const patch: Record<string, unknown> = { status };
+        // aprovado_por/aprovado_em só fazem sentido na APROVAÇÃO
+        if (status === 'aprovado') {
+          patch.aprovado_por = user.id;
+          patch.aprovado_em = new Date().toISOString();
+        }
+        const upd = await supabase.from('fin_budgets')
+          .update(patch).eq('id', id).eq('tenant_id', tenant_id).select().maybeSingle();
+        if (upd.error) {
+          return new Response(JSON.stringify({ error: extractErrorMessage(upd.error) }), { status: 500, headers: corsHeaders });
+        }
+        if (!upd.data) {
+          return new Response(JSON.stringify({ error: 'Orçamento não encontrado nesta loja' }), { status: 404, headers: corsHeaders });
+        }
+        return new Response(JSON.stringify({ data: upd.data }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      case 'delete_budget': {
+        const { id } = payload as { id?: string };
+        if (!id) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders });
+        // Confere a posse antes de apagar (fin_budget_items não tem tenant_id)
+        const { data: owned } = await supabase.from('fin_budgets')
+          .select('id').eq('id', id).eq('tenant_id', tenant_id).maybeSingle();
+        if (!owned) {
+          return new Response(JSON.stringify({ error: 'Orçamento não encontrado nesta loja' }), { status: 404, headers: corsHeaders });
+        }
+        await supabase.from('fin_budget_items').delete().eq('budget_id', id);
+        result = await supabase.from('fin_budgets').delete().eq('id', id).eq('tenant_id', tenant_id);
+        break;
+      }
+
       case 'convert_budget_to_purchase': {
         const { budget_id, payment_method, payment_status, due_date, bank_account_id, cost_center_id } = payload;
 
@@ -1135,6 +1262,159 @@ Deno.serve(async (req) => {
       }
 
       // ── Payroll ───────────────────────────────────────────────────────────
+      // ── RH: campos customizados da folha ──────────────────────────────────
+      // Migrado do front. O update/delete direto filtrava SÓ por id (sem
+      // tenant_id), dependendo inteiramente da RLS — que neste projeto resolve
+      // o tenant com LIMIT 1 sobre user_tenants e é frágil para multi-loja.
+      case 'upsert_payroll_custom_field': {
+        const { id, ...data } = payload as Record<string, unknown> & { id?: string };
+        const record = { ...data, tenant_id, updated_at: new Date().toISOString() };
+        if (id) {
+          result = await supabase.from('hr_payroll_custom_fields')
+            .update(record).eq('id', id).eq('tenant_id', tenant_id).select().maybeSingle();
+        } else {
+          result = await supabase.from('hr_payroll_custom_fields')
+            .insert(record).select().maybeSingle();
+        }
+        if (result?.error) {
+          return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
+        }
+        break;
+      }
+
+      case 'delete_payroll_custom_field': {
+        const { id } = payload as { id?: string };
+        if (!id) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders });
+        // Soft delete, escopado por tenant
+        result = await supabase.from('hr_payroll_custom_fields')
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq('id', id).eq('tenant_id', tenant_id);
+        if (result?.error) {
+          return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
+        }
+        break;
+      }
+
+      // ── RH: Funcionários (hr_employees) ──────────────────────────────────
+      // Escritas migradas do client: a RLS *_auth_uid resolve o tenant com
+      // LIMIT 1 sobre user_tenants (sem ORDER BY) e falha silenciosamente
+      // para admin multi-loja. Aqui tudo é escopado explicitamente por tenant.
+      case 'upsert_employee': {
+        const { id, tenant_id: _t, created_at: _c, updated_at: _u, ...data } =
+          (payload ?? {}) as Record<string, unknown> & { id?: string };
+        const record = { ...data, tenant_id, updated_at: new Date().toISOString() };
+        if (id) {
+          result = await supabase.from('hr_employees')
+            .update(record).eq('id', id).eq('tenant_id', tenant_id).select().maybeSingle();
+          if (!result?.error && !result?.data) {
+            return new Response(JSON.stringify({ error: 'Funcionário não encontrado neste estabelecimento' }), { status: 404, headers: corsHeaders });
+          }
+        } else {
+          result = await supabase.from('hr_employees')
+            .insert(record).select().maybeSingle();
+        }
+        if (result?.error) {
+          console.error('[upsert_employee] error:', extractErrorMessage(result.error));
+          return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
+        }
+        break;
+      }
+
+      case 'delete_employee': {
+        const { id } = (payload ?? {}) as { id?: string };
+        if (!id) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders });
+        // Soft delete: mantém histórico, apenas inativa
+        result = await supabase.from('hr_employees')
+          .update({ status: 'inactive', updated_at: new Date().toISOString() })
+          .eq('id', id).eq('tenant_id', tenant_id);
+        if (result?.error) {
+          console.error('[delete_employee] error:', extractErrorMessage(result.error));
+          return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
+        }
+        break;
+      }
+
+      case 'update_employee_vacation':
+      case 'update_employee_thirteenth': {
+        const { id, ...rest } = (payload ?? {}) as Record<string, unknown> & { id?: string };
+        if (!id) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders });
+        const allowed = action === 'update_employee_vacation'
+          ? ['vacation_start_date', 'vacation_end_date', 'next_vacation_date', 'vacation_days_taken', 'vacation_days_per_year', 'status']
+          : ['thirteenth_status', 'thirteenth_first_paid_date', 'thirteenth_second_paid_date'];
+        const data: Record<string, unknown> = {};
+        for (const key of allowed) {
+          if (key in rest) data[key] = rest[key];
+        }
+        if (Object.keys(data).length === 0) {
+          return new Response(JSON.stringify({ error: 'Nenhum campo válido informado' }), { status: 400, headers: corsHeaders });
+        }
+        result = await supabase.from('hr_employees')
+          .update({ ...data, updated_at: new Date().toISOString() })
+          .eq('id', id).eq('tenant_id', tenant_id);
+        if (result?.error) {
+          console.error(`[${action}] error:`, extractErrorMessage(result.error));
+          return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
+        }
+        break;
+      }
+
+      // ── RH: Folha (hr_payroll) ───────────────────────────────────────────
+      case 'upsert_payroll': {
+        const { id, tenant_id: _t, created_at: _c, updated_at: _u, ...data } =
+          (payload ?? {}) as Record<string, unknown> & { id?: string };
+        // Remove chaves indefinidas/nulas-de-transporte (o JSON já dropa undefined)
+        const clean = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
+        const record = { ...clean, tenant_id, updated_at: new Date().toISOString() };
+        if (id) {
+          result = await supabase.from('hr_payroll')
+            .update(record).eq('id', id).eq('tenant_id', tenant_id).select().maybeSingle();
+          if (!result?.error && !result?.data) {
+            return new Response(JSON.stringify({ error: 'Lançamento de folha não encontrado neste estabelecimento' }), { status: 404, headers: corsHeaders });
+          }
+        } else {
+          result = await supabase.from('hr_payroll')
+            .insert(record).select().maybeSingle();
+        }
+        if (result?.error) {
+          console.error('[upsert_payroll] error:', extractErrorMessage(result.error));
+          return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
+        }
+        break;
+      }
+
+      case 'delete_payroll': {
+        const { id } = (payload ?? {}) as { id?: string };
+        if (!id) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders });
+        result = await supabase.from('hr_payroll')
+          .delete().eq('id', id).eq('tenant_id', tenant_id);
+        if (result?.error) {
+          console.error('[delete_payroll] error:', extractErrorMessage(result.error));
+          return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
+        }
+        break;
+      }
+
+      case 'bulk_insert_payroll': {
+        const { records } = (payload ?? {}) as { records?: Record<string, unknown>[] };
+        if (!Array.isArray(records) || records.length === 0) {
+          return new Response(JSON.stringify({ error: 'Nenhum registro informado' }), { status: 400, headers: corsHeaders });
+        }
+        const now = new Date().toISOString();
+        const rows = records.map((r) => {
+          const { id: _i, tenant_id: _t, created_at: _c, updated_at: _u, ...data } =
+            r as Record<string, unknown> & { id?: string };
+          const clean = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
+          return { ...clean, tenant_id, updated_at: now };
+        });
+        result = await supabase.from('hr_payroll').insert(rows).select('id');
+        if (result?.error) {
+          console.error('[bulk_insert_payroll] error:', extractErrorMessage(result.error));
+          return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
+        }
+        result = { data: { inserted: (result?.data as unknown[] | null)?.length ?? 0 } };
+        break;
+      }
+
       case 'pay_payroll': {
         const { id, paid_date, payment_method } = payload;
         const { data: entry, error: fetchErr } = await supabase

@@ -1,10 +1,34 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, SUPABASE_URL } from '@/lib/supabase';
+
+/**
+ * Escrita de orçamento SEMPRE pela Edge Function (service_role).
+ * `fin_budget_items` não tem coluna tenant_id, então o insert direto dependia
+ * da RLS de `fin_budgets`, que resolve o tenant com LIMIT 1 sobre user_tenants
+ * (sem ORDER BY) — para admin multi-loja isso podia gravar zero linhas sem
+ * erro nenhum. A Edge Function valida a membership e escopa por tenant_id.
+ */
+async function callFinancialWrite(action: string, tenantId: string, payload: Record<string, unknown>) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) return { error: 'Sessão expirada' };
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/financial-write`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'apikey': import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY as string,
+    },
+    body: JSON.stringify({ action, tenant_id: tenantId, payload }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json?.error) return { error: String(json?.error ?? 'Erro na operação') };
+  return { data: json?.data ?? null };
+}
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import { useCostCenters, useBankAccounts } from '@/hooks/useFinanceiro';
 import { useSuppliers } from '@/hooks/useSuppliers';
-import { SUPABASE_URL } from '@/lib/supabase';
 
 interface BudgetItem {
   id?: string;
@@ -538,6 +562,21 @@ export default function OrcamentosTab() {
 
   useEffect(() => { fetchBudgets(); }, [fetchBudgets]);
 
+  // Leitura de itens sempre amarrada ao tenant. fin_budget_items não tem coluna
+  // tenant_id (confirmado no schema), então o escopo vem do JOIN obrigatório com
+  // fin_budgets — filtrar só por budget_id deixaria a leitura à mercê da RLS, que
+  // neste projeto já se mostrou frágil para admin multi-loja.
+  const fetchBudgetItems = useCallback(async (budgetId: string): Promise<BudgetItem[]> => {
+    if (!user?.tenantId) return [];
+    const { data } = await supabase
+      .from('fin_budget_items')
+      .select('id, budget_id, descricao, quantidade, unidade, valor_unitario, valor_total, created_at, fin_budgets!inner(tenant_id)')
+      .eq('budget_id', budgetId)
+      .eq('fin_budgets.tenant_id', user.tenantId)
+      .order('created_at');
+    return ((data ?? []) as unknown as BudgetItem[]);
+  }, [user?.tenantId]);
+
   const totalItems = (items: BudgetItem[]) =>
     items.reduce((s, i) => s + i.quantidade * i.valor_unitario, 0);
 
@@ -559,65 +598,48 @@ export default function OrcamentosTab() {
     if (!form.titulo.trim() || !user?.tenantId) return;
     setSaving(true);
     const valor_total = totalItems(form.items);
-    const { data: budget, error } = await supabase
-      .from('fin_budgets')
-      .insert({
-        tenant_id: user.tenantId,
-        titulo: form.titulo,
-        descricao: form.descricao || null,
-        fornecedor: form.fornecedor || null,
-        validade: form.validade || null,
-        observacoes: form.observacoes || null,
-        valor_total,
-        created_by: user.id,
-      })
-      .select()
-      .maybeSingle();
 
-    if (!error && budget) {
-      const itemsToInsert = form.items
-        .filter(i => i.descricao.trim())
-        .map(i => ({
-          budget_id: budget.id,
-          descricao: i.descricao,
-          quantidade: i.quantidade,
-          unidade: i.unidade,
-          valor_unitario: i.valor_unitario,
-          valor_total: i.quantidade * i.valor_unitario,
-        }));
-      if (itemsToInsert.length > 0) {
-        await supabase.from('fin_budget_items').insert(itemsToInsert);
-      }
+    // Orçamento + itens gravados ATOMICAMENTE pela Edge Function: se os itens
+    // falharem, a operação inteira retorna erro (antes o orçamento ficava
+    // salvo com valor cheio e zero itens, e virava compra vazia depois).
+    const { error } = await callFinancialWrite('upsert_budget', user.tenantId, {
+      titulo: form.titulo,
+      descricao: form.descricao || null,
+      fornecedor: form.fornecedor || null,
+      validade: form.validade || null,
+      observacoes: form.observacoes || null,
+      valor_total,
+      items: form.items.filter(i => i.descricao.trim()),
+    });
+
+    if (error) {
+      showToast(`Erro ao salvar orçamento: ${error}`, 'error');
+    } else {
       showToast('Orçamento criado com sucesso!');
       resetForm();
       fetchBudgets();
-    } else {
-      showToast('Erro ao salvar orçamento', 'error');
     }
     setSaving(false);
   };
 
   const handleUpdateStatus = async (id: string, status: Budget['status']) => {
-    const { error } = await supabase
-      .from('fin_budgets')
-      .update({ status, aprovado_por: user?.id, aprovado_em: new Date().toISOString() })
-      .eq('id', id);
+    if (!user?.tenantId) return;
+    // aprovado_por/aprovado_em são preenchidos no backend, só na APROVAÇÃO.
+    const { error } = await callFinancialWrite('update_budget_status', user.tenantId, { id, status });
     if (!error) {
       const labels: Record<string, string> = { aprovado: 'Orçamento aprovado!', rejeitado: 'Orçamento rejeitado.' };
       showToast(labels[status] ?? 'Status atualizado.');
       fetchBudgets();
       setSelectedBudget(prev => prev?.id === id ? { ...prev, status } : prev);
+    } else {
+      showToast(`Erro ao atualizar status: ${error}`, 'error');
     }
   };
 
   const openConvertModal = async (budget: Budget) => {
     // Buscar itens antes de abrir o modal
-    const { data: items } = await supabase
-      .from('fin_budget_items')
-      .select('*')
-      .eq('budget_id', budget.id)
-      .order('created_at');
-    setBudgetToConvert({ ...budget, items: items || [] });
+    const items = await fetchBudgetItems(budget.id);
+    setBudgetToConvert({ ...budget, items });
     setShowConvertModal(true);
   };
 
@@ -632,49 +654,34 @@ export default function OrcamentosTab() {
   };
 
   const openDetail = async (budget: Budget) => {
-    const { data: items } = await supabase
-      .from('fin_budget_items')
-      .select('*')
-      .eq('budget_id', budget.id)
-      .order('created_at');
-    setSelectedBudget({ ...budget, items: items || [] });
+    const items = await fetchBudgetItems(budget.id);
+    setSelectedBudget({ ...budget, items });
   };
 
   const handleDuplicate = async (budget: Budget) => {
     if (!user?.tenantId) return;
-    const { data: items } = await supabase
-      .from('fin_budget_items')
-      .select('*')
-      .eq('budget_id', budget.id)
-      .order('created_at');
+    const items = await fetchBudgetItems(budget.id);
 
-    const { data: newBudget, error } = await supabase
-      .from('fin_budgets')
-      .insert({
-        tenant_id: user.tenantId,
-        titulo: `${budget.titulo} (cópia)`,
-        descricao: budget.descricao || null,
-        fornecedor: budget.fornecedor || null,
-        validade: null,
-        observacoes: budget.observacoes || null,
-        valor_total: budget.valor_total,
-        status: 'rascunho',
-        created_by: user.id,
-      })
-      .select()
-      .maybeSingle();
+    // Cópia atômica (orçamento + itens) — cópia sem itens vira compra vazia.
+    const { error } = await callFinancialWrite('upsert_budget', user.tenantId, {
+      titulo: `${budget.titulo} (cópia)`,
+      descricao: budget.descricao || null,
+      fornecedor: budget.fornecedor || null,
+      validade: null,
+      observacoes: budget.observacoes || null,
+      valor_total: budget.valor_total,
+      status: 'rascunho',
+      items: items.map((i) => ({
+        descricao: i.descricao,
+        quantidade: i.quantidade,
+        unidade: i.unidade,
+        valor_unitario: i.valor_unitario,
+      })),
+    });
 
-    if (!error && newBudget && items && items.length > 0) {
-      await supabase.from('fin_budget_items').insert(
-        items.map((i: BudgetItem & { id?: string; budget_id?: string }) => ({
-          budget_id: newBudget.id,
-          descricao: i.descricao,
-          quantidade: i.quantidade,
-          unidade: i.unidade,
-          valor_unitario: i.valor_unitario,
-          valor_total: i.valor_total,
-        }))
-      );
+    if (error) {
+      showToast(`Erro ao duplicar orçamento: ${error}`, 'error');
+      return;
     }
     showToast('Orçamento duplicado com sucesso!');
     fetchBudgets();

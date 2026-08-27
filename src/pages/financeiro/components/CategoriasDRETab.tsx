@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, Fragment } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
@@ -73,7 +73,7 @@ interface CatNodeProps {
   depth: number;
   allCats: DRECat[];
   onEdit: (cat: DRECat) => void;
-  onDelete: (id: string) => void;
+  onDelete: (cat: DRECat) => void;
   onAddChild: (parent: DRECat) => void;
   customGroups: CustomGroup[];
 }
@@ -135,7 +135,7 @@ function CatNode({ cat, depth, allCats, onEdit, onDelete, onAddChild, customGrou
               <i className="ri-edit-line text-xs" />
             </button>
             <button
-              onClick={() => onDelete(cat.id)}
+              onClick={() => onDelete(cat)}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer"
             >
               <i className="ri-delete-bin-line text-xs" />
@@ -172,13 +172,24 @@ export default function CategoriasDRETab() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [filterGroup, setFilterGroup] = useState('all');
+  // Confirmação inline de exclusão (nada de window.confirm)
+  const [deleteTarget, setDeleteTarget] = useState<DRECat | null>(null);
+  const [deleteUsage, setDeleteUsage] = useState<number | null>(null);
+  const [countingUsage, setCountingUsage] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Grupos customizados (armazenados em localStorage por tenant)
   const storageKey = user?.tenantId ? `dre_custom_groups_${user.tenantId}` : null;
-  const [customGroups, setCustomGroups] = useState<CustomGroup[]>(() => {
-    if (!storageKey) return [];
-    try { return JSON.parse(localStorage.getItem(storageKey) ?? '[]'); } catch { return []; }
-  });
+  const [customGroups, setCustomGroups] = useState<CustomGroup[]>([]);
+  // O initializer do useState roda UMA vez só: na troca de loja os grupos da loja
+  // anterior continuavam na tela (vazamento entre tenants já registrado no projeto).
+  // Relendo o localStorage sempre que o tenant muda, cada loja vê só os seus.
+  useEffect(() => {
+    if (!storageKey) { setCustomGroups([]); return; }
+    try { setCustomGroups(JSON.parse(localStorage.getItem(storageKey) ?? '[]')); }
+    catch { setCustomGroups([]); }
+  }, [storageKey]);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [groupForm, setGroupForm] = useState(emptyGroupForm);
   const [groupError, setGroupError] = useState<string | null>(null);
@@ -226,14 +237,48 @@ export default function CategoriasDRETab() {
     setShowModal(true);
   };
 
-  const handleDelete = async (id: string) => {
+  // Exclusão de categoria é DELETE FÍSICO. Antes o erro era engolido (o botão
+  // "não fazia nada" quando havia FK) e, quando passava, o histórico da categoria
+  // sumia de DREs já fechadas sem aviso. Agora: contamos o uso, confirmamos inline
+  // (sem window.confirm) e EXIBIMOS qualquer erro.
+  const requestDelete = async (cat: DRECat) => {
     if (!user?.tenantId) return;
-    try {
-      await callFinancialWrite('delete_dre_category', user.tenantId, { id });
-    } catch {
-      // silently ignore
+    setDeleteError(null);
+    setDeleteTarget(cat);
+    setDeleteUsage(null);
+    setCountingUsage(true);
+    const { count, error } = await supabase
+      .from('fin_accounts_payable')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', user.tenantId)
+      .eq('dre_category_id', cat.id);
+    setCountingUsage(false);
+    if (error) {
+      setDeleteError(`Não foi possível verificar o uso da categoria: ${error.message}`);
+      return;
     }
-    fetchCats();
+    setDeleteUsage(count ?? 0);
+  };
+
+  const confirmDelete = async () => {
+    if (!user?.tenantId || !deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await callFinancialWrite('delete_dre_category', user.tenantId, { id: deleteTarget.id });
+      setDeleteTarget(null);
+      fetchCats();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // FK RESTRICT costuma vir como violação de chave estrangeira — traduzimos.
+      setDeleteError(
+        /foreign key|violates|23503/i.test(msg)
+          ? 'Esta categoria não pode ser excluída porque está vinculada a lançamentos. Reclassifique os lançamentos antes de excluir.'
+          : msg
+      );
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -257,12 +302,18 @@ export default function CategoriasDRETab() {
       return;
     }
 
+    // sort_order só é calculado na CRIAÇÃO. Na edição ele era recalculado como
+    // "quantidade de categorias do grupo", o que jogava a categoria para o fim da
+    // lista só por renomeá-la (e criava colisões de posição). Na edição preservamos
+    // o valor atual.
     const payload = {
       id: editing?.id,
       name: form.name,
       group_type: form.group_type,
       parent_id: form.parent_id || null,
-      sort_order: cats.filter(c => c.group_type === form.group_type).length,
+      sort_order: editing
+        ? editing.sort_order
+        : cats.filter(c => c.group_type === form.group_type).length,
       is_active: true,
     };
 
@@ -439,8 +490,10 @@ export default function CategoriasDRETab() {
                 if (groupNodes.length === 0) return null;
                 const meta = getGroupMeta2(g);
                 return (
-                  <>
-                    <tr key={`header-${g}`} className={`${meta.bg}`}>
+                  // Fragment PRECISA de key: dentro de .map um <> anônimo faz o React
+                  // perder a identidade das linhas ao filtrar/reordenar grupos.
+                  <Fragment key={`group-${g}`}>
+                    <tr className={`${meta.bg}`}>
                       <td colSpan={4} className="px-4 py-2">
                         <div className="flex items-center gap-2">
                           <i className={`${meta.icon} ${meta.color} text-sm`} />
@@ -456,12 +509,12 @@ export default function CategoriasDRETab() {
                         depth={0}
                         allCats={cats}
                         onEdit={openEdit}
-                        onDelete={handleDelete}
+                        onDelete={requestDelete}
                         onAddChild={openNew}
                         customGroups={customGroups}
                       />
                     ))}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -632,6 +685,70 @@ export default function CategoriasDRETab() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmação de exclusão (inline — nunca window.confirm) */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
+              <h3 className="font-semibold text-zinc-900">Excluir categoria</h3>
+              <button
+                onClick={() => { setDeleteTarget(null); setDeleteError(null); }}
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer"
+              >
+                <i className="ri-close-line text-zinc-500" />
+              </button>
+            </div>
+            <div className="p-6 space-y-3">
+              <p className="text-sm text-zinc-700">
+                Excluir <strong>{deleteTarget.name}</strong>? Esta exclusão é <strong>definitiva</strong> (não é arquivamento).
+              </p>
+              {(() => {
+                const subCount = cats.filter(c => c.parent_id === deleteTarget.id).length;
+                return subCount > 0 ? (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+                    Esta categoria tem <strong>{subCount}</strong> subcategoria(s). Elas também serão afetadas.
+                  </div>
+                ) : null;
+              })()}
+              {countingUsage ? (
+                <p className="text-xs text-zinc-400">Verificando lançamentos vinculados...</p>
+              ) : deleteUsage === null ? null : deleteUsage > 0 ? (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700">
+                  <strong>{deleteUsage}</strong> lançamento(s) em Contas a Pagar usam esta categoria.
+                  Excluí-la afeta o <strong>histórico</strong>: esses lançamentos ficam sem categoria e
+                  somem das DREs já fechadas (ou a exclusão será bloqueada pelo banco).
+                  O recomendado é reclassificar os lançamentos antes.
+                </div>
+              ) : (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-700">
+                  Nenhum lançamento de Contas a Pagar usa esta categoria.
+                </div>
+              )}
+              {deleteError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700">
+                  {deleteError}
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-zinc-100">
+              <button
+                onClick={() => { setDeleteTarget(null); setDeleteError(null); }}
+                className="px-4 py-2 rounded-lg text-sm font-semibold text-zinc-600 hover:bg-zinc-100 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting || countingUsage}
+                className="px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 cursor-pointer"
+              >
+                {deleting ? 'Excluindo...' : 'Excluir definitivamente'}
+              </button>
+            </div>
           </div>
         </div>
       )}

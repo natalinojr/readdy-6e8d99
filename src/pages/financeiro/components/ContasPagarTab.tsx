@@ -839,6 +839,14 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                     </td>
                     <td className="px-4 py-3 font-semibold text-zinc-800">
                       {formatCurrency(b.amount)}
+                      {/* Com pagamento parcial o valor original esconde o que
+                          ainda falta pagar — sem isso a conta exibia R$1.000
+                          sem dizer que restavam R$400. */}
+                      {Number(b.paid_amount ?? 0) > 0 && b.status !== 'paid' && (
+                        <p className="text-xs text-sky-600 font-semibold">
+                          falta {formatCurrency(saldoRestante(b))}
+                        </p>
+                      )}
                       {b.is_recurring && <p className="text-xs text-zinc-400 font-normal">valor variável</p>}
                     </td>
                     <td className="px-4 py-3">
@@ -920,6 +928,9 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                       </div>
                       <div className="text-right flex-shrink-0">
                         <p className="font-bold text-zinc-900 text-sm">{formatCurrency(b.amount)}</p>
+                        {Number(b.paid_amount ?? 0) > 0 && b.status !== 'paid' && (
+                          <p className="text-xs text-sky-600 font-semibold">falta {formatCurrency(saldoRestante(b))}</p>
+                        )}
                         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_BADGE[b.status]}`}>
                           {STATUS_LABEL[b.status]}
                         </span>

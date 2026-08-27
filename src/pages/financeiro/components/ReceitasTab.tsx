@@ -5,6 +5,7 @@ import {
   SOURCE_LABELS_R, SOURCE_COLORS_R,
 } from '@/hooks/useReceitas';
 import { formatCurrency } from '@/lib/formatters';
+import { todayBrasilia } from '@/lib/dateUtils';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip,
@@ -12,9 +13,15 @@ import {
 } from 'recharts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const today = new Date();
-const firstDayOfMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
-const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+// Eram `const` de nível de módulo: calculadas UMA vez no carregamento do bundle.
+// Numa aba de PWA deixada aberta (o caso da loja), o período padrão congelava no
+// dia/mês em que o app foi aberto. Agora são funções, em fuso de Brasília.
+function hojeStr() { return todayBrasilia(); }
+function firstDayOfMonth() { return `${hojeStr().slice(0, 7)}-01`; }
+function lastDayOfMonth() {
+  const [y, m] = hojeStr().split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().split('T')[0];
+}
 
 function dayLabel(d: string) {
   const [, m, day] = d.split('-').map(Number);
@@ -107,7 +114,7 @@ function NovaReceitaModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
   const [form, setForm] = useState({
     description: '',
     amount: '',
-    date: today.toISOString().split('T')[0],
+    date: hojeStr(),
     category: 'Outros',
     notes: '',
   });
@@ -237,8 +244,8 @@ function NovaReceitaModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
 export default function ReceitasTab() {
   const [viewMode, setViewMode] = useState<'tabela' | 'graficos' | 'analise'>('tabela');
   const [filters, setFilters] = useState<ReceitasFilters>({
-    startDate: firstDayOfMonth,
-    endDate: lastDayOfMonth,
+    startDate: firstDayOfMonth(),
+    endDate: lastDayOfMonth(),
     categories: [],
     sources: [],
     search: '',
@@ -287,7 +294,7 @@ export default function ReceitasTab() {
   };
 
   const clearFilters = () => {
-    setFilters({ startDate: firstDayOfMonth, endDate: lastDayOfMonth, categories: [], sources: [], search: '', minAmount: undefined, maxAmount: undefined });
+    setFilters({ startDate: firstDayOfMonth(), endDate: lastDayOfMonth(), categories: [], sources: [], search: '', minAmount: undefined, maxAmount: undefined });
   };
 
   const hasActiveFilters = filters.categories.length > 0 || filters.sources.length > 0 ||
@@ -350,7 +357,11 @@ export default function ReceitasTab() {
         <KpiCard
           label="Média Diária"
           value={formatCurrency((() => {
-            const days = Math.max(1, Math.ceil((new Date(filters.endDate).getTime() - new Date(filters.startDate).getTime()) / 86400000));
+            // Média diária conta só os dias JÁ DECORRIDOS: com "Este Mês", endDate é o
+              // último dia do mês, então no dia 5 a média dividia por 30 e mostrava 1/6
+              // do real. O +1 inclui o próprio dia inicial (01→31 são 31 dias, não 30).
+              const fimReal = filters.endDate > todayBrasilia() ? todayBrasilia() : filters.endDate;
+              const days = Math.max(1, Math.round((new Date(fimReal + 'T12:00:00').getTime() - new Date(filters.startDate + 'T12:00:00').getTime()) / 86400000) + 1);
             return (summary?.total ?? 0) / days;
           })())}
           icon="ri-line-chart-line"
@@ -766,7 +777,11 @@ export default function ReceitasTab() {
           <div className="bg-white rounded-xl border border-zinc-200 p-5">
             <h3 className="text-sm font-semibold text-zinc-800 mb-4">Resumo do Período</h3>
             {(() => {
-              const days = Math.max(1, Math.ceil((new Date(filters.endDate).getTime() - new Date(filters.startDate).getTime()) / 86400000));
+              // Média diária conta só os dias JÁ DECORRIDOS: com "Este Mês", endDate é o
+              // último dia do mês, então no dia 5 a média dividia por 30 e mostrava 1/6
+              // do real. O +1 inclui o próprio dia inicial (01→31 são 31 dias, não 30).
+              const fimReal = filters.endDate > todayBrasilia() ? todayBrasilia() : filters.endDate;
+              const days = Math.max(1, Math.round((new Date(fimReal + 'T12:00:00').getTime() - new Date(filters.startDate + 'T12:00:00').getTime()) / 86400000) + 1);
               const avgDaily = summary.total / days;
               const avgPerItem = items.length > 0 ? summary.total / items.length : 0;
               const maxDay = summary.dailyTrend.reduce((max, d) => d.amount > max.amount ? d : max, summary.dailyTrend[0] ?? { date: '', amount: 0 });

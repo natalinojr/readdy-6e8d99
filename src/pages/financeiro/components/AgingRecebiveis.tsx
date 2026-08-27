@@ -128,7 +128,10 @@ export default function AgingRecebiveis({ installments, activeBucket, onBucketCl
           return (
             <button
               key={b.label}
-              onClick={() => onBucketClick(isActive ? null : b.label)}
+              // Bucket vazio não é clicável (mesma guarda que a versão de contas a pagar):
+              // sem ela o usuário filtrava por uma faixa sem nenhum título e via a lista vazia.
+              disabled={b.count === 0}
+              onClick={() => { if (b.count > 0) onBucketClick(isActive ? null : b.label); }}
               className={`text-left p-3 rounded-xl border-2 transition-all cursor-pointer ${
                 isActive
                   ? `${b.bgColor} ${b.color} ring-2 ring-offset-1 ring-zinc-300`

@@ -88,6 +88,15 @@ async function fetchCmvConsumo(tenantId: string, startDate: string, endDateTime:
   return { cmvTeorico, fichaCobertura };
 }
 
+// Extrai o destino do pedido embutido no payment/recebível. O PostgREST tipa o embed
+// como array, então o cast direto para Record<string, unknown> era erro de TS — daí o
+// `as unknown` no meio. Centralizado aqui para os dois regimes usarem o mesmo critério.
+function destOf(row: unknown): string {
+  const orders = (row as Record<string, unknown>)?.orders as unknown;
+  const rec = Array.isArray(orders) ? orders[0] : orders;
+  return String((rec as Record<string, unknown>)?.destination_type ?? '');
+}
+
 type DREMode = 'caixa' | 'competencia';
 
 const STANDARD_GROUPS = ['revenue', 'cost', 'expense', 'tax'];
@@ -155,9 +164,15 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
 
     supabase
       .from('fin_accounts_payable')
-      .select('dre_category_id, category, paid_amount, amount')
+      .select('dre_category_id, category, paid_amount, amount, status')
       .eq('tenant_id', tenantId)
-      .eq('status', 'paid')
+      // P11: depois do fix de pagamento parcial, `pay_bill` ACUMULA `paid_amount` e deixa
+      // a conta em `status='partial'` enquanto não cobre o total. Filtrar só `paid` fazia a
+      // conta paga pela metade entrar com ZERO no mês em que o dinheiro efetivamente saiu.
+      // No regime de caixa o que vale é o desembolso → soma-se `paid_amount`, não `amount`.
+      // Limitação conhecida (schema): `paid_date` guarda apenas a data do ÚLTIMO pagamento,
+      // então uma conta paga em 2 meses aparece inteira no mês do último pagamento.
+      .in('status', ['paid', 'partial'])
       // P1: exclui contas geradas por compras — o custo delas já entra via CMV (fin_purchases).
       // Sem isso a compra é contada 2x (CMV + despesa). Mesmo critério da aba Despesas.
       .or('reference_type.is.null,reference_type.neq.purchase')
@@ -177,10 +192,15 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .select('purchase_id, total_price, dre_category_id, freight_allocated')
       .eq('tenant_id', tenantId),
 
+    // REGIME DE CAIXA: só entra a folha efetivamente PAGA. Antes o filtro era apenas
+    // `reference_month`, então a folha do mês virava saída de caixa mesmo sem ter sido paga
+    // (o regime de competência é que reconhece por mês de referência — ver a query gêmea em
+    // fetchDREDataCompetencia, que continua sem filtro de status de propósito).
     supabase
       .from('hr_payroll')
       .select('net_salary, gross_salary, fgts')
       .eq('tenant_id', tenantId)
+      .eq('status', 'paid')
       .eq('reference_month', monthStr),
 
     supabase
@@ -233,23 +253,23 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   );
 
   let receitaBalcao = paymentsMatched
-    .filter(p => ['immediate', 'balcao', 'hora', 'password', 'name'].includes((p.orders as Record<string, unknown>)?.destination_type as string))
+    .filter(p => ['immediate', 'balcao', 'hora', 'password', 'name'].includes(destOf(p)))
     .reduce((s, p) => s + Number(p.amount), 0);
   let receitaDelivery = paymentsMatched
-    .filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'delivery')
+    .filter(p => destOf(p) === 'delivery')
     .reduce((s, p) => s + Number(p.amount), 0);
   let receitaMesa = paymentsMatched
-    .filter(p => ['table', 'mesa'].includes((p.orders as Record<string, unknown>)?.destination_type as string))
+    .filter(p => ['table', 'mesa'].includes(destOf(p)))
     .reduce((s, p) => s + Number(p.amount), 0);
   let receitaAutoatendimento = paymentsMatched
-    .filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'self_service')
+    .filter(p => destOf(p) === 'self_service')
     .reduce((s, p) => s + Number(p.amount), 0);
 
   // BUG-42: Adiciona recebíveis liquidados no período ao breakdown por destino
   // O total desses valores já está nos auto_sale do fin_cash_flow (data do recebimento)
   // Aqui só distribuímos por destination_type para o detalhamento
   (receivablesReceivedRes.data ?? []).forEach((ri: Record<string, unknown>) => {
-    const destType = (ri.orders as Record<string, unknown>)?.destination_type as string ?? '';
+    const destType = destOf(ri);
     const amount = Number(ri.amount ?? 0);
     if (['immediate', 'balcao', 'hora', 'password', 'name'].includes(destType)) {
       receitaBalcao += amount;
@@ -276,14 +296,14 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
     (it: Record<string, unknown>) => purchaseIds.includes(it.purchase_id as string)
   );
 
+  // P1 (continuação): `billsRes` exclui as contas a pagar de compra para a mercadoria não
+  // ser contada 2x. Mas o ITEM da compra, quando tinha `dre_category_id`, era jogado em
+  // `despesasPorCategoria` — burlando exatamente a exclusão do P1: a mesma mercadoria virava
+  // despesa por categoria E entrava no agregado de compras/CMV. Agora TODO o valor dos itens
+  // vai para `cmvCompras` (agregado informativo de compras do período), tenha categoria ou não.
   for (const it of purchaseItems as Array<Record<string, unknown>>) {
     const itemTotal = Number(it.total_price ?? 0) + Number(it.freight_allocated ?? 0);
-    const catId = it.dre_category_id as string | null;
-    if (catId) {
-      despesasPorCategoria[catId] = (despesasPorCategoria[catId] ?? 0) + itemTotal;
-    } else {
-      cmvCompras += itemTotal;
-    }
+    cmvCompras += itemTotal;
   }
 
   const totalCompras = (purchasesRes.data ?? []).reduce((s, p) => s + Number(p.total_amount), 0);
@@ -294,7 +314,11 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
 
   (billsRes.data ?? []).forEach(b => {
     const key = b.dre_category_id ?? '__sem_categoria__';
-    const val = Number(b.paid_amount ?? b.amount);
+    // P11: em `partial` o que saiu do caixa é o `paid_amount` acumulado (nunca o `amount`).
+    // O fallback para `amount` só cobre linhas antigas de contas já quitadas sem `paid_amount`.
+    const val = b.status === 'partial'
+      ? Number(b.paid_amount ?? 0)
+      : Number(b.paid_amount ?? b.amount);
     despesasPorCategoria[key] = (despesasPorCategoria[key] ?? 0) + val;
   });
 
@@ -400,7 +424,9 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .from('fin_accounts_payable')
       .select('dre_category_id, category, amount, paid_amount, status')
       .eq('tenant_id', tenantId)
-      .in('status', ['pending', 'paid', 'overdue'])
+      // P11: 'partial' passou a existir; sem ele a conta paga pela metade sumia da
+      // competência inteira (nem pelo valor cheio, que é o que a competência reconhece).
+      .in('status', ['pending', 'paid', 'overdue', 'partial'])
       // P1: exclui contas geradas por compras (custo já entra via CMV = fin_purchases).
       .or('reference_type.is.null,reference_type.neq.purchase')
       .gte('due_date', startDate)
@@ -452,16 +478,16 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
   );
 
   const receitaBalcao = paymentsMatched
-    .filter(p => ['immediate', 'balcao', 'hora', 'password', 'name'].includes((p.orders as Record<string, unknown>)?.destination_type as string))
+    .filter(p => ['immediate', 'balcao', 'hora', 'password', 'name'].includes(destOf(p)))
     .reduce((s, p) => s + Number(p.amount), 0);
   const receitaDelivery = paymentsMatched
-    .filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'delivery')
+    .filter(p => destOf(p) === 'delivery')
     .reduce((s, p) => s + Number(p.amount), 0);
   const receitaMesa = paymentsMatched
-    .filter(p => ['table', 'mesa'].includes((p.orders as Record<string, unknown>)?.destination_type as string))
+    .filter(p => ['table', 'mesa'].includes(destOf(p)))
     .reduce((s, p) => s + Number(p.amount), 0);
   const receitaAutoatendimento = paymentsMatched
-    .filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'self_service')
+    .filter(p => destOf(p) === 'self_service')
     .reduce((s, p) => s + Number(p.amount), 0);
 
   const cancelamentos = (cancelledRes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
@@ -475,14 +501,12 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     (it: Record<string, unknown>) => purchaseIds.includes(it.purchase_id as string)
   );
 
+  // P1 (continuação): idem regime de caixa — item de compra NUNCA alimenta
+  // `despesasPorCategoria`, senão a mercadoria escapa da exclusão de `reference_type='purchase'`
+  // e é contada 2x (despesa por categoria + agregado de compras/CMV).
   for (const it of purchaseItems as Array<Record<string, unknown>>) {
     const itemTotal = Number(it.total_price ?? 0) + Number(it.freight_allocated ?? 0);
-    const catId = it.dre_category_id as string | null;
-    if (catId) {
-      despesasPorCategoria[catId] = (despesasPorCategoria[catId] ?? 0) + itemTotal;
-    } else {
-      cmvCompras += itemTotal;
-    }
+    cmvCompras += itemTotal;
   }
 
   const totalCompras = (purchasesRes.data ?? []).reduce((s, p) => s + Number(p.total_amount), 0);
@@ -500,7 +524,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     const key = b.dre_category_id ?? '__sem_categoria__';
     const val = Number(b.amount);
     despesasPorCategoria[key] = (despesasPorCategoria[key] ?? 0) + val;
-    if (b.status === 'pending' || b.status === 'overdue') {
+    if (b.status === 'pending' || b.status === 'overdue' || b.status === 'partial') {
       despesasAPagar += val;
     }
   });
@@ -850,9 +874,10 @@ export default function DRETab() {
       // BUG-41: receitaAReceber não soma na receita (é saldo, não receita adicional)
       const receita = receitaBase;
       const cmv = d.cmvTeorico ?? 0; // P2: CMV por consumo (custo dos produtos vendidos)
-      const despesas = Object.entries(d.despesasPorCategoria)
-        .filter(([k]) => k !== '__sem_categoria__')
-        .reduce((s, [, v]) => s + v, 0) + cmv + d.custoPessoal + (d.taxasMaquininha ?? 0);
+      // Despesas sem categoria DRE entram no total (mesmo critério da tabela) — antes o
+      // gráfico as descartava e mostrava um resultado melhor do que o real.
+      const despesas = Object.values(d.despesasPorCategoria)
+        .reduce((s, v) => s + v, 0) + cmv + d.custoPessoal + (d.taxasMaquininha ?? 0);
       return { mes: mesLabel(m), receita, despesas, resultado: receita - despesas };
     }));
     setChartHistory(results);
@@ -887,8 +912,20 @@ export default function DRETab() {
   // Compras entram como estoque/caixa, não no CMV. Confiabilidade depende da cobertura de ficha (ver aviso).
   const cmvTotal = data.cmvTeorico ?? 0;
 
-  const receitaLiquida = receitaBruta - data.cancelamentos - data.descontos;
+  // DEDUÇÃO DUPLA (corrigido): `receitaBruta` vem de `paymentsMatched`, que já exclui pedidos
+  // cancelados (`.not('orders.status','in','(cancelled,draft)')`) e cujo `payments.amount` já é
+  // LÍQUIDO de desconto (o desconto nunca chegou a ser cobrado do cliente). Subtrair
+  // cancelamentos e descontos aqui descontava o mesmo dinheiro duas vezes.
+  // Os dois valores continuam sendo buscados e exibidos como INFORMATIVOS (o drill-down usa).
+  const receitaLiquida = receitaBruta;
   const lucroBruto = receitaLiquida - cmvTotal;
+
+  // Despesas lançadas em contas a pagar SEM `dre_category_id`: caíam na chave
+  // `__sem_categoria__`, que não pertence a nenhuma árvore de categorias — logo o valor
+  // aparecia no aviso amarelo mas NUNCA era subtraído do resultado (dinheiro que saiu e
+  // não aparecia na DRE). Agora entra nas despesas operacionais, ainda sem classificação.
+  const despesasSemCategoria = data.despesasPorCategoria['__sem_categoria__'] ?? 0;
+  const prevDespesasSemCategoria = prevData?.despesasPorCategoria['__sem_categoria__'] ?? 0;
 
   const expenseCats = buildTree(dreCats.filter(c => c.group_type === 'expense'));
   const costCats = buildTree(dreCats.filter(c => c.group_type === 'cost'));
@@ -908,7 +945,7 @@ export default function DRETab() {
 
   const totalDespesasOp = expenseCats.reduce(
     (s, c) => s + sumCatTree(c, data.despesasPorCategoria), 0
-  );
+  ) + despesasSemCategoria;
   const totalCustosCat = costCats.reduce(
     (s, c) => s + sumCatTree(c, data.despesasPorCategoria), 0
   );
@@ -928,11 +965,12 @@ export default function DRETab() {
 
   const prevCmvTotal = prevData?.cmvTeorico ?? 0;
 
-  const prevReceitaLiquida = prevReceitaBruta - (prevData?.cancelamentos ?? 0) - (prevData?.descontos ?? 0);
+  // Mesmo critério do mês corrente: sem dedução dupla de cancelamentos/descontos.
+  const prevReceitaLiquida = prevReceitaBruta;
   const prevLucroBruto = prevReceitaLiquida - prevCmvTotal;
   const prevTotalDespesasOp = expenseCats.reduce(
     (s, c) => s + sumCatTree(c, prevData?.despesasPorCategoria ?? {}), 0
-  );
+  ) + prevDespesasSemCategoria;
   const prevTotalCustosCat = costCats.reduce(
     (s, c) => s + sumCatTree(c, prevData?.despesasPorCategoria ?? {}), 0
   );
@@ -1163,7 +1201,7 @@ export default function DRETab() {
               {formatCurrency(semCategoria)} em despesas sem categoria DRE
             </p>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Algumas contas a pagar não estão vinculadas a uma categoria do DRE. Edite-as em <strong>Contas a Pagar</strong> e selecione a categoria correspondente.
+              Esse valor <strong>já está subtraído do resultado</strong> (na linha "Sem categoria DRE" das despesas operacionais), mas sem classificação — não aparece em nenhuma categoria. Edite essas contas em <strong>Contas a Pagar</strong> e selecione a categoria correspondente.
             </p>
           </div>
         </div>
@@ -1297,8 +1335,25 @@ export default function DRETab() {
                   </td>
                 </tr>
               )}
-              <DRERow label="(-) Cancelamentos" atual={data.cancelamentos} anterior={prevData?.cancelamentos} receitaBruta={receitaBruta} isNeg depth={1} origin="Pedidos cancelados" clickable={data.cancelamentos > 0} onClick={data.cancelamentos > 0 ? () => setDrillDown({ type: 'cancelamentos' }) : undefined} />
-              <DRERow label="(-) Descontos Concedidos" atual={data.descontos} anterior={prevData?.descontos} receitaBruta={receitaBruta} isNeg depth={1} origin="Descontos aplicados nos pedidos" clickable={data.descontos > 0} onClick={data.descontos > 0 ? () => setDrillDown({ type: 'descontos' }) : undefined} />
+              {/* Cancelamentos e descontos são INFORMATIVOS: já estão fora da receita bruta
+                  (pedido cancelado não gera payment/auto_sale e o payments.amount já vem
+                  líquido de desconto). Subtraí-los outra vez era dedução dupla. */}
+              <DRERow label="(i) Cancelamentos (informativo — já fora da receita)" atual={data.cancelamentos} anterior={prevData?.cancelamentos} receitaBruta={receitaBruta} depth={1} origin="Pedidos cancelados — não deduzido da receita (nunca entrou)" badge="Informativo" badgeColor="bg-zinc-100 text-zinc-500" clickable={data.cancelamentos > 0} onClick={data.cancelamentos > 0 ? () => setDrillDown({ type: 'cancelamentos' }) : undefined} />
+              <DRERow label="(i) Descontos Concedidos (informativo — já fora da receita)" atual={data.descontos} anterior={prevData?.descontos} receitaBruta={receitaBruta} depth={1} origin="Descontos aplicados nos pedidos — o valor recebido já é líquido" badge="Informativo" badgeColor="bg-zinc-100 text-zinc-500" clickable={data.descontos > 0} onClick={data.descontos > 0 ? () => setDrillDown({ type: 'descontos' }) : undefined} />
+              {(data.cancelamentos > 0 || data.descontos > 0) && (
+                <tr>
+                  <td colSpan={5} className="px-3 pb-2">
+                    <div className="flex items-start gap-2 rounded-lg px-3 py-2 text-xs bg-zinc-50 text-zinc-500 border border-zinc-200">
+                      <i className="ri-information-line mt-0.5" />
+                      <span>
+                        Cancelamentos e descontos <strong>não são mais subtraídos</strong> da receita:
+                        pedido cancelado nunca vira recebimento e o valor recebido já entra líquido do desconto.
+                        Descontar de novo reduzia a receita líquida em dobro. As linhas seguem aqui só para conferência.
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              )}
               <DRERow label="(=) RECEITA LÍQUIDA" atual={receitaLiquida} anterior={prevReceitaLiquida} receitaBruta={receitaBruta} isTotal />
 
               {/* ── CUSTOS ── */}
@@ -1358,7 +1413,9 @@ export default function DRETab() {
                   receitaBruta={receitaBruta}
                   isNeg
                   depth={1}
-                  origin="Folha de pagamento do mês + encargos patronais"
+                  origin={dreMode === 'caixa'
+                    ? 'Folha PAGA no mês de referência + encargos patronais (regime de caixa)'
+                    : 'Folha do mês de referência + encargos patronais (paga ou não)'}
                   badge="RH"
                   badgeColor="bg-amber-100 text-amber-700"
                   clickable
@@ -1400,6 +1457,21 @@ export default function DRETab() {
                     </div>
                   </td>
                 </tr>
+              )}
+              {/* Despesas sem categoria DRE: agora SOMAM no resultado (antes sumiam da conta).
+                  Ficam nesta linha até serem classificadas em Contas a Pagar. */}
+              {despesasSemCategoria > 0 && (
+                <DRERow
+                  label="Sem categoria DRE (a classificar)"
+                  atual={despesasSemCategoria}
+                  anterior={prevDespesasSemCategoria}
+                  receitaBruta={receitaBruta}
+                  isNeg
+                  depth={1}
+                  origin="Contas a pagar sem dre_category_id — já subtraídas do resultado"
+                  badge="A classificar"
+                  badgeColor="bg-zinc-200 text-zinc-600"
+                />
               )}
 
               {/* ── GRUPOS CUSTOMIZADOS ── */}
@@ -1477,13 +1549,13 @@ export default function DRETab() {
           {(dreMode === 'caixa' ? [
             { icon: 'ri-shopping-bag-line', label: 'Receitas', desc: 'Livro-razão (fin_cash_flow): auto_sale + entradas manuais' },
             { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Custo dos produtos vendidos (consumo via ficha técnica)' },
-            { icon: 'ri-bill-line', label: 'Despesas', desc: 'Contas a Pagar pagas + categoria DRE (compras excluídas)' },
-            { icon: 'ri-price-tag-3-line', label: 'Deduções', desc: 'Cancelamentos e descontos dos pedidos' },
+            { icon: 'ri-bill-line', label: 'Despesas', desc: 'Contas a Pagar pagas e parciais, pelo valor pago (compras excluídas) + folha paga' },
+            { icon: 'ri-price-tag-3-line', label: 'Deduções', desc: 'Cancelamentos e descontos: informativos — já fora da receita, não são subtraídos de novo' },
           ] : [
             { icon: 'ri-shopping-bag-line', label: 'Receitas', desc: 'Livro-razão (fin_cash_flow): auto_sale + entradas manuais (recebíveis são saldo, já contabilizados)' },
             { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Custo dos produtos vendidos (consumo via ficha técnica)' },
             { icon: 'ri-bill-line', label: 'Despesas', desc: 'Todas as contas com vencimento no período — compras excluídas (evita dupla contagem)' },
-            { icon: 'ri-price-tag-3-line', label: 'Deduções', desc: 'Cancelamentos e descontos dos pedidos' },
+            { icon: 'ri-price-tag-3-line', label: 'Deduções', desc: 'Cancelamentos e descontos: informativos — já fora da receita, não são subtraídos de novo' },
           ]).map((f) => (
             <div key={f.label} className="flex items-start gap-2">
               <div className="w-6 h-6 flex items-center justify-center bg-white border border-zinc-200 rounded-lg flex-shrink-0">

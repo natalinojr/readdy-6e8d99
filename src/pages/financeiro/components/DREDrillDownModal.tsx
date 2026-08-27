@@ -98,28 +98,90 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           source: 'Contas a Receber',
         }));
       } else {
+        // O drill-down de receita não reproduzia a linha da DRE: pegava TODO payment do
+        // período, inclusive estornado e cartão a prazo (dinheiro que ainda não entrou), e
+        // ignorava os recebíveis liquidados que a DRE soma. Agora replica o critério do
+        // DRETab: is_refunded=false + days_to_receive=0 + cruzamento com auto_sale do razão,
+        // mais os recebíveis com received_at no período (BUG-42).
         const destinations = destMap[type] || [];
-        const { data } = await supabase
-          .from('payments')
-          .select('id,amount,created_at,order_id,orders(destination_type,order_number,status)')
-          .eq('orders.tenant_id', user.tenantId)
-          .eq('orders.is_training', false)
-          .eq('orders.is_draft', false)
-          .not('orders.status', 'in', '("cancelled","draft")')
-          .in('orders.destination_type', destinations)
-          .gte('created_at', start)
-          .lte('created_at', end)
-          .order('created_at', { ascending: false });
-        result = (data ?? []).map((p: Record<string, unknown>) => ({
-          id: p.id as string,
-          date: (p.created_at as string).slice(0, 10),
-          description: `Pedido ${(p.orders as Record<string, unknown>)?.order_number || p.order_id || ''}`,
-          amount: Number(p.amount),
-          source: 'Pagamentos',
-          extra: {
-            Canal: String((p.orders as Record<string, unknown>)?.destination_type || ''),
-          },
-        }));
+        const isBalcao = type === 'receita_balcao';
+        const [autoSaleRes, payMethodsRes, paymentsRes, receivablesRes] = await Promise.all([
+          supabase
+            .from('fin_cash_flow')
+            .select('reference_id')
+            .eq('tenant_id', user.tenantId)
+            .eq('type', 'income')
+            .eq('origin', 'auto_sale')
+            .gte('date', start.slice(0, 10))
+            .lte('date', end.slice(0, 10)),
+          supabase
+            .from('payment_methods')
+            .select('id, days_to_receive')
+            .eq('tenant_id', user.tenantId),
+          supabase
+            .from('payments')
+            .select('id,amount,created_at,order_id,payment_method_id,orders!inner(destination_type,order_number,status,is_training,is_draft)')
+            .eq('orders.tenant_id', user.tenantId)
+            .eq('orders.is_training', false)
+            .eq('orders.is_draft', false)
+            .not('orders.status', 'in', '("cancelled","draft")')
+            .eq('is_refunded', false)
+            .in('orders.destination_type', destinations)
+            .gte('created_at', start)
+            .lte('created_at', end)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('fin_receivable_installments')
+            .select('id,amount,received_at,order_id,orders!inner(destination_type,order_number)')
+            .eq('tenant_id', user.tenantId)
+            .eq('status', 'received')
+            .gte('received_at', start)
+            .lte('received_at', end)
+            .order('received_at', { ascending: false }),
+        ]);
+
+        const autoSaleIds = new Set(
+          ((autoSaleRes.data ?? []) as Array<Record<string, unknown>>)
+            .map(e => e.reference_id).filter(Boolean) as string[]
+        );
+        const daysToReceive: Record<string, number> = {};
+        ((payMethodsRes.data ?? []) as Array<Record<string, unknown>>).forEach(m => {
+          daysToReceive[m.id as string] = Number(m.days_to_receive ?? 0);
+        });
+
+        const knownDests = ['immediate', 'balcao', 'hora', 'password', 'name', 'delivery', 'table', 'mesa', 'self_service'];
+
+        result = ((paymentsRes.data ?? []) as Array<Record<string, unknown>>)
+          .filter(p => (daysToReceive[p.payment_method_id as string] ?? 0) === 0)
+          .filter(p => autoSaleIds.has(p.id as string))
+          .map(p => ({
+            id: p.id as string,
+            date: (p.created_at as string).slice(0, 10),
+            description: `Pedido ${(p.orders as Record<string, unknown>)?.order_number || p.order_id || ''}`,
+            amount: Number(p.amount),
+            source: 'Pagamentos (à vista)',
+            extra: {
+              Canal: String((p.orders as Record<string, unknown>)?.destination_type || ''),
+            },
+          }));
+
+        // Recebíveis liquidados: entram no mesmo canal do pedido; canal desconhecido cai em
+        // "balcão", exatamente como o fallback do DRETab.
+        ((receivablesRes.data ?? []) as Array<Record<string, unknown>>).forEach(r => {
+          const dest = String((r.orders as Record<string, unknown>)?.destination_type ?? '');
+          const belongs = destinations.includes(dest) || (isBalcao && !knownDests.includes(dest));
+          if (!belongs) return;
+          result.push({
+            id: r.id as string,
+            date: String(r.received_at ?? '').slice(0, 10),
+            description: `Recebível liquidado — Pedido ${(r.orders as Record<string, unknown>)?.order_number || r.order_id || ''}`,
+            amount: Number(r.amount),
+            source: 'Contas a Receber (liquidado)',
+            extra: { Canal: dest || '—' },
+          });
+        });
+
+        result.sort((a, b) => (a.date < b.date ? 1 : -1));
       }
     }
 
@@ -238,9 +300,11 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
         .eq('dre_category_id', categoryId);
 
       if (mode === 'caixa') {
-        // No caixa: só contas pagas no período
+        // No caixa: contas pagas E parciais no período, somando pelo `paid_amount` acumulado.
+        // P11: com `.eq('status','paid')` a conta paga pela metade não aparecia aqui, embora o
+        // dinheiro já tivesse saído — o drill-down não fechava com a linha da DRE.
         const { data } = await query
-          .eq('status', 'paid')
+          .in('status', ['paid', 'partial'])
           .gte('paid_date', start.slice(0, 10))
           .lte('paid_date', end.slice(0, 10))
           .order('paid_date', { ascending: false });
@@ -248,7 +312,9 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           id: b.id as string,
           date: (b.paid_date as string) || (b.due_date as string),
           description: `${b.description}${b.supplier ? ` — ${b.supplier}` : ''}`,
-          amount: Number(b.paid_amount ?? b.amount),
+          amount: b.status === 'partial'
+            ? Number(b.paid_amount ?? 0)
+            : Number(b.paid_amount ?? b.amount),
           source: 'Contas a Pagar',
           extra: {
             'Data Venc.': String(b.due_date || '—'),
@@ -259,7 +325,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
       } else {
         // Competência: todas as contas com vencimento no período
         const { data } = await query
-          .in('status', ['pending', 'paid', 'overdue'])
+          .in('status', ['pending', 'paid', 'overdue', 'partial'])
           .gte('due_date', start.slice(0, 10))
           .lte('due_date', end.slice(0, 10))
           .order('due_date', { ascending: false });

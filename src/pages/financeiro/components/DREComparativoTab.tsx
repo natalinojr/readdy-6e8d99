@@ -33,6 +33,10 @@ interface DRESnapshot {
   cmvTeorico: number; // P2: CMV por consumo (custo dos produtos vendidos)
   despesasPorCategoria: Record<string, number>;
   despesasAPagar: number;
+  // Estas duas linhas existiam no DRETab e NÃO eram buscadas aqui — o resultado do
+  // comparativo ignorava folha e taxa de maquininha e por isso nunca batia com a DRE.
+  custoPessoal: number;
+  taxasMaquininha: number;
 }
 
 // P2: CMV por consumo (Σ order_items.unit_cost × qtd) — igual nos dois regimes.
@@ -60,58 +64,113 @@ interface DRECat {
 }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
+const DEST_BALCAO = ['immediate', 'balcao', 'hora', 'password', 'name'];
+const DEST_MESA = ['table', 'mesa'];
+
+type ReceitaBucket = { balcao: number; delivery: number; mesa: number; auto: number };
+
+// Mesmo roteamento por destino do DRETab, com o mesmo fallback (destino desconhecido → balcão).
+function addReceita(bucket: ReceitaBucket, destType: string, amount: number) {
+  if (DEST_BALCAO.includes(destType)) bucket.balcao += amount;
+  else if (destType === 'delivery') bucket.delivery += amount;
+  else if (DEST_MESA.includes(destType)) bucket.mesa += amount;
+  else if (destType === 'self_service') bucket.auto += amount;
+  else bucket.balcao += amount;
+}
+
+const destOf = (row: Record<string, unknown>) =>
+  String((row.orders as Record<string, unknown>)?.destination_type ?? '');
+
 async function fetchCaixa(tenantId: string, startDate: string, endDate: string): Promise<DRESnapshot> {
   const endDateTime = endDate + 'T23:59:59';
-  const [paymentsRes, cancelledRes, descontosRes, billsRes, purchasesRes] = await Promise.all([
-    supabase
-      .from('payments')
-      .select('amount, orders!inner(destination_type, status, is_training, is_draft)')
-      .eq('orders.tenant_id', tenantId)
-      .eq('orders.is_training', false)
-      .eq('orders.is_draft', false)
-      .not('orders.status', 'in', '("cancelled","draft")')
-      .gte('created_at', startDate)
-      .lte('created_at', endDateTime),
+  const monthStr = startDate.slice(0, 7);
+  const [autoSaleRes, paymentsRes, payMethodsRes, receivablesReceivedRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, cardFeeRes] = await Promise.all([
+    // Livro-razão: só o que virou caixa de fato. Serve de crivo para os payments abaixo.
+    supabase.from('fin_cash_flow').select('reference_id').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'auto_sale').gte('date', startDate).lte('date', endDate),
+    // A coluna Caixa contava TODO payment do período — inclusive cartão a prazo (dinheiro que
+    // ainda não entrou) e pagamentos estornados. Faltavam os 3 filtros do DRETab:
+    // is_refunded=false, days_to_receive=0 e cruzamento com auto_sale.
+    supabase.from('payments').select('id, amount, payment_method_id, orders!inner(destination_type, status, is_training, is_draft)').eq('orders.tenant_id', tenantId).eq('orders.is_training', false).eq('orders.is_draft', false).not('orders.status', 'in', '("cancelled","draft")').eq('is_refunded', false).gte('created_at', startDate).lte('created_at', endDateTime),
+    supabase.from('payment_methods').select('id, days_to_receive').eq('tenant_id', tenantId),
+    // BUG-42: cartão a prazo só vira caixa na liquidação do recebível.
+    supabase.from('fin_receivable_installments').select('amount, orders!inner(destination_type)').eq('tenant_id', tenantId).eq('status', 'received').gte('received_at', startDate).lte('received_at', endDateTime),
     supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('status', 'cancelled').gte('created_at', startDate).lte('created_at', endDateTime),
     supabase.from('orders').select('discount_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).not('status', 'in', '("cancelled","draft")').gte('created_at', startDate).lte('created_at', endDateTime),
-    supabase.from('fin_accounts_payable').select('dre_category_id, amount, paid_amount').eq('tenant_id', tenantId).eq('status', 'paid').or('reference_type.is.null,reference_type.neq.purchase').gte('paid_date', startDate).lte('paid_date', endDate),
+    // P11: inclui `partial` e soma pelo `paid_amount` acumulado (o desembolso real).
+    // Mantido o filtro do P1 (compras fora, senão a mercadoria conta 2x com o CMV).
+    supabase.from('fin_accounts_payable').select('dre_category_id, amount, paid_amount, status').eq('tenant_id', tenantId).in('status', ['paid', 'partial']).or('reference_type.is.null,reference_type.neq.purchase').gte('paid_date', startDate).lte('paid_date', endDate),
     supabase.from('fin_purchases').select('total_amount, payment_status').eq('tenant_id', tenantId).in('payment_status', ['paid', 'partial']).gte('purchase_date', startDate).lte('purchase_date', endDate),
+    // Regime de caixa: só folha efetivamente paga.
+    supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('status', 'paid').eq('reference_month', monthStr),
+    // P7: taxa de maquininha vem do razão (auto_card_fee), igual ao DRETab.
+    supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'expense').eq('origin', 'auto_card_fee').gte('date', startDate).lte('date', endDate),
   ]);
 
-  const payments = paymentsRes.data ?? [];
-  const receitaBalcao = payments.filter(p => ['immediate', 'balcao', 'hora', 'password', 'name'].includes((p.orders as Record<string, unknown>)?.destination_type as string)).reduce((s, p) => s + Number(p.amount), 0);
-  const receitaDelivery = payments.filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'delivery').reduce((s, p) => s + Number(p.amount), 0);
-  const receitaMesa = payments.filter(p => ['table', 'mesa'].includes((p.orders as Record<string, unknown>)?.destination_type as string)).reduce((s, p) => s + Number(p.amount), 0);
-  const receitaAutoatendimento = payments.filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'self_service').reduce((s, p) => s + Number(p.amount), 0);
+  const autoSalePaymentIds = new Set(
+    ((autoSaleRes.data ?? []) as Array<Record<string, unknown>>).map(e => e.reference_id).filter(Boolean) as string[]
+  );
+  const daysToReceiveMap: Record<string, number> = {};
+  ((payMethodsRes.data ?? []) as Array<Record<string, unknown>>).forEach(m => {
+    daysToReceiveMap[m.id as string] = Number(m.days_to_receive ?? 0);
+  });
+
+  const paymentsMatched = ((paymentsRes.data ?? []) as Array<Record<string, unknown>>)
+    .filter(p => (daysToReceiveMap[p.payment_method_id as string] ?? 0) === 0)
+    .filter(p => autoSalePaymentIds.has(p.id as string));
+
+  const bucket: ReceitaBucket = { balcao: 0, delivery: 0, mesa: 0, auto: 0 };
+  paymentsMatched.forEach(p => addReceita(bucket, destOf(p), Number(p.amount ?? 0)));
+  ((receivablesReceivedRes.data ?? []) as Array<Record<string, unknown>>)
+    .forEach(r => addReceita(bucket, destOf(r), Number(r.amount ?? 0)));
+
   const cancelamentos = (cancelledRes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
   const descontos = (descontosRes.data ?? []).reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
   const cmvCompras = (purchasesRes.data ?? []).reduce((s, p) => s + Number(p.total_amount), 0);
   const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime);
   const despesasPorCategoria: Record<string, number> = {};
-  (billsRes.data ?? []).forEach(b => {
-    const key = b.dre_category_id ?? '__sem__';
-    despesasPorCategoria[key] = (despesasPorCategoria[key] ?? 0) + Number(b.paid_amount ?? b.amount);
+  ((billsRes.data ?? []) as Array<Record<string, unknown>>).forEach(b => {
+    const key = (b.dre_category_id as string) ?? '__sem__';
+    const val = b.status === 'partial'
+      ? Number(b.paid_amount ?? 0)
+      : Number(b.paid_amount ?? b.amount);
+    despesasPorCategoria[key] = (despesasPorCategoria[key] ?? 0) + val;
   });
+  const custoPessoal = (payrollRes.data ?? []).reduce((s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0);
+  const taxasMaquininha = (cardFeeRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
-  return { receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento, receitaAReceber: 0, cancelamentos, descontos, cmvCompras, cmvComprasPendentes: 0, cmvTeorico, despesasPorCategoria, despesasAPagar: 0 };
+  return {
+    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto,
+    receitaAReceber: 0, cancelamentos, descontos, cmvCompras, cmvComprasPendentes: 0, cmvTeorico,
+    despesasPorCategoria, despesasAPagar: 0, custoPessoal, taxasMaquininha,
+  };
 }
 
 async function fetchCompetencia(tenantId: string, startDate: string, endDate: string): Promise<DRESnapshot> {
   const endDateTime = endDate + 'T23:59:59';
-  const [paymentsRes, receivablesRes, cancelledRes, descontosRes, billsRes, purchasesRes] = await Promise.all([
-    supabase.from('payments').select('amount, orders!inner(destination_type, status, is_training, is_draft)').eq('orders.tenant_id', tenantId).eq('orders.is_training', false).eq('orders.is_draft', false).not('orders.status', 'in', '("cancelled","draft")').gte('created_at', startDate).lte('created_at', endDateTime),
+  const monthStr = startDate.slice(0, 7);
+  const [autoSaleRes, paymentsRes, receivablesRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, cardFeeRes] = await Promise.all([
+    supabase.from('fin_cash_flow').select('reference_id').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'auto_sale').gte('date', startDate).lte('date', endDate),
+    supabase.from('payments').select('id, amount, orders!inner(destination_type, status, is_training, is_draft)').eq('orders.tenant_id', tenantId).eq('orders.is_training', false).eq('orders.is_draft', false).not('orders.status', 'in', '("cancelled","draft")').eq('is_refunded', false).gte('created_at', startDate).lte('created_at', endDateTime),
     supabase.from('fin_receivable_installments').select('amount').eq('tenant_id', tenantId).eq('status', 'pending').gte('due_date', startDate).lte('due_date', endDate),
     supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('status', 'cancelled').gte('created_at', startDate).lte('created_at', endDateTime),
     supabase.from('orders').select('discount_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).not('status', 'in', '("cancelled","draft")').gte('created_at', startDate).lte('created_at', endDateTime),
-    supabase.from('fin_accounts_payable').select('dre_category_id, amount, status').eq('tenant_id', tenantId).in('status', ['pending', 'paid', 'overdue']).or('reference_type.is.null,reference_type.neq.purchase').gte('due_date', startDate).lte('due_date', endDate),
+    supabase.from('fin_accounts_payable').select('dre_category_id, amount, status').eq('tenant_id', tenantId).in('status', ['pending', 'paid', 'overdue', 'partial']).or('reference_type.is.null,reference_type.neq.purchase').gte('due_date', startDate).lte('due_date', endDate),
     supabase.from('fin_purchases').select('total_amount, payment_status').eq('tenant_id', tenantId).gte('purchase_date', startDate).lte('purchase_date', endDate),
+    // Competência: folha pelo mês de referência, paga ou não (igual ao DRETab).
+    supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('reference_month', monthStr),
+    supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'expense').eq('origin', 'auto_card_fee').gte('date', startDate).lte('date', endDate),
   ]);
 
-  const payments = paymentsRes.data ?? [];
-  const receitaBalcao = payments.filter(p => ['immediate', 'balcao', 'hora', 'password', 'name'].includes((p.orders as Record<string, unknown>)?.destination_type as string)).reduce((s, p) => s + Number(p.amount), 0);
-  const receitaDelivery = payments.filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'delivery').reduce((s, p) => s + Number(p.amount), 0);
-  const receitaMesa = payments.filter(p => ['table', 'mesa'].includes((p.orders as Record<string, unknown>)?.destination_type as string)).reduce((s, p) => s + Number(p.amount), 0);
-  const receitaAutoatendimento = payments.filter(p => (p.orders as Record<string, unknown>)?.destination_type === 'self_service').reduce((s, p) => s + Number(p.amount), 0);
+  // Mesmo crivo do DRETab (competência): só payments com auto_sale correspondente no razão.
+  const autoSalePaymentIds = new Set(
+    ((autoSaleRes.data ?? []) as Array<Record<string, unknown>>).map(e => e.reference_id).filter(Boolean) as string[]
+  );
+  const paymentsMatched = ((paymentsRes.data ?? []) as Array<Record<string, unknown>>)
+    .filter(p => autoSalePaymentIds.has(p.id as string));
+
+  const bucket: ReceitaBucket = { balcao: 0, delivery: 0, mesa: 0, auto: 0 };
+  paymentsMatched.forEach(p => addReceita(bucket, destOf(p), Number(p.amount ?? 0)));
+
   const receitaAReceber = (receivablesRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0);
   const cancelamentos = (cancelledRes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
   const descontos = (descontosRes.data ?? []).reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
@@ -121,23 +180,36 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
   const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime);
   const despesasPorCategoria: Record<string, number> = {};
   let despesasAPagar = 0;
-  (billsRes.data ?? []).forEach(b => {
-    const key = b.dre_category_id ?? '__sem__';
+  ((billsRes.data ?? []) as Array<Record<string, unknown>>).forEach(b => {
+    const key = (b.dre_category_id as string) ?? '__sem__';
     despesasPorCategoria[key] = (despesasPorCategoria[key] ?? 0) + Number(b.amount);
-    if (b.status === 'pending' || b.status === 'overdue') despesasAPagar += Number(b.amount);
+    if (b.status === 'pending' || b.status === 'overdue' || b.status === 'partial') despesasAPagar += Number(b.amount);
   });
+  const custoPessoal = (payrollRes.data ?? []).reduce((s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0);
+  const taxasMaquininha = (cardFeeRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
-  return { receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento, receitaAReceber, cancelamentos, descontos, cmvCompras, cmvComprasPendentes, cmvTeorico, despesasPorCategoria, despesasAPagar };
+  return {
+    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto,
+    receitaAReceber, cancelamentos, descontos, cmvCompras, cmvComprasPendentes, cmvTeorico,
+    despesasPorCategoria, despesasAPagar, custoPessoal, taxasMaquininha,
+  };
 }
 
-function calcDRE(d: DRESnapshot, mode: 'caixa' | 'competencia') {
+function calcDRE(d: DRESnapshot, _mode: 'caixa' | 'competencia') {
   const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento;
-  const receitaBruta = mode === 'competencia' ? receitaRecebida + d.receitaAReceber : receitaRecebida;
+  // BUG-41 (intencional, mesmo critério do DRETab): recebível pendente é SALDO, não receita
+  // adicional. A venda a prazo já está no `payments`/`auto_sale`; somar `receitaAReceber` na
+  // competência contava a mesma venda duas vezes. `receitaAReceber` segue exibido à parte.
+  const receitaBruta = receitaRecebida;
   const cmv = d.cmvTeorico; // P2: CMV por consumo — igual nos dois regimes
-  const receitaLiquida = receitaBruta - d.cancelamentos - d.descontos;
+  // Dedução dupla (corrigido): pedido cancelado não gera payment e o payments.amount já vem
+  // líquido de desconto. Cancelamentos/descontos ficam como informativos.
+  const receitaLiquida = receitaBruta;
   const lucroBruto = receitaLiquida - cmv;
-  const totalDespesas = Object.entries(d.despesasPorCategoria).filter(([k]) => k !== '__sem__').reduce((s, [, v]) => s + v, 0);
-  const resultado = lucroBruto - totalDespesas;
+  // Inclui `__sem__` (contas sem categoria DRE): antes sumiam do total e do resultado.
+  const totalDespesas = Object.values(d.despesasPorCategoria).reduce((s, v) => s + v, 0);
+  // Folha e taxa de maquininha agora entram no resultado (antes o comparativo as ignorava).
+  const resultado = lucroBruto - totalDespesas - d.custoPessoal - d.taxasMaquininha;
   const margemBruta = receitaBruta > 0 ? (lucroBruto / receitaBruta) * 100 : 0;
   const margemLiquida = receitaBruta > 0 ? (resultado / receitaBruta) * 100 : 0;
   return { receitaBruta, receitaLiquida, lucroBruto, cmv, totalDespesas, resultado, margemBruta, margemLiquida };
@@ -274,7 +346,10 @@ export default function DREComparativoTab() {
 
   const diffResultado = comp.resultado - caixa.resultado;
   const diffReceita = comp.receitaBruta - caixa.receitaBruta;
-  const diffDespesas = comp.totalDespesas - caixa.totalDespesas;
+  // Total de despesas do card = mesmo total que entra no resultado (inclui folha e taxas).
+  const caixaDespesasTotais = caixa.totalDespesas + caixaData.custoPessoal + caixaData.taxasMaquininha;
+  const compDespesasTotais = comp.totalDespesas + compData.custoPessoal + compData.taxasMaquininha;
+  const diffDespesas = compDespesasTotais - caixaDespesasTotais;
 
   const mesLabel = new Date(mes + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
@@ -379,7 +454,7 @@ export default function DREComparativoTab() {
               <div className="bg-white border border-amber-100 rounded-xl p-3">
                 <p className="text-xs font-semibold text-amber-700">Receita a Receber</p>
                 <p className="text-base font-black text-amber-800 mt-0.5">{formatCurrency(compData.receitaAReceber)}</p>
-                <p className="text-xs text-amber-500 mt-0.5">Reconhecida na competência, não no caixa</p>
+                <p className="text-xs text-amber-500 mt-0.5">Saldo em aberto — informativo, não somado na receita de nenhum dos regimes</p>
               </div>
             )}
             {compData.despesasAPagar > 0 && (
@@ -439,12 +514,16 @@ export default function DREComparativoTab() {
             {(caixaData.receitaAutoatendimento > 0 || compData.receitaAutoatendimento > 0) && (
               <CompRow label="Autoatendimento" caixaVal={caixaData.receitaAutoatendimento} compVal={compData.receitaAutoatendimento} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
             )}
+            {/* BUG-41: saldo a receber é informação, NÃO soma na receita bruta (a venda a prazo
+                já está no payments/auto_sale — somar de novo era dupla contagem). */}
             {compData.receitaAReceber > 0 && (
-              <CompRow label="(+) Receita a Realizar" caixaVal={0} compVal={compData.receitaAReceber} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} highlight />
+              <CompRow label="(i) A receber (saldo — não somado na receita)" caixaVal={0} compVal={compData.receitaAReceber} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} highlight />
             )}
             <CompRow label="(=) RECEITA BRUTA" caixaVal={caixa.receitaBruta} compVal={comp.receitaBruta} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isTotal />
-            <CompRow label="(-) Cancelamentos" caixaVal={caixaData.cancelamentos} compVal={compData.cancelamentos} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
-            <CompRow label="(-) Descontos" caixaVal={caixaData.descontos} compVal={compData.descontos} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
+            {/* Informativos: já fora da receita (cancelado não vira payment; o valor recebido
+                já é líquido de desconto). Subtrair aqui era dedução dupla. */}
+            <CompRow label="(i) Cancelamentos (informativo — já fora da receita)" caixaVal={caixaData.cancelamentos} compVal={compData.cancelamentos} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
+            <CompRow label="(i) Descontos (informativo — já fora da receita)" caixaVal={caixaData.descontos} compVal={compData.descontos} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
             <CompRow label="(=) RECEITA LÍQUIDA" caixaVal={caixa.receitaLiquida} compVal={comp.receitaLiquida} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isTotal />
 
             {/* ── CUSTOS ── */}
@@ -468,8 +547,20 @@ export default function DREComparativoTab() {
               return <CompRow key={cat.id} label={cat.name} caixaVal={cv} compVal={pv} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />;
             })}
             {compData.despesasAPagar > 0 && (
-              <CompRow label="(+) Despesas a Pagar (não pagas)" caixaVal={0} compVal={compData.despesasAPagar} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg highlight />
+              <CompRow label="(i) Despesas a Pagar (não pagas — já inclusas nas categorias acima)" caixaVal={0} compVal={compData.despesasAPagar} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} highlight />
             )}
+            {/* Folha e taxa de maquininha: existiam no DRETab e faltavam aqui — sem elas o
+                resultado do comparativo era otimista e nunca batia com a DRE. */}
+            {(caixaData.custoPessoal > 0 || compData.custoPessoal > 0) && (
+              <CompRow label="Custo com Pessoal (Folha + FGTS)" caixaVal={caixaData.custoPessoal} compVal={compData.custoPessoal} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
+            )}
+            {(caixaData.taxasMaquininha > 0 || compData.taxasMaquininha > 0) && (
+              <CompRow label="Taxas de Intermediação (Maquininha/PIX)" caixaVal={caixaData.taxasMaquininha} compVal={compData.taxasMaquininha} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
+            )}
+            {(caixaData.despesasPorCategoria['__sem__'] ?? 0) + (compData.despesasPorCategoria['__sem__'] ?? 0) > 0 && (
+              <CompRow label="Sem categoria DRE (a classificar)" caixaVal={caixaData.despesasPorCategoria['__sem__'] ?? 0} compVal={compData.despesasPorCategoria['__sem__'] ?? 0} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
+            )}
+            <CompRow label="(=) TOTAL DE DESPESAS" caixaVal={caixa.totalDespesas + caixaData.custoPessoal + caixaData.taxasMaquininha} compVal={comp.totalDespesas + compData.custoPessoal + compData.taxasMaquininha} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg isTotal />
 
             {/* ── RESULTADO ── */}
             <SectionHeader label="Resultado" />

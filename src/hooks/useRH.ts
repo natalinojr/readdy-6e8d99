@@ -151,22 +151,35 @@ export function recalcPayroll(entry: Partial<PayrollEntry>): Partial<PayrollEntr
 // via as actions 'pay_payroll' e 'pay_all_payroll'
 
 // ─── Helper: chamar edge function financial-write ─────────────────────────────
-async function invokeFinancial(action: string, tenantId: string, payload: Record<string, unknown>) {
+/**
+ * Todas as ESCRITAS de hr_employees/hr_payroll passam por aqui.
+ * Motivo: o insert/update direto dependia da RLS `*_auth_uid`, que resolve o
+ * tenant com `LIMIT 1` sobre user_tenants **sem ORDER BY** — para um usuário
+ * com várias lojas isso sorteia UMA membership e, nas demais, a escrita afeta
+ * zero linhas sem erro nenhum. Além disso vários updates filtravam só por `id`.
+ * A edge function roda como service_role, valida a membership e escopa por
+ * tenant_id explicitamente.
+ */
+async function callFinancialWrite(action: string, tenantId: string, payload: Record<string, unknown>) {
   const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) return { error: 'Sessão expirada' };
   const res = await fetch(`${SUPABASE_URL}/functions/v1/financial-write`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${session?.access_token}`,
+      'Authorization': `Bearer ${token}`,
+      'apikey': import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY as string,
     },
     body: JSON.stringify({ action, tenant_id: tenantId, payload }),
   });
-  const json = await res.json().catch(() => null);
-  if (!res.ok) {
-    console.error(`[invokeFinancial] ${action} erro:`, json.error || res.statusText);
-    return { error: json.error || res.statusText };
+  const json = await res.json().catch(() => ({} as Record<string, unknown>));
+  if (!res.ok || (json as { error?: unknown })?.error) {
+    const message = String((json as { error?: unknown })?.error ?? res.statusText ?? 'Erro na operação');
+    console.error(`[callFinancialWrite] ${action} erro:`, message);
+    return { error: message };
   }
-  return { data: json.data ?? null };
+  return { data: (json as { data?: unknown })?.data ?? null };
 }
 
 // ─── Employees ────────────────────────────────────────────────────────────────
@@ -191,22 +204,24 @@ export function useEmployees() {
   useEffect(() => { fetchEmployees(); }, [fetchEmployees]);
 
   const upsert = async (payload: Partial<Employee>) => {
-    if (!user?.tenantId) return;
-    const record = { ...payload, tenant_id: user.tenantId, updated_at: new Date().toISOString() };
-    if (record.id) {
-      const { error } = await supabase.from('hr_employees').update(record).eq('id', record.id);
-      if (error) console.error('[useEmployees] Erro ao atualizar:', error.message);
-    } else {
-      const { error } = await supabase.from('hr_employees').insert(record);
-      if (error) console.error('[useEmployees] Erro ao inserir:', error.message);
-    }
-    fetchEmployees();
+    if (!user?.tenantId) return { error: 'Sem tenant' };
+    const { tenant_id: _t, created_at: _c, updated_at: _u, ...data } = payload;
+    void _t; void _c; void _u;
+    const cleanData = Object.fromEntries(
+      Object.entries(data).filter(([, v]) => v !== undefined),
+    );
+    const { error } = await callFinancialWrite('upsert_employee', user.tenantId, cleanData);
+    if (error) console.error('[useEmployees] Erro ao salvar:', error);
+    await fetchEmployees();
+    return { error: error ?? null };
   };
 
   const remove = async (id: string) => {
-    if (!user?.tenantId) return;
-    await supabase.from('hr_employees').update({ status: 'inactive' }).eq('id', id);
-    fetchEmployees();
+    if (!user?.tenantId) return { error: 'Sem tenant' };
+    const { error } = await callFinancialWrite('delete_employee', user.tenantId, { id });
+    if (error) console.error('[useEmployees] Erro ao remover:', error);
+    await fetchEmployees();
+    return { error: error ?? null };
   };
 
   const updateVacation = async (id: string, vacationData: {
@@ -216,9 +231,11 @@ export function useEmployees() {
     vacation_days_taken?: number;
     status?: EmployeeStatus;
   }) => {
-    if (!user?.tenantId) return;
-    await supabase.from('hr_employees').update({ ...vacationData, updated_at: new Date().toISOString() }).eq('id', id);
-    fetchEmployees();
+    if (!user?.tenantId) return { error: 'Sem tenant' };
+    const { error } = await callFinancialWrite('update_employee_vacation', user.tenantId, { id, ...vacationData });
+    if (error) console.error('[useEmployees] Erro ao atualizar férias:', error);
+    await fetchEmployees();
+    return { error: error ?? null };
   };
 
   const updateThirteenth = async (id: string, thirteenthData: {
@@ -226,9 +243,11 @@ export function useEmployees() {
     thirteenth_first_paid_date?: string;
     thirteenth_second_paid_date?: string;
   }) => {
-    if (!user?.tenantId) return;
-    await supabase.from('hr_employees').update({ ...thirteenthData, updated_at: new Date().toISOString() }).eq('id', id);
-    fetchEmployees();
+    if (!user?.tenantId) return { error: 'Sem tenant' };
+    const { error } = await callFinancialWrite('update_employee_thirteenth', user.tenantId, { id, ...thirteenthData });
+    if (error) console.error('[useEmployees] Erro ao atualizar 13º:', error);
+    await fetchEmployees();
+    return { error: error ?? null };
   };
 
   const activeCount = employees.filter(e => e.status === 'active').length;
@@ -268,47 +287,39 @@ export function usePayroll(referenceMonth?: string) {
     if (!user?.tenantId) return;
     // Recalcula automaticamente antes de salvar
     const recalculated = recalcPayroll(payload);
-    const record = {
-      ...recalculated,
-      tenant_id: user.tenantId,
-      updated_at: new Date().toISOString(),
-    };
-    // Remove campos que não existem na tabela para evitar erro
+    const { tenant_id: _t, created_at: _c, updated_at: _u, ...rest } = recalculated;
+    void _t; void _c; void _u;
+    // Remove campos indefinidos para evitar erro
     const cleanRecord = Object.fromEntries(
-      Object.entries(record).filter(([_, v]) => v !== undefined),
+      Object.entries(rest).filter(([, v]) => v !== undefined),
     );
-    if (record.id) {
-      const { error } = await supabase.from('hr_payroll').update(cleanRecord).eq('id', record.id);
-      if (error) {
-        console.error('[usePayroll] Erro ao atualizar:', error.message);
-        throw error;
-      }
-    } else {
-      const { error } = await supabase.from('hr_payroll').insert(cleanRecord);
-      if (error) {
-        console.error('[usePayroll] Erro ao inserir:', error.message);
-        throw error;
-      }
+    const { error } = await callFinancialWrite('upsert_payroll', user.tenantId, cleanRecord);
+    if (error) {
+      console.error('[usePayroll] Erro ao salvar:', error);
+      await fetchEntries();
+      throw new Error(error);
     }
     await fetchEntries();
   };
 
   const markPaid = async (id: string, paid_date: string, payment_method: string) => {
     if (!user?.tenantId) return;
-    await invokeFinancial('pay_payroll', user.tenantId, { id, paid_date, payment_method });
+    await callFinancialWrite('pay_payroll', user.tenantId, { id, paid_date, payment_method });
     fetchEntries();
   };
 
   const markAllPaid = async (ids: string[], paid_date: string, payment_method: string) => {
     if (!user?.tenantId) return;
-    await invokeFinancial('pay_all_payroll', user.tenantId, { ids, paid_date, payment_method });
+    await callFinancialWrite('pay_all_payroll', user.tenantId, { ids, paid_date, payment_method });
     fetchEntries();
   };
 
   const remove = async (id: string) => {
-    if (!user?.tenantId) return;
-    await supabase.from('hr_payroll').delete().eq('id', id);
-    fetchEntries();
+    if (!user?.tenantId) return { error: 'Sem tenant' };
+    const { error } = await callFinancialWrite('delete_payroll', user.tenantId, { id });
+    if (error) console.error('[usePayroll] Erro ao remover:', error);
+    await fetchEntries();
+    return { error: error ?? null };
   };
 
   const generateFromEmployees = async (employees: Employee[], month: string) => {
@@ -368,11 +379,17 @@ export function usePayroll(referenceMonth?: string) {
           entry_type: 'regular' as PayrollEntryType,
         };
       });
+    let writeError: string | null = null;
     if (records.length > 0) {
-      const { error } = await supabase.from('hr_payroll').insert(records);
-      if (error) console.error('[usePayroll] Erro ao gerar folha:', error.message);
+      // Insert em LOTE numa única chamada
+      const { error } = await callFinancialWrite('bulk_insert_payroll', user.tenantId, { records });
+      if (error) {
+        console.error('[usePayroll] Erro ao gerar folha:', error);
+        writeError = error;
+      }
     }
-    fetchEntries();
+    await fetchEntries();
+    return { error: writeError };
   };
 
   const generateThirteenth = async (employees: Employee[], month: string, parcel: 'first' | 'second') => {
@@ -435,10 +452,17 @@ export function usePayroll(referenceMonth?: string) {
           notes: label,
         };
       });
+    let writeError: string | null = null;
     if (records.length > 0) {
-      await supabase.from('hr_payroll').insert(records);
+      // Insert em LOTE numa única chamada
+      const { error } = await callFinancialWrite('bulk_insert_payroll', user.tenantId, { records });
+      if (error) {
+        console.error('[usePayroll] Erro ao gerar 13º:', error);
+        writeError = error;
+      }
     }
-    fetchEntries();
+    await fetchEntries();
+    return { error: writeError };
   };
 
   const generateVacationPay = async (employee: Employee, month: string, vacationDays: number) => {
@@ -489,8 +513,10 @@ export function usePayroll(referenceMonth?: string) {
       entry_type: 'vacation_pay' as PayrollEntryType,
       notes: `Férias — ${vacationDays} dias`,
     };
-    await supabase.from('hr_payroll').insert(record);
-    fetchEntries();
+    const { error } = await callFinancialWrite('upsert_payroll', user.tenantId, record);
+    if (error) console.error('[usePayroll] Erro ao gerar férias:', error);
+    await fetchEntries();
+    return { error: error ?? null };
   };
 
   const totalBruto = entries.reduce((s, e) => s + Number(e.gross_salary), 0);

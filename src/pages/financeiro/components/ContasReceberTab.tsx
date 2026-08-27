@@ -275,7 +275,7 @@ function AntecipacaoModal({ installments, onClose, onConfirm }: AntecipacaoModal
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ContasReceberTab() {
-  const { installments, loading, receive } = useReceivableInstallments();
+  const { installments, loading, receive, refresh: refreshInstallments } = useReceivableInstallments();
   const { anticipations, insert: insertAntecipacao } = useAntecipacoes();
   const [showAntecipacao, setShowAntecipacao] = useState(false);
   const [receivingId, setReceivingId] = useState<string | null>(null);
@@ -386,7 +386,13 @@ export default function ContasReceberTab() {
     installment_ids: string[];
   }) => {
     await insertAntecipacao(payload);
-  }, [insertAntecipacao]);
+    // insertAntecipacao (useFinanceiro) só recarrega a lista de antecipações;
+    // `installments` ficava obsoleto e as parcelas continuavam aparecendo como
+    // disponíveis (o modal filtra !i.is_anticipated sobre dados velhos), abrindo
+    // caminho para ANTECIPAR AS MESMAS PARCELAS 2x — com segunda entrada no
+    // fin_cash_flow. Recarregar as parcelas fecha essa janela.
+    await refreshInstallments();
+  }, [insertAntecipacao, refreshInstallments]);
 
   // Contagem de antecipados no mês
   const antecipados = enriched.filter((i) => i.is_anticipated && i.status !== 'received' && i.due_date && i.due_date >= monthStart && i.due_date <= monthEnd);
