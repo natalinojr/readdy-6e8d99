@@ -57,11 +57,20 @@ interface Props {
   onClose: () => void;
 }
 
+/** Chave de identidade de um endereco: usa o id; o legado (sem id) cai no texto. */
+function chaveEndereco(a: Endereco | null): string {
+  if (!a) return '';
+  return a.id ?? `legacy:${a.street ?? ''}|${a.number ?? ''}|${a.complement ?? ''}`;
+}
+
 export function enderecoEmUmaLinha(a: Endereco | null): string {
   if (!a) return '';
   const rua = [a.street, a.number].filter(Boolean).join(', ');
   return [rua, a.complement, a.bairro].filter(Boolean).join(' — ');
 }
+
+/** Mesmos rotulos que o link do delivery grava — mantem o cadastro consistente. */
+const ROTULOS_ENDERECO = ['Casa', 'Trabalho', 'Escritório', 'Outro'];
 
 function formatTelefone(raw: string): string {
   const d = (raw || '').replace(/\D/g, '').slice(0, 11);
@@ -101,6 +110,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
   const [fBairroTexto, setFBairroTexto] = useState('');
   const [fComplemento, setFComplemento] = useState('');
   const [fReferencia, setFReferencia] = useState('');
+  const [fRotulo, setFRotulo] = useState('Casa');
   const [fLat, setFLat] = useState<number | null>(null);
   const [fLng, setFLng] = useState<number | null>(null);
   // Confirmacao EXPLICITA do pin. Nao pode ser derivada de fLat/fLng: arrastar o
@@ -189,6 +199,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
     setFTelefone(formatTelefone(q));
     setFRua(''); setFNumero(''); setFBairroId(''); setFBairroTexto('');
     setFComplemento(''); setFReferencia(''); setFLat(null); setFLng(null); setPinConfirmado(false);
+    setFRotulo('Casa');
   };
 
   const abrirNovoEndereco = () => {
@@ -196,6 +207,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
     setModo('novo_endereco');
     setFRua(''); setFNumero(''); setFBairroId(''); setFBairroTexto('');
     setFComplemento(''); setFReferencia(''); setFLat(null); setFLng(null); setPinConfirmado(false);
+    setFRotulo('Casa');
   };
 
   const salvarCadastro = async () => {
@@ -212,7 +224,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
         {
           body: {
             action: 'save_customer', tenant_id: tenantId, phone: tel, name: fNome.trim(),
-            neighborhood_id: fBairroId || null, street: fRua.trim() || null, number: fNumero.trim() || null,
+            label: fRotulo, neighborhood_id: fBairroId || null, street: fRua.trim() || null, number: fNumero.trim() || null,
             complement: fComplemento.trim() || null, reference_point: fReferencia.trim() || null,
             bairro: bairroNome || null,
             address_lat: pinConfirmado ? fLat : null, address_lng: pinConfirmado ? fLng : null,
@@ -240,10 +252,10 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
     if (!cliente) return;
     if (!fRua.trim() && !fBairroId && !pinConfirmado) { setErro('Informe ao menos a rua ou o bairro.'); return; }
     setSalvando(true);
-    const { data, error } = await invokeWithAuth<{ addresses?: Endereco[] }>('delivery-write', {
+    const { data, error } = await invokeWithAuth<{ addresses?: Endereco[]; saved_address_id?: string | null }>('delivery-write', {
       body: {
         action: 'save_customer_address', tenant_id: tenantId, customer_id: cliente.id,
-        label: 'Endereço', neighborhood_id: fBairroId || null,
+        label: fRotulo, neighborhood_id: fBairroId || null,
         street: fRua.trim() || null, number: fNumero.trim() || null,
         complement: fComplemento.trim() || null, reference_point: fReferencia.trim() || null,
         bairro: bairroNome || null,
@@ -261,8 +273,10 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
     setCliente(atualizado);
     setClientes((prev) => prev.map((c) => (c.id === atualizado.id ? atualizado : c)));
     setModo('lista');
-    // Reencontra o endereço recém-salvo pela rua+número (o backend devolve a lista toda).
-    const novoAddr = addrs.find((a) => (a.street ?? '') === fRua.trim() && (a.number ?? '') === fNumero.trim()) ?? addrs[0];
+    // Seleciona pelo id que o backend acabou de gravar — procurar por rua+número
+    // escolhia o endereço errado quando o cliente tem dois parecidos (mesma rua,
+    // complementos diferentes).
+    const novoAddr = addrs.find((a) => a.id && a.id === data.saved_address_id) ?? addrs[0];
     if (novoAddr) selecionarEndereco(novoAddr);
   };
 
@@ -296,6 +310,26 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
   // ── Formulário de endereço (compartilhado pelos dois cadastros) ──
   const formEndereco = (
     <div className="space-y-3">
+      <div>
+        <label className="block text-xs font-bold text-zinc-600 mb-1.5">Este endereço é</label>
+        <div className="flex flex-wrap gap-2">
+          {ROTULOS_ENDERECO.map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setFRotulo(r)}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
+                fRotulo === r
+                  ? 'border-amber-400 bg-amber-50 text-amber-700'
+                  : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:border-zinc-300'
+              }`}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid grid-cols-3 gap-2">
         <div className="col-span-2">
           <label className="block text-xs font-bold text-zinc-600 mb-1.5">Rua</label>
@@ -433,10 +467,10 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
                       <p className="text-xs text-zinc-500">Este cliente ainda não tem endereço cadastrado.</p>
                     )}
                     {cliente.addresses.map((a, idx) => {
-                      const ativo = endereco === a || (endereco?.id != null && endereco.id === a.id);
+                      const ativo = chaveEndereco(endereco) === chaveEndereco(a);
                       return (
                         <button
-                          key={a.id ?? `legacy-${idx}`}
+                          key={chaveEndereco(a) || `addr-${idx}`}
                           onClick={() => selecionarEndereco(a)}
                           className={`w-full text-left px-3 py-2 rounded-lg border text-xs cursor-pointer transition-colors ${
                             ativo ? 'border-amber-500 bg-white' : 'border-zinc-200 bg-white/60 hover:border-zinc-300'

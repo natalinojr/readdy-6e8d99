@@ -301,6 +301,15 @@ Como fica um pedido de delivery do caixa: `origin_type='delivery'` + `delivery_p
 - **`MapaPin`: o botao "Confirmar esta localizacao" sumia ao mexer no mapa.** `confirmed` estava derivado de "ja existe coordenada", e o `dragend` grava a coordenada do centro — ou seja, o primeiro arraste ja marcava como confirmado. Fix na raiz: `onChange` ganhou um 3o argumento `origem: 'arraste' | 'confirmacao'` (retrocompativel — os outros usos ignoram), e quem controla o estado so confirma no `'confirmacao'`. No modal do caixa o pin so e gravado (`address_lat/lng`) depois de confirmado.
 - **Taxa de entrega deixou de ser editavel** no caso normal: vira texto com o valor cotado. So vira campo digitavel quando nao existe cotacao possivel (fora da area de entrega, ou endereco sem pin e sem bairro) — senao o caixa ficaria travado sem saida.
 
+**Rodada 3 — auditoria do multiplo endereco por cliente:**
+Estado real do banco: 3 clientes com 2 enderecos, 1 com 5, e **0 clientes com endereco so nas colunas legadas** de `delivery_customers` (o caminho "endereco sintetico" do `search_customers` e defensivo, nao serve ninguem hoje). Rotulos em uso: Casa, Trabalho, Escritório, Principal, Endereco 3/4/5.
+3 defeitos corrigidos:
+1. **Todo endereco criado pelo caixa saia com o rotulo fixo "Endereço"** — varios enderecos do mesmo cliente ficavam indistinguiveis na lista. Agora o formulario tem seletor (Casa/Trabalho/Escritório/Outro), igual ao link. `save_customer` passou a aceitar `label` opcional (sem ele, segue "Principal"/"Endereco N" — o link nao manda).
+2. **`save_customer_address` nao deduplicava**: dois cliques em Salvar criavam dois enderecos iguais. Dedup agora por `street+number+label` (o rotulo entra na chave de proposito: "Casa" e "Trabalho" no mesmo predio sao enderecos distintos).
+3. **A selecao pos-salvamento adivinhava o endereco por rua+numero** — escolhia o errado quando o cliente tem dois parecidos (mesma rua, complementos diferentes). O backend passou a devolver `saved_address_id` e o front seleciona por ele. Tambem troquei a comparacao de "endereco ativo" na lista (era por referencia de objeto + id) por uma **chave estavel** `chaveEndereco()` — a referencia quebrava depois de recarregar a lista.
+
+Testado end-to-end por HTTP na loja "Testes PDV" (a acao e publica, como no link): criar cliente com "Casa" -> adicionar "Trabalho" -> repetir "Trabalho" identico (dedupou, mesmo id) -> mesma rua com rotulo "Escritório" (criou novo). `saved_address_id` correto nos 3. Dados de teste removidos depois.
+
 Verificado: `tsc` 301 (identico ao baseline medido com `git stash`), `vite build` OK, app sobe no dev server sem erro de console. **Nao testei o fluxo completo logado** — a loja e de producao e o teste criaria cliente/pedido reais. **Deploy necessario:** `delivery-write` e `order-write` (as acoes novas nao existem em producao) + push do front.
 
 ### 2026-08-11 — `NotificacoesContext` NAO serve para avisar uma pessoa especifica

@@ -364,6 +364,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
     if (action === "save_customer") {
       const { tenant_id, phone, name, neighborhood_id, street, number, complement, reference_point, bairro, address_lat, address_lng, birth_date, gender } = body;
+      // Rotulo opcional do 1o endereco (o caixa deixa escolher Casa/Trabalho/...).
+      // O link do delivery nao manda — segue com "Principal"/"Endereco N".
+      const labelPedido = (typeof body.label === "string" && body.label.trim()) ? body.label.trim().slice(0, 40) : null;
       if (!tenant_id || !phone || !name) return jsonErr("tenant_id, phone e name sao obrigatorios", 400);
       const cleanPhone = String(phone).replace(/\D/g, "");
       const { data: rows, error } = await admin.rpc("fn_delivery_save_customer", { p_tenant_id: tenant_id, p_phone: cleanPhone, p_name: name.trim(), p_neighborhood_id: neighborhood_id || null, p_street: street || null, p_number: number || null, p_complement: complement || null, p_reference_point: reference_point || null });
@@ -394,7 +397,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           await admin.from("delivery_customer_addresses").update({ lat: sHasPin ? sLat : null, lng: sHasPin ? sLng : null, bairro: bairro || null }).eq("id", existingAddr.id);
         } else {
           const { count: addrCount } = await admin.from("delivery_customer_addresses").select("id", { count: "exact", head: true }).eq("customer_id", customer.id);
-          await admin.from("delivery_customer_addresses").insert({ customer_id: customer.id, tenant_id, label: (addrCount ?? 0) === 0 ? "Principal" : "Endereco " + ((addrCount ?? 0) + 1), neighborhood_id: neighborhood_id || null, street: street || null, number: number || null, complement: complement || null, reference_point: reference_point || null, bairro: bairro || null, is_default: (addrCount ?? 0) === 0, lat: sHasPin ? sLat : null, lng: sHasPin ? sLng : null });
+          await admin.from("delivery_customer_addresses").insert({ customer_id: customer.id, tenant_id, label: labelPedido ?? ((addrCount ?? 0) === 0 ? "Principal" : "Endereco " + ((addrCount ?? 0) + 1)), neighborhood_id: neighborhood_id || null, street: street || null, number: number || null, complement: complement || null, reference_point: reference_point || null, bairro: bairro || null, is_default: (addrCount ?? 0) === 0, lat: sHasPin ? sLat : null, lng: sHasPin ? sLng : null });
         }
       }
       let addresses: Array<Record<string, unknown>> = [];
@@ -891,17 +894,39 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         lat: (pinLat != null && !Number.isNaN(pinLat)) ? pinLat : null,
         lng: (pinLng != null && !Number.isNaN(pinLng)) ? pinLng : null,
       };
+      // Id do endereco gravado — o chamador precisa dele pra selecionar exatamente
+      // este endereco depois (procurar por rua+numero erra quando ha parecidos).
+      let savedAddressId: string | null = null;
       if (address_id) {
         const { error: updErr } = await admin.from("delivery_customer_addresses").update(fields).eq("id", address_id).eq("customer_id", customer_id).eq("tenant_id", tenant_id);
         if (updErr) throw updErr;
+        savedAddressId = String(address_id);
       } else {
-        const { count: addrCount } = await admin.from("delivery_customer_addresses").select("id", { count: "exact", head: true }).eq("customer_id", customer_id);
-        const { error: insErr } = await admin.from("delivery_customer_addresses").insert({ customer_id, tenant_id, is_default: (addrCount ?? 0) === 0, ...fields });
-        if (insErr) throw insErr;
+        // Dedup: mesmo rua+numero+complemento E mesmo rotulo = e o mesmo endereco
+        // (clique duplo em "Salvar", ou recadastro). Rotulo diferente na mesma rua
+        // continua sendo um endereco novo ("Casa" e "Trabalho" no mesmo predio).
+        const { data: jaExiste } = await admin.from("delivery_customer_addresses")
+          .select("id")
+          .eq("customer_id", customer_id).eq("tenant_id", tenant_id)
+          .eq("street", fields.street ?? "").eq("number", fields.number ?? "")
+          .eq("label", fields.label as string)
+          .maybeSingle();
+        if (jaExiste) {
+          const { error: updErr2 } = await admin.from("delivery_customer_addresses").update(fields).eq("id", jaExiste.id);
+          if (updErr2) throw updErr2;
+          savedAddressId = String(jaExiste.id);
+        } else {
+          const { count: addrCount } = await admin.from("delivery_customer_addresses").select("id", { count: "exact", head: true }).eq("customer_id", customer_id);
+          const { data: inserted, error: insErr } = await admin.from("delivery_customer_addresses")
+            .insert({ customer_id, tenant_id, is_default: (addrCount ?? 0) === 0, ...fields })
+            .select("id").maybeSingle();
+          if (insErr) throw insErr;
+          savedAddressId = inserted?.id ? String(inserted.id) : null;
+        }
       }
       const { data: addrRows } = await admin.from("delivery_customer_addresses").select("id, label, neighborhood_id, street, number, complement, reference_point, is_default, lat, lng, bairro").eq("customer_id", customer_id).eq("tenant_id", tenant_id).order("is_default", { ascending: false });
       const addresses = (addrRows ?? []).map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, lat: a.lat, lng: a.lng, bairro: a.bairro, neighborhood_name: null, neighborhood_delivery_fee: 0, neighborhood_is_active: true }));
-      return new Response(JSON.stringify({ _v: "v14", addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ _v: "v14", addresses, saved_address_id: savedAddressId }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "set_default_address") {
