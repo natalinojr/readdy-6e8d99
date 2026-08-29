@@ -262,6 +262,35 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
 
+### 2026-08-29 — Pedido de delivery lancado no PDV Caixa (cliente cadastrado + taxa automatica)
+
+Pedido do usuario: no caixa, montar o carrinho no cardapio normal e marcar como **entrega**, escolhendo um cliente ja cadastrado (nome/celular/endereco) ou cadastrando um novo com os mesmos dados do link do delivery; ao selecionar, a taxa aparece; ao confirmar, vai pra cozinha como pedido de delivery.
+
+**Decisao de arquitetura:** reusar o **carrinho do PDV** (`PDVContext` + `submitOrder`/`order-write`) em vez de passar pelo `delivery-write create_delivery_order`. Motivo: o caixa precisa de pagamento no caixa, desconto, cortesia e a fila de impressao do PDV — tudo isso ja existe no caminho do PDV. Do delivery reusamos so o **cadastro** (`delivery_customers`/`delivery_customer_addresses`) e a **regra da taxa**.
+
+Como fica um pedido de delivery do caixa: `origin_type='delivery'` + `delivery_platform='propria'` — e isso (e so isso) que faz o pedido aparecer no **Gestor de Entregas** (`list_delivery_board` filtra por `origin_type='delivery'` e plataforma `propria`/nula).
+
+**Backend**
+- `delivery-write` (3 acoes novas, autenticadas por token do operador + membership, mesmo gate do `list_delivery_orders`):
+  - `pdv_delivery_bootstrap` → bairros ativos, `store_location`, faixas de distancia, `distance_mode`.
+  - `search_customers` → busca por nome OU telefone (3+ digitos casa telefone); sem termo devolve os 20 mais recentes por `last_used_at`. Traz os enderecos de cada cliente; cliente antigo com endereco so nas colunas do proprio cadastro vira um endereco "sintetico" (`id: null`).
+  - `quote_delivery_fee` → cotacao pura (nao grava): rota ORS por faixa quando ha `store_location` + faixas + pin; senao taxa do bairro; senao `mode:'manual'` (o caixa digita). Mesma regra do `create_delivery_order`.
+  - Cadastro reusa as acoes publicas ja existentes `save_customer` e `save_customer_address`.
+- `order-write`: passou a aceitar `delivery_lat/lng/distance_km/route_min/sla_min` (UPDATE apos criar o pedido, espelhando o `create_delivery_order`) — sem isso o pedido nao tem pin no mapa do Gestor nem no link do motoboy.
+
+**PEGADINHA — a conferencia financeira do `order-write` ignorava `delivery_fee`.** A validacao era `subtotal - desconto + service_fee == total_amount`; taxa de entrega no total dava 400. Por isso a tela `/pdv/delivery` (iFood etc.) mandava a taxa **duas vezes** (`service_fee_amount` E `delivery_fee`) — era o unico jeito de passar. Agora a validacao aceita **as duas formas** (com e sem a taxa somada), de proposito: front antigo em cache continua funcionando enquanto o deploy do front nao chega. **Convencao canonica (a do `delivery-write`): `total = subtotal - desconto + servico + entrega`, com `service_fee_amount = 0`.** `/pdv/delivery` foi corrigida pra ela.
+
+**PEGADINHA DE CANAL (ja documentada em 2026-07-12, agora com helper):** `order_items.item_price` em `origin_type='delivery'` grava **so o preco-base** (complementos vivem em `order_item_options`, e `fn_get_sales_report` os soma *apenas* nas linhas de delivery). Nos outros canais o `item_price` ja inclui os complementos. O PDV monta `precoTotal` = base + complementos → gravar isso num pedido de delivery contaria em dobro no `top_items`. Criado `itemPriceDoCanal(ci, isDelivery)` em `PDVContext.tsx`, usado nos 4 pontos de montagem de itens. `/pdv/delivery` tinha esse bug e foi corrigida (passou a mandar `itemPreco`).
+
+**Front**
+- `DestinoInfo` (PDVContext) ganhou `clienteDeliveryId`, `enderecoId`, `bairroId`, `latEntrega`, `lngEntrega`, `distanciaKm`, `rotaMin`, `slaMin`.
+- `PDVContext`: `valorTaxaEntrega` (0 fora do destino delivery) entra no `total`; `finalizarPedido` e `enviarParaCozinha` mandam `origin:'delivery'`, `delivery_platform:'propria'`, geo e `destination_name` no formato `"Nome - Endereco"` (o Gestor separa o nome do cliente por esse hifen). **Cortesia com entrega:** o desconto passou a cobrir `subtotal + taxaEntrega`, senao o total 0 nao fecha com a validacao.
+- Novo `src/pages/pdv/caixa/components/DeliveryClienteCaixaModal.tsx`: busca com debounce, lista com nome/telefone/endereco, escolha de endereco quando ha varios, cotacao da taxa, campo de taxa sempre editavel (pre-preenchido pela cotacao — cobre "fora de area" e endereco sem pin), cadastro de cliente novo e de endereco novo (com `MapaPin` quando a loja usa taxa por distancia).
+- `DestinoModal`: o tipo "Delivery" nao tem mais campos livres de nome/telefone — abre o modal do cliente e mostra o resumo (nome, telefone, endereco, taxa) com "Alterar".
+- `CarrinhoPanel`: linha "Taxa de Entrega" no resumo.
+
+Verificado: `tsc` 301 (identico ao baseline medido com `git stash`), `vite build` OK, app sobe no dev server sem erro de console. **Nao testei o fluxo completo logado** — a loja e de producao e o teste criaria cliente/pedido reais. **Deploy necessario:** `delivery-write` e `order-write` (as acoes novas nao existem em producao) + push do front.
+
 ### 2026-08-11 — `NotificacoesContext` NAO serve para avisar uma pessoa especifica
 
 Ao construir as notificacoes do modulo de tarefas, descobri que `src/contexts/NotificacoesContext.tsx` e **estado em memoria** (`useState(gerarMock)`, sem Supabase, sem persistencia) e enderecado por **perfil** (`perfisAlvo: PerfilAlvo[]`), nao por usuario.

@@ -929,6 +929,144 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ _v: "v14", addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── PDV: pedido de delivery lancado no caixa ──────────────────────────────
+    // Acoes autenticadas (token do operador + membership na loja), espelhando o
+    // gate usado em list_delivery_orders. Servem a tela /pdv/caixa: bootstrap da
+    // config de entrega, busca de clientes cadastrados e cotacao da taxa.
+    if (action === "pdv_delivery_bootstrap" || action === "search_customers" || action === "quote_delivery_fee") {
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) return jsonErr("Nao autenticado", 401);
+      const { data: userData, error: userErr } = await admin.auth.getUser(token);
+      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+      const { tenant_id } = body;
+      if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
+      const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
+      if (!membership) return jsonErr("Sem acesso a esta loja.", 403);
+
+      if (action === "pdv_delivery_bootstrap") {
+        const [neighRes, settingsRes] = await Promise.all([
+          admin.from("delivery_neighborhoods").select("id, name, delivery_fee, is_active").eq("tenant_id", tenant_id).order("name"),
+          admin.from("system_settings").select("delivery_config, delivery_city").eq("tenant_id", tenant_id).maybeSingle(),
+        ]);
+        const dc = (settingsRes.data?.delivery_config ?? {}) as Record<string, any>;
+        const tiersRaw = Array.isArray(dc.delivery_fee_tiers) ? dc.delivery_fee_tiers : [];
+        const tiers = tiersRaw
+          .map((t: any) => ({ ate_km: Number(t.ate_km) || 0, taxa: Number(t.taxa) || 0, tempo_max_min: Number(t.tempo_max_min) || 0 }))
+          .filter((t: FaixaEntrega) => t.ate_km > 0);
+        const loc = dc.store_location;
+        const storeLocation = (loc && typeof loc.lat === "number" && typeof loc.lng === "number") ? { lat: loc.lat, lng: loc.lng } : null;
+        return new Response(JSON.stringify({
+          _v: "v14", ok: true,
+          neighborhoods: (neighRes.data ?? []).filter((n: Record<string, unknown>) => n.is_active !== false),
+          store_location: storeLocation,
+          tiers,
+          city: settingsRes.data?.delivery_city ?? null,
+          distance_mode: !!storeLocation && tiers.length > 0,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (action === "search_customers") {
+        // Busca por nome OU telefone. Sem termo, devolve os clientes usados mais
+        // recentemente (o caixa quase sempre atende um cliente recorrente).
+        const raw = String(body.q ?? "").trim();
+        const digits = raw.replace(/\D/g, "");
+        let query = admin.from("delivery_customers")
+          .select("id, name, phone, last_used_at, neighborhood_id, street, number, complement, reference_point")
+          .eq("tenant_id", tenant_id)
+          .order("last_used_at", { ascending: false, nullsFirst: false })
+          .limit(20);
+        if (raw.length >= 2) {
+          // Com 3+ digitos o termo tambem casa por trecho do telefone.
+          const like = raw.replace(/[%,()]/g, " ").trim();
+          query = digits.length >= 3
+            ? query.or("name.ilike.%" + like + "%,phone.ilike.%" + digits + "%")
+            : query.ilike("name", "%" + like + "%");
+        }
+        const { data: custRows, error: custErr } = await query;
+        if (custErr) throw custErr;
+        const customers = custRows ?? [];
+        const ids = customers.map((c: Record<string, unknown>) => c.id as string);
+        const addrByCustomer: Record<string, Array<Record<string, unknown>>> = {};
+        if (ids.length > 0) {
+          const { data: addrRows } = await admin.from("delivery_customer_addresses")
+            .select("id, customer_id, label, neighborhood_id, street, number, complement, reference_point, is_default, lat, lng, bairro")
+            .eq("tenant_id", tenant_id).in("customer_id", ids)
+            .order("is_default", { ascending: false });
+          for (const a of (addrRows ?? [])) {
+            const cid = a.customer_id as string;
+            if (!addrByCustomer[cid]) addrByCustomer[cid] = [];
+            addrByCustomer[cid].push(a);
+          }
+        }
+        // Nome/taxa dos bairros p/ exibir o endereco completo direto na lista.
+        const { data: neighRows } = await admin.from("delivery_neighborhoods").select("id, name, delivery_fee").eq("tenant_id", tenant_id);
+        const neighMap: Record<string, { name: string; fee: number }> = {};
+        for (const n of (neighRows ?? [])) neighMap[n.id as string] = { name: n.name as string, fee: Number(n.delivery_fee ?? 0) };
+        return new Response(JSON.stringify({
+          _v: "v14", ok: true,
+          customers: customers.map((c: Record<string, unknown>) => {
+            const addrs = addrByCustomer[c.id as string] ?? [];
+            // Cliente antigo pode ter endereco so nas colunas do proprio cadastro
+            // (antes da tabela de enderecos) — expoe como endereco sintetico.
+            const legacy = (addrs.length === 0 && c.street)
+              ? [{ id: null, label: "Principal", neighborhood_id: c.neighborhood_id, street: c.street, number: c.number, complement: c.complement, reference_point: c.reference_point, is_default: true, lat: null, lng: null, bairro: null }]
+              : addrs;
+            return {
+              id: c.id, name: c.name, phone: c.phone, last_used_at: c.last_used_at,
+              addresses: legacy.map((a: Record<string, unknown>) => ({
+                id: a.id, label: a.label, neighborhood_id: a.neighborhood_id,
+                street: a.street, number: a.number, complement: a.complement,
+                reference_point: a.reference_point, is_default: a.is_default,
+                lat: a.lat != null ? Number(a.lat) : null,
+                lng: a.lng != null ? Number(a.lng) : null,
+                bairro: a.bairro ?? (a.neighborhood_id ? (neighMap[a.neighborhood_id as string]?.name ?? null) : null),
+                neighborhood_fee: a.neighborhood_id ? (neighMap[a.neighborhood_id as string]?.fee ?? 0) : 0,
+              })),
+            };
+          }),
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // quote_delivery_fee — mesma regra do create_delivery_order (rota ORS por
+      // faixa de distancia; senao, taxa do bairro). Cotacao apenas: nao grava nada.
+      const { data: settingsQ } = await admin.from("system_settings").select("delivery_config").eq("tenant_id", tenant_id).maybeSingle();
+      const dcQ = (settingsQ?.delivery_config ?? {}) as Record<string, any>;
+      const storeLocQ = dcQ.store_location;
+      const tiersQ: FaixaEntrega[] = (Array.isArray(dcQ.delivery_fee_tiers) ? dcQ.delivery_fee_tiers : [])
+        .map((t: any) => ({ ate_km: Number(t.ate_km) || 0, taxa: Number(t.taxa) || 0, tempo_max_min: Number(t.tempo_max_min) || 0 }))
+        .filter((t: FaixaEntrega) => t.ate_km > 0);
+      const hasDistanceCfgQ = storeLocQ && typeof storeLocQ.lat === "number" && typeof storeLocQ.lng === "number" && tiersQ.length > 0;
+      const qLat = (body.lat != null && body.lat !== "") ? Number(body.lat) : null;
+      const qLng = (body.lng != null && body.lng !== "") ? Number(body.lng) : null;
+      const hasPinQ = qLat != null && !Number.isNaN(qLat) && qLng != null && !Number.isNaN(qLng);
+
+      if (hasDistanceCfgQ && hasPinQ) {
+        const ors = await orsRoute(storeLocQ.lat, storeLocQ.lng, qLat as number, qLng as number);
+        const km = ors != null ? ors.km : haversineKm(storeLocQ.lat, storeLocQ.lng, qLat as number, qLng as number) * ROAD_FACTOR;
+        const routeMin = Math.round(ors != null ? ors.durationMin : (km / MOTO_KMH) * 60);
+        const quote = quoteFromTiers(km, tiersQ);
+        return new Response(JSON.stringify({
+          _v: "v14", ok: true, mode: "distancia",
+          fee: quote?.dentroArea ? quote.taxa : 0,
+          km: Math.round(km * 100) / 100,
+          route_min: routeMin,
+          tempo_max_min: quote?.tempoMax ?? null,
+          dentro_area: !!quote?.dentroArea,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const qNeighId = body.neighborhood_id ? String(body.neighborhood_id) : null;
+      if (qNeighId) {
+        const { data: nb } = await admin.from("delivery_neighborhoods").select("id, delivery_fee, is_active").eq("tenant_id", tenant_id).eq("id", qNeighId).maybeSingle();
+        if (nb && nb.is_active !== false) {
+          return new Response(JSON.stringify({ _v: "v14", ok: true, mode: "bairro", fee: Number(nb.delivery_fee ?? 0), km: null, route_min: null, tempo_max_min: null, dentro_area: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+      }
+      // Sem pin e sem bairro nao ha como cotar — o caixa informa a taxa na mao.
+      return new Response(JSON.stringify({ _v: "v14", ok: true, mode: "manual", fee: 0, km: null, route_min: null, tempo_max_min: null, dentro_area: true, needs_pin: !!hasDistanceCfgQ }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "validate_voucher") {
       const { tenant_id, code, order_amount } = body;
       if (!tenant_id || !code) return jsonErr("tenant_id e code obrigatorios", 400);

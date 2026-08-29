@@ -44,7 +44,7 @@ function DestinoTag({ destino, onClear }: { destino: DestinoInfo; onClear?: () =
     mesa: `Mesa ${destino.mesaNumero}`,
     nome: destino.nomeCliente ?? '',
     senha: `Senha: ${destino.senha}`,
-    delivery: `Delivery · ${destino.nomeCliente}`,
+    delivery: `Delivery · ${destino.nomeCliente ?? ''}`,
   };
   const icons: Record<string, string> = {
     hora: 'ri-timer-line',
@@ -116,7 +116,7 @@ function ConfirmDialog({
 export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem, onEnviarCozinha, onVincularPedidos }: Props) {
   const {
     carrinho, destino, taxaServico,
-    subtotal, valorDesconto, valorTaxaServico, total,
+    subtotal, valorDesconto, valorTaxaServico, valorTaxaEntrega, total,
     updateItemQty, removeItem, setDesconto, toggleTaxaServico, addItem, clearCart, setDestino,
     isCortesia, cortesiaAutorizadaPor, cortesiaDestinatario, cortesiaMotivo,
   } = usePDV();
@@ -800,6 +800,12 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
                   <div className="flex justify-between text-xs text-zinc-500">
                     <span>Taxa de Serviço</span>
                     <span>+{formatPrice(valorTaxaServico)}</span>
+                  </div>
+                )}
+                {valorTaxaEntrega > 0 && (
+                  <div className="flex justify-between text-xs text-zinc-500">
+                    <span className="flex items-center gap-1"><i className="ri-e-bike-line" /> Taxa de Entrega</span>
+                    <span>+{formatPrice(valorTaxaEntrega)}</span>
                   </div>
                 )}
                 <div className={`flex justify-between text-base font-bold text-zinc-900 ${(subtotal !== total || valorDesconto > 0 || (taxaServico && taxaServicoConfig)) ? 'pt-1 border-t border-zinc-200' : ''}`}>

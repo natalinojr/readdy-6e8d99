@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import type { DestinoInfo, DestinoType } from '../../../../contexts/PDVContext';
 import { usePDV } from '../../../../contexts/PDVContext';
 import { useMesas } from '../../../../contexts/MesasContext';
+import { useAuth } from '../../../../contexts/AuthContext';
+import DeliveryClienteCaixaModal from './DeliveryClienteCaixaModal';
 
 interface Props {
   current: DestinoInfo | null;
@@ -20,11 +22,16 @@ const TIPOS: { tipo: DestinoType; label: string; icon: string; desc: string }[] 
 
 export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa }: Props) {
   const { mesas } = useMesas();
+  const { user } = useAuth();
   const { senhaCounter, consumirSenha } = usePDV();
+  // Delivery: cliente + endereco + taxa vem do modal proprio (cadastro do delivery).
+  const [deliveryInfo, setDeliveryInfo] = useState<DestinoInfo | null>(
+    current?.tipo === 'delivery' ? current : null,
+  );
+  const [showClienteDelivery, setShowClienteDelivery] = useState(false);
   const [tipo, setTipo] = useState<DestinoType>(current?.tipo && current.tipo !== 'hora' ? current.tipo : 'mesa');
   const [mesaId, setMesaId] = useState(current?.mesaId ?? '');
   const [nomeCliente, setNomeCliente] = useState(current?.nomeCliente ?? '');
-  const [telefone, setTelefone] = useState(current?.telefone ?? '');
   const [senha, setSenha] = useState(current?.senha ?? '');
   const [observacaoPedido, setObservacaoPedido] = useState(current?.observacaoPedido ?? '');
 
@@ -61,8 +68,8 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
       const senhaGerada = await consumirSenha();
       info = { tipo, senha: String(senhaGerada), observacaoPedido: observacaoPedido.trim() || undefined };
     } else if (tipo === 'delivery') {
-      if (!nomeCliente.trim()) return;
-      info = { tipo, nomeCliente, telefone, observacaoPedido: observacaoPedido.trim() || undefined };
+      if (!deliveryInfo) return;
+      info = { ...deliveryInfo, tipo, observacaoPedido: deliveryInfo.observacaoPedido };
     }
     onConfirm(info);
   };
@@ -71,7 +78,7 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
     if (tipo === 'mesa') return !!mesaId;
     if (tipo === 'nome') return !!nomeCliente.trim();
     if (tipo === 'senha') return true; // Sempre válido — senha é gerada automaticamente
-    if (tipo === 'delivery') return !!nomeCliente.trim();
+    if (tipo === 'delivery') return !!deliveryInfo;
     return false;
   };
 
@@ -92,7 +99,10 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
             {TIPOS.map((t) => (
               <button
                 key={t.tipo}
-                onClick={() => setTipo(t.tipo)}
+                onClick={() => {
+                  setTipo(t.tipo);
+                  if (t.tipo === 'delivery' && !deliveryInfo) setShowClienteDelivery(true);
+                }}
                 className={`flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-colors cursor-pointer ${
                   tipo === t.tipo
                     ? 'border-amber-500 bg-amber-50'
@@ -151,29 +161,47 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
             </div>
           )}
 
-          {(tipo === 'nome' || tipo === 'delivery') && (
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Nome do Cliente</label>
-                <input
-                  type="text"
-                  value={nomeCliente}
-                  onChange={(e) => setNomeCliente(e.target.value)}
-                  placeholder="Ex: João Silva"
-                  className="w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                />
-              </div>
-              {tipo === 'delivery' && (
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">Telefone (opcional)</label>
-                  <input
-                    type="tel"
-                    value={telefone}
-                    onChange={(e) => setTelefone(e.target.value)}
-                    placeholder="(11) 99999-9999"
-                    className="w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                  />
+          {tipo === 'nome' && (
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 mb-1">Nome do Cliente</label>
+              <input
+                type="text"
+                value={nomeCliente}
+                onChange={(e) => setNomeCliente(e.target.value)}
+                placeholder="Ex: João Silva"
+                className="w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+          )}
+
+          {tipo === 'delivery' && (
+            <div>
+              {deliveryInfo ? (
+                <div className="border-2 border-amber-400 bg-amber-50 rounded-xl p-3">
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-zinc-900 truncate">{deliveryInfo.nomeCliente}</p>
+                      {deliveryInfo.telefone && <p className="text-xs text-zinc-500">{deliveryInfo.telefone}</p>}
+                      <p className="text-xs text-zinc-600 mt-1">{deliveryInfo.enderecoEntrega || 'Sem endereço'}</p>
+                      <p className="text-xs font-semibold text-amber-700 mt-1">
+                        Taxa de entrega: R$ {(deliveryInfo.taxaEntrega ?? 0).toFixed(2).replace('.', ',')}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowClienteDelivery(true)}
+                      className="text-xs font-semibold text-amber-700 hover:underline cursor-pointer shrink-0"
+                    >
+                      Alterar
+                    </button>
+                  </div>
                 </div>
+              ) : (
+                <button
+                  onClick={() => setShowClienteDelivery(true)}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-dashed border-zinc-300 text-sm font-semibold text-zinc-600 hover:border-amber-400 hover:text-amber-700 cursor-pointer"
+                >
+                  <i className="ri-user-search-line" /> Selecionar cliente da entrega
+                </button>
               )}
             </div>
           )}
@@ -194,7 +222,7 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
           )}
 
           {/* Observação geral do pedido (balcão / delivery) */}
-          {(tipo === 'nome' || tipo === 'senha' || tipo === 'delivery') && (
+          {(tipo === 'nome' || tipo === 'senha') && (
             <div>
               <label className="block text-sm font-medium text-zinc-700 mb-1">
                 <span className="flex items-center gap-1.5">
@@ -214,6 +242,15 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
             </div>
           )}
         </div>
+
+        {showClienteDelivery && user?.tenantId && (
+          <DeliveryClienteCaixaModal
+            tenantId={user.tenantId}
+            current={deliveryInfo}
+            onClose={() => setShowClienteDelivery(false)}
+            onConfirm={(info) => { setDeliveryInfo(info); setShowClienteDelivery(false); }}
+          />
+        )}
 
         <div className="px-5 pb-5">
           <button

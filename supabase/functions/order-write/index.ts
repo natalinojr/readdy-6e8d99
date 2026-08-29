@@ -694,7 +694,17 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const orderNotes: string | null = (body.notes as string) ?? null;
       if (!session_id) { return new Response(JSON.stringify({ error: "session_id is required — pedido bloqueado sem sessao ativa" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       if (!Array.isArray(items) || items.length === 0) { return new Response(JSON.stringify({ error: "items array is required and must not be empty" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
-      if (subtotal != null && total_amount != null) { const expectedTotal = (Number(subtotal ?? 0)) - (Number(discount_amount ?? 0)) + (Number(service_fee_amount ?? 0)); const diff = Math.abs(expectedTotal - Number(total_amount)); if (diff > 0.01) { return new Response(JSON.stringify({ error: `Inconsistencia financeira: subtotal(${subtotal}) - desconto(${discount_amount ?? 0}) + taxa(${service_fee_amount ?? 0}) = ${expectedTotal.toFixed(2)}, mas total_amount enviado = ${total_amount}. Diferenca: ${diff.toFixed(2)}` }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } }
+      // Conferencia financeira. A taxa de entrega entra no total pela convencao do
+      // delivery-write (total = subtotal - desconto + servico + entrega). Aceitamos
+      // TAMBEM o total sem a taxa: fronts antigos ainda em cache mandam a taxa de
+      // entrega duplicada em service_fee_amount, e rejeita-los travaria o caixa
+      // enquanto o deploy do front nao chega.
+      if (subtotal != null && total_amount != null) {
+        const base = (Number(subtotal ?? 0)) - (Number(discount_amount ?? 0)) + (Number(service_fee_amount ?? 0));
+        const comEntrega = base + (Number(delivery_fee ?? 0));
+        const diff = Math.min(Math.abs(comEntrega - Number(total_amount)), Math.abs(base - Number(total_amount)));
+        if (diff > 0.01) { return new Response(JSON.stringify({ error: `Inconsistencia financeira: subtotal(${subtotal}) - desconto(${discount_amount ?? 0}) + taxa(${service_fee_amount ?? 0}) + entrega(${delivery_fee ?? 0}) = ${comEntrega.toFixed(2)}, mas total_amount enviado = ${total_amount}. Diferenca: ${diff.toFixed(2)}` }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      }
       const { data: sessionRow, error: sessionErr } = await admin.from("sessions").select("id, tenant_id, status").eq("id", session_id).maybeSingle();
       if (sessionErr) { log("WARN", "create_order", "Erro ao validar session_id", { error: sessionErr.message }); }
       else if (!sessionRow) { return new Response(JSON.stringify({ error: "session_id invalido — sessao nao encontrada" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -725,6 +735,23 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const orderResult = await withRetry(async () => { const { data, error } = await admin.rpc("fn_create_order_bypass", { order_data: { tenant_id: tenantId, session_id, number: orderNumber, status: initialOrderStatus, origin_type: mappedOrigin, destination_type: mappedDest, destination_name: finalDestinationName, destination_phone: cleanDestPhone, delivery_address: delivery_address ?? null, delivery_fee: delivery_fee ?? 0, delivery_platform: deliveryPlatform ?? null, discount_amount: discount_amount ?? 0, service_fee_amount: service_fee_amount ?? 0, subtotal: subtotal ?? 0, total_amount: total_amount ?? 0, is_training: is_training ?? false, is_draft: false, origin_user_id: effectiveUserId, customer_id: customerId ?? null, table_number: finalTableNumber, customer_cpf: customer_cpf ?? null, customer_email: customer_email ?? null, table_session_id: resolvedTableSessionId, notes: cortesiaNotes, client_request_id: effectiveClientRequestId } }); if (error) throw error; return data; }, 3, "create_order:fn_create_order_bypass", { session_id, tenant_id: tenantId, origin: mappedOrigin, client_request_id: effectiveClientRequestId });
       const orderId: string = orderResult?.id;
       if (!orderId) { return new Response(JSON.stringify({ error: "Order created but no ID returned" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      // ── Delivery lancado no caixa: pin + rota (alimenta o Gestor de Entregas
+      // e o link do motoboy, iguais aos pedidos vindos do link do delivery) ──
+      const dLat = (body.delivery_lat != null && body.delivery_lat !== "") ? Number(body.delivery_lat) : null;
+      const dLng = (body.delivery_lng != null && body.delivery_lng !== "") ? Number(body.delivery_lng) : null;
+      if (dLat != null && !Number.isNaN(dLat) && dLng != null && !Number.isNaN(dLng)) {
+        const dKm = (body.delivery_distance_km != null) ? Number(body.delivery_distance_km) : null;
+        const dRoute = (body.delivery_route_min != null) ? Number(body.delivery_route_min) : null;
+        const dSla = (body.delivery_sla_min != null) ? Number(body.delivery_sla_min) : null;
+        try {
+          await admin.from("orders").update({
+            delivery_lat: dLat, delivery_lng: dLng,
+            delivery_distance_km: (dKm != null && !Number.isNaN(dKm)) ? dKm : null,
+            delivery_route_min: (dRoute != null && !Number.isNaN(dRoute)) ? dRoute : null,
+            delivery_sla_min: (dSla != null && !Number.isNaN(dSla)) ? dSla : null,
+          }).eq("id", orderId);
+        } catch (geoErr) { log("WARN", "create_order", "Falha ao gravar geo da entrega (non-blocking)", { error: String(geoErr), order_id: orderId }); }
+      }
       // ── Cortesia: marca pedido como cortesia e pago ──
       if (isCortesia && orderId) {
         const cortesiaNow = new Date().toISOString();

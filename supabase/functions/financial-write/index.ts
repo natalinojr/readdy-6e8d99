@@ -187,20 +187,41 @@ Deno.serve(async (req) => {
 
       // ── Cash Flow ─────────────────────────────────────────────────────────
       case 'list_cash_flow': {
-        let query = supabase
-          .from('fin_cash_flow')
-          .select('*, cost_center:fin_cost_centers(id,name,color,icon)')
-          .eq('tenant_id', tenant_id)
-          .order('date', { ascending: false })
-          .order('created_at', { ascending: false });
-        if (payload?.startDate) query = query.gte('date', payload.startDate);
-        if (payload?.endDate) query = query.lte('date', payload.endDate);
-        const { data, error } = await query;
-        if (error) {
-          console.error('[list_cash_flow] error:', error.message);
-          return new Response(JSON.stringify({ error: extractErrorMessage(error) }), { status: 500, headers: corsHeaders });
+        // PAGINADO: o PostgREST corta em ~1000 linhas SEM erro. O fluxo de caixa
+        // ganha uma linha por pagamento (auto_sale), mais taxa de cartão,
+        // sangrias, compras e contas pagas — uma loja movimentada passa de 1000
+        // num mês. Os KPIs "Total Entradas/Saídas/Saldo" são somados no cliente
+        // a partir desta lista, então o truncamento fazia os totais
+        // subnotificarem sozinhos, sem nada indicar na tela.
+        const PAGE = 1000;
+        const MAX = 20000;
+        const rows: unknown[] = [];
+        let truncated = false;
+
+        for (let page = 0; page * PAGE < MAX; page++) {
+          let query = supabase
+            .from('fin_cash_flow')
+            .select('*, cost_center:fin_cost_centers(id,name,color,icon)')
+            .eq('tenant_id', tenant_id)
+            .order('date', { ascending: false })
+            .order('created_at', { ascending: false })
+            .range(page * PAGE, page * PAGE + PAGE - 1);
+          if (payload?.startDate) query = query.gte('date', payload.startDate);
+          if (payload?.endDate) query = query.lte('date', payload.endDate);
+
+          const { data, error } = await query;
+          if (error) {
+            console.error('[list_cash_flow] error:', error.message);
+            return new Response(JSON.stringify({ error: extractErrorMessage(error) }), { status: 500, headers: corsHeaders });
+          }
+          const batch = data ?? [];
+          rows.push(...batch);
+          if (batch.length < PAGE) break;
+          if (rows.length >= MAX) { truncated = true; break; }
         }
-        return new Response(JSON.stringify({ data: data ?? [] }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+        if (truncated) console.warn(`[list_cash_flow] teto de ${MAX} linhas atingido (tenant ${tenant_id})`);
+        return new Response(JSON.stringify({ data: rows, truncated }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       case 'insert_cash_flow': {

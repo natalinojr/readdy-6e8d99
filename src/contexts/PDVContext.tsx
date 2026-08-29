@@ -93,6 +93,17 @@ export interface DestinoInfo {
   enderecoEntrega?: string;
   taxaEntrega?: number;
   observacaoPedido?: string;
+  /** Delivery lançado no caixa — cliente do cadastro do delivery (delivery_customers) */
+  clienteDeliveryId?: string;
+  /** Endereço escolhido (delivery_customer_addresses) */
+  enderecoId?: string | null;
+  bairroId?: string | null;
+  /** Pin do endereço — alimenta o mapa do Gestor de Entregas e o link do motoboy */
+  latEntrega?: number | null;
+  lngEntrega?: number | null;
+  distanciaKm?: number | null;
+  rotaMin?: number | null;
+  slaMin?: number | null;
 }
 
 export interface PagamentoItem {
@@ -138,9 +149,22 @@ interface PDVContextData {
   subtotal: number;
   valorDesconto: number;
   valorTaxaServico: number;
+  /** Taxa de entrega do destino delivery (0 nos demais destinos) — já somada no total */
+  valorTaxaEntrega: number;
   total: number;
   finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }) => Promise<FinalizarResult>;
   enviarParaCozinha: (destinoOverride?: DestinoInfo | null) => Promise<FinalizarResult>;
+}
+
+/**
+ * Preco gravado em order_items.item_price.
+ * PEGADINHA DE CANAL: em `origin_type='delivery'` a convencao do sistema e gravar
+ * so o preco-base (os complementos vivem em order_item_options); nos demais canais
+ * o item_price ja inclui os complementos. O relatorio de vendas soma os complementos
+ * apenas nas linhas de delivery — gravar o preco cheio contaria em dobro.
+ */
+function itemPriceDoCanal(ci: CarrinhoItem, isDelivery: boolean): number {
+  return isDelivery ? ci.precoBase : ci.precoTotal;
 }
 
 const PDVContext = createContext<PDVContextData | null>(null);
@@ -236,7 +260,10 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
   const subtotal = carrinho.reduce((acc, i) => acc + i.precoTotal * i.quantidade, 0);
   const valorDesconto = Math.min(desconto, subtotal);
   const valorTaxaServico = taxaServico ? (subtotal - valorDesconto) * taxaServicoPct : 0;
-  const total = subtotal - valorDesconto + valorTaxaServico;
+  // Delivery no caixa: a taxa de entrega faz parte do que o cliente paga.
+  // Mesma convenção do delivery-write (total = subtotal - desconto + serviço + entrega).
+  const valorTaxaEntrega = destino?.tipo === 'delivery' ? (destino.taxaEntrega ?? 0) : 0;
+  const total = subtotal - valorDesconto + valorTaxaServico + valorTaxaEntrega;
 
   const addItem = useCallback((item: Omit<CarrinhoItem, 'cartId'>) => {
     setCarrinho((prev) => {
@@ -304,7 +331,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
   const toggleTaxaServico = useCallback(() => setTaxaServico((v) => !v), []);
 
   // ── Helper: monta payload dos itens para a edge function ────────────────
-  const buildItemsPayload = useCallback(() => {
+  const buildItemsPayload = useCallback((isDeliveryDest = false) => {
     const obsPedido = destino?.observacaoPedido;
     let obsPedidoAdded = false;
 
@@ -326,7 +353,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
           return {
             item_id: ci.itemId || null,
             item_name: ci.nome,
-            item_price: ci.precoTotal,
+            item_price: itemPriceDoCanal(ci, isDeliveryDest),
             quantity: 1,
             station_id: ci.stationId ?? null,
             skip_kds: ci.semPreparo ?? false,
@@ -356,7 +383,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       return [{
         item_id: ci.itemId || null,
         item_name: ci.nome,
-        item_price: ci.precoTotal,
+        item_price: itemPriceDoCanal(ci, isDeliveryDest),
         quantity: ci.quantidade,
         station_id: ci.stationId ?? null,
         skip_kds: ci.semPreparo ?? false,
@@ -393,7 +420,8 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       return { orderId: 'local', number: numeroLocal };
     }
 
-    const itensPayload = buildItemsPayload();
+    const isDelivery = destino?.tipo === 'delivery';
+    const itensPayload = buildItemsPayload(isDelivery);
 
     const offlinePayments = pagamentos
       .filter((p) => p.formaId)
@@ -418,7 +446,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     // desconto do carrinho. Reduz o total_amount do pedido (o voucher, quando houver,
     // continua sendo resgatado à parte).
     const extraDesc = cortesiaAtiva ? 0 : Math.max(0, extraDiscount?.amount ?? 0);
-    const actualDesconto = cortesiaAtiva ? subtotal : (valorDesconto + extraDesc);
+    const actualDesconto = cortesiaAtiva ? subtotal + valorTaxaEntrega : (valorDesconto + extraDesc);
     const actualTaxaServico = cortesiaAtiva ? 0 : valorTaxaServico;
     const actualTotal = cortesiaAtiva ? 0 : Math.max(0, total - extraDesc);
 
@@ -439,11 +467,22 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       destination: destino?.tipo ?? 'hora',
       destination_name: destino?.tipo === 'mesa'
         ? (destino?.nomeCliente ? `Mesa ${destino.mesaNumero} — ${destino.nomeCliente}` : `Mesa ${destino.mesaNumero}`)
-        : (destino?.nomeCliente ?? destino?.senha ?? null),
+        // Delivery: mesmo formato "Nome - Endereco" gravado pelo link do delivery —
+        // o Gestor de Entregas separa o nome do cliente por esse hifen.
+        : isDelivery
+          ? `${destino?.nomeCliente ?? 'Cliente'}${destino?.enderecoEntrega ? ` - ${destino.enderecoEntrega}` : ''}`
+          : (destino?.nomeCliente ?? destino?.senha ?? null),
       destination_phone: (customerData?.customerPhone?.trim() || destino?.telefone) ?? null,
       delivery_address: destino?.enderecoEntrega ?? null,
-      delivery_fee: destino?.taxaEntrega ?? 0,
-      origin: 'cashier',
+      delivery_fee: cortesiaAtiva ? 0 : (destino?.taxaEntrega ?? 0),
+      // Entrega propria: e o que faz o pedido aparecer no Gestor de Entregas.
+      delivery_platform: isDelivery ? 'propria' : undefined,
+      delivery_lat: isDelivery ? destino?.latEntrega ?? null : null,
+      delivery_lng: isDelivery ? destino?.lngEntrega ?? null : null,
+      delivery_distance_km: isDelivery ? destino?.distanciaKm ?? null : null,
+      delivery_route_min: isDelivery ? destino?.rotaMin ?? null : null,
+      delivery_sla_min: isDelivery ? destino?.slaMin ?? null : null,
+      origin: isDelivery ? 'delivery' : 'cashier',
       items: itensPayload,
       discount_amount: actualDesconto,
       service_fee_amount: actualTaxaServico,
@@ -455,7 +494,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       customer_email: customerData?.customerEmail ?? null,
       table_number: destino?.tipo === 'mesa' ? destino.mesaNumero ?? null : null,
       // Nome digitado no box de dados do cliente tem prioridade; fallback = nome da mesa
-      customer_name: (customerData?.customerName?.trim() || (destino?.tipo === 'mesa' ? destino?.nomeCliente : null)) ?? null,
+      customer_name: (customerData?.customerName?.trim() || ((destino?.tipo === 'mesa' || isDelivery) ? destino?.nomeCliente : null)) ?? null,
       table_session_id: tableSessionId,
       is_cortesia: cortesiaAtiva ? true : undefined,
       // Audita quem autorizou o desconto aplicado na tela de pagamento (via notes,
@@ -588,6 +627,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
 
     const destinoAtivo = destinoOverride ?? destino;
 
+    const isDeliveryDest = destinoAtivo?.tipo === 'delivery';
     const obsPedido = destinoAtivo?.observacaoPedido;
     let obsPedidoAdded = false;
     const itensPayload = carrinho.flatMap((ci) => {
@@ -606,7 +646,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
           return {
             item_id: ci.itemId || null,
             item_name: ci.nome,
-            item_price: ci.precoTotal,
+            item_price: itemPriceDoCanal(ci, isDeliveryDest),
             quantity: 1,
             station_id: ci.stationId ?? null,
             skip_kds: ci.semPreparo ?? false,
@@ -636,7 +676,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       return [{
         item_id: ci.itemId || null,
         item_name: ci.nome,
-        item_price: ci.precoTotal,
+        item_price: itemPriceDoCanal(ci, isDeliveryDest),
         quantity: ci.quantidade,
         station_id: ci.stationId ?? null,
         skip_kds: ci.semPreparo ?? false,
@@ -667,11 +707,19 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       destination: destinoAtivo?.tipo ?? 'hora',
       destination_name: destinoAtivo?.tipo === 'mesa'
         ? (destinoAtivo?.nomeCliente ? `Mesa ${destinoAtivo.mesaNumero} — ${destinoAtivo.nomeCliente}` : `Mesa ${destinoAtivo.mesaNumero}`)
-        : (destinoAtivo?.nomeCliente ?? destinoAtivo?.senha ?? null),
+        : isDeliveryDest
+          ? `${destinoAtivo?.nomeCliente ?? 'Cliente'}${destinoAtivo?.enderecoEntrega ? ` - ${destinoAtivo.enderecoEntrega}` : ''}`
+          : (destinoAtivo?.nomeCliente ?? destinoAtivo?.senha ?? null),
       destination_phone: destinoAtivo?.telefone ?? null,
       delivery_address: destinoAtivo?.enderecoEntrega ?? null,
       delivery_fee: destinoAtivo?.taxaEntrega ?? 0,
-      origin: 'cashier',
+      delivery_platform: isDeliveryDest ? 'propria' : undefined,
+      delivery_lat: isDeliveryDest ? destinoAtivo?.latEntrega ?? null : null,
+      delivery_lng: isDeliveryDest ? destinoAtivo?.lngEntrega ?? null : null,
+      delivery_distance_km: isDeliveryDest ? destinoAtivo?.distanciaKm ?? null : null,
+      delivery_route_min: isDeliveryDest ? destinoAtivo?.rotaMin ?? null : null,
+      delivery_sla_min: isDeliveryDest ? destinoAtivo?.slaMin ?? null : null,
+      origin: isDeliveryDest ? 'delivery' : 'cashier',
       items: itensPayload,
       discount_amount: valorDesconto,
       service_fee_amount: valorTaxaServico,
@@ -682,7 +730,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       customer_cpf: null,
       customer_email: null,
       table_number: destinoAtivo?.tipo === 'mesa' ? destinoAtivo.mesaNumero ?? null : null,
-      customer_name: destinoAtivo?.tipo === 'mesa' ? destinoAtivo?.nomeCliente ?? null : null,
+      customer_name: (destinoAtivo?.tipo === 'mesa' || isDeliveryDest) ? destinoAtivo?.nomeCliente ?? null : null,
       table_session_id: tableSessionId,
     }, { stationToImpressoraId: mapaEstacoes });
 
@@ -755,7 +803,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       isCortesia, cortesiaAutorizadaPor, cortesiaDestinatario, cortesiaMotivo, setCortesia, clearCortesia,
       addItem, updateItemQty, removeItem, updateItemObs, clearCart,
       setDestino, setDesconto, toggleTaxaServico, marcarComoPago,
-      subtotal, valorDesconto, valorTaxaServico, total,
+      subtotal, valorDesconto, valorTaxaServico, valorTaxaEntrega, total,
       finalizarPedido, enviarParaCozinha,
       senhaCounter, consumirSenha,
     }}>

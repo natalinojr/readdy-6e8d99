@@ -88,7 +88,9 @@ export default function PDVDeliveryPage() {
     const itensPayload = carrinho.map((ci) => ({
       item_id: ci.itemId && /^[0-9a-f-]{36}$/i.test(ci.itemId) ? ci.itemId : null,
       item_name: ci.itemNome,
-      item_price: ci.precoUnitario,
+      // Canal delivery grava so o preco-base; os complementos ficam em
+      // order_item_options (o relatorio de vendas os soma nessas linhas).
+      item_price: ci.itemPreco,
       quantity: ci.quantidade,
       station_id: null,
       // Pedidos de delivery NÃO vão para o KDS — já chegam prontos do app externo
@@ -130,7 +132,9 @@ export default function PDVDeliveryPage() {
         waiter_name: obsExtra || null,
         items: itensPayload,
         discount_amount: 0,
-        service_fee_amount: taxaEntrega,
+        // A taxa de entrega ja entra no total via delivery_fee — repetir aqui
+        // contava a taxa duas vezes na conferencia financeira do order-write.
+        service_fee_amount: 0,
         subtotal,
         total_amount: total,
         is_training: user.modoTreino ?? false,

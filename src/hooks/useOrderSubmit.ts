@@ -55,6 +55,12 @@ export interface CreateOrderPayload {
   customer_email?: string | null;
   /** Plataforma de delivery (ifood, rappi, etc.) para relatórios */
   delivery_platform?: string | null;
+  /** Pin/rota da entrega — alimenta o mapa do Gestor de Entregas e o link do motoboy */
+  delivery_lat?: number | null;
+  delivery_lng?: number | null;
+  delivery_distance_km?: number | null;
+  delivery_route_min?: number | null;
+  delivery_sla_min?: number | null;
   /** ID da sessão de mesa (table_session_id) para vincular pedido ao consumo da mesa */
   table_session_id?: string | null;
   /** Pedido cortesia — total zerado, is_paid=true automaticamente */
