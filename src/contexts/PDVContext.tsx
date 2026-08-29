@@ -104,6 +104,10 @@ export interface DestinoInfo {
   distanciaKm?: number | null;
   rotaMin?: number | null;
   slaMin?: number | null;
+  /** Forma de pagamento combinada com o cliente (cobrada na entrega) */
+  formaPagamento?: string;
+  /** Troco para (dinheiro) */
+  trocoPara?: number;
 }
 
 export interface PagamentoItem {
@@ -165,6 +169,20 @@ interface PDVContextData {
  */
 function itemPriceDoCanal(ci: CarrinhoItem, isDelivery: boolean): number {
   return isDelivery ? ci.precoBase : ci.precoTotal;
+}
+
+/**
+ * Linha de pagamento do pedido de entrega, no mesmo formato que o `delivery-write`
+ * grava para os pedidos do link ("Pagamento: X | Troco para R$ Y") — assim as duas
+ * origens ficam iguais no historico e na impressao.
+ */
+function notasPagamentoDelivery(d: DestinoInfo | null | undefined): string | null {
+  if (!d || d.tipo !== 'delivery' || !d.formaPagamento) return null;
+  const partes = [`Pagamento: ${d.formaPagamento}`];
+  if (d.trocoPara && d.trocoPara > 0) {
+    partes.push(`Troco para R$ ${d.trocoPara.toFixed(2).replace('.', ',')}`);
+  }
+  return partes.join(' | ');
 }
 
 const PDVContext = createContext<PDVContextData | null>(null);
@@ -501,9 +519,14 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       // já que não passamos pela coluna dedicada aqui).
       notes: cortesiaAtiva
         ? cortesiaNotesStr
-        : (extraDesc > 0 && extraDiscount?.authorizedBy
-            ? `Desconto R$ ${extraDesc.toFixed(2)} autorizado por: ${extraDiscount.authorizedBy}`
-            : undefined),
+        : ([
+            extraDesc > 0 && extraDiscount?.authorizedBy
+              ? `Desconto R$ ${extraDesc.toFixed(2)} autorizado por: ${extraDiscount.authorizedBy}`
+              : null,
+            notasPagamentoDelivery(destino),
+          ].filter(Boolean).join(' | ') || undefined),
+      delivery_payment_label: isDelivery ? destino?.formaPagamento ?? null : null,
+      delivery_change_for: isDelivery ? destino?.trocoPara ?? null : null,
       cortesia_authorized_by: cortesiaAtiva ? (cortesiaAutor ?? undefined) : undefined,
     }, { offlinePayments, stationToImpressoraId: mapaEstacoes });
 
@@ -738,6 +761,9 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       table_number: destinoAtivo?.tipo === 'mesa' ? destinoAtivo.mesaNumero ?? null : null,
       customer_name: (destinoAtivo?.tipo === 'mesa' || isDeliveryDest) ? destinoAtivo?.nomeCliente ?? null : null,
       table_session_id: tableSessionId,
+      notes: notasPagamentoDelivery(destinoAtivo) ?? undefined,
+      delivery_payment_label: isDeliveryDest ? destinoAtivo?.formaPagamento ?? null : null,
+      delivery_change_for: isDeliveryDest ? destinoAtivo?.trocoPara ?? null : null,
     }, { stationToImpressoraId: mapaEstacoes });
 
     const orderId: string = orderResult.id;

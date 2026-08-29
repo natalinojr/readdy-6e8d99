@@ -186,6 +186,12 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
                       <p className="text-xs font-semibold text-amber-700 mt-1">
                         Taxa de entrega: R$ {(deliveryInfo.taxaEntrega ?? 0).toFixed(2).replace('.', ',')}
                       </p>
+                      {deliveryInfo.formaPagamento && (
+                        <p className="text-xs text-zinc-600">
+                          Pagamento: {deliveryInfo.formaPagamento}
+                          {deliveryInfo.trocoPara ? ` · troco para R$ ${deliveryInfo.trocoPara.toFixed(2).replace('.', ',')}` : ''}
+                        </p>
+                      )}
                     </div>
                     <button
                       onClick={() => setShowClienteDelivery(true)}

@@ -36,6 +36,9 @@ export interface DeliveryReceiptInfo {
   distanceKm?: number | null;
   slaMin?: number | null;
   observacao?: string | null;
+  /** Forma de pagamento combinada e troco — o motoboy precisa disso na mao */
+  paymentLabel?: string | null;
+  changeFor?: number | null;
 }
 
 export interface OrderPrintDestino {
@@ -501,6 +504,8 @@ export async function queueOrderForPrint(
       (deliveryReceipt.discount ?? 0) > 0 ? `Desconto: -${money(deliveryReceipt.discount ?? 0)}` : '',
       deliveryReceipt.fee > 0 ? `Taxa de entrega: ${money(deliveryReceipt.fee)}` : '',
       `TOTAL: ${money(deliveryReceipt.total)}`,
+      `Pagamento: ${deliveryReceipt.paymentLabel || 'Nao informado'}`,
+      (deliveryReceipt.changeFor ?? 0) > 0 ? `Troco para ${money(deliveryReceipt.changeFor ?? 0)}` : '',
       deliveryReceipt.observacao ? `Obs: ${deliveryReceipt.observacao}` : '',
     ].filter(Boolean);
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
 import MapaPin from '@/components/feature/MapaPin';
+import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 import type { DestinoInfo } from '@/contexts/PDVContext';
 
 /**
@@ -100,6 +101,13 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
   const [taxaManual, setTaxaManual] = useState('');
   const [obs, setObs] = useState(current?.observacaoPedido ?? '');
 
+  // ── Pagamento previsto na entrega (o cliente paga ao motoboy) ──
+  const { formasAtivas } = usePaymentMethods();
+  const [formaPagamento, setFormaPagamento] = useState<string>('');
+  const [trocoPara, setTrocoPara] = useState('');
+  const formaSel = formasAtivas.find((f) => f.id === formaPagamento) ?? null;
+  const pedeTroco = formaSel?.tipo === 'dinheiro' || formaSel?.exigeTroco === true;
+
   // ── Cadastro (cliente novo ou endereço novo) ──
   const [modo, setModo] = useState<'lista' | 'novo_cliente' | 'novo_endereco'>('lista');
   const [fNome, setFNome] = useState('');
@@ -118,6 +126,9 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
   const [pinConfirmado, setPinConfirmado] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
+  // Quais campos obrigatorios estao faltando — o aviso no topo do form rolado some
+  // da vista, entao o erro tambem aparece junto do botao Salvar.
+  const [faltando, setFaltando] = useState<{ nome?: boolean; telefone?: boolean }>({});
 
   const buscaSeq = useRef(0);
 
@@ -216,8 +227,18 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
 
     if (modo === 'novo_cliente') {
       const tel = fTelefone.replace(/\D/g, '');
-      if (!fNome.trim()) { setErro('Informe o nome do cliente.'); return; }
-      if (tel.length < 10) { setErro('Informe um telefone válido com DDD.'); return; }
+      const semNome = !fNome.trim();
+      const semTel = tel.length < 10;
+      setFaltando({ nome: semNome, telefone: semTel });
+      if (semNome || semTel) {
+        setErro(
+          semNome && semTel ? 'Preencha o nome e o celular do cliente.'
+            : semNome ? 'Preencha o nome do cliente.'
+            : 'Preencha o celular com DDD.',
+        );
+        return;
+      }
+      setFaltando({});
       setSalvando(true);
       const { data, error } = await invokeWithAuth<{ customer?: { id: string; name: string; phone: string }; addresses?: Endereco[] }>(
         'delivery-write',
@@ -289,6 +310,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
 
   const confirmar = () => {
     if (!cliente || !endereco) return;
+    const troco = Number((trocoPara || '0').replace(',', '.')) || 0;
     onConfirm({
       tipo: 'delivery',
       nomeCliente: cliente.name,
@@ -296,6 +318,8 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
       enderecoEntrega: enderecoEmUmaLinha(endereco),
       taxaEntrega: taxaFinal,
       observacaoPedido: obs.trim() || undefined,
+      formaPagamento: formaSel?.nome ?? undefined,
+      trocoPara: pedeTroco && troco > 0 ? troco : undefined,
       clienteDeliveryId: cliente.id,
       enderecoId: endereco.id,
       bairroId: endereco.neighborhood_id,
@@ -345,7 +369,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
 
       <div>
         <label className="block text-xs font-bold text-zinc-600 mb-1.5">Bairro</label>
-        {bairros.length > 0 ? (
+        {bairros.length > 0 && !distanceMode ? (
           <select value={fBairroId} onChange={(e) => setFBairroId(e.target.value)}
             className="w-full text-sm bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-amber-400 text-zinc-800">
             <option value="">Selecione o bairro</option>
@@ -577,6 +601,46 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
                 </div>
               )}
 
+              {/* Forma de pagamento combinada com o cliente (cobrada na entrega) */}
+              <div>
+                <label className="block text-xs font-bold text-zinc-600 mb-1.5">
+                  Forma de pagamento
+                  <span className="text-zinc-400 font-normal ml-1">(na entrega)</span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {formasAtivas.map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => { setFormaPagamento(f.id === formaPagamento ? '' : f.id); setTrocoPara(''); }}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
+                        formaPagamento === f.id
+                          ? 'border-amber-400 bg-amber-50 text-amber-700'
+                          : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:border-zinc-300'
+                      }`}
+                    >
+                      <i className={`${f.icone} text-sm`} />
+                      {f.nome}
+                    </button>
+                  ))}
+                </div>
+                {pedeTroco && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <label className="text-xs font-bold text-zinc-600">Troco para</label>
+                    <div className="relative max-w-[140px]">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400">R$</span>
+                      <input
+                        value={trocoPara}
+                        onChange={(e) => setTrocoPara(e.target.value.replace(/[^\d.,]/g, ''))}
+                        inputMode="decimal"
+                        placeholder="0,00"
+                        className="w-full text-sm bg-white border border-zinc-200 rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-amber-400 text-zinc-900"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Observação do pedido */}
               <div>
                 <label className="block text-xs font-bold text-zinc-600 mb-1.5">Observação do pedido</label>
@@ -597,13 +661,13 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs font-bold text-zinc-600 mb-1.5">Nome <span className="text-red-500">*</span></label>
-                  <input autoFocus value={fNome} onChange={(e) => setFNome(e.target.value)} placeholder="Nome do cliente"
-                    className="w-full text-sm bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-amber-400 text-zinc-800" />
+                  <input autoFocus value={fNome} onChange={(e) => { setFNome(e.target.value); setFaltando((f) => ({ ...f, nome: false })); }} placeholder="Nome do cliente"
+                    className={`w-full text-sm rounded-xl px-3 py-2.5 focus:outline-none text-zinc-800 border ${faltando.nome ? 'bg-red-50 border-red-300 focus:border-red-400' : 'bg-zinc-50 border-zinc-200 focus:border-amber-400'}`} />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-zinc-600 mb-1.5">Celular <span className="text-red-500">*</span></label>
-                  <input value={fTelefone} onChange={(e) => setFTelefone(formatTelefone(e.target.value))} inputMode="tel" placeholder="(41) 99999-9999"
-                    className="w-full text-sm bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-amber-400 text-zinc-800" />
+                  <input value={fTelefone} onChange={(e) => { setFTelefone(formatTelefone(e.target.value)); setFaltando((f) => ({ ...f, telefone: false })); }} inputMode="tel" placeholder="(41) 99999-9999"
+                    className={`w-full text-sm rounded-xl px-3 py-2.5 focus:outline-none text-zinc-800 border ${faltando.telefone ? 'bg-red-50 border-red-300 focus:border-red-400' : 'bg-zinc-50 border-zinc-200 focus:border-amber-400'}`} />
                 </div>
               </div>
               {formEndereco}
@@ -629,18 +693,25 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
               </button>
             </>
           ) : (
-            <>
-              <button onClick={() => { setModo('lista'); setErro(''); }} className="flex-1 py-2.5 rounded-xl border border-zinc-300 text-sm font-semibold text-zinc-600 hover:bg-white cursor-pointer">
-                Voltar
-              </button>
-              <button
-                onClick={() => void salvarCadastro()}
-                disabled={salvando}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-50 cursor-pointer"
-              >
-                {salvando ? 'Salvando...' : 'Salvar'}
-              </button>
-            </>
+            <div className="flex-1">
+              {erro && (
+                <p className="text-xs text-red-600 mb-2 flex items-center gap-1.5">
+                  <i className="ri-error-warning-line" />{erro}
+                </p>
+              )}
+              <div className="flex items-center gap-2">
+                <button onClick={() => { setModo('lista'); setErro(''); setFaltando({}); }} className="flex-1 py-2.5 rounded-xl border border-zinc-300 text-sm font-semibold text-zinc-600 hover:bg-white cursor-pointer">
+                  Voltar
+                </button>
+                <button
+                  onClick={() => void salvarCadastro()}
+                  disabled={salvando}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-50 cursor-pointer"
+                >
+                  {salvando ? 'Salvando...' : 'Salvar'}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

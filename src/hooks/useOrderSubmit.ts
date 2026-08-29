@@ -61,6 +61,9 @@ export interface CreateOrderPayload {
   delivery_distance_km?: number | null;
   delivery_route_min?: number | null;
   delivery_sla_min?: number | null;
+  /** Forma de pagamento combinada na entrega — vai na 2a via impressa */
+  delivery_payment_label?: string | null;
+  delivery_change_for?: number | null;
   /** ID da sessão de mesa (table_session_id) para vincular pedido ao consumo da mesa */
   table_session_id?: string | null;
   /** Pedido cortesia — total zerado, is_paid=true automaticamente */
@@ -311,6 +314,8 @@ function buildDeliveryReceipt(payload: CreateOrderPayload): DeliveryReceiptInfo 
     total: payload.total_amount ?? 0,
     distanceKm: payload.delivery_distance_km ?? null,
     slaMin: payload.delivery_sla_min ?? null,
+    paymentLabel: payload.delivery_payment_label ?? null,
+    changeFor: payload.delivery_change_for ?? null,
   };
 }
 
