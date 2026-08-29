@@ -6,7 +6,14 @@ import 'leaflet/dist/leaflet.css';
 interface Props {
   lat: number | null;
   lng: number | null;
-  onChange: (lat: number, lng: number) => void;
+  /**
+   * Recebe a coordenada do centro do mapa. `origem` diz o que a produziu: `'arraste'`
+   * (usuario mexeu no mapa — o ponto ainda NAO foi confirmado) ou `'confirmacao'`
+   * (clicou em "Confirmar esta localizacao"). Quem controla o estado de confirmado
+   * precisa dessa distincao: derivar "confirmado" de ter coordenada faz o botao de
+   * confirmar sumir no primeiro arraste, antes do usuario confirmar.
+   */
+  onChange: (lat: number, lng: number, origem?: 'arraste' | 'confirmacao') => void;
   /** Centro padrão quando ainda não há pin (lat, lng). Default: região Pontal do PR. */
   defaultCenter?: [number, number];
   /** Classe de altura do mapa (ex.: 'h-72'). */
@@ -43,10 +50,10 @@ function GuardaMapa({ mapRef }: { mapRef: { current: LeafletMap | null } }) {
  * que arrastar um marcador com o dedo. Usamos dragend/zoomend (ações do usuário) — e
  * não moveend — para NÃO disparar no posicionamento inicial/programático.
  */
-function CentroComoPin({ onChange }: { onChange: (lat: number, lng: number) => void }) {
+function CentroComoPin({ onChange }: { onChange: (lat: number, lng: number, origem?: 'arraste' | 'confirmacao') => void }) {
   const map = useMapEvents({
-    dragend() { const c = map.getCenter(); onChange(c.lat, c.lng); },
-    zoomend() { const c = map.getCenter(); onChange(c.lat, c.lng); },
+    dragend() { const c = map.getCenter(); onChange(c.lat, c.lng, 'arraste'); },
+    zoomend() { const c = map.getCenter(); onChange(c.lat, c.lng, 'arraste'); },
   });
   return null;
 }
@@ -107,7 +114,7 @@ export default function MapaPin({
     const m = mapRef.current;
     if (!m) return;
     const c = m.getCenter();
-    onChange(c.lat, c.lng);
+    onChange(c.lat, c.lng, 'confirmacao');
   }
 
   return (

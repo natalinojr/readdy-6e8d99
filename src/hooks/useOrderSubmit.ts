@@ -6,7 +6,7 @@ import {
   generateLocalOrderNumber,
   type OfflineOrder,
 } from '@/lib/offlineDB';
-import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
+import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino, type DeliveryReceiptInfo } from '@/lib/printOrderQueue';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -285,6 +285,35 @@ async function retryOrderItems(
  * - Proteção contra submissão duplicada
  * - Impressão automática via fila centralizada (print_queue)
  */
+/**
+ * 2a via do pedido de entrega. So existe para pedido de delivery COM endereco —
+ * retirada na loja e pedido de balcao nao geram comprovante de entrega.
+ */
+function buildDeliveryReceipt(payload: CreateOrderPayload): DeliveryReceiptInfo | undefined {
+  if (payload.origin !== 'delivery') return undefined;
+  if (payload.delivery_platform === 'retirada') return undefined;
+  const address = payload.delivery_address?.trim();
+  if (!address) return undefined;
+  const fone = payload.destination_phone?.replace(/[^0-9]/g, '') ?? '';
+  const foneFmt = fone.length >= 10
+    ? '(' + fone.slice(0, 2) + ') ' + fone.slice(2, fone.length - 4) + '-' + fone.slice(-4)
+    : fone;
+  return {
+    // destination_name vem como "Nome - Endereco"; o nome e a parte antes do hifen.
+    customerName: payload.customer_name?.trim()
+      || (payload.destination_name ?? '').split(/\s+-\s+/)[0].trim()
+      || 'Cliente',
+    phone: foneFmt || null,
+    address,
+    fee: payload.delivery_fee ?? 0,
+    subtotal: payload.subtotal ?? 0,
+    discount: payload.discount_amount ?? 0,
+    total: payload.total_amount ?? 0,
+    distanceKm: payload.delivery_distance_km ?? null,
+    slaMin: payload.delivery_sla_min ?? null,
+  };
+}
+
 export function useOrderSubmit() {
   const submittingRef = useRef(false);
 
@@ -450,7 +479,8 @@ export function useOrderSubmit() {
             station_id: item.station_id,
             item_id: item.item_id,
             production_parts: item.production_parts,
-            options: item.options?.map((o) => ({ option_name: o.option_name, obrigatorio: o.group_obrigatorio })),
+            item_price: item.item_price,
+            options: item.options?.map((o) => ({ option_name: o.option_name, obrigatorio: o.group_obrigatorio, additional_price: o.additional_price })),
             observations: item.observations,
             notes: item.notes,
           }));
@@ -465,6 +495,9 @@ export function useOrderSubmit() {
               options?.stationToImpressoraId,
               payload.total_amount,
               options?.paraViagem,
+              undefined,
+              undefined,
+              buildDeliveryReceipt(payload),
             );
             printEnqueued = true;
             logOrder('info', 'submitOrder', 'Ticket enfileirado para impressão', {
@@ -517,7 +550,8 @@ export function useOrderSubmit() {
                 station_id: item.station_id,
                 item_id: item.item_id,
                 production_parts: item.production_parts,
-                options: item.options?.map((o) => ({ option_name: o.option_name, obrigatorio: o.group_obrigatorio })),
+                item_price: item.item_price,
+                options: item.options?.map((o) => ({ option_name: o.option_name, obrigatorio: o.group_obrigatorio, additional_price: o.additional_price })),
                 observations: item.observations,
                 notes: item.notes,
               }));
@@ -532,6 +566,9 @@ export function useOrderSubmit() {
                   undefined,
                   payload.total_amount,
                   options?.paraViagem,
+                  undefined,
+                  undefined,
+                  buildDeliveryReceipt(payload),
                 );
                 printEnqueued = true;
               } catch {

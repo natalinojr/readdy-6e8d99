@@ -628,6 +628,12 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     const destinoAtivo = destinoOverride ?? destino;
 
     const isDeliveryDest = destinoAtivo?.tipo === 'delivery';
+    // ATENCAO: `total`/`valorTaxaEntrega` do render vem do state `destino`, que ainda
+    // NAO reflete o `destinoOverride` (o caixa confirma o destino e chama esta funcao
+    // no mesmo tick). Recalcular pelo destino ATIVO — senao a taxa de entrega ia no
+    // delivery_fee mas ficava de fora do total_amount (pedido cobrado a menos).
+    const taxaEntregaAtiva = isDeliveryDest ? (destinoAtivo?.taxaEntrega ?? 0) : 0;
+    const totalAtivo = subtotal - valorDesconto + valorTaxaServico + taxaEntregaAtiva;
     const obsPedido = destinoAtivo?.observacaoPedido;
     let obsPedidoAdded = false;
     const itensPayload = carrinho.flatMap((ci) => {
@@ -712,7 +718,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
           : (destinoAtivo?.nomeCliente ?? destinoAtivo?.senha ?? null),
       destination_phone: destinoAtivo?.telefone ?? null,
       delivery_address: destinoAtivo?.enderecoEntrega ?? null,
-      delivery_fee: destinoAtivo?.taxaEntrega ?? 0,
+      delivery_fee: taxaEntregaAtiva,
       delivery_platform: isDeliveryDest ? 'propria' : undefined,
       delivery_lat: isDeliveryDest ? destinoAtivo?.latEntrega ?? null : null,
       delivery_lng: isDeliveryDest ? destinoAtivo?.lngEntrega ?? null : null,
@@ -724,7 +730,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       discount_amount: valorDesconto,
       service_fee_amount: valorTaxaServico,
       subtotal,
-      total_amount: total,
+      total_amount: totalAtivo,
       cash_register_id: caixa?.id ?? null,
       is_training: user.modoTreino,
       customer_cpf: null,

@@ -10,11 +10,32 @@ export interface OrderItemForPrint {
   item_id?: string | null;
   /** Partes de produção pré-carregadas do contexto do cardápio (evita query RLS) */
   production_parts?: Array<{ name: string; station_id: string; station_name?: string }>;
-  options?: Array<{ option_name: string; obrigatorio?: boolean }>;
+  options?: Array<{ option_name: string; obrigatorio?: boolean; additional_price?: number }>;
+  /** Preco unitario — usado so na via do comprovante de entrega */
+  item_price?: number;
   observations?: Array<{ text: string }>;
   notes?: string | null;
   /** Partes de produção a destacar neste ticket (preenchido pelo queueOrderForPrint) */
   partes_destaque?: string[];
+}
+
+/**
+ * Dados da 2a via de um pedido de entrega ("COMPROVANTE ENTREGA"): quem recebe, onde
+ * e quanto. Espelha o comprovante que o `delivery-write` enfileira para os pedidos
+ * vindos do link do delivery — mesma `station_key` (`delivery-receipt`), pro agente
+ * local tratar dos dois jeitos iguais.
+ */
+export interface DeliveryReceiptInfo {
+  customerName: string;
+  phone?: string | null;
+  address?: string | null;
+  fee: number;
+  subtotal: number;
+  discount?: number;
+  total: number;
+  distanceKm?: number | null;
+  slaMin?: number | null;
+  observacao?: string | null;
 }
 
 export interface OrderPrintDestino {
@@ -210,6 +231,8 @@ export async function queueOrderForPrint(
   senha?: string,
   /** Reimpressão manual: pula a dedup da print_queue e sempre gera ticket novo */
   force?: boolean,
+  /** Pedido de entrega: gera a 2a via com endereço, taxa e totais */
+  deliveryReceipt?: DeliveryReceiptInfo,
 ): Promise<void> {
   console.log(`[queueOrderForPrint] INICIO pedido #${orderNumber}, ${items.length} itens, origem=${origin}${senha ? ', senha=' + senha : ''}`);
   items.forEach((it, idx) => {
@@ -445,6 +468,62 @@ export async function queueOrderForPrint(
         payload,
         force,
       ),
+    );
+  }
+
+  // — 2a via da entrega (endereco/taxa/totais) — mesma station_key do delivery do link —
+  if (deliveryReceipt) {
+    const money = (v: number) => `R$ ${v.toFixed(2).replace('.', ',')}`;
+    const receiptItens: TicketItem[] = items.map((item) => {
+      const preco = item.item_price ?? 0;
+      const qtd = item.quantity ?? 1;
+      const opcoes = (item.options ?? [])
+        .filter((o) => !!o.option_name)
+        .map((o) => {
+          const add = o.additional_price ?? 0;
+          return { nome: add > 0 ? `${o.option_name} +${money(add)}` : `+ ${o.option_name}` };
+        });
+      return {
+        quantidade: qtd,
+        nome: `${item.item_name} - ${money(preco * qtd)}`,
+        ...(opcoes.length > 0 ? { opcoes } : {}),
+      } as TicketItem;
+    });
+
+    const linhas = [
+      `Cliente: ${deliveryReceipt.customerName || 'Nao informado'}`,
+      deliveryReceipt.phone ? `Telefone: ${deliveryReceipt.phone}` : '',
+      deliveryReceipt.address ? `Endereco: ${deliveryReceipt.address}` : '',
+      deliveryReceipt.distanceKm != null
+        ? `Distancia: ~${deliveryReceipt.distanceKm.toFixed(1)} km${deliveryReceipt.slaMin ? ` (ate ${deliveryReceipt.slaMin} min)` : ''}`
+        : '',
+      `Subtotal: ${money(deliveryReceipt.subtotal)}`,
+      (deliveryReceipt.discount ?? 0) > 0 ? `Desconto: -${money(deliveryReceipt.discount ?? 0)}` : '',
+      deliveryReceipt.fee > 0 ? `Taxa de entrega: ${money(deliveryReceipt.fee)}` : '',
+      `TOTAL: ${money(deliveryReceipt.total)}`,
+      deliveryReceipt.observacao ? `Obs: ${deliveryReceipt.observacao}` : '',
+    ].filter(Boolean);
+
+    // Mesmo numero curto dos demais tickets do pedido (4 ultimos digitos).
+    const numeroReceipt = parseInt(orderNumber.replace(/\D/g, '').slice(-4), 10) || 1;
+    const receiptPayload: TicketPayload = {
+      numero: numeroReceipt,
+      destino: `${deliveryReceipt.customerName || 'Cliente'} - Entrega`,
+      origem: 'Delivery',
+      impressora_id: resolveImpressoraId('delivery-receipt') || '',
+      estacao: 'COMPROVANTE ENTREGA',
+      itens: receiptItens,
+      data_hora: new Date().toLocaleString('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }),
+      observacao_geral: linhas.join('\n'),
+      total: deliveryReceipt.total,
+    } as TicketPayload;
+
+    enqueuePromises.push(
+      enqueueTicket(tenantId, orderId, orderNumber, 'delivery-receipt', 'Comprovante', receiptPayload, force),
     );
   }
 

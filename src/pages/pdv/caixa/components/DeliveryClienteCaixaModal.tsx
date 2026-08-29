@@ -103,6 +103,9 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
   const [fReferencia, setFReferencia] = useState('');
   const [fLat, setFLat] = useState<number | null>(null);
   const [fLng, setFLng] = useState<number | null>(null);
+  // Confirmacao EXPLICITA do pin. Nao pode ser derivada de fLat/fLng: arrastar o
+  // mapa ja grava a coordenada do centro, o que fazia o botao de confirmar sumir.
+  const [pinConfirmado, setPinConfirmado] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
 
@@ -185,14 +188,14 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
     setFNome(q.replace(/\d/g, '').trim());
     setFTelefone(formatTelefone(q));
     setFRua(''); setFNumero(''); setFBairroId(''); setFBairroTexto('');
-    setFComplemento(''); setFReferencia(''); setFLat(null); setFLng(null);
+    setFComplemento(''); setFReferencia(''); setFLat(null); setFLng(null); setPinConfirmado(false);
   };
 
   const abrirNovoEndereco = () => {
     setErro('');
     setModo('novo_endereco');
     setFRua(''); setFNumero(''); setFBairroId(''); setFBairroTexto('');
-    setFComplemento(''); setFReferencia(''); setFLat(null); setFLng(null);
+    setFComplemento(''); setFReferencia(''); setFLat(null); setFLng(null); setPinConfirmado(false);
   };
 
   const salvarCadastro = async () => {
@@ -211,7 +214,8 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
             action: 'save_customer', tenant_id: tenantId, phone: tel, name: fNome.trim(),
             neighborhood_id: fBairroId || null, street: fRua.trim() || null, number: fNumero.trim() || null,
             complement: fComplemento.trim() || null, reference_point: fReferencia.trim() || null,
-            bairro: bairroNome || null, address_lat: fLat, address_lng: fLng,
+            bairro: bairroNome || null,
+            address_lat: pinConfirmado ? fLat : null, address_lng: pinConfirmado ? fLng : null,
           },
         },
       );
@@ -234,7 +238,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
 
     // novo endereço para um cliente já selecionado
     if (!cliente) return;
-    if (!fRua.trim() && !fBairroId && fLat == null) { setErro('Informe ao menos a rua ou o bairro.'); return; }
+    if (!fRua.trim() && !fBairroId && !pinConfirmado) { setErro('Informe ao menos a rua ou o bairro.'); return; }
     setSalvando(true);
     const { data, error } = await invokeWithAuth<{ addresses?: Endereco[] }>('delivery-write', {
       body: {
@@ -242,7 +246,8 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
         label: 'Endereço', neighborhood_id: fBairroId || null,
         street: fRua.trim() || null, number: fNumero.trim() || null,
         complement: fComplemento.trim() || null, reference_point: fReferencia.trim() || null,
-        bairro: bairroNome || null, address_lat: fLat, address_lng: fLng,
+        bairro: bairroNome || null,
+            address_lat: pinConfirmado ? fLat : null, address_lng: pinConfirmado ? fLng : null,
       },
     });
     setSalvando(false);
@@ -263,6 +268,9 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
 
   // ── Confirmação ──
   const taxaFinal = Number((taxaManual || '0').replace(',', '.')) || 0;
+  // A taxa vem da cotacao do backend e nao se mexe. So vira campo editavel quando
+  // nao existe cotacao possivel — endereco fora da area, ou sem pin e sem bairro.
+  const taxaEditavel = !quote || quote.mode === 'manual' || !quote.dentro_area;
   const podeConfirmar = !!cliente && !!endereco && !cotando;
 
   const confirmar = () => {
@@ -342,12 +350,17 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
         </p>
         <MapaPin
           lat={fLat} lng={fLng}
-          onChange={(la, ln) => { setFLat(la); setFLng(ln); }}
+          onChange={(la, ln, origem) => {
+            setFLat(la); setFLng(ln);
+            // So o botao "Confirmar esta localizacao" fecha o pin — arrastar apenas
+            // move o ponto, senao o botao some antes do operador confirmar.
+            if (origem === 'confirmacao') setPinConfirmado(true);
+          }}
           defaultCenter={storeLoc ? [storeLoc.lat, storeLoc.lng] : undefined}
           altura="h-56"
-          confirmed={fLat != null && fLng != null}
+          confirmed={pinConfirmado}
         />
-        {distanceMode && fLat == null && (
+        {distanceMode && !pinConfirmado && (
           <p className="text-[11px] text-amber-700 mt-1.5 flex items-center gap-1">
             <i className="ri-information-line" />
             Sem o pin não dá pra calcular a taxa automaticamente — você digita na mão.
@@ -469,16 +482,22 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
 
                     <div className="flex items-center gap-2">
                       <label className="text-xs font-bold text-zinc-600">Taxa de entrega</label>
-                      <div className="relative flex-1 max-w-[140px]">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400">R$</span>
-                        <input
-                          value={taxaManual}
-                          onChange={(e) => setTaxaManual(e.target.value.replace(/[^\d.,]/g, ''))}
-                          inputMode="decimal"
-                          placeholder="0,00"
-                          className="w-full text-sm font-bold bg-white border border-zinc-200 rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-amber-400 text-zinc-900"
-                        />
-                      </div>
+                      {taxaEditavel ? (
+                        // Sem cotacao possivel (fora de area, sem pin e sem bairro) nao ha
+                        // valor a impor — o operador digita. No caso normal a taxa e fixa.
+                        <div className="relative flex-1 max-w-[140px]">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400">R$</span>
+                          <input
+                            value={taxaManual}
+                            onChange={(e) => setTaxaManual(e.target.value.replace(/[^\d.,]/g, ''))}
+                            inputMode="decimal"
+                            placeholder="0,00"
+                            className="w-full text-sm font-bold bg-white border border-zinc-200 rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-amber-400 text-zinc-900"
+                          />
+                        </div>
+                      ) : (
+                        <span className="text-sm font-bold text-zinc-900">{formatCurrency(taxaFinal)}</span>
+                      )}
                     </div>
                   </div>
                 </div>
