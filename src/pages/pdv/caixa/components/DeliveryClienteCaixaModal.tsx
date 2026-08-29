@@ -81,6 +81,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
   const [q, setQ] = useState('');
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [buscando, setBuscando] = useState(false);
+  const [erroBusca, setErroBusca] = useState('');
 
   // ── Seleção ──
   const [cliente, setCliente] = useState<Cliente | null>(null);
@@ -126,12 +127,19 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
   const buscar = useCallback(async (termo: string) => {
     const seq = ++buscaSeq.current;
     setBuscando(true);
-    const { data } = await invokeWithAuth<{ customers?: Cliente[] }>('delivery-write', {
+    const { data, error } = await invokeWithAuth<{ customers?: Cliente[]; error?: string }>('delivery-write', {
       body: { action: 'search_customers', tenant_id: tenantId, q: termo },
     });
     if (seq !== buscaSeq.current) return; // resposta velha: descarta
-    setClientes(data?.customers ?? []);
     setBuscando(false);
+    // Lista vazia por falha de backend é indistinguível de "não achei" — avisa.
+    if (error || !data || data.error) {
+      setClientes([]);
+      setErroBusca('Não consegui buscar os clientes agora. Verifique a conexão e tente de novo.');
+      return;
+    }
+    setErroBusca('');
+    setClientes(data.customers ?? []);
   }, [tenantId]);
 
   useEffect(() => {
@@ -322,21 +330,30 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
         </div>
       </div>
 
-      {distanceMode && (
-        <div>
-          <label className="block text-xs font-bold text-zinc-600 mb-1.5">
-            Localização no mapa
-            <span className="text-zinc-400 font-normal ml-1">(a taxa vem da distância)</span>
-          </label>
-          <MapaPin
-            lat={fLat} lng={fLng}
-            onChange={(la, ln) => { setFLat(la); setFLng(ln); }}
-            defaultCenter={storeLoc ? [storeLoc.lat, storeLoc.lng] : undefined}
-            altura="h-56"
-            confirmed={fLat != null && fLng != null}
-          />
-        </div>
-      )}
+      <div>
+        <label className="block text-xs font-bold text-zinc-600 mb-1.5">
+          Localização no mapa
+          <span className="text-zinc-400 font-normal ml-1">
+            {distanceMode ? '(a taxa de entrega vem daqui)' : '(opcional — ajuda o motoboy a achar)'}
+          </span>
+        </label>
+        <p className="text-[11px] text-zinc-400 mb-1.5">
+          Arraste o mapa até o pin ficar em cima da casa do cliente.
+        </p>
+        <MapaPin
+          lat={fLat} lng={fLng}
+          onChange={(la, ln) => { setFLat(la); setFLng(ln); }}
+          defaultCenter={storeLoc ? [storeLoc.lat, storeLoc.lng] : undefined}
+          altura="h-56"
+          confirmed={fLat != null && fLng != null}
+        />
+        {distanceMode && fLat == null && (
+          <p className="text-[11px] text-amber-700 mt-1.5 flex items-center gap-1">
+            <i className="ri-information-line" />
+            Sem o pin não dá pra calcular a taxa automaticamente — você digita na mão.
+          </p>
+        )}
+      </div>
     </div>
   );
 
@@ -378,7 +395,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
                   autoFocus
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Buscar por nome ou telefone..."
+                  placeholder="Buscar por nome, telefone ou endereço..."
                   className="w-full text-sm bg-zinc-50 border border-zinc-200 rounded-xl pl-9 pr-3 py-2.5 focus:outline-none focus:border-amber-400 text-zinc-800"
                 />
               </div>
@@ -472,7 +489,12 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
                 <div className="space-y-1.5">
                   {!q && <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Clientes recentes</p>}
                   {buscando && <p className="text-xs text-zinc-400 py-2">Buscando...</p>}
-                  {!buscando && clientes.length === 0 && (
+                  {!buscando && erroBusca && (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
+                      <i className="ri-error-warning-line" />{erroBusca}
+                    </p>
+                  )}
+                  {!buscando && !erroBusca && clientes.length === 0 && (
                     <p className="text-xs text-zinc-400 py-2">Nenhum cliente encontrado.</p>
                   )}
                   {clientes.map((c) => {

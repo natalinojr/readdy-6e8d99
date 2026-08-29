@@ -289,6 +289,12 @@ Como fica um pedido de delivery do caixa: `origin_type='delivery'` + `delivery_p
 - `DestinoModal`: o tipo "Delivery" nao tem mais campos livres de nome/telefone — abre o modal do cliente e mostra o resumo (nome, telefone, endereco, taxa) com "Alterar".
 - `CarrinhoPanel`: linha "Taxa de Entrega" no resumo.
 
+**Ajustes do mesmo dia (apos o 1o teste do usuario):**
+- A busca voltava vazia porque as acoes novas **nao estavam deployadas** (`delivery-write` estava na v86). Conferido no banco: Vila Leste tem 94 `delivery_customers` e **todo cliente da aba Clientes ja existe em `delivery_customers`** (0 orfaos) — nao precisa de fallback na tabela `customers`. Deploy feito: `delivery-write` e `order-write`.
+- `search_customers` passou a buscar tambem por **endereco**: resolve antes os `customer_id` em `delivery_customer_addresses` (`street`/`bairro`/`reference_point`/`complement`) e injeta como `id.in.(...)` no `or` da consulta principal; cobre tambem `delivery_customers.street` (cadastro antigo). **Bairro mora em texto:** 77 de 78 enderecos tem `bairro` preenchido e so 1 tem `neighborhood_id` — por isso a busca olha a coluna de texto, nao a FK. Sanitizacao do termo (`% , ( ) . *`) e obrigatoria: sao sintaxe do filtro `or` do PostgREST.
+- O `MapaPin` no cadastro passou a aparecer **sempre** (antes so em `distance_mode`) — sem `distance_mode` o pin fica opcional e serve pro motoboy achar a casa.
+- A busca agora distingue "nao achei" de "backend falhou" (mensagem de erro no lugar da lista vazia muda).
+
 Verificado: `tsc` 301 (identico ao baseline medido com `git stash`), `vite build` OK, app sobe no dev server sem erro de console. **Nao testei o fluxo completo logado** — a loja e de producao e o teste criaria cliente/pedido reais. **Deploy necessario:** `delivery-write` e `order-write` (as acoes novas nao existem em producao) + push do front.
 
 ### 2026-08-11 — `NotificacoesContext` NAO serve para avisar uma pessoa especifica

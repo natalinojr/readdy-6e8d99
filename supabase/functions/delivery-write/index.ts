@@ -967,21 +967,39 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       }
 
       if (action === "search_customers") {
-        // Busca por nome OU telefone. Sem termo, devolve os clientes usados mais
-        // recentemente (o caixa quase sempre atende um cliente recorrente).
+        // Busca por NOME, TELEFONE ou ENDERECO. Sem termo, devolve os clientes usados
+        // mais recentemente (o caixa quase sempre atende um cliente recorrente).
         const raw = String(body.q ?? "").trim();
         const digits = raw.replace(/\D/g, "");
+        // O filtro `or` do PostgREST usa virgula/parenteses como sintaxe — sanitiza.
+        const like = raw.replace(/[%,().*]/g, " ").replace(/\s+/g, " ").trim();
+
+        // Endereco mora em outra tabela: resolve primeiro os clientes cujo endereco casa.
+        let idsPorEndereco: string[] = [];
+        if (like.length >= 2) {
+          const { data: addrHits } = await admin.from("delivery_customer_addresses")
+            .select("customer_id")
+            .eq("tenant_id", tenant_id)
+            .or("street.ilike.%" + like + "%,bairro.ilike.%" + like + "%,reference_point.ilike.%" + like + "%,complement.ilike.%" + like + "%")
+            .limit(300);
+          idsPorEndereco = Array.from(new Set((addrHits ?? []).map((a: Record<string, unknown>) => a.customer_id as string)));
+        }
+
         let query = admin.from("delivery_customers")
           .select("id, name, phone, last_used_at, neighborhood_id, street, number, complement, reference_point")
           .eq("tenant_id", tenant_id)
           .order("last_used_at", { ascending: false, nullsFirst: false })
-          .limit(20);
-        if (raw.length >= 2) {
-          // Com 3+ digitos o termo tambem casa por trecho do telefone.
-          const like = raw.replace(/[%,()]/g, " ").trim();
-          query = digits.length >= 3
-            ? query.or("name.ilike.%" + like + "%,phone.ilike.%" + digits + "%")
-            : query.ilike("name", "%" + like + "%");
+          .limit(30);
+        if (like.length >= 2 || digits.length >= 3) {
+          const partes: string[] = [];
+          if (like.length >= 2) {
+            partes.push("name.ilike.%" + like + "%");
+            // Cliente antigo guarda o endereco nas colunas do proprio cadastro.
+            partes.push("street.ilike.%" + like + "%");
+          }
+          if (digits.length >= 3) partes.push("phone.ilike.%" + digits + "%");
+          if (idsPorEndereco.length > 0) partes.push("id.in.(" + idsPorEndereco.join(",") + ")");
+          if (partes.length > 0) query = query.or(partes.join(","));
         }
         const { data: custRows, error: custErr } = await query;
         if (custErr) throw custErr;
