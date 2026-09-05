@@ -354,11 +354,10 @@ export default function CatalogoComprasModal({ onClose }: Props) {
   // soma. O grupo aparece mesmo sem nenhuma categoria dentro — a categoria é
   // um refinamento opcional, não um pré-requisito para classificar a compra.
   const gruposDestino = allGroups
-    .filter((g) => g.key === 'cost' || isGrupoDespesa(g.key))
+    .filter((g) => isGrupoDespesa(g.key))
     .map((g) => ({
       ...g,
       cats: dreCategories.filter((c) => c.group_type === g.key),
-      despesa: isGrupoDespesa(g.key),
     }));
 
   return (
@@ -487,10 +486,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                 >
                   <option value="">CMV — Custo de Mercadoria Vendida (padrão)</option>
                   {gruposDestino.map((g) => (
-                    <optgroup
-                      key={g.key}
-                      label={`${g.label} ${g.despesa ? '(sai do CMV)' : '(conta como CMV)'}`}
-                    >
+                    <optgroup key={g.key} label={`${g.label} (sai do CMV)`}>
                       <option value={`${GRUPO_PREFIX}${g.key}`}>
                         {g.label} — sem detalhar
                       </option>

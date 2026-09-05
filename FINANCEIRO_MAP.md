@@ -449,9 +449,19 @@ categoria é estratificação opcional dentro dele.**
   `resolverCategoriaDoGrupo` reaproveita a categoria raiz homônima ou cria uma com o
   nome do grupo. Sem isso o valor sairia do CMV e não teria linha na DRE onde pousar,
   ou seja, sumiria do resultado.
-- **`tax` e `revenue` não são oferecidos**, de propósito: o `resultadoOperacional` do
-  `DRETab` desconta `expense`, `cost`, pessoal, taxas e os grupos customizados — nunca
-  esses dois. Mesma razão já registrada em §9d.
+- **Grupos `cost` e `tax` aposentados** (pedido do dono, 2026-09-05). Ficaram só como
+  legado em `GRUPOS_LEGADOS`, para categoria antiga não virar "grupo customizado" e
+  passar a ser contada duas vezes na DRE. Não aparecem mais como card fixo na aba
+  Categorias DRE, nem no select de novo grupo, nem como destino de compra; só voltam a
+  aparecer se a loja tiver categoria presa a eles. Motivos:
+  - `cost` era **redundância pura**: categoria de custo já ia para o CMV, que é o padrão
+    de todo item sem classificação. As duas opções davam o mesmo número e a segunda
+    ainda criava uma categoria sem uso.
+  - `tax` (como `revenue`) nunca entrou no `resultadoOperacional` do `DRETab`, que
+    desconta `expense`, `cost`, pessoal, taxas de maquininha e os grupos customizados.
+    Classificar ali fazia o valor sumir do resultado. Mesma razão já registrada em §9d.
+  - `STANDARD_GROUP_KEYS` continua com os quatro e é a fonte única do `DRETab`, que antes
+    tinha a lista duplicada em constante própria.
 - **Regra única compartilhada:** `isGrupoDespesa` (`src/hooks/useDreGroups.ts`) decide o
   que sai do CMV, e é usada tanto pelo split de `comprasDRE.ts` quanto pelo select do
   catálogo, para os dois não divergirem. Passou a incluir os **grupos customizados**:

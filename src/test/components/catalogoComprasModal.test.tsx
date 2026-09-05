@@ -122,8 +122,11 @@ describe('CatalogoComprasModal', () => {
     expect(values).toContain('grupo:expense');
     expect(values).toContain('grupo:despesas_fixas');
     // O que a DRE não soma não vira destino: o valor sumiria do resultado.
-    expect(values).not.toContain('grupo:tax');
     expect(values).not.toContain('grupo:revenue');
+    // Grupos aposentados em 2026-09-05: 'cost' era redundante com o CMV padrão
+    // e 'tax' nunca foi somado pela DRE.
+    expect(values).not.toContain('grupo:cost');
+    expect(values).not.toContain('grupo:tax');
   });
 
   it('escolher o grupo cria a categoria raiz e grava o id dela no item', async () => {

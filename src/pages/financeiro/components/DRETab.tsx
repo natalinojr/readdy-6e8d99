@@ -9,7 +9,7 @@ import {
 } from 'recharts';
 import { formatCurrency } from '@/lib/formatters';
 import DREDrillDownModal from './DREDrillDownModal';
-import { useDreGroups } from '@/hooks/useDreGroups';
+import { useDreGroups, STANDARD_GROUP_KEYS } from '@/hooks/useDreGroups';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function pct(v: number, total: number) {
@@ -105,7 +105,10 @@ function destOf(row: unknown): string {
 
 type DREMode = 'caixa' | 'competencia';
 
-const STANDARD_GROUPS = ['revenue', 'cost', 'expense', 'tax'];
+// Inclui os grupos aposentados ('cost'/'tax'): categoria antiga presa a eles não
+// pode ser tratada como grupo customizado, senão entraria em customGroupTrees E
+// no bloco de custos, contando duas vezes no resultado.
+const STANDARD_GROUPS = STANDARD_GROUP_KEYS;
 
 // ─── Fetch — Regime de Caixa ──────────────────────────────────────────────────
 async function fetchDREData(tenantId: string, startDate: string, endDate: string): Promise<DREData> {

@@ -41,7 +41,22 @@ function getGroupMeta(groupType: string, customGroups: CustomGroup[]) {
   return { ...FALLBACK_GROUP, label: groupType };
 }
 
-const STANDARD_GROUPS = Object.keys(DEFAULT_GROUP_LABELS);
+/**
+ * "Custos" e "Impostos e Taxas" foram aposentados em 2026-09-05 a pedido do dono:
+ * custo era redundante com o CMV (o padrão de todo item sem classificação) e
+ * imposto nunca foi somado pela DRE. Os rótulos continuam acima só para que
+ * categorias antigas ainda apareçam com nome, mas os grupos não são mais
+ * oferecidos ao criar categoria nem viram card fixo na tela.
+ */
+const GRUPOS_APOSENTADOS = ['cost', 'tax'];
+
+/** Grupos padrão oferecidos hoje. */
+const STANDARD_GROUPS = Object.keys(DEFAULT_GROUP_LABELS).filter(
+  g => !GRUPOS_APOSENTADOS.includes(g),
+);
+
+/** Chaves que ninguém pode reusar ao criar um grupo, aposentados incluídos. */
+const RESERVED_GROUP_KEYS = Object.keys(DEFAULT_GROUP_LABELS);
 
 interface CustomGroup {
   key: string;
@@ -372,7 +387,7 @@ export default function CategoriasDRETab() {
       setGroupError('Preencha o nome e a chave do grupo.');
       return;
     }
-    if (STANDARD_GROUPS.includes(key) || customGroups.some(g => g.key === key)) {
+    if (RESERVED_GROUP_KEYS.includes(key) || customGroups.some(g => g.key === key)) {
       setGroupError('Já existe um grupo com esta chave.');
       return;
     }

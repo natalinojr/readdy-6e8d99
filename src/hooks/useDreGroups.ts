@@ -13,12 +13,27 @@ export interface DreGroup {
 
 export const STANDARD_DRE_GROUPS: DreGroup[] = [
   { key: 'revenue', label: 'Receitas', icon: 'ri-arrow-down-circle-line', standard: true },
-  { key: 'cost', label: 'Custos', icon: 'ri-shopping-bag-line', standard: true },
   { key: 'expense', label: 'Despesas Operacionais', icon: 'ri-money-dollar-circle-line', standard: true },
+];
+
+/**
+ * Grupos aposentados em 2026-09-05, a pedido do dono. Continuam reconhecidos
+ * para que categorias antigas não virem "grupo customizado" e passem a ser
+ * contadas duas vezes na DRE, mas não são mais oferecidos em lugar nenhum:
+ *
+ *  - `cost` era redundante com o CMV. Categoria de custo já ia para o CMV, que
+ *    é o padrão de qualquer item sem classificação: as duas opções davam o
+ *    mesmo número e a segunda ainda criava uma categoria sem uso.
+ *  - `tax` nunca foi somado pela DRE, então classificar ali fazia o valor
+ *    desaparecer do resultado.
+ */
+export const GRUPOS_LEGADOS: DreGroup[] = [
+  { key: 'cost', label: 'Custos', icon: 'ri-shopping-bag-line', standard: true },
   { key: 'tax', label: 'Impostos e Taxas', icon: 'ri-government-line', standard: true },
 ];
 
-export const STANDARD_GROUP_KEYS = STANDARD_DRE_GROUPS.map((g) => g.key);
+/** Tudo que NÃO é grupo customizado da loja, incluindo os aposentados. */
+export const STANDARD_GROUP_KEYS = [...STANDARD_DRE_GROUPS, ...GRUPOS_LEGADOS].map((g) => g.key);
 
 /**
  * Grupos que a DRE NÃO soma em lugar nenhum hoje (ver DRETab: o resultado
@@ -68,7 +83,12 @@ export function useDreGroups() {
 
   useEffect(() => { fetchGroups(); }, [fetchGroups]);
 
+  /** Só os grupos que a interface oferece hoje. Legados ficam de fora. */
   const allGroups = [...STANDARD_DRE_GROUPS, ...customGroups];
 
-  return { allGroups, customGroups, loading, refetch: fetchGroups };
+  /** Inclui os aposentados, para achar o rótulo de uma categoria antiga. */
+  const groupMeta = (key: string): DreGroup | undefined =>
+    [...allGroups, ...GRUPOS_LEGADOS].find((g) => g.key === key);
+
+  return { allGroups, customGroups, loading, refetch: fetchGroups, groupMeta };
 }
