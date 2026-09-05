@@ -4,6 +4,22 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSuppliers } from '@/hooks/useSuppliers';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
+import { useMerchandiseCategories } from '@/hooks/useMerchandiseCategories';
+
+/**
+ * O catálogo faz DOIS trabalhos diferentes, e antes não dizia qual era qual:
+ *
+ *  - `estoque`  → APRESENTAÇÃO de fornecedor para um insumo que você conta no
+ *    estoque (ex.: "Requeijão · Forn. A · cx 12×1,5kg"). Guarda o vínculo com o
+ *    insumo e a conversão da embalagem, e a compra dá entrada no estoque.
+ *    Sempre CMV, por isso não pede classificação DRE.
+ *  - `consumo`  → item que você compra e NÃO conta no estoque (limpeza,
+ *    embalagem, escritório). Aqui a classificação DRE é que importa: se for de
+ *    Despesa Operacional, o valor sai do CMV e vai para a despesa.
+ *
+ * `tipo` não é coluna: é derivado de `ingredient_id` estar preenchido ou não.
+ */
+type TipoItem = 'estoque' | 'consumo';
 
 interface DRECategory {
   id: string;
@@ -23,6 +39,7 @@ interface CatalogItem {
   is_active: boolean;
   dre_category?: { id: string; name: string; group_type: string } | null;
   // Vínculo com o estoque (apresentação do fornecedor)
+  merchandise_category_id?: string | null;
   ingredient_id?: string | null;
   purchase_unit?: string | null;
   pack_count?: number | null;
@@ -41,6 +58,7 @@ const UNIT_OPTIONS = [
 ];
 
 const emptyForm = {
+  tipo: 'consumo' as TipoItem,
   name: '',
   description: '',
   default_unit: 'un',
@@ -48,6 +66,7 @@ const emptyForm = {
   default_supplier: '',
   supplier_id: '',
   notes: '',
+  merchandise_category_id: '',
   // Vínculo com o estoque
   ingredient_id: '',
   purchase_unit: 'cx',
@@ -62,6 +81,7 @@ interface Props {
 export default function CatalogoComprasModal({ onClose }: Props) {
   const { user } = useAuth();
   const { names: supplierNames, suppliers: supplierList } = useSuppliers();
+  const { categories: merchandiseCategories } = useMerchandiseCategories();
 
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [dreCategories, setDreCategories] = useState<DRECategory[]>([]);
@@ -84,7 +104,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
     const [catRes, dreRes, ingRes] = await Promise.all([
       supabase
         .from('fin_purchase_catalog')
-        .select('id, name, description, default_unit, dre_category_id, default_supplier, supplier_id, notes, is_active, ingredient_id, purchase_unit, pack_count, pack_size, dre_category:fin_dre_categories(id, name, group_type)')
+        .select('id, name, description, default_unit, dre_category_id, default_supplier, supplier_id, notes, is_active, merchandise_category_id, ingredient_id, purchase_unit, pack_count, pack_size, dre_category:fin_dre_categories(id, name, group_type)')
         .eq('tenant_id', user.tenantId)
         .order('name'),
       supabase
@@ -119,6 +139,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
   const openEdit = (item: CatalogItem) => {
     setEditingId(item.id);
     setForm({
+      tipo: item.ingredient_id ? 'estoque' : 'consumo',
       name: item.name,
       description: item.description ?? '',
       default_unit: item.default_unit,
@@ -126,6 +147,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
       default_supplier: item.default_supplier ?? '',
       supplier_id: item.supplier_id ?? '',
       notes: item.notes ?? '',
+      merchandise_category_id: item.merchandise_category_id ?? '',
       ingredient_id: item.ingredient_id ?? '',
       purchase_unit: item.purchase_unit ?? 'cx',
       pack_count: item.pack_count != null ? String(item.pack_count) : '',
@@ -144,19 +166,24 @@ export default function CatalogoComprasModal({ onClose }: Props) {
     if (!form.name.trim() || !user?.tenantId) return;
     setSaving(true);
 
+    // Item de estoque é sempre mercadoria (CMV), então nunca grava categoria DRE:
+    // é o que a DRE faz de fato com ele, e gravar outra coisa daria uma promessa
+    // que a conta não cumpre. Item de consumo nunca grava vínculo de estoque.
+    const deEstoque = form.tipo === 'estoque' && !!form.ingredient_id;
     const payload = {
       name: form.name.trim(),
       description: form.description.trim() || null,
-      default_unit: form.default_unit,
-      dre_category_id: form.dre_category_id || null,
+      default_unit: deEstoque ? (form.purchase_unit || form.default_unit) : form.default_unit,
+      dre_category_id: deEstoque ? null : (form.dre_category_id || null),
       default_supplier: form.default_supplier.trim() || null,
       supplier_id: form.supplier_id || null,
       notes: form.notes.trim() || null,
+      merchandise_category_id: form.merchandise_category_id || null,
       // Vínculo com o estoque — null quando não há insumo vinculado
-      ingredient_id: form.ingredient_id || null,
-      purchase_unit: form.ingredient_id ? (form.purchase_unit || null) : null,
-      pack_count: form.ingredient_id && form.pack_count !== '' ? Number(form.pack_count) : null,
-      pack_size: form.ingredient_id && form.pack_size !== '' ? Number(form.pack_size) : null,
+      ingredient_id: deEstoque ? form.ingredient_id : null,
+      purchase_unit: deEstoque ? (form.purchase_unit || null) : null,
+      pack_count: deEstoque && form.pack_count !== '' ? Number(form.pack_count) : null,
+      pack_size: deEstoque && form.pack_size !== '' ? Number(form.pack_size) : null,
       updated_at: new Date().toISOString(),
     };
 
@@ -286,7 +313,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
           <div>
             <h3 className="font-semibold text-zinc-900 text-sm">Catálogo de Itens de Compra</h3>
             <p className="text-xs text-zinc-400 mt-0.5">
-              Cadastre qualquer item que você compra e defina sua classificação no DRE
+              O que você compra: itens que não entram no estoque e apresentações de fornecedor
             </p>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
@@ -328,34 +355,73 @@ export default function CatalogoComprasModal({ onClose }: Props) {
               {editingId ? 'Editar Item' : 'Novo Item'}
             </p>
             <div className="space-y-3">
+              {/* Tipo do item - decide o resto do formulario */}
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { v: 'consumo' as TipoItem, t: 'Não entra no estoque', d: 'Limpeza, embalagem, escritório', i: 'ri-shopping-bag-3-line' },
+                  { v: 'estoque' as TipoItem, t: 'Entra no estoque', d: 'Apresentação de um insumo que você conta', i: 'ri-box-3-line' },
+                ]).map((opt) => (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, tipo: opt.v }))}
+                    className={`text-left border rounded-xl px-3 py-2 cursor-pointer transition-colors ${
+                      form.tipo === opt.v
+                        ? 'border-amber-400 bg-white ring-2 ring-amber-200'
+                        : 'border-zinc-200 bg-white/60 hover:bg-white'
+                    }`}
+                  >
+                    <p className="text-xs font-bold text-zinc-800 flex items-center gap-1.5">
+                      <i className={`${opt.i} ${form.tipo === opt.v ? 'text-amber-500' : 'text-zinc-400'}`} />
+                      {opt.t}
+                    </p>
+                    <p className="text-[10px] text-zinc-400 mt-0.5">{opt.d}</p>
+                  </button>
+                ))}
+              </div>
+
               {/* Nome + Unidade */}
               <div className="grid grid-cols-3 gap-2">
-                <div className="col-span-2">
+                <div className={form.tipo === 'estoque' ? 'col-span-3' : 'col-span-2'}>
                   <label className="text-[10px] font-semibold text-zinc-500 block mb-1">Nome do Item *</label>
                   <input
                     value={form.name}
                     onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                    placeholder="Ex: Detergente, Embalagem, Papel Toalha..."
+                    placeholder={form.tipo === 'estoque' ? 'Ex: Requeijão · Forn. A · cx 12x1,5kg' : 'Ex: Detergente, Embalagem, Papel Toalha...'}
                     className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
                   />
                 </div>
-                <div>
-                  <label className="text-[10px] font-semibold text-zinc-500 block mb-1">Unidade padrão</label>
-                  <select
-                    value={form.default_unit}
-                    onChange={(e) => setForm((f) => ({ ...f, default_unit: e.target.value }))}
-                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-                  >
-                    {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </div>
+                {form.tipo === 'consumo' && (
+                  <div>
+                    <label className="text-[10px] font-semibold text-zinc-500 block mb-1">Unidade padrão</label>
+                    <select
+                      value={form.default_unit}
+                      onChange={(e) => setForm((f) => ({ ...f, default_unit: e.target.value }))}
+                      className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                    >
+                      {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </div>
+                )}
               </div>
 
-              {/* Classificação DRE — campo principal */}
+              {/* Item de estoque e sempre mercadoria: nao faz sentido perguntar. */}
+              {form.tipo === 'estoque' && (
+                <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                  <i className="ri-information-line text-emerald-500 mt-0.5" />
+                  <p className="text-[11px] text-emerald-800">
+                    Entra no DRE como <strong>CMV</strong>, junto com o resto da mercadoria comprada.
+                    A compra também dá <strong>entrada no estoque</strong> do insumo vinculado.
+                  </p>
+                </div>
+              )}
+
+              {/* Classificação DRE - campo principal do item de consumo */}
+              {form.tipo === 'consumo' && (
               <div>
                 <label className="text-[10px] font-semibold text-zinc-500 block mb-1">
                   <i className="ri-folder-chart-line text-amber-500 mr-0.5" />
-                  Classificação DRE *
+                  Classificação DRE
                   <span className="text-zinc-400 font-normal ml-1">— onde este item aparece no DRE</span>
                 </label>
                 <select
@@ -364,20 +430,40 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                   className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
                 >
                   <option value="">CMV — Custo de Mercadoria Vendida (padrão)</option>
-                  {costCats.length > 0 && (
-                    <optgroup label="Custos">
-                      {costCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {expenseCats.length > 0 && (
+                    <optgroup label="Despesa Operacional (sai do CMV)">
+                      {expenseCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </optgroup>
                   )}
-                  {expenseCats.length > 0 && (
-                    <optgroup label="Despesas Operacionais">
-                      {expenseCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {costCats.length > 0 && (
+                    <optgroup label="Custos (contam como CMV)">
+                      {costCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </optgroup>
                   )}
                 </select>
                 <p className="text-[10px] text-zinc-400 mt-1">
                   Alimentos/bebidas = CMV &nbsp;·&nbsp; Limpeza/embalagem = Despesa Operacional
                 </p>
+              </div>
+              )}
+
+              {/* Categoria de mercadoria - agrupa os relatorios de compras */}
+              <div>
+                <label className="text-[10px] font-semibold text-zinc-500 block mb-1">
+                  <i className="ri-price-tag-3-line text-amber-500 mr-0.5" />
+                  Categoria de mercadoria (opcional)
+                  <span className="text-zinc-400 font-normal ml-1">— como agrupa nos relatórios de compras</span>
+                </label>
+                <select
+                  value={form.merchandise_category_id}
+                  onChange={(e) => setForm((f) => ({ ...f, merchandise_category_id: e.target.value }))}
+                  className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                >
+                  <option value="">
+                    {form.tipo === 'estoque' ? 'Herdar a categoria do insumo' : 'Sem categoria'}
+                  </option>
+                  {merchandiseCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
               </div>
 
               {/* Fornecedor padrão */}
@@ -417,11 +503,13 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                 )}
               </div>
 
-              {/* Vínculo com estoque (opcional) */}
+              {/* Vinculo com estoque - so existe no item de estoque */}
+              {form.tipo === 'estoque' && (
               <div className="border border-zinc-200 rounded-xl bg-white p-3">
                 <label className="text-[10px] font-semibold text-zinc-500 block mb-1">
                   <i className="ri-box-3-line text-emerald-500 mr-0.5" />
-                  Vínculo com estoque (opcional)
+                  Insumo do estoque *
+                  <span className="text-zinc-400 font-normal ml-1">— qual item do estoque esta compra abastece</span>
                 </label>
                 <div className="relative">
                   <input
@@ -526,7 +614,13 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                     </p>
                   </div>
                 )}
+                {!form.ingredient_id && (
+                  <p className="text-[10px] text-zinc-400 mt-2">
+                    O insumo precisa existir no Estoque. Se ainda não existe, cadastre lá primeiro.
+                  </p>
+                )}
               </div>
+              )}
 
               {/* Descrição + Obs */}
               <div className="grid grid-cols-2 gap-2">
@@ -561,7 +655,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={saving || !form.name.trim()}
+                  disabled={saving || !form.name.trim() || (form.tipo === 'estoque' && !form.ingredient_id)}
                   className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap transition-colors"
                 >
                   {saving ? 'Salvando...' : editingId ? 'Salvar' : 'Cadastrar'}
@@ -588,7 +682,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
               <p className="text-zinc-400 text-xs mt-1 max-w-xs">
                 {search
                   ? 'Tente outro termo de busca'
-                  : 'Cadastre itens como produtos de limpeza, embalagens, materiais de escritório e defina onde cada um aparece no DRE'}
+                  : 'Duas coisas moram aqui: o que você compra e não conta no estoque (limpeza, embalagem, escritório), e as apresentações de fornecedor dos insumos que você conta, como a caixa de 12x1,5kg do Requeijão'}
               </p>
               {!search && (
                 <button

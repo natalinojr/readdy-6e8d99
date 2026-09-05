@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { fetchComprasDRE } from '@/lib/comprasDRE';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 
@@ -28,9 +29,11 @@ interface DRESnapshot {
   receitaAReceber: number;
   cancelamentos: number;
   descontos: number;
+  /** Compras do período que são MERCADORIA — é a linha CMV da DRE. */
   cmvCompras: number;
   cmvComprasPendentes: number;
-  cmvTeorico: number; // P2: CMV por consumo (custo dos produtos vendidos)
+  /** CMV TEÓRICO por ficha técnica. NÃO entra na DRE (2026-09-05): só comparativo. */
+  cmvTeorico: number;
   despesasPorCategoria: Record<string, number>;
   despesasAPagar: number;
   // Estas duas linhas existiam no DRETab e NÃO eram buscadas aqui — o resultado do
@@ -99,7 +102,7 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string):
     // P11: inclui `partial` e soma pelo `paid_amount` acumulado (o desembolso real).
     // Mantido o filtro do P1 (compras fora, senão a mercadoria conta 2x com o CMV).
     supabase.from('fin_accounts_payable').select('dre_category_id, amount, paid_amount, status').eq('tenant_id', tenantId).in('status', ['paid', 'partial']).or('reference_type.is.null,reference_type.neq.purchase').gte('paid_date', startDate).lte('paid_date', endDate),
-    supabase.from('fin_purchases').select('total_amount, payment_status').eq('tenant_id', tenantId).in('payment_status', ['paid', 'partial']).gte('purchase_date', startDate).lte('purchase_date', endDate),
+    supabase.from('fin_purchases').select('id, total_amount, payment_status').eq('tenant_id', tenantId).in('payment_status', ['paid', 'partial']).gte('purchase_date', startDate).lte('purchase_date', endDate),
     // Regime de caixa: só folha efetivamente paga.
     supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('status', 'paid').eq('reference_month', monthStr),
     // P7: taxa de maquininha vem do razão (auto_card_fee), igual ao DRETab.
@@ -125,9 +128,12 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string):
 
   const cancelamentos = (cancelledRes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
   const descontos = (descontosRes.data ?? []).reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
-  const cmvCompras = (purchasesRes.data ?? []).reduce((s, p) => s + Number(p.total_amount), 0);
+  // CMV = compras realizadas; item classificado como despesa sai do CMV (mesmo
+  // critério do DRETab, via helper compartilhado).
+  const compras = await fetchComprasDRE(tenantId, purchasesRes.data ?? []);
+  const cmvCompras = compras.cmv;
   const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime);
-  const despesasPorCategoria: Record<string, number> = {};
+  const despesasPorCategoria: Record<string, number> = { ...compras.despesasPorCategoria };
   ((billsRes.data ?? []) as Array<Record<string, unknown>>).forEach(b => {
     const key = (b.dre_category_id as string) ?? '__sem__';
     const val = b.status === 'partial'
@@ -155,7 +161,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
     supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('status', 'cancelled').gte('created_at', startDate).lte('created_at', endDateTime),
     supabase.from('orders').select('discount_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).not('status', 'in', '("cancelled","draft")').gte('created_at', startDate).lte('created_at', endDateTime),
     supabase.from('fin_accounts_payable').select('dre_category_id, amount, status').eq('tenant_id', tenantId).in('status', ['pending', 'paid', 'overdue', 'partial']).or('reference_type.is.null,reference_type.neq.purchase').gte('due_date', startDate).lte('due_date', endDate),
-    supabase.from('fin_purchases').select('total_amount, payment_status').eq('tenant_id', tenantId).gte('purchase_date', startDate).lte('purchase_date', endDate),
+    supabase.from('fin_purchases').select('id, total_amount, payment_status').eq('tenant_id', tenantId).gte('purchase_date', startDate).lte('purchase_date', endDate),
     // Competência: folha pelo mês de referência, paga ou não (igual ao DRETab).
     supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('reference_month', monthStr),
     supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'expense').eq('origin', 'auto_card_fee').gte('date', startDate).lte('date', endDate),
@@ -175,10 +181,11 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
   const cancelamentos = (cancelledRes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
   const descontos = (descontosRes.data ?? []).reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
   const allPurchases = purchasesRes.data ?? [];
-  const cmvCompras = allPurchases.reduce((s, p) => s + Number(p.total_amount), 0);
+  const compras = await fetchComprasDRE(tenantId, allPurchases);
+  const cmvCompras = compras.cmv;
   const cmvComprasPendentes = allPurchases.filter(p => p.payment_status === 'pending').reduce((s, p) => s + Number(p.total_amount), 0);
   const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime);
-  const despesasPorCategoria: Record<string, number> = {};
+  const despesasPorCategoria: Record<string, number> = { ...compras.despesasPorCategoria };
   let despesasAPagar = 0;
   ((billsRes.data ?? []) as Array<Record<string, unknown>>).forEach(b => {
     const key = (b.dre_category_id as string) ?? '__sem__';
@@ -201,7 +208,7 @@ function calcDRE(d: DRESnapshot, _mode: 'caixa' | 'competencia') {
   // adicional. A venda a prazo já está no `payments`/`auto_sale`; somar `receitaAReceber` na
   // competência contava a mesma venda duas vezes. `receitaAReceber` segue exibido à parte.
   const receitaBruta = receitaRecebida;
-  const cmv = d.cmvTeorico; // P2: CMV por consumo — igual nos dois regimes
+  const cmv = d.cmvCompras; // CMV = compras realizadas (2026-09-05)
   // Dedução dupla (corrigido): pedido cancelado não gera payment e o payments.amount já vem
   // líquido de desconto. Cancelamentos/descontos ficam como informativos.
   const receitaLiquida = receitaBruta;

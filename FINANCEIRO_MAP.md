@@ -2,7 +2,7 @@
 
 > Documento vivo. É a fonte única para entender a aba **Financeiro**: telas, dados, fluxos, conexões com Estoque/Faturamento, a DRE e os problemas conhecidos.
 > **Sempre confirme no código atual antes de afirmar** — atualize este arquivo quando algo mudar.
-> Última revisão: **2026-08-26** (Fase 1-2 de compras + **auditoria completa do módulo**: P9–P30 — ver §7).
+> Última revisão: **2026-09-05** (CMV da DRE = compras realizadas §9d · catálogo de compras separado em dois tipos §9e · aba Relatórios de compras §9c).
 
 Arquivos-base: `src/pages/financeiro/`, `src/hooks/useFinanceiro.ts`, `useDespesas.ts`, `useReceitas.ts`, `useFinanceiroAlertas.ts`, `src/types/financeiro.ts`, Edge Functions `financial-write`, `purchase-write`, `purchase-confirm-delivery`, `order-write` (integração de venda), RPC `fn_get_cmv_report`.
 
@@ -115,9 +115,9 @@ Depois, **`purchase-confirm-delivery`** (`index.ts`):
 | Junho | 18.819,56 | 4.784,92 | 7.292,73 | 16.311,75 |
 | Julho | 22.233,97 | 7.292,73 | 6.599,86 | 22.926,84 |
 
-> 🔴 **A DRE atual NÃO segue esta regra** — desde o "fix" P2 (2026-07-03) ela usa o CMV teórico. Ver P12 em §7. **Não implementado ainda.**
+> ✅ **Implementado em 2026-09-05** (o dono reafirmou a regra: *"no CMV tem que ir compras realizadas; o CMV dos produtos vendidos é teórico e isso não entra no DRE"*). `DRETab` e `DREComparativoTab` passaram a usar **compras realizadas** como CMV, nos dois regimes. O CMV teórico continua sendo calculado e aparece **só como comparativo** no aviso abaixo da linha do CMV. Ver §9d.
 
-> **Bloqueio conhecido:** não existe snapshot mensal de estoque valorizado. `inventory_sessions` guarda contagens (`valor_ajuste_liquido`, `items` jsonb) mas **não** o valor total do estoque em cada fechamento. Sem isso o regime de competência não tem como obter Estoque inicial/final. O regime de caixa (compras pagas no mês) é implementável hoje.
+> **Bloqueio remanescente (só do ajuste de estoque):** o termo `+ Estoque inicial − Estoque final` da competência **ainda não é aplicado** — não existe snapshot mensal de estoque valorizado. `inventory_sessions` guarda contagens (`valor_ajuste_liquido`, `items` jsonb) mas **não** o valor total do estoque em cada fechamento. Sem isso o regime de competência não tem como obter Estoque inicial/final. O regime de caixa (compras pagas no mês) é implementável hoje.
 
 ---
 
@@ -168,6 +168,7 @@ margemLiquida     = resultadoOperacional / receitaBruta × 100
 > Legenda: ✅ corrigido · 🔶 corrigido parcialmente / decisão consciente · ⏳ pendente.
 
 - **✅ 🔴 P1 — Dupla contagem CMV × contas a pagar de compra (DRE).** `DRETab` somava compras pagas no CMV (`fin_purchases`) **e** as contas a pagar de compra por categoria (sem excluir `reference_type='purchase'`). As 6 contas geradas por compras entravam 2×. **Fix:** `billsRes` dos dois regimes agora exclui `reference_type='purchase'` (`.or('reference_type.is.null,reference_type.neq.purchase')`), mesmo critério da `DespesasTab`.
+- **✅ 🔴 P2/P12 — RESOLVIDO em 2026-09-05: CMV da DRE = compras realizadas.** Ver §9d. O texto abaixo fica como histórico do caminho errado.
 - **❌ 🔴 P2 — REVERTIDO CONCEITUALMENTE (ver P12). O remédio estava errado.** O diagnóstico ("compras ≠ CMV") era correto, mas a solução escolhida (ficha técnica) não é CMV de DRE — é CMV teórico. O caminho certo é `Compras + Estoque inicial − Estoque final`. Texto original abaixo, mantido para histórico: ~~CMV agora é por CONSUMO (custo dos produtos vendidos).~~ DRE e DRE Comparativo passam a usar Σ `order_items.unit_cost × qtd` (`fetchCmvConsumo`/`fetchCmvConsumoComp`), regime-agnóstico. Compras saem do CMV (viram estoque/caixa). Drill-down do CMV mostra itens vendidos. **⚠️ Cobertura de ficha técnica medida = 2,2%** (25 de 1.136 itens) → hoje o CMV está **subestimado** (margem inflada) até o usuário cadastrar as fichas. Aviso na tela mostra a cobertura e as compras do período. **Raiz a resolver: subir a cobertura de ficha técnica.**
 - **✅ 🟠 P3 — `pay_bill` gravava caixa com `origin='manual'` → dupla contagem em Despesas.** `pay_bill` **já** inseria `fin_cash_flow`, mas como `origin='manual'`; `useDespesas` soma `fin_accounts_payable` (pagas) **e** `fin_cash_flow` manual → conta contada 2× na aba Despesas. O design já previa `auto_bill_payment` (lista de exclusão em `useFinanceiro.ts:519-532`). **Fix:** `pay_bill` usa `origin='auto_bill_payment'`. **Deployado: `financial-write` v35 (2026-07-03).**
 - **✅ 🟠 P4 — Três bases de "receita" (rotuladas).** `ReceitasTab` = faturamento (pedidos entregues); Visão Geral/DRE = recebido em caixa (`auto_sale`). São visões legítimas diferentes — não colapsadas. **Fix:** aviso azul na aba Receitas explicando "faturamento por venda"; KPIs da Visão Geral relabelados "Receita … (caixa)". Reconciliação automática entre as duas fica como evolução futura.
@@ -238,7 +239,7 @@ Ganhos além do isolamento: o vínculo DRE em lote contava `count++` mesmo quand
 > **Sobre as políticas `deny_direct_write_*`:** verificado em 2026-08-26 que TODAS são **PERMISSIVAS**. Como políticas permissivas se somam por OR, uma com `using(false)` **não bloqueia nada** — as escritas diretas do front funcionam. Elas dão falsa sensação de proteção. Torná-las RESTRICTIVE quebraria RH, orçamentos e outros caminhos que escrevem direto; decisão consciente de não mexer agora.
 
 ### Backlog restante
-- **P12 (prioridade):** refazer o CMV da DRE conforme §4c. Pré-requisito: snapshot mensal de estoque valorizado.
+- ~~**P12:** refazer o CMV da DRE conforme §4c~~ → **feito em 2026-09-05** (§9d). Resta só o ajuste `+ Estoque inicial − Estoque final` da competência, que depende do snapshot mensal de estoque valorizado.
 - **Fase 2 de compras:** catálogo de recorrentes ligado ao modal (lançamento rápido do dia a dia); pagamento em lote por fornecedor. ~~Listagem espelhando a aba "CM" da planilha~~ → **feito em 2026-09-05** (aba **Relatórios**, ver §9c).
 - **Duplicação de modal de compra:** existem DOIS `NovaCompraModal` (`components/` usado pelo Estoque, `components/compras/` usado pelo Financeiro). Unificar — foi a divergência que escondeu o P9.
 - **`GerenciarFornecedoresModal` órfão:** existe em `src/pages/estoque/components/` sem nenhum import. Fornecedor na compra é ligado por **nome** (`ilike`), não por FK.
@@ -355,6 +356,34 @@ entrar mais nada" — que é exatamente a leitura pedida.
 - **Matriz Categoria × Mês** (espelho da aba "CM" da planilha) + gráfico empilhado (top 7 categorias + "Outras") só quando o período tem 2+ meses.
 - **CSV** de itens com os filtros aplicados (`Compras_itens_<from>_<to>.csv`, `;`, BOM, decimal com vírgula).
 - Teste de fumaça: `src/test/components/comprasRelatoriosPanel.test.tsx`. **Pegadinha corrigida no `vite.config.ts`:** o alias `@` do Vitest usava `new URL(...).pathname`, que devolve `%20` no espaço do caminho do projeto — NENHUM teste com `@/` rodava no Windows. Agora usa `resolve(__dirname, "src")`. Com isso a suíte voltou a rodar e expôs 15 falhas pré-existentes (`dateUtils`, `orderFlow`, `mesaQRFlow`), não relacionadas a compras.
+
+## 9d. CMV da DRE = compras realizadas (2026-09-05)
+
+Decisão reafirmada pelo dono e implementada. Fecha o P2/P12.
+
+- **Regra:** o CMV da DRE é o que foi **comprado** no período. O CMV por ficha técnica é **teórico** e não entra no resultado; segue calculado (`fetchCmvConsumo`/`fetchCmvConsumoComp`) e aparece só como comparativo no aviso sob a linha do CMV. `CMV real − CMV teórico = perda do período` continua sendo a leitura gerencial.
+- **Helper compartilhado `src/lib/comprasDRE.ts`.** `fetchComprasDRE(tenantId, purchases)` devolve `{ cmv, despesasPorCategoria, total }`. Usado pelos dois regimes do `DRETab` e do `DREComparativoTab`, para os dois não divergirem de novo.
+- **Split exclusivo (é o que impede o P23 de voltar):** item de compra cuja categoria DRE é do grupo `expense` vai para a **despesa** daquela categoria; **todo o resto** (sem categoria, ou categoria de custo) vai para o **CMV**. Nunca os dois. Invariante testado: `cmv + Σ despesas === total` (`src/test/lib/comprasDRE.test.ts`).
+- **Só `expense` sai do CMV, de propósito.** Os grupos `tax`/`revenue` não são somados em lugar nenhum da DRE; mandar um item para lá faria o valor **sumir** do resultado.
+- **Compra sem itens lançados** entra pelo `total_amount` dela, em CMV (antes o fallback era global: só valia se NENHUMA compra do período tivesse item).
+- **P30 (continuação):** a query de `fin_purchase_items` da DRE puxava **todos** os itens do tenant, sem paginação nem filtro de período, e truncava em ~1000 linhas sem erro. Agora é filtrada por `purchase_id` (em lotes de 150 ids) e paginada com `fetchAllRows`. Como os itens viraram a base do próprio CMV, esse truncamento passaria a subnotificar o resultado.
+- **Limitação conhecida (herdada):** no regime de caixa o filtro das compras é `payment_status in ('paid','partial')` **por `purchase_date`**, não pela data do pagamento. Uma compra parcial entra pelo valor cheio. Corrigir isso é trabalho à parte.
+
+---
+
+## 9e. Catálogo de compras: as duas funções agora são explícitas (2026-09-05)
+
+`compras/CatalogoComprasModal.tsx`. A janela fazia dois trabalhos sem dizer qual era qual: o texto prometia "itens de limpeza/embalagem com classificação no DRE" e o formulário oferecia vínculo com estoque, que é coisa de apresentação de fornecedor.
+
+- **Escolha de tipo no topo do formulário.** `tipo` não é coluna: é derivado de `ingredient_id` estar preenchido.
+  - **Não entra no estoque** (limpeza, embalagem, escritório): mostra **Classificação DRE**, esconde o vínculo. É o que faz o valor sair do CMV e virar despesa (§9d).
+  - **Entra no estoque** (apresentação de fornecedor de um insumo): mostra **insumo + embalagem**, esconde a classificação DRE e grava `dre_category_id = null`. Item de estoque é sempre CMV; oferecer outra classificação seria uma promessa que a conta não cumpre.
+- **Categoria de mercadoria entrou no catálogo.** `fin_purchase_catalog.merchandise_category_id` existia mas **nenhuma UI preenchia** (era o pendente registrado em §8b). Sem ela, item que não é de estoque caía permanentemente em "Sem categoria" nos relatórios de compras: o servidor só herda a categoria pelo insumo vinculado, e esse item não tem insumo. Não precisou de migração nem de deploy da Edge Function: a coluna já existia e `upsert_purchase_catalog` repassa o payload inteiro.
+- **Duplicata no seletor de compra resolvida.** `compras/NovaCompraModal` montava a lista como catálogo + insumos, então um insumo com apresentação aparecia **duas vezes**, em seções diferentes e com comportamento diferente (pela seção "Insumos" perdia-se a embalagem do fornecedor). Agora o insumo que já tem apresentação some da seção "Insumos". A embalagem segue editável na linha, para a compra do dia que vier em caixa diferente.
+- **Obrigatoriedades honestas:** o asterisco de "Classificação DRE" era decorativo (o salvamento só exigia o nome) e sumiu, porque vazio tem significado real (= CMV). No tipo "entra no estoque" o **insumo** virou obrigatório de verdade, com o botão desabilitado.
+- Testes: `src/test/components/catalogoComprasModal.test.tsx` cobre os dois modos e o payload gravado em cada um.
+
+---
 
 ## 9. Tabelas do módulo (schema `public`)
 `fin_cash_flow`, `fin_accounts_payable`, `fin_receivable_installments`, `fin_anticipations`, `fin_purchases`, `fin_purchase_items`, `fin_purchase_catalog`, `fin_merchandise_categories`, `fin_suppliers`, `fin_cost_centers`, `fin_dre_categories`, `fin_bank_accounts`, `fin_bank_transactions`, `fin_bank_statement_imports`, `fin_bank_statements`, `fin_reconciliation_rules`, `fin_budgets`, `fin_budget_items`, `fin_income_routing`, `fin_investment_settings`, `fin_implementation_costs`, `fin_implementation_columns`, `fin_stone_config`, `fin_stone_imports`, `fin_pix_payments`, `fin_payable_aging`(view), `fin_receivable_aging`(view), `hr_employees`, `hr_payroll`, `hr_payroll_custom_fields`.

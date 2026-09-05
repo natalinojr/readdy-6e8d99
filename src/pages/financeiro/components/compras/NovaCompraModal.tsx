@@ -147,18 +147,29 @@ export default function NovaCompraModal({
       });
   }, [user?.tenantId]);
 
+  // Insumo que já tem apresentação no catálogo NÃO aparece de novo na seção de
+  // insumos: o mesmo item saía duas vezes na lista, e escolher pela seção errada
+  // perdia a embalagem do fornecedor sem avisar. A apresentação sempre traz mais
+  // informação (embalagem, fornecedor, categoria), e a embalagem segue editável
+  // na linha caso a compra do dia venha diferente.
+  const ingredientesComApresentacao = new Set(
+    catalogItems.map((c) => c.ingredient_id).filter((v): v is string => Boolean(v)),
+  );
+
   // Itens unificados: catálogo primeiro, depois insumos
   const allItems: UnifiedItem[] = [
     ...catalogItems,
-    ...ingredients.map((ig) => ({
-      id: ig.id,
-      name: ig.name,
-      unit: ig.unit,
-      type: 'ingredient' as const,
-      dre_category_id: null,
-      dre_category_name: 'CMV',
-      default_supplier: null,
-    })),
+    ...ingredients
+      .filter((ig) => !ingredientesComApresentacao.has(ig.id))
+      .map((ig) => ({
+        id: ig.id,
+        name: ig.name,
+        unit: ig.unit,
+        type: 'ingredient' as const,
+        dre_category_id: null,
+        dre_category_name: 'CMV',
+        default_supplier: null,
+      })),
   ];
 
   // Categorias de mercadoria (Bebidas, Hortifruti, Proteínas...) — gerenciáveis pelo usuário

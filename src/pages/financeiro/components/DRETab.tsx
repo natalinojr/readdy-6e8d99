@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, Fragment } from 'react';
 import { useImpressoras, PRINTER_KEY_RELATORIOS } from '@/contexts/ImpressorasContext';
 import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
+import { fetchComprasDRE } from '@/lib/comprasDRE';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Cell,
@@ -51,15 +52,19 @@ interface DREData {
   receitaManual: number;
   cancelamentos: number;
   descontos: number;
+  /** Compras do período que são MERCADORIA — é a linha CMV da DRE. */
   cmvCompras: number;
+  /** Tudo que foi comprado no período (mercadoria + itens classificados como despesa). */
+  comprasTotal: number;
   despesasPorCategoria: Record<string, number>;
   custoPessoal: number;
   taxasMaquininha: number;
   receitaAReceber: number;
   despesasAPagar: number;
   cmvComprasPendentes: number;
-  // P2: CMV teórico por consumo (Σ order_items.unit_cost × qtd) e cobertura de ficha técnica.
-  // Só é confiável com cobertura alta; serve de comparação com o CMV por compras.
+  // CMV TEÓRICO por consumo (Σ order_items.unit_cost × qtd) e cobertura de ficha técnica.
+  // NÃO entra na DRE (decisão de 2026-09-05): serve só de comparação com o CMV real
+  // por compras, como indicador de desvio/perda.
   cmvTeorico?: number;
   fichaCobertura?: number; // % de itens vendidos com custo (unit_cost > 0)
 }
@@ -112,7 +117,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   // BUG-42: Para cartão a prazo (days_to_receive > 0), o auto_sale só é criado na liquidação do recebível
   // (receive_installment no financial-write). O breakdown por destino usa fin_receivable_installments
   // com received_at no período + join com orders para destination_type.
-  const [autoSaleRes, manualIncomeRes, paymentsRes, cancelledRes, descontosRes, billsRes, purchasesRes, purchaseItemsRes, payrollRes, payMethodsRes, receivablesReceivedRes] = await Promise.all([
+  const [autoSaleRes, manualIncomeRes, paymentsRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, payMethodsRes, receivablesReceivedRes] = await Promise.all([
     supabase
       .from('fin_cash_flow')
       .select('amount, reference_id')
@@ -186,11 +191,6 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .in('payment_status', ['paid', 'partial'])
       .gte('purchase_date', startDate)
       .lte('purchase_date', endDate),
-
-    supabase
-      .from('fin_purchase_items')
-      .select('purchase_id, total_price, dre_category_id, freight_allocated')
-      .eq('tenant_id', tenantId),
 
     // REGIME DE CAIXA: só entra a folha efetivamente PAGA. Antes o filtro era apenas
     // `reference_month`, então a folha do mês virava saída de caixa mesmo sem ter sido paga
@@ -288,29 +288,14 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   const cancelamentos = (cancelledRes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
   const descontos = (descontosRes.data ?? []).reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
 
-  let cmvCompras = 0;
-  const despesasPorCategoria: Record<string, number> = {};
-
-  const purchaseIds = (purchasesRes.data ?? []).map(p => p.id);
-  const purchaseItems = (purchaseItemsRes.data ?? []).filter(
-    (it: Record<string, unknown>) => purchaseIds.includes(it.purchase_id as string)
-  );
-
-  // P1 (continuação): `billsRes` exclui as contas a pagar de compra para a mercadoria não
-  // ser contada 2x. Mas o ITEM da compra, quando tinha `dre_category_id`, era jogado em
-  // `despesasPorCategoria` — burlando exatamente a exclusão do P1: a mesma mercadoria virava
-  // despesa por categoria E entrava no agregado de compras/CMV. Agora TODO o valor dos itens
-  // vai para `cmvCompras` (agregado informativo de compras do período), tenha categoria ou não.
-  for (const it of purchaseItems as Array<Record<string, unknown>>) {
-    const itemTotal = Number(it.total_price ?? 0) + Number(it.freight_allocated ?? 0);
-    cmvCompras += itemTotal;
-  }
-
-  const totalCompras = (purchasesRes.data ?? []).reduce((s, p) => s + Number(p.total_amount), 0);
-  const totalItens = purchaseItems.reduce((s, it) => s + Number((it as Record<string, unknown>).total_price ?? 0), 0);
-  if (totalItens === 0 && totalCompras > 0) {
-    cmvCompras = totalCompras;
-  }
+  // CMV = COMPRAS REALIZADAS no período (decisão do dono, 2026-09-05). O item de
+  // compra classificado como DESPESA sai do CMV e vai para a categoria dele; todo o
+  // resto é mercadoria. Os dois destinos são exclusivos, então a mercadoria continua
+  // sem ser contada 2x (P1/P23): `billsRes` já exclui `reference_type='purchase'`.
+  const compras = await fetchComprasDRE(tenantId, purchasesRes.data ?? []);
+  const cmvCompras = compras.cmv;
+  const comprasTotal = compras.total;
+  const despesasPorCategoria: Record<string, number> = { ...compras.despesasPorCategoria };
 
   (billsRes.data ?? []).forEach(b => {
     const key = b.dre_category_id ?? '__sem_categoria__';
@@ -344,7 +329,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
     receitaManual,
-    cancelamentos, descontos, cmvCompras, despesasPorCategoria,
+    cancelamentos, descontos, cmvCompras, comprasTotal, despesasPorCategoria,
     custoPessoal, taxasMaquininha,
     receitaAReceber: 0,
     despesasAPagar: 0,
@@ -362,7 +347,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
   // Regime de Competência: receita = auto_sale (recebido à vista) + manual
   // Recebíveis são saldo (balanço), NÃO somam na receita bruta (BUG-41)
   // A receita já foi reconhecida no auto_sale no momento da venda
-  const [autoSaleRes, manualIncomeRes, paymentsRes, receivablesRes, cancelledRes, descontosRes, billsRes, purchasesRes, purchaseItemsRes, payrollRes, payMethodsRes] = await Promise.all([
+  const [autoSaleRes, manualIncomeRes, paymentsRes, receivablesRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, payMethodsRes] = await Promise.all([
     supabase
       .from('fin_cash_flow')
       .select('amount, reference_id')
@@ -440,11 +425,6 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .lte('purchase_date', endDate),
 
     supabase
-      .from('fin_purchase_items')
-      .select('purchase_id, total_price, dre_category_id, freight_allocated')
-      .eq('tenant_id', tenantId),
-
-    supabase
       .from('hr_payroll')
       .select('net_salary, gross_salary, fgts')
       .eq('tenant_id', tenantId)
@@ -493,27 +473,14 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
   const cancelamentos = (cancelledRes.data ?? []).reduce((s, o) => s + Number(o.total_amount), 0);
   const descontos = (descontosRes.data ?? []).reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
 
-  let cmvCompras = 0;
-  const despesasPorCategoria: Record<string, number> = {};
-
-  const purchaseIds = (purchasesRes.data ?? []).map(p => p.id);
-  const purchaseItems = (purchaseItemsRes.data ?? []).filter(
-    (it: Record<string, unknown>) => purchaseIds.includes(it.purchase_id as string)
-  );
-
-  // P1 (continuação): idem regime de caixa — item de compra NUNCA alimenta
-  // `despesasPorCategoria`, senão a mercadoria escapa da exclusão de `reference_type='purchase'`
-  // e é contada 2x (despesa por categoria + agregado de compras/CMV).
-  for (const it of purchaseItems as Array<Record<string, unknown>>) {
-    const itemTotal = Number(it.total_price ?? 0) + Number(it.freight_allocated ?? 0);
-    cmvCompras += itemTotal;
-  }
-
-  const totalCompras = (purchasesRes.data ?? []).reduce((s, p) => s + Number(p.total_amount), 0);
-  const totalItens = purchaseItems.reduce((s, it) => s + Number((it as Record<string, unknown>).total_price ?? 0), 0);
-  if (totalItens === 0 && totalCompras > 0) {
-    cmvCompras = totalCompras;
-  }
+  // CMV = COMPRAS REALIZADAS no período (decisão do dono, 2026-09-05). O item de
+  // compra classificado como DESPESA sai do CMV e vai para a categoria dele; todo o
+  // resto é mercadoria. Os dois destinos são exclusivos, então a mercadoria continua
+  // sem ser contada 2x (P1/P23): `billsRes` já exclui `reference_type='purchase'`.
+  const compras = await fetchComprasDRE(tenantId, purchasesRes.data ?? []);
+  const cmvCompras = compras.cmv;
+  const comprasTotal = compras.total;
+  const despesasPorCategoria: Record<string, number> = { ...compras.despesasPorCategoria };
 
   const cmvComprasPendentes = (purchasesRes.data ?? [])
     .filter(p => p.payment_status === 'pending')
@@ -551,7 +518,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
     receitaManual,
-    cancelamentos, descontos, cmvCompras, despesasPorCategoria,
+    cancelamentos, descontos, cmvCompras, comprasTotal, despesasPorCategoria,
     custoPessoal, taxasMaquininha,
     receitaAReceber,
     despesasAPagar,
@@ -873,7 +840,7 @@ export default function DRETab() {
       const receitaBase = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento;
       // BUG-41: receitaAReceber não soma na receita (é saldo, não receita adicional)
       const receita = receitaBase;
-      const cmv = d.cmvTeorico ?? 0; // P2: CMV por consumo (custo dos produtos vendidos)
+      const cmv = d.cmvCompras ?? 0; // CMV = compras realizadas (2026-09-05)
       // Despesas sem categoria DRE entram no total (mesmo critério da tabela) — antes o
       // gráfico as descartava e mostrava um resultado melhor do que o real.
       const despesas = Object.values(d.despesasPorCategoria)
@@ -907,10 +874,13 @@ export default function DRETab() {
   // (criado no momento da venda). Somar recebíveis duplicaria vendas a prazo.
   const receitaBruta = receitaRecebida;
 
-  // P2: CMV = Custo dos Produtos Vendidos (consumo real via ficha técnica, Σ unit_cost × qtd).
-  // Regime-agnóstico: o custo do que foi vendido não depende de quando a compra foi paga.
-  // Compras entram como estoque/caixa, não no CMV. Confiabilidade depende da cobertura de ficha (ver aviso).
-  const cmvTotal = data.cmvTeorico ?? 0;
+  // CMV = COMPRAS REALIZADAS no período (decisão do dono, 2026-09-05). O CMV por
+  // ficha técnica é TEÓRICO e fica só como comparativo no aviso abaixo da linha.
+  // Falta ainda o ajuste de estoque inicial/final (não há inventário valorizado mensal).
+  const cmvTotal = data.cmvCompras ?? 0;
+  // Parte das compras que foi classificada como despesa operacional e por isso
+  // NÃO está no CMV — exibido no aviso para o total comprado continuar reconciliável.
+  const comprasComoDespesa = Math.max(0, (data.comprasTotal ?? 0) - cmvTotal);
 
   // DEDUÇÃO DUPLA (corrigido): `receitaBruta` vem de `paymentsMatched`, que já exclui pedidos
   // cancelados (`.not('orders.status','in','(cancelled,draft)')`) e cujo `payments.amount` já é
@@ -963,7 +933,7 @@ export default function DRETab() {
 
   const prevReceitaBruta = prevReceitaRecebida;
 
-  const prevCmvTotal = prevData?.cmvTeorico ?? 0;
+  const prevCmvTotal = prevData?.cmvCompras ?? 0;
 
   // Mesmo critério do mês corrente: sem dedução dupla de cancelamentos/descontos.
   const prevReceitaLiquida = prevReceitaBruta;
@@ -1373,23 +1343,27 @@ export default function DRETab() {
               />
               {/* P2: CMV aqui é baseado em COMPRAS, não no custo do que foi vendido.
                   O CMV correto (consumo via ficha técnica) só é confiável com cobertura alta. */}
-              {typeof data.fichaCobertura === 'number' && (
-                <tr>
-                  <td colSpan={5} className="px-3 pb-2">
-                    <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${
-                      data.fichaCobertura < 70 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-zinc-50 text-zinc-500 border border-zinc-200'
-                    }`}>
-                      <i className="ri-information-line mt-0.5" />
-                      <span>
-                        CMV = <strong>custo dos produtos vendidos</strong> (consumo por ficha técnica).
-                        Compras do período (entram no estoque, não no CMV): <strong>{formatCurrency(data.cmvCompras)}</strong>
-                        {' '}· cobertura de ficha técnica: <strong>{(data.fichaCobertura).toFixed(0)}%</strong>.
-                        {data.fichaCobertura < 70 && ' ⚠ Cobertura baixa — o CMV está subestimado até você cadastrar as fichas técnicas dos itens vendidos.'}
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              )}
+              <tr>
+                <td colSpan={5} className="px-3 pb-2">
+                  <div className="flex items-start gap-2 rounded-lg px-3 py-2 text-xs bg-zinc-50 text-zinc-500 border border-zinc-200">
+                    <i className="ri-information-line mt-0.5" />
+                    <span>
+                      CMV = <strong>compras realizadas no período</strong>.
+                      Total comprado: <strong>{formatCurrency(data.comprasTotal ?? 0)}</strong>
+                      {comprasComoDespesa > 0 && (
+                        <>, dos quais <strong>{formatCurrency(comprasComoDespesa)}</strong> foram classificados como despesa operacional e saíram do CMV</>
+                      )}.
+                      {' '}Ainda sem ajuste de estoque inicial/final, que exige inventário valorizado por mês.
+                      {typeof data.cmvTeorico === 'number' && data.cmvTeorico > 0 && (
+                        <>
+                          {' '}CMV teórico por ficha técnica, apenas comparativo: <strong>{formatCurrency(data.cmvTeorico)}</strong>
+                          {typeof data.fichaCobertura === 'number' && <> (cobertura de {data.fichaCobertura.toFixed(0)}%)</>}.
+                        </>
+                      )}
+                    </span>
+                  </div>
+                </td>
+              </tr>
               {hasDynCats && costCats.length > 0 && (
                 <CatTreeRows
                   cats={costCats}
