@@ -477,6 +477,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                     setSupplierOpen(true);
                   }}
                   onFocus={() => setSupplierOpen(true)}
+                  onBlur={() => setTimeout(() => setSupplierOpen(false), 200)}
                   placeholder="Selecionar ou digitar..."
                   className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
                 />
