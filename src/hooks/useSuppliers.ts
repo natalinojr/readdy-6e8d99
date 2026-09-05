@@ -73,7 +73,12 @@ export function useSuppliers() {
       }),
     });
 
+    // A Edge Function responde 200 com `{ error }` no corpo. Engolir isso fazia
+    // o fornecedor "sumir" sem explicação, como aconteceu no catálogo de compras.
     const json = await res.json();
+    if (!res.ok || json?.error) {
+      throw new Error(json?.error ?? `Falha ao salvar fornecedor (HTTP ${res.status})`);
+    }
     await load();
     return json?.data ?? null;
   }, [user?.tenantId, load]);
@@ -84,7 +89,7 @@ export function useSuppliers() {
     const token = session?.access_token;
     if (!token) return;
 
-    await fetch(`${SUPABASE_URL}/functions/v1/financial-write`, {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/financial-write`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -97,6 +102,10 @@ export function useSuppliers() {
         payload: { id, is_active: false },
       }),
     });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.error) {
+      throw new Error(json?.error ?? `Falha ao remover fornecedor (HTTP ${res.status})`);
+    }
     await load();
   }, [user?.tenantId, load]);
 

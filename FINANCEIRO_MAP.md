@@ -519,6 +519,35 @@ O dono cadastrou um item e ele não ficou salvo. A tabela estava **vazia desde s
 
 ---
 
+## 9h. Fornecedores: cadastro e edição na aba Compras (2026-09-05)
+
+Pedido do dono: poder **adicionar e editar** fornecedor pela aba Compras, usando os
+**mesmos** fornecedores do estoque.
+
+- **A tabela já era a mesma.** Tudo (Compras, Catálogo, Contas a Pagar, Orçamentos,
+  Insumos e o relatório de fornecedores do estoque) passa pelo hook
+  `src/hooks/useSuppliers.ts`, que lê `fin_suppliers` e grava por
+  `financial-write / upsert_supplier`. O que faltava era **interface** no financeiro.
+- **A tela já existia e era órfã.** `GerenciarFornecedoresModal` estava em
+  `pages/estoque/components/` e **nenhum arquivo a importava**. Foi movida para
+  `src/components/GerenciarFornecedoresModal.tsx` (as duas áreas usam) e ligada ao
+  botão **Fornecedores** da barra da aba Compras. Ao fechar, a `ComprasTab` recarrega
+  a lista, senão o fornecedor recém-criado não aparecia nos filtros da tela.
+- **Falha silenciosa fechada (mesmo modo de falha do §9g).** `useSuppliers.upsert` e
+  `.remove` liam a resposta e seguiam em frente: a Edge Function responde **200 com
+  `{ error }` no corpo**, então um erro de permissão sumia e o fornecedor "não
+  salvava" sem aviso. Agora as duas lançam, e o modal mostra o motivo mantendo o
+  formulário aberto. Testes em `src/test/components/gerenciarFornecedoresModal.test.tsx`.
+- **⚠️ Duplicata conhecida:** existe um **segundo** `useSuppliers` em
+  `src/hooks/useFinanceiro.ts` (via `list_suppliers`), também sobre `fin_suppliers`,
+  que **ninguém importa**. É código morto com nome idêntico ao hook bom — cuidado para
+  não importar o errado.
+- **Pendente conhecido:** no catálogo, o campo "Fornecedor padrão" aceita texto livre e
+  grava `default_supplier` sem `supplier_id` quando o nome não casa com a lista. Isso
+  cria fornecedor "fantasma" que não existe em `fin_suppliers`.
+
+---
+
 ## 9. Tabelas do módulo (schema `public`)
 `fin_cash_flow`, `fin_accounts_payable`, `fin_receivable_installments`, `fin_anticipations`, `fin_purchases`, `fin_purchase_items`, `fin_purchase_catalog`, `fin_merchandise_categories`, `fin_suppliers`, `fin_cost_centers`, `fin_dre_categories`, `fin_dre_groups`, `fin_bank_accounts`, `fin_bank_transactions`, `fin_bank_statement_imports`, `fin_bank_statements`, `fin_reconciliation_rules`, `fin_budgets`, `fin_budget_items`, `fin_income_routing`, `fin_investment_settings`, `fin_implementation_costs`, `fin_implementation_columns`, `fin_stone_config`, `fin_stone_imports`, `fin_pix_payments`, `fin_payable_aging`(view), `fin_receivable_aging`(view), `hr_employees`, `hr_payroll`, `hr_payroll_custom_fields`.
 

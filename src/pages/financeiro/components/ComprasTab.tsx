@@ -13,6 +13,7 @@ import ComprasRelatoriosPanel from './compras/ComprasRelatoriosPanel';
 import DetalhePurchaseModal from './compras/DetalhePurchaseModal';
 import NovaCompraModal from './compras/NovaCompraModal';
 import CatalogoComprasModal from './compras/CatalogoComprasModal';
+import GerenciarFornecedoresModal from '@/components/GerenciarFornecedoresModal';
 import CategoriasMercadoriaModal from './compras/CategoriasMercadoriaModal';
 
 interface BillInstallment {
@@ -51,7 +52,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const { registrarEvento } = useAuditoria();
   const { centers } = useCostCenters();
   const { accounts: bankAccounts } = useBankAccounts();
-  const { names: supplierNames } = useSuppliers();
+  const { names: supplierNames, load: recarregarFornecedores } = useSuppliers();
   // O EstoqueContext é global e se atualiza por Realtime — mas para admin
   // multi-loja o Realtime é filtrado pela RLS (get_user_tenant_id() = última
   // membership) e fica MUDO na loja errada. Compra mexe em estoque, então
@@ -61,6 +62,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const [activeView, setActiveView] = useState<'lista' | 'relatorios' | 'relatorio' | 'centrocusto'>('lista');
   const [showModal, setShowModal] = useState(false);
   const [showCatalogo, setShowCatalogo] = useState(false);
+  const [showFornecedores, setShowFornecedores] = useState(false);
   const [showCategorias, setShowCategorias] = useState(false);
   const [detailPurchase, setDetailPurchase] = useState<Purchase | null>(null);
   const [detailInstallments, setDetailInstallments] = useState<BillInstallment[]>([]);
@@ -339,6 +341,12 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
             className="flex items-center gap-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
           >
             <i className="ri-price-tag-3-line" /> Categorias
+          </button>
+          <button
+            onClick={() => setShowFornecedores(true)}
+            className="flex items-center gap-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
+          >
+            <i className="ri-truck-line" /> Fornecedores
           </button>
           <button
             onClick={() => { setShowModal(true); loadIngredients(); }}
@@ -674,6 +682,13 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
           onClose={() => setDetailPurchase(null)}
           onDeliveryConfirmed={handleDeliveryConfirmed}
           onDeleted={handleDeleted}
+        />
+      )}
+
+      {/* Fornecedores — mesma tabela (fin_suppliers) e mesma tela do estoque. */}
+      {showFornecedores && (
+        <GerenciarFornecedoresModal
+          onClose={() => { setShowFornecedores(false); recarregarFornecedores(); }}
         />
       )}
 

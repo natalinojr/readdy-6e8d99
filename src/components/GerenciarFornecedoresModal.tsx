@@ -123,6 +123,7 @@ export default function GerenciarFornecedoresModal({ onClose, onSelect, selectMo
   const [editSupplier, setEditSupplier] = useState<Supplier | null>(null);
   const [busca, setBusca] = useState('');
   const [confirmRemove, setConfirmRemove] = useState<Supplier | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
 
   const filtered = busca
     ? suppliers.filter((s) =>
@@ -133,9 +134,25 @@ export default function GerenciarFornecedoresModal({ onClose, onSelect, selectMo
     : suppliers;
 
   const handleSave = async (data: SupplierFormData) => {
-    await upsert({ ...data, id: data.id });
-    setShowForm(false);
-    setEditSupplier(null);
+    try {
+      await upsert({ ...data, id: data.id });
+      setErro(null);
+      setShowForm(false);
+      setEditSupplier(null);
+    } catch (e) {
+      // Mantém o formulário aberto com o que foi digitado.
+      setErro(e instanceof Error ? e.message : 'Erro ao salvar o fornecedor.');
+    }
+  };
+
+  const handleRemove = async (s: Supplier) => {
+    try {
+      await remove(s.id);
+      setErro(null);
+      setConfirmRemove(null);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Erro ao remover o fornecedor.');
+    }
   };
 
   const handleEdit = (s: Supplier) => {
@@ -162,6 +179,13 @@ export default function GerenciarFornecedoresModal({ onClose, onSelect, selectMo
         </div>
 
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
+          {erro && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+              <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-red-600">{erro}</p>
+            </div>
+          )}
+
           {/* Busca + novo */}
           <div className="flex gap-2">
             <div className="flex-1 flex items-center gap-2 bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2">
@@ -306,7 +330,7 @@ export default function GerenciarFornecedoresModal({ onClose, onSelect, selectMo
             <div className="flex gap-2">
               <button onClick={() => setConfirmRemove(null)} className="flex-1 py-2 text-xs font-semibold text-zinc-600 bg-zinc-100 rounded-lg cursor-pointer">Cancelar</button>
               <button
-                onClick={() => { remove(confirmRemove.id); setConfirmRemove(null); }}
+                onClick={() => handleRemove(confirmRemove)}
                 className="flex-1 py-2 text-xs font-semibold text-white bg-red-500 rounded-lg hover:bg-red-600 cursor-pointer"
               >
                 Remover
