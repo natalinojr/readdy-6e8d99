@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import { formatCurrency } from '@/lib/formatters';
 import DREDrillDownModal from './DREDrillDownModal';
+import { useDreGroups } from '@/hooks/useDreGroups';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function pct(v: number, total: number) {
@@ -765,6 +766,7 @@ export default function DRETab() {
   }[]>([]);
   const [loadingChart, setLoadingChart] = useState(false);
   const [dreCats, setDreCats] = useState<DRECat[]>([]);
+  const { customGroups: dreGroups } = useDreGroups();
   const [semCategoria, setSemCategoria] = useState(0);
   const [drillDown, setDrillDown] = useState<{
     type: string;
@@ -782,15 +784,11 @@ export default function DRETab() {
       return acc;
     }, [] as Array<{ key: string; label: string }>);
 
-  // Enrich custom group labels from localStorage if available
-  const storageKey = user?.tenantId ? `dre_custom_groups_${user.tenantId}` : null;
+  // O rótulo bonito do grupo vem do banco (fin_dre_groups). Antes vinha do
+  // localStorage, então em outra máquina a DRE mostrava a chave crua.
   const enrichedCustomGroups = customGroups.map(g => {
-    if (!storageKey) return g;
-    try {
-      const stored = JSON.parse(localStorage.getItem(storageKey) ?? '[]') as Array<{ key: string; label: string }>;
-      const match = stored.find(s => s.key === g.key);
-      return match ? { key: g.key, label: match.label } : g;
-    } catch { return g; }
+    const match = dreGroups.find(s => s.key === g.key);
+    return match ? { key: g.key, label: match.label } : g;
   });
 
   const fetchFn = useCallback(

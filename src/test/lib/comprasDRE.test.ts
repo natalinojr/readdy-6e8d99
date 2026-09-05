@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { splitComprasDRE, type ItemRow, type PurchaseRef } from '@/lib/comprasDRE';
+import { isGrupoDespesa } from '@/hooks/useDreGroups';
 
 // Regra de 2026-09-05: CMV da DRE = compras realizadas. Item de compra
 // classificado como DESPESA sai do CMV e vai para a categoria dele.
@@ -81,5 +82,28 @@ describe('splitComprasDRE', () => {
   it('sem compras devolve tudo zerado', () => {
     const r = splitComprasDRE([], [], DESPESAS);
     expect(r).toEqual({ cmv: 0, despesasPorCategoria: {}, total: 0 });
+  });
+});
+
+// A regra de QUAIS grupos saem do CMV é compartilhada entre o split das compras
+// e o select do catálogo, para os dois não divergirem.
+describe('isGrupoDespesa', () => {
+  it('despesa operacional e grupo customizado saem do CMV', () => {
+    expect(isGrupoDespesa('expense')).toBe(true);
+    expect(isGrupoDespesa('despesas_fixas')).toBe(true);
+  });
+
+  it('custo continua sendo CMV', () => {
+    expect(isGrupoDespesa('cost')).toBe(false);
+  });
+
+  it('grupos que a DRE não soma ficam em CMV para o valor não sumir', () => {
+    expect(isGrupoDespesa('tax')).toBe(false);
+    expect(isGrupoDespesa('revenue')).toBe(false);
+  });
+
+  it('sem grupo não é despesa', () => {
+    expect(isGrupoDespesa(null)).toBe(false);
+    expect(isGrupoDespesa('')).toBe(false);
   });
 });

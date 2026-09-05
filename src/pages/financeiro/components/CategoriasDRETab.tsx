@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, Fragment } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
+import { useDreGroups } from '@/hooks/useDreGroups';
 
 async function callFinancialWrite(action: string, tenantId: string, payload: Record<string, unknown>) {
   const { data, error } = await invokeWithAuth<{ error?: string; data?: unknown }>('financial-write', {
@@ -179,26 +180,33 @@ export default function CategoriasDRETab() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Grupos customizados (armazenados em localStorage por tenant)
+  // Grupos customizados: agora vivem no banco (fin_dre_groups). Antes eram
+  // localStorage, então ficavam presos a um navegador e invisíveis para o resto
+  // da loja — e o item de compra classificado neles não tinha como ser lido de
+  // outra máquina.
   const storageKey = user?.tenantId ? `dre_custom_groups_${user.tenantId}` : null;
-  const [customGroups, setCustomGroups] = useState<CustomGroup[]>([]);
-  // O initializer do useState roda UMA vez só: na troca de loja os grupos da loja
-  // anterior continuavam na tela (vazamento entre tenants já registrado no projeto).
-  // Relendo o localStorage sempre que o tenant muda, cada loja vê só os seus.
+  const { customGroups, refetch: refetchGroups } = useDreGroups();
+
+  // Migração única do que já existia no navegador desta máquina.
   useEffect(() => {
-    if (!storageKey) { setCustomGroups([]); return; }
-    try { setCustomGroups(JSON.parse(localStorage.getItem(storageKey) ?? '[]')); }
-    catch { setCustomGroups([]); }
-  }, [storageKey]);
+    if (!storageKey || !user?.tenantId) return;
+    let antigos: CustomGroup[] = [];
+    try { antigos = JSON.parse(localStorage.getItem(storageKey) ?? '[]'); } catch { return; }
+    if (!antigos.length) return;
+    (async () => {
+      for (const g of antigos) {
+        await callFinancialWrite('upsert_dre_group', user.tenantId!, {
+          key: g.key, label: g.label, icon: g.icon || 'ri-folder-line',
+        }).catch((e) => console.error('[CategoriasDRE] migração de grupo falhou:', e));
+      }
+      localStorage.removeItem(storageKey);
+      refetchGroups();
+    })();
+  }, [storageKey, user?.tenantId, refetchGroups]);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [groupForm, setGroupForm] = useState(emptyGroupForm);
   const [groupError, setGroupError] = useState<string | null>(null);
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
-
-  const saveCustomGroups = (groups: CustomGroup[]) => {
-    setCustomGroups(groups);
-    if (storageKey) localStorage.setItem(storageKey, JSON.stringify(groups));
-  };
 
   const allGroups = [...STANDARD_GROUPS, ...customGroups.map(g => g.key)];
   const getGroupMeta2 = (g: string) => getGroupMeta(g, customGroups);
@@ -358,7 +366,7 @@ export default function CategoriasDRETab() {
     setShowGroupModal(true);
   };
 
-  const handleSaveGroup = () => {
+  const handleSaveGroup = async () => {
     const key = groupForm.key.trim().toLowerCase().replace(/\s+/g, '_');
     if (!key || !groupForm.label.trim()) {
       setGroupError('Preencha o nome e a chave do grupo.');
@@ -368,13 +376,28 @@ export default function CategoriasDRETab() {
       setGroupError('Já existe um grupo com esta chave.');
       return;
     }
-    saveCustomGroups([...customGroups, { key, label: groupForm.label.trim(), icon: groupForm.icon }]);
-    setShowGroupModal(false);
+    if (!user?.tenantId) return;
+    try {
+      await callFinancialWrite('upsert_dre_group', user.tenantId, {
+        key, label: groupForm.label.trim(), icon: groupForm.icon,
+      });
+      await refetchGroups();
+      setShowGroupModal(false);
+    } catch (e) {
+      setGroupError(e instanceof Error ? e.message : 'Erro ao salvar o grupo.');
+    }
   };
 
-  const handleDeleteGroup = (key: string) => {
-    saveCustomGroups(customGroups.filter(g => g.key !== key));
-    if (filterGroup === key) setFilterGroup('all');
+  const handleDeleteGroup = async (key: string) => {
+    const grupo = customGroups.find(g => g.key === key);
+    if (!grupo?.id || !user?.tenantId) return;
+    try {
+      await callFinancialWrite('delete_dre_group', user.tenantId, { id: grupo.id });
+      await refetchGroups();
+      if (filterGroup === key) setFilterGroup('all');
+    } catch (e) {
+      console.error('[CategoriasDRE] erro ao excluir grupo:', e);
+    }
   };
 
   return (

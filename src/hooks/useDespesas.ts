@@ -123,7 +123,10 @@ export function useDespesas(filters: DespesasFilters) {
       // Fluxo de caixa (saídas manuais)
       supabase
         .from('fin_cash_flow')
-        .select('id, description, amount, date, category, type, origin, payment_method, notes, created_at')
+        // `payment_method` NAO existe em `fin_cash_flow` (a coluna e
+        // `payment_method_id`). O PostgREST devolvia 400 e a query inteira
+        // falhava: as SAIDAS MANUAIS sumiam da aba Despesas sem nenhum aviso.
+        .select('id, description, amount, date, category, type, origin, payment_method_id, notes, created_at')
         .eq('tenant_id', user.tenantId)
         .eq('type', 'expense')
         .eq('origin', 'manual')
@@ -235,7 +238,8 @@ export function useDespesas(filters: DespesasFilters) {
         amount: Number(c.amount),
         date: c.date,
         status: 'paid',
-        payment_method: c.payment_method,
+        // Sem rotulo de forma de pagamento aqui: a tabela guarda so o UUID
+        // (`payment_method_id`) e a tela exibe este campo cru como texto.
         reference_id: c.id,
         notes: c.notes,
         created_at: c.created_at,

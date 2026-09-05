@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSuppliers } from '@/hooks/useSuppliers';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
 import { useMerchandiseCategories } from '@/hooks/useMerchandiseCategories';
+import { useDreGroups, isGrupoDespesa } from '@/hooks/useDreGroups';
 
 /**
  * O catálogo faz DOIS trabalhos diferentes, e antes não dizia qual era qual:
@@ -57,6 +58,14 @@ const UNIT_OPTIONS = [
   'garrafa', 'bandeja', 'dúzia', 'rolo', 'par', 'resma',
 ];
 
+/**
+ * Marca, no value do select, a escolha de um GRUPO inteiro em vez de uma
+ * categoria. O catálogo grava `dre_category_id`, que é FK de categoria, então
+ * não existe "id de grupo" para gravar: ao salvar, a categoria raiz do grupo é
+ * criada sob demanda (ver `resolverCategoriaDoGrupo`).
+ */
+const GRUPO_PREFIX = 'grupo:';
+
 const emptyForm = {
   tipo: 'consumo' as TipoItem,
   name: '',
@@ -82,6 +91,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
   const { user } = useAuth();
   const { names: supplierNames, suppliers: supplierList } = useSuppliers();
   const { categories: merchandiseCategories } = useMerchandiseCategories();
+  const { allGroups } = useDreGroups();
 
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [dreCategories, setDreCategories] = useState<DRECategory[]>([]);
@@ -162,9 +172,47 @@ export default function CatalogoComprasModal({ onClose }: Props) {
     setShowForm(true);
   };
 
+  /**
+   * Traduz a escolha de um grupo para o id de uma categoria, porque é isso que
+   * o catálogo sabe gravar. Reaproveita a categoria raiz do grupo se ela já
+   * existir; senão cria uma com o nome do grupo. Sem isso o valor sairia do CMV
+   * e não teria linha nenhuma na DRE para pousar, ou seja, sumiria do resultado.
+   */
+  const resolverCategoriaDoGrupo = async (groupKey: string): Promise<string | null> => {
+    if (!user?.tenantId) return null;
+    const grupo = allGroups.find((g) => g.key === groupKey);
+    const nome = grupo?.label ?? groupKey;
+
+    const existente = dreCategories.find(
+      (c) => c.group_type === groupKey && c.name.trim().toLowerCase() === nome.trim().toLowerCase(),
+    );
+    if (existente) return existente.id;
+
+    const { data, error } = await invokeWithAuth<{ error?: string; data?: { id?: string } }>(
+      'financial-write',
+      {
+        body: {
+          action: 'upsert_dre_category',
+          tenant_id: user.tenantId,
+          payload: { name: nome, group_type: groupKey, sort_order: 0, is_active: true },
+        },
+      },
+    );
+    if (error || data?.error) {
+      console.error('[CatalogoCompras] erro ao criar categoria do grupo:', error ?? data?.error);
+      return null;
+    }
+    return data?.data?.id ?? null;
+  };
+
   const handleSave = async () => {
     if (!form.name.trim() || !user?.tenantId) return;
     setSaving(true);
+
+    let categoriaId = form.dre_category_id;
+    if (categoriaId.startsWith(GRUPO_PREFIX)) {
+      categoriaId = (await resolverCategoriaDoGrupo(categoriaId.slice(GRUPO_PREFIX.length))) ?? '';
+    }
 
     // Item de estoque é sempre mercadoria (CMV), então nunca grava categoria DRE:
     // é o que a DRE faz de fato com ele, e gravar outra coisa daria uma promessa
@@ -174,7 +222,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
       name: form.name.trim(),
       description: form.description.trim() || null,
       default_unit: deEstoque ? (form.purchase_unit || form.default_unit) : form.default_unit,
-      dre_category_id: deEstoque ? null : (form.dre_category_id || null),
+      dre_category_id: deEstoque ? null : (categoriaId || null),
       default_supplier: form.default_supplier.trim() || null,
       supplier_id: form.supplier_id || null,
       notes: form.notes.trim() || null,
@@ -302,8 +350,16 @@ export default function CatalogoComprasModal({ onClose }: Props) {
     );
   };
 
-  const costCats = dreCategories.filter((c) => c.group_type === 'cost');
-  const expenseCats = dreCategories.filter((c) => c.group_type === 'expense');
+  // Destinos possíveis para um item de compra: os grupos que a DRE realmente
+  // soma. O grupo aparece mesmo sem nenhuma categoria dentro — a categoria é
+  // um refinamento opcional, não um pré-requisito para classificar a compra.
+  const gruposDestino = allGroups
+    .filter((g) => g.key === 'cost' || isGrupoDespesa(g.key))
+    .map((g) => ({
+      ...g,
+      cats: dreCategories.filter((c) => c.group_type === g.key),
+      despesa: isGrupoDespesa(g.key),
+    }));
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
@@ -430,19 +486,21 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                   className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
                 >
                   <option value="">CMV — Custo de Mercadoria Vendida (padrão)</option>
-                  {expenseCats.length > 0 && (
-                    <optgroup label="Despesa Operacional (sai do CMV)">
-                      {expenseCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {gruposDestino.map((g) => (
+                    <optgroup
+                      key={g.key}
+                      label={`${g.label} ${g.despesa ? '(sai do CMV)' : '(conta como CMV)'}`}
+                    >
+                      <option value={`${GRUPO_PREFIX}${g.key}`}>
+                        {g.label} — sem detalhar
+                      </option>
+                      {g.cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </optgroup>
-                  )}
-                  {costCats.length > 0 && (
-                    <optgroup label="Custos (contam como CMV)">
-                      {costCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </optgroup>
-                  )}
+                  ))}
                 </select>
                 <p className="text-[10px] text-zinc-400 mt-1">
-                  Alimentos/bebidas = CMV &nbsp;·&nbsp; Limpeza/embalagem = Despesa Operacional
+                  Alimentos/bebidas = CMV &nbsp;·&nbsp; Limpeza/embalagem = Despesa Operacional.
+                  A categoria é opcional: serve só para detalhar o grupo.
                 </p>
               </div>
               )}

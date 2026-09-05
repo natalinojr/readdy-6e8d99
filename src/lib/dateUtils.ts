@@ -54,6 +54,19 @@ export function getTodayBrasiliaRange(): { fromTs: string; toTs: string } {
   };
 }
 
+/**
+ * Converte um timestamptz (ISO vindo do banco) para a data-calendário de
+ * BRASÍLIA no formato YYYY-MM-DD.
+ *
+ * PORQUÊ: `ts.slice(0, 10)` corta a string em UTC. Como Brasília é −3, todo
+ * pedido pago depois das 21h local cai no DIA SEGUINTE — e é exatamente aí que
+ * fica o jantar, o grosso do faturamento de um restaurante.
+ */
+export function dateKeyBrasilia(ts: string | number | Date): string {
+  const d = ts instanceof Date ? ts : new Date(ts);
+  return d.toLocaleDateString('en-CA', { timeZone: TIMEZONE });
+}
+
 export type PeriodoString =
   | 'Hoje'
   | 'Ontem'

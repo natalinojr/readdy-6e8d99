@@ -255,7 +255,7 @@ export default function ReceitasTab() {
   const [sortField, setSortField] = useState<'date' | 'amount' | 'category'>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  const { items, summary, loading, refresh } = useReceitas(filters);
+  const { items, summary, loading, error, truncated, refresh } = useReceitas(filters);
 
   const allCategories = useMemo(() => {
     const set = new Set(items.map(r => r.category));
@@ -330,6 +330,29 @@ export default function ReceitasTab() {
           entram aqui na data da venda, mas no caixa só quando o dinheiro cai.
         </span>
       </div>
+
+      {/* Falha de carga NUNCA pode passar por "não há vendas": sem este bloco a
+          aba mostrava R$ 0,00 e "Nenhuma receita encontrada" mesmo quando a
+          query voltava erro. */}
+      {error && (
+        <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-xs text-red-700">
+          <i className="ri-error-warning-line mt-0.5" />
+          <div className="flex-1">
+            <p className="font-semibold">Não foi possível carregar as receitas.</p>
+            <p className="text-red-500 mt-0.5">Os valores abaixo estão zerados por falha de leitura, não por ausência de vendas. Detalhe: {error}</p>
+          </div>
+          <button onClick={refresh} className="px-2 py-1 rounded-md border border-red-300 text-red-700 font-semibold cursor-pointer hover:bg-red-100 whitespace-nowrap">
+            Tentar de novo
+          </button>
+        </div>
+      )}
+
+      {truncated && !error && (
+        <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+          <i className="ri-alert-line mt-0.5" />
+          <span>Período muito grande: a lista foi cortada no limite de segurança e os totais estão <strong>subestimados</strong>. Reduza o intervalo.</span>
+        </div>
+      )}
 
       {/* ── KPIs ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">

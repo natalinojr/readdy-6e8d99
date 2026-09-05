@@ -167,7 +167,11 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
             const [regResult, ordersResult] = await Promise.all([
               supabase
                 .from('cash_registers')
-                .select('id, session_id, opening_value, closing_value_expected, closing_value_actual, closing_difference, closing_notes, opened_at, closed_at, status, total_retiradas, total_adicoes')
+                // `total_retiradas`/`total_adicoes` NAO existem em `cash_registers`:
+                // a query dava 400, `registersMap` ficava vazio e, sem ids de caixa,
+                // `cash_movements` nem era buscado — sangrias e suprimentos sumiam
+                // do relatorio. Os totais ja sao recalculados dos movimentos abaixo.
+                .select('id, session_id, opening_value, closing_value_expected, closing_value_actual, closing_difference, closing_notes, opened_at, closed_at, status')
                 .eq('tenant_id', user.tenantId)
                 .in('session_id', sessionIds),
               supabase

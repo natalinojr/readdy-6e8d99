@@ -10,13 +10,14 @@
  * MUTUAMENTE EXCLUSIVOS, para nunca repetir o P23 (mesmo item contado como
  * despesa E como CMV):
  *
- *   - item cuja categoria DRE é do grupo `expense` → despesa daquela categoria
- *     (é o caso de limpeza, embalagem, material de escritório);
+ *   - item cuja categoria DRE é de um grupo de despesa (`expense` ou qualquer
+ *     grupo customizado da loja) → despesa daquela categoria (é o caso de
+ *     limpeza, embalagem, material de escritório);
  *   - todo o resto (sem categoria, ou categoria de custo) → CMV.
  *
- * Só `expense` sai do CMV de propósito: os grupos `tax`/`revenue` não são
- * somados em lugar nenhum da DRE, então mandar um item para lá o faria sumir
- * do resultado.
+ * `tax`/`revenue` ficam em CMV de propósito: a DRE não os soma em lugar nenhum,
+ * então mandá-los para despesa faria o valor sumir do resultado. A regra está
+ * em `isGrupoDespesa`, compartilhada com a UI que oferece os destinos.
  *
  * Valor do item = `total_price + freight_allocated` (custo real da linha).
  * Compra sem nenhum item lançado entra pelo `total_amount` dela, em CMV.
@@ -24,6 +25,7 @@
 
 import { supabase } from './supabase';
 import { fetchAllRows } from './fetchAllRows';
+import { isGrupoDespesa } from '@/hooks/useDreGroups';
 
 export interface PurchaseRef {
   id: string;
@@ -94,7 +96,7 @@ export async function fetchComprasDRE(
     .eq('tenant_id', tenantId);
   if (catErr) console.error('[comprasDRE] Erro ao buscar categorias DRE:', catErr.message);
   const despesaIds = new Set(
-    (cats ?? []).filter((c) => c.group_type === 'expense').map((c) => c.id as string),
+    (cats ?? []).filter((c) => isGrupoDespesa(c.group_type as string)).map((c) => c.id as string),
   );
 
   return splitComprasDRE(items, purchases, despesaIds);

@@ -65,11 +65,14 @@ export function useFinanceiroAlertas(): FinanceiroAlertasSummary {
       // Orçamentos expirando em 3 dias
       supabase
         .from('fin_budgets')
-        .select('id, title, valid_until, status')
+        // As colunas de `fin_budgets` sao em PORTUGUES (`titulo`, `validade`).
+        // Pedir `title`/`valid_until` dava 400 e o alerta de orcamento
+        // expirando nunca disparava.
+        .select('id, titulo, validade, status')
         .eq('tenant_id', user.tenantId)
         .eq('status', 'approved')
-        .lte('valid_until', new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0])
-        .gte('valid_until', today),
+        .lte('validade', new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0])
+        .gte('validade', today),
 
       // Compras com mercadoria recebida mas pagamento pendente
       supabase

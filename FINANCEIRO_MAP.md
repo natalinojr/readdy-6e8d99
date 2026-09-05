@@ -123,7 +123,8 @@ Depois, **`purchase-confirm-delivery`** (`index.ts`):
 
 ## 5. Despesas e Receitas (abas 2 e 3)
 
-- **`useReceitas`**: `orders` com `status='delivered' AND is_paid=true AND NOT is_training` + `fin_cash_flow` `origin='manual'` income. (Base = pedidos entregues, não `auto_sale` — pode divergir da Visão Geral/DRE.)
+- **`useReceitas`**: `orders` com `status='delivered' AND is_paid=true AND NOT is_training` + `fin_cash_flow` `origin='manual'` income. (Base = pedidos entregues, não `auto_sale` — pode divergir da Visão Geral/DRE.) Data da linha e filtro de período usam ambos `created_at` em **fuso de Brasília** (ver P35/P36). O hook expõe `error` e `truncated` — a tela é obrigada a mostrar falha como falha, não como "sem vendas" (§7c).
+- **A conciliação NÃO alimenta Receitas.** `fin_bank_statement_imports` só marca `reconciled=true` na linha do extrato (`useConciliacao.reconcile`); não cria receita, não baixa conta a pagar, não liquida recebível, não lança em `fin_cash_flow`. É conferência, não lançamento. Em 2026-09-05 não havia **nenhuma** linha de extrato importada em nenhuma loja.
 - **`useDespesas`**: 5 fontes — `fin_accounts_payable` (**excluindo `reference_type='purchase'`**, `useDespesas.ts:~96`), `fin_purchases`, `hr_payroll` (`gross_salary + fgts`), `fin_cash_flow` manual expense, `fin_anticipations` (taxa = `gross - net`).
 - **Prevenção de dupla contagem** (`useFinanceiro.ts:519-532`): `useTopDespesas` exclui `auto_purchase`/`auto_bill_payment`/`auto_payroll` do somatório de `fin_cash_flow`. Invariante documentado: somatório deve bater com saídas do `fin_cash_flow` no período.
 
@@ -157,7 +158,7 @@ margemBruta       = lucroBruto / receitaBruta × 100
 margemLiquida     = resultadoOperacional / receitaBruta × 100
 ```
 - **Não há linha de EBITDA** explícita.
-- Categorias DRE: `fin_dre_categories` (`group_type ∈ revenue|cost|expense|tax`, hierárquicas via `parent_id`). Grupos "custom" ficam em `localStorage` por tenant.
+- Categorias DRE: `fin_dre_categories` (`group_type ∈ revenue|cost|expense|tax` ou a `key` de um grupo customizado, hierárquicas via `parent_id`). Grupos customizados ficam em **`fin_dre_groups`** desde 2026-09-05 (antes era `localStorage` por tenant; ver §9f).
 - Regime **Competência**: receita reconhecida = `receitaRecebida` (recebível pendente é **saldo**, não soma na receita — comentado como "BUG-41", intencional); CMV/despesas por `purchase_date`/`due_date`.
 
 ---
@@ -305,6 +306,51 @@ entrar mais nada" — que é exatamente a leitura pedida.
 
 ---
 
+## 7c. Coluna inexistente = tela vazia em silêncio (2026-09-05)
+
+**A pegadinha mais cara do projeto até agora.** Quando um `.select()` do
+PostgREST pede uma coluna que não existe, a resposta é **400 (42703)** e a query
+INTEIRA falha — não é um campo nulo, é zero linha. Como quase todo hook lê
+`(res.data ?? [])` e **descarta o `error`**, o resultado na tela é
+indistinguível de "não há dados no período".
+
+Uma varredura automática comparando todo `from('X').select('...')` de `src/`
+com o `information_schema` achou **5 queries quebradas**, todas silenciosas:
+
+| Onde | Coluna pedida | Coluna real | Efeito |
+|---|---|---|---|
+| `useReceitas` | `orders.payment_method` | não existe (fica em `payments`) | **aba Receitas mostrava R$ 0,00 em TODAS as lojas, em TODOS os períodos** |
+| `DREDrillDownModal` (6×) | `orders.order_number` | `orders.number` | drill-down de cancelamentos, descontos, receitas e recebíveis abria vazio |
+| `useDespesas` | `fin_cash_flow.payment_method` | `payment_method_id` | saídas manuais sumiam da aba Despesas |
+| `useFinanceiroAlertas` | `fin_budgets.title` / `valid_until` | `titulo` / `validade` (PT) | alerta de orçamento expirando nunca disparava |
+| `useCaixaReport` | `cash_registers.total_adicoes` / `total_retiradas` | não existem | `registersMap` vazio → `cash_movements` nem era buscado → sangria/suprimento sumia do relatório de caixa |
+
+**Regras que ficam:**
+1. **Nunca descartar `error` de query de leitura.** Falha de carga tem que
+   aparecer na tela como falha, com botão de tentar de novo — nunca como
+   "nenhum registro encontrado". `useReceitas` já expõe `error` e `truncated`.
+2. Antes de adicionar coluna a um `select`, conferir no `information_schema`.
+   Parte das tabelas do projeto tem colunas em **português** (`fin_budgets`,
+   `fin_budget_items`) — o palpite em inglês quebra a query inteira.
+3. A varredura vale como teste de regressão: extrair os pares (tabela, coluna)
+   dos `select` do `src/` e cruzar com o catálogo do banco.
+
+### P35 — data de venda em UTC na aba Receitas  ✅ corrigido
+`useReceitas` datava a linha com `paid_at.slice(0, 10)` — corte em UTC. Como
+Brasília é −3, **todo pedido depois das 21h caía no dia seguinte**: 448 de 1.072
+pedidos pagos do banco (42%), justamente o jantar. Exemplo real (Vila Leste,
+02/09/2026): R$ 730,60 no dia, dos quais R$ 555,00 apareceriam em 03/09.
+Passou a usar `dateKeyBrasilia()` (novo helper em `dateUtils.ts`).
+
+### P36 — filtro e data eram campos diferentes  ✅ corrigido
+O período filtrava por `orders.created_at` (data da venda) mas a linha era datada
+por `paid_at` (data do pagamento). Pedido aberto em 31/08 e fechado em 01/09
+entrava no filtro de agosto exibindo data de setembro — e sumia do filtro de
+setembro. Ambos passam a usar `created_at`, coerente com o rótulo da aba
+("faturamento por venda").
+
+---
+
 ## 8. Invariantes de reconciliação (para testes)
 - Σ receitas por categoria (DRE) ≈ Σ `auto_sale`+`manual income` do período (quando bases unificadas).
 - Σ `useTopDespesas` = saídas de `fin_cash_flow` no período (auto_purchase/bill/payroll excluídos por design).
@@ -385,8 +431,46 @@ Decisão reafirmada pelo dono e implementada. Fecha o P2/P12.
 
 ---
 
+## 9f. Classificar a compra pelo GRUPO do DRE (2026-09-05)
+
+O dono apontou que o select de "Classificação DRE" do catálogo só oferecia a opção
+padrão de CMV. Diagnóstico: o select montava as opções a partir das **categorias**, e
+`fin_dre_categories` está vazia em todas as lojas reais (não há seed por tenant). Sem
+categoria cadastrada não havia como dizer "isto é despesa".
+
+A leitura do dono está certa e virou a regra: **o grupo é o que muda o resultado; a
+categoria é estratificação opcional dentro dele.**
+
+- **O grupo agora é selecionável sozinho.** O select lista todo grupo que a DRE soma,
+  mesmo com zero categorias, como `Grupo — sem detalhar`. As categorias existentes
+  seguem aparecendo abaixo, dentro do `optgroup` do grupo.
+- **Categoria raiz sob demanda.** `fin_purchase_catalog.dre_category_id` é FK de
+  categoria: não existe "id de grupo" para gravar. Ao salvar com um grupo escolhido,
+  `resolverCategoriaDoGrupo` reaproveita a categoria raiz homônima ou cria uma com o
+  nome do grupo. Sem isso o valor sairia do CMV e não teria linha na DRE onde pousar,
+  ou seja, sumiria do resultado.
+- **`tax` e `revenue` não são oferecidos**, de propósito: o `resultadoOperacional` do
+  `DRETab` desconta `expense`, `cost`, pessoal, taxas e os grupos customizados — nunca
+  esses dois. Mesma razão já registrada em §9d.
+- **Regra única compartilhada:** `isGrupoDespesa` (`src/hooks/useDreGroups.ts`) decide o
+  que sai do CMV, e é usada tanto pelo split de `comprasDRE.ts` quanto pelo select do
+  catálogo, para os dois não divergirem. Passou a incluir os **grupos customizados**:
+  antes só `expense` saía do CMV, então uma compra classificada num grupo customizado
+  ficava em CMV enquanto a linha daquele grupo aparecia zerada na DRE.
+- **Grupos customizados saíram do localStorage.** Nova tabela `fin_dre_groups`
+  (migração `20260905000000_fin_dre_groups.sql`), escrita pela `financial-write`
+  (`upsert_dre_group` / `delete_dre_group`, **deployada**). Antes viviam na chave
+  `dre_custom_groups_<tenant>` do navegador: presos a uma máquina, invisíveis para o
+  resto da loja, e a DRE aberta em outro lugar mostrava a chave crua no lugar do
+  rótulo. `CategoriasDRETab` migra sozinho o que houver no navegador, uma vez, e apaga
+  a chave.
+- Testes: `isGrupoDespesa` em `src/test/lib/comprasDRE.test.ts`; select do grupo e
+  criação da categoria raiz em `src/test/components/catalogoComprasModal.test.tsx`.
+
+---
+
 ## 9. Tabelas do módulo (schema `public`)
-`fin_cash_flow`, `fin_accounts_payable`, `fin_receivable_installments`, `fin_anticipations`, `fin_purchases`, `fin_purchase_items`, `fin_purchase_catalog`, `fin_merchandise_categories`, `fin_suppliers`, `fin_cost_centers`, `fin_dre_categories`, `fin_bank_accounts`, `fin_bank_transactions`, `fin_bank_statement_imports`, `fin_bank_statements`, `fin_reconciliation_rules`, `fin_budgets`, `fin_budget_items`, `fin_income_routing`, `fin_investment_settings`, `fin_implementation_costs`, `fin_implementation_columns`, `fin_stone_config`, `fin_stone_imports`, `fin_pix_payments`, `fin_payable_aging`(view), `fin_receivable_aging`(view), `hr_employees`, `hr_payroll`, `hr_payroll_custom_fields`.
+`fin_cash_flow`, `fin_accounts_payable`, `fin_receivable_installments`, `fin_anticipations`, `fin_purchases`, `fin_purchase_items`, `fin_purchase_catalog`, `fin_merchandise_categories`, `fin_suppliers`, `fin_cost_centers`, `fin_dre_categories`, `fin_dre_groups`, `fin_bank_accounts`, `fin_bank_transactions`, `fin_bank_statement_imports`, `fin_bank_statements`, `fin_reconciliation_rules`, `fin_budgets`, `fin_budget_items`, `fin_income_routing`, `fin_investment_settings`, `fin_implementation_costs`, `fin_implementation_columns`, `fin_stone_config`, `fin_stone_imports`, `fin_pix_payments`, `fin_payable_aging`(view), `fin_receivable_aging`(view), `hr_employees`, `hr_payroll`, `hr_payroll_custom_fields`.
 
 RPCs relevantes: `fn_get_cmv_report`, `fn_bank_credit`, `fn_bank_debit`, `fn_record_payment_bypass`, `fn_update_ingredient_price_from_purchase`, `fn_update_ingredient_stock`.
 Edge Functions: `financial-write` (~47 actions), `purchase-write`, `purchase-confirm-delivery`, `stone-conciliation`, `pix-payment`, `implementation-write`, `order-write` (integração de venda).

@@ -1,15 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, SUPABASE_URL } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { dateKeyBrasilia } from '@/lib/dateUtils';
 
 // Formato das linhas lidas nas queries paginadas (o helper é genérico, então
 // o tipo precisa ser declarado aqui em vez de inferido pelo supabase-js).
 interface OrderRow {
-  id: string; number: number | null; total_amount: number;
+  id: string; number: string | null; total_amount: number;
   is_paid: boolean | null; paid_at: string | null; created_at: string;
   origin_type: string | null; destination_type: string | null;
   table_number: number | null; waiter_name: string | null;
-  status: string; payment_method: string | null;
+  status: string;
 }
 interface CashFlowRow {
   id: string; description: string; amount: number; date: string;
@@ -81,6 +82,11 @@ export function useReceitas(filters: ReceitasFilters) {
   const [items, setItems] = useState<ReceitaItem[]>([]);
   const [summary, setSummary] = useState<ReceitasSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  // Erro VISÍVEL. Antes o retorno das queries era lido como `res.rows ?? []` e o
+  // `error` era descartado: qualquer falha (coluna inexistente, RLS, rede) virava
+  // "nenhuma receita encontrada" — indistinguível de um período sem vendas.
+  const [error, setError] = useState<string | null>(null);
+  const [truncated, setTruncated] = useState(false);
 
   const fetchReceitas = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -100,7 +106,12 @@ export function useReceitas(filters: ReceitasFilters) {
       // Pedidos entregues (fonte única de verdade: status = 'delivered')
       fetchAllRows<OrderRow>((from, to) => supabase
         .from('orders')
-        .select('id, number, total_amount, is_paid, paid_at, created_at, origin_type, destination_type, table_number, waiter_name, status, payment_method')
+        // NÃO peça `payment_method`: essa coluna NÃO existe em `orders` (a forma
+        // de pagamento vive em `payments`). O PostgREST devolvia 400
+        // (42703 column does not exist) e a query INTEIRA falhava — como o erro
+        // era ignorado, a aba renderizava R$ 0,00 em todas as lojas, em todos os
+        // períodos, sem nada na tela indicando falha. O campo nunca era usado.
+        .select('id, number, total_amount, is_paid, paid_at, created_at, origin_type, destination_type, table_number, waiter_name, status')
         .eq('tenant_id', user.tenantId)
         .eq('status', 'delivered')
         // is_paid era SELECIONADO e nunca aplicado: comanda entregue e não
@@ -127,11 +138,29 @@ export function useReceitas(filters: ReceitasFilters) {
         .range(from, to)),
     ]);
 
+    const falha = ordersRes.error ?? manualRes.error;
+    if (falha) {
+      console.error('[useReceitas] Falha ao carregar receitas:', falha.message);
+      setError(falha.message);
+      setItems([]);
+      setSummary(null);
+      setLoading(false);
+      return;
+    }
+    setError(null);
+    setTruncated(ordersRes.truncated || manualRes.truncated);
+
     const allItems: ReceitaItem[] = [];
 
     // Pedidos pagos
     (ordersRes.rows ?? []).forEach(o => {
-      const paidDate = o.paid_at ? o.paid_at.slice(0, 10) : o.created_at.slice(0, 10);
+      // Data da VENDA (`created_at`), não do pagamento. A aba mede faturamento
+      // por venda e o FILTRO de período já usa `created_at`; datar a linha por
+      // `paid_at` fazia o pedido aberto em 31/08 e fechado em 01/09 entrar no
+      // filtro de agosto exibindo data de setembro — e sumir do filtro de setembro.
+      // E sempre em Brasília: `slice(0,10)` corta em UTC e joga o jantar
+      // (depois das 21h) para o dia seguinte.
+      const saleDate = dateKeyBrasilia(o.created_at);
       const originType = (o.origin_type as string) || 'pdv';
       const destType = (o.destination_type as string) || '';
 
@@ -145,7 +174,7 @@ export function useReceitas(filters: ReceitasFilters) {
         description: `Pedido #${o.number || o.id.slice(0, 8)}`,
         category: destType === 'delivery' ? 'Delivery' : destType === 'table' ? 'Salão' : 'PDV / Caixa',
         amount: Number(o.total_amount),
-        date: paidDate,
+        date: saleDate,
         status: 'received',
         origin_detail: originDetail,
         reference_id: o.id,
@@ -253,7 +282,7 @@ export function useReceitas(filters: ReceitasFilters) {
 
   useEffect(() => { fetchReceitas(); }, [fetchReceitas]);
 
-  return { items, summary, loading, refresh: fetchReceitas };
+  return { items, summary, loading, error, truncated, refresh: fetchReceitas };
 }
 
 // ─── Hook para inserir receita manual ────────────────────────────────────────

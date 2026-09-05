@@ -84,7 +84,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
       } else if (type === 'receita_a_receber') {
         const { data } = await supabase
           .from('fin_receivable_installments')
-          .select('id,due_date,amount,order_id,orders(order_number)')
+          .select('id,due_date,amount,order_id,orders(number)')
           .eq('tenant_id', user.tenantId)
           .eq('status', 'pending')
           .gte('due_date', start.slice(0, 10))
@@ -93,7 +93,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
         result = (data ?? []).map((d: Record<string, unknown>) => ({
           id: d.id as string,
           date: d.due_date as string,
-          description: `Recebível — Pedido ${(d.orders as Record<string, unknown>)?.order_number || d.order_id || ''}`,
+          description: `Recebível — Pedido ${(d.orders as Record<string, unknown>)?.number || d.order_id || ''}`,
           amount: Number(d.amount),
           source: 'Contas a Receber',
         }));
@@ -120,7 +120,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
             .eq('tenant_id', user.tenantId),
           supabase
             .from('payments')
-            .select('id,amount,created_at,order_id,payment_method_id,orders!inner(destination_type,order_number,status,is_training,is_draft)')
+            .select('id,amount,created_at,order_id,payment_method_id,orders!inner(destination_type,number,status,is_training,is_draft)')
             .eq('orders.tenant_id', user.tenantId)
             .eq('orders.is_training', false)
             .eq('orders.is_draft', false)
@@ -132,7 +132,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
             .order('created_at', { ascending: false }),
           supabase
             .from('fin_receivable_installments')
-            .select('id,amount,received_at,order_id,orders!inner(destination_type,order_number)')
+            .select('id,amount,received_at,order_id,orders!inner(destination_type,number)')
             .eq('tenant_id', user.tenantId)
             .eq('status', 'received')
             .gte('received_at', start)
@@ -157,7 +157,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           .map(p => ({
             id: p.id as string,
             date: (p.created_at as string).slice(0, 10),
-            description: `Pedido ${(p.orders as Record<string, unknown>)?.order_number || p.order_id || ''}`,
+            description: `Pedido ${(p.orders as Record<string, unknown>)?.number || p.order_id || ''}`,
             amount: Number(p.amount),
             source: 'Pagamentos (à vista)',
             extra: {
@@ -174,7 +174,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           result.push({
             id: r.id as string,
             date: String(r.received_at ?? '').slice(0, 10),
-            description: `Recebível liquidado — Pedido ${(r.orders as Record<string, unknown>)?.order_number || r.order_id || ''}`,
+            description: `Recebível liquidado — Pedido ${(r.orders as Record<string, unknown>)?.number || r.order_id || ''}`,
             amount: Number(r.amount),
             source: 'Contas a Receber (liquidado)',
             extra: { Canal: dest || '—' },
@@ -189,7 +189,9 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
     else if (type === 'cancelamentos') {
       const { data } = await supabase
         .from('orders')
-        .select('id,total_amount,created_at,order_number,destination_type')
+        // `order_number` NAO existe em `orders` (a coluna e `number`): a query
+        // devolvia 400 e o drill-down de cancelamentos abria VAZIO.
+        .select('id,total_amount,created_at,number,destination_type')
         .eq('tenant_id', user.tenantId)
         .eq('is_training', false)
         .eq('is_draft', false)
@@ -200,7 +202,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
       result = (data ?? []).map((o: Record<string, unknown>) => ({
         id: o.id as string,
         date: (o.created_at as string).slice(0, 10),
-        description: `Pedido ${o.order_number || o.id} cancelado`,
+        description: `Pedido ${o.number || o.id} cancelado`,
         amount: Number(o.total_amount),
         source: 'Pedidos',
         extra: { Canal: String(o.destination_type || '') },
@@ -211,7 +213,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
     else if (type === 'descontos') {
       const { data } = await supabase
         .from('orders')
-        .select('id,discount_amount,created_at,order_number,destination_type')
+        .select('id,discount_amount,created_at,number,destination_type')
         .eq('tenant_id', user.tenantId)
         .eq('is_training', false)
         .eq('is_draft', false)
@@ -223,7 +225,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
       result = (data ?? []).map((o: Record<string, unknown>) => ({
         id: o.id as string,
         date: (o.created_at as string).slice(0, 10),
-        description: `Desconto no pedido ${o.order_number || o.id}`,
+        description: `Desconto no pedido ${o.number || o.id}`,
         amount: Number(o.discount_amount),
         source: 'Pedidos',
         extra: { Canal: String(o.destination_type || '') },

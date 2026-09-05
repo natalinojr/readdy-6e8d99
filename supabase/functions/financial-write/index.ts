@@ -787,6 +787,27 @@ Deno.serve(async (req) => {
         break;
       }
 
+      // ── DRE Groups ────────────────────────────────────────────────────────
+      // Os grupos customizados viviam em localStorage: presos a um navegador e
+      // invisíveis para o resto da loja. Agora são linhas por tenant.
+      case 'upsert_dre_group': {
+        const { id, ...data } = payload;
+        if (id) {
+          result = await supabase.from('fin_dre_groups').update({ ...data, tenant_id }).eq('id', id).eq('tenant_id', tenant_id).select().single();
+        } else {
+          result = await supabase
+            .from('fin_dre_groups')
+            .upsert({ ...data, tenant_id }, { onConflict: 'tenant_id,key' })
+            .select()
+            .single();
+        }
+        break;
+      }
+      case 'delete_dre_group': {
+        result = await supabase.from('fin_dre_groups').delete().eq('id', payload.id).eq('tenant_id', tenant_id);
+        break;
+      }
+
       // ── Convert Budget to Purchase ────────────────────────────────────────
       // ── Budgets (orçamentos) ──────────────────────────────────────────────
       // Escrita centralizada aqui em vez de direto do front: `fin_budget_items`
