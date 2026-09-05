@@ -57,11 +57,11 @@ export function isGrupoDespesa(groupType: string | null | undefined): boolean {
 
 export function useDreGroups() {
   const { user } = useAuth();
-  const [customGroups, setCustomGroups] = useState<DreGroup[]>([]);
+  const [rows, setRows] = useState<DreGroup[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchGroups = useCallback(async () => {
-    if (!user?.tenantId) { setCustomGroups([]); setLoading(false); return; }
+    if (!user?.tenantId) { setRows([]); setLoading(false); return; }
     setLoading(true);
     const { data } = await supabase
       .from('fin_dre_groups')
@@ -69,7 +69,7 @@ export function useDreGroups() {
       .eq('tenant_id', user.tenantId)
       .order('sort_order')
       .order('label');
-    setCustomGroups(
+    setRows(
       (data ?? []).map((g) => ({
         id: g.id as string,
         key: g.key as string,
@@ -83,12 +83,25 @@ export function useDreGroups() {
 
   useEffect(() => { fetchGroups(); }, [fetchGroups]);
 
+  // Uma linha cuja `key` é de grupo padrão não é um grupo novo: é o rótulo e o
+  // ícone que a loja escolheu para aquele grupo. Sem essa separação o grupo
+  // apareceria duas vezes na tela, uma como padrão e outra como customizado.
+  const customGroups = rows.filter((r) => !STANDARD_GROUP_KEYS.includes(r.key));
+  const overrides = rows.filter((r) => STANDARD_GROUP_KEYS.includes(r.key));
+
+  const aplicarOverride = (g: DreGroup): DreGroup => {
+    const ov = overrides.find((o) => o.key === g.key);
+    return ov ? { ...g, id: ov.id, label: ov.label, icon: ov.icon } : g;
+  };
+
   /** Só os grupos que a interface oferece hoje. Legados ficam de fora. */
-  const allGroups = [...STANDARD_DRE_GROUPS, ...customGroups];
+  const allGroups = [...STANDARD_DRE_GROUPS.map(aplicarOverride), ...customGroups];
 
   /** Inclui os aposentados, para achar o rótulo de uma categoria antiga. */
-  const groupMeta = (key: string): DreGroup | undefined =>
-    [...allGroups, ...GRUPOS_LEGADOS].find((g) => g.key === key);
+  const gruposComLegado = [...allGroups, ...GRUPOS_LEGADOS.map(aplicarOverride)];
 
-  return { allGroups, customGroups, loading, refetch: fetchGroups, groupMeta };
+  const groupMeta = (key: string): DreGroup | undefined =>
+    gruposComLegado.find((g) => g.key === key);
+
+  return { allGroups, gruposComLegado, customGroups, loading, refetch: fetchGroups, groupMeta };
 }

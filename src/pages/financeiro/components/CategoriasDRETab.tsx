@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, Fragment } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
-import { useDreGroups } from '@/hooks/useDreGroups';
+import { useDreGroups, type DreGroup } from '@/hooks/useDreGroups';
 
 async function callFinancialWrite(action: string, tenantId: string, payload: Record<string, unknown>) {
   const { data, error } = await invokeWithAuth<{ error?: string; data?: unknown }>('financial-write', {
@@ -34,11 +34,12 @@ const DEFAULT_GROUP_LABELS: Record<string, { label: string; color: string; bg: s
 
 const FALLBACK_GROUP = { label: '', color: 'text-zinc-700', bg: 'bg-zinc-50 border-zinc-200', icon: 'ri-folder-line' };
 
-function getGroupMeta(groupType: string, customGroups: CustomGroup[]) {
-  if (DEFAULT_GROUP_LABELS[groupType]) return DEFAULT_GROUP_LABELS[groupType];
-  const custom = customGroups.find(g => g.key === groupType);
-  if (custom) return { label: custom.label, color: 'text-zinc-700', bg: 'bg-zinc-50 border-zinc-200', icon: custom.icon || 'ri-folder-line' };
-  return { ...FALLBACK_GROUP, label: groupType };
+// As cores continuam vindo da tabela fixa; o nome e o ícone vêm do que a loja
+// gravou, quando gravou (inclusive para grupo padrão renomeado).
+function getGroupMeta(groupType: string, groups: DreGroup[]) {
+  const base = DEFAULT_GROUP_LABELS[groupType] ?? { ...FALLBACK_GROUP, label: groupType };
+  const g = groups.find(x => x.key === groupType);
+  return g ? { ...base, label: g.label, icon: g.icon || base.icon } : base;
 }
 
 /**
@@ -91,14 +92,14 @@ interface CatNodeProps {
   onEdit: (cat: DRECat) => void;
   onDelete: (cat: DRECat) => void;
   onAddChild: (parent: DRECat) => void;
-  customGroups: CustomGroup[];
+  groups: DreGroup[];
 }
 
-function CatNode({ cat, depth, allCats, onEdit, onDelete, onAddChild, customGroups }: CatNodeProps) {
+function CatNode({ cat, depth, allCats, onEdit, onDelete, onAddChild, groups }: CatNodeProps) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = (cat.children?.length ?? 0) > 0;
   const indent = depth * 24;
-  const groupMeta = getGroupMeta(cat.group_type, customGroups);
+  const groupMeta = getGroupMeta(cat.group_type, groups);
 
   return (
     <>
@@ -168,7 +169,7 @@ function CatNode({ cat, depth, allCats, onEdit, onDelete, onAddChild, customGrou
           onEdit={onEdit}
           onDelete={onDelete}
           onAddChild={onAddChild}
-          customGroups={customGroups}
+          groups={groups}
         />
       ))}
     </>
@@ -200,7 +201,7 @@ export default function CategoriasDRETab() {
   // da loja — e o item de compra classificado neles não tinha como ser lido de
   // outra máquina.
   const storageKey = user?.tenantId ? `dre_custom_groups_${user.tenantId}` : null;
-  const { customGroups, refetch: refetchGroups } = useDreGroups();
+  const { gruposComLegado, customGroups, refetch: refetchGroups } = useDreGroups();
 
   // Migração única do que já existia no navegador desta máquina.
   useEffect(() => {
@@ -219,12 +220,13 @@ export default function CategoriasDRETab() {
     })();
   }, [storageKey, user?.tenantId, refetchGroups]);
   const [showGroupModal, setShowGroupModal] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<string | null>(null);
   const [groupForm, setGroupForm] = useState(emptyGroupForm);
   const [groupError, setGroupError] = useState<string | null>(null);
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
 
   const allGroups = [...STANDARD_GROUPS, ...customGroups.map(g => g.key)];
-  const getGroupMeta2 = (g: string) => getGroupMeta(g, customGroups);
+  const getGroupMeta2 = (g: string) => getGroupMeta(g, gruposComLegado);
 
   const fetchCats = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -377,27 +379,41 @@ export default function CategoriasDRETab() {
 
   const handleAddGroup = () => {
     setGroupError(null);
+    setEditingGroup(null);
     setGroupForm(emptyGroupForm);
     setShowGroupModal(true);
   };
 
+  // A chave nunca muda na edição: é ela que as categorias guardam em
+  // `group_type`, então trocá-la deixaria todas elas órfãs.
+  const handleEditGroup = (key: string) => {
+    const meta = getGroupMeta2(key);
+    setGroupError(null);
+    setEditingGroup(key);
+    setGroupForm({ key, label: meta.label || key, icon: meta.icon });
+    setShowGroupModal(true);
+  };
+
   const handleSaveGroup = async () => {
-    const key = groupForm.key.trim().toLowerCase().replace(/\s+/g, '_');
+    const key = editingGroup ?? groupForm.key.trim().toLowerCase().replace(/\s+/g, '_');
     if (!key || !groupForm.label.trim()) {
       setGroupError('Preencha o nome e a chave do grupo.');
       return;
     }
-    if (RESERVED_GROUP_KEYS.includes(key) || customGroups.some(g => g.key === key)) {
+    if (!editingGroup && (RESERVED_GROUP_KEYS.includes(key) || customGroups.some(g => g.key === key))) {
       setGroupError('Já existe um grupo com esta chave.');
       return;
     }
     if (!user?.tenantId) return;
     try {
+      // Grava por (tenant, key): cria o grupo novo e, num grupo padrão, vira o
+      // rótulo próprio da loja para ele.
       await callFinancialWrite('upsert_dre_group', user.tenantId, {
         key, label: groupForm.label.trim(), icon: groupForm.icon,
       });
       await refetchGroups();
       setShowGroupModal(false);
+      setEditingGroup(null);
     } catch (e) {
       setGroupError(e instanceof Error ? e.message : 'Erro ao salvar o grupo.');
     }
@@ -549,7 +565,7 @@ export default function CategoriasDRETab() {
                         onEdit={openEdit}
                         onDelete={requestDelete}
                         onAddChild={openNew}
-                        customGroups={customGroups}
+                        groups={gruposComLegado}
                       />
                     ))}
                   </Fragment>
