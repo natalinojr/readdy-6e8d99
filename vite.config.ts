@@ -102,7 +102,7 @@ export default defineConfig({
       exclude: ["src/test/**", "node_modules"],
     },
     alias: {
-      "@": new URL("./src", import.meta.url).pathname,
+      "@": resolve(__dirname, "src"),
     },
   },
 });

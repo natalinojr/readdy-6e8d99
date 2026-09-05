@@ -244,11 +244,25 @@ Deno.serve(async (req) => {
       case 'list_bills_payable': {
         // Marcar contas vencidas no banco antes de retornar os dados
         await supabase.rpc('fn_mark_overdue_bills');
-        const { data, error } = await supabase
-          .from('fin_accounts_payable')
-          .select('*, cost_center:fin_cost_centers(id,name,color,icon)')
-          .eq('tenant_id', tenant_id)
-          .order('due_date');
+        // Paginado: o PostgREST corta em ~1000 linhas sem avisar, e esta lista
+        // alimenta a PROJEÇÃO de caixa (calendário) — truncar aqui some com
+        // compromissos reais e o saldo projetado aparece melhor do que é.
+        const BILL_PAGE = 1000;
+        const billRows: unknown[] = [];
+        let error: { message: string } | null = null;
+        for (let page = 0; page < 20; page++) {
+          const { data: batch, error: pageErr } = await supabase
+            .from('fin_accounts_payable')
+            .select('*, cost_center:fin_cost_centers(id,name,color,icon)')
+            .eq('tenant_id', tenant_id)
+            .order('due_date')
+            .range(page * BILL_PAGE, page * BILL_PAGE + BILL_PAGE - 1);
+          if (pageErr) { error = pageErr; break; }
+          const rows = batch ?? [];
+          billRows.push(...rows);
+          if (rows.length < BILL_PAGE) break;
+        }
+        const data = billRows;
         if (error) {
           console.error('[list_bills_payable] error:', error.message);
           return new Response(JSON.stringify({ error: extractErrorMessage(error) }), { status: 500, headers: corsHeaders });

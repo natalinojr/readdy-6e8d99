@@ -3,6 +3,7 @@ import { useCashFlow, useBillsPayable, useReceivableInstallments } from '@/hooks
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { todayBrasilia } from '@/lib/dateUtils';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import { formatCurrency } from '@/lib/formatters';
 import type { CashFlowEntry } from '@/types/financeiro';
 
@@ -26,6 +27,8 @@ interface DiaCalendario {
   isInPeriod: boolean;
   isToday: boolean;
   isFuture: boolean;
+  /** Dia dentro do horizonte de projeção (hoje ou futuro) */
+  isProjecao: boolean;
   entradas: number;
   saidas: number;
   saldo: number;
@@ -122,18 +125,23 @@ export default function CalendarioFluxoCaixa() {
     if (!user?.tenantId) return;
     setAberturaCarregada(false);
     (async () => {
-      const { data, error } = await supabase
-        .from('fin_cash_flow')
-        .select('amount, type')
-        .eq('tenant_id', user.tenantId)
-        .lt('date', periodStartStr);
+      // Paginado: sem `.range()` o PostgREST corta em ~1000 linhas em silêncio e
+      // o saldo de abertura subnotifica sozinho conforme o razão cresce.
+      const { rows, error } = await fetchAllRows<{ amount: number; type: string }>((from, to) =>
+        supabase
+          .from('fin_cash_flow')
+          .select('amount, type')
+          .eq('tenant_id', user.tenantId)
+          .lt('date', periodStartStr)
+          .range(from, to)
+      );
       if (cancelado) return;
       if (error) {
         console.error('[CalendarioFluxoCaixa] Erro ao calcular saldo de abertura:', error.message);
         setSaldoAbertura(0);
       } else {
         setSaldoAbertura(
-          (data ?? []).reduce(
+          (rows ?? []).reduce(
             (acc, f) => acc + (f.type === 'income' ? Number(f.amount) : -Number(f.amount)),
             0
           )
@@ -164,23 +172,34 @@ export default function CalendarioFluxoCaixa() {
     // saldo devedor = amount − paid_amount.
     const billsByDate = new Map<string, { desc: string; amount: number; status: string }[]>();
     bills.forEach(b => {
-      const list = billsByDate.get(b.due_date) ?? [];
+      // Conta VENCIDA e ainda em aberto é empurrada para HOJE: ela continua
+      // pressionando o caixa daqui pra frente. Deixá-la na data passada a
+      // excluía da projeção (que só olha dias futuros) e o saldo projetado
+      // aparecia melhor do que é.
+      const emAberto = b.status !== 'paid';
+      const venceu = b.due_date < todayStr;
+      const key = emAberto && venceu ? todayStr : b.due_date;
+      const list = billsByDate.get(key) ?? [];
       // Em 'partial' o que ainda pesa no caixa é o saldo restante; nos demais
       // status o próprio `amount` já é o número a exibir (pendente/vencida = tudo
       // em aberto; paga = valor total da conta quitada).
       const saldoDevedor = Number(b.amount) - Number(b.paid_amount ?? 0);
       list.push({
-        desc: b.description,
+        desc: emAberto && venceu
+          ? `${b.description} — venceu ${new Date(b.due_date + 'T12:00:00').toLocaleDateString('pt-BR')}`
+          : b.description,
         amount: b.status === 'partial' ? saldoDevedor : Number(b.amount),
         status: b.status,
       });
-      billsByDate.set(b.due_date, list);
+      billsByDate.set(key, list);
     });
 
     const recByDate = new Map<string, { desc: string; amount: number; status: string }[]>();
     installments.forEach(r => {
-      const dueKey = r.due_date;
-      if (!dueKey) return;
+      if (!r.due_date) return;
+      // Mesmo tratamento das contas a pagar: parcela pendente com vencimento no
+      // passado cai em HOJE em vez de sumir da projeção.
+      const dueKey = r.status === 'pending' && r.due_date < todayStr ? todayStr : r.due_date;
       const list = recByDate.get(dueKey) ?? [];
       list.push({
         desc: r.order_number ? `Pedido ${r.order_number}` : (r.payment_method_name || 'Parcela a receber'),
@@ -192,7 +211,10 @@ export default function CalendarioFluxoCaixa() {
 
     // Status de conta a pagar que ainda representam dívida em aberto.
     // 'partial' estava fora e por isso a conta paga pela metade sumia da previsão.
-    const EM_ABERTO = ['pending', 'partial'];
+    // 'overdue' também estava fora: `fn_mark_overdue_bills` troca 'pending' →
+    // 'overdue' quando a data passa, então a lista excluía exatamente as contas
+    // atrasadas — as mais urgentes — e a projeção dava saída zero.
+    const EM_ABERTO = ['pending', 'partial', 'overdue'];
 
     let saldoAcumulado = saldoAbertura;
     const current = new Date(start);
@@ -205,6 +227,9 @@ export default function CalendarioFluxoCaixa() {
       const isInPeriod = scope === 'semana' ? true : isCurrentMonth;
       const isToday = dateStr === todayStr;
       const isFuture = dateStr > todayStr;
+      // HOJE também é horizonte de projeção: as contas que vencem hoje (e as
+      // vencidas, que foram empurradas para cá) ainda não saíram do caixa.
+      const isProjecao = isFuture || isToday;
 
       const movs = entriesByDate.get(dateStr) ?? [];
       const entradas = movs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0);
@@ -212,10 +237,10 @@ export default function CalendarioFluxoCaixa() {
 
       const contasPagar = billsByDate.get(dateStr) ?? [];
       const contasReceber = recByDate.get(dateStr) ?? [];
-      const prevSaidas = isFuture
+      const prevSaidas = isProjecao
         ? contasPagar.filter(c => EM_ABERTO.includes(c.status)).reduce((s, c) => s + c.amount, 0)
         : 0;
-      const prevEntradas = isFuture
+      const prevEntradas = isProjecao
         ? contasReceber.filter(c => c.status === 'pending').reduce((s, c) => s + c.amount, 0)
         : 0;
 
@@ -234,11 +259,12 @@ export default function CalendarioFluxoCaixa() {
         isInPeriod,
         isToday,
         isFuture,
+        isProjecao,
         entradas: totalEntradas,
         saidas: totalSaidas,
         saldo: saldoDia,
         saldoAcumulado: isInPeriod ? saldoAcumulado : undefined,
-        saldoNegativo: isFuture && isInPeriod && saldoAcumulado < 0,
+        saldoNegativo: isProjecao && isInPeriod && saldoAcumulado < 0,
         movimentacoes: movs,
         contasPagar,
         contasReceber,
@@ -308,8 +334,8 @@ export default function CalendarioFluxoCaixa() {
     const entradas = diasPeriodo.reduce((s, d) => s + d.entradas, 0);
     const saidas = diasPeriodo.reduce((s, d) => s + d.saidas, 0);
     const saldo = entradas - saidas;
-    const prevEntradas = diasPeriodo.filter(d => d.isFuture).reduce((s, d) => s + d.entradas, 0);
-    const prevSaidas = diasPeriodo.filter(d => d.isFuture).reduce((s, d) => s + d.saidas, 0);
+    const prevEntradas = diasPeriodo.filter(d => d.isProjecao).reduce((s, d) => s + d.entradas, 0);
+    const prevSaidas = diasPeriodo.filter(d => d.isProjecao).reduce((s, d) => s + d.saidas, 0);
     const diasNegativosCount = diasPeriodo.filter(d => d.saldoNegativo).length;
     const saldoFinal = saldoAbertura + saldo;
     return { entradas, saidas, saldo, prevEntradas, prevSaidas, diasNegativosCount, saldoFinal };

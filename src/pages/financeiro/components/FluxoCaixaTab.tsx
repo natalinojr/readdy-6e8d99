@@ -8,6 +8,7 @@ import {
   Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 import CalendarioFluxoCaixa from './CalendarioFluxoCaixa';
+import PrevisaoCaixaTab from './PrevisaoCaixaTab';
 import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 
 const PERIODS = [
@@ -37,6 +38,30 @@ function getPeriodDates(period: string, customStart: string, customEnd: string) 
 // "Taxas de Cartao", "Folha de Pagamento" etc. ficavam inalcançáveis no filtro.
 const CATEGORIES = ['Vendas', 'Compras', 'Conta a Pagar', 'Antecipação', 'Sangria', 'Suprimento', 'Outros'];
 const PAGE_SIZE = 15;
+
+// As três leituras de "fluxo de caixa". O padrão é a PROJEÇÃO: no dia a dia da
+// loja a pergunta é "quando vai faltar dinheiro?", e a resposta depende dos
+// compromissos já assumidos — não do extrato do que já passou.
+const VIEWS = [
+  {
+    id: 'projecao' as const,
+    label: 'Projeção',
+    icon: 'ri-line-chart-line',
+    hint: 'Saldo de hoje + recebíveis já vendidos − contas a pagar (inclusive vencidas) e folha. Mostra o dia em que o caixa fica negativo.',
+  },
+  {
+    id: 'calendario' as const,
+    label: 'Calendário',
+    icon: 'ri-calendar-todo-line',
+    hint: 'Mesma projeção, dia a dia no calendário: clique num dia para ver o que entra e o que sai.',
+  },
+  {
+    id: 'extrato' as const,
+    label: 'Extrato',
+    icon: 'ri-list-check',
+    hint: 'Só o que JÁ entrou e saiu do caixa. Histórico, sem projeção.',
+  },
+];
 
 // Vocabulário completo de `fin_cash_flow.origin` (ver FINANCEIRO_MAP §1).
 // Faltavam auto_bill_payment/auto_card_fee/auto_payroll/auto_suprimento — o CSV
@@ -72,7 +97,10 @@ export default function FluxoCaixaTab() {
   const { centers } = useCostCenters();
   const { formasAtivas } = usePaymentMethods();
   const [chartMode, setChartMode] = useState<'saldo' | 'barras'>('saldo');
-  const [viewMode, setViewMode] = useState<'lista' | 'calendario'>('lista');
+  // A aba abre na PROJEÇÃO. "Fluxo de caixa", no dia a dia da loja, é a
+  // pergunta "quando vai faltar dinheiro?" — não o extrato do que já passou.
+  // O extrato continua aqui, um clique ao lado.
+  const [viewMode, setViewMode] = useState<'projecao' | 'calendario' | 'extrato'>('projecao');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,8 +195,34 @@ export default function FluxoCaixaTab() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
-      {/* Period selector + View toggle */}
+    <div className="flex flex-col">
+      {/* Seletor de visão — a PROJEÇÃO é a visão padrão */}
+      <div className="px-4 md:px-6 pt-4 md:pt-6">
+        <div className="inline-flex items-center gap-1 bg-zinc-100 rounded-lg p-0.5">
+          {VIEWS.map(v => (
+            <button
+              key={v.id}
+              onClick={() => setViewMode(v.id)}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${viewMode === v.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
+            >
+              <i className={v.icon} /> {v.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-zinc-400 mt-2">{VIEWS.find(v => v.id === viewMode)?.hint}</p>
+      </div>
+
+      {viewMode === 'projecao' && <PrevisaoCaixaTab />}
+
+      {viewMode === 'calendario' && (
+        <div className="p-4 md:p-6">
+          <CalendarioFluxoCaixa />
+        </div>
+      )}
+
+      {viewMode === 'extrato' && (
+      <div className="p-4 md:p-6 space-y-4 md:space-y-5">
+      {/* Period selector */}
       <div className="flex items-center gap-2 md:gap-3 flex-wrap">
         <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
           {PERIODS.map(p => (
@@ -186,21 +240,7 @@ export default function FluxoCaixaTab() {
           </>
         )}
 
-        {/* Toggle Lista / Calendário */}
-        <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-0.5 ml-auto">
-          <button
-            onClick={() => setViewMode('lista')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1 ${viewMode === 'lista' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
-          >
-            <i className="ri-list-check" /> Lista
-          </button>
-          <button
-            onClick={() => setViewMode('calendario')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1 ${viewMode === 'calendario' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
-          >
-            <i className="ri-calendar-todo-line" /> Calendário
-          </button>
-        </div>
+
       </div>
 
       {/* KPIs */}
@@ -234,8 +274,6 @@ export default function FluxoCaixaTab() {
         </div>
       </div>
 
-      {viewMode === 'lista' ? (
-        <>
           {/* Gráfico de Saldo / Entradas vs Saídas */}
           {chartData.length > 1 && (
             <div className="bg-white rounded-xl border border-zinc-200 p-5">
@@ -469,9 +507,7 @@ export default function FluxoCaixaTab() {
               </div>
             )}
           </div>
-        </>
-      ) : (
-        <CalendarioFluxoCaixa />
+      </div>
       )}
 
       {/* Modal Nova Movimentação */}

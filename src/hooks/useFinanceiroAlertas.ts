@@ -46,9 +46,11 @@ export function useFinanceiroAlertas(): FinanceiroAlertasSummary {
       // Contas a pagar vencidas ou vencendo em 7 dias
       supabase
         .from('fin_accounts_payable')
-        .select('id, description, amount, due_date, status')
+        .select('id, description, amount, paid_amount, due_date, status')
         .eq('tenant_id', user.tenantId)
-        .in('status', ['pending', 'overdue'])
+        // 'partial' também é dívida em aberto (ver P31 do FINANCEIRO_MAP): uma
+        // conta paga pela metade e prestes a vencer não gerava alerta nenhum.
+        .in('status', ['pending', 'overdue', 'partial'])
         .lte('due_date', sevenDaysLater)
         .order('due_date'),
 
@@ -82,11 +84,13 @@ export function useFinanceiroAlertas(): FinanceiroAlertasSummary {
 
     const bills = (billsRes.data ?? []).map(b => ({
       ...b,
-      status: b.status === 'pending' && b.due_date < today ? 'overdue' : b.status,
-    }));
+      // O que pesa no caixa é o SALDO DEVEDOR, não o valor cheio da conta.
+      amount: Number(b.amount) - Number(b.paid_amount ?? 0),
+      status: b.status !== 'paid' && b.due_date < today ? 'overdue' : b.status,
+    })).filter(b => b.amount > 0.005);
 
     const vencidas = bills.filter(b => b.status === 'overdue');
-    const vencendo = bills.filter(b => b.status === 'pending');
+    const vencendo = bills.filter(b => b.status !== 'overdue');
     const payrollPending = payrollRes.data ?? [];
     const budgets = budgetsRes.data ?? [];
 

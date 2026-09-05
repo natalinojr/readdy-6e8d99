@@ -35,8 +35,8 @@ Arquivos-base: `src/pages/financeiro/`, `src/hooks/useFinanceiro.ts`, `useDespes
 | 1 | `visao` | Visão Geral | `VisaoGeralFinTab` | `fin_cash_flow` + dashboard hook |
 | 2 | `receitas` | Receitas | `ReceitasTab` | `orders` (delivered) + `fin_cash_flow` manual |
 | 3 | `despesas` | Despesas | `DespesasTab` | 5 fontes (ver §5) |
-| 4 | `fluxo` | Fluxo de Caixa (realizado) | `FluxoCaixaTab` | `fin_cash_flow` |
-| 5 | `previsao` | Previsão (projetado) | `PrevisaoCaixaTab` | AP + recebíveis + folha + manual |
+| 4 | `fluxo` | Fluxo de Caixa | `FluxoCaixaTab` — 3 visões: **Projeção** (padrão, = `PrevisaoCaixaTab`), **Calendário** (`CalendarioFluxoCaixa`), **Extrato** (realizado) | projeção: AP + recebíveis + folha + `fin_cash_flow`; extrato: só `fin_cash_flow` |
+| ~~5~~ | ~~`previsao`~~ | *removida da navegação em 2026-09-05* — virou a visão padrão do `fluxo`. O id antigo ainda roteia para `FluxoCaixaTab` por causa de links salvos. | — | — |
 | 6 | `pagar` | Contas a Pagar | `ContasPagarTab` | `fin_accounts_payable` |
 | 7 | `receber` | Contas a Receber | `ContasReceberTab` | `fin_receivable_installments` |
 | 8 | `orcamentos` | Orçamentos | `OrcamentosTab` | `fin_budgets` / `fin_budget_items` |
@@ -239,13 +239,68 @@ Ganhos além do isolamento: o vínculo DRE em lote contava `count++` mesmo quand
 
 ### Backlog restante
 - **P12 (prioridade):** refazer o CMV da DRE conforme §4c. Pré-requisito: snapshot mensal de estoque valorizado.
-- **Fase 2 de compras:** catálogo de recorrentes ligado ao modal (lançamento rápido do dia a dia); pagamento em lote por fornecedor; listagem de compras espelhando a aba "CM" da planilha (filtros mês/fornecedor/categoria + totais), para rodar sistema × planilha em paralelo antes de largar a planilha.
+- **Fase 2 de compras:** catálogo de recorrentes ligado ao modal (lançamento rápido do dia a dia); pagamento em lote por fornecedor. ~~Listagem espelhando a aba "CM" da planilha~~ → **feito em 2026-09-05** (aba **Relatórios**, ver §9c).
 - **Duplicação de modal de compra:** existem DOIS `NovaCompraModal` (`components/` usado pelo Estoque, `components/compras/` usado pelo Financeiro). Unificar — foi a divergência que escondeu o P9.
 - **`GerenciarFornecedoresModal` órfão:** existe em `src/pages/estoque/components/` sem nenhum import. Fornecedor na compra é ligado por **nome** (`ilike`), não por FK.
 - **P8:** padronizar limites de período (borda de 1h).
 - **Cobertura de ficha técnica** (hoje 2,2%): continua importante — mas para o **CMV teórico / indicador de perda**, não para a DRE.
 - **Bancos/income routing:** configurar para o saldo bancário e o P5 usarem dados reais.
 - **Evolução P4:** reconciliação automática faturamento ↔ caixa recebido.
+
+---
+
+## 7b. Fluxo de caixa = projeção (2026-09-05)
+
+**Decisão de produto.** Para a loja, "fluxo de caixa" é a pergunta *"quando vai
+faltar dinheiro para honrar os compromissos?"*. O sistema tinha isso em uma aba
+separada (`previsao`) enquanto a aba chamada "Fluxo de Caixa" mostrava só o
+extrato do passado — o dono abria, via vazio ou irrelevante, e não achava a
+projeção. As duas foram unificadas: `fluxo` abre na **Projeção**, com
+**Calendário** e **Extrato** ao lado.
+
+### P31 — `'overdue'` era tratado como se não fosse dívida  ✅ corrigido
+A rotina `fn_mark_overdue_bills()` (chamada em todo `list_bills_payable`) troca
+`status 'pending' → 'overdue'` assim que `due_date < CURRENT_DATE`. Mas a
+projeção e o calendário filtravam contas em aberto por
+`status IN ('pending','partial')` — ou seja, **descartavam exatamente as contas
+atrasadas**, que são as mais urgentes.
+
+Efeito medido em 2026-09-05: **100% das contas em aberto do banco inteiro
+estavam em `'overdue'`** (9 contas, R$ 5.015,04; em EP Paranaguá, as 5 parcelas
+do Chilli, R$ 1.361,04). A projeção mostrava **saída zero** e saldo saudável.
+
+**Regra:** conta em aberto = `status <> 'paid'`. Nunca listar status "em aberto"
+por enumeração positiva sem incluir `'overdue'`.
+
+### P32 — compromisso vencido sumia da projeção  ✅ corrigido
+Mesmo com o status certo, as queries tinham piso `.gte('due_date', hoje)` e o
+calendário só somava previsão em dias `isFuture`. Uma conta vencida ficava
+ancorada numa data passada e nunca entrava no acumulado.
+**Regra:** compromisso em aberto com vencimento no passado é jogado em **HOJE**
+(mesmo tratamento que a folha em atraso já tinha), rotulado "VENCIDA em dd/mm".
+Vale para `fin_accounts_payable` e para `fin_receivable_installments` pendentes.
+Corolário: **hoje faz parte do horizonte de projeção** (`isProjecao = isFuture || isToday`).
+
+### P33 — saldo de abertura truncado em 1000 linhas  ✅ corrigido
+`PrevisaoCaixaTab` e `CalendarioFluxoCaixa` somavam o razão anterior ao período
+sem `.range()`; `list_bills_payable` idem. Todos passaram por `fetchAllRows`
+(front) / laço de páginas (edge). Ver P30.
+
+### P34 — data do dispositivo na projeção  ✅ corrigido
+`PrevisaoCaixaTab` montava o horizonte com `new Date()` do navegador. Passou a
+usar `todayBrasilia()`, o helper canônico (ver P27).
+
+### O que a projeção mostra hoje
+`Saldo atual` (banco real, ou razão acumulado como proxy) **+** recebíveis de
+cartão pendentes (D+N) **−** contas a pagar em aberto (incluindo vencidas)
+**−** folha pendente projetada no 5º dia do mês seguinte à competência,
+acumulado dia a dia por 30/60/90 dias. O alerta nomeia **a data exata** em que o
+saldo cruza zero e o **pior momento** do horizonte (menor saldo acumulado — o
+caixa mínimo necessário para atravessar o período).
+
+**Limite honesto, exibido na tela:** só entram compromissos **já lançados**.
+Vendas futuras não são estimadas. Então a projeção é o pior caso "se não
+entrar mais nada" — que é exatamente a leitura pedida.
 
 ---
 
@@ -256,6 +311,7 @@ Ganhos além do isolamento: o vínculo DRE em lote contava `count++` mesmo quand
 - Toda compra criada gera `stock_movements type='in'`; toda venda ready/delivered gera `theoretical_out` + `unit_cost`.
 - Em `fin_purchase_items`: `total_price = quantity × (unit_price − discount_per_unit)` e `cost_per_base_unit = (total_price + freight_allocated) / (quantity × units_per_package)`. O `total_amount` da compra é **derivado** da soma dos itens + frete (calculado no `purchase-write`, não confiado ao front).
 - Em `fin_accounts_payable`: `paid_amount` é **acumulado**; saldo devedor = `amount − paid_amount`; `status='paid'` só quando `paid_amount ≥ amount`.
+- **Conta em aberto = `status <> 'paid'`** (`pending`, `partial` E `overdue`). Σ das saídas previstas do horizonte da projeção deve bater com Σ(`amount − paid_amount`) das contas em aberto com `due_date ≤ fim do horizonte`. Ver P31.
 
 ---
 
@@ -286,6 +342,19 @@ Ganhos além do isolamento: o vínculo DRE em lote contava `count++` mesmo quand
 > Pendente: `fin_purchase_catalog.merchandise_category_id` existe mas ainda não é preenchido pela UI do catálogo; `AlertasReposicao` agrupa só por texto de fornecedor, ignorando a FK.
 
 ---
+
+## 9c. Aba Relatórios de Compras (2026-09-05)
+
+`compras/ComprasRelatoriosPanel.tsx`, ligado em `ComprasTab` como view `relatorios` (botão **Relatórios**, antes de "Por Fornecedor"/"Por Centro de Custo", que continuam existindo e trabalham no nível da COMPRA).
+
+- **Nível do ITEM** (`fin_purchase_items`), não da compra: é o que permite agrupar por **categoria de mercadoria**. Valor da linha = `total_price + freight_allocated` (custo real, frete rateado incluso). Por isso o total do painel pode diferir em centavos da soma de `total_amount` quando o frete não foi rateado por item.
+- **Categoria do item:** `item.merchandise_category_id` → senão `ingredients.merchandise_category_id` do insumo ligado → senão **"Sem categoria"** (KPI vermelho clicável que filtra os itens para classificar). Insumos são lidos com `fetchAllRows` (id, name, unit, categoria).
+- **Chave de item:** `ingredient_id` quando existe; senão a descrição normalizada (sem acento/caixa). Itens sem insumo com descrição igual se juntam.
+- **Período:** mês atual / anterior / 3-6-12 meses / ano / personalizado, sempre comparado ao **período anterior de mesma duração** (▲ vermelho = gastou mais). Filtros: busca, categoria, fornecedor, status de pagamento.
+- **Agrupamento:** Categoria / Fornecedor / Insumo / Mês → expande para itens (qtd em unid. de estoque, custo médio, **último custo** destacado quando ≥5% fora da média, mín–máx, nº compras) → expande para as compras individuais (link abre `DetalhePurchaseModal` via prop `onOpenPurchase`).
+- **Matriz Categoria × Mês** (espelho da aba "CM" da planilha) + gráfico empilhado (top 7 categorias + "Outras") só quando o período tem 2+ meses.
+- **CSV** de itens com os filtros aplicados (`Compras_itens_<from>_<to>.csv`, `;`, BOM, decimal com vírgula).
+- Teste de fumaça: `src/test/components/comprasRelatoriosPanel.test.tsx`. **Pegadinha corrigida no `vite.config.ts`:** o alias `@` do Vitest usava `new URL(...).pathname`, que devolve `%20` no espaço do caminho do projeto — NENHUM teste com `@/` rodava no Windows. Agora usa `resolve(__dirname, "src")`. Com isso a suíte voltou a rodar e expôs 15 falhas pré-existentes (`dateUtils`, `orderFlow`, `mesaQRFlow`), não relacionadas a compras.
 
 ## 9. Tabelas do módulo (schema `public`)
 `fin_cash_flow`, `fin_accounts_payable`, `fin_receivable_installments`, `fin_anticipations`, `fin_purchases`, `fin_purchase_items`, `fin_purchase_catalog`, `fin_merchandise_categories`, `fin_suppliers`, `fin_cost_centers`, `fin_dre_categories`, `fin_bank_accounts`, `fin_bank_transactions`, `fin_bank_statement_imports`, `fin_bank_statements`, `fin_reconciliation_rules`, `fin_budgets`, `fin_budget_items`, `fin_income_routing`, `fin_investment_settings`, `fin_implementation_costs`, `fin_implementation_columns`, `fin_stone_config`, `fin_stone_imports`, `fin_pix_payments`, `fin_payable_aging`(view), `fin_receivable_aging`(view), `hr_employees`, `hr_payroll`, `hr_payroll_custom_fields`.

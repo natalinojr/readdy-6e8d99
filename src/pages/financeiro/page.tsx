@@ -10,7 +10,6 @@ import CentroCustosTab from './components/CentroCustosTab';
 import DREContainer from './components/DREContainer';
 import ImplantacaoTab from './components/ImplantacaoTab';
 import OrcamentosTab from './components/OrcamentosTab';
-import PrevisaoCaixaTab from './components/PrevisaoCaixaTab';
 import ConciliacaoTab from './components/ConciliacaoTab';
 import BancosContasTab from './components/BancosContasTab';
 import RHTab from './components/RHTab';
@@ -24,7 +23,6 @@ const TABS = [
   { id: 'receitas', label: 'Receitas', icon: 'ri-arrow-down-circle-line' },
   { id: 'despesas', label: 'Despesas', icon: 'ri-pie-chart-2-line' },
   { id: 'fluxo', label: 'Fluxo de Caixa', icon: 'ri-exchange-dollar-line' },
-  { id: 'previsao', label: 'Previsão', icon: 'ri-line-chart-line' },
   { id: 'pagar', label: 'Contas a Pagar', icon: 'ri-bill-line' },
   { id: 'receber', label: 'Contas a Receber', icon: 'ri-hand-coin-line' },
   { id: 'orcamentos', label: 'Orçamentos', icon: 'ri-file-list-3-line' },
@@ -107,8 +105,10 @@ export default function FinanceiroPage() {
         {activeTab === 'visao' && <VisaoGeralFinTab />}
         {activeTab === 'receitas' && <ReceitasTab />}
         {activeTab === 'despesas' && <DespesasTab />}
-        {activeTab === 'fluxo' && <FluxoCaixaTab />}
-        {activeTab === 'previsao' && <PrevisaoCaixaTab />}
+        {/* 'previsao' era uma aba separada; a projeção virou a visão PADRÃO do
+            Fluxo de Caixa. O id antigo continua roteando para cá por causa de
+            links salvos e de navegações por `location.state`. */}
+        {(activeTab === 'fluxo' || activeTab === 'previsao') && <FluxoCaixaTab />}
         {activeTab === 'pagar' && <ContasPagarTab onNavigateToCompras={handleNavigateToCompras} />}
         {activeTab === 'receber' && <ContasReceberTab />}
         {activeTab === 'orcamentos' && <OrcamentosTab />}

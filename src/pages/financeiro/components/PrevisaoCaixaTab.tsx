@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
+import { todayBrasilia } from '@/lib/dateUtils';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend,
@@ -300,6 +302,9 @@ export default function PrevisaoCaixaTab() {
   const [totalRecebiveis, setTotalRecebiveis] = useState(0);
   const [totalSaidas, setTotalSaidas] = useState(0);
   const [totalEntradas, setTotalEntradas] = useState(0);
+  // Compromissos já VENCIDOS e em aberto, empilhados no dia de hoje.
+  const [totalVencidas, setTotalVencidas] = useState(0);
+  const [countVencidas, setCountVencidas] = useState(0);
   const [pendingReceivables, setPendingReceivables] = useState<Receivable[]>([]);
   const [viewMode, setViewMode] = useState<'area' | 'bar'>('area');
   const [showDetail, setShowDetail] = useState(false);
@@ -320,10 +325,13 @@ export default function PrevisaoCaixaTab() {
     setLoading(true);
     setSelectedDay(null);
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // "Hoje" pelo fuso de Brasília (helper canônico do projeto), não pelo relógio
+    // do dispositivo: num notebook com fuso errado a projeção inteira deslizava
+    // um dia e os compromissos de hoje caíam fora da janela.
+    const todayStr = todayBrasilia();
+    const [ty, tm, td] = todayStr.split('-').map(Number);
+    const today = new Date(ty, tm - 1, td);
     const endDate = addDays(today, horizon);
-    const todayStr = localDateKey(today);
     const endDateStr = localDateKey(endDate);
 
     // Janela de COMPETÊNCIA da folha: uma folha de competência M é paga em M+1,
@@ -338,12 +346,22 @@ export default function PrevisaoCaixaTab() {
       // Contas a pagar: 'partial' TAMBÉM é dívida em aberto (invariante §8:
       // saldo devedor = amount − paid_amount). Filtrar só por 'pending' fazia a
       // conta paga pela metade sumir INTEIRA da previsão.
+      //
+      // SEM piso de data: uma conta VENCIDA e ainda em aberto continua sendo um
+      // compromisso a honrar. O filtro `.gte('due_date', hoje)` a apagava da
+      // projeção — o dono via saldo positivo enquanto tinha boletos atrasados na
+      // gaveta. Agora tudo que vence até o fim do horizonte entra, e o que já
+      // venceu é jogado em HOJE (mesmo tratamento que a folha em atraso já tinha).
       supabase
         .from('fin_accounts_payable')
         .select('due_date, amount, paid_amount, status, description')
         .eq('tenant_id', user.tenantId)
-        .in('status', ['pending', 'partial'])
-        .gte('due_date', todayStr)
+        // 'overdue' É dívida em aberto. A rotina `fn_mark_overdue_bills` troca
+        // 'pending' → 'overdue' assim que a data passa, então filtrar por
+        // ['pending','partial'] descartava JUSTAMENTE as contas atrasadas — que
+        // são as mais urgentes. Na base da loja, 100% das contas em aberto
+        // estavam em 'overdue' e a projeção mostrava saída ZERO.
+        .in('status', ['pending', 'partial', 'overdue'])
         .lte('due_date', endDateStr),
 
       supabase
@@ -353,18 +371,25 @@ export default function PrevisaoCaixaTab() {
         .gte('date', todayStr)
         .lte('date', endDateStr),
 
-      supabase
-        .from('fin_cash_flow')
-        .select('amount, type')
-        .eq('tenant_id', user.tenantId)
-        .lt('date', todayStr),
+      // Saldo de abertura: PAGINADO. O PostgREST corta em ~1000 linhas sem
+      // aviso, e o razão de uma loja passa disso em poucos meses — o saldo
+      // inicial da projeção ia subnotificando sozinho conforme o histórico crescia.
+      fetchAllRows<{ amount: number; type: string }>((from, to) =>
+        supabase
+          .from('fin_cash_flow')
+          .select('amount, type')
+          .eq('tenant_id', user.tenantId)
+          .lt('date', todayStr)
+          .range(from, to)
+      ),
 
+      // Recebível pendente com vencimento no passado também entra (cai em HOJE):
+      // é dinheiro que a loja ainda espera receber, não some da projeção.
       supabase
         .from('fin_receivable_installments')
         .select('id, due_date, amount, status, payment_method_name, order_number')
         .eq('tenant_id', user.tenantId)
         .eq('status', 'pending')
-        .gte('due_date', todayStr)
         .lte('due_date', endDateStr),
 
       // Folha pendente: filtrada por COMPETÊNCIA, não por `paid_date`.
@@ -391,7 +416,7 @@ export default function PrevisaoCaixaTab() {
     // se ainda não há saldo em banco (contas não configuradas / sem income routing),
     // caímos no proxy do livro-razão (fin_cash_flow acumulado até ontem).
     const bankBalance = (bankAccountsRes.data ?? []).reduce((s, b) => s + Number(b.current_balance ?? 0), 0);
-    const ledgerBalance = (pastFlowsRes.data ?? []).reduce((acc, f) => {
+    const ledgerBalance = (pastFlowsRes.rows ?? []).reduce((acc, f) => {
       return acc + (f.type === 'income' ? Number(f.amount) : -Number(f.amount));
     }, 0);
     const usaBanco = Math.abs(bankBalance) > 0.001;
@@ -424,20 +449,31 @@ export default function PrevisaoCaixaTab() {
     // Contas a pagar → saídas contas (vermelho escuro)
     // Projetamos o SALDO DEVEDOR (amount − paid_amount), não o valor cheio:
     // uma conta com pagamento parcial só deve pressionar o caixa pelo que falta.
+    // Conta VENCIDA e em aberto entra em HOJE: o dinheiro já deveria ter saído,
+    // então ela pressiona o caixa a partir de agora, não na data que passou.
+    let totalVencidas = 0;
+    let countVencidas = 0;
     (payablesRes.data ?? []).forEach((p: Payable) => {
-      const k = p.due_date;
+      const venceu = p.due_date < todayStr;
+      const k = venceu ? todayStr : p.due_date;
       const saldoDevedor = Number(p.amount) - Number(p.paid_amount ?? 0);
       if (dayMap[k] && saldoDevedor > 0.005) {
+        if (venceu) { totalVencidas += saldoDevedor; countVencidas += 1; }
         dayMap[k].saidasContas += saldoDevedor;
+        const base = p.description ?? 'Conta a pagar';
+        const parcial = p.status === 'partial' ? ' (saldo restante)' : '';
+        const atraso = venceu
+          ? ` — VENCIDA em ${new Date(p.due_date + 'T12:00:00').toLocaleDateString('pt-BR')}`
+          : '';
         dayMap[k].detalhes.push({
           tipo: 'conta_pagar',
-          descricao: p.status === 'partial'
-            ? `${p.description ?? 'Conta a pagar'} (saldo restante)`
-            : (p.description ?? 'Conta a pagar'),
+          descricao: `${base}${parcial}${atraso}`,
           valor: saldoDevedor,
         });
       }
     });
+    setTotalVencidas(totalVencidas);
+    setCountVencidas(countVencidas);
 
     // Fluxo de caixa → classificado por `origin` (§1 do FINANCEIRO_MAP), tanto
     // nas SAÍDAS quanto nas ENTRADAS. Antes só as saídas olhavam o `origin`:
@@ -496,12 +532,13 @@ export default function PrevisaoCaixaTab() {
     // Recebíveis D+N → entradas automáticas (verde claro)
     const receivables = (receivablesRes.data ?? []) as Receivable[];
     receivables.forEach((r) => {
-      const k = r.due_date;
+      const atrasado = r.due_date < todayStr;
+      const k = atrasado ? todayStr : r.due_date;
       if (dayMap[k]) {
         dayMap[k].entradasAuto += Number(r.amount);
         dayMap[k].detalhes.push({
           tipo: 'recebivel',
-          descricao: `Pedido ${r.order_number ?? '—'} · ${r.payment_method_name ?? 'Cartão'}`,
+          descricao: `Pedido ${r.order_number ?? '—'} · ${r.payment_method_name ?? 'Cartão'}${atrasado ? ' — em atraso' : ''}`,
           valor: Number(r.amount),
         });
       }
@@ -585,6 +622,16 @@ export default function PrevisaoCaixaTab() {
   const criticalDays = projection.filter((p) => p.saldoAcumulado < 0);
   const temDados = projection.some((p) => p.totalEntradas > 0 || p.totalSaidas > 0);
 
+  // Ponto de MAIOR APERTO do horizonte: o menor saldo acumulado. É o número que
+  // responde "quanto preciso ter em caixa para atravessar o período".
+  const piorMomento = useMemo(
+    () => projection.reduce(
+      (pior, p) => (p.saldoAcumulado < pior.saldoAcumulado ? p : pior),
+      projection[0] ?? { date: todayBrasilia(), label: '', saldoAcumulado: saldoAtual } as DayPoint,
+    ),
+    [projection, saldoAtual],
+  );
+
   const receivablesByMethod = useMemo(() => {
     const map: Record<string, number> = {};
     pendingReceivables.forEach((r) => {
@@ -636,7 +683,8 @@ export default function PrevisaoCaixaTab() {
         <div>
           <h2 className="text-base font-bold text-zinc-900">Fluxo de Caixa Projetado</h2>
           <p className="text-xs text-zinc-500 mt-0.5">
-            Combina entradas D+0, recebíveis de cartão (D+N), contas a pagar e folha
+            Saldo de hoje + o que já vendeu a receber (cartão D+N) − contas a pagar, vencidas e folha.
+            Só compromissos já lançados; vendas futuras não entram.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -733,7 +781,9 @@ export default function PrevisaoCaixaTab() {
             icon: 'ri-arrow-up-circle-line',
             color: 'text-red-700',
             bg: 'bg-red-50',
-            sub: 'Contas a pagar + folha no período',
+            sub: countVencidas > 0
+              ? `Inclui ${countVencidas} vencida(s): ${formatCurrency(totalVencidas)}`
+              : 'Contas a pagar + folha no período',
           },
           {
             label: `Saldo em ${horizon}d`,
@@ -760,15 +810,39 @@ export default function PrevisaoCaixaTab() {
       </div>
 
       {/* Alerta saldo negativo */}
-      {criticalDays.length > 0 && (
+      {criticalDays.length > 0 ? (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
           <div className="w-8 h-8 flex items-center justify-center bg-red-100 rounded-lg flex-shrink-0">
             <i className="ri-alert-line text-red-600" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-red-800">Atenção: Saldo negativo previsto</p>
+            <p className="text-sm font-semibold text-red-800">
+              O caixa fica negativo em {new Date(criticalDays[0].date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
+            </p>
             <p className="text-xs text-red-600 mt-0.5">
-              {criticalDays.length} dia(s) com saldo acumulado negativo. Primeiro dia crítico: <strong>{criticalDays[0].label}</strong>
+              Saldo nesse dia: <strong>{formatCurrency(criticalDays[0].saldoAcumulado)}</strong>
+              {' · '}Pior momento do período: <strong>{formatCurrency(piorMomento.saldoAcumulado)}</strong> em{' '}
+              {new Date(piorMomento.date + 'T12:00:00').toLocaleDateString('pt-BR')}
+              {' · '}{criticalDays.length} dia(s) no vermelho.
+            </p>
+            <p className="text-[11px] text-red-500 mt-1">
+              Considere negociar prazo com fornecedores, antecipar recebíveis de cartão ou adiar compras não essenciais.
+            </p>
+          </div>
+        </div>
+      ) : temDados && (
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-start gap-3">
+          <div className="w-8 h-8 flex items-center justify-center bg-green-100 rounded-lg flex-shrink-0">
+            <i className="ri-shield-check-line text-green-600" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-green-800">
+              Caixa cobre os compromissos dos próximos {horizon} dias
+            </p>
+            <p className="text-xs text-green-600 mt-0.5">
+              Pior momento do período: <strong>{formatCurrency(piorMomento.saldoAcumulado)}</strong> em{' '}
+              {new Date(piorMomento.date + 'T12:00:00').toLocaleDateString('pt-BR')}. Projeção considera apenas
+              os compromissos já lançados — vendas novas não estão previstas.
             </p>
           </div>
         </div>

@@ -9,6 +9,7 @@ import { formatCurrency } from '@/lib/formatters';
 import type { Purchase } from '@/types/financeiro';
 import ComprasRelatorioPanel from './ComprasRelatorioPanel';
 import ComprasCentroCustoPanel from './compras/ComprasCentroCustoPanel';
+import ComprasRelatoriosPanel from './compras/ComprasRelatoriosPanel';
 import DetalhePurchaseModal from './compras/DetalhePurchaseModal';
 import NovaCompraModal from './compras/NovaCompraModal';
 import CatalogoComprasModal from './compras/CatalogoComprasModal';
@@ -57,7 +58,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   // recarregamos o contexto explicitamente após cada operação.
   const { reloadInsumos, reloadMovimentacoes } = useEstoque();
 
-  const [activeView, setActiveView] = useState<'lista' | 'relatorio' | 'centrocusto'>('lista');
+  const [activeView, setActiveView] = useState<'lista' | 'relatorios' | 'relatorio' | 'centrocusto'>('lista');
   const [showModal, setShowModal] = useState(false);
   const [showCatalogo, setShowCatalogo] = useState(false);
   const [showCategorias, setShowCategorias] = useState(false);
@@ -313,6 +314,10 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
             className={`px-4 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'lista' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
             <i className="ri-list-check" /> Lista
           </button>
+          <button onClick={() => setActiveView('relatorios')}
+            className={`px-4 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'relatorios' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            <i className="ri-file-chart-line" /> Relatórios
+          </button>
           <button onClick={() => setActiveView('relatorio')}
             className={`px-4 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'relatorio' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
             <i className="ri-bar-chart-line" /> Por Fornecedor
@@ -344,6 +349,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
         </div>
       </div>
 
+      {activeView === 'relatorios' && <ComprasRelatoriosPanel purchases={purchases} onOpenPurchase={openDetail} />}
       {activeView === 'relatorio' && <ComprasRelatorioPanel purchases={purchases} />}
       {activeView === 'centrocusto' && <ComprasCentroCustoPanel purchases={purchases} centers={centers} />}
 
