@@ -145,6 +145,22 @@ describe('CatalogoComprasModal', () => {
     expect(salvo).toMatchObject({ name: 'Água sanitária', dre_category_id: 'cat-nova' });
   });
 
+  // O salvamento falhava só no console e o formulário fechava como se tivesse
+  // dado certo, então o item "sumia" sem explicação nenhuma.
+  it('falha ao salvar mantém o formulário aberto e mostra o motivo', async () => {
+    invokeWithAuth.mockResolvedValueOnce({
+      data: { error: 'permission denied for table fin_purchase_catalog' },
+      error: null,
+    });
+    await abrirFormulario();
+    fireEvent.change(screen.getByPlaceholderText(/Detergente/), { target: { value: 'Detergente' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cadastrar' }));
+
+    expect(await screen.findByText(/permission denied/)).toBeInTheDocument();
+    // Continua no formulário: o texto digitado não pode ter sido descartado.
+    expect(screen.getByPlaceholderText(/Detergente/)).toHaveValue('Detergente');
+  });
+
   it('item de estoque grava o insumo e não grava categoria DRE', async () => {
     await abrirFormulario();
     fireEvent.click(screen.getByRole('button', { name: /Entra no estoque/ }));

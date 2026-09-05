@@ -474,8 +474,48 @@ categoria é estratificação opcional dentro dele.**
   resto da loja, e a DRE aberta em outro lugar mostrava a chave crua no lugar do
   rótulo. `CategoriasDRETab` migra sozinho o que houver no navegador, uma vez, e apaga
   a chave.
-- Testes: `isGrupoDespesa` em `src/test/lib/comprasDRE.test.ts`; select do grupo e
-  criação da categoria raiz em `src/test/components/catalogoComprasModal.test.tsx`.
+- **Grupo pode ser renomeado, inclusive os embutidos.** A aba Categorias DRE ganhou
+  edição de grupo (nome e ícone). Para um grupo customizado é só o update da linha;
+  para um grupo padrão, grava-se uma linha em `fin_dre_groups` com a **key do
+  padrão**, que passa a valer como apelido daquele grupo — `resolverGrupos` mescla as
+  duas fontes, senão o grupo apareceria duas vezes na tela, uma como padrão e outra
+  como customizado. Apagar essa linha devolve o nome de fábrica (botão "voltar ao
+  nome padrão"), e apagar a de um grupo customizado apaga o grupo.
+- **A `key` nunca muda na edição**, e o campo fica travado: é ela que as categorias
+  guardam em `group_type`, então trocar deixaria todas órfãs.
+- Testes: `isGrupoDespesa` em `src/test/lib/comprasDRE.test.ts`; mescla de grupos com
+  apelido em `src/test/lib/dreGroups.test.ts`; select do grupo e criação da categoria
+  raiz em `src/test/components/catalogoComprasModal.test.tsx`.
+
+---
+
+## 9g. `fin_purchase_catalog` sem GRANT: o catálogo nunca salvou (2026-09-05)
+
+O dono cadastrou um item e ele não ficou salvo. A tabela estava **vazia desde sempre**.
+
+- **Causa:** `fin_purchase_catalog` não tinha **GRANT nenhum**, nem para `authenticated`
+  nem para `service_role`. A Edge Function respondia
+  `42501 permission denied for table fin_purchase_catalog` no `upsert_purchase_catalog`,
+  e o front também não conseguia **ler** a tabela. É o mesmo modo de falha já conhecido
+  de tabela nova sem grant para o `service_role`.
+- **Corrigido** por `20260905010000_fix_fin_purchase_catalog_grants.sql`: `select` para
+  `authenticated` (o front só lê esta tabela) e escrita completa para `service_role`.
+- **A RLS também estava quebrada.** A policy `tenant_isolation_purchase_catalog`
+  comparava `tenant_id` com uma subquery **correlacionada à própria linha**
+  (`tenant_id = tenant_id`), ou seja, não isolava loja nenhuma. Trocada pelo padrão das
+  outras `fin_*`: select pelas lojas de `user_tenants`, escrita direta negada,
+  `service_role` por cima.
+- **A tela escondia a falha.** `handleSave` mandava o erro só para o `console` e fechava
+  o formulário como se tivesse dado certo — o item "sumia" sem explicação. Agora o
+  formulário **fica aberto** com o motivo em vermelho, e checa as duas formas de falha
+  (erro de transporte e `{ error }` no corpo, que a Edge Function devolve com 200).
+  Teste em `src/test/components/catalogoComprasModal.test.tsx`.
+- **⚠️ Pendente (fora deste escopo):** outras **23 tabelas** estão sem GRANT para
+  `service_role` e podem ter o mesmo problema latente, entre elas `inventory_sessions`,
+  `production_*`, `fin_stone_*`, `fin_pix_payments`, `fin_reconciliation_rules`,
+  `fin_bank_statement_imports`, `table_session_participants` e `user_preferences`.
+  Precisa checar uma a uma quais são escritas por Edge Function antes de sair dando
+  grant.
 
 ---
 

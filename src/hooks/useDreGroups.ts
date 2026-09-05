@@ -55,6 +55,30 @@ export function isGrupoDespesa(groupType: string | null | undefined): boolean {
   return !GRUPOS_FORA_DA_DRE.includes(groupType);
 }
 
+/**
+ * Junta os grupos embutidos com o que a loja gravou. Uma linha cuja `key` é de
+ * grupo padrão NÃO é um grupo novo: é o nome e o ícone que a loja escolheu para
+ * aquele grupo. Sem essa separação o grupo apareceria duas vezes na tela, uma
+ * como padrão e outra como customizado.
+ */
+export function resolverGrupos(rows: DreGroup[]) {
+  const customGroups = rows.filter((r) => !STANDARD_GROUP_KEYS.includes(r.key));
+  const overrides = rows.filter((r) => STANDARD_GROUP_KEYS.includes(r.key));
+
+  const aplicar = (g: DreGroup): DreGroup => {
+    const ov = overrides.find((o) => o.key === g.key);
+    return ov ? { ...g, id: ov.id, label: ov.label, icon: ov.icon } : g;
+  };
+
+  /** Só os grupos que a interface oferece hoje. Legados ficam de fora. */
+  const allGroups = [...STANDARD_DRE_GROUPS.map(aplicar), ...customGroups];
+
+  /** Inclui os aposentados, para achar o rótulo de uma categoria antiga. */
+  const gruposComLegado = [...allGroups, ...GRUPOS_LEGADOS.map(aplicar)];
+
+  return { allGroups, gruposComLegado, customGroups };
+}
+
 export function useDreGroups() {
   const { user } = useAuth();
   const [rows, setRows] = useState<DreGroup[]>([]);
@@ -83,22 +107,7 @@ export function useDreGroups() {
 
   useEffect(() => { fetchGroups(); }, [fetchGroups]);
 
-  // Uma linha cuja `key` é de grupo padrão não é um grupo novo: é o rótulo e o
-  // ícone que a loja escolheu para aquele grupo. Sem essa separação o grupo
-  // apareceria duas vezes na tela, uma como padrão e outra como customizado.
-  const customGroups = rows.filter((r) => !STANDARD_GROUP_KEYS.includes(r.key));
-  const overrides = rows.filter((r) => STANDARD_GROUP_KEYS.includes(r.key));
-
-  const aplicarOverride = (g: DreGroup): DreGroup => {
-    const ov = overrides.find((o) => o.key === g.key);
-    return ov ? { ...g, id: ov.id, label: ov.label, icon: ov.icon } : g;
-  };
-
-  /** Só os grupos que a interface oferece hoje. Legados ficam de fora. */
-  const allGroups = [...STANDARD_DRE_GROUPS.map(aplicarOverride), ...customGroups];
-
-  /** Inclui os aposentados, para achar o rótulo de uma categoria antiga. */
-  const gruposComLegado = [...allGroups, ...GRUPOS_LEGADOS.map(aplicarOverride)];
+  const { allGroups, gruposComLegado, customGroups } = resolverGrupos(rows);
 
   const groupMeta = (key: string): DreGroup | undefined =>
     gruposComLegado.find((g) => g.key === key);

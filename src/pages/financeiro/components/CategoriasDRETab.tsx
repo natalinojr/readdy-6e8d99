@@ -419,8 +419,10 @@ export default function CategoriasDRETab() {
     }
   };
 
+  // Num grupo customizado apaga o grupo; num grupo padrão renomeado apaga só o
+  // apelido, devolvendo o nome de fábrica.
   const handleDeleteGroup = async (key: string) => {
-    const grupo = customGroups.find(g => g.key === key);
+    const grupo = gruposComLegado.find(g => g.key === key);
     if (!grupo?.id || !user?.tenantId) return;
     try {
       await callFinancialWrite('delete_dre_group', user.tenantId, { id: grupo.id });
@@ -469,6 +471,8 @@ export default function CategoriasDRETab() {
         {allGroupsToShow.map(g => {
           const meta = getGroupMeta2(g);
           const isCustom = customGroups.some(cg => cg.key === g);
+          // Grupo padrão que a loja renomeou tem linha própria, e por isso um id.
+          const temApelido = !isCustom && !!gruposComLegado.find(x => x.key === g)?.id;
           return (
             <div key={g} className="relative group/card">
               <button
@@ -482,15 +486,24 @@ export default function CategoriasDRETab() {
                 <p className="text-xl font-bold text-zinc-800">{totalByGroup[g] ?? 0}</p>
                 <p className="text-xs text-zinc-400">categorias</p>
               </button>
-              {isCustom && (
+              <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity">
                 <button
-                  onClick={() => handleDeleteGroup(g)}
-                  className="absolute top-2 right-2 w-5 h-5 flex items-center justify-center rounded-full bg-red-100 text-red-500 hover:bg-red-200 cursor-pointer opacity-0 group-hover/card:opacity-100 transition-opacity"
-                  title="Remover grupo"
+                  onClick={() => handleEditGroup(g)}
+                  className="w-5 h-5 flex items-center justify-center rounded-full bg-zinc-100 text-zinc-500 hover:bg-zinc-200 cursor-pointer"
+                  title="Renomear grupo"
                 >
-                  <i className="ri-close-line text-xs" />
+                  <i className="ri-edit-line text-xs" />
                 </button>
-              )}
+                {(isCustom || temApelido) && (
+                  <button
+                    onClick={() => handleDeleteGroup(g)}
+                    className="w-5 h-5 flex items-center justify-center rounded-full bg-red-100 text-red-500 hover:bg-red-200 cursor-pointer"
+                    title={isCustom ? 'Remover grupo' : 'Voltar ao nome padrão'}
+                  >
+                    <i className={`${isCustom ? 'ri-close-line' : 'ri-arrow-go-back-line'} text-xs`} />
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}
@@ -581,8 +594,8 @@ export default function CategoriasDRETab() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm">
             <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
-              <h3 className="font-semibold text-zinc-900">Novo Grupo DRE</h3>
-              <button onClick={() => setShowGroupModal(false)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
+              <h3 className="font-semibold text-zinc-900">{editingGroup ? 'Editar Grupo DRE' : 'Novo Grupo DRE'}</h3>
+              <button onClick={() => { setShowGroupModal(false); setEditingGroup(null); }} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
                 <i className="ri-close-line text-zinc-500" />
               </button>
             </div>
@@ -591,7 +604,11 @@ export default function CategoriasDRETab() {
                 <label className="text-xs font-semibold text-zinc-600 block mb-1">Nome do Grupo *</label>
                 <input
                   value={groupForm.label}
-                  onChange={e => setGroupForm(f => ({ ...f, label: e.target.value, key: e.target.value.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') }))}
+                  onChange={e => setGroupForm(f => ({
+                    ...f,
+                    label: e.target.value,
+                    key: editingGroup ?? e.target.value.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''),
+                  }))}
                   placeholder="Ex: Investimentos, Outros..."
                   className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
                 />
@@ -602,9 +619,14 @@ export default function CategoriasDRETab() {
                   value={groupForm.key}
                   onChange={e => setGroupForm(f => ({ ...f, key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') }))}
                   placeholder="ex: investimentos"
-                  className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono"
+                  disabled={!!editingGroup}
+                  className={`w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono ${editingGroup ? 'bg-zinc-100 text-zinc-500' : ''}`}
                 />
-                <p className="text-xs text-zinc-400 mt-1">Usada internamente para identificar o grupo. Não pode ser alterada depois.</p>
+                <p className="text-xs text-zinc-400 mt-1">
+                  {editingGroup
+                    ? 'É o que as categorias guardam para saber a qual grupo pertencem, por isso não muda. O nome acima pode mudar à vontade.'
+                    : 'Usada internamente para identificar o grupo. Não pode ser alterada depois.'}
+                </p>
               </div>
               <div>
                 <label className="text-xs font-semibold text-zinc-600 block mb-1">Ícone</label>
@@ -632,7 +654,7 @@ export default function CategoriasDRETab() {
               <div className="flex gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowGroupModal(false)}
+                  onClick={() => { setShowGroupModal(false); setEditingGroup(null); }}
                   className="flex-1 py-2.5 border border-zinc-200 rounded-lg text-sm font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap"
                 >
                   Cancelar
@@ -642,7 +664,7 @@ export default function CategoriasDRETab() {
                   onClick={handleSaveGroup}
                   className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-semibold cursor-pointer transition-colors whitespace-nowrap"
                 >
-                  Criar Grupo
+                  {editingGroup ? 'Salvar' : 'Criar Grupo'}
                 </button>
               </div>
             </div>

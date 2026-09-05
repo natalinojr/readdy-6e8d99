@@ -101,6 +101,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [supplierOpen, setSupplierOpen] = useState(false);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
@@ -139,6 +140,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
   useEffect(() => { loadData(); }, [loadData]);
 
   const openNew = () => {
+    setSaveError(null);
     setEditingId(null);
     setForm(emptyForm);
     setSupplierSearch('');
@@ -147,6 +149,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
   };
 
   const openEdit = (item: CatalogItem) => {
+    setSaveError(null);
     setEditingId(item.id);
     setForm({
       tipo: item.ingredient_id ? 'estoque' : 'consumo',
@@ -235,31 +238,29 @@ export default function CatalogoComprasModal({ onClose }: Props) {
       updated_at: new Date().toISOString(),
     };
 
-    if (editingId) {
-      const { error } = await invokeWithAuth<{ error?: string; data?: unknown }>('financial-write', {
+    const { data, error } = await invokeWithAuth<{ error?: string; data?: unknown }>(
+      'financial-write',
+      {
         body: {
           action: 'upsert_purchase_catalog',
           tenant_id: user.tenantId,
-          payload: { id: editingId, ...payload },
+          payload: editingId ? { id: editingId, ...payload } : { ...payload, is_active: true },
         },
-      });
-      if (error) {
-        console.error('[CatalogoCompras] erro ao salvar edição:', error);
-      }
-    } else {
-      const { error } = await invokeWithAuth<{ error?: string; data?: unknown }>('financial-write', {
-        body: {
-          action: 'upsert_purchase_catalog',
-          tenant_id: user.tenantId,
-          payload: { ...payload, is_active: true },
-        },
-      });
-      if (error) {
-        console.error('[CatalogoCompras] erro ao salvar novo:', error);
-      }
+      },
+    );
+
+    // A falha vinha só no console e o formulário fechava como se tivesse dado
+    // certo, então o item "sumia" sem explicação. A Edge Function responde 200
+    // com `{ error }` no corpo, por isso as duas formas de falha são checadas.
+    const falha = error?.message ?? data?.error;
+    setSaving(false);
+    if (falha) {
+      console.error('[CatalogoCompras] erro ao salvar:', falha);
+      setSaveError(falha);
+      return;
     }
 
-    setSaving(false);
+    setSaveError(null);
     setShowForm(false);
     loadData();
   };
@@ -699,10 +700,19 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                 </div>
               </div>
 
+              {saveError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                  <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-red-600">
+                    Não deu para salvar: {saveError}
+                  </p>
+                </div>
+              )}
+
               <div className="flex gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => setShowForm(false)}
+                  onClick={() => { setShowForm(false); setSaveError(null); }}
                   className="flex-1 py-2 border border-zinc-200 rounded-lg text-sm font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap"
                 >
                   Cancelar
