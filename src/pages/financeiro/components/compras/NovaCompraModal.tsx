@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useId } from 'react';
 import { formatCurrency } from '@/lib/formatters';
 import type { Purchase, PurchaseItem } from '@/types/financeiro';
 import { supabase } from '@/lib/supabase';
@@ -116,6 +116,8 @@ export default function NovaCompraModal({
   editingPurchase, editingInstallments,
 }: Props) {
   const { user } = useAuth();
+  // O botao de salvar vive na barra fixa, fora do <form>, e o alcanca por id.
+  const formId = useId();
   const [catalogItems, setCatalogItems] = useState<UnifiedItem[]>([]);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -607,7 +609,7 @@ export default function NovaCompraModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-3">
+        <form id={formId} onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-3">
           {/* Erro de envio */}
           {submitError && (
             <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2">
@@ -633,6 +635,7 @@ export default function NovaCompraModal({
             </div>
           )}
           {/* Linha 1: Fornecedor + NF + Data + Pagamento */}
+          <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Dados da compra</p>
           <div className="grid grid-cols-4 gap-2">
             <div className="col-span-2 relative" ref={supplierDropdownRef}>
               <label className="text-xs font-semibold text-zinc-600 block mb-1">Fornecedor *</label>
@@ -836,70 +839,115 @@ export default function NovaCompraModal({
             </div>
           )}
 
-          {/* ─── Frete ─── */}
-          <div className="border border-zinc-100 rounded-xl p-4 space-y-3 bg-zinc-50/30">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 flex items-center justify-center">
-                  <i className="ri-truck-line text-amber-500 text-base" />
+          {/* ─── Custos e classificação ─── */}
+          {/* O frete tinha um painel próprio, com moldura e fundo, para UM campo que
+              quase sempre fica em zero. Virou uma coluna desta linha; o que só faz
+              sentido com frete lançado aparece abaixo, sob demanda. */}
+          <div className="pt-2 space-y-2">
+            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Custos e classificação</p>
+
+            <div className="grid grid-cols-12 gap-2 items-start">
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-zinc-600 flex items-center gap-1 h-5 mb-1 whitespace-nowrap">
+                  <i className="ri-truck-line text-amber-500" /> Frete
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-semibold">R$</span>
+                  <input
+                    type="number" step="0.01" min="0" placeholder="0,00"
+                    value={freightAmount || ''}
+                    onChange={(e) => {
+                      const val = Number(e.target.value) || 0;
+                      setFreightAmount(val);
+                      if (freightMode === 'manual') setFreightPerItem({});
+                    }}
+                    className="w-full border border-zinc-200 rounded-lg pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                  />
                 </div>
-                <span className="text-xs font-semibold text-zinc-700">Frete</span>
-                {freightAmount > 0 && (
-                  <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">
-                    {formatCurrency(freightAmount)}
+              </div>
+
+              <div className="col-span-4">
+                <label className="text-xs font-semibold text-zinc-600 flex items-center justify-between gap-1 h-5 mb-1">
+                  <span className="whitespace-nowrap">Centro de Custo</span>
+                  <span className="flex bg-zinc-100 rounded-md p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setCostCenterMode('total')}
+                      className={`px-1.5 py-0.5 text-[10px] font-semibold rounded cursor-pointer transition-all whitespace-nowrap ${costCenterMode === 'total' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
+                    >
+                      Compra
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCostCenterMode('per_item')}
+                      className={`px-1.5 py-0.5 text-[10px] font-semibold rounded cursor-pointer transition-all whitespace-nowrap ${costCenterMode === 'per_item' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
+                    >
+                      Item
+                    </button>
                   </span>
+                </label>
+                {costCenterMode === 'total' ? (
+                  <select value={form.cost_center_id} onChange={(e) => setForm((f) => ({ ...f, cost_center_id: e.target.value }))}
+                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
+                    <option value="">Nenhum</option>
+                    {centers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                ) : (
+                  <p className="text-xs text-zinc-400 flex items-center gap-1 border border-dashed border-zinc-200 rounded-lg px-3 py-2">
+                    <i className="ri-arrow-down-line" /> Definido em cada item
+                  </p>
                 )}
               </div>
-              <div className="flex items-center gap-2">
-                {freightAmount > 0 && (
-                  <div className="flex bg-zinc-100 rounded-lg p-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setFreightMode('auto')}
-                      className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer transition-all whitespace-nowrap ${
-                        freightMode === 'auto' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-                      }`}
-                    >
-                      <i className="ri-magic-line mr-1" />Automático
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFreightMode('manual')}
-                      className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer transition-all whitespace-nowrap ${
-                        freightMode === 'manual' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-                      }`}
-                    >
-                      <i className="ri-edit-line mr-1" />Manual
-                    </button>
-                  </div>
-                )}
+
+              <div className="col-span-3">
+                <label className="text-xs font-semibold text-zinc-600 flex items-center h-5 mb-1 whitespace-nowrap">
+                  {paymentMode === 'avista' ? 'Debitar da Conta' : 'Conta de Pagamento'}
+                </label>
+                <select value={form.bank_account_id} onChange={(e) => setForm((f) => ({ ...f, bank_account_id: e.target.value }))}
+                  className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
+                  <option value="">Não especificado</option>
+                  {bankAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+
+              <div className="col-span-3">
+                <label className="text-xs font-semibold text-zinc-600 flex items-center h-5 mb-1">Observações</label>
+                <input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                  className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  placeholder="Obs. internas" />
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <div className="relative flex-1 max-w-[200px]">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-semibold">R$</span>
-                <input
-                  type="number" step="0.01" min="0" placeholder="0,00"
-                  value={freightAmount || ''}
-                  onChange={(e) => {
-                    const val = Number(e.target.value) || 0;
-                    setFreightAmount(val);
-                    if (freightMode === 'manual') setFreightPerItem({});
-                  }}
-                  className="w-full border border-zinc-200 rounded-lg pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-                />
+            {freightAmount > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex bg-zinc-100 rounded-lg p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setFreightMode('auto')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer transition-all whitespace-nowrap ${
+                      freightMode === 'auto' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
+                    }`}
+                  >
+                    <i className="ri-magic-line mr-1" />Automático
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFreightMode('manual')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer transition-all whitespace-nowrap ${
+                      freightMode === 'manual' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
+                    }`}
+                  >
+                    <i className="ri-edit-line mr-1" />Manual
+                  </button>
+                </div>
+                {freightMode === 'auto' && (
+                  <p className="text-xs text-zinc-500 flex items-center gap-1">
+                    <i className="ri-information-line text-amber-500" />
+                    Rateado proporcionalmente ao valor de cada item
+                  </p>
+                )}
               </div>
-              {freightAmount === 0 && (
-                <p className="text-xs text-zinc-400">Sem frete — deixe em branco ou zero</p>
-              )}
-              {freightAmount > 0 && freightMode === 'auto' && (
-                <p className="text-xs text-zinc-500 flex items-center gap-1">
-                  <i className="ri-information-line text-amber-500" />
-                  Dividido proporcionalmente ao valor de cada item
-                </p>
-              )}
-            </div>
+            )}
 
             {/* Tabela de rateio manual */}
             {freightAmount > 0 && freightMode === 'manual' && items.length > 0 && (
@@ -957,67 +1005,15 @@ export default function NovaCompraModal({
             )}
           </div>
 
-          {/* Centro de Custo + Conta bancária + Obs em linha */}
-          <div className="grid grid-cols-3 gap-2">
-            <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-zinc-600">Centro de Custo</label>
-              <div className="flex bg-zinc-100 rounded-lg p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setCostCenterMode('total')}
-                  className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer transition-all whitespace-nowrap ${costCenterMode === 'total' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
-                >
-                  Pela compra
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCostCenterMode('per_item')}
-                  className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer transition-all whitespace-nowrap ${costCenterMode === 'per_item' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
-                >
-                  Por item
-                </button>
-              </div>
-            </div>
-
-            {costCenterMode === 'total' && (
-              <select value={form.cost_center_id} onChange={(e) => setForm((f) => ({ ...f, cost_center_id: e.target.value }))}
-                className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-                <option value="">Nenhum</option>
-                {centers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            )}
-            {costCenterMode === 'per_item' && (
-              <p className="text-[10px] text-zinc-400 flex items-center gap-1 mt-1">
-                <i className="ri-information-line" />
-                Defina por item abaixo
-              </p>
-            )}
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-zinc-600 block mb-1">
-                {paymentMode === 'avista' ? 'Débitar da Conta' : 'Conta de Pagamento'}
-              </label>
-              <select value={form.bank_account_id} onChange={(e) => setForm((f) => ({ ...f, bank_account_id: e.target.value }))}
-                className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-                <option value="">Não especificado</option>
-                {bankAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-zinc-600 block mb-1">Observações</label>
-              <input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-                className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                placeholder="Obs. internas" />
-            </div>
-          </div>
-
           {/* ─── Itens da compra ─── */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <label className="text-xs font-semibold text-zinc-600">Itens da Compra</label>
+              <label className="text-xs font-semibold text-zinc-600">
+                Itens da Compra
+                <span className="ml-1.5 text-[10px] font-normal text-zinc-400">
+                  {items.length} item{items.length !== 1 ? 's' : ''}
+                </span>
+              </label>
               <button type="button" onClick={addItem}
                 className="text-xs text-amber-600 hover:text-amber-700 cursor-pointer font-semibold flex items-center gap-1">
                 <i className="ri-add-line" /> Adicionar item
@@ -1310,37 +1306,39 @@ export default function NovaCompraModal({
               })}
             </div>
 
-            <div className="flex justify-between items-center mt-3 pt-3 border-t border-zinc-100">
-              <span className="text-xs text-zinc-400">{items.length} item{items.length !== 1 ? 's' : ''}</span>
-              <div className="text-right">
-                {freightAmount > 0 && (
-                  <p className="text-xs text-zinc-400">
-                    Subtotal: {formatCurrency(subtotalAmount)}
-                    <span className="ml-2 text-amber-600">+ Frete: {formatCurrency(freightAmount)}</span>
-                  </p>
-                )}
-                <span className="text-sm font-bold text-zinc-900">Total: {formatCurrency(totalAmount)}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex gap-3 pt-1 flex-shrink-0">
-            <button type="button" onClick={onClose}
-              className="flex-1 py-2.5 border border-zinc-200 rounded-lg text-sm font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
-              Cancelar
-            </button>
-            <button type="submit"
-              disabled={submitting || !parcelasValidas || (paymentMode === 'parcelado' && totalAmount > 0 && parcelasDiff > 0.01)}
-              className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center justify-center gap-2">
-              {submitting ? (
-                <>
-                  <i className="ri-loader-4-line animate-spin" />
-                  Salvando...
-                </>
-              ) : editingPurchase ? 'Salvar Alterações' : 'Salvar Compra'}
-            </button>
           </div>
         </form>
+
+        {/* Barra fixa: o total é a informação que o usuário confere antes de
+            salvar, e antes ficava pequeno e rolava junto com a lista de itens. */}
+        <div className="flex items-center gap-3 px-5 py-3 border-t border-zinc-100 flex-shrink-0 bg-white rounded-b-2xl">
+          <div className="flex-1 min-w-0">
+            {freightAmount > 0 && (
+              <p className="text-[10px] text-zinc-400 truncate">
+                Itens {formatCurrency(subtotalAmount)}
+                <span className="ml-1.5 text-amber-600">+ frete {formatCurrency(freightAmount)}</span>
+              </p>
+            )}
+            <p className="flex items-baseline gap-1.5">
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Total</span>
+              <span className="text-lg font-bold text-zinc-900 leading-none">{formatCurrency(totalAmount)}</span>
+            </p>
+          </div>
+          <button type="button" onClick={onClose}
+            className="px-5 py-2.5 border border-zinc-200 rounded-lg text-sm font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
+            Cancelar
+          </button>
+          <button type="submit" form={formId}
+            disabled={submitting || !parcelasValidas || (paymentMode === 'parcelado' && totalAmount > 0 && parcelasDiff > 0.01)}
+            className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center justify-center gap-2">
+            {submitting ? (
+              <>
+                <i className="ri-loader-4-line animate-spin" />
+                Salvando...
+              </>
+            ) : editingPurchase ? 'Salvar Alterações' : 'Salvar Compra'}
+          </button>
+        </div>
       </div>
     </div>
   );

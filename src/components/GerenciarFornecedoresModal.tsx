@@ -10,7 +10,10 @@ interface Props {
 
 interface SupplierFormData {
   id?: string;
+  /** Como a loja chama o fornecedor. É este que aparece no sistema. */
   name: string;
+  /** Razão social da nota fiscal, que costuma ser outra coisa. */
+  legal_name: string;
   cnpj: string;
   phone: string;
   email: string;
@@ -18,7 +21,7 @@ interface SupplierFormData {
 }
 
 const emptyForm: SupplierFormData = {
-  name: '', cnpj: '', phone: '', email: '', address: '',
+  name: '', legal_name: '', cnpj: '', phone: '', email: '', address: '',
 };
 
 function SupplierForm({
@@ -50,11 +53,26 @@ function SupplierForm({
         {form.id ? 'Editar Fornecedor' : 'Novo Fornecedor'}
       </p>
       <div>
-        <label className="block text-[10px] font-semibold text-zinc-500 mb-1">Nome *</label>
+        <label className="block text-[10px] font-semibold text-zinc-500 mb-1">
+          Nome de identificação *
+          <span className="text-zinc-400 font-normal ml-1">— como você chama, e o que aparece no sistema</span>
+        </label>
         <input
           value={form.name}
           onChange={(e) => f('name', e.target.value)}
-          placeholder="Distribuidora XYZ"
+          placeholder="Ex: Zé das Bebidas"
+          className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-amber-400"
+        />
+      </div>
+      <div>
+        <label className="block text-[10px] font-semibold text-zinc-500 mb-1">
+          Razão social
+          <span className="text-zinc-400 font-normal ml-1">— como vem na nota fiscal</span>
+        </label>
+        <input
+          value={form.legal_name}
+          onChange={(e) => f('legal_name', e.target.value)}
+          placeholder="Ex: José Distribuidora de Bebidas LTDA"
           className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-amber-400"
         />
       </div>
@@ -128,6 +146,8 @@ export default function GerenciarFornecedoresModal({ onClose, onSelect, selectMo
   const filtered = busca
     ? suppliers.filter((s) =>
         s.name.toLowerCase().includes(busca.toLowerCase()) ||
+        (s.legal_name || '').toLowerCase().includes(busca.toLowerCase()) ||
+        (s.cnpj || '').includes(busca) ||
         (s.phone || '').includes(busca) ||
         (s.email || '').toLowerCase().includes(busca.toLowerCase())
       )
@@ -193,7 +213,7 @@ export default function GerenciarFornecedoresModal({ onClose, onSelect, selectMo
               <input
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar fornecedor..."
+                placeholder="Buscar por nome, razão social ou CNPJ..."
                 className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none"
               />
             </div>
@@ -241,6 +261,7 @@ export default function GerenciarFornecedoresModal({ onClose, onSelect, selectMo
                       initial={{
                         id: s.id,
                         name: s.name,
+                        legal_name: s.legal_name ?? '',
                         cnpj: s.cnpj ?? '',
                         phone: s.phone ?? '',
                         email: s.email ?? '',
@@ -263,6 +284,9 @@ export default function GerenciarFornecedoresModal({ onClose, onSelect, selectMo
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-bold text-zinc-800">{s.name}</p>
+                        {s.legal_name && (
+                          <p className="text-[10px] text-zinc-400 truncate">{s.legal_name}</p>
+                        )}
                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
                           {s.phone && (
                             <span className="flex items-center gap-1 text-[10px] text-zinc-500">

@@ -542,9 +542,43 @@ Pedido do dono: poder **adicionar e editar** fornecedor pela aba Compras, usando
   `src/hooks/useFinanceiro.ts` (via `list_suppliers`), também sobre `fin_suppliers`,
   que **ninguém importa**. É código morto com nome idêntico ao hook bom — cuidado para
   não importar o errado.
+- **Razão social separada do nome usado (2026-09-05).** Coluna nova
+  `fin_suppliers.legal_name` (migração `20260905020000_fin_suppliers_legal_name.sql`).
+  `name` continua sendo o **nome de identificação** e o que aparece em todas as telas,
+  por isso nada precisou ser migrado nem reescrito. `legal_name` é só conferência e
+  busca: o fornecedor é conhecido por um nome e a NF vem com outro, o que atrapalhava
+  achar as notas. A busca do modal passou a cobrir nome, razão social e CNPJ, e a
+  razão social aparece em cinza sob o nome na lista. Não precisou de deploy: o
+  `upsert_supplier` repassa o payload inteiro.
 - **Pendente conhecido:** no catálogo, o campo "Fornecedor padrão" aceita texto livre e
   grava `default_supplier` sem `supplier_id` quando o nome não casa com a lista. Isso
   cria fornecedor "fantasma" que não existe em `fin_suppliers`.
+
+---
+
+## 9i. Layout da janela Nova Compra (2026-09-05)
+
+Redesenho a pedido do dono. Só layout: nenhum campo, cálculo ou regra mudou.
+
+- **Frete deixou de ter painel próprio.** Ele ocupava um bloco com moldura, fundo e
+  ~120px de altura para **um campo que quase sempre fica em zero**. Virou a primeira
+  coluna da linha de custos. O seletor `Automático/Manual` e a tabela de rateio só
+  aparecem quando há frete lançado, que é quando significam alguma coisa.
+- **Uma seção "Custos e classificação"** juntou Frete, Centro de Custo, Conta e
+  Observações, que antes eram duas linhas separadas. A grade é `grid-cols-12`
+  (2/4/3/3): com quatro colunas iguais o rótulo "Centro de Custo" quebrava em duas
+  linhas e desalinhava o campo dele dos vizinhos.
+- **Rótulos com altura fixa (`h-5`)** para os campos da linha continuarem alinhados
+  mesmo quando um deles carrega o seletor `Compra/Item` ao lado do texto.
+- **Barra fixa no rodapé.** O total era um texto pequeno que rolava junto com a lista
+  de itens; agora fica sempre visível ao lado dos botões, com o subtotal e o frete em
+  cima quando há frete. Como o botão de salvar saiu de dentro do `<form>`, ele aponta
+  para o formulário por `form={formId}` (`useId`) — sem isso o submit para de funcionar.
+- **Títulos de seção** em maiúsculas discretas ("Dados da compra", "Custos e
+  classificação") para o formulário deixar de ser uma pilha lisa de campos.
+- Teste em `src/test/components/novaCompraModal.test.tsx`: garante que os campos
+  essenciais sobreviveram ao redesenho, que o botão continua ligado ao form pelo id e
+  que o rateio aparece ao lançar frete.
 
 ---
 

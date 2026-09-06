@@ -5,7 +5,10 @@ import { SUPABASE_URL } from '@/lib/supabase';
 
 export interface Supplier {
   id: string;
+  /** Nome de identificação: como a loja chama o fornecedor. É o que aparece nas telas. */
   name: string;
+  /** Razão social, como vem na nota fiscal. Só para conferência e busca. */
+  legal_name?: string | null;
   cnpj?: string;
   phone?: string;
   email?: string;
@@ -28,7 +31,7 @@ export function useSuppliers() {
     try {
       const { data, error } = await supabase
         .from('fin_suppliers')
-        .select('id,name,cnpj,phone,email,address,category,is_active,created_at')
+        .select('id,name,legal_name,cnpj,phone,email,address,category,is_active,created_at')
         .eq('tenant_id', tenantId)
         .eq('is_active', true)
         .order('name');
@@ -52,6 +55,7 @@ export function useSuppliers() {
     const payload = {
       id: data.id ?? undefined,
       name: data.name.trim(),
+      legal_name: data.legal_name?.trim() || null,
       cnpj: data.cnpj?.trim() || null,
       phone: data.phone?.trim() || null,
       email: data.email?.trim() || null,
