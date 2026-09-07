@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2 } from 'lucide-react';
+import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
@@ -11,6 +11,8 @@ import { rotuloRecorrencia, DICA_RECORRENCIA } from '../lib/recorrencia';
 import CampoBadge from './campos/CampoBadge';
 import CampoInput from './campos/CampoInput';
 import ColumnsMenu from './ColumnsMenu';
+import ConfirmDialog from './ConfirmDialog';
+import StatusPicker from './StatusPicker';
 import { iniciais, rotuloVencimento } from './TaskCard';
 
 interface ViewListaProps {
@@ -136,6 +138,11 @@ export default function ViewLista({
     carregarColunasVisiveis(chaveArmazenamento, colunasPadrao),
   );
   const [editando, setEditando] = useState<{ taskId: string; col: ColunaId } | null>(null);
+  const [statusPickerAberto, setStatusPickerAberto] = useState<string | null>(null);
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState<TaskRow | null>(null);
+  const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
+  const [confirmandoExclusaoEmMassa, setConfirmandoExclusaoEmMassa] = useState(false);
+  const [acaoEmMassaAberta, setAcaoEmMassaAberta] = useState<'status' | 'prioridade' | 'responsavel' | null>(null);
 
   // Ao trocar de pasta/visão, recarrega a preferência salva (cada uma tem a sua).
   useEffect(() => {
@@ -187,24 +194,51 @@ export default function ViewLista({
     return res;
   };
 
-  // Backend resolve o status_id certo pela lista de CADA tarefa — funciona
-  // igual com uma pasta só ou espalhado por várias (Minhas/Todas).
-  const alternarConclusao = async (task: TaskRow, concluir: boolean) => {
-    await gravar('update_task', concluir
-      ? { task_id: task.id, status_category: 'done' }
-      : { task_id: task.id, status_action: 'undone' });
-  };
+  const excluir = (task: TaskRow) => setConfirmandoExclusao(task);
 
-  const excluir = async (task: TaskRow) => {
-    if (!confirm(`Arquivar a tarefa "${task.title}"?`)) return;
-    const res = await write('delete_task', { task_id: task.id });
+  const confirmarExclusao = async () => {
+    if (!confirmandoExclusao) return;
+    const res = await write('delete_task', { task_id: confirmandoExclusao.id });
     if (!res.success) toast.error('Não foi possível arquivar', res.error);
+    setConfirmandoExclusao(null);
   };
 
   const toggleTag = async (task: TaskRow, tagId: string) => {
     const atuais = task.tags.map((t) => t.id);
     const proximas = atuais.includes(tagId) ? atuais.filter((t) => t !== tagId) : [...atuais, tagId];
     await gravar('update_task', { task_id: task.id, tag_ids: proximas });
+  };
+
+  // ── Seleção em massa ──────────────────────────────────────────────────────
+  const alternarSelecao = (taskId: string) => {
+    setSelecionadas((prev) => {
+      const p = new Set(prev);
+      if (p.has(taskId)) p.delete(taskId);
+      else p.add(taskId);
+      return p;
+    });
+  };
+
+  const limparSelecao = () => {
+    setSelecionadas(new Set());
+    setAcaoEmMassaAberta(null);
+  };
+
+  const gravarEmMassa = async (payload: Record<string, unknown>) => {
+    const ids = [...selecionadas];
+    const resultados = await Promise.all(ids.map((id) => write('update_task', { task_id: id, ...payload })));
+    const falhas = resultados.filter((r) => !r.success).length;
+    if (falhas > 0) toast.error(`${falhas} de ${ids.length} não foram atualizadas`);
+    setAcaoEmMassaAberta(null);
+  };
+
+  const confirmarExclusaoEmMassa = async () => {
+    const ids = [...selecionadas];
+    const resultados = await Promise.all(ids.map((id) => write('delete_task', { task_id: id })));
+    const falhas = resultados.filter((r) => !r.success).length;
+    if (falhas > 0) toast.error(`${falhas} de ${ids.length} não foram arquivadas`);
+    setConfirmandoExclusaoEmMassa(false);
+    limparSelecao();
   };
 
   // Categoria de um grupo (só faz sentido agrupando por status): decide se
@@ -315,14 +349,34 @@ export default function ViewLista({
     const concluida = task.status_category === 'done';
     const subtarefas = tasks.filter((t) => t.parent_task_id === task.id);
     const aberta = expandidas.has(task.id);
+    const selecionada = selecionadas.has(task.id);
+    const haSelecao = selecionadas.size > 0;
 
     return (
       <div key={task.id}>
         <div
           onClick={() => onOpenTask(task.id)}
-          className="flex items-center gap-3 px-4 py-3.5 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer group"
+          className={`flex items-center gap-3 px-4 py-3.5 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer group ${
+            selecionada ? 'bg-indigo-50/60 hover:bg-indigo-50/60' : ''
+          }`}
           style={{ paddingLeft: `${16 + nivel * 22}px` }}
         >
+          {/* Seleção — só aparece no hover (ou já com alguma seleção ativa) pra não poluir a linha à toa. */}
+          {nivel === 0 && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); alternarSelecao(task.id); }}
+              className={`shrink-0 w-4 h-4 rounded border flex items-center justify-center transition ${
+                selecionada
+                  ? 'bg-indigo-600 border-indigo-600 opacity-100'
+                  : `border-slate-300 hover:border-indigo-400 ${haSelecao ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`
+              }`}
+              title="Selecionar"
+            >
+              {selecionada && <Check size={11} className="text-white" />}
+            </button>
+          )}
+
           {subtarefas.length > 0 ? (
             <button
               onClick={(e) => {
@@ -342,13 +396,29 @@ export default function ViewLista({
             nivel === 0 && <span className="w-[13px] shrink-0" />
           )}
 
-          <input
-            type="checkbox"
-            checked={concluida}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => alternarConclusao(task, e.target.checked)}
-            className="rounded-full border-slate-300 text-emerald-500 focus:ring-emerald-400 shrink-0 w-5 h-5 md:w-4 md:h-4"
-          />
+          {/* Clicar abre o seletor de status — antes ia direto pra "concluído",
+              sem deixar escolher outro destino (ex.: "Em andamento"). */}
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setStatusPickerAberto(task.id); }}
+              className={`w-5 h-5 md:w-4 md:h-4 rounded-full border flex items-center justify-center transition ${
+                concluida ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 hover:border-emerald-400'
+              }`}
+              title="Mudar status"
+            >
+              {concluida && <Check size={11} className="text-white" />}
+            </button>
+            {statusPickerAberto === task.id && (
+              <div className="absolute left-0 top-full mt-1">
+                <StatusPicker
+                  list={list}
+                  onEscolher={(payload) => gravar('update_task', { task_id: task.id, ...payload })}
+                  onClose={() => setStatusPickerAberto(null)}
+                />
+              </div>
+            )}
+          </div>
 
           <span className={`flex-1 text-sm truncate ${concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>
             {task.title}
@@ -410,9 +480,101 @@ export default function ViewLista({
 
   return (
     <div className="space-y-6">
-      <div className="hidden md:flex items-center justify-end gap-1">
-        <ColumnsMenu disponiveis={todasColunas} visiveis={colunasVisiveis} onChange={alterarColunas} />
-      </div>
+      {selecionadas.size > 0 ? (
+        <div className="flex items-center gap-2 bg-indigo-600 text-white rounded-xl px-3 py-2 sticky top-0 z-30 shadow-sm">
+          <span className="text-xs font-medium px-1">{selecionadas.size} selecionada{selecionadas.size > 1 ? 's' : ''}</span>
+
+          <div className="relative">
+            <button
+              onClick={() => setAcaoEmMassaAberta((v) => (v === 'status' ? null : 'status'))}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 transition"
+            >
+              Status
+            </button>
+            {acaoEmMassaAberta === 'status' && (
+              <div className="absolute left-0 top-full mt-1">
+                <StatusPicker
+                  list={list}
+                  onEscolher={(payload) => gravarEmMassa(payload)}
+                  onClose={() => setAcaoEmMassaAberta(null)}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="relative">
+            <button
+              onClick={() => setAcaoEmMassaAberta((v) => (v === 'prioridade' ? null : 'prioridade'))}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 transition"
+            >
+              Prioridade
+            </button>
+            {acaoEmMassaAberta === 'prioridade' && (
+              <div className="relative">
+                <div className="fixed inset-0 z-40" onClick={() => setAcaoEmMassaAberta(null)} />
+                <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-lg border border-slate-200 shadow-lg p-1.5 w-40">
+                  {PRIORIDADES.map((p) => (
+                    <button
+                      key={p.value}
+                      onClick={() => gravarEmMassa({ priority: p.value })}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-left hover:bg-slate-50"
+                    >
+                      <Flag size={11} style={{ color: p.color }} />
+                      <span className="text-slate-700">{p.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="relative">
+            <button
+              onClick={() => setAcaoEmMassaAberta((v) => (v === 'responsavel' ? null : 'responsavel'))}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 transition"
+            >
+              Responsável
+            </button>
+            {acaoEmMassaAberta === 'responsavel' && (
+              <div className="relative">
+                <div className="fixed inset-0 z-40" onClick={() => setAcaoEmMassaAberta(null)} />
+                <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-lg border border-slate-200 shadow-lg p-1.5 w-44 max-h-56 overflow-y-auto">
+                  <button
+                    onClick={() => gravarEmMassa({ assignee_id: null })}
+                    className="w-full px-2 py-1.5 rounded-lg text-xs text-left text-slate-500 hover:bg-slate-50"
+                  >
+                    Ninguém
+                  </button>
+                  {usuarios.map((u) => (
+                    <button
+                      key={u.id}
+                      onClick={() => gravarEmMassa({ assignee_id: u.id })}
+                      className="w-full px-2 py-1.5 rounded-lg text-xs text-left text-slate-700 hover:bg-slate-50"
+                    >
+                      {u.nome}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => setConfirmandoExclusaoEmMassa(true)}
+            className="text-xs px-2.5 py-1.5 rounded-lg bg-red-500 hover:bg-red-400 transition flex items-center gap-1"
+          >
+            <Trash2 size={12} /> Excluir
+          </button>
+
+          <button onClick={limparSelecao} className="ml-auto p-1.5 rounded-lg hover:bg-indigo-500 transition" title="Cancelar seleção">
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <div className="hidden md:flex items-center justify-end gap-1">
+          <ColumnsMenu disponiveis={todasColunas} visiveis={colunasVisiveis} onChange={alterarColunas} />
+        </div>
+      )}
 
       {colunas.length > 0 && (
         <div className="hidden md:flex items-center px-4 -mb-4">
@@ -487,6 +649,26 @@ export default function ViewLista({
           </div>
         );
       })}
+
+      {confirmandoExclusao && (
+        <ConfirmDialog
+          titulo={`Arquivar a tarefa "${confirmandoExclusao.title}"?`}
+          descricao="Ela sai de todas as visões, mas pode ser recuperada depois com o suporte."
+          textoConfirmar="Arquivar"
+          onConfirmar={confirmarExclusao}
+          onCancelar={() => setConfirmandoExclusao(null)}
+        />
+      )}
+
+      {confirmandoExclusaoEmMassa && (
+        <ConfirmDialog
+          titulo={`Arquivar ${selecionadas.size} tarefa${selecionadas.size > 1 ? 's' : ''}?`}
+          descricao="Elas saem de todas as visões, mas podem ser recuperadas depois com o suporte."
+          textoConfirmar="Arquivar"
+          onConfirmar={confirmarExclusaoEmMassa}
+          onCancelar={() => setConfirmandoExclusaoEmMassa(false)}
+        />
+      )}
     </div>
   );
 }

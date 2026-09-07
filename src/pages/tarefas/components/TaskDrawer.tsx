@@ -8,6 +8,7 @@ import { camposDaLista } from '../lib/agrupamento';
 import { useVoltarFecha } from '../lib/mobile';
 import CampoInput from './campos/CampoInput';
 import ComentarioInput from './ComentarioInput';
+import ConfirmDialog from './ConfirmDialog';
 
 interface TaskDrawerProps {
   taskId: string;
@@ -73,6 +74,7 @@ export default function TaskDrawer({
   const [saving, setSaving] = useState(false);
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
   const [mostrarTemplates, setMostrarTemplates] = useState(false);
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
 
   const load = useCallback(async () => {
     const [d, a] = await Promise.all([fetchDetail(taskId), fetchAnexos(taskId)]);
@@ -141,12 +143,7 @@ export default function TaskDrawer({
           <div className="flex items-center gap-2">
             {saving && <span className="text-xs text-slate-400">salvando…</span>}
             <button
-              onClick={async () => {
-                if (!confirm('Arquivar esta tarefa?')) return;
-                const res = await write('delete_task', { task_id: taskId });
-                if (res.success) onClose();
-                else toast.error('Não foi possível arquivar', res.error);
-              }}
+              onClick={() => setConfirmandoExclusao(true)}
               className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-500"
               title="Arquivar tarefa"
             >
@@ -573,6 +570,21 @@ export default function TaskDrawer({
           )}
         </div>
       </div>
+
+      {confirmandoExclusao && (
+        <ConfirmDialog
+          titulo="Arquivar esta tarefa?"
+          descricao="Ela sai de todas as visões, mas pode ser recuperada depois com o suporte."
+          textoConfirmar="Arquivar"
+          onConfirmar={async () => {
+            const res = await write('delete_task', { task_id: taskId });
+            setConfirmandoExclusao(false);
+            if (res.success) onClose();
+            else toast.error('Não foi possível arquivar', res.error);
+          }}
+          onCancelar={() => setConfirmandoExclusao(false)}
+        />
+      )}
     </div>
   );
 }

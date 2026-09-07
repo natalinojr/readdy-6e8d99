@@ -4,7 +4,7 @@ import { PRIORIDADES } from '../hooks/useTarefas';
 /** Rótulo/cor genéricos por categoria — usados quando as tarefas vêm de mais
  *  de uma pasta (Minhas/Compartilhadas/Todas) e não há um `list.statuses` único
  *  pra agrupar; cada pasta tem seus próprios status por trás da mesma categoria. */
-const CATEGORIAS_GENERICAS: Array<{ key: TaskStatus['category']; label: string; color: string }> = [
+export const CATEGORIAS_GENERICAS: Array<{ key: TaskStatus['category']; label: string; color: string }> = [
   { key: 'backlog', label: 'Backlog', color: '#a1a1aa' },
   { key: 'todo', label: 'A fazer', color: '#94a3b8' },
   { key: 'in_progress', label: 'Em andamento', color: '#3b82f6' },
