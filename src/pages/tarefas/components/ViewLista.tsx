@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check } from 'lucide-react';
+import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2 } from 'lucide-react';
+import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
-import type { GroupBy, UsuarioOption } from '../lib/agrupamento';
+import type { GroupBy, Grupo, UsuarioOption } from '../lib/agrupamento';
 import { agruparTarefas, payloadMoverGrupo } from '../lib/agrupamento';
 import type { ColunaDef, ColunaId } from '../lib/colunas';
 import { carregarColunasVisiveis, colunasDisponiveis, salvarColunasVisiveis } from '../lib/colunas';
+import { rotuloRecorrencia, DICA_RECORRENCIA } from '../lib/recorrencia';
 import CampoBadge from './campos/CampoBadge';
 import CampoInput from './campos/CampoInput';
 import ColumnsMenu from './ColumnsMenu';
@@ -119,13 +121,16 @@ const EDITOR_INPUT_CLS = 'w-full border border-slate-200 rounded-lg px-2 py-1.5 
 export default function ViewLista({
   list, chaveColunas, tasks, campos, usuarios, tags, groupBy, write, onOpenTask,
 }: ViewListaProps) {
+  const toast = useToast();
   const chaveArmazenamento = list?.id ?? chaveColunas ?? 'agregado';
   // Em visão agregada mostra de qual pasta cada tarefa é por padrão — numa
   // pasta só isso é óbvio pelo contexto, então fica fora do padrão.
   const colunasPadrao = list ? undefined : (['responsavel', 'vencimento', 'prioridade', 'pasta'] as ColunaId[]);
 
   const [quickAdd, setQuickAdd] = useState<Record<string, string>>({});
-  const [recolhidos, setRecolhidos] = useState<Set<string>>(new Set());
+  // Grupos cujo estado de recolhido o usuário inverteu em relação ao padrão
+  // (Concluído/Cancelado começam recolhidos; o resto, aberto).
+  const [alternados, setAlternados] = useState<Set<string>>(new Set());
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
   const [colunasVisiveis, setColunasVisiveis] = useState<ColunaId[]>(() =>
     carregarColunasVisiveis(chaveArmazenamento, colunasPadrao),
@@ -164,9 +169,9 @@ export default function ViewLista({
     if (groupBy === 'priority' && grupoKey) extras.priority = Number(grupoKey);
     if (groupBy === 'assignee' && grupoKey) extras.assignee_id = grupoKey;
 
-    const res = await write('create_task', { list_id: list.id, title, ...extras });
+    const res = await gravar('create_task', { list_id: list.id, title, ...extras });
     if (res.success && res.id && groupBy.startsWith('field:') && grupoKey) {
-      await write('set_field_value', {
+      await gravar('set_field_value', {
         task_id: res.id,
         field_id: groupBy.slice('field:'.length),
         value: grupoKey,
@@ -174,18 +179,40 @@ export default function ViewLista({
     }
   };
 
+  // Toda escrita da lista passa aqui: o hook já aplica/desfaz o otimista, mas
+  // sem isto o usuário nunca ficava sabendo POR QUE algo não salvou.
+  const gravar = async (action: string, payload: Record<string, unknown>) => {
+    const res = await write(action, payload);
+    if (!res.success) toast.error('Não foi possível salvar', res.error);
+    return res;
+  };
+
   // Backend resolve o status_id certo pela lista de CADA tarefa — funciona
   // igual com uma pasta só ou espalhado por várias (Minhas/Todas).
   const alternarConclusao = async (task: TaskRow, concluir: boolean) => {
-    await write('update_task', concluir
+    await gravar('update_task', concluir
       ? { task_id: task.id, status_category: 'done' }
       : { task_id: task.id, status_action: 'undone' });
+  };
+
+  const excluir = async (task: TaskRow) => {
+    if (!confirm(`Arquivar a tarefa "${task.title}"?`)) return;
+    const res = await write('delete_task', { task_id: task.id });
+    if (!res.success) toast.error('Não foi possível arquivar', res.error);
   };
 
   const toggleTag = async (task: TaskRow, tagId: string) => {
     const atuais = task.tags.map((t) => t.id);
     const proximas = atuais.includes(tagId) ? atuais.filter((t) => t !== tagId) : [...atuais, tagId];
-    await write('update_task', { task_id: task.id, tag_ids: proximas });
+    await gravar('update_task', { task_id: task.id, tag_ids: proximas });
+  };
+
+  // Categoria de um grupo (só faz sentido agrupando por status): decide se
+  // ele começa recolhido — concluídas/canceladas acumulam e só atrapalham.
+  const categoriaDoGrupo = (grupo: Grupo): string | null => {
+    if (groupBy !== 'status' || !grupo.key) return null;
+    if (!list) return grupo.key; // cross-pasta: a chave já é a categoria
+    return list.statuses.find((s) => s.id === grupo.key)?.category ?? null;
   };
 
   const renderEditor = (coluna: ColunaDef, task: TaskRow) => {
@@ -199,7 +226,7 @@ export default function ViewLista({
           value={task.field_values?.[fieldId]}
           usuarios={usuarios}
           onChange={async (value) => {
-            await write('set_field_value', { task_id: task.id, field_id: fieldId, value });
+            await gravar('set_field_value', { task_id: task.id, field_id: fieldId, value });
             setEditando(null);
           }}
         />
@@ -213,7 +240,7 @@ export default function ViewLista({
             autoFocus
             value={task.assignee_id ?? ''}
             onChange={(e) => {
-              write('update_task', { task_id: task.id, assignee_id: e.target.value || null });
+              gravar('update_task', { task_id: task.id, assignee_id: e.target.value || null });
               setEditando(null);
             }}
             className={EDITOR_INPUT_CLS}
@@ -232,7 +259,7 @@ export default function ViewLista({
             type="date"
             defaultValue={task.due_date ? task.due_date.slice(0, 10) : ''}
             onChange={(e) => {
-              write('update_task', { task_id: task.id, due_date: e.target.value ? `${e.target.value}T12:00:00Z` : null });
+              gravar('update_task', { task_id: task.id, due_date: e.target.value ? `${e.target.value}T12:00:00Z` : null });
               setEditando(null);
             }}
             className={EDITOR_INPUT_CLS}
@@ -245,7 +272,7 @@ export default function ViewLista({
             autoFocus
             value={task.priority}
             onChange={(e) => {
-              write('update_task', { task_id: task.id, priority: Number(e.target.value) });
+              gravar('update_task', { task_id: task.id, priority: Number(e.target.value) });
               setEditando(null);
             }}
             className={EDITOR_INPUT_CLS}
@@ -327,7 +354,11 @@ export default function ViewLista({
             {task.title}
           </span>
 
-          {task.recurrence?.freq && <Repeat size={11} className="text-slate-300 shrink-0" />}
+          {task.recurrence?.freq && (
+            <span title={`${rotuloRecorrencia(task.recurrence)}. ${DICA_RECORRENCIA}`} className="shrink-0 text-slate-300">
+              <Repeat size={11} />
+            </span>
+          )}
 
           <div className="hidden md:flex items-center shrink-0">
             {colunas.map((c) => {
@@ -354,6 +385,14 @@ export default function ViewLista({
                 </div>
               );
             })}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); excluir(task); }}
+              className="ml-1 p-1 rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 transition shrink-0"
+              title="Arquivar tarefa"
+            >
+              <Trash2 size={13} />
+            </button>
           </div>
 
           {/* No celular não há espaço pra tabela — mantém um resumo compacto das colunas ativas (edição continua só pelo desktop) */}
@@ -383,19 +422,23 @@ export default function ViewLista({
               {c.label}
             </div>
           ))}
+          {/* mesma largura do botão de arquivar da linha, pra manter o alinhamento */}
+          <span className="ml-1 w-[21px] shrink-0" />
         </div>
       )}
 
       {grupos.map((grupo) => {
         const chave = grupo.key ?? '__vazio';
-        const recolhido = recolhidos.has(chave);
+        const cat = categoriaDoGrupo(grupo);
+        const recolhidoPadrao = cat === 'done' || cat === 'cancelled';
+        const recolhido = recolhidoPadrao !== alternados.has(chave);
         const podeAdicionar = list !== null && (payloadMoverGrupo(groupBy, grupo.key, list) !== null || groupBy === 'status');
 
         return (
           <div key={chave}>
             <button
               onClick={() =>
-                setRecolhidos((prev) => {
+                setAlternados((prev) => {
                   const p = new Set(prev);
                   if (p.has(chave)) p.delete(chave);
                   else p.add(chave);

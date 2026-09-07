@@ -2,6 +2,7 @@ import { Flag, MessageSquare, CheckSquare, GitBranch, Repeat } from 'lucide-reac
 import type { CampoCustom, TaskRow } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
+import { rotuloRecorrencia, DICA_RECORRENCIA } from '../lib/recorrencia';
 import CampoBadge from './campos/CampoBadge';
 
 interface TaskCardProps {
@@ -103,7 +104,11 @@ export default function TaskCard({
 
       <div className="flex items-center gap-2 text-[11px] text-slate-400">
         {task.priority > 0 && prio && <Flag size={11} style={{ color: prio.color }} />}
-        {task.recurrence?.freq && <Repeat size={11} className="text-slate-400" />}
+        {task.recurrence?.freq && (
+          <span title={`${rotuloRecorrencia(task.recurrence)}. ${DICA_RECORRENCIA}`}>
+            <Repeat size={11} className="text-slate-400" />
+          </span>
+        )}
         {task.checklist_total > 0 && (
           <span className="flex items-center gap-0.5">
             <CheckSquare size={11} />{task.checklist_done}/{task.checklist_total}

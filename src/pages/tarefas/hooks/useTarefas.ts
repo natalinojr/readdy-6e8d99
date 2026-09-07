@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, invokeWithAuth, uploadTaskAttachment } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -198,6 +199,7 @@ export const PRIORIDADES: Array<{ value: number; label: string; color: string }>
 
 export function useTarefas() {
   const { user } = useAuth();
+  const toast = useToast();
   const tenantId = user?.tenantId ?? null;
 
   const [lists, setLists] = useState<TaskList[]>([]);
@@ -288,16 +290,87 @@ export function useTarefas() {
     };
   }, [meuId, tenantId]);
 
+  /**
+   * Aplica um `update_task` localmente antes da resposta do servidor — o
+   * checkbox de concluir, o arrasto no Kanban e a edição inline respondem na
+   * hora em vez de esperar o reload completo. Se o servidor recusar, o
+   * `reload()` do erro desfaz. Só cobre o que dá pra prever no cliente; o
+   * resto (nome do responsável novo, contadores) o reload preenche depois.
+   */
+  const patchOtimista = useCallback((t: TaskRow, p: Record<string, unknown>): TaskRow => {
+    const n: TaskRow = { ...t };
+    const lista = lists.find((l) => l.id === (p.list_id as string | undefined ?? t.list_id));
+    const aplicarStatus = (s: TaskStatus | null | undefined) => {
+      if (!s) return;
+      n.status_id = s.id;
+      n.status_category = s.category;
+      n.completed_at = s.category === 'done' ? new Date().toISOString() : null;
+    };
+
+    if (typeof p.title === 'string') n.title = p.title;
+    if (p.priority !== undefined) n.priority = Number(p.priority);
+    if (p.assignee_id !== undefined) {
+      const novo = (p.assignee_id as string | null) ?? null;
+      if (novo !== t.assignee_id) n.assignee_name = null; // o reload traz o nome
+      n.assignee_id = novo;
+    }
+    if (p.due_date !== undefined) n.due_date = (p.due_date as string | null) ?? null;
+    if (p.start_date !== undefined) n.start_date = (p.start_date as string | null) ?? null;
+    if (p.due_has_time !== undefined) n.due_has_time = Boolean(p.due_has_time);
+    if (p.sort_order !== undefined) n.sort_order = Number(p.sort_order);
+    if (p.recurrence !== undefined) n.recurrence = (p.recurrence as TaskRow['recurrence']) ?? null;
+    if (p.list_id !== undefined && lista) {
+      n.list_id = lista.id;
+      n.list_name = lista.name;
+      n.list_color = lista.color;
+    }
+    if (Array.isArray(p.tag_ids)) {
+      n.tags = (p.tag_ids as string[]).map((id) => tags.find((tg) => tg.id === id)).filter((x): x is TaskTag => !!x);
+    }
+
+    // Status: por id exato, por categoria (visões cross-pasta) ou "desmarcar".
+    if (typeof p.status_id === 'string') {
+      aplicarStatus(lista?.statuses.find((s) => s.id === p.status_id));
+    } else if (typeof p.status_category === 'string') {
+      const cat = p.status_category as TaskStatus['category'];
+      const s = lista?.statuses.find((x) => x.category === cat);
+      if (s) aplicarStatus(s);
+      else { n.status_category = cat; n.completed_at = cat === 'done' ? new Date().toISOString() : null; } // pasta de outra pessoa
+    } else if (p.status_action === 'undone') {
+      const s = lista?.statuses.find((x) => x.category !== 'done' && x.category !== 'cancelled');
+      if (s) aplicarStatus(s);
+      else { n.status_category = 'todo'; n.completed_at = null; }
+    }
+    return n;
+  }, [lists, tags]);
+
   const write = useCallback(
-    async (action: string, payload: Record<string, unknown> = {}): Promise<{ success: boolean; id?: string; error?: string }> => {
+    async (action: string, payload: Record<string, unknown> = {}): Promise<{ success: boolean; id?: string; error?: string; next_occurrence_id?: string | null }> => {
       if (!tenantId) return { success: false, error: 'Sem loja ativa' };
+
+      // Otimista: aplica antes de ir ao servidor. Erro abaixo chama reload() e desfaz.
+      if (action === 'update_task' && typeof payload.task_id === 'string') {
+        const id = payload.task_id;
+        setTasks((prev) => prev.map((t) => (t.id === id ? patchOtimista(t, payload) : t)));
+      } else if (action === 'delete_task' && typeof payload.task_id === 'string') {
+        const id = payload.task_id;
+        setTasks((prev) => prev.filter((t) => t.id !== id && t.parent_task_id !== id));
+      }
+
       const { data, error: fnError } = await invokeWithAuth<{ success?: boolean; id?: string; error?: string; next_occurrence_id?: string | null }>('task-write', {
         body: { action, active_tenant_id: tenantId, ...payload },
       });
       if (fnError || !data?.success) {
         const msg = data?.error ?? fnError?.message ?? 'Erro desconhecido';
         console.error(`[useTarefas] ${action} falhou:`, msg);
+        if (action === 'update_task' || action === 'delete_task') reload(); // desfaz o otimista
         return { success: false, error: msg };
+      }
+
+      // Tarefa recorrente concluída: o servidor já criou a próxima ocorrência.
+      // Sem este aviso parece que a tarefa "duplicou" (mesmo título, nova data).
+      if (action === 'update_task' && data.next_occurrence_id) {
+        toast.success('Tarefa concluída', 'Por ser recorrente, a próxima ocorrência já foi criada com a nova data.');
       }
 
       // Mostra a tarefa nova na hora, sem esperar o reload completo (7 RPCs
@@ -341,9 +414,9 @@ export function useTarefas() {
 
       // Recarrega em background (o broadcast também dispara, mas garante consistência)
       reload();
-      return { success: true, id: data.id };
+      return { success: true, id: data.id, next_occurrence_id: data.next_occurrence_id ?? null };
     },
-    [tenantId, reload, lists, user?.id],
+    [tenantId, reload, lists, user?.id, patchOtimista, toast],
   );
 
   const fetchDetail = useCallback(

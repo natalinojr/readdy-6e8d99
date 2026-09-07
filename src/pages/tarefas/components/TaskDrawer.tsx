@@ -145,6 +145,7 @@ export default function TaskDrawer({
                 if (!confirm('Arquivar esta tarefa?')) return;
                 const res = await write('delete_task', { task_id: taskId });
                 if (res.success) onClose();
+                else toast.error('Não foi possível arquivar', res.error);
               }}
               className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-500"
               title="Arquivar tarefa"
@@ -163,6 +164,11 @@ export default function TaskDrawer({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => title.trim() && title !== detail.title && update({ title: title.trim() })}
+            // Tarefa recém-criada pelo botão "Nova tarefa" já abre com o título
+            // selecionado — é só digitar por cima, sem precisar apagar.
+            autoFocus={detail.title === 'Nova tarefa'}
+            onFocus={(e) => { if (e.target.value === 'Nova tarefa') e.target.select(); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
             className="w-full text-lg font-semibold text-slate-800 outline-none border-b border-transparent focus:border-indigo-300 pb-1"
             placeholder="Título da tarefa"
           />
