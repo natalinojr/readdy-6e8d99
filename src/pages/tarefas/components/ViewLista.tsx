@@ -138,16 +138,18 @@ export default function ViewLista({
     carregarColunasVisiveis(chaveArmazenamento, colunasPadrao),
   );
   const [editando, setEditando] = useState<{ taskId: string; col: ColunaId } | null>(null);
-  const [statusPickerAberto, setStatusPickerAberto] = useState<string | null>(null);
+  const [statusPickerAberto, setStatusPickerAberto] = useState<{ taskId: string; rect: DOMRect } | null>(null);
   const [confirmandoExclusao, setConfirmandoExclusao] = useState<TaskRow | null>(null);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   const [confirmandoExclusaoEmMassa, setConfirmandoExclusaoEmMassa] = useState(false);
-  const [acaoEmMassaAberta, setAcaoEmMassaAberta] = useState<'status' | 'prioridade' | 'responsavel' | null>(null);
+  const [acaoEmMassaAberta, setAcaoEmMassaAberta] = useState<'prioridade' | 'responsavel' | null>(null);
+  const [statusEmMassaAberto, setStatusEmMassaAberto] = useState<DOMRect | null>(null);
 
   // Ao trocar de pasta/visão, recarrega a preferência salva (cada uma tem a sua).
   useEffect(() => {
     setColunasVisiveis(carregarColunasVisiveis(chaveArmazenamento, colunasPadrao));
     setEditando(null);
+    setStatusPickerAberto(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chaveArmazenamento]);
 
@@ -222,6 +224,7 @@ export default function ViewLista({
   const limparSelecao = () => {
     setSelecionadas(new Set());
     setAcaoEmMassaAberta(null);
+    setStatusEmMassaAberto(null);
   };
 
   const gravarEmMassa = async (payload: Record<string, unknown>) => {
@@ -230,6 +233,7 @@ export default function ViewLista({
     const falhas = resultados.filter((r) => !r.success).length;
     if (falhas > 0) toast.error(`${falhas} de ${ids.length} não foram atualizadas`);
     setAcaoEmMassaAberta(null);
+    setStatusEmMassaAberto(null);
   };
 
   const confirmarExclusaoEmMassa = async () => {
@@ -398,10 +402,10 @@ export default function ViewLista({
 
           {/* Clicar abre o seletor de status — antes ia direto pra "concluído",
               sem deixar escolher outro destino (ex.: "Em andamento"). */}
-          <div className="relative shrink-0">
+          <div className="shrink-0">
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); setStatusPickerAberto(task.id); }}
+              onClick={(e) => { e.stopPropagation(); setStatusPickerAberto({ taskId: task.id, rect: e.currentTarget.getBoundingClientRect() }); }}
               className={`w-5 h-5 md:w-4 md:h-4 rounded-full border flex items-center justify-center transition ${
                 concluida ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 hover:border-emerald-400'
               }`}
@@ -409,14 +413,13 @@ export default function ViewLista({
             >
               {concluida && <Check size={11} className="text-white" />}
             </button>
-            {statusPickerAberto === task.id && (
-              <div className="absolute left-0 top-full mt-1">
-                <StatusPicker
-                  list={list}
-                  onEscolher={(payload) => gravar('update_task', { task_id: task.id, ...payload })}
-                  onClose={() => setStatusPickerAberto(null)}
-                />
-              </div>
+            {statusPickerAberto?.taskId === task.id && (
+              <StatusPicker
+                list={list}
+                anchorRect={statusPickerAberto.rect}
+                onEscolher={(payload) => gravar('update_task', { task_id: task.id, ...payload })}
+                onClose={() => setStatusPickerAberto(null)}
+              />
             )}
           </div>
 
@@ -486,25 +489,24 @@ export default function ViewLista({
 
           <div className="relative">
             <button
-              onClick={() => setAcaoEmMassaAberta((v) => (v === 'status' ? null : 'status'))}
+              onClick={(e) => { setAcaoEmMassaAberta(null); setStatusEmMassaAberto((v) => (v ? null : e.currentTarget.getBoundingClientRect())); }}
               className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 transition"
             >
               Status
             </button>
-            {acaoEmMassaAberta === 'status' && (
-              <div className="absolute left-0 top-full mt-1">
-                <StatusPicker
-                  list={list}
-                  onEscolher={(payload) => gravarEmMassa(payload)}
-                  onClose={() => setAcaoEmMassaAberta(null)}
-                />
-              </div>
+            {statusEmMassaAberto && (
+              <StatusPicker
+                list={list}
+                anchorRect={statusEmMassaAberto}
+                onEscolher={(payload) => gravarEmMassa(payload)}
+                onClose={() => setStatusEmMassaAberto(null)}
+              />
             )}
           </div>
 
           <div className="relative">
             <button
-              onClick={() => setAcaoEmMassaAberta((v) => (v === 'prioridade' ? null : 'prioridade'))}
+              onClick={() => { setStatusEmMassaAberto(null); setAcaoEmMassaAberta((v) => (v === 'prioridade' ? null : 'prioridade')); }}
               className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 transition"
             >
               Prioridade
@@ -530,7 +532,7 @@ export default function ViewLista({
 
           <div className="relative">
             <button
-              onClick={() => setAcaoEmMassaAberta((v) => (v === 'responsavel' ? null : 'responsavel'))}
+              onClick={() => { setStatusEmMassaAberto(null); setAcaoEmMassaAberta((v) => (v === 'responsavel' ? null : 'responsavel')); }}
               className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 transition"
             >
               Responsável
