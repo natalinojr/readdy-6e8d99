@@ -262,6 +262,10 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
 
+### 2026-09-08 — Tráfego Pago: "Recurso indisponível / O Login do Facebook está indisponível para este app"
+
+Sintoma: ao clicar "Conectar" em `/trafego-pago`, o popup da Meta (`/v20.0/dialog/oauth?client_id=1962652891051908&scope=ads_read...`) mostra "Recurso indisponível" antes de qualquer tela de consentimento. Causa (pelo código): `handleConnect` (`src/pages/trafego-pago/page.tsx`) tinha trocado o `config_id` do **Login do Facebook para Empresas** pelo login clássico (`scope=ads_read`) para "enxergar contas de outros portfólios" — mas app Meta do **tipo Empresa** só aceita o Login para Empresas; o diálogo clássico devolve exatamente esse erro. Fix: usar `config_id=<META_LOGIN_CONFIG_ID>&override_default_response_type=true&response_type=code` sempre que `meta-connect action=config` devolver `config_id`; só sem ele cai no clássico. O "filtro por portfólio" não é problema: a conexão é **uma por loja** (`meta_ad_connections.tenant_id`), então cada loja conecta escolhendo o portfólio dela no diálogo. Checklist no painel Meta se persistir: (1) secret `META_LOGIN_CONFIG_ID` setada nas Edge Functions (Meta → app → Login do Facebook para Empresas → Configurações → ID da configuração); (2) `https://erpos.vercel.app/trafego-pago` em "URIs de redirecionamento do OAuth válidos" (migração readdy.co → vercel.app); (3) app com URL de política de privacidade + modo Ativo, ou usuário com papel no app se estiver em Desenvolvimento. Não dá pra testar daqui: o proxy do ambiente bloqueia `facebook.com` e `*.supabase.co`.
+
 ### 2026-08-29 — Pedido de delivery lancado no PDV Caixa (cliente cadastrado + taxa automatica)
 
 Pedido do usuario: no caixa, montar o carrinho no cardapio normal e marcar como **entrega**, escolhendo um cliente ja cadastrado (nome/celular/endereco) ou cadastrando um novo com os mesmos dados do link do delivery; ao selecionar, a taxa aparece; ao confirmar, vai pra cozinha como pedido de delivery.
