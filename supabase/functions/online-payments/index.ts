@@ -115,7 +115,7 @@ const isManager = (role: string) => role === "admin" || role === "manager";
 type BillOrder = {
   id: string; number: string | null; participant_id: string | null; participant_name: string | null;
   status: string; total_amount: number; paid_amount: number; remaining: number; is_paid: boolean; created_at: string;
-  locked: boolean; items: { name: string; quantity: number; price: number }[];
+  paid_at: string | null; locked: boolean; items: { name: string; quantity: number; price: number }[];
 };
 
 // Conta da MESA (todos os pedidos da sessão) ou da SENHA (só os do participante,
@@ -123,7 +123,7 @@ type BillOrder = {
 async function loadBill(admin: Admin, scopeRef: { tableSessionId: string | null; participantId: string }, viewerParticipantId: string | null): Promise<BillOrder[]> {
   const { tableSessionId } = scopeRef;
   const base = admin.from("orders")
-    .select("id, number, participant_id, status, total_amount, is_paid, is_draft, is_training, created_at, order_items(item_name, quantity, item_price, status)");
+    .select("id, number, participant_id, status, total_amount, is_paid, is_draft, is_training, created_at, paid_at, order_items(item_name, quantity, item_price, status)");
   const { data: orders } = await (tableSessionId
     ? base.eq("table_session_id", tableSessionId)
     : base.eq("participant_id", scopeRef.participantId)
@@ -166,6 +166,7 @@ async function loadBill(admin: Admin, scopeRef: { tableSessionId: string | null;
       participant_name: o.participant_id ? (nameOf[o.participant_id as string] ?? null) : null,
       status: String(o.status), total_amount: total, paid_amount: paid, remaining,
       is_paid: Boolean(o.is_paid) || (total > 0 && remaining <= 0), created_at: String(o.created_at),
+      paid_at: (o.paid_at as string) ?? null,
       locked: locked.has(o.id as string), items,
     };
   });
@@ -390,10 +391,43 @@ Deno.serve(async (req: Request) => {
         .eq("participant_id", participant.id).eq("status", "confirmed")
         .gt("confirmed_at", new Date(Date.now() - 60 * 60 * 1000).toISOString())
         .order("confirmed_at", { ascending: false }).limit(1).maybeSingle();
+      // Extrato do que já foi pago — inclui o que o caixa recebeu (dinheiro/cartão),
+      // não só os Pix deste app. Pagamento de vários pedidos de uma vez (payment_group_id)
+      // vira UMA linha somada, senão o cliente vê o mesmo Pix repetido por pedido.
+      const orderIds = orders.map((o) => o.id);
+      const { data: pagos } = orderIds.length > 0
+        ? await admin.from("payments").select("id, order_id, amount, created_at, payment_method_id, payment_group_id")
+            .in("order_id", orderIds).eq("is_refunded", false).order("created_at", { ascending: false })
+        : { data: [] as Record<string, unknown>[] };
+      const methodIds = [...new Set((pagos ?? []).map((p) => p.payment_method_id).filter(Boolean))] as string[];
+      const { data: methods } = methodIds.length > 0
+        ? await admin.from("payment_methods").select("id, name").in("id", methodIds)
+        : { data: [] as { id: string; name: string }[] };
+      const methodName: Record<string, string> = {};
+      for (const m of methods ?? []) methodName[m.id] = m.name;
+      const grouped = new Map<string, { id: string; amount: number; at: string; method: string; orders: string[] }>();
+      for (const p of pagos ?? []) {
+        const key = (p.payment_group_id as string) ?? (p.id as string);
+        const numero = orders.find((o) => o.id === p.order_id)?.number ?? null;
+        const g = grouped.get(key);
+        if (g) {
+          g.amount = round2(g.amount + Number(p.amount ?? 0));
+          if (numero) g.orders.push(numero);
+        } else {
+          grouped.set(key, {
+            id: key, amount: round2(Number(p.amount ?? 0)), at: String(p.created_at),
+            method: methodName[p.payment_method_id as string] ?? "Pagamento",
+            orders: numero ? [numero] : [],
+          });
+        }
+      }
+      const paymentsHistory = [...grouped.values()].sort((a, b) => (a.at < b.at ? 1 : -1));
+
       const { data: tbl } = auth.tableId ? await admin.from("tables").select("number").eq("id", auth.tableId).maybeSingle() : { data: null };
       return json({
         enabled: isEnabled(cfg), table_number: tbl?.number ?? null, participant: { id: participant.id, name: participant.name },
         mode: tableSessionId ? "table" : "queue",
+        payments_history: paymentsHistory,
         session_closed: session ? session.status !== "open" : false,
         orders, pending_pix: px && px.status === "pending" ? pixPublic(px) : null,
         last_pix: lastOk ? pixPublic(lastOk) : null,

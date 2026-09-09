@@ -15,6 +15,14 @@ function formatMoney(v: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 }
 
+interface PagamentoFeito {
+  id: string;
+  amount: number;
+  at: string;
+  method: string;
+  orders: string[];
+}
+
 interface BillOrder {
   id: string;
   number: string | null;
@@ -25,6 +33,7 @@ interface BillOrder {
   paid_amount: number;
   remaining: number;
   is_paid: boolean;
+  paid_at: string | null;
   locked: boolean;
   items: { name: string; quantity: number; price: number }[];
 }
@@ -88,6 +97,7 @@ export default function PagarContaModalQR(props: Props) {
   const [copiado, setCopiado] = useState(false);
   const [segundos, setSegundos] = useState(0);
   const [expandido, setExpandido] = useState<string | null>(null);
+  const [pagamentos, setPagamentos] = useState<PagamentoFeito[]>([]);
   // CPF/CNPJ na nota (opcional): o cliente digita antes de gerar o Pix.
   const [cpfNota, setCpfNota] = useState<string>(function () {
     try { return sessionStorage.getItem('erpos_qr_cpf_nota') || ''; } catch { return ''; }
@@ -103,6 +113,7 @@ export default function PagarContaModalQR(props: Props) {
       const data = await callOnlinePayments<{
         enabled: boolean; table_number: number | null; orders: BillOrder[];
         pending_pix: PixInfo | null; last_pix: PixInfo | null; session_closed: boolean; mode?: string;
+        payments_history?: PagamentoFeito[];
       }>({ action: 'get_bill', ...auth });
 
       if (data.error) {
@@ -112,6 +123,7 @@ export default function PagarContaModalQR(props: Props) {
       setEnabled(Boolean(data.enabled));
       setOrders(data.orders || []);
       setTableNumber(data.table_number ?? null);
+      setPagamentos(data.payments_history || []);
       if (data.mode === 'queue') { setQueueMode(true); setScope('mine'); }
 
       if (data.pending_pix && !pixRef.current) {
@@ -264,6 +276,7 @@ export default function PagarContaModalQR(props: Props) {
   const totalAlvo = scope === 'mine' ? totalMeus : totalTodos;
   const temTravado = alvo.some(function (o) { return o.locked; });
   const tudoPago = orders.length > 0 && pendentesTodos.length === 0;
+  const totalPagoGeral = pagamentos.reduce(function (s, p) { return s + p.amount; }, 0);
   const listaVisivel = scope === 'mine' ? meus : orders;
 
   const mm = String(Math.floor(segundos / 60)).padStart(2, '0');
@@ -292,21 +305,25 @@ export default function PagarContaModalQR(props: Props) {
         </div>
       );
     }
-    if (tudoPago) {
-      return (
-        <div className="flex flex-col items-center py-10 text-center px-4">
-          <div className="w-16 h-16 flex items-center justify-center bg-emerald-100 rounded-full mb-4">
-            <i className="ri-checkbox-circle-fill text-emerald-500 text-3xl" />
-          </div>
-          <p className="text-base font-black text-zinc-800">Conta toda paga!</p>
-          <p className="text-xs text-zinc-500 mt-1">Obrigado pela visita.</p>
-        </div>
-      );
-    }
     return (
       <div className="space-y-4">
-        {/* Escopo — só faz sentido quando há mesa compartilhada */}
-        <div className={'grid grid-cols-2 gap-2 p-1 bg-zinc-100 rounded-xl' + (queueMode ? ' hidden' : '')}>
+        {tudoPago ? (
+          <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl">
+            <div className="w-10 h-10 flex items-center justify-center bg-emerald-100 rounded-full shrink-0">
+              <i className="ri-checkbox-circle-fill text-emerald-500 text-xl" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-black text-emerald-800">Conta toda paga</p>
+              <p className="text-[11px] text-emerald-600">
+                {totalPagoGeral > 0 ? formatMoney(totalPagoGeral) + ' · ' : ''}
+                {orders.length} {orders.length === 1 ? 'pedido' : 'pedidos'} · obrigado!
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Escopo — só faz sentido quando há mesa compartilhada e ainda há o que pagar */}
+        <div className={'grid grid-cols-2 gap-2 p-1 bg-zinc-100 rounded-xl' + (queueMode || tudoPago ? ' hidden' : '')}>
           <button
             type="button"
             onClick={function () { setScope('mine'); }}
@@ -347,7 +364,9 @@ export default function PagarContaModalQR(props: Props) {
                         <span className="text-zinc-400 font-medium"> · {o.items.length} {o.items.length === 1 ? 'item' : 'itens'}</span>
                       </p>
                       {pago ? (
-                        <p className="text-[10px] font-semibold text-emerald-600">Pago</p>
+                        <p className="text-[10px] font-semibold text-emerald-600">
+                          Pago{o.paid_at ? ' às ' + new Date(o.paid_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}
+                        </p>
                       ) : o.locked ? (
                         <p className="text-[10px] font-semibold text-amber-600">Alguém está pagando…</p>
                       ) : o.paid_amount > 0 ? (
@@ -379,6 +398,35 @@ export default function PagarContaModalQR(props: Props) {
 
         {!queueMode && scope === 'mine' && meus.length === 0 ? (
           <p className="text-[11px] text-zinc-400 text-center">Você ainda não fez pedidos. Use "Mesa inteira" para pagar pelos outros.</p>
+        ) : null}
+
+        {/* Extrato: o que já foi pago (Pix pelo app ou recebido no caixa) */}
+        {pagamentos.length > 0 ? (
+          <div>
+            <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 mb-2">Pagamentos</p>
+            <div className="space-y-1.5">
+              {pagamentos.map(function (pg) {
+                const hora = new Date(pg.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                return (
+                  <div key={pg.id} className="flex items-center justify-between px-3.5 py-2.5 bg-emerald-50/60 border border-emerald-100 rounded-xl">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-7 h-7 flex items-center justify-center bg-emerald-100 rounded-lg shrink-0">
+                        <i className="ri-check-line text-emerald-600 text-sm" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-zinc-800 truncate">{pg.method}</p>
+                        <p className="text-[10px] text-zinc-400">
+                          {hora}
+                          {pg.orders.length > 0 ? ' · pedido' + (pg.orders.length > 1 ? 's ' : ' ') + pg.orders.map(function (n) { return n.slice(-3); }).join(', ') : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-sm font-bold text-emerald-700 shrink-0">{formatMoney(pg.amount)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         ) : null}
       </div>
     );
