@@ -266,6 +266,14 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
 
+### 2026-09-09 — Autoatendimento MOBILE × TABLET: a cozinha herdou a regra errada
+
+Efeito colateral da mudança de `origin_type` para `self_service`: o pedido do QR universal passou a ser tratado como **totem (tablet)** e herdou a trava *"não pode marcar entregue sem estar pago"*. Errado — no QR do celular o cliente pede e paga **depois** (no caixa ou pelo Pix), então a cozinha ficava travada. **Nome definido pelo usuário: "autoatendimento mobile".**
+- **`src/lib/autoatendimento.ts` (novo):** `isAutoatendimentoMobile` / `isAutoatendimentoTablet` / `bloqueiaEntregaSemPagamento` / `autoatendimentoBadge`. **O que separa os dois é o PARTICIPANTE:** ambos são `self_service`, mas o mobile identifica o cliente por senha (`participantToken`) e o totem não tem participante. Mesmo critério do `isQRUniversal` (pedidos/components/utils.ts) — se um dia mudar, mudar nos dois.
+- **Trava corrigida em 3 pontos** (`KDSCard`, `KDSCardActions`, `GestorKanbanView` — o `KDSCardItemList` recebe por prop): só o **tablet** bloqueia entrega sem pagamento.
+- **Rótulos:** KDS (card, lista, detalhe) e Gestor mostram **"Auto mobile"** com ícone de celular (`ri-smartphone-line`) em vez de "Kiosk"/tablet; o detalhe do item mostra "Autoatendimento mobile". No caixa e na lista de Pedidos o badge "QR CODE" virou **"AUTO MOBILE"**. O totem segue "Kiosk"/"Autoatendimento".
+- Verificado: tsc no baseline (301) e todos os módulos tocados transformam no Vite. **A tela do KDS não foi aberta com pedido real** (exige login/estação) — a regra foi verificada no código.
+
 ### 2026-09-09 — QR universal vira FILA POR SENHA de verdade (sem table_session)
 
 Continuação do item abaixo (esconder a mesa 0 era paliativo). Pedido do usuário: *"a ideia é operar por senha, não tem que abrir nada"*. Agora o QR universal **não cria nem usa `table_sessions`** — o pedido nasce igual ao do totem: **destino `password`**.

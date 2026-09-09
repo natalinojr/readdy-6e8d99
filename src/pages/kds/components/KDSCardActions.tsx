@@ -1,3 +1,4 @@
+import { bloqueiaEntregaSemPagamento } from '@/lib/autoatendimento';
 import { memo } from 'react';
 import type { KDSPedido, KDSItem } from '@/types/kds';
 import { deriveItemStatus } from './KDSCard';
@@ -29,8 +30,9 @@ const KDSCardActions = memo(function KDSCardActions({
   const isDelivery = pedido.destino === 'delivery' || pedido.origem === 'delivery';
   const semOperadorCount = itensVisiveis.filter((i) => !i.operadorPreparo).length;
 
-  // Pedidos de autoatendimento não pagos: entrega bloqueada até pagamento no caixa
-  const isKioskNaoPago = pedido.origem === 'autoatendimento' && !pedido.isPaid;
+  // Só o TOTEM (tablet) exige pagamento antes de entregar; no autoatendimento
+  // mobile (QR do cliente) o pagamento pode vir depois — ver lib/autoatendimento.
+  const isKioskNaoPago = bloqueiaEntregaSemPagamento(pedido);
 
   // Pedidos bloqueados por edição no PDV — KDS não pode avançar
   const isPdvEditing = (pedido.isEditing ?? false) || (pedido.isSaving ?? false);

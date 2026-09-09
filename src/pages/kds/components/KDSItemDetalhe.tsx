@@ -1,3 +1,4 @@
+import { autoatendimentoBadge } from '@/lib/autoatendimento';
 import type { KDSItem, KDSPedido } from '@/types/kds';
 import FichaTecnicaKDSModal from './FichaTecnicaKDSModal';
 import { useState } from 'react';
@@ -51,7 +52,9 @@ function diffStr(a?: number, b?: number): string {
 export default function KDSItemDetalhe({ item, pedido, onClose }: Props) {
   const [showFicha, setShowFicha] = useState(false);
 
-  const origemCfg = ORIGEM_LABEL[pedido.origem] ?? ORIGEM_LABEL.caixa;
+  const origemBase = ORIGEM_LABEL[pedido.origem] ?? ORIGEM_LABEL.caixa;
+  const origemMobile = autoatendimentoBadge(pedido);
+  const origemCfg = origemMobile ? { ...origemBase, label: 'Autoatendimento mobile', icon: origemMobile.icon } : origemBase;
 
   const tempoEsperaParaPreparo = diffStr(item.entroKdsEm, item.iniciouPreparoEm);
   const tempoDePreparo = diffStr(item.iniciouPreparoEm, item.ficouProntoEm);

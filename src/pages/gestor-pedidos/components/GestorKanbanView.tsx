@@ -1,3 +1,4 @@
+import { bloqueiaEntregaSemPagamento, autoatendimentoBadge } from '@/lib/autoatendimento';
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade } from '@/types/kds';
 import FichaTecnicaKDSModal from '@/pages/kds/components/FichaTecnicaKDSModal';
@@ -275,7 +276,9 @@ function GestorCard({
   void tick;
   const [showFicha, setShowFicha] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const origemInfo = ORIGEM_LABELS[pedido.origem] ?? { label: pedido.origem, cor: 'bg-zinc-100 text-zinc-700 border border-zinc-200' };
+  const origemBase = ORIGEM_LABELS[pedido.origem] ?? { label: pedido.origem, cor: 'bg-zinc-100 text-zinc-700 border border-zinc-200' };
+  const origemMobile = autoatendimentoBadge(pedido);
+  const origemInfo = origemMobile ? { ...origemBase, label: origemMobile.label } : origemBase;
   const platformInfo = pedido.deliveryPlatform
     ? (PLATFORM_LABELS[pedido.deliveryPlatform] ?? { label: pedido.deliveryPlatform, cor: 'bg-zinc-100 text-zinc-700 border border-zinc-200' })
     : null;
@@ -875,7 +878,7 @@ function GestorCard({
                       <ItemUnidadesRow
                         item={item}
                         isCancelled={isCancelled}
-                        isKioskNaoPago={pedido.origem === 'autoatendimento' && !isPaid}
+                        isKioskNaoPago={bloqueiaEntregaSemPagamento(pedido, isPaid)}
                         onAvancarUnidade={onAvancarUnidade}
                         onEntregarUnidade={onEntregarUnidade}
                       />
@@ -914,8 +917,9 @@ function GestorCard({
                   <i className="ri-check-double-line" />Entregue
                 </div>
               ) : pedido.status === 'pronto' ? (
-                // Kiosk não pago: bloquear entrega
-                pedido.origem === 'autoatendimento' && !isPaid ? (
+                // Totem (tablet) não pago: bloquear entrega. O autoatendimento mobile
+                // (QR do cliente) paga depois, então não trava aqui.
+                bloqueiaEntregaSemPagamento(pedido, isPaid) ? (
                   <div className="w-full py-2 px-3 rounded-xl border border-amber-200 bg-amber-50 flex items-center gap-2">
                     <i className="ri-store-2-line text-amber-600 text-sm flex-shrink-0" />
                     <span className="text-xs font-bold text-amber-700 leading-tight">

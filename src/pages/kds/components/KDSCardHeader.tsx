@@ -1,3 +1,4 @@
+import { autoatendimentoBadge } from '@/lib/autoatendimento';
 import { memo } from 'react';
 import type { KDSPedido, KDSItem, KDSItemStatus } from '@/types/kds';
 import { useKDSTick, formatElapsed, formatDuration, SLA_COLORS } from '@/hooks/useKDSTick';
@@ -111,7 +112,9 @@ const KDSCardHeader = memo(function KDSCardHeader({
   useKDSTick();
   const now = Date.now();
 
-  const origemCfg = ORIGEM_BADGE[pedido.origem] ?? ORIGEM_BADGE.caixa;
+  const origemBase = ORIGEM_BADGE[pedido.origem] ?? ORIGEM_BADGE.caixa;
+  const origemMobile = autoatendimentoBadge(pedido);
+  const origemCfg = origemMobile ? { ...origemBase, ...origemMobile } : origemBase;
   const numeroBase = `#${String(pedido.numero).padStart(4, '0')}`;
   // KDS display: "#0047 — Senha 03" quando o pedido tem participantToken
   const numeroDisplay = pedido.participantToken

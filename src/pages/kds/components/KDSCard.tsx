@@ -1,3 +1,4 @@
+import { bloqueiaEntregaSemPagamento } from '@/lib/autoatendimento';
 import { useState, useCallback } from 'react';
 import type { KDSPedido, KDSItem, KDSItemStatus } from '@/types/kds';
 import { useKDSTick, getElapsedSeconds, getSLALevel, SLA_COLORS, SLA_BG } from '@/hooks/useKDSTick';
@@ -285,7 +286,7 @@ export default function KDSCard({
               faseColuna={faseColuna}
               clienteEditando={clienteEditando}
               isCancelled={!!pedido.isCancelled}
-              isKioskNaoPago={pedido.origem === 'autoatendimento' && !pedido.isPaid}
+              isKioskNaoPago={bloqueiaEntregaSemPagamento(pedido)}
               operadoresDisponiveis={operadoresDisponiveis}
               onAvancar={onAvancar}
               onAvancarParte={onAvancarParte}

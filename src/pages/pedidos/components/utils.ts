@@ -75,7 +75,7 @@ export function clienteNome(p: Pick<PedidoRecente, 'participantName' | 'nomeClie
 
 /** Rotulo de origem: "QR CODE" para QR universal, senao o rotulo padrao. */
 export function origemLabelFor(p: Pick<PedidoRecente, 'origem' | 'mesaNumero'>): string {
-  if (isQRUniversal(p)) return 'QR CODE';
+  if (isQRUniversal(p)) return 'AUTO MOBILE';
   return ORIGEM_LABEL[p.origem] ?? p.origem;
 }
 

@@ -1,3 +1,4 @@
+import { autoatendimentoBadge } from '@/lib/autoatendimento';
 import { useState } from 'react';
 import type { KDSPedido, KDSItem, KDSItemStatus } from '@/types/kds';
 import type React from 'react';
@@ -198,7 +199,9 @@ function PedidoRowPronto({ pedido, onAvancar, onAvancarItem, onAvancarUnidade, e
   const elapsed = getElapsedSeconds(pedido.criadoEm);
   const maxSla = pedido.itens.reduce((s, i) => s + i.slaMinutos, 0);
   const slaLevel = getSLALevel(elapsed, maxSla);
-  const origemCfg = ORIGEM_LABEL[pedido.origem] ?? ORIGEM_LABEL.caixa;
+  const origemBase = ORIGEM_LABEL[pedido.origem] ?? ORIGEM_LABEL.caixa;
+  const origemMobile = autoatendimentoBadge(pedido);
+  const origemCfg = origemMobile ? { ...origemBase, ...origemMobile } : origemBase;
   const totalItens = pedido.itens.reduce((s, i) => s + i.quantidade, 0);
 
   // Apenas itens/unidades que estão PRONTOS (não entregues, não em preparo)
@@ -471,7 +474,9 @@ function PedidoRowEntregue({ pedido, expanded, onToggle }: {
   onToggle: () => void;
 }) {
   const totalItens = pedido.itens.reduce((s, i) => s + i.quantidade, 0);
-  const origemCfg = ORIGEM_LABEL[pedido.origem] ?? ORIGEM_LABEL.caixa;
+  const origemBase = ORIGEM_LABEL[pedido.origem] ?? ORIGEM_LABEL.caixa;
+  const origemMobile = autoatendimentoBadge(pedido);
+  const origemCfg = origemMobile ? { ...origemBase, ...origemMobile } : origemBase;
   const entregueEm = pedido.itens.reduce((latest, i) => Math.max(latest, i.entregueEm ?? 0), 0);
 
   // Tempo total cozinha

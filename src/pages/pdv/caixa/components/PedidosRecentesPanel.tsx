@@ -89,7 +89,7 @@ const ORIGEM_CONFIG: Record<string, { label: string; icon: string; color: string
   caixa:           { label: 'Caixa',          icon: 'ri-safe-2-line',       color: 'bg-amber-50  text-amber-700  border-amber-200'  },
   garcom:          { label: 'Garçom',          icon: 'ri-walk-line',         color: 'bg-sky-50    text-sky-700    border-sky-200'    },
   mesa:            { label: 'Mesa',            icon: 'ri-restaurant-2-line', color: 'bg-violet-50 text-violet-700 border-violet-200' },
-  qr_code:         { label: 'QR CODE',          icon: 'ri-qr-code-line',      color: 'bg-violet-50 text-violet-700 border-violet-200' },
+  qr_code:         { label: 'AUTO MOBILE',      icon: 'ri-smartphone-line',   color: 'bg-violet-50 text-violet-700 border-violet-200' },
   autoatendimento: { label: 'Autoatendimento', icon: 'ri-tablet-line',       color: 'bg-teal-50   text-teal-700   border-teal-200'   },
   delivery:        { label: 'Delivery',        icon: 'ri-e-bike-2-line',     color: 'bg-rose-50   text-rose-700   border-rose-200'   },
 };
