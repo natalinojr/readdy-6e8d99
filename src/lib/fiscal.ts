@@ -187,3 +187,12 @@ export const formatCpfCnpj = (d: string | null) => {
   return d;
 };
 export const formatBRL = (n: number | string | null | undefined) => `R$ ${Number(n ?? 0).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`;
+
+/** Prazo da SEFAZ-PR para cancelar NFC-e após a autorização (minutos). */
+export const CANCEL_WINDOW_MIN = 30;
+/** Minutos restantes para cancelar (0 = expirou; null = sem data de autorização). */
+export function cancelMinutesLeft(emittedAt: string | null, now: number = Date.now()): number | null {
+  if (!emittedAt) return null;
+  const left = (new Date(emittedAt).getTime() + CANCEL_WINDOW_MIN * 60_000 - now) / 60_000;
+  return left <= 0 ? 0 : Math.ceil(left);
+}

@@ -1,6 +1,7 @@
 import type { PedidoRecente } from '@/types/pdv';
 import type { FiscalDocumentRow } from '@/lib/fiscal';
-import { STATUS_LABEL } from '@/lib/fiscal';
+import { STATUS_LABEL, cancelMinutesLeft } from '@/lib/fiscal';
+import { useEffect, useState } from 'react';
 import type { useFiscalDocs } from '@/hooks/useFiscalDocs';
 
 type Fiscal = ReturnType<typeof useFiscalDocs>;
@@ -24,6 +25,9 @@ export default function NotaFiscalCell({ pedido, fiscal, onToast, compact }: Pro
   const cancelado = pedido.status === 'cancelado' || pedido.status === 'cancelled';
   const isBusy = ids.some(id => fiscal.busy.has(id));
   const stop = (e: React.MouseEvent) => { e.stopPropagation(); e.preventDefault(); };
+  // Relógio do prazo de cancelamento (30 min): re-renderiza a cada 30s.
+  const [agora, setAgora] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setAgora(Date.now()), 30_000); return () => clearInterval(t); }, []);
 
   const emitirTodos = async (e: React.MouseEvent) => {
     stop(e);
@@ -83,6 +87,9 @@ export default function NotaFiscalCell({ pedido, fiscal, onToast, compact }: Pro
           {!compact && (
             <div className="flex items-center gap-1 mt-0.5">
               <span className="text-[10px] text-zinc-400">{fmtHora(d.emitted_at)}{d.customer_cpf ? ' · CPF' : ''}</span>
+              {!cancel && (() => { const m = cancelMinutesLeft(d.emitted_at, agora); return m !== null && m > 0
+                ? <span className={`text-[9px] font-semibold px-1 rounded ${m <= 5 ? 'text-red-600 bg-red-50' : 'text-amber-700 bg-amber-50'}`} title="Prazo para cancelar na SEFAZ (Pedidos › Notas Fiscais)">cancela {m}min</span>
+                : null; })()}
               <button onClick={e => abrir(e, d)} disabled={isBusy} title="Ver DANFE" className="w-5 h-5 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer disabled:opacity-40"><i className="ri-file-text-line text-[12px]" /></button>
               {!cancel && <button onClick={e => imprimir(e, d)} disabled={isBusy} title="Reimprimir cupom" className="w-5 h-5 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer disabled:opacity-40"><i className="ri-printer-line text-[12px]" /></button>}
             </div>

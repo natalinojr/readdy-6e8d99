@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
-import { STATUS_LABEL, STATUS_CLASS, formatChave, formatCpfCnpj, formatBRL, type FiscalDocumentRow, type FiscalDocStatus } from '@/lib/fiscal';
+import { STATUS_LABEL, STATUS_CLASS, formatChave, formatCpfCnpj, formatBRL, cancelMinutesLeft, CANCEL_WINDOW_MIN, type FiscalDocumentRow, type FiscalDocStatus } from '@/lib/fiscal';
 import { buildZip, downloadBlob } from '@/lib/zipStore';
 
 const LIST_COLS = 'id, tenant_id, model, status, source_type, source_id, order_ids, order_number, environment, total_amount, customer_cpf, customer_name, serie, numero, chave, protocolo, sefaz_status_code, sefaz_message, qr_code, url_chave, error_message, attempts, emitted_at, cancelled_at, cancel_reason, printed_at, created_at, updated_at';
@@ -33,6 +33,9 @@ export default function NotasFiscaisList() {
   const [detail, setDetail] = useState<FiscalDocumentRow | null>(null);
   const [emitirPedido, setEmitirPedido] = useState('');
   const podeCancelar = user?.perfil === 'admin' || user?.perfil === 'gerente';
+  // Relógio para o prazo de cancelamento (30 min da SEFAZ): re-renderiza a cada 30s.
+  const [agora, setAgora] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setAgora(Date.now()), 30_000); return () => clearInterval(t); }, []);
 
   const carregar = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -311,9 +314,19 @@ export default function NotasFiscaisList() {
                             <>
                               <button onClick={() => abrirPdf(d)} disabled={isBusy} title="Ver DANFE (PDF)" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-file-pdf-2-line" /></button>
                               <button onClick={() => imprimir(d)} disabled={isBusy} title="Reimprimir cupom" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-printer-line" /></button>
-                              {podeCancelar && (
-                                <button onClick={() => { setCancelDoc(d); setJustificativa(''); }} disabled={isBusy} title="Cancelar nota" className="w-7 h-7 flex items-center justify-center rounded-lg text-red-500 hover:bg-red-50 disabled:opacity-40 cursor-pointer"><i className="ri-close-circle-line" /></button>
-                              )}
+                              {podeCancelar && (() => {
+                                const min = cancelMinutesLeft(d.emitted_at, agora);
+                                const pode = min === null || min > 0;
+                                return pode ? (
+                                  <button onClick={() => { setCancelDoc(d); setJustificativa(''); }} disabled={isBusy}
+                                    title={min === null ? 'Cancelar nota' : `Cancelável por mais ${min} min`}
+                                    className={`inline-flex items-center gap-0.5 h-7 px-1.5 rounded-lg text-[10px] font-bold cursor-pointer disabled:opacity-40 ${min !== null && min <= 5 ? 'text-red-700 bg-red-50 animate-pulse' : 'text-red-500 hover:bg-red-50'}`}>
+                                    <i className="ri-close-circle-line text-sm" />{min !== null && <span>{min}min</span>}
+                                  </button>
+                                ) : (
+                                  <span className="w-7 h-7 flex items-center justify-center text-zinc-300" title={`Prazo de cancelamento expirado (${CANCEL_WINDOW_MIN} min após a autorização)`}><i className="ri-lock-line" /></span>
+                                );
+                              })()}
                             </>
                           )}
                           {(d.status === 'authorized' || d.status === 'cancelled') && (
@@ -364,7 +377,11 @@ export default function NotasFiscaisList() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md">
             <h3 className="text-sm font-bold text-zinc-900 mb-1">Cancelar NFC-e nº {cancelDoc.numero}</h3>
-            <p className="text-xs text-zinc-500 mb-4">A SEFAZ só aceita cancelamento em até 30 minutos após a autorização (prazo pode variar por estado). A venda no ERPOS não é alterada.</p>
+            <p className="text-xs text-zinc-500 mb-4">
+              A SEFAZ aceita cancelamento em até {CANCEL_WINDOW_MIN} minutos após a autorização.
+              {(() => { const m = cancelMinutesLeft(cancelDoc.emitted_at, agora); return m === null ? '' : m > 0 ? ` Restam ${m} min.` : ' O prazo já expirou; a SEFAZ vai recusar.'; })()}
+              {' '}A venda no ERPOS não é alterada; se a venda foi desfeita, faça o estorno no PDV também.
+            </p>
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Justificativa (mínimo 15 caracteres)</label>
             <textarea className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400" rows={3} value={justificativa} onChange={e => setJustificativa(e.target.value)} placeholder="Ex: Erro de digitação no valor da venda" />
             <div className="flex gap-2 mt-4">
