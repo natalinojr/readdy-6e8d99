@@ -5,7 +5,7 @@ import {
   Megaphone, RefreshCw, Link2Off, AlertTriangle, Loader2,
   TrendingUp, Eye, MousePointerClick, Target, Wallet,
   Users, Percent, DollarSign, Gauge, BarChart3, Layers,
-  ShoppingCart, Banknote, Store,
+  ShoppingCart, Banknote, Store, Share2, Copy, Check, Trash2, X, Lock,
 } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Area, Line, BarChart, Bar,
@@ -130,6 +130,11 @@ interface InsightsResponse {
   range?: { since: string; until: string } | null;
   previous?: (SlimRow & { since: string; until: string }) | null;
   breakdowns?: { placement: PlacementRow[]; age_gender: AgeGenderRow[]; hourly: HourRow[] } | null;
+  // Só no link público: cabeçalho de leitura + motivo quando o link não vale mais.
+  share?: { store_name: string | null; label: string | null; created_by_name: string | null; expires_at: string | null } | null;
+  share_invalid?: boolean;
+  share_revoked?: boolean;
+  share_expired?: boolean;
   error?: unknown;
 }
 
@@ -152,6 +157,44 @@ const brDate = (offsetDays = 0): string => {
   return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 };
 const MAX_DIAS_PERSONALIZADO = 366;
+
+// ─── Link público (somente leitura) ──────────────────────────────────────────
+// A mesma tela atende /trafego-pago (com login) e /relatorio/<token> (sem login).
+// Lê o token do pathname, e não dos params do router, pelo mesmo motivo do
+// delivery: com basePath os params podem não resolver.
+function getShareTokenFromUrl(): string | null {
+  try {
+    const basePath = (typeof __BASE_PATH__ !== 'undefined' ? __BASE_PATH__ : '').replace(/\/$/, '');
+    const path = window.location.pathname;
+    const clean = basePath ? path.replace(basePath, '') : path;
+    const m = clean.match(/\/relatorio\/([a-f0-9]{32,64})\/?$/i);
+    return m ? m[1].toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+interface ShareLink {
+  id: string;
+  token: string;
+  label: string | null;
+  date_preset: string | null;
+  range_since: string | null;
+  range_until: string | null;
+  include_erpos_orders: boolean;
+  created_at: string;
+  created_by_name: string | null;
+  expires_at: string | null;
+  view_count: number;
+  last_viewed_at: string | null;
+}
+
+const periodoDoLink = (s: Pick<ShareLink, 'date_preset' | 'range_since' | 'range_until'>): string =>
+  (s.range_since && s.range_until
+    ? `${s.range_since.split('-').reverse().join('/')} a ${s.range_until.split('-').reverse().join('/')}`
+    : (PERIODOS.find((p) => p.value === s.date_preset)?.label ?? s.date_preset ?? '—'));
+
+const shareUrl = (token: string): string => `${window.location.origin}/relatorio/${token}`;
 
 const OAUTH_STATE_KEY = 'meta_oauth_state';
 
@@ -270,7 +313,12 @@ export default function TrafegoPagoPage() {
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
 
-  const [loadingStatus, setLoadingStatus] = useState(true);
+  // Modo público: /relatorio/<token>. Sem login, sem nenhuma ação de escrita.
+  const shareToken = useMemo(() => getShareTokenFromUrl(), []);
+  const publico = !!shareToken;
+  const [shareOpen, setShareOpen] = useState(false);
+
+  const [loadingStatus, setLoadingStatus] = useState(!shareToken);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [exchanging, setExchanging] = useState(false);
@@ -289,7 +337,7 @@ export default function TrafegoPagoPage() {
 
   // ── Status da conexão ──
   const loadStatus = useCallback(async () => {
-    if (!tenantId) return;
+    if (!tenantId || publico) return;
     setLoadingStatus(true);
     const { data } = await invokeWithAuth<{ success: boolean; connection: Connection | null }>(
       'meta-connect',
@@ -326,7 +374,7 @@ export default function TrafegoPagoPage() {
 
   // ── Ao montar: trata retorno do OAuth (fallback redirect) ou carrega status ──
   useEffect(() => {
-    if (!tenantId) return;
+    if (publico || !tenantId) return;
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const returnedState = params.get('state');
@@ -356,6 +404,32 @@ export default function TrafegoPagoPage() {
 
   // ── Carrega as campanhas quando há conta + muda período ──
   const loadInsights = useCallback(async () => {
+    // Modo público: chamada sem sessão, mandando só o token. A loja e o período
+    // saem da linha do banco — nada do que for enviado daqui os define.
+    if (publico) {
+      setInsightsLoading(true);
+      setInsightsError(null);
+      try {
+        const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
+        const res = await fetch(`${base}/functions/v1/meta-ads-insights`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ share_token: shareToken }),
+        });
+        const data = (await res.json()) as InsightsResponse;
+        if (!data?.ok) {
+          setInsightsError(typeof data?.error === 'string' ? data.error : 'Não foi possível abrir este relatório.');
+          setInsights(data ?? null);
+        } else {
+          setInsights(data);
+        }
+      } catch {
+        setInsightsError('Erro de conexão. Recarregue a página.');
+      }
+      setInsightsLoading(false);
+      return;
+    }
+
     if (!tenantId || !connection?.ad_account_id) return;
     if (datePreset === 'custom' && !customApplied) return; // espera o "Aplicar"
     setInsightsLoading(true);
@@ -375,12 +449,12 @@ export default function TrafegoPagoPage() {
       setInsights(data ?? null);
     }
     setInsightsLoading(false);
-  }, [tenantId, connection?.ad_account_id, datePreset, customApplied]);
+  }, [tenantId, connection?.ad_account_id, datePreset, customApplied, publico, shareToken]);
 
   useEffect(() => {
-    if (connection?.ad_account_id) loadInsights();
+    if (publico || connection?.ad_account_id) loadInsights();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection?.ad_account_id, datePreset, customApplied]);
+  }, [publico, connection?.ad_account_id, datePreset, customApplied]);
 
   // Valida e aplica o período personalizado (de ≤ até, até ≤ hoje, no máximo 366 dias).
   const aplicarPersonalizado = useCallback(() => {
@@ -656,12 +730,32 @@ export default function TrafegoPagoPage() {
             <Megaphone size={20} className="text-amber-600" />
           </div>
           <div>
-            <h1 className="text-xl font-black text-zinc-900 leading-tight">Tráfego Pago</h1>
-            <p className="text-sm text-zinc-400">Acompanhe suas campanhas de anúncios da Meta</p>
+            <h1 className="text-xl font-black text-zinc-900 leading-tight">
+              {publico ? (insights?.share?.store_name ?? 'Relatório de anúncios') : 'Tráfego Pago'}
+            </h1>
+            <p className="text-sm text-zinc-400">
+              {publico
+                ? (insights?.share?.label || 'Desempenho das campanhas da Meta')
+                : 'Acompanhe suas campanhas de anúncios da Meta'}
+            </p>
           </div>
         </div>
 
-        {connection?.ad_account_id && (
+        {publico && insights?.ok && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-100 border border-zinc-200 text-zinc-600 font-semibold text-sm">
+              <Lock size={13} />
+              Somente leitura
+            </span>
+            {range && (
+              <span className="text-sm font-semibold text-zinc-500">
+                {shortDate(range.since)} a {shortDate(range.until)}
+              </span>
+            )}
+          </div>
+        )}
+
+        {!publico && connection?.ad_account_id && (
           <div className="flex items-center gap-2 flex-wrap">
             <select
               value={datePreset}
@@ -711,6 +805,14 @@ export default function TrafegoPagoPage() {
               <RefreshCw size={14} className={insightsLoading ? 'animate-spin' : ''} />
             </button>
             <button
+              onClick={() => setShareOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-xl bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 cursor-pointer"
+              title="Gerar link somente leitura para enviar a alguém"
+            >
+              <Share2 size={14} />
+              <span className="hidden sm:inline">Compartilhar</span>
+            </button>
+            <button
               onClick={handleDisconnect}
               className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-xl bg-white border border-red-200 text-red-500 hover:bg-red-50 cursor-pointer"
             >
@@ -729,16 +831,34 @@ export default function TrafegoPagoPage() {
         </div>
       )}
 
-      {/* Carregando status / trocando token */}
-      {(loadingStatus || exchanging) && (
+      {/* Carregando status / trocando token / abrindo o link público */}
+      {(loadingStatus || exchanging || (publico && insightsLoading && !insights)) && (
         <div className="flex flex-col items-center justify-center py-24 text-zinc-400">
           <Loader2 size={28} className="animate-spin mb-3 text-amber-500" />
           <p className="text-sm font-semibold">{exchanging ? 'Conectando à Meta...' : 'Carregando...'}</p>
         </div>
       )}
 
+      {/* Link público inválido, revogado ou expirado */}
+      {publico && !insightsLoading && insights && !insights.ok && (
+        <div className="flex flex-col items-center justify-center py-16 px-4 text-center bg-white border border-zinc-200 rounded-2xl">
+          <div className="w-16 h-16 flex items-center justify-center rounded-2xl bg-zinc-100 border border-zinc-200 mb-5">
+            <Lock size={28} className="text-zinc-400" />
+          </div>
+          <h2 className="text-lg font-black text-zinc-800 mb-1.5">
+            {insights.share_revoked ? 'Link revogado'
+              : insights.share_expired ? 'Link expirado'
+                : 'Link inválido'}
+          </h2>
+          <p className="text-sm text-zinc-500 max-w-md leading-relaxed">
+            {typeof insights.error === 'string' ? insights.error : 'Este link não está mais disponível.'}
+            {' '}Peça um link novo a quem enviou.
+          </p>
+        </div>
+      )}
+
       {/* Não conectado → botão Conectar */}
-      {!loadingStatus && !exchanging && !connection?.ad_account_id && (
+      {!publico && !loadingStatus && !exchanging && !connection?.ad_account_id && (
         <div className="flex flex-col items-center justify-center py-16 px-4 text-center bg-white border border-zinc-200 rounded-2xl">
           <div className="w-16 h-16 flex items-center justify-center rounded-2xl bg-amber-50 border border-amber-100 mb-5">
             <Megaphone size={30} className="text-amber-500" />
@@ -772,11 +892,11 @@ export default function TrafegoPagoPage() {
         </div>
       )}
 
-      {/* Conectado → painel */}
-      {!loadingStatus && !exchanging && connection?.ad_account_id && (
+      {/* Conectado (ou link público válido) → painel */}
+      {!loadingStatus && !exchanging && (publico ? !!insights?.ok : !!connection?.ad_account_id) && (
         <>
-          {/* Conta conectada + seletor */}
-          <div className="flex items-center gap-2 mb-5 flex-wrap text-sm">
+          {/* Conta conectada + seletor (some no link público) */}
+          <div className={`flex items-center gap-2 mb-5 flex-wrap text-sm ${publico ? 'hidden' : ''}`}>
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               Conectado
@@ -1327,6 +1447,247 @@ export default function TrafegoPagoPage() {
           )}
         </>
       )}
+
+      {shareOpen && !publico && (
+        <CompartilharModal
+          tenantId={tenantId}
+          datePreset={datePreset}
+          customApplied={customApplied}
+          userName={user?.nome ?? null}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de compartilhamento ───────────────────────────────────────────────
+// Gera um link SOMENTE LEITURA do relatório. O período é congelado no link e a
+// loja vem do banco pelo token — quem abre não escolhe nem uma coisa nem outra.
+function CompartilharModal({
+  tenantId, datePreset, customApplied, userName, onClose,
+}: {
+  tenantId: string;
+  datePreset: string;
+  customApplied: { since: string; until: string } | null;
+  userName: string | null;
+  onClose: () => void;
+}) {
+  const [links, setLinks] = useState<ShareLink[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [gerando, setGerando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [label, setLabel] = useState('');
+  const [dias, setDias] = useState(30);
+  const [incluirPedidos, setIncluirPedidos] = useState(false);
+  const [novoToken, setNovoToken] = useState<string | null>(null);
+  const [copiado, setCopiado] = useState<string | null>(null);
+
+  const periodoAtual = datePreset === 'custom' && customApplied
+    ? { range_since: customApplied.since, range_until: customApplied.until, date_preset: null }
+    : { range_since: null, range_until: null, date_preset: datePreset };
+
+  const carregar = useCallback(async () => {
+    setCarregando(true);
+    const { data } = await invokeWithAuth<{ success: boolean; shares: ShareLink[] }>('meta-connect', {
+      body: { action: 'list_shares', tenant_id: tenantId },
+    });
+    setLinks(data?.shares ?? []);
+    setCarregando(false);
+  }, [tenantId]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const copiar = (token: string) => {
+    navigator.clipboard.writeText(shareUrl(token)).then(
+      () => { setCopiado(token); window.setTimeout(() => setCopiado(null), 2000); },
+      () => setErro('Não foi possível copiar. Selecione o link e copie manualmente.'),
+    );
+  };
+
+  const gerar = async () => {
+    setGerando(true);
+    setErro(null);
+    const { data, error: err } = await invokeWithAuth<{ success: boolean; token?: string; error?: string }>(
+      'meta-connect',
+      {
+        body: {
+          action: 'create_share',
+          tenant_id: tenantId,
+          date_preset: periodoAtual.date_preset,
+          time_range: periodoAtual.range_since && periodoAtual.range_until
+            ? { since: periodoAtual.range_since, until: periodoAtual.range_until }
+            : undefined,
+          include_erpos_orders: incluirPedidos,
+          label: label.trim() || undefined,
+          expires_in_days: dias,
+          created_by_name: userName,
+        },
+      },
+    );
+    if (err || !data?.success || !data.token) {
+      setErro(data?.error ?? err?.message ?? 'Não foi possível gerar o link. Só administradores da loja podem criar.');
+    } else {
+      setNovoToken(data.token);
+      setLabel('');
+      copiar(data.token);
+      carregar();
+    }
+    setGerando(false);
+  };
+
+  const revogar = async (l: ShareLink) => {
+    if (!window.confirm('Revogar este link? Quem tiver o endereço deixa de ver o relatório na hora.')) return;
+    const { data, error: err } = await invokeWithAuth<{ success: boolean; error?: string }>('meta-connect', {
+      body: { action: 'revoke_share', tenant_id: tenantId, id: l.id },
+    });
+    if (err || !data?.success) setErro(data?.error ?? 'Não foi possível revogar.');
+    else { if (novoToken === l.token) setNovoToken(null); carregar(); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-zinc-100 sticky top-0 bg-white">
+          <Share2 size={17} className="text-amber-500" />
+          <p className="text-base font-bold text-zinc-800">Compartilhar relatório</p>
+          <button onClick={onClose} className="ml-auto text-zinc-400 hover:text-zinc-600 cursor-pointer" aria-label="Fechar">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-5">
+          <p className="text-sm text-zinc-500 leading-relaxed mb-4">
+            Gera um endereço que qualquer pessoa abre <strong className="font-semibold text-zinc-700">sem login</strong>,
+            só para visualizar. O período fica congelado como está agora
+            (<strong className="font-semibold text-zinc-700">{periodoDoLink(periodoAtual)}</strong>) e não dá para
+            trocar de loja pelo endereço.
+          </p>
+
+          {erro && (
+            <div className="mb-4 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-sm text-red-600">
+              <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
+              <span>{erro}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Nome (opcional)</label>
+              <input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Ex.: Agência, sócio, contador"
+                maxLength={80}
+                className="mt-1 w-full text-sm border border-zinc-200 rounded-xl px-3 py-2 focus:outline-none focus:border-amber-400"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Validade</label>
+              <select
+                value={dias}
+                onChange={(e) => setDias(Number(e.target.value))}
+                className="mt-1 w-full text-sm font-semibold border border-zinc-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:border-amber-400 cursor-pointer"
+              >
+                <option value={7}>7 dias</option>
+                <option value={30}>30 dias</option>
+                <option value={90}>90 dias</option>
+                <option value={365}>1 ano</option>
+              </select>
+            </div>
+          </div>
+
+          <label className="flex items-start gap-2.5 mb-4 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={incluirPedidos}
+              onChange={(e) => setIncluirPedidos(e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-amber-500 cursor-pointer"
+            />
+            <span className="text-sm text-zinc-600 leading-snug">
+              Incluir os pedidos reais do ERPOS
+              <span className="block text-xs text-zinc-400">
+                Mostra quantos pedidos e quanto a loja faturou pelos links da Meta. É dado interno do caixa;
+                deixe desmarcado se o link vai circular fora da empresa.
+              </span>
+            </span>
+          </label>
+
+          <button
+            onClick={gerar}
+            disabled={gerando}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 text-white font-bold text-sm hover:bg-amber-600 cursor-pointer disabled:opacity-60"
+          >
+            {gerando ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={15} />}
+            {gerando ? 'Gerando...' : 'Gerar link'}
+          </button>
+
+          {novoToken && (
+            <div className="mt-4 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+              <p className="text-xs font-bold text-emerald-700 mb-1.5">Link criado e copiado</p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-zinc-700 flex-1 truncate">{shareUrl(novoToken)}</span>
+                <button
+                  onClick={() => copiar(novoToken)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-emerald-200 text-emerald-700 text-xs font-bold cursor-pointer hover:bg-emerald-50"
+                >
+                  {copiado === novoToken ? <Check size={13} /> : <Copy size={13} />}
+                  {copiado === novoToken ? 'Copiado' : 'Copiar'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-6">
+            <p className="text-sm font-bold text-zinc-800 mb-2">
+              Links ativos <span className="text-xs font-semibold text-zinc-400">({links.length})</span>
+            </p>
+            {carregando ? (
+              <div className="flex justify-center py-6"><Loader2 size={18} className="animate-spin text-amber-500" /></div>
+            ) : links.length === 0 ? (
+              <p className="text-sm text-zinc-400 py-3">Nenhum link ativo.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {links.map((l) => (
+                  <div key={l.id} className="flex items-center gap-2 border border-zinc-200 rounded-xl px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-zinc-800 truncate">
+                        {l.label || 'Sem nome'}
+                        {l.include_erpos_orders && (
+                          <span className="ml-2 text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">
+                            com pedidos do ERPOS
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-[11px] text-zinc-400 truncate">
+                        {periodoDoLink(l)} · {l.view_count} {l.view_count === 1 ? 'acesso' : 'acessos'}
+                        {l.expires_at ? ` · expira ${new Date(l.expires_at).toLocaleDateString('pt-BR')}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => copiar(l.token)}
+                      className="p-2 rounded-lg text-zinc-500 hover:bg-zinc-50 cursor-pointer"
+                      title="Copiar link"
+                    >
+                      {copiado === l.token ? <Check size={15} className="text-emerald-600" /> : <Copy size={15} />}
+                    </button>
+                    <button
+                      onClick={() => revogar(l)}
+                      className="p-2 rounded-lg text-red-400 hover:bg-red-50 cursor-pointer"
+                      title="Revogar"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

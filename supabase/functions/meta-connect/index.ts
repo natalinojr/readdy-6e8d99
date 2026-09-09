@@ -21,6 +21,20 @@ function requiredEnv(name: string): string {
   return value
 }
 
+const ALLOWED_DATE_PRESETS = new Set([
+  'today', 'yesterday', 'last_3d', 'last_7d', 'last_14d', 'last_30d',
+  'this_week_mon_today', 'last_week_mon_sun', 'this_month', 'last_month', 'maximum',
+])
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+
+// Token do link público: 32 bytes aleatórios em hex (64 chars). Mesmo formato do
+// claim_token do voucher, validado com /^[a-f0-9]{32,64}$/ na meta-ads-insights.
+function newShareToken(): string {
+  const b = new Uint8Array(32)
+  crypto.getRandomValues(b)
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+}
+
 interface AdAccount { id: string; name: string }
 
 function parseAccounts(raw: unknown): AdAccount[] {
@@ -218,6 +232,89 @@ Deno.serve(async (req: Request) => {
       const auth = await requireMember(req, admin, String(tenant_id), true)
       if (auth.error) return auth.error
       const { error } = await admin.from('meta_ad_connections').delete().eq('tenant_id', tenant_id)
+      if (error) return json({ success: false, error: error.message }, 500)
+      return json({ success: true })
+    }
+
+    // ── create_share: gera um link público SOMENTE LEITURA do relatório ──
+    // Exige ADMIN da loja: o link abre uma porta sem login, então não fica a cargo
+    // de qualquer usuário com acesso ao relatório.
+    if (action === 'create_share') {
+      const { tenant_id, date_preset, time_range, include_erpos_orders, label, expires_in_days } = body
+      if (!tenant_id) return json({ success: false, error: 'tenant_id é obrigatório' }, 400)
+      const auth = await requireMember(req, admin, String(tenant_id), true)
+      if (auth.error) return auth.error
+
+      // Período CONGELADO no link. Valida aqui pra não gravar algo que a Meta recusaria depois.
+      let preset: string | null = null
+      let since: string | null = null
+      let until: string | null = null
+      const tr = time_range as { since?: unknown; until?: unknown } | undefined
+      if (tr && typeof tr === 'object' && ISO_DATE.test(String(tr.since ?? '')) && ISO_DATE.test(String(tr.until ?? ''))) {
+        since = String(tr.since)
+        until = String(tr.until)
+        const span = (Date.parse(`${until}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`)) / 86400000
+        if (!(span >= 0 && span <= 366)) {
+          return json({ success: false, error: 'Período inválido (a data final deve ser depois da inicial, no máximo 366 dias).' }, 400)
+        }
+      } else {
+        const p = String(date_preset ?? 'last_30d')
+        if (!ALLOWED_DATE_PRESETS.has(p)) return json({ success: false, error: 'Período inválido.' }, 400)
+        preset = p
+      }
+
+      const days = Math.min(Math.max(Number(expires_in_days ?? 30) || 30, 1), 365)
+      const token = newShareToken()
+      const { error } = await admin.from('trafego_pago_shares').insert({
+        tenant_id,
+        token,
+        label: typeof label === 'string' && label.trim() ? label.trim().slice(0, 80) : null,
+        date_preset: preset,
+        range_since: since,
+        range_until: until,
+        include_erpos_orders: include_erpos_orders === true,
+        created_by_user_id: auth.userId ?? null,
+        created_by_name: typeof body.created_by_name === 'string' ? body.created_by_name.slice(0, 80) : null,
+        expires_at: new Date(Date.now() + days * 86400000).toISOString(),
+      })
+      if (error) {
+        console.error('[meta-connect] create_share error:', error)
+        return json({ success: false, error: error.message }, 500)
+      }
+      return json({ success: true, token, expires_in_days: days })
+    }
+
+    // ── list_shares: links ativos da loja ──
+    if (action === 'list_shares') {
+      const { tenant_id } = body
+      if (!tenant_id) return json({ success: false, error: 'tenant_id é obrigatório' }, 400)
+      const auth = await requireMember(req, admin, String(tenant_id))
+      if (auth.error) return auth.error
+
+      const { data, error } = await admin
+        .from('trafego_pago_shares')
+        .select('id, token, label, date_preset, range_since, range_until, include_erpos_orders, created_at, created_by_name, expires_at, view_count, last_viewed_at')
+        .eq('tenant_id', tenant_id)
+        .is('revoked_at', null)
+        .order('created_at', { ascending: false })
+        .limit(50)
+      if (error) return json({ success: false, error: error.message }, 500)
+      return json({ success: true, shares: data ?? [] })
+    }
+
+    // ── revoke_share: derruba um link na hora ──
+    if (action === 'revoke_share') {
+      const { tenant_id, id } = body
+      if (!tenant_id || !id) return json({ success: false, error: 'tenant_id e id são obrigatórios' }, 400)
+      const auth = await requireMember(req, admin, String(tenant_id), true)
+      if (auth.error) return auth.error
+
+      // Filtra por tenant_id também: admin de uma loja não revoga link de outra.
+      const { error } = await admin
+        .from('trafego_pago_shares')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('tenant_id', tenant_id)
       if (error) return json({ success: false, error: error.message }, 500)
       return json({ success: true })
     }

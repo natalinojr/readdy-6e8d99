@@ -263,16 +263,60 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}))
-    const tenantId = body.tenant_id || body.active_tenant_id
-    if (!tenantId) return json({ ok: false, error: 'tenant_id é obrigatório' }, 400)
 
     const admin = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
-    const auth = await requireMember(req, admin, String(tenantId))
-    if (auth.error) return auth.error
+    // ── Dois caminhos de acesso ───────────────────────────────────────────────
+    // (1) share_token: link público SOMENTE LEITURA. A loja e o período saem DA
+    //     LINHA DO BANCO; tenant_id/date_preset/time_range do body são ignorados.
+    //     Se viessem do navegador, bastaria trocar o tenant_id para ver outra loja.
+    // (2) sem token: sessão do app, validando que o usuário é membro da loja.
+    const shareToken = typeof body.share_token === 'string' ? body.share_token.trim() : ''
+    let tenantId: string
+    let share: Row | null = null
+    let includeErpos = true
+    let storeName: string | null = null
+
+    if (shareToken) {
+      if (!/^[a-f0-9]{32,64}$/.test(shareToken)) {
+        return json({ ok: false, share_invalid: true, error: 'Link inválido.' }, 200)
+      }
+      const { data: row, error: shareErr } = await admin
+        .from('trafego_pago_shares')
+        .select('tenant_id, label, date_preset, range_since, range_until, include_erpos_orders, expires_at, revoked_at, created_by_name, view_count')
+        .eq('token', shareToken)
+        .maybeSingle()
+      if (shareErr) {
+        console.error('[meta-ads-insights] share lookup error:', shareErr)
+        return json({ ok: false, error: shareErr.message }, 500)
+      }
+      if (!row) return json({ ok: false, share_invalid: true, error: 'Link inválido ou removido.' }, 200)
+      if (row.revoked_at) return json({ ok: false, share_revoked: true, error: 'Este link foi revogado pela loja.' }, 200)
+      if (row.expires_at && Date.parse(String(row.expires_at)) < Date.now()) {
+        return json({ ok: false, share_expired: true, error: 'Este link expirou.' }, 200)
+      }
+      share = row as Row
+      tenantId = String(row.tenant_id)
+      includeErpos = row.include_erpos_orders === true
+
+      const { data: t } = await admin.from('tenants').select('name').eq('id', tenantId).maybeSingle()
+      storeName = t?.name ? String(t.name) : null
+
+      // Contador de acessos (não bloqueia a resposta se falhar).
+      await admin
+        .from('trafego_pago_shares')
+        .update({ view_count: Number(row.view_count ?? 0) + 1, last_viewed_at: new Date().toISOString() })
+        .eq('token', shareToken)
+        .then(undefined, (e: unknown) => console.warn('[meta-ads-insights] view_count:', e))
+    } else {
+      tenantId = body.tenant_id || body.active_tenant_id
+      if (!tenantId) return json({ ok: false, error: 'tenant_id é obrigatório' }, 400)
+      const auth = await requireMember(req, admin, String(tenantId))
+      if (auth.error) return auth.error
+    }
 
     // Busca o token + conta de anúncios da loja (token nunca sai daqui)
     const { data: conn, error: connErr } = await admin
@@ -292,14 +336,24 @@ Deno.serve(async (req: Request) => {
       return json({ ok: false, no_account: true, error: 'Nenhuma conta de anúncios selecionada' }, 200)
     }
 
-    const requested = String(body.date_preset ?? 'last_7d')
+    // Com share_token o período vem congelado do banco; sem ele, do body.
+    const periodSource = share
+      ? {
+        date_preset: share.date_preset,
+        time_range: share.range_since && share.range_until
+          ? { since: share.range_since, until: share.range_until }
+          : undefined,
+      }
+      : { date_preset: body.date_preset, time_range: body.time_range }
+
+    const requested = String(periodSource.date_preset ?? 'last_7d')
     let datePreset = ALLOWED_DATE_PRESETS.has(requested) ? requested : 'last_7d'
 
-    // Período personalizado: body.time_range = { since, until } (YYYY-MM-DD, since ≤ until, ≤ 366 dias).
+    // Período personalizado: time_range = { since, until } (YYYY-MM-DD, since ≤ until, ≤ 366 dias).
     // Se vier inválido, ignora e cai no preset — nunca devolve erro por causa de data.
     let period = `date_preset=${datePreset}`
     const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
-    const tr = body.time_range as { since?: unknown; until?: unknown } | undefined
+    const tr = periodSource.time_range as { since?: unknown; until?: unknown } | undefined
     if (tr && typeof tr === 'object') {
       const s = String(tr.since ?? '')
       const u = String(tr.until ?? '')
@@ -453,12 +507,23 @@ Deno.serve(async (req: Request) => {
       previous = { ...slim(row ?? {}), since: prevSince, until: prevUntil }
     }
 
-    const orders = range ? await erposOrders(admin, String(tenantId), since, until) : null
+    // No link público, o cruzamento com pedidos do ERPOS (faturamento real) só vai
+    // se quem gerou o link marcou a opção.
+    const orders = range && includeErpos ? await erposOrders(admin, String(tenantId), since, until) : null
 
     return json({
       ok: true,
       date_preset: datePreset,
       range,
+      // Só no link público: cabeçalho de leitura (a tela do app já sabe a loja).
+      share: share
+        ? {
+          store_name: storeName,
+          label: share.label ?? null,
+          created_by_name: share.created_by_name ?? null,
+          expires_at: share.expires_at ?? null,
+        }
+        : null,
       ad_account_id: conn.ad_account_id,
       ad_account_name: conn.ad_account_name,
       count: campaigns.length,
