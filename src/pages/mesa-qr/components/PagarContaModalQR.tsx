@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { savePixMemo, loadPixMemo, clearPixMemo } from '../pixMemo';
 
 // ── Pagar a conta no celular (Pix dinâmico via Mercado Pago) ─────────────────
 // Fluxo: conta → escolhe "meus pedidos" ou "mesa inteira" → gera Pix → copia o
-// código / abre no banco → confirmação chega por Realtime (`pix-payment:<id>`)
-// com polling de segurança que reconcilia no provedor. Nada aqui marca pago:
-// só a Edge `online-payments` quando o provedor aprova.
+// código → o cliente SAI para o app do banco → volta. Nada aqui marca pago: só a
+// Edge `online-payments` quando o provedor aprova.
+//
+// A volta do app do banco é o ponto delicado: o Android congela timers e derruba
+// o WebSocket da aba em segundo plano, então além do Realtime + polling temos um
+// gatilho em `visibilitychange`/`focus` e um botão manual de verificação.
 
 function formatMoney(v: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -39,6 +43,7 @@ interface PixInfo {
 }
 
 interface Props {
+  qrToken: string;
   tenantId: string;
   participantId: string;
   participantName: string;
@@ -66,7 +71,7 @@ function shortNumber(n: string | null, id: string) {
 }
 
 export default function PagarContaModalQR(props: Props) {
-  const { participantId, participantName, accessToken, onClose } = props;
+  const { qrToken, participantId, participantName, accessToken, onClose } = props;
   const auth = { participant_id: participantId, access_token: accessToken };
 
   const [carregando, setCarregando] = useState(true);
@@ -76,6 +81,7 @@ export default function PagarContaModalQR(props: Props) {
   const [scope, setScope] = useState<Scope>('mine');
   const [pix, setPix] = useState<PixInfo | null>(null);
   const [gerando, setGerando] = useState(false);
+  const [verificando, setVerificando] = useState(false);
   const [erro, setErro] = useState('');
   const [copiado, setCopiado] = useState(false);
   const [segundos, setSegundos] = useState(0);
@@ -86,9 +92,11 @@ export default function PagarContaModalQR(props: Props) {
 
   const carregarConta = useCallback(async function () {
     try {
-      const data = await callOnlinePayments<{ enabled: boolean; table_number: number | null; orders: BillOrder[]; pending_pix: PixInfo | null }>({
-        action: 'get_bill', ...auth,
-      });
+      const data = await callOnlinePayments<{
+        enabled: boolean; table_number: number | null; orders: BillOrder[];
+        pending_pix: PixInfo | null; last_pix: PixInfo | null; session_closed: boolean;
+      }>({ action: 'get_bill', ...auth });
+
       if (data.error) {
         setErro(data.message || data.error);
         return;
@@ -96,9 +104,17 @@ export default function PagarContaModalQR(props: Props) {
       setEnabled(Boolean(data.enabled));
       setOrders(data.orders || []);
       setTableNumber(data.table_number ?? null);
+
       if (data.pending_pix && !pixRef.current) {
         setPix(data.pending_pix);
         setScope(data.pending_pix.scope || 'mine');
+        return;
+      }
+      // Voltou do app do banco depois de a tela ter sido recarregada: mostra o comprovante
+      // do Pix que ESTE aparelho gerou (o memo local evita exibir cobrança de outra pessoa).
+      const memo = loadPixMemo(qrToken);
+      if (!pixRef.current && data.last_pix && memo && memo.pixId === data.last_pix.id) {
+        setPix(data.last_pix);
       }
     } catch {
       setErro('Erro de conexão. Tente novamente.');
@@ -106,11 +122,13 @@ export default function PagarContaModalQR(props: Props) {
       setCarregando(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participantId, accessToken]);
+  }, [participantId, accessToken, qrToken]);
 
   useEffect(function () { carregarConta(); }, [carregarConta]);
 
-  // ── Acompanhamento do Pix: Realtime + polling de segurança (reconcilia no provedor) ──
+  // ── Acompanhamento do Pix ────────────────────────────────────────────────
+  // Realtime (instantâneo) + polling de 6 s (webhook perdido) + volta do app do
+  // banco (timers congelados em segundo plano não disparam sozinhos).
   useEffect(function () {
     if (!pix || pix.status !== 'pending') return;
     const pixId = pix.id;
@@ -123,7 +141,10 @@ export default function PagarContaModalQR(props: Props) {
         if (cancelled || !data.pix) return;
         if (data.pix.status !== 'pending') {
           setPix(data.pix);
-          if (data.pix.status === 'confirmed') carregarConta();
+          if (data.pix.status === 'confirmed') {
+            clearPixMemo(qrToken);
+            carregarConta();
+          }
         }
       } catch { /* tenta de novo no próximo ciclo */ }
     }
@@ -133,22 +154,30 @@ export default function PagarContaModalQR(props: Props) {
       .on('broadcast', { event: 'pix_change' }, function () { checar(false); })
       .subscribe();
 
-    // A cada 6s pergunta ao provedor (cobre webhook perdido); o Realtime traz antes na maioria dos casos.
     const poll = setInterval(function () { checar(true); }, 6000);
+
+    function aoVoltar() {
+      if (document.visibilityState === 'visible') checar(true);
+    }
+    document.addEventListener('visibilitychange', aoVoltar);
+    window.addEventListener('focus', aoVoltar);
 
     return function () {
       cancelled = true;
       clearInterval(poll);
+      document.removeEventListener('visibilitychange', aoVoltar);
+      window.removeEventListener('focus', aoVoltar);
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pix?.id, pix?.status]);
+  }, [pix?.id, pix?.status, qrToken]);
 
   // Contador de expiração
   useEffect(function () {
     if (!pix || pix.status !== 'pending') return;
+    const expiraEm = new Date(pix.expires_at).getTime();
     function tick() {
-      const diff = Math.max(0, Math.floor((new Date(pix!.expires_at).getTime() - Date.now()) / 1000));
+      const diff = Math.max(0, Math.floor((expiraEm - Date.now()) / 1000));
       setSegundos(diff);
       if (diff <= 0) setPix(function (p) { return p && p.status === 'pending' ? Object.assign({}, p, { status: 'expired' as const }) : p; });
     }
@@ -167,6 +196,7 @@ export default function PagarContaModalQR(props: Props) {
         return;
       }
       setPix(data.pix);
+      savePixMemo(qrToken, { pixId: data.pix.id, participantId, accessToken, amount: data.pix.amount });
     } catch {
       setErro('Erro de conexão. Tente novamente.');
     } finally {
@@ -174,10 +204,29 @@ export default function PagarContaModalQR(props: Props) {
     }
   }
 
+  async function verificarAgora() {
+    if (!pix || verificando) return;
+    setVerificando(true);
+    setErro('');
+    try {
+      const data = await callOnlinePayments<{ pix: PixInfo }>({ action: 'get_pix_status', pix_payment_id: pix.id, reconcile: true, ...auth });
+      if (data.pix) {
+        setPix(data.pix);
+        if (data.pix.status === 'confirmed') { clearPixMemo(qrToken); carregarConta(); }
+        else if (data.pix.status === 'pending') setErro('O banco ainda não avisou o pagamento. Se você acabou de pagar, aguarde alguns segundos.');
+      }
+    } catch {
+      setErro('Erro de conexão. Tente novamente.');
+    } finally {
+      setVerificando(false);
+    }
+  }
+
   async function cancelarPix() {
     if (!pix) return;
     const id = pix.id;
     setPix(null);
+    clearPixMemo(qrToken);
     try { await callOnlinePayments({ action: 'cancel_pix', pix_payment_id: id, ...auth }); } catch { /* silencioso */ }
     carregarConta();
   }
@@ -189,7 +238,6 @@ export default function PagarContaModalQR(props: Props) {
       setCopiado(true);
       setTimeout(function () { setCopiado(false); }, 2500);
     } catch {
-      // Fallback: seleciona o texto do campo
       const el = document.getElementById('pix-copia-cola') as HTMLInputElement | null;
       if (el) { el.focus(); el.select(); }
     }
@@ -240,7 +288,7 @@ export default function PagarContaModalQR(props: Props) {
             <i className="ri-checkbox-circle-fill text-emerald-500 text-3xl" />
           </div>
           <p className="text-base font-black text-zinc-800">Conta toda paga!</p>
-          <p className="text-xs text-zinc-500 mt-1">Obrigado pela visita. Se quiser pedir mais, é só voltar ao cardápio.</p>
+          <p className="text-xs text-zinc-500 mt-1">Obrigado pela visita.</p>
         </div>
       );
     }
@@ -359,7 +407,7 @@ export default function PagarContaModalQR(props: Props) {
           <p className="text-xs text-zinc-400 mt-1">Se você já pagou, aguarde: a confirmação pode levar alguns segundos.</p>
           <button
             type="button"
-            onClick={function () { setPix(null); carregarConta(); }}
+            onClick={function () { setPix(null); clearPixMemo(qrToken); carregarConta(); }}
             className="mt-5 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
           >
             Gerar um novo Pix
@@ -396,13 +444,23 @@ export default function PagarContaModalQR(props: Props) {
         <ol className="w-full mt-4 space-y-1.5 text-[11px] text-zinc-600">
           <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">1</span>Copie o código acima</li>
           <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">2</span>Abra o app do seu banco em <strong>Pix › Pix Copia e Cola</strong></li>
-          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">3</span>Cole, confirme e volte aqui — a confirmação é automática</li>
+          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">3</span>Cole, confirme e <strong>volte para esta tela</strong> — a confirmação aparece sozinha</li>
         </ol>
 
         <div className="flex items-center gap-2 mt-4 text-[11px] text-zinc-400">
           <i className="ri-loader-4-line animate-spin text-amber-500" />
           Aguardando o pagamento…
         </div>
+
+        <button
+          type="button"
+          onClick={verificarAgora}
+          disabled={verificando}
+          className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 bg-zinc-100 hover:bg-zinc-200 disabled:opacity-50 text-zinc-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
+        >
+          <i className={verificando ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} />
+          {verificando ? 'Verificando…' : 'Já paguei — verificar agora'}
+        </button>
 
         <button
           type="button"

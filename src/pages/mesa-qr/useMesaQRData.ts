@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 import { loadCart, saveCart } from '@/lib/cartStorage';
+import { loadPixMemo, clearPixMemo } from './pixMemo';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -91,7 +92,7 @@ export type Participant = {
   tenant_id: string;
 };
 
-type Step = 'loading' | 'encerrada' | 'identificacao' | 'cardapio' | 'confirmacao';
+type Step = 'loading' | 'encerrada' | 'identificacao' | 'cardapio' | 'confirmacao' | 'comprovante';
 
 type Highlight = {
   id: string;
@@ -230,6 +231,33 @@ async function fetchCardapioData(tenantId: string, setters: {
   }
 }
 
+// Pagou e a tela recarregou (aba descartada, "puxar para atualizar") ou a sessão da
+// mesa fechou sozinha porque a conta zerou — nos dois casos o participante salvo já
+// não vale e o cliente cairia na tela de nome achando que perdeu o pagamento.
+// Antes disso, conferimos o Pix que ESTE aparelho gerou e mostramos o comprovante.
+async function buscarComprovantePix(qrToken: string): Promise<{ amount: number } | null> {
+  const memo = loadPixMemo(qrToken);
+  if (!memo) return null;
+  const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
+  try {
+    const res = await fetch(base + '/functions/v1/online-payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'get_pix_status',
+        pix_payment_id: memo.pixId,
+        reconcile: true,
+        participant_id: memo.participantId,
+        access_token: memo.accessToken,
+      }),
+    });
+    const data = await res.json();
+    if (data?.pix?.status === 'confirmed') return { amount: Number(data.pix.amount ?? memo.amount) };
+    if (data?.pix && data.pix.status !== 'pending') clearPixMemo(qrToken);
+  } catch { /* sem rede: segue o fluxo normal */ }
+  return null;
+}
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useMesaQRData() {
@@ -271,6 +299,9 @@ export function useMesaQRData() {
 
   // Meus Pedidos
   const [showMeusPedidos, setShowMeusPedidos] = useState(false);
+
+  // Comprovante de Pix (quando a identificação se perdeu depois do pagamento)
+  const [comprovante, setComprovante] = useState<{ amount: number } | null>(null);
 
   // Pagar a conta (Pix online) — botão só aparece se a loja tem provedor ativo
   const [showPagarConta, setShowPagarConta] = useState(false);
@@ -368,6 +399,13 @@ export function useMesaQRData() {
               Object.keys(localStorage)
                 .filter(function (k) { return k.startsWith('mesa_participant_'); })
                 .forEach(function (k) { localStorage.removeItem(k); });
+              const recibo = await buscarComprovantePix(qrToken || '');
+              if (cancelled) return;
+              if (recibo) {
+                setComprovante(recibo);
+                setStep('comprovante');
+                return;
+              }
               setStep('identificacao');
               await fetchCardapioData(currentTenantId, { setCategories, setItems, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva, productionPartsRef });
               return;
@@ -380,6 +418,14 @@ export function useMesaQRData() {
           } catch {
             localStorage.removeItem('mesa_participant_' + currentSession.id);
           }
+        }
+
+        const reciboSemParticipante = await buscarComprovantePix(qrToken || '');
+        if (cancelled) return;
+        if (reciboSemParticipante) {
+          setComprovante(reciboSemParticipante);
+          setStep('comprovante');
+          return;
         }
 
         setStep('identificacao');
@@ -630,6 +676,13 @@ export function useMesaQRData() {
     setStep('cardapio');
   }
 
+  function handleFecharComprovante() {
+    clearPixMemo(qrToken || '');
+    setComprovante(null);
+    // Recarrega para abrir uma sessão nova da mesa (a anterior foi encerrada ao zerar a conta)
+    window.location.reload();
+  }
+
   // ── Valores derivados ───────────────────────────────────────────────────────
 
   const totalItens = cart.reduce(function (s, i) { return s + i.quantidade; }, 0);
@@ -657,6 +710,9 @@ export function useMesaQRData() {
     numeroPedido: numeroPedido,
     showMeusPedidos: showMeusPedidos,
     showPagarConta: showPagarConta,
+    comprovante: comprovante,
+    qrToken: qrToken || '',
+    handleFecharComprovante: handleFecharComprovante,
     onlinePayEnabled: onlinePayEnabled,
     totalItens: totalItens,
     totalValor: totalValor,

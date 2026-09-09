@@ -62,7 +62,11 @@ async function loadConfig(admin: Admin, tenantId: string) {
 const isEnabled = (cfg: Awaited<ReturnType<typeof loadConfig>>) => Boolean(cfg && cfg.is_active && cfg.access_token);
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
-async function requireParticipant(admin: Admin, body: Record<string, unknown>) {
+// `allowClosed`: a sessão da mesa fecha sozinha (trigger fn_check_table_session_auto_close)
+// no instante em que o último pedido vira pago — inclusive por causa DESTE pagamento. Consultar
+// o status/comprovante do próprio Pix tem que continuar funcionando depois disso; só criar
+// cobrança nova exige mesa aberta.
+async function requireParticipant(admin: Admin, body: Record<string, unknown>, opts: { allowClosed?: boolean } = {}) {
   const participantId = String(body.participant_id ?? "");
   const accessToken = String(body.access_token ?? "");
   if (!participantId || !accessToken) return { error: json({ error: "participant_id e access_token são obrigatórios" }, 400) };
@@ -72,7 +76,8 @@ async function requireParticipant(admin: Admin, body: Record<string, unknown>) {
   if (!p || p.deleted_at || String(p.access_token) !== accessToken) return { error: json({ error: "Identificação inválida" }, 403) };
   const { data: sess } = await admin.from("table_sessions").select("id, status, table_id, session_id, tenant_id")
     .eq("id", p.table_session_id).maybeSingle();
-  if (!sess || sess.status !== "open") return { error: json({ error: "mesa_encerrada", message: "Esta mesa já foi encerrada" }, 409) };
+  if (!sess) return { error: json({ error: "mesa_encerrada", message: "Esta mesa já foi encerrada" }, 409) };
+  if (sess.status !== "open" && !opts.allowClosed) return { error: json({ error: "mesa_encerrada", message: "Esta mesa já foi encerrada" }, 409) };
   return { error: null, participant: p, session: sess };
 }
 
@@ -338,7 +343,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "get_bill") {
-      const auth = await requireParticipant(admin, body);
+      const auth = await requireParticipant(admin, body, { allowClosed: true });
       if (auth.error) return auth.error;
       const { participant, session } = auth;
       const cfg = await loadConfig(admin, session.tenant_id);
@@ -347,10 +352,17 @@ Deno.serve(async (req: Request) => {
         .eq("table_session_id", session.id).eq("participant_id", participant.id).eq("status", "pending")
         .order("created_at", { ascending: false }).limit(1).maybeSingle();
       const px = pending ? await expireIfNeeded(admin, pending) : null;
+      // Comprovante recente: o cliente pode ter voltado do app do banco depois da mesa fechar
+      const { data: lastOk } = await admin.from("fin_pix_payments").select("*")
+        .eq("participant_id", participant.id).eq("status", "confirmed")
+        .gt("confirmed_at", new Date(Date.now() - 60 * 60 * 1000).toISOString())
+        .order("confirmed_at", { ascending: false }).limit(1).maybeSingle();
       const { data: tbl } = await admin.from("tables").select("number").eq("id", session.table_id).maybeSingle();
       return json({
         enabled: isEnabled(cfg), table_number: tbl?.number ?? null, participant: { id: participant.id, name: participant.name },
+        session_closed: session.status !== "open",
         orders, pending_pix: px && px.status === "pending" ? pixPublic(px) : null,
+        last_pix: lastOk ? pixPublic(lastOk) : null,
       });
     }
 
@@ -431,7 +443,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "get_pix_status") {
-      const auth = await requireParticipant(admin, body);
+      const auth = await requireParticipant(admin, body, { allowClosed: true });
       if (auth.error) return auth.error;
       const pixId = String(body.pix_payment_id ?? "");
       const { data: px0 } = await admin.from("fin_pix_payments").select("*").eq("id", pixId).eq("participant_id", auth.participant.id).maybeSingle();
@@ -449,7 +461,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "cancel_pix") {
-      const auth = await requireParticipant(admin, body);
+      const auth = await requireParticipant(admin, body, { allowClosed: true });
       if (auth.error) return auth.error;
       const pixId = String(body.pix_payment_id ?? "");
       const { data: px } = await admin.from("fin_pix_payments").select("id, status, provider_payment_id").eq("id", pixId).eq("participant_id", auth.participant.id).maybeSingle();

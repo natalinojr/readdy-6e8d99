@@ -102,6 +102,33 @@ export default function MesaQRPage() {
     );
   }
 
+  if (step === 'comprovante' && data.comprovante) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center px-4">
+        <div className="text-center max-w-xs">
+          <div className="w-20 h-20 flex items-center justify-center mx-auto mb-6 bg-emerald-100 rounded-full">
+            <i className="ri-checkbox-circle-fill text-4xl text-emerald-500" />
+          </div>
+          <h2 className="text-xl font-black text-zinc-800 mb-1">Pagamento confirmado</h2>
+          <p className="text-3xl font-black text-emerald-600 mb-3">
+            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(data.comprovante.amount)}
+          </p>
+          <p className="text-sm text-zinc-500 leading-relaxed">
+            Recebemos seu Pix e sua conta foi encerrada. Obrigado pela visita!
+          </p>
+          <button
+            type="button"
+            onClick={data.handleFecharComprovante}
+            className="mt-6 w-full py-3 bg-gradient-to-br from-amber-500 to-orange-500 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap"
+          >
+            Fazer um novo pedido
+          </button>
+          <p className="text-[11px] text-zinc-400 mt-3">{tenantName || 'Estabelecimento'}</p>
+        </div>
+      </div>
+    );
+  }
+
   if (step === 'identificacao' && table) {
     return (
       <IdentificacaoMesaQR
@@ -278,6 +305,7 @@ export default function MesaQRPage() {
         {/* Modal Pagar a conta (Pix online) */}
         {data.showPagarConta && participant ? (
           <PagarContaModalQR
+            qrToken={data.qrToken}
             tenantId={participant.tenant_id}
             participantId={participant.id}
             participantName={participant.name}
