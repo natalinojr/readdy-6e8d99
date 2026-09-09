@@ -1371,3 +1371,17 @@ Os dois lugares que usam `StatusPicker` (checkbox de cada linha + botão "Status
 **Nota pra próxima vez**: os outros popovers da `ViewLista` (edição de coluna — responsável/vencimento/prioridade/etiquetas —, e os de Prioridade/Responsável da barra de ações em massa) ainda usam `absolute` clássico. Não deram bug reportado ainda porque a maioria abre alinhada à direita/dentro da área visível, mas o de edição de coluna (linhas perto do fim do grupo, coluna à direita) tem o mesmo risco em telas mais estreitas — se reportarem, é o mesmo fix (`fixed` + `getBoundingClientRect`).
 
 Verificação: rota de teste isolada forçando o card a ficar com altura pequena e `overflow: hidden` (reproduz o cenário do print — linha colada na borda) — confirmei visualmente (screenshot) que as 3 opções do dropdown aparecem completas, nada cortado. `tsc --noEmit` manteve 301.
+
+---
+
+### Observação do item no ticket da cozinha (2026-09-09)
+
+Relato: cliente do QR universal põe observação num item, aparece no Gestor de Pedidos mas "não aparece na impressão".
+
+**Auditoria da cadeia (QR → `mesa-write` → `print_queue` → edge `print-queue-agent` → agente local):** a obs está gravada e chega ao ticket. Tag de obs vai pra `order_item_observations`, texto livre vai pro `order_items.notes`; `buildTicketItems` (`src/lib/printOrderQueue.ts`) junta os dois em `itens[].observacoes` (dedup por texto). Varredura de 90 dias em pedidos QR: **todos** os casos com obs têm o texto dentro do `print_queue.payload` — a única exceção foi 22/08, e ali o item INTEIRO sumiu (bug de corrida da dedup por `(order_id, station_key)`, já corrigido pela mescla cozinha+bar num ticket por estação).
+
+**Critério pra diagnosticar esse tipo de queixa:** comparar `order_items` + `order_item_observations` com o `print_queue.payload` do mesmo `order_id` **antes** de mexer em código — separa "não gravou", "não enfileirou" e "enfileirou mas não imprimiu". Lembrar que o ticket é **por estação**: a obs sai só no ticket da estação daquele item; quem olha o ticket de outra estação não vê.
+
+**Mudança feita:** obs do item agora sai em **negrito + caixa alta** (`   ** SEM CEBOLA`) em vez de fonte normal com `*`, na edge `print-queue-agent` (v27 no ar) e no `agente-local/index.js` (caminho de fallback). O ESC/POS que a impressora recebe é gerado **pela edge** desde a v3.2 do agente (`escpos_80mm_base64`/`escpos_58mm_base64`) — mudar layout de ticket = deploy da edge, não precisa tocar nos PCs; o `formatTicket` do agente só vale pro fallback local (`POST 127.0.0.1:9876/print`) e pra PCs com agente antigo.
+
+**Ponta solta conhecida:** obs por unidade gravada no formato `Un.N: texto` (PDV/KDS) é separada em `unitObsMap` no `KDSContext` e **não entra** em `item.observacoes` — logo aparece na tela mas some na reimpressão pelo Gestor (`reprintPedidoGestor`). Não afeta o QR (lá cada unidade vira item "(Un. N)" próprio).

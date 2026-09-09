@@ -354,10 +354,13 @@ function formatTicket(
       });
     }
 
+    // Observacoes do item em NEGRITO + caixa alta: sao a instrucao que muda o
+    // preparo ("sem cebola", "trocar X por Y") e estavam passando batido no
+    // meio do ticket quando saiam na mesma fonte das opcoes.
     const observacoes = item.observacoes as string[] | undefined;
     if (observacoes && observacoes.length > 0) {
       observacoes.forEach((obs) => {
-        out += toCp860(`   * ${obs}`) + LINE_FEED;
+        out += BOLD_ON + toCp860(`   ** ${String(obs).toUpperCase()}`) + BOLD_OFF + LINE_FEED;
       });
     }
 

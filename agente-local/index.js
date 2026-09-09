@@ -467,9 +467,10 @@ function formatTicket(body, impressora) {
       });
     }
 
+    // Observacoes do item em NEGRITO + caixa alta (mesmo destaque da edge).
     if (item.observacoes && item.observacoes.length > 0) {
       item.observacoes.forEach((obs) => {
-        out += utf8ToCp860(`   * ${obs}`) + LINE_FEED;
+        out += BOLD_ON + utf8ToCp860(`   ** ${String(obs).toUpperCase()}`) + BOLD_OFF + LINE_FEED;
       });
     }
 
