@@ -156,7 +156,7 @@ interface PDVContextData {
   /** Taxa de entrega do destino delivery (0 nos demais destinos) — já somada no total */
   valorTaxaEntrega: number;
   total: number;
-  finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }) => Promise<FinalizarResult>;
+  finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null; paymentGroupSize?: number | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }) => Promise<FinalizarResult>;
   enviarParaCozinha: (destinoOverride?: DestinoInfo | null) => Promise<FinalizarResult>;
 }
 
@@ -422,7 +422,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     });
   }, [carrinho, destino]);
 
-  const finalizarPedido = useCallback(async (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }): Promise<FinalizarResult> => {
+  const finalizarPedido = useCallback(async (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null; paymentGroupSize?: number | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }): Promise<FinalizarResult> => {
     const freshSession = await ensureFreshSession();
     if (!freshSession) {
       throw new Error('Sessao de autenticacao expirada. Por favor, faca login novamente.');
@@ -595,6 +595,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
               operator_name: user.nome ?? null,
               paid_by_pdv: 'cashier',
               payment_group_id: customerData?.paymentGroupId ?? null,
+              group_size: customerData?.paymentGroupId ? (customerData?.paymentGroupSize ?? null) : null,
             },
           });
           if (payErr) {

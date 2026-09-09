@@ -135,6 +135,7 @@ function formatDanfe(payload: Record<string, unknown>, papel: "80mm" | "58mm"): 
   const cancelada = payload.cancelada === true;
 
   let out = INIT + CP860;
+  out += LINE_FEED;
   out += ALIGN_CENTER;
   if (emit.nome) out += BOLD_ON + toCp860(String(emit.nome).slice(0, width)) + BOLD_OFF + LINE_FEED;
   if (emit.fantasia && emit.fantasia !== emit.nome) out += toCp860(String(emit.fantasia).slice(0, width)) + LINE_FEED;
@@ -186,9 +187,11 @@ function formatDanfe(payload: Record<string, unknown>, papel: "80mm" | "58mm"): 
   out += toCp860("Consulte pela Chave de Acesso em") + LINE_FEED;
   out += toCp860(String(payload.url_chave || "www.nfe.fazenda.gov.br/portal").slice(0, width)) + LINE_FEED;
   if (chave) {
-    const grouped = chave.match(/.{1,4}/g)?.join(" ") ?? chave;
-    if (width >= 48) out += toCp860(grouped) + LINE_FEED;
-    else { out += toCp860(grouped.slice(0, 29)) + LINE_FEED; out += toCp860(grouped.slice(30)) + LINE_FEED; }
+    // 44 dígitos em blocos de 4 = 54 colunas: não cabe em 80mm (48) nem 58mm (32).
+    // Sempre em 2 linhas: 6 blocos + 5 blocos.
+    const blocos = chave.match(/.{1,4}/g) ?? [chave];
+    out += toCp860(blocos.slice(0, 6).join(" ")) + LINE_FEED;
+    out += toCp860(blocos.slice(6).join(" ")) + LINE_FEED;
   }
   out += toCp860(sep) + LINE_FEED;
 
@@ -219,7 +222,9 @@ function formatDanfe(payload: Record<string, unknown>, papel: "80mm" | "58mm"): 
     out += LINE_FEED;
   }
   out += toCp860("Tributos aprox. conforme Lei 12.741/2012") + LINE_FEED;
-  out += LINE_FEED + LINE_FEED;
+  // Avança o papel antes de cortar: a guilhotina fica ~1cm acima da cabeça de impressão;
+  // sem isso o rodapé/QR ficam presos e só saem no cupom seguinte (cortado "no começo").
+  out += LINE_FEED + LINE_FEED + LINE_FEED + LINE_FEED + LINE_FEED;
   out += CUT;
   return out;
 }

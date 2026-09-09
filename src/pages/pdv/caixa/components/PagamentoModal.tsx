@@ -327,7 +327,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
 
   // Pagamento de pedido existente (não cria pedido, só registra pagamento)
   // paymentGroupId: ID único gerado para agrupar pagamentos de múltiplos pedidos pagos juntos
-  const pagarPedidoExistente = useCallback(async (orderId: string, pagamentosParaRegistrar: PagamentoItem[], paymentGroupId?: string | null) => {
+  const pagarPedidoExistente = useCallback(async (orderId: string, pagamentosParaRegistrar: PagamentoItem[], paymentGroupId?: string | null, paymentGroupSize?: number | null) => {
     const cashRegisterId: string | null = caixa?.id ?? null;
     let paymentRegistered = false;
     const paymentErrors: string[] = [];
@@ -346,6 +346,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             operator_name: user?.nome ?? null,
             paid_by_pdv: 'cashier',
             payment_group_id: paymentGroupId ?? null,
+            group_size: paymentGroupId ? (paymentGroupSize ?? null) : null,
           },
         });
         if (payErr) {
@@ -467,6 +468,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             customerName: customerName || undefined,
             customerPhone: customerPhone || undefined,
             paymentGroupId,
+            paymentGroupSize: paymentGroupId ? totalPedidosPagando : null,
           },
           undefined,
           descontoManual > 0 ? { amount: descontoManual, authorizedBy: descontoAutorizadoPor } : undefined,
@@ -486,7 +488,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       // Isso troca N chamadas de rede em série por ~1 tempo de rede no total.
       await Promise.all(
         pagamentosParaPedidosExistentes.map(({ orderId, pagamentos: pg }) =>
-          pagarPedidoExistente(orderId, pg, paymentGroupId),
+          pagarPedidoExistente(orderId, pg, paymentGroupId, totalPedidosPagando),
         ),
       );
 

@@ -3,7 +3,8 @@
 // Ações (POST JSON { action, ...}):
 //   save_settings   { tenant_id, settings }          admin/manager — grava fiscal_settings (token só se enviado)
 //   test_connection { tenant_id }                    consulta status da SEFAZ com o token da loja
-//   emit            { tenant_id, source_type, source_id, force? }  cria/emite a NFC-e de um pedido ou sessão de mesa
+//   emit            { tenant_id, source_type, source_id, force?, group_size? }  cria/emite a NFC-e de um pedido,
+//                   de um grupo de pagamento (pedidos pagos juntos = 1 nota) ou, manualmente, de uma sessão de mesa
 //   retry           { tenant_id, document_id }       reemite um documento rejeitado/com erro
 //   run_pending     { tenant_id }                    reprocessa pendentes/erros (até 20)
 //   cancel          { tenant_id, document_id, justificativa }   admin/manager — cancela na SEFAZ
@@ -203,7 +204,16 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
   let q = admin.from('orders')
     .select('id, number, origin_type, status, table_session_id, table_number, destination_name, customer_cpf, customer_id, discount_amount, service_fee_amount, tip_amount, delivery_fee, subtotal, total_amount, is_training, is_draft, is_cortesia, is_paid, created_at')
     .eq('tenant_id', tenantId);
-  q = sourceType === 'order' ? q.eq('id', sourceId) : q.eq('table_session_id', sourceId);
+  if (sourceType === 'order') q = q.eq('id', sourceId);
+  else if (sourceType === 'table_session') q = q.eq('table_session_id', sourceId);
+  else {
+    // payment_group: todos os pedidos que têm pagamento nesse grupo (pagos juntos no PDV)
+    const { data: gp, error: gpErr } = await admin.from('payments').select('order_id').eq('tenant_id', tenantId).eq('payment_group_id', sourceId);
+    if (gpErr) throw new Error(`payments(grupo): ${gpErr.message}`);
+    const ids = [...new Set((gp ?? []).map((p: any) => p.order_id).filter(Boolean))] as string[];
+    if (ids.length === 0) return { note: null, skipReason: 'Grupo de pagamento sem pedidos' };
+    q = q.in('id', ids);
+  }
   const { data: ordersRaw, error: ordErr } = await q;
   if (ordErr) throw new Error(`orders: ${ordErr.message}`);
   const orders = ((ordersRaw ?? []) as OrderRow[]).filter((o) => o.status !== 'cancelled' && !o.is_draft && !o.is_training);
@@ -239,7 +249,8 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
   const optsByItem = new Map<string, string[]>();
   for (const o of optsRaw ?? []) {
     const arr = optsByItem.get(o.order_item_id) ?? [];
-    if (o.option_name) arr.push(String(o.option_name));
+    // "Un. 1", "Un. 2" são rótulos internos de unidade do KDS, não opções do produto.
+    if (o.option_name && !/^un\.?\s*\d+$/i.test(String(o.option_name).trim())) arr.push(String(o.option_name));
     optsByItem.set(o.order_item_id, arr);
   }
 
@@ -388,12 +399,18 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
     const t = (ts as any)?.tables as { number?: number | null; area?: string | null } | null;
     if (t) mesaLabel = t.number && t.number > 0 ? `Mesa ${t.number}${t.area ? ` (${t.area})` : ''}` : (t.area || 'Balcão');
   }
+  const isGroup = sourceType === 'payment_group';
+  const nums = orders.map((o) => o.number).filter(Boolean);
   const orderNumber = isTable
     ? mesaLabel + (orders.length > 1 ? ` (${orders.length} pedidos)` : ` #${first.number ?? ''}`)
-    : `#${first.number ?? first.id.slice(0, 8)}`;
+    : isGroup
+      ? `#${nums.join(', #')} (pagos juntos)`
+      : `#${first.number ?? first.id.slice(0, 8)}`;
   const obs = isTable
-    ? `${mesaLabel} - pedidos ${orders.map((o) => o.number).filter(Boolean).join(', ')}`
-    : `Pedido ${first.number ?? ''}${first.origin_type === 'delivery' ? ' - delivery' : ''}`;
+    ? `${mesaLabel} - pedidos ${nums.join(', ')}`
+    : isGroup
+      ? `Pedidos ${nums.join(', ')} pagos juntos`
+      : `Pedido ${first.number ?? ''}${first.origin_type === 'delivery' ? ' - delivery' : ''}`;
 
   const payload: Record<string, unknown> = {
     ModeloDocumento: 65,
@@ -674,23 +691,41 @@ Deno.serve({ verify_jwt: false } as any, async (req: Request) => {
 
     // ── emit ──
     if (action === 'emit') {
-      const sourceType = String(body.source_type ?? '');
-      const sourceId = String(body.source_id ?? '');
-      if (!['order', 'table_session'].includes(sourceType) || !sourceId) return errResp('source_type e source_id são obrigatórios');
+      let sourceType = String(body.source_type ?? '');
+      let sourceId = String(body.source_id ?? '');
+      if (!['order', 'table_session', 'payment_group'].includes(sourceType) || !sourceId) return errResp('source_type e source_id são obrigatórios');
       const settings = await loadSettings(admin, tenantId);
+      // Pedido pago junto com outros (payment_group_id) vira UMA nota do grupo.
+      const groupSize = Number(body.group_size ?? 0) || 0;
+      if (sourceType === 'order') {
+        const { data: gpay } = await admin.from('payments').select('payment_group_id').eq('tenant_id', tenantId).eq('order_id', sourceId).not('payment_group_id', 'is', null).limit(1).maybeSingle();
+        if (gpay?.payment_group_id) { sourceType = 'payment_group'; sourceId = String(gpay.payment_group_id); }
+      }
+      if (sourceType === 'payment_group' && groupSize > 1) {
+        // O PDV registra os pagamentos do grupo um a um (~4s entre eles): só emite quando o último chegou.
+        const { data: gp } = await admin.from('payments').select('order_id').eq('tenant_id', tenantId).eq('payment_group_id', sourceId);
+        const ids = [...new Set((gp ?? []).map((p: any) => p.order_id).filter(Boolean))] as string[];
+        const { data: paidRows } = ids.length ? await admin.from('orders').select('id').in('id', ids).eq('is_paid', true) : { data: [] as any[] };
+        if ((paidRows ?? []).length < groupSize) return json({ success: false, status: 'skipped', skipped: true, message: `Aguardando os demais pedidos do grupo (${(paidRows ?? []).length}/${groupSize})` });
+      }
       // Gatilhos automáticos respeitam as chaves por canal; emissão manual (force) ignora.
       if (!body.force && settings) {
         // Regra (2026-09-09): a NFC-e sai SEMPRE por pedido, no pagamento — balcão, delivery,
         // QR universal e mesa numerada. Sessão de mesa só por emissão manual (force).
         if (sourceType === 'table_session') return json({ success: false, status: 'skipped', skipped: true, message: 'Notas saem por pedido, no pagamento; sessão de mesa só manualmente' });
-        const { data: o } = await admin.from('orders').select('origin_type, table_session_id').eq('id', sourceId).maybeSingle();
+        let firstOrderId = sourceId;
+        if (sourceType === 'payment_group') {
+          const { data: g1 } = await admin.from('payments').select('order_id').eq('tenant_id', tenantId).eq('payment_group_id', sourceId).limit(1).maybeSingle();
+          firstOrderId = String(g1?.order_id ?? '');
+        }
+        const { data: o } = await admin.from('orders').select('origin_type, table_session_id').eq('id', firstOrderId).maybeSingle();
         const canal = o?.origin_type === 'delivery' ? 'delivery' : (o?.table_session_id || o?.origin_type === 'table' || o?.origin_type === 'waiter') ? 'mesa' : 'balcao';
         if (canal === 'delivery' && !settings.emit_on_delivery) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no delivery desligada' });
         if (canal === 'mesa' && !settings.emit_on_table_close) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão em mesas/QR desligada' });
         if (canal === 'balcao' && !settings.emit_on_counter) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no balcão desligada' });
       }
       const r = await emitForSource(admin, tenantId, sourceType, sourceId, { force: Boolean(body.force), userId, trigger: body.trigger });
-      return json(r, r.success || r.skipped ? 200 : 200);
+      return json({ ...r, source_type: sourceType, source_id: sourceId });
     }
 
     // ── retry ──

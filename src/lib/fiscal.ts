@@ -59,7 +59,7 @@ export interface FiscalDocumentRow {
   tenant_id: string;
   model: number;
   status: FiscalDocStatus;
-  source_type: 'order' | 'table_session';
+  source_type: 'order' | 'table_session' | 'payment_group';
   source_id: string;
   order_ids: string[];
   order_number: string | null;

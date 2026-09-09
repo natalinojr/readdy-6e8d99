@@ -5,7 +5,7 @@ import type { FiscalDocumentRow } from '@/lib/fiscal';
 
 const COLS = 'id, tenant_id, model, status, source_type, source_id, order_ids, order_number, environment, total_amount, customer_cpf, customer_name, serie, numero, chave, protocolo, sefaz_status_code, sefaz_message, qr_code, url_chave, error_message, attempts, emitted_at, cancelled_at, cancel_reason, printed_at, created_at, updated_at';
 
-export interface FiscalEmitResult { success: boolean; status: string; message?: string; document_id?: string; chave?: string; skipped?: boolean }
+export interface FiscalEmitResult { success: boolean; status: string; message?: string; document_id?: string; chave?: string; skipped?: boolean; source_type?: string; source_id?: string }
 
 /**
  * Notas fiscais (NFC-e) dos pedidos de uma lista. Indexa por order_id e acompanha
@@ -28,10 +28,13 @@ export function useFiscalDocs(orderIds: string[]) {
     // PostgREST limita o tamanho do IN; busca em lotes.
     for (let i = 0; i < idsRef.current.length; i += 200) {
       const chunk = idsRef.current.slice(i, i + 200);
-      const { data } = await supabase.from('fiscal_documents').select(COLS)
-        .eq('tenant_id', tenantId).eq('source_type', 'order').in('source_id', chunk)
-        .order('created_at', { ascending: false }).limit(1000);
-      if (data) rows.push(...(data as unknown as FiscalDocumentRow[]));
+      // Nota do próprio pedido OU de um grupo de pagamento que inclui o pedido (order_ids).
+      const [{ data: byId }, { data: byGroup }] = await Promise.all([
+        supabase.from('fiscal_documents').select(COLS).eq('tenant_id', tenantId).eq('source_type', 'order').in('source_id', chunk).order('created_at', { ascending: false }).limit(1000),
+        supabase.from('fiscal_documents').select(COLS).eq('tenant_id', tenantId).eq('source_type', 'payment_group').overlaps('order_ids', chunk).order('created_at', { ascending: false }).limit(1000),
+      ]);
+      if (byId) rows.push(...(byId as unknown as FiscalDocumentRow[]));
+      if (byGroup) rows.push(...(byGroup as unknown as FiscalDocumentRow[]));
     }
     setDocs(rows);
   }, [tenantId, idsKey]);
@@ -51,9 +54,15 @@ export function useFiscalDocs(orderIds: string[]) {
   const byOrder = useMemo(() => {
     const rank = (s: string) => (s === 'authorized' ? 3 : s === 'processing' || s === 'pending' ? 2 : 1);
     const map = new Map<string, FiscalDocumentRow>();
+    const seen = new Set<string>();
     for (const d of docs) {
-      const cur = map.get(d.source_id);
-      if (!cur || rank(d.status) > rank(cur.status) || (rank(d.status) === rank(cur.status) && d.created_at > cur.created_at)) map.set(d.source_id, d);
+      if (seen.has(d.id)) continue; // a mesma nota de grupo pode vir em mais de um lote
+      seen.add(d.id);
+      const keys = d.source_type === 'payment_group' ? (d.order_ids ?? []) : [d.source_id];
+      for (const k of keys) {
+        const cur = map.get(k);
+        if (!cur || rank(d.status) > rank(cur.status) || (rank(d.status) === rank(cur.status) && d.created_at > cur.created_at)) map.set(k, d);
+      }
     }
     return map;
   }, [docs]);

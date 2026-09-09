@@ -33,6 +33,8 @@ export default function NotaFiscalCell({ pedido, fiscal, onToast, compact }: Pro
       if (d && (d.status === 'authorized' || d.status === 'processing')) continue;
       const r = await fiscal.emitir(ids[i]);
       if (r.success) ok++; else falha = r.message ?? r.status;
+      // Pedidos pagos juntos: a fiscal-write emite UMA nota do grupo, que já cobre os demais.
+      if (r.source_type === 'payment_group') break;
     }
     if (falha) onToast(false, ok > 0 ? `${ok} nota(s) autorizada(s), 1 falhou` : 'Nota não autorizada', falha);
     else onToast(true, ok === 1 ? 'NFC-e autorizada' : `${ok} NFC-e autorizadas`);
@@ -49,9 +51,10 @@ export default function NotaFiscalCell({ pedido, fiscal, onToast, compact }: Pro
     onToast(!err, err ? 'Não foi possível imprimir' : 'Cupom enviado para a impressora', err ?? undefined);
   };
 
-  // ── Pedido único ──
-  if (ids.length === 1) {
-    const d = docs[0];
+  // ── Pedido único, ou grupo pago junto que já tem UMA nota cobrindo todos ──
+  const unicaDoGrupo = ids.length > 1 && docs[0]?.source_type === 'payment_group' && docs.every(d => d && d.id === docs[0]!.id) ? docs[0] : null;
+  if (ids.length === 1 || unicaDoGrupo) {
+    const d = unicaDoGrupo ?? docs[0];
     if (cancelado && !d) return <span className="text-[10px] text-zinc-300">—</span>;
 
     if (!d) {

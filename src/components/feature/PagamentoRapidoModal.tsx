@@ -451,6 +451,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             operator_name: user?.nome ?? null,
             paid_by_pdv: paidByPdv,
             payment_group_id: paymentGroupId ?? null,
+            group_size: paymentGroupId ? totalPedidosPagando : null,
           },
         });
         if (payErr) {
@@ -476,6 +477,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                 operator_name: user?.nome ?? null,
                 paid_by_pdv: paidByPdv,
                 payment_group_id: paymentGroupId ?? null,
+                group_size: paymentGroupId ? totalPedidosPagando : null,
               },
             });
             if (payErr) {
