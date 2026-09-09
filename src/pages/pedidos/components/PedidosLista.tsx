@@ -215,6 +215,40 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
     if (st.some((x) => x === 'rejected' || x === 'error')) return 1;
     return p.pago ? 2 : 0;
   };
+
+  // ── Seleção múltipla para emitir NF em lote ──
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [lote, setLote] = useState<{ total: number; feito: number; ok: number } | null>(null);
+  const idsDe = (p: PedidoRecente) => (p.pedidoIds && p.pedidoIds.length > 0 ? p.pedidoIds : [p.id]);
+  // Elegível = pago, não cancelado e com pelo menos um pedido sem nota autorizada/em emissão.
+  const elegivel = (p: PedidoRecente): boolean => {
+    if (!p.pago || p.status === 'cancelado' || p.status === 'cancelled') return false;
+    return idsDe(p).some((id) => { const st = fiscal.byOrder.get(id)?.status; return st !== 'authorized' && st !== 'processing' && st !== 'pending'; });
+  };
+  const toggleSel = (id: string) => setSelecionados((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const elegiveisVisiveis = pedidos.filter(elegivel);
+  const todosMarcados = elegiveisVisiveis.length > 0 && elegiveisVisiveis.every((p) => selecionados.has(p.id));
+  const toggleTodos = () => setSelecionados(todosMarcados ? new Set() : new Set(elegiveisVisiveis.map((p) => p.id)));
+  const selecionadosValidos = pedidos.filter((p) => selecionados.has(p.id) && elegivel(p));
+
+  const emitirLote = async () => {
+    const alvo = selecionadosValidos.flatMap(idsDe).filter((id) => { const st = fiscal.byOrder.get(id)?.status; return st !== 'authorized' && st !== 'processing' && st !== 'pending'; });
+    if (alvo.length === 0) return;
+    setLote({ total: alvo.length, feito: 0, ok: 0 });
+    let ok = 0; let falhas: string[] = [];
+    for (let i = 0; i < alvo.length; i++) {
+      const r = await fiscal.emitir(alvo[i]); // sequencial: não sobrecarrega SEFAZ/provedor
+      if (r.success) ok++; else falhas.push(r.message ?? r.status);
+      setLote({ total: alvo.length, feito: i + 1, ok });
+    }
+    setLote(null);
+    setSelecionados((prev) => { const n = new Set(prev); for (const p of selecionadosValidos) if (idsDe(p).every((id) => fiscal.byOrder.get(id)?.status === 'authorized')) n.delete(p.id); return n; });
+    if (falhas.length === 0) toastSuccess(`${ok} NFC-e autorizada${ok === 1 ? '' : 's'}`);
+    else toastError(`${ok} autorizada(s), ${falhas.length} com problema`, falhas[0]);
+    await fiscal.recarregar();
+    // Pedidos que ficaram autorizados saem da seleção; os com falha continuam marcados para tentar de novo.
+    setSelecionados((prev) => new Set([...prev].filter((id) => { const p = pedidos.find((x) => x.id === id); return p ? elegivel(p) : false; })));
+  };
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const toggleSort = (key: SortKey) => {
@@ -282,8 +316,11 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
       {/* Desktop table header */}
       <div
         className="hidden lg:grid gap-x-2 px-4 py-3 border-b border-zinc-100 bg-zinc-50"
-        style={{ gridTemplateColumns: '2fr 1.1fr 1.4fr 1.3fr 1.5fr 1.7fr 1.1fr 0.8fr 1.3fr 1fr 1.2fr' }}
+        style={{ gridTemplateColumns: '28px 2fr 1.1fr 1.4fr 1.3fr 1.5fr 1.7fr 1.1fr 0.8fr 1.3fr 1fr 1.2fr' }}
       >
+        <label className="flex items-center justify-center cursor-pointer" title={elegiveisVisiveis.length === 0 ? 'Nenhum pedido pago sem nota nesta lista' : `Marcar os ${elegiveisVisiveis.length} pedidos pagos sem nota`} onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" className="w-3.5 h-3.5 accent-amber-500 cursor-pointer disabled:cursor-not-allowed" checked={todosMarcados} disabled={elegiveisVisiveis.length === 0} onChange={toggleTodos} />
+        </label>
         {COLUNAS.map(({ label, key }) => (
           <button
             key={key}
@@ -321,8 +358,17 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
               {/* Desktop row */}
               <div
                 className="hidden lg:grid gap-x-2 px-4 py-3.5 items-center"
-                style={{ gridTemplateColumns: '2fr 1.1fr 1.4fr 1.3fr 1.5fr 1.7fr 1.1fr 0.8fr 1.3fr 1fr 1.2fr' }}
+                style={{ gridTemplateColumns: '28px 2fr 1.1fr 1.4fr 1.3fr 1.5fr 1.7fr 1.1fr 0.8fr 1.3fr 1fr 1.2fr' }}
               >
+                {/* Seleção (só pedidos pagos sem nota) */}
+                <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                  {elegivel(pedido) ? (
+                    <input type="checkbox" className="w-3.5 h-3.5 accent-amber-500 cursor-pointer" checked={selecionados.has(pedido.id)} onChange={() => toggleSel(pedido.id)} />
+                  ) : (
+                    <span className="w-3.5 h-3.5" />
+                  )}
+                </div>
+
                 {/* # */}
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
@@ -481,6 +527,9 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                   <span>{itensProntosReal}/{itensTotalReal} itens</span>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
+                  {elegivel(pedido) && (
+                    <input type="checkbox" className="w-4 h-4 accent-amber-500 cursor-pointer" checked={selecionados.has(pedido.id)} onChange={() => toggleSel(pedido.id)} onClick={(e) => e.stopPropagation()} />
+                  )}
                   <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">NF</span>
                   <NotaFiscalCell pedido={pedido} fiscal={fiscal} onToast={nfToast} compact />
                 </div>
@@ -489,6 +538,36 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
           );
         })}
       </div>
+
+      {/* Barra de ação: emissão em lote */}
+      {(selecionadosValidos.length > 0 || lote) && (
+        <div className="sticky bottom-3 mx-3 mb-3 z-20">
+          <div className="flex flex-wrap items-center gap-3 bg-zinc-900 text-white rounded-xl px-4 py-3 shadow-lg">
+            <i className="ri-file-shield-2-line text-amber-400 text-base" />
+            {lote ? (
+              <>
+                <span className="text-sm font-semibold">Emitindo {lote.feito}/{lote.total}…</span>
+                <div className="flex-1 min-w-[120px] h-1.5 bg-white/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-amber-400 transition-all" style={{ width: `${Math.round((lote.feito / lote.total) * 100)}%` }} />
+                </div>
+                <span className="text-xs text-zinc-300">{lote.ok} autorizada{lote.ok === 1 ? '' : 's'}</span>
+              </>
+            ) : (
+              <>
+                <span className="text-sm font-semibold">{selecionadosValidos.length} pedido{selecionadosValidos.length === 1 ? '' : 's'} selecionado{selecionadosValidos.length === 1 ? '' : 's'}</span>
+                <span className="text-xs text-zinc-400 hidden sm:inline">
+                  {selecionadosValidos.flatMap(idsDe).length} nota{selecionadosValidos.flatMap(idsDe).length === 1 ? '' : 's'} a emitir
+                </span>
+                <div className="flex-1" />
+                <button onClick={() => setSelecionados(new Set())} className="text-xs font-semibold text-zinc-300 hover:text-white px-2 py-1.5 cursor-pointer">Limpar</button>
+                <button onClick={emitirLote} className="inline-flex items-center gap-1.5 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-zinc-900 px-3 py-2 rounded-lg cursor-pointer whitespace-nowrap">
+                  <i className="ri-file-add-line" />Emitir NF dos selecionados
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

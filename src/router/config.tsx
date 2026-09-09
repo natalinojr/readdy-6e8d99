@@ -63,6 +63,9 @@ const routes: RouteObject[] = [
   { path: '/privacidade', element: <PrivacidadePage /> },
   { path: '/mesa/:mesaId', element: <MesaClientePage /> },
   { path: '/voucher/:token', element: <VoucherLinkPage /> },
+  // Relatório de Tráfego Pago somente leitura, sem login. A própria TrafegoPagoPage
+  // detecta o token no pathname e entra em modo público.
+  { path: '/relatorio/:token', element: <TrafegoPagoPage /> },
   { path: '/mesa-qr/:qr_token/:session_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
   { path: '/mesa-qr/:qr_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },
   { path: '/pedido/:qr_token/:session_token', element: <PullToRefresh><MobileKeyboardAssist /><MesaQRPage /></PullToRefresh> },

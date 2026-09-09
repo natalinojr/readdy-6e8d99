@@ -5,7 +5,7 @@ import {
   Megaphone, RefreshCw, Link2Off, AlertTriangle, Loader2,
   TrendingUp, Eye, MousePointerClick, Target, Wallet,
   Users, Percent, DollarSign, Gauge, BarChart3, Layers,
-  ShoppingCart, Banknote, Store,
+  ShoppingCart, Banknote, Store, Share2, Copy, Check, Trash2, X, Lock,
 } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Area, Line, BarChart, Bar,
@@ -29,6 +29,10 @@ interface MetricRow {
   cpc: number;
   ctr: number;
   cpm: number;
+  // CTR/CPC sobre cliques no LINK — critério do Gerenciador de Anúncios e do Reportei.
+  // `ctr`/`cpc` acima são sobre TODOS os cliques (curtida, comentário, clique no perfil).
+  link_ctr?: number;
+  cost_per_link_click?: number;
   results: ActionVal[];
   result?: ResultVal;
   purchases?: number;
@@ -76,7 +80,34 @@ interface ErposOrders {
   by_source: Record<string, { count: number; revenue: number }>;
   since: string;
   until: string;
+  total_count?: number;
+  total_revenue?: number;
+  hourly?: number[];
 }
+
+interface SlimRow {
+  spend: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  link_clicks: number;
+  purchases: number;
+  purchase_value: number;
+  roas: number;
+  cost_per_purchase: number;
+  cpc: number;
+  ctr: number;
+  link_ctr?: number;
+  cost_per_link_click?: number;
+  frequency?: number;
+  cpm?: number;
+  landing_page_views?: number;
+  add_to_cart?: number;
+  initiate_checkout?: number;
+}
+interface PlacementRow extends SlimRow { platform: string; position: string }
+interface AgeGenderRow extends SlimRow { age: string; gender: string }
+interface HourRow extends SlimRow { hour: number }
 
 interface Connection {
   ad_account_id: string | null;
@@ -92,11 +123,21 @@ interface InsightsResponse {
   no_account?: boolean;
   ad_account_name?: string;
   count?: number;
+  // Totais no nível da conta: única fonte correta de alcance/frequência (deduplicados por
+  // consulta — somar campanhas infla o alcance e subestima a frequência).
+  totals?: MetricRow | null;
   campaigns?: CampaignRow[];
   ads?: AdRow[];
   daily?: DailyRow[];
   erpos_orders?: ErposOrders | null;
   range?: { since: string; until: string } | null;
+  previous?: (SlimRow & { since: string; until: string }) | null;
+  breakdowns?: { placement: PlacementRow[]; age_gender: AgeGenderRow[]; hourly: HourRow[] } | null;
+  // Só no link público: cabeçalho de leitura + motivo quando o link não vale mais.
+  share?: { store_name: string | null; label: string | null; created_by_name: string | null; expires_at: string | null } | null;
+  share_invalid?: boolean;
+  share_revoked?: boolean;
+  share_expired?: boolean;
   error?: unknown;
 }
 
@@ -109,7 +150,54 @@ const PERIODOS = [
   { value: 'last_30d', label: 'Últimos 30 dias' },
   { value: 'this_month', label: 'Este mês' },
   { value: 'last_month', label: 'Mês passado' },
+  { value: 'custom', label: 'Personalizado…' },
 ];
+
+// Data de hoje (ou deslocada) no fuso da loja, formato YYYY-MM-DD — pros inputs de data.
+const brDate = (offsetDays = 0): string => {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+};
+const MAX_DIAS_PERSONALIZADO = 366;
+
+// ─── Link público (somente leitura) ──────────────────────────────────────────
+// A mesma tela atende /trafego-pago (com login) e /relatorio/<token> (sem login).
+// Lê o token do pathname, e não dos params do router, pelo mesmo motivo do
+// delivery: com basePath os params podem não resolver.
+function getShareTokenFromUrl(): string | null {
+  try {
+    const basePath = (typeof __BASE_PATH__ !== 'undefined' ? __BASE_PATH__ : '').replace(/\/$/, '');
+    const path = window.location.pathname;
+    const clean = basePath ? path.replace(basePath, '') : path;
+    const m = clean.match(/\/relatorio\/([a-f0-9]{32,64})\/?$/i);
+    return m ? m[1].toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+interface ShareLink {
+  id: string;
+  token: string;
+  label: string | null;
+  date_preset: string | null;
+  range_since: string | null;
+  range_until: string | null;
+  include_erpos_orders: boolean;
+  created_at: string;
+  created_by_name: string | null;
+  expires_at: string | null;
+  view_count: number;
+  last_viewed_at: string | null;
+}
+
+const periodoDoLink = (s: Pick<ShareLink, 'date_preset' | 'range_since' | 'range_until'>): string =>
+  (s.range_since && s.range_until
+    ? `${s.range_since.split('-').reverse().join('/')} a ${s.range_until.split('-').reverse().join('/')}`
+    : (PERIODOS.find((p) => p.value === s.date_preset)?.label ?? s.date_preset ?? '—'));
+
+const shareUrl = (token: string): string => `${window.location.origin}/relatorio/${token}`;
 
 const OAUTH_STATE_KEY = 'meta_oauth_state';
 
@@ -174,6 +262,22 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   PENDING_BILLING_INFO: { label: 'Cobrança pendente', cls: 'bg-red-50 text-red-600 border-red-200' },
 };
 
+const PLATFORM_LABELS: Record<string, string> = {
+  facebook: 'Facebook', instagram: 'Instagram', audience_network: 'Audience Network',
+  messenger: 'Messenger', threads: 'Threads', unknown: 'Outro',
+};
+const POSITION_LABELS: Record<string, string> = {
+  feed: 'Feed', instagram_stories: 'Stories', facebook_stories: 'Stories', messenger_stories: 'Stories',
+  instagram_reels: 'Reels', facebook_reels: 'Reels', facebook_reels_overlay: 'Reels (overlay)', ads_on_reels: 'Anúncio em Reels',
+  instagram_explore: 'Explorar', instagram_explore_grid_home: 'Explorar', instagram_profile_feed: 'Perfil',
+  instagram_search: 'Busca', search: 'Busca', video_feeds: 'Feed de vídeos', marketplace: 'Marketplace',
+  right_hand_column: 'Coluna direita', instream_video: 'Vídeo in-stream', messenger_inbox: 'Inbox',
+  an_classic: 'Banner', rewarded_video: 'Vídeo premiado', unknown: 'Outro',
+};
+const GENDER_LABELS: Record<string, string> = { male: 'Homens', female: 'Mulheres', unknown: 'Não inf.' };
+const placementLabel = (p: PlacementRow) =>
+  `${PLATFORM_LABELS[p.platform] ?? p.platform} · ${POSITION_LABELS[p.position] ?? p.position.replace(/_/g, ' ')}`;
+
 // ─── Helpers de formatação ────────────────────────────────────────────────────
 const brl = (n: number) => Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const num = (n: number) => Math.round(Number(n || 0)).toLocaleString('pt-BR');
@@ -184,6 +288,17 @@ const n0 = (v: number | undefined | null) => Number(v || 0);
 // otimização). Fallback pra função antiga, que não manda `result`: cliques no link.
 const resultOf = (r: { result?: ResultVal; results: ActionVal[] }): ResultVal =>
   r.result ?? { type: 'link_click', value: (r.results || []).find((x) => x.type === 'link_click')?.value ?? 0 };
+
+// CTR e CPC sobre cliques no LINK (o que o Gerenciador de Anúncios e o Reportei mostram).
+// Usa o valor que a Meta já calcula; sem ele (função antiga), calcula pelos cliques no link.
+type CliqueLike = {
+  link_ctr?: number; cost_per_link_click?: number;
+  impressions: number; link_clicks?: number; clicks?: number; spend: number;
+};
+const linkCtr = (r: CliqueLike): number =>
+  r.link_ctr ?? (r.impressions ? (n0(r.link_clicks) / r.impressions) * 100 : 0);
+const linkCpc = (r: CliqueLike): number =>
+  r.cost_per_link_click ?? (n0(r.link_clicks) ? r.spend / n0(r.link_clicks) : 0);
 const shortDate = (d: string) => {
   const p = (d || '').split('-');
   return p.length === 3 ? `${p[2]}/${p[1]}` : d;
@@ -201,13 +316,23 @@ export default function TrafegoPagoPage() {
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
 
-  const [loadingStatus, setLoadingStatus] = useState(true);
+  // Modo público: /relatorio/<token>. Sem login, sem nenhuma ação de escrita.
+  const shareToken = useMemo(() => getShareTokenFromUrl(), []);
+  const publico = !!shareToken;
+  const [shareOpen, setShareOpen] = useState(false);
+
+  const [loadingStatus, setLoadingStatus] = useState(!shareToken);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [exchanging, setExchanging] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [datePreset, setDatePreset] = useState('last_30d');
+  // Período personalizado: os inputs editam since/until; só busca quando o usuário clica em Aplicar.
+  const [customSince, setCustomSince] = useState(brDate(-6));
+  const [customUntil, setCustomUntil] = useState(brDate(0));
+  const [customApplied, setCustomApplied] = useState<{ since: string; until: string } | null>(null);
+  const [customErro, setCustomErro] = useState<string | null>(null);
   const [insights, setInsights] = useState<InsightsResponse | null>(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
@@ -215,7 +340,7 @@ export default function TrafegoPagoPage() {
 
   // ── Status da conexão ──
   const loadStatus = useCallback(async () => {
-    if (!tenantId) return;
+    if (!tenantId || publico) return;
     setLoadingStatus(true);
     const { data } = await invokeWithAuth<{ success: boolean; connection: Connection | null }>(
       'meta-connect',
@@ -252,7 +377,7 @@ export default function TrafegoPagoPage() {
 
   // ── Ao montar: trata retorno do OAuth (fallback redirect) ou carrega status ──
   useEffect(() => {
-    if (!tenantId) return;
+    if (publico || !tenantId) return;
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const returnedState = params.get('state');
@@ -282,11 +407,42 @@ export default function TrafegoPagoPage() {
 
   // ── Carrega as campanhas quando há conta + muda período ──
   const loadInsights = useCallback(async () => {
+    // Modo público: chamada sem sessão, mandando só o token. A loja e o período
+    // saem da linha do banco — nada do que for enviado daqui os define.
+    if (publico) {
+      setInsightsLoading(true);
+      setInsightsError(null);
+      try {
+        const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
+        const res = await fetch(`${base}/functions/v1/meta-ads-insights`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ share_token: shareToken }),
+        });
+        const data = (await res.json()) as InsightsResponse;
+        if (!data?.ok) {
+          setInsightsError(typeof data?.error === 'string' ? data.error : 'Não foi possível abrir este relatório.');
+          setInsights(data ?? null);
+        } else {
+          setInsights(data);
+        }
+      } catch {
+        setInsightsError('Erro de conexão. Recarregue a página.');
+      }
+      setInsightsLoading(false);
+      return;
+    }
+
     if (!tenantId || !connection?.ad_account_id) return;
+    if (datePreset === 'custom' && !customApplied) return; // espera o "Aplicar"
     setInsightsLoading(true);
     setInsightsError(null);
     const { data, error: err } = await invokeWithAuth<InsightsResponse>('meta-ads-insights', {
-      body: { tenant_id: tenantId, date_preset: datePreset },
+      body: {
+        tenant_id: tenantId,
+        date_preset: datePreset,
+        ...(datePreset === 'custom' && customApplied ? { time_range: customApplied } : {}),
+      },
     });
     if (err) {
       setInsightsError(err.message);
@@ -296,12 +452,24 @@ export default function TrafegoPagoPage() {
       setInsights(data ?? null);
     }
     setInsightsLoading(false);
-  }, [tenantId, connection?.ad_account_id, datePreset]);
+  }, [tenantId, connection?.ad_account_id, datePreset, customApplied, publico, shareToken]);
 
   useEffect(() => {
-    if (connection?.ad_account_id) loadInsights();
+    if (publico || connection?.ad_account_id) loadInsights();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection?.ad_account_id, datePreset]);
+  }, [publico, connection?.ad_account_id, datePreset, customApplied]);
+
+  // Valida e aplica o período personalizado (de ≤ até, até ≤ hoje, no máximo 366 dias).
+  const aplicarPersonalizado = useCallback(() => {
+    const hoje = brDate(0);
+    if (!customSince || !customUntil) { setCustomErro('Informe as duas datas.'); return; }
+    if (customSince > customUntil) { setCustomErro('A data inicial não pode ser depois da final.'); return; }
+    if (customUntil > hoje) { setCustomErro('A data final não pode ser no futuro.'); return; }
+    const dias = Math.round((Date.parse(`${customUntil}T00:00:00Z`) - Date.parse(`${customSince}T00:00:00Z`)) / 86400000) + 1;
+    if (dias > MAX_DIAS_PERSONALIZADO) { setCustomErro(`Período máximo de ${MAX_DIAS_PERSONALIZADO} dias.`); return; }
+    setCustomErro(null);
+    setCustomApplied({ since: customSince, until: customUntil });
+  }, [customSince, customUntil]);
 
   // ── Inicia o login do Facebook (popup) ──
   const handleConnect = useCallback(async () => {
@@ -404,29 +572,38 @@ export default function TrafegoPagoPage() {
 
   const totals = useMemo(() => {
     const sum = (f: (c: CampaignRow) => number) => campaigns.reduce((s, c) => s + f(c), 0);
-    const spend = sum((c) => c.spend);
-    const impressions = sum((c) => c.impressions);
-    const reach = sum((c) => c.reach);
-    const clicks = sum((c) => c.clicks || 0);
-    const linkClicks = sum((c) => c.link_clicks || 0);
+    // Preferimos SEMPRE os totais do nível da conta. Alcance é deduplicado por consulta: somar o
+    // alcance das campanhas conta a mesma pessoa mais de uma vez, infla o total e subestima a
+    // frequência. Somar só é correto para métricas aditivas (gasto, impressões, cliques, compras).
+    const a = insights?.totals ?? null;
+    const spend = a ? a.spend : sum((c) => c.spend);
+    const impressions = a ? a.impressions : sum((c) => c.impressions);
+    const reach = a ? a.reach : sum((c) => c.reach);
+    const clicks = a ? a.clicks : sum((c) => c.clicks || 0);
+    const linkClicks = a ? a.link_clicks : sum((c) => c.link_clicks || 0);
+    const purchases = a ? n0(a.purchases) : sum((c) => n0(c.purchases));
+    const purchaseValue = a ? n0(a.purchase_value) : sum((c) => n0(c.purchase_value));
+    // "Resultado" depende do objetivo de CADA campanha — só faz sentido somando as campanhas.
     const results = sum((c) => resultOf(c).value);
-    const purchases = sum((c) => n0(c.purchases));
-    const purchaseValue = sum((c) => n0(c.purchase_value));
     return {
       spend, impressions, reach, clicks, linkClicks, results, purchases, purchaseValue,
-      landing: sum((c) => n0(c.landing_page_views)),
-      addToCart: sum((c) => n0(c.add_to_cart)),
-      checkout: sum((c) => n0(c.initiate_checkout)),
+      reachExato: !!a,
+      landing: a ? n0(a.landing_page_views) : sum((c) => n0(c.landing_page_views)),
+      addToCart: a ? n0(a.add_to_cart) : sum((c) => n0(c.add_to_cart)),
+      checkout: a ? n0(a.initiate_checkout) : sum((c) => n0(c.initiate_checkout)),
       roas: spend ? purchaseValue / spend : 0,
       cpp: purchases ? spend / purchases : 0,
       ticket: purchases ? purchaseValue / purchases : 0,
-      ctr: impressions ? (clicks / impressions) * 100 : 0,
-      cpc: clicks ? spend / clicks : 0,
+      // CTR/CPC sobre cliques no LINK. Os de todos os cliques ficam ao lado, pra referência.
+      ctr: a ? linkCtr(a) : (impressions ? (linkClicks / impressions) * 100 : 0),
+      cpc: a ? linkCpc(a) : (linkClicks ? spend / linkClicks : 0),
+      ctrTotal: impressions ? (clicks / impressions) * 100 : 0,
+      cpcTotal: clicks ? spend / clicks : 0,
       cpm: impressions ? (spend / impressions) * 1000 : 0,
-      freq: reach ? impressions / reach : 0,
+      freq: a?.frequency ? a.frequency : (reach ? impressions / reach : 0),
       cpr: results ? spend / results : 0,
     };
-  }, [campaigns]);
+  }, [campaigns, insights]);
 
   // Mix de tipos de resultado (ex.: "3 Compras · 120 Cliques no link") pro subtítulo do KPI.
   const resultMix = useMemo(() => {
@@ -491,6 +668,89 @@ export default function TrafegoPagoPage() {
 
   const temCompras = totals.purchases > 0 || daily.some((d) => n0(d.purchases) > 0);
 
+  // ── Período anterior, quebras, hora do dia, alertas ──
+  const previous = insights?.previous ?? null;
+  const range = insights?.range ?? null;
+  const diasPeriodo = range
+    ? Math.round((Date.parse(`${range.until}T00:00:00Z`) - Date.parse(`${range.since}T00:00:00Z`)) / 86400000) + 1
+    : null;
+
+  const placementRows = useMemo(
+    () => [...(insights?.breakdowns?.placement ?? [])].filter((p) => p.spend > 0).sort((a, b) => b.spend - a.spend).slice(0, 8),
+    [insights],
+  );
+  const ageRows = useMemo(
+    () => [...(insights?.breakdowns?.age_gender ?? [])].filter((p) => p.spend > 0).sort((a, b) => b.spend - a.spend).slice(0, 10),
+    [insights],
+  );
+
+  // Compras por hora (anúncios) × pedidos do delivery por hora.
+  // As duas séries têm ordens de grandeza muito diferentes (dezenas de compras contra centenas
+  // ou milhares de pedidos/cliques), então cada uma ganha o SEU eixo — num eixo só, a série
+  // pequena vira uma linha rente ao chão e some.
+  const hourlyData = useMemo(() => {
+    const adsHora = insights?.breakdowns?.hourly ?? [];
+    const pedidos = erposOrders?.hourly ?? null;
+    if (adsHora.length === 0 && !pedidos) return null;
+
+    const full = Array.from({ length: 24 }, (_, h) => {
+      const r = adsHora.find((x) => x.hour === h);
+      return {
+        hour: h,
+        spend: r?.spend ?? 0,
+        purchases: r?.purchases ?? 0,
+        link_clicks: r?.link_clicks ?? 0,
+        landing: n0(r?.landing_page_views),
+        carrinho: n0(r?.add_to_cart),
+        checkout: n0(r?.initiate_checkout),
+        pedidos: pedidos?.[h] ?? 0,
+      };
+    });
+
+    // Corta as horas sem nada nas pontas (madrugada) pra sobrar largura onde a loja funciona.
+    const ativo = (d: typeof full[number]) =>
+      d.purchases > 0 || d.link_clicks > 0 || d.landing > 0
+      || d.carrinho > 0 || d.checkout > 0 || d.pedidos > 0;
+    const first = full.findIndex(ativo);
+    if (first === -1) return null;
+    let last = 23;
+    while (last > first && !ativo(full[last])) last -= 1;
+
+    // Sem nenhuma compra atribuída no período, a barra vira cliques no link — senão o gráfico
+    // ficaria vazio justamente quando o dado interessa.
+    const temCompras = full.some((d) => d.purchases > 0);
+    const temVisitas = full.some((d) => d.landing > 0);
+    const temCarrinho = full.some((d) => d.carrinho > 0);
+    const temCheckout = full.some((d) => d.checkout > 0);
+    return { linhas: full.slice(first, last + 1), temCompras, temVisitas, temCarrinho, temCheckout };
+  }, [insights, erposOrders]);
+
+  const alertas = useMemo(() => {
+    const out: { nivel: 'alto' | 'medio'; texto: string }[] = [];
+    const dias = diasPeriodo ? ` em ${diasPeriodo} dia${diasPeriodo > 1 ? 's' : ''}` : '';
+    if (totals.spend > 0 && totals.purchases === 0 && campaigns.some((c) => resultOf(c).type === 'purchase')) {
+      out.push({
+        nivel: 'alto',
+        texto: `Campanhas de venda gastaram ${brl(totals.spend)}${dias} sem nenhuma compra atribuída. Confira se o pixel está disparando Purchase (Gerenciador de Eventos → Eventos de teste).`,
+      });
+    }
+    (ads ?? []).filter((a) => a.status === 'ACTIVE' && a.spend > 0).forEach((a) => {
+      const venda = resultOf(a).type === 'purchase';
+      if (venda && n0(a.purchases) === 0 && a.spend >= 20) {
+        out.push({ nivel: 'alto', texto: `"${a.ad}" gastou ${brl(a.spend)}${dias} sem nenhuma compra.` });
+      } else if (venda && n0(a.roas) < 1 && a.spend >= 50) {
+        out.push({ nivel: 'alto', texto: `"${a.ad}": ROAS ${dec(n0(a.roas), 2)}x — vendeu ${brl(n0(a.purchase_value))} com ${brl(a.spend)} investidos.` });
+      }
+      if (a.frequency >= 3.5) {
+        out.push({ nivel: 'medio', texto: `"${a.ad}": frequência ${dec(a.frequency, 1)}x — o mesmo público está vendo repetido; hora de trocar o criativo.` });
+      }
+      if (a.impressions >= 2000 && linkCtr(a) < 0.5) {
+        out.push({ nivel: 'medio', texto: `"${a.ad}": CTR no link ${pct(linkCtr(a))} em ${num(a.impressions)} impressões — pouca gente clica; testar outra imagem/texto.` });
+      }
+    });
+    return out.slice(0, 8);
+  }, [ads, totals, campaigns, diasPeriodo]);
+
   const temGrafico = daily.length > 0;
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -503,12 +763,32 @@ export default function TrafegoPagoPage() {
             <Megaphone size={20} className="text-amber-600" />
           </div>
           <div>
-            <h1 className="text-xl font-black text-zinc-900 leading-tight">Tráfego Pago</h1>
-            <p className="text-sm text-zinc-400">Acompanhe suas campanhas de anúncios da Meta</p>
+            <h1 className="text-xl font-black text-zinc-900 leading-tight">
+              {publico ? (insights?.share?.store_name ?? 'Relatório de anúncios') : 'Tráfego Pago'}
+            </h1>
+            <p className="text-sm text-zinc-400">
+              {publico
+                ? (insights?.share?.label || 'Desempenho das campanhas da Meta')
+                : 'Acompanhe suas campanhas de anúncios da Meta'}
+            </p>
           </div>
         </div>
 
-        {connection?.ad_account_id && (
+        {publico && insights?.ok && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-100 border border-zinc-200 text-zinc-600 font-semibold text-sm">
+              <Lock size={13} />
+              Somente leitura
+            </span>
+            {range && (
+              <span className="text-sm font-semibold text-zinc-500">
+                {shortDate(range.since)} a {shortDate(range.until)}
+              </span>
+            )}
+          </div>
+        )}
+
+        {!publico && connection?.ad_account_id && (
           <div className="flex items-center gap-2 flex-wrap">
             <select
               value={datePreset}
@@ -519,6 +799,36 @@ export default function TrafegoPagoPage() {
                 <option key={p.value} value={p.value}>{p.label}</option>
               ))}
             </select>
+            {datePreset === 'custom' && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <input
+                  type="date"
+                  value={customSince}
+                  max={customUntil || brDate(0)}
+                  onChange={(e) => setCustomSince(e.target.value)}
+                  className="text-sm font-semibold border border-zinc-200 rounded-xl px-2.5 py-1.5 bg-white text-zinc-700 focus:outline-none focus:border-amber-400"
+                  aria-label="Data inicial"
+                />
+                <span className="text-xs text-zinc-400">até</span>
+                <input
+                  type="date"
+                  value={customUntil}
+                  min={customSince}
+                  max={brDate(0)}
+                  onChange={(e) => setCustomUntil(e.target.value)}
+                  className="text-sm font-semibold border border-zinc-200 rounded-xl px-2.5 py-1.5 bg-white text-zinc-700 focus:outline-none focus:border-amber-400"
+                  aria-label="Data final"
+                />
+                <button
+                  onClick={aplicarPersonalizado}
+                  disabled={insightsLoading}
+                  className="px-3 py-2 text-sm font-bold rounded-xl bg-amber-500 text-white hover:bg-amber-600 cursor-pointer disabled:opacity-50"
+                >
+                  Aplicar
+                </button>
+                {customErro && <span className="text-xs text-red-500 font-semibold">{customErro}</span>}
+              </div>
+            )}
             <button
               onClick={loadInsights}
               disabled={insightsLoading}
@@ -526,6 +836,14 @@ export default function TrafegoPagoPage() {
               title="Atualizar"
             >
               <RefreshCw size={14} className={insightsLoading ? 'animate-spin' : ''} />
+            </button>
+            <button
+              onClick={() => setShareOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-xl bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 cursor-pointer"
+              title="Gerar link somente leitura para enviar a alguém"
+            >
+              <Share2 size={14} />
+              <span className="hidden sm:inline">Compartilhar</span>
             </button>
             <button
               onClick={handleDisconnect}
@@ -546,16 +864,34 @@ export default function TrafegoPagoPage() {
         </div>
       )}
 
-      {/* Carregando status / trocando token */}
-      {(loadingStatus || exchanging) && (
+      {/* Carregando status / trocando token / abrindo o link público */}
+      {(loadingStatus || exchanging || (publico && insightsLoading && !insights)) && (
         <div className="flex flex-col items-center justify-center py-24 text-zinc-400">
           <Loader2 size={28} className="animate-spin mb-3 text-amber-500" />
           <p className="text-sm font-semibold">{exchanging ? 'Conectando à Meta...' : 'Carregando...'}</p>
         </div>
       )}
 
+      {/* Link público inválido, revogado ou expirado */}
+      {publico && !insightsLoading && insights && !insights.ok && (
+        <div className="flex flex-col items-center justify-center py-16 px-4 text-center bg-white border border-zinc-200 rounded-2xl">
+          <div className="w-16 h-16 flex items-center justify-center rounded-2xl bg-zinc-100 border border-zinc-200 mb-5">
+            <Lock size={28} className="text-zinc-400" />
+          </div>
+          <h2 className="text-lg font-black text-zinc-800 mb-1.5">
+            {insights.share_revoked ? 'Link revogado'
+              : insights.share_expired ? 'Link expirado'
+                : 'Link inválido'}
+          </h2>
+          <p className="text-sm text-zinc-500 max-w-md leading-relaxed">
+            {typeof insights.error === 'string' ? insights.error : 'Este link não está mais disponível.'}
+            {' '}Peça um link novo a quem enviou.
+          </p>
+        </div>
+      )}
+
       {/* Não conectado → botão Conectar */}
-      {!loadingStatus && !exchanging && !connection?.ad_account_id && (
+      {!publico && !loadingStatus && !exchanging && !connection?.ad_account_id && (
         <div className="flex flex-col items-center justify-center py-16 px-4 text-center bg-white border border-zinc-200 rounded-2xl">
           <div className="w-16 h-16 flex items-center justify-center rounded-2xl bg-amber-50 border border-amber-100 mb-5">
             <Megaphone size={30} className="text-amber-500" />
@@ -589,32 +925,36 @@ export default function TrafegoPagoPage() {
         </div>
       )}
 
-      {/* Conectado → painel */}
-      {!loadingStatus && !exchanging && connection?.ad_account_id && (
+      {/* Conectado (ou link público válido) → painel */}
+      {!loadingStatus && !exchanging && (publico ? !!insights?.ok : !!connection?.ad_account_id) && (
         <>
-          {/* Conta conectada + seletor */}
-          <div className="flex items-center gap-2 mb-5 flex-wrap text-sm">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              Conectado
-            </span>
-            {connection.available_accounts.length > 1 ? (
-              <select
-                value={connection.ad_account_id}
-                onChange={(e) => handleSelectAccount(e.target.value)}
-                className="text-sm font-semibold border border-zinc-200 rounded-xl px-3 py-1.5 bg-white text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer"
-              >
-                {connection.available_accounts.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-            ) : (
-              <span className="text-zinc-500 font-medium">{connection.ad_account_name}</span>
-            )}
-            {connection.connected_by_name && (
-              <span className="text-zinc-400">· por {connection.connected_by_name}</span>
-            )}
-          </div>
+          {/* Conta conectada + seletor. Precisa ser renderização condicional, não classe
+              CSS: no modo público `connection` é null e o JSX abaixo seria avaliado do
+              mesmo jeito, quebrando a tela. */}
+          {!publico && connection && (
+            <div className="flex items-center gap-2 mb-5 flex-wrap text-sm">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                Conectado
+              </span>
+              {connection.available_accounts.length > 1 ? (
+                <select
+                  value={connection.ad_account_id ?? ''}
+                  onChange={(e) => handleSelectAccount(e.target.value)}
+                  className="text-sm font-semibold border border-zinc-200 rounded-xl px-3 py-1.5 bg-white text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer"
+                >
+                  {connection.available_accounts.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-zinc-500 font-medium">{connection.ad_account_name}</span>
+              )}
+              {connection.connected_by_name && (
+                <span className="text-zinc-400">· por {connection.connected_by_name}</span>
+              )}
+            </div>
+          )}
 
           {insightsError && (
             <div className="mb-5 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-600">
@@ -629,17 +969,27 @@ export default function TrafegoPagoPage() {
             </div>
           ) : (
             <div className={insightsLoading ? 'opacity-60 pointer-events-none transition-opacity' : 'transition-opacity'}>
+              {previous && (
+                <p className="text-[11px] text-zinc-400 mb-2">
+                  Setas comparam com o período anterior ({shortDate(previous.since)} a {shortDate(previous.until)}).
+                </p>
+              )}
+
               {/* KPIs de venda */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
                 <KpiCard icon={Wallet} cor="amber" label="Investimento" valor={brl(totals.spend)}
-                  sub={`CPM ${brl(totals.cpm)} · CPC ${brl(totals.cpc)}`} />
+                  sub={`CPM ${brl(totals.cpm)} · CPC ${brl(totals.cpc)}`}
+                  extra={<Delta atual={totals.spend} anterior={previous?.spend} neutro fmt={brl} />} />
                 <KpiCard icon={ShoppingCart} cor="emerald" label="Compras (Meta)" valor={num(totals.purchases)}
-                  sub={totals.cpp ? `Custo por compra ${brl(totals.cpp)}` : 'Nenhuma compra atribuída'} />
+                  sub={totals.cpp ? `Custo por compra ${brl(totals.cpp)}` : 'Nenhuma compra atribuída'}
+                  extra={<Delta atual={totals.purchases} anterior={previous?.purchases} fmt={num} />} />
                 <KpiCard icon={Banknote} cor="teal" label="Valor em vendas" valor={brl(totals.purchaseValue)}
-                  sub={totals.ticket ? `Ticket médio ${brl(totals.ticket)}` : '—'} />
+                  sub={totals.ticket ? `Ticket médio ${brl(totals.ticket)}` : '—'}
+                  extra={<Delta atual={totals.purchaseValue} anterior={previous?.purchase_value} fmt={brl} />} />
                 <KpiCard icon={TrendingUp} cor={totals.roas >= 1 ? 'emerald' : 'red'} label="ROAS"
                   valor={totals.spend ? `${dec(totals.roas, 2)}x` : '—'}
-                  sub={totals.spend ? `R$ ${dec(totals.roas, 2)} vendidos por R$ 1 investido` : '—'} />
+                  sub={totals.spend ? `R$ ${dec(totals.roas, 2)} vendidos por R$ 1 investido` : '—'}
+                  extra={<Delta atual={totals.roas} anterior={previous?.roas} fmt={(n) => `${dec(n, 2)}x`} />} />
               </div>
 
               {/* KPIs de alcance / tráfego */}
@@ -649,9 +999,11 @@ export default function TrafegoPagoPage() {
                     ? resultMix.slice(0, 2).map((r) => `${num(r.value)} ${actionLabel(r.type)}`).join(' · ')
                     : (totals.cpr ? `Custo/result. ${brl(totals.cpr)}` : '—')} />
                 <KpiCard icon={Users} cor="sky" label="Alcance" valor={num(totals.reach)}
-                  sub={`Frequência ${dec(totals.freq, 2)}x`} />
+                  sub={`Frequência ${dec(totals.freq, 2)}x${totals.reachExato ? '' : ' (aprox.)'}`}
+                  extra={<Delta atual={totals.reach} anterior={previous?.reach} fmt={num} />} />
                 <KpiCard icon={MousePointerClick} cor="violet" label="Cliques no link" valor={num(totals.linkClicks || totals.clicks)}
-                  sub={`CTR ${pct(totals.ctr)}`} />
+                  sub={`CTR no link ${pct(totals.ctr)}`}
+                  extra={<Delta atual={totals.linkClicks || totals.clicks} anterior={previous?.link_clicks} fmt={num} />} />
                 <KpiCard icon={Store} cor="amber" label="Pedidos no ERPOS via anúncio"
                   valor={erposOrders ? num(erposOrders.count) : '—'}
                   sub={erposOrders
@@ -663,11 +1015,36 @@ export default function TrafegoPagoPage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-6">
                 <Pill icon={Eye} label="Impressões" valor={num(totals.impressions)} />
                 <Pill icon={MousePointerClick} label="Cliques totais" valor={num(totals.clicks)} />
-                <Pill icon={DollarSign} label="CPC" valor={brl(totals.cpc)} />
+                <Pill icon={DollarSign} label="CPC no link" valor={brl(totals.cpc)} />
                 <Pill icon={DollarSign} label="CPM" valor={brl(totals.cpm)} />
-                <Pill icon={Percent} label="CTR" valor={pct(totals.ctr)} />
+                <Pill icon={Percent} label="CTR no link" valor={pct(totals.ctr)} />
                 <Pill icon={Gauge} label="Frequência" valor={`${dec(totals.freq, 2)}x`} />
               </div>
+
+              <p className="text-[11px] text-zinc-400 -mt-4 mb-6 leading-relaxed">
+                CTR e CPC são sobre <strong className="font-semibold text-zinc-500">cliques no link</strong>, o mesmo
+                critério do Gerenciador de Anúncios (sobre todos os cliques dariam {pct(totals.ctrTotal)} e {brl(totals.cpcTotal)}).
+                Alcance e frequência vêm do total da conta, sem somar campanhas, para não contar a mesma pessoa duas vezes.
+              </p>
+
+              {/* Alertas (calculados dos anúncios ativos do período) */}
+              {alertas.length > 0 && (
+                <div className="mb-4 bg-white border border-zinc-200 rounded-2xl p-4">
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <AlertTriangle size={15} className="text-amber-500" />
+                    <p className="text-sm font-bold text-zinc-800">Alertas</p>
+                    <span className="text-xs text-zinc-400">({alertas.length})</span>
+                  </div>
+                  <ul className="flex flex-col gap-1.5">
+                    {alertas.map((a, i) => (
+                      <li key={i} className={`flex items-start gap-2 text-xs rounded-lg px-3 py-2 border ${a.nivel === 'alto' ? 'bg-red-50 border-red-100 text-red-700' : 'bg-amber-50 border-amber-100 text-amber-800'}`}>
+                        <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${a.nivel === 'alto' ? 'bg-red-500' : 'bg-amber-500'}`} />
+                        <span>{a.texto}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Gráfico principal: Investimento x Vendas por dia */}
               <ChartCard icon={TrendingUp}
@@ -791,6 +1168,165 @@ export default function TrafegoPagoPage() {
                 </ChartCard>
               </div>
 
+              {/* Hora do dia: compras dos anúncios × pedidos do delivery. Cada série no seu
+                  eixo — as grandezas são muito diferentes e num eixo só a menor desaparece. */}
+              {hourlyData && (
+                <ChartCard
+                  icon={BarChart3}
+                  titulo={`Hora do dia — ${hourlyData.temCompras ? 'compras' : 'visitas'} via anúncio × pedidos do delivery`}
+                  className="mb-4"
+                >
+                  <div className="flex items-center gap-x-4 gap-y-1 flex-wrap mb-1 text-[11px] font-semibold">
+                    <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: hourlyData.temCompras ? CORES.compras : CORES.reach }} />
+                      {hourlyData.temCompras ? 'Compras via anúncio' : 'Visitas à página'}
+                      <span className="text-zinc-400 font-normal">(esquerda)</span>
+                    </span>
+                    {hourlyData.temCompras && hourlyData.temVisitas && (
+                      <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                        <span className="w-3 h-0.5 rounded-full" style={{ background: CORES.reach }} />
+                        Visitas à página
+                      </span>
+                    )}
+                    {hourlyData.temCarrinho && (
+                      <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                        <span className="w-3 h-0.5 rounded-full" style={{ background: CORES.clicks }} />
+                        Add. ao carrinho
+                      </span>
+                    )}
+                    {hourlyData.temCheckout && (
+                      <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                        <span className="w-3 h-0.5 rounded-full" style={{ background: '#f97316' }} />
+                        Início de checkout
+                      </span>
+                    )}
+                    <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                      <span className="w-3 h-0.5 rounded-full" style={{ background: CORES.spend }} />
+                      Pedidos no delivery, todos
+                    </span>
+                    <span className="text-zinc-400 font-normal">— linhas no eixo da direita</span>
+                  </div>
+                  <ResponsiveContainer width="100%" height={240}>
+                    <ComposedChart data={hourlyData.linhas} margin={{ top: 10, right: 4, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                      <XAxis dataKey="hour" tickFormatter={(h: number) => `${h}h`} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={4} />
+                      <YAxis
+                        yAxisId="l"
+                        allowDecimals={false}
+                        tickFormatter={compact}
+                        tick={{ fontSize: 11, fill: hourlyData.temCompras ? CORES.compras : CORES.reach }}
+                        axisLine={false}
+                        tickLine={false}
+                        width={36}
+                      />
+                      {/* Eixo da direita é compartilhado por visitas e pedidos (grandezas parecidas),
+                          então os números ficam cinza — colorir puxaria pra uma das duas séries. */}
+                      <YAxis
+                        yAxisId="r"
+                        orientation="right"
+                        allowDecimals={false}
+                        tickFormatter={compact}
+                        tick={{ fontSize: 11, fill: '#a1a1aa' }}
+                        axisLine={false}
+                        tickLine={false}
+                        width={36}
+                      />
+                      <Tooltip content={<GraphTooltip fmt={{ purchases: num, pedidos: num, landing: num, carrinho: num, checkout: num, spend: brl, link_clicks: num }} labelFmt={(h) => `${h}h`} />} cursor={{ fill: '#fafafa' }} />
+                      {hourlyData.temCompras ? (
+                        <Bar yAxisId="l" dataKey="purchases" name="Compras via anúncio" fill={CORES.compras} radius={[4, 4, 0, 0]} maxBarSize={30} />
+                      ) : (
+                        <Bar yAxisId="l" dataKey="landing" name="Visitas à página" fill={CORES.reach} radius={[4, 4, 0, 0]} maxBarSize={30} />
+                      )}
+                      {/* Etapas do funil como linhas no eixo da direita. Visitas só entram quando a
+                          barra já é de compras — senão seriam a mesma informação duas vezes. */}
+                      {hourlyData.temCompras && hourlyData.temVisitas && (
+                        <Line yAxisId="r" type="monotone" dataKey="landing" name="Visitas à página" stroke={CORES.reach} strokeWidth={2} strokeDasharray="5 3" dot={false} />
+                      )}
+                      {hourlyData.temCarrinho && (
+                        <Line yAxisId="r" type="monotone" dataKey="carrinho" name="Add. ao carrinho" stroke={CORES.clicks} strokeWidth={2} strokeDasharray="2 3" dot={false} />
+                      )}
+                      {hourlyData.temCheckout && (
+                        <Line yAxisId="r" type="monotone" dataKey="checkout" name="Início de checkout" stroke="#f97316" strokeWidth={2} strokeDasharray="6 2 2 2" dot={false} />
+                      )}
+                      <Line yAxisId="r" type="monotone" dataKey="pedidos" name="Pedidos no delivery (todos)" stroke={CORES.spend} strokeWidth={2.5} dot={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                  <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
+                    Cada série tem a sua escala, então compare o <strong className="font-semibold text-zinc-500">formato</strong> das
+                    curvas, não a altura entre elas. Se a loja vende às 20h e o anúncio converte às 15h, vale programar a
+                    veiculação para o horário em que a loja de fato vende.
+                  </p>
+                </ChartCard>
+              )}
+
+              {(placementRows.length > 0 || ageRows.length > 0) && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                  {/* Por posicionamento */}
+                  <ChartCard icon={Layers} titulo="Por posicionamento">
+                    {placementRows.length > 0 ? (
+                      <div className="overflow-x-auto -mx-1">
+                        <table className="w-full text-xs whitespace-nowrap">
+                          <thead>
+                            <tr className="text-left text-[10px] uppercase tracking-wider text-zinc-400 border-b border-zinc-100">
+                              <th className="px-2 py-1.5 font-bold">Onde</th>
+                              <th className="px-2 py-1.5 font-bold text-right">Investido</th>
+                              <th className="px-2 py-1.5 font-bold text-right">Compras</th>
+                              <th className="px-2 py-1.5 font-bold text-right">ROAS</th>
+                              <th className="px-2 py-1.5 font-bold text-right">Custo/compra</th>
+                              <th className="px-2 py-1.5 font-bold text-right">CPC link</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {placementRows.map((p) => (
+                              <tr key={`${p.platform}-${p.position}`} className="border-b border-zinc-50">
+                                <td className="px-2 py-1.5 font-semibold text-zinc-700">{placementLabel(p)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-800">{brl(p.spend)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-emerald-600">{num(p.purchases)}</td>
+                                <td className="px-2 py-1.5 text-right"><Roas v={p.roas} spend={p.spend} /></td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-600">{p.cost_per_purchase ? brl(p.cost_per_purchase) : '—'}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">{brl(linkCpc(p))}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : <SemDados />}
+                  </ChartCard>
+
+                  {/* Por idade e gênero */}
+                  <ChartCard icon={Users} titulo="Por idade e gênero">
+                    {ageRows.length > 0 ? (
+                      <div className="overflow-x-auto -mx-1">
+                        <table className="w-full text-xs whitespace-nowrap">
+                          <thead>
+                            <tr className="text-left text-[10px] uppercase tracking-wider text-zinc-400 border-b border-zinc-100">
+                              <th className="px-2 py-1.5 font-bold">Faixa</th>
+                              <th className="px-2 py-1.5 font-bold">Gênero</th>
+                              <th className="px-2 py-1.5 font-bold text-right">Investido</th>
+                              <th className="px-2 py-1.5 font-bold text-right">Compras</th>
+                              <th className="px-2 py-1.5 font-bold text-right">ROAS</th>
+                              <th className="px-2 py-1.5 font-bold text-right">CPC link</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ageRows.map((p) => (
+                              <tr key={`${p.age}-${p.gender}`} className="border-b border-zinc-50">
+                                <td className="px-2 py-1.5 font-semibold text-zinc-700">{p.age}</td>
+                                <td className="px-2 py-1.5 text-zinc-600">{GENDER_LABELS[p.gender] ?? p.gender}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-800">{brl(p.spend)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-emerald-600">{num(p.purchases)}</td>
+                                <td className="px-2 py-1.5 text-right"><Roas v={p.roas} spend={p.spend} /></td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">{brl(linkCpc(p))}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : <SemDados />}
+                  </ChartCard>
+                </div>
+              )}
+
               {/* Tabela de campanhas */}
               <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden mb-4">
                 <div className="px-4 py-3 border-b border-zinc-100 flex items-center gap-2 flex-wrap">
@@ -822,8 +1358,8 @@ export default function TrafegoPagoPage() {
                           <th className="px-3 py-2.5 font-bold text-right">Vendas</th>
                           <th className="px-3 py-2.5 font-bold text-right">ROAS</th>
                           <th className="px-3 py-2.5 font-bold text-right">Cliques link</th>
-                          <th className="px-3 py-2.5 font-bold text-right">CTR</th>
-                          <th className="px-3 py-2.5 font-bold text-right">CPC</th>
+                          <th className="px-3 py-2.5 font-bold text-right">CTR link</th>
+                          <th className="px-3 py-2.5 font-bold text-right">CPC link</th>
                           <th className="px-3 py-2.5 font-bold text-right">Alcance</th>
                           <th className="px-3 py-2.5 font-bold text-right">Freq.</th>
                           <th className="px-4 py-2.5 font-bold text-right">CPM</th>
@@ -851,8 +1387,8 @@ export default function TrafegoPagoPage() {
                               <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-emerald-700">{brl(n0(c.purchase_value))}</td>
                               <td className="px-3 py-2.5 text-right"><Roas v={n0(c.roas)} spend={c.spend} /></td>
                               <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{num(c.link_clicks || c.clicks)}</td>
-                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-500">{pct(c.ctr)}</td>
-                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{brl(c.cpc)}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-500">{pct(linkCtr(c))}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{brl(linkCpc(c))}</td>
                               <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{num(c.reach)}</td>
                               <td className="px-3 py-2.5 text-right tabular-nums text-zinc-500">{dec(c.frequency, 2)}x</td>
                               <td className="px-4 py-2.5 text-right tabular-nums text-zinc-500">{brl(c.cpm)}</td>
@@ -928,8 +1464,8 @@ export default function TrafegoPagoPage() {
                           <th className="px-3 py-2.5 font-bold text-right">Vendas</th>
                           <th className="px-3 py-2.5 font-bold text-right">ROAS</th>
                           <th className="px-3 py-2.5 font-bold text-right">Cliques link</th>
-                          <th className="px-3 py-2.5 font-bold text-right">CTR</th>
-                          <th className="px-3 py-2.5 font-bold text-right">CPC</th>
+                          <th className="px-3 py-2.5 font-bold text-right">CTR link</th>
+                          <th className="px-3 py-2.5 font-bold text-right">CPC link</th>
                           <th className="px-3 py-2.5 font-bold text-right">Alcance</th>
                           <th className="px-4 py-2.5 font-bold text-right">Freq.</th>
                         </tr>
@@ -965,8 +1501,8 @@ export default function TrafegoPagoPage() {
                               <td className="px-3 py-2 text-right tabular-nums font-semibold text-emerald-700">{brl(n0(a.purchase_value))}</td>
                               <td className="px-3 py-2 text-right"><Roas v={n0(a.roas)} spend={a.spend} /></td>
                               <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{num(a.link_clicks || a.clicks)}</td>
-                              <td className="px-3 py-2 text-right tabular-nums text-zinc-500">{pct(a.ctr)}</td>
-                              <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{brl(a.cpc)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-500">{pct(linkCtr(a))}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{brl(linkCpc(a))}</td>
                               <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{num(a.reach)}</td>
                               <td className="px-4 py-2 text-right tabular-nums text-zinc-500">{dec(a.frequency, 2)}x</td>
                             </tr>
@@ -1018,6 +1554,247 @@ export default function TrafegoPagoPage() {
           )}
         </>
       )}
+
+      {shareOpen && !publico && (
+        <CompartilharModal
+          tenantId={tenantId}
+          datePreset={datePreset}
+          customApplied={customApplied}
+          userName={user?.nome ?? null}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de compartilhamento ───────────────────────────────────────────────
+// Gera um link SOMENTE LEITURA do relatório. O período é congelado no link e a
+// loja vem do banco pelo token — quem abre não escolhe nem uma coisa nem outra.
+function CompartilharModal({
+  tenantId, datePreset, customApplied, userName, onClose,
+}: {
+  tenantId: string;
+  datePreset: string;
+  customApplied: { since: string; until: string } | null;
+  userName: string | null;
+  onClose: () => void;
+}) {
+  const [links, setLinks] = useState<ShareLink[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [gerando, setGerando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [label, setLabel] = useState('');
+  const [dias, setDias] = useState(30);
+  const [incluirPedidos, setIncluirPedidos] = useState(false);
+  const [novoToken, setNovoToken] = useState<string | null>(null);
+  const [copiado, setCopiado] = useState<string | null>(null);
+
+  const periodoAtual = datePreset === 'custom' && customApplied
+    ? { range_since: customApplied.since, range_until: customApplied.until, date_preset: null }
+    : { range_since: null, range_until: null, date_preset: datePreset };
+
+  const carregar = useCallback(async () => {
+    setCarregando(true);
+    const { data } = await invokeWithAuth<{ success: boolean; shares: ShareLink[] }>('meta-connect', {
+      body: { action: 'list_shares', tenant_id: tenantId },
+    });
+    setLinks(data?.shares ?? []);
+    setCarregando(false);
+  }, [tenantId]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const copiar = (token: string) => {
+    navigator.clipboard.writeText(shareUrl(token)).then(
+      () => { setCopiado(token); window.setTimeout(() => setCopiado(null), 2000); },
+      () => setErro('Não foi possível copiar. Selecione o link e copie manualmente.'),
+    );
+  };
+
+  const gerar = async () => {
+    setGerando(true);
+    setErro(null);
+    const { data, error: err } = await invokeWithAuth<{ success: boolean; token?: string; error?: string }>(
+      'meta-connect',
+      {
+        body: {
+          action: 'create_share',
+          tenant_id: tenantId,
+          date_preset: periodoAtual.date_preset,
+          time_range: periodoAtual.range_since && periodoAtual.range_until
+            ? { since: periodoAtual.range_since, until: periodoAtual.range_until }
+            : undefined,
+          include_erpos_orders: incluirPedidos,
+          label: label.trim() || undefined,
+          expires_in_days: dias,
+          created_by_name: userName,
+        },
+      },
+    );
+    if (err || !data?.success || !data.token) {
+      setErro(data?.error ?? err?.message ?? 'Não foi possível gerar o link. Só administradores da loja podem criar.');
+    } else {
+      setNovoToken(data.token);
+      setLabel('');
+      copiar(data.token);
+      carregar();
+    }
+    setGerando(false);
+  };
+
+  const revogar = async (l: ShareLink) => {
+    if (!window.confirm('Revogar este link? Quem tiver o endereço deixa de ver o relatório na hora.')) return;
+    const { data, error: err } = await invokeWithAuth<{ success: boolean; error?: string }>('meta-connect', {
+      body: { action: 'revoke_share', tenant_id: tenantId, id: l.id },
+    });
+    if (err || !data?.success) setErro(data?.error ?? 'Não foi possível revogar.');
+    else { if (novoToken === l.token) setNovoToken(null); carregar(); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-zinc-100 sticky top-0 bg-white">
+          <Share2 size={17} className="text-amber-500" />
+          <p className="text-base font-bold text-zinc-800">Compartilhar relatório</p>
+          <button onClick={onClose} className="ml-auto text-zinc-400 hover:text-zinc-600 cursor-pointer" aria-label="Fechar">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-5">
+          <p className="text-sm text-zinc-500 leading-relaxed mb-4">
+            Gera um endereço que qualquer pessoa abre <strong className="font-semibold text-zinc-700">sem login</strong>,
+            só para visualizar. O período fica congelado como está agora
+            (<strong className="font-semibold text-zinc-700">{periodoDoLink(periodoAtual)}</strong>) e não dá para
+            trocar de loja pelo endereço.
+          </p>
+
+          {erro && (
+            <div className="mb-4 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-sm text-red-600">
+              <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
+              <span>{erro}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Nome (opcional)</label>
+              <input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Ex.: Agência, sócio, contador"
+                maxLength={80}
+                className="mt-1 w-full text-sm border border-zinc-200 rounded-xl px-3 py-2 focus:outline-none focus:border-amber-400"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Validade</label>
+              <select
+                value={dias}
+                onChange={(e) => setDias(Number(e.target.value))}
+                className="mt-1 w-full text-sm font-semibold border border-zinc-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:border-amber-400 cursor-pointer"
+              >
+                <option value={7}>7 dias</option>
+                <option value={30}>30 dias</option>
+                <option value={90}>90 dias</option>
+                <option value={365}>1 ano</option>
+              </select>
+            </div>
+          </div>
+
+          <label className="flex items-start gap-2.5 mb-4 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={incluirPedidos}
+              onChange={(e) => setIncluirPedidos(e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-amber-500 cursor-pointer"
+            />
+            <span className="text-sm text-zinc-600 leading-snug">
+              Incluir os pedidos reais do ERPOS
+              <span className="block text-xs text-zinc-400">
+                Mostra quantos pedidos e quanto a loja faturou pelos links da Meta. É dado interno do caixa;
+                deixe desmarcado se o link vai circular fora da empresa.
+              </span>
+            </span>
+          </label>
+
+          <button
+            onClick={gerar}
+            disabled={gerando}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 text-white font-bold text-sm hover:bg-amber-600 cursor-pointer disabled:opacity-60"
+          >
+            {gerando ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={15} />}
+            {gerando ? 'Gerando...' : 'Gerar link'}
+          </button>
+
+          {novoToken && (
+            <div className="mt-4 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+              <p className="text-xs font-bold text-emerald-700 mb-1.5">Link criado e copiado</p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-zinc-700 flex-1 truncate">{shareUrl(novoToken)}</span>
+                <button
+                  onClick={() => copiar(novoToken)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-emerald-200 text-emerald-700 text-xs font-bold cursor-pointer hover:bg-emerald-50"
+                >
+                  {copiado === novoToken ? <Check size={13} /> : <Copy size={13} />}
+                  {copiado === novoToken ? 'Copiado' : 'Copiar'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-6">
+            <p className="text-sm font-bold text-zinc-800 mb-2">
+              Links ativos <span className="text-xs font-semibold text-zinc-400">({links.length})</span>
+            </p>
+            {carregando ? (
+              <div className="flex justify-center py-6"><Loader2 size={18} className="animate-spin text-amber-500" /></div>
+            ) : links.length === 0 ? (
+              <p className="text-sm text-zinc-400 py-3">Nenhum link ativo.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {links.map((l) => (
+                  <div key={l.id} className="flex items-center gap-2 border border-zinc-200 rounded-xl px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-zinc-800 truncate">
+                        {l.label || 'Sem nome'}
+                        {l.include_erpos_orders && (
+                          <span className="ml-2 text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">
+                            com pedidos do ERPOS
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-[11px] text-zinc-400 truncate">
+                        {periodoDoLink(l)} · {l.view_count} {l.view_count === 1 ? 'acesso' : 'acessos'}
+                        {l.expires_at ? ` · expira ${new Date(l.expires_at).toLocaleDateString('pt-BR')}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => copiar(l.token)}
+                      className="p-2 rounded-lg text-zinc-500 hover:bg-zinc-50 cursor-pointer"
+                      title="Copiar link"
+                    >
+                      {copiado === l.token ? <Check size={15} className="text-emerald-600" /> : <Copy size={15} />}
+                    </button>
+                    <button
+                      onClick={() => revogar(l)}
+                      className="p-2 rounded-lg text-red-400 hover:bg-red-50 cursor-pointer"
+                      title="Revogar"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1054,14 +1831,36 @@ function Roas({ v, spend }: { v: number; spend: number }) {
   return <span className={`font-semibold tabular-nums ${cls}`}>{dec(v, 2)}x</span>;
 }
 
+// Variação vs período anterior. `invertido` = cair é bom (custo); `neutro` = sem juízo (investimento).
+function Delta({
+  atual, anterior, invertido = false, neutro = false, fmt,
+}: {
+  atual: number;
+  anterior?: number | null;
+  invertido?: boolean;
+  neutro?: boolean;
+  fmt?: (n: number) => string;
+}) {
+  if (anterior == null || (!anterior && !atual)) return null;
+  const diff = anterior ? ((atual - anterior) / anterior) * 100 : 100;
+  const bom = invertido ? diff <= 0 : diff >= 0;
+  const cls = neutro || Math.abs(diff) < 0.5 ? 'text-zinc-400' : bom ? 'text-emerald-600' : 'text-red-500';
+  return (
+    <span className={`text-[11px] font-bold tabular-nums ${cls}`} title={fmt ? `Período anterior: ${fmt(anterior)}` : undefined}>
+      {diff >= 0 ? '▲' : '▼'} {dec(Math.abs(diff), 0)}%
+    </span>
+  );
+}
+
 function KpiCard({
-  icon: Icon, cor, label, valor, sub,
+  icon: Icon, cor, label, valor, sub, extra,
 }: {
   icon: React.ComponentType<{ size?: number; className?: string }>;
   cor: keyof typeof CORES_KPI | string;
   label: string;
   valor: string;
   sub?: string;
+  extra?: React.ReactNode;
 }) {
   const c = CORES_KPI[cor] ?? CORES_KPI.amber;
   return (
@@ -1070,6 +1869,7 @@ function KpiCard({
         <div className={`w-9 h-9 flex items-center justify-center rounded-xl ${c.bg}`}>
           <Icon size={17} className={c.text} />
         </div>
+        {extra}
       </div>
       <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">{label}</p>
       <p className="text-xl font-black text-zinc-900 tabular-nums mt-0.5">{valor}</p>
@@ -1126,17 +1926,20 @@ function SemDados() {
 
 interface TooltipPayload { name: string; dataKey: string; value: number; color: string }
 function GraphTooltip({
-  active, payload, label, fmt,
+  active, payload, label, fmt, labelFmt,
 }: {
   active?: boolean;
   payload?: TooltipPayload[];
-  label?: string;
+  label?: string | number;
   fmt?: Record<string, (n: number) => string>;
+  labelFmt?: (l: string | number) => string;
 }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-white border border-zinc-200 rounded-lg shadow-lg px-3 py-2 text-xs">
-      {label && <p className="font-bold text-zinc-700 mb-1">{shortDate(label)}</p>}
+      {label != null && label !== '' && (
+        <p className="font-bold text-zinc-700 mb-1">{labelFmt ? labelFmt(label) : shortDate(String(label))}</p>
+      )}
       {payload.map((p, i) => (
         <p key={i} className="flex items-center gap-1.5 text-zinc-600">
           <span className="w-2 h-2 rounded-full" style={{ background: p.color }} />

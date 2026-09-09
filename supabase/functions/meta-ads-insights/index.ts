@@ -21,6 +21,7 @@ const ALLOWED_DATE_PRESETS = new Set([
   'this_week_mon_today', 'last_week_mon_sun', 'this_month', 'last_month', 'maximum',
 ])
 
+type Row = Record<string, unknown>
 type MetaAction = { action_type?: string; value?: string }
 type Act = { type: string; value: number }
 
@@ -83,8 +84,8 @@ function resultFor(
   return pick(LINK)
 }
 
-// Métricas comuns a campanha / anúncio / dia, a partir de uma linha do insights.
-function metrics(row: Record<string, unknown>) {
+// Métricas comuns a campanha / anúncio / dia / quebra, a partir de uma linha do insights.
+function metrics(row: Row) {
   const acts = simplifyActions(row.actions)
   const vals = simplifyActions(row.action_values)
   const spend = Number(row.spend ?? 0)
@@ -102,6 +103,11 @@ function metrics(row: Record<string, unknown>) {
     cpc: Number(row.cpc ?? 0),
     ctr: Number(row.ctr ?? 0),
     cpm: Number(row.cpm ?? 0),
+    // CTR/CPC sobre cliques no LINK — é o critério que o Gerenciador de Anúncios e o Reportei
+    // mostram. Os campos `ctr`/`cpc` acima são sobre TODOS os cliques (curtida, comentário,
+    // clique no perfil), o que dá CTR maior e CPC menor. Guardamos os dois.
+    link_ctr: Number(row.inline_link_click_ctr ?? 0),
+    cost_per_link_click: Number(row.cost_per_inline_link_click ?? 0),
     purchases,
     purchase_value: purchaseValue,
     roas: spend > 0 ? purchaseValue / spend : 0,
@@ -117,10 +123,50 @@ function metrics(row: Record<string, unknown>) {
   }
 }
 
+// Métricas enxutas pra quebras (posicionamento, idade/gênero, hora) e pro período anterior.
+function slim(row: Row) {
+  const m = metrics(row)
+  return {
+    spend: m.spend,
+    impressions: m.impressions,
+    reach: m.reach,
+    clicks: m.clicks,
+    link_clicks: m.link_clicks,
+    purchases: m.purchases,
+    purchase_value: m.purchase_value,
+    roas: m.roas,
+    cost_per_purchase: m.cost_per_purchase,
+    cpc: m.cpc,
+    ctr: m.ctr,
+    link_ctr: m.link_ctr,
+    cost_per_link_click: m.cost_per_link_click,
+    frequency: m.frequency,
+    cpm: m.cpm,
+    landing_page_views: m.landing_page_views,
+    add_to_cart: m.add_to_cart,
+    initiate_checkout: m.initiate_checkout,
+  }
+}
+
+async function graphRows(url: string, label: string): Promise<{ ok: boolean; rows: Row[]; status: number; body: unknown }> {
+  try {
+    const resp = await fetch(url)
+    const body = await resp.json().catch(() => ({}))
+    if (!resp.ok) {
+      console.warn(`[meta-ads-insights] ${label} error:`, resp.status, JSON.stringify(body).slice(0, 300))
+      return { ok: false, rows: [], status: resp.status, body }
+    }
+    return { ok: true, rows: Array.isArray((body as Row).data) ? (body as Row).data as Row[] : [], status: resp.status, body }
+  } catch (e) {
+    console.warn(`[meta-ads-insights] ${label} exception:`, e)
+    return { ok: false, rows: [], status: 0, body: null }
+  }
+}
+
 // GET /?ids=a,b,c&fields=... em lotes de 50 (status e miniatura dos anúncios / status das campanhas).
 // À prova de falha: se der erro, devolve o que conseguiu — o relatório sai sem status/miniatura.
-async function fetchObjects(ids: string[], fields: string, token: string): Promise<Record<string, Record<string, unknown>>> {
-  const out: Record<string, Record<string, unknown>> = {}
+async function fetchObjects(ids: string[], fields: string, token: string): Promise<Record<string, Row>> {
+  const out: Record<string, Row> = {}
   const uniq = Array.from(new Set(ids.filter(Boolean)))
   for (let i = 0; i < uniq.length; i += 50) {
     const chunk = uniq.slice(i, i + 50)
@@ -128,7 +174,7 @@ async function fetchObjects(ids: string[], fields: string, token: string): Promi
       const resp = await fetch(`${GRAPH}/?ids=${chunk.join(',')}&fields=${fields}&access_token=${token}`)
       const body = await resp.json().catch(() => ({}))
       if (resp.ok && body && typeof body === 'object') {
-        for (const [id, obj] of Object.entries(body as Record<string, Record<string, unknown>>)) out[id] = obj
+        for (const [id, obj] of Object.entries(body as Record<string, Row>)) out[id] = obj
       } else {
         console.warn('[meta-ads-insights] objects lookup failed:', resp.status, JSON.stringify(body).slice(0, 300))
       }
@@ -139,42 +185,80 @@ async function fetchObjects(ids: string[], fields: string, token: string): Promi
   return out
 }
 
-// Pedidos REAIS do delivery do ERPOS no mesmo período, que chegaram por link com utm_source da Meta
-// (instagram/facebook/fb/ig/meta...). Cruza a atribuição da Meta com o que entrou de fato no caixa.
-async function erposOrdersFromMeta(
-  admin: ReturnType<typeof createClient>, tenantId: string, since: string, until: string,
-) {
+function addDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+// Hora local (America/Sao_Paulo) de um timestamp — pro histograma de pedidos por hora.
+const hourFmt = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/Sao_Paulo' })
+function localHour(ts: string): number {
+  const h = Number(hourFmt.format(new Date(ts)))
+  return Number.isFinite(h) ? h % 24 : 0
+}
+
+// Pedidos REAIS do delivery do ERPOS no período: (a) os que chegaram por link com utm_source da Meta
+// (instagram/facebook/fb/ig/meta...) — cruza a atribuição da Meta com o que entrou de fato no caixa;
+// (b) histograma por hora de TODOS os pedidos do delivery — pra cruzar com a hora das compras dos anúncios.
+async function erposOrders(admin: ReturnType<typeof createClient>, tenantId: string, since: string, until: string) {
   const { data, error } = await admin
     .from('orders')
-    .select('total_amount, delivery_source, status')
+    .select('total_amount, delivery_source, status, created_at')
     .eq('tenant_id', tenantId)
     .eq('origin_type', 'delivery')
     .in('delivery_platform', ['propria', 'retirada'])
     .eq('is_training', false)
-    .not('delivery_source', 'is', null)
     .gte('created_at', `${since}T00:00:00-03:00`)
     .lte('created_at', `${until}T23:59:59-03:00`)
-    .limit(5000)
+    .limit(10000)
   if (error) {
     console.warn('[meta-ads-insights] orders lookup error:', error.message)
     return null
   }
   const isMeta = (s: string) => /^(fb|ig|meta|face|insta)/.test(s)
   const bySource: Record<string, { count: number; revenue: number }> = {}
+  const hourly: number[] = Array.from({ length: 24 }, () => 0)
   let count = 0
   let revenue = 0
-  for (const o of (data ?? []) as Array<{ total_amount: unknown; delivery_source: unknown; status: unknown }>) {
-    const src = String(o.delivery_source ?? '').trim().toLowerCase()
-    if (!src || !isMeta(src)) continue
+  let totalCount = 0
+  let totalRevenue = 0
+  for (const o of (data ?? []) as Array<{ total_amount: unknown; delivery_source: unknown; status: unknown; created_at: string }>) {
     if (String(o.status ?? '').toLowerCase().includes('cancel')) continue
     const v = Number(o.total_amount ?? 0)
+    totalCount += 1
+    totalRevenue += v
+    hourly[localHour(o.created_at)] += 1
+    const src = String(o.delivery_source ?? '').trim().toLowerCase()
+    if (!src || !isMeta(src)) continue
     count += 1
     revenue += v
     bySource[src] = bySource[src] ?? { count: 0, revenue: 0 }
     bySource[src].count += 1
     bySource[src].revenue += v
   }
-  return { count, revenue, by_source: bySource, since, until }
+  return { count, revenue, by_source: bySource, since, until, total_count: totalCount, total_revenue: totalRevenue, hourly }
+}
+
+// Sessão válida + usuário membro DESTA loja. A função roda com service role e é publicada sem
+// verify_jwt no gateway, então a checagem tem que ser aqui — senão qualquer um com a anon key
+// leria as métricas de qualquer tenant só trocando o tenant_id do body.
+async function requireMember(req: Request, admin: ReturnType<typeof createClient>, tenantId: string) {
+  const authHeader = req.headers.get('Authorization') || ''
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim()
+  if (!token) return { error: json({ ok: false, error: 'Não autenticado' }, 401) }
+  const { data: userData, error: userErr } = await admin.auth.getUser(token)
+  if (userErr || !userData?.user) return { error: json({ ok: false, error: 'Sessão inválida' }, 401) }
+  const { data: membership, error: memErr } = await admin
+    .from('user_tenants')
+    .select('role')
+    .eq('user_id', userData.user.id)
+    .eq('tenant_id', tenantId)
+    .limit(1)
+    .maybeSingle()
+  if (memErr) return { error: json({ ok: false, error: memErr.message }, 500) }
+  if (!membership) return { error: json({ ok: false, error: 'Sem acesso a esta loja' }, 403) }
+  return { error: null, userId: userData.user.id, role: String(membership.role ?? '') }
 }
 
 Deno.serve(async (req: Request) => {
@@ -182,13 +266,60 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}))
-    const tenantId = body.tenant_id || body.active_tenant_id
-    if (!tenantId) return json({ ok: false, error: 'tenant_id é obrigatório' }, 400)
 
     const admin = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
+
+    // ── Dois caminhos de acesso ───────────────────────────────────────────────
+    // (1) share_token: link público SOMENTE LEITURA. A loja e o período saem DA
+    //     LINHA DO BANCO; tenant_id/date_preset/time_range do body são ignorados.
+    //     Se viessem do navegador, bastaria trocar o tenant_id para ver outra loja.
+    // (2) sem token: sessão do app, validando que o usuário é membro da loja.
+    const shareToken = typeof body.share_token === 'string' ? body.share_token.trim() : ''
+    let tenantId: string
+    let share: Row | null = null
+    let includeErpos = true
+    let storeName: string | null = null
+
+    if (shareToken) {
+      if (!/^[a-f0-9]{32,64}$/.test(shareToken)) {
+        return json({ ok: false, share_invalid: true, error: 'Link inválido.' }, 200)
+      }
+      const { data: row, error: shareErr } = await admin
+        .from('trafego_pago_shares')
+        .select('tenant_id, label, date_preset, range_since, range_until, include_erpos_orders, expires_at, revoked_at, created_by_name, view_count')
+        .eq('token', shareToken)
+        .maybeSingle()
+      if (shareErr) {
+        console.error('[meta-ads-insights] share lookup error:', shareErr)
+        return json({ ok: false, error: shareErr.message }, 500)
+      }
+      if (!row) return json({ ok: false, share_invalid: true, error: 'Link inválido ou removido.' }, 200)
+      if (row.revoked_at) return json({ ok: false, share_revoked: true, error: 'Este link foi revogado pela loja.' }, 200)
+      if (row.expires_at && Date.parse(String(row.expires_at)) < Date.now()) {
+        return json({ ok: false, share_expired: true, error: 'Este link expirou.' }, 200)
+      }
+      share = row as Row
+      tenantId = String(row.tenant_id)
+      includeErpos = row.include_erpos_orders === true
+
+      const { data: t } = await admin.from('tenants').select('name').eq('id', tenantId).maybeSingle()
+      storeName = t?.name ? String(t.name) : null
+
+      // Contador de acessos (não bloqueia a resposta se falhar).
+      await admin
+        .from('trafego_pago_shares')
+        .update({ view_count: Number(row.view_count ?? 0) + 1, last_viewed_at: new Date().toISOString() })
+        .eq('token', shareToken)
+        .then(undefined, (e: unknown) => console.warn('[meta-ads-insights] view_count:', e))
+    } else {
+      tenantId = body.tenant_id || body.active_tenant_id
+      if (!tenantId) return json({ ok: false, error: 'tenant_id é obrigatório' }, 400)
+      const auth = await requireMember(req, admin, String(tenantId))
+      if (auth.error) return auth.error
+    }
 
     // Busca o token + conta de anúncios da loja (token nunca sai daqui)
     const { data: conn, error: connErr } = await admin
@@ -208,12 +339,42 @@ Deno.serve(async (req: Request) => {
       return json({ ok: false, no_account: true, error: 'Nenhuma conta de anúncios selecionada' }, 200)
     }
 
-    const requested = String(body.date_preset ?? 'last_7d')
-    const datePreset = ALLOWED_DATE_PRESETS.has(requested) ? requested : 'last_7d'
+    // Com share_token o período vem congelado do banco; sem ele, do body.
+    const periodSource = share
+      ? {
+        date_preset: share.date_preset,
+        time_range: share.range_since && share.range_until
+          ? { since: share.range_since, until: share.range_until }
+          : undefined,
+      }
+      : { date_preset: body.date_preset, time_range: body.time_range }
+
+    const requested = String(periodSource.date_preset ?? 'last_7d')
+    let datePreset = ALLOWED_DATE_PRESETS.has(requested) ? requested : 'last_7d'
+
+    // Período personalizado: time_range = { since, until } (YYYY-MM-DD, since ≤ until, ≤ 366 dias).
+    // Se vier inválido, ignora e cai no preset — nunca devolve erro por causa de data.
+    let period = `date_preset=${datePreset}`
+    const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+    const tr = periodSource.time_range as { since?: unknown; until?: unknown } | undefined
+    if (tr && typeof tr === 'object') {
+      const s = String(tr.since ?? '')
+      const u = String(tr.until ?? '')
+      const span = ISO_DATE.test(s) && ISO_DATE.test(u)
+        ? (Date.parse(`${u}T00:00:00Z`) - Date.parse(`${s}T00:00:00Z`)) / 86400000
+        : NaN
+      if (Number.isFinite(span) && span >= 0 && span <= 366) {
+        period = `time_range=${encodeURIComponent(JSON.stringify({ since: s, until: u }))}`
+        datePreset = 'custom'
+      } else {
+        console.warn('[meta-ads-insights] time_range inválido, usando preset:', JSON.stringify(tr).slice(0, 100))
+      }
+    }
 
     const common = [
       'spend', 'impressions', 'reach', 'frequency', 'clicks', 'inline_link_clicks',
-      'cpc', 'ctr', 'cpm', 'actions', 'action_values',
+      'cpc', 'ctr', 'cpm', 'inline_link_click_ctr', 'cost_per_inline_link_click',
+      'actions', 'action_values',
     ]
     const campaignFields = ['campaign_id', 'campaign_name', 'objective', ...common].join(',')
     const adFields = [
@@ -221,33 +382,43 @@ Deno.serve(async (req: Request) => {
       'objective', 'optimization_goal', ...common,
     ].join(',')
     const dailyFields = ['spend', 'impressions', 'reach', 'clicks', 'inline_link_clicks', 'actions', 'action_values'].join(',')
+    // Quebras não aceitam reach/frequency em todas as combinações — ficam só com o essencial.
+    const breakdownFields = [
+      'spend', 'impressions', 'clicks', 'inline_link_clicks', 'cpc', 'ctr',
+      'inline_link_click_ctr', 'cost_per_inline_link_click', 'actions', 'action_values',
+    ].join(',')
+    // Totais NO NÍVEL DA CONTA (sem level, sem time_increment). Necessário porque ALCANCE é
+    // deduplicado por consulta: somar o alcance das campanhas conta a mesma pessoa várias vezes
+    // e infla o total (e por consequência subestima a frequência). Só esta consulta dá o número
+    // real do período — é o mesmo que o Gerenciador de Anúncios e o Reportei mostram.
+    const totalsFields = common.join(',')
 
     const base = `${GRAPH}/${conn.ad_account_id}/insights`
     const token = encodeURIComponent(conn.access_token)
 
-    // Três consultas em paralelo:
-    //  1) por campanha (tabela);  2) por anúncio (detalhe);  3) por dia (série pros gráficos).
-    const campaignUrl =
-      `${base}?level=campaign&fields=${campaignFields}&date_preset=${datePreset}&limit=200&access_token=${token}`
-    const adUrl =
-      `${base}?level=ad&fields=${adFields}&date_preset=${datePreset}&limit=500&access_token=${token}`
-    const dailyUrl =
-      `${base}?fields=${dailyFields}&date_preset=${datePreset}&time_increment=1&limit=500&access_token=${token}`
+    // Sete consultas em paralelo: totais da conta, campanha, anúncio, dia, posicionamento,
+    // idade/gênero, hora do dia.
+    const [acct, camp, ad, day, placement, ageGender, hourly] = await Promise.all([
+      graphRows(`${base}?fields=${totalsFields}&${period}&access_token=${token}`, 'account_totals'),
+      graphRows(`${base}?level=campaign&fields=${campaignFields}&${period}&limit=200&access_token=${token}`, 'campaign'),
+      graphRows(`${base}?level=ad&fields=${adFields}&${period}&limit=500&access_token=${token}`, 'ad'),
+      graphRows(`${base}?fields=${dailyFields}&${period}&time_increment=1&limit=500&access_token=${token}`, 'daily'),
+      graphRows(`${base}?fields=${breakdownFields}&breakdowns=publisher_platform,platform_position&${period}&limit=200&access_token=${token}`, 'placement'),
+      graphRows(`${base}?fields=${breakdownFields}&breakdowns=age,gender&${period}&limit=200&access_token=${token}`, 'age_gender'),
+      graphRows(`${base}?fields=${breakdownFields}&breakdowns=hourly_stats_aggregated_by_advertiser_time_zone&${period}&limit=200&access_token=${token}`, 'hourly'),
+    ])
 
-    const [campResp, adResp, dailyResp] = await Promise.all([fetch(campaignUrl), fetch(adUrl), fetch(dailyUrl)])
-    const campBody = await campResp.json().catch(() => ({}))
-    const adBody = await adResp.json().catch(() => ({}))
-    const dailyBody = await dailyResp.json().catch(() => ({}))
-
-    if (!campResp.ok) {
-      console.error('[meta-ads-insights] Meta error:', campResp.status, campBody)
-      return json({ ok: false, status: campResp.status, error: campBody?.error ?? campBody }, 502)
+    if (!camp.ok) {
+      console.error('[meta-ads-insights] Meta error:', camp.status, camp.body)
+      return json({ ok: false, status: camp.status, error: (camp.body as Row | null)?.error ?? camp.body }, 502)
     }
-    if (!adResp.ok) console.warn('[meta-ads-insights] ad-level error:', adResp.status, JSON.stringify(adBody).slice(0, 300))
 
-    const campRows: Record<string, unknown>[] = Array.isArray(campBody.data) ? campBody.data : []
-    const adRows: Record<string, unknown>[] = Array.isArray(adBody.data) ? adBody.data : []
-    const dailyRows: Record<string, unknown>[] = Array.isArray(dailyBody.data) ? dailyBody.data : []
+    const campRows = camp.rows
+    const adRows = ad.rows
+    const dailyRows = day.rows
+    // Totais reais do período (alcance/frequência corretos). Null = a consulta falhou e o front
+    // cai em somar as campanhas, com alcance aproximado.
+    const accountTotals = acct.rows[0] ? metrics(acct.rows[0]) : null
 
     // Status (ativo/pausado) + miniatura do criativo — lookup em lote, tolerante a falha.
     const [adObjs, campObjs] = await Promise.all([
@@ -303,27 +474,69 @@ Deno.serve(async (req: Request) => {
       })
       .sort((a, b) => a.date.localeCompare(b.date))
 
+    const byPlacement = placement.rows.map((row) => ({
+      platform: String(row.publisher_platform ?? ''),
+      position: String(row.platform_position ?? ''),
+      ...slim(row),
+    }))
+    const byAgeGender = ageGender.rows.map((row) => ({
+      age: String(row.age ?? ''),
+      gender: String(row.gender ?? ''),
+      ...slim(row),
+    }))
+    const byHour = hourly.rows.map((row) => ({
+      // "13:00:00 - 13:59:59" → 13
+      hour: Number(String(row.hourly_stats_aggregated_by_advertiser_time_zone ?? '0').slice(0, 2)) || 0,
+      ...slim(row),
+    })).sort((a, b) => a.hour - b.hour)
+
     // Período efetivo (a Meta devolve date_start/date_stop em toda linha): menor início, maior fim.
-    const allRows = [...campRows, ...dailyRows]
+    const allRows = [...acct.rows, ...campRows, ...dailyRows]
     const starts = allRows.map((r) => String(r.date_start ?? '')).filter(Boolean).sort()
     const stops = allRows.map((r) => String(r.date_stop ?? '')).filter(Boolean).sort()
     const since = starts[0] ?? ''
     const until = stops[stops.length - 1] ?? ''
     const range = since && until ? { since, until } : null
 
-    const erposOrders = range ? await erposOrdersFromMeta(admin, String(tenantId), since, until) : null
+    // Período anterior de mesmo tamanho (totais da conta) — pros deltas dos KPIs. Não faz sentido em "maximum".
+    let previous: (ReturnType<typeof slim> & { since: string; until: string }) | null = null
+    if (range && datePreset !== 'maximum') {
+      const days = Math.round((Date.parse(`${until}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`)) / 86400000) + 1
+      const prevSince = addDays(since, -days)
+      const prevUntil = addDays(since, -1)
+      const tr = encodeURIComponent(JSON.stringify({ since: prevSince, until: prevUntil }))
+      const prev = await graphRows(`${base}?fields=${totalsFields}&time_range=${tr}&access_token=${token}`, 'previous')
+      const row = prev.rows[0]
+      previous = { ...slim(row ?? {}), since: prevSince, until: prevUntil }
+    }
+
+    // No link público, o cruzamento com pedidos do ERPOS (faturamento real) só vai
+    // se quem gerou o link marcou a opção.
+    const orders = range && includeErpos ? await erposOrders(admin, String(tenantId), since, until) : null
 
     return json({
       ok: true,
       date_preset: datePreset,
       range,
+      // Só no link público: cabeçalho de leitura (a tela do app já sabe a loja).
+      share: share
+        ? {
+          store_name: storeName,
+          label: share.label ?? null,
+          created_by_name: share.created_by_name ?? null,
+          expires_at: share.expires_at ?? null,
+        }
+        : null,
       ad_account_id: conn.ad_account_id,
       ad_account_name: conn.ad_account_name,
       count: campaigns.length,
+      totals: accountTotals,
       campaigns,
       ads,
       daily,
-      erpos_orders: erposOrders,
+      previous,
+      breakdowns: { placement: byPlacement, age_gender: byAgeGender, hourly: byHour },
+      erpos_orders: orders,
     })
   } catch (err) {
     console.error('[meta-ads-insights] Error:', err)
