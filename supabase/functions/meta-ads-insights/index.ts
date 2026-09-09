@@ -142,6 +142,7 @@ function slim(row: Row) {
     cost_per_link_click: m.cost_per_link_click,
     frequency: m.frequency,
     cpm: m.cpm,
+    landing_page_views: m.landing_page_views,
   }
 }
 

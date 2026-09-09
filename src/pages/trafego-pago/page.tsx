@@ -101,6 +101,7 @@ interface SlimRow {
   cost_per_link_click?: number;
   frequency?: number;
   cpm?: number;
+  landing_page_views?: number;
 }
 interface PlacementRow extends SlimRow { platform: string; position: string }
 interface AgeGenderRow extends SlimRow { age: string; gender: string }
@@ -697,12 +698,14 @@ export default function TrafegoPagoPage() {
         spend: r?.spend ?? 0,
         purchases: r?.purchases ?? 0,
         link_clicks: r?.link_clicks ?? 0,
+        landing: n0(r?.landing_page_views),
         pedidos: pedidos?.[h] ?? 0,
       };
     });
 
     // Corta as horas sem nada nas pontas (madrugada) pra sobrar largura onde a loja funciona.
-    const ativo = (d: typeof full[number]) => d.purchases > 0 || d.link_clicks > 0 || d.pedidos > 0;
+    const ativo = (d: typeof full[number]) =>
+      d.purchases > 0 || d.link_clicks > 0 || d.landing > 0 || d.pedidos > 0;
     const first = full.findIndex(ativo);
     if (first === -1) return null;
     let last = 23;
@@ -711,7 +714,8 @@ export default function TrafegoPagoPage() {
     // Sem nenhuma compra atribuída no período, a barra vira cliques no link — senão o gráfico
     // ficaria vazio justamente quando o dado interessa.
     const temCompras = full.some((d) => d.purchases > 0);
-    return { linhas: full.slice(first, last + 1), temCompras };
+    const temVisitas = full.some((d) => d.landing > 0);
+    return { linhas: full.slice(first, last + 1), temCompras, temVisitas };
   }, [insights, erposOrders]);
 
   const alertas = useMemo(() => {
@@ -1162,19 +1166,26 @@ export default function TrafegoPagoPage() {
               {hourlyData && (
                 <ChartCard
                   icon={BarChart3}
-                  titulo={`Hora do dia — ${hourlyData.temCompras ? 'compras via anúncio' : 'cliques no anúncio'} × pedidos do delivery`}
+                  titulo={`Hora do dia — ${hourlyData.temCompras ? 'compras' : 'visitas'} via anúncio × pedidos do delivery`}
                   className="mb-4"
                 >
-                  <div className="flex items-center gap-4 flex-wrap mb-1 text-[11px] font-semibold">
+                  <div className="flex items-center gap-x-4 gap-y-1 flex-wrap mb-1 text-[11px] font-semibold">
                     <span className="inline-flex items-center gap-1.5 text-zinc-600">
-                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: hourlyData.temCompras ? CORES.compras : CORES.clicks }} />
-                      {hourlyData.temCompras ? 'Compras via anúncio' : 'Cliques no anúncio'}
-                      <span className="text-zinc-400 font-normal">(eixo da esquerda)</span>
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: hourlyData.temCompras ? CORES.compras : CORES.reach }} />
+                      {hourlyData.temCompras ? 'Compras via anúncio' : 'Visitas à página'}
+                      <span className="text-zinc-400 font-normal">(esquerda)</span>
                     </span>
+                    {hourlyData.temCompras && hourlyData.temVisitas && (
+                      <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                        <span className="w-3 h-0.5 rounded-full" style={{ background: CORES.reach }} />
+                        Visitas à página
+                        <span className="text-zinc-400 font-normal">(direita)</span>
+                      </span>
+                    )}
                     <span className="inline-flex items-center gap-1.5 text-zinc-600">
                       <span className="w-3 h-0.5 rounded-full" style={{ background: CORES.spend }} />
                       Pedidos no delivery, todos
-                      <span className="text-zinc-400 font-normal">(eixo da direita)</span>
+                      <span className="text-zinc-400 font-normal">(direita)</span>
                     </span>
                   </div>
                   <ResponsiveContainer width="100%" height={240}>
@@ -1185,26 +1196,33 @@ export default function TrafegoPagoPage() {
                         yAxisId="l"
                         allowDecimals={false}
                         tickFormatter={compact}
-                        tick={{ fontSize: 11, fill: hourlyData.temCompras ? CORES.compras : CORES.clicks }}
+                        tick={{ fontSize: 11, fill: hourlyData.temCompras ? CORES.compras : CORES.reach }}
                         axisLine={false}
                         tickLine={false}
                         width={36}
                       />
+                      {/* Eixo da direita é compartilhado por visitas e pedidos (grandezas parecidas),
+                          então os números ficam cinza — colorir puxaria pra uma das duas séries. */}
                       <YAxis
                         yAxisId="r"
                         orientation="right"
                         allowDecimals={false}
                         tickFormatter={compact}
-                        tick={{ fontSize: 11, fill: CORES.spend }}
+                        tick={{ fontSize: 11, fill: '#a1a1aa' }}
                         axisLine={false}
                         tickLine={false}
                         width={36}
                       />
-                      <Tooltip content={<GraphTooltip fmt={{ purchases: num, pedidos: num, spend: brl, link_clicks: num }} labelFmt={(h) => `${h}h`} />} cursor={{ fill: '#fafafa' }} />
+                      <Tooltip content={<GraphTooltip fmt={{ purchases: num, pedidos: num, landing: num, spend: brl, link_clicks: num }} labelFmt={(h) => `${h}h`} />} cursor={{ fill: '#fafafa' }} />
                       {hourlyData.temCompras ? (
                         <Bar yAxisId="l" dataKey="purchases" name="Compras via anúncio" fill={CORES.compras} radius={[4, 4, 0, 0]} maxBarSize={30} />
                       ) : (
-                        <Bar yAxisId="l" dataKey="link_clicks" name="Cliques no anúncio" fill={CORES.clicks} radius={[4, 4, 0, 0]} maxBarSize={30} />
+                        <Bar yAxisId="l" dataKey="landing" name="Visitas à página" fill={CORES.reach} radius={[4, 4, 0, 0]} maxBarSize={30} />
+                      )}
+                      {/* Visitas só entram como linha quando a barra já é de compras — senão seriam
+                          a mesma informação duas vezes. */}
+                      {hourlyData.temCompras && hourlyData.temVisitas && (
+                        <Line yAxisId="r" type="monotone" dataKey="landing" name="Visitas à página" stroke={CORES.reach} strokeWidth={2} strokeDasharray="5 3" dot={false} />
                       )}
                       <Line yAxisId="r" type="monotone" dataKey="pedidos" name="Pedidos no delivery (todos)" stroke={CORES.spend} strokeWidth={2.5} dot={false} />
                     </ComposedChart>
