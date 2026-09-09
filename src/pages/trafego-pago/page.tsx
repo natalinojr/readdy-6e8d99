@@ -681,15 +681,37 @@ export default function TrafegoPagoPage() {
     [insights],
   );
 
-  // 24 linhas (0h–23h): compras/investimento dos anúncios por hora × pedidos do delivery por hora.
+  // Compras por hora (anúncios) × pedidos do delivery por hora.
+  // As duas séries têm ordens de grandeza muito diferentes (dezenas de compras contra centenas
+  // ou milhares de pedidos/cliques), então cada uma ganha o SEU eixo — num eixo só, a série
+  // pequena vira uma linha rente ao chão e some.
   const hourlyData = useMemo(() => {
-    const ads = insights?.breakdowns?.hourly ?? [];
+    const adsHora = insights?.breakdowns?.hourly ?? [];
     const pedidos = erposOrders?.hourly ?? null;
-    if (ads.length === 0 && !pedidos) return null;
-    return Array.from({ length: 24 }, (_, h) => {
-      const r = ads.find((x) => x.hour === h);
-      return { hour: h, spend: r?.spend ?? 0, purchases: r?.purchases ?? 0, link_clicks: r?.link_clicks ?? 0, pedidos: pedidos?.[h] ?? 0 };
+    if (adsHora.length === 0 && !pedidos) return null;
+
+    const full = Array.from({ length: 24 }, (_, h) => {
+      const r = adsHora.find((x) => x.hour === h);
+      return {
+        hour: h,
+        spend: r?.spend ?? 0,
+        purchases: r?.purchases ?? 0,
+        link_clicks: r?.link_clicks ?? 0,
+        pedidos: pedidos?.[h] ?? 0,
+      };
     });
+
+    // Corta as horas sem nada nas pontas (madrugada) pra sobrar largura onde a loja funciona.
+    const ativo = (d: typeof full[number]) => d.purchases > 0 || d.link_clicks > 0 || d.pedidos > 0;
+    const first = full.findIndex(ativo);
+    if (first === -1) return null;
+    let last = 23;
+    while (last > first && !ativo(full[last])) last -= 1;
+
+    // Sem nenhuma compra atribuída no período, a barra vira cliques no link — senão o gráfico
+    // ficaria vazio justamente quando o dado interessa.
+    const temCompras = full.some((d) => d.purchases > 0);
+    return { linhas: full.slice(first, last + 1), temCompras };
   }, [insights, erposOrders]);
 
   const alertas = useMemo(() => {
@@ -1135,23 +1157,62 @@ export default function TrafegoPagoPage() {
                 </ChartCard>
               </div>
 
-              {/* Hora do dia: compras dos anúncios × pedidos do delivery */}
+              {/* Hora do dia: compras dos anúncios × pedidos do delivery. Cada série no seu
+                  eixo — as grandezas são muito diferentes e num eixo só a menor desaparece. */}
               {hourlyData && (
-                <ChartCard icon={BarChart3} titulo="Hora do dia — compras via anúncio × pedidos do delivery" className="mb-4">
-                  <ResponsiveContainer width="100%" height={220}>
-                    <ComposedChart data={hourlyData} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+                <ChartCard
+                  icon={BarChart3}
+                  titulo={`Hora do dia — ${hourlyData.temCompras ? 'compras via anúncio' : 'cliques no anúncio'} × pedidos do delivery`}
+                  className="mb-4"
+                >
+                  <div className="flex items-center gap-4 flex-wrap mb-1 text-[11px] font-semibold">
+                    <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: hourlyData.temCompras ? CORES.compras : CORES.clicks }} />
+                      {hourlyData.temCompras ? 'Compras via anúncio' : 'Cliques no anúncio'}
+                      <span className="text-zinc-400 font-normal">(eixo da esquerda)</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                      <span className="w-3 h-0.5 rounded-full" style={{ background: CORES.spend }} />
+                      Pedidos no delivery, todos
+                      <span className="text-zinc-400 font-normal">(eixo da direita)</span>
+                    </span>
+                  </div>
+                  <ResponsiveContainer width="100%" height={240}>
+                    <ComposedChart data={hourlyData.linhas} margin={{ top: 10, right: 4, left: 0, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                      <XAxis dataKey="hour" tickFormatter={(h: number) => `${h}h`} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} interval={1} />
-                      <YAxis yAxisId="l" tickFormatter={compact} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} width={40} />
-                      <YAxis yAxisId="r" orientation="right" tickFormatter={compact} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} width={40} />
-                      <Tooltip content={<GraphTooltip fmt={{ purchases: num, pedidos: num, spend: brl, link_clicks: num }} labelFmt={(h) => `${h}h`} />} />
-                      <Bar yAxisId="l" dataKey="purchases" name="Compras via anúncio" fill={CORES.compras} radius={[3, 3, 0, 0]} maxBarSize={18} />
-                      <Bar yAxisId="l" dataKey="link_clicks" name="Cliques no link" fill={CORES.clicks} radius={[3, 3, 0, 0]} maxBarSize={18} opacity={0.35} />
+                      <XAxis dataKey="hour" tickFormatter={(h: number) => `${h}h`} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={4} />
+                      <YAxis
+                        yAxisId="l"
+                        allowDecimals={false}
+                        tickFormatter={compact}
+                        tick={{ fontSize: 11, fill: hourlyData.temCompras ? CORES.compras : CORES.clicks }}
+                        axisLine={false}
+                        tickLine={false}
+                        width={36}
+                      />
+                      <YAxis
+                        yAxisId="r"
+                        orientation="right"
+                        allowDecimals={false}
+                        tickFormatter={compact}
+                        tick={{ fontSize: 11, fill: CORES.spend }}
+                        axisLine={false}
+                        tickLine={false}
+                        width={36}
+                      />
+                      <Tooltip content={<GraphTooltip fmt={{ purchases: num, pedidos: num, spend: brl, link_clicks: num }} labelFmt={(h) => `${h}h`} />} cursor={{ fill: '#fafafa' }} />
+                      {hourlyData.temCompras ? (
+                        <Bar yAxisId="l" dataKey="purchases" name="Compras via anúncio" fill={CORES.compras} radius={[4, 4, 0, 0]} maxBarSize={30} />
+                      ) : (
+                        <Bar yAxisId="l" dataKey="link_clicks" name="Cliques no anúncio" fill={CORES.clicks} radius={[4, 4, 0, 0]} maxBarSize={30} />
+                      )}
                       <Line yAxisId="r" type="monotone" dataKey="pedidos" name="Pedidos no delivery (todos)" stroke={CORES.spend} strokeWidth={2.5} dot={false} />
                     </ComposedChart>
                   </ResponsiveContainer>
-                  <p className="text-[11px] text-zinc-400 mt-2">
-                    Se o pico de pedidos do delivery é às 20h e as compras dos anúncios concentram às 15h, vale programar a veiculação pro horário em que a loja vende.
+                  <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
+                    Cada série tem a sua escala, então compare o <strong className="font-semibold text-zinc-500">formato</strong> das
+                    curvas, não a altura entre elas. Se a loja vende às 20h e o anúncio converte às 15h, vale programar a
+                    veiculação para o horário em que a loja de fato vende.
                   </p>
                 </ChartCard>
               )}
