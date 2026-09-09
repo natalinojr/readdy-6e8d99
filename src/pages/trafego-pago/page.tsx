@@ -895,29 +895,33 @@ export default function TrafegoPagoPage() {
       {/* Conectado (ou link público válido) → painel */}
       {!loadingStatus && !exchanging && (publico ? !!insights?.ok : !!connection?.ad_account_id) && (
         <>
-          {/* Conta conectada + seletor (some no link público) */}
-          <div className={`flex items-center gap-2 mb-5 flex-wrap text-sm ${publico ? 'hidden' : ''}`}>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              Conectado
-            </span>
-            {connection.available_accounts.length > 1 ? (
-              <select
-                value={connection.ad_account_id}
-                onChange={(e) => handleSelectAccount(e.target.value)}
-                className="text-sm font-semibold border border-zinc-200 rounded-xl px-3 py-1.5 bg-white text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer"
-              >
-                {connection.available_accounts.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-            ) : (
-              <span className="text-zinc-500 font-medium">{connection.ad_account_name}</span>
-            )}
-            {connection.connected_by_name && (
-              <span className="text-zinc-400">· por {connection.connected_by_name}</span>
-            )}
-          </div>
+          {/* Conta conectada + seletor. Precisa ser renderização condicional, não classe
+              CSS: no modo público `connection` é null e o JSX abaixo seria avaliado do
+              mesmo jeito, quebrando a tela. */}
+          {!publico && connection && (
+            <div className="flex items-center gap-2 mb-5 flex-wrap text-sm">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                Conectado
+              </span>
+              {connection.available_accounts.length > 1 ? (
+                <select
+                  value={connection.ad_account_id ?? ''}
+                  onChange={(e) => handleSelectAccount(e.target.value)}
+                  className="text-sm font-semibold border border-zinc-200 rounded-xl px-3 py-1.5 bg-white text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer"
+                >
+                  {connection.available_accounts.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-zinc-500 font-medium">{connection.ad_account_name}</span>
+              )}
+              {connection.connected_by_name && (
+                <span className="text-zinc-400">· por {connection.connected_by_name}</span>
+              )}
+            </div>
+          )}
 
           {insightsError && (
             <div className="mb-5 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-600">
