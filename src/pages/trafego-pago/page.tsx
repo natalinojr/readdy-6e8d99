@@ -233,11 +233,16 @@ export default function TrafegoPagoPage() {
     }
     const redirectUri = window.location.origin + window.location.pathname;
     const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
-    // Login clássico (scope=ads_read) lista as contas pelo acesso PESSOAL do usuário,
-    // não por portfólio — assim contas de outros negócios (ex.: Vila Leste) aparecem.
-    // (O config_id do "Login para Empresas" filtrava por portfólio e escondia essas contas.)
-    const grant = 'scope=ads_read';
-    void data.config_id;
+    // "Login do Facebook para Empresas" (config_id) sempre que estiver configurado: app do
+    // tipo Empresa só aceita esse login — com o login clássico (scope=ads_read) a Meta
+    // responde "Recurso indisponível / O Login do Facebook está indisponível para este app".
+    // No diálogo o usuário escolhe o portfólio + contas de anúncio que libera; como a conexão
+    // é uma por loja, cada loja conecta com o portfólio dela (Vila Leste incluída).
+    // `override_default_response_type` garante `code` mesmo se a configuração pedir token.
+    // Sem config_id (secret META_LOGIN_CONFIG_ID ausente), cai no login clássico.
+    const grant = data.config_id
+      ? `config_id=${encodeURIComponent(data.config_id)}&override_default_response_type=true`
+      : 'scope=ads_read';
     const url =
       `https://www.facebook.com/v20.0/dialog/oauth?client_id=${data.app_id}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
