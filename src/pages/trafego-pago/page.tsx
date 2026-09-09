@@ -131,7 +131,16 @@ const PERIODOS = [
   { value: 'last_30d', label: 'Últimos 30 dias' },
   { value: 'this_month', label: 'Este mês' },
   { value: 'last_month', label: 'Mês passado' },
+  { value: 'custom', label: 'Personalizado…' },
 ];
+
+// Data de hoje (ou deslocada) no fuso da loja, formato YYYY-MM-DD — pros inputs de data.
+const brDate = (offsetDays = 0): string => {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+};
+const MAX_DIAS_PERSONALIZADO = 366;
 
 const OAUTH_STATE_KEY = 'meta_oauth_state';
 
@@ -246,6 +255,11 @@ export default function TrafegoPagoPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [datePreset, setDatePreset] = useState('last_30d');
+  // Período personalizado: os inputs editam since/until; só busca quando o usuário clica em Aplicar.
+  const [customSince, setCustomSince] = useState(brDate(-6));
+  const [customUntil, setCustomUntil] = useState(brDate(0));
+  const [customApplied, setCustomApplied] = useState<{ since: string; until: string } | null>(null);
+  const [customErro, setCustomErro] = useState<string | null>(null);
   const [insights, setInsights] = useState<InsightsResponse | null>(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
@@ -321,10 +335,15 @@ export default function TrafegoPagoPage() {
   // ── Carrega as campanhas quando há conta + muda período ──
   const loadInsights = useCallback(async () => {
     if (!tenantId || !connection?.ad_account_id) return;
+    if (datePreset === 'custom' && !customApplied) return; // espera o "Aplicar"
     setInsightsLoading(true);
     setInsightsError(null);
     const { data, error: err } = await invokeWithAuth<InsightsResponse>('meta-ads-insights', {
-      body: { tenant_id: tenantId, date_preset: datePreset },
+      body: {
+        tenant_id: tenantId,
+        date_preset: datePreset,
+        ...(datePreset === 'custom' && customApplied ? { time_range: customApplied } : {}),
+      },
     });
     if (err) {
       setInsightsError(err.message);
@@ -334,12 +353,24 @@ export default function TrafegoPagoPage() {
       setInsights(data ?? null);
     }
     setInsightsLoading(false);
-  }, [tenantId, connection?.ad_account_id, datePreset]);
+  }, [tenantId, connection?.ad_account_id, datePreset, customApplied]);
 
   useEffect(() => {
     if (connection?.ad_account_id) loadInsights();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection?.ad_account_id, datePreset]);
+  }, [connection?.ad_account_id, datePreset, customApplied]);
+
+  // Valida e aplica o período personalizado (de ≤ até, até ≤ hoje, no máximo 366 dias).
+  const aplicarPersonalizado = useCallback(() => {
+    const hoje = brDate(0);
+    if (!customSince || !customUntil) { setCustomErro('Informe as duas datas.'); return; }
+    if (customSince > customUntil) { setCustomErro('A data inicial não pode ser depois da final.'); return; }
+    if (customUntil > hoje) { setCustomErro('A data final não pode ser no futuro.'); return; }
+    const dias = Math.round((Date.parse(`${customUntil}T00:00:00Z`) - Date.parse(`${customSince}T00:00:00Z`)) / 86400000) + 1;
+    if (dias > MAX_DIAS_PERSONALIZADO) { setCustomErro(`Período máximo de ${MAX_DIAS_PERSONALIZADO} dias.`); return; }
+    setCustomErro(null);
+    setCustomApplied({ since: customSince, until: customUntil });
+  }, [customSince, customUntil]);
 
   // ── Inicia o login do Facebook (popup) ──
   const handleConnect = useCallback(async () => {
@@ -610,6 +641,36 @@ export default function TrafegoPagoPage() {
                 <option key={p.value} value={p.value}>{p.label}</option>
               ))}
             </select>
+            {datePreset === 'custom' && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <input
+                  type="date"
+                  value={customSince}
+                  max={customUntil || brDate(0)}
+                  onChange={(e) => setCustomSince(e.target.value)}
+                  className="text-sm font-semibold border border-zinc-200 rounded-xl px-2.5 py-1.5 bg-white text-zinc-700 focus:outline-none focus:border-amber-400"
+                  aria-label="Data inicial"
+                />
+                <span className="text-xs text-zinc-400">até</span>
+                <input
+                  type="date"
+                  value={customUntil}
+                  min={customSince}
+                  max={brDate(0)}
+                  onChange={(e) => setCustomUntil(e.target.value)}
+                  className="text-sm font-semibold border border-zinc-200 rounded-xl px-2.5 py-1.5 bg-white text-zinc-700 focus:outline-none focus:border-amber-400"
+                  aria-label="Data final"
+                />
+                <button
+                  onClick={aplicarPersonalizado}
+                  disabled={insightsLoading}
+                  className="px-3 py-2 text-sm font-bold rounded-xl bg-amber-500 text-white hover:bg-amber-600 cursor-pointer disabled:opacity-50"
+                >
+                  Aplicar
+                </button>
+                {customErro && <span className="text-xs text-red-500 font-semibold">{customErro}</span>}
+              </div>
+            )}
             <button
               onClick={loadInsights}
               disabled={insightsLoading}

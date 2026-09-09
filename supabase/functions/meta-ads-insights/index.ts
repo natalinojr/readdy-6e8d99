@@ -284,7 +284,26 @@ Deno.serve(async (req: Request) => {
     }
 
     const requested = String(body.date_preset ?? 'last_7d')
-    const datePreset = ALLOWED_DATE_PRESETS.has(requested) ? requested : 'last_7d'
+    let datePreset = ALLOWED_DATE_PRESETS.has(requested) ? requested : 'last_7d'
+
+    // Período personalizado: body.time_range = { since, until } (YYYY-MM-DD, since ≤ until, ≤ 366 dias).
+    // Se vier inválido, ignora e cai no preset — nunca devolve erro por causa de data.
+    let period = `date_preset=${datePreset}`
+    const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+    const tr = body.time_range as { since?: unknown; until?: unknown } | undefined
+    if (tr && typeof tr === 'object') {
+      const s = String(tr.since ?? '')
+      const u = String(tr.until ?? '')
+      const span = ISO_DATE.test(s) && ISO_DATE.test(u)
+        ? (Date.parse(`${u}T00:00:00Z`) - Date.parse(`${s}T00:00:00Z`)) / 86400000
+        : NaN
+      if (Number.isFinite(span) && span >= 0 && span <= 366) {
+        period = `time_range=${encodeURIComponent(JSON.stringify({ since: s, until: u }))}`
+        datePreset = 'custom'
+      } else {
+        console.warn('[meta-ads-insights] time_range inválido, usando preset:', JSON.stringify(tr).slice(0, 100))
+      }
+    }
 
     const common = [
       'spend', 'impressions', 'reach', 'frequency', 'clicks', 'inline_link_clicks',
@@ -301,7 +320,6 @@ Deno.serve(async (req: Request) => {
 
     const base = `${GRAPH}/${conn.ad_account_id}/insights`
     const token = encodeURIComponent(conn.access_token)
-    const period = `date_preset=${datePreset}`
 
     // Seis consultas em paralelo: campanha, anúncio, dia, posicionamento, idade/gênero, hora do dia.
     const [camp, ad, day, placement, ageGender, hourly] = await Promise.all([
