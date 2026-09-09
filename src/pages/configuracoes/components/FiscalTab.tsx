@@ -180,7 +180,7 @@ export default function FiscalTab() {
       <Section title="Emissão automática" icon={<FileCheck2 size={14} />}>
         <div className="space-y-4">
           <Toggle checked={form.enabled} onChange={v => set('enabled', v)} label="Emitir NFC-e automaticamente a cada venda"
-            hint="Desligado: nada é emitido (pode emitir manualmente em Financeiro › Notas Fiscais)." />
+            hint="Desligado: nada é emitido (pode emitir manualmente em Pedidos › Notas Fiscais)." />
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pl-1">
             <Toggle checked={form.emit_on_counter} onChange={v => set('emit_on_counter', v)} label="Balcão / PDV Caixa" hint="Ao concluir o pagamento" />
             <Toggle checked={form.emit_on_delivery} onChange={v => set('emit_on_delivery', v)} label="Delivery" hint="Ao registrar o pagamento" />

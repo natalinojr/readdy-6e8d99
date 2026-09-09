@@ -1,4 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import NotasFiscaisList from './components/NotasFiscaisList';
 import type { PedidoRecente, OrigemPedido } from '@/types/pdv';
 import PedidoDetalheModal from './components/PedidoDetalheModal';
 import PedidosLista from './components/PedidosLista';
@@ -498,6 +500,10 @@ function destinoStr(pedido: PedidoRecente): string {
 // ── Página ────────────────────────────────────────────────────────────────────
 
 export default function PedidosPage() {
+  // Aba "Notas Fiscais" (NFC-e) vive dentro de Pedidos: /pedidos?tab=notas
+  const [searchParams, setSearchParams] = useSearchParams();
+  const abaAtiva: 'pedidos' | 'notas' = searchParams.get('tab') === 'notas' ? 'notas' : 'pedidos';
+  const setAba = (t: 'pedidos' | 'notas') => setSearchParams(t === 'notas' ? { tab: 'notas' } : {}, { replace: true });
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>('todos');
   const [filtroOrigem, setFiltroOrigem] = useState<FiltroOrigem>('todos');
@@ -958,13 +964,24 @@ export default function PedidosPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-              <i className="ri-file-list-3-line text-zinc-600 text-base" />
+              <i className={`${abaAtiva === 'notas' ? 'ri-file-shield-2-line' : 'ri-file-list-3-line'} text-zinc-600 text-base`} />
             </div>
             <div>
-              <h1 className="text-base font-bold text-zinc-900">Pedidos</h1>
-              <p className="text-xs text-zinc-400 hidden sm:block">Todos os pedidos com informações completas</p>
+              <h1 className="text-base font-bold text-zinc-900">{abaAtiva === 'notas' ? 'Notas Fiscais' : 'Pedidos'}</h1>
+              <p className="text-xs text-zinc-400 hidden sm:block">
+                {abaAtiva === 'notas' ? 'NFC-e emitidas por venda: consulta, reimpressão, cancelamento e XMLs' : 'Todos os pedidos com informações completas'}
+              </p>
+            </div>
+            <div className="flex items-center bg-zinc-100 rounded-lg p-0.5 ml-2">
+              {([['pedidos', 'Pedidos'], ['notas', 'Notas Fiscais']] as const).map(([id, label]) => (
+                <button key={id} onClick={() => setAba(id)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer whitespace-nowrap transition-colors ${abaAtiva === id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
+          {abaAtiva === 'pedidos' && (
           <div className="flex items-center gap-2 flex-wrap">
             <ModoFaturamentoToggle size="sm" showLabel={false} />
             <button
@@ -1010,9 +1027,17 @@ export default function PedidosPage() {
               )}
             </div>
           </div>
+          )}
         </div>
       </div>
 
+      {abaAtiva === 'notas' && (
+        <div className="flex-1 overflow-y-auto">
+          <NotasFiscaisList />
+        </div>
+      )}
+
+      {abaAtiva === 'pedidos' && (
       <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-5">
         {/* Métricas */}
         <PedidosMetricas
@@ -1110,6 +1135,7 @@ export default function PedidosPage() {
           onSelectPedido={setPedidoDetalheId}
         />
       </div>
+      )}
 
       {pedidoDetalhe && (
         <PedidoDetalheModal pedido={pedidoDetalhe} onClose={() => setPedidoDetalheId(null)} />

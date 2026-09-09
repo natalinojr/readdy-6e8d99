@@ -93,6 +93,7 @@ const routes: RouteObject[] = [
       { path: 'relatorios', element: <RelatoriosPage /> },
       { path: 'pedidos', element: <PedidosPage /> },
       { path: 'trafego-pago', element: <TrafegoPagoPage /> },
+      { path: 'notas-fiscais', element: <Navigate to="/pedidos?tab=notas" replace /> },
       { path: 'tarefas', element: <TarefasPage /> },
       { path: 'estoque', element: <EstoquePage /> },
       { path: 'aprovacoes', element: <AprovacoesPage /> },
