@@ -179,11 +179,21 @@ export async function reprintPedidoGestor(opts: ReprintOptions): Promise<PrintRe
       };
     });
 
-    const destino: OrderPrintDestino = {
-      tipo: pedido.destino,
-      destination_name: pedido.nomeCliente ?? pedido.participantToken ?? pedido.senha ?? null,
-      table_number: pedido.mesaNumero ?? null,
-    };
+    // Pedido de senha (QR universal / fila): a senha já sai no bloco grande do
+    // ticket, então o destino leva o NOME do cliente — senão a mesma senha era
+    // impressa duas vezes e o nome não aparecia em lugar nenhum.
+    const nomeFila = (pedido.participantName ?? pedido.nomeCliente ?? '').trim();
+    const destino: OrderPrintDestino = pedido.destino === 'senha'
+      ? {
+          tipo: 'nome',
+          destination_name: nomeFila || `Senha ${pedido.participantToken ?? pedido.senha ?? ''}`.trim(),
+          table_number: null,
+        }
+      : {
+          tipo: pedido.destino,
+          destination_name: pedido.nomeCliente ?? pedido.participantToken ?? pedido.senha ?? null,
+          table_number: pedido.mesaNumero ?? null,
+        };
 
     const senha = pedido.participantToken ?? pedido.senha;
 

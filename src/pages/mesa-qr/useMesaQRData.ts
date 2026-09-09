@@ -644,8 +644,11 @@ export function useMesaQRData() {
             };
           });
 
+          // Fila (QR universal): a senha já sai no bloco grande do ticket (parâmetro
+          // `senha`); o destino leva o NOME que o cliente digitou, senão a cozinha
+          // recebia a mesma senha impressa duas vezes e nenhum nome.
           const printDestino: OrderPrintDestino = queueMode
-            ? { tipo: 'senha', destination_name: participant.access_token, table_number: null }
+            ? { tipo: 'nome', destination_name: (participant.name || '').trim() || ('Senha ' + participant.access_token), table_number: null }
             : { tipo: 'table', table_number: table.number, destination_name: 'Mesa ' + table.number + ' - ' + participant.name };
 
           queueOrderForPrint(
