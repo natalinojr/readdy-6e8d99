@@ -7,6 +7,7 @@ import { usePaymentMethods, type PaymentMethod } from '@/hooks/usePaymentMethods
 import { useUsuarios } from '@/hooks/useUsuarios';
 import { useToast } from '@/contexts/ToastContext';
 import { subscribeReload } from '@/lib/reloadSignal';
+import { TPAG_OPTIONS, TPAG_AUTO } from '@/lib/fiscal';
 
 // ─── Static config ────────────────────────────────────────────────────────────
 const CORES = ['#f59e0b', '#f97316', '#10b981', '#06b6d4', '#8b5cf6', '#ec4899', '#ef4444', '#14b8a6'];
@@ -154,6 +155,7 @@ function FormaModal({ forma, onClose, onSalvo, tenantId }: FormaModalProps) {
   const [taxa, setTaxa] = useState(forma?.taxa?.toString() ?? '0');
   const [prazo, setPrazo] = useState(forma?.prazoRecebimento ?? 30);
   const [prazoCustom, setPrazoCustom] = useState(false);
+  const [fiscalCode, setFiscalCode] = useState(forma?.fiscalCode ?? '');
   const [salvando, setSalvando] = useState(false);
 
   const tipoLabels: Record<PaymentMethod['tipo'], string> = { dinheiro: 'Dinheiro', credito: 'Crédito', debito: 'Débito', pix: 'PIX', vale: 'Vale' };
@@ -170,6 +172,7 @@ function FormaModal({ forma, onClose, onSalvo, tenantId }: FormaModalProps) {
       type: tipo,
       fee_percentage: parseFloat(taxa) || 0,
       days_to_receive: tipo === 'credito' || tipo === 'debito' || tipo === 'vale' ? prazo : 0,
+      fiscal_code: fiscalCode || null,
     };
 
     if (forma?.id) {
@@ -281,6 +284,16 @@ function FormaModal({ forma, onClose, onSalvo, tenantId }: FormaModalProps) {
               )}
             </div>
           )}
+          <div>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+              Código na NFC-e
+              <span className="ml-1 text-zinc-400 font-normal">(forma de pagamento fiscal)</span>
+            </label>
+            <select value={fiscalCode} onChange={e => setFiscalCode(e.target.value)}
+              className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400 cursor-pointer">
+              {TPAG_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.value === '' ? `Automático (${TPAG_AUTO[tipo]})` : o.label}</option>)}
+            </select>
+          </div>
         </div>
         <div className="flex gap-2 mt-5">
           <button onClick={onClose} className="flex-1 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-lg hover:bg-zinc-200 cursor-pointer whitespace-nowrap">Cancelar</button>

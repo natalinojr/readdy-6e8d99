@@ -1,4 +1,5 @@
-import { Settings, Store, ChefHat, Sliders, Shield, LayoutGrid, Printer, FileText } from 'lucide-react';
+import { Settings, Store, ChefHat, Sliders, Shield, LayoutGrid, Printer, FileText, FileCheck2 } from 'lucide-react';
+import FiscalTab from './components/FiscalTab';
 import { useSearchParams } from 'react-router-dom';
 import LojaTab from './components/LojaTab';
 import EstacoesPagamentosTab from './components/EstacoesPagamentosTab';
@@ -8,12 +9,13 @@ import MesasConfigTab from './components/MesasConfigTab';
 import ImpressorasTab from './components/ImpressorasTab';
 import ModelosImpressaoTab from './components/ModelosImpressaoTab';
 
-type Tab = 'loja' | 'mesas' | 'estacoes' | 'impressoras' | 'modelos-impressao' | 'operacao' | 'permissoes';
+type Tab = 'loja' | 'fiscal' | 'mesas' | 'estacoes' | 'impressoras' | 'modelos-impressao' | 'operacao' | 'permissoes';
 
-const VALID_TABS: Tab[] = ['loja', 'mesas', 'estacoes', 'impressoras', 'modelos-impressao', 'operacao', 'permissoes'];
+const VALID_TABS: Tab[] = ['loja', 'fiscal', 'mesas', 'estacoes', 'impressoras', 'modelos-impressao', 'operacao', 'permissoes'];
 
 const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'loja', label: 'Dados da Loja', icon: <Store size={14} /> },
+  { id: 'fiscal', label: 'Fiscal (NFC-e)', icon: <FileCheck2 size={14} /> },
   { id: 'mesas', label: 'Mesas & QR Codes', icon: <LayoutGrid size={14} /> },
   { id: 'estacoes', label: 'Estações & Pagamentos', icon: <ChefHat size={14} /> },
   { id: 'impressoras', label: 'Impressoras', icon: <Printer size={14} /> },
@@ -55,6 +57,7 @@ export default function ConfiguracoesPage() {
       </div>
       <div className="flex-1 overflow-y-auto p-6">
         {tab === 'loja' && <LojaTab />}
+        {tab === 'fiscal' && <FiscalTab />}
         {tab === 'mesas' && <MesasConfigTab />}
         {tab === 'estacoes' && <EstacoesPagamentosTab />}
         {tab === 'impressoras' && <ImpressorasTab />}

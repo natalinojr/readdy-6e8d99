@@ -8,6 +8,8 @@ const mockDiasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 import type { EstacaoCozinha } from '../../../contexts/CardapioContext';
 import FichaTecnicaTab from './FichaTecnicaTab';
 import DeliveryTab from './DeliveryTab';
+import FiscalFields from '@/components/feature/FiscalFields';
+import type { ItemFiscal } from '@/lib/fiscal';
 import ItemImage from '@/components/base/ItemImage';
 import { uploadMenuImage } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -64,7 +66,7 @@ const novaSubProducao = (estacaoNome = 'Grelha', estacaoId = ''): SubproducaoIte
   slaMinutos: 10,
 });
 
-type TabLocal = 'info' | 'producao' | 'opcoes' | 'promocoes' | 'observacoes' | 'ficha' | 'delivery';
+type TabLocal = 'info' | 'producao' | 'opcoes' | 'promocoes' | 'observacoes' | 'ficha' | 'delivery' | 'fiscal';
 
 export default function ItemModal({ item, categorias, obsGlobais, estacoes, saving, onSave, onClose }: Props) {
   const { user } = useAuth();
@@ -93,6 +95,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
   const primeiraEstacao = estacoes[0];
   const [producaoDividida, setProducaoDividida] = useState((item?.subproducao?.length ?? 0) > 0);
   const [deliveryConfig, setDeliveryConfig] = useState<ConfiguracaoDelivery | undefined>(item?.delivery);
+  const [fiscal, setFiscal] = useState<ItemFiscal>(item?.fiscal ?? {});
   const fotoInputRef = useRef<HTMLInputElement>(null);
   const [uploadingFoto, setUploadingFoto] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -118,11 +121,12 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
     setSubproducao(item?.subproducao ?? []);
     setProducaoDividida((item?.subproducao?.length ?? 0) > 0);
     setDeliveryConfig(item?.delivery);
+    setFiscal(item?.fiscal ?? {});
     setTab('info');
     setNovaObs('');
     setUploadError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item ? JSON.stringify({ id: item.id, subproducao: item.subproducao, nome: item.nome, descricao: item.descricao, preco: item.preco, categoriaId: item.categoriaId, slaMinutos: item.slaMinutos, fotoUrl: item.fotoUrl, status: item.status, semPreparo: item.semPreparo, somenteDelivery: item.somenteDelivery, gruposOpcoes: item.gruposOpcoes, promocoes: item.promocoes, observacoesPadrao: item.observacoesPadrao, fichaTecnica: item.fichaTecnica, delivery: item.delivery }) : 'undefined', categorias]);
+  }, [item ? JSON.stringify({ id: item.id, subproducao: item.subproducao, nome: item.nome, descricao: item.descricao, preco: item.preco, categoriaId: item.categoriaId, slaMinutos: item.slaMinutos, fotoUrl: item.fotoUrl, status: item.status, semPreparo: item.semPreparo, somenteDelivery: item.somenteDelivery, gruposOpcoes: item.gruposOpcoes, promocoes: item.promocoes, observacoesPadrao: item.observacoesPadrao, fichaTecnica: item.fichaTecnica, delivery: item.delivery, fiscal: item.fiscal }) : 'undefined', categorias]);
 
   const slaCalculado = producaoDividida && subproducao.length > 0
     ? subproducao.reduce((acc, s) => acc + (s.slaMinutos || 0), 0)
@@ -159,6 +163,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
     { id: 'promocoes', label: `Promoções (${promocoes.length})`, icon: 'ri-price-tag-3-line' },
     { id: 'observacoes', label: `Obs (${obs.length})`, icon: 'ri-chat-3-line' },
     { id: 'ficha', label: `Ficha Técnica (${fichasCount})`, icon: 'ri-test-tube-line' },
+    { id: 'fiscal', label: fiscal.ncm ? `Fiscal (${fiscal.ncm})` : 'Fiscal', icon: 'ri-file-shield-2-line' },
     {
       id: 'delivery',
       label: deliveryConfig?.ativo ? 'Delivery Próprio ✓' : 'Delivery Próprio',
@@ -267,6 +272,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
       fichaTecnica: fichas,
       subproducao: producaoDividida && subproducao.length > 0 ? subproducao : undefined,
       delivery: deliveryConfig,
+      fiscal,
     };
     onSave(saved);
   };
@@ -860,6 +866,20 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
               itemId={item?.id}
               precoVenda={parseFloat(preco) || 0}
               onCountChange={setFichasCount}
+            />
+          )}
+
+          {/* ── FISCAL ── */}
+          {tab === 'fiscal' && (
+            <FiscalFields
+              scope="item"
+              value={fiscal}
+              onChange={setFiscal}
+              heranca={(() => {
+                const cat = categorias.find(c => c.id === categoriaId);
+                const catNcm = cat?.fiscal?.ncm;
+                return catNcm ? `da categoria "${cat?.nome}" (NCM ${catNcm}) e, depois, do padrão da loja` : `da categoria "${cat?.nome ?? ''}" (sem NCM próprio) e, depois, do padrão da loja`;
+              })()}
             />
           )}
 

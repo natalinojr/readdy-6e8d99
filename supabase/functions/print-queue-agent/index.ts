@@ -91,6 +91,140 @@ const ORIGEM_PT: Record<string, string> = {
 };
 
 // ============================================
+// formatDanfe — DANFE NFC-e simplificado (cupom fiscal) com QR Code
+// ============================================
+
+// QR Code nativo ESC/POS (GS ( k) — suportado pelas térmicas Epson-compatíveis.
+function escposQrCode(data: string, moduleSize: number): string {
+  const bytes = latin1ToBytes(data);
+  const len = bytes.length + 3;
+  const pL = String.fromCharCode(len & 0xFF);
+  const pH = String.fromCharCode((len >> 8) & 0xFF);
+  let out = "";
+  out += GS + "(k" + "\x04\x00" + "\x31\x41" + "\x32\x00";                 // modelo 2
+  out += GS + "(k" + "\x03\x00" + "\x31\x43" + String.fromCharCode(moduleSize); // tamanho do módulo
+  out += GS + "(k" + "\x03\x00" + "\x31\x45" + "\x30";                       // correção L
+  out += GS + "(k" + pL + pH + "\x31\x50\x30" + String.fromCharCode(...Array.from(bytes)); // armazena
+  out += GS + "(k" + "\x03\x00" + "\x31\x51\x30";                            // imprime
+  return out;
+}
+
+function fmtMoney(n: unknown): string {
+  return Number(n ?? 0).toFixed(2).replace(".", ",");
+}
+function padLR(left: string, right: string, width: number): string {
+  const l = left.length + right.length >= width ? left.slice(0, Math.max(0, width - right.length - 1)) : left;
+  return l + " ".repeat(Math.max(1, width - l.length - right.length)) + right;
+}
+function fmtCnpj(d: string): string {
+  return d.length === 14 ? `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}` : d;
+}
+function fmtCpf(d: string): string {
+  if (d.length === 11) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+  return fmtCnpj(d);
+}
+
+function formatDanfe(payload: Record<string, unknown>, papel: "80mm" | "58mm"): string {
+  const width = papel === "58mm" ? 32 : 48;
+  const sep = "-".repeat(width);
+  const emit = (payload.emitente ?? {}) as Record<string, string>;
+  const itens = (payload.itens ?? []) as Array<Record<string, unknown>>;
+  const pagamentos = (payload.pagamentos ?? []) as Array<Record<string, unknown>>;
+  const chave = String(payload.chave ?? "").replace(/\D/g, "");
+  const homolog = Number(payload.ambiente ?? 2) === 2;
+  const cancelada = payload.cancelada === true;
+
+  let out = INIT + CP860;
+  out += ALIGN_CENTER;
+  if (emit.nome) out += BOLD_ON + toCp860(String(emit.nome).slice(0, width)) + BOLD_OFF + LINE_FEED;
+  if (emit.fantasia && emit.fantasia !== emit.nome) out += toCp860(String(emit.fantasia).slice(0, width)) + LINE_FEED;
+  if (emit.cnpj) out += toCp860(`CNPJ: ${fmtCnpj(emit.cnpj)}${emit.ie ? `  IE: ${emit.ie}` : ""}`) + LINE_FEED;
+  const end1 = [emit.endereco, emit.bairro].filter(Boolean).join(" - ");
+  if (end1) out += toCp860(end1.slice(0, width)) + LINE_FEED;
+  const end2 = [emit.municipio, emit.uf].filter(Boolean).join("/") + (emit.cep ? ` CEP ${emit.cep}` : "");
+  if (end2.trim()) out += toCp860(end2.trim().slice(0, width)) + LINE_FEED;
+  out += toCp860(sep) + LINE_FEED;
+  out += BOLD_ON + toCp860("DANFE NFC-e - Documento Auxiliar") + BOLD_OFF + LINE_FEED;
+  out += toCp860("da Nota Fiscal de Consumidor Eletronica") + LINE_FEED;
+  if (homolog) out += BOLD_ON + toCp860("EMITIDA EM HOMOLOGACAO - SEM VALOR FISCAL") + BOLD_OFF + LINE_FEED;
+  if (cancelada) out += DOUBLE_HEIGHT + BOLD_ON + toCp860("*** NOTA CANCELADA ***") + BOLD_OFF + NORMAL + LINE_FEED;
+  out += toCp860(sep) + LINE_FEED;
+
+  // Itens
+  out += ALIGN_LEFT;
+  out += toCp860(padLR("# DESCRICAO", "", width)) + LINE_FEED;
+  out += toCp860(padLR("QTD x UNIT", "TOTAL", width)) + LINE_FEED;
+  itens.forEach((it, i) => {
+    const nome = String(it.nome ?? "ITEM");
+    out += toCp860(`${String(i + 1).padStart(2, "0")} ${nome}`.slice(0, width)) + LINE_FEED;
+    if (nome.length > width - 3) {
+      const rest = nome.slice(width - 3);
+      out += toCp860(`   ${rest}`.slice(0, width)) + LINE_FEED;
+    }
+    const qtd = Number(it.quantidade ?? 1);
+    const left = `   ${qtd} UN x ${fmtMoney(it.unitario)}`;
+    out += toCp860(padLR(left, fmtMoney(it.total), width)) + LINE_FEED;
+  });
+  out += toCp860(sep) + LINE_FEED;
+
+  // Totais
+  const qtdItens = itens.reduce((s, it) => s + Number(it.quantidade ?? 1), 0);
+  out += toCp860(padLR("Qtd. total de itens", String(qtdItens), width)) + LINE_FEED;
+  out += toCp860(padLR("Subtotal", fmtMoney(payload.subtotal), width)) + LINE_FEED;
+  if (Number(payload.desconto ?? 0) > 0) out += toCp860(padLR("Desconto", `-${fmtMoney(payload.desconto)}`, width)) + LINE_FEED;
+  if (Number(payload.outras ?? 0) > 0) out += toCp860(padLR("Taxas/Entrega", fmtMoney(payload.outras), width)) + LINE_FEED;
+  out += BOLD_ON + DOUBLE_HEIGHT + toCp860(padLR("VALOR A PAGAR R$", fmtMoney(payload.total), width)) + NORMAL + BOLD_OFF + LINE_FEED;
+  out += toCp860(padLR("FORMA DE PAGAMENTO", "VALOR PAGO", width)) + LINE_FEED;
+  for (const p of pagamentos) {
+    out += toCp860(padLR(String(p.nome ?? "Pagamento"), fmtMoney(p.valor), width)) + LINE_FEED;
+  }
+  if (Number(payload.troco ?? 0) > 0) out += toCp860(padLR("Troco", fmtMoney(payload.troco), width)) + LINE_FEED;
+  out += toCp860(sep) + LINE_FEED;
+
+  // Consulta / chave
+  out += ALIGN_CENTER;
+  out += toCp860("Consulte pela Chave de Acesso em") + LINE_FEED;
+  out += toCp860(String(payload.url_chave || "www.nfe.fazenda.gov.br/portal").slice(0, width)) + LINE_FEED;
+  if (chave) {
+    const grouped = chave.match(/.{1,4}/g)?.join(" ") ?? chave;
+    if (width >= 48) out += toCp860(grouped) + LINE_FEED;
+    else { out += toCp860(grouped.slice(0, 29)) + LINE_FEED; out += toCp860(grouped.slice(30)) + LINE_FEED; }
+  }
+  out += toCp860(sep) + LINE_FEED;
+
+  // Consumidor
+  const cpf = String(payload.consumidor_cpf ?? "").replace(/\D/g, "");
+  if (cpf) {
+    out += toCp860(`CONSUMIDOR ${cpf.length === 11 ? "CPF" : "CNPJ"}: ${fmtCpf(cpf)}`) + LINE_FEED;
+    if (payload.consumidor_nome) out += toCp860(String(payload.consumidor_nome).slice(0, width)) + LINE_FEED;
+  } else {
+    out += toCp860("CONSUMIDOR NAO IDENTIFICADO") + LINE_FEED;
+  }
+  out += toCp860(sep) + LINE_FEED;
+
+  // Número / série / data / protocolo
+  const emitted = payload.emitted_at
+    ? new Date(String(payload.emitted_at)).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : "";
+  out += BOLD_ON + toCp860(`NFC-e no ${payload.numero ?? "-"}  Serie ${payload.serie ?? "-"}`) + BOLD_OFF + LINE_FEED;
+  if (emitted) out += toCp860(`Emissao: ${emitted}`) + LINE_FEED;
+  if (payload.protocolo) out += toCp860(`Protocolo: ${payload.protocolo}${emitted ? " " + emitted.slice(0, 10) : ""}`) + LINE_FEED;
+  if (payload.pedido) out += toCp860(`Pedido: ${payload.pedido}`) + LINE_FEED;
+
+  // QR Code
+  const qr = String(payload.qr_code ?? "");
+  if (qr) {
+    out += LINE_FEED;
+    out += escposQrCode(qr, papel === "58mm" ? 4 : 5);
+    out += LINE_FEED;
+  }
+  out += toCp860("Tributos aprox. conforme Lei 12.741/2012") + LINE_FEED;
+  out += LINE_FEED + LINE_FEED;
+  out += CUT;
+  return out;
+}
+
+// ============================================
 // formatTicket — gera ESC/POS completo
 // ============================================
 
@@ -449,6 +583,19 @@ serve(async (req) => {
         };
 
         const payload = ticket.payload as Record<string, unknown> | undefined;
+
+        // DANFE NFC-e (cupom fiscal) — layout próprio, com QR Code.
+        if (ticket.content_type === "danfe_nfce" && payload) {
+          try {
+            const d80 = latin1ToBytes(formatDanfe(payload, "80mm"));
+            const d58 = latin1ToBytes(formatDanfe(payload, "58mm"));
+            return { ...ticket, ...printerFields, escpos_80mm_base64: bytesToBase64(d80), escpos_58mm_base64: bytesToBase64(d58), escpos_80mm_size: d80.length, escpos_58mm_size: d58.length };
+          } catch (fmtErr) {
+            console.error(`[print-queue-agent] erro formatando DANFE ${ticket.id}:`, fmtErr);
+            return { ...ticket, ...printerFields, escpos_80mm_base64: null, escpos_58mm_base64: null, format_error: (fmtErr as Error).message };
+          }
+        }
+
         if (!payload || !payload.itens) {
           return { ...ticket, ...printerFields, escpos_80mm_base64: null, escpos_58mm_base64: null };
         }

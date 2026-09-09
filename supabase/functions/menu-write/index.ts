@@ -146,16 +146,23 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     let result: unknown = null;
 
     if (action === 'upsert_category') {
-      const { id, name, station_id, sort_order, is_active } = payload as { id?: string; name: string; station_id?: string | null; sort_order?: number; is_active?: boolean };
+      const { id, name, station_id, sort_order, is_active, fiscal } = payload as { id?: string; name: string; station_id?: string | null; sort_order?: number; is_active?: boolean; fiscal?: Record<string, unknown> };
+      // Campos fiscais da categoria (NCM/CEST/CFOP/CSOSN/grupo tributário) — só quando enviados.
+      const fiscalCat: Record<string, unknown> = {};
+      if (fiscal && typeof fiscal === 'object') {
+        for (const k of ['ncm', 'cest', 'cfop', 'csosn', 'cod_tributacao']) {
+          if (fiscal[k] !== undefined) fiscalCat[k] = fiscal[k] === '' || fiscal[k] === null ? null : (k === 'cfop' ? Number(fiscal[k]) : String(fiscal[k]).trim());
+        }
+      }
       if (id) {
-        const { data, error } = await admin.from('menu_categories').update({ name, station_id: station_id ?? null, sort_order, is_active }).eq('id', id).eq('tenant_id', tenantId).is('deleted_at', null).select().maybeSingle();
+        const { data, error } = await admin.from('menu_categories').update({ name, station_id: station_id ?? null, sort_order, is_active, ...fiscalCat }).eq('id', id).eq('tenant_id', tenantId).is('deleted_at', null).select().maybeSingle();
         if (error) {
           if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: friendlyUniqueError(error, 'category') }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           throw new Error(`upsert_category update: ${error.message}`);
         }
         result = data;
       } else {
-        const { data, error } = await admin.from('menu_categories').insert({ tenant_id: tenantId, name, station_id: station_id ?? null, sort_order: sort_order ?? 0, is_active: is_active ?? true }).select().maybeSingle();
+        const { data, error } = await admin.from('menu_categories').insert({ tenant_id: tenantId, name, station_id: station_id ?? null, sort_order: sort_order ?? 0, is_active: is_active ?? true, ...fiscalCat }).select().maybeSingle();
         if (error) {
           if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: friendlyUniqueError(error, 'category') }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           throw new Error(`upsert_category insert: ${error.message}`);
@@ -226,15 +233,27 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         photo_url = null;
       }
 
+      // Campos fiscais do item (NCM/CEST/CFOP/CSOSN/origem/grupo tributário/GTIN) — só quando enviados.
+      const fiscalItem: Record<string, unknown> = {};
+      if (p.fiscal && typeof p.fiscal === 'object') {
+        for (const k of ['ncm', 'cest', 'cfop', 'csosn', 'origem', 'cod_tributacao', 'gtin']) {
+          const v = p.fiscal[k];
+          if (v === undefined) continue;
+          if (v === '' || v === null) fiscalItem[k] = null;
+          else if (k === 'cfop' || k === 'origem') fiscalItem[k] = Number(v);
+          else fiscalItem[k] = String(v).trim();
+        }
+      }
+
       let itemId = id;
       if (itemId) {
-        const { error } = await admin.from('menu_items').update({ category_id, name, description, price, photo_url, sla_minutes, is_active, skip_kds, sort_order, channels, delivery_config: delivery_config ?? null, updated_at: now }).eq('id', itemId).eq('tenant_id', tenantId).is('deleted_at', null);
+        const { error } = await admin.from('menu_items').update({ category_id, name, description, price, photo_url, sla_minutes, is_active, skip_kds, sort_order, channels, delivery_config: delivery_config ?? null, ...fiscalItem, updated_at: now }).eq('id', itemId).eq('tenant_id', tenantId).is('deleted_at', null);
         if (error) {
           if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: friendlyUniqueError(error, 'item') }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           throw new Error(`upsert_item update: ${error.message}`);
         }
       } else {
-        const { data: newItem, error } = await admin.from('menu_items').insert({ tenant_id: tenantId, category_id, name, description, price, photo_url, sla_minutes: sla_minutes ?? 10, is_active: is_active ?? true, skip_kds: skip_kds ?? false, sort_order: sort_order ?? 0, channels: channels ?? { cashier: true, waiter: true, delivery: true, table_qr: true, self_service: true }, delivery_config: delivery_config ?? null }).select().maybeSingle();
+        const { data: newItem, error } = await admin.from('menu_items').insert({ tenant_id: tenantId, category_id, name, description, price, photo_url, sla_minutes: sla_minutes ?? 10, is_active: is_active ?? true, skip_kds: skip_kds ?? false, sort_order: sort_order ?? 0, channels: channels ?? { cashier: true, waiter: true, delivery: true, table_qr: true, self_service: true }, delivery_config: delivery_config ?? null, ...fiscalItem }).select().maybeSingle();
         if (error) {
           if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: friendlyUniqueError(error, 'item') }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           throw new Error(`upsert_item insert: ${error.message}`);

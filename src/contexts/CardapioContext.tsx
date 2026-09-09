@@ -96,6 +96,13 @@ interface DBItem {
   skip_kds?: boolean | null;
   channels?: Record<string, boolean> | null;
   delivery_config?: DBDeliveryConfig | null;
+  ncm?: string | null;
+  cest?: string | null;
+  cfop?: number | null;
+  csosn?: string | null;
+  origem?: number | null;
+  cod_tributacao?: string | null;
+  gtin?: string | null;
   option_groups?: DBGrupoOpcoes[];
   promotions?: DBPromocao[];
   preset_observations?: DBPresetObs[];
@@ -110,6 +117,11 @@ interface DBCategoria {
   sort_order?: number | null;
   is_active?: boolean | null;
   item_count?: number | null;
+  ncm?: string | null;
+  cest?: string | null;
+  cfop?: number | null;
+  csosn?: string | null;
+  cod_tributacao?: string | null;
 }
 
 interface DBObsGlobal {
@@ -160,6 +172,7 @@ function mapCategoria(c: DBCategoria): Categoria {
   return {
     id: c.id, nome: c.name, estacao: c.station_name ?? '', estacaoId: c.station_id ?? undefined,
     ordem: c.sort_order ?? 0, ativo: c.is_active ?? true, totalItens: c.item_count ?? 0,
+    fiscal: { ncm: c.ncm ?? null, cest: c.cest ?? null, cfop: c.cfop ?? null, csosn: c.csosn ?? null, codTributacao: c.cod_tributacao ?? null },
   };
 }
 
@@ -236,6 +249,10 @@ function mapItem(i: DBItem, ingredientNameMap?: Map<string, string>): Item {
       slaMinutos: Number(p.sla_minutes ?? 10),
     })),
     delivery: mapDeliveryConfig(i.delivery_config, precoBase, slaBase),
+    fiscal: {
+      ncm: i.ncm ?? null, cest: i.cest ?? null, cfop: i.cfop ?? null, csosn: i.csosn ?? null,
+      origem: i.origem ?? null, codTributacao: i.cod_tributacao ?? null, gtin: i.gtin ?? null,
+    },
   };
 }
 
@@ -321,8 +338,8 @@ interface CardapioContextValue {
   recarregarEstacoes: () => Promise<void>;
 
   // Category CRUD
-  criarCategoria: (data: { nome: string; estacaoId?: string }) => Promise<void>;
-  editarCategoria: (id: string, data: { nome?: string; estacaoId?: string; ativo?: boolean }) => Promise<void>;
+  criarCategoria: (data: { nome: string; estacaoId?: string; fiscal?: import('@/lib/fiscal').CategoriaFiscal }) => Promise<void>;
+  editarCategoria: (id: string, data: { nome?: string; estacaoId?: string; ativo?: boolean; fiscal?: import('@/lib/fiscal').CategoriaFiscal }) => Promise<void>;
   excluirCategoria: (id: string) => Promise<void>;
   reordenarCategorias: (items: Array<{ id: string; sortOrder: number }>) => Promise<void>;
 
@@ -558,13 +575,18 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
 
   // ── Category CRUD ─────────────────────────────────────────────────────────
 
-  const criarCategoria = async (data: { nome: string; estacaoId?: string }) => {
+  const fiscalCatPayload = (f?: import('@/lib/fiscal').CategoriaFiscal) => f ? {
+    ncm: f.ncm ?? null, cest: f.cest ?? null, cfop: f.cfop ?? null, csosn: f.csosn ?? null, cod_tributacao: f.codTributacao ?? null,
+  } : undefined;
+
+  const criarCategoria = async (data: { nome: string; estacaoId?: string; fiscal?: import('@/lib/fiscal').CategoriaFiscal }) => {
     setSaving(true);
     const maxOrdem = categorias.length > 0 ? Math.max(...categorias.map(c => c.ordem)) : 0;
     try {
       const result = await menuWrite('upsert_category', {
         name: data.nome, station_id: data.estacaoId ?? null,
         sort_order: maxOrdem + 1, is_active: true,
+        fiscal: fiscalCatPayload(data.fiscal),
       }, user?.tenantId);
       if (result?.success) await recarregar({ silent: true });
     } catch (err) {
@@ -574,7 +596,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const editarCategoria = async (id: string, data: { nome?: string; estacaoId?: string; ativo?: boolean }) => {
+  const editarCategoria = async (id: string, data: { nome?: string; estacaoId?: string; ativo?: boolean; fiscal?: import('@/lib/fiscal').CategoriaFiscal }) => {
     const cat = categorias.find(c => c.id === id);
     if (!cat) return;
     setSaving(true);
@@ -583,6 +605,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         id, name: data.nome ?? cat.nome,
         station_id: data.estacaoId ?? cat.estacaoId ?? null,
         sort_order: cat.ordem, is_active: data.ativo ?? cat.ativo,
+        fiscal: fiscalCatPayload(data.fiscal),
       }, user?.tenantId);
       await recarregar({ silent: true });
     } catch (err) {
@@ -689,6 +712,11 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         })),
         preset_observations: item.observacoesPadrao.map(text => ({ text })),
         production_parts: productionPartsPayload,
+        fiscal: item.fiscal ? {
+          ncm: item.fiscal.ncm ?? null, cest: item.fiscal.cest ?? null, cfop: item.fiscal.cfop ?? null,
+          csosn: item.fiscal.csosn ?? null, origem: item.fiscal.origem ?? null,
+          cod_tributacao: item.fiscal.codTributacao ?? null, gtin: item.fiscal.gtin ?? null,
+        } : undefined,
       }, user?.tenantId);
 
       if (user) {

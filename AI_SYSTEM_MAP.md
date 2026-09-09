@@ -220,6 +220,9 @@ Financeiro/RH:
 Delivery/kiosk:
 - `delivery_neighborhoods`, `delivery_customers`, `delivery_customer_addresses`, `kiosk_tokens`.
 
+Fiscal (NFC-e):
+- `fiscal_settings` (1 por loja; `provider_token` sem SELECT para `authenticated`), `fiscal_documents` (uma NFC-e por pedido balcao/delivery ou por sessao de mesa). Campos fiscais em `menu_items` (ncm, cest, cfop, csosn, origem, cod_tributacao, gtin), `menu_categories` (ncm, cest, cfop, csosn, cod_tributacao) e `payment_methods.fiscal_code`.
+
 Auditoria/impressao/outros:
 - `audit_log`, `print_queue`, `vouchers`, `voucher_transactions`, `loyalty_transactions`, `senha_counter`, `tenant_day_order_seq`.
 
@@ -233,6 +236,7 @@ Slugs importantes:
 - Pedidos: `order-write`, `order-edit-lock`, `check-session-pending`, `session-payments`.
 - Mesa/delivery: `table-write`, `mesa-write`, `delivery-write`, `reservation-write`.
 - Financeiro: `financial-write`, `purchase-write`, `purchase-confirm-delivery`, `stone-conciliation`, `pix-payment`, `implementation-write`.
+- Fiscal: `fiscal-write` (NFC-e via Brasil NFe: emit/retry/cancel/get_pdf/get_xml/print_danfe/test_connection/save_settings).
 - Estoque/producao: `stock-write`, `production-write`.
 - Impressao: `printer-ping`, `printer-raw`, `print-queue-write`, `print-queue-agent`.
 - QA/diagnostico: `simulate-orders`, `simulate-pdv-orders`, `qa-full-simulation`.
@@ -261,6 +265,22 @@ Quando o usuario pedir "muda X":
 ## Historico de solucoes e criterios
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
+
+### 2026-09-09 — Módulo fiscal: NFC-e por venda via Brasil NFe (backend no ar, front pendente de push)
+
+**Decisões:** provedor Brasil NFe (R$ 49,90/mês ilimitado, API síncrona `/services/fiscal/EnviarNotaFiscal`, header `Token`); empresa/certificado A1/CSC ficam no painel do provedor e o ERPOS guarda só o Token da empresa. **Regra da nota:** balcão/delivery = uma NFC-e por pedido pago; mesa = **uma NFC-e por sessão fechada** (todos os pedidos e pagamentos juntos). Tributação por item resolve **item → categoria → padrão da loja** (`fiscal_settings`); se houver `cod_tributacao` (grupo tributário do painel), o provedor calcula os impostos.
+
+**Onde:**
+- Migration `20260909010000_fiscal_nfce.sql`: tabelas `fiscal_settings`/`fiscal_documents` (RLS padrão fin_*: select por membership, escrita só service_role), colunas fiscais em `menu_items`/`menu_categories`/`payment_methods`, `fn_get_full_menu` e `fn_get_payment_methods` devolvendo os campos novos. `REVOKE SELECT (provider_token)` — o front **nunca** pode dar `select('*')` em `fiscal_settings` (usar a lista de colunas de `FiscalTab.tsx`).
+- `supabase/functions/fiscal-write/index.ts`: monta a nota (`buildNote`), transmite, grava chave/protocolo/XML/QR, enfileira o DANFE. Ações: `emit`, `retry`, `run_pending`, `cancel`, `get_pdf`, `get_xml`, `print_danfe`, `test_connection`, `get_settings`, `save_settings`.
+- Gatilhos: `order-write` › `record_payment` (quando o pedido vira pago e **não** é de mesa) e `table-write` › `close_table` / `close_table_by_customer`. Ambos só chamam a `fiscal-write` se `fiscal_settings.enabled` (1 select), via `EdgeRuntime.waitUntil` (não atrasam o PDV).
+- **Chamada interna entre Edge Functions:** o gateway do Supabase rejeita a `sb_secret_*` no `Authorization` e "Conflicting API keys" quando `apikey` ≠ `Authorization`. Solução: secret `FISCAL_INTERNAL_KEY` (já setado no projeto) enviado no header `x-internal-key`, com `Authorization`/`apikey` = anon. `fiscal-write` aceita esse header como autenticação de serviço (tenant vem do body). Reutilizar esse padrão para qualquer função que precise chamar outra.
+- DANFE térmico: `print-queue-agent` › `formatDanfe` para `content_type = 'danfe_nfce'` (QR Code nativo ESC/POS `GS ( k`). O agente local não muda (só repassa o base64). Impressora: `fiscal_settings.danfe_printer_id` ou a única/mapeada.
+- Front: `Configurações › Fiscal (NFC-e)` (`FiscalTab.tsx`), `Financeiro › Notas Fiscais` (`NotasFiscaisTab.tsx`: lista do mês, PDF, XML, zip de XMLs para o contador via `src/lib/zipStore.ts`, reimpressão, reemissão, cancelamento com justificativa, emissão manual por nº de pedido), aba **Fiscal** no `ItemModal`, seção fiscal no modal de categoria, "Código na NFC-e" na forma de pagamento. Constantes em `src/lib/fiscal.ts`, campos compartilhados em `components/feature/FiscalFields.tsx`.
+
+**Regras de montagem (buildNote):** `item_price` já inclui as opções; a nota fecha **exatamente** no `total_amount` (diferença vira desconto rateado ou "outras despesas"); taxa de serviço/gorjeta/entrega vão em `ValorOutrasDespesas` do 1º item; pagamentos consolidados por tPag e ajustados na maior linha para Σ(pago − troco) = total; sem pagamento registrado → `99 Outros`; total 0 (cortesia) → `skipped`; CPF só entra se o DV for válido; `IndicadorPresenca = 1` em todos os canais (4 exigiria endereço estruturado). Índice único parcial impede nota duplicada por origem.
+
+**Pendências para ir a produção:** conta no Brasil NFe + certificado A1 + credenciamento NFC-e e CSC na SEFAZ-PR (contador); colar o Token em Configurações › Fiscal, testar em **homologação** (ambiente 2), classificar NCM por categoria, e só então ambiente 1. Provedor testado apenas até "Token inválido" (pipeline completo validado no tenant *Testes PDV*, dados apagados depois).
 
 ### 2026-08-29 — Pedido de delivery lancado no PDV Caixa (cliente cadastrado + taxa automatica)
 

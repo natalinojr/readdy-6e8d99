@@ -6,6 +6,8 @@ export interface Categoria {
   ordem: number;
   ativo: boolean;
   totalItens: number;
+  /** Classificação fiscal padrão dos itens da categoria (NFC-e). */
+  fiscal?: import('@/lib/fiscal').CategoriaFiscal;
   created_at?: string;
   updated_at?: string;
   deleted_at?: string | null;
@@ -114,6 +116,8 @@ export interface Item {
   fichaTecnica: FichaTecnicaItem[];
   subproducao?: SubproducaoItem[];
   delivery?: ConfiguracaoDelivery;
+  /** Classificação fiscal do item (NFC-e). Vazio = herda da categoria/loja. */
+  fiscal?: import('@/lib/fiscal').ItemFiscal;
   deleted_at?: string | null;
 }
 

@@ -13,6 +13,8 @@ export interface PaymentMethod {
   ordem: number;
   icone: string;
   prazoRecebimento: number; // dias para recebimento: 0=D+0, 1=D+1, 30=D+30
+  /** Código fiscal (tPag) na NFC-e; null = deduzido do tipo */
+  fiscalCode: string | null;
 }
 
 const DB_TO_TIPO: Record<string, PaymentMethod['tipo']> = {
@@ -45,6 +47,7 @@ interface DBPaymentMethod {
   requires_change: boolean | null;
   sort_order: number | null;
   days_to_receive?: number | null;
+  fiscal_code?: string | null;
 }
 
 function mapPaymentMethod(row: DBPaymentMethod): PaymentMethod {
@@ -59,6 +62,7 @@ function mapPaymentMethod(row: DBPaymentMethod): PaymentMethod {
     ordem: row.sort_order ?? 0,
     icone: TIPO_ICONE[tipo] ?? 'ri-wallet-line',
     prazoRecebimento: Number(row.days_to_receive ?? 0),
+    fiscalCode: row.fiscal_code ?? null,
   };
 }
 

@@ -1,4 +1,6 @@
 import { useState, useMemo } from 'react';
+import FiscalFields from '@/components/feature/FiscalFields';
+import type { CategoriaFiscal } from '@/lib/fiscal';
 import { useCardapio } from '@/contexts/CardapioContext';
 import ConfirmModal from '@/components/base/ConfirmModal';
 import type { Item } from '@/types/cardapio';
@@ -21,6 +23,8 @@ interface ModalState {
   editId: string | null;
   nome: string;
   estacaoId: string;
+  fiscal: CategoriaFiscal;
+  showFiscal: boolean;
 }
 
 export default function CategoriasTab() {
@@ -40,22 +44,23 @@ export default function CategoriasTab() {
   }, [itens, categorias]);
 
   const primeiraEstacao = estacoes[0]?.id ?? '';
-  const initialModal: ModalState = { open: false, editId: null, nome: '', estacaoId: primeiraEstacao };
+  const initialModal: ModalState = { open: false, editId: null, nome: '', estacaoId: primeiraEstacao, fiscal: {}, showFiscal: false };
   const [modal, setModal] = useState<ModalState>(initialModal);
 
-  const openCreate = () => setModal({ open: true, editId: null, nome: '', estacaoId: primeiraEstacao });
+  const openCreate = () => setModal({ open: true, editId: null, nome: '', estacaoId: primeiraEstacao, fiscal: {}, showFiscal: false });
   const openEdit = (id: string) => {
     const cat = categorias.find(c => c.id === id);
     if (!cat) return;
-    setModal({ open: true, editId: id, nome: cat.nome, estacaoId: cat.estacaoId ?? primeiraEstacao });
+    const f = cat.fiscal ?? {};
+    setModal({ open: true, editId: id, nome: cat.nome, estacaoId: cat.estacaoId ?? primeiraEstacao, fiscal: f, showFiscal: Boolean(f.ncm || f.cfop || f.csosn || f.codTributacao) });
   };
 
   const handleSave = async () => {
     if (!modal.nome.trim()) return;
     if (modal.editId) {
-      await editarCategoria(modal.editId, { nome: modal.nome, estacaoId: modal.estacaoId || undefined });
+      await editarCategoria(modal.editId, { nome: modal.nome, estacaoId: modal.estacaoId || undefined, fiscal: modal.fiscal });
     } else {
-      await criarCategoria({ nome: modal.nome, estacaoId: modal.estacaoId || undefined });
+      await criarCategoria({ nome: modal.nome, estacaoId: modal.estacaoId || undefined, fiscal: modal.fiscal });
     }
     setModal(initialModal);
   };
@@ -257,6 +262,23 @@ export default function CategoriasTab() {
                   </select>
                 </div>
               )}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setModal(s => ({ ...s, showFiscal: !s.showFiscal }))}
+                  className="flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-orange-600 cursor-pointer"
+                >
+                  <i className={`ri-arrow-${modal.showFiscal ? 'down' : 'right'}-s-line`} />
+                  <i className="ri-file-shield-2-line" />
+                  Classificação fiscal da categoria (NFC-e)
+                  {modal.fiscal.ncm && <span className="ml-1 text-[10px] font-bold px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded-full">NCM {modal.fiscal.ncm}</span>}
+                </button>
+                {modal.showFiscal && (
+                  <div className="mt-3 max-h-[45vh] overflow-y-auto pr-1">
+                    <FiscalFields scope="categoria" value={modal.fiscal} onChange={f => setModal(s => ({ ...s, fiscal: f }))} />
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex gap-3 mt-6">
               <button

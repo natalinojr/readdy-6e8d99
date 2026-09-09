@@ -238,7 +238,7 @@ Deno.serve(async (req) => {
     // PAYMENT METHODS
     // ═══════════════════════════════════════════════════════════════════════════
     if (action === 'create_payment_method') {
-      const { name, type, fee_percentage, days_to_receive, max_installments, installment_interval_days } = rest
+      const { name, type, fee_percentage, days_to_receive, max_installments, installment_interval_days, fiscal_code } = rest
       if (!tId || !name || !type) {
         return new Response(JSON.stringify({ success: false, error: 'tenant_id, name e type são obrigatórios' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
@@ -256,6 +256,7 @@ Deno.serve(async (req) => {
           days_to_receive: typeof days_to_receive === 'number' ? days_to_receive : 0,
           max_installments: typeof max_installments === 'number' ? max_installments : 1,
           installment_interval_days: typeof installment_interval_days === 'number' ? installment_interval_days : 30,
+          fiscal_code: typeof fiscal_code === 'string' && fiscal_code.trim() ? fiscal_code.trim() : null,
         })
         .select('id, name, type, is_active, fee_percentage, days_to_receive')
         .single()
@@ -287,6 +288,7 @@ Deno.serve(async (req) => {
       if (fields.days_to_receive !== undefined) updateData.days_to_receive = Number(fields.days_to_receive)
       if (fields.max_installments !== undefined) updateData.max_installments = Number(fields.max_installments)
       if (fields.installment_interval_days !== undefined) updateData.installment_interval_days = Number(fields.installment_interval_days)
+      if (fields.fiscal_code !== undefined) updateData.fiscal_code = (typeof fields.fiscal_code === 'string' && fields.fiscal_code.trim()) ? fields.fiscal_code.trim() : null
 
       const { error } = await supabaseAdmin
         .from('payment_methods')
