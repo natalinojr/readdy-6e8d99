@@ -38,7 +38,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         const { data: caixaSession } = await admin.from("sessions").select("id").eq("status", "open").eq("tenant_id", tableData.tenant_id).order("opened_at", { ascending: false }).limit(1).maybeSingle();
         if (!caixaSession) return new Response(JSON.stringify({ error: "mesa_encerrada", message: "Estabelecimento fechado." }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         const { data: newSession } = await admin.from("table_sessions").insert({ table_id: tableData.id, tenant_id: tableData.tenant_id, session_id: caixaSession.id, status: "open", opened_at: new Date().toISOString() }).select("id, status, customer_name, opened_at, session_id, tenant_id, session_token").maybeSingle();
-        await admin.from("tables").update({ status: "occupied" }).eq("id", tableData.id);
+        // Mesa 0 = QR universal (fila por senha, balcão): não é mesa do salão, não ocupa nada.
+        if (tableData.number !== 0) await admin.from("tables").update({ status: "occupied" }).eq("id", tableData.id);
         const { data: tenantData } = await admin.from("tenants").select("name").eq("id", tableData.tenant_id).maybeSingle();
         return new Response(JSON.stringify({ table: tableData, session: newSession, tenant_name: tenantData?.name || null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }

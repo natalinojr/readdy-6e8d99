@@ -53,6 +53,12 @@ interface MesasContextValue {
 
 const MesasContext = createContext<MesasContextValue | null>(null);
 
+// Mesa 0 = QR universal / balcão: é só o container da fila por senha, não uma mesa
+// do salão. Fica fora de toda lista de mesas (salão, painel do caixa, destino do
+// pedido, garçom) — senão aparece eternamente "ocupada" enquanto houver senha ativa.
+export const MESA_QR_UNIVERSAL = 0;
+const isMesaDoSalao = (row: DBTable) => row.number !== MESA_QR_UNIVERSAL;
+
 function dbToMesa(row: DBTable): Mesa {
   const hasSession = !!row.table_session_id && row.session_status === 'open';
   const openedAt = row.session_opened_at
@@ -93,7 +99,7 @@ export function MesasProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase.rpc('fn_get_tables', { p_tenant_id: user.tenantId });
       if (error) throw error;
       const rows = (data as DBTable[]) ?? [];
-      setMesas(rows.map(dbToMesa));
+      setMesas(rows.filter(isMesaDoSalao).map(dbToMesa));
     } catch (e) {
       console.error('[MesasContext] loadMesas error:', e);
     } finally {
