@@ -139,7 +139,7 @@ export default function FiscalTab() {
             NFC-e {form.enabled ? 'ligada' : 'desligada'} · ambiente de {form.environment === 1 ? 'PRODUÇÃO' : 'homologação (testes)'}
           </p>
           <p className="text-xs text-zinc-500 mt-0.5">
-            Balcão e delivery: uma nota por pedido pago. Mesas: uma nota por sessão fechada, com todos os pedidos e pagamentos.
+            Uma nota por pedido, no momento do pagamento, em todos os canais (balcão, delivery, QR das mesas e mesa numerada).
             {' '}Provedor: Brasil NFe {hasToken ? '(token configurado)' : '(sem token)'}.
           </p>
         </div>
@@ -184,7 +184,7 @@ export default function FiscalTab() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pl-1">
             <Toggle checked={form.emit_on_counter} onChange={v => set('emit_on_counter', v)} label="Balcão / PDV Caixa" hint="Ao concluir o pagamento" />
             <Toggle checked={form.emit_on_delivery} onChange={v => set('emit_on_delivery', v)} label="Delivery" hint="Ao registrar o pagamento" />
-            <Toggle checked={form.emit_on_table_close} onChange={v => set('emit_on_table_close', v)} label="Mesas" hint="Ao fechar a sessão da mesa" />
+            <Toggle checked={form.emit_on_table_close} onChange={v => set('emit_on_table_close', v)} label="Mesas e QR universal" hint="Ao pagar o pedido no caixa" />
           </div>
         </div>
       </Section>

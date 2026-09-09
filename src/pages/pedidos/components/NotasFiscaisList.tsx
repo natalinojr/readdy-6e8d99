@@ -105,13 +105,15 @@ export default function NotasFiscaisList() {
 
   const abrirPdf = async (d: FiscalDocumentRow) => {
     setBusy(d.id);
-    const r = await call<{ success: boolean; pdf_base64?: string; error?: string }>({ action: 'get_pdf', document_id: d.id });
+    const r = await call<{ success: boolean; pdf_base64?: string; content_type?: string; error?: string }>({ action: 'get_pdf', document_id: d.id });
     setBusy(null);
-    if (!r?.success || !r.pdf_base64) { toastError('PDF indisponível', r?.error ?? ''); return; }
+    if (!r?.success || !r.pdf_base64) { toastError('DANFE indisponível', r?.error ?? ''); return; }
     const bin = atob(r.pdf_base64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+    // NFC-e: o provedor devolve o DANFE em HTML; NF-e vem em PDF. Abre do jeito certo.
+    const type = r.content_type === 'text/html' ? 'text/html;charset=utf-8' : 'application/pdf';
+    const url = URL.createObjectURL(new Blob([bytes], { type }));
     window.open(url, '_blank', 'noopener');
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
@@ -159,9 +161,7 @@ export default function NotasFiscaisList() {
     setBusy('manual');
     const { data: o } = await supabase.from('orders').select('id, table_session_id').eq('tenant_id', user.tenantId).eq('number', num).order('created_at', { ascending: false }).limit(1).maybeSingle();
     if (!o) { setBusy(null); toastError('Pedido não encontrado', `Número ${num}`); return; }
-    const body = o.table_session_id
-      ? { action: 'emit', source_type: 'table_session', source_id: o.table_session_id, force: true }
-      : { action: 'emit', source_type: 'order', source_id: o.id, force: true };
+    const body = { action: 'emit', source_type: 'order', source_id: o.id, force: true };
     const r = await call<{ success: boolean; status: string; message?: string }>(body);
     setBusy(null);
     if (r?.success) { toastSuccess('Nota autorizada'); setEmitirPedido(''); }
@@ -251,7 +251,7 @@ export default function NotasFiscaisList() {
       <div className="bg-white rounded-xl border border-zinc-100 p-4 flex flex-wrap items-center gap-3">
         <div className="flex-1 min-w-[200px]">
           <p className="text-xs font-semibold text-zinc-700">Emitir nota de um pedido</p>
-          <p className="text-[11px] text-zinc-400">Para vendas feitas com a emissão desligada ou que ficaram sem nota. Pedido de mesa emite a sessão inteira.</p>
+          <p className="text-[11px] text-zinc-400">Para vendas feitas com a emissão desligada ou que ficaram sem nota. A nota é sempre por pedido.</p>
         </div>
         <input className={`${inputCls} w-40`} placeholder="Nº do pedido" value={emitirPedido} onChange={e => setEmitirPedido(e.target.value)} onKeyDown={e => e.key === 'Enter' && emitirManual()} />
         <button onClick={emitirManual} disabled={busy !== null || !emitirPedido.trim()}

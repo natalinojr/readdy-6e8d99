@@ -14,8 +14,8 @@
 // Autenticação: JWT do usuário (membership em user_tenants) OU chamada interna de outra
 // Edge Function com `Authorization: Bearer <service_role_key>` (order-write / table-write).
 //
-// Regra da nota: balcão/delivery = uma NFC-e por pedido pago; mesa = uma NFC-e por
-// sessão fechada (todos os pedidos e pagamentos da sessão dentro da mesma nota).
+// Regra da nota: uma NFC-e por pedido, no momento do pagamento, em todos os canais
+// (balcão, delivery, QR universal, mesa numerada). Sessão de mesa só por emissão manual.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 
@@ -172,6 +172,15 @@ function providerHasError(data: any): boolean {
   return Boolean(providerErrorMessage(data)) || (data && typeof data === 'object' && data.status === 2);
 }
 
+// Sessão do QR universal = mesa sem número (tables.number 0/null, ex.: "Balcão").
+// Cada cliente que lê o QR entra na MESMA sessão e paga o próprio pedido no caixa,
+// então a nota é por pedido; só mesa numerada fecha uma conta única por sessão.
+async function isUniversalSession(admin: Admin, tableSessionId: string): Promise<boolean> {
+  const { data } = await admin.from('table_sessions').select('table_id, tables(number)').eq('id', tableSessionId).maybeSingle();
+  const num = (data as any)?.tables?.number;
+  return !data?.table_id || num == null || Number(num) === 0;
+}
+
 // ─── Montagem da NFC-e ───────────────────────────────────────────────────────
 interface BuiltNote {
   payload: Record<string, unknown>;
@@ -315,19 +324,13 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
     return prod;
   });
 
-  // 4. Pagamentos (por pedido e, na mesa, também por sessão)
-  const payQ = admin.from('payments')
-    .select('id, order_id, table_session_id, amount, change_amount, is_refunded, payment_method_id')
-    .eq('tenant_id', tenantId).eq('is_refunded', false);
-  const { data: paysByOrder } = await payQ.in('order_id', orderIds);
-  let pays = (paysByOrder ?? []) as any[];
-  if (sourceType === 'table_session') {
-    const { data: paysBySession } = await admin.from('payments')
-      .select('id, order_id, table_session_id, amount, change_amount, is_refunded, payment_method_id')
-      .eq('tenant_id', tenantId).eq('is_refunded', false).eq('table_session_id', sourceId);
-    const seen = new Set(pays.map((p) => p.id));
-    for (const p of paysBySession ?? []) if (!seen.has(p.id)) pays.push(p);
-  }
+  // 4. Pagamentos — sempre ligados ao pedido (`payments` não tem table_session_id;
+  //    na mesa, os pagamentos ficam nos pedidos da sessão).
+  const { data: paysByOrder, error: payErr } = await admin.from('payments')
+    .select('id, order_id, amount, change_amount, is_refunded, payment_method_id')
+    .eq('tenant_id', tenantId).eq('is_refunded', false).in('order_id', orderIds);
+  if (payErr) throw new Error(`payments: ${payErr.message}`);
+  const pays = (paysByOrder ?? []) as any[];
   const pmIds = [...new Set(pays.map((p) => p.payment_method_id).filter(Boolean))] as string[];
   const pmById = new Map<string, any>();
   if (pmIds.length > 0) {
@@ -338,7 +341,8 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
   const byCode = new Map<string, { code: string; label: string; paid: number; troco: number }>();
   for (const p of pays) {
     const pm = p.payment_method_id ? pmById.get(p.payment_method_id) : null;
-    const code = onlyDigits(pm?.fiscal_code).padStart(2, '0').slice(0, 2) || TPAG_BY_TYPE[String(pm?.type ?? '')] || '99';
+    const fc = onlyDigits(pm?.fiscal_code);
+    const code = fc ? fc.padStart(2, '0').slice(0, 2) : (TPAG_BY_TYPE[String(pm?.type ?? '')] || '99');
     const label = pm?.name ?? TPAG_LABEL[code] ?? 'Pagamento';
     const troco = round2(Number(p.change_amount ?? 0));
     const paid = round2(Number(p.amount ?? 0) + troco);
@@ -377,11 +381,18 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
 
   const first = orders[0];
   const isTable = sourceType === 'table_session';
+  // Nome da mesa vem do cadastro de mesas (número 0 = balcão/área sem número).
+  let mesaLabel = `Mesa ${first.table_number ?? ''}`.trim();
+  if (isTable) {
+    const { data: ts } = await admin.from('table_sessions').select('table_id, tables(number, area)').eq('id', sourceId).maybeSingle();
+    const t = (ts as any)?.tables as { number?: number | null; area?: string | null } | null;
+    if (t) mesaLabel = t.number && t.number > 0 ? `Mesa ${t.number}${t.area ? ` (${t.area})` : ''}` : (t.area || 'Balcão');
+  }
   const orderNumber = isTable
-    ? `Mesa ${first.table_number ?? ''}`.trim() + (orders.length > 1 ? ` (${orders.length} pedidos)` : ` #${first.number ?? ''}`)
+    ? mesaLabel + (orders.length > 1 ? ` (${orders.length} pedidos)` : ` #${first.number ?? ''}`)
     : `#${first.number ?? first.id.slice(0, 8)}`;
   const obs = isTable
-    ? `Mesa ${first.table_number ?? ''} - pedidos ${orders.map((o) => o.number).filter(Boolean).join(', ')}`
+    ? `${mesaLabel} - pedidos ${orders.map((o) => o.number).filter(Boolean).join(', ')}`
     : `Pedido ${first.number ?? ''}${first.origin_type === 'delivery' ? ' - delivery' : ''}`;
 
   const payload: Record<string, unknown> = {
@@ -669,13 +680,14 @@ Deno.serve({ verify_jwt: false } as any, async (req: Request) => {
       const settings = await loadSettings(admin, tenantId);
       // Gatilhos automáticos respeitam as chaves por canal; emissão manual (force) ignora.
       if (!body.force && settings) {
-        if (sourceType === 'table_session' && !settings.emit_on_table_close) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no fechamento de mesa desligada' });
-        if (sourceType === 'order') {
-          const { data: o } = await admin.from('orders').select('origin_type, table_session_id').eq('id', sourceId).maybeSingle();
-          if (o?.table_session_id) return json({ success: false, status: 'skipped', skipped: true, message: 'Pedido de mesa: a nota sai no fechamento da sessão' });
-          if (o?.origin_type === 'delivery' && !settings.emit_on_delivery) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no delivery desligada' });
-          if (o?.origin_type !== 'delivery' && !settings.emit_on_counter) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no balcão desligada' });
-        }
+        // Regra (2026-09-09): a NFC-e sai SEMPRE por pedido, no pagamento — balcão, delivery,
+        // QR universal e mesa numerada. Sessão de mesa só por emissão manual (force).
+        if (sourceType === 'table_session') return json({ success: false, status: 'skipped', skipped: true, message: 'Notas saem por pedido, no pagamento; sessão de mesa só manualmente' });
+        const { data: o } = await admin.from('orders').select('origin_type, table_session_id').eq('id', sourceId).maybeSingle();
+        const canal = o?.origin_type === 'delivery' ? 'delivery' : (o?.table_session_id || o?.origin_type === 'table' || o?.origin_type === 'waiter') ? 'mesa' : 'balcao';
+        if (canal === 'delivery' && !settings.emit_on_delivery) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no delivery desligada' });
+        if (canal === 'mesa' && !settings.emit_on_table_close) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão em mesas/QR desligada' });
+        if (canal === 'balcao' && !settings.emit_on_counter) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no balcão desligada' });
       }
       const r = await emitForSource(admin, tenantId, sourceType, sourceId, { force: Boolean(body.force), userId, trigger: body.trigger });
       return json(r, r.success || r.skipped ? 200 : 200);
@@ -745,7 +757,10 @@ Deno.serve({ verify_jwt: false } as any, async (req: Request) => {
       else if (res.data?.Base64File) b64 = String(res.data.Base64File);
       else if (res.raw && !res.raw.trim().startsWith('{')) b64 = res.raw.replace(/^"|"$/g, '');
       if (!res.ok || !b64 || providerHasError(res.data)) return json({ success: false, error: providerErrorMessage(res.data) || `Não foi possível obter o PDF (HTTP ${res.status})` });
-      return json({ success: true, pdf_base64: b64 });
+      // Para NFC-e o provedor devolve o DANFE em HTML (base64), não PDF. Informa o tipo.
+      let contentType = 'application/pdf';
+      try { const head = atob(b64.slice(0, 16)); if (!head.startsWith('%PDF')) contentType = 'text/html'; } catch { /* mantém pdf */ }
+      return json({ success: true, pdf_base64: b64, content_type: contentType });
     }
 
     // ── get_xml ──

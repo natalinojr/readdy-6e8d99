@@ -5,28 +5,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// ── Gatilho fiscal (NFC-e) ────────────────────────────────────────────────────
-// Regra: UMA NFC-e por sessão de mesa fechada (todos os pedidos/pagamentos juntos).
-// Só chama a fiscal-write se a loja tem emissão ligada; nunca bloqueia o fechamento.
-async function triggerFiscalSession(admin: ReturnType<typeof createClient>, supabaseUrl: string, _serviceRoleKey: string, tenantId: string, tableSessionId: string) {
-  try {
-    const { data: fs } = await admin.from('fiscal_settings').select('enabled').eq('tenant_id', tenantId).maybeSingle();
-    if (!fs?.enabled) return;
-    const internalKey = Deno.env.get('FISCAL_INTERNAL_KEY') ?? '';
-    const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-    if (!internalKey) { console.warn('[table-write] FISCAL_INTERNAL_KEY ausente — NFC-e não disparada'); return; }
-    const p = fetch(`${supabaseUrl}/functions/v1/fiscal-write`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${anonKey}`, apikey: anonKey, 'x-internal-key': internalKey },
-      body: JSON.stringify({ action: 'emit', tenant_id: tenantId, source_type: 'table_session', source_id: tableSessionId, trigger: 'close_table' }),
-    }).then(async (r) => { const t = await r.text().catch(() => ''); console.log('[table-write] fiscal-write emit', tableSessionId, r.status, t.slice(0, 300)); })
-      .catch((e) => console.warn('[table-write] fiscal-write falhou', tableSessionId, String(e)));
-    // deno-lint-ignore no-explicit-any
-    const rt = (globalThis as any).EdgeRuntime;
-    if (rt && typeof rt.waitUntil === 'function') rt.waitUntil(p); else await p;
-  } catch (e) { console.warn('[table-write] triggerFiscalSession erro', String(e)); }
-}
-
 Deno.serve({ verify_jwt: false }, async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
@@ -272,11 +250,6 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           .eq('id', sess.table_id);
       }
 
-      {
-        const { data: sessT } = await admin.from('table_sessions').select('tenant_id').eq('id', table_session_id).maybeSingle();
-        if (sessT?.tenant_id) await triggerFiscalSession(admin, supabaseUrl, serviceRoleKey, sessT.tenant_id, table_session_id);
-      }
-
       return new Response(JSON.stringify({ ok: true, closed: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
@@ -321,7 +294,6 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const { table_session_id } = body;
       const { error } = await admin.rpc('fn_close_table_session', { p_table_session_id: table_session_id, p_tenant_id: tenantId });
       if (error) throw error;
-      await triggerFiscalSession(admin, supabaseUrl, serviceRoleKey, tenantId, table_session_id);
       return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 

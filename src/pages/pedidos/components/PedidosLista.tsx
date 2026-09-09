@@ -3,6 +3,9 @@ import type { PedidoRecente } from '@/types/pdv';
 import { formatOrderNumber } from '@/lib/statusMappers';
 import { TempoCell } from './SlaCell';
 import { isQRUniversal, clienteNome, origemLabelFor } from './utils';
+import NotaFiscalCell from './NotaFiscalCell';
+import { useFiscalDocs } from '@/hooks/useFiscalDocs';
+import { useToast } from '@/contexts/ToastContext';
 
 const DB_STATUS_LABEL: Record<string, string> = {
   new: 'Na Fila', preparing: 'Em preparo', ready: 'Pronto',
@@ -181,13 +184,14 @@ interface PedidosListaProps {
   onSelectPedido: (id: string) => void;
 }
 
-type SortKey = 'numero' | 'sessao' | 'status' | 'pagamento' | 'destino' | 'origem' | 'itens' | 'tempo' | 'hora' | 'total';
+type SortKey = 'numero' | 'sessao' | 'status' | 'pagamento' | 'nf' | 'destino' | 'origem' | 'itens' | 'tempo' | 'hora' | 'total';
 
 const COLUNAS: { label: string; key: SortKey }[] = [
   { label: '#', key: 'numero' },
   { label: 'Sessão', key: 'sessao' },
   { label: 'Status', key: 'status' },
   { label: 'Pagamento', key: 'pagamento' },
+  { label: 'Nota Fiscal', key: 'nf' },
   { label: 'Destino', key: 'destino' },
   { label: 'Origem', key: 'origem' },
   { label: 'Itens', key: 'itens' },
@@ -198,6 +202,19 @@ const COLUNAS: { label: string; key: SortKey }[] = [
 
 export default function PedidosLista({ pedidos, loading, onSelectPedido }: PedidosListaProps) {
   const [sortBy, setSortBy] = useState<SortKey | null>(null);
+  const { success: toastSuccess, error: toastError } = useToast();
+  // Notas fiscais (NFC-e) dos pedidos visíveis — uma por pedido; grupos unificados agregam.
+  const orderIds = useMemo(() => pedidos.flatMap((p) => (p.pedidoIds && p.pedidoIds.length > 0 ? p.pedidoIds : [p.id])), [pedidos]);
+  const fiscal = useFiscalDocs(orderIds);
+  const nfToast = (ok: boolean, title: string, msg?: string) => (ok ? toastSuccess(title, msg) : toastError(title, msg));
+  const nfRank = (p: PedidoRecente): number => {
+    const ids = p.pedidoIds && p.pedidoIds.length > 0 ? p.pedidoIds : [p.id];
+    const st = ids.map((id) => fiscal.byOrder.get(id)?.status ?? 'none');
+    if (st.every((x) => x === 'authorized')) return 4;
+    if (st.some((x) => x === 'processing' || x === 'pending')) return 3;
+    if (st.some((x) => x === 'rejected' || x === 'error')) return 1;
+    return p.pago ? 2 : 0;
+  };
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const toggleSort = (key: SortKey) => {
@@ -218,6 +235,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
         case 'sessao': return p.session_number ?? '';
         case 'status': return p.status;
         case 'pagamento': return p.pago ? 1 : 0;
+        case 'nf': return nfRank(p);
         case 'destino': return destinoLabel(p).toLowerCase();
         case 'origem': return origemLabelFor(p).toLowerCase();
         case 'itens': return p.itensDetalhes.reduce((a, i) => a + i.quantidade, 0);
@@ -233,7 +251,8 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
       if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
       return String(av).localeCompare(String(bv), 'pt-BR') * dir;
     });
-  }, [pedidos, sortBy, sortDir]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidos, sortBy, sortDir, fiscal.byOrder]);
 
   if (loading) {
     return (
@@ -263,7 +282,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
       {/* Desktop table header */}
       <div
         className="hidden lg:grid gap-x-2 px-4 py-3 border-b border-zinc-100 bg-zinc-50"
-        style={{ gridTemplateColumns: '2fr 1.2fr 1.5fr 1.4fr 1.8fr 1.2fr 0.8fr 1.4fr 1.1fr 1.2fr' }}
+        style={{ gridTemplateColumns: '2fr 1.1fr 1.4fr 1.3fr 1.5fr 1.7fr 1.1fr 0.8fr 1.3fr 1fr 1.2fr' }}
       >
         {COLUNAS.map(({ label, key }) => (
           <button
@@ -302,7 +321,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
               {/* Desktop row */}
               <div
                 className="hidden lg:grid gap-x-2 px-4 py-3.5 items-center"
-                style={{ gridTemplateColumns: '2fr 1.2fr 1.5fr 1.4fr 1.8fr 1.2fr 0.8fr 1.4fr 1.1fr 1.2fr' }}
+                style={{ gridTemplateColumns: '2fr 1.1fr 1.4fr 1.3fr 1.5fr 1.7fr 1.1fr 0.8fr 1.3fr 1fr 1.2fr' }}
               >
                 {/* # */}
                 <div className="min-w-0">
@@ -354,6 +373,11 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                   ) : (
                     <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200 whitespace-nowrap w-fit">Pendente</span>
                   )}
+                </div>
+
+                {/* Nota Fiscal */}
+                <div className="min-w-0">
+                  <NotaFiscalCell pedido={pedido} fiscal={fiscal} onToast={nfToast} />
                 </div>
 
                 {/* Destino */}
@@ -455,6 +479,10 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                   {pedido.garcomNome && <span className="text-zinc-400">{pedido.garcomNome}</span>}
                   <span className="text-zinc-400">{pedido.criadoEm}</span>
                   <span>{itensProntosReal}/{itensTotalReal} itens</span>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">NF</span>
+                  <NotaFiscalCell pedido={pedido} fiscal={fiscal} onToast={nfToast} compact />
                 </div>
               </div>
             </div>
