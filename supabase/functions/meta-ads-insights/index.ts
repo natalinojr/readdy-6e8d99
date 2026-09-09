@@ -103,6 +103,11 @@ function metrics(row: Row) {
     cpc: Number(row.cpc ?? 0),
     ctr: Number(row.ctr ?? 0),
     cpm: Number(row.cpm ?? 0),
+    // CTR/CPC sobre cliques no LINK — é o critério que o Gerenciador de Anúncios e o Reportei
+    // mostram. Os campos `ctr`/`cpc` acima são sobre TODOS os cliques (curtida, comentário,
+    // clique no perfil), o que dá CTR maior e CPC menor. Guardamos os dois.
+    link_ctr: Number(row.inline_link_click_ctr ?? 0),
+    cost_per_link_click: Number(row.cost_per_inline_link_click ?? 0),
     purchases,
     purchase_value: purchaseValue,
     roas: spend > 0 ? purchaseValue / spend : 0,
@@ -133,6 +138,10 @@ function slim(row: Row) {
     cost_per_purchase: m.cost_per_purchase,
     cpc: m.cpc,
     ctr: m.ctr,
+    link_ctr: m.link_ctr,
+    cost_per_link_click: m.cost_per_link_click,
+    frequency: m.frequency,
+    cpm: m.cpm,
   }
 }
 
@@ -307,7 +316,8 @@ Deno.serve(async (req: Request) => {
 
     const common = [
       'spend', 'impressions', 'reach', 'frequency', 'clicks', 'inline_link_clicks',
-      'cpc', 'ctr', 'cpm', 'actions', 'action_values',
+      'cpc', 'ctr', 'cpm', 'inline_link_click_ctr', 'cost_per_inline_link_click',
+      'actions', 'action_values',
     ]
     const campaignFields = ['campaign_id', 'campaign_name', 'objective', ...common].join(',')
     const adFields = [
@@ -316,13 +326,23 @@ Deno.serve(async (req: Request) => {
     ].join(',')
     const dailyFields = ['spend', 'impressions', 'reach', 'clicks', 'inline_link_clicks', 'actions', 'action_values'].join(',')
     // Quebras não aceitam reach/frequency em todas as combinações — ficam só com o essencial.
-    const breakdownFields = ['spend', 'impressions', 'clicks', 'inline_link_clicks', 'cpc', 'ctr', 'actions', 'action_values'].join(',')
+    const breakdownFields = [
+      'spend', 'impressions', 'clicks', 'inline_link_clicks', 'cpc', 'ctr',
+      'inline_link_click_ctr', 'cost_per_inline_link_click', 'actions', 'action_values',
+    ].join(',')
+    // Totais NO NÍVEL DA CONTA (sem level, sem time_increment). Necessário porque ALCANCE é
+    // deduplicado por consulta: somar o alcance das campanhas conta a mesma pessoa várias vezes
+    // e infla o total (e por consequência subestima a frequência). Só esta consulta dá o número
+    // real do período — é o mesmo que o Gerenciador de Anúncios e o Reportei mostram.
+    const totalsFields = common.join(',')
 
     const base = `${GRAPH}/${conn.ad_account_id}/insights`
     const token = encodeURIComponent(conn.access_token)
 
-    // Seis consultas em paralelo: campanha, anúncio, dia, posicionamento, idade/gênero, hora do dia.
-    const [camp, ad, day, placement, ageGender, hourly] = await Promise.all([
+    // Sete consultas em paralelo: totais da conta, campanha, anúncio, dia, posicionamento,
+    // idade/gênero, hora do dia.
+    const [acct, camp, ad, day, placement, ageGender, hourly] = await Promise.all([
+      graphRows(`${base}?fields=${totalsFields}&${period}&access_token=${token}`, 'account_totals'),
       graphRows(`${base}?level=campaign&fields=${campaignFields}&${period}&limit=200&access_token=${token}`, 'campaign'),
       graphRows(`${base}?level=ad&fields=${adFields}&${period}&limit=500&access_token=${token}`, 'ad'),
       graphRows(`${base}?fields=${dailyFields}&${period}&time_increment=1&limit=500&access_token=${token}`, 'daily'),
@@ -339,6 +359,9 @@ Deno.serve(async (req: Request) => {
     const campRows = camp.rows
     const adRows = ad.rows
     const dailyRows = day.rows
+    // Totais reais do período (alcance/frequência corretos). Null = a consulta falhou e o front
+    // cai em somar as campanhas, com alcance aproximado.
+    const accountTotals = acct.rows[0] ? metrics(acct.rows[0]) : null
 
     // Status (ativo/pausado) + miniatura do criativo — lookup em lote, tolerante a falha.
     const [adObjs, campObjs] = await Promise.all([
@@ -411,7 +434,7 @@ Deno.serve(async (req: Request) => {
     })).sort((a, b) => a.hour - b.hour)
 
     // Período efetivo (a Meta devolve date_start/date_stop em toda linha): menor início, maior fim.
-    const allRows = [...campRows, ...dailyRows]
+    const allRows = [...acct.rows, ...campRows, ...dailyRows]
     const starts = allRows.map((r) => String(r.date_start ?? '')).filter(Boolean).sort()
     const stops = allRows.map((r) => String(r.date_stop ?? '')).filter(Boolean).sort()
     const since = starts[0] ?? ''
@@ -425,7 +448,7 @@ Deno.serve(async (req: Request) => {
       const prevSince = addDays(since, -days)
       const prevUntil = addDays(since, -1)
       const tr = encodeURIComponent(JSON.stringify({ since: prevSince, until: prevUntil }))
-      const prev = await graphRows(`${base}?fields=${dailyFields}&time_range=${tr}&access_token=${token}`, 'previous')
+      const prev = await graphRows(`${base}?fields=${totalsFields}&time_range=${tr}&access_token=${token}`, 'previous')
       const row = prev.rows[0]
       previous = { ...slim(row ?? {}), since: prevSince, until: prevUntil }
     }
@@ -439,6 +462,7 @@ Deno.serve(async (req: Request) => {
       ad_account_id: conn.ad_account_id,
       ad_account_name: conn.ad_account_name,
       count: campaigns.length,
+      totals: accountTotals,
       campaigns,
       ads,
       daily,

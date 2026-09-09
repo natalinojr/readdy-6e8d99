@@ -29,6 +29,10 @@ interface MetricRow {
   cpc: number;
   ctr: number;
   cpm: number;
+  // CTR/CPC sobre cliques no LINK — critério do Gerenciador de Anúncios e do Reportei.
+  // `ctr`/`cpc` acima são sobre TODOS os cliques (curtida, comentário, clique no perfil).
+  link_ctr?: number;
+  cost_per_link_click?: number;
   results: ActionVal[];
   result?: ResultVal;
   purchases?: number;
@@ -93,6 +97,10 @@ interface SlimRow {
   cost_per_purchase: number;
   cpc: number;
   ctr: number;
+  link_ctr?: number;
+  cost_per_link_click?: number;
+  frequency?: number;
+  cpm?: number;
 }
 interface PlacementRow extends SlimRow { platform: string; position: string }
 interface AgeGenderRow extends SlimRow { age: string; gender: string }
@@ -112,6 +120,9 @@ interface InsightsResponse {
   no_account?: boolean;
   ad_account_name?: string;
   count?: number;
+  // Totais no nível da conta: única fonte correta de alcance/frequência (deduplicados por
+  // consulta — somar campanhas infla o alcance e subestima a frequência).
+  totals?: MetricRow | null;
   campaigns?: CampaignRow[];
   ads?: AdRow[];
   daily?: DailyRow[];
@@ -231,6 +242,17 @@ const n0 = (v: number | undefined | null) => Number(v || 0);
 // otimização). Fallback pra função antiga, que não manda `result`: cliques no link.
 const resultOf = (r: { result?: ResultVal; results: ActionVal[] }): ResultVal =>
   r.result ?? { type: 'link_click', value: (r.results || []).find((x) => x.type === 'link_click')?.value ?? 0 };
+
+// CTR e CPC sobre cliques no LINK (o que o Gerenciador de Anúncios e o Reportei mostram).
+// Usa o valor que a Meta já calcula; sem ele (função antiga), calcula pelos cliques no link.
+type CliqueLike = {
+  link_ctr?: number; cost_per_link_click?: number;
+  impressions: number; link_clicks?: number; clicks?: number; spend: number;
+};
+const linkCtr = (r: CliqueLike): number =>
+  r.link_ctr ?? (r.impressions ? (n0(r.link_clicks) / r.impressions) * 100 : 0);
+const linkCpc = (r: CliqueLike): number =>
+  r.cost_per_link_click ?? (n0(r.link_clicks) ? r.spend / n0(r.link_clicks) : 0);
 const shortDate = (d: string) => {
   const p = (d || '').split('-');
   return p.length === 3 ? `${p[2]}/${p[1]}` : d;
@@ -473,29 +495,38 @@ export default function TrafegoPagoPage() {
 
   const totals = useMemo(() => {
     const sum = (f: (c: CampaignRow) => number) => campaigns.reduce((s, c) => s + f(c), 0);
-    const spend = sum((c) => c.spend);
-    const impressions = sum((c) => c.impressions);
-    const reach = sum((c) => c.reach);
-    const clicks = sum((c) => c.clicks || 0);
-    const linkClicks = sum((c) => c.link_clicks || 0);
+    // Preferimos SEMPRE os totais do nível da conta. Alcance é deduplicado por consulta: somar o
+    // alcance das campanhas conta a mesma pessoa mais de uma vez, infla o total e subestima a
+    // frequência. Somar só é correto para métricas aditivas (gasto, impressões, cliques, compras).
+    const a = insights?.totals ?? null;
+    const spend = a ? a.spend : sum((c) => c.spend);
+    const impressions = a ? a.impressions : sum((c) => c.impressions);
+    const reach = a ? a.reach : sum((c) => c.reach);
+    const clicks = a ? a.clicks : sum((c) => c.clicks || 0);
+    const linkClicks = a ? a.link_clicks : sum((c) => c.link_clicks || 0);
+    const purchases = a ? n0(a.purchases) : sum((c) => n0(c.purchases));
+    const purchaseValue = a ? n0(a.purchase_value) : sum((c) => n0(c.purchase_value));
+    // "Resultado" depende do objetivo de CADA campanha — só faz sentido somando as campanhas.
     const results = sum((c) => resultOf(c).value);
-    const purchases = sum((c) => n0(c.purchases));
-    const purchaseValue = sum((c) => n0(c.purchase_value));
     return {
       spend, impressions, reach, clicks, linkClicks, results, purchases, purchaseValue,
-      landing: sum((c) => n0(c.landing_page_views)),
-      addToCart: sum((c) => n0(c.add_to_cart)),
-      checkout: sum((c) => n0(c.initiate_checkout)),
+      reachExato: !!a,
+      landing: a ? n0(a.landing_page_views) : sum((c) => n0(c.landing_page_views)),
+      addToCart: a ? n0(a.add_to_cart) : sum((c) => n0(c.add_to_cart)),
+      checkout: a ? n0(a.initiate_checkout) : sum((c) => n0(c.initiate_checkout)),
       roas: spend ? purchaseValue / spend : 0,
       cpp: purchases ? spend / purchases : 0,
       ticket: purchases ? purchaseValue / purchases : 0,
-      ctr: impressions ? (clicks / impressions) * 100 : 0,
-      cpc: clicks ? spend / clicks : 0,
+      // CTR/CPC sobre cliques no LINK. Os de todos os cliques ficam ao lado, pra referência.
+      ctr: a ? linkCtr(a) : (impressions ? (linkClicks / impressions) * 100 : 0),
+      cpc: a ? linkCpc(a) : (linkClicks ? spend / linkClicks : 0),
+      ctrTotal: impressions ? (clicks / impressions) * 100 : 0,
+      cpcTotal: clicks ? spend / clicks : 0,
       cpm: impressions ? (spend / impressions) * 1000 : 0,
-      freq: reach ? impressions / reach : 0,
+      freq: a?.frequency ? a.frequency : (reach ? impressions / reach : 0),
       cpr: results ? spend / results : 0,
     };
-  }, [campaigns]);
+  }, [campaigns, insights]);
 
   // Mix de tipos de resultado (ex.: "3 Compras · 120 Cliques no link") pro subtítulo do KPI.
   const resultMix = useMemo(() => {
@@ -606,8 +637,8 @@ export default function TrafegoPagoPage() {
       if (a.frequency >= 3.5) {
         out.push({ nivel: 'medio', texto: `"${a.ad}": frequência ${dec(a.frequency, 1)}x — o mesmo público está vendo repetido; hora de trocar o criativo.` });
       }
-      if (a.impressions >= 2000 && a.ctr < 0.5) {
-        out.push({ nivel: 'medio', texto: `"${a.ad}": CTR ${pct(a.ctr)} em ${num(a.impressions)} impressões — pouca gente clica; testar outra imagem/texto.` });
+      if (a.impressions >= 2000 && linkCtr(a) < 0.5) {
+        out.push({ nivel: 'medio', texto: `"${a.ad}": CTR no link ${pct(linkCtr(a))} em ${num(a.impressions)} impressões — pouca gente clica; testar outra imagem/texto.` });
       }
     });
     return out.slice(0, 8);
@@ -811,10 +842,10 @@ export default function TrafegoPagoPage() {
                     ? resultMix.slice(0, 2).map((r) => `${num(r.value)} ${actionLabel(r.type)}`).join(' · ')
                     : (totals.cpr ? `Custo/result. ${brl(totals.cpr)}` : '—')} />
                 <KpiCard icon={Users} cor="sky" label="Alcance" valor={num(totals.reach)}
-                  sub={`Frequência ${dec(totals.freq, 2)}x`}
+                  sub={`Frequência ${dec(totals.freq, 2)}x${totals.reachExato ? '' : ' (aprox.)'}`}
                   extra={<Delta atual={totals.reach} anterior={previous?.reach} fmt={num} />} />
                 <KpiCard icon={MousePointerClick} cor="violet" label="Cliques no link" valor={num(totals.linkClicks || totals.clicks)}
-                  sub={`CTR ${pct(totals.ctr)}`}
+                  sub={`CTR no link ${pct(totals.ctr)}`}
                   extra={<Delta atual={totals.linkClicks || totals.clicks} anterior={previous?.link_clicks} fmt={num} />} />
                 <KpiCard icon={Store} cor="amber" label="Pedidos no ERPOS via anúncio"
                   valor={erposOrders ? num(erposOrders.count) : '—'}
@@ -827,11 +858,17 @@ export default function TrafegoPagoPage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-6">
                 <Pill icon={Eye} label="Impressões" valor={num(totals.impressions)} />
                 <Pill icon={MousePointerClick} label="Cliques totais" valor={num(totals.clicks)} />
-                <Pill icon={DollarSign} label="CPC" valor={brl(totals.cpc)} />
+                <Pill icon={DollarSign} label="CPC no link" valor={brl(totals.cpc)} />
                 <Pill icon={DollarSign} label="CPM" valor={brl(totals.cpm)} />
-                <Pill icon={Percent} label="CTR" valor={pct(totals.ctr)} />
+                <Pill icon={Percent} label="CTR no link" valor={pct(totals.ctr)} />
                 <Pill icon={Gauge} label="Frequência" valor={`${dec(totals.freq, 2)}x`} />
               </div>
+
+              <p className="text-[11px] text-zinc-400 -mt-4 mb-6 leading-relaxed">
+                CTR e CPC são sobre <strong className="font-semibold text-zinc-500">cliques no link</strong>, o mesmo
+                critério do Gerenciador de Anúncios (sobre todos os cliques dariam {pct(totals.ctrTotal)} e {brl(totals.cpcTotal)}).
+                Alcance e frequência vêm do total da conta, sem somar campanhas, para não contar a mesma pessoa duas vezes.
+              </p>
 
               {/* Alertas (calculados dos anúncios ativos do período) */}
               {alertas.length > 0 && (
@@ -1009,7 +1046,7 @@ export default function TrafegoPagoPage() {
                               <th className="px-2 py-1.5 font-bold text-right">Compras</th>
                               <th className="px-2 py-1.5 font-bold text-right">ROAS</th>
                               <th className="px-2 py-1.5 font-bold text-right">Custo/compra</th>
-                              <th className="px-2 py-1.5 font-bold text-right">CPC</th>
+                              <th className="px-2 py-1.5 font-bold text-right">CPC link</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1020,7 +1057,7 @@ export default function TrafegoPagoPage() {
                                 <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-emerald-600">{num(p.purchases)}</td>
                                 <td className="px-2 py-1.5 text-right"><Roas v={p.roas} spend={p.spend} /></td>
                                 <td className="px-2 py-1.5 text-right tabular-nums text-zinc-600">{p.cost_per_purchase ? brl(p.cost_per_purchase) : '—'}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">{brl(p.cpc)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">{brl(linkCpc(p))}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1041,7 +1078,7 @@ export default function TrafegoPagoPage() {
                               <th className="px-2 py-1.5 font-bold text-right">Investido</th>
                               <th className="px-2 py-1.5 font-bold text-right">Compras</th>
                               <th className="px-2 py-1.5 font-bold text-right">ROAS</th>
-                              <th className="px-2 py-1.5 font-bold text-right">CPC</th>
+                              <th className="px-2 py-1.5 font-bold text-right">CPC link</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1052,7 +1089,7 @@ export default function TrafegoPagoPage() {
                                 <td className="px-2 py-1.5 text-right tabular-nums text-zinc-800">{brl(p.spend)}</td>
                                 <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-emerald-600">{num(p.purchases)}</td>
                                 <td className="px-2 py-1.5 text-right"><Roas v={p.roas} spend={p.spend} /></td>
-                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">{brl(p.cpc)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">{brl(linkCpc(p))}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1094,8 +1131,8 @@ export default function TrafegoPagoPage() {
                           <th className="px-3 py-2.5 font-bold text-right">Vendas</th>
                           <th className="px-3 py-2.5 font-bold text-right">ROAS</th>
                           <th className="px-3 py-2.5 font-bold text-right">Cliques link</th>
-                          <th className="px-3 py-2.5 font-bold text-right">CTR</th>
-                          <th className="px-3 py-2.5 font-bold text-right">CPC</th>
+                          <th className="px-3 py-2.5 font-bold text-right">CTR link</th>
+                          <th className="px-3 py-2.5 font-bold text-right">CPC link</th>
                           <th className="px-3 py-2.5 font-bold text-right">Alcance</th>
                           <th className="px-3 py-2.5 font-bold text-right">Freq.</th>
                           <th className="px-4 py-2.5 font-bold text-right">CPM</th>
@@ -1123,8 +1160,8 @@ export default function TrafegoPagoPage() {
                               <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-emerald-700">{brl(n0(c.purchase_value))}</td>
                               <td className="px-3 py-2.5 text-right"><Roas v={n0(c.roas)} spend={c.spend} /></td>
                               <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{num(c.link_clicks || c.clicks)}</td>
-                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-500">{pct(c.ctr)}</td>
-                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{brl(c.cpc)}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-500">{pct(linkCtr(c))}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{brl(linkCpc(c))}</td>
                               <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{num(c.reach)}</td>
                               <td className="px-3 py-2.5 text-right tabular-nums text-zinc-500">{dec(c.frequency, 2)}x</td>
                               <td className="px-4 py-2.5 text-right tabular-nums text-zinc-500">{brl(c.cpm)}</td>
@@ -1200,8 +1237,8 @@ export default function TrafegoPagoPage() {
                           <th className="px-3 py-2.5 font-bold text-right">Vendas</th>
                           <th className="px-3 py-2.5 font-bold text-right">ROAS</th>
                           <th className="px-3 py-2.5 font-bold text-right">Cliques link</th>
-                          <th className="px-3 py-2.5 font-bold text-right">CTR</th>
-                          <th className="px-3 py-2.5 font-bold text-right">CPC</th>
+                          <th className="px-3 py-2.5 font-bold text-right">CTR link</th>
+                          <th className="px-3 py-2.5 font-bold text-right">CPC link</th>
                           <th className="px-3 py-2.5 font-bold text-right">Alcance</th>
                           <th className="px-4 py-2.5 font-bold text-right">Freq.</th>
                         </tr>
@@ -1237,8 +1274,8 @@ export default function TrafegoPagoPage() {
                               <td className="px-3 py-2 text-right tabular-nums font-semibold text-emerald-700">{brl(n0(a.purchase_value))}</td>
                               <td className="px-3 py-2 text-right"><Roas v={n0(a.roas)} spend={a.spend} /></td>
                               <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{num(a.link_clicks || a.clicks)}</td>
-                              <td className="px-3 py-2 text-right tabular-nums text-zinc-500">{pct(a.ctr)}</td>
-                              <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{brl(a.cpc)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-500">{pct(linkCtr(a))}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{brl(linkCpc(a))}</td>
                               <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{num(a.reach)}</td>
                               <td className="px-4 py-2 text-right tabular-nums text-zinc-500">{dec(a.frequency, 2)}x</td>
                             </tr>
