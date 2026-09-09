@@ -88,6 +88,12 @@ export default function PagarContaModalQR(props: Props) {
   const [copiado, setCopiado] = useState(false);
   const [segundos, setSegundos] = useState(0);
   const [expandido, setExpandido] = useState<string | null>(null);
+  // CPF/CNPJ na nota (opcional): o cliente digita antes de gerar o Pix.
+  const [cpfNota, setCpfNota] = useState<string>(function () {
+    try { return sessionStorage.getItem('erpos_qr_cpf_nota') || ''; } catch { return ''; }
+  });
+  const cpfDigits = cpfNota.replace(/\D/g, '');
+  const cpfValido = cpfDigits.length === 0 || validaCpfCnpj(cpfDigits);
 
   const pixRef = useRef<PixInfo | null>(null);
   pixRef.current = pix;
@@ -193,7 +199,9 @@ export default function PagarContaModalQR(props: Props) {
     setGerando(true);
     setErro('');
     try {
-      const data = await callOnlinePayments<{ pix: PixInfo }>({ action: 'create_pix', scope, ...auth });
+      if (cpfDigits && !cpfValido) { setErro('CPF/CNPJ inválido. Confira os dígitos ou deixe em branco.'); return; }
+      try { if (cpfDigits) sessionStorage.setItem('erpos_qr_cpf_nota', cpfDigits); else sessionStorage.removeItem('erpos_qr_cpf_nota'); } catch { /* sem storage */ }
+      const data = await callOnlinePayments<{ pix: PixInfo }>({ action: 'create_pix', scope, customer_cpf: cpfDigits || null, ...auth });
       if (data.error || !data.pix) {
         setErro(data.message || data.error || 'Não foi possível gerar o Pix');
         return;
@@ -521,9 +529,25 @@ export default function PagarContaModalQR(props: Props) {
         {/* Footer: só na tela da conta, com algo a pagar */}
         {!carregando && !mostrandoPix && enabled && !tudoPago && orders.length > 0 ? (
           <div className="border-t border-zinc-100 bg-white px-5 py-4 flex-shrink-0 rounded-b-2xl">
+            {/* CPF na nota (opcional) — vai para a NFC-e emitida quando o Pix confirmar */}
+            <div className="mb-3">
+              <label className="flex items-center justify-between text-[11px] font-semibold text-zinc-600 mb-1">
+                <span><i className="ri-file-shield-2-line text-zinc-400 mr-1" />CPF na nota fiscal <span className="font-normal text-zinc-400">(opcional)</span></span>
+                {cpfDigits && cpfValido ? <span className="text-emerald-600 font-bold">vai na nota</span> : null}
+              </label>
+              <input
+                inputMode="numeric"
+                autoComplete="off"
+                value={formatCpfCnpjQR(cpfDigits) || cpfNota}
+                onChange={function (e) { setCpfNota(e.target.value.replace(/\D/g, '').slice(0, 14)); }}
+                placeholder="000.000.000-00"
+                className={'w-full text-sm border rounded-xl px-3 py-2.5 text-zinc-800 focus:outline-none ' + (cpfDigits && !cpfValido ? 'border-red-300 focus:border-red-400' : 'border-zinc-200 focus:border-emerald-400')}
+              />
+              {cpfDigits && !cpfValido ? <p className="text-[10px] text-red-500 mt-1">{cpfDigits.length < 11 ? 'Faltam dígitos' : 'Documento inválido'}</p> : null}
+            </div>
             <button
               type="button"
-              disabled={gerando || alvo.length === 0 || temTravado}
+              disabled={gerando || alvo.length === 0 || temTravado || (cpfDigits.length > 0 && !cpfValido)}
               onClick={gerarPix}
               className="w-full flex items-center justify-between bg-gradient-to-br from-emerald-500 to-emerald-600 disabled:from-zinc-300 disabled:to-zinc-300 text-white px-5 py-3.5 rounded-xl cursor-pointer disabled:cursor-not-allowed transition-colors shadow-sm"
             >
@@ -541,4 +565,23 @@ export default function PagarContaModalQR(props: Props) {
       </div>
     </div>
   );
+}
+
+// ── CPF/CNPJ (validação de dígito verificador + máscara) ─────────────────────
+function validaCpfCnpj(d: string): boolean {
+  if (d.length === 11) {
+    if (/^(\d)\1{10}$/.test(d)) return false;
+    const calc = function (len: number) { let s = 0; for (let i = 0; i < len; i++) s += Number(d[i]) * (len + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
+    return calc(9) === Number(d[9]) && calc(10) === Number(d[10]);
+  }
+  if (d.length === 14) {
+    if (/^(\d)\1{13}$/.test(d)) return false;
+    const calc = function (len: number) { const w = len === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]; let s = 0; for (let i = 0; i < len; i++) s += Number(d[i]) * w[i]; const r = s % 11; return r < 2 ? 0 : 11 - r; };
+    return calc(12) === Number(d[12]) && calc(13) === Number(d[13]);
+  }
+  return false;
+}
+function formatCpfCnpjQR(d: string): string {
+  if (d.length <= 11) return d.replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2');
+  return d.replace(/^(\d{2})(\d)/, '$1.$2').replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1/$2').replace(/(\d{4})(\d{1,2})$/, '$1-$2');
 }

@@ -24,6 +24,19 @@ const log = (level: string, scope: string, msg: string, extra?: unknown) =>
 const MP_API = "https://api.mercadopago.com";
 const PIX_EXPIRATION_MIN = 15;
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+function isValidCpfCnpj(d: string): boolean {
+  if (d.length === 11) {
+    if (/^(\d)\1{10}$/.test(d)) return false;
+    const calc = (len: number) => { let s = 0; for (let i = 0; i < len; i++) s += Number(d[i]) * (len + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
+    return calc(9) === Number(d[9]) && calc(10) === Number(d[10]);
+  }
+  if (d.length === 14) {
+    if (/^(\d)\1{13}$/.test(d)) return false;
+    const calc = (len: number) => { const w = len === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]; let s = 0; for (let i = 0; i < len; i++) s += Number(d[i]) * w[i]; const r = s % 11; return r < 2 ? 0 : 11 - r; };
+    return calc(12) === Number(d[12]) && calc(13) === Number(d[13]);
+  }
+  return false;
+}
 
 // ── Mercado Pago client ──────────────────────────────────────────────────────
 async function mpFetch(token: string, path: string, init: RequestInit = {}) {
@@ -221,7 +234,10 @@ async function settlePix(admin: Admin, pixId: string, providerPayload: unknown, 
         fiscalJobs.push(fetch(`${supabaseUrl}/functions/v1/fiscal-write`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}`, apikey: anonKey, "x-internal-key": internalKey },
-          body: JSON.stringify({ action: "emit", tenant_id: tenantId, source_type: "order", source_id: a.order_id, trigger: "online_payment" }),
+          // Vários pedidos no mesmo Pix = pagamento em grupo = UMA NFC-e (a fiscal-write espera o grupo completar).
+          body: JSON.stringify(groupId
+            ? { action: "emit", tenant_id: tenantId, source_type: "payment_group", source_id: groupId, group_size: allocation.length, trigger: "online_payment" }
+            : { action: "emit", tenant_id: tenantId, source_type: "order", source_id: a.order_id, trigger: "online_payment" }),
         }).then(async (r) => log("INFO", "fiscal", "emit", { order: a.order_id, http: r.status, body: (await r.text().catch(() => "")).slice(0, 200) }))
           .catch((e) => log("WARN", "fiscal", "falhou", { order: a.order_id, error: String(e) })));
       }
@@ -401,6 +417,14 @@ Deno.serve(async (req: Request) => {
       }
       const amount = round2(target.reduce((s, o) => s + o.remaining, 0));
       if (target.length === 0 || amount < 0.01) return json({ error: "nothing_to_pay", message: "Não há nada pendente para pagar." }, 422);
+
+      // CPF/CNPJ na nota (opcional): guarda nos pedidos que este Pix vai pagar. A fiscal-write
+      // usa orders.customer_cpf ao emitir a NFC-e quando o pagamento confirmar.
+      const cpfNota = String(body.customer_cpf ?? "").replace(/\D/g, "");
+      if (cpfNota) {
+        if (!isValidCpfCnpj(cpfNota)) return json({ error: "invalid_cpf", message: "CPF/CNPJ inválido. Confira os dígitos ou deixe em branco." }, 422);
+        await admin.from("orders").update({ customer_cpf: cpfNota }).in("id", target.map((o) => o.id)).eq("tenant_id", tenantId);
+      }
 
       // Um Pix pendente por participante: cancela o anterior (aqui e no provedor)
       const { data: olds } = await admin.from("fin_pix_payments").select("id, provider_payment_id")

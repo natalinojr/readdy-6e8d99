@@ -131,7 +131,7 @@ interface FiscalSettings {
 interface OrderRow {
   id: string; number: string | null; origin_type: string; status: string;
   table_session_id: string | null; table_number: number | null;
-  destination_name: string | null; customer_cpf: string | null; customer_id: string | null;
+  destination_name: string | null; customer_cpf: string | null; customer_id: string | null; participant_id?: string | null;
   discount_amount: number | null; service_fee_amount: number | null; tip_amount: number | null;
   delivery_fee: number | null; subtotal: number | null; total_amount: number | null;
   is_training: boolean | null; is_draft: boolean | null; is_cortesia: boolean | null; is_paid: boolean | null;
@@ -202,7 +202,7 @@ async function loadSettings(admin: Admin, tenantId: string): Promise<FiscalSetti
 async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: string, sourceType: string, sourceId: string, consumer?: { cpf?: string | null; name?: string | null } | null): Promise<{ note: BuiltNote | null; skipReason?: string }> {
   // 1. Pedidos da origem
   let q = admin.from('orders')
-    .select('id, number, origin_type, status, table_session_id, table_number, destination_name, customer_cpf, customer_id, discount_amount, service_fee_amount, tip_amount, delivery_fee, subtotal, total_amount, is_training, is_draft, is_cortesia, is_paid, created_at')
+    .select('id, number, origin_type, status, table_session_id, table_number, destination_name, customer_cpf, customer_id, participant_id, discount_amount, service_fee_amount, tip_amount, delivery_fee, subtotal, total_amount, is_training, is_draft, is_cortesia, is_paid, created_at')
     .eq('tenant_id', tenantId);
   if (sourceType === 'order') q = q.eq('id', sourceId);
   else if (sourceType === 'table_session') q = q.eq('table_session_id', sourceId);
@@ -395,7 +395,16 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
       const { data: cust } = await admin.from('customers').select('name').eq('id', withCpf.customer_id).maybeSingle();
       customerName = cust?.name ?? null;
     }
-    if (!customerName && withCpf?.destination_name) customerName = String(withCpf.destination_name).split(/\s+[-–—]\s+/)[0].trim() || null;
+    // QR universal: o nome real está no participante (destination_name é "Mesa 0 - Nome" ou a senha).
+    if (!customerName && withCpf?.participant_id) {
+      const { data: part } = await admin.from('table_session_participants').select('name').eq('id', withCpf.participant_id).maybeSingle();
+      customerName = part?.name ? String(part.name).trim().slice(0, 60) : null;
+    }
+    if (!customerName && withCpf?.destination_name) {
+      const parts = String(withCpf.destination_name).split(/\s+[-–—]\s+/).map((x) => x.trim()).filter(Boolean);
+      const cand = parts.find((x) => !/^mesa\s*\d*$/i.test(x) && !/^\d+$/.test(x)) ?? null;
+      customerName = cand || null;
+    }
   }
 
   const first = orders[0];
