@@ -43,6 +43,19 @@ function pickAction(list: Act[], types: string[]): number {
   return 0
 }
 
+// Campos "de vídeo" e "outbound" vêm como lista de {action_type, value} com um item só.
+function firstValue(v: unknown): number {
+  const list = simplifyActions(v)
+  return list.length ? list[0].value : 0
+}
+
+// Valores monetários de objetos (orçamento, saldo) vêm em centavos, como string.
+function centavos(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n / 100 : null
+}
+
 const PURCHASE = ['purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_web_purchase']
 const ADD_TO_CART = ['add_to_cart', 'omni_add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart']
 const INITIATE_CHECKOUT = ['initiate_checkout', 'omni_initiated_checkout', 'offsite_conversion.fb_pixel_initiate_checkout']
@@ -84,7 +97,7 @@ function resultFor(
   return pick(LINK)
 }
 
-// Métricas comuns a campanha / anúncio / dia / quebra, a partir de uma linha do insights.
+// Métricas comuns a conta / campanha / conjunto / anúncio / dia / quebra, a partir de uma linha do insights.
 function metrics(row: Row) {
   const acts = simplifyActions(row.actions)
   const vals = simplifyActions(row.action_values)
@@ -108,6 +121,13 @@ function metrics(row: Row) {
     // clique no perfil), o que dá CTR maior e CPC menor. Guardamos os dois.
     link_ctr: Number(row.inline_link_click_ctr ?? 0),
     cost_per_link_click: Number(row.cost_per_inline_link_click ?? 0),
+    // Pessoas distintas e cliques que saem da Meta de fato — medida mais honesta de tráfego.
+    unique_clicks: Number(row.unique_clicks ?? 0),
+    unique_ctr: Number(row.unique_ctr ?? 0),
+    cost_per_unique_click: Number(row.cost_per_unique_click ?? 0),
+    unique_link_clicks: Number(row.unique_inline_link_clicks ?? 0),
+    outbound_clicks: firstValue(row.outbound_clicks),
+    outbound_ctr: firstValue(row.outbound_clicks_ctr),
     purchases,
     purchase_value: purchaseValue,
     roas: spend > 0 ? purchaseValue / spend : 0,
@@ -120,10 +140,35 @@ function metrics(row: Row) {
     conversations: pickAction(acts, CONVERSATION),
     result: resultFor(row.optimization_goal, row.objective, acts, { reach, impressions }),
     results: acts,
+    // Custo por cada tipo de ação, já calculado pela Meta.
+    cost_per: simplifyActions(row.cost_per_action_type),
   }
 }
 
-// Métricas enxutas pra quebras (posicionamento, idade/gênero, hora) e pro período anterior.
+// Só no nível de anúncio: notas de qualidade (comparação com concorrentes) e retenção de vídeo.
+function adExtras(row: Row) {
+  const plays = firstValue(row.video_play_actions)
+  return {
+    rankings: {
+      quality: row.quality_ranking ? String(row.quality_ranking) : null,
+      engagement: row.engagement_rate_ranking ? String(row.engagement_rate_ranking) : null,
+      conversion: row.conversion_rate_ranking ? String(row.conversion_rate_ranking) : null,
+    },
+    video: plays > 0
+      ? {
+        plays,
+        p25: firstValue(row.video_p25_watched_actions),
+        p50: firstValue(row.video_p50_watched_actions),
+        p75: firstValue(row.video_p75_watched_actions),
+        p100: firstValue(row.video_p100_watched_actions),
+        thruplay: firstValue(row.video_thruplay_watched_actions),
+        avg_seconds: firstValue(row.video_avg_time_watched_actions),
+      }
+      : null,
+  }
+}
+
+// Métricas enxutas pra quebras (posicionamento, idade/gênero, hora, aparelho, região, peça) e pro período anterior.
 function slim(row: Row) {
   const m = metrics(row)
   return {
@@ -163,23 +208,38 @@ async function graphRows(url: string, label: string): Promise<{ ok: boolean; row
   }
 }
 
-// GET /?ids=a,b,c&fields=... em lotes de 50 (status e miniatura dos anúncios / status das campanhas).
-// À prova de falha: se der erro, devolve o que conseguiu — o relatório sai sem status/miniatura.
-async function fetchObjects(ids: string[], fields: string, token: string): Promise<Record<string, Row>> {
+// GET de um objeto só (conta, post...). Devolve null em erro — nunca derruba o relatório.
+async function graphObject(url: string, label: string): Promise<Row | null> {
+  try {
+    const resp = await fetch(url)
+    const body = await resp.json().catch(() => ({}))
+    if (!resp.ok) {
+      console.warn(`[meta-ads-insights] ${label} error:`, resp.status, JSON.stringify(body).slice(0, 300))
+      return null
+    }
+    return body as Row
+  } catch (e) {
+    console.warn(`[meta-ads-insights] ${label} exception:`, e)
+    return null
+  }
+}
+
+// GET /?ids=a,b,c&fields=... em lotes de 50. À prova de falha: se der erro, devolve o que conseguiu.
+async function fetchObjects(ids: string[], fields: string, token: string, label = 'objects'): Promise<Record<string, Row>> {
   const out: Record<string, Row> = {}
   const uniq = Array.from(new Set(ids.filter(Boolean)))
   for (let i = 0; i < uniq.length; i += 50) {
     const chunk = uniq.slice(i, i + 50)
     try {
-      const resp = await fetch(`${GRAPH}/?ids=${chunk.join(',')}&fields=${fields}&access_token=${token}`)
+      const resp = await fetch(`${GRAPH}/?ids=${chunk.join(',')}&fields=${encodeURIComponent(fields)}&access_token=${token}`)
       const body = await resp.json().catch(() => ({}))
       if (resp.ok && body && typeof body === 'object') {
         for (const [id, obj] of Object.entries(body as Record<string, Row>)) out[id] = obj
       } else {
-        console.warn('[meta-ads-insights] objects lookup failed:', resp.status, JSON.stringify(body).slice(0, 300))
+        console.warn(`[meta-ads-insights] ${label} lookup failed:`, resp.status, JSON.stringify(body).slice(0, 300))
       }
     } catch (e) {
-      console.warn('[meta-ads-insights] objects lookup exception:', e)
+      console.warn(`[meta-ads-insights] ${label} lookup exception:`, e)
     }
   }
   return out
@@ -198,13 +258,103 @@ function localHour(ts: string): number {
   return Number.isFinite(h) ? h % 24 : 0
 }
 
+// Distância em km entre dois pontos (fórmula de haversine) — pra comparar o pin do anúncio com a loja.
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371
+  const toRad = (x: number) => (x * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+function percentile(values: number[], p: number): number | null {
+  if (!values.length) return null
+  const s = [...values].sort((a, b) => a - b)
+  const idx = Math.min(s.length - 1, Math.max(0, Math.ceil((p / 100) * s.length) - 1))
+  return s[idx]
+}
+
+// Resumo legível da segmentação do conjunto (targeting da Meta é um objeto grande e irregular).
+type Loc = { type: string; name: string; radius_km: number | null; lat: number | null; lng: number | null }
+function summarizeTargeting(t: unknown) {
+  const tg = (t && typeof t === 'object' ? t : {}) as Row
+  const geo = (tg.geo_locations && typeof tg.geo_locations === 'object' ? tg.geo_locations : {}) as Row
+  const toKm = (radius: unknown, unit: unknown) => {
+    const r = Number(radius)
+    if (!Number.isFinite(r) || r <= 0) return null
+    return String(unit ?? 'kilometer').toLowerCase().startsWith('mile') ? r * 1.609344 : r
+  }
+  const locations: Loc[] = []
+  for (const c of (Array.isArray(geo.custom_locations) ? geo.custom_locations : []) as Row[]) {
+    locations.push({
+      type: 'pin',
+      name: String(c.name ?? c.address_string ?? 'Pin no mapa'),
+      radius_km: toKm(c.radius, c.distance_unit),
+      lat: Number.isFinite(Number(c.latitude)) ? Number(c.latitude) : null,
+      lng: Number.isFinite(Number(c.longitude)) ? Number(c.longitude) : null,
+    })
+  }
+  for (const c of (Array.isArray(geo.cities) ? geo.cities : []) as Row[]) {
+    locations.push({ type: 'cidade', name: String(c.name ?? c.key ?? ''), radius_km: toKm(c.radius, c.distance_unit), lat: null, lng: null })
+  }
+  for (const c of (Array.isArray(geo.regions) ? geo.regions : []) as Row[]) {
+    locations.push({ type: 'estado', name: String(c.name ?? c.key ?? ''), radius_km: null, lat: null, lng: null })
+  }
+  for (const c of (Array.isArray(geo.zips) ? geo.zips : []) as Row[]) {
+    locations.push({ type: 'cep', name: String(c.name ?? c.key ?? ''), radius_km: null, lat: null, lng: null })
+  }
+  for (const c of (Array.isArray(geo.countries) ? geo.countries : []) as unknown[]) {
+    locations.push({ type: 'país', name: String(c), radius_km: null, lat: null, lng: null })
+  }
+
+  const names = (list: unknown): string[] =>
+    (Array.isArray(list) ? list : []).map((x) => String((x as Row)?.name ?? '')).filter(Boolean)
+  const interests = new Set<string>(names(tg.interests))
+  const behaviors = new Set<string>(names(tg.behaviors))
+  for (const spec of (Array.isArray(tg.flexible_spec) ? tg.flexible_spec : []) as Row[]) {
+    names(spec.interests).forEach((n) => interests.add(n))
+    names(spec.behaviors).forEach((n) => behaviors.add(n))
+  }
+  const genders = Array.isArray(tg.genders) ? (tg.genders as number[]) : []
+  const automation = (tg.targeting_automation && typeof tg.targeting_automation === 'object' ? tg.targeting_automation : {}) as Row
+
+  return {
+    age_min: Number(tg.age_min ?? 0) || null,
+    age_max: Number(tg.age_max ?? 0) || null,
+    genders: genders.length === 0 || genders.length === 2 ? 'todos' : genders[0] === 1 ? 'homens' : 'mulheres',
+    locations,
+    location_types: Array.isArray(geo.location_types) ? (geo.location_types as string[]) : [],
+    interests: Array.from(interests).slice(0, 15),
+    behaviors: Array.from(behaviors).slice(0, 10),
+    custom_audiences: names(tg.custom_audiences),
+    excluded_audiences: names(tg.excluded_custom_audiences),
+    advantage_audience: Number(automation.advantage_audience ?? 0) === 1,
+    publisher_platforms: Array.isArray(tg.publisher_platforms) ? (tg.publisher_platforms as string[]) : [],
+  }
+}
+
+function issuesText(v: unknown): string[] {
+  return (Array.isArray(v) ? v : [])
+    .map((i) => String((i as Row)?.error_summary ?? (i as Row)?.error_message ?? ''))
+    .filter(Boolean)
+}
+function recsText(v: unknown): Array<{ title: string; message: string; code: number | null }> {
+  return (Array.isArray(v) ? v : []).map((r) => ({
+    title: String((r as Row)?.title ?? ''),
+    message: String((r as Row)?.message ?? ''),
+    code: Number.isFinite(Number((r as Row)?.code)) ? Number((r as Row)?.code) : null,
+  })).filter((r) => r.title || r.message)
+}
+
 // Pedidos REAIS do delivery do ERPOS no período: (a) os que chegaram por link com utm_source da Meta
 // (instagram/facebook/fb/ig/meta...) — cruza a atribuição da Meta com o que entrou de fato no caixa;
-// (b) histograma por hora de TODOS os pedidos do delivery — pra cruzar com a hora das compras dos anúncios.
+// (b) histograma por hora de TODOS os pedidos do delivery; (c) distâncias de entrega (p90 e máxima),
+// pra comparar com o raio dos anúncios.
 async function erposOrders(admin: ReturnType<typeof createClient>, tenantId: string, since: string, until: string) {
   const { data, error } = await admin
     .from('orders')
-    .select('total_amount, delivery_source, status, created_at')
+    .select('total_amount, delivery_source, status, created_at, delivery_distance_km')
     .eq('tenant_id', tenantId)
     .eq('origin_type', 'delivery')
     .in('delivery_platform', ['propria', 'retirada'])
@@ -219,16 +369,19 @@ async function erposOrders(admin: ReturnType<typeof createClient>, tenantId: str
   const isMeta = (s: string) => /^(fb|ig|meta|face|insta)/.test(s)
   const bySource: Record<string, { count: number; revenue: number }> = {}
   const hourly: number[] = Array.from({ length: 24 }, () => 0)
+  const dists: number[] = []
   let count = 0
   let revenue = 0
   let totalCount = 0
   let totalRevenue = 0
-  for (const o of (data ?? []) as Array<{ total_amount: unknown; delivery_source: unknown; status: unknown; created_at: string }>) {
+  for (const o of (data ?? []) as Array<{ total_amount: unknown; delivery_source: unknown; status: unknown; created_at: string; delivery_distance_km: unknown }>) {
     if (String(o.status ?? '').toLowerCase().includes('cancel')) continue
     const v = Number(o.total_amount ?? 0)
     totalCount += 1
     totalRevenue += v
     hourly[localHour(o.created_at)] += 1
+    const km = Number(o.delivery_distance_km)
+    if (Number.isFinite(km) && km > 0) dists.push(km)
     const src = String(o.delivery_source ?? '').trim().toLowerCase()
     if (!src || !isMeta(src)) continue
     count += 1
@@ -237,7 +390,25 @@ async function erposOrders(admin: ReturnType<typeof createClient>, tenantId: str
     bySource[src].count += 1
     bySource[src].revenue += v
   }
-  return { count, revenue, by_source: bySource, since, until, total_count: totalCount, total_revenue: totalRevenue, hourly }
+  return {
+    count, revenue, by_source: bySource, since, until,
+    total_count: totalCount, total_revenue: totalRevenue, hourly,
+    km_p90: percentile(dists, 90), km_max: dists.length ? Math.max(...dists) : null, km_amostra: dists.length,
+  }
+}
+
+// Área de entrega configurada no ERPOS: pin da loja + faixas de km (system_settings.delivery_config).
+async function deliveryArea(admin: ReturnType<typeof createClient>, tenantId: string) {
+  const [{ data: ss }, { count }] = await Promise.all([
+    admin.from('system_settings').select('delivery_config, delivery_city').eq('tenant_id', tenantId).maybeSingle(),
+    admin.from('delivery_neighborhoods').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('is_active', true),
+  ])
+  const dc = ((ss?.delivery_config ?? {}) as Row)
+  const tiers = (Array.isArray(dc.delivery_fee_tiers) ? dc.delivery_fee_tiers : []) as Row[]
+  const maxKm = tiers.map((t) => Number(t.ate_km) || 0).filter((k) => k > 0).reduce((a, b) => Math.max(a, b), 0) || null
+  const loc = dc.store_location as Row | undefined
+  const store = loc && typeof loc.lat === 'number' && typeof loc.lng === 'number' ? { lat: loc.lat as number, lng: loc.lng as number } : null
+  return { max_km: maxKm, store, city: ss?.delivery_city ? String(ss.delivery_city) : null, neighborhoods: count ?? 0 }
 }
 
 // Sessão válida + usuário membro DESTA loja. A função roda com service role e é publicada sem
@@ -374,19 +545,29 @@ Deno.serve(async (req: Request) => {
     const common = [
       'spend', 'impressions', 'reach', 'frequency', 'clicks', 'inline_link_clicks',
       'cpc', 'ctr', 'cpm', 'inline_link_click_ctr', 'cost_per_inline_link_click',
+      'unique_clicks', 'unique_ctr', 'cost_per_unique_click', 'unique_inline_link_clicks',
+      'outbound_clicks', 'outbound_clicks_ctr', 'cost_per_action_type',
       'actions', 'action_values',
     ]
     const campaignFields = ['campaign_id', 'campaign_name', 'objective', ...common].join(',')
+    const adsetFields = ['campaign_id', 'campaign_name', 'adset_id', 'adset_name', 'objective', 'optimization_goal', ...common].join(',')
+    // Notas de qualidade e retenção de vídeo só existem no nível de anúncio.
     const adFields = [
       'campaign_id', 'campaign_name', 'adset_id', 'adset_name', 'ad_id', 'ad_name',
       'objective', 'optimization_goal', ...common,
+      'quality_ranking', 'engagement_rate_ranking', 'conversion_rate_ranking',
+      'video_play_actions', 'video_p25_watched_actions', 'video_p50_watched_actions',
+      'video_p75_watched_actions', 'video_p100_watched_actions', 'video_thruplay_watched_actions',
+      'video_avg_time_watched_actions',
     ].join(',')
     const dailyFields = ['spend', 'impressions', 'reach', 'clicks', 'inline_link_clicks', 'actions', 'action_values'].join(',')
-    // Quebras não aceitam reach/frequency em todas as combinações — ficam só com o essencial.
+    // Quebras não aceitam reach/frequency nem métricas "unique" em todas as combinações — só o essencial.
     const breakdownFields = [
       'spend', 'impressions', 'clicks', 'inline_link_clicks', 'cpc', 'ctr',
       'inline_link_click_ctr', 'cost_per_inline_link_click', 'actions', 'action_values',
     ].join(',')
+    // frequency_value é a distribuição de quantas vezes cada pessoa viu: precisa de reach.
+    const frequencyFields = ['spend', 'impressions', 'reach', 'actions', 'action_values'].join(',')
     // Totais NO NÍVEL DA CONTA (sem level, sem time_increment). Necessário porque ALCANCE é
     // deduplicado por consulta: somar o alcance das campanhas conta a mesma pessoa várias vezes
     // e infla o total (e por consequência subestima a frequência). Só esta consulta dá o número
@@ -395,17 +576,41 @@ Deno.serve(async (req: Request) => {
 
     const base = `${GRAPH}/${conn.ad_account_id}/insights`
     const token = encodeURIComponent(conn.access_token)
+    const bd = (breakdown: string, fields = breakdownFields) =>
+      graphRows(`${base}?fields=${fields}&breakdowns=${breakdown}&${period}&limit=200&access_token=${token}`, `bd:${breakdown}`)
 
-    // Sete consultas em paralelo: totais da conta, campanha, anúncio, dia, posicionamento,
-    // idade/gênero, hora do dia.
-    const [acct, camp, ad, day, placement, ageGender, hourly] = await Promise.all([
+    // Consultas em paralelo: totais, campanha, conjunto, anúncio, dia, e as quebras.
+    const [
+      acct, camp, adsetQ, ad, day,
+      placement, ageGender, hourly, devicePlatform, impressionDevice, region, frequencyValue,
+      assetImage, assetTitle, assetBody, assetCta,
+      accountInfo, audiences, area,
+    ] = await Promise.all([
       graphRows(`${base}?fields=${totalsFields}&${period}&access_token=${token}`, 'account_totals'),
       graphRows(`${base}?level=campaign&fields=${campaignFields}&${period}&limit=200&access_token=${token}`, 'campaign'),
+      graphRows(`${base}?level=adset&fields=${adsetFields}&${period}&limit=300&access_token=${token}`, 'adset'),
       graphRows(`${base}?level=ad&fields=${adFields}&${period}&limit=500&access_token=${token}`, 'ad'),
       graphRows(`${base}?fields=${dailyFields}&${period}&time_increment=1&limit=500&access_token=${token}`, 'daily'),
-      graphRows(`${base}?fields=${breakdownFields}&breakdowns=publisher_platform,platform_position&${period}&limit=200&access_token=${token}`, 'placement'),
-      graphRows(`${base}?fields=${breakdownFields}&breakdowns=age,gender&${period}&limit=200&access_token=${token}`, 'age_gender'),
-      graphRows(`${base}?fields=${breakdownFields}&breakdowns=hourly_stats_aggregated_by_advertiser_time_zone&${period}&limit=200&access_token=${token}`, 'hourly'),
+      bd('publisher_platform,platform_position'),
+      bd('age,gender'),
+      bd('hourly_stats_aggregated_by_advertiser_time_zone'),
+      bd('device_platform'),
+      bd('impression_device'),
+      bd('country,region'),
+      bd('frequency_value', frequencyFields),
+      bd('image_asset'),
+      bd('title_asset'),
+      bd('body_asset'),
+      bd('call_to_action_asset'),
+      graphObject(
+        `${GRAPH}/${conn.ad_account_id}?fields=name,currency,account_status,disable_reason,amount_spent,balance,spend_cap,timezone_name,funding_source_details&access_token=${token}`,
+        'account',
+      ),
+      graphRows(
+        `${GRAPH}/${conn.ad_account_id}/customaudiences?fields=name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,delivery_status,operation_status,time_updated&limit=50&access_token=${token}`,
+        'audiences',
+      ),
+      deliveryArea(admin, String(tenantId)),
     ])
 
     if (!camp.ok) {
@@ -414,33 +619,102 @@ Deno.serve(async (req: Request) => {
     }
 
     const campRows = camp.rows
+    const adsetRows = adsetQ.rows
     const adRows = ad.rows
     const dailyRows = day.rows
     // Totais reais do período (alcance/frequência corretos). Null = a consulta falhou e o front
     // cai em somar as campanhas, com alcance aproximado.
     const accountTotals = acct.rows[0] ? metrics(acct.rows[0]) : null
 
-    // Status (ativo/pausado) + miniatura do criativo — lookup em lote, tolerante a falha.
-    const [adObjs, campObjs] = await Promise.all([
-      fetchObjects(adRows.map((r) => String(r.ad_id ?? '')), 'effective_status,creative{thumbnail_url}', token),
-      fetchObjects(campRows.map((r) => String(r.campaign_id ?? '')), 'effective_status', token),
+    // Objetos (fora do insights): status, orçamento, aprendizado, segmentação, criativo, problemas.
+    // "recommendations" vai num lote separado: se a Meta recusar o campo, o essencial não cai junto.
+    const adIds = adRows.map((r) => String(r.ad_id ?? ''))
+    const adsetIds = adsetRows.map((r) => String(r.adset_id ?? ''))
+    const campIds = campRows.map((r) => String(r.campaign_id ?? ''))
+    const [adObjs, adsetObjs, campObjs, adRecs, adsetRecs, campRecs] = await Promise.all([
+      fetchObjects(adIds, 'effective_status,issues_info,creative{thumbnail_url,image_url,body,title,call_to_action_type,effective_object_story_id,video_id,object_story_spec}', token, 'ads'),
+      fetchObjects(adsetIds, 'effective_status,daily_budget,lifetime_budget,budget_remaining,bid_strategy,bid_amount,start_time,end_time,learning_stage_info,targeting,issues_info,optimization_goal,billing_event', token, 'adsets'),
+      fetchObjects(campIds, 'effective_status,daily_budget,lifetime_budget,budget_remaining,bid_strategy,start_time,stop_time,issues_info,special_ad_categories', token, 'campaigns'),
+      fetchObjects(adIds, 'recommendations', token, 'ad_recs'),
+      fetchObjects(adsetIds, 'recommendations', token, 'adset_recs'),
+      fetchObjects(campIds, 'recommendations', token, 'camp_recs'),
     ])
 
     const campaigns = campRows.map((row) => {
       const id = String(row.campaign_id ?? '')
+      const o = campObjs[id] ?? {}
       return {
         campaign_id: id,
         campaign: String(row.campaign_name ?? '(sem nome)'),
         objective: row.objective ? String(row.objective) : null,
-        status: campObjs[id]?.effective_status ? String(campObjs[id].effective_status) : null,
+        status: o.effective_status ? String(o.effective_status) : null,
+        daily_budget: centavos(o.daily_budget),
+        lifetime_budget: centavos(o.lifetime_budget),
+        budget_remaining: centavos(o.budget_remaining),
+        bid_strategy: o.bid_strategy ? String(o.bid_strategy) : null,
+        start_time: o.start_time ? String(o.start_time) : null,
+        stop_time: o.stop_time ? String(o.stop_time) : null,
+        issues: issuesText(o.issues_info),
+        recommendations: recsText(campRecs[id]?.recommendations),
+        ...metrics(row),
+      }
+    })
+
+    const storePin = area.store
+    const adsets = adsetRows.map((row) => {
+      const id = String(row.adset_id ?? '')
+      const o = adsetObjs[id] ?? {}
+      const learning = (o.learning_stage_info && typeof o.learning_stage_info === 'object' ? o.learning_stage_info : null) as Row | null
+      const targeting = summarizeTargeting(o.targeting)
+      // Cruzamento com a área de entrega: pra cada pin com raio, distância do pin até a loja e
+      // quanto o raio passa do limite de entrega configurado no ERPOS.
+      const areaCheck = targeting.locations
+        .filter((l) => l.radius_km !== null)
+        .map((l) => {
+          const distStore = storePin && l.lat !== null && l.lng !== null ? haversineKm(storePin.lat, storePin.lng, l.lat, l.lng) : null
+          const alcance = l.radius_km !== null && distStore !== null ? l.radius_km + distStore : l.radius_km
+          const excede = area.max_km !== null && alcance !== null ? Math.max(0, alcance - area.max_km) : null
+          return { name: l.name, type: l.type, radius_km: l.radius_km, dist_store_km: distStore, alcance_km: alcance, excede_km: excede }
+        })
+      return {
+        adset_id: id,
+        adset: String(row.adset_name ?? '(sem nome)'),
+        campaign_id: String(row.campaign_id ?? ''),
+        campaign: String(row.campaign_name ?? ''),
+        objective: row.objective ? String(row.objective) : null,
+        optimization_goal: row.optimization_goal ? String(row.optimization_goal) : (o.optimization_goal ? String(o.optimization_goal) : null),
+        status: o.effective_status ? String(o.effective_status) : null,
+        daily_budget: centavos(o.daily_budget),
+        lifetime_budget: centavos(o.lifetime_budget),
+        budget_remaining: centavos(o.budget_remaining),
+        bid_strategy: o.bid_strategy ? String(o.bid_strategy) : null,
+        bid_amount: centavos(o.bid_amount),
+        billing_event: o.billing_event ? String(o.billing_event) : null,
+        start_time: o.start_time ? String(o.start_time) : null,
+        end_time: o.end_time ? String(o.end_time) : null,
+        learning: learning
+          ? {
+            status: String(learning.status ?? ''),
+            conversions: Number(learning.conversions ?? 0),
+            last_edit: learning.last_sig_edit_ts ? new Date(Number(learning.last_sig_edit_ts) * 1000).toISOString() : null,
+          }
+          : null,
+        targeting,
+        area_check: areaCheck,
+        issues: issuesText(o.issues_info),
+        recommendations: recsText(adsetRecs[id]?.recommendations),
         ...metrics(row),
       }
     })
 
     const ads = adRows.map((row) => {
       const id = String(row.ad_id ?? '')
-      const obj = adObjs[id]
-      const creative = (obj?.creative ?? null) as { thumbnail_url?: string } | null
+      const o = adObjs[id] ?? {}
+      const creative = (o.creative && typeof o.creative === 'object' ? o.creative : {}) as Row
+      const spec = (creative.object_story_spec && typeof creative.object_story_spec === 'object' ? creative.object_story_spec : {}) as Row
+      const linkData = (spec.link_data && typeof spec.link_data === 'object' ? spec.link_data : {}) as Row
+      const videoData = (spec.video_data && typeof spec.video_data === 'object' ? spec.video_data : {}) as Row
+      const cta = (linkData.call_to_action ?? videoData.call_to_action) as Row | undefined
       return {
         ad_id: id,
         ad: String(row.ad_name ?? '(sem nome)'),
@@ -450,11 +724,65 @@ Deno.serve(async (req: Request) => {
         campaign: String(row.campaign_name ?? ''),
         objective: row.objective ? String(row.objective) : null,
         optimization_goal: row.optimization_goal ? String(row.optimization_goal) : null,
-        status: obj?.effective_status ? String(obj.effective_status) : null,
-        thumbnail_url: creative?.thumbnail_url ?? null,
+        status: o.effective_status ? String(o.effective_status) : null,
+        thumbnail_url: creative.thumbnail_url ? String(creative.thumbnail_url) : null,
+        creative: {
+          title: String(creative.title ?? linkData.name ?? videoData.title ?? ''),
+          body: String(creative.body ?? linkData.message ?? videoData.message ?? ''),
+          description: String(linkData.description ?? ''),
+          cta: String(creative.call_to_action_type ?? cta?.type ?? ''),
+          link: String(linkData.link ?? ''),
+          image_url: creative.image_url ? String(creative.image_url) : null,
+          video_id: creative.video_id ? String(creative.video_id) : (videoData.video_id ? String(videoData.video_id) : null),
+          story_id: creative.effective_object_story_id ? String(creative.effective_object_story_id) : null,
+        },
+        issues: issuesText(o.issues_info),
+        recommendations: recsText(adRecs[id]?.recommendations),
         ...metrics(row),
+        ...adExtras(row),
       }
     })
+
+    // Comentários das publicações impulsionadas (top 8 anúncios por gasto). O token de anúncios
+    // normalmente NÃO tem permissão de página: aí a Meta responde erro 10/200/100 e a tela explica
+    // o que falta (pages_show_list + pages_read_engagement na configuração de login).
+    let comments: { available: boolean; reason: string | null; by_ad: Record<string, { total: number; latest: Array<{ message: string; from: string; created_time: string; likes: number }> }> } =
+      { available: true, reason: null, by_ad: {} }
+    const topAds = [...ads].filter((a) => a.creative.story_id && a.spend > 0).sort((a, b) => b.spend - a.spend).slice(0, 8)
+    if (topAds.length) {
+      const results = await Promise.all(topAds.map(async (a) => {
+        const url = `${GRAPH}/${a.creative.story_id}/comments?fields=message,created_time,from{name},like_count&summary=total_count&order=reverse_chronological&limit=5&access_token=${token}`
+        try {
+          const resp = await fetch(url)
+          const b = await resp.json().catch(() => ({})) as Row
+          if (!resp.ok) {
+            const err = (b.error ?? {}) as Row
+            return { ad_id: a.ad_id, error: Number(err.code ?? resp.status), message: String(err.message ?? '') }
+          }
+          const data = Array.isArray(b.data) ? b.data as Row[] : []
+          const summary = (b.summary ?? {}) as Row
+          return {
+            ad_id: a.ad_id,
+            total: Number(summary.total_count ?? data.length),
+            latest: data.map((c) => ({
+              message: String(c.message ?? ''),
+              from: String(((c.from ?? {}) as Row).name ?? 'Alguém'),
+              created_time: String(c.created_time ?? ''),
+              likes: Number(c.like_count ?? 0),
+            })),
+          }
+        } catch (e) {
+          return { ad_id: a.ad_id, error: 0, message: String(e) }
+        }
+      }))
+      const permErr = results.find((r) => 'error' in r && [10, 200, 100, 190].includes(Number(r.error)))
+      if (permErr && results.every((r) => 'error' in r)) {
+        comments = { available: false, reason: 'permission', by_ad: {} }
+        console.warn('[meta-ads-insights] comments unavailable:', (permErr as { message: string }).message)
+      } else {
+        for (const r of results) if (!('error' in r)) comments.by_ad[r.ad_id] = { total: r.total, latest: r.latest }
+      }
+    }
 
     const daily = dailyRows
       .map((row) => {
@@ -489,6 +817,52 @@ Deno.serve(async (req: Request) => {
       hour: Number(String(row.hourly_stats_aggregated_by_advertiser_time_zone ?? '0').slice(0, 2)) || 0,
       ...slim(row),
     })).sort((a, b) => a.hour - b.hour)
+    const byDevicePlatform = devicePlatform.rows.map((row) => ({ device: String(row.device_platform ?? ''), ...slim(row) }))
+    const byImpressionDevice = impressionDevice.rows.map((row) => ({ device: String(row.impression_device ?? ''), ...slim(row) }))
+    const byRegion = region.rows.map((row) => ({ country: String(row.country ?? ''), region: String(row.region ?? ''), ...slim(row) }))
+    const byFrequency = frequencyValue.rows.map((row) => ({
+      ...slim(row),
+      bucket: String(row.frequency_value ?? ''),
+    }))
+    const assetLabel = (row: Row, key: string): { label: string; url: string | null } => {
+      const a = (row[key] && typeof row[key] === 'object' ? row[key] : {}) as Row
+      return {
+        label: String(a.text ?? a.name ?? a.type ?? a.hash ?? a.id ?? '(sem nome)').slice(0, 140),
+        url: a.url ? String(a.url) : null,
+      }
+    }
+    const assets = {
+      image: assetImage.rows.map((row) => ({ ...assetLabel(row, 'image_asset'), ...slim(row) })),
+      title: assetTitle.rows.map((row) => ({ ...assetLabel(row, 'title_asset'), ...slim(row) })),
+      body: assetBody.rows.map((row) => ({ ...assetLabel(row, 'body_asset'), ...slim(row) })),
+      cta: assetCta.rows.map((row) => ({ ...assetLabel(row, 'call_to_action_asset'), ...slim(row) })),
+    }
+
+    const account = accountInfo
+      ? {
+        name: accountInfo.name ? String(accountInfo.name) : null,
+        currency: accountInfo.currency ? String(accountInfo.currency) : null,
+        status: Number(accountInfo.account_status ?? 0),
+        disable_reason: Number(accountInfo.disable_reason ?? 0),
+        amount_spent: centavos(accountInfo.amount_spent),
+        balance: centavos(accountInfo.balance),
+        spend_cap: centavos(accountInfo.spend_cap),
+        timezone: accountInfo.timezone_name ? String(accountInfo.timezone_name) : null,
+        funding: ((accountInfo.funding_source_details ?? {}) as Row).display_string
+          ? String(((accountInfo.funding_source_details ?? {}) as Row).display_string)
+          : null,
+      }
+      : null
+
+    const audienceList = audiences.rows.map((r) => ({
+      id: String(r.id ?? ''),
+      name: String(r.name ?? ''),
+      subtype: String(r.subtype ?? ''),
+      size_low: Number(r.approximate_count_lower_bound ?? 0) || null,
+      size_high: Number(r.approximate_count_upper_bound ?? 0) || null,
+      delivery_status: String(((r.delivery_status ?? {}) as Row).description ?? ''),
+      updated: r.time_updated ? new Date(Number(r.time_updated) * 1000).toISOString() : null,
+    }))
 
     // Período efetivo (a Meta devolve date_start/date_stop em toda linha): menor início, maior fim.
     const allRows = [...acct.rows, ...campRows, ...dailyRows]
@@ -504,14 +878,14 @@ Deno.serve(async (req: Request) => {
       const days = Math.round((Date.parse(`${until}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`)) / 86400000) + 1
       const prevSince = addDays(since, -days)
       const prevUntil = addDays(since, -1)
-      const tr = encodeURIComponent(JSON.stringify({ since: prevSince, until: prevUntil }))
-      const prev = await graphRows(`${base}?fields=${totalsFields}&time_range=${tr}&access_token=${token}`, 'previous')
+      const trPrev = encodeURIComponent(JSON.stringify({ since: prevSince, until: prevUntil }))
+      const prev = await graphRows(`${base}?fields=${totalsFields}&time_range=${trPrev}&access_token=${token}`, 'previous')
       const row = prev.rows[0]
       previous = { ...slim(row ?? {}), since: prevSince, until: prevUntil }
     }
 
     // No link público, o cruzamento com pedidos do ERPOS (faturamento real) só vai
-    // se quem gerou o link marcou a opção.
+    // se quem gerou o link marcou a opção. A área de entrega (raio) vai sempre: é só km.
     const orders = range && includeErpos ? await erposOrders(admin, String(tenantId), since, until) : null
 
     return json({
@@ -529,13 +903,35 @@ Deno.serve(async (req: Request) => {
         : null,
       ad_account_id: conn.ad_account_id,
       ad_account_name: conn.ad_account_name,
+      account,
       count: campaigns.length,
       totals: accountTotals,
       campaigns,
+      adsets,
       ads,
       daily,
       previous,
-      breakdowns: { placement: byPlacement, age_gender: byAgeGender, hourly: byHour },
+      breakdowns: {
+        placement: byPlacement,
+        age_gender: byAgeGender,
+        hourly: byHour,
+        device_platform: byDevicePlatform,
+        impression_device: byImpressionDevice,
+        region: byRegion,
+        frequency: byFrequency,
+        assets,
+      },
+      audiences: audienceList,
+      delivery_area: {
+        max_km: area.max_km,
+        store: area.store,
+        city: area.city,
+        neighborhoods: area.neighborhoods,
+        km_p90: orders?.km_p90 ?? null,
+        km_max: orders?.km_max ?? null,
+        km_amostra: orders?.km_amostra ?? 0,
+      },
+      comments,
       erpos_orders: orders,
     })
   } catch (err) {
