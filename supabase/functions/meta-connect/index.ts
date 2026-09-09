@@ -33,6 +33,32 @@ function parseAccounts(raw: unknown): AdAccount[] {
     .filter((a) => a.id)
 }
 
+// Sessão válida + usuário membro DESTA loja (admin quando `adminOnly`). A função roda com service
+// role e é publicada sem verify_jwt no gateway, então a checagem tem que ser aqui — senão qualquer
+// um com a anon key trocaria a conta ou desconectaria a Meta de qualquer tenant pelo tenant_id.
+async function requireMember(
+  req: Request, admin: ReturnType<typeof createClient>, tenantId: string, adminOnly = false,
+) {
+  const authHeader = req.headers.get('Authorization') || ''
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim()
+  if (!token) return { error: json({ success: false, error: 'Não autenticado' }, 401) }
+  const { data: userData, error: userErr } = await admin.auth.getUser(token)
+  if (userErr || !userData?.user) return { error: json({ success: false, error: 'Sessão inválida' }, 401) }
+  const { data: membership, error: memErr } = await admin
+    .from('user_tenants')
+    .select('role')
+    .eq('user_id', userData.user.id)
+    .eq('tenant_id', tenantId)
+    .limit(1)
+    .maybeSingle()
+  if (memErr) return { error: json({ success: false, error: memErr.message }, 500) }
+  if (!membership) return { error: json({ success: false, error: 'Sem acesso a esta loja' }, 403) }
+  if (adminOnly && membership.role !== 'admin') {
+    return { error: json({ success: false, error: 'Sem permissão de admin para esta loja' }, 403) }
+  }
+  return { error: null, userId: userData.user.id }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
@@ -59,6 +85,8 @@ Deno.serve(async (req: Request) => {
     if (action === 'status') {
       const tenantId = body.tenant_id
       if (!tenantId) return json({ success: false, error: 'tenant_id é obrigatório' }, 400)
+      const auth = await requireMember(req, admin, String(tenantId))
+      if (auth.error) return auth.error
 
       const { data, error } = await admin
         .from('meta_ad_connections')
@@ -80,6 +108,8 @@ Deno.serve(async (req: Request) => {
         console.error('[meta-connect] exchange faltando campos:', { has_tenant: !!tenant_id, has_code: !!code, has_redirect: !!redirect_uri })
         return json({ success: false, error: 'tenant_id, code e redirect_uri são obrigatórios' }, 400)
       }
+      const auth = await requireMember(req, admin, String(tenant_id))
+      if (auth.error) return auth.error
       console.log('[meta-connect] exchange início | tenant:', tenant_id, '| redirect:', redirect_uri)
       const appSecret = requiredEnv('META_APP_SECRET')
 
@@ -131,7 +161,7 @@ Deno.serve(async (req: Request) => {
             access_token: token,
             token_expires_at: expiresAt,
             available_accounts: accounts,
-            connected_by_user_id: connected_by_user_id ?? null,
+            connected_by_user_id: auth.userId ?? connected_by_user_id ?? null,
             connected_by_name: connected_by_name ?? null,
             updated_at: new Date().toISOString(),
           },
@@ -160,6 +190,8 @@ Deno.serve(async (req: Request) => {
       if (!tenant_id || !ad_account_id) {
         return json({ success: false, error: 'tenant_id e ad_account_id são obrigatórios' }, 400)
       }
+      const auth = await requireMember(req, admin, String(tenant_id))
+      if (auth.error) return auth.error
       const { data: conn } = await admin
         .from('meta_ad_connections')
         .select('available_accounts')
@@ -183,6 +215,8 @@ Deno.serve(async (req: Request) => {
     if (action === 'disconnect') {
       const { tenant_id } = body
       if (!tenant_id) return json({ success: false, error: 'tenant_id é obrigatório' }, 400)
+      const auth = await requireMember(req, admin, String(tenant_id), true)
+      if (auth.error) return auth.error
       const { error } = await admin.from('meta_ad_connections').delete().eq('tenant_id', tenant_id)
       if (error) return json({ success: false, error: error.message }, 500)
       return json({ success: true })
