@@ -1296,6 +1296,16 @@ export function useDeliveryData(storeSlug?: string) {
 
   function handleAdicionar(item: CartItem) {
     setCart(function (prev) { return prev.concat([item]); });
+    // Pixel da Meta: item adicionado ao carrinho. É a etapa do meio do funil — sem ela a Meta
+    // só enxerga visita e checkout, e o relatório de Tráfego Pago fica com um degrau vazio.
+    trackPixel('AddToCart', {
+      value: item.precoTotal * item.quantidade,
+      currency: 'BRL',
+      content_type: 'product',
+      content_ids: [item.itemId],
+      content_name: item.name,
+      num_items: item.quantidade,
+    });
   }
 
   function handleAlterarQtd(cartId: string, delta: number) {

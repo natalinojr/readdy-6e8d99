@@ -143,6 +143,8 @@ function slim(row: Row) {
     frequency: m.frequency,
     cpm: m.cpm,
     landing_page_views: m.landing_page_views,
+    add_to_cart: m.add_to_cart,
+    initiate_checkout: m.initiate_checkout,
   }
 }
 

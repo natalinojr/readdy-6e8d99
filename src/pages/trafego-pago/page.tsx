@@ -102,6 +102,8 @@ interface SlimRow {
   frequency?: number;
   cpm?: number;
   landing_page_views?: number;
+  add_to_cart?: number;
+  initiate_checkout?: number;
 }
 interface PlacementRow extends SlimRow { platform: string; position: string }
 interface AgeGenderRow extends SlimRow { age: string; gender: string }
@@ -699,13 +701,16 @@ export default function TrafegoPagoPage() {
         purchases: r?.purchases ?? 0,
         link_clicks: r?.link_clicks ?? 0,
         landing: n0(r?.landing_page_views),
+        carrinho: n0(r?.add_to_cart),
+        checkout: n0(r?.initiate_checkout),
         pedidos: pedidos?.[h] ?? 0,
       };
     });
 
     // Corta as horas sem nada nas pontas (madrugada) pra sobrar largura onde a loja funciona.
     const ativo = (d: typeof full[number]) =>
-      d.purchases > 0 || d.link_clicks > 0 || d.landing > 0 || d.pedidos > 0;
+      d.purchases > 0 || d.link_clicks > 0 || d.landing > 0
+      || d.carrinho > 0 || d.checkout > 0 || d.pedidos > 0;
     const first = full.findIndex(ativo);
     if (first === -1) return null;
     let last = 23;
@@ -715,7 +720,9 @@ export default function TrafegoPagoPage() {
     // ficaria vazio justamente quando o dado interessa.
     const temCompras = full.some((d) => d.purchases > 0);
     const temVisitas = full.some((d) => d.landing > 0);
-    return { linhas: full.slice(first, last + 1), temCompras, temVisitas };
+    const temCarrinho = full.some((d) => d.carrinho > 0);
+    const temCheckout = full.some((d) => d.checkout > 0);
+    return { linhas: full.slice(first, last + 1), temCompras, temVisitas, temCarrinho, temCheckout };
   }, [insights, erposOrders]);
 
   const alertas = useMemo(() => {
@@ -1179,14 +1186,25 @@ export default function TrafegoPagoPage() {
                       <span className="inline-flex items-center gap-1.5 text-zinc-600">
                         <span className="w-3 h-0.5 rounded-full" style={{ background: CORES.reach }} />
                         Visitas à página
-                        <span className="text-zinc-400 font-normal">(direita)</span>
+                      </span>
+                    )}
+                    {hourlyData.temCarrinho && (
+                      <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                        <span className="w-3 h-0.5 rounded-full" style={{ background: CORES.clicks }} />
+                        Add. ao carrinho
+                      </span>
+                    )}
+                    {hourlyData.temCheckout && (
+                      <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                        <span className="w-3 h-0.5 rounded-full" style={{ background: '#f97316' }} />
+                        Início de checkout
                       </span>
                     )}
                     <span className="inline-flex items-center gap-1.5 text-zinc-600">
                       <span className="w-3 h-0.5 rounded-full" style={{ background: CORES.spend }} />
                       Pedidos no delivery, todos
-                      <span className="text-zinc-400 font-normal">(direita)</span>
                     </span>
+                    <span className="text-zinc-400 font-normal">— linhas no eixo da direita</span>
                   </div>
                   <ResponsiveContainer width="100%" height={240}>
                     <ComposedChart data={hourlyData.linhas} margin={{ top: 10, right: 4, left: 0, bottom: 0 }}>
@@ -1213,16 +1231,22 @@ export default function TrafegoPagoPage() {
                         tickLine={false}
                         width={36}
                       />
-                      <Tooltip content={<GraphTooltip fmt={{ purchases: num, pedidos: num, landing: num, spend: brl, link_clicks: num }} labelFmt={(h) => `${h}h`} />} cursor={{ fill: '#fafafa' }} />
+                      <Tooltip content={<GraphTooltip fmt={{ purchases: num, pedidos: num, landing: num, carrinho: num, checkout: num, spend: brl, link_clicks: num }} labelFmt={(h) => `${h}h`} />} cursor={{ fill: '#fafafa' }} />
                       {hourlyData.temCompras ? (
                         <Bar yAxisId="l" dataKey="purchases" name="Compras via anúncio" fill={CORES.compras} radius={[4, 4, 0, 0]} maxBarSize={30} />
                       ) : (
                         <Bar yAxisId="l" dataKey="landing" name="Visitas à página" fill={CORES.reach} radius={[4, 4, 0, 0]} maxBarSize={30} />
                       )}
-                      {/* Visitas só entram como linha quando a barra já é de compras — senão seriam
-                          a mesma informação duas vezes. */}
+                      {/* Etapas do funil como linhas no eixo da direita. Visitas só entram quando a
+                          barra já é de compras — senão seriam a mesma informação duas vezes. */}
                       {hourlyData.temCompras && hourlyData.temVisitas && (
                         <Line yAxisId="r" type="monotone" dataKey="landing" name="Visitas à página" stroke={CORES.reach} strokeWidth={2} strokeDasharray="5 3" dot={false} />
+                      )}
+                      {hourlyData.temCarrinho && (
+                        <Line yAxisId="r" type="monotone" dataKey="carrinho" name="Add. ao carrinho" stroke={CORES.clicks} strokeWidth={2} strokeDasharray="2 3" dot={false} />
+                      )}
+                      {hourlyData.temCheckout && (
+                        <Line yAxisId="r" type="monotone" dataKey="checkout" name="Início de checkout" stroke="#f97316" strokeWidth={2} strokeDasharray="6 2 2 2" dot={false} />
                       )}
                       <Line yAxisId="r" type="monotone" dataKey="pedidos" name="Pedidos no delivery (todos)" stroke={CORES.spend} strokeWidth={2.5} dot={false} />
                     </ComposedChart>
