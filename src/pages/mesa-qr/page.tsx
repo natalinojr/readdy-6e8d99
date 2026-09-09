@@ -136,6 +136,7 @@ export default function MesaQRPage() {
     return (
       <IdentificacaoMesaQR
         mesaNumero={table.number}
+        isUniversal={data.queueMode}
         tenantName={tenantName}
         onConfirmar={handleIdentificar}
         error={error}

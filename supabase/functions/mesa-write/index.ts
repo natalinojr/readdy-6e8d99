@@ -33,6 +33,16 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!qr_token) return new Response(JSON.stringify({ error: "qr_token is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       const { data: tableData } = await admin.from("tables").select("id, number, capacity, area, tenant_id, qr_token").eq("qr_token", qr_token).maybeSingle();
       if (!tableData) return new Response(JSON.stringify({ error: "mesa_not_found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { data: tenantRow } = await admin.from("tenants").select("name").eq("id", tableData.tenant_id).maybeSingle();
+
+      // Mesa 0 = QR universal: fila por SENHA. Não abre nem procura table_session —
+      // o cliente é identificado pelo participante (senha), ancorado na sessão de caixa.
+      if (tableData.number === 0) {
+        const { data: caixaSession } = await admin.from("sessions").select("id").eq("status", "open").eq("tenant_id", tableData.tenant_id).order("opened_at", { ascending: false }).limit(1).maybeSingle();
+        if (!caixaSession) return new Response(JSON.stringify({ error: "mesa_encerrada", message: "Estabelecimento fechado." }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ table: tableData, mode: "queue", queue: { session_id: caixaSession.id }, tenant_name: tenantRow?.name || null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
       const { data: sessionData } = await admin.from("table_sessions").select("id, status, customer_name, opened_at, session_id, tenant_id, session_token").eq("table_id", tableData.id).eq("status", "open").maybeSingle();
       if (!sessionData) {
         const { data: caixaSession } = await admin.from("sessions").select("id").eq("status", "open").eq("tenant_id", tableData.tenant_id).order("opened_at", { ascending: false }).limit(1).maybeSingle();
@@ -48,16 +58,33 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     }
 
     if (action === "create_participant") {
-      const { table_session_id, name, tenant_id } = body;
-      if (!table_session_id || !name || !tenant_id) return new Response(JSON.stringify({ error: "table_session_id, name e tenant_id sao obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { table_session_id, name, tenant_id, session_id } = body;
+
+      // Fila por senha (QR universal): sem mesa, ancorado na sessão de caixa
+      if (!table_session_id) {
+        if (!session_id || !name || !tenant_id) return new Response(JSON.stringify({ error: "session_id, name e tenant_id sao obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        const { data: queueResult, error: queueErr } = await admin.rpc("fn_create_queue_ticket", { p_tenant_id: tenant_id, p_session_id: session_id, p_name: name, p_phone: body.phone ?? null });
+        if (queueErr) throw queueErr;
+        return new Response(JSON.stringify(queueResult), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (!name || !tenant_id) return new Response(JSON.stringify({ error: "table_session_id, name e tenant_id sao obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       const { data: result, error: rpcErr } = await admin.rpc("fn_create_mesa_participant_auto", { p_table_session_id: table_session_id, p_name: name, p_tenant_id: tenant_id });
       if (rpcErr) throw rpcErr;
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "create_mesa_order") {
-      const { tenant_id, table_session_id, session_id, participant_id, items, subtotal, total_amount, mesa_number, participant_name } = body;
-      if (!tenant_id || !table_session_id || !session_id || !participant_id || !Array.isArray(items) || items.length === 0) return new Response(JSON.stringify({ error: "Dados incompletos" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { tenant_id, table_session_id, session_id, participant_id, items, subtotal, total_amount, mesa_number, participant_name, access_token } = body;
+      if (!tenant_id || !session_id || !participant_id || !Array.isArray(items) || items.length === 0) return new Response(JSON.stringify({ error: "Dados incompletos" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      // QR universal: pedido de FILA (destino senha), sem mesa nenhuma.
+      const isFila = !table_session_id;
+      const { data: participantRow } = await admin.from("table_session_participants").select("id, name, access_token, table_session_id, deleted_at").eq("id", participant_id).maybeSingle();
+      if (!participantRow || participantRow.deleted_at) return new Response(JSON.stringify({ error: "Identificacao invalida", code: "invalid_participant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // Só valida quando o app manda a senha (versões antigas em cache podem não mandar)
+      if (access_token && String(participantRow.access_token) !== String(access_token)) return new Response(JSON.stringify({ error: "Identificacao invalida", code: "invalid_participant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      if (isFila && participantRow.table_session_id) return new Response(JSON.stringify({ error: "Identificacao invalida", code: "invalid_participant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
       const { data: caixaSessionCheck } = await admin.from("sessions").select("id, status").eq("id", session_id).maybeSingle();
       if (!caixaSessionCheck || caixaSessionCheck.status !== "open") return new Response(JSON.stringify({ error: "Estabelecimento fechado.", code: "session_closed" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -66,12 +93,17 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (numErr) throw numErr;
       const orderNumber = numData?.[0]?.number ?? "P" + Date.now();
 
-      const tableDestName = mesa_number != null
-        ? (typeof participant_name === 'string' && participant_name.trim()
-          ? `Mesa ${mesa_number} - ${participant_name.trim()}`
-          : `Mesa ${mesa_number}`)
-        : null;
-      const { data: order, error: orderErr } = await admin.rpc("fn_create_order_bypass", { order_data: { tenant_id, session_id, table_session_id, participant_id, number: orderNumber, status: "new", origin_type: "table", destination_type: "table", destination_name: tableDestName, discount_amount: 0, service_fee_amount: 0, subtotal: subtotal ?? 0, total_amount: total_amount ?? (subtotal ?? 0), is_training: false, is_draft: false, table_number: mesa_number ?? null } });
+      // Destino: na fila é a SENHA pura (o KDS lê destination_name como senha quando
+      // destination_type = 'password'; nome e senha também chegam pelo participant_id).
+      const senhaFila = String(participantRow.access_token ?? "").trim();
+      const tableDestName = isFila
+        ? (senhaFila || (typeof participant_name === 'string' ? participant_name.trim() : null) || null)
+        : (mesa_number != null
+          ? (typeof participant_name === 'string' && participant_name.trim()
+            ? `Mesa ${mesa_number} - ${participant_name.trim()}`
+            : `Mesa ${mesa_number}`)
+          : null);
+      const { data: order, error: orderErr } = await admin.rpc("fn_create_order_bypass", { order_data: { tenant_id, session_id, table_session_id: table_session_id ?? null, participant_id, number: orderNumber, status: "new", origin_type: isFila ? "self_service" : "table", destination_type: isFila ? "password" : "table", destination_name: tableDestName, discount_amount: 0, service_fee_amount: 0, subtotal: subtotal ?? 0, total_amount: total_amount ?? (subtotal ?? 0), is_training: false, is_draft: false, table_number: isFila ? null : (mesa_number ?? null) } });
       if (orderErr) throw orderErr;
       const orderId = Array.isArray(order) ? order[0]?.id : order?.id;
       if (!orderId) return new Response(JSON.stringify({ error: "Falha ao criar pedido" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });

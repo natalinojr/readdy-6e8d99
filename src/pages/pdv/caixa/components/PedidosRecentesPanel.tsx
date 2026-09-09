@@ -771,7 +771,8 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
   const isCancelado = cancelado || pedido.status === 'cancelado';
   const isPago = (pedido.pago === true || pagoLocal) && !estornado;
   const statusEfetivo = isCancelado ? 'cancelado' : pedido.status;
-  const isQRCode = pedido.origem === 'mesa' && !!(pedido as PedidoRecenteComParticipant).participantToken;
+  // QR do balcão: senha sem mesa (vale para o formato legado 'mesa 0' e para a fila por senha)
+  const isQRCode = !pedido.mesaNumero && !!(pedido as PedidoRecenteComParticipant).participantToken;
   const origemCfg = isQRCode ? ORIGEM_CONFIG.qr_code : (ORIGEM_CONFIG[pedido.origem] ?? ORIGEM_CONFIG.caixa);
 
   const kdsStatusRaw = (pedido as PedidoRecente & { kdsStatus?: KDSPedidoStatus }).kdsStatus;
@@ -1343,7 +1344,8 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
   // pagoLocal é otimista — set imediatamente após PagamentoRapidoModal.onSuccess
   const isPago = (pedido.pago === true || pagoLocal) && !estornado;
   const statusEfetivo = isCancelado ? 'cancelado' : pedido.status;
-  const isQRCode = pedido.origem === 'mesa' && !!(pedido as PedidoRecenteComParticipant).participantToken;
+  // QR do balcão: senha sem mesa (vale para o formato legado 'mesa 0' e para a fila por senha)
+  const isQRCode = !pedido.mesaNumero && !!(pedido as PedidoRecenteComParticipant).participantToken;
   const origemCfg = isQRCode ? ORIGEM_CONFIG.qr_code : (ORIGEM_CONFIG[pedido.origem] ?? ORIGEM_CONFIG.caixa);
 
 

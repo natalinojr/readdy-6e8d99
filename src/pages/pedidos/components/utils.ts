@@ -50,14 +50,17 @@ export function somarDias(dataStr: string, dias: number): string {
 }
 
 // ── Helpers de QR code universal ──────────────────────────────────────────────
-// QR code universal = pedido de origem "mesa" (QR) sem mesa física (mesaNumero
-// 0/ausente). A identidade real fica na senha (participantToken/access_token) e
-// no participantName, nao em "Mesa 0". A deteccao usa apenas origem + mesaNumero
-// (funciona em qualquer pedido, ao vivo ou historico, mesmo sem o token); o
-// token so e necessario para EXIBIR a senha.
-
-export function isQRUniversal(p: Pick<PedidoRecente, 'origem' | 'mesaNumero'>): boolean {
-  return p.origem === 'mesa' && !p.mesaNumero;
+// QR code universal = pedido feito pelo QR do balcão, identificado por SENHA e sem
+// mesa física. A identidade real fica na senha (participantToken/access_token) e no
+// participantName. Dois formatos convivem:
+//   • legado (até 09/2026): nascia com origem 'mesa' e mesaNumero 0/ausente, porque
+//     o QR universal era forçado a abrir uma sessão da "mesa 0";
+//   • atual: origem 'autoatendimento' (self_service) com participante — o que o
+//     distingue do totem, que também é self_service mas não tem participante.
+export function isQRUniversal(p: Pick<PedidoRecente, 'origem' | 'mesaNumero'> & { participantToken?: string | null }): boolean {
+  if (p.mesaNumero) return false;
+  if (p.origem === 'mesa') return true;
+  return !!p.participantToken;
 }
 
 /** Remove o prefixo "Mesa N -" de um nome poluido (ex.: "Mesa 0 - Angelica" → "Angelica"). */

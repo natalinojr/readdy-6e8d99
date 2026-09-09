@@ -74,11 +74,17 @@ async function requireParticipant(admin: Admin, body: Record<string, unknown>, o
     .select("id, name, tenant_id, table_session_id, access_token, deleted_at")
     .eq("id", participantId).maybeSingle();
   if (!p || p.deleted_at || String(p.access_token) !== accessToken) return { error: json({ error: "Identificação inválida" }, 403) };
+
+  // Fila por senha (QR universal): não existe mesa — a conta é do participante.
+  if (!p.table_session_id) {
+    return { error: null, participant: p, session: null, tenantId: p.tenant_id as string, tableSessionId: null as string | null, tableId: null as string | null };
+  }
+
   const { data: sess } = await admin.from("table_sessions").select("id, status, table_id, session_id, tenant_id")
     .eq("id", p.table_session_id).maybeSingle();
   if (!sess) return { error: json({ error: "mesa_encerrada", message: "Esta mesa já foi encerrada" }, 409) };
   if (sess.status !== "open" && !opts.allowClosed) return { error: json({ error: "mesa_encerrada", message: "Esta mesa já foi encerrada" }, 409) };
-  return { error: null, participant: p, session: sess };
+  return { error: null, participant: p, session: sess, tenantId: sess.tenant_id as string, tableSessionId: sess.id as string | null, tableId: sess.table_id as string | null };
 }
 
 async function requireMember(req: Request, admin: Admin, tenantId: string) {
@@ -99,19 +105,30 @@ type BillOrder = {
   locked: boolean; items: { name: string; quantity: number; price: number }[];
 };
 
-async function loadBill(admin: Admin, tableSessionId: string, viewerParticipantId: string | null): Promise<BillOrder[]> {
-  const { data: orders } = await admin.from("orders")
-    .select("id, number, participant_id, status, total_amount, is_paid, is_draft, is_training, created_at, order_items(item_name, quantity, item_price, status)")
-    .eq("table_session_id", tableSessionId).neq("status", "cancelled").order("created_at", { ascending: true });
+// Conta da MESA (todos os pedidos da sessão) ou da SENHA (só os do participante,
+// quando o QR universal opera em fila e não há mesa nenhuma).
+async function loadBill(admin: Admin, scopeRef: { tableSessionId: string | null; participantId: string }, viewerParticipantId: string | null): Promise<BillOrder[]> {
+  const { tableSessionId } = scopeRef;
+  const base = admin.from("orders")
+    .select("id, number, participant_id, status, total_amount, is_paid, is_draft, is_training, created_at, order_items(item_name, quantity, item_price, status)");
+  const { data: orders } = await (tableSessionId
+    ? base.eq("table_session_id", tableSessionId)
+    : base.eq("participant_id", scopeRef.participantId)
+  ).neq("status", "cancelled").order("created_at", { ascending: true });
   const rows = (orders ?? []).filter((o: Record<string, unknown>) => !o.is_draft && !o.is_training);
   if (rows.length === 0) return [];
   const ids = rows.map((o: { id: string }) => o.id);
 
+  const pendingPixQuery = admin.from("fin_pix_payments").select("id, participant_id, allocation, expires_at")
+    .eq("status", "pending").gt("expires_at", new Date().toISOString());
   const [{ data: pays }, { data: parts }, { data: pendingPix }] = await Promise.all([
     admin.from("payments").select("order_id, amount").in("order_id", ids).eq("is_refunded", false),
-    admin.from("table_session_participants").select("id, name").eq("table_session_id", tableSessionId),
-    admin.from("fin_pix_payments").select("id, participant_id, allocation, expires_at")
-      .eq("table_session_id", tableSessionId).eq("status", "pending").gt("expires_at", new Date().toISOString()),
+    tableSessionId
+      ? admin.from("table_session_participants").select("id, name").eq("table_session_id", tableSessionId)
+      : admin.from("table_session_participants").select("id, name").eq("id", scopeRef.participantId),
+    tableSessionId
+      ? pendingPixQuery.eq("table_session_id", tableSessionId)
+      : pendingPixQuery.eq("participant_id", scopeRef.participantId),
   ]);
   const paidBy: Record<string, number> = {};
   for (const p of pays ?? []) paidBy[p.order_id] = (paidBy[p.order_id] ?? 0) + Number(p.amount ?? 0);
@@ -345,11 +362,11 @@ Deno.serve(async (req: Request) => {
     if (action === "get_bill") {
       const auth = await requireParticipant(admin, body, { allowClosed: true });
       if (auth.error) return auth.error;
-      const { participant, session } = auth;
-      const cfg = await loadConfig(admin, session.tenant_id);
-      const orders = await loadBill(admin, session.id, participant.id);
+      const { participant, session, tenantId: billTenantId, tableSessionId } = auth;
+      const cfg = await loadConfig(admin, billTenantId!);
+      const orders = await loadBill(admin, { tableSessionId: tableSessionId ?? null, participantId: participant.id }, participant.id);
       const { data: pending } = await admin.from("fin_pix_payments").select("*")
-        .eq("table_session_id", session.id).eq("participant_id", participant.id).eq("status", "pending")
+        .eq("participant_id", participant.id).eq("status", "pending")
         .order("created_at", { ascending: false }).limit(1).maybeSingle();
       const px = pending ? await expireIfNeeded(admin, pending) : null;
       // Comprovante recente: o cliente pode ter voltado do app do banco depois da mesa fechar
@@ -357,10 +374,11 @@ Deno.serve(async (req: Request) => {
         .eq("participant_id", participant.id).eq("status", "confirmed")
         .gt("confirmed_at", new Date(Date.now() - 60 * 60 * 1000).toISOString())
         .order("confirmed_at", { ascending: false }).limit(1).maybeSingle();
-      const { data: tbl } = await admin.from("tables").select("number").eq("id", session.table_id).maybeSingle();
+      const { data: tbl } = auth.tableId ? await admin.from("tables").select("number").eq("id", auth.tableId).maybeSingle() : { data: null };
       return json({
         enabled: isEnabled(cfg), table_number: tbl?.number ?? null, participant: { id: participant.id, name: participant.name },
-        session_closed: session.status !== "open",
+        mode: tableSessionId ? "table" : "queue",
+        session_closed: session ? session.status !== "open" : false,
         orders, pending_pix: px && px.status === "pending" ? pixPublic(px) : null,
         last_pix: lastOk ? pixPublic(lastOk) : null,
       });
@@ -369,13 +387,14 @@ Deno.serve(async (req: Request) => {
     if (action === "create_pix") {
       const auth = await requireParticipant(admin, body);
       if (auth.error) return auth.error;
-      const { participant, session } = auth;
-      const tenantId = session.tenant_id as string;
+      const { participant, tenantId: pixTenantId, tableSessionId } = auth;
+      const tenantId = pixTenantId!;
       const cfg = await loadConfig(admin, tenantId);
       if (!isEnabled(cfg)) return json({ error: "Pagamento online não está disponível nesta loja" }, 422);
-      const scope = body.scope === "all" ? "all" : "mine";
+      // Na fila por senha só existe a própria conta — "mesa inteira" não faz sentido.
+      const scope = (tableSessionId && body.scope === "all") ? "all" : "mine";
 
-      const orders = await loadBill(admin, session.id, participant.id);
+      const orders = await loadBill(admin, { tableSessionId: tableSessionId ?? null, participantId: participant.id }, participant.id);
       const target = orders.filter((o) => o.remaining > 0 && !o.locked && (scope === "all" || o.participant_id === participant.id));
       if (orders.some((o) => o.remaining > 0 && o.locked && (scope === "all" || o.participant_id === participant.id))) {
         return json({ error: "orders_locked", message: "Outra pessoa da mesa está pagando parte desses pedidos. Aguarde alguns minutos e tente de novo." }, 409);
@@ -385,7 +404,7 @@ Deno.serve(async (req: Request) => {
 
       // Um Pix pendente por participante: cancela o anterior (aqui e no provedor)
       const { data: olds } = await admin.from("fin_pix_payments").select("id, provider_payment_id")
-        .eq("table_session_id", session.id).eq("participant_id", participant.id).eq("status", "pending");
+        .eq("participant_id", participant.id).eq("status", "pending");
       for (const old of olds ?? []) {
         await admin.from("fin_pix_payments").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", old.id);
         if (old.provider_payment_id) mpFetch(cfg!.access_token!, `/v1/payments/${old.provider_payment_id}`, { method: "PUT", body: JSON.stringify({ status: "cancelled" }) }).catch(() => {});
@@ -399,26 +418,27 @@ Deno.serve(async (req: Request) => {
       const baseRow = {
         id: pixId, tenant_id: tenantId, provider: "mercadopago", txid: `MP${Date.now()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
         amount, expires_at: expiresAt.toISOString(),
-        table_session_id: session.id, participant_id: participant.id, scope, allocation,
+        table_session_id: tableSessionId ?? null, participant_id: participant.id, scope, allocation,
         order_id: allocation.length === 1 ? allocation[0].order_id : null,
         pix_key: "mercadopago", pix_key_type: "provider", beneficiary_name: cfg!.account_label ?? "Mercado Pago", city: "-",
       };
 
-      const { data: tbl } = await admin.from("tables").select("number").eq("id", session.table_id).maybeSingle();
+      const { data: tbl } = auth.tableId ? await admin.from("tables").select("number").eq("id", auth.tableId).maybeSingle() : { data: null };
       const { data: tenant } = await admin.from("tenants").select("name").eq("id", tenantId).maybeSingle();
+      const alvoLabel = tbl?.number != null ? `Mesa ${tbl.number}` : `Senha ${participant.access_token ?? ""}`.trim();
       const nameParts = String(participant.name ?? "Cliente").trim().split(/\s+/);
       const mp = await mpFetch(cfg!.access_token!, "/v1/payments", {
         method: "POST",
         headers: { "X-Idempotency-Key": pixId },
         body: JSON.stringify({
           transaction_amount: amount,
-          description: `${tenant?.name ?? "Restaurante"} · Mesa ${tbl?.number ?? "?"} · ${allocation.length} pedido(s)`,
+          description: `${tenant?.name ?? "Restaurante"} · ${alvoLabel} · ${allocation.length} pedido(s)`,
           payment_method_id: "pix",
           payer: { email: `${participant.id}@cliente.erpos.app`, first_name: nameParts[0] || "Cliente", last_name: nameParts.slice(1).join(" ") || "Mesa" },
           external_reference: pixId,
           notification_url: `${supabaseUrl}/functions/v1/online-payments?webhook=1&tenant_id=${tenantId}`,
           date_of_expiration: mpDate(expiresAt),
-          metadata: { erpos_pix_id: pixId, table_session_id: session.id, tenant_id: tenantId },
+          metadata: { erpos_pix_id: pixId, table_session_id: tableSessionId ?? null, participant_id: participant.id, tenant_id: tenantId },
         }),
       });
       if (!mp.ok) {
@@ -450,7 +470,7 @@ Deno.serve(async (req: Request) => {
       if (!px0) return json({ error: "Pagamento não encontrado" }, 404);
       let px = await expireIfNeeded(admin, px0);
       if (px.status === "pending" && body.reconcile) {
-        const cfg = await loadConfig(admin, auth.session.tenant_id);
+        const cfg = await loadConfig(admin, auth.tenantId!);
         if (cfg?.access_token) {
           await reconcilePix(admin, cfg.access_token, px);
           const { data: fresh } = await admin.from("fin_pix_payments").select("*").eq("id", pixId).maybeSingle();
@@ -468,7 +488,7 @@ Deno.serve(async (req: Request) => {
       if (!px) return json({ error: "Pagamento não encontrado" }, 404);
       if (px.status !== "pending") return json({ ok: true, status: px.status });
       await admin.from("fin_pix_payments").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", pixId).eq("status", "pending");
-      const cfg = await loadConfig(admin, auth.session.tenant_id);
+      const cfg = await loadConfig(admin, auth.tenantId!);
       if (cfg?.access_token && px.provider_payment_id) mpFetch(cfg.access_token, `/v1/payments/${px.provider_payment_id}`, { method: "PUT", body: JSON.stringify({ status: "cancelled" }) }).catch(() => {});
       return json({ ok: true, status: "cancelled" });
     }

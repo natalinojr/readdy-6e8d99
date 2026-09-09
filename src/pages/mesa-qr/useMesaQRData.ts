@@ -268,8 +268,10 @@ export function useMesaQRData() {
   // Estado de carregamento
   const [step, setStep] = useState<Step>('loading');
   const [table, setTable] = useState<TableInfo | null>(null);
-  const [tableSessionId, setTableSessionId] = useState('');    // table_sessions.id
+  const [tableSessionId, setTableSessionId] = useState('');    // table_sessions.id ('' na fila por senha)
   const [caixaSessionId, setCaixaSessionId] = useState('');    // sessions.id (sessão de caixa real)
+  // QR universal (mesa 0): fila por SENHA — não existe sessão de mesa nenhuma.
+  const [queueMode, setQueueMode] = useState(false);
   const [sessionToken, setSessionToken] = useState('');
   const [tenantId, setTenantId] = useState('');
   const [tenantName, setTenantName] = useState('');
@@ -364,38 +366,44 @@ export function useMesaQRData() {
           setStep('encerrada');
           return;
         }
-        if (!data.table || !data.session) {
+        const isFila = data.mode === 'queue';
+        if (!data.table || (!isFila && !data.session)) {
           setStep('encerrada');
           return;
         }
 
         const currentTable = data.table;
-        const currentSession = data.session;
-        const currentSessionToken = currentSession.session_token;
+        const currentSession = isFila ? null : data.session;
+        const currentSessionToken = currentSession ? currentSession.session_token : '';
+        const currentCaixaId = isFila ? (data.queue?.session_id || '') : (currentSession.session_id || '');
         const currentTenantId = currentTable.tenant_id;
         const currentTenantName = data.tenant_name || currentTable.area || 'Estabelecimento';
 
         setTable(currentTable);
-        setTableSessionId(currentSession.id);                   // table_sessions.id
-        setCaixaSessionId(currentSession.session_id || '');     // sessions.id (real)
+        setQueueMode(isFila);
+        setTableSessionId(isFila ? '' : currentSession.id);
+        setCaixaSessionId(currentCaixaId);
         setSessionToken(currentSessionToken || '');
         setTenantId(currentTenantId);
         setTenantName(currentTenantName);
 
-        if (currentSessionToken && !urlSessionToken) {
+        if (!isFila && currentSessionToken && !urlSessionToken) {
           window.history.replaceState(null, '', '/mesa-qr/' + qrToken + '/' + currentSessionToken);
         }
 
-        // Verificar participante salvo
-        const savedParticipant = localStorage.getItem('mesa_participant_' + currentSession.id);
+        // Na fila a senha vive enquanto o caixa estiver aberto; na mesa, enquanto a sessão durar.
+        const storageKey = isFila ? 'mesa_participant_qr_' + qrToken : 'mesa_participant_' + currentSession.id;
+        const savedParticipant = localStorage.getItem(storageKey);
         if (savedParticipant) {
           try {
             const p = JSON.parse(savedParticipant);
-            const invalidToken = p.session_token && currentSessionToken && p.session_token !== currentSessionToken;
-            const invalidTableSession = p.table_session_id && p.table_session_id !== currentSession.id;
+            // Fila: a senha só vale dentro da mesma sessão de caixa (novo dia = senha nova).
+            const invalidQueue = isFila && (!p.caixa_session_id || p.caixa_session_id !== currentCaixaId);
+            const invalidToken = !isFila && p.session_token && currentSessionToken && p.session_token !== currentSessionToken;
+            const invalidTableSession = !isFila && p.table_session_id && p.table_session_id !== currentSession.id;
 
-            if (invalidToken || invalidTableSession) {
-              localStorage.removeItem('mesa_participant_' + currentSession.id);
+            if (invalidQueue || invalidToken || invalidTableSession) {
+              localStorage.removeItem(storageKey);
               Object.keys(localStorage)
                 .filter(function (k) { return k.startsWith('mesa_participant_'); })
                 .forEach(function (k) { localStorage.removeItem(k); });
@@ -416,7 +424,7 @@ export function useMesaQRData() {
             await fetchCardapioData(currentTenantId, { setCategories, setItems, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva, productionPartsRef });
             return;
           } catch {
-            localStorage.removeItem('mesa_participant_' + currentSession.id);
+            localStorage.removeItem(storageKey);
           }
         }
 
@@ -450,18 +458,15 @@ export function useMesaQRData() {
   // ── Criar participante ──────────────────────────────────────────────────────
 
   function handleIdentificar(nome: string) {
-    if (!tableSessionId || !table) return;
+    if (!table) return;
+    if (queueMode ? !caixaSessionId : !tableSessionId) return;
     const url = getMesaWriteUrl();
     fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'create_participant',
-        table_session_id: tableSessionId,
-        name: nome.trim(),
-        tenant_id: table.tenant_id,
-        session_token: sessionToken,
-      }),
+      body: JSON.stringify(queueMode
+        ? { action: 'create_participant', session_id: caixaSessionId, name: nome.trim(), tenant_id: table.tenant_id }
+        : { action: 'create_participant', table_session_id: tableSessionId, name: nome.trim(), tenant_id: table.tenant_id, session_token: sessionToken }),
     })
       .then(function (res) { return res.json(); })
       .then(function (data) {
@@ -471,8 +476,8 @@ export function useMesaQRData() {
         }
         setParticipant(data.participant);
         localStorage.setItem(
-          'mesa_participant_' + tableSessionId,
-          JSON.stringify(Object.assign({}, data.participant, { session_token: sessionToken }))
+          queueMode ? 'mesa_participant_qr_' + (qrToken || '') : 'mesa_participant_' + tableSessionId,
+          JSON.stringify(Object.assign({}, data.participant, queueMode ? { caixa_session_id: caixaSessionId } : { session_token: sessionToken }))
         );
         setStep('cardapio');
       })
@@ -533,7 +538,8 @@ export function useMesaQRData() {
   // ── Confirmar pedido ────────────────────────────────────────────────────────
 
   function handleConfirmarPedido() {
-    if (!tableSessionId || !table || !participant) return;
+    if (!table || !participant) return;
+    if (queueMode ? !caixaSessionId : !tableSessionId) return;
     if (cart.length === 0) return;
 
     setEnviando(true);
@@ -576,12 +582,12 @@ export function useMesaQRData() {
     const payload = {
       action: 'create_mesa_order',
       tenant_id: table.tenant_id,
-      table_session_id: tableSessionId,
+      table_session_id: queueMode ? null : tableSessionId,
       session_id: caixaSessionId,    // sessions.id real (sessão de caixa)
       participant_id: participant.id,
       access_token: participant.access_token,
       participant_name: participant.name,
-      mesa_number: table.number,
+      mesa_number: queueMode ? null : table.number,
       items: itemsPayload,
       subtotal: subtotal,
       total_amount: subtotal,
@@ -638,17 +644,15 @@ export function useMesaQRData() {
             };
           });
 
-          const printDestino: OrderPrintDestino = {
-            tipo: 'table',
-            table_number: table.number,
-            destination_name: 'Mesa ' + table.number + ' - ' + participant.name,
-          };
+          const printDestino: OrderPrintDestino = queueMode
+            ? { tipo: 'senha', destination_name: participant.access_token, table_number: null }
+            : { tipo: 'table', table_number: table.number, destination_name: 'Mesa ' + table.number + ' - ' + participant.name };
 
           queueOrderForPrint(
             table.tenant_id,
             orderId,
             orderNumber,
-            'table',
+            queueMode ? 'self_service' : 'table',
             printItems,
             printDestino,
             undefined,
@@ -711,6 +715,7 @@ export function useMesaQRData() {
     showMeusPedidos: showMeusPedidos,
     showPagarConta: showPagarConta,
     comprovante: comprovante,
+    queueMode: queueMode,
     qrToken: qrToken || '',
     handleFecharComprovante: handleFecharComprovante,
     onlinePayEnabled: onlinePayEnabled,

@@ -78,6 +78,8 @@ export default function PagarContaModalQR(props: Props) {
   const [enabled, setEnabled] = useState(true);
   const [orders, setOrders] = useState<BillOrder[]>([]);
   const [tableNumber, setTableNumber] = useState<number | null>(null);
+  // Fila por senha (QR universal): a conta é só do cliente, não existe "mesa inteira".
+  const [queueMode, setQueueMode] = useState(false);
   const [scope, setScope] = useState<Scope>('mine');
   const [pix, setPix] = useState<PixInfo | null>(null);
   const [gerando, setGerando] = useState(false);
@@ -94,7 +96,7 @@ export default function PagarContaModalQR(props: Props) {
     try {
       const data = await callOnlinePayments<{
         enabled: boolean; table_number: number | null; orders: BillOrder[];
-        pending_pix: PixInfo | null; last_pix: PixInfo | null; session_closed: boolean;
+        pending_pix: PixInfo | null; last_pix: PixInfo | null; session_closed: boolean; mode?: string;
       }>({ action: 'get_bill', ...auth });
 
       if (data.error) {
@@ -104,6 +106,7 @@ export default function PagarContaModalQR(props: Props) {
       setEnabled(Boolean(data.enabled));
       setOrders(data.orders || []);
       setTableNumber(data.table_number ?? null);
+      if (data.mode === 'queue') { setQueueMode(true); setScope('mine'); }
 
       if (data.pending_pix && !pixRef.current) {
         setPix(data.pending_pix);
@@ -294,8 +297,8 @@ export default function PagarContaModalQR(props: Props) {
     }
     return (
       <div className="space-y-4">
-        {/* Escopo */}
-        <div className="grid grid-cols-2 gap-2 p-1 bg-zinc-100 rounded-xl">
+        {/* Escopo — só faz sentido quando há mesa compartilhada */}
+        <div className={'grid grid-cols-2 gap-2 p-1 bg-zinc-100 rounded-xl' + (queueMode ? ' hidden' : '')}>
           <button
             type="button"
             onClick={function () { setScope('mine'); }}
@@ -366,7 +369,7 @@ export default function PagarContaModalQR(props: Props) {
           })}
         </div>
 
-        {scope === 'mine' && meus.length === 0 ? (
+        {!queueMode && scope === 'mine' && meus.length === 0 ? (
           <p className="text-[11px] text-zinc-400 text-center">Você ainda não fez pedidos. Use "Mesa inteira" para pagar pelos outros.</p>
         ) : null}
       </div>
@@ -486,7 +489,7 @@ export default function PagarContaModalQR(props: Props) {
             </div>
             <div>
               <h2 className="text-base font-bold text-zinc-900">{mostrandoPix ? 'Pagar com Pix' : 'Pagar a conta'}</h2>
-              <p className="text-[10px] text-zinc-400">{tableNumber != null ? 'Mesa ' + tableNumber + ' · ' : ''}{participantName}</p>
+              <p className="text-[10px] text-zinc-400">{queueMode ? 'Senha ' + accessToken + ' · ' : (tableNumber != null ? 'Mesa ' + tableNumber + ' · ' : '')}{participantName}</p>
             </div>
           </div>
           <button
