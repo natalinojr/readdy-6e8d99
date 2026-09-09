@@ -114,14 +114,17 @@ export default function MesaQRPage() {
             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(data.comprovante.amount)}
           </p>
           <p className="text-sm text-zinc-500 leading-relaxed">
-            Recebemos seu Pix e sua conta foi encerrada. Obrigado pela visita!
+            Recebemos seu Pix. Obrigado!
+          </p>
+          <p className="text-xs text-zinc-400 mt-2">
+            Quer pedir mais alguma coisa? É só continuar.
           </p>
           <button
             type="button"
             onClick={data.handleFecharComprovante}
             className="mt-6 w-full py-3 bg-gradient-to-br from-amber-500 to-orange-500 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap"
           >
-            Fazer um novo pedido
+            Voltar ao cardápio
           </button>
           <p className="text-[11px] text-zinc-400 mt-3">{tenantName || 'Estabelecimento'}</p>
         </div>
