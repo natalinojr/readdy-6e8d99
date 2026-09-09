@@ -145,10 +145,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       const totalConsumo = (orders ?? []).reduce((sum: number, o: { total_amount: number }) => sum + (o.total_amount ?? 0), 0);
 
-      const { data: payments, error: paymentsErr } = await admin
-        .from('payments')
-        .select('amount')
-        .eq('table_session_id', table_session_id);
+      // `payments` NÃO tem table_session_id: pagamentos da mesa são lidos pelos pedidos da sessão
+      const { data: payments, error: paymentsErr } = orderIds.length > 0
+        ? await admin.from('payments').select('amount').in('order_id', orderIds).eq('is_refunded', false)
+        : { data: [], error: null };
 
       if (paymentsErr) throw paymentsErr;
       const totalPago = (payments ?? []).reduce((sum: number, p: { amount: number }) => sum + (p.amount ?? 0), 0);
@@ -209,10 +209,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       const totalConsumo = (orders ?? []).reduce((sum: number, o: { total_amount: number }) => sum + (o.total_amount ?? 0), 0);
 
-      const { data: payments, error: paymentsErr } = await admin
-        .from('payments')
-        .select('amount')
-        .eq('table_session_id', table_session_id);
+      // `payments` NÃO tem table_session_id: pagamentos da mesa são lidos pelos pedidos da sessão
+      const { data: payments, error: paymentsErr } = orderIds.length > 0
+        ? await admin.from('payments').select('amount').in('order_id', orderIds).eq('is_refunded', false)
+        : { data: [], error: null };
 
       if (paymentsErr) throw paymentsErr;
       const totalPago = (payments ?? []).reduce((sum: number, p: { amount: number }) => sum + (p.amount ?? 0), 0);

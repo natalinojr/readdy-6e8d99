@@ -4,6 +4,7 @@ import CardapioMesaQR from './components/CardapioMesaQR';
 import CarrinhoMesaQR from './components/CarrinhoMesaQR';
 import ConfirmacaoMesaQR from './components/ConfirmacaoMesaQR';
 import MeusPedidosModalQR from './components/MeusPedidosModalQR';
+import PagarContaModalQR from './components/PagarContaModalQR';
 import EditarItemMesaQRModal from './components/EditarItemMesaQRModal';
 import { useRef } from 'react';
 
@@ -161,16 +162,30 @@ export default function MesaQRPage() {
             </div>
           </div>
           {participant && (
-            <button
-              type="button"
-              onClick={function () { data.setShowMeusPedidos(true); }}
-              className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 bg-white/20 hover:bg-white/30 text-white text-xs font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap border border-white/30"
-            >
-              <div className="w-4 h-4 flex items-center justify-center">
-                <i className="ri-receipt-line" />
-              </div>
-              Meus Pedidos
-            </button>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={function () { data.setShowMeusPedidos(true); }}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-white/20 hover:bg-white/30 text-white text-xs font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap border border-white/30"
+              >
+                <div className="w-4 h-4 flex items-center justify-center">
+                  <i className="ri-receipt-line" />
+                </div>
+                Meus Pedidos
+              </button>
+              {data.onlinePayEnabled ? (
+                <button
+                  type="button"
+                  onClick={function () { data.setShowPagarConta(true); }}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-white text-emerald-700 hover:bg-emerald-50 text-xs font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap shadow-sm"
+                >
+                  <div className="w-4 h-4 flex items-center justify-center">
+                    <i className="ri-qr-code-line" />
+                  </div>
+                  Pagar conta
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
 
@@ -257,6 +272,17 @@ export default function MesaQRPage() {
             participantName={participant.name}
             tenantId={participant.tenant_id}
             onClose={function () { data.setShowMeusPedidos(false); }}
+          />
+        ) : null}
+
+        {/* Modal Pagar a conta (Pix online) */}
+        {data.showPagarConta && participant ? (
+          <PagarContaModalQR
+            tenantId={participant.tenant_id}
+            participantId={participant.id}
+            participantName={participant.name}
+            accessToken={participant.access_token}
+            onClose={function () { data.setShowPagarConta(false); }}
           />
         ) : null}
 

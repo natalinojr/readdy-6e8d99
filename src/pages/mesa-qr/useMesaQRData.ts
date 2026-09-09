@@ -272,6 +272,24 @@ export function useMesaQRData() {
   // Meus Pedidos
   const [showMeusPedidos, setShowMeusPedidos] = useState(false);
 
+  // Pagar a conta (Pix online) — botão só aparece se a loja tem provedor ativo
+  const [showPagarConta, setShowPagarConta] = useState(false);
+  const [onlinePayEnabled, setOnlinePayEnabled] = useState(false);
+  useEffect(function () {
+    if (!tenantId) return;
+    let cancelled = false;
+    const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
+    fetch(base + '/functions/v1/online-payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'public_status', tenant_id: tenantId }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (!cancelled) setOnlinePayEnabled(Boolean(d && d.enabled)); })
+      .catch(function () { /* fica desligado */ });
+    return function () { cancelled = true; };
+  }, [tenantId]);
+
   // Ref para evitar dupla chamada
   const initializedRef = useRef(false);
 
@@ -378,6 +396,8 @@ export function useMesaQRData() {
 
     return function () {
       cancelled = true;
+      // StrictMode (dev) roda o efeito 2x: sem liberar a ref, a 2ª rodada era ignorada e a tela ficava em "Carregando".
+      initializedRef.current = false;
     };
   }, [qrToken, urlSessionToken]);
 
@@ -636,12 +656,15 @@ export function useMesaQRData() {
     pedidoConfirmado: pedidoConfirmado,
     numeroPedido: numeroPedido,
     showMeusPedidos: showMeusPedidos,
+    showPagarConta: showPagarConta,
+    onlinePayEnabled: onlinePayEnabled,
     totalItens: totalItens,
     totalValor: totalValor,
     confirmedCartItems: confirmedCartItems,
     setCategoriaAtiva: setCategoriaAtiva,
     setShowCart: setShowCart,
     setShowMeusPedidos: setShowMeusPedidos,
+    setShowPagarConta: setShowPagarConta,
     handleIdentificar: handleIdentificar,
     handleAdicionar: handleAdicionar,
     handleAlterarQtd: handleAlterarQtd,

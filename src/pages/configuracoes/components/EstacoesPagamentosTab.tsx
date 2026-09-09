@@ -8,6 +8,7 @@ import { useUsuarios } from '@/hooks/useUsuarios';
 import { useToast } from '@/contexts/ToastContext';
 import { subscribeReload } from '@/lib/reloadSignal';
 import { TPAG_OPTIONS, TPAG_AUTO } from '@/lib/fiscal';
+import MercadoPagoConfigModal from './MercadoPagoConfigModal';
 
 // ─── Static config ────────────────────────────────────────────────────────────
 const CORES = ['#f59e0b', '#f97316', '#10b981', '#06b6d4', '#8b5cf6', '#ec4899', '#ef4444', '#14b8a6'];
@@ -323,6 +324,14 @@ export default function EstacoesPagamentosTab() {
   const setMainTab = (t: MainTab) => setSearchParams(prev => { prev.set('subtab', t); return prev; }, { replace: true });
   const [estacaoModal, setEstacaoModal] = useState<EstacaoCozinha | 'new' | null>(null);
   const [formaModal, setFormaModal] = useState<PaymentMethod | 'new' | null>(null);
+  const [showMpModal, setShowMpModal] = useState(false);
+  const [mpAtivo, setMpAtivo] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!user?.tenantId) return;
+    invokeWithAuth<{ is_active: boolean }>('online-payments', { body: { action: 'get_config', tenant_id: user.tenantId } })
+      .then(({ data }) => setMpAtivo(Boolean(data?.is_active)))
+      .catch(() => setMpAtivo(false));
+  }, [user?.tenantId]);
 
   // Force re-render when kitchen_stations signal fires (ensures list updates after create)
   const [, setStationTick] = useState(0);
@@ -553,23 +562,27 @@ export default function EstacoesPagamentosTab() {
             </button>
           </div>
 
-          {/* PIX Stone Banner */}
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          {/* Pagamento pelo celular (Pix dinâmico via Mercado Pago) */}
+          <button
+            type="button"
+            onClick={() => setShowMpModal(true)}
+            className={`w-full text-left border rounded-xl p-4 cursor-pointer transition-colors ${mpAtivo ? 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100/60' : 'bg-sky-50 border-sky-200 hover:bg-sky-100/60'}`}
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 flex items-center justify-center bg-emerald-500 rounded-xl flex-shrink-0">
-                  <i className="ri-qr-code-line text-white text-lg" />
+                <div className={`w-10 h-10 flex items-center justify-center rounded-xl flex-shrink-0 ${mpAtivo ? 'bg-emerald-500' : 'bg-sky-500'}`}>
+                  <i className="ri-smartphone-line text-white text-lg" />
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-emerald-800">PIX Automático via Stone</p>
-                  <p className="text-xs text-emerald-600">QR Code dinâmico · Confirmação automática por webhook · Taxa: <strong>0,99% por transação</strong></p>
+                  <p className={`text-sm font-bold ${mpAtivo ? 'text-emerald-800' : 'text-sky-800'}`}>Pagamento pelo celular do cliente</p>
+                  <p className={`text-xs ${mpAtivo ? 'text-emerald-600' : 'text-sky-600'}`}>Pix dinâmico via Mercado Pago · o cliente paga a conta da mesa no QR Code, sem passar no caixa</p>
                 </div>
               </div>
-              <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-100 px-2.5 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap flex items-center gap-1">
-                <i className="ri-shield-check-line text-sm" />Integrado
+              <span className={`text-[10px] font-semibold px-2.5 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap flex items-center gap-1 ${mpAtivo ? 'text-emerald-600 bg-emerald-100' : 'text-sky-700 bg-sky-100'}`}>
+                <i className={`text-sm ${mpAtivo ? 'ri-shield-check-line' : 'ri-settings-3-line'}`} />{mpAtivo === null ? '…' : mpAtivo ? 'Ativo' : 'Configurar'}
               </span>
             </div>
-          </div>
+          </button>
 
           {formas.length === 0 ? (
             <div className="text-center py-12 bg-white border border-zinc-100 rounded-xl">
@@ -706,6 +719,9 @@ export default function EstacoesPagamentosTab() {
           onSalvo={recarregarEstacoes}
           onClose={() => setEstacaoModal(null)}
         />
+      )}
+      {showMpModal && (
+        <MercadoPagoConfigModal onClose={() => setShowMpModal(false)} onSaved={info => setMpAtivo(info.is_active)} />
       )}
       {formaModal && (
         <FormaModal
