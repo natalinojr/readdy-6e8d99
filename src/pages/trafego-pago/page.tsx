@@ -5,6 +5,7 @@ import {
   Megaphone, RefreshCw, Link2Off, AlertTriangle, Loader2,
   TrendingUp, Eye, MousePointerClick, Target, Wallet,
   Users, Percent, DollarSign, Gauge, BarChart3, Layers,
+  ShoppingCart, Banknote, Store,
 } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Area, Line, BarChart, Bar,
@@ -14,9 +15,11 @@ import {
 // ─── Tipos ─────────────────────────────────────────────────────────────────
 interface AdAccount { id: string; name: string }
 interface ActionVal { type: string; value: number }
+interface ResultVal { type: string; value: number }
 
-interface CampaignRow {
-  campaign: string;
+// Métricas comuns (campanha e anúncio). Compra/funil/status vêm da Edge Function atualizada;
+// ficam opcionais pra tela não quebrar enquanto a função antiga ainda estiver no ar.
+interface MetricRow {
   spend: number;
   impressions: number;
   reach: number;
@@ -27,6 +30,32 @@ interface CampaignRow {
   ctr: number;
   cpm: number;
   results: ActionVal[];
+  result?: ResultVal;
+  purchases?: number;
+  purchase_value?: number;
+  roas?: number;
+  cost_per_purchase?: number;
+  landing_page_views?: number;
+  view_content?: number;
+  add_to_cart?: number;
+  initiate_checkout?: number;
+  status?: string | null;
+}
+
+interface CampaignRow extends MetricRow {
+  campaign: string;
+  campaign_id?: string;
+  objective?: string | null;
+}
+
+interface AdRow extends MetricRow {
+  ad_id: string;
+  ad: string;
+  adset: string;
+  campaign: string;
+  campaign_id?: string;
+  optimization_goal?: string | null;
+  thumbnail_url?: string | null;
 }
 
 interface DailyRow {
@@ -36,6 +65,17 @@ interface DailyRow {
   reach: number;
   clicks: number;
   results: number;
+  link_clicks?: number;
+  purchases?: number;
+  purchase_value?: number;
+}
+
+interface ErposOrders {
+  count: number;
+  revenue: number;
+  by_source: Record<string, { count: number; revenue: number }>;
+  since: string;
+  until: string;
 }
 
 interface Connection {
@@ -53,7 +93,10 @@ interface InsightsResponse {
   ad_account_name?: string;
   count?: number;
   campaigns?: CampaignRow[];
+  ads?: AdRow[];
   daily?: DailyRow[];
+  erpos_orders?: ErposOrders | null;
+  range?: { since: string; until: string } | null;
   error?: unknown;
 }
 
@@ -72,8 +115,15 @@ const OAUTH_STATE_KEY = 'meta_oauth_state';
 
 // Traduções amigáveis para os tipos de resultado da Meta
 const ACTION_LABELS: Record<string, string> = {
-  link_click: 'Cliques no link',
+  purchase: 'Compras',
+  add_to_cart: 'Add. ao carrinho',
+  initiate_checkout: 'Início de checkout',
+  view_content: 'Visualiz. de produto',
   landing_page_view: 'Visitas à página',
+  link_click: 'Cliques no link',
+  lead: 'Leads',
+  'onsite_conversion.messaging_conversation_started_7d': 'Conversas iniciadas',
+  'onsite_conversion.messaging_first_reply': 'Primeiras respostas',
   post_engagement: 'Engajamento',
   page_engagement: 'Engaj. da página',
   post_reaction: 'Reações',
@@ -81,25 +131,59 @@ const ACTION_LABELS: Record<string, string> = {
   comment: 'Comentários',
   like: 'Curtidas na página',
   video_view: 'Views de vídeo',
-  'onsite_conversion.messaging_conversation_started_7d': 'Conversas iniciadas',
-  'onsite_conversion.messaging_first_reply': 'Primeiras respostas',
   'onsite_conversion.post_save': 'Salvamentos',
-  lead: 'Leads',
-  purchase: 'Compras',
+  reach: 'Alcance',
+  omni_app_install: 'Instalações',
   'offsite_conversion.fb_pixel_purchase': 'Compras (site)',
   'offsite_conversion.fb_pixel_lead': 'Leads (site)',
-  'offsite_conversion.fb_pixel_add_to_cart': 'Add. ao carrinho',
-  add_to_cart: 'Add. ao carrinho',
-  initiate_checkout: 'Início de checkout',
+  'offsite_conversion.fb_pixel_add_to_cart': 'Add. ao carrinho (site)',
 };
 const actionLabel = (t: string) => ACTION_LABELS[t] ?? t.replace(/_/g, ' ').replace(/\./g, ' ');
+
+// Só tipos "canônicos" entram no card "Resultados por tipo": a Meta repete o mesmo evento em vários
+// recortes (omni_*, offsite_conversion.*) e somar tudo conta em dobro.
+const BREAKDOWN_TYPES = [
+  'purchase', 'initiate_checkout', 'add_to_cart', 'view_content', 'landing_page_view', 'link_click',
+  'lead', 'onsite_conversion.messaging_conversation_started_7d', 'post_engagement', 'video_view',
+  'post_reaction', 'comment', 'post', 'onsite_conversion.post_save', 'like',
+];
+
+const OBJECTIVE_LABELS: Record<string, string> = {
+  OUTCOME_SALES: 'Vendas', CONVERSIONS: 'Vendas', PRODUCT_CATALOG_SALES: 'Catálogo',
+  OUTCOME_TRAFFIC: 'Tráfego', LINK_CLICKS: 'Tráfego',
+  OUTCOME_ENGAGEMENT: 'Engajamento', POST_ENGAGEMENT: 'Engajamento', MESSAGES: 'Mensagens', VIDEO_VIEWS: 'Vídeo',
+  OUTCOME_LEADS: 'Leads', LEAD_GENERATION: 'Leads',
+  OUTCOME_AWARENESS: 'Reconhecimento', REACH: 'Alcance', BRAND_AWARENESS: 'Reconhecimento',
+  OUTCOME_APP_PROMOTION: 'App', APP_INSTALLS: 'App',
+};
+const objectiveLabel = (o?: string | null) =>
+  (o ? (OBJECTIVE_LABELS[o] ?? o.replace(/^OUTCOME_/, '').toLowerCase()) : '—');
+
+const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
+  ACTIVE: { label: 'Ativo', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  PAUSED: { label: 'Pausado', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
+  CAMPAIGN_PAUSED: { label: 'Camp. pausada', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
+  ADSET_PAUSED: { label: 'Conj. pausado', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
+  ARCHIVED: { label: 'Arquivado', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
+  DELETED: { label: 'Excluído', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
+  IN_PROCESS: { label: 'Processando', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+  PENDING_REVIEW: { label: 'Em análise', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+  PREAPPROVED: { label: 'Pré-aprovado', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+  WITH_ISSUES: { label: 'Com problemas', cls: 'bg-red-50 text-red-600 border-red-200' },
+  DISAPPROVED: { label: 'Reprovado', cls: 'bg-red-50 text-red-600 border-red-200' },
+  PENDING_BILLING_INFO: { label: 'Cobrança pendente', cls: 'bg-red-50 text-red-600 border-red-200' },
+};
 
 // ─── Helpers de formatação ────────────────────────────────────────────────────
 const brl = (n: number) => Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const num = (n: number) => Math.round(Number(n || 0)).toLocaleString('pt-BR');
 const dec = (n: number, d = 2) => Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 const pct = (n: number) => `${dec(n, 2)}%`;
-const sumResults = (r: ActionVal[]) => (r || []).reduce((s, x) => s + (x.value || 0), 0);
+const n0 = (v: number | undefined | null) => Number(v || 0);
+// "Resultado" no padrão do Gerenciador de Anúncios (calculado na Edge Function pelo objetivo/meta de
+// otimização). Fallback pra função antiga, que não manda `result`: cliques no link.
+const resultOf = (r: { result?: ResultVal; results: ActionVal[] }): ResultVal =>
+  r.result ?? { type: 'link_click', value: (r.results || []).find((x) => x.type === 'link_click')?.value ?? 0 };
 const shortDate = (d: string) => {
   const p = (d || '').split('-');
   return p.length === 3 ? `${p[2]}/${p[1]}` : d;
@@ -111,7 +195,7 @@ const compact = (n: number) => {
   return String(Math.round(v));
 };
 
-const CORES = { spend: '#f59e0b', results: '#10b981', reach: '#0ea5e9', clicks: '#8b5cf6' };
+const CORES = { spend: '#f59e0b', results: '#10b981', reach: '#0ea5e9', clicks: '#8b5cf6', receita: '#14b8a6', compras: '#16a34a' };
 
 export default function TrafegoPagoPage() {
   const { user } = useAuth();
@@ -127,6 +211,7 @@ export default function TrafegoPagoPage() {
   const [insights, setInsights] = useState<InsightsResponse | null>(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
+  const [campanhaSel, setCampanhaSel] = useState<string | null>(null);
 
   // ── Status da conexão ──
   const loadStatus = useCallback(async () => {
@@ -313,17 +398,28 @@ export default function TrafegoPagoPage() {
 
   // ── Dados derivados ──
   const campaigns = useMemo(() => insights?.campaigns ?? [], [insights]);
+  const ads = useMemo(() => insights?.ads ?? null, [insights]);
   const daily = useMemo(() => insights?.daily ?? [], [insights]);
+  const erposOrders = insights?.erpos_orders ?? null;
 
   const totals = useMemo(() => {
-    const spend = campaigns.reduce((s, c) => s + c.spend, 0);
-    const impressions = campaigns.reduce((s, c) => s + c.impressions, 0);
-    const reach = campaigns.reduce((s, c) => s + c.reach, 0);
-    const clicks = campaigns.reduce((s, c) => s + (c.clicks || 0), 0);
-    const linkClicks = campaigns.reduce((s, c) => s + (c.link_clicks || 0), 0);
-    const results = campaigns.reduce((s, c) => s + sumResults(c.results), 0);
+    const sum = (f: (c: CampaignRow) => number) => campaigns.reduce((s, c) => s + f(c), 0);
+    const spend = sum((c) => c.spend);
+    const impressions = sum((c) => c.impressions);
+    const reach = sum((c) => c.reach);
+    const clicks = sum((c) => c.clicks || 0);
+    const linkClicks = sum((c) => c.link_clicks || 0);
+    const results = sum((c) => resultOf(c).value);
+    const purchases = sum((c) => n0(c.purchases));
+    const purchaseValue = sum((c) => n0(c.purchase_value));
     return {
-      spend, impressions, reach, clicks, linkClicks, results,
+      spend, impressions, reach, clicks, linkClicks, results, purchases, purchaseValue,
+      landing: sum((c) => n0(c.landing_page_views)),
+      addToCart: sum((c) => n0(c.add_to_cart)),
+      checkout: sum((c) => n0(c.initiate_checkout)),
+      roas: spend ? purchaseValue / spend : 0,
+      cpp: purchases ? spend / purchases : 0,
+      ticket: purchases ? purchaseValue / purchases : 0,
       ctr: impressions ? (clicks / impressions) * 100 : 0,
       cpc: clicks ? spend / clicks : 0,
       cpm: impressions ? (spend / impressions) * 1000 : 0,
@@ -332,20 +428,58 @@ export default function TrafegoPagoPage() {
     };
   }, [campaigns]);
 
+  // Mix de tipos de resultado (ex.: "3 Compras · 120 Cliques no link") pro subtítulo do KPI.
+  const resultMix = useMemo(() => {
+    const map = new Map<string, number>();
+    campaigns.forEach((c) => { const r = resultOf(c); map.set(r.type, (map.get(r.type) ?? 0) + r.value); });
+    return Array.from(map, ([type, value]) => ({ type, value }))
+      .filter((x) => x.value > 0)
+      .sort((a, b) => b.value - a.value);
+  }, [campaigns]);
+
   const actionBreakdown = useMemo(() => {
     const map = new Map<string, number>();
-    campaigns.forEach((c) => c.results.forEach((r) => map.set(r.type, (map.get(r.type) ?? 0) + r.value)));
-    return Array.from(map, ([type, value]) => ({ label: actionLabel(type), value }))
+    campaigns.forEach((c) => c.results.forEach((r) => {
+      if (BREAKDOWN_TYPES.includes(r.type)) map.set(r.type, (map.get(r.type) ?? 0) + r.value);
+    }));
+    return Array.from(map, ([type, value]) => ({ label: actionLabel(type), value, destaque: type === 'purchase' }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 7);
+      .slice(0, 8);
   }, [campaigns]);
 
   const rankCampaigns = useMemo(
-    () => [...campaigns].map((c) => ({ ...c, total: sumResults(c.results) })).sort((a, b) => b.spend - a.spend),
+    () => [...campaigns].map((c) => ({ ...c, res: resultOf(c) })).sort((a, b) => b.spend - a.spend),
     [campaigns],
   );
 
-  const funil = useMemo(() => {
+  const rankAds = useMemo(() => {
+    if (!ads) return null;
+    const list = campanhaSel ? ads.filter((a) => a.campaign === campanhaSel) : ads;
+    return [...list].map((a) => ({ ...a, res: resultOf(a) })).sort((a, b) => b.spend - a.spend);
+  }, [ads, campanhaSel]);
+
+  type FunilRow = { label: string; value: number; cor: string; pct: number; conv?: number | null };
+
+  // Funil de vendas do pixel (clique → página → carrinho → checkout → compra). Sem nenhum evento de
+  // pixel no período, cai no funil genérico (impressões → alcance → cliques → resultados).
+  const funilVendas = useMemo<FunilRow[] | null>(() => {
+    const steps = [
+      { label: 'Cliques no link', value: totals.linkClicks, cor: CORES.clicks },
+      { label: 'Visitas à página', value: totals.landing, cor: CORES.reach },
+      { label: 'Add. ao carrinho', value: totals.addToCart, cor: CORES.spend },
+      { label: 'Início de checkout', value: totals.checkout, cor: '#f97316' },
+      { label: 'Compras', value: totals.purchases, cor: CORES.results },
+    ];
+    if (totals.landing + totals.addToCart + totals.checkout + totals.purchases === 0) return null;
+    const max = Math.max(steps[0].value, 1);
+    return steps.map((s, i) => ({
+      ...s,
+      pct: (s.value / max) * 100,
+      conv: i > 0 && steps[i - 1].value > 0 ? (s.value / steps[i - 1].value) * 100 : null,
+    }));
+  }, [totals]);
+
+  const funil = useMemo<FunilRow[]>(() => {
     const max = Math.max(totals.impressions, 1);
     return [
       { label: 'Impressões', value: totals.impressions, cor: '#6366f1' },
@@ -354,6 +488,8 @@ export default function TrafegoPagoPage() {
       { label: 'Resultados', value: totals.results, cor: CORES.results },
     ].map((f) => ({ ...f, pct: (f.value / max) * 100 }));
   }, [totals]);
+
+  const temCompras = totals.purchases > 0 || daily.some((d) => n0(d.purchases) > 0);
 
   const temGrafico = daily.length > 0;
 
@@ -493,16 +629,34 @@ export default function TrafegoPagoPage() {
             </div>
           ) : (
             <div className={insightsLoading ? 'opacity-60 pointer-events-none transition-opacity' : 'transition-opacity'}>
-              {/* KPIs principais */}
+              {/* KPIs de venda */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
                 <KpiCard icon={Wallet} cor="amber" label="Investimento" valor={brl(totals.spend)}
-                  sub={`CPM ${brl(totals.cpm)}`} />
+                  sub={`CPM ${brl(totals.cpm)} · CPC ${brl(totals.cpc)}`} />
+                <KpiCard icon={ShoppingCart} cor="emerald" label="Compras (Meta)" valor={num(totals.purchases)}
+                  sub={totals.cpp ? `Custo por compra ${brl(totals.cpp)}` : 'Nenhuma compra atribuída'} />
+                <KpiCard icon={Banknote} cor="teal" label="Valor em vendas" valor={brl(totals.purchaseValue)}
+                  sub={totals.ticket ? `Ticket médio ${brl(totals.ticket)}` : '—'} />
+                <KpiCard icon={TrendingUp} cor={totals.roas >= 1 ? 'emerald' : 'red'} label="ROAS"
+                  valor={totals.spend ? `${dec(totals.roas, 2)}x` : '—'}
+                  sub={totals.spend ? `R$ ${dec(totals.roas, 2)} vendidos por R$ 1 investido` : '—'} />
+              </div>
+
+              {/* KPIs de alcance / tráfego */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+                <KpiCard icon={Target} cor="violet" label="Resultados" valor={num(totals.results)}
+                  sub={resultMix.length
+                    ? resultMix.slice(0, 2).map((r) => `${num(r.value)} ${actionLabel(r.type)}`).join(' · ')
+                    : (totals.cpr ? `Custo/result. ${brl(totals.cpr)}` : '—')} />
                 <KpiCard icon={Users} cor="sky" label="Alcance" valor={num(totals.reach)}
                   sub={`Frequência ${dec(totals.freq, 2)}x`} />
                 <KpiCard icon={MousePointerClick} cor="violet" label="Cliques no link" valor={num(totals.linkClicks || totals.clicks)}
                   sub={`CTR ${pct(totals.ctr)}`} />
-                <KpiCard icon={Target} cor="emerald" label="Resultados" valor={num(totals.results)}
-                  sub={totals.cpr ? `Custo/result. ${brl(totals.cpr)}` : '—'} />
+                <KpiCard icon={Store} cor="amber" label="Pedidos no ERPOS via anúncio"
+                  valor={erposOrders ? num(erposOrders.count) : '—'}
+                  sub={erposOrders
+                    ? (erposOrders.count ? `${brl(erposOrders.revenue)} faturados` : 'Nenhum pedido com utm_source da Meta')
+                    : 'Disponível após atualizar a função'} />
               </div>
 
               {/* Métricas secundárias */}
@@ -515,8 +669,10 @@ export default function TrafegoPagoPage() {
                 <Pill icon={Gauge} label="Frequência" valor={`${dec(totals.freq, 2)}x`} />
               </div>
 
-              {/* Gráfico principal: Investimento x Resultados por dia */}
-              <ChartCard icon={TrendingUp} titulo="Evolução — Investimento e Resultados por dia" className="mb-4">
+              {/* Gráfico principal: Investimento x Vendas por dia */}
+              <ChartCard icon={TrendingUp}
+                titulo={temCompras ? 'Evolução — Investimento, valor em vendas e compras por dia' : 'Evolução — Investimento e cliques no link por dia'}
+                className="mb-4">
                 {temGrafico ? (
                   <ResponsiveContainer width="100%" height={260}>
                     <ComposedChart data={daily} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
@@ -525,14 +681,26 @@ export default function TrafegoPagoPage() {
                           <stop offset="0%" stopColor={CORES.spend} stopOpacity={0.35} />
                           <stop offset="100%" stopColor={CORES.spend} stopOpacity={0} />
                         </linearGradient>
+                        <linearGradient id="gReceita" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={CORES.receita} stopOpacity={0.3} />
+                          <stop offset="100%" stopColor={CORES.receita} stopOpacity={0} />
+                        </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                       <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} />
                       <YAxis yAxisId="l" tickFormatter={(v) => `R$${compact(v)}`} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} width={54} />
                       <YAxis yAxisId="r" orientation="right" tickFormatter={compact} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} width={40} />
-                      <Tooltip content={<GraphTooltip fmt={{ spend: brl, results: num }} />} />
+                      <Tooltip content={<GraphTooltip fmt={{ spend: brl, purchase_value: brl, purchases: num, link_clicks: num, results: num }} />} />
                       <Area yAxisId="l" type="monotone" dataKey="spend" name="Investimento" stroke={CORES.spend} strokeWidth={2} fill="url(#gSpend)" />
-                      <Line yAxisId="r" type="monotone" dataKey="results" name="Resultados" stroke={CORES.results} strokeWidth={2.5} dot={false} />
+                      {temCompras && (
+                        <Area yAxisId="l" type="monotone" dataKey="purchase_value" name="Valor em vendas" stroke={CORES.receita} strokeWidth={2} fill="url(#gReceita)" />
+                      )}
+                      {temCompras && (
+                        <Line yAxisId="r" type="monotone" dataKey="purchases" name="Compras" stroke={CORES.compras} strokeWidth={2.5} dot={false} />
+                      )}
+                      {!temCompras && (
+                        <Line yAxisId="r" type="monotone" dataKey="link_clicks" name="Cliques no link" stroke={CORES.clicks} strokeWidth={2.5} dot={false} />
+                      )}
                     </ComposedChart>
                   </ResponsiveContainer>
                 ) : <SemDados />}
@@ -557,13 +725,18 @@ export default function TrafegoPagoPage() {
                 </ChartCard>
 
                 {/* Funil */}
-                <ChartCard icon={Layers} titulo="Funil de desempenho">
-                  <div className="flex flex-col justify-center gap-3 py-2 h-[220px]">
-                    {funil.map((f) => (
+                <ChartCard icon={Layers} titulo={funilVendas ? 'Funil de vendas (pixel)' : 'Funil de desempenho'}>
+                  <div className="flex flex-col justify-center gap-2.5 py-1 min-h-[220px]">
+                    {(funilVendas ?? funil).map((f) => (
                       <div key={f.label}>
                         <div className="flex items-center justify-between text-xs mb-1">
                           <span className="font-semibold text-zinc-600">{f.label}</span>
-                          <span className="font-black text-zinc-800 tabular-nums">{num(f.value)}</span>
+                          <span className="font-black text-zinc-800 tabular-nums">
+                            {num(f.value)}
+                            {f.conv != null && (
+                              <span className="ml-1.5 text-[10px] font-semibold text-zinc-400">{pct(f.conv)} do passo anterior</span>
+                            )}
+                          </span>
                         </div>
                         <div className="h-3 rounded-full bg-zinc-100 overflow-hidden">
                           <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(f.pct, 2)}%`, background: f.cor }} />
@@ -571,7 +744,9 @@ export default function TrafegoPagoPage() {
                       </div>
                     ))}
                     <p className="text-[11px] text-zinc-400 mt-1">
-                      Do total de impressões, quantas viraram alcance, cliques e resultados.
+                      {funilVendas
+                        ? 'Eventos do pixel no delivery: de quem clicou no anúncio, quantos chegaram à página, montaram o carrinho, iniciaram o checkout e compraram.'
+                        : 'Do total de impressões, quantas viraram alcance, cliques e resultados.'}
                     </p>
                   </div>
                 </ChartCard>
@@ -602,11 +777,11 @@ export default function TrafegoPagoPage() {
                         return (
                           <div key={a.label}>
                             <div className="flex items-center justify-between text-xs mb-1">
-                              <span className="font-semibold text-zinc-600 truncate pr-2">{a.label}</span>
-                              <span className="font-black text-zinc-800 tabular-nums">{num(a.value)}</span>
+                              <span className={`font-semibold truncate pr-2 ${a.destaque ? 'text-emerald-700' : 'text-zinc-600'}`}>{a.label}</span>
+                              <span className={`font-black tabular-nums ${a.destaque ? 'text-emerald-700' : 'text-zinc-800'}`}>{num(a.value)}</span>
                             </div>
                             <div className="h-2 rounded-full bg-zinc-100 overflow-hidden">
-                              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max((a.value / max) * 100, 2)}%` }} />
+                              <div className={`h-full rounded-full ${a.destaque ? 'bg-emerald-500' : 'bg-zinc-400'}`} style={{ width: `${Math.max((a.value / max) * 100, 2)}%` }} />
                             </div>
                           </div>
                         );
@@ -617,11 +792,14 @@ export default function TrafegoPagoPage() {
               </div>
 
               {/* Tabela de campanhas */}
-              <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-zinc-100 flex items-center gap-2">
+              <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden mb-4">
+                <div className="px-4 py-3 border-b border-zinc-100 flex items-center gap-2 flex-wrap">
                   <TrendingUp size={16} className="text-amber-500" />
                   <p className="text-sm font-bold text-zinc-800">Campanhas</p>
                   <span className="text-xs text-zinc-400">({rankCampaigns.length})</span>
+                  {ads && rankCampaigns.length > 0 && (
+                    <span className="text-[11px] text-zinc-400 ml-auto">Clique numa campanha pra filtrar os anúncios abaixo</span>
+                  )}
                 </div>
 
                 {rankCampaigns.length === 0 ? (
@@ -636,34 +814,48 @@ export default function TrafegoPagoPage() {
                       <thead>
                         <tr className="text-left text-[11px] uppercase tracking-wider text-zinc-400 border-b border-zinc-100 bg-zinc-50/60">
                           <th className="px-4 py-2.5 font-bold sticky left-0 bg-zinc-50/60">Campanha</th>
+                          <th className="px-3 py-2.5 font-bold">Status</th>
                           <th className="px-3 py-2.5 font-bold text-right">Investido</th>
-                          <th className="px-3 py-2.5 font-bold text-right">Impressões</th>
-                          <th className="px-3 py-2.5 font-bold text-right">Alcance</th>
-                          <th className="px-3 py-2.5 font-bold text-right">Freq.</th>
-                          <th className="px-3 py-2.5 font-bold text-right">Cliques</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Resultado</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Custo/res.</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Compras</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Vendas</th>
+                          <th className="px-3 py-2.5 font-bold text-right">ROAS</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Cliques link</th>
                           <th className="px-3 py-2.5 font-bold text-right">CTR</th>
                           <th className="px-3 py-2.5 font-bold text-right">CPC</th>
-                          <th className="px-3 py-2.5 font-bold text-right">CPM</th>
-                          <th className="px-3 py-2.5 font-bold text-right">Result.</th>
-                          <th className="px-4 py-2.5 font-bold text-right">Custo/res.</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Alcance</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Freq.</th>
+                          <th className="px-4 py-2.5 font-bold text-right">CPM</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {rankCampaigns.map((c, i) => {
-                          const cpr = c.total ? c.spend / c.total : 0;
+                        {rankCampaigns.map((c) => {
+                          const cpr = c.res.value ? c.spend / c.res.value : 0;
+                          const sel = campanhaSel === c.campaign;
                           return (
-                            <tr key={i} className="border-b border-zinc-50 hover:bg-amber-50/40">
-                              <td className="px-4 py-3 font-semibold text-zinc-800 max-w-[220px] truncate sticky left-0 bg-white">{c.campaign}</td>
-                              <td className="px-3 py-3 text-right tabular-nums font-semibold text-zinc-800">{brl(c.spend)}</td>
-                              <td className="px-3 py-3 text-right tabular-nums text-zinc-600">{num(c.impressions)}</td>
-                              <td className="px-3 py-3 text-right tabular-nums text-zinc-600">{num(c.reach)}</td>
-                              <td className="px-3 py-3 text-right tabular-nums text-zinc-500">{dec(c.frequency, 2)}x</td>
-                              <td className="px-3 py-3 text-right tabular-nums text-zinc-600">{num(c.clicks)}</td>
-                              <td className="px-3 py-3 text-right tabular-nums text-zinc-500">{pct(c.ctr)}</td>
-                              <td className="px-3 py-3 text-right tabular-nums text-zinc-600">{brl(c.cpc)}</td>
-                              <td className="px-3 py-3 text-right tabular-nums text-zinc-500">{brl(c.cpm)}</td>
-                              <td className="px-3 py-3 text-right tabular-nums font-semibold text-emerald-600">{num(c.total)}</td>
-                              <td className="px-4 py-3 text-right tabular-nums text-zinc-600">{cpr ? brl(cpr) : '—'}</td>
+                            <tr
+                              key={c.campaign_id ?? c.campaign}
+                              onClick={() => { if (ads) setCampanhaSel(sel ? null : c.campaign); }}
+                              className={`border-b border-zinc-50 ${ads ? 'cursor-pointer' : ''} ${sel ? 'bg-amber-50' : 'hover:bg-amber-50/40'}`}
+                            >
+                              <td className={`px-4 py-2.5 sticky left-0 ${sel ? 'bg-amber-50' : 'bg-white'}`}>
+                                <p className="font-semibold text-zinc-800 max-w-[220px] truncate">{c.campaign}</p>
+                                <p className="text-[11px] text-zinc-400">{objectiveLabel(c.objective)}</p>
+                              </td>
+                              <td className="px-3 py-2.5"><StatusBadge status={c.status} /></td>
+                              <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-zinc-800">{brl(c.spend)}</td>
+                              <td className="px-3 py-2.5 text-right"><ResultCell r={c.res} /></td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{cpr ? brl(cpr) : '—'}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-emerald-600">{num(n0(c.purchases))}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-emerald-700">{brl(n0(c.purchase_value))}</td>
+                              <td className="px-3 py-2.5 text-right"><Roas v={n0(c.roas)} spend={c.spend} /></td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{num(c.link_clicks || c.clicks)}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-500">{pct(c.ctr)}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{brl(c.cpc)}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600">{num(c.reach)}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-500">{dec(c.frequency, 2)}x</td>
+                              <td className="px-4 py-2.5 text-right tabular-nums text-zinc-500">{brl(c.cpm)}</td>
                             </tr>
                           );
                         })}
@@ -672,16 +864,19 @@ export default function TrafegoPagoPage() {
                         <tfoot>
                           <tr className="border-t border-zinc-200 bg-zinc-50/60 font-bold text-zinc-800">
                             <td className="px-4 py-3 sticky left-0 bg-zinc-50/60">Total</td>
+                            <td className="px-3 py-3" />
                             <td className="px-3 py-3 text-right tabular-nums">{brl(totals.spend)}</td>
-                            <td className="px-3 py-3 text-right tabular-nums">{num(totals.impressions)}</td>
-                            <td className="px-3 py-3 text-right tabular-nums">{num(totals.reach)}</td>
-                            <td className="px-3 py-3 text-right tabular-nums">{dec(totals.freq, 2)}x</td>
-                            <td className="px-3 py-3 text-right tabular-nums">{num(totals.clicks)}</td>
+                            <td className="px-3 py-3 text-right tabular-nums">{num(totals.results)}</td>
+                            <td className="px-3 py-3 text-right tabular-nums">{totals.cpr ? brl(totals.cpr) : '—'}</td>
+                            <td className="px-3 py-3 text-right tabular-nums text-emerald-700">{num(totals.purchases)}</td>
+                            <td className="px-3 py-3 text-right tabular-nums text-emerald-700">{brl(totals.purchaseValue)}</td>
+                            <td className="px-3 py-3 text-right"><Roas v={totals.roas} spend={totals.spend} /></td>
+                            <td className="px-3 py-3 text-right tabular-nums">{num(totals.linkClicks || totals.clicks)}</td>
                             <td className="px-3 py-3 text-right tabular-nums">{pct(totals.ctr)}</td>
                             <td className="px-3 py-3 text-right tabular-nums">{brl(totals.cpc)}</td>
-                            <td className="px-3 py-3 text-right tabular-nums">{brl(totals.cpm)}</td>
-                            <td className="px-3 py-3 text-right tabular-nums text-emerald-700">{num(totals.results)}</td>
-                            <td className="px-4 py-3 text-right tabular-nums">{totals.cpr ? brl(totals.cpr) : '—'}</td>
+                            <td className="px-3 py-3 text-right tabular-nums">{num(totals.reach)}</td>
+                            <td className="px-3 py-3 text-right tabular-nums">{dec(totals.freq, 2)}x</td>
+                            <td className="px-4 py-3 text-right tabular-nums">{brl(totals.cpm)}</td>
                           </tr>
                         </tfoot>
                       )}
@@ -689,6 +884,136 @@ export default function TrafegoPagoPage() {
                   </div>
                 )}
               </div>
+
+              {/* Tabela de anúncios */}
+              <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden mb-4">
+                <div className="px-4 py-3 border-b border-zinc-100 flex items-center gap-2 flex-wrap">
+                  <Megaphone size={16} className="text-amber-500" />
+                  <p className="text-sm font-bold text-zinc-800">Anúncios</p>
+                  {rankAds && <span className="text-xs text-zinc-400">({rankAds.length})</span>}
+                  {ads && campaigns.length > 0 && (
+                    <select
+                      value={campanhaSel ?? ''}
+                      onChange={(e) => setCampanhaSel(e.target.value || null)}
+                      className="ml-auto text-xs font-semibold border border-zinc-200 rounded-lg px-2 py-1.5 bg-white text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer max-w-[260px]"
+                    >
+                      <option value="">Todas as campanhas</option>
+                      {campaigns.map((c) => (
+                        <option key={c.campaign_id ?? c.campaign} value={c.campaign}>{c.campaign}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                {!ads ? (
+                  <div className="px-4 py-8 text-center text-sm text-zinc-400">
+                    Detalhe por anúncio disponível após atualizar a Edge Function <span className="font-mono">meta-ads-insights</span>.
+                  </div>
+                ) : !rankAds || rankAds.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
+                    <Megaphone size={28} className="mb-2 opacity-40" />
+                    <p className="text-sm font-semibold">Nenhum anúncio no período</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm whitespace-nowrap">
+                      <thead>
+                        <tr className="text-left text-[11px] uppercase tracking-wider text-zinc-400 border-b border-zinc-100 bg-zinc-50/60">
+                          <th className="px-4 py-2.5 font-bold sticky left-0 bg-zinc-50/60">Anúncio</th>
+                          <th className="px-3 py-2.5 font-bold">Status</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Investido</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Resultado</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Custo/res.</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Compras</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Vendas</th>
+                          <th className="px-3 py-2.5 font-bold text-right">ROAS</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Cliques link</th>
+                          <th className="px-3 py-2.5 font-bold text-right">CTR</th>
+                          <th className="px-3 py-2.5 font-bold text-right">CPC</th>
+                          <th className="px-3 py-2.5 font-bold text-right">Alcance</th>
+                          <th className="px-4 py-2.5 font-bold text-right">Freq.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rankAds.map((a) => {
+                          const cpr = a.res.value ? a.spend / a.res.value : 0;
+                          return (
+                            <tr key={a.ad_id} className="border-b border-zinc-50 hover:bg-amber-50/40">
+                              <td className="px-4 py-2 sticky left-0 bg-white">
+                                <div className="flex items-center gap-2.5">
+                                  {a.thumbnail_url ? (
+                                    <img src={a.thumbnail_url} alt="" loading="lazy"
+                                      className="w-9 h-9 rounded-lg object-cover border border-zinc-100 flex-shrink-0" />
+                                  ) : (
+                                    <div className="w-9 h-9 rounded-lg bg-zinc-100 flex items-center justify-center flex-shrink-0">
+                                      <Megaphone size={14} className="text-zinc-300" />
+                                    </div>
+                                  )}
+                                  <div className="min-w-0">
+                                    <p className="font-semibold text-zinc-800 max-w-[220px] truncate">{a.ad}</p>
+                                    <p className="text-[11px] text-zinc-400 max-w-[220px] truncate">
+                                      {a.adset}{!campanhaSel && a.campaign ? ` · ${a.campaign}` : ''}
+                                    </p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2"><StatusBadge status={a.status} /></td>
+                              <td className="px-3 py-2 text-right tabular-nums font-semibold text-zinc-800">{brl(a.spend)}</td>
+                              <td className="px-3 py-2 text-right"><ResultCell r={a.res} /></td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{cpr ? brl(cpr) : '—'}</td>
+                              <td className="px-3 py-2 text-right tabular-nums font-semibold text-emerald-600">{num(n0(a.purchases))}</td>
+                              <td className="px-3 py-2 text-right tabular-nums font-semibold text-emerald-700">{brl(n0(a.purchase_value))}</td>
+                              <td className="px-3 py-2 text-right"><Roas v={n0(a.roas)} spend={a.spend} /></td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{num(a.link_clicks || a.clicks)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-500">{pct(a.ctr)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{brl(a.cpc)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{num(a.reach)}</td>
+                              <td className="px-4 py-2 text-right tabular-nums text-zinc-500">{dec(a.frequency, 2)}x</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Meta × ERPOS: atribuição da Meta contra pedidos reais do delivery com utm da Meta */}
+              {erposOrders && (
+                <ChartCard icon={Store} titulo="Compras atribuídas pela Meta × pedidos reais no ERPOS" className="mb-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="rounded-xl bg-zinc-50 border border-zinc-100 p-3">
+                      <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">A Meta atribuiu</p>
+                      <p className="text-lg font-black text-zinc-900 tabular-nums">{num(totals.purchases)} compras</p>
+                      <p className="text-xs text-zinc-500">{brl(totals.purchaseValue)}</p>
+                    </div>
+                    <div className="rounded-xl bg-zinc-50 border border-zinc-100 p-3">
+                      <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">O ERPOS registrou (link com utm da Meta)</p>
+                      <p className="text-lg font-black text-zinc-900 tabular-nums">{num(erposOrders.count)} pedidos</p>
+                      <p className="text-xs text-zinc-500">
+                        {brl(erposOrders.revenue)}
+                        {Object.keys(erposOrders.by_source).length > 0 && (
+                          ` · ${Object.entries(erposOrders.by_source).map(([s, v]) => `${s}: ${v.count}`).join(', ')}`
+                        )}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-zinc-50 border border-zinc-100 p-3">
+                      <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Investimento por pedido real</p>
+                      <p className="text-lg font-black text-zinc-900 tabular-nums">{erposOrders.count ? brl(totals.spend / erposOrders.count) : '—'}</p>
+                      <p className="text-xs text-zinc-500">
+                        {erposOrders.count && totals.spend ? `ROAS real ${dec(erposOrders.revenue / totals.spend, 2)}x` : 'sem pedidos com utm no período'}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mt-3 leading-relaxed">
+                    A Meta atribui por janela (7 dias após o clique / 1 dia após a visualização) e o pixel é compartilhado
+                    entre as lojas — por isso os números não batem 1:1 com o caixa.
+                    {erposOrders.count === 0 && (
+                      ' Nenhum pedido chegou com utm_source da Meta: coloque ?utm_source=instagram (ou facebook) no link de destino dos anúncios pra o ERPOS reconhecer a origem.'
+                    )}
+                  </p>
+                </ChartCard>
+              )}
             </div>
           )}
         </>
@@ -703,7 +1028,31 @@ const CORES_KPI: Record<string, { bg: string; text: string }> = {
   sky: { bg: 'bg-sky-50', text: 'text-sky-600' },
   violet: { bg: 'bg-violet-50', text: 'text-violet-600' },
   emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600' },
+  teal: { bg: 'bg-teal-50', text: 'text-teal-600' },
+  red: { bg: 'bg-red-50', text: 'text-red-500' },
 };
+
+function StatusBadge({ status }: { status?: string | null }) {
+  if (!status) return <span className="text-zinc-300">—</span>;
+  const s = STATUS_LABELS[status] ?? { label: status.toLowerCase().replace(/_/g, ' '), cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' };
+  return <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${s.cls}`}>{s.label}</span>;
+}
+
+function ResultCell({ r }: { r: ResultVal }) {
+  const compra = r.type === 'purchase';
+  return (
+    <span className="inline-flex flex-col items-end leading-tight">
+      <span className={`font-semibold tabular-nums ${compra ? 'text-emerald-600' : 'text-zinc-800'}`}>{num(r.value)}</span>
+      <span className="text-[10px] text-zinc-400">{actionLabel(r.type)}</span>
+    </span>
+  );
+}
+
+function Roas({ v, spend }: { v: number; spend: number }) {
+  if (!spend) return <span className="text-zinc-300">—</span>;
+  const cls = v >= 2 ? 'text-emerald-600' : v >= 1 ? 'text-amber-600' : 'text-red-500';
+  return <span className={`font-semibold tabular-nums ${cls}`}>{dec(v, 2)}x</span>;
+}
 
 function KpiCard({
   icon: Icon, cor, label, valor, sub,
