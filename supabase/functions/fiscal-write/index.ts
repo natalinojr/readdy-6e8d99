@@ -3,7 +3,7 @@
 // Ações (POST JSON { action, ...}):
 //   save_settings   { tenant_id, settings }          admin/manager — grava fiscal_settings (token só se enviado)
 //   test_connection { tenant_id }                    consulta status da SEFAZ com o token da loja
-//   emit            { tenant_id, source_type, source_id, force?, group_size? }  cria/emite a NFC-e de um pedido,
+//   emit            { tenant_id, source_type, source_id, force?, group_size?, customer_cpf?, customer_name? }  cria/emite a NFC-e de um pedido,
 //                   de um grupo de pagamento (pedidos pagos juntos = 1 nota) ou, manualmente, de uma sessão de mesa
 //   retry           { tenant_id, document_id }       reemite um documento rejeitado/com erro
 //   run_pending     { tenant_id }                    reprocessa pendentes/erros (até 20)
@@ -199,7 +199,7 @@ async function loadSettings(admin: Admin, tenantId: string): Promise<FiscalSetti
   return (data as FiscalSettings | null) ?? null;
 }
 
-async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: string, sourceType: string, sourceId: string): Promise<{ note: BuiltNote | null; skipReason?: string }> {
+async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: string, sourceType: string, sourceId: string, consumer?: { cpf?: string | null; name?: string | null } | null): Promise<{ note: BuiltNote | null; skipReason?: string }> {
   // 1. Pedidos da origem
   let q = admin.from('orders')
     .select('id, number, origin_type, status, table_session_id, table_number, destination_name, customer_cpf, customer_id, discount_amount, service_fee_amount, tip_amount, delivery_fee, subtotal, total_amount, is_training, is_draft, is_cortesia, is_paid, created_at')
@@ -374,14 +374,22 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
   }
   const trocoTotal = round2(pagamentos.reduce((s, p) => s + p.troco, 0));
 
-  // 5. Consumidor (CPF na nota)
+  // 5. Consumidor (CPF na nota) — informado na hora da emissão manual tem prioridade
   let customerCpf: string | null = null;
   let customerName: string | null = null;
+  const informado = onlyDigits(consumer?.cpf);
+  if (informado && ((informado.length === 11 && isValidCpf(informado)) || (informado.length === 14 && isValidCnpj(informado)))) {
+    customerCpf = informado;
+    customerName = (consumer?.name ?? '').trim().slice(0, 60) || null;
+    // Guarda no pedido para o histórico/CRM e para reemissões.
+    await admin.from('orders').update({ customer_cpf: customerCpf }).in('id', orderIds).eq('tenant_id', tenantId);
+  }
   for (const o of orders) {
+    if (customerCpf) break;
     const d = onlyDigits(o.customer_cpf);
     if ((d.length === 11 && isValidCpf(d)) || (d.length === 14 && isValidCnpj(d))) { customerCpf = d; break; }
   }
-  if (customerCpf) {
+  if (customerCpf && !customerName) {
     const withCpf = orders.find((o) => onlyDigits(o.customer_cpf) === customerCpf);
     if (withCpf?.customer_id) {
       const { data: cust } = await admin.from('customers').select('name').eq('id', withCpf.customer_id).maybeSingle();
@@ -459,7 +467,7 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
 // ─── Emissão ─────────────────────────────────────────────────────────────────
 interface EmitResult { success: boolean; status: string; document_id?: string; message?: string; chave?: string; skipped?: boolean }
 
-async function emitForSource(admin: Admin, tenantId: string, sourceType: string, sourceId: string, opts: { force?: boolean; userId?: string | null; trigger?: string }): Promise<EmitResult> {
+async function emitForSource(admin: Admin, tenantId: string, sourceType: string, sourceId: string, opts: { force?: boolean; userId?: string | null; trigger?: string; consumer?: { cpf?: string | null; name?: string | null } | null }): Promise<EmitResult> {
   const settings = await loadSettings(admin, tenantId);
   if (!settings) return { success: false, status: 'skipped', skipped: true, message: 'Módulo fiscal não configurado' };
   if (!settings.enabled && !opts.force) return { success: false, status: 'skipped', skipped: true, message: 'Emissão automática desligada' };
@@ -477,7 +485,7 @@ async function emitForSource(admin: Admin, tenantId: string, sourceType: string,
 
   let built: { note: BuiltNote | null; skipReason?: string };
   try {
-    built = await buildNote(admin, settings, tenantId, sourceType, sourceId);
+    built = await buildNote(admin, settings, tenantId, sourceType, sourceId, opts.consumer ?? null);
   } catch (e) {
     log('ERROR', 'emit', 'buildNote falhou', { tenantId, sourceType, sourceId, error: String(e) });
     return { success: false, status: 'error', message: `Falha ao montar a nota: ${(e as Error).message}` };
@@ -724,7 +732,9 @@ Deno.serve({ verify_jwt: false } as any, async (req: Request) => {
         if (canal === 'mesa' && !settings.emit_on_table_close) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão em mesas/QR desligada' });
         if (canal === 'balcao' && !settings.emit_on_counter) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no balcão desligada' });
       }
-      const r = await emitForSource(admin, tenantId, sourceType, sourceId, { force: Boolean(body.force), userId, trigger: body.trigger });
+      const consumer = body.customer_cpf ? { cpf: String(body.customer_cpf), name: body.customer_name ? String(body.customer_name) : null } : null;
+      if (consumer) { const d = onlyDigits(consumer.cpf); if (!((d.length === 11 && isValidCpf(d)) || (d.length === 14 && isValidCnpj(d)))) return errResp('CPF/CNPJ inválido'); }
+      const r = await emitForSource(admin, tenantId, sourceType, sourceId, { force: Boolean(body.force), userId, trigger: body.trigger, consumer });
       return json({ ...r, source_type: sourceType, source_id: sourceId });
     }
 
@@ -736,7 +746,9 @@ Deno.serve({ verify_jwt: false } as any, async (req: Request) => {
       if (doc.status === 'cancelled') return errResp('Nota cancelada não pode ser reemitida por aqui; emita uma nova pela venda');
       // Reabre como pending para o índice único aceitar a reemissão
       await admin.from('fiscal_documents').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', doc.id);
-      const r = await emitForSource(admin, tenantId, doc.source_type, doc.source_id, { force: true, userId });
+      const consumerR = body.customer_cpf ? { cpf: String(body.customer_cpf), name: body.customer_name ? String(body.customer_name) : null } : null;
+      if (consumerR) { const d = onlyDigits(consumerR.cpf); if (!((d.length === 11 && isValidCpf(d)) || (d.length === 14 && isValidCnpj(d)))) return errResp('CPF/CNPJ inválido'); }
+      const r = await emitForSource(admin, tenantId, doc.source_type, doc.source_id, { force: true, userId, consumer: consumerR });
       return json(r);
     }
 

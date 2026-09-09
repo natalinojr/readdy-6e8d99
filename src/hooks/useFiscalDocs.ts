@@ -77,13 +77,14 @@ export function useFiscalDocs(orderIds: string[]) {
   const mark = (id: string, on: boolean) => setBusy(prev => { const n = new Set(prev); if (on) n.add(id); else n.delete(id); return n; });
 
   /** Emite (ou reemite) a NFC-e de um pedido manualmente. */
-  const emitir = useCallback(async (orderId: string): Promise<FiscalEmitResult> => {
+  const emitir = useCallback(async (orderId: string, consumer?: { cpf?: string; name?: string } | null): Promise<FiscalEmitResult> => {
     mark(orderId, true);
     try {
       const doc = byOrder.get(orderId);
+      const extra = consumer?.cpf ? { customer_cpf: consumer.cpf.replace(/\D/g, ''), customer_name: consumer.name?.trim() || null } : {};
       const r = doc && (doc.status === 'rejected' || doc.status === 'error' || doc.status === 'pending')
-        ? await call({ action: 'retry', document_id: doc.id })
-        : await call({ action: 'emit', source_type: 'order', source_id: orderId, force: true });
+        ? await call({ action: 'retry', document_id: doc.id, ...extra })
+        : await call({ action: 'emit', source_type: 'order', source_id: orderId, force: true, ...extra });
       await carregar();
       return r;
     } finally { mark(orderId, false); }

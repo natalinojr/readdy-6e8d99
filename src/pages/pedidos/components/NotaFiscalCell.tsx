@@ -2,6 +2,9 @@ import type { PedidoRecente } from '@/types/pdv';
 import type { FiscalDocumentRow } from '@/lib/fiscal';
 import { STATUS_LABEL, cancelMinutesLeft } from '@/lib/fiscal';
 import { useEffect, useState } from 'react';
+import EmitirNfModal from './EmitirNfModal';
+import { clienteNome } from './utils';
+import { formatOrderNumber } from '@/lib/statusMappers';
 import type { useFiscalDocs } from '@/hooks/useFiscalDocs';
 
 type Fiscal = ReturnType<typeof useFiscalDocs>;
@@ -19,7 +22,11 @@ const fmtHora = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('
  * Coluna "Nota Fiscal" da lista de pedidos. Um pedido = uma NFC-e. Em pedidos
  * unificados (pagamento em grupo) mostra o agregado e emite o que faltar.
  */
-export default function NotaFiscalCell({ pedido, fiscal, onToast, compact }: Props) {
+export default function NotaFiscalCell(props: Props) {
+  return <NotaFiscalCellInner {...props} />;
+}
+
+function NotaFiscalCellInner({ pedido, fiscal, onToast, compact }: Props) {
   const ids = pedido.pedidoIds && pedido.pedidoIds.length > 0 ? pedido.pedidoIds : [pedido.id];
   const docs = ids.map(id => fiscal.byOrder.get(id) ?? null);
   const cancelado = pedido.status === 'cancelado' || pedido.status === 'cancelled';
@@ -29,13 +36,16 @@ export default function NotaFiscalCell({ pedido, fiscal, onToast, compact }: Pro
   const [agora, setAgora] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setAgora(Date.now()), 30_000); return () => clearInterval(t); }, []);
 
-  const emitirTodos = async (e: React.MouseEvent) => {
-    stop(e);
+  // Emissão manual pergunta antes se o cliente quer CPF/CNPJ na nota.
+  const [modal, setModal] = useState(false);
+  const emitirTodos = (e: React.MouseEvent) => { stop(e); setModal(true); };
+  const executarEmissao = async (consumer: { cpf?: string; name?: string } | null) => {
+    setModal(false);
     let ok = 0; let falha: string | null = null;
     for (let i = 0; i < ids.length; i++) {
       const d = docs[i];
       if (d && (d.status === 'authorized' || d.status === 'processing')) continue;
-      const r = await fiscal.emitir(ids[i]);
+      const r = await fiscal.emitir(ids[i], consumer);
       if (r.success) ok++; else falha = r.message ?? r.status;
       // Pedidos pagos juntos: a fiscal-write emite UMA nota do grupo, que já cobre os demais.
       if (r.source_type === 'payment_group') break;
@@ -43,6 +53,19 @@ export default function NotaFiscalCell({ pedido, fiscal, onToast, compact }: Pro
     if (falha) onToast(false, ok > 0 ? `${ok} nota(s) autorizada(s), 1 falhou` : 'Nota não autorizada', falha);
     else onToast(true, ok === 1 ? 'NFC-e autorizada' : `${ok} NFC-e autorizadas`);
   };
+
+  const titulo = ids.length > 1
+    ? `Emitir NFC-e de ${ids.length} pedidos pagos juntos`
+    : `Emitir NFC-e do pedido ${formatOrderNumber(pedido.numeroStr ?? pedido.numeroCodigo, pedido.numero)}`;
+  const modalEl = modal ? (
+    <EmitirNfModal
+      titulo={titulo}
+      valor={`R$ ${pedido.total.toFixed(2).replace('.', ',')}`}
+      nomeInicial={clienteNome(pedido) || undefined}
+      onConfirm={executarEmissao}
+      onClose={() => setModal(false)}
+    />
+  ) : null;
 
   const abrir = async (e: React.MouseEvent, d: FiscalDocumentRow) => {
     stop(e);
@@ -63,13 +86,14 @@ export default function NotaFiscalCell({ pedido, fiscal, onToast, compact }: Pro
 
     if (!d) {
       if (!pedido.pago) return <span className="text-[10px] text-zinc-400 whitespace-nowrap" title="A nota sai quando o pedido for pago">Aguarda pgto.</span>;
-      return (
+      return (<>
         <button onClick={emitirTodos} disabled={isBusy}
           className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-md bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 cursor-pointer whitespace-nowrap"
           title={fiscal.enabled ? 'Sem nota: emitir agora' : 'Emissão automática desligada: emitir manualmente'}>
           <i className={`${isBusy ? 'ri-loader-4-line animate-spin' : 'ri-file-add-line'} text-[11px]`} />{isBusy ? 'Emitindo' : 'Emitir NF'}
         </button>
-      );
+        {modalEl}
+      </>);
     }
 
     if (d.status === 'authorized' || d.status === 'cancelled') {
@@ -114,6 +138,7 @@ export default function NotaFiscalCell({ pedido, fiscal, onToast, compact }: Pro
         {!compact && d.error_message && (
           <p className="text-[10px] text-red-500 truncate max-w-[160px] mt-0.5" title={d.error_message}>{d.error_message}</p>
         )}
+        {modalEl}
       </div>
     );
   }
@@ -141,6 +166,7 @@ export default function NotaFiscalCell({ pedido, fiscal, onToast, compact }: Pro
         {isBusy ? 'Emitindo' : `Emitir ${faltam} NF`}
       </button>
       {!compact && autorizadas > 0 && <p className="text-[10px] text-zinc-400 mt-0.5">{autorizadas}/{ids.length} emitidas</p>}
+      {modalEl}
     </div>
   );
 }
