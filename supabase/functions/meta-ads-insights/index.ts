@@ -21,6 +21,7 @@ const ALLOWED_DATE_PRESETS = new Set([
   'this_week_mon_today', 'last_week_mon_sun', 'this_month', 'last_month', 'maximum',
 ])
 
+type Row = Record<string, unknown>
 type MetaAction = { action_type?: string; value?: string }
 type Act = { type: string; value: number }
 
@@ -83,8 +84,8 @@ function resultFor(
   return pick(LINK)
 }
 
-// Métricas comuns a campanha / anúncio / dia, a partir de uma linha do insights.
-function metrics(row: Record<string, unknown>) {
+// Métricas comuns a campanha / anúncio / dia / quebra, a partir de uma linha do insights.
+function metrics(row: Row) {
   const acts = simplifyActions(row.actions)
   const vals = simplifyActions(row.action_values)
   const spend = Number(row.spend ?? 0)
@@ -117,10 +118,43 @@ function metrics(row: Record<string, unknown>) {
   }
 }
 
+// Métricas enxutas pra quebras (posicionamento, idade/gênero, hora) e pro período anterior.
+function slim(row: Row) {
+  const m = metrics(row)
+  return {
+    spend: m.spend,
+    impressions: m.impressions,
+    reach: m.reach,
+    clicks: m.clicks,
+    link_clicks: m.link_clicks,
+    purchases: m.purchases,
+    purchase_value: m.purchase_value,
+    roas: m.roas,
+    cost_per_purchase: m.cost_per_purchase,
+    cpc: m.cpc,
+    ctr: m.ctr,
+  }
+}
+
+async function graphRows(url: string, label: string): Promise<{ ok: boolean; rows: Row[]; status: number; body: unknown }> {
+  try {
+    const resp = await fetch(url)
+    const body = await resp.json().catch(() => ({}))
+    if (!resp.ok) {
+      console.warn(`[meta-ads-insights] ${label} error:`, resp.status, JSON.stringify(body).slice(0, 300))
+      return { ok: false, rows: [], status: resp.status, body }
+    }
+    return { ok: true, rows: Array.isArray((body as Row).data) ? (body as Row).data as Row[] : [], status: resp.status, body }
+  } catch (e) {
+    console.warn(`[meta-ads-insights] ${label} exception:`, e)
+    return { ok: false, rows: [], status: 0, body: null }
+  }
+}
+
 // GET /?ids=a,b,c&fields=... em lotes de 50 (status e miniatura dos anúncios / status das campanhas).
 // À prova de falha: se der erro, devolve o que conseguiu — o relatório sai sem status/miniatura.
-async function fetchObjects(ids: string[], fields: string, token: string): Promise<Record<string, Record<string, unknown>>> {
-  const out: Record<string, Record<string, unknown>> = {}
+async function fetchObjects(ids: string[], fields: string, token: string): Promise<Record<string, Row>> {
+  const out: Record<string, Row> = {}
   const uniq = Array.from(new Set(ids.filter(Boolean)))
   for (let i = 0; i < uniq.length; i += 50) {
     const chunk = uniq.slice(i, i + 50)
@@ -128,7 +162,7 @@ async function fetchObjects(ids: string[], fields: string, token: string): Promi
       const resp = await fetch(`${GRAPH}/?ids=${chunk.join(',')}&fields=${fields}&access_token=${token}`)
       const body = await resp.json().catch(() => ({}))
       if (resp.ok && body && typeof body === 'object') {
-        for (const [id, obj] of Object.entries(body as Record<string, Record<string, unknown>>)) out[id] = obj
+        for (const [id, obj] of Object.entries(body as Record<string, Row>)) out[id] = obj
       } else {
         console.warn('[meta-ads-insights] objects lookup failed:', resp.status, JSON.stringify(body).slice(0, 300))
       }
@@ -139,42 +173,80 @@ async function fetchObjects(ids: string[], fields: string, token: string): Promi
   return out
 }
 
-// Pedidos REAIS do delivery do ERPOS no mesmo período, que chegaram por link com utm_source da Meta
-// (instagram/facebook/fb/ig/meta...). Cruza a atribuição da Meta com o que entrou de fato no caixa.
-async function erposOrdersFromMeta(
-  admin: ReturnType<typeof createClient>, tenantId: string, since: string, until: string,
-) {
+function addDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+// Hora local (America/Sao_Paulo) de um timestamp — pro histograma de pedidos por hora.
+const hourFmt = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/Sao_Paulo' })
+function localHour(ts: string): number {
+  const h = Number(hourFmt.format(new Date(ts)))
+  return Number.isFinite(h) ? h % 24 : 0
+}
+
+// Pedidos REAIS do delivery do ERPOS no período: (a) os que chegaram por link com utm_source da Meta
+// (instagram/facebook/fb/ig/meta...) — cruza a atribuição da Meta com o que entrou de fato no caixa;
+// (b) histograma por hora de TODOS os pedidos do delivery — pra cruzar com a hora das compras dos anúncios.
+async function erposOrders(admin: ReturnType<typeof createClient>, tenantId: string, since: string, until: string) {
   const { data, error } = await admin
     .from('orders')
-    .select('total_amount, delivery_source, status')
+    .select('total_amount, delivery_source, status, created_at')
     .eq('tenant_id', tenantId)
     .eq('origin_type', 'delivery')
     .in('delivery_platform', ['propria', 'retirada'])
     .eq('is_training', false)
-    .not('delivery_source', 'is', null)
     .gte('created_at', `${since}T00:00:00-03:00`)
     .lte('created_at', `${until}T23:59:59-03:00`)
-    .limit(5000)
+    .limit(10000)
   if (error) {
     console.warn('[meta-ads-insights] orders lookup error:', error.message)
     return null
   }
   const isMeta = (s: string) => /^(fb|ig|meta|face|insta)/.test(s)
   const bySource: Record<string, { count: number; revenue: number }> = {}
+  const hourly: number[] = Array.from({ length: 24 }, () => 0)
   let count = 0
   let revenue = 0
-  for (const o of (data ?? []) as Array<{ total_amount: unknown; delivery_source: unknown; status: unknown }>) {
-    const src = String(o.delivery_source ?? '').trim().toLowerCase()
-    if (!src || !isMeta(src)) continue
+  let totalCount = 0
+  let totalRevenue = 0
+  for (const o of (data ?? []) as Array<{ total_amount: unknown; delivery_source: unknown; status: unknown; created_at: string }>) {
     if (String(o.status ?? '').toLowerCase().includes('cancel')) continue
     const v = Number(o.total_amount ?? 0)
+    totalCount += 1
+    totalRevenue += v
+    hourly[localHour(o.created_at)] += 1
+    const src = String(o.delivery_source ?? '').trim().toLowerCase()
+    if (!src || !isMeta(src)) continue
     count += 1
     revenue += v
     bySource[src] = bySource[src] ?? { count: 0, revenue: 0 }
     bySource[src].count += 1
     bySource[src].revenue += v
   }
-  return { count, revenue, by_source: bySource, since, until }
+  return { count, revenue, by_source: bySource, since, until, total_count: totalCount, total_revenue: totalRevenue, hourly }
+}
+
+// Sessão válida + usuário membro DESTA loja. A função roda com service role e é publicada sem
+// verify_jwt no gateway, então a checagem tem que ser aqui — senão qualquer um com a anon key
+// leria as métricas de qualquer tenant só trocando o tenant_id do body.
+async function requireMember(req: Request, admin: ReturnType<typeof createClient>, tenantId: string) {
+  const authHeader = req.headers.get('Authorization') || ''
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim()
+  if (!token) return { error: json({ ok: false, error: 'Não autenticado' }, 401) }
+  const { data: userData, error: userErr } = await admin.auth.getUser(token)
+  if (userErr || !userData?.user) return { error: json({ ok: false, error: 'Sessão inválida' }, 401) }
+  const { data: membership, error: memErr } = await admin
+    .from('user_tenants')
+    .select('role')
+    .eq('user_id', userData.user.id)
+    .eq('tenant_id', tenantId)
+    .limit(1)
+    .maybeSingle()
+  if (memErr) return { error: json({ ok: false, error: memErr.message }, 500) }
+  if (!membership) return { error: json({ ok: false, error: 'Sem acesso a esta loja' }, 403) }
+  return { error: null, userId: userData.user.id, role: String(membership.role ?? '') }
 }
 
 Deno.serve(async (req: Request) => {
@@ -189,6 +261,9 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
+
+    const auth = await requireMember(req, admin, String(tenantId))
+    if (auth.error) return auth.error
 
     // Busca o token + conta de anúncios da loja (token nunca sai daqui)
     const { data: conn, error: connErr } = await admin
@@ -221,33 +296,31 @@ Deno.serve(async (req: Request) => {
       'objective', 'optimization_goal', ...common,
     ].join(',')
     const dailyFields = ['spend', 'impressions', 'reach', 'clicks', 'inline_link_clicks', 'actions', 'action_values'].join(',')
+    // Quebras não aceitam reach/frequency em todas as combinações — ficam só com o essencial.
+    const breakdownFields = ['spend', 'impressions', 'clicks', 'inline_link_clicks', 'cpc', 'ctr', 'actions', 'action_values'].join(',')
 
     const base = `${GRAPH}/${conn.ad_account_id}/insights`
     const token = encodeURIComponent(conn.access_token)
+    const period = `date_preset=${datePreset}`
 
-    // Três consultas em paralelo:
-    //  1) por campanha (tabela);  2) por anúncio (detalhe);  3) por dia (série pros gráficos).
-    const campaignUrl =
-      `${base}?level=campaign&fields=${campaignFields}&date_preset=${datePreset}&limit=200&access_token=${token}`
-    const adUrl =
-      `${base}?level=ad&fields=${adFields}&date_preset=${datePreset}&limit=500&access_token=${token}`
-    const dailyUrl =
-      `${base}?fields=${dailyFields}&date_preset=${datePreset}&time_increment=1&limit=500&access_token=${token}`
+    // Seis consultas em paralelo: campanha, anúncio, dia, posicionamento, idade/gênero, hora do dia.
+    const [camp, ad, day, placement, ageGender, hourly] = await Promise.all([
+      graphRows(`${base}?level=campaign&fields=${campaignFields}&${period}&limit=200&access_token=${token}`, 'campaign'),
+      graphRows(`${base}?level=ad&fields=${adFields}&${period}&limit=500&access_token=${token}`, 'ad'),
+      graphRows(`${base}?fields=${dailyFields}&${period}&time_increment=1&limit=500&access_token=${token}`, 'daily'),
+      graphRows(`${base}?fields=${breakdownFields}&breakdowns=publisher_platform,platform_position&${period}&limit=200&access_token=${token}`, 'placement'),
+      graphRows(`${base}?fields=${breakdownFields}&breakdowns=age,gender&${period}&limit=200&access_token=${token}`, 'age_gender'),
+      graphRows(`${base}?fields=${breakdownFields}&breakdowns=hourly_stats_aggregated_by_advertiser_time_zone&${period}&limit=200&access_token=${token}`, 'hourly'),
+    ])
 
-    const [campResp, adResp, dailyResp] = await Promise.all([fetch(campaignUrl), fetch(adUrl), fetch(dailyUrl)])
-    const campBody = await campResp.json().catch(() => ({}))
-    const adBody = await adResp.json().catch(() => ({}))
-    const dailyBody = await dailyResp.json().catch(() => ({}))
-
-    if (!campResp.ok) {
-      console.error('[meta-ads-insights] Meta error:', campResp.status, campBody)
-      return json({ ok: false, status: campResp.status, error: campBody?.error ?? campBody }, 502)
+    if (!camp.ok) {
+      console.error('[meta-ads-insights] Meta error:', camp.status, camp.body)
+      return json({ ok: false, status: camp.status, error: (camp.body as Row | null)?.error ?? camp.body }, 502)
     }
-    if (!adResp.ok) console.warn('[meta-ads-insights] ad-level error:', adResp.status, JSON.stringify(adBody).slice(0, 300))
 
-    const campRows: Record<string, unknown>[] = Array.isArray(campBody.data) ? campBody.data : []
-    const adRows: Record<string, unknown>[] = Array.isArray(adBody.data) ? adBody.data : []
-    const dailyRows: Record<string, unknown>[] = Array.isArray(dailyBody.data) ? dailyBody.data : []
+    const campRows = camp.rows
+    const adRows = ad.rows
+    const dailyRows = day.rows
 
     // Status (ativo/pausado) + miniatura do criativo — lookup em lote, tolerante a falha.
     const [adObjs, campObjs] = await Promise.all([
@@ -303,6 +376,22 @@ Deno.serve(async (req: Request) => {
       })
       .sort((a, b) => a.date.localeCompare(b.date))
 
+    const byPlacement = placement.rows.map((row) => ({
+      platform: String(row.publisher_platform ?? ''),
+      position: String(row.platform_position ?? ''),
+      ...slim(row),
+    }))
+    const byAgeGender = ageGender.rows.map((row) => ({
+      age: String(row.age ?? ''),
+      gender: String(row.gender ?? ''),
+      ...slim(row),
+    }))
+    const byHour = hourly.rows.map((row) => ({
+      // "13:00:00 - 13:59:59" → 13
+      hour: Number(String(row.hourly_stats_aggregated_by_advertiser_time_zone ?? '0').slice(0, 2)) || 0,
+      ...slim(row),
+    })).sort((a, b) => a.hour - b.hour)
+
     // Período efetivo (a Meta devolve date_start/date_stop em toda linha): menor início, maior fim.
     const allRows = [...campRows, ...dailyRows]
     const starts = allRows.map((r) => String(r.date_start ?? '')).filter(Boolean).sort()
@@ -311,7 +400,19 @@ Deno.serve(async (req: Request) => {
     const until = stops[stops.length - 1] ?? ''
     const range = since && until ? { since, until } : null
 
-    const erposOrders = range ? await erposOrdersFromMeta(admin, String(tenantId), since, until) : null
+    // Período anterior de mesmo tamanho (totais da conta) — pros deltas dos KPIs. Não faz sentido em "maximum".
+    let previous: (ReturnType<typeof slim> & { since: string; until: string }) | null = null
+    if (range && datePreset !== 'maximum') {
+      const days = Math.round((Date.parse(`${until}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`)) / 86400000) + 1
+      const prevSince = addDays(since, -days)
+      const prevUntil = addDays(since, -1)
+      const tr = encodeURIComponent(JSON.stringify({ since: prevSince, until: prevUntil }))
+      const prev = await graphRows(`${base}?fields=${dailyFields}&time_range=${tr}&access_token=${token}`, 'previous')
+      const row = prev.rows[0]
+      previous = { ...slim(row ?? {}), since: prevSince, until: prevUntil }
+    }
+
+    const orders = range ? await erposOrders(admin, String(tenantId), since, until) : null
 
     return json({
       ok: true,
@@ -323,7 +424,9 @@ Deno.serve(async (req: Request) => {
       campaigns,
       ads,
       daily,
-      erpos_orders: erposOrders,
+      previous,
+      breakdowns: { placement: byPlacement, age_gender: byAgeGender, hourly: byHour },
+      erpos_orders: orders,
     })
   } catch (err) {
     console.error('[meta-ads-insights] Error:', err)

@@ -76,7 +76,27 @@ interface ErposOrders {
   by_source: Record<string, { count: number; revenue: number }>;
   since: string;
   until: string;
+  total_count?: number;
+  total_revenue?: number;
+  hourly?: number[];
 }
+
+interface SlimRow {
+  spend: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  link_clicks: number;
+  purchases: number;
+  purchase_value: number;
+  roas: number;
+  cost_per_purchase: number;
+  cpc: number;
+  ctr: number;
+}
+interface PlacementRow extends SlimRow { platform: string; position: string }
+interface AgeGenderRow extends SlimRow { age: string; gender: string }
+interface HourRow extends SlimRow { hour: number }
 
 interface Connection {
   ad_account_id: string | null;
@@ -97,6 +117,8 @@ interface InsightsResponse {
   daily?: DailyRow[];
   erpos_orders?: ErposOrders | null;
   range?: { since: string; until: string } | null;
+  previous?: (SlimRow & { since: string; until: string }) | null;
+  breakdowns?: { placement: PlacementRow[]; age_gender: AgeGenderRow[]; hourly: HourRow[] } | null;
   error?: unknown;
 }
 
@@ -173,6 +195,22 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   DISAPPROVED: { label: 'Reprovado', cls: 'bg-red-50 text-red-600 border-red-200' },
   PENDING_BILLING_INFO: { label: 'Cobrança pendente', cls: 'bg-red-50 text-red-600 border-red-200' },
 };
+
+const PLATFORM_LABELS: Record<string, string> = {
+  facebook: 'Facebook', instagram: 'Instagram', audience_network: 'Audience Network',
+  messenger: 'Messenger', threads: 'Threads', unknown: 'Outro',
+};
+const POSITION_LABELS: Record<string, string> = {
+  feed: 'Feed', instagram_stories: 'Stories', facebook_stories: 'Stories', messenger_stories: 'Stories',
+  instagram_reels: 'Reels', facebook_reels: 'Reels', facebook_reels_overlay: 'Reels (overlay)', ads_on_reels: 'Anúncio em Reels',
+  instagram_explore: 'Explorar', instagram_explore_grid_home: 'Explorar', instagram_profile_feed: 'Perfil',
+  instagram_search: 'Busca', search: 'Busca', video_feeds: 'Feed de vídeos', marketplace: 'Marketplace',
+  right_hand_column: 'Coluna direita', instream_video: 'Vídeo in-stream', messenger_inbox: 'Inbox',
+  an_classic: 'Banner', rewarded_video: 'Vídeo premiado', unknown: 'Outro',
+};
+const GENDER_LABELS: Record<string, string> = { male: 'Homens', female: 'Mulheres', unknown: 'Não inf.' };
+const placementLabel = (p: PlacementRow) =>
+  `${PLATFORM_LABELS[p.platform] ?? p.platform} · ${POSITION_LABELS[p.position] ?? p.position.replace(/_/g, ' ')}`;
 
 // ─── Helpers de formatação ────────────────────────────────────────────────────
 const brl = (n: number) => Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -491,6 +529,59 @@ export default function TrafegoPagoPage() {
 
   const temCompras = totals.purchases > 0 || daily.some((d) => n0(d.purchases) > 0);
 
+  // ── Período anterior, quebras, hora do dia, alertas ──
+  const previous = insights?.previous ?? null;
+  const range = insights?.range ?? null;
+  const diasPeriodo = range
+    ? Math.round((Date.parse(`${range.until}T00:00:00Z`) - Date.parse(`${range.since}T00:00:00Z`)) / 86400000) + 1
+    : null;
+
+  const placementRows = useMemo(
+    () => [...(insights?.breakdowns?.placement ?? [])].filter((p) => p.spend > 0).sort((a, b) => b.spend - a.spend).slice(0, 8),
+    [insights],
+  );
+  const ageRows = useMemo(
+    () => [...(insights?.breakdowns?.age_gender ?? [])].filter((p) => p.spend > 0).sort((a, b) => b.spend - a.spend).slice(0, 10),
+    [insights],
+  );
+
+  // 24 linhas (0h–23h): compras/investimento dos anúncios por hora × pedidos do delivery por hora.
+  const hourlyData = useMemo(() => {
+    const ads = insights?.breakdowns?.hourly ?? [];
+    const pedidos = erposOrders?.hourly ?? null;
+    if (ads.length === 0 && !pedidos) return null;
+    return Array.from({ length: 24 }, (_, h) => {
+      const r = ads.find((x) => x.hour === h);
+      return { hour: h, spend: r?.spend ?? 0, purchases: r?.purchases ?? 0, link_clicks: r?.link_clicks ?? 0, pedidos: pedidos?.[h] ?? 0 };
+    });
+  }, [insights, erposOrders]);
+
+  const alertas = useMemo(() => {
+    const out: { nivel: 'alto' | 'medio'; texto: string }[] = [];
+    const dias = diasPeriodo ? ` em ${diasPeriodo} dia${diasPeriodo > 1 ? 's' : ''}` : '';
+    if (totals.spend > 0 && totals.purchases === 0 && campaigns.some((c) => resultOf(c).type === 'purchase')) {
+      out.push({
+        nivel: 'alto',
+        texto: `Campanhas de venda gastaram ${brl(totals.spend)}${dias} sem nenhuma compra atribuída. Confira se o pixel está disparando Purchase (Gerenciador de Eventos → Eventos de teste).`,
+      });
+    }
+    (ads ?? []).filter((a) => a.status === 'ACTIVE' && a.spend > 0).forEach((a) => {
+      const venda = resultOf(a).type === 'purchase';
+      if (venda && n0(a.purchases) === 0 && a.spend >= 20) {
+        out.push({ nivel: 'alto', texto: `"${a.ad}" gastou ${brl(a.spend)}${dias} sem nenhuma compra.` });
+      } else if (venda && n0(a.roas) < 1 && a.spend >= 50) {
+        out.push({ nivel: 'alto', texto: `"${a.ad}": ROAS ${dec(n0(a.roas), 2)}x — vendeu ${brl(n0(a.purchase_value))} com ${brl(a.spend)} investidos.` });
+      }
+      if (a.frequency >= 3.5) {
+        out.push({ nivel: 'medio', texto: `"${a.ad}": frequência ${dec(a.frequency, 1)}x — o mesmo público está vendo repetido; hora de trocar o criativo.` });
+      }
+      if (a.impressions >= 2000 && a.ctr < 0.5) {
+        out.push({ nivel: 'medio', texto: `"${a.ad}": CTR ${pct(a.ctr)} em ${num(a.impressions)} impressões — pouca gente clica; testar outra imagem/texto.` });
+      }
+    });
+    return out.slice(0, 8);
+  }, [ads, totals, campaigns, diasPeriodo]);
+
   const temGrafico = daily.length > 0;
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -629,17 +720,27 @@ export default function TrafegoPagoPage() {
             </div>
           ) : (
             <div className={insightsLoading ? 'opacity-60 pointer-events-none transition-opacity' : 'transition-opacity'}>
+              {previous && (
+                <p className="text-[11px] text-zinc-400 mb-2">
+                  Setas comparam com o período anterior ({shortDate(previous.since)} a {shortDate(previous.until)}).
+                </p>
+              )}
+
               {/* KPIs de venda */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
                 <KpiCard icon={Wallet} cor="amber" label="Investimento" valor={brl(totals.spend)}
-                  sub={`CPM ${brl(totals.cpm)} · CPC ${brl(totals.cpc)}`} />
+                  sub={`CPM ${brl(totals.cpm)} · CPC ${brl(totals.cpc)}`}
+                  extra={<Delta atual={totals.spend} anterior={previous?.spend} neutro fmt={brl} />} />
                 <KpiCard icon={ShoppingCart} cor="emerald" label="Compras (Meta)" valor={num(totals.purchases)}
-                  sub={totals.cpp ? `Custo por compra ${brl(totals.cpp)}` : 'Nenhuma compra atribuída'} />
+                  sub={totals.cpp ? `Custo por compra ${brl(totals.cpp)}` : 'Nenhuma compra atribuída'}
+                  extra={<Delta atual={totals.purchases} anterior={previous?.purchases} fmt={num} />} />
                 <KpiCard icon={Banknote} cor="teal" label="Valor em vendas" valor={brl(totals.purchaseValue)}
-                  sub={totals.ticket ? `Ticket médio ${brl(totals.ticket)}` : '—'} />
+                  sub={totals.ticket ? `Ticket médio ${brl(totals.ticket)}` : '—'}
+                  extra={<Delta atual={totals.purchaseValue} anterior={previous?.purchase_value} fmt={brl} />} />
                 <KpiCard icon={TrendingUp} cor={totals.roas >= 1 ? 'emerald' : 'red'} label="ROAS"
                   valor={totals.spend ? `${dec(totals.roas, 2)}x` : '—'}
-                  sub={totals.spend ? `R$ ${dec(totals.roas, 2)} vendidos por R$ 1 investido` : '—'} />
+                  sub={totals.spend ? `R$ ${dec(totals.roas, 2)} vendidos por R$ 1 investido` : '—'}
+                  extra={<Delta atual={totals.roas} anterior={previous?.roas} fmt={(n) => `${dec(n, 2)}x`} />} />
               </div>
 
               {/* KPIs de alcance / tráfego */}
@@ -649,9 +750,11 @@ export default function TrafegoPagoPage() {
                     ? resultMix.slice(0, 2).map((r) => `${num(r.value)} ${actionLabel(r.type)}`).join(' · ')
                     : (totals.cpr ? `Custo/result. ${brl(totals.cpr)}` : '—')} />
                 <KpiCard icon={Users} cor="sky" label="Alcance" valor={num(totals.reach)}
-                  sub={`Frequência ${dec(totals.freq, 2)}x`} />
+                  sub={`Frequência ${dec(totals.freq, 2)}x`}
+                  extra={<Delta atual={totals.reach} anterior={previous?.reach} fmt={num} />} />
                 <KpiCard icon={MousePointerClick} cor="violet" label="Cliques no link" valor={num(totals.linkClicks || totals.clicks)}
-                  sub={`CTR ${pct(totals.ctr)}`} />
+                  sub={`CTR ${pct(totals.ctr)}`}
+                  extra={<Delta atual={totals.linkClicks || totals.clicks} anterior={previous?.link_clicks} fmt={num} />} />
                 <KpiCard icon={Store} cor="amber" label="Pedidos no ERPOS via anúncio"
                   valor={erposOrders ? num(erposOrders.count) : '—'}
                   sub={erposOrders
@@ -668,6 +771,25 @@ export default function TrafegoPagoPage() {
                 <Pill icon={Percent} label="CTR" valor={pct(totals.ctr)} />
                 <Pill icon={Gauge} label="Frequência" valor={`${dec(totals.freq, 2)}x`} />
               </div>
+
+              {/* Alertas (calculados dos anúncios ativos do período) */}
+              {alertas.length > 0 && (
+                <div className="mb-4 bg-white border border-zinc-200 rounded-2xl p-4">
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <AlertTriangle size={15} className="text-amber-500" />
+                    <p className="text-sm font-bold text-zinc-800">Alertas</p>
+                    <span className="text-xs text-zinc-400">({alertas.length})</span>
+                  </div>
+                  <ul className="flex flex-col gap-1.5">
+                    {alertas.map((a, i) => (
+                      <li key={i} className={`flex items-start gap-2 text-xs rounded-lg px-3 py-2 border ${a.nivel === 'alto' ? 'bg-red-50 border-red-100 text-red-700' : 'bg-amber-50 border-amber-100 text-amber-800'}`}>
+                        <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${a.nivel === 'alto' ? 'bg-red-500' : 'bg-amber-500'}`} />
+                        <span>{a.texto}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Gráfico principal: Investimento x Vendas por dia */}
               <ChartCard icon={TrendingUp}
@@ -790,6 +912,95 @@ export default function TrafegoPagoPage() {
                   ) : <SemDados />}
                 </ChartCard>
               </div>
+
+              {/* Hora do dia: compras dos anúncios × pedidos do delivery */}
+              {hourlyData && (
+                <ChartCard icon={BarChart3} titulo="Hora do dia — compras via anúncio × pedidos do delivery" className="mb-4">
+                  <ResponsiveContainer width="100%" height={220}>
+                    <ComposedChart data={hourlyData} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                      <XAxis dataKey="hour" tickFormatter={(h: number) => `${h}h`} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} interval={1} />
+                      <YAxis yAxisId="l" tickFormatter={compact} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} width={40} />
+                      <YAxis yAxisId="r" orientation="right" tickFormatter={compact} tick={{ fontSize: 11, fill: '#a1a1aa' }} axisLine={false} tickLine={false} width={40} />
+                      <Tooltip content={<GraphTooltip fmt={{ purchases: num, pedidos: num, spend: brl, link_clicks: num }} labelFmt={(h) => `${h}h`} />} />
+                      <Bar yAxisId="l" dataKey="purchases" name="Compras via anúncio" fill={CORES.compras} radius={[3, 3, 0, 0]} maxBarSize={18} />
+                      <Bar yAxisId="l" dataKey="link_clicks" name="Cliques no link" fill={CORES.clicks} radius={[3, 3, 0, 0]} maxBarSize={18} opacity={0.35} />
+                      <Line yAxisId="r" type="monotone" dataKey="pedidos" name="Pedidos no delivery (todos)" stroke={CORES.spend} strokeWidth={2.5} dot={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                  <p className="text-[11px] text-zinc-400 mt-2">
+                    Se o pico de pedidos do delivery é às 20h e as compras dos anúncios concentram às 15h, vale programar a veiculação pro horário em que a loja vende.
+                  </p>
+                </ChartCard>
+              )}
+
+              {(placementRows.length > 0 || ageRows.length > 0) && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                  {/* Por posicionamento */}
+                  <ChartCard icon={Layers} titulo="Por posicionamento">
+                    {placementRows.length > 0 ? (
+                      <div className="overflow-x-auto -mx-1">
+                        <table className="w-full text-xs whitespace-nowrap">
+                          <thead>
+                            <tr className="text-left text-[10px] uppercase tracking-wider text-zinc-400 border-b border-zinc-100">
+                              <th className="px-2 py-1.5 font-bold">Onde</th>
+                              <th className="px-2 py-1.5 font-bold text-right">Investido</th>
+                              <th className="px-2 py-1.5 font-bold text-right">Compras</th>
+                              <th className="px-2 py-1.5 font-bold text-right">ROAS</th>
+                              <th className="px-2 py-1.5 font-bold text-right">Custo/compra</th>
+                              <th className="px-2 py-1.5 font-bold text-right">CPC</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {placementRows.map((p) => (
+                              <tr key={`${p.platform}-${p.position}`} className="border-b border-zinc-50">
+                                <td className="px-2 py-1.5 font-semibold text-zinc-700">{placementLabel(p)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-800">{brl(p.spend)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-emerald-600">{num(p.purchases)}</td>
+                                <td className="px-2 py-1.5 text-right"><Roas v={p.roas} spend={p.spend} /></td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-600">{p.cost_per_purchase ? brl(p.cost_per_purchase) : '—'}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">{brl(p.cpc)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : <SemDados />}
+                  </ChartCard>
+
+                  {/* Por idade e gênero */}
+                  <ChartCard icon={Users} titulo="Por idade e gênero">
+                    {ageRows.length > 0 ? (
+                      <div className="overflow-x-auto -mx-1">
+                        <table className="w-full text-xs whitespace-nowrap">
+                          <thead>
+                            <tr className="text-left text-[10px] uppercase tracking-wider text-zinc-400 border-b border-zinc-100">
+                              <th className="px-2 py-1.5 font-bold">Faixa</th>
+                              <th className="px-2 py-1.5 font-bold">Gênero</th>
+                              <th className="px-2 py-1.5 font-bold text-right">Investido</th>
+                              <th className="px-2 py-1.5 font-bold text-right">Compras</th>
+                              <th className="px-2 py-1.5 font-bold text-right">ROAS</th>
+                              <th className="px-2 py-1.5 font-bold text-right">CPC</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ageRows.map((p) => (
+                              <tr key={`${p.age}-${p.gender}`} className="border-b border-zinc-50">
+                                <td className="px-2 py-1.5 font-semibold text-zinc-700">{p.age}</td>
+                                <td className="px-2 py-1.5 text-zinc-600">{GENDER_LABELS[p.gender] ?? p.gender}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-800">{brl(p.spend)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-emerald-600">{num(p.purchases)}</td>
+                                <td className="px-2 py-1.5 text-right"><Roas v={p.roas} spend={p.spend} /></td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">{brl(p.cpc)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : <SemDados />}
+                  </ChartCard>
+                </div>
+              )}
 
               {/* Tabela de campanhas */}
               <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden mb-4">
@@ -1054,14 +1265,36 @@ function Roas({ v, spend }: { v: number; spend: number }) {
   return <span className={`font-semibold tabular-nums ${cls}`}>{dec(v, 2)}x</span>;
 }
 
+// Variação vs período anterior. `invertido` = cair é bom (custo); `neutro` = sem juízo (investimento).
+function Delta({
+  atual, anterior, invertido = false, neutro = false, fmt,
+}: {
+  atual: number;
+  anterior?: number | null;
+  invertido?: boolean;
+  neutro?: boolean;
+  fmt?: (n: number) => string;
+}) {
+  if (anterior == null || (!anterior && !atual)) return null;
+  const diff = anterior ? ((atual - anterior) / anterior) * 100 : 100;
+  const bom = invertido ? diff <= 0 : diff >= 0;
+  const cls = neutro || Math.abs(diff) < 0.5 ? 'text-zinc-400' : bom ? 'text-emerald-600' : 'text-red-500';
+  return (
+    <span className={`text-[11px] font-bold tabular-nums ${cls}`} title={fmt ? `Período anterior: ${fmt(anterior)}` : undefined}>
+      {diff >= 0 ? '▲' : '▼'} {dec(Math.abs(diff), 0)}%
+    </span>
+  );
+}
+
 function KpiCard({
-  icon: Icon, cor, label, valor, sub,
+  icon: Icon, cor, label, valor, sub, extra,
 }: {
   icon: React.ComponentType<{ size?: number; className?: string }>;
   cor: keyof typeof CORES_KPI | string;
   label: string;
   valor: string;
   sub?: string;
+  extra?: React.ReactNode;
 }) {
   const c = CORES_KPI[cor] ?? CORES_KPI.amber;
   return (
@@ -1070,6 +1303,7 @@ function KpiCard({
         <div className={`w-9 h-9 flex items-center justify-center rounded-xl ${c.bg}`}>
           <Icon size={17} className={c.text} />
         </div>
+        {extra}
       </div>
       <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">{label}</p>
       <p className="text-xl font-black text-zinc-900 tabular-nums mt-0.5">{valor}</p>
@@ -1126,17 +1360,20 @@ function SemDados() {
 
 interface TooltipPayload { name: string; dataKey: string; value: number; color: string }
 function GraphTooltip({
-  active, payload, label, fmt,
+  active, payload, label, fmt, labelFmt,
 }: {
   active?: boolean;
   payload?: TooltipPayload[];
-  label?: string;
+  label?: string | number;
   fmt?: Record<string, (n: number) => string>;
+  labelFmt?: (l: string | number) => string;
 }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-white border border-zinc-200 rounded-lg shadow-lg px-3 py-2 text-xs">
-      {label && <p className="font-bold text-zinc-700 mb-1">{shortDate(label)}</p>}
+      {label != null && label !== '' && (
+        <p className="font-bold text-zinc-700 mb-1">{labelFmt ? labelFmt(label) : shortDate(String(label))}</p>
+      )}
       {payload.map((p, i) => (
         <p key={i} className="flex items-center gap-1.5 text-zinc-600">
           <span className="w-2 h-2 rounded-full" style={{ background: p.color }} />
