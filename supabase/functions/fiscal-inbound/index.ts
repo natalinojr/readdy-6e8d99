@@ -218,8 +218,15 @@ async function syncTenant(admin: Admin, tenantId: string, days: number) {
     log('WARN', 'sync', 'ObterNotasFiscais falhou', { tenantId, msg });
     return { tenant_id: tenantId, error: msg };
   }
+  // Resumo por modelo (55 NF-e, 10 NFS-e, 57 CT-e...) antes de filtrar — diagnóstico.
+  const todos = res.data.Notas as any[];
+  const modelos: Record<string, number> = {};
+  for (const n of todos) { const k = String(n.ModeloDocumento ?? '?'); modelos[k] = (modelos[k] ?? 0) + 1; }
+  const outrosModelos = todos.filter((n) => Number(n.ModeloDocumento) !== 55).slice(0, 10).map((n) => ({
+    modelo: n.ModeloDocumento, emissor: n.NomeEmissor, cnpj: n.CnpjEmissor, valor: n.Valor, emissao: n.DtEmissao, numero: n.Numero,
+  }));
   // Só NF-e (55). CT-e/NFS-e também chegam por aqui, mas não são compra de mercadoria.
-  const notas = (res.data.Notas as any[]).filter((n) => Number(n.ModeloDocumento) === 55 && onlyDigits(n.Chave).length === 44);
+  const notas = todos.filter((n) => Number(n.ModeloDocumento) === 55 && onlyDigits(n.Chave).length === 44);
   let novas = 0;
   for (const n of notas) {
     const chave = onlyDigits(n.Chave);
@@ -249,8 +256,8 @@ async function syncTenant(admin: Admin, tenantId: string, days: number) {
   for (const d of semXml ?? []) xmlStats[await fetchXmlFor(admin, token, d)]++;
 
   await admin.from('fiscal_settings').update({ inbound_last_sync_at: now, inbound_last_error: null }).eq('tenant_id', tenantId);
-  log('INFO', 'sync', 'ok', { tenantId, encontradas: notas.length, novas, ...xmlStats });
-  return { tenant_id: tenantId, encontradas: notas.length, novas, xml: xmlStats };
+  log('INFO', 'sync', 'ok', { tenantId, encontradas: notas.length, novas, modelos, ...xmlStats });
+  return { tenant_id: tenantId, encontradas: notas.length, novas, xml: xmlStats, modelos, outros_modelos: outrosModelos };
 }
 
 // ── Importação ───────────────────────────────────────────────────────────────
