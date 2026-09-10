@@ -10,6 +10,8 @@ import TransacaoDetalheModal from './conciliacao/TransacaoDetalheModal';
 import ReconciliacaoSaldoModal from './conciliacao/ReconciliacaoSaldoModal';
 import StoneConfigModal from './conciliacao/StoneConfigModal';
 import StoneImportPanel from './conciliacao/StoneImportPanel';
+import InterConfigModal from './conciliacao/InterConfigModal';
+import InterSyncPanel from './conciliacao/InterSyncPanel';
 import type { OFXTransaction, MatchCandidate } from '@/utils/ofxParser';
 import type { StatementImport, ReconciliationRule } from '@/hooks/useConciliacao';
 
@@ -372,7 +374,7 @@ function ImportPreviewModal({ rows, onClose, onConfirm, saving }: ImportPreviewP
 
 export default function ConciliacaoTab() {
   const { user } = useAuth();
-  const { accounts: bankAccounts } = useBankAccounts();
+  const { accounts: bankAccounts, refresh: refetchAccounts } = useBankAccounts();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
@@ -386,7 +388,9 @@ export default function ConciliacaoTab() {
   const [selectedTransaction, setSelectedTransaction] = useState<StatementImport | null>(null);
   const [showSaldoModal, setShowSaldoModal] = useState(false);
   const [showStoneConfig, setShowStoneConfig] = useState(false);
-  const [activeImportTab, setActiveImportTab] = useState<'manual' | 'stone'>('manual');
+  const [showInterConfig, setShowInterConfig] = useState(false);
+  const [interRefreshKey, setInterRefreshKey] = useState(0);
+  const [activeImportTab, setActiveImportTab] = useState<'manual' | 'stone' | 'inter'>('manual');
 
   // Filters
   const [search, setSearch] = useState('');
@@ -676,6 +680,17 @@ export default function ConciliacaoTab() {
             <i className="ri-bank-card-line" /> Stone
           </button>
           <button
+            onClick={() => setActiveImportTab(activeImportTab === 'inter' ? 'manual' : 'inter')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap transition-colors ${
+              activeImportTab === 'inter'
+                ? 'bg-orange-600 text-white hover:bg-orange-700'
+                : 'border border-orange-300 text-orange-700 bg-orange-50 hover:bg-orange-100'
+            }`}
+            title="Extrato e saldo automáticos pela API do Banco Inter"
+          >
+            <i className="ri-bank-line" /> Banco Inter
+          </button>
+          <button
             onClick={() => setShowRules(true)}
             className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-sm font-semibold hover:bg-zinc-50 cursor-pointer whitespace-nowrap transition-colors"
           >
@@ -729,13 +744,30 @@ export default function ConciliacaoTab() {
             <p className="text-sm font-semibold text-zinc-800">{selectedAccount.name}</p>
             <p className="text-xs text-zinc-400">{selectedAccount.bank_name || 'Conta bancária'}</p>
           </div>
+          {selectedAccount.synced_balance != null && (
+            <div className="text-right">
+              <p className="text-xs text-zinc-400">Saldo no banco (API)</p>
+              <p className={`text-sm font-bold ${Number(selectedAccount.synced_balance) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                {formatCurrency(Number(selectedAccount.synced_balance))}
+              </p>
+            </div>
+          )}
           <div className="text-right">
-            <p className="text-xs text-zinc-400">Saldo atual</p>
+            <p className="text-xs text-zinc-400">{selectedAccount.synced_balance != null ? 'Saldo no ERP' : 'Saldo atual'}</p>
             <p className={`text-sm font-bold ${Number(selectedAccount.current_balance) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
               {formatCurrency(Number(selectedAccount.current_balance))}
             </p>
           </div>
         </div>
+      )}
+
+      {/* Banco Inter (API) */}
+      {activeImportTab === 'inter' && (
+        <InterSyncPanel
+          refreshKey={interRefreshKey}
+          onSyncDone={() => { refresh(); refetchAccounts(); }}
+          onConfigureClick={() => setShowInterConfig(true)}
+        />
       )}
 
       {/* Stone Import Panel */}
@@ -1125,6 +1157,14 @@ export default function ConciliacaoTab() {
         <ReconciliacaoSaldoModal
           account={selectedAccount}
           onClose={() => setShowSaldoModal(false)}
+        />
+      )}
+
+      {/* Banco Inter Config Modal */}
+      {showInterConfig && (
+        <InterConfigModal
+          onClose={() => setShowInterConfig(false)}
+          onSaved={() => { setInterRefreshKey((k) => k + 1); refresh(); refetchAccounts(); }}
         />
       )}
 

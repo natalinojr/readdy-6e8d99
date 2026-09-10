@@ -26,6 +26,8 @@ const log = (level: string, scope: string, msg: string, extra?: unknown) =>
 const MP_API = "https://api.mercadopago.com";
 const PIX_EXPIRATION_MIN = 15;
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+// fin_pix_payments.method → payment_methods.type da loja (decide tPag da NFC-e, taxa e prazo).
+const METHOD_LABEL: Record<string, string> = { pix: "PIX", credit_card: "Cartão de Crédito", debit_card: "Cartão de Débito" };
 function isValidCpfCnpj(d: string): boolean {
   if (d.length === 11) {
     if (/^(\d)\1{10}$/.test(d)) return false;
@@ -225,6 +227,48 @@ const pixPublic = (px: Record<string, unknown>) => ({
   allocation: px.allocation, error: px.error ?? null,
 });
 
+// ── Financeiro da venda (espelho do order-write › record_payment) ───────────
+// D+0 (Pix, débito): entrada no fluxo de caixa + crédito na conta roteada + taxa da forma
+// de pagamento. A prazo (crédito D+30): só o recebível — a entrada e a taxa entram quando
+// ele é baixado (financial-write › receive_installment, BUG-43). Mantenha em sincronia com
+// o order-write: o DRE trata venda do caixa e venda online do mesmo jeito.
+type SalePm = { id: string; name: string; days_to_receive: number | null; fee_percentage: number | null };
+async function postSaleFinance(admin: Admin, s: {
+  tenantId: string; pm: SalePm; paymentId: string; orderId: string; orderNumber: string | null;
+  amount: number; todayBR: string; channel: string;
+}) {
+  const ref = s.orderNumber ?? s.orderId.slice(0, 8);
+  const desc = `Venda ${ref} (${s.pm.name} ${s.channel})`;
+  const days = Number(s.pm.days_to_receive ?? 0);
+  if (days > 0) {
+    // Sem checagem de duplicado: o settle só roda uma vez por cobrança (claim pending → confirmed).
+    const due = new Date(`${s.todayBR}T12:00:00Z`);
+    due.setUTCDate(due.getUTCDate() + days);
+    const { error } = await admin.from("fin_receivable_installments").insert({
+      tenant_id: s.tenantId, order_id: s.orderId, installment_number: 1, total_installments: 1, amount: s.amount,
+      due_date: due.toISOString().slice(0, 10), status: "pending", payment_method_name: s.pm.name, order_number: s.orderNumber,
+    });
+    if (error) throw new Error(`recebível: ${error.message}`);
+    return;
+  }
+  const { data: exists } = await admin.from("fin_cash_flow").select("id").eq("tenant_id", s.tenantId).eq("reference_id", s.paymentId).eq("origin", "auto_sale").maybeSingle();
+  if (!exists) {
+    await admin.from("fin_cash_flow").insert({ tenant_id: s.tenantId, type: "income", amount: s.amount, description: desc, category: "Vendas", origin: "auto_sale", reference_id: s.paymentId, date: s.todayBR, payment_method_id: s.pm.id });
+  }
+  const { data: routing } = await admin.from("fin_income_routing").select("bank_account_id").eq("tenant_id", s.tenantId).eq("source_type", "payment_method").eq("source_id", s.pm.id).eq("is_active", true).maybeSingle();
+  if (routing?.bank_account_id) {
+    await admin.rpc("fn_bank_credit", { p_bank_account_id: routing.bank_account_id, p_amount: s.amount, p_description: desc, p_reference_type: "sale", p_reference_id: s.orderId, p_transaction_date: s.todayBR });
+  }
+  const feePercent = Number(s.pm.fee_percentage ?? 0);
+  const fee = round2(s.amount * feePercent / 100);
+  if (fee > 0) {
+    const { data: feeExists } = await admin.from("fin_cash_flow").select("id").eq("tenant_id", s.tenantId).eq("reference_id", s.paymentId).eq("origin", "auto_card_fee").maybeSingle();
+    if (!feeExists) {
+      await admin.from("fin_cash_flow").insert({ tenant_id: s.tenantId, type: "expense", amount: fee, description: `Taxa maquininha — ${s.pm.name} (${feePercent}%) — Venda ${ref}`, category: "Taxas de Cartao", origin: "auto_card_fee", reference_id: s.paymentId, date: s.todayBR });
+    }
+  }
+}
+
 // ── Liquidação: o que o caixa faria ao receber o dinheiro ────────────────────
 // Idempotente: reivindica a linha com update condicional (pending → confirmed);
 // quem perder a corrida (webhook × polling) sai sem fazer nada.
@@ -239,13 +283,16 @@ async function settlePix(admin: Admin, pixId: string, providerPayload: unknown, 
   const allocation = ((claimed.allocation as { order_id: string; amount: number }[]) ?? []).filter((a) => Number(a.amount) > 0);
   const errors: string[] = [];
 
+  // Forma de pagamento da loja pelo TIPO do que o provedor recebeu (Pix, ou crédito/débito
+  // na maquininha). Sem a coluna `method` (linhas antigas), é Pix.
+  const method = String(claimed.method ?? "pix");
   const { data: pms } = await admin.from("payment_methods").select("id, name, days_to_receive, fee_percentage")
-    .eq("tenant_id", tenantId).eq("type", "pix").eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true });
-  const pm = (pms ?? []).find((m: { name: string }) => /^pix$/i.test(String(m.name).trim())) ?? (pms ?? [])[0];
+    .eq("tenant_id", tenantId).eq("type", method).eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true });
+  const pm = ((method === "pix" ? (pms ?? []).find((m: { name: string }) => /^pix$/i.test(String(m.name).trim())) : null) ?? (pms ?? [])[0]) as SalePm | undefined;
   if (!pm) {
-    await admin.from("fin_pix_payments").update({ error: "Loja sem forma de pagamento do tipo PIX ativa — pagamento recebido mas não lançado", settled_at: now }).eq("id", pixId);
-    log("ERROR", "settle", "sem payment_method pix", { pixId, tenantId });
-    return { already: false, errors: ["no_pix_method"] };
+    await admin.from("fin_pix_payments").update({ error: `Loja sem forma de pagamento ativa do tipo ${METHOD_LABEL[method] ?? method} — pagamento recebido mas não lançado`, settled_at: now }).eq("id", pixId);
+    log("ERROR", "settle", "sem payment_method do tipo", { pixId, tenantId, method });
+    return { already: false, errors: [`no_${method}_method`] };
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -262,7 +309,7 @@ async function settlePix(admin: Admin, pixId: string, providerPayload: unknown, 
     const amount = round2(Number(a.amount));
     const { data: paymentId, error: payErr } = await admin.rpc("fn_record_payment_bypass", {
       p_order_id: a.order_id, p_tenant_id: tenantId, p_cash_register_id: null, p_payment_method_id: pm.id,
-      p_amount: amount, p_change_amount: 0, p_operator_name: "Cliente • Pix online", p_origin_type: "qr_online", p_payment_group_id: groupId,
+      p_amount: amount, p_change_amount: 0, p_operator_name: method === "pix" ? "Cliente • Pix online" : "Cliente • Cartão na maquininha", p_origin_type: "qr_online", p_payment_group_id: groupId,
     });
     if (payErr || !paymentId) {
       errors.push(`pedido ${a.order_id.slice(0, 8)}: ${payErr?.message ?? "caixa não encontrado (fn_record_payment_bypass devolveu null)"}`);
@@ -302,20 +349,13 @@ async function settlePix(admin: Admin, pixId: string, providerPayload: unknown, 
       }
     }
 
-    // Fluxo de caixa + roteamento bancário (espelho do order-write; Pix é D+0)
+    // Fluxo de caixa / recebível + taxa (mesma regra do caixa — ver postSaleFinance)
     try {
-      const desc = `Venda ${o?.number ?? a.order_id.slice(0, 8)} (${pm.name} online)`;
-      if (Number(pm.days_to_receive ?? 0) === 0) {
-        const { data: exists } = await admin.from("fin_cash_flow").select("id").eq("tenant_id", tenantId).eq("reference_id", String(paymentId)).eq("origin", "auto_sale").maybeSingle();
-        if (!exists) {
-          await admin.from("fin_cash_flow").insert({ tenant_id: tenantId, type: "income", amount, description: desc, category: "Vendas", origin: "auto_sale", reference_id: String(paymentId), date: todayBR, payment_method_id: pm.id });
-        }
-        const { data: routing } = await admin.from("fin_income_routing").select("bank_account_id").eq("tenant_id", tenantId).eq("source_type", "payment_method").eq("source_id", pm.id).eq("is_active", true).maybeSingle();
-        if (routing?.bank_account_id) {
-          await admin.rpc("fn_bank_credit", { p_bank_account_id: routing.bank_account_id, p_amount: amount, p_description: desc, p_reference_type: "sale", p_reference_id: a.order_id, p_transaction_date: todayBR });
-        }
-      }
-    } catch (e) { log("WARN", "settle", "fin_cash_flow/routing falhou (non-blocking)", { error: String(e) }); }
+      await postSaleFinance(admin, {
+        tenantId, pm, paymentId: String(paymentId), orderId: a.order_id, orderNumber: (o?.number as string) ?? null,
+        amount, todayBR, channel: method === "pix" ? "online" : "maquininha",
+      });
+    } catch (e) { log("WARN", "settle", "financeiro da venda falhou (non-blocking)", { error: String(e) }); }
   }
 
   await admin.from("fin_pix_payments").update({

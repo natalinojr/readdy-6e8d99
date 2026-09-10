@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import CalendarioFluxoCaixa from './CalendarioFluxoCaixa';
 import PrevisaoCaixaTab from './PrevisaoCaixaTab';
+import RealizadoProjetadoTab from './RealizadoProjetadoTab';
 import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 
 const PERIODS = [
@@ -61,6 +62,12 @@ const VIEWS = [
     icon: 'ri-list-check',
     hint: 'Só o que JÁ entrou e saiu do caixa. Histórico, sem projeção.',
   },
+  {
+    id: 'realizado' as const,
+    label: 'Realizado × Projetado',
+    icon: 'ri-scales-3-line',
+    hint: 'O que estava previsto, o que o ERP registrou e o que de fato passou no banco (extrato). Mostra onde o caixa fugiu do plano.',
+  },
 ];
 
 // Vocabulário completo de `fin_cash_flow.origin` (ver FINANCEIRO_MAP §1).
@@ -100,7 +107,7 @@ export default function FluxoCaixaTab() {
   // A aba abre na PROJEÇÃO. "Fluxo de caixa", no dia a dia da loja, é a
   // pergunta "quando vai faltar dinheiro?" — não o extrato do que já passou.
   // O extrato continua aqui, um clique ao lado.
-  const [viewMode, setViewMode] = useState<'projecao' | 'calendario' | 'extrato'>('projecao');
+  const [viewMode, setViewMode] = useState<'projecao' | 'calendario' | 'extrato' | 'realizado'>('projecao');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -213,6 +220,8 @@ export default function FluxoCaixaTab() {
       </div>
 
       {viewMode === 'projecao' && <PrevisaoCaixaTab />}
+
+      {viewMode === 'realizado' && <RealizadoProjetadoTab />}
 
       {viewMode === 'calendario' && (
         <div className="p-4 md:p-6">

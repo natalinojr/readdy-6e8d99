@@ -19,6 +19,10 @@ export interface BankAccount {
   pix_key?: string;
   initial_balance: number;
   current_balance: number;
+  // Saldo REAL vindo da API do banco (Inter) — separado do current_balance (razão do ERP)
+  synced_balance?: number | null;
+  synced_balance_at?: string | null;
+  synced_provider?: string | null;
   color: string;
   icon: string;
   is_active: boolean;

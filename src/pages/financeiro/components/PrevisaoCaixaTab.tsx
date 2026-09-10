@@ -299,6 +299,8 @@ export default function PrevisaoCaixaTab() {
   const [projection, setProjection] = useState<DayPoint[]>([]);
   const [saldoAtual, setSaldoAtual] = useState(0);
   const [saldoSource, setSaldoSource] = useState<'banco' | 'razao'>('razao');
+  // Quando alguma conta tem saldo sincronizado pela API do banco (Inter)
+  const [saldoSyncedAt, setSaldoSyncedAt] = useState<string | null>(null);
   const [totalRecebiveis, setTotalRecebiveis] = useState(0);
   const [totalSaidas, setTotalSaidas] = useState(0);
   const [totalEntradas, setTotalEntradas] = useState(0);
@@ -406,7 +408,7 @@ export default function PrevisaoCaixaTab() {
 
       supabase
         .from('fin_bank_accounts')
-        .select('current_balance')
+        .select('current_balance, synced_balance, synced_balance_at, synced_provider')
         .eq('tenant_id', user.tenantId)
         .eq('is_active', true),
     ]);
@@ -415,14 +417,19 @@ export default function PrevisaoCaixaTab() {
     // Preferimos o saldo bancário real (fin_bank_accounts) quando os bancos estão em uso;
     // se ainda não há saldo em banco (contas não configuradas / sem income routing),
     // caímos no proxy do livro-razão (fin_cash_flow acumulado até ontem).
-    const bankBalance = (bankAccountsRes.data ?? []).reduce((s, b) => s + Number(b.current_balance ?? 0), 0);
+    // Conta integrada ao banco (Inter) traz o saldo REAL sincronizado pela API;
+    // nas demais vale o razão interno (current_balance).
+    const accs = bankAccountsRes.data ?? [];
+    const bankBalance = accs.reduce((s, b) => s + Number(b.synced_balance ?? b.current_balance ?? 0), 0);
+    const synced = accs.filter((b) => b.synced_balance != null);
     const ledgerBalance = (pastFlowsRes.rows ?? []).reduce((acc, f) => {
       return acc + (f.type === 'income' ? Number(f.amount) : -Number(f.amount));
     }, 0);
-    const usaBanco = Math.abs(bankBalance) > 0.001;
+    const usaBanco = synced.length > 0 || Math.abs(bankBalance) > 0.001;
     const currentBalance = usaBanco ? bankBalance : ledgerBalance;
     setSaldoAtual(currentBalance);
     setSaldoSource(usaBanco ? 'banco' : 'razao');
+    setSaldoSyncedAt(synced.length > 0 ? synced.map((b) => String(b.synced_balance_at ?? '')).sort().pop() ?? null : null);
 
     // Mapa dia a dia com 5 categorias separadas
     const dayMap: Record<string, {
@@ -765,7 +772,9 @@ export default function PrevisaoCaixaTab() {
             icon: 'ri-bank-line',
             color: saldoAtual >= 0 ? 'text-green-700' : 'text-red-700',
             bg: saldoAtual >= 0 ? 'bg-green-50' : 'bg-red-50',
-            sub: saldoSource === 'banco' ? 'Saldo real das contas bancárias' : 'Estimado pelo caixa (configure os bancos p/ saldo real)',
+            sub: saldoSyncedAt
+              ? `Saldo real do banco (API) · ${new Date(saldoSyncedAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+              : saldoSource === 'banco' ? 'Saldo real das contas bancárias' : 'Estimado pelo caixa (configure os bancos p/ saldo real)',
           },
           {
             label: 'Recebíveis D+N',

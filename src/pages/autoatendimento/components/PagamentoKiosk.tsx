@@ -532,8 +532,9 @@ export default function PagamentoKiosk({
   // BUG-11: estado de erro de pagamento (ex: caixa fechado)
   const [pagamentoError, setPagamentoError] = useState<string | null>(null);
 
-  const simulandoRef = useRef(false);
   const pagarEntregaRef = useRef(false);
+  // Forma escolhida para pagar no balcão (cartão/dinheiro): só informativa na confirmação.
+  const [balcaoFormaNome, setBalcaoFormaNome] = useState<string | null>(null);
 
   const total = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
   const tenantId = kioskSession?.tenantId ?? user?.tenantId ?? '';
@@ -547,16 +548,7 @@ export default function PagamentoKiosk({
       .eq('tenant_id', tenantId)
       .eq('is_active', true)
       .then(({ data }) => {
-        if (data && data.length > 0) {
-          setPaymentMethods(data as PaymentMethod[]);
-        } else {
-          setPaymentMethods([
-            { id: 'pix', name: 'PIX', type: 'pix' },
-            { id: 'credito', name: 'Cartão de Crédito', type: 'credit_card' },
-            { id: 'debito', name: 'Cartão de Débito', type: 'debit_card' },
-            { id: 'dinheiro', name: 'Dinheiro', type: 'cash' },
-          ]);
-        }
+        setPaymentMethods((data as PaymentMethod[] | null) ?? []);
       });
   }, [tenantId]);
 
@@ -572,26 +564,6 @@ export default function PagamentoKiosk({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSimularPagamento = async (method: PaymentMethod) => {
-    if (simulandoRef.current) return;
-    simulandoRef.current = true;
-    setAguardando(true);
-    setPagamentoError(null);
-    try {
-      await onEntrarPagamento();
-      await new Promise((r) => setTimeout(r, 1200));
-      await onConcluir(method.id);
-      setConfirmado(true);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Erro ao processar pagamento. Tente novamente.';
-      setPagamentoError(msg);
-      console.error('[PagamentoKiosk] Erro no pagamento:', msg);
-    } finally {
-      simulandoRef.current = false;
-      setAguardando(false);
-    }
-  };
-
   const handlePagarNaEntregaEscolhido = async () => {
     if (pagarEntregaRef.current) return;
     pagarEntregaRef.current = true;
@@ -604,6 +576,13 @@ export default function PagamentoKiosk({
       pagarEntregaRef.current = false;
       setProcessandoPedido(false);
     }
+  };
+
+  // Cartão/dinheiro: o tablet não tem como confirmar o recebimento (sem maquininha
+  // integrada), então o pedido vai em aberto e o operador dá baixa no balcão.
+  const handlePagarNoBalcao = async (method: PaymentMethod) => {
+    setBalcaoFormaNome(method.name);
+    await handlePagarNaEntregaEscolhido();
   };
 
   // Quando PIX é confirmado: cria pedido e finaliza
@@ -663,7 +642,7 @@ export default function PagamentoKiosk({
         orderNumber={orderNumber}
         pagarNaEntrega={pagarNaEntrega}
         modoEscolhido={modoEscolhido}
-        formaPagamentoNome={formaPagamentoNome}
+        formaPagamentoNome={formaPagamentoNome ?? balcaoFormaNome ?? undefined}
         alertaParcial={alertaParcial}
         onNovoPedido={() => onConcluir()}
       />
@@ -804,9 +783,7 @@ export default function PagamentoKiosk({
 
     const getMethodDesc = (type: string) => {
       if (type === 'pix') return 'QR Code instantâneo';
-      if (type === 'cash') return 'Pague no caixa';
-      if (type === 'credit_card') return 'À vista ou parcelado';
-      return 'Débito à vista';
+      return 'Pague no balcão';
     };
 
     return (
@@ -861,6 +838,17 @@ export default function PagamentoKiosk({
               </button>
             );
           })}
+          {paymentMethods.length === 0 && (
+            <button
+              onClick={handlePagarNaEntregaEscolhido}
+              className="col-span-2 flex flex-col items-center gap-2 md:gap-3 p-3 md:p-5 rounded-xl md:rounded-2xl cursor-pointer active:scale-95 transition-all bg-zinc-800 hover:bg-zinc-700 text-white"
+            >
+              <div className="w-12 h-12 md:w-14 md:h-14 flex items-center justify-center rounded-xl bg-zinc-700">
+                <i className="ri-store-2-line text-xl md:text-3xl" />
+              </div>
+              <p className="text-sm md:text-xl font-black">Pagar no balcão</p>
+            </button>
+          )}
         </div>
         {modoPagamento === 'ambos' && (
           <button
@@ -874,19 +862,20 @@ export default function PagamentoKiosk({
     );
   }
 
-  // ── Cartão / Dinheiro ──
+  // ── Cartão / Dinheiro: pagamento no balcão ──
+  // Enquanto não há maquininha integrada (Point em modo PDV), o tablet não confirma
+  // cartão nem dinheiro — nada é marcado pago aqui; o operador recebe e dá baixa no PDV.
   return (
     <div className="flex flex-col items-center justify-center h-full gap-5 md:gap-6 p-5 md:p-8 text-center">
       <div className="w-16 h-16 md:w-24 md:h-24 flex items-center justify-center bg-zinc-800 rounded-xl md:rounded-2xl">
         <i className={`text-3xl md:text-5xl text-amber-400 ${forma.type === 'cash' ? 'ri-money-dollar-circle-line' : 'ri-bank-card-line'}`} />
       </div>
-      <h2 className="text-xl md:text-5xl font-black text-white">
-        {forma.type === 'credit_card'
-          ? 'Aproxime ou insira o cartão'
-          : forma.type === 'debit_card'
-          ? 'Insira seu cartão de débito'
-          : 'Dirija-se ao caixa para pagar'}
-      </h2>
+      <div>
+        <h2 className="text-xl md:text-5xl font-black text-white">Pague no balcão</h2>
+        <p className="text-zinc-400 text-sm md:text-2xl mt-2 max-w-xl">
+          Seu pedido vai para a cozinha agora. Pague com <span className="text-white font-bold">{forma.name}</span> ao retirar.
+        </p>
+      </div>
       <p className="text-zinc-400 text-sm md:text-2xl">Total: <span className="text-amber-400 font-black">{fmt(total)}</span></p>
       {/* BUG-11: Banner de erro de pagamento */}
       {pagamentoError && (
@@ -906,16 +895,6 @@ export default function PagamentoKiosk({
           </button>
         </div>
       )}
-      {forma.type !== 'cash' && (
-        <div className="bg-zinc-800 rounded-xl md:rounded-2xl px-8 md:px-12 py-4 md:py-6 border-2 border-dashed border-zinc-600">
-          <p className="text-zinc-500 text-sm md:text-xl">Aguardando leitura do terminal...</p>
-          <div className="mt-2 md:mt-3 flex justify-center gap-2">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="w-3 h-3 md:w-4 md:h-4 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-            ))}
-          </div>
-        </div>
-      )}
       <div className="flex gap-3 md:gap-4">
         <button
           onClick={() => { setForma(null); setPagamentoError(null); }}
@@ -924,11 +903,11 @@ export default function PagamentoKiosk({
           Voltar
         </button>
         <button
-          onClick={() => handleSimularPagamento(forma)}
-          disabled={aguardando}
+          onClick={() => handlePagarNoBalcao(forma)}
+          disabled={processandoPedido}
           className="px-8 md:px-12 py-3 md:py-4 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-white font-bold text-sm md:text-xl rounded-xl md:rounded-2xl cursor-pointer whitespace-nowrap"
         >
-          {aguardando ? 'Processando...' : forma.type === 'cash' ? 'Confirmar pagamento no caixa' : 'Simular aprovação'}
+          Confirmar pedido
         </button>
       </div>
     </div>

@@ -1453,4 +1453,17 @@ Relato: cliente do QR universal põe observação num item, aparece no Gestor de
 
 **Caixa:** a venda online **já entra no caixa aberto**. O `fn_record_payment_bypass` recebe `cash_register_id` nulo e procura sozinho o caixa aberto da sessão do pedido; sem caixa aberto ele não grava o pagamento e o settle registra o erro na cobrança. Pro kiosk isso é o desejado (a venda do tablet aparece no fechamento do dia).
 
-**Cuidado ao deployar a `online-payments`:** o Pix online está em produção na VILA LESTE / EL PATRON. Loja de testes para a Point: EP PAR MALL (crédito 1,5% D+30 e débito 3% D+0 — cobre os dois ramos do `postSaleFinance`).
+**Cuidado ao deployar a `online-payments`:** o Pix online está em produção na VILA LESTE / EL PATRON. Loja de testes para a Point: **El Patron Paranaguá** (não tem config do MP, então não conflita com o Pix de produção; formas de pagamento estão com taxa 0% e D+0 — o ramo a prazo do `postSaleFinance` só é exercitado com taxa/prazo reais configurados).
+
+**mTLS (certificado cliente) funciona nas Edge Functions — testado 2026-09-10.** Várias fontes na internet dizem que não; testamos na prática com uma função temporária chamando `https://client.badssl.com/` (só responde 200 se receber certificado cliente): sem certificado → 400; `Deno.createHttpClient({ cert, key })` + `fetch(url, { client })` → **200**. Os nomes de opção do Deno 1 (`certChain`/`privateKey`) são ignorados em silêncio (400). Runtime na época: `supabase-edge-runtime-1.76.0` (Deno 2.1.4). Isso viabiliza API de banco com mTLS (Banco Inter, API Pix do BACEN) direto na edge, sem servidor intermediário.
+
+**Pix do kiosk NÃO é confirmado por banco.** A edge `pix-payment` gera um BR Code estático com a chave da loja (`system_settings.pix_key`) e o `check_status` só lê a tabela — o status só vira `confirmed` pela ação `confirm`, que **não exige autenticação**, e o `TelaPix` do kiosk mostra um botão "Confirmar PIX" na tela do cliente. Resolver junto com o Pix via API do banco (Inter/MP) antes de ligar o kiosk em alguma loja.
+
+### Banco Inter: conciliação automática e saldo real (2026-09-10)
+
+Edge **`inter-bank`** (v2, no ar) + migration `20260910130000_inter_bank.sql` (aplicada: `fin_inter_config`, `fin_bank_accounts.synced_balance/_at/_provider`, `fin_bank_statement_imports.source/raw`, cron `inter-bank-sync` de hora em hora). Detalhes completos em `FINANCEIRO_MAP.md` §9j. Front (`InterConfigModal`, `InterSyncPanel`, botão na Conciliação, saldo real na Projeção, visão **Realizado × Projetado** no Fluxo de Caixa) **pendente de push**.
+
+- **Segredos do banco ficam em tabela sem policy** (`fin_inter_config`, RLS ligado, só service_role) — o front só recebe client_id mascarado. Padrão pra qualquer integração com certificado/secret por loja.
+- **mTLS na edge**: `Deno.createHttpClient({ cert, key })` e `fetch(url, { client })`. Testado com `probe_mtls` (interno): cert autoassinado → `UnknownCA` do Inter, ou seja, o certificado é apresentado. Sem certificado real ainda não há sync de verdade — o caminho de erro foi exercitado ponta a ponta pelo cron (`fn_inter_bank_sync_all` → `last_sync_error`).
+- **Cron reaproveita os segredos do Vault do cron fiscal** (`fiscal_internal_key`, `supabase_anon_key`) e a `FISCAL_INTERNAL_KEY` como `x-internal-key`; não criar chave nova por função.
+- tsc: 301 antes e depois (sem aumento).

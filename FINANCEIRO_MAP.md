@@ -47,7 +47,7 @@ Arquivos-base: `src/pages/financeiro/`, `src/hooks/useFinanceiro.ts`, `useDespes
 | 13 | `dre` | DRE | `DREContainer`→`DRETab`/`DREComparativoTab` | ver §6 |
 | 14 | `contas-vencidas` | Contas Vencidas | `ContasVencidasPanel` | `fin_accounts_payable` vencidas |
 | 15 | `bancos` | Bancos e Contas | `BancosContasTab` | `fin_bank_accounts` / `fin_bank_transactions` |
-| 16 | `conciliacao` | Conciliação | `ConciliacaoTab` | `fin_bank_statement_imports` + Stone |
+| 16 | `conciliacao` | Conciliação | `ConciliacaoTab` | `fin_bank_statement_imports` + Stone + **Banco Inter (API, §9j)** |
 | 17 | `implantacao` | Implantação | `ImplantacaoTab` | `fin_implementation_costs` |
 
 ---
@@ -582,11 +582,31 @@ Redesenho a pedido do dono. Só layout: nenhum campo, cálculo ou regra mudou.
 
 ---
 
+## 9j. Banco Inter: extrato e saldo pela API + Realizado × Projetado (2026-09-10)
+
+**O que é.** Conciliação bancária automática da conta PJ do Inter e saldo real na projeção de caixa. Backend no ar; front pendente de push.
+
+**Backend — Edge `inter-bank` (verify_jwt=false; JWT do usuário via `user_tenants` OU `x-internal-key` = `FISCAL_INTERNAL_KEY`):**
+- `get_config` (client_id mascarado, nunca devolve secret/cert), `save_config`/`test_config` (admin/manager; **valida no Inter antes de gravar**: token + saldo), `delete_config`, `sync { days? }`, `sync_all` (cron), `probe_mtls` (interno, diagnóstico).
+- Tabela **`fin_inter_config`** (1 por loja; RLS ligado **sem policies** → só service_role lê; guarda client_id/secret, `cert_pem`/`key_pem`, `conta_corrente` (header `x-conta-corrente`, opcional), `environment` production|sandbox, `sync_from`, `auto_sync`, cache do token OAuth (55 min), `last_sync_at/error`, `last_balance*`).
+- **mTLS**: `Deno.createHttpClient({ cert, key })` + `fetch(url, { client })`. Confirmado no runtime `supabase-edge-runtime-1.76.0` (Deno 2.1.4): com certificado autoassinado o handshake chega ao Inter e volta `UnknownCA` (= o certificado É apresentado). `certChain/privateKey` (nomes antigos) são ignorados em silêncio.
+- **API**: `POST /oauth/v2/token` (form: client_id, client_secret, grant_type=client_credentials, scope=`extrato.read`), `GET /banking/v2/extrato/completo?dataInicio&dataFim&pagina&tamanhoPagina` (janelas de ≤ 90 dias, paginado), `GET /banking/v2/saldo?dataSaldo` (`disponivel`). Base prod `cdpj.partners.bancointer.com.br`, sandbox `cdpj-sandbox.partners.uatinter.co`.
+- **Sync**: janela = do último sync − 3 dias (ou `sync_from` na 1ª vez, ou `days`) até hoje. Cada transação vira linha em `fin_bank_statement_imports` com `external_id = inter_<idTransacao>` (dedup pelo unique `tenant, conta, external_id`), `source='inter'`, `raw` = JSON do Inter. **Conciliação automática só das linhas novas**: procura em `fin_bank_transactions` da conta e em `fin_cash_flow` da loja o lançamento de mesmo tipo, valor (±R$0,02) e data (±3 dias; mesma data pontua mais; um lançamento só casa com uma linha) → `status='matched'` + `matched_transaction_id` + `notes`. Regras de `fin_reconciliation_rules` classificam `category`/`cost_center_id` (mesma lógica do `useConciliacao.applyRules`). Como no OFX, **conciliar não lança nada** (§5): é conferência.
+- **Saldo real**: `fin_bank_accounts.synced_balance / synced_balance_at / synced_provider='inter'`. `current_balance` continua sendo o razão interno (não é sobrescrito).
+- **Cron** `inter-bank-sync` (`10 0-2,9-23 * * *` UTC = de hora em hora 06h–23h Brasília) → `fn_inter_bank_sync_all()` (extensão `http`, mesmos segredos do Vault do cron fiscal: `fiscal_internal_key` + `supabase_anon_key`). Erro de sync fica em `last_sync_error` e aparece no painel.
+
+**Front:**
+- Conciliação › botão **Banco Inter** abre `InterSyncPanel` (saldo, última sync, erro, "Sincronizar agora" com período opcional) e `InterConfigModal` (colar ou carregar `.crt`/`.key`, client_id/secret, ambiente, conta do ERP, "buscar desde", auto-sync). O card da conta selecionada mostra "Saldo no banco (API)" ao lado do "Saldo no ERP".
+- **Projeção de caixa** (`PrevisaoCaixaTab`): saldo inicial = Σ (`synced_balance` ?? `current_balance`) das contas ativas; quando há conta sincronizada o KPI diz "Saldo real do banco (API) · dd/mm hh:mm".
+- **Fluxo de Caixa › 4ª visão "Realizado × Projetado"** (`RealizadoProjetadoTab`): por período (7/30 dias, mês atual/anterior), três leituras lado a lado — **Previsto** (contas a pagar + folha pelo vencimento; recebíveis pela liquidação), **ERP** (`fin_cash_flow`), **Banco** (`fin_bank_statement_imports`, qualquer fonte). KPIs: saldo banco (API) × saldo ERP e divergência; entradas/saídas previsto × ERP × banco; "previsto que não realizou" (vencidas em aberto); % do extrato conciliado. Gráficos por semana/dia + tabela. Leitura direta do Supabase (mesmo padrão da projeção).
+
+**Para ativar numa loja:** Internet Banking PJ › Soluções para sua empresa › Nova Integração (escopo Extrato) → baixar `.crt`/`.key`, anotar client_id/secret → ERP › Financeiro › Conciliação › Banco Inter › Configurar. O certificado vale 1 ano. Nenhuma loja configurada ainda (2026-09-10).
+
 ## 9. Tabelas do módulo (schema `public`)
 `fin_cash_flow`, `fin_accounts_payable`, `fin_receivable_installments`, `fin_anticipations`, `fin_purchases`, `fin_purchase_items`, `fin_purchase_catalog`, `fin_merchandise_categories`, `fin_suppliers`, `fin_cost_centers`, `fin_dre_categories`, `fin_dre_groups`, `fin_bank_accounts`, `fin_bank_transactions`, `fin_bank_statement_imports`, `fin_bank_statements`, `fin_reconciliation_rules`, `fin_budgets`, `fin_budget_items`, `fin_income_routing`, `fin_investment_settings`, `fin_implementation_costs`, `fin_implementation_columns`, `fin_stone_config`, `fin_stone_imports`, `fin_pix_payments`, `fin_payable_aging`(view), `fin_receivable_aging`(view), `hr_employees`, `hr_payroll`, `hr_payroll_custom_fields`.
 
 RPCs relevantes: `fn_get_cmv_report`, `fn_bank_credit`, `fn_bank_debit`, `fn_record_payment_bypass`, `fn_update_ingredient_price_from_purchase`, `fn_update_ingredient_stock`.
-Edge Functions: `financial-write` (~47 actions), `purchase-write`, `purchase-confirm-delivery`, `stone-conciliation`, `pix-payment`, `implementation-write`, `order-write` (integração de venda).
+Edge Functions: `financial-write` (~47 actions), `purchase-write`, `purchase-confirm-delivery`, `stone-conciliation`, `inter-bank` (§9j), `pix-payment`, `implementation-write`, `order-write` (integração de venda).
 
 ### Unidades de compra × estoque e apresentações (2026-08-26)
 
