@@ -236,6 +236,40 @@ Deno.serve(async (req: Request) => {
       return json({ success: true })
     }
 
+    // ── ad_preview: HTML (iframe) do anúncio como ele aparece no Feed/Stories/Reels ──
+    // Sob demanda, um anúncio por vez: a Meta cobra rate limit e o HTML é pesado.
+    if (action === 'ad_preview') {
+      const { tenant_id, ad_id, ad_format } = body
+      if (!tenant_id || !/^\d{5,30}$/.test(String(ad_id ?? ''))) {
+        return json({ success: false, error: 'tenant_id e ad_id são obrigatórios' }, 400)
+      }
+      const auth = await requireMember(req, admin, String(tenant_id))
+      if (auth.error) return auth.error
+
+      const { data: conn } = await admin
+        .from('meta_ad_connections')
+        .select('access_token')
+        .eq('tenant_id', tenant_id)
+        .maybeSingle()
+      if (!conn?.access_token) return json({ success: false, error: 'Loja não conectada à Meta' }, 200)
+
+      const formats = new Set([
+        'MOBILE_FEED_STANDARD', 'DESKTOP_FEED_STANDARD', 'INSTAGRAM_STANDARD',
+        'INSTAGRAM_STORY', 'INSTAGRAM_REELS', 'FACEBOOK_STORY_MOBILE', 'FACEBOOK_REELS_MOBILE',
+      ])
+      const fmt = formats.has(String(ad_format)) ? String(ad_format) : 'MOBILE_FEED_STANDARD'
+      const resp = await fetch(
+        `${GRAPH}/${ad_id}/previews?ad_format=${fmt}&access_token=${encodeURIComponent(conn.access_token)}`,
+      )
+      const previewBody = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        console.warn('[meta-connect] ad_preview error:', resp.status, JSON.stringify(previewBody).slice(0, 300))
+        return json({ success: false, error: previewBody?.error?.message ?? 'A Meta não devolveu a prévia.' }, 200)
+      }
+      const html = Array.isArray(previewBody.data) && previewBody.data[0]?.body ? String(previewBody.data[0].body) : ''
+      return json({ success: true, format: fmt, html })
+    }
+
     // ── create_share: gera um link público SOMENTE LEITURA do relatório ──
     // Exige ADMIN da loja: o link abre uma porta sem login, então não fica a cargo
     // de qualquer usuário com acesso ao relatório.

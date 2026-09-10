@@ -11,6 +11,15 @@ import {
   ResponsiveContainer, ComposedChart, Area, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
+import {
+  brl, num, dec, pct, n0, shortDate, compact, linkCtr, linkCpc, CORES, objectiveLabel,
+  StatusBadge, Roas, ChartCard, SemDados,
+  type AdBase, type AdsetRow, type AccountInfo, type AudienceRow, type DeliveryArea, type CommentsInfo,
+  type DeviceRow, type RegionRow, type FrequencyRow, type AssetsBreakdown, type Recomendacao,
+} from './shared';
+import { ContaStrip, ConjuntosTable, AreaEntregaCard } from './components/ContaEConjuntos';
+import { PreviaModal, RankingsInline, RetencaoVideoCard, PecasCriativasCard } from './components/Criativos';
+import { AparelhoRegiaoCards, FrequenciaCard, PublicosCard, RecomendacoesCard, montarAvisos } from './components/Quebras';
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────
 interface AdAccount { id: string; name: string }
@@ -44,15 +53,29 @@ interface MetricRow {
   add_to_cart?: number;
   initiate_checkout?: number;
   status?: string | null;
+  // Pessoas distintas e cliques que saem da Meta; custo por cada tipo de ação (já calculado pela Meta).
+  unique_clicks?: number;
+  unique_ctr?: number;
+  cost_per_unique_click?: number;
+  unique_link_clicks?: number;
+  outbound_clicks?: number;
+  outbound_ctr?: number;
+  cost_per?: ActionVal[];
 }
 
 interface CampaignRow extends MetricRow {
   campaign: string;
   campaign_id?: string;
   objective?: string | null;
+  daily_budget?: number | null;
+  lifetime_budget?: number | null;
+  budget_remaining?: number | null;
+  bid_strategy?: string | null;
+  issues?: string[];
+  recommendations?: Recomendacao[];
 }
 
-interface AdRow extends MetricRow {
+interface AdRow extends MetricRow, AdBase {
   ad_id: string;
   ad: string;
   adset: string;
@@ -127,12 +150,21 @@ interface InsightsResponse {
   // consulta — somar campanhas infla o alcance e subestima a frequência).
   totals?: MetricRow | null;
   campaigns?: CampaignRow[];
+  adsets?: AdsetRow[];
   ads?: AdRow[];
   daily?: DailyRow[];
   erpos_orders?: ErposOrders | null;
   range?: { since: string; until: string } | null;
   previous?: (SlimRow & { since: string; until: string }) | null;
-  breakdowns?: { placement: PlacementRow[]; age_gender: AgeGenderRow[]; hourly: HourRow[] } | null;
+  breakdowns?: {
+    placement: PlacementRow[]; age_gender: AgeGenderRow[]; hourly: HourRow[];
+    device_platform?: DeviceRow[]; impression_device?: DeviceRow[]; region?: RegionRow[];
+    frequency?: FrequencyRow[]; assets?: AssetsBreakdown;
+  } | null;
+  account?: AccountInfo | null;
+  audiences?: AudienceRow[];
+  delivery_area?: DeliveryArea | null;
+  comments?: CommentsInfo | null;
   // Só no link público: cabeçalho de leitura + motivo quando o link não vale mais.
   share?: { store_name: string | null; label: string | null; created_by_name: string | null; expires_at: string | null } | null;
   share_invalid?: boolean;
@@ -236,31 +268,7 @@ const BREAKDOWN_TYPES = [
   'post_reaction', 'comment', 'post', 'onsite_conversion.post_save', 'like',
 ];
 
-const OBJECTIVE_LABELS: Record<string, string> = {
-  OUTCOME_SALES: 'Vendas', CONVERSIONS: 'Vendas', PRODUCT_CATALOG_SALES: 'Catálogo',
-  OUTCOME_TRAFFIC: 'Tráfego', LINK_CLICKS: 'Tráfego',
-  OUTCOME_ENGAGEMENT: 'Engajamento', POST_ENGAGEMENT: 'Engajamento', MESSAGES: 'Mensagens', VIDEO_VIEWS: 'Vídeo',
-  OUTCOME_LEADS: 'Leads', LEAD_GENERATION: 'Leads',
-  OUTCOME_AWARENESS: 'Reconhecimento', REACH: 'Alcance', BRAND_AWARENESS: 'Reconhecimento',
-  OUTCOME_APP_PROMOTION: 'App', APP_INSTALLS: 'App',
-};
-const objectiveLabel = (o?: string | null) =>
-  (o ? (OBJECTIVE_LABELS[o] ?? o.replace(/^OUTCOME_/, '').toLowerCase()) : '—');
-
-const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
-  ACTIVE: { label: 'Ativo', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  PAUSED: { label: 'Pausado', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
-  CAMPAIGN_PAUSED: { label: 'Camp. pausada', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
-  ADSET_PAUSED: { label: 'Conj. pausado', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
-  ARCHIVED: { label: 'Arquivado', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
-  DELETED: { label: 'Excluído', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
-  IN_PROCESS: { label: 'Processando', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-  PENDING_REVIEW: { label: 'Em análise', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-  PREAPPROVED: { label: 'Pré-aprovado', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-  WITH_ISSUES: { label: 'Com problemas', cls: 'bg-red-50 text-red-600 border-red-200' },
-  DISAPPROVED: { label: 'Reprovado', cls: 'bg-red-50 text-red-600 border-red-200' },
-  PENDING_BILLING_INFO: { label: 'Cobrança pendente', cls: 'bg-red-50 text-red-600 border-red-200' },
-};
+// Rótulos de objetivo e status vivem em ./shared (usados também pelos componentes).
 
 const PLATFORM_LABELS: Record<string, string> = {
   facebook: 'Facebook', instagram: 'Instagram', audience_network: 'Audience Network',
@@ -278,39 +286,12 @@ const GENDER_LABELS: Record<string, string> = { male: 'Homens', female: 'Mulhere
 const placementLabel = (p: PlacementRow) =>
   `${PLATFORM_LABELS[p.platform] ?? p.platform} · ${POSITION_LABELS[p.position] ?? p.position.replace(/_/g, ' ')}`;
 
-// ─── Helpers de formatação ────────────────────────────────────────────────────
-const brl = (n: number) => Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const num = (n: number) => Math.round(Number(n || 0)).toLocaleString('pt-BR');
-const dec = (n: number, d = 2) => Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
-const pct = (n: number) => `${dec(n, 2)}%`;
-const n0 = (v: number | undefined | null) => Number(v || 0);
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+// Formatadores, linkCtr/linkCpc e CORES vivem em ./shared.
 // "Resultado" no padrão do Gerenciador de Anúncios (calculado na Edge Function pelo objetivo/meta de
 // otimização). Fallback pra função antiga, que não manda `result`: cliques no link.
 const resultOf = (r: { result?: ResultVal; results: ActionVal[] }): ResultVal =>
   r.result ?? { type: 'link_click', value: (r.results || []).find((x) => x.type === 'link_click')?.value ?? 0 };
-
-// CTR e CPC sobre cliques no LINK (o que o Gerenciador de Anúncios e o Reportei mostram).
-// Usa o valor que a Meta já calcula; sem ele (função antiga), calcula pelos cliques no link.
-type CliqueLike = {
-  link_ctr?: number; cost_per_link_click?: number;
-  impressions: number; link_clicks?: number; clicks?: number; spend: number;
-};
-const linkCtr = (r: CliqueLike): number =>
-  r.link_ctr ?? (r.impressions ? (n0(r.link_clicks) / r.impressions) * 100 : 0);
-const linkCpc = (r: CliqueLike): number =>
-  r.cost_per_link_click ?? (n0(r.link_clicks) ? r.spend / n0(r.link_clicks) : 0);
-const shortDate = (d: string) => {
-  const p = (d || '').split('-');
-  return p.length === 3 ? `${p[2]}/${p[1]}` : d;
-};
-const compact = (n: number) => {
-  const v = Number(n || 0);
-  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace('.0', '')}M`;
-  if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(1).replace('.0', '')}k`;
-  return String(Math.round(v));
-};
-
-const CORES = { spend: '#f59e0b', results: '#10b981', reach: '#0ea5e9', clicks: '#8b5cf6', receita: '#14b8a6', compras: '#16a34a' };
 
 export default function TrafegoPagoPage() {
   const { user } = useAuth();
@@ -320,6 +301,7 @@ export default function TrafegoPagoPage() {
   const shareToken = useMemo(() => getShareTokenFromUrl(), []);
   const publico = !!shareToken;
   const [shareOpen, setShareOpen] = useState(false);
+  const [previaAd, setPreviaAd] = useState<AdRow | null>(null);
 
   const [loadingStatus, setLoadingStatus] = useState(!shareToken);
   const [connection, setConnection] = useState<Connection | null>(null);
@@ -619,10 +601,21 @@ export default function TrafegoPagoPage() {
     campaigns.forEach((c) => c.results.forEach((r) => {
       if (BREAKDOWN_TYPES.includes(r.type)) map.set(r.type, (map.get(r.type) ?? 0) + r.value);
     }));
-    return Array.from(map, ([type, value]) => ({ label: actionLabel(type), value, destaque: type === 'purchase' }))
+    // Custo por ação: o que a Meta já calcula no nível da conta; sem ele, investimento ÷ ações.
+    const custoMeta = insights?.totals?.cost_per ?? [];
+    const gasto = insights?.totals?.spend ?? campaigns.reduce((s, c) => s + c.spend, 0);
+    return Array.from(map, ([type, value]) => ({
+      label: actionLabel(type),
+      value,
+      destaque: type === 'purchase',
+      custo: custoMeta.find((c) => c.type === type)?.value ?? (value ? gasto / value : 0),
+    }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 8);
-  }, [campaigns]);
+  }, [campaigns, insights]);
+
+  // Avisos e recomendações da própria Meta (campanhas, conjuntos e anúncios), sem repetição.
+  const avisosMeta = useMemo(() => montarAvisos(campaigns, insights?.adsets, ads), [campaigns, insights?.adsets, ads]);
 
   const rankCampaigns = useMemo(
     () => [...campaigns].map((c) => ({ ...c, res: resultOf(c) })).sort((a, b) => b.spend - a.spend),
@@ -1015,6 +1008,12 @@ export default function TrafegoPagoPage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-6">
                 <Pill icon={Eye} label="Impressões" valor={num(totals.impressions)} />
                 <Pill icon={MousePointerClick} label="Cliques totais" valor={num(totals.clicks)} />
+                {n0(insights?.totals?.unique_link_clicks) > 0 && (
+                  <Pill icon={Users} label="Pessoas que clicaram" valor={num(n0(insights?.totals?.unique_link_clicks))} />
+                )}
+                {n0(insights?.totals?.outbound_clicks) > 0 && (
+                  <Pill icon={MousePointerClick} label="Cliques de saída" valor={num(n0(insights?.totals?.outbound_clicks))} />
+                )}
                 <Pill icon={DollarSign} label="CPC no link" valor={brl(totals.cpc)} />
                 <Pill icon={DollarSign} label="CPM" valor={brl(totals.cpm)} />
                 <Pill icon={Percent} label="CTR no link" valor={pct(totals.ctr)} />
@@ -1026,6 +1025,8 @@ export default function TrafegoPagoPage() {
                 critério do Gerenciador de Anúncios (sobre todos os cliques dariam {pct(totals.ctrTotal)} e {brl(totals.cpcTotal)}).
                 Alcance e frequência vêm do total da conta, sem somar campanhas, para não contar a mesma pessoa duas vezes.
               </p>
+
+              <ContaStrip account={insights?.account} />
 
               {/* Alertas (calculados dos anúncios ativos do período) */}
               {alertas.length > 0 && (
@@ -1045,6 +1046,9 @@ export default function TrafegoPagoPage() {
                   </ul>
                 </div>
               )}
+
+              <AreaEntregaCard area={insights?.delivery_area} adsets={insights?.adsets} />
+              <RecomendacoesCard linhas={avisosMeta} />
 
               {/* Gráfico principal: Investimento x Vendas por dia */}
               <ChartCard icon={TrendingUp}
@@ -1155,7 +1159,10 @@ export default function TrafegoPagoPage() {
                           <div key={a.label}>
                             <div className="flex items-center justify-between text-xs mb-1">
                               <span className={`font-semibold truncate pr-2 ${a.destaque ? 'text-emerald-700' : 'text-zinc-600'}`}>{a.label}</span>
-                              <span className={`font-black tabular-nums ${a.destaque ? 'text-emerald-700' : 'text-zinc-800'}`}>{num(a.value)}</span>
+                              <span className={`font-black tabular-nums ${a.destaque ? 'text-emerald-700' : 'text-zinc-800'}`}>
+                                {num(a.value)}
+                                {a.custo > 0 && <span className="ml-1.5 text-[10px] font-semibold text-zinc-400">{brl(a.custo)} cada</span>}
+                              </span>
                             </div>
                             <div className="h-2 rounded-full bg-zinc-100 overflow-hidden">
                               <div className={`h-full rounded-full ${a.destaque ? 'bg-emerald-500' : 'bg-zinc-400'}`} style={{ width: `${Math.max((a.value / max) * 100, 2)}%` }} />
@@ -1259,6 +1266,14 @@ export default function TrafegoPagoPage() {
                 </ChartCard>
               )}
 
+              <AparelhoRegiaoCards
+                devicePlatform={insights?.breakdowns?.device_platform}
+                impressionDevice={insights?.breakdowns?.impression_device}
+                region={insights?.breakdowns?.region}
+                cidadeLoja={insights?.delivery_area?.city}
+              />
+              <FrequenciaCard rows={insights?.breakdowns?.frequency} freqMedia={totals.freq} />
+
               {(placementRows.length > 0 || ageRows.length > 0) && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
                   {/* Por posicionamento */}
@@ -1326,6 +1341,9 @@ export default function TrafegoPagoPage() {
                   </ChartCard>
                 </div>
               )}
+
+              <RetencaoVideoCard ads={ads} onAbrir={publico ? undefined : (a) => setPreviaAd(a as AdRow)} />
+              <PecasCriativasCard assets={insights?.breakdowns?.assets} />
 
               {/* Tabela de campanhas */}
               <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden mb-4">
@@ -1421,6 +1439,8 @@ export default function TrafegoPagoPage() {
                 )}
               </div>
 
+              <ConjuntosTable adsets={insights?.adsets} campanhaSel={campanhaSel} maxKm={insights?.delivery_area?.max_km ?? null} />
+
               {/* Tabela de anúncios */}
               <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden mb-4">
                 <div className="px-4 py-3 border-b border-zinc-100 flex items-center gap-2 flex-wrap">
@@ -1493,7 +1513,18 @@ export default function TrafegoPagoPage() {
                                   </div>
                                 </div>
                               </td>
-                              <td className="px-3 py-2"><StatusBadge status={a.status} /></td>
+                              <td className="px-3 py-2">
+                                <div className="flex flex-col gap-1 items-start">
+                                  <StatusBadge status={a.status} />
+                                  <RankingsInline ad={a} />
+                                  {(a.issues?.length ?? 0) > 0 && <span className="text-[10px] font-bold text-red-600">⚠ {a.issues!.length} problema{a.issues!.length > 1 ? 's' : ''}</span>}
+                                  {!publico && (
+                                    <button onClick={() => setPreviaAd(a)} className="text-[11px] font-bold text-amber-600 hover:text-amber-700 cursor-pointer inline-flex items-center gap-1">
+                                      <Eye size={11} /> Prévia e detalhes
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
                               <td className="px-3 py-2 text-right tabular-nums font-semibold text-zinc-800">{brl(a.spend)}</td>
                               <td className="px-3 py-2 text-right"><ResultCell r={a.res} /></td>
                               <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{cpr ? brl(cpr) : '—'}</td>
@@ -1513,6 +1544,8 @@ export default function TrafegoPagoPage() {
                   </div>
                 )}
               </div>
+
+              <PublicosCard audiences={insights?.audiences} />
 
               {/* Meta × ERPOS: atribuição da Meta contra pedidos reais do delivery com utm da Meta */}
               {erposOrders && (
@@ -1553,6 +1586,10 @@ export default function TrafegoPagoPage() {
             </div>
           )}
         </>
+      )}
+
+      {previaAd && !publico && (
+        <PreviaModal ad={previaAd} tenantId={tenantId} comments={insights?.comments} onClose={() => setPreviaAd(null)} />
       )}
 
       {shareOpen && !publico && (
@@ -1809,11 +1846,7 @@ const CORES_KPI: Record<string, { bg: string; text: string }> = {
   red: { bg: 'bg-red-50', text: 'text-red-500' },
 };
 
-function StatusBadge({ status }: { status?: string | null }) {
-  if (!status) return <span className="text-zinc-300">—</span>;
-  const s = STATUS_LABELS[status] ?? { label: status.toLowerCase().replace(/_/g, ' '), cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' };
-  return <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${s.cls}`}>{s.label}</span>;
-}
+// StatusBadge, Roas, ChartCard e SemDados vivem em ./shared.
 
 function ResultCell({ r }: { r: ResultVal }) {
   const compra = r.type === 'purchase';
@@ -1823,12 +1856,6 @@ function ResultCell({ r }: { r: ResultVal }) {
       <span className="text-[10px] text-zinc-400">{actionLabel(r.type)}</span>
     </span>
   );
-}
-
-function Roas({ v, spend }: { v: number; spend: number }) {
-  if (!spend) return <span className="text-zinc-300">—</span>;
-  const cls = v >= 2 ? 'text-emerald-600' : v >= 1 ? 'text-amber-600' : 'text-red-500';
-  return <span className={`font-semibold tabular-nums ${cls}`}>{dec(v, 2)}x</span>;
 }
 
 // Variação vs período anterior. `invertido` = cair é bom (custo); `neutro` = sem juízo (investimento).
@@ -1892,34 +1919,6 @@ function Pill({
         <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide leading-none">{label}</p>
         <p className="text-sm font-black text-zinc-800 tabular-nums mt-0.5 truncate">{valor}</p>
       </div>
-    </div>
-  );
-}
-
-function ChartCard({
-  icon: Icon, titulo, children, className = '',
-}: {
-  icon: React.ComponentType<{ size?: number; className?: string }>;
-  titulo: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div className={`bg-white border border-zinc-200 rounded-2xl p-4 ${className}`}>
-      <div className="flex items-center gap-2 mb-3">
-        <Icon size={15} className="text-amber-500" />
-        <p className="text-sm font-bold text-zinc-800">{titulo}</p>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function SemDados() {
-  return (
-    <div className="flex flex-col items-center justify-center h-[200px] text-zinc-300">
-      <BarChart3 size={26} className="mb-2" />
-      <p className="text-xs font-semibold text-zinc-400">Sem dados no período</p>
     </div>
   );
 }
