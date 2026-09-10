@@ -828,6 +828,10 @@ export function useDeliveryData(storeSlug?: string) {
                   setPixOnline({ orderId: memo.orderId, orderToken: memo.orderToken || '', number: memo.number || '', total: Number(memo.total || 0) });
                   setNumeroPedido(memo.number || '');
                   setOrderTotal(Number(memo.total || 0));
+                  // Reconstrói o que a tela mostra (taxa 0 na retirada) — sem isso ela usaria a taxa do endereço atual
+                  if (memo.modo === 'retirada' || memo.modo === 'entrega') setModoEntrega(memo.modo);
+                  const feeMemo = Number(memo.fee || 0);
+                  setResumoConfirmacao({ subtotal: Math.max(0, Number(memo.total || 0) - feeMemo), desconto: 0, deliveryFee: feeMemo, voucherCodigo: '' });
                   setPagamentoSelecionado('PIX pelo app');
                   setPedidoConfirmado(true);
                   setStep('confirmacao');
@@ -1518,7 +1522,7 @@ export function useDeliveryData(storeSlug?: string) {
         setOrderTotal(totalConfirmado);
         // Pix pelo app: guarda o pedido + token no aparelho para cobrar (e sobreviver a reload)
         if (isPixOnline && data.data?.id) {
-          const memo = { orderId: String(data.data.id), orderToken: clientRequestId, number: String(data.data.number || ''), total: Number(totalConfirmado), at: Date.now() };
+          const memo = { orderId: String(data.data.id), orderToken: clientRequestId, number: String(data.data.number || ''), total: Number(totalConfirmado), fee: Number(data.data.delivery_fee ?? effectiveDeliveryFee ?? 0), modo: modoEntrega, at: Date.now() };
           setPixOnline(memo);
           try { localStorage.setItem('delivery_pix_' + tenant.id, JSON.stringify(memo)); } catch { /* sem storage */ }
         } else {
@@ -1586,13 +1590,17 @@ export function useDeliveryData(storeSlug?: string) {
 
   // Aparelho perdeu a chave (ou nunca teve): retoma o pedido segurado pelo TELEFONE do
   // cliente. `orderToken` vazio faz a tela autenticar por `order_phone`.
-  function voltarParaPagamentoPixPorTelefone(orderId: string, number: string, total: number) {
+  function voltarParaPagamentoPixPorTelefone(orderId: string, number: string, total: number, fee?: number, isRetirada?: boolean) {
     if (!tenant?.id) return;
-    const memo = { orderId, orderToken: '', number, total, at: Date.now() };
+    const feeNum = Number(fee || 0);
+    const modo: 'entrega' | 'retirada' = isRetirada ? 'retirada' : 'entrega';
+    const memo = { orderId, orderToken: '', number, total, fee: feeNum, modo, at: Date.now() };
     setPixOnline(memo);
     try { localStorage.setItem('delivery_pix_' + tenant.id, JSON.stringify(memo)); } catch { /* sem storage */ }
     setNumeroPedido(number);
     setOrderTotal(total);
+    setModoEntrega(modo);
+    setResumoConfirmacao({ subtotal: Math.max(0, total - feeNum), desconto: 0, deliveryFee: feeNum, voucherCodigo: '' });
     setPagamentoSelecionado('PIX pelo app');
     setPedidoConfirmado(true);
     setErrorMsg('');

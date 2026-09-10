@@ -9,6 +9,7 @@ type OrderStatusData = {
   updated_at: string;
   out_for_delivery_at: string | null;
   delivery_sla_min: number | null;
+  is_retirada?: boolean;
   total_amount: number;
   delivery_fee: number;
   subtotal: number;
@@ -30,19 +31,26 @@ interface Props {
   pixPendenteNumero?: string;
   onPagarPix?: () => void;
   /** Sem a chave no aparelho: retoma pelo telefone do cliente (só se o app souber o telefone) */
-  onPagarPixSemChave?: (orderId: string, number: string, total: number) => void;
+  onPagarPixSemChave?: (orderId: string, number: string, total: number, fee?: number, isRetirada?: boolean) => void;
   /** Trocar a forma de pagamento do pedido segurado (libera pra cozinha) */
   metodosAlternativos?: MetodoAlternativo[];
   onTrocarPagamento?: (orderId: string, metodoKey: string, cashAmount?: string) => Promise<boolean>;
   modoEntrega?: 'entrega' | 'retirada';
 }
 
-const STATUS_STEPS = [
+const STATUS_STEPS_ENTREGA = [
   { key: 'new', label: 'Recebido', icon: 'ri-check-double-line', description: 'Seu pedido foi recebido' },
   { key: 'preparing', label: 'Em preparo', icon: 'ri-restaurant-2-line', description: 'Cozinha preparando' },
   { key: 'ready', label: 'Pronto', icon: 'ri-checkbox-circle-line', description: 'Aguardando entregador' },
   { key: 'em_rota', label: 'Em rota', icon: 'ri-motorbike-line', description: 'Saiu para entrega' },
   { key: 'delivered', label: 'Entregue', icon: 'ri-checkbox-circle-fill', description: 'Pedido entregue' },
+];
+// Retirada na loja: ninguém sai com o pedido — não existe "em rota"
+const STATUS_STEPS_RETIRADA = [
+  { key: 'new', label: 'Recebido', icon: 'ri-check-double-line', description: 'Seu pedido foi recebido' },
+  { key: 'preparing', label: 'Em preparo', icon: 'ri-restaurant-2-line', description: 'Cozinha preparando' },
+  { key: 'ready', label: 'Pronto', icon: 'ri-store-2-line', description: 'Pode retirar no balcão' },
+  { key: 'delivered', label: 'Retirado', icon: 'ri-checkbox-circle-fill', description: 'Pedido retirado' },
 ];
 
 function getStatusLabel(status: string): string {
@@ -125,7 +133,7 @@ export default function AcompanharPedido(props: Props) {
   }, [numeroPedido, tenantId]);
 
   function getStepIndex(status: string): number {
-    const order = ['new', 'preparing', 'ready', 'em_rota', 'delivered'];
+    const order = isRetirada ? ['new', 'preparing', 'ready', 'delivered'] : ['new', 'preparing', 'ready', 'em_rota', 'delivered'];
     const idx = order.indexOf(status);
     if (idx < 0) return -1;
     return idx;
@@ -169,6 +177,8 @@ export default function AcompanharPedido(props: Props) {
     );
   }
 
+  const isRetirada = !!orderData.is_retirada;
+  const STATUS_STEPS = isRetirada ? STATUS_STEPS_RETIRADA : STATUS_STEPS_ENTREGA;
   const rawStatus = orderData.status;
   // "Em rota" não é um valor do enum — é derivado de out_for_delivery_at (mesma lógica do KDS).
   const status = (rawStatus !== 'delivered' && rawStatus !== 'cancelled' && orderData.out_for_delivery_at)
@@ -184,7 +194,7 @@ export default function AcompanharPedido(props: Props) {
   function pagarPix() {
     if (!orderData) return;
     if (temChave && props.onPagarPix) props.onPagarPix();
-    else if (props.onPagarPixSemChave) props.onPagarPixSemChave(orderData.id, orderData.number, orderData.total_amount);
+    else if (props.onPagarPixSemChave) props.onPagarPixSemChave(orderData.id, orderData.number, orderData.total_amount, orderData.delivery_fee, !!orderData.is_retirada);
   }
 
   // Previsão máxima de entrega = horário do pedido + tempo total da faixa de distância (SLA).

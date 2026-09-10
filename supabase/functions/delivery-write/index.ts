@@ -1035,7 +1035,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!tenant_id || !order_number) return jsonErr("tenant_id e order_number obrigatorios", 400);
       const { data: o, error } = await admin
         .from("orders")
-        .select("id, number, status, created_at, updated_at, total_amount, delivery_fee, subtotal, out_for_delivery_at, delivery_sla_min, is_paid, notes")
+        .select("id, number, status, created_at, updated_at, total_amount, delivery_fee, subtotal, out_for_delivery_at, delivery_sla_min, is_paid, notes, delivery_platform")
         .eq("tenant_id", tenant_id)
         .eq("number", order_number)
         .maybeSingle();
@@ -1074,6 +1074,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         delivery_sla_min: o.delivery_sla_min ?? null,
         is_paid: !!o.is_paid,
         pagamento: (o.notes as string | null) ?? null,
+        // Retirada na loja: sem taxa e sem etapa "em rota" no acompanhamento
+        is_retirada: o.delivery_platform === "retirada",
         total_amount: Number(o.total_amount ?? 0),
         delivery_fee: Number(o.delivery_fee ?? 0),
         subtotal: Number(o.subtotal ?? 0),
