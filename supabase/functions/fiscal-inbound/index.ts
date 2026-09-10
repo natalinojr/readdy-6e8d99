@@ -1,4 +1,5 @@
-// fiscal-inbound — NF-e de ENTRADA (fornecedores → CNPJ da loja) via Brasil NFe.
+// fiscal-inbound — notas de ENTRADA contra o CNPJ da loja via Brasil NFe:
+// NF-e (modelo 55, mercadoria) e NFS-e do padrão nacional (modelo 10, serviço tomado).
 //
 // Ações (POST JSON { action, tenant_id, ... }):
 //   sync           { days? }                 busca as notas de entrada dos últimos N dias (padrão 30, máx 90)
@@ -166,6 +167,44 @@ function parseNFe(xml: string): Parsed {
   };
 }
 
+// ── NFS-e do padrão nacional (Sefin/ADN): NFSe > infNFSe (+ DPS > infDPS) ──
+interface ParsedNFSe {
+  numero: number | null; emitCnpj: string | null; emitNome: string | null; emitFone: string | null;
+  emitEndereco: string | null; emitCidade: string | null; emitUf: string | null;
+  servico: string | null; descricao: string | null; codigo: string | null; competencia: string | null;
+  emittedAt: string | null; vServ: number; vLiq: number; vIss: number; vTotalRet: number; issRetido: boolean;
+}
+function parseNFSe(xml: string): ParsedNFSe {
+  const inf = tag(xml, 'infNFSe') ?? '';
+  const emit = tag(inf, 'emit') ?? '';
+  const ender = tag(emit, 'enderNac') ?? '';
+  const val = tag(inf, 'valores') ?? '';          // 1º <valores> = totais da NFS-e (vBC, vISSQN, vTotalRet, vLiq)
+  const dps = tag(inf, 'infDPS') ?? '';
+  const serv = tag(dps, 'serv') ?? '';
+  const vServ = num(tag(tag(dps, 'vServPrest') ?? '', 'vServ'));
+  const tpRet = tag(tag(dps, 'tribMun') ?? '', 'tpRetISSQN'); // 1 não retido · 2 retido pelo tomador · 3 pelo intermediário
+  return {
+    numero: Number(tag(inf, 'nNFSe')) || null,
+    emitCnpj: onlyDigits(tag(emit, 'CNPJ') ?? tag(emit, 'CPF')) || null,
+    emitNome: unesc(tag(emit, 'xNome')),
+    emitFone: tag(emit, 'fone'),
+    emitEndereco: [unesc(tag(ender, 'xLgr')), tag(ender, 'nro'), unesc(tag(ender, 'xBairro'))].filter(Boolean).join(', ') || null,
+    emitCidade: unesc(tag(inf, 'xLocEmi')),
+    emitUf: tag(ender, 'UF'),
+    servico: unesc(tag(inf, 'xTribNac')),
+    descricao: unesc(tag(serv, 'xDescServ')),
+    codigo: tag(serv, 'cTribNac'),
+    competencia: (tag(dps, 'dCompet') ?? '').slice(0, 10) || null,
+    emittedAt: tag(dps, 'dhEmi') ?? tag(inf, 'dhProc'),
+    vServ: round2(vServ),
+    vLiq: round2(num(tag(val, 'vLiq')) || vServ),
+    vIss: round2(num(tag(val, 'vISSQN'))),
+    vTotalRet: round2(num(tag(val, 'vTotalRet'))),
+    issRetido: tpRet === '2' || tpRet === '3',
+  };
+}
+const isNFSeXml = (xml: string | null | undefined) => Boolean(xml && /<infNFSe[\s>]/.test(xml));
+
 // ── Sincronização ────────────────────────────────────────────────────────────
 async function loadToken(admin: Admin, tenantId: string): Promise<string | null> {
   const { data } = await admin.from('fiscal_settings').select('provider_token').eq('tenant_id', tenantId).maybeSingle();
@@ -188,6 +227,22 @@ async function fetchXmlFor(admin: Admin, token: string, doc: { id: string; chave
   try { xml = base64ToUtf8(b64); } catch (e) {
     await admin.from('fiscal_inbound_documents').update({ xml_status: 'error', error_message: `XML inválido: ${String(e)}`.slice(0, 500), updated_at: now }).eq('id', doc.id);
     return 'error';
+  }
+  if (isNFSeXml(xml)) {
+    const q = parseNFSe(xml);
+    await admin.from('fiscal_inbound_documents').update({
+      xml, xml_status: 'full', error_message: null, updated_at: now, modelo: 10,
+      numero: q.numero, emitente_cnpj: q.emitCnpj, emitente_nome: q.emitNome,
+      natureza: q.servico, valor_total: q.vLiq, emitted_at: q.emittedAt,
+      // Serviço vira 1 "item" com os valores da nota (bruto, ISS, retenções, líquido)
+      itens: [{
+        codigo: q.codigo, descricao: q.descricao ?? q.servico, quantidade: 1, unidade: 'SV',
+        valor_unitario: q.vServ, valor_total: q.vServ, desconto: 0,
+        competencia: q.competencia, v_iss: q.vIss, iss_retido: q.issRetido, v_retencoes: q.vTotalRet, v_liquido: q.vLiq,
+      }],
+      parcelas: [], pagamento: [],
+    }).eq('id', doc.id);
+    return 'full';
   }
   const p = parseNFe(xml);
   const upd: Record<string, unknown> = { xml, xml_status: p.full ? 'full' : 'summary', error_message: null, updated_at: now };
@@ -225,14 +280,17 @@ async function syncTenant(admin: Admin, tenantId: string, days: number) {
   const outrosModelos = todos.filter((n) => Number(n.ModeloDocumento) !== 55).slice(0, 10).map((n) => ({
     modelo: n.ModeloDocumento, emissor: n.NomeEmissor, cnpj: n.CnpjEmissor, valor: n.Valor, emissao: n.DtEmissao, numero: n.Numero,
   }));
-  // Só NF-e (55). CT-e/NFS-e também chegam por aqui, mas não são compra de mercadoria.
-  const notas = todos.filter((n) => Number(n.ModeloDocumento) === 55 && onlyDigits(n.Chave).length === 44);
+  // NF-e (55, chave 44) = mercadoria · NFS-e (10, chave 50) = serviço tomado. CT-e e demais ficam de fora.
+  const notas = todos.filter((n) => {
+    const m = Number(n.ModeloDocumento); const len = onlyDigits(n.Chave).length;
+    return (m === 55 && len === 44) || (m === 10 && len === 50);
+  });
   let novas = 0;
   for (const n of notas) {
     const chave = onlyDigits(n.Chave);
     const row = {
-      tenant_id: tenantId, chave, modelo: 55,
-      numero: Number(n.Numero) || null, serie: n.Serie != null ? String(n.Serie) : null,
+      tenant_id: tenantId, chave, modelo: Number(n.ModeloDocumento) || 55,
+      numero: Number(n.Numero) || null, serie: n.Serie != null && n.Serie !== 'SEM' ? String(n.Serie) : null,
       emitente_cnpj: onlyDigits(n.CnpjEmissor) || null, emitente_nome: n.NomeEmissor ?? null, emitente_ie: n.IeEmissor ?? null,
       cfops: n.Cfops ?? null, valor_total: round2(Number(n.Valor ?? 0)), valor_icms: round2(Number(n.ValorIcms ?? 0)),
       emitted_at: n.DtEmissao ?? null, received_at: n.DtRecebimento ?? null, sefaz_status: Number(n.Status) || null,
@@ -280,8 +338,13 @@ function normalizeParcelas(doc: any, override: unknown): Parcela[] {
 async function upsertSupplier(admin: Admin, tenantId: string, doc: any): Promise<{ id: string; name: string } | null> {
   const cnpj = onlyDigits(doc.emitente_cnpj);
   const razao = String(doc.emitente_nome ?? '').trim();
-  let parsed: Parsed | null = null;
-  if (doc.xml) { try { parsed = parseNFe(doc.xml); } catch { parsed = null; } }
+  let parsed: Pick<Parsed, 'emitFantasia' | 'emitFone' | 'emitEndereco' | 'emitCidade' | 'emitUf'> | null = null;
+  if (doc.xml) {
+    try {
+      if (isNFSeXml(doc.xml)) { const q = parseNFSe(doc.xml); parsed = { emitFantasia: null, emitFone: q.emitFone, emitEndereco: q.emitEndereco, emitCidade: q.emitCidade, emitUf: q.emitUf }; }
+      else parsed = parseNFe(doc.xml);
+    } catch { parsed = null; }
+  }
   const fantasia = parsed?.emitFantasia?.trim() || '';
   const nomeExibicao = (fantasia || razao || `Fornecedor ${cnpj}`).slice(0, 120);
 
@@ -333,6 +396,7 @@ Deno.serve(async (req: Request) => {
       if (error) return errResp(`setup_cron: ${error.message}`, 500);
       return json({ success: true });
     }
+
 
     // ── Cron: todas as lojas com token e sync automático ligado ──
     if (action === 'sync_all') {
@@ -442,6 +506,7 @@ Deno.serve(async (req: Request) => {
       if (!isManager) return errResp('Apenas administradores e gerentes podem lançar', 403);
       if (doc.status === 'imported') return errResp('Esta nota já foi lançada');
       if (Number(doc.sefaz_status) === 2) return errResp('A nota foi CANCELADA pelo fornecedor na SEFAZ — não lance');
+      if (action === 'import_purchase' && Number(doc.modelo) === 10) return errResp('NFS-e é serviço, não mercadoria: lance como despesa');
       const parcelas = normalizeParcelas(doc, body.parcelas);
       const soma = round2(parcelas.reduce((s, p) => s + p.valor, 0));
       const supplier = await upsertSupplier(admin, tenantId, doc);

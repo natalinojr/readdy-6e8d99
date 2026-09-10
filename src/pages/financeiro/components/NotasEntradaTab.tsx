@@ -9,9 +9,9 @@ import { useToast } from '@/contexts/ToastContext';
 // ou é ignorada (devolução, bonificação, remessa, nota de outra finalidade).
 
 interface Parcela { numero?: string; vencimento: string; valor: number }
-interface Item { codigo?: string; descricao?: string; ncm?: string; cfop?: string; unidade?: string; quantidade?: number; valor_unitario?: number; valor_total?: number; desconto?: number }
+interface Item { codigo?: string; descricao?: string; ncm?: string; cfop?: string; unidade?: string; quantidade?: number; valor_unitario?: number; valor_total?: number; desconto?: number; competencia?: string | null; v_iss?: number; iss_retido?: boolean; v_retencoes?: number; v_liquido?: number }
 interface DocRow {
-  id: string; chave: string; numero: number | null; serie: string | null;
+  id: string; chave: string; modelo: number; numero: number | null; serie: string | null;
   emitente_cnpj: string | null; emitente_nome: string | null; natureza: string | null; cfops: string | null;
   valor_total: number; emitted_at: string | null; sefaz_status: number | null;
   xml_status: 'pending' | 'full' | 'summary' | 'error';
@@ -20,7 +20,7 @@ interface DocRow {
   payable_ids: string[]; ignore_reason: string | null; manifest_status: string | null; error_message: string | null;
   imported_at: string | null;
 }
-const COLS = 'id, chave, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at';
+const COLS = 'id, chave, modelo, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at';
 
 const brl = (n: number | null | undefined) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n ?? 0));
 const dataBR = (s: string | null | undefined) => (s ? new Date(s.length === 10 ? `${s}T12:00:00` : s).toLocaleDateString('pt-BR') : '—');
@@ -42,6 +42,9 @@ function pareceNaoVenda(d: { cfops: string | null; pagamento?: Pag[] }): boolean
   const semPagamento = (d.pagamento ?? []).length > 0 && (d.pagamento ?? []).every((p) => p.forma === '90' || Number(p.valor) === 0);
   return semPagamento || (cfops.length > 0 && cfops.every((c) => CFOP_NAO_VENDA.test(c)));
 }
+// Plataformas cuja NFS-e é a comissão/taxa já descontada do repasse — lançar de novo duplica.
+const DESCONTA_NO_REPASSE = /IFOOD|RAPPI|99\s?FOOD|AIQFOME|UBER\s?EATS|KEETA/i;
+const isServico = (d: { modelo: number }) => Number(d.modelo) === 10;
 function formaResumo(pag: Pag[] | undefined): string {
   return [...new Set((pag ?? []).map((p) => TPAG[p.forma] ?? 'Outros'))].join(', ');
 }
@@ -56,6 +59,7 @@ export default function NotasEntradaTab() {
   const [loading, setLoading] = useState(true);
   const [filtro, setFiltro] = useState<Filtro>('new');
   const [busca, setBusca] = useState('');
+  const [tipoDoc, setTipoDoc] = useState<'all' | 'nfe' | 'nfse'>('all');
   const [sincronizando, setSincronizando] = useState(false);
   const [ultimaSync, setUltimaSync] = useState<{ at: string | null; erro: string | null; temToken: boolean }>({ at: null, erro: null, temToken: false });
   const [aberto, setAberto] = useState<DocRow | null>(null);
@@ -93,10 +97,12 @@ export default function NotasEntradaTab() {
     const q = busca.trim().toLowerCase();
     return docs.filter((d) => {
       if (filtro !== 'all' && d.status !== filtro) return false;
+      if (tipoDoc === 'nfe' && isServico(d)) return false;
+      if (tipoDoc === 'nfse' && !isServico(d)) return false;
       if (!q) return true;
       return (d.emitente_nome ?? '').toLowerCase().includes(q) || (d.emitente_cnpj ?? '').includes(q.replace(/\D/g, '') || '§') || String(d.numero ?? '').includes(q);
     });
-  }, [docs, filtro, busca]);
+  }, [docs, filtro, busca, tipoDoc]);
 
   const resumo = useMemo(() => {
     const novas = docs.filter((d) => d.status === 'new' && d.sefaz_status !== 2);
@@ -182,6 +188,13 @@ export default function NotasEntradaTab() {
             {label}
           </button>
         ))}
+        <span className="w-px h-5 bg-zinc-200 mx-1" />
+        {([['all', 'Todos os tipos'], ['nfe', 'Mercadorias (NF-e)'], ['nfse', 'Serviços (NFS-e)']] as const).map(([id, label]) => (
+          <button key={id} onClick={() => setTipoDoc(id)}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${tipoDoc === id ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
+            {label} <span className="opacity-70">{docs.filter((d) => (id === 'all' ? true : id === 'nfse' ? isServico(d) : !isServico(d))).length}</span>
+          </button>
+        ))}
         <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Fornecedor, CNPJ ou nº da nota"
           className="flex-1 min-w-[180px] text-sm border border-zinc-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-amber-400" />
       </div>
@@ -223,12 +236,17 @@ export default function NotasEntradaTab() {
                         <p className="text-[10px] text-zinc-400 font-mono">{cnpjFmt(d.emitente_cnpj)}</p>
                       </td>
                       <td className="px-4 py-2.5 text-zinc-600 whitespace-nowrap">
+                        <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded mr-1.5 align-middle ${isServico(d) ? 'bg-sky-50 text-sky-700' : 'bg-zinc-100 text-zinc-600'}`}>{isServico(d) ? 'NFS-e' : 'NF-e'}</span>
                         {d.numero ?? '—'}{d.serie ? `/${d.serie}` : ''}
                         {d.natureza && <p className="text-[10px] text-zinc-400 truncate max-w-[160px]" title={d.natureza}>{d.natureza}</p>}
                       </td>
                       <td className="px-4 py-2.5 text-right font-semibold text-zinc-800 whitespace-nowrap">{brl(d.valor_total)}</td>
                       <td className="px-4 py-2.5 text-zinc-600 whitespace-nowrap">
-                        {d.xml_status !== 'full' ? <span className="text-[11px] text-sky-600">aguardando XML</span>
+                        {isServico(d) && d.xml_status === 'full' ? (
+                          DESCONTA_NO_REPASSE.test(d.emitente_nome ?? '')
+                            ? <span className="text-[11px] font-semibold text-violet-600" title="Taxa/comissão já descontada do repasse da plataforma — lançar de novo pode duplicar">descontado no repasse?</span>
+                            : <span className="text-[11px] text-zinc-500">serviço · comp. {dataBR((d.itens ?? [])[0]?.competencia ?? null)}</span>
+                        ) : d.xml_status !== 'full' ? <span className="text-[11px] text-sky-600">aguardando XML</span>
                           : pareceNaoVenda(d) ? <span className="text-[11px] font-semibold text-violet-600" title="CFOP de remessa/bonificação ou nota sem pagamento — normalmente se ignora">remessa/bonificação?</span>
                           : (d.parcelas ?? []).length === 0 ? <span className="text-[11px] text-zinc-500">sem boleto · {formaResumo(d.pagamento) || 'pago na hora?'}</span>
                           : <>
@@ -307,7 +325,8 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
     ? doc.parcelas.map((p) => ({ ...p }))
     : [{ numero: '1', vencimento: (doc.emitted_at ?? new Date().toISOString()).slice(0, 10), valor: Number(doc.valor_total ?? 0) }];
   const [parcelas, setParcelas] = useState<Parcela[]>(parcelasIniciais);
-  const [tipo, setTipo] = useState<'purchase' | 'bill'>('purchase');
+  const servico = isServico(doc);
+  const [tipo, setTipo] = useState<'purchase' | 'bill'>(servico ? 'bill' : 'purchase');
   const semBoleto = (doc.parcelas ?? []).length === 0;
   const pagoNaHora = semBoleto && (doc.pagamento ?? []).some((p) => PAGO_NA_HORA.has(p.forma));
   const [pago, setPago] = useState<boolean>(pagoNaHora);
@@ -374,8 +393,35 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
             </div>
           )}
 
+          {/* Serviço (NFS-e) */}
+          {servico && itens[0] && (() => {
+            const sv = itens[0];
+            return (
+              <div className="border border-sky-100 bg-sky-50/40 rounded-xl p-3 space-y-2">
+                <p className="text-xs font-bold text-zinc-700">Serviço prestado</p>
+                <p className="text-sm text-zinc-800">{sv.descricao}</p>
+                {doc.natureza && doc.natureza !== sv.descricao && <p className="text-[11px] text-zinc-500">{doc.natureza}</p>}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                  <div><p className="text-[10px] uppercase text-zinc-400">Competência</p><p className="text-xs font-semibold text-zinc-700">{dataBR(sv.competencia ?? null)}</p></div>
+                  <div><p className="text-[10px] uppercase text-zinc-400">Valor do serviço</p><p className="text-xs font-semibold text-zinc-700">{brl(sv.valor_total)}</p></div>
+                  <div><p className="text-[10px] uppercase text-zinc-400">ISS {sv.iss_retido ? '(retido por você)' : ''}</p><p className="text-xs font-semibold text-zinc-700">{brl(sv.v_iss)}</p></div>
+                  <div><p className="text-[10px] uppercase text-zinc-400">Líquido a pagar</p><p className="text-xs font-bold text-zinc-900">{brl(sv.v_liquido ?? doc.valor_total)}</p></div>
+                </div>
+                {(Number(sv.v_retencoes ?? 0) > 0 || sv.iss_retido) && (
+                  <p className="text-[11px] text-amber-700">Há imposto retido na fonte ({brl(Number(sv.v_retencoes ?? 0) || sv.v_iss)}): quem recolhe é a loja. Confira com a contadora.</p>
+                )}
+              </div>
+            );
+          })()}
+          {servico && DESCONTA_NO_REPASSE.test(doc.emitente_nome ?? '') && (
+            <div className="flex items-start gap-2 bg-violet-50 border border-violet-100 rounded-lg p-3">
+              <i className="ri-error-warning-line text-violet-500" />
+              <p className="text-xs text-violet-800">Esta é a nota da <strong>taxa/comissão da plataforma</strong>, que já vem descontada do repasse. Se o repasse já entra líquido no financeiro, lançar aqui duplica a despesa: normalmente se ignora.</p>
+            </div>
+          )}
+
           {/* Itens */}
-          {itens.length > 0 && (
+          {!servico && itens.length > 0 && (
             <div>
               <p className="text-xs font-bold text-zinc-700 mb-2">Itens da nota ({itens.length})</p>
               <div className="border border-zinc-100 rounded-lg overflow-hidden max-h-56 overflow-y-auto">
@@ -430,7 +476,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-bold text-zinc-700">
-                {(doc.parcelas ?? []).length > 0 ? `Boletos da nota (${parcelas.length})` : 'Vencimento (a nota não traz boleto)'}
+                {servico ? 'Vencimento do pagamento ao prestador' : (doc.parcelas ?? []).length > 0 ? `Boletos da nota (${parcelas.length})` : 'Vencimento (a nota não traz boleto)'}
               </p>
               <button onClick={() => setParcelas((ps) => [...ps, { numero: String(ps.length + 1), vencimento: ps[ps.length - 1]?.vencimento ?? hoje(), valor: 0 }])}
                 className="text-[11px] font-semibold text-amber-600 hover:text-amber-700 cursor-pointer">+ parcela</button>
@@ -457,6 +503,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
           )}
 
           {/* Tipo de lançamento */}
+          {!servico && (
           <div>
             <p className="text-xs font-bold text-zinc-700 mb-2">Como lançar</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -472,6 +519,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
               </button>
             </div>
           </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
