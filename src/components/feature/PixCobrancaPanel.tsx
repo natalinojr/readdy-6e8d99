@@ -83,7 +83,19 @@ export default function PixCobrancaPanel(props: Props) {
     setErro('');
     try {
       const data = await call<{ pix: PixInfo }>({ action: 'create_pix', ...auth });
-      if (data.error === 'nothing_to_pay') { marcarPago(0); return; }
+      if (data.error === 'nothing_to_pay') {
+        // Só é "pago" se a conta disser que não resta nada. Sem pedido na conta = erro, nunca "pago".
+        const bill = await call<BillResumo>({ action: 'get_bill', ...auth });
+        const orders = bill.orders || [];
+        const restante = orders.reduce(function (s, o) { return s + o.remaining; }, 0);
+        if (orders.length > 0 && restante <= 0) {
+          marcarPago((bill.payments_history || []).reduce(function (s, p) { return s + p.amount; }, 0) || orders.reduce(function (s, o) { return s + o.total_amount; }, 0));
+          return;
+        }
+        setErro('Não encontramos o valor a pagar deste pedido. Tente de novo ou fale com a loja.');
+        setFase('erro');
+        return;
+      }
       if (data.error || !data.pix) { setErro(data.message || data.error || 'Não foi possível gerar o Pix'); setFase('erro'); return; }
       setPix(data.pix);
       setFase('pix');

@@ -163,7 +163,9 @@ async function loadBill(admin: Admin, scopeRef: { tableSessionId: string | null;
       ? base.eq("id", scopeRef.orderId)
       : base.eq("participant_id", scopeRef.participantId ?? "")
   ).neq("status", "cancelled").order("created_at", { ascending: true });
-  const rows = (orders ?? []).filter((o: Record<string, unknown>) => !o.is_draft && !o.is_training);
+  // Rascunho fica de fora da conta de MESA/SENHA (carrinho nao enviado). No escopo de
+  // PEDIDO UNICO (delivery) o rascunho e' justamente o pedido "segurado" esperando o Pix.
+  const rows = (orders ?? []).filter((o: Record<string, unknown>) => !o.is_training && (scopeRef.orderId ? true : !o.is_draft));
   if (rows.length === 0) return [];
   const ids = rows.map((o: { id: string }) => o.id);
 
