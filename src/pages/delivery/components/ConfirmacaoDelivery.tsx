@@ -20,6 +20,9 @@ interface Props {
   /** Pedido a pagar por Pix pelo app: {orderId, orderToken} identificam o pedido na Edge online-payments */
   pixOnline?: { orderId: string; orderToken: string } | null;
   onPixPago?: () => void;
+  /** Outras formas (cobrança na entrega/retirada) para quem desistir do Pix pelo app */
+  metodosAlternativos?: { key: string; label: string; icon: string }[];
+  onTrocarPagamento?: (metodoKey: string, cashAmount?: string) => Promise<boolean>;
 }
 
 export default function ConfirmacaoDelivery(props: Props) {
@@ -38,6 +41,27 @@ export default function ConfirmacaoDelivery(props: Props) {
   const [abaAtiva, setAbaAtiva] = useState<TabOption>('acompanhar');
   // "PIX pelo app": o pedido só vai pra cozinha depois do Pix confirmar
   const [pixPago, setPixPago] = useState(false);
+  // Desistiu do Pix: escolhe outra forma e o pedido é liberado pra cozinha na hora
+  const [trocando, setTrocando] = useState(false);
+  const [metodoAlt, setMetodoAlt] = useState('');
+  const [valorDinheiroAlt, setValorDinheiroAlt] = useState('');
+  const [salvandoAlt, setSalvandoAlt] = useState(false);
+  const [erroAlt, setErroAlt] = useState('');
+  const metodosAlternativos = props.metodosAlternativos || [];
+
+  async function confirmarTroca() {
+    if (!metodoAlt || !props.onTrocarPagamento) return;
+    if (metodoAlt === 'dinheiro' && valorDinheiroAlt !== '' && (parseFloat(valorDinheiroAlt) || 0) < orderTotal) {
+      setErroAlt('O valor em dinheiro precisa cobrir o total de R$ ' + orderTotal.toFixed(2));
+      return;
+    }
+    setSalvandoAlt(true);
+    setErroAlt('');
+    const ok = await props.onTrocarPagamento(metodoAlt, metodoAlt === 'dinheiro' ? valorDinheiroAlt : undefined);
+    setSalvandoAlt(false);
+    if (ok) setTrocando(false);
+    else setErroAlt('Não foi possível trocar a forma de pagamento. Tente de novo.');
+  }
   const [trackingNumero, setTrackingNumero] = useState(numeroPedido);
 
   function handleVerPedidoHistorico(numero: string) {
@@ -118,6 +142,72 @@ export default function ConfirmacaoDelivery(props: Props) {
             titulo="Pague agora com Pix"
             textoPago="Seu pedido foi para a cozinha. Obrigado!"
           />
+
+          {!pixPago && metodosAlternativos.length > 0 && props.onTrocarPagamento ? (
+            <div className="mt-2">
+              {!trocando ? (
+                <button
+                  type="button"
+                  onClick={function () { setTrocando(true); setMetodoAlt(''); setValorDinheiroAlt(''); setErroAlt(''); }}
+                  className="w-full py-2.5 text-xs font-bold text-zinc-500 hover:text-zinc-700 underline cursor-pointer whitespace-nowrap"
+                >
+                  Cancelar o Pix e pagar de outra forma
+                </button>
+              ) : (
+                <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-3">
+                  <p className="text-xs font-bold text-zinc-700 mb-2">Como você prefere pagar {modoEntrega === 'retirada' ? 'na retirada' : 'na entrega'}?</p>
+                  <div className="space-y-1.5">
+                    {metodosAlternativos.map(function (m) {
+                      const sel = metodoAlt === m.key;
+                      return (
+                        <button
+                          key={m.key}
+                          type="button"
+                          onClick={function () { setMetodoAlt(m.key); setValorDinheiroAlt(''); setErroAlt(''); }}
+                          className={'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left cursor-pointer transition-all ' +
+                            (sel ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-200/50' : 'bg-white border-zinc-100 hover:border-zinc-200')}
+                        >
+                          <div className={'w-8 h-8 flex items-center justify-center rounded-lg shrink-0 ' + (sel ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-400')}>
+                            <i className={m.icon + ' text-base'} />
+                          </div>
+                          <span className="text-sm font-bold text-zinc-700 flex-1">{m.label}</span>
+                          <div className={'w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ' + (sel ? 'bg-amber-500 border-amber-500' : 'border-zinc-200')}>
+                            {sel ? <i className="ri-check-line text-white text-[9px]" /> : null}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {metodoAlt === 'dinheiro' ? (
+                    <div className="mt-2">
+                      <label className="block text-[11px] font-bold text-zinc-600 mb-1">Troco para quanto? (opcional)</label>
+                      <div className="relative">
+                        <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-xs font-bold text-zinc-400">R$</span>
+                        <input
+                          type="number" inputMode="decimal" step="0.01" min="0"
+                          value={valorDinheiroAlt}
+                          onChange={function (e) { setValorDinheiroAlt(e.target.value); setErroAlt(''); }}
+                          placeholder={orderTotal.toFixed(2)}
+                          className="w-full pl-9 pr-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300"
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                  {erroAlt ? <p className="mt-2 text-[11px] text-red-600">{erroAlt}</p> : null}
+                  <div className="flex gap-2 mt-3">
+                    <button type="button" onClick={function () { setTrocando(false); }} disabled={salvandoAlt}
+                      className="flex-1 py-2 text-xs font-bold text-zinc-600 bg-white border border-zinc-200 rounded-xl cursor-pointer whitespace-nowrap disabled:opacity-50">
+                      Voltar ao Pix
+                    </button>
+                    <button type="button" onClick={confirmarTroca} disabled={!metodoAlt || salvandoAlt}
+                      className="flex-1 py-2 text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-xl cursor-pointer whitespace-nowrap disabled:opacity-40">
+                      {salvandoAlt ? 'Enviando…' : 'Confirmar e enviar pedido'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

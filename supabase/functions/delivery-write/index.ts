@@ -403,6 +403,54 @@ async function emitDeliveryOutputs(admin: any, ctx: DeliveryOutputCtx) {
       });
 }
 
+// ── Libera um pedido "segurado" (Pix pelo app) ───────────────────────────────
+// Vira status 'new' (aparece no KDS/gestor), opcionalmente grava as notas novas
+// (troca de forma de pagamento) e dispara as saídas presas: tickets, comprovante,
+// WhatsApp. Idempotente: pedido que já saiu do rascunho volta `already`.
+// deno-lint-ignore no-explicit-any
+async function releaseHeldOrder(admin: any, tenant_id: string, order_id: string, paymentLabel: string, newNotes: string | null, cashAmount: number | null = null): Promise<{ error?: string; code?: number; already?: boolean }> {
+  const { data: o } = await admin.from("orders")
+    .select("id, number, status, is_draft, origin_type, destination_name, destination_phone, delivery_address, delivery_platform, delivery_fee, subtotal, discount_amount, total_amount, notes, delivery_distance_km, delivery_sla_min")
+    .eq("id", order_id).eq("tenant_id", tenant_id).maybeSingle();
+  if (!o) return { error: "Pedido nao encontrado", code: 404 };
+  if (o.origin_type !== "delivery") return { error: "Nao e pedido de delivery", code: 400 };
+  if (o.status !== "draft" && !o.is_draft) return { already: true };
+
+  const upd: Record<string, unknown> = { status: "new", is_draft: false, updated_at: new Date().toISOString() };
+  if (newNotes != null) upd.notes = newNotes;
+  const { error: upErr } = await admin.from("orders").update(upd).eq("id", order_id);
+  if (upErr) throw upErr;
+
+  const { data: items } = await admin.from("order_items").select("id, item_name, item_price, quantity, notes, skip_kds, station_id, status").eq("order_id", order_id).neq("status", "cancelled");
+  const itemIds = ((items ?? []) as Record<string, unknown>[]).map((it) => it.id as string);
+  const [{ data: optRows }, { data: obsRows }] = await Promise.all([
+    itemIds.length ? admin.from("order_item_options").select("order_item_id, option_name, group_name, additional_price").in("order_item_id", itemIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    itemIds.length ? admin.from("order_item_observations").select("order_item_id, text").in("order_item_id", itemIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+  ]);
+  const serverItems = ((items ?? []) as Record<string, unknown>[]).map((it) => ({
+    item_name: it.item_name, item_price: Number(it.item_price ?? 0), quantity: Number(it.quantity ?? 1),
+    notes: it.notes ?? null, skip_kds: !!it.skip_kds, station_id: it.station_id ?? null,
+    options: ((optRows ?? []) as Record<string, unknown>[]).filter((r) => r.order_item_id === it.id).map((r) => ({ option_name: r.option_name, group_name: r.group_name, additional_price: Number(r.additional_price ?? 0) })),
+    observations: ((obsRows ?? []) as Record<string, unknown>[]).filter((r) => r.order_item_id === it.id).map((r) => ({ text: r.text, is_checked: false })),
+  }));
+  const isRetirada = o.delivery_platform === "retirada";
+  const customer_name = String(o.destination_name ?? "").split(/\s+[-–—]\s+/)[0].trim() || "Cliente";
+  const notesTxt = String(newNotes ?? o.notes ?? "");
+  const trocoMatch = cashAmount == null ? notesTxt.match(/Troco para\s*R\$\s*([\d.,]+)/i) : null;
+  await emitDeliveryOutputs(admin, {
+    tenant_id, orderId: o.id as string, orderNumber: o.number as string, serverItems,
+    customer_name, customer_address: (o.delivery_address as string | null) ?? null, customer_phone: String(o.destination_phone ?? ""),
+    cleanPhone: String(o.destination_phone ?? "").replace(/\D/g, ""), isRetirada,
+    routeKm: o.delivery_distance_km != null ? Number(o.delivery_distance_km) : null,
+    routeTempoMax: o.delivery_sla_min != null ? Number(o.delivery_sla_min) : null,
+    serverDeliveryFee: Number(o.delivery_fee ?? 0), serverSubtotal: Number(o.subtotal ?? 0),
+    voucherDiscount: Number(o.discount_amount ?? 0), vCode: null, serverTotal: Number(o.total_amount ?? 0),
+    payment_method: paymentLabel, isDinheiro: /dinheiro/i.test(paymentLabel),
+    cash_amount: cashAmount ?? (trocoMatch ? Number(trocoMatch[1].replace(".", "").replace(",", ".")) : null),
+  });
+  return {};
+}
+
 Deno.serve({ verify_jwt: false }, async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -1297,51 +1345,37 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     }
 
     if (action === "release_held_order") {
-      // Pix confirmado: o pedido "segurado" vira 'new' (aparece no KDS/gestor) e dispara
-      // as saídas que ficaram presas (tickets, comprovante, WhatsApp). Só o online-payments
-      // chama isto, com a chave interna — o cliente nunca libera o próprio pedido.
+      // Pix confirmado: só o online-payments chama isto, com a chave interna.
       const internalKey = Deno.env.get("FISCAL_INTERNAL_KEY") ?? "";
       if (!internalKey || req.headers.get("x-internal-key") !== internalKey) return jsonErr("Unauthorized", 401);
       const { tenant_id, order_id } = body;
       if (!tenant_id || !order_id) return jsonErr("tenant_id e order_id obrigatorios", 400);
-      const { data: o } = await admin.from("orders")
-        .select("id, number, status, is_draft, origin_type, destination_name, destination_phone, delivery_address, delivery_platform, delivery_fee, subtotal, discount_amount, total_amount, notes, delivery_distance_km, delivery_sla_min")
+      const r = await releaseHeldOrder(admin, String(tenant_id), String(order_id), "PIX pelo app (PAGO)", null);
+      if (r.error) return jsonErr(r.error, r.code ?? 400);
+      return new Response(JSON.stringify({ _v: "v14", ok: true, released: !r.already, already: !!r.already }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "change_held_payment") {
+      // Cliente desistiu do Pix pelo app: escolhe outra forma (cobra na entrega/retirada) e o
+      // pedido segurado vai pra cozinha agora. Prova de posse = client_request_id do aparelho.
+      const { tenant_id, order_id, order_token, payment_method, cash_amount } = body;
+      if (!tenant_id || !order_id || !order_token || !payment_method) return jsonErr("Dados incompletos", 400);
+      const label = String(payment_method).trim().slice(0, 40);
+      if (/pix pelo app/i.test(label)) return jsonErr("Escolha uma forma diferente do Pix pelo app", 400);
+      const { data: o } = await admin.from("orders").select("id, status, is_draft, origin_type, client_request_id, delivery_platform, total_amount")
         .eq("id", order_id).eq("tenant_id", tenant_id).maybeSingle();
-      if (!o) return jsonErr("Pedido nao encontrado", 404);
-      if (o.origin_type !== "delivery") return jsonErr("Nao e pedido de delivery", 400);
-      if (o.status !== "draft" && !o.is_draft) return new Response(JSON.stringify({ _v: "v14", ok: true, already: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
-      const { error: upErr } = await admin.from("orders").update({ status: "new", is_draft: false, updated_at: new Date().toISOString() }).eq("id", order_id);
-      if (upErr) throw upErr;
-
-      const { data: items } = await admin.from("order_items").select("id, item_name, item_price, quantity, notes, skip_kds, station_id, status").eq("order_id", order_id).neq("status", "cancelled");
-      const itemIds = ((items ?? []) as Record<string, unknown>[]).map((it) => it.id as string);
-      const [{ data: optRows }, { data: obsRows }] = await Promise.all([
-        itemIds.length ? admin.from("order_item_options").select("order_item_id, option_name, group_name, additional_price").in("order_item_id", itemIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-        itemIds.length ? admin.from("order_item_observations").select("order_item_id, text").in("order_item_id", itemIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-      ]);
-      const serverItems = ((items ?? []) as Record<string, unknown>[]).map((it) => ({
-        item_name: it.item_name, item_price: Number(it.item_price ?? 0), quantity: Number(it.quantity ?? 1),
-        notes: it.notes ?? null, skip_kds: !!it.skip_kds, station_id: it.station_id ?? null,
-        options: ((optRows ?? []) as Record<string, unknown>[]).filter((r) => r.order_item_id === it.id).map((r) => ({ option_name: r.option_name, group_name: r.group_name, additional_price: Number(r.additional_price ?? 0) })),
-        observations: ((obsRows ?? []) as Record<string, unknown>[]).filter((r) => r.order_item_id === it.id).map((r) => ({ text: r.text, is_checked: false })),
-      }));
+      if (!o || String(o.client_request_id ?? "") !== String(order_token) || o.origin_type !== "delivery") return jsonErr("Pedido nao encontrado", 403);
+      if (o.status !== "draft" && !o.is_draft) return jsonErr("Este pedido ja foi enviado para a cozinha", 409);
       const isRetirada = o.delivery_platform === "retirada";
-      const customer_name = String(o.destination_name ?? "").split(/\s+[-–—]\s+/)[0].trim() || "Cliente";
-      const notesTxt = String(o.notes ?? "");
-      const trocoMatch = notesTxt.match(/Troco para\s*R\$\s*([\d.,]+)/i);
-      await emitDeliveryOutputs(admin, {
-        tenant_id, orderId: o.id as string, orderNumber: o.number as string, serverItems,
-        customer_name, customer_address: (o.delivery_address as string | null) ?? null, customer_phone: String(o.destination_phone ?? ""),
-        cleanPhone: String(o.destination_phone ?? "").replace(/\D/g, ""), isRetirada,
-        routeKm: o.delivery_distance_km != null ? Number(o.delivery_distance_km) : null,
-        routeTempoMax: o.delivery_sla_min != null ? Number(o.delivery_sla_min) : null,
-        serverDeliveryFee: Number(o.delivery_fee ?? 0), serverSubtotal: Number(o.subtotal ?? 0),
-        voucherDiscount: Number(o.discount_amount ?? 0), vCode: null, serverTotal: Number(o.total_amount ?? 0),
-        payment_method: "PIX pelo app (PAGO)", isDinheiro: false,
-        cash_amount: trocoMatch ? Number(trocoMatch[1].replace(".", "").replace(",", ".")) : null,
-      });
-      return new Response(JSON.stringify({ _v: "v14", ok: true, released: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const isDinheiro = /dinheiro/i.test(label);
+      const troco = isDinheiro && cash_amount != null && Number(cash_amount) > 0 ? Number(cash_amount) : null;
+      if (troco != null && troco < Number(o.total_amount ?? 0)) return jsonErr("O valor em dinheiro precisa cobrir o total do pedido", 400);
+      const parts = ["Pagamento: " + label];
+      if (isRetirada) parts.push("RETIRADA NA LOJA");
+      if (troco != null) parts.push("Troco para " + fmtPrice(troco));
+      const r = await releaseHeldOrder(admin, String(tenant_id), String(order_id), label, parts.join(" | "), troco);
+      if (r.error) return jsonErr(r.error, r.code ?? 400);
+      return new Response(JSON.stringify({ _v: "v14", ok: true, payment_method: label }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "create_delivery_order") {

@@ -102,6 +102,8 @@ export default function DeliveryPage() {
   const customerId = data.customerId;
   const opcoesIndisponiveisIds = data.opcoesIndisponiveisIds;
   const paymentMethods = data.paymentMethods;
+  const LABEL_METODO: Record<string, string> = { dinheiro: 'Dinheiro', cartao_credito: 'Cartão de Crédito', cartao_debito: 'Cartão de Débito', pix: 'PIX', vale_refeicao: 'Vale Refeição' };
+  const ICONE_METODO: Record<string, string> = { dinheiro: 'ri-money-dollar-circle-line', cartao_credito: 'ri-bank-card-line', cartao_debito: 'ri-bank-card-2-line', pix: 'ri-qr-code-line', vale_refeicao: 'ri-coupon-line' };
   // "PIX pelo app" entra na lista quando a loja tem o Mercado Pago ativo, a menos
   // que a loja tenha desligado essa forma em Config › Delivery (pix_online: false).
   const metodosDisponiveis: Record<string, boolean> = Object.assign({}, paymentMethods || {}, {
@@ -472,6 +474,10 @@ export default function DeliveryPage() {
         resumo={data.resumoConfirmacao}
         pixOnline={data.pixOnline}
         onPixPago={data.limparPixOnline}
+        metodosAlternativos={Object.entries(metodosDisponiveis)
+          .filter(function (e) { return e[1] === true && e[0] !== 'pix_online'; })
+          .map(function (e) { return { key: e[0], label: LABEL_METODO[e[0]] || e[0], icon: ICONE_METODO[e[0]] || 'ri-wallet-line' }; })}
+        onTrocarPagamento={data.handleTrocarPagamentoPixOnline}
       />
     );
   }
@@ -1404,8 +1410,12 @@ export default function DeliveryPage() {
                 </div>
 
                 <div className="space-y-2 mb-6">
-                  {Object.entries(metodosDisponiveis).filter(function (entry) { return entry[1] === true; }).map(function (entry) {
+                  {Object.entries(metodosDisponiveis).filter(function (entry) { return entry[1] === true; })
+                    // "PIX pelo app" sempre primeiro: é o caminho que a loja quer empurrar
+                    .sort(function (a, b) { return (a[0] === 'pix_online' ? -1 : 0) - (b[0] === 'pix_online' ? -1 : 0); })
+                    .map(function (entry) {
                     const key = entry[0];
+                    const destaque = key === 'pix_online';
                     const methodMap: Record<string, { label: string; icon: string; description: string }> = modoEntrega === 'retirada' ? {
                       dinheiro: { label: 'Dinheiro', icon: 'ri-money-dollar-circle-line', description: 'Informe o valor para calcular o troco' },
                       cartao_credito: { label: 'Cartão de Crédito', icon: 'ri-bank-card-line', description: 'Pague com cartão na retirada' },
@@ -1435,23 +1445,28 @@ export default function DeliveryPage() {
                         }}
                         className={'w-full flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer transition-all duration-200 ' +
                           (selected
-                            ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-200/50'
-                            : 'bg-white border-zinc-100 hover:border-zinc-200')
+                            ? (destaque ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-200/60' : 'bg-amber-50 border-amber-300 ring-2 ring-amber-200/50')
+                            : (destaque ? 'bg-emerald-50/60 border-emerald-300 hover:border-emerald-400 shadow-sm' : 'bg-white border-zinc-100 hover:border-zinc-200'))
                         }
                       >
                         <div className={'w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ' +
-                          (selected ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-400')
+                          (selected ? (destaque ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white') : (destaque ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-zinc-400'))
                         }>
                           <i className={info.icon + ' text-lg'} />
                         </div>
                         <div className="flex-1 text-left">
                           <span className={'text-sm font-bold ' + (selected ? 'text-zinc-800' : 'text-zinc-700')}>
                             {info.label}
+                            {destaque ? (
+                              <span className="ml-2 inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500 text-white align-middle">
+                                <i className="ri-flashlight-fill" /> Recomendado
+                              </span>
+                            ) : null}
                           </span>
-                          <p className="text-[11px] text-zinc-400 mt-0.5">{info.description}</p>
+                          <p className={'text-[11px] mt-0.5 ' + (destaque ? 'text-emerald-700' : 'text-zinc-400')}>{info.description}</p>
                         </div>
                         <div className={'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ' +
-                          (selected ? 'bg-amber-500 border-amber-500' : 'border-zinc-200')
+                          (selected ? (destaque ? 'bg-emerald-500 border-emerald-500' : 'bg-amber-500 border-amber-500') : (destaque ? 'border-emerald-300' : 'border-zinc-200'))
                         }>
                           {selected ? <i className="ri-check-line text-white text-[10px]" /> : null}
                         </div>

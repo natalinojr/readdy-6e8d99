@@ -1533,6 +1533,34 @@ export function useDeliveryData(storeSlug?: string) {
 
   // ── Novo pedido ─────────────────────────────────────────────────────────────
 
+  // Cliente desistiu do Pix pelo app: escolhe outra forma e o pedido segurado vai pra cozinha.
+  async function handleTrocarPagamentoPixOnline(metodoKey: string, cashAmount?: string): Promise<boolean> {
+    if (!tenant || !pixOnline) return false;
+    const labels: Record<string, string> = { dinheiro: 'Dinheiro', cartao_credito: 'Cartão de Crédito', cartao_debito: 'Cartão de Débito', pix: 'PIX', vale_refeicao: 'Vale Refeição' };
+    const label = labels[metodoKey] || metodoKey;
+    const cashNum = cashAmount ? parseFloat(cashAmount) : 0;
+    try {
+      const res = await fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'change_held_payment', tenant_id: tenant.id,
+          order_id: pixOnline.orderId, order_token: pixOnline.orderToken,
+          payment_method: label, cash_amount: cashNum > 0 ? cashNum : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) { setErrorMsg(data.message || data.error); return false; }
+      setPagamentoSelecionado(label);
+      limparPixOnline();
+      setPixOnline(null);
+      return true;
+    } catch {
+      setErrorMsg('Erro de conexão. Tente novamente.');
+      return false;
+    }
+  }
+
   function limparPixOnline() {
     // Chamado quando o Pix confirma: o memo não precisa mais sobreviver a reload
     try { if (tenant?.id) localStorage.removeItem('delivery_pix_' + tenant.id); } catch { /* ignore */ }
@@ -1801,6 +1829,7 @@ export function useDeliveryData(storeSlug?: string) {
     pixOnlineDisponivel,
     pixOnline,
     limparPixOnline,
+    handleTrocarPagamentoPixOnline,
     modoEntrega,
     setModoEntrega,
     retiradaAtivo,
