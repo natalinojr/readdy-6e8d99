@@ -1607,6 +1607,34 @@ export function useDeliveryData(storeSlug?: string) {
     setStep('confirmacao');
   }
 
+  // O pedido pendente guardado no aparelho pode ter morrido no servidor (cancelado no
+  // fechamento do caixa, pago pelo caixa, liberado com outra forma…). Confere na Edge e,
+  // se não houver mais nada a pagar, esquece o memo — senão o banner "falta pagar" mente.
+  useEffect(function () {
+    if (!pixOnline || !tenant?.id) return;
+    let cancelled = false;
+    const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
+    const auth = pixOnline.orderToken
+      ? { order_id: pixOnline.orderId, order_token: pixOnline.orderToken }
+      : { order_id: pixOnline.orderId, order_phone: phone };
+    fetch(base + '/functions/v1/online-payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get_bill', ...auth }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (cancelled || !d) return;
+        const orders = (d.orders || []) as { remaining: number }[];
+        const restante = orders.reduce(function (acc: number, o) { return acc + Number(o.remaining || 0); }, 0);
+        const morto = !!d.error || (orders.length > 0 && restante <= 0);
+        if (morto) limparPixOnline();
+      })
+      .catch(function () { /* sem rede: mantém o memo, a tela do Pix trata */ });
+    return function () { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pixOnline?.orderId, tenant?.id]);
+
   // Cliente saiu pro cardápio antes de pagar: volta pra tela do pedido com o Pix.
   function voltarParaPagamentoPix() {
     if (!pixOnline) return;
