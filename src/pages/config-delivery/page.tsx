@@ -98,6 +98,8 @@ export default function ConfigDeliveryPage() {
     { key: 'cartao_debito', label: 'Cartão de Débito', icon: 'ri-bank-card-2-line' },
     { key: 'pix', label: 'PIX', icon: 'ri-qr-code-line' },
     { key: 'vale_refeicao', label: 'Vale Refeição', icon: 'ri-coupon-line' },
+    // Só aparece pro cliente se a loja tiver o Mercado Pago ativo (Configurações › Pagamentos)
+    { key: 'pix_online', label: 'PIX pelo app (pagamento online)', icon: 'ri-smartphone-line' },
   ];
 
   const [formasPagamento, setFormasPagamento] = useState<Record<string, boolean>>({});

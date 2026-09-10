@@ -93,6 +93,15 @@ export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, 
         <div>
           <span className="text-sm font-black text-zinc-800">{fmtMoeda(o.total)}</span>
           {o.taxa > 0 && <span className="text-[10px] text-zinc-400 ml-1">taxa {fmtMoeda(o.taxa)}</span>}
+          {o.pago ? (
+            <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700" title="Pago pelo app (Pix) — o motoboy não cobra">
+              <i className="ri-checkbox-circle-fill" /> PAGO
+            </span>
+          ) : /pix pelo app/i.test(o.pagamento || '') ? (
+            <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700" title="Cliente escolheu Pix pelo app e ainda não pagou">
+              <i className="ri-time-line" /> Pix pelo app
+            </span>
+          ) : null}
         </div>
         {o.driver_id ? (
           <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500 truncate max-w-[120px]" title="Entregador responsável">

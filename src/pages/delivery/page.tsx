@@ -102,6 +102,11 @@ export default function DeliveryPage() {
   const customerId = data.customerId;
   const opcoesIndisponiveisIds = data.opcoesIndisponiveisIds;
   const paymentMethods = data.paymentMethods;
+  // "PIX pelo app" entra na lista quando a loja tem o Mercado Pago ativo, a menos
+  // que a loja tenha desligado essa forma em Config › Delivery (pix_online: false).
+  const metodosDisponiveis: Record<string, boolean> = Object.assign({}, paymentMethods || {}, {
+    pix_online: data.pixOnlineDisponivel && (paymentMethods || {}).pix_online !== false,
+  });
   const pagamentoSelecionado = data.pagamentoSelecionado;
   const modoEntrega = data.modoEntrega;
   const customer = data.customer;
@@ -465,6 +470,8 @@ export default function DeliveryPage() {
         paymentMethod={pagamentoSelecionado}
         modoEntrega={modoEntrega}
         resumo={data.resumoConfirmacao}
+        pixOnline={data.pixOnline}
+        onPixPago={data.limparPixOnline}
       />
     );
   }
@@ -1243,7 +1250,7 @@ export default function DeliveryPage() {
                 type="button"
                 onClick={function () {
                   if (foraDeArea) { data.handleIrParaEnderecos(); return; }
-                  const activeMethods = Object.entries(paymentMethods || {}).filter(function (entry) { return entry[1] === true; });
+                  const activeMethods = Object.entries(metodosDisponiveis).filter(function (entry) { return entry[1] === true; });
                   if (activeMethods.length > 0) {
                     setMetodoPagamento('');
                     setValorDinheiro('');
@@ -1397,7 +1404,7 @@ export default function DeliveryPage() {
                 </div>
 
                 <div className="space-y-2 mb-6">
-                  {Object.entries(paymentMethods || {}).filter(function (entry) { return entry[1] === true; }).map(function (entry) {
+                  {Object.entries(metodosDisponiveis).filter(function (entry) { return entry[1] === true; }).map(function (entry) {
                     const key = entry[0];
                     const methodMap: Record<string, { label: string; icon: string; description: string }> = modoEntrega === 'retirada' ? {
                       dinheiro: { label: 'Dinheiro', icon: 'ri-money-dollar-circle-line', description: 'Informe o valor para calcular o troco' },
@@ -1405,12 +1412,14 @@ export default function DeliveryPage() {
                       cartao_debito: { label: 'Cartão de Débito', icon: 'ri-bank-card-2-line', description: 'Pague com cartão na retirada' },
                       pix: { label: 'PIX', icon: 'ri-qr-code-line', description: 'Faça o PIX na retirada' },
                       vale_refeicao: { label: 'Vale Refeição', icon: 'ri-coupon-line', description: 'Use seu vale na retirada' },
+                      pix_online: { label: 'PIX pelo app', icon: 'ri-smartphone-line', description: 'Pague agora pelo celular — confirmação automática' },
                     } : {
                       dinheiro: { label: 'Dinheiro', icon: 'ri-money-dollar-circle-line', description: 'Informe o valor para calcular o troco' },
                       cartao_credito: { label: 'Cartão de Crédito', icon: 'ri-bank-card-line', description: 'O motoboy levará a maquininha' },
                       cartao_debito: { label: 'Cartão de Débito', icon: 'ri-bank-card-2-line', description: 'O motoboy levará a maquininha' },
                       pix: { label: 'PIX', icon: 'ri-qr-code-line', description: 'O motoboy levará a maquininha' },
                       vale_refeicao: { label: 'Vale Refeição', icon: 'ri-coupon-line', description: 'O motoboy levará a maquininha' },
+                      pix_online: { label: 'PIX pelo app', icon: 'ri-smartphone-line', description: 'Pague agora pelo celular — o motoboy não cobra nada' },
                     };
                     const info = methodMap[key] || { label: key, icon: 'ri-wallet-line', description: '' };
                     const selected = metodoPagamento === key;

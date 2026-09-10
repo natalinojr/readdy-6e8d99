@@ -31,6 +31,8 @@ export interface EntregaDetalhe {
   itens: { nome: string; quantidade: number; preco: number }[];
   problemas: ProblemaEntrega[];
   delivery_notes: NotaEntrega[];
+  pago?: boolean;
+  pagamento?: string | null;
 }
 
 export interface EntregaPedido {
@@ -48,6 +50,10 @@ export interface EntregaPedido {
   delivery_notes: NotaEntrega[];
   driver_id: string | null;
   driver_nome: string | null;
+  /** Pago pelo app (Pix online) — o motoboy não cobra */
+  pago?: boolean;
+  /** Texto "Pagamento: X | Troco para ..." gravado em orders.notes */
+  pagamento?: string | null;
   created_at: string;
   motoboy_updated_at: string | null;
   out_for_delivery_at: string | null;

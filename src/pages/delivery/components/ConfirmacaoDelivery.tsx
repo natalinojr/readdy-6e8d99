@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import AcompanharPedido from './AcompanharPedido';
 import HistoricoPedidos from './HistoricoPedidos';
+import PixCobrancaPanel from '@/components/feature/PixCobrancaPanel';
 
 type TabOption = 'acompanhar' | 'historico';
 
@@ -16,6 +17,9 @@ interface Props {
   modoEntrega?: 'entrega' | 'retirada';
   /** Resumo de valores (subtotal, desconto do cupom, taxa) capturado ao confirmar */
   resumo?: { subtotal: number; desconto: number; deliveryFee: number; voucherCodigo: string } | null;
+  /** Pedido a pagar por Pix pelo app: {orderId, orderToken} identificam o pedido na Edge online-payments */
+  pixOnline?: { orderId: string; orderToken: string } | null;
+  onPixPago?: () => void;
 }
 
 export default function ConfirmacaoDelivery(props: Props) {
@@ -29,6 +33,7 @@ export default function ConfirmacaoDelivery(props: Props) {
   const paymentMethod = props.paymentMethod;
   const modoEntrega = props.modoEntrega || 'entrega';
   const resumo = props.resumo;
+  const pixOnline = props.pixOnline;
 
   const [abaAtiva, setAbaAtiva] = useState<TabOption>('acompanhar');
   const [trackingNumero, setTrackingNumero] = useState(numeroPedido);
@@ -89,7 +94,7 @@ export default function ConfirmacaoDelivery(props: Props) {
           </div>
         )}
 
-        {paymentMethod ? (
+        {paymentMethod && !pixOnline ? (
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 rounded-full border border-green-200/60 mb-4 mx-2">
             <i className="ri-wallet-3-line text-green-600 text-sm" />
             <span className="text-xs font-bold text-green-700">{paymentMethod}</span>
@@ -99,6 +104,17 @@ export default function ConfirmacaoDelivery(props: Props) {
           </div>
         ) : null}
       </div>
+
+      {/* Pix pelo app: o cliente paga aqui mesmo; a confirmação chega sozinha */}
+      {pixOnline ? (
+        <div className="mb-5">
+          <PixCobrancaPanel
+            auth={{ order_id: pixOnline.orderId, order_token: pixOnline.orderToken }}
+            onPago={props.onPixPago}
+            titulo="Pague agora com Pix"
+          />
+        </div>
+      ) : null}
 
       {/* Abas */}
       <div className="flex gap-1 bg-zinc-100 rounded-xl p-1 mb-5">

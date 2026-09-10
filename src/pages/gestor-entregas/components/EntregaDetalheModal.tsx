@@ -100,6 +100,15 @@ export default function EntregaDetalheModal({ orderId, autor, busy, fetchDetalhe
                 ) : null}
                 <div className="flex items-center gap-3 mt-2 pt-2 border-t border-zinc-100">
                   <span className="text-sm font-black text-zinc-800">{fmtMoeda(d.total)}</span>
+                  {d.pago ? (
+                    <span className="ml-2 inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700" title="Pago pelo app (Pix) — o motoboy não cobra">
+                      <i className="ri-checkbox-circle-fill" /> PAGO
+                    </span>
+                  ) : /pix pelo app/i.test(d.pagamento || '') ? (
+                    <span className="ml-2 inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700" title="Cliente escolheu Pix pelo app e ainda não pagou">
+                      <i className="ri-time-line" /> Pix pelo app · aguardando
+                    </span>
+                  ) : null}
                   {d.taxa > 0 && <span className="text-[11px] text-zinc-400">taxa {fmtMoeda(d.taxa)}</span>}
                   {d.driver_nome && <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-zinc-500"><i className="ri-e-bike-2-line text-zinc-400" /> {d.driver_nome}</span>}
                 </div>

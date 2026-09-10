@@ -187,7 +187,7 @@ serve(async (req) => {
 
     if (body.action === "get_order") {
       const { data: order, error } = await admin.from("orders")
-        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, status, motoboy_status, motoboy_note, motoboy_problems, delivery_notes, motoboy_driver_id, motoboy_timeline, out_for_delivery_at, created_at, origin_type")
+        .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, is_paid, status, motoboy_status, motoboy_note, motoboy_problems, delivery_notes, motoboy_driver_id, motoboy_timeline, out_for_delivery_at, created_at, origin_type")
         .eq("id", orderId).maybeSingle();
       if (error || !order) return json({ error: "not_found" }, 200);
       if (order.origin_type !== "delivery") return json({ error: "not_delivery" }, 200);
@@ -233,6 +233,8 @@ serve(async (req) => {
           total: Number(order.total_amount ?? 0),
           taxa: Number(order.delivery_fee ?? 0),
           pagamento: order.notes ?? "",
+          // Pago pelo app (Pix): o motoboy NAO cobra na entrega
+          pago: !!order.is_paid,
           status: order.status,
           motoboy_status: order.motoboy_status ?? null,
           motoboy_note: order.motoboy_note ?? null,

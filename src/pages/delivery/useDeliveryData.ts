@@ -625,6 +625,27 @@ export function useDeliveryData(storeSlug?: string) {
   // Resumo de valores capturado NO MOMENTO da confirmação (o carrinho é limpo depois)
   const [resumoConfirmacao, setResumoConfirmacao] = useState<{ subtotal: number; desconto: number; deliveryFee: number; voucherCodigo: string } | null>(null);
   const [pagamentoSelecionado, setPagamentoSelecionado] = useState('');
+
+  // ── Pix pelo app (pagamento online via Mercado Pago) ─────────────────────
+  // Disponível quando a loja tem o provedor ativo (mesma regra do mesa-qr). O pedido
+  // recém-criado guarda {orderId, orderToken} — o token é o client_request_id que
+  // este aparelho gerou: é a prova de posse do pedido para a Edge online-payments.
+  const [pixOnlineDisponivel, setPixOnlineDisponivel] = useState(false);
+  const [pixOnline, setPixOnline] = useState<{ orderId: string; orderToken: string; number: string; total: number } | null>(null);
+  useEffect(function () {
+    if (!tenant?.id) return;
+    let cancelled = false;
+    const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
+    fetch(base + '/functions/v1/online-payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'public_status', tenant_id: tenant.id }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (!cancelled) setPixOnlineDisponivel(Boolean(d && d.enabled)); })
+      .catch(function () { /* fica desligado */ });
+    return function () { cancelled = true; };
+  }, [tenant?.id]);
   const [paymentMethods, setPaymentMethods] = useState<Record<string, boolean>>({});
   const [modoEntrega, setModoEntrega] = useState<'entrega' | 'retirada'>('entrega');
   const [retiradaAtivo, setRetiradaAtivo] = useState(true);
@@ -794,6 +815,21 @@ export function useDeliveryData(storeSlug?: string) {
               }
 
               localStorage.setItem('delivery_phone', c.phone);
+
+              // Pix pelo app em andamento (voltou do banco / recarregou): reabre a tela do pedido
+              try {
+                const rawPix = localStorage.getItem('delivery_pix_' + configResult.tenant.id);
+                const memo = rawPix ? JSON.parse(rawPix) : null;
+                if (memo && memo.orderId && memo.orderToken && Date.now() - Number(memo.at || 0) < 2 * 60 * 60 * 1000) {
+                  setPixOnline({ orderId: memo.orderId, orderToken: memo.orderToken, number: memo.number || '', total: Number(memo.total || 0) });
+                  setNumeroPedido(memo.number || '');
+                  setOrderTotal(Number(memo.total || 0));
+                  setPagamentoSelecionado('PIX pelo app');
+                  setPedidoConfirmado(true);
+                  setStep('confirmacao');
+                  return;
+                }
+              } catch { /* memo inválido: segue o fluxo normal */ }
 
               // Cliente estava navegando o cardápio e voltou do 2º plano: retoma lá.
               if (savedStep === 'cardapio') { setStep('cardapio'); return; }
@@ -1370,7 +1406,9 @@ export function useDeliveryData(storeSlug?: string) {
       cartao_debito: 'Cartão de Débito',
       pix: 'PIX',
       vale_refeicao: 'Vale Refeição',
+      pix_online: 'PIX pelo app',
     };
+    const isPixOnline = methodLabel === 'pix_online';
     const methodName = methodMap[methodLabel] || methodLabel;
     setPagamentoSelecionado(methodName);
 
@@ -1468,6 +1506,14 @@ export function useDeliveryData(storeSlug?: string) {
         const totalConfirmado = data.data?.total || total;
         setNumeroPedido(data.data?.number || '');
         setOrderTotal(totalConfirmado);
+        // Pix pelo app: guarda o pedido + token no aparelho para cobrar (e sobreviver a reload)
+        if (isPixOnline && data.data?.id) {
+          const memo = { orderId: String(data.data.id), orderToken: clientRequestId, number: String(data.data.number || ''), total: Number(totalConfirmado), at: Date.now() };
+          setPixOnline(memo);
+          try { localStorage.setItem('delivery_pix_' + tenant.id, JSON.stringify(memo)); } catch { /* sem storage */ }
+        } else {
+          setPixOnline(null);
+        }
         // Desconto real aplicado pelo backend (voucher) = bruto - total confirmado.
         const descontoAplicado = Math.max(0, (subtotal + effectiveDeliveryFee) - totalConfirmado);
         setResumoConfirmacao({ subtotal, desconto: descontoAplicado, deliveryFee: effectiveDeliveryFee, voucherCodigo });
@@ -1487,7 +1533,14 @@ export function useDeliveryData(storeSlug?: string) {
 
   // ── Novo pedido ─────────────────────────────────────────────────────────────
 
+  function limparPixOnline() {
+    // Chamado quando o Pix confirma: o memo não precisa mais sobreviver a reload
+    try { if (tenant?.id) localStorage.removeItem('delivery_pix_' + tenant.id); } catch { /* ignore */ }
+  }
+
   function handleNovoPedido() {
+    limparPixOnline();
+    setPixOnline(null);
     setPedidoConfirmado(false);
     setNumeroPedido('');
     setErrorMsg('');
@@ -1745,6 +1798,9 @@ export function useDeliveryData(storeSlug?: string) {
     totalValor,
     paymentMethods,
     pagamentoSelecionado,
+    pixOnlineDisponivel,
+    pixOnline,
+    limparPixOnline,
     modoEntrega,
     setModoEntrega,
     retiradaAtivo,

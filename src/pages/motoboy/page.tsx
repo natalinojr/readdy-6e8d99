@@ -48,6 +48,8 @@ interface OrderData {
   total: number;
   taxa: number;
   pagamento: string;
+  /** Já pago pelo app (Pix online): não cobrar na entrega */
+  pago?: boolean;
   status: string;
   motoboy_status: string | null;
   alertas?: string[];
@@ -338,8 +340,17 @@ export default function MotoboyPage() {
           </div>
           <div className="flex gap-3">
             <div className="flex-1">
-              <p className="text-[11px] text-zinc-400 font-semibold uppercase">Cobrar do cliente</p>
-              <p className="text-lg font-black text-zinc-800">{fmt(order.total)}</p>
+              {order.pago ? (
+                <>
+                  <p className="text-[11px] text-emerald-600 font-semibold uppercase">Já pago pelo app — não cobrar</p>
+                  <p className="text-lg font-black text-emerald-700"><i className="ri-checkbox-circle-fill mr-1" />{fmt(order.total)}</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[11px] text-zinc-400 font-semibold uppercase">Cobrar do cliente</p>
+                  <p className="text-lg font-black text-zinc-800">{fmt(order.total)}</p>
+                </>
+              )}
             </div>
             {order.taxa > 0 ? (
               <div>

@@ -1,7 +1,9 @@
 // ── online-payments ──────────────────────────────────────────────────────────
-// Pagamento da conta da mesa pelo celular do cliente (mesa-qr) via Pix dinâmico
-// do Mercado Pago. Uma função só, três "portas":
-//   • cliente (sem JWT; autentica por participant_id + access_token da mesa):
+// Pagamento pelo celular do cliente via Pix dinâmico do Mercado Pago. Atende MESA
+// numerada (conta da sessão, várias pessoas), FILA POR SENHA (QR universal, sem
+// mesa — a conta é do participante) e DELIVERY (pedido único, autenticado pelo
+// client_request_id gerado no aparelho do cliente). Uma função só, três "portas":
+//   • cliente (sem JWT; participant_id + access_token, ou order_id + order_token no delivery):
 //       public_status, get_bill, create_pix, get_pix_status, cancel_pix
 //   • staff (JWT + membership em user_tenants):
 //       get_config, save_config (admin/manager), confirm_manual (admin/manager)
@@ -90,15 +92,44 @@ async function requireParticipant(admin: Admin, body: Record<string, unknown>, o
 
   // Fila por senha (QR universal): não existe mesa — a conta é do participante.
   if (!p.table_session_id) {
-    return { error: null, participant: p, session: null, tenantId: p.tenant_id as string, tableSessionId: null as string | null, tableId: null as string | null };
+    return { error: null, participant: p, session: null, tenantId: p.tenant_id as string, tableSessionId: null as string | null, tableId: null as string | null, orderId: null as string | null };
   }
 
   const { data: sess } = await admin.from("table_sessions").select("id, status, table_id, session_id, tenant_id")
     .eq("id", p.table_session_id).maybeSingle();
   if (!sess) return { error: json({ error: "mesa_encerrada", message: "Esta mesa já foi encerrada" }, 409) };
   if (sess.status !== "open" && !opts.allowClosed) return { error: json({ error: "mesa_encerrada", message: "Esta mesa já foi encerrada" }, 409) };
-  return { error: null, participant: p, session: sess, tenantId: sess.tenant_id as string, tableSessionId: sess.id as string | null, tableId: sess.table_id as string | null };
+  return { error: null, participant: p, session: sess, tenantId: sess.tenant_id as string, tableSessionId: sess.id as string | null, tableId: sess.table_id as string | null, orderId: null as string | null };
 }
+
+// Cliente do DELIVERY: não tem senha nem mesa. A prova de posse do pedido é o
+// `client_request_id` que o próprio app gerou ao criar o pedido (uuid que fica no
+// aparelho) — sem ele ninguém consulta nem cobra o pedido de outra pessoa.
+async function requireDeliveryOrder(admin: Admin, body: Record<string, unknown>) {
+  const orderId = String(body.order_id ?? "");
+  const token = String(body.order_token ?? "");
+  if (!orderId || !token) return { error: json({ error: "order_id e order_token são obrigatórios" }, 400) };
+  const { data: o } = await admin.from("orders").select("id, tenant_id, number, client_request_id, origin_type, status, destination_name")
+    .eq("id", orderId).maybeSingle();
+  if (!o || String(o.client_request_id ?? "") !== token || o.origin_type !== "delivery") return { error: json({ error: "Pedido não encontrado" }, 403) };
+  if (o.status === "cancelled") return { error: json({ error: "pedido_cancelado", message: "Este pedido foi cancelado" }, 409) };
+  const customerName = String(o.destination_name ?? "").split(/\s+[-–—]\s+/)[0].trim() || "Cliente";
+  return {
+    error: null, participant: null, session: null, tenantId: o.tenant_id as string,
+    tableSessionId: null as string | null, tableId: null as string | null,
+    orderId: o.id as string, orderNumber: (o.number as string) ?? null, customerName,
+  };
+}
+
+// Quem está pagando: senha/mesa (participant_id + access_token) ou delivery (order_id + order_token).
+function resolveCustomer(admin: Admin, body: Record<string, unknown>, opts: { allowClosed?: boolean } = {}) {
+  return body.order_token ? requireDeliveryOrder(admin, body) : requireParticipant(admin, body, opts);
+}
+
+// Filtra fin_pix_payments pelo dono: participante (mesa/senha) ou pedido (delivery).
+// deno-lint-ignore no-explicit-any
+const ownerFilter = (q: any, ctx: { participant: { id: string } | null; orderId: string | null }) =>
+  ctx.participant ? q.eq("participant_id", ctx.participant.id) : q.eq("order_id", ctx.orderId);
 
 async function requireMember(req: Request, admin: Admin, tenantId: string) {
   const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
@@ -120,13 +151,17 @@ type BillOrder = {
 
 // Conta da MESA (todos os pedidos da sessão) ou da SENHA (só os do participante,
 // quando o QR universal opera em fila e não há mesa nenhuma).
-async function loadBill(admin: Admin, scopeRef: { tableSessionId: string | null; participantId: string }, viewerParticipantId: string | null): Promise<BillOrder[]> {
+// Escopos: MESA (todos os pedidos da sessão), SENHA (só os do participante) ou
+// PEDIDO ÚNICO (delivery — `orderId`).
+async function loadBill(admin: Admin, scopeRef: { tableSessionId: string | null; participantId: string | null; orderId?: string | null }, viewerParticipantId: string | null): Promise<BillOrder[]> {
   const { tableSessionId } = scopeRef;
   const base = admin.from("orders")
     .select("id, number, participant_id, status, total_amount, is_paid, is_draft, is_training, created_at, paid_at, order_items(item_name, quantity, item_price, status)");
   const { data: orders } = await (tableSessionId
     ? base.eq("table_session_id", tableSessionId)
-    : base.eq("participant_id", scopeRef.participantId)
+    : scopeRef.orderId
+      ? base.eq("id", scopeRef.orderId)
+      : base.eq("participant_id", scopeRef.participantId ?? "")
   ).neq("status", "cancelled").order("created_at", { ascending: true });
   const rows = (orders ?? []).filter((o: Record<string, unknown>) => !o.is_draft && !o.is_training);
   if (rows.length === 0) return [];
@@ -138,10 +173,14 @@ async function loadBill(admin: Admin, scopeRef: { tableSessionId: string | null;
     admin.from("payments").select("order_id, amount").in("order_id", ids).eq("is_refunded", false),
     tableSessionId
       ? admin.from("table_session_participants").select("id, name").eq("table_session_id", tableSessionId)
-      : admin.from("table_session_participants").select("id, name").eq("id", scopeRef.participantId),
+      : scopeRef.participantId
+        ? admin.from("table_session_participants").select("id, name").eq("id", scopeRef.participantId)
+        : Promise.resolve({ data: [] as { id: string; name: string }[] }),
     tableSessionId
       ? pendingPixQuery.eq("table_session_id", tableSessionId)
-      : pendingPixQuery.eq("participant_id", scopeRef.participantId),
+      : scopeRef.orderId
+        ? pendingPixQuery.eq("order_id", scopeRef.orderId)
+        : pendingPixQuery.eq("participant_id", scopeRef.participantId ?? ""),
   ]);
   const paidBy: Record<string, number> = {};
   for (const p of pays ?? []) paidBy[p.order_id] = (paidBy[p.order_id] ?? 0) + Number(p.amount ?? 0);
@@ -377,18 +416,16 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "get_bill") {
-      const auth = await requireParticipant(admin, body, { allowClosed: true });
+      const auth = await resolveCustomer(admin, body, { allowClosed: true });
       if (auth.error) return auth.error;
       const { participant, session, tenantId: billTenantId, tableSessionId } = auth;
       const cfg = await loadConfig(admin, billTenantId!);
-      const orders = await loadBill(admin, { tableSessionId: tableSessionId ?? null, participantId: participant.id }, participant.id);
-      const { data: pending } = await admin.from("fin_pix_payments").select("*")
-        .eq("participant_id", participant.id).eq("status", "pending")
+      const orders = await loadBill(admin, { tableSessionId: tableSessionId ?? null, participantId: participant?.id ?? null, orderId: auth.orderId }, participant?.id ?? null);
+      const { data: pending } = await ownerFilter(admin.from("fin_pix_payments").select("*"), auth).eq("status", "pending")
         .order("created_at", { ascending: false }).limit(1).maybeSingle();
       const px = pending ? await expireIfNeeded(admin, pending) : null;
       // Comprovante recente: o cliente pode ter voltado do app do banco depois da mesa fechar
-      const { data: lastOk } = await admin.from("fin_pix_payments").select("*")
-        .eq("participant_id", participant.id).eq("status", "confirmed")
+      const { data: lastOk } = await ownerFilter(admin.from("fin_pix_payments").select("*"), auth).eq("status", "confirmed")
         .gt("confirmed_at", new Date(Date.now() - 60 * 60 * 1000).toISOString())
         .order("confirmed_at", { ascending: false }).limit(1).maybeSingle();
       // Extrato do que já foi pago — inclui o que o caixa recebeu (dinheiro/cartão),
@@ -425,8 +462,9 @@ Deno.serve(async (req: Request) => {
 
       const { data: tbl } = auth.tableId ? await admin.from("tables").select("number").eq("id", auth.tableId).maybeSingle() : { data: null };
       return json({
-        enabled: isEnabled(cfg), table_number: tbl?.number ?? null, participant: { id: participant.id, name: participant.name },
-        mode: tableSessionId ? "table" : "queue",
+        enabled: isEnabled(cfg), table_number: tbl?.number ?? null,
+        participant: participant ? { id: participant.id, name: participant.name } : { id: auth.orderId, name: auth.customerName ?? "" },
+        mode: tableSessionId ? "table" : auth.orderId ? "delivery" : "queue",
         payments_history: paymentsHistory,
         session_closed: session ? session.status !== "open" : false,
         orders, pending_pix: px && px.status === "pending" ? pixPublic(px) : null,
@@ -435,7 +473,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "create_pix") {
-      const auth = await requireParticipant(admin, body);
+      const auth = await resolveCustomer(admin, body);
       if (auth.error) return auth.error;
       const { participant, tenantId: pixTenantId, tableSessionId } = auth;
       const tenantId = pixTenantId!;
@@ -444,9 +482,11 @@ Deno.serve(async (req: Request) => {
       // Na fila por senha só existe a própria conta — "mesa inteira" não faz sentido.
       const scope = (tableSessionId && body.scope === "all") ? "all" : "mine";
 
-      const orders = await loadBill(admin, { tableSessionId: tableSessionId ?? null, participantId: participant.id }, participant.id);
-      const target = orders.filter((o) => o.remaining > 0 && !o.locked && (scope === "all" || o.participant_id === participant.id));
-      if (orders.some((o) => o.remaining > 0 && o.locked && (scope === "all" || o.participant_id === participant.id))) {
+      const orders = await loadBill(admin, { tableSessionId: tableSessionId ?? null, participantId: participant?.id ?? null, orderId: auth.orderId }, participant?.id ?? null);
+      // Sem participante (delivery) a conta é o próprio pedido — tudo é "meu".
+      const isMine = (o: BillOrder) => scope === "all" || !participant || o.participant_id === participant.id;
+      const target = orders.filter((o) => o.remaining > 0 && !o.locked && isMine(o));
+      if (orders.some((o) => o.remaining > 0 && o.locked && isMine(o))) {
         return json({ error: "orders_locked", message: "Outra pessoa da mesa está pagando parte desses pedidos. Aguarde alguns minutos e tente de novo." }, 409);
       }
       const amount = round2(target.reduce((s, o) => s + o.remaining, 0));
@@ -461,8 +501,7 @@ Deno.serve(async (req: Request) => {
       }
 
       // Um Pix pendente por participante: cancela o anterior (aqui e no provedor)
-      const { data: olds } = await admin.from("fin_pix_payments").select("id, provider_payment_id")
-        .eq("participant_id", participant.id).eq("status", "pending");
+      const { data: olds } = await ownerFilter(admin.from("fin_pix_payments").select("id, provider_payment_id"), auth).eq("status", "pending");
       for (const old of olds ?? []) {
         await admin.from("fin_pix_payments").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", old.id);
         if (old.provider_payment_id) mpFetch(cfg!.access_token!, `/v1/payments/${old.provider_payment_id}`, { method: "PUT", body: JSON.stringify({ status: "cancelled" }) }).catch(() => {});
@@ -476,15 +515,16 @@ Deno.serve(async (req: Request) => {
       const baseRow = {
         id: pixId, tenant_id: tenantId, provider: "mercadopago", txid: `MP${Date.now()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
         amount, expires_at: expiresAt.toISOString(),
-        table_session_id: tableSessionId ?? null, participant_id: participant.id, scope, allocation,
+        table_session_id: tableSessionId ?? null, participant_id: participant?.id ?? null, scope, allocation,
         order_id: allocation.length === 1 ? allocation[0].order_id : null,
         pix_key: "mercadopago", pix_key_type: "provider", beneficiary_name: cfg!.account_label ?? "Mercado Pago", city: "-",
       };
 
       const { data: tbl } = auth.tableId ? await admin.from("tables").select("number").eq("id", auth.tableId).maybeSingle() : { data: null };
       const { data: tenant } = await admin.from("tenants").select("name").eq("id", tenantId).maybeSingle();
-      const alvoLabel = tbl?.number != null ? `Mesa ${tbl.number}` : `Senha ${participant.access_token ?? ""}`.trim();
-      const nameParts = String(participant.name ?? "Cliente").trim().split(/\s+/);
+      const alvoLabel = tbl?.number != null ? `Mesa ${tbl.number}` : participant ? `Senha ${participant.access_token ?? ""}`.trim() : `Delivery ${auth.orderNumber ?? ""}`.trim();
+      const nameParts = String(participant?.name ?? auth.customerName ?? "Cliente").trim().split(/\s+/);
+      const payerKey = participant?.id ?? auth.orderId;
       const mp = await mpFetch(cfg!.access_token!, "/v1/payments", {
         method: "POST",
         headers: { "X-Idempotency-Key": pixId },
@@ -492,11 +532,11 @@ Deno.serve(async (req: Request) => {
           transaction_amount: amount,
           description: `${tenant?.name ?? "Restaurante"} · ${alvoLabel} · ${allocation.length} pedido(s)`,
           payment_method_id: "pix",
-          payer: { email: `${participant.id}@cliente.erpos.app`, first_name: nameParts[0] || "Cliente", last_name: nameParts.slice(1).join(" ") || "Mesa" },
+          payer: { email: `${payerKey}@cliente.erpos.app`, first_name: nameParts[0] || "Cliente", last_name: nameParts.slice(1).join(" ") || "Cliente" },
           external_reference: pixId,
           notification_url: `${supabaseUrl}/functions/v1/online-payments?webhook=1&tenant_id=${tenantId}`,
           date_of_expiration: mpDate(expiresAt),
-          metadata: { erpos_pix_id: pixId, table_session_id: tableSessionId ?? null, participant_id: participant.id, tenant_id: tenantId },
+          metadata: { erpos_pix_id: pixId, table_session_id: tableSessionId ?? null, participant_id: participant?.id ?? null, order_id: auth.orderId ?? null, tenant_id: tenantId },
         }),
       });
       if (!mp.ok) {
@@ -521,10 +561,10 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "get_pix_status") {
-      const auth = await requireParticipant(admin, body, { allowClosed: true });
+      const auth = await resolveCustomer(admin, body, { allowClosed: true });
       if (auth.error) return auth.error;
       const pixId = String(body.pix_payment_id ?? "");
-      const { data: px0 } = await admin.from("fin_pix_payments").select("*").eq("id", pixId).eq("participant_id", auth.participant.id).maybeSingle();
+      const { data: px0 } = await ownerFilter(admin.from("fin_pix_payments").select("*").eq("id", pixId), auth).maybeSingle();
       if (!px0) return json({ error: "Pagamento não encontrado" }, 404);
       let px = await expireIfNeeded(admin, px0);
       if (px.status === "pending" && body.reconcile) {
@@ -539,10 +579,10 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "cancel_pix") {
-      const auth = await requireParticipant(admin, body, { allowClosed: true });
+      const auth = await resolveCustomer(admin, body, { allowClosed: true });
       if (auth.error) return auth.error;
       const pixId = String(body.pix_payment_id ?? "");
-      const { data: px } = await admin.from("fin_pix_payments").select("id, status, provider_payment_id").eq("id", pixId).eq("participant_id", auth.participant.id).maybeSingle();
+      const { data: px } = await ownerFilter(admin.from("fin_pix_payments").select("id, status, provider_payment_id").eq("id", pixId), auth).maybeSingle();
       if (!px) return json({ error: "Pagamento não encontrado" }, 404);
       if (px.status !== "pending") return json({ ok: true, status: px.status });
       await admin.from("fin_pix_payments").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", pixId).eq("status", "pending");
