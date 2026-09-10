@@ -26,13 +26,17 @@ Deno.serve(async (req) => {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    // 1. Busca pedidos da sessão (não cancelados)
+    // 1. Busca pedidos da sessão (não cancelados). Rascunho fica de fora: é carrinho
+    //    não enviado ou pedido de delivery "segurado" esperando o Pix pelo app — não
+    //    existe pra cozinha nem pro caixa até ser pago (mesma regra do fn_close_session).
     const { data: pedidos, error: errPedidos } = await supabase
       .from('orders')
       .select('id, session_id, is_paid, status, number, tenant_id, is_draft')
       .eq('session_id', session_id)
       .eq('tenant_id', tenant_id)
-      .neq('status', 'cancelled');
+      .neq('status', 'cancelled')
+      .neq('status', 'draft')
+      .eq('is_draft', false);
 
     if (errPedidos) {
       return new Response(
