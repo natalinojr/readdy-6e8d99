@@ -1358,13 +1358,16 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "change_held_payment") {
       // Cliente desistiu do Pix pelo app: escolhe outra forma (cobra na entrega/retirada) e o
       // pedido segurado vai pra cozinha agora. Prova de posse = client_request_id do aparelho.
-      const { tenant_id, order_id, order_token, payment_method, cash_amount } = body;
-      if (!tenant_id || !order_id || !order_token || !payment_method) return jsonErr("Dados incompletos", 400);
+      const { tenant_id, order_id, order_token, order_phone, payment_method, cash_amount } = body;
+      if (!tenant_id || !order_id || (!order_token && !order_phone) || !payment_method) return jsonErr("Dados incompletos", 400);
       const label = String(payment_method).trim().slice(0, 40);
       if (/pix pelo app/i.test(label)) return jsonErr("Escolha uma forma diferente do Pix pelo app", 400);
-      const { data: o } = await admin.from("orders").select("id, status, is_draft, origin_type, client_request_id, delivery_platform, total_amount")
+      const { data: o } = await admin.from("orders").select("id, status, is_draft, origin_type, client_request_id, destination_phone, delivery_platform, total_amount")
         .eq("id", order_id).eq("tenant_id", tenant_id).maybeSingle();
-      if (!o || String(o.client_request_id ?? "") !== String(order_token) || o.origin_type !== "delivery") return jsonErr("Pedido nao encontrado", 403);
+      const phoneDigits = String(order_phone ?? "").replace(/\D/g, "");
+      const tokenOk = !!order_token && String(o?.client_request_id ?? "") === String(order_token);
+      const phoneOk = phoneDigits.length >= 10 && String(o?.destination_phone ?? "").replace(/\D/g, "") === phoneDigits;
+      if (!o || !(tokenOk || phoneOk) || o.origin_type !== "delivery") return jsonErr("Pedido nao encontrado", 403);
       if (o.status !== "draft" && !o.is_draft) return jsonErr("Este pedido ja foi enviado para a cozinha", 409);
       const isRetirada = o.delivery_platform === "retirada";
       const isDinheiro = /dinheiro/i.test(label);

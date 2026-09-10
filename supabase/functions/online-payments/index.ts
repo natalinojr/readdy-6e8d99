@@ -105,13 +105,18 @@ async function requireParticipant(admin: Admin, body: Record<string, unknown>, o
 // Cliente do DELIVERY: não tem senha nem mesa. A prova de posse do pedido é o
 // `client_request_id` que o próprio app gerou ao criar o pedido (uuid que fica no
 // aparelho) — sem ele ninguém consulta nem cobra o pedido de outra pessoa.
+// Alternativa: `order_phone` = telefone do cliente (mesma confiança do histórico/acompanhar,
+// que já expõem o pedido por telefone). Cobre o aparelho que perdeu a chave.
 async function requireDeliveryOrder(admin: Admin, body: Record<string, unknown>) {
   const orderId = String(body.order_id ?? "");
   const token = String(body.order_token ?? "");
-  if (!orderId || !token) return { error: json({ error: "order_id e order_token são obrigatórios" }, 400) };
-  const { data: o } = await admin.from("orders").select("id, tenant_id, number, client_request_id, origin_type, status, destination_name")
+  const phone = String(body.order_phone ?? "").replace(/\D/g, "");
+  if (!orderId || (!token && !phone)) return { error: json({ error: "order_id e order_token (ou order_phone) são obrigatórios" }, 400) };
+  const { data: o } = await admin.from("orders").select("id, tenant_id, number, client_request_id, origin_type, status, destination_name, destination_phone")
     .eq("id", orderId).maybeSingle();
-  if (!o || String(o.client_request_id ?? "") !== token || o.origin_type !== "delivery") return { error: json({ error: "Pedido não encontrado" }, 403) };
+  const tokenOk = !!token && String(o?.client_request_id ?? "") === token;
+  const phoneOk = !!phone && phone.length >= 10 && String(o?.destination_phone ?? "").replace(/\D/g, "") === phone;
+  if (!o || !(tokenOk || phoneOk) || o.origin_type !== "delivery") return { error: json({ error: "Pedido não encontrado" }, 403) };
   if (o.status === "cancelled") return { error: json({ error: "pedido_cancelado", message: "Este pedido foi cancelado" }, 409) };
   const customerName = String(o.destination_name ?? "").split(/\s+[-–—]\s+/)[0].trim() || "Cliente";
   return {
@@ -123,7 +128,7 @@ async function requireDeliveryOrder(admin: Admin, body: Record<string, unknown>)
 
 // Quem está pagando: senha/mesa (participant_id + access_token) ou delivery (order_id + order_token).
 function resolveCustomer(admin: Admin, body: Record<string, unknown>, opts: { allowClosed?: boolean } = {}) {
-  return body.order_token ? requireDeliveryOrder(admin, body) : requireParticipant(admin, body, opts);
+  return (body.order_token || body.order_phone) ? requireDeliveryOrder(admin, body) : requireParticipant(admin, body, opts);
 }
 
 // Filtra fin_pix_payments pelo dono: participante (mesa/senha) ou pedido (delivery).

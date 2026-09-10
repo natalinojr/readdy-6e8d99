@@ -1095,6 +1095,7 @@ export default function DeliveryPage() {
                 onNovoPedido={function () { setSubView('cardapio'); }}
                 pixPendenteNumero={data.pixOnline ? data.pixOnline.number : undefined}
                 onPagarPix={data.voltarParaPagamentoPix}
+                onPagarPixSemChave={phone ? data.voltarParaPagamentoPixPorTelefone : undefined}
               />
             </div>
           ) : subView === 'historico' ? (

@@ -820,8 +820,8 @@ export function useDeliveryData(storeSlug?: string) {
               try {
                 const rawPix = localStorage.getItem('delivery_pix_' + configResult.tenant.id);
                 const memo = rawPix ? JSON.parse(rawPix) : null;
-                if (memo && memo.orderId && memo.orderToken && Date.now() - Number(memo.at || 0) < 2 * 60 * 60 * 1000) {
-                  setPixOnline({ orderId: memo.orderId, orderToken: memo.orderToken, number: memo.number || '', total: Number(memo.total || 0) });
+                if (memo && memo.orderId && Date.now() - Number(memo.at || 0) < 2 * 60 * 60 * 1000) {
+                  setPixOnline({ orderId: memo.orderId, orderToken: memo.orderToken || '', number: memo.number || '', total: Number(memo.total || 0) });
                   setNumeroPedido(memo.number || '');
                   setOrderTotal(Number(memo.total || 0));
                   setPagamentoSelecionado('PIX pelo app');
@@ -1545,7 +1545,8 @@ export function useDeliveryData(storeSlug?: string) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'change_held_payment', tenant_id: tenant.id,
-          order_id: pixOnline.orderId, order_token: pixOnline.orderToken,
+          order_id: pixOnline.orderId,
+          order_token: pixOnline.orderToken || undefined, order_phone: pixOnline.orderToken ? undefined : phone,
           payment_method: label, cash_amount: cashNum > 0 ? cashNum : undefined,
         }),
       });
@@ -1565,6 +1566,21 @@ export function useDeliveryData(storeSlug?: string) {
     // Chamado quando o Pix confirma (ou o cliente troca a forma): o pedido deixa de estar pendente
     try { if (tenant?.id) localStorage.removeItem('delivery_pix_' + tenant.id); } catch { /* ignore */ }
     setPixOnline(null);
+  }
+
+  // Aparelho perdeu a chave (ou nunca teve): retoma o pedido segurado pelo TELEFONE do
+  // cliente. `orderToken` vazio faz a tela autenticar por `order_phone`.
+  function voltarParaPagamentoPixPorTelefone(orderId: string, number: string, total: number) {
+    if (!tenant?.id) return;
+    const memo = { orderId, orderToken: '', number, total, at: Date.now() };
+    setPixOnline(memo);
+    try { localStorage.setItem('delivery_pix_' + tenant.id, JSON.stringify(memo)); } catch { /* sem storage */ }
+    setNumeroPedido(number);
+    setOrderTotal(total);
+    setPagamentoSelecionado('PIX pelo app');
+    setPedidoConfirmado(true);
+    setErrorMsg('');
+    setStep('confirmacao');
   }
 
   // Cliente saiu pro cardápio antes de pagar: volta pra tela do pedido com o Pix.
@@ -1843,6 +1859,7 @@ export function useDeliveryData(storeSlug?: string) {
     limparPixOnline,
     handleTrocarPagamentoPixOnline,
     voltarParaPagamentoPix,
+    voltarParaPagamentoPixPorTelefone,
     modoEntrega,
     setModoEntrega,
     retiradaAtivo,

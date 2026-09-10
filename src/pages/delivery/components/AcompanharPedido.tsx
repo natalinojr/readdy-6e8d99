@@ -28,6 +28,8 @@ interface Props {
   /** Número do pedido que este aparelho deixou esperando o Pix pelo app */
   pixPendenteNumero?: string;
   onPagarPix?: () => void;
+  /** Sem a chave no aparelho: retoma pelo telefone do cliente (só se o app souber o telefone) */
+  onPagarPixSemChave?: (orderId: string, number: string, total: number) => void;
 }
 
 const STATUS_STEPS = [
@@ -172,7 +174,13 @@ export default function AcompanharPedido(props: Props) {
   const isDelivered = status === 'delivered';
   // Segurado esperando o Pix pelo app: só este aparelho (que criou o pedido) consegue pagar
   const isAguardandoPix = status === 'draft';
-  const podePagarPix = isAguardandoPix && !!props.onPagarPix && !!props.pixPendenteNumero && props.pixPendenteNumero === orderData.number;
+  const temChave = !!props.onPagarPix && !!props.pixPendenteNumero && props.pixPendenteNumero === orderData.number;
+  const podePagarPix = isAguardandoPix && (temChave || !!props.onPagarPixSemChave);
+  function pagarPix() {
+    if (!orderData) return;
+    if (temChave && props.onPagarPix) props.onPagarPix();
+    else if (props.onPagarPixSemChave) props.onPagarPixSemChave(orderData.id, orderData.number, orderData.total_amount);
+  }
 
   // Previsão máxima de entrega = horário do pedido + tempo total da faixa de distância (SLA).
   const previsaoEntregaMs = (orderData.delivery_sla_min != null && orderData.delivery_sla_min > 0)
@@ -188,12 +196,12 @@ export default function AcompanharPedido(props: Props) {
           <p className="text-xs text-emerald-700 mt-1">
             {podePagarPix
               ? 'Ele só vai para a cozinha depois do Pix. Pague agora pelo celular.'
-              : 'Ele só vai para a cozinha depois do Pix pelo app, feito no aparelho que criou o pedido.'}
+              : 'Ele só vai para a cozinha depois do Pix pelo app. Abra o cardápio com o telefone que fez o pedido para pagar.'}
           </p>
           {podePagarPix ? (
             <button
               type="button"
-              onClick={props.onPagarPix}
+              onClick={pagarPix}
               className="mt-3 w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap"
             >
               <i className="ri-qr-code-line" /> Pagar com Pix agora

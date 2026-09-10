@@ -137,7 +137,7 @@ export default function ConfirmacaoDelivery(props: Props) {
       {pixOnline ? (
         <div className="mb-5">
           <PixCobrancaPanel
-            auth={{ order_id: pixOnline.orderId, order_token: pixOnline.orderToken }}
+            auth={pixOnline.orderToken ? { order_id: pixOnline.orderId, order_token: pixOnline.orderToken } : { order_id: pixOnline.orderId, order_phone: phone || '' }}
             onPago={function () { setPixPago(true); if (props.onPixPago) props.onPixPago(); }}
             titulo="Pague agora com Pix"
             textoPago="Seu pedido foi para a cozinha. Obrigado!"
