@@ -1562,13 +1562,25 @@ export function useDeliveryData(storeSlug?: string) {
   }
 
   function limparPixOnline() {
-    // Chamado quando o Pix confirma: o memo não precisa mais sobreviver a reload
+    // Chamado quando o Pix confirma (ou o cliente troca a forma): o pedido deixa de estar pendente
     try { if (tenant?.id) localStorage.removeItem('delivery_pix_' + tenant.id); } catch { /* ignore */ }
+    setPixOnline(null);
+  }
+
+  // Cliente saiu pro cardápio antes de pagar: volta pra tela do pedido com o Pix.
+  function voltarParaPagamentoPix() {
+    if (!pixOnline) return;
+    setNumeroPedido(pixOnline.number);
+    setOrderTotal(pixOnline.total);
+    setPagamentoSelecionado('PIX pelo app');
+    setPedidoConfirmado(true);
+    setErrorMsg('');
+    setStep('confirmacao');
   }
 
   function handleNovoPedido() {
-    limparPixOnline();
-    setPixOnline(null);
+    // NÃO apaga o Pix pendente: "fazer outro pedido" só volta ao cardápio; o pedido
+    // segurado continua esperando pagamento (banner no cardápio leva de volta).
     setPedidoConfirmado(false);
     setNumeroPedido('');
     setErrorMsg('');
@@ -1830,6 +1842,7 @@ export function useDeliveryData(storeSlug?: string) {
     pixOnline,
     limparPixOnline,
     handleTrocarPagamentoPixOnline,
+    voltarParaPagamentoPix,
     modoEntrega,
     setModoEntrega,
     retiradaAtivo,

@@ -655,6 +655,22 @@ export default function DeliveryPage() {
             }</span>
           </div>
         )}
+        {/* Banner: pedido segurado esperando o Pix pelo app (cliente saiu antes de pagar) */}
+        {data.pixOnline && !showCart ? (
+          <button
+            type="button"
+            onClick={data.voltarParaPagamentoPix}
+            className="shrink-0 w-full bg-emerald-600 text-white px-4 py-2.5 flex items-center justify-between gap-3 text-left cursor-pointer hover:bg-emerald-700 transition-colors"
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <i className="ri-qr-code-line text-base shrink-0" />
+              <span className="text-xs font-semibold truncate">
+                Pedido #{data.pixOnline.number.slice(-4)} aguardando o Pix — R$ {data.pixOnline.total.toFixed(2)}
+              </span>
+            </span>
+            <span className="shrink-0 text-[11px] font-black bg-white/20 px-2.5 py-1 rounded-full whitespace-nowrap">Pagar agora →</span>
+          </button>
+        ) : null}
         {/* Header (oculto ao ver o pedido, p/ dar mais espaço à lista de itens) */}
         <div className={"shrink-0" + (showCart ? " hidden" : "")}>
           {/* Hero: marca da loja + status + ações */}
@@ -1077,6 +1093,8 @@ export default function DeliveryPage() {
                 numeroPedido={trackingNumero}
                 tenantId={tenantId}
                 onNovoPedido={function () { setSubView('cardapio'); }}
+                pixPendenteNumero={data.pixOnline ? data.pixOnline.number : undefined}
+                onPagarPix={data.voltarParaPagamentoPix}
               />
             </div>
           ) : subView === 'historico' ? (

@@ -25,6 +25,9 @@ interface Props {
   numeroPedido: string;
   tenantId: string;
   onNovoPedido: () => void;
+  /** Número do pedido que este aparelho deixou esperando o Pix pelo app */
+  pixPendenteNumero?: string;
+  onPagarPix?: () => void;
 }
 
 const STATUS_STEPS = [
@@ -167,6 +170,9 @@ export default function AcompanharPedido(props: Props) {
   const currentStep = getStepIndex(status);
   const isCancelled = status === 'cancelled';
   const isDelivered = status === 'delivered';
+  // Segurado esperando o Pix pelo app: só este aparelho (que criou o pedido) consegue pagar
+  const isAguardandoPix = status === 'draft';
+  const podePagarPix = isAguardandoPix && !!props.onPagarPix && !!props.pixPendenteNumero && props.pixPendenteNumero === orderData.number;
 
   // Previsão máxima de entrega = horário do pedido + tempo total da faixa de distância (SLA).
   const previsaoEntregaMs = (orderData.delivery_sla_min != null && orderData.delivery_sla_min > 0)
@@ -176,6 +182,25 @@ export default function AcompanharPedido(props: Props) {
 
   return (
     <div>
+      {isAguardandoPix ? (
+        <div className="mb-5 p-4 bg-emerald-50 border border-emerald-200 rounded-2xl">
+          <p className="text-sm font-black text-emerald-800">Este pedido ainda não foi pago</p>
+          <p className="text-xs text-emerald-700 mt-1">
+            {podePagarPix
+              ? 'Ele só vai para a cozinha depois do Pix. Pague agora pelo celular.'
+              : 'Ele só vai para a cozinha depois do Pix pelo app, feito no aparelho que criou o pedido.'}
+          </p>
+          {podePagarPix ? (
+            <button
+              type="button"
+              onClick={props.onPagarPix}
+              className="mt-3 w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap"
+            >
+              <i className="ri-qr-code-line" /> Pagar com Pix agora
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {/* Status principal */}
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-2">
@@ -194,7 +219,7 @@ export default function AcompanharPedido(props: Props) {
           )}
           <div>
             <p className="text-sm font-bold text-zinc-800">
-              {isCancelled ? 'Pedido Cancelado' : isDelivered ? 'Pedido Entregue' : 'Pedido em andamento'}
+              {isCancelled ? 'Pedido Cancelado' : isDelivered ? 'Pedido Entregue' : isAguardandoPix ? 'Aguardando pagamento' : 'Pedido em andamento'}
             </p>
             <p className="text-xs text-zinc-500">
               {formatDate(orderData.created_at)} às {formatTime(orderData.created_at)}
