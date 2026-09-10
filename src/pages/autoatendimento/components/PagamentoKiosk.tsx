@@ -198,7 +198,6 @@ function TelaPix({
   const [pixError, setPixError] = useState('');
   const [timeLeft, setTimeLeft] = useState(600); // 10 min
   const [pollingStatus, setPollingStatus] = useState<'waiting' | 'confirmed' | 'expired'>('waiting');
-  const [confirmandoManual, setConfirmandoManual] = useState(false);
   const [copiado, setCopiado] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pixDataRef = useRef<PixPaymentData | null>(null);
@@ -218,7 +217,7 @@ function TelaPix({
     try {
       const { data, error } = await invokeWithAuth('pix-payment', {
         body: {
-          action: 'generate',
+          action: 'create_charge',
           tenant_id: tenantId,
           order_id: orderId,
           amount: total,
@@ -292,19 +291,24 @@ function TelaPix({
     } catch { /* ignore */ }
   };
 
-  const handleConfirmarManual = async () => {
-    if (!pixData?.pix_payment_id || confirmandoManual) return;
-    setConfirmandoManual(true);
-    try {
-      await invokeWithAuth('pix-payment', {
-        body: { action: 'confirm', pix_payment_id: pixData.pix_payment_id },
-      });
-      if (pollingRef.current) clearInterval(pollingRef.current);
-      setPollingStatus('confirmed');
-      setTimeout(() => onPago(pixData.pix_payment_id), 1500);
-    } catch { /* ignore */ } finally {
-      setConfirmandoManual(false);
+  // Sair da tela: cancela a cobrança no provedor — mas antes o servidor confere se
+  // o cliente já pagou; se pagou, o pedido segue em vez de sumir com o dinheiro.
+  const handleVoltar = async () => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    const id = pixDataRef.current?.pix_payment_id;
+    if (id) {
+      try {
+        const { data } = await invokeWithAuth<{ status?: string }>('pix-payment', {
+          body: { action: 'cancel', pix_payment_id: id },
+        });
+        if (data?.status === 'confirmed') {
+          setPollingStatus('confirmed');
+          setTimeout(() => onPago(id), 1500);
+          return;
+        }
+      } catch { /* segue pra escolher outra forma */ }
     }
+    onVoltar();
   };
 
   const mins = Math.floor(timeLeft / 60).toString().padStart(2, '0');
@@ -331,7 +335,7 @@ function TelaPix({
           <i className="ri-error-warning-line text-3xl md:text-5xl text-red-400" />
         </div>
         <div>
-          <h3 className="text-lg md:text-3xl font-bold text-white mb-1">PIX não configurado</h3>
+          <h3 className="text-lg md:text-3xl font-bold text-white mb-1">Não foi possível gerar o Pix</h3>
           <p className="text-zinc-400 text-sm md:text-lg max-w-xs">{pixError}</p>
         </div>
         <div className="flex gap-3">
@@ -482,22 +486,15 @@ function TelaPix({
       {/* Botões */}
       <div className="flex flex-col sm:flex-row gap-2 w-full max-w-3xl">
         <button
-          onClick={onVoltar}
+          onClick={handleVoltar}
           className="flex-1 py-3 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 font-semibold text-base rounded-xl cursor-pointer transition-colors whitespace-nowrap"
         >
           Escolher outra forma
         </button>
-        <button
-          onClick={handleConfirmarManual}
-          disabled={confirmandoManual}
-          className="flex-1 py-3 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-400 font-bold text-base rounded-xl cursor-pointer transition-colors whitespace-nowrap disabled:opacity-60"
-        >
-          {confirmandoManual ? 'Confirmando...' : 'Confirmar PIX (operador)'}
-        </button>
       </div>
 
       <p className="text-zinc-600 text-xs max-w-sm">
-        O pagamento é confirmado automaticamente. O botão &quot;Confirmar PIX&quot; é para uso do operador quando necessário.
+        O pagamento é confirmado automaticamente pelo banco assim que você pagar.
       </p>
     </div>
   );
@@ -533,6 +530,8 @@ export default function PagamentoKiosk({
   const [pagamentoError, setPagamentoError] = useState<string | null>(null);
 
   const pagarEntregaRef = useRef(false);
+  // Pix só é oferecido quando a loja tem provedor que confirma o pagamento (Inter/MP).
+  const [pixDisponivel, setPixDisponivel] = useState(false);
   // Forma escolhida para pagar no balcão (cartão/dinheiro): só informativa na confirmação.
   const [balcaoFormaNome, setBalcaoFormaNome] = useState<string | null>(null);
 
@@ -551,6 +550,14 @@ export default function PagamentoKiosk({
         setPaymentMethods((data as PaymentMethod[] | null) ?? []);
       });
   }, [tenantId]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    invokeWithAuth<{ provider: string | null }>('pix-payment', { body: { action: 'kiosk_provider', tenant_id: tenantId } })
+      .then(({ data }) => setPixDisponivel(Boolean(data?.provider)))
+      .catch(() => setPixDisponivel(false));
+  }, [tenantId]);
+  const metodosVisiveis = paymentMethods.filter((m) => m.type !== 'pix' || pixDisponivel);
 
   // Pagar na entrega (modo fixo) — cria pedido ao montar
   useEffect(() => {
@@ -811,7 +818,7 @@ export default function PagamentoKiosk({
           </div>
         )}
         <div className="grid grid-cols-2 gap-3 md:gap-4 w-full max-w-2xl">
-          {paymentMethods.map((method) => {
+          {metodosVisiveis.map((method) => {
             const isPix = method.type === 'pix';
             return (
               <button
@@ -838,7 +845,7 @@ export default function PagamentoKiosk({
               </button>
             );
           })}
-          {paymentMethods.length === 0 && (
+          {metodosVisiveis.length === 0 && (
             <button
               onClick={handlePagarNaEntregaEscolhido}
               className="col-span-2 flex flex-col items-center gap-2 md:gap-3 p-3 md:p-5 rounded-xl md:rounded-2xl cursor-pointer active:scale-95 transition-all bg-zinc-800 hover:bg-zinc-700 text-white"

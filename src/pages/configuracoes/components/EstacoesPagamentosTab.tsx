@@ -9,6 +9,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { subscribeReload } from '@/lib/reloadSignal';
 import { TPAG_OPTIONS, TPAG_AUTO } from '@/lib/fiscal';
 import MercadoPagoConfigModal from './MercadoPagoConfigModal';
+import InterPixConfigModal from './InterPixConfigModal';
 
 // ─── Static config ────────────────────────────────────────────────────────────
 const CORES = ['#f59e0b', '#f97316', '#10b981', '#06b6d4', '#8b5cf6', '#ec4899', '#ef4444', '#14b8a6'];
@@ -326,11 +327,16 @@ export default function EstacoesPagamentosTab() {
   const [formaModal, setFormaModal] = useState<PaymentMethod | 'new' | null>(null);
   const [showMpModal, setShowMpModal] = useState(false);
   const [mpAtivo, setMpAtivo] = useState<boolean | null>(null);
+  const [showInterModal, setShowInterModal] = useState(false);
+  const [interAtivo, setInterAtivo] = useState<boolean | null>(null);
   useEffect(() => {
     if (!user?.tenantId) return;
     invokeWithAuth<{ is_active: boolean }>('online-payments', { body: { action: 'get_config', tenant_id: user.tenantId } })
       .then(({ data }) => setMpAtivo(Boolean(data?.is_active)))
       .catch(() => setMpAtivo(false));
+    invokeWithAuth<{ is_active: boolean }>('pix-payment', { body: { action: 'get_inter_pix_config', tenant_id: user.tenantId } })
+      .then(({ data }) => setInterAtivo(Boolean(data?.is_active)))
+      .catch(() => setInterAtivo(false));
   }, [user?.tenantId]);
 
   // Force re-render when kitchen_stations signal fires (ensures list updates after create)
@@ -584,6 +590,28 @@ export default function EstacoesPagamentosTab() {
             </div>
           </button>
 
+          {/* Pix do autoatendimento pelo Banco Inter (cobrança confirmada pelo banco) */}
+          <button
+            type="button"
+            onClick={() => setShowInterModal(true)}
+            className={`w-full text-left border rounded-xl p-4 cursor-pointer transition-colors ${interAtivo ? 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100/60' : 'bg-orange-50 border-orange-200 hover:bg-orange-100/60'}`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 flex items-center justify-center rounded-xl flex-shrink-0 ${interAtivo ? 'bg-emerald-500' : 'bg-orange-500'}`}>
+                  <i className="ri-qr-code-line text-white text-lg" />
+                </div>
+                <div>
+                  <p className={`text-sm font-bold ${interAtivo ? 'text-emerald-800' : 'text-orange-800'}`}>Pix no autoatendimento (Banco Inter)</p>
+                  <p className={`text-xs ${interAtivo ? 'text-emerald-600' : 'text-orange-600'}`}>O tablet gera a cobrança na conta do Inter e o banco confirma o pagamento sozinho</p>
+                </div>
+              </div>
+              <span className={`text-[10px] font-semibold px-2.5 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap flex items-center gap-1 ${interAtivo ? 'text-emerald-600 bg-emerald-100' : 'text-orange-700 bg-orange-100'}`}>
+                <i className={`text-sm ${interAtivo ? 'ri-shield-check-line' : 'ri-settings-3-line'}`} />{interAtivo === null ? '…' : interAtivo ? 'Ativo' : 'Configurar'}
+              </span>
+            </div>
+          </button>
+
           {formas.length === 0 ? (
             <div className="text-center py-12 bg-white border border-zinc-100 rounded-xl">
               <div className="w-12 h-12 flex items-center justify-center bg-zinc-100 rounded-full mx-auto mb-3">
@@ -722,6 +750,9 @@ export default function EstacoesPagamentosTab() {
       )}
       {showMpModal && (
         <MercadoPagoConfigModal onClose={() => setShowMpModal(false)} onSaved={info => setMpAtivo(info.is_active)} />
+      )}
+      {showInterModal && (
+        <InterPixConfigModal onClose={() => setShowInterModal(false)} onSaved={info => setInterAtivo(info.is_active)} />
       )}
       {formaModal && (
         <FormaModal
