@@ -548,7 +548,8 @@ function AutoatendimentoPageInner() {
           console.error('[Autoatendimento] record_payment error:', payErr);
           throw new Error(typeof payErr === 'string' ? payErr : 'Falha ao registrar pagamento no caixa');
         } else {
-          supabase.rpc('fn_update_paid_by_pdv', { p_order_id: effectiveOrderId, p_paid_by_pdv: 'self_service' }).catch(() => {});
+          // O builder do Supabase não tem .catch (só .then): .catch aqui lançava erro DEPOIS do pagamento gravado.
+          supabase.rpc('fn_update_paid_by_pdv', { p_order_id: effectiveOrderId, p_paid_by_pdv: 'self_service' }).then(() => {}, () => {});
         }
       } catch (e) {
         console.error('[Autoatendimento] Erro ao registrar pagamento:', e);

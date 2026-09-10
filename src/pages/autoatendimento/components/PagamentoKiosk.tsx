@@ -295,24 +295,17 @@ function TelaPix({
     } catch { /* ignore */ }
   };
 
-  // Sair da tela: cancela a cobrança no provedor — mas antes o servidor confere se
-  // o cliente já pagou; se pagou, o pedido segue em vez de sumir com o dinheiro.
-  const handleVoltar = async () => {
+  // Sair da tela: volta NA HORA e cancela a cobrança em segundo plano. O servidor confere
+  // no banco antes de cancelar; se o cliente já tinha pago, o pedido segue pelo fluxo de
+  // Pix pago (o PagamentoKiosk continua montado, então a confirmação aparece normalmente).
+  const handleVoltar = () => {
     if (pollingRef.current) clearInterval(pollingRef.current);
     const id = pixDataRef.current?.pix_payment_id;
-    if (id) {
-      try {
-        const { data } = await invokeWithAuth<{ status?: string }>('pix-payment', {
-          body: { action: 'cancel', pix_payment_id: id },
-        });
-        if (data?.status === 'confirmed') {
-          setPollingStatus('confirmed');
-          setTimeout(() => onPagoRef.current(id), 3500);
-          return;
-        }
-      } catch { /* segue pra escolher outra forma */ }
-    }
     onVoltar();
+    if (!id) return;
+    invokeWithAuth<{ status?: string }>('pix-payment', { body: { action: 'cancel', pix_payment_id: id } })
+      .then(({ data }) => { if (data?.status === 'confirmed') onPagoRef.current(id); })
+      .catch(() => { /* a cobrança vence sozinha em 10 min */ });
   };
 
   const mins = Math.floor(timeLeft / 60).toString().padStart(2, '0');

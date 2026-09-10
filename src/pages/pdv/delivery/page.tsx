@@ -190,7 +190,7 @@ export default function PDVDeliveryPage() {
           },
         });
         // Salva PDV que confirmou pagamento
-        supabase.rpc('fn_update_paid_by_pdv', { p_order_id: orderId, p_paid_by_pdv: 'delivery' }).catch(() => {});
+        supabase.rpc('fn_update_paid_by_pdv', { p_order_id: orderId, p_paid_by_pdv: 'delivery' }).then(() => {}, () => {}); // builder não tem .catch
       } catch (e) {
         console.error('[PDVDelivery] record_payment error:', e);
       }
