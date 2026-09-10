@@ -43,7 +43,7 @@ function getStatusLabel(status: string): string {
     em_rota: 'Em rota',
     delivered: 'Entregue',
     cancelled: 'Cancelado',
-    draft: 'Rascunho',
+    draft: 'Aguardando pagamento',
   };
   return map[status] || status;
 }

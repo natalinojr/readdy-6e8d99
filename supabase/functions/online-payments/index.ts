@@ -264,12 +264,24 @@ async function settlePix(admin: Admin, pixId: string, providerPayload: unknown, 
     paymentIds.push(String(paymentId));
 
     // Fica pago quando Σ pagamentos ≥ total (mesma regra do order-write › record_payment)
-    const { data: o } = await admin.from("orders").select("id, number, total_amount, is_paid").eq("id", a.order_id).maybeSingle();
+    const { data: o } = await admin.from("orders").select("id, number, total_amount, is_paid, origin_type, status").eq("id", a.order_id).maybeSingle();
     const { data: allPays } = await admin.from("payments").select("amount").eq("order_id", a.order_id).eq("is_refunded", false);
     const totalPaid = (allPays ?? []).reduce((s: number, p: { amount: number }) => s + Number(p.amount), 0);
     const total = Number(o?.total_amount ?? 0);
     if (o && !o.is_paid && (total === 0 || totalPaid >= total - 0.005)) {
       await admin.from("orders").update({ is_paid: true, paid_at: now, paid_by_pdv: "qr_online", updated_at: now }).eq("id", a.order_id);
+      // Delivery "PIX pelo app" ficou como rascunho esperando este momento: libera pra cozinha
+      // (status new + tickets + WhatsApp) antes de qualquer outra coisa.
+      if (o.origin_type === "delivery" && o.status === "draft") {
+        try {
+          const r = await fetch(`${supabaseUrl}/functions/v1/delivery-write`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}`, apikey: anonKey, "x-internal-key": internalKey },
+            body: JSON.stringify({ action: "release_held_order", tenant_id: tenantId, order_id: a.order_id }),
+          });
+          log(r.ok ? "INFO" : "WARN", "release", "pedido de delivery liberado pra cozinha", { order: a.order_id, http: r.status, body: (await r.text().catch(() => "")).slice(0, 200) });
+        } catch (e) { log("WARN", "release", "release_held_order falhou", { order: a.order_id, error: String(e) }); }
+      }
       if (fiscalOn) {
         fiscalJobs.push(fetch(`${supabaseUrl}/functions/v1/fiscal-write`, {
           method: "POST",

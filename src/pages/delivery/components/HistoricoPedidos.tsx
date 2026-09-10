@@ -44,7 +44,7 @@ function getStatusLabel(status: string): string {
     ready: 'Pronto',
     delivered: 'Entregue',
     cancelled: 'Cancelado',
-    draft: 'Rascunho',
+    draft: 'Aguardando pagamento',
   };
   return map[status] || status;
 }

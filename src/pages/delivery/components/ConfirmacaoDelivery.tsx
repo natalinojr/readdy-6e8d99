@@ -36,6 +36,8 @@ export default function ConfirmacaoDelivery(props: Props) {
   const pixOnline = props.pixOnline;
 
   const [abaAtiva, setAbaAtiva] = useState<TabOption>('acompanhar');
+  // "PIX pelo app": o pedido só vai pra cozinha depois do Pix confirmar
+  const [pixPago, setPixPago] = useState(false);
   const [trackingNumero, setTrackingNumero] = useState(numeroPedido);
 
   function handleVerPedidoHistorico(numero: string) {
@@ -56,7 +58,9 @@ export default function ConfirmacaoDelivery(props: Props) {
 
         <h2 className="text-lg font-black text-zinc-800 mb-1">Pedido #{numeroPedido}</h2>
         <p className="text-xs text-zinc-500 mb-3">
-          {phone ? 'Acompanhe abaixo o status do seu pedido' : 'Seu pedido foi enviado para a cozinha'}
+          {pixOnline && !pixPago
+            ? 'Seu pedido vai para a cozinha assim que o Pix for confirmado'
+            : (phone ? 'Acompanhe abaixo o status do seu pedido' : 'Seu pedido foi enviado para a cozinha')}
         </p>
 
         {resumo && resumo.desconto > 0 ? (
@@ -110,8 +114,9 @@ export default function ConfirmacaoDelivery(props: Props) {
         <div className="mb-5">
           <PixCobrancaPanel
             auth={{ order_id: pixOnline.orderId, order_token: pixOnline.orderToken }}
-            onPago={props.onPixPago}
+            onPago={function () { setPixPago(true); if (props.onPixPago) props.onPixPago(); }}
             titulo="Pague agora com Pix"
+            textoPago="Seu pedido foi para a cozinha. Obrigado!"
           />
         </div>
       ) : null}

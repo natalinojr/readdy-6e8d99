@@ -242,6 +242,167 @@ function extractClientIp(req: Request): string {
   return "unknown";
 }
 
+// ── Saídas do pedido de delivery: tickets (cozinha/bar), comprovante e WhatsApp ──
+// Extraído do create_delivery_order para ser reutilizado por `release_held_order`:
+// pedido pago por "PIX pelo app" nasce como RASCUNHO (não vai pra cozinha) e só
+// dispara tudo isso quando o online-payments confirma o Pix.
+type DeliveryOutputCtx = {
+  tenant_id: string; orderId: string; orderNumber: string;
+  serverItems: Array<Record<string, unknown>>;
+  customer_name: string | null; customer_address: string | null; customer_phone: string;
+  cleanPhone: string; isRetirada: boolean;
+  routeKm: number | null; routeTempoMax: number | null;
+  serverDeliveryFee: number; serverSubtotal: number; voucherDiscount: number; vCode: string | null;
+  serverTotal: number; payment_method: string | null; isDinheiro: boolean; cash_amount: number | null;
+};
+// deno-lint-ignore no-explicit-any
+async function emitDeliveryOutputs(admin: any, ctx: DeliveryOutputCtx) {
+  const { tenant_id, orderId, orderNumber, serverItems, customer_name, customer_address, customer_phone, cleanPhone, isRetirada, routeKm, routeTempoMax, serverDeliveryFee, serverSubtotal, voucherDiscount, vCode, serverTotal, payment_method, isDinheiro, cash_amount } = ctx;
+      const dataHora = new Date().toLocaleString("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+      });
+      const ticketNum = parseInt(String(orderNumber).replace(/\D/g, "").slice(-4), 10) || 1;
+
+      function buildTicketItems(stationItems: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+        return stationItems.map((it: Record<string, unknown>) => {
+          const opts = (it.options as Array<Record<string, unknown>> ?? [])
+            .map((o: Record<string, unknown>) => o.option_name)
+            .filter(Boolean);
+          const obs = (it.observations as Array<Record<string, unknown>> ?? [])
+            .map((o: Record<string, unknown>) => o.text)
+            .filter((t: string) => t && t.trim().length > 0);
+          if (it.notes && typeof it.notes === "string" && it.notes.trim().length > 0) {
+            obs.push(it.notes.trim());
+          }
+          const ticketItem: Record<string, unknown> = {
+            quantidade: it.quantity ?? 1,
+            nome: it.item_name,
+          };
+          if (opts.length > 0) ticketItem.opcoes = opts;
+          if (obs.length > 0) ticketItem.observacoes = obs;
+          return ticketItem;
+        });
+      }
+
+      const itensCozinha = serverItems.filter((it: Record<string, unknown>) => !it.skip_kds);
+      const stationGroups = new Map<string, Array<Record<string, unknown>>>();
+      for (const item of itensCozinha) {
+        const key = (item.station_id as string) || "cozinha-padrao";
+        if (!stationGroups.has(key)) stationGroups.set(key, []);
+        stationGroups.get(key)!.push(item);
+      }
+
+      for (const [stationKey, stationItems] of stationGroups.entries()) {
+        try {
+          await admin.rpc("enqueue_print_ticket", {
+            p_tenant_id: tenant_id, p_order_id: orderId, p_order_number: orderNumber,
+            p_station_key: stationKey, p_station_label: stationKey,
+            p_content_type: "ticket_json",
+            p_payload: {
+              numero: ticketNum, destino: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
+              origem: isRetirada ? "retirada" : "delivery",
+              impressora_id: stationKey,
+              itens: buildTicketItems(stationItems),
+              data_hora: dataHora,
+            },
+            p_paper_style: "80mm",
+          });
+        } catch { /* non-blocking */ }
+      }
+
+      // Itens "sem preparo" (skip_kds: bebidas, sobremesas prontas) -> ticket de BAR,
+      // agrupado pela station_id real (fallback "bar"). Espelha o printOrderQueue das
+      // outras origens; antes o delivery NAO imprimia esses itens (so no comprovante).
+      const itensBar = serverItems.filter((it: Record<string, unknown>) => it.skip_kds);
+      const barGroups = new Map<string, Array<Record<string, unknown>>>();
+      for (const item of itensBar) {
+        const key = (item.station_id as string) || "bar";
+        if (!barGroups.has(key)) barGroups.set(key, []);
+        barGroups.get(key)!.push(item);
+      }
+      for (const [stationKey, stationItems] of barGroups.entries()) {
+        try {
+          await admin.rpc("enqueue_print_ticket", {
+            p_tenant_id: tenant_id, p_order_id: orderId, p_order_number: orderNumber,
+            p_station_key: stationKey, p_station_label: "Bar",
+            p_content_type: "ticket_json",
+            p_payload: {
+              numero: ticketNum, destino: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
+              origem: isRetirada ? "retirada" : "delivery",
+              impressora_id: stationKey,
+              itens: buildTicketItems(stationItems),
+              data_hora: dataHora,
+            },
+            p_paper_style: "80mm",
+          });
+        } catch { /* non-blocking */ }
+      }
+
+      try {
+        const receiptItems: Array<Record<string, unknown>> = [];
+        for (const item of serverItems) {
+          const itemQty = Number(item.quantity ?? 1);
+          const itemBasePrice = Number(item.item_price ?? 0);
+          const receiptItem: Record<string, unknown> = {
+            quantidade: itemQty,
+            nome: item.item_name + " - " + fmtPrice(itemBasePrice * itemQty),
+          };
+          const opts = (item.options as Array<Record<string, unknown>> ?? [])
+            .filter((o: Record<string, unknown>) => o.option_name)
+            .map((o: Record<string, unknown>) => {
+              const addP = Number(o.additional_price ?? 0);
+              return addP > 0
+                ? o.option_name + " +" + fmtPrice(addP)
+                : "+ " + o.option_name;
+            });
+          if (opts.length > 0) receiptItem.opcoes = opts;
+          receiptItems.push(receiptItem);
+        }
+
+        const obsGeralParts = [
+          "Cliente: " + (customer_name || "Nao informado"),
+          cleanPhone ? "Telefone: " + fmtPhone(cleanPhone) : "",
+          isRetirada ? "RETIRADA NA LOJA" : "",
+          (!isRetirada && routeKm != null) ? "Distancia: ~" + routeKm.toFixed(1) + " km" + (routeTempoMax ? " (ate " + routeTempoMax + " min)" : "") : "",
+          serverDeliveryFee > 0 ? "Taxa de entrega: " + fmtPrice(serverDeliveryFee) : "",
+          "Subtotal: " + fmtPrice(serverSubtotal),
+          voucherDiscount > 0 ? "Desconto voucher" + (vCode ? " (" + vCode + ")" : "") + ": -" + fmtPrice(voucherDiscount) : "",
+          "TOTAL: " + fmtPrice(serverTotal),
+          "Pagamento: " + (payment_method || "Nao informado"),
+          isDinheiro && cash_amount !== undefined && cash_amount !== null && Number(cash_amount) > 0
+            ? "Troco para " + fmtPrice(Number(cash_amount))
+            : "",
+        ].filter(Boolean);
+
+        await admin.rpc("enqueue_print_ticket", {
+          p_tenant_id: tenant_id, p_order_id: orderId, p_order_number: orderNumber,
+          p_station_key: "delivery-receipt", p_station_label: "Comprovante",
+          p_content_type: "ticket_json",
+          p_payload: {
+            numero: ticketNum,
+            destino: (customer_name || "Cliente") + " - " + (isRetirada ? "Retirada" : "Entrega"),
+            origem: isRetirada ? "retirada" : "delivery",
+            estacao: isRetirada ? "COMPROVANTE RETIRADA" : "COMPROVANTE ENTREGA",
+            itens: receiptItems,
+            data_hora: dataHora,
+            observacao_geral: obsGeralParts.join("\n"),
+          },
+          p_paper_style: "80mm",
+        });
+      } catch { /* non-blocking */ }
+
+      await notifyDeliveryOrderCreated({
+        tenant_id,
+        order_id: orderId,
+        order_number: orderNumber,
+        customer_name: customer_name || "Cliente",
+        customer_phone: cleanPhone || String(customer_phone || ""),
+        total_amount: serverTotal,
+      });
+}
+
 Deno.serve({ verify_jwt: false }, async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -1135,6 +1296,54 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return okResp({ valid: true, applicable_amount: applicable, code: voucher.code, voucher_type: voucher.voucher_type });
     }
 
+    if (action === "release_held_order") {
+      // Pix confirmado: o pedido "segurado" vira 'new' (aparece no KDS/gestor) e dispara
+      // as saídas que ficaram presas (tickets, comprovante, WhatsApp). Só o online-payments
+      // chama isto, com a chave interna — o cliente nunca libera o próprio pedido.
+      const internalKey = Deno.env.get("FISCAL_INTERNAL_KEY") ?? "";
+      if (!internalKey || req.headers.get("x-internal-key") !== internalKey) return jsonErr("Unauthorized", 401);
+      const { tenant_id, order_id } = body;
+      if (!tenant_id || !order_id) return jsonErr("tenant_id e order_id obrigatorios", 400);
+      const { data: o } = await admin.from("orders")
+        .select("id, number, status, is_draft, origin_type, destination_name, destination_phone, delivery_address, delivery_platform, delivery_fee, subtotal, discount_amount, total_amount, notes, delivery_distance_km, delivery_sla_min")
+        .eq("id", order_id).eq("tenant_id", tenant_id).maybeSingle();
+      if (!o) return jsonErr("Pedido nao encontrado", 404);
+      if (o.origin_type !== "delivery") return jsonErr("Nao e pedido de delivery", 400);
+      if (o.status !== "draft" && !o.is_draft) return new Response(JSON.stringify({ _v: "v14", ok: true, already: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      const { error: upErr } = await admin.from("orders").update({ status: "new", is_draft: false, updated_at: new Date().toISOString() }).eq("id", order_id);
+      if (upErr) throw upErr;
+
+      const { data: items } = await admin.from("order_items").select("id, item_name, item_price, quantity, notes, skip_kds, station_id, status").eq("order_id", order_id).neq("status", "cancelled");
+      const itemIds = ((items ?? []) as Record<string, unknown>[]).map((it) => it.id as string);
+      const [{ data: optRows }, { data: obsRows }] = await Promise.all([
+        itemIds.length ? admin.from("order_item_options").select("order_item_id, option_name, group_name, additional_price").in("order_item_id", itemIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+        itemIds.length ? admin.from("order_item_observations").select("order_item_id, text").in("order_item_id", itemIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+      ]);
+      const serverItems = ((items ?? []) as Record<string, unknown>[]).map((it) => ({
+        item_name: it.item_name, item_price: Number(it.item_price ?? 0), quantity: Number(it.quantity ?? 1),
+        notes: it.notes ?? null, skip_kds: !!it.skip_kds, station_id: it.station_id ?? null,
+        options: ((optRows ?? []) as Record<string, unknown>[]).filter((r) => r.order_item_id === it.id).map((r) => ({ option_name: r.option_name, group_name: r.group_name, additional_price: Number(r.additional_price ?? 0) })),
+        observations: ((obsRows ?? []) as Record<string, unknown>[]).filter((r) => r.order_item_id === it.id).map((r) => ({ text: r.text, is_checked: false })),
+      }));
+      const isRetirada = o.delivery_platform === "retirada";
+      const customer_name = String(o.destination_name ?? "").split(/\s+[-–—]\s+/)[0].trim() || "Cliente";
+      const notesTxt = String(o.notes ?? "");
+      const trocoMatch = notesTxt.match(/Troco para\s*R\$\s*([\d.,]+)/i);
+      await emitDeliveryOutputs(admin, {
+        tenant_id, orderId: o.id as string, orderNumber: o.number as string, serverItems,
+        customer_name, customer_address: (o.delivery_address as string | null) ?? null, customer_phone: String(o.destination_phone ?? ""),
+        cleanPhone: String(o.destination_phone ?? "").replace(/\D/g, ""), isRetirada,
+        routeKm: o.delivery_distance_km != null ? Number(o.delivery_distance_km) : null,
+        routeTempoMax: o.delivery_sla_min != null ? Number(o.delivery_sla_min) : null,
+        serverDeliveryFee: Number(o.delivery_fee ?? 0), serverSubtotal: Number(o.subtotal ?? 0),
+        voucherDiscount: Number(o.discount_amount ?? 0), vCode: null, serverTotal: Number(o.total_amount ?? 0),
+        payment_method: "PIX pelo app (PAGO)", isDinheiro: false,
+        cash_amount: trocoMatch ? Number(trocoMatch[1].replace(".", "").replace(",", ".")) : null,
+      });
+      return new Response(JSON.stringify({ _v: "v14", ok: true, released: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "create_delivery_order") {
       const {
         tenant_id, customer_id, customer_name, customer_phone,
@@ -1496,10 +1705,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       }
       const notesCombined = paymentParts.join(" | ");
 
+      // "PIX pelo app": segura o pedido como RASCUNHO até o pagamento confirmar. Só então
+      // ele entra na cozinha (release_held_order). Dinheiro/cartão seguem direto.
+      const holdUntilPaid = typeof payment_method === "string" && /pix pelo app/i.test(payment_method);
+
       const { data: order, error: orderErr } = await admin.rpc("fn_create_order_bypass", {
         order_data: {
           tenant_id, session_id: sessionId, number: orderNumber,
-          status: "new", origin_type: "delivery", destination_type: "delivery",
+          status: holdUntilPaid ? "draft" : "new", origin_type: "delivery", destination_type: "delivery",
           destination_name: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
           // Normaliza para dígitos: todas as buscas (get_customer_orders, rate-limit, motoboy)
           // comparam por telefone sem máscara. Gravar formatado some do histórico do cliente.
@@ -1507,7 +1720,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           customer_id: realCustomerId, discount_amount: voucherDiscount, service_fee_amount: 0,
           subtotal: serverSubtotal,
           total_amount: serverTotal,
-          is_training: false, is_draft: false,
+          is_training: false, is_draft: holdUntilPaid,
           delivery_fee: serverDeliveryFee,
           delivery_address: customer_address || null,
           delivery_platform: isRetirada ? "retirada" : "propria",
@@ -1584,149 +1797,19 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         } catch (_e) { /* nao bloqueia o pedido se o resgate falhar */ }
       }
 
-      const dataHora = new Date().toLocaleString("pt-BR", {
-        timeZone: "America/Sao_Paulo",
-        day: "2-digit", month: "2-digit", year: "numeric",
-        hour: "2-digit", minute: "2-digit", second: "2-digit",
-      });
-      const ticketNum = parseInt(String(orderNumber).replace(/\D/g, "").slice(-4), 10) || 1;
-
-      function buildTicketItems(stationItems: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-        return stationItems.map((it: Record<string, unknown>) => {
-          const opts = (it.options as Array<Record<string, unknown>> ?? [])
-            .map((o: Record<string, unknown>) => o.option_name)
-            .filter(Boolean);
-          const obs = (it.observations as Array<Record<string, unknown>> ?? [])
-            .map((o: Record<string, unknown>) => o.text)
-            .filter((t: string) => t && t.trim().length > 0);
-          if (it.notes && typeof it.notes === "string" && it.notes.trim().length > 0) {
-            obs.push(it.notes.trim());
-          }
-          const ticketItem: Record<string, unknown> = {
-            quantidade: it.quantity ?? 1,
-            nome: it.item_name,
-          };
-          if (opts.length > 0) ticketItem.opcoes = opts;
-          if (obs.length > 0) ticketItem.observacoes = obs;
-          return ticketItem;
-        });
+      const outputCtx: DeliveryOutputCtx = {
+        tenant_id, orderId, orderNumber, serverItems,
+        customer_name: customer_name ?? null, customer_address: customer_address ?? null, customer_phone: String(customer_phone || ""),
+        cleanPhone, isRetirada, routeKm, routeTempoMax, serverDeliveryFee, serverSubtotal, voucherDiscount, vCode,
+        serverTotal, payment_method: payment_method ?? null, isDinheiro: !!isDinheiro,
+        cash_amount: (cash_amount !== undefined && cash_amount !== null) ? Number(cash_amount) : null,
+      };
+      if (holdUntilPaid) {
+        // "PIX pelo app": o pedido fica RASCUNHO (fora do KDS, do gestor e sem imprimir)
+        // até o online-payments liquidar o Pix e chamar `release_held_order`.
+      } else {
+        await emitDeliveryOutputs(admin, outputCtx);
       }
-
-      const itensCozinha = serverItems.filter((it: Record<string, unknown>) => !it.skip_kds);
-      const stationGroups = new Map<string, Array<Record<string, unknown>>>();
-      for (const item of itensCozinha) {
-        const key = (item.station_id as string) || "cozinha-padrao";
-        if (!stationGroups.has(key)) stationGroups.set(key, []);
-        stationGroups.get(key)!.push(item);
-      }
-
-      for (const [stationKey, stationItems] of stationGroups.entries()) {
-        try {
-          await admin.rpc("enqueue_print_ticket", {
-            p_tenant_id: tenant_id, p_order_id: orderId, p_order_number: orderNumber,
-            p_station_key: stationKey, p_station_label: stationKey,
-            p_content_type: "ticket_json",
-            p_payload: {
-              numero: ticketNum, destino: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
-              origem: isRetirada ? "retirada" : "delivery",
-              impressora_id: stationKey,
-              itens: buildTicketItems(stationItems),
-              data_hora: dataHora,
-            },
-            p_paper_style: "80mm",
-          });
-        } catch { /* non-blocking */ }
-      }
-
-      // Itens "sem preparo" (skip_kds: bebidas, sobremesas prontas) -> ticket de BAR,
-      // agrupado pela station_id real (fallback "bar"). Espelha o printOrderQueue das
-      // outras origens; antes o delivery NAO imprimia esses itens (so no comprovante).
-      const itensBar = serverItems.filter((it: Record<string, unknown>) => it.skip_kds);
-      const barGroups = new Map<string, Array<Record<string, unknown>>>();
-      for (const item of itensBar) {
-        const key = (item.station_id as string) || "bar";
-        if (!barGroups.has(key)) barGroups.set(key, []);
-        barGroups.get(key)!.push(item);
-      }
-      for (const [stationKey, stationItems] of barGroups.entries()) {
-        try {
-          await admin.rpc("enqueue_print_ticket", {
-            p_tenant_id: tenant_id, p_order_id: orderId, p_order_number: orderNumber,
-            p_station_key: stationKey, p_station_label: "Bar",
-            p_content_type: "ticket_json",
-            p_payload: {
-              numero: ticketNum, destino: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
-              origem: isRetirada ? "retirada" : "delivery",
-              impressora_id: stationKey,
-              itens: buildTicketItems(stationItems),
-              data_hora: dataHora,
-            },
-            p_paper_style: "80mm",
-          });
-        } catch { /* non-blocking */ }
-      }
-
-      try {
-        const receiptItems: Array<Record<string, unknown>> = [];
-        for (const item of serverItems) {
-          const itemQty = Number(item.quantity ?? 1);
-          const itemBasePrice = Number(item.item_price ?? 0);
-          const receiptItem: Record<string, unknown> = {
-            quantidade: itemQty,
-            nome: item.item_name + " - " + fmtPrice(itemBasePrice * itemQty),
-          };
-          const opts = (item.options as Array<Record<string, unknown>> ?? [])
-            .filter((o: Record<string, unknown>) => o.option_name)
-            .map((o: Record<string, unknown>) => {
-              const addP = Number(o.additional_price ?? 0);
-              return addP > 0
-                ? o.option_name + " +" + fmtPrice(addP)
-                : "+ " + o.option_name;
-            });
-          if (opts.length > 0) receiptItem.opcoes = opts;
-          receiptItems.push(receiptItem);
-        }
-
-        const obsGeralParts = [
-          "Cliente: " + (customer_name || "Nao informado"),
-          cleanPhone ? "Telefone: " + fmtPhone(cleanPhone) : "",
-          isRetirada ? "RETIRADA NA LOJA" : "",
-          (!isRetirada && routeKm != null) ? "Distancia: ~" + routeKm.toFixed(1) + " km" + (routeTempoMax ? " (ate " + routeTempoMax + " min)" : "") : "",
-          serverDeliveryFee > 0 ? "Taxa de entrega: " + fmtPrice(serverDeliveryFee) : "",
-          "Subtotal: " + fmtPrice(serverSubtotal),
-          voucherDiscount > 0 ? "Desconto voucher" + (vCode ? " (" + vCode + ")" : "") + ": -" + fmtPrice(voucherDiscount) : "",
-          "TOTAL: " + fmtPrice(serverTotal),
-          "Pagamento: " + (payment_method || "Nao informado"),
-          isDinheiro && cash_amount !== undefined && cash_amount !== null && Number(cash_amount) > 0
-            ? "Troco para " + fmtPrice(Number(cash_amount))
-            : "",
-        ].filter(Boolean);
-
-        await admin.rpc("enqueue_print_ticket", {
-          p_tenant_id: tenant_id, p_order_id: orderId, p_order_number: orderNumber,
-          p_station_key: "delivery-receipt", p_station_label: "Comprovante",
-          p_content_type: "ticket_json",
-          p_payload: {
-            numero: ticketNum,
-            destino: (customer_name || "Cliente") + " - " + (isRetirada ? "Retirada" : "Entrega"),
-            origem: isRetirada ? "retirada" : "delivery",
-            estacao: isRetirada ? "COMPROVANTE RETIRADA" : "COMPROVANTE ENTREGA",
-            itens: receiptItems,
-            data_hora: dataHora,
-            observacao_geral: obsGeralParts.join("\n"),
-          },
-          p_paper_style: "80mm",
-        });
-      } catch { /* non-blocking */ }
-
-      await notifyDeliveryOrderCreated({
-        tenant_id,
-        order_id: orderId,
-        order_number: orderNumber,
-        customer_name: customer_name || "Cliente",
-        customer_phone: cleanPhone || String(customer_phone || ""),
-        total_amount: serverTotal,
-      });
 
       return new Response(JSON.stringify({
         _v: "v14",
@@ -1741,6 +1824,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           customer_id: realCustomerId,
           payment_method,
           order_type: order_type || "entrega",
+          held: holdUntilPaid,
         },
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }

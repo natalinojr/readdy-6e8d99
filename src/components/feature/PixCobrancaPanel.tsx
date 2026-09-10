@@ -39,6 +39,8 @@ interface Props {
   onPago?: () => void;
   /** Título curto do bloco (ex.: "Pague agora com Pix") */
   titulo?: string;
+  /** Linha abaixo de "Pagamento confirmado" (ex.: "Seu pedido foi para a cozinha") */
+  textoPago?: string;
 }
 
 function functionsUrl() {
@@ -53,7 +55,7 @@ async function call<T>(body: Record<string, unknown>): Promise<T & { error?: str
 type Fase = 'carregando' | 'pix' | 'pago' | 'indisponivel' | 'erro';
 
 export default function PixCobrancaPanel(props: Props) {
-  const { auth, onPago, titulo } = props;
+  const { auth, onPago, titulo, textoPago } = props;
   const authKey = JSON.stringify(auth);
 
   const [fase, setFase] = useState<Fase>('carregando');
@@ -220,7 +222,7 @@ export default function PixCobrancaPanel(props: Props) {
         </div>
         <div className="min-w-0">
           <p className="text-sm font-black text-emerald-800">Pagamento confirmado</p>
-          <p className="text-[11px] text-emerald-600">{valorPago > 0 ? formatMoney(valorPago) + ' via Pix · ' : ''}Obrigado!</p>
+          <p className="text-[11px] text-emerald-600">{valorPago > 0 ? formatMoney(valorPago) + ' via Pix · ' : ''}{textoPago || 'Obrigado!'}</p>
         </div>
       </div>
     );
