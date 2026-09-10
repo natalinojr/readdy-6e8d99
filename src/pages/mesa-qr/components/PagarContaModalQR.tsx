@@ -556,9 +556,9 @@ export default function PagarContaModalQR(props: Props) {
         </div>
 
         <ol className="w-full mt-4 space-y-1.5 text-[11px] text-zinc-600">
-          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">1</span>Copie o código acima</li>
-          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">2</span>Abra o app do seu banco em <strong>Pix › Pix Copia e Cola</strong></li>
-          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">3</span>Cole, confirme e <strong>volte para esta tela</strong> — a confirmação aparece sozinha</li>
+          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">1</span><span className="flex-1 min-w-0">Copie o código acima</span></li>
+          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">2</span><span className="flex-1 min-w-0">Abra o app do seu banco em <strong>Pix › Pix Copia e Cola</strong></span></li>
+          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">3</span><span className="flex-1 min-w-0">Cole, confirme e <strong>volte para esta tela</strong> — a confirmação aparece sozinha</span></li>
         </ol>
 
         <div className="flex items-center gap-2 mt-4 text-[11px] text-zinc-400">

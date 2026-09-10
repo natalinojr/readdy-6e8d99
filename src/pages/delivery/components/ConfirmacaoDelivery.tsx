@@ -38,6 +38,8 @@ export default function ConfirmacaoDelivery(props: Props) {
   const modoEntrega = props.modoEntrega || 'entrega';
   const resumo = props.resumo;
   const pixOnline = props.pixOnline;
+  // Retirada não tem taxa: a taxa exibida é a capturada na confirmação (0 na retirada), nunca a do endereço atual
+  const taxaExibida = resumo ? resumo.deliveryFee : (modoEntrega === 'retirada' ? 0 : deliveryFee);
 
   const [abaAtiva, setAbaAtiva] = useState<TabOption>('acompanhar');
   // "PIX pelo app": o pedido só vai pra cozinha depois do Pix confirmar
@@ -95,9 +97,9 @@ export default function ConfirmacaoDelivery(props: Props) {
             <span className="text-xs font-bold text-amber-700">
               Total: R$ {orderTotal.toFixed(2)}
             </span>
-            {deliveryFee > 0 ? (
+            {taxaExibida > 0 ? (
               <span className="text-[10px] text-amber-500">
-                (taxa R$ {deliveryFee.toFixed(2)})
+                (taxa R$ {taxaExibida.toFixed(2)})
               </span>
             ) : null}
           </div>

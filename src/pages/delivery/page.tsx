@@ -475,7 +475,7 @@ export default function DeliveryPage() {
       <ConfirmacaoDelivery
         numeroPedido={numeroPedido}
         orderTotal={orderTotal}
-        deliveryFee={deliveryFee}
+        deliveryFee={modoEntrega === 'retirada' ? 0 : deliveryFee}
         phone={phone}
         tenantId={tenantId}
         customerId={customerId}
