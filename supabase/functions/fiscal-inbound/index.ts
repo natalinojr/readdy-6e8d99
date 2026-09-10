@@ -455,20 +455,43 @@ Deno.serve(async (req: Request) => {
           units_per_package: 1,
           cost_center_id: body.cost_center_id ?? null,
         }));
+        // O purchase-write recalcula o total como Σ itens líquidos + frete. O vNF da nota também
+        // soma ICMS-ST, IPI, seguro e outras despesas — sem isso a compra (e a conta a pagar de
+        // 1 parcela) sairia menor que o boleto. A diferença entra como uma linha própria.
+        const frete = Number(doc.frete ?? 0) || 0;
+        const itensLiquido = itens.reduce((s, it) => s + Math.round(it.quantity * Math.max(0, it.unit_price - it.discount_per_unit) * 100) / 100, 0);
+        const acrescimos = round2(Number(doc.valor_total ?? 0) - itensLiquido - frete);
+        if (itens.length > 0 && acrescimos >= 0.01) {
+          itens.push({
+            description: 'Acréscimos da nota (ICMS-ST, IPI, seguro, outras despesas)',
+            quantity: 1, unit_price: acrescimos, discount_per_unit: 0, unit_label: null, units_per_package: 1,
+            cost_center_id: body.cost_center_id ?? null,
+          });
+        } else if (itens.length > 0 && acrescimos <= -0.01) {
+          // Desconto no total da nota que não veio rateado nos itens: aplica no maior item
+          const maior = itens.reduce((a, b) => (b.quantity * b.unit_price > a.quantity * a.unit_price ? b : a));
+          maior.discount_per_unit = round2(maior.discount_per_unit + (-acrescimos) / (maior.quantity || 1));
+        }
+
+        // Nota já paga (dinheiro/cartão/PIX na entrega): entra como compra paga — o purchase-write
+        // registra a saída no fluxo de caixa. Sem boleto em aberto, sem conta a pagar.
+        const jaPaga = body.pago === true;
         const purchasePayload: Record<string, unknown> = {
           supplier: supplier.name,
           invoice_number: numeroNf,
           purchase_date: String(doc.emitted_at ?? now).slice(0, 10),
-          payment_method: 'Boleto',
-          payment_status: 'pending',
+          payment_method: jaPaga ? String(body.payment_method ?? 'Dinheiro') : 'Boleto',
+          payment_status: jaPaga ? 'paid' : 'pending',
           cost_center_id: body.cost_center_id ?? null,
           bank_account_id: body.bank_account_id ?? null,
-          freight_amount: Number(doc.frete ?? 0) || 0,
+          freight_amount: frete,
           notes,
           items: itens,
         };
-        if (parcelas.length >= 2) purchasePayload.custom_installments = parcelas.map((p) => ({ due_date: p.vencimento, amount: p.valor }));
-        else purchasePayload.due_date = parcelas[0].vencimento;
+        if (!jaPaga) {
+          if (parcelas.length >= 2) purchasePayload.custom_installments = parcelas.map((p) => ({ due_date: p.vencimento, amount: p.valor }));
+          else purchasePayload.due_date = parcelas[0].vencimento;
+        }
         // Nota sem itens legíveis: total vem da nota
         if (itens.length === 0) purchasePayload.total_amount = Number(doc.valor_total ?? soma);
 

@@ -15,12 +15,12 @@ interface DocRow {
   emitente_cnpj: string | null; emitente_nome: string | null; natureza: string | null; cfops: string | null;
   valor_total: number; emitted_at: string | null; sefaz_status: number | null;
   xml_status: 'pending' | 'full' | 'summary' | 'error';
-  parcelas: Parcela[]; itens: Item[]; frete: number | null; desconto: number | null;
+  parcelas: Parcela[]; itens: Item[]; frete: number | null; desconto: number | null; pagamento: Pag[];
   status: 'new' | 'imported' | 'ignored'; import_type: 'purchase' | 'bill' | null; purchase_id: string | null;
   payable_ids: string[]; ignore_reason: string | null; manifest_status: string | null; error_message: string | null;
   imported_at: string | null;
 }
-const COLS = 'id, chave, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at';
+const COLS = 'id, chave, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at';
 
 const brl = (n: number | null | undefined) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n ?? 0));
 const dataBR = (s: string | null | undefined) => (s ? new Date(s.length === 10 ? `${s}T12:00:00` : s).toLocaleDateString('pt-BR') : '—');
@@ -31,6 +31,20 @@ const cnpjFmt = (d: string | null) => {
 const hoje = () => new Date().toISOString().slice(0, 10);
 
 type Filtro = 'new' | 'imported' | 'ignored' | 'all';
+
+// CFOPs de saída que não são venda a pagar: bonificação, amostra, remessa, vasilhame, outras saídas.
+const CFOP_NAO_VENDA = /^[56](9(0[1-9]|1[0-9]|2[0-4]|49)|55[0-9])$/;
+const TPAG: Record<string, string> = { '01': 'Dinheiro', '02': 'Cheque', '03': 'Cartão de crédito', '04': 'Cartão de débito', '05': 'Crédito loja', '15': 'Boleto', '16': 'Depósito', '17': 'PIX', '18': 'Transferência', '90': 'Sem pagamento', '99': 'Outros' };
+const PAGO_NA_HORA = new Set(['01', '03', '04', '17', '16', '18']);
+interface Pag { forma: string; valor: number }
+function pareceNaoVenda(d: { cfops: string | null; pagamento?: Pag[] }): boolean {
+  const cfops = (d.cfops ?? '').split(',').map((c) => c.trim()).filter(Boolean);
+  const semPagamento = (d.pagamento ?? []).length > 0 && (d.pagamento ?? []).every((p) => p.forma === '90' || Number(p.valor) === 0);
+  return semPagamento || (cfops.length > 0 && cfops.every((c) => CFOP_NAO_VENDA.test(c)));
+}
+function formaResumo(pag: Pag[] | undefined): string {
+  return [...new Set((pag ?? []).map((p) => TPAG[p.forma] ?? 'Outros'))].join(', ');
+}
 
 export default function NotasEntradaTab() {
   const { user } = useAuth();
@@ -215,7 +229,8 @@ export default function NotasEntradaTab() {
                       <td className="px-4 py-2.5 text-right font-semibold text-zinc-800 whitespace-nowrap">{brl(d.valor_total)}</td>
                       <td className="px-4 py-2.5 text-zinc-600 whitespace-nowrap">
                         {d.xml_status !== 'full' ? <span className="text-[11px] text-sky-600">aguardando XML</span>
-                          : (d.parcelas ?? []).length === 0 ? <span className="text-[11px] text-zinc-400">sem boleto na nota</span>
+                          : pareceNaoVenda(d) ? <span className="text-[11px] font-semibold text-violet-600" title="CFOP de remessa/bonificação ou nota sem pagamento — normalmente se ignora">remessa/bonificação?</span>
+                          : (d.parcelas ?? []).length === 0 ? <span className="text-[11px] text-zinc-500">sem boleto · {formaResumo(d.pagamento) || 'pago na hora?'}</span>
                           : <>
                               <span className="text-xs">{(d.parcelas ?? []).length}× · próx. {dataBR(proxima?.vencimento)}</span>
                             </>}
@@ -293,6 +308,11 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
     : [{ numero: '1', vencimento: (doc.emitted_at ?? new Date().toISOString()).slice(0, 10), valor: Number(doc.valor_total ?? 0) }];
   const [parcelas, setParcelas] = useState<Parcela[]>(parcelasIniciais);
   const [tipo, setTipo] = useState<'purchase' | 'bill'>('purchase');
+  const semBoleto = (doc.parcelas ?? []).length === 0;
+  const pagoNaHora = semBoleto && (doc.pagamento ?? []).some((p) => PAGO_NA_HORA.has(p.forma));
+  const [pago, setPago] = useState<boolean>(pagoNaHora);
+  const formaPrincipal = (doc.pagamento ?? []).slice().sort((a, b) => Number(b.valor) - Number(a.valor))[0]?.forma;
+  const naoVenda = pareceNaoVenda(doc);
   const [centros, setCentros] = useState<{ id: string; name: string }[]>([]);
   const [dres, setDres] = useState<{ id: string; name: string; group_type: string }[]>([]);
   const [centro, setCentro] = useState('');
@@ -319,13 +339,17 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
       action: tipo === 'purchase' ? 'import_purchase' : 'import_bill',
       document_id: doc.id,
       parcelas,
+      pago: tipo === 'purchase' && pago,
+      payment_method: formaPrincipal ? (TPAG[formaPrincipal] ?? 'Outros') : undefined,
       cost_center_id: centro || null,
       dre_category_id: tipo === 'bill' ? (dre || null) : null,
       category: tipo === 'bill' ? (dres.find((d) => d.id === dre)?.name ?? 'Outros') : undefined,
     });
     setEnviando(false);
     if (!r.success) { onErro('Não foi possível lançar', r.error); return; }
-    onLancado(`${tipo === 'purchase' ? 'Compra lançada' : 'Despesa lançada'} · ${r.parcelas ?? parcelas.length} parcela(s) em Contas a Pagar`);
+    onLancado(tipo === 'purchase' && pago
+      ? 'Compra lançada como paga · saída registrada no Fluxo de Caixa'
+      : `${tipo === 'purchase' ? 'Compra lançada' : 'Despesa lançada'} · ${r.parcelas ?? parcelas.length} parcela(s) em Contas a Pagar`);
   };
 
   return (
@@ -375,7 +399,34 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
             </div>
           )}
 
+          {naoVenda && (
+            <div className="flex items-start gap-2 bg-violet-50 border border-violet-100 rounded-lg p-3">
+              <i className="ri-error-warning-line text-violet-500" />
+              <p className="text-xs text-violet-800">Esta nota parece <strong>remessa, bonificação ou outra saída</strong> (CFOP {doc.cfops}). Normalmente não se lança: feche e use o botão de ignorar na lista.</p>
+            </div>
+          )}
+
+          {tipo === 'purchase' && (
+            <div>
+              <p className="text-xs font-bold text-zinc-700 mb-2">Pagamento</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => setPago(false)} className={`text-left p-2.5 rounded-lg border text-xs cursor-pointer ${!pago ? 'border-amber-400 bg-amber-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
+                  <strong className="text-zinc-800">A pagar</strong>
+                  <span className="block text-zinc-500">{semBoleto ? 'Cria conta a pagar no vencimento abaixo' : `Boleto: ${parcelas.length} parcela(s) em Contas a Pagar`}</span>
+                </button>
+                <button onClick={() => setPago(true)} className={`text-left p-2.5 rounded-lg border text-xs cursor-pointer ${pago ? 'border-amber-400 bg-amber-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
+                  <strong className="text-zinc-800">Já paga</strong>
+                  <span className="block text-zinc-500">{formaResumo(doc.pagamento) ? `Na nota: ${formaResumo(doc.pagamento)}` : 'Pago na entrega'}</span>
+                </button>
+              </div>
+              {pago && (
+                <p className="text-[11px] text-amber-700 mt-1.5">A compra entra como paga e a saída é registrada no Fluxo de Caixa na data da nota. Se essa saída já foi lançada em outro lugar (sangria, despesa manual), escolha "A pagar" e dê baixa por lá para não duplicar.</p>
+              )}
+            </div>
+          )}
+
           {/* Parcelas */}
+          {!(tipo === 'purchase' && pago) && (
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-bold text-zinc-700">
@@ -402,6 +453,8 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
               Soma das parcelas: {brl(soma)}{Math.abs(diff) >= 0.01 ? ` · diferença de ${brl(diff)} para o total da nota (frete/desconto fora do boleto?)` : ' · confere com o total da nota'}
             </p>
           </div>
+
+          )}
 
           {/* Tipo de lançamento */}
           <div>
@@ -442,10 +495,10 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
 
         <div className="p-4 border-t border-zinc-100 flex items-center justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-lg hover:bg-zinc-200 cursor-pointer">Cancelar</button>
-          <button onClick={lancar} disabled={!podeLancar || enviando || parcelas.length === 0 || soma <= 0 || (tipo === 'bill' && !dre)}
+          <button onClick={lancar} disabled={!podeLancar || enviando || (!(tipo === 'purchase' && pago) && (parcelas.length === 0 || soma <= 0)) || (tipo === 'bill' && !dre)}
             title={!podeLancar ? 'Apenas administradores e gerentes' : undefined}
             className="px-4 py-2 text-sm font-semibold text-white bg-amber-500 rounded-lg hover:bg-amber-600 disabled:opacity-40 cursor-pointer">
-            {enviando ? 'Lançando…' : tipo === 'purchase' ? `Lançar compra · ${parcelas.length} parcela(s)` : `Lançar despesa · ${parcelas.length} parcela(s)`}
+            {enviando ? 'Lançando…' : tipo === 'purchase' ? (pago ? 'Lançar compra paga' : `Lançar compra · ${parcelas.length} parcela(s)`) : `Lançar despesa · ${parcelas.length} parcela(s)`}
           </button>
         </div>
       </div>
