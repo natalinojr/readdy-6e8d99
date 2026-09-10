@@ -34,6 +34,8 @@ export interface OrderItemPayload {
 
 export interface CreateOrderPayload {
   session_id: string;
+  // Autoatendimento: Pix já confirmado pelo banco — o pedido nasce pago (order-write › create_order).
+  paid_pix_payment_id?: string | null;
   tenant_id: string;
   origin: 'cashier' | 'waiter' | 'self_service' | 'delivery';
   destination: string;

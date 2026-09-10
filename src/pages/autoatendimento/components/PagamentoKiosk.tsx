@@ -37,7 +37,7 @@ interface PagamentoKioskProps {
   formaPagamentoNome?: string;
   orderNumber?: number;
   alertaParcial?: string;
-  onEntrarPagamento: () => Promise<string | null>;
+  onEntrarPagamento: (paidPixPaymentId?: string) => Promise<string | null>;
   // Grava o pagamento no caixa SEM voltar o tablet pro início (quem encerra é onConcluir).
   onRegistrarPagamento: (paymentMethodId: string, orderId: string) => Promise<void>;
   onConcluir: (paymentMethodId?: string, orderId?: string) => Promise<void>;
@@ -200,7 +200,6 @@ function TelaPix({
   const [pixError, setPixError] = useState('');
   const [timeLeft, setTimeLeft] = useState(600); // 10 min
   const [pollingStatus, setPollingStatus] = useState<'waiting' | 'confirmed' | 'expired'>('waiting');
-  const [copiado, setCopiado] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pixDataRef = useRef<PixPaymentData | null>(null);
   const onPagoRef = useRef(onPago);
@@ -286,14 +285,6 @@ function TelaPix({
     return () => clearInterval(t);
   }, [timeLeft, pollingStatus]);
 
-  const handleCopiarChave = async () => {
-    if (!pixData?.emv_payload) return;
-    try {
-      await navigator.clipboard.writeText(pixData.emv_payload);
-      setCopiado(true);
-      setTimeout(() => setCopiado(false), 2500);
-    } catch { /* ignore */ }
-  };
 
   // Sair da tela: volta NA HORA e cancela a cobrança em segundo plano. O servidor confere
   // no banco antes de cancelar; se o cliente já tinha pago, o pedido segue pelo fluxo de
@@ -447,18 +438,6 @@ function TelaPix({
             </div>
           )}
 
-          {/* Copiar código */}
-          <button
-            onClick={handleCopiarChave}
-            className={`flex items-center justify-center gap-2 w-full py-3 rounded-xl text-base font-semibold cursor-pointer transition-all whitespace-nowrap ${
-              copiado
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                : 'bg-zinc-700 hover:bg-zinc-600 text-zinc-300'
-            }`}
-          >
-            <i className={`text-base ${copiado ? 'ri-checkbox-circle-line' : 'ri-file-copy-line'}`} />
-            {copiado ? 'Código copiado!' : 'Copiar código PIX'}
-          </button>
         </div>
       </div>
 
@@ -610,7 +589,7 @@ export default function PagamentoKiosk({
     try {
       // O id do pedido vem direto daqui: o estado do pai ainda não atualizou nesta chamada
       // (era por isso que o pagamento do Pix não entrava no caixa).
-      const orderId = await onEntrarPagamento();
+      const orderId = await onEntrarPagamento(pixPaymentId);
       if (!orderId) throw new Error('O Pix foi recebido, mas o pedido não foi registrado. NÃO pague de novo — chame um atendente.');
       invokeWithAuth('pix-payment', { body: { action: 'attach_order', pix_payment_id: pixPaymentId, order_id: orderId } }).catch(() => {});
       const pixMethod = paymentMethods.find((m) => m.type === 'pix');

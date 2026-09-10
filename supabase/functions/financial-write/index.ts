@@ -804,6 +804,22 @@ Deno.serve(async (req) => {
         break;
       }
       case 'delete_dre_group': {
+        // Categorias guardam a KEY do grupo em `group_type`. Apagar um grupo
+        // customizado que ainda tem categorias deixaria todas órfãs (sem
+        // rótulo na tela e fora da validação do trigger de grupo).
+        const { data: grupo } = await supabase
+          .from('fin_dre_groups').select('key').eq('id', payload.id).eq('tenant_id', tenant_id).maybeSingle();
+        const STANDARD = ['revenue', 'cost', 'expense', 'tax'];
+        if (grupo && !STANDARD.includes(grupo.key)) {
+          const { count } = await supabase
+            .from('fin_dre_categories').select('id', { count: 'exact', head: true })
+            .eq('tenant_id', tenant_id).eq('group_type', grupo.key);
+          if ((count ?? 0) > 0) {
+            return new Response(JSON.stringify({
+              error: `Este grupo tem ${count} categoria(s). Mova ou exclua as categorias antes de remover o grupo.`,
+            }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          }
+        }
         result = await supabase.from('fin_dre_groups').delete().eq('id', payload.id).eq('tenant_id', tenant_id);
         break;
       }

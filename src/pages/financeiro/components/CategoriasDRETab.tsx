@@ -429,7 +429,10 @@ export default function CategoriasDRETab() {
       await refetchGroups();
       if (filterGroup === key) setFilterGroup('all');
     } catch (e) {
+      // O backend recusa (409) apagar grupo que ainda tem categorias; antes o
+      // erro só ia pro console e o clique parecia não fazer nada.
       console.error('[CategoriasDRE] erro ao excluir grupo:', e);
+      alert(e instanceof Error ? e.message : 'Não foi possível remover o grupo.');
     }
   };
 

@@ -336,7 +336,7 @@ function AutoatendimentoPageInner() {
   const criarPedidoRef = useRef(false);
 
   // Cria o pedido no banco e retorna o ID e número
-  const criarPedidoBanco = useCallback(async (): Promise<{ id: string; numero: number } | null> => {
+  const criarPedidoBanco = useCallback(async (paidPixPaymentId?: string): Promise<{ id: string; numero: number } | null> => {
     let { tenantId, sessionId } = getTenantAndSession();
 
     console.log('[Autoatendimento] criarPedidoBanco iniciando:', {
@@ -454,6 +454,8 @@ function AutoatendimentoPageInner() {
           subtotal,
           total_amount: subtotal,
           is_training: user?.modoTreino ?? false,
+          // Pix já pago: o pedido nasce pago em vez de ficar "em aberto" até o record_payment.
+          ...(typeof paidPixPaymentId === 'string' ? { paid_pix_payment_id: paidPixPaymentId } : {}),
         },
         { externalToken: kioskToken, paraViagem: destino === 'viagem' },
       );
@@ -476,7 +478,8 @@ function AutoatendimentoPageInner() {
   }, [carrinho, identifNome, identifSenha, modoIdentificacao, pagarNaEntrega, formaPagamentoNome, getTenantAndSession, submitOrder, user?.modoTreino, kioskSession?.accessToken]);
 
 
-  const handleAvancarPagamento = useCallback(async (): Promise<string | null> => {
+  // paidPixPaymentId só vale como texto: esta função também é usada direto em botões (recebe o evento).
+  const handleAvancarPagamento = useCallback(async (paidPixPaymentId?: unknown): Promise<string | null> => {
     // Padrão ref+state duplo:
     // - criarPedidoRef bloqueia no mesmo tick (state não atualiza rápido o suficiente)
     // - pendingOrderId bloqueia chamadas subsequentes após o primeiro ciclo
@@ -491,7 +494,7 @@ function AutoatendimentoPageInner() {
     criarPedidoRef.current = true;
     try {
       console.log('[Autoatendimento] handleAvancarPagamento: chamando criarPedidoBanco...');
-      const result = await criarPedidoBanco();
+      const result = await criarPedidoBanco(typeof paidPixPaymentId === 'string' ? paidPixPaymentId : undefined);
       console.log('[Autoatendimento] handleAvancarPagamento: pedido criado =', result);
       if (result) {
         setPendingOrderId(result.id);

@@ -759,6 +759,27 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const orderResult = await withRetry(async () => { const { data, error } = await admin.rpc("fn_create_order_bypass", { order_data: { tenant_id: tenantId, session_id, number: orderNumber, status: initialOrderStatus, origin_type: mappedOrigin, destination_type: mappedDest, destination_name: finalDestinationName, destination_phone: cleanDestPhone, delivery_address: delivery_address ?? null, delivery_fee: delivery_fee ?? 0, delivery_platform: deliveryPlatform ?? null, discount_amount: discount_amount ?? 0, service_fee_amount: service_fee_amount ?? 0, subtotal: subtotal ?? 0, total_amount: total_amount ?? 0, is_training: is_training ?? false, is_draft: false, origin_user_id: effectiveUserId, customer_id: customerId ?? null, table_number: finalTableNumber, customer_cpf: customer_cpf ?? null, customer_email: customer_email ?? null, table_session_id: resolvedTableSessionId, notes: cortesiaNotes, client_request_id: effectiveClientRequestId } }); if (error) throw error; return data; }, 3, "create_order:fn_create_order_bypass", { session_id, tenant_id: tenantId, origin: mappedOrigin, client_request_id: effectiveClientRequestId });
       const orderId: string = orderResult?.id;
       if (!orderId) { return new Response(JSON.stringify({ error: "Order created but no ID returned" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      // ── Autoatendimento: pedido que já nasce pago por um Pix confirmado pelo banco ──
+      // O tablet só cria o pedido depois do Pix pago; com o id do Pix o pedido sai daqui já
+      // pago (sem ficar "em aberto" até o record_payment chegar). Confere no banco: Pix
+      // confirmado, da mesma loja, cobre o total e ainda sem pedido — a ligação é condicional
+      // (order_id nulo), então o mesmo Pix nunca paga dois pedidos. O record_payment continua
+      // gravando o pagamento no caixa (financeiro / NFC-e) logo em seguida.
+      const paidPixId: string | null = isValidUuid(body.paid_pix_payment_id) ? String(body.paid_pix_payment_id) : null;
+      if (paidPixId) {
+        try {
+          const { data: pixClaim } = await admin.from("fin_pix_payments").update({ order_id: orderId, updated_at: new Date().toISOString() })
+            .eq("id", paidPixId).eq("tenant_id", tenantId).eq("status", "confirmed").is("order_id", null)
+            .gte("amount", Number(total_amount ?? 0) - 0.01).select("id").maybeSingle();
+          if (pixClaim?.id) {
+            const paidNow = new Date().toISOString();
+            await admin.from("orders").update({ is_paid: true, paid_at: paidNow, paid_by_pdv: "self_service", updated_at: paidNow }).eq("id", orderId);
+            log("INFO", "create_order", "Pedido nasce pago (Pix confirmado)", { order_id: orderId, pix_payment_id: paidPixId });
+          } else {
+            log("WARN", "create_order", "paid_pix_payment_id recusado (não confirmado, outra loja, valor menor ou já usado)", { order_id: orderId, pix_payment_id: paidPixId });
+          }
+        } catch (e) { log("WARN", "create_order", "Falha ao marcar pedido pago pelo Pix", { order_id: orderId, error: String(e) }); }
+      }
       // ── Delivery lancado no caixa: pin + rota (alimenta o Gestor de Entregas
       // e o link do motoboy, iguais aos pedidos vindos do link do delivery) ──
       const dLat = (body.delivery_lat != null && body.delivery_lat !== "") ? Number(body.delivery_lat) : null;
