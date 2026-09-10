@@ -439,6 +439,40 @@ export default function ConciliacaoTab() {
     pctConciliado,
   } = useConciliacao(selectedAccountId);
 
+  // Extratos dos bancos integrados (Inter e Stone): buscados ao abrir a tela e no botão
+  // "Atualizar bancos". Não há rotina automática no servidor.
+  const [bankSync, setBankSync] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
+  const runBankSync = useCallback(async () => {
+    if (!user?.tenantId) return;
+    setBankSync({ running: true, msg: null, error: false });
+    type SyncResp = { success?: boolean; not_configured?: boolean; skipped?: boolean; error?: string; inserted?: number };
+    const [inter, stone] = await Promise.all([
+      invokeWithAuth<SyncResp>('inter-bank', { body: { action: 'sync', tenant_id: user.tenantId } }),
+      invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId } }),
+    ]);
+    const parts: string[] = [];
+    let hasError = false;
+    let novos = 0;
+    const read = (label: string, r: { data: SyncResp | null; error: Error | null }) => {
+      const d = r.data;
+      const err = d?.error ?? r.error?.message;
+      if (d?.not_configured || /não configurad/i.test(String(err ?? ''))) return; // banco não integrado nesta loja
+      if (d?.skipped) return;
+      if (err || !d?.success) { hasError = true; parts.push(`${label}: falhou`); return; }
+      novos += Number(d.inserted ?? 0);
+      parts.push(`${label}: ${Number(d.inserted ?? 0)} novo(s)`);
+    };
+    read('Inter', inter);
+    read('Stone', stone);
+    const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    setBankSync({ running: false, error: hasError, msg: parts.length > 0 ? `Bancos atualizados às ${hora} · ${parts.join(' · ')}` : null });
+    if (novos > 0) refresh();
+    if (parts.length > 0) { refetchAccounts(); setInterRefreshKey((k) => k + 1); }
+  }, [user?.tenantId, refresh, refetchAccounts]);
+
+  // Uma vez ao abrir a tela (e ao trocar de loja)
+  useEffect(() => { runBankSync(); }, [user?.tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── File import ─────────────────────────────────────────────────────────────
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -660,6 +694,14 @@ export default function ConciliacaoTab() {
         <div>
           <h2 className="text-base font-bold text-zinc-900">Conciliação Bancária</h2>
           <p className="text-xs text-zinc-500 mt-0.5">Importe extratos, classifique automaticamente e reconcilie com o sistema</p>
+          {bankSync.running && (
+            <p className="text-xs text-blue-600 mt-1 flex items-center gap-1"><i className="ri-loader-4-line animate-spin" /> Buscando extratos dos bancos integrados...</p>
+          )}
+          {!bankSync.running && bankSync.msg && (
+            <p className={`text-xs mt-1 flex items-center gap-1 ${bankSync.error ? 'text-red-600' : 'text-green-700'}`}>
+              <i className={bankSync.error ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'} /> {bankSync.msg}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {bankAccounts.length > 1 && (
@@ -673,6 +715,14 @@ export default function ConciliacaoTab() {
               ))}
             </select>
           )}
+          <button
+            onClick={runBankSync}
+            disabled={bankSync.running}
+            className="flex items-center gap-1.5 px-3 py-2 border border-blue-300 text-blue-700 bg-blue-50 rounded-lg text-sm font-semibold hover:bg-blue-100 cursor-pointer whitespace-nowrap transition-colors disabled:opacity-50"
+            title="Busca agora o extrato do Inter e o arquivo da Stone"
+          >
+            <i className={`ri-refresh-line ${bankSync.running ? 'animate-spin' : ''}`} /> Atualizar bancos
+          </button>
           <button
             onClick={() => setShowStoneConfig(true)}
             className="flex items-center gap-1.5 px-3 py-2 border border-green-300 text-green-700 bg-green-50 rounded-lg text-sm font-semibold hover:bg-green-100 cursor-pointer whitespace-nowrap transition-colors"

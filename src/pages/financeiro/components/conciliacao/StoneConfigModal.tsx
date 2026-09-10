@@ -91,7 +91,7 @@ export default function StoneConfigModal({ onClose, onSaved }: Props) {
             </div>
             <div>
               <h3 className="font-bold text-zinc-900">Integração Stone</h3>
-              <p className="text-xs text-zinc-500">Repasses, tarifas e chargebacks da maquininha, todo dia</p>
+              <p className="text-xs text-zinc-500">Repasses, tarifas e chargebacks da maquininha</p>
             </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
@@ -125,7 +125,7 @@ export default function StoneConfigModal({ onClose, onSaved }: Props) {
                 <li>Vá em <strong>Conciliação</strong> (ou Perfil › Chaves de autenticação) e crie uma chave para a <strong>API de Conciliação</strong>.</li>
                 <li>Copie a <strong>Chave Secreta</strong> e cole abaixo. O <strong>StoneCode</strong> é o número de afiliação que aparece no portal e no comprovante da maquininha.</li>
               </ol>
-              <p className="text-[11px] text-zinc-400">O arquivo de um dia fica disponível a partir das 05h do dia seguinte. A sincronização automática roda às 06h30.</p>
+              <p className="text-[11px] text-zinc-400">O arquivo de um dia fica disponível a partir das 05h do dia seguinte. Ele é buscado quando alguém abre a Conciliação ou clica em Atualizar bancos.</p>
             </div>
 
             <div>
@@ -162,7 +162,7 @@ export default function StoneConfigModal({ onClose, onSaved }: Props) {
 
             <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
               <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} className="rounded" />
-              Importar automaticamente todo dia às 06h30
+              Buscar os dias que faltam sempre que alguém abrir a Conciliação
             </label>
 
             {result && (

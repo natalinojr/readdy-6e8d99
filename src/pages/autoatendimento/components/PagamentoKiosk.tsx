@@ -37,7 +37,9 @@ interface PagamentoKioskProps {
   formaPagamentoNome?: string;
   orderNumber?: number;
   alertaParcial?: string;
-  onEntrarPagamento: () => Promise<void>;
+  onEntrarPagamento: () => Promise<string | null>;
+  // Grava o pagamento no caixa SEM voltar o tablet pro início (quem encerra é onConcluir).
+  onRegistrarPagamento: (paymentMethodId: string, orderId: string) => Promise<void>;
   onConcluir: (paymentMethodId?: string, orderId?: string) => Promise<void>;
 }
 
@@ -201,6 +203,8 @@ function TelaPix({
   const [copiado, setCopiado] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pixDataRef = useRef<PixPaymentData | null>(null);
+  const onPagoRef = useRef(onPago);
+  onPagoRef.current = onPago;
 
   // Gera o PIX ao montar
   useEffect(() => {
@@ -258,13 +262,13 @@ function TelaPix({
         if (data?.status === 'confirmed') {
           clearInterval(pollingRef.current!);
           setPollingStatus('confirmed');
-          setTimeout(() => onPago(pixPaymentId), 1500);
+          setTimeout(() => onPagoRef.current(pixPaymentId), 3500);
         } else if (data?.status === 'expired') {
           clearInterval(pollingRef.current!);
           setPollingStatus('expired');
         }
       } catch { /* non-fatal */ }
-    }, 3000);
+    }, 2000);
   };
 
   // Countdown
@@ -303,7 +307,7 @@ function TelaPix({
         });
         if (data?.status === 'confirmed') {
           setPollingStatus('confirmed');
-          setTimeout(() => onPago(id), 1500);
+          setTimeout(() => onPagoRef.current(id), 3500);
           return;
         }
       } catch { /* segue pra escolher outra forma */ }
@@ -513,6 +517,7 @@ export default function PagamentoKiosk({
   orderNumber,
   alertaParcial,
   onEntrarPagamento,
+  onRegistrarPagamento,
   onConcluir,
 }: PagamentoKioskProps) {
   const { user } = useAuth();
@@ -531,7 +536,8 @@ export default function PagamentoKiosk({
 
   const pagarEntregaRef = useRef(false);
   // Pix só é oferecido quando a loja tem provedor que confirma o pagamento (Inter/MP).
-  const [pixDisponivel, setPixDisponivel] = useState(false);
+  const [pixDisponivel, setPixDisponivel] = useState<boolean | null>(null);
+  const [metodosCarregados, setMetodosCarregados] = useState(false);
   // Forma escolhida para pagar no balcão (cartão/dinheiro): só informativa na confirmação.
   const [balcaoFormaNome, setBalcaoFormaNome] = useState<string | null>(null);
 
@@ -548,16 +554,28 @@ export default function PagamentoKiosk({
       .eq('is_active', true)
       .then(({ data }) => {
         setPaymentMethods((data as PaymentMethod[] | null) ?? []);
+        setMetodosCarregados(true);
       });
   }, [tenantId]);
 
+  // Resposta anterior fica guardada na sessão do tablet: a partir do 2º pedido as opções
+  // aparecem na hora; a consulta ao servidor só atualiza em segundo plano.
   useEffect(() => {
     if (!tenantId) return;
+    const cacheKey = `erpos_kiosk_pix:${tenantId}`;
+    try { const c = sessionStorage.getItem(cacheKey); if (c !== null) setPixDisponivel(c === '1'); } catch { /* sem storage */ }
+    const desiste = setTimeout(() => setPixDisponivel((prev) => prev ?? false), 6000);
     invokeWithAuth<{ provider: string | null }>('pix-payment', { body: { action: 'kiosk_provider', tenant_id: tenantId } })
-      .then(({ data }) => setPixDisponivel(Boolean(data?.provider)))
-      .catch(() => setPixDisponivel(false));
+      .then(({ data, error }) => {
+        if (error) { setPixDisponivel((prev) => prev ?? false); return; }
+        const v = Boolean(data?.provider);
+        setPixDisponivel(v);
+        try { sessionStorage.setItem(cacheKey, v ? '1' : '0'); } catch { /* sem storage */ }
+      })
+      .catch(() => setPixDisponivel((prev) => prev ?? false))
+      .finally(() => clearTimeout(desiste));
   }, [tenantId]);
-  const metodosVisiveis = paymentMethods.filter((m) => m.type !== 'pix' || pixDisponivel);
+  const metodosVisiveis = paymentMethods.filter((m) => m.type !== 'pix' || pixDisponivel === true);
 
   // Pagar na entrega (modo fixo) — cria pedido ao montar
   useEffect(() => {
@@ -597,20 +615,25 @@ export default function PagamentoKiosk({
     setAguardando(true);
     setPagamentoError(null);
     try {
-      // Cria o pedido no banco
-      await onEntrarPagamento();
-      // Busca o método PIX para registrar o pagamento
+      // O id do pedido vem direto daqui: o estado do pai ainda não atualizou nesta chamada
+      // (era por isso que o pagamento do Pix não entrava no caixa).
+      const orderId = await onEntrarPagamento();
+      if (!orderId) throw new Error('O Pix foi recebido, mas o pedido não foi registrado. NÃO pague de novo — chame um atendente.');
+      invokeWithAuth('pix-payment', { body: { action: 'attach_order', pix_payment_id: pixPaymentId, order_id: orderId } }).catch(() => {});
       const pixMethod = paymentMethods.find((m) => m.type === 'pix');
-      await onConcluir(pixMethod?.id);
+      if (!pixMethod) throw new Error('O Pix foi recebido, mas a loja não tem a forma de pagamento PIX cadastrada. NÃO pague de novo — chame um atendente.');
+      await onRegistrarPagamento(pixMethod.id, orderId);
       setConfirmado(true);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Erro ao processar pagamento PIX. Tente novamente.';
-      setPagamentoError(msg);
+      const msg = e instanceof Error ? e.message : 'Erro ao registrar o pagamento.';
+      // Volta pra escolha de forma com o aviso visível (na tela do Pix ele não aparece).
+      setPagamentoError(/NÃO pague de novo/.test(msg) ? msg : `O Pix foi recebido, mas houve um erro ao registrar: ${msg}. NÃO pague de novo — chame um atendente.`);
+      setForma(null);
       console.error('[PagamentoKiosk] Erro no pagamento PIX:', msg);
     } finally {
       setAguardando(false);
     }
-  }, [onEntrarPagamento, onConcluir, paymentMethods]);
+  }, [onEntrarPagamento, onRegistrarPagamento, paymentMethods]);
 
   // Helpers de identificador
   const isComanda = modoIdentificacao === 'comanda' || modoIdentificacao === 'senha_balcao';
@@ -817,6 +840,12 @@ export default function PagamentoKiosk({
             </button>
           </div>
         )}
+        {(!metodosCarregados || pixDisponivel === null) ? (
+          <div className="flex items-center justify-center gap-3 py-10 text-zinc-400 text-base md:text-xl">
+            <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+            Carregando formas de pagamento…
+          </div>
+        ) : (
         <div className="grid grid-cols-2 gap-3 md:gap-4 w-full max-w-2xl">
           {metodosVisiveis.map((method) => {
             const isPix = method.type === 'pix';
@@ -857,6 +886,7 @@ export default function PagamentoKiosk({
             </button>
           )}
         </div>
+        )}
         {modoPagamento === 'ambos' && (
           <button
             onClick={handlePagarNaEntregaEscolhido}

@@ -107,7 +107,7 @@ export default function StoneImportPanel({ onImportDone, onConfigureClick }: Pro
           <i className="ri-bank-card-line text-green-600 text-2xl" />
         </div>
         <h3 className="font-bold text-zinc-800 mb-1">Integração Stone não configurada</h3>
-        <p className="text-sm text-zinc-500 mb-4">Configure o StoneCode e a Chave Secreta para importar repasses, tarifas e chargebacks todo dia.</p>
+        <p className="text-sm text-zinc-500 mb-4">Configure o StoneCode e a Chave Secreta para importar repasses, tarifas e chargebacks da maquininha.</p>
         <button onClick={onConfigureClick}
           className="inline-flex items-center gap-2 px-5 py-2.5 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 cursor-pointer whitespace-nowrap transition-colors">
           <i className="ri-settings-3-line" /> Configurar Integração Stone
@@ -132,7 +132,7 @@ export default function StoneImportPanel({ onImportDone, onConfigureClick }: Pro
                 ) : (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700"><i className="ri-checkbox-circle-fill text-xs" /> Conectado</span>
                 )}
-                {config.auto_sync !== false && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-700"><i className="ri-time-line" /> diário 06h30</span>}
+                {config.auto_sync !== false && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-700"><i className="ri-refresh-line" /> ao abrir a tela</span>}
               </div>
               <p className="text-xs text-zinc-500">
                 StoneCode: <span className="font-mono font-semibold">{config.stone_code}</span>

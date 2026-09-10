@@ -86,10 +86,26 @@ export default function NotasEntradaTab() {
 
   const sincronizar = async () => {
     setSincronizando(true);
-    const r = await call<{ encontradas?: number; novas?: number; xml?: { full: number; summary: number; error: number }; skipped?: string }>({ action: 'sync', days: 90 });
+    type XmlStats = { full: number; summary: number; error: number };
+    const r = await call<{ encontradas?: number; novas?: number; xml?: XmlStats; pendentes?: number; skipped?: string }>({ action: 'sync', days: 90 });
+    if (!r.success) { setSincronizando(false); toastErr('Não foi possível buscar as notas', r.error || r.skipped || ''); await carregar(); return; }
+    // Muitas notas novas (ex.: 1ª carga da loja): o servidor baixa parte dos XMLs por vez; segue pedindo até zerar.
+    let pendentes = r.pendentes ?? 0;
+    let aguardandoCiencia = r.xml?.summary ?? 0;
+    if (pendentes > 0) await carregar();
+    for (let rodada = 0; pendentes > 0 && rodada < 15; rodada++) {
+      const x = await call<{ xml?: XmlStats; pendentes?: number }>({ action: 'fetch_xml' });
+      if (!x.success) break;
+      aguardandoCiencia += x.xml?.summary ?? 0;
+      const progresso = (x.xml?.full ?? 0) + (x.xml?.summary ?? 0);
+      const antes = pendentes;
+      pendentes = x.pendentes ?? 0;
+      await carregar();
+      if (progresso === 0 && pendentes >= antes) break; // provedor não entrega agora; o cron tenta de novo
+    }
     setSincronizando(false);
-    if (!r.success) { toastErr('Não foi possível buscar as notas', r.error || r.skipped || ''); await carregar(); return; }
-    toastOk(`${r.encontradas ?? 0} nota(s) na SEFAZ`, `${r.novas ?? 0} nova(s)${r.xml?.summary ? ` · ${r.xml.summary} aguardando ciência` : ''}`);
+    toastOk(`${r.encontradas ?? 0} nota(s) na SEFAZ`,
+      `${r.novas ?? 0} nova(s)${aguardandoCiencia ? ` · ${aguardandoCiencia} aguardando ciência` : ''}${pendentes ? ` · ${pendentes} XML(s) ainda a baixar (clique em Buscar de novo)` : ''}`);
     await carregar();
   };
 

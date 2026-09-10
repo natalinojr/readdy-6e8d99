@@ -13,11 +13,11 @@
 //   test_config    { ...mesmos campos opcionais }  testa token + saldo (usa o que estiver gravado se omitido)
 //   delete_config  {}                              admin/manager
 //   sync           { days? }                       extrato + saldo desde o último sync (ou N dias)
-//   sync_all       {}                              (interno/cron) todas as lojas com auto_sync
+//   sync_all       {}                              (interno) todas as lojas com auto_sync — sem cron: o front chama `sync` ao abrir a Conciliação
 //   probe_mtls     { cert_pem, key_pem }           (interno) diagnóstico do suporte a mTLS no runtime
 //
 // Autenticação: JWT do usuário (membership em user_tenants) OU chamada interna
-// (cron / outra função) com header x-internal-key = FISCAL_INTERNAL_KEY.
+// (outra função) com header x-internal-key = FISCAL_INTERNAL_KEY.
 //
 // API do Inter: OAuth2 client_credentials em /oauth/v2/token (escopo extrato.read),
 // TODA chamada exige o certificado mTLS emitido no Internet Banking PJ

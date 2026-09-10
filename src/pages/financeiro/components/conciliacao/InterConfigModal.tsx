@@ -263,7 +263,7 @@ export default function InterConfigModal({ onClose, onSaved }: Props) {
 
             <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
               <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} className="rounded" />
-              Sincronizar automaticamente de hora em hora (06h–23h)
+              Atualizar o extrato sempre que alguém abrir a Conciliação
             </label>
 
             {result && (

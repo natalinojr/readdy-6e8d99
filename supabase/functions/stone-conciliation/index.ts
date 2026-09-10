@@ -16,7 +16,8 @@
 //   import        { reference_date }                          um dia (AAAA-MM-DD)
 //   import_range  { date_from, date_to }                      até 31 dias
 //   get_history   {}
-//   sync_all      {}                                          (interno/cron) ontem + dias faltantes
+//   sync          {}                                          ontem + dias sem sucesso dos últimos 3 (ao abrir a Conciliação)
+//   sync_all      {}                                          (interno) o mesmo para todas as lojas
 //
 // Autenticação: JWT do usuário (membership em user_tenants) OU header x-internal-key = FISCAL_INTERNAL_KEY.
 // Stone: HTTP Basic com a Chave Secreta como usuário e senha vazia + x-user-type: client.
@@ -70,12 +71,11 @@ const money = (s: string | null | undefined) => {
 function children(xml: string, tag: string): string[] {
   const out: string[] = [];
   const open = new RegExp(`<${tag}(\\s[^>]*)?>`, 'g');
-  const selfClose = new RegExp(`<${tag}(\\s[^>]*)?/>`, 'g');
   let m: RegExpExecArray | null;
   while ((m = open.exec(xml)) !== null) {
     if (m[0].endsWith('/>')) { out.push(''); continue; } // <Tag /> vazio
     let depth = 1;
-    let i = m.index + m[0].length;
+    const i = m.index + m[0].length;
     const tagRe = new RegExp(`<(/?)${tag}(\\s[^>]*)?(/?)>`, 'g');
     tagRe.lastIndex = i;
     let t: RegExpExecArray | null;
@@ -86,7 +86,6 @@ function children(xml: string, tag: string): string[] {
     }
     if (depth !== 0) break;
   }
-  void selfClose;
   return out;
 }
 function section(xml: string, tag: string): string {
@@ -212,22 +211,20 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
 
   // Eventos pagos/cobrados no dia
   const fea = section(xml, 'FinancialEventsAccounts');
-  for (const evWrap of [fea]) {
-    for (const ev of children(section(evWrap, 'Events') || evWrap, 'Event')) {
-      const amt = money(val(ev, 'Amount'));
-      if (!amt) continue;
-      const id = val(ev, 'EventId');
-      const type = val(ev, 'Type') || val(ev, 'Tipo');
-      const label = val(ev, 'Description') || EVENT_TYPE[type] || `Evento ${type}`;
-      lines.push({
-        external_id: `stone_ev_${id || `${type}_${amt}_${refDate}`}`,
-        transaction_date: stoneDate(val(ev, 'PaymentDate'), refDate),
-        amount: round2(Math.abs(amt)), transaction_type: amt >= 0 ? 'credit' : 'debit',
-        description: `Stone · ${label}`.slice(0, 250), category: amt >= 0 ? 'Crédito Stone' : 'Tarifas Stone',
-        stone_transaction_id: val(ev, 'AcquirerTransactionKey') || null, stone_payment_type: 'event', stone_installment_info: null,
-        raw: { kind: 'event', id, type, type_label: EVENT_TYPE[type] ?? null, description: val(ev, 'Description'), amount: amt },
-      });
-    }
+  for (const ev of children(section(fea, 'Events') || fea, 'Event')) {
+    const amt = money(val(ev, 'Amount'));
+    if (!amt) continue;
+    const id = val(ev, 'EventId');
+    const type = val(ev, 'Type') || val(ev, 'Tipo');
+    const label = val(ev, 'Description') || EVENT_TYPE[type] || `Evento ${type}`;
+    lines.push({
+      external_id: `stone_ev_${id || `${type}_${amt}_${refDate}`}`,
+      transaction_date: stoneDate(val(ev, 'PaymentDate'), refDate),
+      amount: round2(Math.abs(amt)), transaction_type: amt >= 0 ? 'credit' : 'debit',
+      description: `Stone · ${label}`.slice(0, 250), category: amt >= 0 ? 'Crédito Stone' : 'Tarifas Stone',
+      stone_transaction_id: val(ev, 'AcquirerTransactionKey') || null, stone_payment_type: 'event', stone_installment_info: null,
+      raw: { kind: 'event', id, type, type_label: EVENT_TYPE[type] ?? null, description: val(ev, 'Description'), amount: amt },
+    });
   }
 
   // Depósitos (resumo)
@@ -443,6 +440,27 @@ function safeConfig(cfg: any) {
   };
 }
 
+// Ontem + dias sem importação com sucesso nos últimos N dias. Chamado quando o usuário
+// abre a Conciliação (não há rotina automática no servidor).
+async function syncStoneTenant(admin: Admin, cfg: any, lookbackDays = 3) {
+  const yesterday = addDays(todayBR(), -1);
+  const from = addDays(yesterday, -(lookbackDays - 1));
+  const { data: done } = await admin.from('fin_stone_imports').select('reference_date').eq('tenant_id', cfg.tenant_id).eq('status', 'success').gte('reference_date', from).lte('reference_date', yesterday);
+  const doneSet = new Set((done ?? []).map((d) => String(d.reference_date)));
+  const missing: string[] = [];
+  for (let d = from; d <= yesterday; d = addDays(d, 1)) if (!doneSet.has(d)) missing.push(d);
+  const results = [];
+  for (const d of missing) {
+    const r = await importDay(admin, cfg.tenant_id, cfg, d);
+    results.push(r);
+    if ('error' in r && /recusou a chave/.test(String(r.error))) break;
+  }
+  const err = results.find((r) => 'error' in r) as any;
+  await admin.from('fin_stone_config').update({ last_sync_at: new Date().toISOString(), last_sync_error: err ? String(err.error).slice(0, 500) : null }).eq('tenant_id', cfg.tenant_id);
+  const sum = (k: string) => round2(results.reduce((s, r: any) => s + Number(r[k] ?? 0), 0));
+  return { days: missing.length, inserted: sum('inserted'), matched: sum('matched'), payments_total: sum('payments_total'), error: err ? String(err.error) : undefined, results };
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -460,26 +478,12 @@ Deno.serve(async (req: Request) => {
   const action = String(body.action ?? '');
 
   try {
-    // ── Cron: ontem + dias faltantes dos últimos 5 ──
+    // ── Interno: todas as lojas ativas ──
     if (action === 'sync_all') {
       if (!internal) return errResp('Unauthorized', 401);
       const { data: lojas } = await admin.from('fin_stone_config').select('*').eq('is_active', true).not('api_key_b64', 'is', null).not('bank_account_id', 'is', null);
-      const yesterday = addDays(todayBR(), -1);
       const out = [];
-      for (const cfg of lojas ?? []) {
-        if (cfg.auto_sync === false) continue;
-        const from = addDays(yesterday, -4);
-        const { data: done } = await admin.from('fin_stone_imports').select('reference_date').eq('tenant_id', cfg.tenant_id).eq('status', 'success').gte('reference_date', from).lte('reference_date', yesterday);
-        const doneSet = new Set((done ?? []).map((d) => String(d.reference_date)));
-        const missing: string[] = [];
-        for (let d = from; d <= yesterday; d = addDays(d, 1)) if (!doneSet.has(d) || d === yesterday) missing.push(d);
-        const results = [];
-        for (const d of missing) results.push(await importDay(admin, cfg.tenant_id, cfg, d));
-        const err = results.find((r) => 'error' in r) as any;
-        await admin.from('fin_stone_config').update({ last_sync_at: new Date().toISOString(), last_sync_error: err ? String(err.error).slice(0, 500) : null }).eq('tenant_id', cfg.tenant_id);
-        out.push({ tenant_id: cfg.tenant_id, results });
-      }
-      log('INFO', 'sync_all', 'ok', { lojas: out.length });
+      for (const cfg of lojas ?? []) out.push({ tenant_id: cfg.tenant_id, ...(await syncStoneTenant(admin, cfg)) });
       return json({ success: true, results: out });
     }
 
@@ -507,6 +511,14 @@ Deno.serve(async (req: Request) => {
     const { data: cfg } = await admin.from('fin_stone_config').select('*').eq('tenant_id', tenantId).maybeSingle();
 
     if (action === 'get_config') return json({ success: true, config: safeConfig(cfg) });
+
+    // Ao abrir a Conciliação / botão "Atualizar bancos"
+    if (action === 'sync') {
+      if (!cfg || !cfg.api_key_b64 || !cfg.bank_account_id) return json({ success: false, not_configured: true });
+      if (!cfg.is_active || cfg.auto_sync === false) return json({ success: true, skipped: true });
+      const r = await syncStoneTenant(admin, cfg);
+      return json({ success: !r.error, ...r });
+    }
 
     if (action === 'get_history') {
       const { data: history } = await admin.from('fin_stone_imports').select('*').eq('tenant_id', tenantId).order('reference_date', { ascending: false }).limit(60);

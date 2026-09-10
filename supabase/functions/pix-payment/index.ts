@@ -18,6 +18,8 @@ type Admin = ReturnType<typeof createClient>;
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-kiosk-token',
+  // Sem isto o navegador repete o preflight (OPTIONS) a cada ~5 s durante o polling.
+  'Access-Control-Max-Age': '86400',
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -27,8 +29,8 @@ const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 1
 
 const PROVIDERS = ['inter_pix', 'mercadopago'];
 const PIX_EXPIRATION_SEC = 600;
-// O tablet consulta a cada 3 s; o provedor é consultado no máximo a cada 4 s por cobrança.
-const RECONCILE_EVERY_MS = 4000;
+// O tablet consulta a cada 2 s; o provedor é consultado no máximo a cada 1,5 s por cobrança.
+const RECONCILE_EVERY_MS = 1500;
 
 // ── EMV Payload Builder (PIX BR Code) ──────────────────────────────────────
 function pad(id: string, value: string): string {
@@ -124,11 +126,11 @@ type ProviderCfg = {
   id: string; provider: string; is_active: boolean; access_token: string | null; account_label: string | null;
   client_id: string | null; client_secret: string | null; cert_pem: string | null; key_pem: string | null;
   pix_key: string | null; environment: string | null; conta_corrente: string | null;
-  cert_expires_at: string | null; last_test_at: string | null; updated_at: string;
+  cert_expires_at: string | null; last_test_at: string | null; updated_at: string; token_expires_at: string | null;
 };
 async function loadProviderCfgs(admin: Admin, tenantId: string) {
   const { data } = await admin.from('fin_payment_provider_config')
-    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at')
+    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at')
     .eq('tenant_id', tenantId).in('provider', PROVIDERS);
   const rows = (data ?? []) as ProviderCfg[];
   return { inter: rows.find((r) => r.provider === 'inter_pix') ?? null, mp: rows.find((r) => r.provider === 'mercadopago') ?? null };
@@ -154,11 +156,28 @@ function normalizePem(s: unknown): string {
   return String(s ?? '').replace(/\\n/g, '\n').replace(/\r/g, '').trim() + '\n';
 }
 
+// Um cliente mTLS por credencial, reaproveitado entre chamadas: mantém a conexão TLS com o
+// Inter aberta (criar um por chamada refazia o handshake a cada consulta do tablet).
+// Nomes do Deno 2 (cert/key). Os antigos certChain/privateKey são ignorados em silêncio.
+const interClients = new Map<string, HttpClient>();
+function interClientFor(D: { createHttpClient?: (o: Record<string, unknown>) => HttpClient }, cfg: ProviderCfg): HttpClient {
+  const key = `${cfg.id}:${cfg.updated_at}`;
+  let c = interClients.get(key);
+  if (!c) {
+    if (interClients.size >= 20) {
+      for (const old of interClients.values()) { try { old.close?.(); } catch { /* noop */ } }
+      interClients.clear();
+    }
+    c = D.createHttpClient!({ cert: cfg.cert_pem, key: cfg.key_pem });
+    interClients.set(key, c);
+  }
+  return c;
+}
+
 async function interFetch(cfg: ProviderCfg, path: string, init: RequestInit & { token?: string } = {}): Promise<InterResp> {
   const D = Deno as unknown as { createHttpClient?: (o: Record<string, unknown>) => HttpClient };
   if (typeof D.createHttpClient !== 'function') throw new Error('Runtime sem Deno.createHttpClient — mTLS indisponível');
-  // Nomes do Deno 2 (cert/key). Os antigos certChain/privateKey são ignorados em silêncio.
-  const client = D.createHttpClient({ cert: cfg.cert_pem, key: cfg.key_pem });
+  const client = interClientFor(D, cfg);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), INTER_TIMEOUT_MS);
   const { token, ...rest } = init;
@@ -174,7 +193,6 @@ async function interFetch(cfg: ProviderCfg, path: string, init: RequestInit & { 
     return { ok: res.ok, status: res.status, data, raw };
   } finally {
     clearTimeout(timer);
-    try { client.close?.(); } catch { /* noop */ }
   }
 }
 
@@ -208,10 +226,18 @@ function friendlyError(e: unknown): string {
 // Token OAuth por instância (em memória). Não usa o cache da fin_inter_config: aquele é do
 // escopo de extrato (outra integração) e não serve para Pix.
 const interTokens = new Map<string, { token: string; exp: number }>();
+// Admin client da requisição corrente: guarda o token no banco pra outras instâncias reaproveitarem.
+let DB: Admin | null = null;
+const isUuid = (s: string) => /^[0-9a-f-]{36}$/i.test(s);
 async function interToken(cfg: ProviderCfg, force = false): Promise<string> {
   const key = `${cfg.id}:${cfg.updated_at}`;
   const hit = interTokens.get(key);
   if (!force && hit && hit.exp - Date.now() > 60_000) return hit.token;
+  // Instância nova: reaproveita o token guardado no banco (evita pedir outro a cada cold start).
+  if (!force && cfg.access_token && cfg.token_expires_at && new Date(cfg.token_expires_at).getTime() - Date.now() > 60_000) {
+    interTokens.set(key, { token: cfg.access_token, exp: new Date(cfg.token_expires_at).getTime() });
+    return cfg.access_token;
+  }
   const body = new URLSearchParams({
     client_id: String(cfg.client_id), client_secret: String(cfg.client_secret),
     grant_type: 'client_credentials', scope: INTER_SCOPE,
@@ -220,7 +246,11 @@ async function interToken(cfg: ProviderCfg, force = false): Promise<string> {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString(),
   });
   if (!r.ok || !r.data?.access_token) throw new Error(interError(r, 'Token'));
-  interTokens.set(key, { token: String(r.data.access_token), exp: Date.now() + Number(r.data.expires_in ?? 3600) * 1000 });
+  const exp = Date.now() + Number(r.data.expires_in ?? 3600) * 1000;
+  interTokens.set(key, { token: String(r.data.access_token), exp });
+  if (DB && isUuid(cfg.id)) {
+    await DB.from('fin_payment_provider_config').update({ access_token: String(r.data.access_token), token_expires_at: new Date(exp).toISOString() }).eq('id', cfg.id);
+  }
   return String(r.data.access_token);
 }
 async function interApi(cfg: ProviderCfg, path: string, init: RequestInit = {}): Promise<InterResp> {
@@ -328,12 +358,15 @@ async function reconcileRow(admin: Admin, row: PixRow): Promise<string> {
 
   if (row.provider === 'inter_pix') {
     if (!p.inter?.cert_pem) return row.status;
+    const t0 = Date.now();
     const r = await interApi(p.inter, `/pix/v2/cob/${row.provider_payment_id}`);
     if (!r.ok) { log('WARN', 'reconcile', 'GET cob falhou', { id: row.id, http: r.status, body: r.raw.slice(0, 200) }); return row.status; }
     const st = String(r.data?.status ?? '');
     const pixList = Array.isArray(r.data?.pix) ? r.data.pix : [];
     paid = st === 'CONCLUIDA';
     gone = st.startsWith('REMOVIDA');
+    // Mede o tempo da consulta e, quando pago, quanto o Inter levou pra marcar a cobrança como paga.
+    log('INFO', 'reconcile', 'cob', { id: row.id, st, ms: Date.now() - t0, lag_ms: paid && pixList[0]?.horario ? Date.now() - Date.parse(pixList[0].horario) : null });
     // deno-lint-ignore no-explicit-any
     got = round2(pixList.reduce((s: number, x: any) => s + Number(x?.valor ?? 0), 0));
     // deno-lint-ignore no-explicit-any
@@ -385,6 +418,7 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const supabase = getAdminClient();
+  DB = supabase;
 
   try {
     const body = await req.json();
@@ -517,6 +551,21 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // ── ACTION: attach_order — liga o Pix confirmado ao pedido que o tablet criou ──
+    // O pedido do kiosk só nasce depois do Pix pago; isto deixa o rastro Pix → pedido
+    // (e mostra na fin_pix_payments quem pagou e ficou sem pedido, se o tablet travar).
+    if (action === 'attach_order') {
+      const row = await loadRow(supabase, body);
+      const orderId = String(body.order_id ?? '');
+      if (!row || !orderId) return json({ error: 'pix_payment_id e order_id são obrigatórios' }, 400);
+      const auth = await requireMember(req, supabase, row.tenant_id);
+      if (auth.error) return auth.error;
+      const { data: o } = await supabase.from('orders').select('id').eq('id', orderId).eq('tenant_id', row.tenant_id).maybeSingle();
+      if (!o) return json({ error: 'Pedido não encontrado' }, 404);
+      await supabase.from('fin_pix_payments').update({ order_id: orderId, updated_at: new Date().toISOString() }).eq('id', row.id).is('order_id', null);
+      return json({ ok: true });
+    }
+
     // ── ACTION: check_status ──────────────────────────────────────────────
     if (action === 'check_status') {
       if (!body.pix_payment_id) return json({ error: 'pix_payment_id é obrigatório' }, 400);
@@ -544,7 +593,7 @@ Deno.serve(async (req: Request) => {
     // Cobrança de provedor: primeiro pergunta ao provedor; só força com force=true.
     if (action === 'confirm') {
       const row = await loadRow(supabase, body);
-      if (!row) return json({ error: 'pix_payment_id ou txid é obrigatório' }, 400);
+      if (!row) return json({ error: (body.pix_payment_id || body.txid) ? 'Pagamento não encontrado' : 'pix_payment_id ou txid é obrigatório' }, (body.pix_payment_id || body.txid) ? 404 : 400);
       const auth = await requireMember(req, supabase, row.tenant_id);
       if (auth.error) return auth.error;
       if (!isManager(auth.role)) return json({ error: 'Somente administrador ou gerente' }, 403);
@@ -634,6 +683,7 @@ Deno.serve(async (req: Request) => {
         client_id: cand.client_id, client_secret: cand.client_secret, cert_pem: cand.cert_pem, key_pem: cand.key_pem,
         pix_key: cand.pix_key, environment: cand.environment, conta_corrente: cand.conta_corrente,
         cert_expires_at: await certNotAfter(String(cand.cert_pem)), account_label: 'Banco Inter',
+        access_token: null, token_expires_at: null, // credencial nova → token novo
         last_test_at: now, updated_at: now,
       }, { onConflict: 'tenant_id,provider' });
       if (error) throw error;

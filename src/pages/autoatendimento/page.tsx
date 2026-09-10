@@ -476,17 +476,17 @@ function AutoatendimentoPageInner() {
   }, [carrinho, identifNome, identifSenha, modoIdentificacao, pagarNaEntrega, formaPagamentoNome, getTenantAndSession, submitOrder, user?.modoTreino, kioskSession?.accessToken]);
 
 
-  const handleAvancarPagamento = useCallback(async (): Promise<void> => {
+  const handleAvancarPagamento = useCallback(async (): Promise<string | null> => {
     // Padrão ref+state duplo:
     // - criarPedidoRef bloqueia no mesmo tick (state não atualiza rápido o suficiente)
     // - pendingOrderId bloqueia chamadas subsequentes após o primeiro ciclo
     if (criarPedidoRef.current) {
       console.log('[Autoatendimento] handleAvancarPagamento: bloqueado por ref — criação já em andamento');
-      return;
+      return null;
     }
     if (pendingOrderId) {
       console.log('[Autoatendimento] handleAvancarPagamento: pedido já criado, ignorando', pendingOrderId);
-      return;
+      return pendingOrderId;
     }
     criarPedidoRef.current = true;
     try {
@@ -498,81 +498,92 @@ function AutoatendimentoPageInner() {
         setPendingOrderNumber(result.numero);
 
         // Impressão é gerenciada pelo useOrderSubmit via fila centralizada
-      } else {
-        console.warn('[Autoatendimento] handleAvancarPagamento: criarPedidoBanco retornou null — pedido não salvo no banco');
+        return result.id;
       }
+      console.warn('[Autoatendimento] handleAvancarPagamento: criarPedidoBanco retornou null — pedido não salvo no banco');
+      return null;
     } finally {
       criarPedidoRef.current = false;
     }
   }, [criarPedidoBanco, pendingOrderId]);
 
-  const handleConcluir = useCallback(async (paymentMethodId?: string) => {
-    const effectiveOrderId = pendingOrderId;
+  // Grava o pagamento do pedido no caixa aberto, SEM voltar o tablet pro início — o Pix
+  // confirmado precisa mostrar a tela "Pedido confirmado" depois de gravar. Lança erro se falhar.
+  const registrarPagamento = useCallback(async (paymentMethodId: string, effectiveOrderId: string) => {
+    const { tenantId, sessionId } = getTenantAndSession();
+    if (!sessionId || !tenantId) throw new Error('Sessão do caixa não encontrada — o pagamento não foi registrado.');
+    const subtotal = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
+
+    // Busca o caixa ativo da sessão
+    let cashRegisterId: string | null = caixa?.id ?? null;
+    if (!cashRegisterId && sessionId) {
+      try {
+        const { data: crData } = await supabase
+          .from('cash_registers')
+          .select('id')
+          .eq('session_id', sessionId)
+          .eq('status', 'open')
+          .order('opened_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        cashRegisterId = crData?.id ?? null;
+      } catch (e) {
+        console.error('[Autoatendimento] Erro ao buscar caixa da sessão:', e);
+      }
+    }
+
+    if (cashRegisterId) {
+      try {
+        const { error: payErr } = await kioskInvoke('order-write', {
+          action: 'record_payment',
+          order_id: effectiveOrderId,
+          tenant_id: tenantId,
+          cash_register_id: cashRegisterId,
+          payment_method_id: paymentMethodId,
+          amount: subtotal,
+          change_amount: 0,
+          paid_by_pdv: 'self_service',
+        });
+        if (payErr) {
+          console.error('[Autoatendimento] record_payment error:', payErr);
+          throw new Error(typeof payErr === 'string' ? payErr : 'Falha ao registrar pagamento no caixa');
+        } else {
+          supabase.rpc('fn_update_paid_by_pdv', { p_order_id: effectiveOrderId, p_paid_by_pdv: 'self_service' }).catch(() => {});
+        }
+      } catch (e) {
+        console.error('[Autoatendimento] Erro ao registrar pagamento:', e);
+        throw e;
+      }
+    } else if (paymentMethodId) {
+      // BUG-11: Safety net — método de pagamento selecionado mas sem caixa aberto.
+      // A UI do PagamentoKiosk já bloqueia esse cenário, mas este catch protege
+      // contra race conditions e chamadas diretas.
+      console.error('[Autoatendimento] BUG-11 safety net: pagamento bloqueado — sem caixa', {
+        orderId: effectiveOrderId,
+        paymentMethodId,
+        sessionId,
+      });
+      // Cancela o pedido pois não podemos aceitar pagamento sem caixa
+      try {
+        await kioskInvoke('order-write', {
+          action: 'cancel_order',
+          order_id: effectiveOrderId,
+          tenant_id: tenantId,
+          reason: 'Pagamento recusado: caixa fechado (BUG-11 safety net)',
+        });
+      } catch { /* non-fatal */ }
+      throw new Error('Não é possível registrar o pagamento sem um caixa (gaveta) aberto. Solicite ao operador que abra o caixa no PDV.');
+    }
+  }, [caixa, getTenantAndSession, carrinho, kioskInvoke]);
+
+  // orderId explícito: quem acabou de criar o pedido ainda vê pendingOrderId antigo (null)
+  // nesta callback — sem ele o pagamento era pulado em silêncio.
+  const handleConcluir = useCallback(async (paymentMethodId?: string, orderId?: string) => {
+    const effectiveOrderId = orderId ?? pendingOrderId;
     const { tenantId, sessionId } = getTenantAndSession();
 
     if (effectiveOrderId && paymentMethodId && sessionId && tenantId) {
-      const subtotal = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
-
-      // Busca o caixa ativo da sessão
-      let cashRegisterId: string | null = caixa?.id ?? null;
-      if (!cashRegisterId && sessionId) {
-        try {
-          const { data: crData } = await supabase
-            .from('cash_registers')
-            .select('id')
-            .eq('session_id', sessionId)
-            .eq('status', 'open')
-            .order('opened_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          cashRegisterId = crData?.id ?? null;
-        } catch (e) {
-          console.error('[Autoatendimento] Erro ao buscar caixa da sessão:', e);
-        }
-      }
-
-      if (cashRegisterId) {
-        try {
-          const { error: payErr } = await kioskInvoke('order-write', {
-            action: 'record_payment',
-            order_id: effectiveOrderId,
-            tenant_id: tenantId,
-            cash_register_id: cashRegisterId,
-            payment_method_id: paymentMethodId,
-            amount: subtotal,
-            change_amount: 0,
-            paid_by_pdv: 'self_service',
-          });
-          if (payErr) {
-            console.error('[Autoatendimento] record_payment error:', payErr);
-            throw new Error(typeof payErr === 'string' ? payErr : 'Falha ao registrar pagamento no caixa');
-          } else {
-            supabase.rpc('fn_update_paid_by_pdv', { p_order_id: effectiveOrderId, p_paid_by_pdv: 'self_service' }).catch(() => {});
-          }
-        } catch (e) {
-          console.error('[Autoatendimento] Erro ao registrar pagamento:', e);
-          throw e;
-        }
-      } else if (paymentMethodId) {
-        // BUG-11: Safety net — método de pagamento selecionado mas sem caixa aberto.
-        // A UI do PagamentoKiosk já bloqueia esse cenário, mas este catch protege
-        // contra race conditions e chamadas diretas.
-        console.error('[Autoatendimento] BUG-11 safety net: pagamento bloqueado — sem caixa', {
-          orderId: effectiveOrderId,
-          paymentMethodId,
-          sessionId,
-        });
-        // Cancela o pedido pois não podemos aceitar pagamento sem caixa
-        try {
-          await kioskInvoke('order-write', {
-            action: 'cancel_order',
-            order_id: effectiveOrderId,
-            tenant_id: tenantId,
-            reason: 'Pagamento recusado: caixa fechado (BUG-11 safety net)',
-          });
-        } catch { /* non-fatal */ }
-        throw new Error('Não é possível registrar o pagamento sem um caixa (gaveta) aberto. Solicite ao operador que abra o caixa no PDV.');
-      }
+      await registrarPagamento(paymentMethodId, effectiveOrderId);
     } else if (!sessionId) {
       // BUG-10 FIX: Modo offline — salva no IndexedDB + KDS local
       if (carrinho.length > 0) {
@@ -685,7 +696,7 @@ function AutoatendimentoPageInner() {
   }, [
     pendingOrderId, caixa, getTenantAndSession, carrinho,
     identifNome, identifSenha, modoIdentificacao,
-    addPedido, reloadOrders, kioskInvoke,
+    addPedido, reloadOrders, kioskInvoke, registrarPagamento,
   ]);
 
   const handleCancelar = useCallback(async () => {
@@ -1063,6 +1074,7 @@ function AutoatendimentoPageInner() {
             orderNumber={pendingOrderNumber ?? undefined}
             alertaParcial={alertaParcialKiosk ?? undefined}
             onEntrarPagamento={handleAvancarPagamento}
+            onRegistrarPagamento={registrarPagamento}
             onConcluir={handleConcluir}
           />
         )}

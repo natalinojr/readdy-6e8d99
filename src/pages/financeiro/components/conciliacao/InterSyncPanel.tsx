@@ -87,7 +87,7 @@ export default function InterSyncPanel({ onSyncDone, onConfigureClick, refreshKe
             Banco Inter
             <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${config.environment === 'sandbox' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>{config.environment === 'sandbox' ? 'Sandbox' : 'Produção'}</span>
             {!config.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-zinc-100 text-zinc-500">Inativa</span>}
-            {config.auto_sync && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-700"><i className="ri-time-line" /> auto 1h</span>}
+            {config.auto_sync && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-700"><i className="ri-refresh-line" /> ao abrir a tela</span>}
           </p>
           <p className="text-xs text-zinc-500 mt-0.5">
             {config.last_sync_at ? `Última sincronização: ${new Date(config.last_sync_at).toLocaleString('pt-BR')}` : 'Ainda não sincronizado'}

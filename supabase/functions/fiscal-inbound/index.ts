@@ -4,6 +4,7 @@
 // Ações (POST JSON { action, tenant_id, ... }):
 //   sync           { days? }                 busca as notas de entrada dos últimos N dias (padrão 30, máx 90)
 //                                            e baixa/parseia o XML das que ainda não têm
+//   fetch_xml      {}                        baixa os XMLs pendentes (continuação do sync)
 //   sync_all       {}                        (interno/cron) roda o sync em todas as lojas com token
 //   refetch_xml    { document_id }           tenta baixar o XML de novo (ex.: depois da ciência)
 //   manifest       { document_id, tipo }     manifestação do destinatário (2 = ciência, 1 = confirmação)
@@ -29,7 +30,9 @@ const corsHeaders = {
 };
 const BRASILNFE_BASE = 'https://api.brasilnfe.com.br/services/fiscal';
 const PROVIDER_TIMEOUT_MS = 60_000;
-const MAX_XML_PER_RUN = 40; // cada XML é uma chamada; mantém a execução bem abaixo do limite da Edge
+const XML_CONCURRENCY = 5;      // downloads de XML em paralelo
+const XML_TIMEOUT_MS = 25_000;  // por XML
+const XML_BUDGET_MS = 75_000;   // prazo da execução (a Edge corta em ~150s); o que sobrar a tela pede de novo (fetch_xml)
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -44,9 +47,9 @@ const onlyDigits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
 const num = (s: string | null) => (s == null || s === '' ? 0 : Number(String(s).replace(',', '.')) || 0);
 
 // ── Provedor ─────────────────────────────────────────────────────────────────
-async function providerPost(token: string, path: string, body: unknown): Promise<{ ok: boolean; status: number; data: any; raw: string }> {
+async function providerPost(token: string, path: string, body: unknown, timeoutMs = PROVIDER_TIMEOUT_MS): Promise<{ ok: boolean; status: number; data: any; raw: string }> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), PROVIDER_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(`${BRASILNFE_BASE}/${path}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Token: token },
@@ -212,7 +215,7 @@ async function loadToken(admin: Admin, tenantId: string): Promise<string | null>
 }
 
 async function fetchXmlFor(admin: Admin, token: string, doc: { id: string; chave: string }): Promise<'full' | 'summary' | 'error'> {
-  const res = await providerPost(token, 'ObterArquivoNotaFiscal', { ChaveNF: doc.chave, FileType: 1, TipoDocumentoFiscal: 0 });
+  const res = await providerPost(token, 'ObterArquivoNotaFiscal', { ChaveNF: doc.chave, FileType: 1, TipoDocumentoFiscal: 0 }, XML_TIMEOUT_MS);
   let b64: string | null = null;
   if (typeof res.data === 'string') b64 = res.data;
   else if (res.data?.Base64File) b64 = String(res.data.Base64File);
@@ -258,7 +261,28 @@ async function fetchXmlFor(admin: Admin, token: string, doc: { id: string; chave
   return p.full ? 'full' : 'summary';
 }
 
-async function syncTenant(admin: Admin, tenantId: string, days: number) {
+// Baixa XML das que ainda não têm (novas, resumos que podem ter virado completos, erros), em paralelo e com prazo.
+async function fetchPendingXml(admin: Admin, token: string, tenantId: string, deadline: number) {
+  const stats = { full: 0, summary: 0, error: 0 };
+  const { data: fila } = await admin.from('fiscal_inbound_documents').select('id, chave')
+    .eq('tenant_id', tenantId).in('xml_status', ['pending', 'summary', 'error']).neq('status', 'ignored')
+    .order('xml_status', { ascending: true }).order('emitted_at', { ascending: false }).limit(300);
+  const queue = [...(fila ?? [])] as { id: string; chave: string }[];
+  const worker = async () => {
+    while (queue.length && Date.now() < deadline) {
+      const d = queue.shift()!;
+      try { stats[await fetchXmlFor(admin, token, d)]++; }
+      catch (e) { stats.error++; log('WARN', 'xml', 'download falhou', { chave: d.chave, error: String(e) }); }
+    }
+  };
+  await Promise.all(Array.from({ length: XML_CONCURRENCY }, () => worker()));
+  const { count } = await admin.from('fiscal_inbound_documents').select('id', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId).eq('xml_status', 'pending').neq('status', 'ignored');
+  return { stats, pendentes: count ?? 0 };
+}
+
+async function syncTenant(admin: Admin, tenantId: string, days: number, budgetMs = XML_BUDGET_MS) {
+  const deadline = Date.now() + budgetMs;
   const token = await loadToken(admin, tenantId);
   if (!token) return { tenant_id: tenantId, skipped: 'sem token do provedor' };
   const fim = new Date();
@@ -285,37 +309,54 @@ async function syncTenant(admin: Admin, tenantId: string, days: number) {
     const m = Number(n.ModeloDocumento); const len = onlyDigits(n.Chave).length;
     return (m === 55 && len === 44) || (m === 10 && len === 50);
   });
-  let novas = 0;
+  // Grava em lote: 1ª carga de uma loja pode trazer centenas de notas (1 a 1 estourava o tempo da Edge).
+  const existentes = new Map<string, { id: string; sefaz_status: number | null }>();
+  const chaves = [...new Set(notas.map((n) => onlyDigits(n.Chave)))];
+  for (let i = 0; i < chaves.length; i += 200) {
+    const { data } = await admin.from('fiscal_inbound_documents').select('id, chave, sefaz_status')
+      .eq('tenant_id', tenantId).in('chave', chaves.slice(i, i + 200));
+    for (const r of data ?? []) existentes.set(String(r.chave), { id: String(r.id), sefaz_status: (r.sefaz_status as number) ?? null });
+  }
+  const novasRows: Record<string, unknown>[] = [];
+  const mudaram: { id: string; st: number | null }[] = [];
+  const vistas = new Set<string>();
   for (const n of notas) {
     const chave = onlyDigits(n.Chave);
-    const row = {
+    if (vistas.has(chave)) continue;
+    vistas.add(chave);
+    const st = Number(n.Status) || null;
+    const ex = existentes.get(chave);
+    // Existente: atualiza só a situação (ex.: fornecedor cancelou a nota depois)
+    if (ex) { if (ex.sefaz_status !== st) mudaram.push({ id: ex.id, st }); continue; }
+    novasRows.push({
       tenant_id: tenantId, chave, modelo: Number(n.ModeloDocumento) || 55,
       numero: Number(n.Numero) || null, serie: n.Serie != null && n.Serie !== 'SEM' ? String(n.Serie) : null,
       emitente_cnpj: onlyDigits(n.CnpjEmissor) || null, emitente_nome: n.NomeEmissor ?? null, emitente_ie: n.IeEmissor ?? null,
       cfops: n.Cfops ?? null, valor_total: round2(Number(n.Valor ?? 0)), valor_icms: round2(Number(n.ValorIcms ?? 0)),
-      emitted_at: n.DtEmissao ?? null, received_at: n.DtRecebimento ?? null, sefaz_status: Number(n.Status) || null,
+      emitted_at: n.DtEmissao ?? null, received_at: n.DtRecebimento ?? null, sefaz_status: st,
       updated_at: now,
-    };
-    const { data: existing } = await admin.from('fiscal_inbound_documents').select('id').eq('tenant_id', tenantId).eq('chave', chave).maybeSingle();
-    if (existing) {
-      // Atualiza só a situação (ex.: fornecedor cancelou a nota depois)
-      await admin.from('fiscal_inbound_documents').update({ sefaz_status: row.sefaz_status, updated_at: now }).eq('id', existing.id);
-    } else {
-      const { error } = await admin.from('fiscal_inbound_documents').insert(row);
-      if (!error) novas++;
-      else log('WARN', 'sync', 'insert falhou', { chave, error: error.message });
+    });
+  }
+  let novas = 0;
+  for (let i = 0; i < novasRows.length; i += 100) {
+    const lote = novasRows.slice(i, i + 100);
+    const { error } = await admin.from('fiscal_inbound_documents').insert(lote);
+    if (!error) { novas += lote.length; continue; }
+    // Lote recusado (ex.: corrida com outra execução): cai para 1 a 1 e ignora duplicadas
+    for (const row of lote) {
+      const { error: e1 } = await admin.from('fiscal_inbound_documents').insert(row);
+      if (!e1) novas++;
+      else if (e1.code !== '23505') log('WARN', 'sync', 'insert falhou', { chave: row.chave, error: e1.message });
     }
   }
-  // Baixa XML das que ainda não têm (novas, resumos antigos que já podem ter virado completos, erros)
-  const { data: semXml } = await admin.from('fiscal_inbound_documents').select('id, chave, xml_status')
-    .eq('tenant_id', tenantId).in('xml_status', ['pending', 'summary', 'error']).neq('status', 'ignored')
-    .order('emitted_at', { ascending: false }).limit(MAX_XML_PER_RUN);
-  const xmlStats = { full: 0, summary: 0, error: 0 };
-  for (const d of semXml ?? []) xmlStats[await fetchXmlFor(admin, token, d)]++;
+  for (const m of mudaram) {
+    await admin.from('fiscal_inbound_documents').update({ sefaz_status: m.st, updated_at: now }).eq('id', m.id);
+  }
+  const { stats: xmlStats, pendentes } = await fetchPendingXml(admin, token, tenantId, deadline);
 
   await admin.from('fiscal_settings').update({ inbound_last_sync_at: now, inbound_last_error: null }).eq('tenant_id', tenantId);
-  log('INFO', 'sync', 'ok', { tenantId, encontradas: notas.length, novas, modelos, ...xmlStats });
-  return { tenant_id: tenantId, encontradas: notas.length, novas, xml: xmlStats, modelos, outros_modelos: outrosModelos };
+  log('INFO', 'sync', 'ok', { tenantId, encontradas: notas.length, novas, modelos, pendentes, ...xmlStats });
+  return { tenant_id: tenantId, encontradas: notas.length, novas, xml: xmlStats, pendentes, modelos, outros_modelos: outrosModelos };
 }
 
 // ── Importação ───────────────────────────────────────────────────────────────
@@ -403,7 +444,7 @@ Deno.serve(async (req: Request) => {
       if (!internal) return errResp('Unauthorized', 401);
       const { data: lojas } = await admin.from('fiscal_settings').select('tenant_id').not('provider_token', 'is', null).eq('inbound_auto_sync', true);
       const results = [];
-      for (const l of lojas ?? []) results.push(await syncTenant(admin, l.tenant_id, Number(body.days ?? 7)));
+      for (const l of lojas ?? []) results.push(await syncTenant(admin, l.tenant_id, Number(body.days ?? 7), 40_000));
       return json({ success: true, results });
     }
 
@@ -431,6 +472,14 @@ Deno.serve(async (req: Request) => {
     if (action === 'sync') {
       const r = await syncTenant(admin, tenantId, Number(body.days ?? 30));
       return json({ success: !('error' in r), ...r });
+    }
+
+    // Continua baixando os XMLs que ficaram para trás (a tela chama em sequência até zerar)
+    if (action === 'fetch_xml') {
+      const tok = await loadToken(admin, tenantId);
+      if (!tok) return errResp('Loja sem token do provedor');
+      const r = await fetchPendingXml(admin, tok, tenantId, Date.now() + XML_BUDGET_MS);
+      return json({ success: true, xml: r.stats, pendentes: r.pendentes });
     }
 
     // A partir daqui, sempre sobre um documento da loja
