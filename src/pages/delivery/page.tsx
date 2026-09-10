@@ -255,8 +255,10 @@ export default function DeliveryPage() {
           return;
         }
         const all = data.orders || [];
+        // Em andamento = ainda não terminou: inclui os que aguardam o Pix pelo app (status draft),
+        // senão o cliente perde de vista um pedido que só depende dele.
         const ativos = all.filter(function (o: { status: string }) {
-          return o.status !== 'delivered' && o.status !== 'cancelled' && o.status !== 'draft';
+          return o.status !== 'delivered' && o.status !== 'cancelled';
         });
         setActiveOrders(ativos);
         setActiveOrdersLoading(false);
@@ -1022,11 +1024,19 @@ export default function DeliveryPage() {
                   </div>
                   <p className="text-sm font-bold text-zinc-700 mb-1">Nenhum pedido em andamento</p>
                   <p className="text-xs text-zinc-500">Seus pedidos ativos aparecerão aqui</p>
+                  <button
+                    type="button"
+                    onClick={function () { setSubView('historico'); }}
+                    className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
+                  >
+                    <i className="ri-history-line" /> Ver histórico de pedidos
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-2 mb-6">
                   {activeOrders.map(function (order) {
                     const statusMap: Record<string, { bg: string; text: string; border: string; icon: string; label: string }> = {
+                      draft: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200/60', icon: 'ri-qr-code-line', label: 'Aguardando pagamento' },
                       new: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200/60', icon: 'ri-check-double-line', label: 'Recebido' },
                       preparing: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200/60', icon: 'ri-restaurant-2-line', label: 'Em preparo' },
                       ready: { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200/60', icon: 'ri-checkbox-circle-line', label: 'Pronto' },
@@ -1078,6 +1088,16 @@ export default function DeliveryPage() {
                   })}
                 </div>
               )}
+              {/* Entregues e cancelados ficam no histórico — antes só dava pra chegar lá pelo menu do perfil */}
+              {!activeOrdersLoading && !activeOrdersError ? (
+                <button
+                  type="button"
+                  onClick={function () { setSubView('historico'); }}
+                  className="w-full flex items-center justify-center gap-1.5 py-3 mb-6 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
+                >
+                  <i className="ri-history-line" /> Ver histórico completo (entregues e cancelados)
+                </button>
+              ) : null}
             </div>
           ) : subView === 'acompanhar' ? (
             <div className="px-4 py-4">
