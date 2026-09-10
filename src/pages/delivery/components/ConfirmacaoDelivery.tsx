@@ -46,6 +46,9 @@ export default function ConfirmacaoDelivery(props: Props) {
   const [pixPago, setPixPago] = useState(false);
   const metodosAlternativos = props.metodosAlternativos || [];
   const [trackingNumero, setTrackingNumero] = useState(numeroPedido);
+  // Pelo histórico dá pra abrir OUTRO pedido: aí o cabeçalho, os totais e o painel do Pix
+  // (que são do pedido recém-feito) saem de cena — senão parece que o Pix é do outro pedido.
+  const vendoOriginal = trackingNumero === numeroPedido;
 
   function handleVerPedidoHistorico(numero: string) {
     setTrackingNumero(numero);
@@ -63,14 +66,25 @@ export default function ConfirmacaoDelivery(props: Props) {
           <i className={modoEntrega === 'retirada' ? 'ri-store-2-line text-green-600 text-2xl' : 'ri-motorbike-line text-green-600 text-2xl'} />
         </div>
 
-        <h2 className="text-lg font-black text-zinc-800 mb-1">Pedido #{numeroPedido}</h2>
+        <h2 className="text-lg font-black text-zinc-800 mb-1">Pedido #{trackingNumero}</h2>
+        {!vendoOriginal ? (
+          <button
+            type="button"
+            onClick={function () { setTrackingNumero(numeroPedido); setAbaAtiva('acompanhar'); }}
+            className="mb-3 inline-flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700 cursor-pointer whitespace-nowrap"
+          >
+            <i className="ri-arrow-left-s-line" /> Voltar ao pedido #{numeroPedido}
+          </button>
+        ) : null}
         <p className="text-xs text-zinc-500 mb-3">
-          {pixOnline && !pixPago
+          {!vendoOriginal
+            ? 'Você está vendo um pedido do seu histórico'
+            : pixOnline && !pixPago
             ? 'Seu pedido vai para a cozinha assim que o Pix for confirmado'
             : (phone ? 'Acompanhe abaixo o status do seu pedido' : 'Seu pedido foi enviado para a cozinha')}
         </p>
 
-        {resumo && resumo.desconto > 0 ? (
+        {!vendoOriginal ? null : resumo && resumo.desconto > 0 ? (
           /* Detalhamento com desconto do cupom */
           <div className="mx-auto max-w-[260px] mb-4 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-left space-y-1.5">
             <div className="flex justify-between text-xs">
@@ -105,7 +119,7 @@ export default function ConfirmacaoDelivery(props: Props) {
           </div>
         )}
 
-        {paymentMethod && !pixOnline ? (
+        {vendoOriginal && paymentMethod && !pixOnline ? (
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 rounded-full border border-green-200/60 mb-4 mx-2">
             <i className="ri-wallet-3-line text-green-600 text-sm" />
             <span className="text-xs font-bold text-green-700">{paymentMethod}</span>
@@ -117,7 +131,7 @@ export default function ConfirmacaoDelivery(props: Props) {
       </div>
 
       {/* Pix pelo app: o cliente paga aqui mesmo; a confirmação chega sozinha */}
-      {pixOnline ? (
+      {pixOnline && vendoOriginal ? (
         <div className="mb-5">
           <PixCobrancaPanel
             auth={pixOnline.orderToken ? { order_id: pixOnline.orderId, order_token: pixOnline.orderToken } : { order_id: pixOnline.orderId, order_phone: phone || '' }}
