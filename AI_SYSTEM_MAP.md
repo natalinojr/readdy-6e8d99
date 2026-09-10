@@ -1472,3 +1472,11 @@ Edge **`inter-bank`** (v2, no ar) + migration `20260910130000_inter_bank.sql` (a
 - **Credenciais do Inter pro Pix:** `fin_payment_provider_config` com `provider = 'inter_pix'` (colunas `client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at` — migration `20260910140000_inter_pix_kiosk.sql`, aplicada). Tela: Configurações › Formas de pagamento › "Pix no autoatendimento (Banco Inter)" (`InterPixConfigModal`). Salvar valida pedindo token ao Inter.
 - **São DUAS integrações no Inter, de propósito:** "ERPOS - Pix Autoatendimento" (só API Pix) → aqui; "ERPOS Conciliação" (só extrato) → `fin_inter_config` / edge `inter-bank` / Financeiro › Conciliação. Não misturar: o token em cache da `fin_inter_config` é do escopo de extrato.
 - **Fluxo do pedido no kiosk não mudou:** o pedido só é criado depois do Pix confirmado (`handlePixPago` → `onEntrarPagamento` → `record_payment`), agora com confirmação real do banco. Ponta solta conhecida: se o tablet travar entre a confirmação e a criação do pedido, o dinheiro fica em `fin_pix_payments` (`confirmed`, sem `order_id`) sem pedido — conferir por lá.
+
+### Stone: conciliação reescrita (2026-09-10)
+
+A edge `stone-conciliation` estava morta desde a migração para multi-loja: buscava `users.tenant_id` (a coluna não existe mais) e o parser não seguia o layout da Stone. Reescrita com loja via `user_tenants`, parser do layout 2.2 e cron diário. Detalhes em `FINANCEIRO_MAP.md` §9k. **Pendente:** deploy da edge + migration `20260910140000_stone_conciliation_v2.sql` (o conector do Supabase caiu) e push do front.
+
+- **Pegadinha geral:** qualquer edge que leia `users.tenant_id` está quebrada, porque a loja fica em `user_tenants` + `tenant_id` no body. Em 2026-09-10 a Stone era a única: as outras edges que consultam `users` leem só nome/PIN.
+- tsc: 296 (antes 301).
+

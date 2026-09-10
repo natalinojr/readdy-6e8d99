@@ -47,7 +47,7 @@ Arquivos-base: `src/pages/financeiro/`, `src/hooks/useFinanceiro.ts`, `useDespes
 | 13 | `dre` | DRE | `DREContainer`→`DRETab`/`DREComparativoTab` | ver §6 |
 | 14 | `contas-vencidas` | Contas Vencidas | `ContasVencidasPanel` | `fin_accounts_payable` vencidas |
 | 15 | `bancos` | Bancos e Contas | `BancosContasTab` | `fin_bank_accounts` / `fin_bank_transactions` |
-| 16 | `conciliacao` | Conciliação | `ConciliacaoTab` | `fin_bank_statement_imports` + Stone + **Banco Inter (API, §9j)** |
+| 16 | `conciliacao` | Conciliação | `ConciliacaoTab` | `fin_bank_statement_imports` + **Stone (API, §9k)** + **Banco Inter (API, §9j)** |
 | 17 | `implantacao` | Implantação | `ImplantacaoTab` | `fin_implementation_costs` |
 
 ---
@@ -601,6 +601,25 @@ Redesenho a pedido do dono. Só layout: nenhum campo, cálculo ou regra mudou.
 - **Fluxo de Caixa › 4ª visão "Realizado × Projetado"** (`RealizadoProjetadoTab`): por período (7/30 dias, mês atual/anterior), três leituras lado a lado — **Previsto** (contas a pagar + folha pelo vencimento; recebíveis pela liquidação), **ERP** (`fin_cash_flow`), **Banco** (`fin_bank_statement_imports`, qualquer fonte). KPIs: saldo banco (API) × saldo ERP e divergência; entradas/saídas previsto × ERP × banco; "previsto que não realizou" (vencidas em aberto); % do extrato conciliado. Gráficos por semana/dia + tabela. Leitura direta do Supabase (mesmo padrão da projeção).
 
 **Para ativar numa loja:** Internet Banking PJ › Soluções para sua empresa › Nova Integração (escopo Extrato) → baixar `.crt`/`.key`, anotar client_id/secret → ERP › Financeiro › Conciliação › Banco Inter › Configurar. O certificado vale 1 ano. Nenhuma loja configurada ainda (2026-09-10).
+
+## 9k. Stone: conciliação da maquininha reescrita (2026-09-10)
+
+**Estado:** a edge `stone-conciliation` nunca funcionou. Buscava a loja em `users.tenant_id`, coluna que não existe mais, e toda chamada voltava 400 "Tenant not found". O parser também não seguia o layout: dividia valores por 100, cortava errado as datas `aaaammddHHmmss` e gerava id aleatório, o que duplicava as linhas. Nenhuma loja tinha config. O código foi reescrito (edge, `StoneConfigModal`, `StoneImportPanel`) e a migration `20260910140000_stone_conciliation_v2.sql` foi escrita. **Deploy e migration pendentes:** o conector do Supabase caiu na sessão.
+
+**Como funciona agora:**
+- Loja via `user_tenants` + `tenant_id` do body, ou `x-internal-key` para o cron. `save_config`/`delete_config` só para admin/manager.
+- Stone: Basic com a **Chave Secreta** como usuário e senha vazia, mais `x-user-type: client`. Tenta `/v2/merchant/{StoneCode}/file?referenceDate=AAAA-MM-DD` e depois `/v1/merchant/{StoneCode}/conciliation-file/AAAAMMDD`; guarda em `fin_stone_config.endpoint` o que funcionou. 307 segue o `Location` sem Authorization. 404 = dia sem arquivo (ok). 401/403 = chave recusada, e o range para de tentar.
+- `save_config` valida baixando o arquivo de 2 dias atrás antes de gravar. A chave nunca volta ao front (`has_key`).
+- **O que vira linha de extrato** (`fin_bank_statement_imports`, `source='stone'`):
+  - parcela liquidada (`FinancialTransactionsAccounts › Transaction › Installments › Installment`): crédito do `NetAmount` na `PaymentDate`. `external_id = stone_<NSU>_<parcela>_<PaymentId>`;
+  - evento em conta (`FinancialEventsAccounts › Events › Event`): `Amount` com sinal, negativo = débito (aluguel, ajuste, retenção, antecipação). `external_id = stone_ev_<EventId>`;
+  - chargeback liquidado (`Installment › Chargebacks › Chargeback`): débito. Reapresentação vira crédito.
+  - Vendas do dia (`FinancialTransactions`) e depósitos (`Payments › Payment.TotalAmount`) vão só para o resumo em `fin_stone_imports` (`sales_count`, `sales_gross`, `payments_total`). **Invariante:** Σ linhas do dia = Σ `Payment.TotalAmount`. Se não bater, a edge loga WARN `linhas ≠ depósitos`.
+- AccountType: 1 débito, 2 crédito, 3 pré-pago débito, 4 pré-pago crédito. Valores em reais com ponto decimal (até 6 casas). Datas `aaaammdd` / `aaaammddHHmmss`.
+- **Conciliação automática** das linhas novas contra `fin_bank_transactions` da conta e `fin_cash_flow` (±3 dias), e contra `fin_receivable_installments` (±35 dias, valor líquido OU bruto, porque a antecipação muda a data).
+- **Cron** `stone-sync` às 06h30 de Brasília (`30 9 * * *` UTC) → `fn_stone_sync_all()`: importa ontem e refaz dias sem sucesso dos últimos 5. Usa os segredos do Vault do cron fiscal.
+- **Atenção:** se a mesma conta também recebe OFX, os repasses entram duas vezes. Use contas separadas ou só uma fonte. A API de Conciliação **não** cobre o extrato da Conta Stone (Pix enviado, TED, boleto pago); para isso é OFX.
+- Parser testado localmente com XML sintético no layout 2.2: 2 parcelas, 1 chargeback e 1 aluguel dão R$ 106,61 = `Payment.TotalAmount`. **Ainda não testado com arquivo real.**
 
 ## 9. Tabelas do módulo (schema `public`)
 `fin_cash_flow`, `fin_accounts_payable`, `fin_receivable_installments`, `fin_anticipations`, `fin_purchases`, `fin_purchase_items`, `fin_purchase_catalog`, `fin_merchandise_categories`, `fin_suppliers`, `fin_cost_centers`, `fin_dre_categories`, `fin_dre_groups`, `fin_bank_accounts`, `fin_bank_transactions`, `fin_bank_statement_imports`, `fin_bank_statements`, `fin_reconciliation_rules`, `fin_budgets`, `fin_budget_items`, `fin_income_routing`, `fin_investment_settings`, `fin_implementation_costs`, `fin_implementation_columns`, `fin_stone_config`, `fin_stone_imports`, `fin_pix_payments`, `fin_payable_aging`(view), `fin_receivable_aging`(view), `hr_employees`, `hr_payroll`, `hr_payroll_custom_fields`.
