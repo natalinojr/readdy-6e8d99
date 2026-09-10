@@ -475,8 +475,13 @@ Deno.serve(async (req: Request) => {
       const paymentsHistory = [...grouped.values()].sort((a, b) => (a.at < b.at ? 1 : -1));
 
       const { data: tbl } = auth.tableId ? await admin.from("tables").select("number").eq("id", auth.tableId).maybeSingle() : { data: null };
+      // CPF já informado em algum pedido desta conta: o front usa para pré-preencher o campo.
+      const { data: cpfRow } = orderIds.length > 0
+        ? await admin.from("orders").select("customer_cpf").in("id", orderIds).not("customer_cpf", "is", null).limit(1).maybeSingle()
+        : { data: null };
       return json({
         enabled: isEnabled(cfg), table_number: tbl?.number ?? null,
+        customer_cpf: (cpfRow?.customer_cpf as string | null) ?? null,
         participant: participant ? { id: participant.id, name: participant.name } : { id: auth.orderId, name: auth.customerName ?? "" },
         mode: tableSessionId ? "table" : auth.orderId ? "delivery" : "queue",
         payments_history: paymentsHistory,
@@ -496,6 +501,11 @@ Deno.serve(async (req: Request) => {
       // Na fila por senha só existe a própria conta — "mesa inteira" não faz sentido.
       const scope = (tableSessionId && body.scope === "all") ? "all" : "mine";
 
+      // CPF/CNPJ na nota (opcional): validado ANTES de calcular a conta, para o cliente
+      // receber o erro de digitação mesmo quando não há nada pendente para cobrar.
+      const cpfNota = String(body.customer_cpf ?? "").replace(/\D/g, "");
+      if (cpfNota && !isValidCpfCnpj(cpfNota)) return json({ error: "invalid_cpf", message: "CPF/CNPJ inválido. Confira os dígitos ou deixe em branco." }, 422);
+
       const orders = await loadBill(admin, { tableSessionId: tableSessionId ?? null, participantId: participant?.id ?? null, orderId: auth.orderId }, participant?.id ?? null);
       // Sem participante (delivery) a conta é o próprio pedido — tudo é "meu".
       const isMine = (o: BillOrder) => scope === "all" || !participant || o.participant_id === participant.id;
@@ -506,12 +516,13 @@ Deno.serve(async (req: Request) => {
       const amount = round2(target.reduce((s, o) => s + o.remaining, 0));
       if (target.length === 0 || amount < 0.01) return json({ error: "nothing_to_pay", message: "Não há nada pendente para pagar." }, 422);
 
-      // CPF/CNPJ na nota (opcional): guarda nos pedidos que este Pix vai pagar. A fiscal-write
-      // usa orders.customer_cpf ao emitir a NFC-e quando o pagamento confirmar.
-      const cpfNota = String(body.customer_cpf ?? "").replace(/\D/g, "");
+      // Guarda o CPF nos pedidos que este Pix vai pagar: a fiscal-write lê orders.customer_cpf
+      // ao emitir a NFC-e quando o pagamento confirmar.
       if (cpfNota) {
-        if (!isValidCpfCnpj(cpfNota)) return json({ error: "invalid_cpf", message: "CPF/CNPJ inválido. Confira os dígitos ou deixe em branco." }, 422);
-        await admin.from("orders").update({ customer_cpf: cpfNota }).in("id", target.map((o) => o.id)).eq("tenant_id", tenantId);
+        const { error: cpfErr } = await admin.from("orders").update({ customer_cpf: cpfNota })
+          .in("id", target.map((o) => o.id)).eq("tenant_id", tenantId);
+        if (cpfErr) log("ERROR", "create_pix", "não gravou o CPF na nota", { error: cpfErr.message, orders: target.length });
+        else log("INFO", "create_pix", "CPF na nota gravado", { orders: target.length });
       }
 
       // Um Pix pendente por participante: cancela o anterior (aqui e no provedor)
@@ -590,6 +601,25 @@ Deno.serve(async (req: Request) => {
         }
       }
       return json({ pix: pixPublic(px) });
+    }
+
+    // O cliente lembrou do CPF depois de gerar o Pix (o campo some quando o QR aparece):
+    // grava nos pedidos daquele Pix enquanto ele não foi liquidado.
+    if (action === "set_cpf") {
+      const auth = await resolveCustomer(admin, body, { allowClosed: true });
+      if (auth.error) return auth.error;
+      const cpf = String(body.customer_cpf ?? "").replace(/\D/g, "");
+      if (cpf && !isValidCpfCnpj(cpf)) return json({ error: "invalid_cpf", message: "CPF/CNPJ inválido. Confira os dígitos ou deixe em branco." }, 422);
+      const pixId = String(body.pix_payment_id ?? "");
+      const { data: px } = await ownerFilter(admin.from("fin_pix_payments").select("id, status, allocation, settled_at").eq("id", pixId), auth).maybeSingle();
+      if (!px) return json({ error: "Pagamento não encontrado" }, 404);
+      if (px.settled_at) return json({ error: "already_settled", message: "Este pagamento já foi finalizado e a nota já saiu." }, 409);
+      const ids = (((px.allocation as { order_id: string }[] | null) ?? []).map((a) => a.order_id)).filter(Boolean);
+      if (ids.length === 0) return json({ error: "Nada para atualizar" }, 422);
+      const { error: upErr } = await admin.from("orders").update({ customer_cpf: cpf || null }).in("id", ids).eq("tenant_id", auth.tenantId!);
+      if (upErr) { log("ERROR", "set_cpf", "falhou", { error: upErr.message }); return json({ error: "update_failed", message: upErr.message }, 500); }
+      log("INFO", "set_cpf", "CPF na nota atualizado", { pixId, orders: ids.length, informado: Boolean(cpf) });
+      return json({ ok: true, customer_cpf: cpf || null });
     }
 
     if (action === "cancel_pix") {

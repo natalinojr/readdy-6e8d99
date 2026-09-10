@@ -102,6 +102,8 @@ export default function PagarContaModalQR(props: Props) {
   const [cpfNota, setCpfNota] = useState<string>(function () {
     try { return sessionStorage.getItem('erpos_qr_cpf_nota') || ''; } catch { return ''; }
   });
+  const [editandoCpf, setEditandoCpf] = useState(false);
+  const [salvandoCpf, setSalvandoCpf] = useState(false);
   const cpfDigits = cpfNota.replace(/\D/g, '');
   const cpfValido = cpfDigits.length === 0 || validaCpfCnpj(cpfDigits);
 
@@ -111,7 +113,7 @@ export default function PagarContaModalQR(props: Props) {
   const carregarConta = useCallback(async function () {
     try {
       const data = await callOnlinePayments<{
-        enabled: boolean; table_number: number | null; orders: BillOrder[];
+        enabled: boolean; table_number: number | null; orders: BillOrder[]; customer_cpf?: string | null;
         pending_pix: PixInfo | null; last_pix: PixInfo | null; session_closed: boolean; mode?: string;
         payments_history?: PagamentoFeito[];
       }>({ action: 'get_bill', ...auth });
@@ -122,6 +124,7 @@ export default function PagarContaModalQR(props: Props) {
       }
       setEnabled(Boolean(data.enabled));
       setOrders(data.orders || []);
+      if (data.customer_cpf) setCpfNota(function (atual) { return atual || String(data.customer_cpf); });
       setTableNumber(data.table_number ?? null);
       setPagamentos(data.payments_history || []);
       if (data.mode === 'queue') { setQueueMode(true); setScope('mine'); }
@@ -206,6 +209,24 @@ export default function PagarContaModalQR(props: Props) {
     const t = setInterval(tick, 1000);
     return function () { clearInterval(t); };
   }, [pix]);
+
+  // Informar/corrigir o CPF com o Pix já gerado (antes de o pagamento ser liquidado).
+  async function salvarCpfDoPix() {
+    if (!pix) return;
+    if (cpfDigits && !cpfValido) return;
+    setSalvandoCpf(true);
+    setErro('');
+    try {
+      const data = await callOnlinePayments<{ ok?: boolean }>({ action: 'set_cpf', pix_payment_id: pix.id, customer_cpf: cpfDigits || null, ...auth });
+      if (data.error) { setErro(data.message || data.error); return; }
+      try { if (cpfDigits) sessionStorage.setItem('erpos_qr_cpf_nota', cpfDigits); else sessionStorage.removeItem('erpos_qr_cpf_nota'); } catch { /* sem storage */ }
+      setEditandoCpf(false);
+    } catch {
+      setErro('Erro de conexão. Tente novamente.');
+    } finally {
+      setSalvandoCpf(false);
+    }
+  }
 
   async function gerarPix() {
     setGerando(true);
@@ -487,6 +508,39 @@ export default function PagarContaModalQR(props: Props) {
             <img src={'data:image/png;base64,' + pix.qr_code_base64} alt="QR Code Pix" className="w-44 h-44" />
           </div>
         ) : null}
+
+        {/* CPF na nota: dá para informar/corrigir enquanto o Pix não foi pago */}
+        <div className="w-full mt-3">
+          {editandoCpf ? (
+            <div className="flex items-center gap-2">
+              <input
+                inputMode="numeric"
+                autoFocus
+                value={formatCpfCnpjQR(cpfDigits) || cpfNota}
+                onChange={function (e) { setCpfNota(e.target.value.replace(/\D/g, '').slice(0, 14)); }}
+                placeholder="CPF na nota (opcional)"
+                className={'flex-1 text-sm border rounded-xl px-3 py-2 text-zinc-800 focus:outline-none ' + (cpfDigits && !cpfValido ? 'border-red-300' : 'border-zinc-200 focus:border-emerald-400')}
+              />
+              <button
+                type="button"
+                disabled={salvandoCpf || (cpfDigits.length > 0 && !cpfValido)}
+                onClick={salvarCpfDoPix}
+                className="px-3 py-2 text-xs font-bold bg-zinc-900 text-white rounded-xl disabled:opacity-40 cursor-pointer whitespace-nowrap"
+              >
+                {salvandoCpf ? 'Salvando…' : 'Salvar'}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={function () { setEditandoCpf(true); }}
+              className="w-full flex items-center justify-center gap-1.5 text-[11px] text-zinc-500 py-1.5 cursor-pointer"
+            >
+              <i className="ri-file-shield-2-line" />
+              {cpfDigits && cpfValido ? 'CPF na nota: ' + formatCpfCnpjQR(cpfDigits) + ' · alterar' : 'Quer CPF na nota fiscal?'}
+            </button>
+          )}
+        </div>
 
         <div className="w-full mt-4 space-y-2">
           <button
