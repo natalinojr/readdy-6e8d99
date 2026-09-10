@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { isValidCpfCnpj as validaCpfCnpj, mascaraCpfCnpj as formatCpfCnpjQR } from '@/lib/cpfCnpj';
 import { supabase } from '@/lib/supabase';
 import { savePixMemo, loadPixMemo, clearPixMemo } from '../pixMemo';
 
@@ -518,7 +519,7 @@ export default function PagarContaModalQR(props: Props) {
                 autoFocus
                 value={formatCpfCnpjQR(cpfDigits) || cpfNota}
                 onChange={function (e) { setCpfNota(e.target.value.replace(/\D/g, '').slice(0, 14)); }}
-                placeholder="CPF na nota (opcional)"
+                placeholder="CPF/CNPJ na nota (opcional)"
                 className={'flex-1 text-sm border rounded-xl px-3 py-2 text-zinc-800 focus:outline-none ' + (cpfDigits && !cpfValido ? 'border-red-300' : 'border-zinc-200 focus:border-emerald-400')}
               />
               <button
@@ -537,7 +538,7 @@ export default function PagarContaModalQR(props: Props) {
               className="w-full flex items-center justify-center gap-1.5 text-[11px] text-zinc-500 py-1.5 cursor-pointer"
             >
               <i className="ri-file-shield-2-line" />
-              {cpfDigits && cpfValido ? 'CPF na nota: ' + formatCpfCnpjQR(cpfDigits) + ' · alterar' : 'Quer CPF na nota fiscal?'}
+              {cpfDigits && cpfValido ? 'Na nota: ' + formatCpfCnpjQR(cpfDigits) + ' · alterar' : 'Quer CPF/CNPJ na nota fiscal?'}
             </button>
           )}
         </div>
@@ -634,7 +635,7 @@ export default function PagarContaModalQR(props: Props) {
             {/* CPF na nota (opcional) — vai para a NFC-e emitida quando o Pix confirmar */}
             <div className="mb-3">
               <label className="flex items-center justify-between text-[11px] font-semibold text-zinc-600 mb-1">
-                <span><i className="ri-file-shield-2-line text-zinc-400 mr-1" />CPF na nota fiscal <span className="font-normal text-zinc-400">(opcional)</span></span>
+                <span><i className="ri-file-shield-2-line text-zinc-400 mr-1" />CPF/CNPJ na nota fiscal <span className="font-normal text-zinc-400">(opcional)</span></span>
                 {cpfDigits && cpfValido ? <span className="text-emerald-600 font-bold">vai na nota</span> : null}
               </label>
               <input
@@ -667,23 +668,4 @@ export default function PagarContaModalQR(props: Props) {
       </div>
     </div>
   );
-}
-
-// ── CPF/CNPJ (validação de dígito verificador + máscara) ─────────────────────
-function validaCpfCnpj(d: string): boolean {
-  if (d.length === 11) {
-    if (/^(\d)\1{10}$/.test(d)) return false;
-    const calc = function (len: number) { let s = 0; for (let i = 0; i < len; i++) s += Number(d[i]) * (len + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
-    return calc(9) === Number(d[9]) && calc(10) === Number(d[10]);
-  }
-  if (d.length === 14) {
-    if (/^(\d)\1{13}$/.test(d)) return false;
-    const calc = function (len: number) { const w = len === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]; let s = 0; for (let i = 0; i < len; i++) s += Number(d[i]) * w[i]; const r = s % 11; return r < 2 ? 0 : 11 - r; };
-    return calc(12) === Number(d[12]) && calc(13) === Number(d[13]);
-  }
-  return false;
-}
-function formatCpfCnpjQR(d: string): string {
-  if (d.length <= 11) return d.replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2');
-  return d.replace(/^(\d{2})(\d)/, '$1.$2').replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1/$2').replace(/(\d{4})(\d{1,2})$/, '$1-$2');
 }

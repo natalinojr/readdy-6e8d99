@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import CpfCnpjInput from '@/components/base/CpfCnpjInput';
+import { isValidCpfCnpj } from '@/lib/cpfCnpj';
 import { useDeliveryData, getOrderSource } from './useDeliveryData';
 import IdentificacaoDelivery from './components/IdentificacaoDelivery';
 import EnderecoDelivery from './components/EnderecoDelivery';
@@ -157,6 +159,9 @@ export default function DeliveryPage() {
   const handleSalvarEdicao = data.handleSalvarEdicao;
   const handleFecharEdicao = data.handleFecharEdicao;
   const handleConfirmarPedido = data.handleConfirmarPedido;
+  // Documento incompleto/errado trava a confirmação (o backend recusaria depois).
+  const cpfNotaDigitos = (data.cpfNota || '').replace(/\D/g, '');
+  const cpfNotaInvalido = cpfNotaDigitos.length > 0 && !isValidCpfCnpj(cpfNotaDigitos);
   const handleNovoPedido = data.handleNovoPedido;
   const handleChangeNeighborhood = data.handleChangeNeighborhood;
 
@@ -1591,9 +1596,19 @@ export default function DeliveryPage() {
                   </div>
                 ) : null}
 
+                {/* CPF/CNPJ na nota fiscal (opcional) */}
+                <div className="mb-3">
+                  <CpfCnpjInput
+                    label="CPF/CNPJ na nota fiscal (opcional)"
+                    value={data.cpfNota}
+                    onChange={data.setCpfNota}
+                    hint="Deixe em branco se não quiser o documento na nota."
+                  />
+                </div>
+
                 <button
                   type="button"
-                  disabled={!metodoPagamento || enviando || (metodoPagamento === 'dinheiro' && (valorDinheiro === '' || !!erroValorDinheiro))}
+                  disabled={!metodoPagamento || enviando || (metodoPagamento === 'dinheiro' && (valorDinheiro === '' || !!erroValorDinheiro)) || cpfNotaInvalido}
                   onClick={function () {
                     if (metodoPagamento) {
                       if (metodoPagamento === 'dinheiro' && valorDinheiro !== '') {

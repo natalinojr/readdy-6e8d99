@@ -574,6 +574,10 @@ export function useDeliveryData(storeSlug?: string) {
   // Voucher aplicado no checkout do delivery (pré-preenchido se veio de ?voucher= no link)
   const [voucherInput, setVoucherInput] = useState(() => getUrlVoucher() ?? '');
   const [voucherCodigo, setVoucherCodigo] = useState('');
+  // CPF/CNPJ na nota fiscal (opcional): fica no aparelho para o próximo pedido.
+  const [cpfNota, setCpfNota] = useState<string>(function () {
+    try { return localStorage.getItem('erpos_delivery_cpf_nota') || ''; } catch { return ''; }
+  });
   const [voucherDesconto, setVoucherDesconto] = useState(0);
   const [voucherMsg, setVoucherMsg] = useState('');
   const [voucherLoading, setVoucherLoading] = useState(false);
@@ -1464,6 +1468,11 @@ export function useDeliveryData(storeSlug?: string) {
     });
 
     const clientRequestId = crypto.randomUUID();
+    try {
+      const soDig = cpfNota.replace(/\D/g, '');
+      if (soDig) localStorage.setItem('erpos_delivery_cpf_nota', soDig);
+      else localStorage.removeItem('erpos_delivery_cpf_nota');
+    } catch { /* sem storage */ }
 
     fetch(url, {
       method: 'POST',
@@ -1474,6 +1483,7 @@ export function useDeliveryData(storeSlug?: string) {
         customer_id: customer.id,
         customer_name: customerName,
         customer_phone: phone,
+        customer_cpf: cpfNota.replace(/\D/g, '') || null,
         customer_address: endereco,
         birth_date: dataNascimento || null,
         gender: genero || null,
@@ -1903,6 +1913,8 @@ export function useDeliveryData(storeSlug?: string) {
     handleSalvarEdicao,
     handleFecharEdicao,
     handleConfirmarPedido,
+    cpfNota,
+    setCpfNota,
     handleNovoPedido,
     handleSair,
     handleChangeNeighborhood,

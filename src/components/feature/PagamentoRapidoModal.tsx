@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import CpfCnpjInput from '@/components/base/CpfCnpjInput';
 import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 import { invokeWithAuth, supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -1040,15 +1041,14 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                     <input type="tel" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="(00) 00000-0000" maxLength={20} className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">CPF</label>
-                    <input type="text" value={customerCpf} onChange={(e) => setCustomerCpf(e.target.value)} placeholder="000.000.000-00" maxLength={14} className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                    <CpfCnpjInput compact label="CPF/CNPJ na nota" value={customerCpf} onChange={setCustomerCpf} />
                   </div>
                   <div>
                     <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">E-mail</label>
                     <input type="email" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="cliente@email.com" className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
                   </div>
                 </div>
-                <p className="text-[10px] text-zinc-400">CPF, telefone e e-mail são salvos no pedido para nota fiscal e histórico.</p>
+                <p className="text-[10px] text-zinc-400">CPF/CNPJ, telefone e e-mail são salvos no pedido para nota fiscal e histórico.</p>
               </div>
             )}
           </div>

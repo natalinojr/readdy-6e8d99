@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import CpfCnpjInput from '@/components/base/CpfCnpjInput';
 import { PartialOrderError } from '@/hooks/useOrderSubmit';
 import { usePDV, type PagamentoItem } from '../../../../contexts/PDVContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
@@ -1137,17 +1138,12 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                       className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
                     />
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">CPF</label>
-                    <input
-                      type="text"
-                      value={customerCpf}
-                      onChange={(e) => setCustomerCpf(e.target.value)}
-                      placeholder="000.000.000-00"
-                      maxLength={14}
-                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    />
-                  </div>
+                  <CpfCnpjInput
+                    compact
+                    label="CPF/CNPJ na nota"
+                    value={customerCpf}
+                    onChange={setCustomerCpf}
+                  />
                   <div>
                     <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">E-mail</label>
                     <input

@@ -1383,7 +1383,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
     if (action === "create_delivery_order") {
       const {
-        tenant_id, customer_id, customer_name, customer_phone,
+        tenant_id, customer_id, customer_name, customer_phone, customer_cpf,
         customer_address, neighborhood_name, neighborhood_id,
         delivery_fee: _clientDeliveryFee,
         items: clientItems,
@@ -1396,6 +1396,20 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         client_request_id,
         order_source,
       } = body;
+
+      // CPF/CNPJ da nota: valida o digito verificador e guarda so os digitos (documento
+      // invalido nao pode travar o pedido — a nota sai sem identificacao).
+      const cpfNotaFiscal = (function () {
+        const d = String(customer_cpf ?? "").replace(/\D/g, "");
+        if (d.length !== 11 && d.length !== 14) return null;
+        if (/^(\d)\1+$/.test(d)) return null;
+        if (d.length === 11) {
+          const calc = (len: number) => { let s2 = 0; for (let i = 0; i < len; i++) s2 += Number(d[i]) * (len + 1 - i); const r = (s2 * 10) % 11; return r === 10 ? 0 : r; };
+          return (calc(9) === Number(d[9]) && calc(10) === Number(d[10])) ? d : null;
+        }
+        const calc = (len: number) => { const w = len === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]; let s2 = 0; for (let i = 0; i < len; i++) s2 += Number(d[i]) * w[i]; const r = s2 % 11; return r < 2 ? 0 : 11 - r; };
+        return (calc(12) === Number(d[12]) && calc(13) === Number(d[13])) ? d : null;
+      })();
 
       // Origem do pedido (utm_source do link, ex.: "instagram"). So letras/numeros/._-, minusculo, ate 40 chars.
       const deliverySource = (typeof order_source === "string" && order_source.trim())
@@ -1755,6 +1769,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           // comparam por telefone sem máscara. Gravar formatado some do histórico do cliente.
           destination_phone: cleanPhone || null,
           customer_id: realCustomerId, discount_amount: voucherDiscount, service_fee_amount: 0,
+          // CPF/CNPJ na nota fiscal (opcional, informado pelo cliente no app).
+          customer_cpf: cpfNotaFiscal,
           subtotal: serverSubtotal,
           total_amount: serverTotal,
           is_training: false, is_draft: holdUntilPaid,
