@@ -109,6 +109,10 @@ export default function DeliveryPage() {
   const metodosDisponiveis: Record<string, boolean> = Object.assign({}, paymentMethods || {}, {
     pix_online: data.pixOnlineDisponivel && (paymentMethods || {}).pix_online !== false,
   });
+  // Formas cobradas na entrega/retirada — pra quem desistir do Pix pelo app
+  const metodosAlternativos = Object.entries(metodosDisponiveis)
+    .filter(function (e) { return e[1] === true && e[0] !== 'pix_online'; })
+    .map(function (e) { return { key: e[0], label: LABEL_METODO[e[0]] || e[0], icon: ICONE_METODO[e[0]] || 'ri-wallet-line' }; });
   const pagamentoSelecionado = data.pagamentoSelecionado;
   const modoEntrega = data.modoEntrega;
   const customer = data.customer;
@@ -476,9 +480,7 @@ export default function DeliveryPage() {
         resumo={data.resumoConfirmacao}
         pixOnline={data.pixOnline}
         onPixPago={data.limparPixOnline}
-        metodosAlternativos={Object.entries(metodosDisponiveis)
-          .filter(function (e) { return e[1] === true && e[0] !== 'pix_online'; })
-          .map(function (e) { return { key: e[0], label: LABEL_METODO[e[0]] || e[0], icon: ICONE_METODO[e[0]] || 'ri-wallet-line' }; })}
+        metodosAlternativos={metodosAlternativos}
         onTrocarPagamento={data.handleTrocarPagamentoPixOnline}
       />
     );
@@ -1116,6 +1118,9 @@ export default function DeliveryPage() {
                 pixPendenteNumero={data.pixOnline ? data.pixOnline.number : undefined}
                 onPagarPix={data.voltarParaPagamentoPix}
                 onPagarPixSemChave={phone ? data.voltarParaPagamentoPixPorTelefone : undefined}
+                metodosAlternativos={metodosAlternativos}
+                onTrocarPagamento={phone ? data.trocarPagamentoPedidoSegurado : undefined}
+                modoEntrega={modoEntrega}
               />
             </div>
           ) : subView === 'historico' ? (

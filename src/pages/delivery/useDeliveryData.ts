@@ -1534,32 +1534,38 @@ export function useDeliveryData(storeSlug?: string) {
   // ── Novo pedido ─────────────────────────────────────────────────────────────
 
   // Cliente desistiu do Pix pelo app: escolhe outra forma e o pedido segurado vai pra cozinha.
-  async function handleTrocarPagamentoPixOnline(metodoKey: string, cashAmount?: string): Promise<boolean> {
-    if (!tenant || !pixOnline) return false;
+  // Autentica pela chave do aparelho (se for o pedido pendente daqui) ou pelo telefone.
+  async function trocarPagamentoPedidoSegurado(orderId: string, metodoKey: string, cashAmount?: string): Promise<boolean> {
+    if (!tenant) return false;
     const labels: Record<string, string> = { dinheiro: 'Dinheiro', cartao_credito: 'Cartão de Crédito', cartao_debito: 'Cartão de Débito', pix: 'PIX', vale_refeicao: 'Vale Refeição' };
     const label = labels[metodoKey] || metodoKey;
     const cashNum = cashAmount ? parseFloat(cashAmount) : 0;
+    const token = pixOnline && pixOnline.orderId === orderId ? pixOnline.orderToken : '';
     try {
       const res = await fetch(getDeliveryWriteUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'change_held_payment', tenant_id: tenant.id,
-          order_id: pixOnline.orderId,
-          order_token: pixOnline.orderToken || undefined, order_phone: pixOnline.orderToken ? undefined : phone,
+          order_id: orderId,
+          order_token: token || undefined, order_phone: token ? undefined : phone,
           payment_method: label, cash_amount: cashNum > 0 ? cashNum : undefined,
         }),
       });
       const data = await res.json();
       if (data.error) { setErrorMsg(data.message || data.error); return false; }
       setPagamentoSelecionado(label);
-      limparPixOnline();
-      setPixOnline(null);
+      if (pixOnline && pixOnline.orderId === orderId) limparPixOnline();
       return true;
     } catch {
       setErrorMsg('Erro de conexão. Tente novamente.');
       return false;
     }
+  }
+
+  function handleTrocarPagamentoPixOnline(metodoKey: string, cashAmount?: string): Promise<boolean> {
+    if (!pixOnline) return Promise.resolve(false);
+    return trocarPagamentoPedidoSegurado(pixOnline.orderId, metodoKey, cashAmount);
   }
 
   function limparPixOnline() {
@@ -1858,6 +1864,7 @@ export function useDeliveryData(storeSlug?: string) {
     pixOnline,
     limparPixOnline,
     handleTrocarPagamentoPixOnline,
+    trocarPagamentoPedidoSegurado,
     voltarParaPagamentoPix,
     voltarParaPagamentoPixPorTelefone,
     modoEntrega,

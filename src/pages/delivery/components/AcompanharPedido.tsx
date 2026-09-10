@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import TrocarPagamentoDelivery, { type MetodoAlternativo } from './TrocarPagamentoDelivery';
 
 type OrderStatusData = {
   id: string;
@@ -30,6 +31,10 @@ interface Props {
   onPagarPix?: () => void;
   /** Sem a chave no aparelho: retoma pelo telefone do cliente (só se o app souber o telefone) */
   onPagarPixSemChave?: (orderId: string, number: string, total: number) => void;
+  /** Trocar a forma de pagamento do pedido segurado (libera pra cozinha) */
+  metodosAlternativos?: MetodoAlternativo[];
+  onTrocarPagamento?: (orderId: string, metodoKey: string, cashAmount?: string) => Promise<boolean>;
+  modoEntrega?: 'entrega' | 'retirada';
 }
 
 const STATUS_STEPS = [
@@ -206,6 +211,21 @@ export default function AcompanharPedido(props: Props) {
             >
               <i className="ri-qr-code-line" /> Pagar com Pix agora
             </button>
+          ) : null}
+          {props.onTrocarPagamento && (props.metodosAlternativos || []).length > 0 ? (
+            <div className="mt-2">
+              <TrocarPagamentoDelivery
+                metodos={props.metodosAlternativos || []}
+                orderTotal={orderData.total_amount}
+                modoEntrega={props.modoEntrega || 'entrega'}
+                labelAbrir="Pagar de outra forma (na entrega ou retirada)"
+                onConfirmar={async function (metodoKey, cashAmount) {
+                  const ok = await props.onTrocarPagamento!(orderData.id, metodoKey, cashAmount);
+                  if (ok) fetchStatus();
+                  return ok;
+                }}
+              />
+            </div>
           ) : null}
         </div>
       ) : null}
