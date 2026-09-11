@@ -24,9 +24,10 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
-// Sonnet 5: escolha do usuário em 2026-09-11 (custo ~1/2 do Opus 5; ler cupom não
-// precisa do topo de linha). Se notinhas à mão vierem com erro, testar o Opus 5 aqui.
-const MODEL = 'claude-sonnet-5';
+// Haiku 4.5: escolha do usuário em 2026-09-11 para teste de custo (Sonnet 5 custou
+// ~R$ 0,14/leitura). Se vier leitura/vínculo errado (letra de mão), voltar para
+// 'claude-sonnet-5' — foi o que funcionou na 1ª leitura real.
+const MODEL = 'claude-haiku-4-5';
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const PAYMENT_METHODS = ['Dinheiro', 'PIX', 'Cartão Débito', 'Cartão Crédito', 'Boleto', 'Transferência'];
@@ -49,6 +50,19 @@ function normKey(s: unknown): string {
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
+// Data da IA → AAAA-MM-DD. O Haiku às vezes devolve "11/09/2026" mesmo com o
+// formato pedido no prompt; aceita DD/MM/AAAA (e DD/MM/AA) em vez de descartar.
+function toIsoDate(v: unknown): string | null {
+  const s = String(v ?? '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/);
+  if (!m) return null;
+  const y = m[3].length === 2 ? `20${m[3]}` : m[3];
+  const d = m[1].padStart(2, '0');
+  const mo = m[2].padStart(2, '0');
+  return Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= 31 ? `${y}-${mo}-${d}` : null;
+}
+
 // Fornecedor: CNPJ quando a nota traz (estável), senão o nome normalizado.
 function supplierKeyOf(cnpj: unknown, name: unknown): string {
   const d = onlyDigits(cnpj);
@@ -537,7 +551,7 @@ async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<
       supplier_cnpj: onlyDigits(out.fornecedor_cnpj) || null,
       supplier_key: supplierKey,
       invoice_number: out.numero_documento ?? null,
-      purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(String(out.data_compra ?? '')) ? out.data_compra : null,
+      purchase_date: toIsoDate(out.data_compra),
       payment_method: PAYMENT_METHODS.includes(out.forma_pagamento) ? out.forma_pagamento : null,
       document_total: docTotal,
       discount_total: discountTotal || null,
