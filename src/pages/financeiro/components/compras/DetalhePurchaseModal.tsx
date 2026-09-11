@@ -347,7 +347,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-xs text-zinc-400">
                     <i className="ri-truck-line" />
-                    <span>Mercadoria ainda não confirmada como recebida</span>
+                    <span>Mercadoria ainda não confirmada como recebida · o estoque entra ao confirmar</span>
                   </div>
                   <button
                     onClick={() => setShowDeliveryForm(true)}
@@ -366,7 +366,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                     <p className="text-sm font-bold text-green-800">Confirmar Recebimento da Mercadoria</p>
                   </div>
                   <p className="text-xs text-green-700">
-                    Ajuste as quantidades recebidas abaixo. O valor total será recalculado automaticamente e as contas a pagar serão ajustadas proporcionalmente.
+                    Ajuste as quantidades recebidas abaixo. Os itens vinculados a insumos entram no estoque agora, pela quantidade recebida. O valor total será recalculado automaticamente e as contas a pagar serão ajustadas proporcionalmente.
                   </p>
 
                   {/* Tabela de itens com quantidade recebida */}

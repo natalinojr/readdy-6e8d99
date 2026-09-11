@@ -266,6 +266,18 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
 
+### 2026-09-11 — "Lançar despesa" da Nota de Entrada falhava no CHECK de reference_type
+
+`fin_accounts_payable_reference_type_check` só aceitava `purchase/manual/recurring/hr_payroll`; o `fiscal-inbound › import_bill` grava `reference_type='nfe_entrada'` → toda NF/NFS-e lançada como despesa dava "violates check constraint" na 1ª parcela (nada ficava gravado; a nota seguia "A conferir"). Constraint ampliada com `nfe_entrada` (migração `20260911010000_...`). **Pegadinha:** ao criar um `reference_type` novo em contas a pagar, conferir esse CHECK — o código também usa `sale`/`bill_payment` em outras tabelas, não aqui.
+
+### 2026-09-11 — Compra só entra no estoque na CONFIRMAÇÃO DO RECEBIMENTO
+
+Pedido do usuário: *"só entra no estoque na confirmação do recebimento e não antes"* (lançou NF de entrada como compra com insumos vinculados e o estoque subiu antes da mercadoria chegar). Vale para **toda compra** (manual e nota de entrada).
+- Nova coluna **`fin_purchases.stock_applied_at`**: quando a entrada no estoque foi lançada. `purchase-write` › `create_purchase`/`update_purchase` **não movimentam mais estoque** (só custo do insumo, fornecedor e catálogo); `purchase-confirm-delivery` lança a entrada **inteira pela quantidade recebida** (× `units_per_package`) e grava `stock_applied_at`. A ação `confirm_delivery` do `purchase-write` faz o mesmo (`applyStockEntry`).
+- **Compras antigas** (entrada feita na criação): backfill `stock_applied_at = created_at` nas que têm item com insumo → a confirmação delas continua aplicando só o **delta** recebido − pedido; editar/excluir continua estornando. Editar/excluir compra nova sem recebimento **não estorna** nada (não entrou).
+- `reverseStockForItems` agora estorna a **quantidade recebida** quando houver e usa `units_per_package` real (antes ignorava fator < 1).
+- Correção de dado: COPAL NF 1297703 (El Patron) teve o estoque estornado e `stock_applied_at` zerado, para entrar na confirmação.
+
 ### 2026-09-11 — Zero grudado na frente dos campos numéricos ("014")
 
 Pedido do usuário: *"sempre que tem campo de colocar número começa com o zero e nunca dá pra colocar o número que a gente quer"* — em todas as telas. Causa: `<input type="number">` controlado com valor `0`; ao digitar "14" o DOM fica "014", `Number("014") === 14` já bate com o estado e o React não reescreve o campo.

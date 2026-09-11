@@ -525,7 +525,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
               </div>
               <p className="text-[10px] text-zinc-400 mt-1">
                 {tipo === 'purchase'
-                  ? 'Itens vinculados a um insumo dão entrada no estoque e atualizam o custo dele. O vínculo fica memorizado: nas próximas notas deste fornecedor o item já vem vinculado. Confira o fator quando a nota vier em caixa/fardo (ex.: 1 CX = 12 un).'
+                  ? 'Itens vinculados a um insumo entram no estoque quando você confirmar o recebimento da compra (Compras › detalhe › Confirmar recebimento). O vínculo fica memorizado: nas próximas notas deste fornecedor o item já vem vinculado. Confira o fator quando a nota vier em caixa/fardo (ex.: 1 CX = 12 un).'
                   : 'Despesa não movimenta o estoque.'}
               </p>
             </div>
