@@ -9,7 +9,8 @@ export type AppMode =
   | 'kds'
   | 'gestor_pedidos'
   | 'gestor_delivery'
-  | 'tarefas';
+  | 'tarefas'
+  | 'contratacao';
 
 interface AppModeContextValue {
   mode: AppMode;

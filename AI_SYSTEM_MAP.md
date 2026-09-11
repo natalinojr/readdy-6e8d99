@@ -94,6 +94,7 @@ Rotas dentro do layout autenticado:
 - `/diagnostico/checklist`: `src/pages/diagnostico/ChecklistTeste.tsx`
 - `/imprimir-qrcodes`: `src/pages/imprimir-qrcodes/page.tsx`
 - `/admin-master`: `src/pages/admin-master/page.tsx`
+- `/contratacao`: `src/pages/contratacao/page.tsx` (banco de currículos; só o e-mail do dono. Leitura híbrida: PDF com texto é lido grátis no navegador por `src/lib/curriculoLocal.ts` (pdf.js + regras: nome, contato, nascimento, cidade/UF, cargo, texto completo pesquisável); foto/PDF escaneado vai direto à IA; nos demais a IA só roda no botão "Organizar com IA". Edge `hiring-cv-scan` lê PDF/foto com IA → tabela `hiring_candidates` + bucket privado `curriculos`, RLS por `is_hiring_admin()` = e-mail do JWT, não por tenant)
 
 ## Mapa por dominio
 

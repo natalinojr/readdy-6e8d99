@@ -23,6 +23,8 @@ interface ModuloCard {
   acentoBorder: string;
   tag: string;
   perfis?: string[];
+  /** Quando definido, só estes e-mails veem o módulo (independe do perfil). */
+  emails?: string[];
 }
 
 const MODULOS: ModuloCard[] = [
@@ -116,6 +118,19 @@ const MODULOS: ModuloCard[] = [
     acentoBorder: 'border-indigo-200/70',
     tag: 'Admin',
     perfis: ['admin', 'gerente', 'tarefas'],
+  },
+  {
+    id: 'contratacao',
+    titulo: 'Contratação',
+    descricao: 'Currículos lidos por IA e organizados por candidato',
+    icon: 'ri-user-search-line',
+    rota: '/contratacao',
+    acento: '#e11d48',
+    acentoText: 'text-rose-600',
+    acentoBg: 'bg-rose-50',
+    acentoBorder: 'border-rose-200/70',
+    tag: 'Admin',
+    emails: ['natalinojr.engel@gmail.com'],
   },
   {
     id: 'gestao',
@@ -347,6 +362,7 @@ export default function ModulosPage() {
   };
 
   const modulosVisiveis = MODULOS.filter((m) => {
+    if (m.emails && !m.emails.includes(user?.email?.toLowerCase() ?? '')) return false;
     const perfilOk = !m.perfis || !user?.perfil || m.perfis.includes(user.perfil);
     let cfgOk = true;
     if (!settingsLoading) {

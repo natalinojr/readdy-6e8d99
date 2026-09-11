@@ -37,7 +37,7 @@ function mapearFolha(f: FuncionarioExtrato, modo: ModoImport = 'completa') {
     const reais = (n: number) => n.toFixed(2).replace('.', ',');
     return {
       base_salary: 0, overtime_50: 0, overtime_50_hours: 0, overtime_100: 0, overtime_100_hours: 0,
-      overtime_night: 0, overtime_night_hours: 0, overtime: 0, overtime_percent: 50,
+      overtime_night_hours: 0, overtime: 0, overtime_percent: 50,
       night_shift_value: 0, night_shift_hours: 0, dsr_value: 0, bonuses: 0, other_bonuses: v,
       inss: 0, irrf: 0, fgts: 0, vale_transporte: 0, vale_transporte_uses: false, vale_refeicao: 0,
       desconto_faltas: 0, horas_faltantes: 0, dias_faltas: 0, other_deductions: 0,
@@ -86,7 +86,7 @@ function mapearFolha(f: FuncionarioExtrato, modo: ModoImport = 'completa') {
     base_salary: f.salario || soma(base),
     overtime_50: soma(he50), overtime_50_hours: horas(he50),
     overtime_100: soma(he100), overtime_100_hours: horas(he100),
-    overtime_night: soma(heNot), overtime_night_hours: horas(heNot),
+    overtime_night_hours: horas(heNot),
     overtime: heTotal, overtime_percent: he50pct,
     night_shift_value: soma(adicNot), night_shift_hours: horas(adicNot),
     dsr_value: soma(dsr),
@@ -117,12 +117,12 @@ export default function ImportarFolhaDominioModal({ tenantId, employees, onClose
   const [modo, setModo] = useState<Record<number, ModoImport>>({});
   const [aberto, setAberto] = useState<number | null>(null);
 
-  const matchEmp = (f: FuncionarioExtrato): Employee | undefined => {
+  const matchEmp = (f: FuncionarioExtrato, lista: Employee[] = employees): Employee | undefined => {
     if (f.cpf) {
-      const byCpf = employees.find((e) => (e.cpf ?? '').replace(/\D/g, '') === f.cpf);
+      const byCpf = lista.find((e) => (e.cpf ?? '').replace(/\D/g, '') === f.cpf);
       if (byCpf) return byCpf;
     }
-    return employees.find((e) => norm(e.name) === norm(f.nome));
+    return lista.find((e) => norm(e.name) === norm(f.nome));
   };
   const payDe = (f: FuncionarioExtrato) => {
     const emp = matchEmp(f);
@@ -167,12 +167,15 @@ export default function ImportarFolhaDominioModal({ tenantId, employees, onClose
     const substituir: string[] = [];
     let novos = 0; let atualizados = 0;
     try {
+      const { data: frescos, error: fErr } = await supabase.from('hr_employees').select('*').eq('tenant_id', tenantId);
+      if (fErr) throw new Error(`Cadastro de funcionários: ${fErr.message}`);
+      const lista = (frescos ?? []) as Employee[];
       for (const [i, f] of ext.funcionarios.entries()) {
         const m = modo[i] ?? 'completa';
         if (m === 'nao') continue;
         const pays = payDe(f);
         if (pays.some((p) => p.status === 'paid')) continue; // já pago: não mexe
-        const emp = matchEmp(f);
+        const emp = matchEmp(f, lista);
         const status = /DEMITID/i.test(f.situacao) ? 'inactive' : /F[EÉ]RIAS/i.test(f.situacao) ? 'vacation' : /AFAST|LICEN/i.test(f.situacao) ? 'leave' : 'active';
         const cadastro: Record<string, unknown> = {
           name: f.nome, role: f.cargo || f.vinculo || 'Funcionário', salary: m === 'inss' ? 0 : f.salario, status,
