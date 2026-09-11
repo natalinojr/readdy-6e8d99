@@ -650,3 +650,25 @@ Migration: `supabase/migrations/purchase_pack_breakdown_and_catalog_sku.sql` (ap
 Quando aceita: estorna o estoque da versão antiga (`manual_out`), apaga as contas a pagar/caixa antigas (nenhuma tinha pagamento, garantido pela guarda) e os itens antigos, e recria tudo com os dados novos — mesmo caminho do `create_purchase`.
 
 Front: `ComprasTab.tsx` tem botão de editar (lápis) na coluna Ações — checa a elegibilidade (via `fin_accounts_payable` do `reference_id`) antes de abrir o modal; se bloqueado, mostra banner explicando por quê. `compras/NovaCompraModal.tsx` ganhou os props `editingPurchase`/`editingInstallments` para pré-preencher o formulário. Hook `usePurchases` ganhou `update(id, payload, auditFn)`.
+
+## 9l. Stone × Inter: repasse da maquininha casado sozinho + vendas e taxas no financeiro (2026-09-11)
+
+**Como o dinheiro anda (El Patron Paranaguá):** o repasse de cartão da Stone vai por **domicílio bancário** direto para o Banco Inter (`tipoTransacao=DOMICILIO_CARTAO`, "Crédito domicílio cartão - Cartão De Débito/Antecipação - Stone"). Não passa pela Conta Stone. Na Conta Stone fica só o Pix recebido na maquininha, que o dono transfere depois para o Inter. Por isso o arquivo da Stone (layout 2.2) vem com `<Payments>` vazio e `payments_total = 0`: é esperado.
+
+**Banco (migration `20260911120000_conciliacao_stone_inter.sql`):**
+- `fin_bank_statement_imports.match_kind` (`stone_deposit` | `stone_detail` | `internal_transfer`) e `match_group` (`stone:AAAA-MM-DD:antecipado|normal`).
+- `fin_stone_config.post_to_ledger` (default false).
+- `fn_match_stone_inter(tenant, de, até)` (só `service_role`): agrupa as parcelas da Stone por data de pagamento + antecipado sim/não e casa com os créditos domicílio Stone do Inter do mesmo dia (antecipado = descrição com "Antecipação"), tolerância `max(0,05; 0,02 × linhas do Inter)` porque o Inter quebra por bandeira. Marca os dois lados `matched` com o mesmo `match_group` e grava o resumo nas notas. Também marca Pix/TED de/para o **CNPJ da própria empresa** (pagador dos débitos Pix do Inter ou `tenants.cnpj`) como `internal_transfer`, categoria "Transferência entre contas".
+- Chamada: `stone-conciliation` (após cada dia importado e no `sync`, últimos 20 dias) e `inter-bank` (após cada sync, últimos 20 dias). Sem cron.
+
+**Lançamento no financeiro (`post_to_ledger = true`):** por dia de pagamento, `postLedger` grava em `fin_cash_flow` com `reference_id = fin_stone_imports.id` (idempotente: apaga e relança a cada reimportação):
+- receita `origin='stone_sale'` = bruto das parcelas liquidadas;
+- despesas `origin='auto_card_fee'` = MDR, antecipação e tarifas/chargebacks (a DRE já lê `auto_card_fee` como Taxas de Cartão).
+- bruto − taxas = líquido depositado (conferido no centavo de 01 a 09/09).
+- Desligar a opção remove esses lançamentos. **Usar só enquanto as vendas de cartão NÃO forem registradas pelo PDV do ERP**, senão a receita conta 2×.
+
+**Telas:** `DRETab` e `DREComparativoTab` somam `stone_sale` na receita (linha "Vendas em Cartão (Stone)"); `FluxoCaixaTab` rotula a origem; `RealizadoProjetadoTab` ignora `source='stone'` na coluna Banco (era contagem dupla com o domicílio no Inter); `TransacaoDetalheModal` mostra a composição do repasse (ação `group_detail` da edge) e o aviso de transferência entre contas; `StoneConfigModal` tem o checkbox.
+
+**Taxas reais medidas (08/09):** débito ≈ 0,86%; antecipado ≈ 3,4% (≈ 1,45% é a antecipação). Todas as formas de pagamento do ERP estão com taxa 0 e prazo 0.
+
+**Endpoint e horário da Stone:** `GET /v2/merchant/{stoneCode}/conciliation-file/{AAAAMMDD}` com `Authorization: Basic base64(chave:)` + `x-user-type: client`. Entre 00h e 04h (Brasília) a Stone responde 400 "only permitted from 04:00": a edge trata como `not_ready` e tenta de novo. Fim de semana vem com vendas e 0 linhas (sem liquidação; o repasse acumula na segunda).

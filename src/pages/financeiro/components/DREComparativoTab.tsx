@@ -26,6 +26,8 @@ interface DRESnapshot {
   receitaDelivery: number;
   receitaMesa: number;
   receitaAutoatendimento: number;
+  /** Vendas em cartão liquidadas pela Stone (origin stone_sale). */
+  receitaStone: number;
   receitaAReceber: number;
   cancelamentos: number;
   descontos: number;
@@ -143,9 +145,11 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string):
   });
   const custoPessoal = (payrollRes.data ?? []).reduce((s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0);
   const taxasMaquininha = (cardFeeRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
+  const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
   return {
-    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto,
+    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone,
     receitaAReceber: 0, cancelamentos, descontos, cmvCompras, cmvComprasPendentes: 0, cmvTeorico,
     despesasPorCategoria, despesasAPagar: 0, custoPessoal, taxasMaquininha,
   };
@@ -194,16 +198,18 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
   });
   const custoPessoal = (payrollRes.data ?? []).reduce((s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0);
   const taxasMaquininha = (cardFeeRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
+  const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
   return {
-    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto,
+    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone,
     receitaAReceber, cancelamentos, descontos, cmvCompras, cmvComprasPendentes, cmvTeorico,
     despesasPorCategoria, despesasAPagar, custoPessoal, taxasMaquininha,
   };
 }
 
 function calcDRE(d: DRESnapshot, _mode: 'caixa' | 'competencia') {
-  const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento;
+  const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento + (d.receitaStone ?? 0);
   // BUG-41 (intencional, mesmo critério do DRETab): recebível pendente é SALDO, não receita
   // adicional. A venda a prazo já está no `payments`/`auto_sale`; somar `receitaAReceber` na
   // competência contava a mesma venda duas vezes. `receitaAReceber` segue exibido à parte.

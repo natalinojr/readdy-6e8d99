@@ -2,7 +2,19 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCostCenters } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
+import { invokeWithAuth } from '@/lib/supabase';
 import type { StatementImport, BillMatch, ReceivableMatch, ReconciliationRule } from '@/hooks/useConciliacao';
+
+interface GroupRow {
+  id: string;
+  source: string;
+  transaction_date: string;
+  amount: number;
+  transaction_type: string;
+  description: string;
+  match_kind: string | null;
+  stone_installment_info: Record<string, unknown> | null;
+}
 
 interface Props {
   transaction: StatementImport | null;
@@ -59,6 +71,18 @@ export default function TransacaoDetalheModal({
       loadMatches();
     }
   }, [transaction]);
+
+  // Stone × Inter: vendas que compõem este repasse (ou o depósito de uma venda)
+  const [groupRows, setGroupRows] = useState<GroupRow[]>([]);
+  useEffect(() => {
+    setGroupRows([]);
+    const g = transaction?.match_group;
+    if (!g || !g.startsWith('stone:')) return;
+    let alive = true;
+    invokeWithAuth<{ success?: boolean; rows?: GroupRow[] }>('stone-conciliation', { body: { action: 'group_detail', tenant_id: user?.tenantId, match_group: g } })
+      .then((r) => { if (alive) setGroupRows(r.data?.rows ?? []); });
+    return () => { alive = false; };
+  }, [transaction?.match_group, user?.tenantId]);
 
   const loadMatches = useCallback(async () => {
     if (!transaction) return;
@@ -165,6 +189,46 @@ export default function TransacaoDetalheModal({
               </span>
             )}
           </div>
+
+          {transaction.match_kind === 'internal_transfer' && (
+            <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 text-xs text-sky-800">
+              <i className="ri-arrow-left-right-line mr-1" />
+              Transferência entre contas da própria empresa. Não entra como receita nem como despesa.
+            </div>
+          )}
+          {groupRows.length > 0 && (() => {
+            const num = (v: unknown) => Number(v ?? 0);
+            const vendas = groupRows.filter(r => r.source === 'stone');
+            const deps = groupRows.filter(r => r.source !== 'stone');
+            const bruto = vendas.reduce((s, r) => s + num(r.stone_installment_info?.gross_amount ?? r.amount), 0);
+            const taxa = vendas.reduce((s, r) => s + num(r.stone_installment_info?.fee_amount), 0);
+            const liq = vendas.reduce((s, r) => s + num(r.amount), 0);
+            const dep = deps.reduce((s, r) => s + num(r.amount), 0);
+            return (
+              <div className="border border-green-200 rounded-xl overflow-hidden">
+                <div className="bg-green-50 px-3 py-2 flex items-center justify-between gap-2 text-xs">
+                  <span className="font-semibold text-green-800"><i className="ri-links-line mr-1" />Repasse Stone × Banco Inter</span>
+                  <span className="text-green-700 whitespace-nowrap">{vendas.length} venda(s) · no Inter {formatCurrency(dep)}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 px-3 py-2 text-xs border-b border-green-100">
+                  <div><p className="text-zinc-400">Bruto</p><p className="font-semibold text-zinc-800">{formatCurrency(bruto)}</p></div>
+                  <div><p className="text-zinc-400">Taxas</p><p className="font-semibold text-red-600">{formatCurrency(taxa)}</p></div>
+                  <div><p className="text-zinc-400">Líquido Stone</p><p className="font-semibold text-zinc-800">{formatCurrency(liq)}</p></div>
+                </div>
+                <div className="max-h-48 overflow-y-auto divide-y divide-zinc-100">
+                  {vendas.map(r => (
+                    <div key={r.id} className="flex items-center justify-between px-3 py-1.5 text-xs">
+                      <span className="text-zinc-600 truncate mr-2">{r.description}</span>
+                      <span className="text-zinc-800 whitespace-nowrap">
+                        {formatCurrency(num(r.stone_installment_info?.gross_amount ?? r.amount))}
+                        <span className="text-zinc-400"> → {formatCurrency(num(r.amount))}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Form */}
           <div className="space-y-3">

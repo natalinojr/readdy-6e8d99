@@ -65,6 +65,10 @@ Deno.serve(async (req) => {
 
     let newTotalAmount = 0;
     const items = (purchase.items ?? []) as Array<Record<string, unknown>>;
+    // Desde 2026-09-11 o estoque só entra no recebimento: compra sem stock_applied_at
+    // recebe aqui a entrada INTEIRA (quantidade recebida). Compra antiga, cuja entrada
+    // já foi feita na criação, recebe só o delta recebido − pedido.
+    const stockAlreadyApplied = Boolean(purchase.stock_applied_at);
 
     let supplierRecord: { id: string } | null = null;
     if (purchase.supplier) {
@@ -93,15 +97,32 @@ Deno.serve(async (req) => {
       newTotalAmount += receivedTotal;
 
       if (item.ingredient_id) {
-        // O estoque ja entrou por completo na CRIACAO da compra (purchase-write
-        // create_purchase). Aqui aplicamos apenas o DELTA entre o recebido e o
-        // pedido — antes a entrada era repetida por inteiro (dupla contagem).
         // quantity/received_quantity estao em unidades de COMPRA; units_per_package
         // converte para unidades de estoque.
-        const unitsPerPkg = Number(item.units_per_package ?? 1) || 1;
-        const factor = unitsPerPkg > 1 ? unitsPerPkg : 1;
-        const deltaStock = (receivedQty - originalQty) * factor;
+        const unitsPerPkg = Number(item.units_per_package ?? 1);
+        const factor = unitsPerPkg > 0 ? unitsPerPkg : 1;
 
+        if (!stockAlreadyApplied) {
+          const entrada = receivedQty * factor;
+          if (entrada > 0) {
+            const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
+              p_tenant_id: tenant_id,
+              p_ingredient_id: item.ingredient_id,
+              p_type: 'in',
+              p_quantity: entrada,
+              p_unit: null,
+              p_reason: `Compra: ${purchase.supplier} - NF ${purchase.invoice_number || 'S/N'}`,
+              p_notes: receivedQty !== originalQty ? `recebido=${receivedQty} pedido=${originalQty} upp=${factor}` : null,
+              p_order_id: null,
+              p_operator_id: user.id,
+              p_batch_id: null,
+            });
+            if (mvErr) console.error('[purchase-confirm-delivery] entrada fn_add_stock_movement error:', mvErr.message ?? mvErr);
+          }
+        }
+
+        // Compra antiga: o estoque já entrou por completo na criação; aplica só o DELTA
+        const deltaStock = stockAlreadyApplied ? (receivedQty - originalQty) * factor : 0;
         if (deltaStock !== 0) {
           const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
             p_tenant_id: tenant_id,
@@ -154,6 +175,7 @@ Deno.serve(async (req) => {
       delivery_confirmed_at: confirmedAt,
       delivery_notes: delivery_notes || null,
       total_amount: newTotalAmount,
+      ...(stockAlreadyApplied ? {} : { stock_applied_at: confirmedAt }),
     }).eq('id', purchase_id).eq('tenant_id', tenant_id);
 
     // Ajustar contas a pagar pendentes proporcionalmente

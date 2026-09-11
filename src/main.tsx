@@ -5,6 +5,10 @@ import './index.css'
 import App from './App.tsx'
 import { supabase } from './lib/supabase'
 import { registerServiceWorker } from './lib/pwa'
+import { installNumberInputFix } from './lib/numberInputFix'
+
+// Campos numéricos: seleciona ao focar e tira o zero grudado na frente ("014")
+installNumberInputFix()
 
 // ── Rede de segurança: captura erros de refresh token do Supabase que
 //    escapem do try-catch interno. Ao invés de redirecionar bruscamente,

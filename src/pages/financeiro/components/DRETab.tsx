@@ -51,6 +51,8 @@ interface DREData {
   receitaMesa: number;
   receitaAutoatendimento: number;
   receitaManual: number;
+  /** Vendas em cartão liquidadas pela Stone (fin_cash_flow origin stone_sale). Só existe com a opção ligada na integração. */
+  receitaStone: number;
   cancelamentos: number;
   descontos: number;
   /** Compras do período que são MERCADORIA — é a linha CMV da DRE. */
@@ -327,12 +329,22 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
     .gte('date', startDate)
     .lte('date', endDate);
   const taxasMaquininha = (cardFeeRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  // Vendas em cartão liquidadas pela Stone (opção "lançar no financeiro" da integração)
+  const { data: stoneSaleRows } = await supabase
+    .from('fin_cash_flow')
+    .select('amount')
+    .eq('tenant_id', tenantId)
+    .eq('type', 'income')
+    .eq('origin', 'stone_sale')
+    .gte('date', startDate)
+    .lte('date', endDate);
+  const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
   const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime);
 
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
-    receitaManual,
+    receitaManual, receitaStone,
     cancelamentos, descontos, cmvCompras, comprasTotal, despesasPorCategoria,
     custoPessoal, taxasMaquininha,
     receitaAReceber: 0,
@@ -516,12 +528,22 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     .gte('date', startDate)
     .lte('date', endDate);
   const taxasMaquininha = (cardFeeRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  // Vendas em cartão liquidadas pela Stone (opção "lançar no financeiro" da integração)
+  const { data: stoneSaleRows } = await supabase
+    .from('fin_cash_flow')
+    .select('amount')
+    .eq('tenant_id', tenantId)
+    .eq('type', 'income')
+    .eq('origin', 'stone_sale')
+    .gte('date', startDate)
+    .lte('date', endDate);
+  const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
   const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime);
 
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
-    receitaManual,
+    receitaManual, receitaStone,
     cancelamentos, descontos, cmvCompras, comprasTotal, despesasPorCategoria,
     custoPessoal, taxasMaquininha,
     receitaAReceber,
@@ -868,7 +890,7 @@ export default function DRETab() {
   }
   if (!data) return null;
 
-  const receitaRecebida = data.receitaBalcao + data.receitaDelivery + data.receitaMesa + data.receitaAutoatendimento + data.receitaManual;
+  const receitaRecebida = data.receitaBalcao + data.receitaDelivery + data.receitaMesa + data.receitaAutoatendimento + data.receitaManual + (data.receitaStone ?? 0);
 
   // BUG-41: receitaAReceber é saldo (balanço), não receita adicional.
   // No regime de competência a receita já está no auto_sale do fin_cash_flow
@@ -930,7 +952,7 @@ export default function DRETab() {
   const margemBruta = receitaBruta > 0 ? (lucroBruto / receitaBruta) * 100 : 0;
 
   const prevReceitaRecebida = (prevData?.receitaBalcao ?? 0) + (prevData?.receitaDelivery ?? 0)
-    + (prevData?.receitaMesa ?? 0) + (prevData?.receitaAutoatendimento ?? 0) + (prevData?.receitaManual ?? 0);
+    + (prevData?.receitaMesa ?? 0) + (prevData?.receitaAutoatendimento ?? 0) + (prevData?.receitaManual ?? 0) + (prevData?.receitaStone ?? 0);
 
   const prevReceitaBruta = prevReceitaRecebida;
 
@@ -1273,6 +1295,16 @@ export default function DRETab() {
                   origin="Livro-razão: fin_cash_flow → auto_sale"
                   clickable
                   onClick={() => setDrillDown({ type: 'receita_autoatendimento' })}
+                />
+              )}
+              {(data.receitaStone ?? 0) > 0 && (
+                <DRERow
+                  label="Vendas em Cartão (Stone)"
+                  atual={data.receitaStone}
+                  anterior={prevData?.receitaStone}
+                  receitaBruta={receitaBruta}
+                  depth={1}
+                  origin="Livro-razão: fin_cash_flow → stone_sale (valor bruto liquidado pela Stone; as taxas estão em Taxas de Cartão)"
                 />
               )}
               {data.receitaManual > 0 && (

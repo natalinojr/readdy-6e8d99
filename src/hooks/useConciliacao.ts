@@ -34,6 +34,11 @@ export interface StatementImport {
   category?: string;
   cost_center_id?: string;
   notes?: string;
+  source?: string | null;
+  /** stone_deposit | stone_detail | internal_transfer (fn_match_stone_inter) */
+  match_kind?: string | null;
+  /** ex.: stone:2026-09-08:antecipado — liga as vendas da Stone ao depósito no Inter */
+  match_group?: string | null;
   reconciled: boolean;
   reconciled_at?: string;
   created_at: string;

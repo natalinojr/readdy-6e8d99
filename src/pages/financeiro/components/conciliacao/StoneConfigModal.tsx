@@ -11,6 +11,7 @@ interface StoneConfig {
   is_active: boolean;
   last_sync_at?: string | null;
   last_sync_error?: string | null;
+  post_to_ledger?: boolean;
   bank_account_id?: string | null;
   auto_sync?: boolean;
   has_key?: boolean;
@@ -30,6 +31,7 @@ export default function StoneConfigModal({ onClose, onSaved }: Props) {
   const [apiKey, setApiKey] = useState('');
   const [bankAccountId, setBankAccountId] = useState('');
   const [autoSync, setAutoSync] = useState(true);
+  const [postToLedger, setPostToLedger] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -47,6 +49,7 @@ export default function StoneConfigModal({ onClose, onSaved }: Props) {
         setStoneCode(cfg.stone_code || '');
         setBankAccountId(cfg.bank_account_id || '');
         setAutoSync(cfg.auto_sync !== false);
+        setPostToLedger(cfg.post_to_ledger === true);
       }
       setLoading(false);
     })();
@@ -59,7 +62,7 @@ export default function StoneConfigModal({ onClose, onSaved }: Props) {
     setSaving(true);
     setResult(null);
     const resp = await invokeWithAuth<Resp>('stone-conciliation', {
-      body: { action: 'save_config', tenant_id: user?.tenantId, stone_code: stoneCode.trim(), api_key: apiKey.trim(), bank_account_id: bankAccountId, auto_sync: autoSync },
+      body: { action: 'save_config', tenant_id: user?.tenantId, stone_code: stoneCode.trim(), api_key: apiKey.trim(), bank_account_id: bankAccountId, auto_sync: autoSync, post_to_ledger: postToLedger },
     });
     setSaving(false);
     const err = resp.error?.message ?? resp.data?.error;
@@ -156,13 +159,21 @@ export default function StoneConfigModal({ onClose, onSaved }: Props) {
                 ))}
               </select>
               <p className="text-xs text-zinc-400 mt-1">
-                Cada parcela depositada, tarifa e chargeback vira uma linha na conciliação desta conta. Se você também importar o OFX da mesma conta, os depósitos aparecem duas vezes: use contas separadas ou só uma das fontes.
+                Cada parcela liquidada, tarifa e chargeback vira uma linha de detalhe nesta conta. Se o repasse cai em outro banco por domicílio (ex.: Banco Inter), o sistema casa sozinho cada depósito desse banco com as vendas da Stone.
               </p>
             </div>
 
             <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
               <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} className="rounded" />
               Buscar os dias que faltam sempre que alguém abrir a Conciliação
+            </label>
+
+            <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
+              <input type="checkbox" checked={postToLedger} onChange={(e) => setPostToLedger(e.target.checked)} className="rounded mt-0.5" />
+              <span>
+                Lançar no financeiro as vendas em cartão e as taxas de cada dia liquidado pela Stone (entram na DRE e no Fluxo de Caixa).
+                <span className="block text-zinc-400 mt-0.5">Use só enquanto as vendas de cartão não forem registradas pelo caixa do ERP, senão a receita conta duas vezes. Vale para as próximas importações: reimporte o período para lançar os dias anteriores. Desligar remove os lançamentos feitos pela Stone.</span>
+              </span>
             </label>
 
             {result && (

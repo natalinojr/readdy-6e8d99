@@ -350,6 +350,49 @@ async function autoMatch(admin: Admin, tenantId: string, bankAccountId: string, 
 }
 
 // ── Importa um dia ───────────────────────────────────────────────────────────
+// ── Lançamento no financeiro (opcional: fin_stone_config.post_to_ledger) ──────
+// Por dia de pagamento: receita = bruto das parcelas liquidadas (origin stone_sale);
+// despesas = MDR, antecipação e tarifas/chargebacks (origin auto_card_fee, que a DRE já lê).
+// bruto − taxas = líquido depositado. Idempotente: apaga o que este arquivo lançou e relança.
+async function postLedger(admin: Admin, tenantId: string, importId: string, parsed: ParsedFile) {
+  const { error: delErr } = await admin.from('fin_cash_flow').delete().eq('tenant_id', tenantId).eq('reference_id', importId).in('origin', ['stone_sale', 'auto_card_fee']);
+  if (delErr) throw new Error('Limpar lançamentos: ' + delErr.message);
+  type Day = { gross: number; mdr: number; adv: number; n: number; otherDebit: number; otherCredit: number };
+  const days = new Map<string, Day>();
+  const day = (d: string) => {
+    let x = days.get(d);
+    if (!x) { x = { gross: 0, mdr: 0, adv: 0, n: 0, otherDebit: 0, otherCredit: 0 }; days.set(d, x); }
+    return x;
+  };
+  for (const l of parsed.lines) {
+    const x = day(l.transaction_date);
+    if (l.raw.kind === 'installment' && l.transaction_type === 'credit') {
+      const info = (l.stone_installment_info ?? {}) as Record<string, unknown>;
+      const gross = Number(info.gross_amount ?? l.amount);
+      const fee = Number(info.fee_amount ?? 0);
+      const adv = Number(info.advance_fee ?? 0);
+      x.gross += gross; x.adv += adv; x.mdr += fee - adv; x.n++;
+    } else if (l.transaction_type === 'debit') x.otherDebit += l.amount;
+    else x.otherCredit += l.amount;
+  }
+  const rows: Record<string, unknown>[] = [];
+  const base = { tenant_id: tenantId, reference_id: importId };
+  for (const [d, x] of days) {
+    const dd = d.slice(8, 10) + '/' + d.slice(5, 7);
+    if (x.gross > 0.004) rows.push({ ...base, date: d, type: 'income', origin: 'stone_sale', category: 'Vendas', amount: round2(x.gross), description: 'Vendas em cartão liquidadas pela Stone em ' + dd + ' (' + x.n + ' parcela(s), valor bruto)' });
+    if (x.otherCredit > 0.004) rows.push({ ...base, date: d, type: 'income', origin: 'stone_sale', category: 'Vendas', amount: round2(x.otherCredit), description: 'Stone: créditos diversos de ' + dd });
+    if (x.mdr > 0.004) rows.push({ ...base, date: d, type: 'expense', origin: 'auto_card_fee', category: 'Taxas de Cartao', amount: round2(x.mdr), description: 'Taxa Stone (MDR) do repasse de ' + dd });
+    if (x.adv > 0.004) rows.push({ ...base, date: d, type: 'expense', origin: 'auto_card_fee', category: 'Taxas de Cartao', amount: round2(x.adv), description: 'Taxa de antecipação Stone do repasse de ' + dd });
+    if (x.otherDebit > 0.004) rows.push({ ...base, date: d, type: 'expense', origin: 'auto_card_fee', category: 'Taxas de Cartao', amount: round2(x.otherDebit), description: 'Stone: tarifas, ajustes e chargebacks de ' + dd });
+  }
+  if (rows.length > 0) {
+    const { error } = await admin.from('fin_cash_flow').insert(rows);
+    if (error) throw new Error('Lançar no financeiro: ' + error.message);
+  }
+  const sum = (o: string) => round2(rows.filter((r) => r.origin === o).reduce((s, r) => s + Number(r.amount), 0));
+  return { rows: rows.length, receita: sum('stone_sale'), taxas: sum('auto_card_fee') };
+}
+
 async function importDay(admin: Admin, tenantId: string, cfg: any, date: string) {
   const apiKey = cfg.api_key_b64 ? atob(cfg.api_key_b64) : '';
   if (!apiKey) return { date, error: 'Chave da Stone não configurada' };
@@ -380,6 +423,7 @@ async function importDay(admin: Admin, tenantId: string, cfg: any, date: string)
   }
 
   const parsed = parseConciliation(dl.xml, date);
+  log('INFO', 'import', 'arquivo', { tenantId, date, layout: parsed.layout, lines: parsed.lines.length, sales: parsed.sales.count, payments: parsed.payments.count, hasPaymentsTag: /<Payments[\s>]/.test(dl.xml) });
   if (parsed.stoneCode && String(parsed.stoneCode) !== String(cfg.stone_code)) {
     log('WARN', 'import', 'StoneCode do arquivo diferente da config', { tenantId, file: parsed.stoneCode, cfg: cfg.stone_code });
   }
@@ -415,13 +459,27 @@ async function importDay(admin: Admin, tenantId: string, cfg: any, date: string)
   const grossByExt = new Map(parsed.lines.filter((l) => l.gross != null).map((l) => [l.external_id, l.gross as number]));
   const matched = await autoMatch(admin, tenantId, cfg.bank_account_id, inserted, grossByExt);
 
+  // Stone × Inter: casa os grupos do dia com o repasse que caiu no Inter e marca transferências entre contas próprias
+  let stoneInter: unknown = null;
+  const lineDates = parsed.lines.map((l) => l.transaction_date).sort();
+  if (lineDates.length > 0) {
+    const { data: si, error: siErr } = await admin.rpc('fn_match_stone_inter', { p_tenant: tenantId, p_from: addDays(lineDates[0], -1), p_to: addDays(lineDates[lineDates.length - 1], 1) });
+    if (siErr) log('WARN', 'import', 'fn_match_stone_inter falhou', { tenantId, date, error: siErr.message }); else stoneInter = si;
+  }
+  // Vendas e taxas no financeiro (opcional)
+  let ledger: unknown = null;
+  if (cfg.post_to_ledger === true && imp?.id) {
+    try { ledger = await postLedger(admin, tenantId, imp.id, parsed); }
+    catch (e) { log('WARN', 'import', 'lançamento no financeiro falhou', { tenantId, date, error: String(e) }); ledger = { error: String(e) }; }
+  }
+
   if (cfg.endpoint !== dl.endpoint) await admin.from('fin_stone_config').update({ endpoint: dl.endpoint }).eq('tenant_id', tenantId);
   // Aviso de consistência: Σ linhas do dia deveria bater com Σ depósitos
   const net = round2(credit - debit);
   const diff = parsed.payments.count > 0 ? round2(net - parsed.payments.total) : 0;
   if (Math.abs(diff) > 0.05) log('WARN', 'import', 'linhas ≠ depósitos', { tenantId, date, net, payments: parsed.payments.total });
 
-  return { date, fetched: rows.length, inserted: inserted.length, matched, credit, debit, payments_total: parsed.payments.total, payments_count: parsed.payments.count, sales_count: parsed.sales.count, sales_gross: parsed.sales.gross, diff };
+  return { date, fetched: rows.length, inserted: inserted.length, matched, credit, debit, payments_total: parsed.payments.total, payments_count: parsed.payments.count, sales_count: parsed.sales.count, sales_gross: parsed.sales.gross, diff, stone_inter: stoneInter, ledger };
 }
 
 async function importRange(admin: Admin, tenantId: string, cfg: any, from: string, to: string) {
@@ -450,6 +508,7 @@ function safeConfig(cfg: any) {
     id: cfg.id, stone_code: cfg.stone_code, is_active: cfg.is_active, bank_account_id: cfg.bank_account_id,
     last_sync_at: cfg.last_sync_at, last_sync_error: cfg.last_sync_error ?? null, auto_sync: cfg.auto_sync ?? true,
     has_key: Boolean(cfg.api_key_b64), endpoint: cfg.endpoint ?? null,
+    post_to_ledger: cfg.post_to_ledger === true,
   };
 }
 
@@ -530,12 +589,26 @@ Deno.serve(async (req: Request) => {
       if (!cfg || !cfg.api_key_b64 || !cfg.bank_account_id) return json({ success: false, not_configured: true });
       if (!cfg.is_active || cfg.auto_sync === false) return json({ success: true, skipped: true });
       const r = await syncStoneTenant(admin, cfg);
+      // O Inter pode ter chegado depois da Stone (ou vice-versa): recasa os últimos 20 dias.
+      const { error: siErr } = await admin.rpc('fn_match_stone_inter', { p_tenant: tenantId, p_from: addDays(todayBR(), -20), p_to: todayBR() });
+      if (siErr) log('WARN', 'sync', 'fn_match_stone_inter falhou', { tenantId, error: siErr.message });
       return json({ success: !r.error, ...r });
     }
 
     if (action === 'get_history') {
       const { data: history } = await admin.from('fin_stone_imports').select('*').eq('tenant_id', tenantId).order('reference_date', { ascending: false }).limit(60);
       return json({ success: true, history: history ?? [] });
+    }
+
+    // Vendas da Stone e depósitos do Inter de um mesmo repasse (detalhe da transação na Conciliação)
+    if (action === 'group_detail') {
+      const group = String(body.match_group ?? '');
+      if (!/^stone:\d{4}-\d{2}-\d{2}:(antecipado|normal)$/.test(group)) return errResp('Grupo inválido');
+      const { data: rows, error } = await admin.from('fin_bank_statement_imports')
+        .select('id, source, transaction_date, amount, transaction_type, description, match_kind, stone_installment_info')
+        .eq('tenant_id', tenantId).eq('match_group', group).order('source').order('amount', { ascending: false }).limit(1000);
+      if (error) return errResp(error.message, 500);
+      return json({ success: true, rows: rows ?? [] });
     }
 
     if (action === 'save_config') {
@@ -556,12 +629,21 @@ Deno.serve(async (req: Request) => {
       if (probe.status === 'unauthorized') return errResp('A Stone recusou a chave. Confira a chave (portal Stone › Perfil › Chaves de autenticação, tipo "API de Conciliação Stone") e se ela foi criada para este StoneCode.');
       if (probe.status === 'error') return errResp(`Não foi possível validar na Stone: ${probe.detail}`);
 
+      const postToLedger = typeof body.post_to_ledger === 'boolean' ? body.post_to_ledger : cfg?.post_to_ledger === true;
       const { error } = await admin.from('fin_stone_config').upsert({
         tenant_id: tenantId, stone_code: stoneCode, api_key_b64: btoa(apiKey), bank_account_id: bankAccountId,
-        is_active: true, auto_sync: body.auto_sync === false ? false : true, endpoint: probe.endpoint,
+        is_active: true, auto_sync: body.auto_sync === false ? false : true, endpoint: probe.endpoint, post_to_ledger: postToLedger,
         last_sync_error: null, updated_at: new Date().toISOString(),
       }, { onConflict: 'tenant_id' });
       if (error) return errResp(`Salvar: ${error.message}`, 500);
+      if (cfg?.post_to_ledger === true && postToLedger === false) {
+        // Desligou: remove o que a Stone lançou no financeiro
+        const { data: imps } = await admin.from('fin_stone_imports').select('id').eq('tenant_id', tenantId);
+        const ids = (imps ?? []).map((i) => i.id as string);
+        for (let i = 0; i < ids.length; i += 200) {
+          await admin.from('fin_cash_flow').delete().eq('tenant_id', tenantId).in('reference_id', ids.slice(i, i + 200)).in('origin', ['stone_sale', 'auto_card_fee']);
+        }
+      }
       log('INFO', 'save_config', 'ok', { tenantId, userId, endpoint: probe.endpoint, probe: probe.status });
       return json({ success: true, validated: probe.status, message: probe.status === 'ok' ? 'Chave validada: arquivo da Stone baixado com sucesso.' : 'Chave aceita pela Stone (sem movimento no dia testado).' });
     }

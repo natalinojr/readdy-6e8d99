@@ -99,6 +99,8 @@ Nova ação `confirm_statement_match` em `financial-write`, atômica, por tipo d
 - Saldo do ERP × saldo real do Inter (já temos `synced_balance`).
 
 ### Fase 5 — Entradas: Stone × Inter (dados reais de 2026-09-11)
+
+> ✅ **Implementado em 2026-09-11** (migration `20260911120000_conciliacao_stone_inter.sql`, edges `stone-conciliation` e `inter-bank` publicadas, telas pendentes de push). Detalhes em `FINANCEIRO_MAP.md` §9l. Resultado na 1ª carga (01 a 10/09): 19 depósitos do Inter casados com 168 vendas da Stone, 2 transferências entre contas marcadas, receita − taxas lançadas = líquido da Stone em todos os dias.
 **Como o dinheiro anda:** o repasse da maquininha vai por *domicílio bancário* direto para o Inter (`tipoTransacao=DOMICILIO_CARTAO`, descrição "Crédito domicílio cartão - Cartão De Débito/Antecipação - Stone"). Não passa pela Conta Stone. Na Conta Stone fica só o Pix recebido na maquininha, que o dono transfere depois para o Inter (Pix de "Ep Par Mall", banco STONE IP, CNPJ da própria loja).
 
 **Bate no centavo:**

@@ -155,23 +155,12 @@ async function applyStockAndPricing(
   user: any,
   supplierId: string | null,
 ) {
+  // A ENTRADA NO ESTOQUE não acontece aqui: desde 2026-09-11 ela só é lançada na
+  // confirmação do recebimento (applyStockEntry / purchase-confirm-delivery), e a
+  // compra guarda quando isso ocorreu em fin_purchases.stock_applied_at.
+  void user;
   for (const item of computedItems) {
     if (!item.ingredient_id) continue;
-
-    // quantity vem em UNIDADES DE COMPRA (caixa/fardo); units_per_package
-    // converte para unidades de estoque (contrato exibido na UI da compra:
-    // "qty x upp = total unid.").
-    const stockQty = item.quantity * item.units_per_package;
-
-    // Movimentacao via RPC (insere movimento + atualiza current_stock
-    // atomicamente — antes era insert direto + read-modify-write racy)
-    const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
-      p_tenant_id: tenant_id, p_ingredient_id: item.ingredient_id,
-      p_type: 'in', p_quantity: stockQty, p_unit: null,
-      p_reason: `Compra: ${purchase.supplier} - NF ${purchase.invoice_number || 'S/N'}`,
-      p_notes: null, p_order_id: null, p_operator_id: user.id, p_batch_id: null,
-    });
-    if (mvErr) console.error('[purchase-write] fn_add_stock_movement error:', mvErr.message ?? mvErr);
 
     const supplierPayload: Record<string, unknown> = {};
     if (purchase.supplier) supplierPayload.supplier = purchase.supplier;
@@ -261,8 +250,39 @@ async function upsertCatalogPresentations(
   }
 }
 
+// Entrada no estoque da compra inteira — chamada na confirmação do recebimento.
+// quantity vem em UNIDADES DE COMPRA (caixa/fardo); units_per_package converte
+// para unidades de estoque ("qty x upp = total unid."). Se o recebimento ajustou a
+// quantidade, vale a recebida.
+async function applyStockEntry(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  tenant_id: string,
+  // deno-lint-ignore no-explicit-any
+  purchase: any,
+  items: Array<Record<string, unknown>>,
+  // deno-lint-ignore no-explicit-any
+  user: any,
+) {
+  for (const item of items) {
+    if (!item.ingredient_id) continue;
+    const qty = item.received_quantity != null ? Number(item.received_quantity) : Number(item.quantity ?? 0);
+    const upp = Number(item.units_per_package ?? 1) > 0 ? Number(item.units_per_package) : 1;
+    const stockQty = qty * upp;
+    if (!(stockQty > 0)) continue;
+    // Movimentacao via RPC (insere movimento + atualiza current_stock atomicamente)
+    const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
+      p_tenant_id: tenant_id, p_ingredient_id: item.ingredient_id,
+      p_type: 'in', p_quantity: stockQty, p_unit: null,
+      p_reason: `Compra: ${purchase.supplier} - NF ${purchase.invoice_number || 'S/N'}`,
+      p_notes: null, p_order_id: null, p_operator_id: user.id, p_batch_id: null,
+    });
+    if (mvErr) console.error('[purchase-write] fn_add_stock_movement error:', mvErr.message ?? mvErr);
+  }
+}
+
 // Estorna a entrada de estoque de uma lista de itens (usado ao excluir e ao
-// editar uma compra, antes de recriar com os valores novos).
+// editar uma compra cujo estoque JÁ entrou — stock_applied_at preenchido).
 async function reverseStockForItems(
   // deno-lint-ignore no-explicit-any
   supabase: any,
@@ -274,9 +294,10 @@ async function reverseStockForItems(
 ) {
   for (const item of items) {
     if (!item.ingredient_id) continue;
-    const purchaseQty = Number(item.quantity ?? 0);
-    const unitsPerPkg = Number(item.units_per_package ?? 1) || 1;
-    const stockQty = purchaseQty * (unitsPerPkg > 1 ? unitsPerPkg : 1);
+    // Estorna o que de fato entrou: a quantidade recebida, quando o recebimento ajustou
+    const purchaseQty = item.received_quantity != null ? Number(item.received_quantity) : Number(item.quantity ?? 0);
+    const unitsPerPkg = Number(item.units_per_package ?? 1) > 0 ? Number(item.units_per_package) : 1;
+    const stockQty = purchaseQty * unitsPerPkg;
     if (stockQty <= 0) continue;
 
     // Estorno via RPC. O tipo antigo 'out' nao existe no enum
@@ -652,10 +673,14 @@ Deno.serve(async (req) => {
         // Desfaz o efeito da versão antiga: estoque, contas a pagar e itens.
         // Nenhuma delas tem pagamento (guarda acima já garantiu isso).
         const oldItems = (existing.items ?? []) as Array<Record<string, unknown>>;
-        await reverseStockForItems(
-          supabase, tenant_id, oldItems, user,
-          `Ajuste por edição da compra: ${existing.supplier}${existing.invoice_number ? ` NF ${existing.invoice_number}` : ''}`,
-        );
+        // Só compras antigas (antes de 2026-09-11) têm estoque lançado sem recebimento
+        // confirmado; nas novas o estoque ainda não entrou e não há o que estornar.
+        if (existing.stock_applied_at) {
+          await reverseStockForItems(
+            supabase, tenant_id, oldItems, user,
+            `Ajuste por edição da compra: ${existing.supplier}${existing.invoice_number ? ` NF ${existing.invoice_number}` : ''}`,
+          );
+        }
         await supabase.from('fin_accounts_payable').delete().eq('reference_id', id).eq('tenant_id', tenant_id);
         await supabase.from('fin_cash_flow').delete().eq('reference_id', id).eq('tenant_id', tenant_id).eq('origin', 'auto_purchase');
         await supabase.from('fin_purchase_items').delete().eq('purchase_id', id).eq('tenant_id', tenant_id);
@@ -690,7 +715,7 @@ Deno.serve(async (req) => {
 
         const { data: updated, error: updateErr } = await supabase
           .from('fin_purchases')
-          .update({ ...purchaseData, payment_status: finalStatus, delivery_confirmed_at: null, delivery_notes: null })
+          .update({ ...purchaseData, payment_status: finalStatus, delivery_confirmed_at: null, delivery_notes: null, stock_applied_at: null })
           .eq('id', id).eq('tenant_id', tenant_id)
           .select().single();
         if (updateErr) throw updateErr;
@@ -726,11 +751,15 @@ Deno.serve(async (req) => {
         if (purchase.delivery_confirmed_at) return new Response(JSON.stringify({ error: 'Recebimento já confirmado anteriormente' }), { status: 409, headers: corsHeaders });
 
         const confirmedAt = new Date().toISOString();
-        await supabase.from('fin_purchases').update({ delivery_confirmed_at: confirmedAt, delivery_notes: delivery_notes || null }).eq('id', purchase_id).eq('tenant_id', tenant_id);
-
-        // O estoque entra na CRIACAO da compra (create_purchase). Confirmar o
-        // recebimento aqui nao repete a entrada — o fluxo com ajuste de
-        // quantidades recebidas e o edge purchase-confirm-delivery.
+        // O estoque entra AQUI, no recebimento (a tela usa o purchase-confirm-delivery,
+        // que faz o mesmo com ajuste de quantidades). Compra antiga que já teve a
+        // entrada na criação (stock_applied_at preenchido) não repete.
+        const stockNow = !purchase.stock_applied_at;
+        if (stockNow) await applyStockEntry(supabase, tenant_id, purchase, (purchase.items ?? []) as Array<Record<string, unknown>>, user);
+        await supabase.from('fin_purchases').update({
+          delivery_confirmed_at: confirmedAt, delivery_notes: delivery_notes || null,
+          ...(stockNow ? { stock_applied_at: confirmedAt } : {}),
+        }).eq('id', purchase_id).eq('tenant_id', tenant_id);
 
         await supabase.from('fin_accounts_payable').update({ delivery_confirmed: true, delivery_confirmed_at: confirmedAt })
           .eq('reference_id', purchase_id).eq('tenant_id', tenant_id).neq('status', 'paid');
@@ -754,10 +783,13 @@ Deno.serve(async (req) => {
         if (!purchase) return new Response(JSON.stringify({ error: 'Compra não encontrada' }), { status: 404, headers: corsHeaders });
 
         const purchaseItems = (purchase.items ?? []) as Array<Record<string, unknown>>;
-        await reverseStockForItems(
-          supabase, tenant_id, purchaseItems, user,
-          `Estorno de compra excluída: ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`,
-        );
+        // Só estorna se o estoque chegou a entrar (recebimento confirmado, ou compra antiga)
+        if (purchase.stock_applied_at) {
+          await reverseStockForItems(
+            supabase, tenant_id, purchaseItems, user,
+            `Estorno de compra excluída: ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`,
+          );
+        }
 
         await supabase
           .from('fin_accounts_payable')

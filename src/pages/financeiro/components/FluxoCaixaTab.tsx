@@ -76,7 +76,7 @@ const VIEWS = [
 const originLabel: Record<string, string> = {
   manual: 'Manual', auto_sale: 'Venda', auto_purchase: 'Compra',
   auto_sangria: 'Sangria', auto_suprimento: 'Suprimento',
-  auto_bill_payment: 'Conta paga', auto_card_fee: 'Taxa de cartão',
+  auto_bill_payment: 'Conta paga', auto_card_fee: 'Taxa de cartão', stone_sale: 'Venda cartão (Stone)',
   auto_payroll: 'Folha', auto_anticipation: 'Antecipação',
 };
 

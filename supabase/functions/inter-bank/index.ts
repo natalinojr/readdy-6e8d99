@@ -309,6 +309,16 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number 
       }
     }
 
+    // Stone × Inter: repasses da maquininha (domicílio) e transferências entre contas próprias.
+    // Roda sempre (não só com linhas novas): a Stone pode ter sido importada depois do Inter.
+    try {
+      const { data: si, error: siErr } = await admin.rpc('fn_match_stone_inter', { p_tenant: tenantId, p_from: addDays(today, -20), p_to: today });
+      if (siErr) log('WARN', action, 'fn_match_stone_inter falhou', { tenantId, error: siErr.message });
+      else if (si) log('INFO', action, 'stone×inter', { tenantId, ...(si as Record<string, unknown>) });
+    } catch (e) {
+      log('WARN', action, 'fn_match_stone_inter falhou', { tenantId, error: String(e) });
+    }
+
     // Saldo real
     let balance: number | null = null;
     try {

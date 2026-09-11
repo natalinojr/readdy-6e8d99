@@ -130,6 +130,9 @@ export default function RealizadoProjetadoTab() {
       const fontes = new Set<string>();
       (st.rows ?? []).forEach((r) => {
         if (r.status === 'ignored') return;
+        // Linhas da API da Stone são o DETALHE do repasse que cai no Inter (domicílio bancário).
+        // Somar as duas fontes contava o cartão duas vezes.
+        if (r.source === 'stone') return;
         const b = at(r.transaction_date); if (!b) return;
         extratoLinhas++;
         fontes.add(r.source ?? 'file');
