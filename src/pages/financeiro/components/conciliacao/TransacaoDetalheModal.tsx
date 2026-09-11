@@ -5,6 +5,11 @@ import { formatCurrency } from '@/lib/formatters';
 import { invokeWithAuth } from '@/lib/supabase';
 import type { StatementImport, BillMatch, ReceivableMatch, ReconciliationRule } from '@/hooks/useConciliacao';
 
+const fmtDoc = (d: string) =>
+  d.length === 11 ? d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')
+    : d.length === 14 ? d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')
+      : d;
+
 interface GroupRow {
   id: string;
   source: string;
@@ -26,6 +31,8 @@ interface Props {
   onCreateRule: (pattern: string, category: string, costCenterId: string, txType: 'credit' | 'debit') => Promise<ReconciliationRule | null>;
   findBillMatches: (amount: number, date: string) => Promise<BillMatch[]>;
   findReceivableMatches: (amount: number, date: string) => Promise<ReceivableMatch[]>;
+  /** Chamado depois de confirmar/desfazer uma baixa (recarregar lista e alertas) */
+  onChanged?: () => void;
 }
 
 export default function TransacaoDetalheModal({
@@ -38,6 +45,7 @@ export default function TransacaoDetalheModal({
   onCreateRule,
   findBillMatches,
   findReceivableMatches,
+  onChanged,
 }: Props) {
   const { user } = useAuth();
   const { centers } = useCostCenters();
@@ -72,6 +80,28 @@ export default function TransacaoDetalheModal({
     }
   }, [transaction]);
 
+  // Vínculo pagamento × nota/conta: confirmar ou desfazer a baixa; lembrar CPF/chave Pix
+  const [vinculoBusy, setVinculoBusy] = useState(false);
+  const [vinculoMsg, setVinculoMsg] = useState<string | null>(null);
+  const [lembrarContraparte, setLembrarContraparte] = useState(false);
+  useEffect(() => { setVinculoMsg(null); setLembrarContraparte(false); }, [transaction?.id]);
+  const vinculoAction = async (kind: 'confirm' | 'undo') => {
+    if (!transaction) return;
+    setVinculoBusy(true);
+    setVinculoMsg(null);
+    const body = kind === 'confirm'
+      ? { action: 'confirm', tenant_id: user?.tenantId, ids: [transaction.id] }
+      : { action: 'undo', tenant_id: user?.tenantId, id: transaction.id };
+    const r = await invokeWithAuth<{ success?: boolean; error?: string; message?: string; results?: Array<{ ok: boolean; msg: string }> }>('conciliacao-pagamentos', { body });
+    setVinculoBusy(false);
+    const res = r.data?.results?.[0];
+    const err = r.data?.error ?? r.error?.message ?? (res && !res.ok ? res.msg : null);
+    if (err) { setVinculoMsg('Não foi possível: ' + err); return; }
+    if (kind === 'undo' && r.data?.message) window.alert(r.data.message);
+    onChanged?.();
+    onClose();
+  };
+
   // Stone × Inter: vendas que compõem este repasse (ou o depósito de uma venda)
   const [groupRows, setGroupRows] = useState<GroupRow[]>([]);
   useEffect(() => {
@@ -100,6 +130,9 @@ export default function TransacaoDetalheModal({
 
   const handleSave = async () => {
     setSaving(true);
+    if (lembrarContraparte && transaction.counterpart_doc && form.category) {
+      await invokeWithAuth('conciliacao-pagamentos', { body: { action: 'save_counterpart_rule', tenant_id: user?.tenantId, counterpart_doc: transaction.counterpart_doc, counterpart_label: transaction.counterpart_name ?? transaction.description, category: form.category, cost_center_id: form.cost_center_id || null, transaction_type: transaction.transaction_type } });
+    }
     await onUpdate(transaction.id, {
       description: form.description,
       category: form.category || null,
@@ -190,6 +223,48 @@ export default function TransacaoDetalheModal({
             )}
           </div>
 
+          {(transaction.match_kind === 'payable' || transaction.match_kind === 'inbound_doc') && transaction.match_detail && (() => {
+            const d = transaction.match_detail as Record<string, unknown>;
+            const conf = d.confirmed as Record<string, unknown> | undefined;
+            const confLabel: Record<string, string> = { exato: 'Exato', forte: 'Forte', provavel: 'Provável' };
+            const desconto = Number(d.desconto ?? 0);
+            return (
+              <div className={'border rounded-xl p-3 text-xs space-y-2 ' + (conf ? 'border-emerald-200 bg-emerald-50' : 'border-blue-200 bg-blue-50')}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-zinc-800"><i className="ri-links-line mr-1" />{conf ? 'Pagamento conciliado' : 'Vínculo sugerido'}</span>
+                  <span className="px-2 py-0.5 rounded-full bg-white border border-zinc-200 text-zinc-600">{confLabel[String(transaction.match_confidence)] ?? String(transaction.match_confidence ?? '')}</span>
+                </div>
+                <p className="text-zinc-700">
+                  {String(d.label ?? '')}
+                  {d.parcela ? ' · parcela ' + String(d.parcela) : ''}
+                  {d.vencimento ? ' · vence ' + new Date(String(d.vencimento) + 'T00:00:00').toLocaleDateString('pt-BR') : ''}
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div><p className="text-zinc-400">Parcela</p><p className="font-semibold text-zinc-800">{formatCurrency(Number(d.valor ?? 0))}</p></div>
+                  <div><p className="text-zinc-400">Pago no banco</p><p className="font-semibold text-zinc-800">{formatCurrency(Number(transaction.amount))}</p></div>
+                  <div><p className="text-zinc-400">{desconto > 0 ? 'Desconto' : 'Juros/multa'}</p><p className="font-semibold text-red-600">{formatCurrency(desconto > 0 ? desconto : Number(d.juros ?? 0))}</p></div>
+                </div>
+                {!conf && d.auto_import === true && (
+                  <p className="text-blue-700"><i className="ri-magic-line mr-1" />Esta nota ainda não foi lançada. Ao confirmar, ela é importada automaticamente como {Number(d.modelo) === 10 ? 'despesa (serviço)' : 'compra'} e a parcela recebe a baixa.</p>
+                )}
+                {conf?.auto_imported === true && (
+                  <p className="text-emerald-700"><i className="ri-magic-line mr-1" />Nota importada automaticamente pela conciliação. Os itens não foram ligados ao estoque: confira em Notas de Entrada se precisar.</p>
+                )}
+                {vinculoMsg && <p className="text-red-600">{vinculoMsg}</p>}
+                <div className="flex gap-2">
+                  {!conf ? (
+                    <button onClick={() => vinculoAction('confirm')} disabled={vinculoBusy} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 disabled:opacity-50 cursor-pointer">
+                      {vinculoBusy ? 'Confirmando...' : 'Confirmar e dar baixa'}
+                    </button>
+                  ) : (
+                    <button onClick={() => vinculoAction('undo')} disabled={vinculoBusy} className="px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-semibold hover:bg-amber-50 disabled:opacity-50 cursor-pointer">
+                      {vinculoBusy ? 'Desfazendo...' : 'Desfazer baixa'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
           {transaction.match_kind === 'internal_transfer' && (
             <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 text-xs text-sky-800">
               <i className="ri-arrow-left-right-line mr-1" />
@@ -327,6 +402,16 @@ export default function TransacaoDetalheModal({
                 </button>
               </div>
             </div>
+          )}
+
+          {transaction.counterpart_doc && transaction.match_kind !== 'internal_transfer' && (
+            <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer bg-zinc-50 border border-zinc-200 rounded-lg p-2.5">
+              <input type="checkbox" checked={lembrarContraparte} onChange={e => setLembrarContraparte(e.target.checked)} className="mt-0.5" />
+              <span>
+                Lembrar a categoria escolhida para {transaction.counterpart_doc.length === 11 ? 'o CPF' : transaction.counterpart_doc.length === 14 ? 'o CNPJ' : 'a chave Pix'} {fmtDoc(transaction.counterpart_doc)}
+                {transaction.counterpart_name ? ' (' + transaction.counterpart_name + ')' : ''}. Os próximos lançamentos dessa pessoa entram classificados.
+              </span>
+            </label>
           )}
 
           {/* Matches */}

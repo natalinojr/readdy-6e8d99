@@ -672,3 +672,20 @@ Front: `ComprasTab.tsx` tem botão de editar (lápis) na coluna Ações — chec
 **Taxas reais medidas (08/09):** débito ≈ 0,86%; antecipado ≈ 3,4% (≈ 1,45% é a antecipação). Todas as formas de pagamento do ERP estão com taxa 0 e prazo 0.
 
 **Endpoint e horário da Stone:** `GET /v2/merchant/{stoneCode}/conciliation-file/{AAAAMMDD}` com `Authorization: Basic base64(chave:)` + `x-user-type: client`. Entre 00h e 04h (Brasília) a Stone responde 400 "only permitted from 04:00": a edge trata como `not_ready` e tenta de novo. Fim de semana vem com vendas e 0 linhas (sem liquidação; o repasse acumula na segunda).
+
+## 9m. Pagamentos × notas de entrada / contas a pagar (2026-09-11)
+
+**Decisões do dono:** vínculo exato é confirmado **em lote, com um clique** (nunca sozinho); pagamento que bate com nota **ainda não lançada** faz a nota ser **importada automaticamente** no clique (fica marcado `fiscal_inbound_documents.auto_imported`, selo "automática" em Notas de Entrada); Pix para pessoa física: o usuário escolhe a categoria e pode **lembrar o CPF/chave Pix** (regra por contraparte).
+
+**Banco (migrations `20260911150000_conciliacao_pagamentos.sql` e `20260911151000_conciliacao_alertas_ajuste.sql`):**
+- `fin_bank_statement_imports`: `counterpart_doc`, `counterpart_name`, `face_value`, `due_date`, `match_ref_id`, `match_confidence` (`exato|forte|provavel`), `match_detail` (jsonb: doc, parcela, vencimento, valor, juros, desconto, `auto_import`, e `confirmed` depois da baixa).
+- `fiscal_inbound_documents`: `auto_imported`, `auto_imported_at`, `auto_import_ref`.
+- `fin_reconciliation_rules`: `counterpart_doc`, `counterpart_label`.
+- `fn_match_payments(tenant, de, até)`: extrai contraparte/face/vencimento do `raw` do Inter e sugere, para cada débito pendente, uma conta a pagar aberta ou a parcela de uma nota `new`. **Exato** = boleto com vencimento **e** valor de face iguais à parcela, ou Pix/TED para o mesmo CNPJ (raiz) com o mesmo valor; **forte** = mesmo valor de face + mesma 1ª palavra do nome (`fn_name_key`) + data coerente; empate → **provável**. Cada parcela só é usada uma vez. Aplica também as regras por contraparte. Chamada pelo sync do `inter-bank` e pela ação `rematch`.
+- `fn_conciliacao_alertas(tenant)`: contas vencidas, notas com parcela vencida sem pagamento (só a partir do 1º débito do extrato), juros do mês, pagamentos a CNPJ sem nota, duplicidade (mesmo código de barras ou mesmo CNPJ + valor em 3 dias; Pix a pessoa física não conta) e notas canceladas lançadas.
+
+**Edge `conciliacao-pagamentos` (verify_jwt=true; exige usuário logado):** `rematch`, `alerts`, `confirm {ids}` (admin/gerente, até 30 por vez), `undo {id}`, `save_counterpart_rule`. A confirmação **reaproveita** as edges existentes com o JWT do usuário: `fiscal-inbound` (`import_purchase`, ou `import_bill` para NFS-e) e `financial-write` (`pay_bill`, `upsert_bill`). Pago acima da parcela vira conta "Juros/multa — …" (categoria "Juros e multas", `reference_type='conciliacao_juros'`) já paga; boleto pago abaixo reduz a parcela (desconto). O `undo` estorna com service role (não existe "despagar" no `financial-write`): devolve `paid_amount`/status, apaga o `auto_bill_payment`, lança `fn_bank_credit` "Estorno da conciliação", apaga a conta de juros e recalcula o status da compra. A nota importada automaticamente **continua lançada** depois do estorno.
+
+**Teste com os dados reais (Paranaguá, 03 a 10/09):** Encarta, Bebidas Nova Geração e Copal saíram **exatos** (Encarta com R$ 12,63 de juros); Sequoia, Alvino e Voxy saíram **fortes**. As 5 primeiras notas estavam `new` e serão importadas no clique.
+
+**Pegadinha:** no boleto do Inter, `detalhes.cpfCnpj` é o CNPJ da **própria loja**; o valor de face sai dos 10 últimos dígitos da linha digitável (47) ou das posições 10–19 do código de barras (44), e os juros em `adicionado`.

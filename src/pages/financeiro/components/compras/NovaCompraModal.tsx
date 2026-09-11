@@ -34,6 +34,66 @@ interface UnifiedItem {
   merchandise_category_id?: string | null;
 }
 
+// Linha da compra no formulário. Os campos com "_" só existem na tela: vêm da
+// leitura da notinha por foto (descrição original, confiança, origem do vínculo)
+// e servem para o usuário conferir e para memorizar o vínculo ao salvar.
+type ItemRow = Partial<PurchaseItem> & {
+  catalog_id?: string | null;
+  dre_category_id?: string | null;
+  _raw?: string;
+  _conf?: string;
+  _src?: 'memoria' | 'ia' | null;
+};
+
+// Resultado da Edge purchase-receipt-scan (ação scan).
+interface ScanItem {
+  raw_description: string; quantity: number; unit_label: string; unit_price: number;
+  line_total: number; line_discount: number;
+  catalog_id: string | null; ingredient_id: string | null;
+  merchandise_category_id: string | null; dre_category_id: string | null;
+  pack_count: number | null; pack_size: number | null;
+  confidence: string; match_source: 'memoria' | 'ia' | null;
+}
+interface ScanResult {
+  readable: boolean; supplier_name: string | null; supplier_key: string;
+  invoice_number: string | null; purchase_date: string | null; payment_method: string | null;
+  document_total: number | null; discount_total: number | null; items_sum: number;
+  items: ScanItem[]; warnings: string[];
+}
+interface DreCategory { id: string; name: string; group_type: string | null; }
+
+// Foto do celular chega com 4–12 MB: reduz para ~2000px em JPEG antes de enviar
+// (lê igual e sobe em segundos no 4G). PDF vai como está.
+async function fileToPayload(file: File): Promise<{ base64: string; mediaType: string }> {
+  const readB64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] ?? '');
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+  if (file.type === 'application/pdf') return { base64: await readB64(file), mediaType: 'application/pdf' };
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Não foi possível abrir a imagem'));
+      i.src = url;
+    });
+    const MAX = 2000;
+    const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Falha ao processar a imagem'))), 'image/jpeg', 0.85));
+    return { base64: await readB64(blob), mediaType: 'image/jpeg' };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 function genId() {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -121,6 +181,27 @@ export default function NovaCompraModal({
   const [catalogItems, setCatalogItems] = useState<UnifiedItem[]>([]);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // Leitura de notinha por foto
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scan, setScan] = useState<ScanResult | null>(null);
+  const scanInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Categorias da DRE — para itens que não são insumo de estoque (limpeza, descartáveis...)
+  const [dreCategories, setDreCategories] = useState<DreCategory[]>([]);
+  useEffect(() => {
+    if (!user?.tenantId) return;
+    supabase
+      .from('fin_dre_categories')
+      .select('id, name, group_type, deleted_at')
+      .eq('tenant_id', user.tenantId)
+      .eq('is_active', true)
+      .order('sort_order')
+      .then(({ data }) => {
+        setDreCategories(((data ?? []) as Array<DreCategory & { deleted_at?: string | null }>).filter((d) => !d.deleted_at));
+      });
+  }, [user?.tenantId]);
+
   // Load catálogo de itens de compra
   useEffect(() => {
     if (!user?.tenantId) return;
@@ -195,7 +276,7 @@ export default function NovaCompraModal({
       bank_account_id: (p.bank_account_id as string) ?? '',
     };
   });
-  const [items, setItems] = useState<Partial<PurchaseItem>[]>(() => {
+  const [items, setItems] = useState<ItemRow[]>(() => {
     if (editingPurchase?.items && editingPurchase.items.length > 0) {
       return editingPurchase.items.map((it) => ({
         description: it.description ?? '',
@@ -410,6 +491,8 @@ export default function NovaCompraModal({
       }
       updated.description = unified.name;
       (updated as Record<string, unknown>).dre_category_id = unified.dre_category_id ?? null;
+      // Escolha manual: deixa de ser "sugestão" da leitura da nota.
+      updated._src = null;
       return updated;
     }));
     // Apresentação com fornecedor padrão preenche o fornecedor da compra
@@ -426,6 +509,94 @@ export default function NovaCompraModal({
   const stockUnitFor = (item: Partial<PurchaseItem>): string | null => {
     if (!item.ingredient_id) return null;
     return ingredients.find((g) => g.id === item.ingredient_id)?.unit ?? null;
+  };
+
+  // ─── Leitura da notinha por foto ─────────────────────────────────────────
+  // A Edge purchase-receipt-scan lê o documento e já devolve, por linha, o
+  // vínculo memorizado (ou sugerido) com insumo/catálogo/categorias. Aqui só
+  // montamos as linhas do formulário — o usuário confere e salva normalmente.
+  const handleScanFile = async (file: File) => {
+    if (file.size > 25 * 1024 * 1024) { setScanError('Arquivo grande demais (máx. 25 MB).'); return; }
+    setScanError(null);
+    setScanning(true);
+    onLoadIngredients();
+    try {
+      const { base64, mediaType } = await fileToPayload(file);
+      const { data, error } = await supabase.functions.invoke('purchase-receipt-scan', {
+        body: { action: 'scan', tenant_id: user?.tenantId, file_base64: base64, media_type: mediaType },
+      });
+      if (error) {
+        let msg = error.message;
+        const ctx = (error as { context?: Response }).context;
+        if (ctx && typeof ctx.json === 'function') {
+          try { const b = await ctx.json(); if (b?.error) msg = String(b.error); } catch { /* corpo não-JSON */ }
+        }
+        throw new Error(msg);
+      }
+      const resp = data as { success?: boolean; error?: string; data?: ScanResult } | null;
+      if (!resp?.success || !resp.data) throw new Error(resp?.error || 'Falha ao ler a nota');
+      const r = resp.data;
+      if (!r.readable || r.items.length === 0) {
+        setScan(null);
+        setScanError(r.warnings[0] || 'Não encontrei itens de compra nesta imagem. Tente uma foto mais nítida, reta e com boa luz.');
+        return;
+      }
+
+      // Cabeçalho: nunca sobrescreve o que o usuário já digitou.
+      setForm((f) => ({
+        ...f,
+        supplier: f.supplier.trim()
+          || (r.supplier_name
+            ? (suppliers.find((s) => s.trim().toLowerCase() === r.supplier_name!.trim().toLowerCase()) ?? r.supplier_name)
+            : ''),
+        invoice_number: f.invoice_number || r.invoice_number || '',
+        purchase_date: r.purchase_date || f.purchase_date,
+        payment_method: r.payment_method || f.payment_method,
+      }));
+
+      const WEIGHT_UNITS = ['kg', 'g', 'L', 'mL'];
+      const rows: ItemRow[] = r.items.map((si) => {
+        const cat = si.catalog_id ? catalogItems.find((c) => c.id === si.catalog_id) : null;
+        const ing = si.ingredient_id ? ingredients.find((g) => g.id === si.ingredient_id) : null;
+        const qty = si.quantity > 0 ? si.quantity : 1;
+        const unit = UNIT_OPTIONS.find((u) => u.toLowerCase() === String(si.unit_label).toLowerCase()) ?? 'un';
+        const unitPrice = si.unit_price > 0 ? si.unit_price : (si.line_total + si.line_discount) / qty;
+        const discountPerUnit = si.line_discount > 0 ? Math.round((si.line_discount / qty) * 10000) / 10000 : undefined;
+        // Embalagem: a da nota/memória; senão a da apresentação do catálogo — exceto
+        // produto pesado (kg/L), em que a quantidade da nota já é a de estoque.
+        const packCount = si.pack_count ?? (cat && !WEIGHT_UNITS.includes(unit) ? cat.pack_count ?? null : null);
+        const packSize = si.pack_count ? si.pack_size : (packCount ? cat?.pack_size ?? 1 : null);
+        const net = Math.max(0, unitPrice - (discountPerUnit ?? 0));
+        return {
+          description: cat?.name ?? ing?.name ?? si.raw_description,
+          ingredient_id: si.ingredient_id ?? undefined,
+          catalog_id: si.catalog_id,
+          dre_category_id: si.dre_category_id,
+          merchandise_category_id: si.merchandise_category_id ?? undefined,
+          quantity: qty,
+          unit_label: unit,
+          unit_price: Math.round(unitPrice * 10000) / 10000,
+          discount_per_unit: discountPerUnit,
+          total_price: Math.round(qty * net * 100) / 100,
+          pack_count: packCount ?? undefined,
+          pack_size: packCount ? (packSize ?? 1) : undefined,
+          units_per_package: packCount ? packCount * (packSize ?? 1) : undefined,
+          cost_center_id: '',
+          _raw: si.raw_description,
+          _conf: si.confidence,
+          _src: si.match_source,
+        };
+      });
+      // Mantém linhas que o usuário já preencheu; a linha vazia inicial é substituída.
+      setItems((prev) => [...prev.filter((it) => it.description?.trim()), ...rows]);
+      setItemSearch({});
+      setFreightPerItem({});
+      setScan(r);
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : 'Falha ao ler a nota. Tente de novo.');
+    } finally {
+      setScanning(false);
+    }
   };
 
   const addItem = () => {
@@ -584,6 +755,27 @@ export default function NovaCompraModal({
       }
 
       await onSubmit(payload);
+
+      // Memoriza o que o usuário confirmou nas linhas lidas da nota — na próxima
+      // nota do mesmo fornecedor o vínculo já vem pronto. Sem await: a compra já
+      // está salva e o modal pode fechar; falha aqui não afeta nada.
+      if (scan) {
+        const toLearn = items.filter((it) => it._raw).map((it) => ({
+          raw_description: it._raw,
+          ingredient_id: it.ingredient_id ?? null,
+          catalog_id: it.catalog_id ?? null,
+          merchandise_category_id: it.merchandise_category_id ?? null,
+          dre_category_id: it.dre_category_id ?? null,
+          unit_label: it.unit_label ?? null,
+          pack_count: it.pack_count ?? null,
+          pack_size: it.pack_size ?? null,
+        }));
+        if (toLearn.length > 0) {
+          supabase.functions.invoke('purchase-receipt-scan', {
+            body: { action: 'learn', tenant_id: user?.tenantId, supplier_key: scan.supplier_key, items: toLearn },
+          }).catch(() => { /* memória é conveniência */ });
+        }
+      }
     } catch (err: any) {
       setSubmitError(err?.message || 'Erro ao salvar compra. Tente novamente.');
     } finally {
@@ -604,9 +796,37 @@ export default function NovaCompraModal({
               </span>
             )}
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
-            <i className="ri-close-line text-zinc-500" />
-          </button>
+          <div className="flex items-center gap-2">
+            {!editingPurchase && (
+              <>
+                <input
+                  ref={scanInputRef}
+                  type="file"
+                  accept="image/*,application/pdf"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) handleScanFile(f);
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={scanning}
+                  onClick={() => scanInputRef.current?.click()}
+                  title="Tire uma foto do cupom/notinha ou envie o PDF — o sistema preenche a compra para você conferir"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-sky-200 bg-sky-50 text-sky-700 text-xs font-semibold hover:bg-sky-100 cursor-pointer disabled:opacity-60 disabled:cursor-wait whitespace-nowrap"
+                >
+                  {scanning
+                    ? (<><i className="ri-loader-4-line animate-spin" /> Lendo nota...</>)
+                    : (<><i className="ri-camera-line" /> Ler notinha (foto)</>)}
+                </button>
+              </>
+            )}
+            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
+              <i className="ri-close-line text-zinc-500" />
+            </button>
+          </div>
         </div>
 
         <form id={formId} onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-3">
@@ -634,6 +854,54 @@ export default function NovaCompraModal({
               </ul>
             </div>
           )}
+          {/* Leitura da notinha por foto */}
+          {scanning && (
+            <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-center gap-2 text-xs text-sky-800">
+              <i className="ri-loader-4-line animate-spin" />
+              Lendo a nota e procurando os itens no seu estoque e catálogo… (leva alguns segundos)
+            </div>
+          )}
+          {scanError && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2">
+              <i className="ri-error-warning-line text-red-500 mt-0.5" />
+              <p className="text-xs text-red-700">{scanError}</p>
+            </div>
+          )}
+          {scan && !scanning && (() => {
+            const semVinculo = items.filter((it) => it._raw && !it.ingredient_id && !it.catalog_id && !it.dre_category_id).length;
+            const lidos = items.filter((it) => it._raw).length;
+            return (
+              <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 space-y-1.5 text-xs text-sky-900">
+                <p className="font-semibold flex items-center gap-1.5 flex-wrap">
+                  <i className="ri-file-search-line text-sky-600" />
+                  {lidos} ite{lidos !== 1 ? 'ns' : 'm'} lido{lidos !== 1 ? 's' : ''} da nota — confira antes de salvar.
+                  {scan.document_total != null && (
+                    <span className="font-normal text-sky-700">
+                      Total da nota: <b>{formatCurrency(scan.document_total)}</b>
+                      {scan.discount_total ? ` (desconto no total: ${formatCurrency(scan.discount_total)})` : ''}
+                    </span>
+                  )}
+                </p>
+                {semVinculo > 0 && (
+                  <p className="text-amber-700 flex items-center gap-1.5">
+                    <i className="ri-link-unlink" />
+                    {semVinculo} ite{semVinculo !== 1 ? 'ns' : 'm'} sem vínculo: escolha o item de estoque/catálogo ou a categoria DRE.
+                  </p>
+                )}
+                {scan.discount_total ? (
+                  <p className="text-amber-700 flex items-center gap-1.5">
+                    <i className="ri-information-line" />
+                    O desconto no total não entra nas linhas — lance-o como desconto/unid. no item certo, se quiser que o custo reflita.
+                  </p>
+                ) : null}
+                {scan.warnings.map((w, i) => (
+                  <p key={i} className="text-amber-700 flex items-start gap-1.5"><i className="ri-error-warning-line mt-0.5" />{w}</p>
+                ))}
+                <p className="text-[10px] text-sky-600">Ao salvar, os vínculos que você confirmar ficam memorizados para as próximas notas.</p>
+              </div>
+            );
+          })()}
+
           {/* Linha 1: Fornecedor + NF + Data + Pagamento */}
           <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Dados da compra</p>
           <div className="grid grid-cols-4 gap-2">
@@ -1127,6 +1395,24 @@ export default function NovaCompraModal({
                     </div>
                   </div>
 
+                  {/* Linha lida da notinha: descrição original + origem do vínculo */}
+                  {item._raw && (
+                    <div className="flex items-center gap-1.5 text-[10px] flex-wrap">
+                      <span className="px-1.5 py-0.5 rounded bg-sky-50 border border-sky-200 text-sky-700 font-semibold">
+                        <i className="ri-file-text-line mr-0.5" />Na nota: {item._raw}
+                      </span>
+                      {!item.ingredient_id && !item.catalog_id && !item.dre_category_id ? (
+                        <span className="text-amber-700 font-semibold"><i className="ri-link-unlink mr-0.5" />sem vínculo — escolha o item ou a categoria DRE</span>
+                      ) : item._src === 'memoria' ? (
+                        <span className="text-emerald-700 font-semibold"><i className="ri-history-line mr-0.5" />vínculo lembrado</span>
+                      ) : item._src === 'ia' ? (
+                        <span className={`font-semibold ${item._conf === 'alta' ? 'text-emerald-700' : item._conf === 'media' ? 'text-amber-700' : 'text-red-600'}`}>
+                          <i className="ri-sparkling-line mr-0.5" />sugestão · confiança {item._conf === 'media' ? 'média' : item._conf}
+                        </span>
+                      ) : null}
+                    </div>
+                  )}
+
                   {/* Linha 2: Qtd + Unidade + Unid/embalagem + Preço unit */}
                   <div className="grid grid-cols-4 gap-2">
                     <div>
@@ -1206,7 +1492,28 @@ export default function NovaCompraModal({
                         {merchandiseCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
                     </div>
-                    <div className="col-span-2">
+                    {/* Item que não é de estoque (limpeza, descartável...) vai para uma
+                        categoria de despesa da DRE em vez do CMV. */}
+                    {!item.ingredient_id && (
+                      <div>
+                        <label className="text-[10px] font-semibold text-zinc-500 block mb-1 whitespace-nowrap">Categoria DRE</label>
+                        <select value={item.dre_category_id ?? ''}
+                          onChange={(e) => updateItem(idx, 'dre_category_id', e.target.value || undefined)}
+                          className="w-full border border-zinc-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white">
+                          <option value="">CMV (padrão)</option>
+                          {Object.entries(dreCategories.reduce<Record<string, DreCategory[]>>((acc, d) => {
+                            const g = d.group_type || 'Outras';
+                            (acc[g] ||= []).push(d);
+                            return acc;
+                          }, {})).map(([g, list]) => (
+                            <optgroup key={g} label={g}>
+                              {list.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div className={item.ingredient_id ? 'col-span-2' : ''}>
                       <label className="text-[10px] font-semibold text-zinc-500 block mb-1">Observação</label>
                       <input placeholder="Opcional" value={item.notes ?? ''}
                         onChange={(e) => updateItem(idx, 'notes', e.target.value)}

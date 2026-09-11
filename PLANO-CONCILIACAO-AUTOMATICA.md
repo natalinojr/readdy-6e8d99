@@ -62,6 +62,8 @@ Quando roda (sem cron, conforme decisão do dono):
 
 ## 3. Fases
 
+> ✅ **Fases 0 a 4 implementadas em 2026-09-11** com as decisões do dono: exato confirmado em lote; nota não lançada é importada automaticamente no clique (marcada como automática); Pix a pessoa física com categoria escolhida pelo usuário e opção de lembrar o CPF/chave Pix. Detalhes em `FINANCEIRO_MAP.md` §9m. Diferenças do desenho original: o vínculo com código de barras gravado na conta a pagar ficou de fora (o boleto casa por vencimento + face), e o estorno não desfaz a importação automática da nota.
+
 ### Fase 0 — Base de dados (migration)
 - `fin_accounts_payable`: `supplier_id`, `fiscal_document_id`, `barcode` (linha digitável).
 - `fin_bank_statement_imports`: `match_kind` (`payable` | `receivable` | `inbound_doc` | `bank_transaction` | `cash_flow` | `rule`), `match_ref_id`, `match_confidence`, `counterpart_doc`, `counterpart_name`, `face_value`, `due_date`, `interest_amount`.

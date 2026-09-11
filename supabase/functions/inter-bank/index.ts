@@ -319,6 +319,15 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number 
       log('WARN', action, 'fn_match_stone_inter falhou', { tenantId, error: String(e) });
     }
 
+    // Pagamentos × notas de entrada / contas a pagar: só SUGERE (a baixa é confirmada pelo usuário).
+    try {
+      const { data: mp, error: mpErr } = await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: addDays(today, -120), p_to: today });
+      if (mpErr) log('WARN', action, 'fn_match_payments falhou', { tenantId, error: mpErr.message });
+      else if (mp) log('INFO', action, 'pagamentos×notas', { tenantId, ...(mp as Record<string, unknown>) });
+    } catch (e) {
+      log('WARN', action, 'fn_match_payments falhou', { tenantId, error: String(e) });
+    }
+
     // Saldo real
     let balance: number | null = null;
     try {

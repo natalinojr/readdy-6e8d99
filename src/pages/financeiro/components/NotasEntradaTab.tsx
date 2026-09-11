@@ -19,8 +19,10 @@ interface DocRow {
   status: 'new' | 'imported' | 'ignored'; import_type: 'purchase' | 'bill' | null; purchase_id: string | null;
   payable_ids: string[]; ignore_reason: string | null; manifest_status: string | null; error_message: string | null;
   imported_at: string | null;
+  /** Importada automaticamente pela conciliação bancária ao confirmar o pagamento */
+  auto_imported?: boolean;
 }
-const COLS = 'id, chave, modelo, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at';
+const COLS = 'id, chave, modelo, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at, auto_imported';
 
 const brl = (n: number | null | undefined) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n ?? 0));
 const dataBR = (s: string | null | undefined) => (s ? new Date(s.length === 10 ? `${s}T12:00:00` : s).toLocaleDateString('pt-BR') : '—');
@@ -273,7 +275,7 @@ export default function NotasEntradaTab() {
                       </td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
                         {cancelada ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Cancelada na SEFAZ</span>
-                          : d.status === 'imported' ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{d.import_type === 'purchase' ? 'Lançada como compra' : 'Lançada como despesa'}</span>
+                          : d.status === 'imported' ? <><span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{d.import_type === 'purchase' ? 'Lançada como compra' : 'Lançada como despesa'}</span>{d.auto_imported && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700" title="Importada automaticamente pela conciliação bancária ao confirmar o pagamento. Os itens não foram ligados ao estoque.">automática</span>}</>
                           : d.status === 'ignored' ? <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500" title={d.ignore_reason ?? ''}>Ignorada</span>
                           : <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">A conferir</span>}
                         {d.error_message && d.status === 'new' && <p className="text-[10px] text-red-500 truncate max-w-[200px]" title={d.error_message}>{d.error_message}</p>}

@@ -39,6 +39,16 @@ export interface StatementImport {
   match_kind?: string | null;
   /** ex.: stone:2026-09-08:antecipado — liga as vendas da Stone ao depósito no Inter */
   match_group?: string | null;
+  /** CPF/CNPJ da contraparte (Pix/TED) — no boleto do Inter vem vazio */
+  counterpart_doc?: string | null;
+  counterpart_name?: string | null;
+  /** Boleto: valor de face e vencimento (do código de barras / extrato) */
+  face_value?: number | null;
+  due_date?: string | null;
+  /** Vínculo sugerido pela fn_match_payments (payable | inbound_doc) */
+  match_ref_id?: string | null;
+  match_confidence?: 'exato' | 'forte' | 'provavel' | null;
+  match_detail?: Record<string, unknown> | null;
   reconciled: boolean;
   reconciled_at?: string;
   created_at: string;

@@ -439,6 +439,15 @@ export default function ConciliacaoTab() {
     pctConciliado,
   } = useConciliacao(selectedAccountId);
 
+  // Alertas de confiabilidade (fn_conciliacao_alertas)
+  type AlertaBloco = { count: number; total: number; itens: Array<{ label: string; valor: number; data: string | null }> };
+  const [alertas, setAlertas] = useState<Record<string, AlertaBloco | undefined> | null>(null);
+  const loadAlerts = useCallback(async () => {
+    if (!user?.tenantId) return;
+    const r = await invokeWithAuth<{ success?: boolean; alerts?: Record<string, AlertaBloco> }>('conciliacao-pagamentos', { body: { action: 'alerts', tenant_id: user.tenantId } });
+    if (r.data?.alerts) setAlertas(r.data.alerts);
+  }, [user?.tenantId]);
+
   // Extratos dos bancos integrados (Inter e Stone): buscados ao abrir a tela e no botão
   // "Atualizar bancos". Não há rotina automática no servidor.
   const [bankSync, setBankSync] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
@@ -466,14 +475,44 @@ export default function ConciliacaoTab() {
     read('Stone', stone);
     const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     setBankSync({ running: false, error: hasError, msg: parts.length > 0 ? `Bancos atualizados às ${hora} · ${parts.join(' · ')}` : null });
-    if (novos > 0) refresh();
+    // Sugere de novo os vínculos pagamento × nota/conta (a nota pode ter chegado depois do pagamento)
+    await invokeWithAuth('conciliacao-pagamentos', { body: { action: 'rematch', tenant_id: user.tenantId } });
+    void novos;
+    refresh();
+    loadAlerts();
     if (parts.length > 0) { refetchAccounts(); setInterRefreshKey((k) => k + 1); }
-  }, [user?.tenantId, refresh, refetchAccounts]);
+  }, [user?.tenantId, refresh, refetchAccounts, loadAlerts]);
 
   // Uma vez ao abrir a tela (e ao trocar de loja)
   useEffect(() => { runBankSync(); }, [user?.tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── File import ─────────────────────────────────────────────────────────────
+  // Pagamentos com vínculo EXATO a uma nota/conta: confirmados em lote (decisão do dono)
+  const exatosPendentes = useMemo(
+    () => imports.filter(i => i.status === 'pending' && !i.reconciled && i.match_confidence === 'exato'),
+    [imports],
+  );
+  const [confirmando, setConfirmando] = useState(false);
+  const confirmarVinculos = useCallback(async (ids: string[]) => {
+    if (!user?.tenantId || ids.length === 0) return;
+    setConfirmando(true);
+    type Res = { ok: boolean; msg: string; auto_imported?: boolean };
+    const r = await invokeWithAuth<{ success?: boolean; error?: string; results?: Res[] }>('conciliacao-pagamentos', { body: { action: 'confirm', tenant_id: user.tenantId, ids } });
+    setConfirmando(false);
+    const res = r.data?.results ?? [];
+    const ok = res.filter(x => x.ok).length;
+    const auto = res.filter(x => x.ok && x.auto_imported).length;
+    const falhas = res.filter(x => !x.ok);
+    const err = r.data?.error ?? r.error?.message;
+    if (err) showToast(err, 'error');
+    else showToast(
+      ok + ' pagamento(s) conciliado(s)' + (auto ? ', ' + auto + ' nota(s) importada(s) automaticamente' : '') + (falhas.length ? ' · ' + falhas.length + ' com problema: ' + falhas[0].msg : ''),
+      falhas.length ? 'error' : 'success',
+    );
+    refresh();
+    loadAlerts();
+  }, [user?.tenantId, refresh, loadAlerts]);
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user?.tenantId || !selectedAccountId) return;
@@ -784,6 +823,63 @@ export default function ConciliacaoTab() {
         </div>
       </div>
 
+      {/* Pagamentos com vínculo exato a confirmar */}
+      {exatosPendentes.length > 0 && (
+        <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex-wrap">
+          <i className="ri-links-line text-emerald-600 text-lg" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-emerald-800">{exatosPendentes.length} pagamento(s) com vínculo exato a uma nota ou conta a pagar</p>
+            <p className="text-xs text-emerald-700">Boleto com o mesmo vencimento e valor da parcela, ou Pix para o mesmo CNPJ com o mesmo valor. Confirmar dá baixa na conta a pagar, lança juros e importa sozinha a nota que ainda não foi lançada.</p>
+          </div>
+          <button
+            onClick={() => confirmarVinculos(exatosPendentes.map(i => i.id))}
+            disabled={confirmando}
+            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 cursor-pointer whitespace-nowrap disabled:opacity-50"
+          >
+            <i className={confirmando ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'} />
+            {confirmando ? 'Confirmando...' : 'Confirmar ' + exatosPendentes.length}
+          </button>
+        </div>
+      )}
+
+      {/* Alertas */}
+      {alertas && (() => {
+        const defs: Array<[string, string, string, string]> = [
+          ['contas_vencidas', 'Contas a pagar vencidas em aberto', 'ri-alarm-warning-line', 'text-red-800 bg-red-50 border-red-200'],
+          ['notas_vencidas', 'Notas com parcela vencida e sem pagamento no extrato', 'ri-file-warning-line', 'text-red-800 bg-red-50 border-red-200'],
+          ['duplicidades', 'Possíveis pagamentos em duplicidade', 'ri-file-copy-2-line', 'text-red-800 bg-red-50 border-red-200'],
+          ['notas_canceladas_lancadas', 'Notas canceladas na SEFAZ que foram lançadas', 'ri-close-circle-line', 'text-red-800 bg-red-50 border-red-200'],
+          ['pagamentos_sem_nota', 'Pagamentos a empresas sem nota de entrada', 'ri-question-line', 'text-amber-800 bg-amber-50 border-amber-200'],
+          ['juros_mes', 'Juros e multas pagos no mês', 'ri-percent-line', 'text-amber-800 bg-amber-50 border-amber-200'],
+        ];
+        const ativos = defs.filter(([k]) => Number(alertas[k]?.count ?? 0) > 0);
+        if (ativos.length === 0) return null;
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {ativos.map(([k, title, icon, cls]) => {
+              const a = alertas[k]!;
+              return (
+                <details key={k} className={'rounded-xl border px-4 py-3 ' + cls}>
+                  <summary className="cursor-pointer list-none flex items-center gap-2 text-sm font-semibold">
+                    <i className={icon} />
+                    <span className="flex-1">{title}</span>
+                    <span className="whitespace-nowrap">{a.count} · {fmtCur(Number(a.total))}</span>
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    {a.itens.map((it, i) => (
+                      <div key={i} className="flex justify-between gap-2 text-xs">
+                        <span className="truncate">{it.data ? new Date(String(it.data).slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR') + ' · ' : ''}{it.label}</span>
+                        <span className="whitespace-nowrap font-semibold">{fmtCur(Number(it.valor))}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        );
+      })()}
+
       {/* Conta selecionada */}
       {selectedAccount && (
         <div className="flex items-center gap-3 bg-white border border-zinc-200 rounded-xl px-4 py-3">
@@ -1026,6 +1122,14 @@ export default function ConciliacaoTab() {
                       {s.notes && (
                         <p className="text-xs text-amber-500 mt-0.5 truncate"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>
                       )}
+                      {s.match_detail && (s.match_kind === 'payable' || s.match_kind === 'inbound_doc') && (
+                        <p className={'text-xs mt-0.5 truncate ' + (s.reconciled ? 'text-emerald-600' : 'text-blue-600')}>
+                          <i className="ri-links-line text-xs" /> {s.reconciled ? 'Pago: ' : 'Sugestão (' + (s.match_confidence ?? '') + '): '}{String(s.match_detail.label ?? '')}
+                          {!s.reconciled && s.match_detail.auto_import ? ' · nota será importada' : ''}
+                          {s.reconciled && (s.match_detail.confirmed as Record<string, unknown> | undefined)?.auto_imported ? ' · nota importada automaticamente' : ''}
+                          {Number(s.match_detail.juros ?? 0) > 0 ? ' · juros ' + fmtCur(Number(s.match_detail.juros)) : ''}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${s.transaction_type === 'credit' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
@@ -1199,6 +1303,7 @@ export default function ConciliacaoTab() {
           }}
           findBillMatches={findBillMatches}
           findReceivableMatches={findReceivableMatches}
+          onChanged={() => { refresh(); loadAlerts(); }}
         />
       )}
 
