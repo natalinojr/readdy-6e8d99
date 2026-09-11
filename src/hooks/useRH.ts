@@ -160,7 +160,7 @@ export function recalcPayroll(entry: Partial<PayrollEntry>): Partial<PayrollEntr
  * A edge function roda como service_role, valida a membership e escopa por
  * tenant_id explicitamente.
  */
-async function callFinancialWrite(action: string, tenantId: string, payload: Record<string, unknown>) {
+export async function callFinancialWrite(action: string, tenantId: string, payload: Record<string, unknown>) {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
   if (!token) return { error: 'Sessão expirada' };

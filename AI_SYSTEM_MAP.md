@@ -1530,3 +1530,10 @@ A edge `stone-conciliation` estava morta desde a migração para multi-loja: bus
 - **Sugerir no banco, confirmar na edge:** `fn_match_payments` (SQL, idempotente, só sugere) roda no sync do Inter; a baixa só acontece no clique do usuário. Detalhes em `FINANCEIRO_MAP.md` §9m.
 - **Alerta de duplicidade não pode olhar pessoa física:** Pix diário do mesmo valor para freela/motoboy é normal. Só mesmo código de barras ou mesmo CNPJ.
 - **Estoque é físico, pagamento é financeiro (2026-09-11):** o vínculo item da nota → insumo passou para o "Confirmar recebimento" (`purchase-confirm-delivery`, ação `receipt_context` + `received_items[].ingredient_id`). A importação da nota (manual ou automática pela conciliação) só traz os itens com `supplier_code`/`ean`; a memória de vínculos continua em `fiscal_inbound_item_links`. Detalhes em `FINANCEIRO_MAP.md` §9m.
+
+### 2026-09-11 — Folha do Domínio → RH (sem IA)
+- **Domínio (Thomson Reuters) não tem API de saída da folha**: a API pública (api.dominio@tr.com / Onvio BR Accounting API) só RECEBE do ERP (NF-e/NFC-e/NFS-e, baixas, rubricas). O caminho inverso existe só para o Conta Azul (parceria exclusiva).
+- **Importação por PDF**: Financeiro › RH › Folha › "Importar do Domínio" (`ImportarFolhaDominioModal.tsx` + `src/lib/dominioExtrato.ts`, dependência `pdfjs-dist@4.10.38`). Lê o "Extrato Mensal" com pdf.js no navegador (texto + posição), sem IA (decisão do usuário: não pagar IA para isso).
+- **Pegadinha de formato**: o PDF tem que ser salvo pelo Domínio (produtor Amyuni, com texto). "Microsoft Print to PDF" vira desenho (0 caracteres). O `.xls` que o Domínio exporta está corrompido (xlrd e SheetJS não leem as células).
+- **Validação**: por pessoa, a soma das rubricas bate com o total, e proventos − descontos = líquido. No geral, a soma dos líquidos = Líquido Geral. Grava pelo `financial-write` (upsert_employee, delete_payroll dos pendentes do mês, bulk_insert_payroll) como **pendente**. As rubricas completas ficam em `notes`. A folha já paga não é tocada.
+- **Não lançar guias FGTS/INSS em Contas a Pagar** a partir da folha: a DRE (`useDespesas`) já soma bruto + FGTS do `hr_payroll` → duplicaria.

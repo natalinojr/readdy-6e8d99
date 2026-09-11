@@ -1,5 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useEmployees, usePayroll } from '@/hooks/useRH';
+import ImportarFolhaDominioModal from './ImportarFolhaDominioModal';
+import { useAuth } from '@/contexts/AuthContext';
 import type { Employee, PayrollEntry, EmployeeStatus, ThirteenthStatus } from '@/hooks/useRH';
 import { usePayrollCustomFields } from '@/hooks/usePayrollCustomFields';
 import { formatCurrency } from '@/lib/formatters';
@@ -1240,14 +1242,18 @@ export default function RHTab() {
   const [vacationModal, setVacationModal] = useState<Employee | null>(null);
   const [thirteenthModal, setThirteenthModal] = useState(false);
   const [camposCustomizadosModal, setCamposCustomizadosModal] = useState(false);
+  const [importarDominio, setImportarDominio] = useState(false);
+  const [avisoImport, setAvisoImport] = useState<string | null>(null);
+  const { user } = useAuth();
   const [deptFilter, setDeptFilter] = useState('Todos');
   const [search, setSearch] = useState('');
 
-  const { employees, loading: empLoading, upsert: upsertEmployee, remove: removeEmployee, activeCount, totalSalaryMass } = useEmployees();
+  const { employees, loading: empLoading, upsert: upsertEmployee, remove: removeEmployee, activeCount, totalSalaryMass, refresh: refreshEmployees } = useEmployees();
   const {
     entries, loading: payLoading, upsert: upsertPayroll, markPaid, markAllPaid, remove: removePayroll,
     generateFromEmployees, generateThirteenth, generateVacationPay,
     totalBruto, totalLiquido, totalFGTS, totalINSS, totalIRRF, totalPago, totalPendente,
+    refresh: refreshPayroll,
   } = usePayroll(selectedMonth);
 
   const canGoNext = selectedMonth < currentMonth;
@@ -1343,6 +1349,28 @@ export default function RHTab() {
         </div>
       )}
 
+      {avisoImport && (
+        <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+          <i className="ri-checkbox-circle-line text-green-600" />
+          <p className="text-xs text-green-800 flex-1">Folha importada do Domínio: {avisoImport}</p>
+          <button onClick={() => setAvisoImport(null)} className="text-green-700 hover:text-green-900 cursor-pointer"><i className="ri-close-line" /></button>
+        </div>
+      )}
+      {importarDominio && user?.tenantId && (
+        <ImportarFolhaDominioModal
+          tenantId={user.tenantId}
+          employees={employees}
+          onClose={() => setImportarDominio(false)}
+          onImported={async (month, resumo) => {
+            setImportarDominio(false);
+            setAvisoImport(resumo);
+            setActiveView('folha');
+            await refreshEmployees();
+            if (month === selectedMonth) await refreshPayroll(); else setSelectedMonth(month);
+          }}
+        />
+      )}
+
       {/* Tabs */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between flex-wrap gap-3">
         <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
@@ -1392,6 +1420,10 @@ export default function RHTab() {
                 <i className="ri-check-double-line" /> Fechar e Pagar ({pendingEntries.length})
               </button>
             )}
+            <button onClick={() => setImportarDominio(true)} title="Importar o Extrato Mensal (PDF) do Domínio"
+              className="flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
+              <i className="ri-file-upload-line" /> Importar do Domínio
+            </button>
             <button onClick={() => setCamposCustomizadosModal(true)}
               className="flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
               <i className="ri-settings-3-line" /> Campos
