@@ -13,6 +13,9 @@
 //                                            do boleto viram contas a pagar reference_type='purchase'
 //   import_bill    { document_id, parcelas?, dre_category_id?, cost_center_id?, category? }
 //                                            lança como DESPESA (contas a pagar reference_type='nfe_entrada')
+//                  links?: [{ index, ingredient_id, units_per_package }] vincula itens a insumos
+//                                            (dá entrada no estoque) e memoriza o vínculo por fornecedor+código
+//   item_links     { document_id }           vínculos já memorizados p/ os itens da nota + lista de insumos
 //   ignore         { document_id, reason? }  /  unignore { document_id }
 //   get_xml        { document_id }           XML completo
 //   get_pdf        { document_id }           DANFE (provedor)
@@ -412,6 +415,54 @@ async function upsertSupplier(admin: Admin, tenantId: string, doc: any): Promise
   return created;
 }
 
+// ── Vínculo item da nota → insumo do estoque ─────────────────────────────────
+// Memorizado por fornecedor (CNPJ) + código do produto dele (cProd); o EAN serve de
+// reserva quando o fornecedor muda o código. Na próxima nota do mesmo fornecedor os
+// itens já chegam vinculados.
+const itemCode = (it: any) => String(it?.codigo ?? '').trim();
+const itemEan = (it: any) => { const e = onlyDigits(it?.ean); return e.length >= 8 ? e : ''; };
+
+async function loadItemLinks(admin: Admin, tenantId: string, doc: any) {
+  const cnpj = onlyDigits(doc.emitente_cnpj);
+  const itens = (doc.itens ?? []) as any[];
+  const out: Array<{ index: number; ingredient_id: string; units_per_package: number } | null> = itens.map(() => null);
+  if (!cnpj || itens.length === 0) return out;
+  const { data } = await admin.from('fiscal_inbound_item_links')
+    .select('supplier_code, ean, ingredient_id, units_per_package, ingredients!inner(id, deleted_at)')
+    .eq('tenant_id', tenantId).eq('supplier_cnpj', cnpj);
+  const vivos = (data ?? []).filter((l: any) => !l.ingredients?.deleted_at);
+  const byCode = new Map(vivos.map((l: any) => [String(l.supplier_code), l]));
+  const byEan = new Map(vivos.filter((l: any) => l.ean).map((l: any) => [String(l.ean), l]));
+  itens.forEach((it, i) => {
+    const l: any = byCode.get(itemCode(it)) ?? (itemEan(it) ? byEan.get(itemEan(it)) : undefined);
+    if (l) out[i] = { index: i, ingredient_id: l.ingredient_id, units_per_package: Number(l.units_per_package) || 1 };
+  });
+  return out;
+}
+
+async function saveItemLinks(admin: Admin, tenantId: string, doc: any, links: Map<number, { ingredient_id: string | null; units_per_package: number }>, userId: string | null) {
+  const cnpj = onlyDigits(doc.emitente_cnpj);
+  if (!cnpj) return;
+  const itens = (doc.itens ?? []) as any[];
+  const now = new Date().toISOString();
+  for (const [i, l] of links) {
+    const it = itens[i];
+    const code = itemCode(it);
+    if (!it || !code) continue;
+    if (!l.ingredient_id) {
+      // O usuário tirou o vínculo deste item: esquece o que estava memorizado
+      await admin.from('fiscal_inbound_item_links').delete().eq('tenant_id', tenantId).eq('supplier_cnpj', cnpj).eq('supplier_code', code);
+      continue;
+    }
+    const { error } = await admin.from('fiscal_inbound_item_links').upsert({
+      tenant_id: tenantId, supplier_cnpj: cnpj, supplier_code: code, ean: itemEan(it) || null,
+      description: String(it.descricao ?? '').slice(0, 250) || null, unit_label: it.unidade ?? null,
+      ingredient_id: l.ingredient_id, units_per_package: l.units_per_package, updated_by: userId, updated_at: now,
+    }, { onConflict: 'tenant_id,supplier_cnpj,supplier_code' });
+    if (error) log('WARN', 'item_links', 'memorizar vínculo falhou', { code, error: error.message });
+  }
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -491,6 +542,17 @@ Deno.serve(async (req: Request) => {
 
     if (action === 'get_xml') return json({ success: true, xml: doc.xml, chave: doc.chave });
 
+    // Vínculos memorizados dos itens + insumos da loja (pela service role: a leitura
+    // direta com RLS falha para admin com várias lojas — auth_tenant_id = última membership)
+    if (action === 'item_links') {
+      const [links, { data: ings }] = await Promise.all([
+        loadItemLinks(admin, tenantId, doc),
+        admin.from('ingredients').select('id, name, unit, purchase_unit, purchase_factor')
+          .eq('tenant_id', tenantId).is('deleted_at', null).order('name').limit(3000),
+      ]);
+      return json({ success: true, links, ingredients: ings ?? [] });
+    }
+
     if (action === 'get_pdf') {
       const t = await loadToken(admin, tenantId);
       if (!t) return errResp('Token do provedor não configurado');
@@ -566,16 +628,37 @@ Deno.serve(async (req: Request) => {
 
       if (action === 'import_purchase') {
         // Pelo purchase-write (fonte única da regra de compra: fornecedor, parcelas com
-        // reference_type='purchase' → CMV). Itens sem insumo vinculado NÃO mexem no estoque.
-        const itens = ((doc.itens ?? []) as any[]).map((it) => ({
-          description: [it.descricao, it.codigo ? `(${it.codigo})` : null].filter(Boolean).join(' ').slice(0, 250),
-          quantity: Number(it.quantidade ?? 0) || 1,
-          unit_price: Number(it.valor_unitario ?? 0),
-          discount_per_unit: Number(it.quantidade) > 0 ? round2(Number(it.desconto ?? 0) / Number(it.quantidade)) : 0,
-          unit_label: it.unidade ?? null,
-          units_per_package: 1,
-          cost_center_id: body.cost_center_id ?? null,
-        }));
+        // reference_type='purchase' → CMV). Itens vinculados a um insumo dão entrada no
+        // estoque (qtd × units_per_package, na unidade do insumo); os demais só descrição.
+        const linkMap = new Map<number, { ingredient_id: string | null; units_per_package: number }>();
+        if (Array.isArray(body.links)) {
+          const ids = [...new Set((body.links as any[]).map((l) => l?.ingredient_id).filter(Boolean).map(String))];
+          const { data: validos } = ids.length
+            ? await admin.from('ingredients').select('id').eq('tenant_id', tenantId).is('deleted_at', null).in('id', ids)
+            : { data: [] };
+          const ok = new Set((validos ?? []).map((v: any) => String(v.id)));
+          for (const l of body.links as any[]) {
+            const i = Number(l?.index);
+            if (!Number.isInteger(i) || i < 0) continue;
+            const ing = l?.ingredient_id ? String(l.ingredient_id) : null;
+            if (ing && !ok.has(ing)) return errResp('Insumo inválido para esta loja');
+            const upp = Number(l?.units_per_package);
+            linkMap.set(i, { ingredient_id: ing, units_per_package: upp > 0 ? upp : 1 });
+          }
+        }
+        const itens: Record<string, any>[] = ((doc.itens ?? []) as any[]).map((it, i) => {
+          const link = linkMap.get(i);
+          return {
+            description: [it.descricao, it.codigo ? `(${it.codigo})` : null].filter(Boolean).join(' ').slice(0, 250),
+            quantity: Number(it.quantidade ?? 0) || 1,
+            unit_price: Number(it.valor_unitario ?? 0),
+            discount_per_unit: Number(it.quantidade) > 0 ? round2(Number(it.desconto ?? 0) / Number(it.quantidade)) : 0,
+            unit_label: it.unidade ?? null,
+            units_per_package: link?.ingredient_id ? link.units_per_package : 1,
+            ingredient_id: link?.ingredient_id ?? null,
+            cost_center_id: body.cost_center_id ?? null,
+          };
+        });
         // O purchase-write recalcula o total como Σ itens líquidos + frete. O vNF da nota também
         // soma ICMS-ST, IPI, seguro e outras despesas — sem isso a compra (e a conta a pagar de
         // 1 parcela) sairia menor que o boleto. A diferença entra como uma linha própria.
@@ -586,7 +669,7 @@ Deno.serve(async (req: Request) => {
           itens.push({
             description: 'Acréscimos da nota (ICMS-ST, IPI, seguro, outras despesas)',
             quantity: 1, unit_price: acrescimos, discount_per_unit: 0, unit_label: null, units_per_package: 1,
-            cost_center_id: body.cost_center_id ?? null,
+            ingredient_id: null, cost_center_id: body.cost_center_id ?? null,
           });
         } else if (itens.length > 0 && acrescimos <= -0.01) {
           // Desconto no total da nota que não veio rateado nos itens: aplica no maior item
@@ -631,6 +714,7 @@ Deno.serve(async (req: Request) => {
           log('ERROR', 'import_purchase', 'purchase-write falhou', { http: r.status, msg });
           return errResp(`Não foi possível lançar a compra: ${msg}`, 500);
         }
+        if (linkMap.size > 0) await saveItemLinks(admin, tenantId, doc, linkMap, userId);
         const { data: bills } = await admin.from('fin_accounts_payable').select('id').eq('tenant_id', tenantId).eq('reference_id', purchase.id);
         await admin.from('fiscal_inbound_documents').update({
           status: 'imported', import_type: 'purchase', purchase_id: purchase.id, supplier_id: supplier.id,

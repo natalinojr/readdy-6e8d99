@@ -246,12 +246,15 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
 // ── Download do arquivo ──────────────────────────────────────────────────────
 // A Stone mantém URLs diferentes conforme a geração da conta; tentamos em ordem e
 // lembramos a que funcionou. 404 = sem arquivo para o dia (válido). 401/403 = chave.
-type DownloadResult = { status: 'ok'; xml: string; endpoint: string } | { status: 'empty'; endpoint: string } | { status: 'unauthorized'; detail: string } | { status: 'error'; detail: string };
+type DownloadResult = { status: 'ok'; xml: string; endpoint: string } | { status: 'empty'; endpoint: string; detail?: string } | { status: 'not_ready'; detail: string } | { status: 'unauthorized'; detail: string } | { status: 'error'; detail: string };
 
 function endpointsFor(stoneCode: string, date: string, preferred?: string | null) {
   const compact = date.replace(/-/g, '');
   const list = [
-    { id: 'v2-file', url: `${STONE_BASE}/v2/merchant/${stoneCode}/file?referenceDate=${date}` },
+    // Documentado para cliente Stone (chave criada em Perfil › Chaves de autenticação):
+    // GET /v2/merchant/{stoneCode}/conciliation-file/{YYYYMMDD}. O antigo "/v2/.../file?referenceDate="
+    // não existe (404 "no Route matched"). v1 fica como reserva para chaves antigas.
+    { id: 'v2-conciliation-file', url: `${STONE_BASE}/v2/merchant/${stoneCode}/conciliation-file/${compact}` },
     { id: 'v1-conciliation-file', url: `${STONE_BASE}/v1/merchant/${stoneCode}/conciliation-file/${compact}` },
   ];
   if (preferred) list.sort((a, b) => (a.id === preferred ? -1 : b.id === preferred ? 1 : 0));
@@ -268,6 +271,7 @@ async function downloadFile(apiKey: string, stoneCode: string, date: string, pre
   };
   const errors: string[] = [];
   let sawNotFound: string | null = null;
+  let sawUnauthorized: string | null = null;
   for (const ep of endpointsFor(stoneCode, date, preferred)) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -281,15 +285,20 @@ async function downloadFile(apiKey: string, stoneCode: string, date: string, pre
       }
       const text = await res.text();
       if (res.ok && /<Conciliation[\s>]/.test(text)) return { status: 'ok', xml: text, endpoint: ep.id };
-      if (res.status === 401 || res.status === 403) return { status: 'unauthorized', detail: `${res.status} ${text.slice(0, 200)}` };
-      if (res.status === 404) { sawNotFound = ep.id; errors.push(`${ep.id}: 404`); continue; }
+      // A Stone só gera o arquivo a partir das 04h (Brasília): chave válida, arquivo ainda não disponível.
+      if (res.status === 400 && /only permitted from/i.test(text)) return { status: 'not_ready', detail: `${ep.id}: ${text.slice(0, 200)}` };
+      // Chave de uma geração da API é recusada na outra: tenta o próximo endereço antes de concluir.
+      if (res.status === 401 || res.status === 403) { sawUnauthorized = `${ep.id}: ${res.status} ${text.slice(0, 160)}`; errors.push(sawUnauthorized); continue; }
+      if (res.status === 404 && /no route matched/i.test(text)) { errors.push(`${ep.id}: rota inexistente`); continue; }
+      if (res.status === 404) { sawNotFound = ep.id; errors.push(`${ep.id}: 404 ${text.slice(0, 160)}`); continue; }
       if (res.ok) { errors.push(`${ep.id}: resposta sem <Conciliation> (${text.slice(0, 120)})`); continue; }
       errors.push(`${ep.id}: ${res.status} ${text.slice(0, 160)}`);
     } catch (e) {
       errors.push(`${ep.id}: ${String((e as Error)?.message ?? e).slice(0, 160)}`);
     } finally { clearTimeout(timer); }
   }
-  if (sawNotFound) return { status: 'empty', endpoint: sawNotFound };
+  if (sawNotFound) return { status: 'empty', endpoint: sawNotFound, detail: errors.join(' | ').slice(0, 480) };
+  if (sawUnauthorized) return { status: 'unauthorized', detail: errors.join(' | ') };
   return { status: 'error', detail: errors.join(' | ') };
 }
 
@@ -352,16 +361,20 @@ async function importDay(admin: Admin, tenantId: string, cfg: any, date: string)
     await admin.from('fin_stone_imports').upsert({ tenant_id: tenantId, reference_date: date, imported_at: now, ...fields }, { onConflict: 'tenant_id,reference_date' });
   };
 
+  if (dl.status === 'not_ready') {
+    // Não grava o dia: o sync tenta de novo na próxima abertura da Conciliação.
+    return { date, skipped: true, fetched: 0, inserted: 0, matched: 0, credit: 0, debit: 0, payments_total: 0, sales_count: 0, note: 'A Stone só libera o arquivo do dia anterior a partir das 04h (Brasília).' };
+  }
   if (dl.status === 'unauthorized') {
     await logRow({ status: 'error', transactions_count: 0, total_credit: 0, total_debit: 0, error_message: `Chave recusada pela Stone (${dl.detail})`.slice(0, 500) });
-    return { date, error: 'A Stone recusou a chave. Gere uma nova Chave Secreta no portal Stone (Conciliação) e confira o StoneCode.' };
+    return { date, error: 'A Stone recusou a chave. Gere uma nova chave no portal Stone (Perfil › Chaves de autenticação) para este StoneCode.' };
   }
   if (dl.status === 'error') {
     await logRow({ status: 'error', transactions_count: 0, total_credit: 0, total_debit: 0, error_message: dl.detail.slice(0, 500) });
     return { date, error: `Falha ao baixar o arquivo da Stone: ${dl.detail}` };
   }
   if (dl.status === 'empty') {
-    await logRow({ status: 'success', transactions_count: 0, total_credit: 0, total_debit: 0, error_message: null, sales_count: 0, sales_gross: 0, payments_total: 0 });
+    await logRow({ status: 'success', transactions_count: 0, total_credit: 0, total_debit: 0, error_message: dl.detail ? `Sem arquivo: ${dl.detail}` : null, sales_count: 0, sales_gross: 0, payments_total: 0 });
     if (cfg.endpoint !== dl.endpoint) await admin.from('fin_stone_config').update({ endpoint: dl.endpoint }).eq('tenant_id', tenantId);
     return { date, empty: true, fetched: 0, inserted: 0, matched: 0, credit: 0, debit: 0, payments_total: 0, sales_count: 0 };
   }
@@ -537,8 +550,10 @@ Deno.serve(async (req: Request) => {
       if (!acc) return errResp('Conta bancária não encontrada nesta loja');
 
       // Valida baixando o arquivo de 2 dias atrás (ontem pode ainda não existir antes das 05h)
-      const probe = await downloadFile(apiKey, stoneCode, addDays(todayBR(), -2), cfg?.endpoint);
-      if (probe.status === 'unauthorized') return errResp('A Stone recusou a chave. Confira a Chave Secreta (portal Stone › Conciliação) e o StoneCode.');
+      let probe = await downloadFile(apiKey, stoneCode, addDays(todayBR(), -2), cfg?.endpoint);
+      if (probe.status === 'not_ready') probe = { status: 'empty', endpoint: 'v2-conciliation-file' } as DownloadResult;
+      if (probe.status === 'unauthorized' || probe.status === 'error') log('WARN', 'save_config', 'validação recusada', { tenantId, stoneCode, probe });
+      if (probe.status === 'unauthorized') return errResp('A Stone recusou a chave. Confira a chave (portal Stone › Perfil › Chaves de autenticação, tipo "API de Conciliação Stone") e se ela foi criada para este StoneCode.');
       if (probe.status === 'error') return errResp(`Não foi possível validar na Stone: ${probe.detail}`);
 
       const { error } = await admin.from('fin_stone_config').upsert({

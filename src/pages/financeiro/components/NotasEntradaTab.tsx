@@ -37,6 +37,8 @@ const CFOP_NAO_VENDA = /^[56](9(0[1-9]|1[0-9]|2[0-4]|49)|55[0-9])$/;
 const TPAG: Record<string, string> = { '01': 'Dinheiro', '02': 'Cheque', '03': 'Cartão de crédito', '04': 'Cartão de débito', '05': 'Crédito loja', '15': 'Boleto', '16': 'Depósito', '17': 'PIX', '18': 'Transferência', '90': 'Sem pagamento', '99': 'Outros' };
 const PAGO_NA_HORA = new Set(['01', '03', '04', '17', '16', '18']);
 interface Pag { forma: string; valor: number }
+interface Insumo { id: string; name: string; unit: string | null; purchase_unit: string | null; purchase_factor: number | null }
+interface Vinculo { ingredient_id: string; units_per_package: number }
 function pareceNaoVenda(d: { cfops: string | null; pagamento?: Pag[] }): boolean {
   const cfops = (d.cfops ?? '').split(',').map((c) => c.trim()).filter(Boolean);
   const semPagamento = (d.pagamento ?? []).length > 0 && (d.pagamento ?? []).every((p) => p.forma === '90' || Number(p.valor) === 0);
@@ -353,6 +355,35 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
   const [centro, setCentro] = useState('');
   const [dre, setDre] = useState('');
   const [enviando, setEnviando] = useState(false);
+  // Vínculo item → insumo (dá entrada no estoque); vem memorizado por fornecedor+código
+  const [insumos, setInsumos] = useState<Insumo[]>([]);
+  const [vinculos, setVinculos] = useState<Vinculo[]>(() => (doc.itens ?? []).map(() => ({ ingredient_id: '', units_per_package: 1 })));
+  const [vinculosCarregados, setVinculosCarregados] = useState(false);
+
+  useEffect(() => {
+    if (servico || (doc.itens ?? []).length === 0) return;
+    call<{ links?: Array<{ index: number; ingredient_id: string; units_per_package: number } | null>; ingredients?: Insumo[] }>({ action: 'item_links', document_id: doc.id })
+      .then((r) => {
+        if (!r.success) return;
+        setInsumos(r.ingredients ?? []);
+        setVinculos((vs) => vs.map((v, i) => {
+          const l = r.links?.[i];
+          return l ? { ingredient_id: l.ingredient_id, units_per_package: Number(l.units_per_package) || 1 } : v;
+        }));
+        setVinculosCarregados(true);
+      });
+  }, [call, doc.id, doc.itens, servico]);
+
+  const setVinculo = (i: number, patch: Partial<Vinculo>) => setVinculos((vs) => vs.map((v, j) => {
+    if (j !== i) return v;
+    const nv = { ...v, ...patch };
+    // Ao trocar de insumo, sugere o fator de embalagem que ele já tem memorizado
+    if (patch.ingredient_id !== undefined && patch.units_per_package === undefined) {
+      const ing = insumos.find((g) => g.id === patch.ingredient_id);
+      nv.units_per_package = Number(ing?.purchase_factor) > 0 ? Number(ing?.purchase_factor) : 1;
+    }
+    return nv;
+  }));
 
   useEffect(() => {
     if (!tenantId) return;
@@ -379,6 +410,10 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
       cost_center_id: centro || null,
       dre_category_id: tipo === 'bill' ? (dre || null) : null,
       category: tipo === 'bill' ? (dres.find((d) => d.id === dre)?.name ?? 'Outros') : undefined,
+      // Só manda se os vínculos carregaram — senão um erro de rede apagaria os memorizados
+      links: tipo === 'purchase' && vinculosCarregados
+        ? vinculos.map((v, i) => ({ index: i, ingredient_id: v.ingredient_id || null, units_per_package: v.units_per_package > 0 ? v.units_per_package : 1 }))
+        : undefined,
     });
     setEnviando(false);
     if (!r.success) { onErro('Não foi possível lançar', r.error); return; }
@@ -439,25 +474,60 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
           {/* Itens */}
           {!servico && itens.length > 0 && (
             <div>
-              <p className="text-xs font-bold text-zinc-700 mb-2">Itens da nota ({itens.length})</p>
-              <div className="border border-zinc-100 rounded-lg overflow-hidden max-h-56 overflow-y-auto">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-bold text-zinc-700">Itens da nota ({itens.length})</p>
+                {tipo === 'purchase' && vinculosCarregados && (
+                  <p className="text-[11px] text-zinc-500">{vinculos.filter((v) => v.ingredient_id).length} de {itens.length} vinculado(s) ao estoque</p>
+                )}
+              </div>
+              <div className="border border-zinc-100 rounded-lg overflow-auto max-h-72">
                 <table className="w-full text-xs">
-                  <thead className="bg-zinc-50 text-zinc-400 uppercase text-[10px] sticky top-0">
-                    <tr><th className="text-left px-3 py-1.5">Produto</th><th className="text-right px-3 py-1.5">Qtd</th><th className="text-right px-3 py-1.5">Unit.</th><th className="text-right px-3 py-1.5">Total</th></tr>
+                  <thead className="bg-zinc-50 text-zinc-400 uppercase text-[10px] sticky top-0 z-10">
+                    <tr>
+                      <th className="text-left px-3 py-1.5">Produto</th><th className="text-right px-3 py-1.5">Qtd</th><th className="text-right px-3 py-1.5">Total</th>
+                      {tipo === 'purchase' && <th className="text-left px-3 py-1.5 min-w-[260px]">Insumo do estoque</th>}
+                    </tr>
                   </thead>
                   <tbody>
-                    {itens.map((it, i) => (
-                      <tr key={i} className="border-t border-zinc-50">
-                        <td className="px-3 py-1.5 text-zinc-700">{it.descricao}<span className="text-zinc-400"> {it.ncm ? `· NCM ${it.ncm}` : ''}</span></td>
-                        <td className="px-3 py-1.5 text-right text-zinc-600 whitespace-nowrap">{Number(it.quantidade ?? 0).toLocaleString('pt-BR')} {it.unidade}</td>
-                        <td className="px-3 py-1.5 text-right text-zinc-600 whitespace-nowrap">{brl(it.valor_unitario)}</td>
-                        <td className="px-3 py-1.5 text-right font-medium text-zinc-800 whitespace-nowrap">{brl(it.valor_total)}</td>
-                      </tr>
-                    ))}
+                    {itens.map((it, i) => {
+                      const v = vinculos[i];
+                      const ing = insumos.find((g) => g.id === v?.ingredient_id);
+                      const entra = Number(it.quantidade ?? 0) * (Number(v?.units_per_package) || 1);
+                      return (
+                        <tr key={i} className="border-t border-zinc-50 align-top">
+                          <td className="px-3 py-1.5 text-zinc-700">{it.descricao}<span className="text-zinc-400"> {it.codigo ? `· cód. ${it.codigo}` : ''}</span></td>
+                          <td className="px-3 py-1.5 text-right text-zinc-600 whitespace-nowrap">{Number(it.quantidade ?? 0).toLocaleString('pt-BR')} {it.unidade}<p className="text-[10px] text-zinc-400">{brl(it.valor_unitario)}</p></td>
+                          <td className="px-3 py-1.5 text-right font-medium text-zinc-800 whitespace-nowrap">{brl(it.valor_total)}</td>
+                          {tipo === 'purchase' && (
+                            <td className="px-3 py-1.5">
+                              <select value={v?.ingredient_id ?? ''} onChange={(e) => setVinculo(i, { ingredient_id: e.target.value })} disabled={!vinculosCarregados}
+                                className={`w-full text-xs border rounded-lg px-2 py-1 focus:outline-none focus:border-amber-400 cursor-pointer ${v?.ingredient_id ? 'border-emerald-300 bg-emerald-50/50' : 'border-zinc-200'}`}>
+                                <option value="">{vinculosCarregados ? 'Não entra no estoque' : 'Carregando…'}</option>
+                                {insumos.map((g) => <option key={g.id} value={g.id}>{g.name}{g.unit ? ` (${g.unit})` : ''}</option>)}
+                              </select>
+                              {ing && (
+                                <div className="flex items-center gap-1 mt-1 text-[11px] text-zinc-500">
+                                  <span>1 {it.unidade || 'un'} =</span>
+                                  <input type="number" min="0" step="any" value={v.units_per_package}
+                                    onChange={(e) => setVinculo(i, { units_per_package: Number(e.target.value.replace(',', '.')) || 0 })}
+                                    className="w-16 border border-zinc-200 rounded px-1.5 py-0.5 text-right focus:outline-none focus:border-amber-400" />
+                                  <span>{ing.unit ?? 'un'}</span>
+                                  <span className="text-emerald-700 font-semibold ml-auto whitespace-nowrap">+{entra.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} {ing.unit ?? 'un'}</span>
+                                </div>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
-              <p className="text-[10px] text-zinc-400 mt-1">Os itens entram na compra como descrição. O estoque só é movimentado quando o item estiver vinculado a um insumo (edite a compra depois, se quiser).</p>
+              <p className="text-[10px] text-zinc-400 mt-1">
+                {tipo === 'purchase'
+                  ? 'Itens vinculados a um insumo dão entrada no estoque e atualizam o custo dele. O vínculo fica memorizado: nas próximas notas deste fornecedor o item já vem vinculado. Confira o fator quando a nota vier em caixa/fardo (ex.: 1 CX = 12 un).'
+                  : 'Despesa não movimenta o estoque.'}
+              </p>
             </div>
           )}
 
