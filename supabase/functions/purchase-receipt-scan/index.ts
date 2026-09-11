@@ -24,7 +24,9 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
-const MODEL = 'claude-opus-5';
+// Sonnet 5: escolha do usuário em 2026-09-11 (custo ~1/2 do Opus 5; ler cupom não
+// precisa do topo de linha). Se notinhas à mão vierem com erro, testar o Opus 5 aqui.
+const MODEL = 'claude-sonnet-5';
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const PAYMENT_METHODS = ['Dinheiro', 'PIX', 'Cartão Débito', 'Cartão Crédito', 'Boleto', 'Transferência'];
@@ -399,12 +401,9 @@ async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<
   // deno-lint-ignore no-explicit-any
   let response: any;
   try {
-    response = await client.beta.messages.create({
+    response = await client.messages.create({
       model: MODEL,
       max_tokens: 16000,
-      betas: ['server-side-fallback-2026-07-01'],
-      // deno-lint-ignore no-explicit-any
-      fallbacks: 'default' as any,
       system: SYSTEM_PROMPT,
       output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
       messages: [{

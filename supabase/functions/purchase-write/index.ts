@@ -31,6 +31,9 @@ interface ComputedItem {
   notes: string | null;
   pack_count: number | null;
   pack_size: number | null;
+  /** Código do produto no fornecedor (NF-e) e EAN: usados no recebimento para sugerir/memorizar o insumo */
+  supplier_code: string | null;
+  ean: string | null;
 }
 
 // Normalização dos itens: o total da compra é derivado dos itens (líquidos de
@@ -85,6 +88,8 @@ function computePurchaseItems(tenant_id: string, items: unknown): ComputedItem[]
       notes: item.notes ? String(item.notes) : null,
       pack_count: packCount > 0 ? packCount : null,
       pack_size: packCount > 0 ? (packSize > 0 ? packSize : 1) : null,
+      supplier_code: item.supplier_code ? String(item.supplier_code).trim().slice(0, 60) : null,
+      ean: item.ean && /^\d{8,14}$/.test(String(item.ean).replace(/\D/g, '')) ? String(item.ean).replace(/\D/g, '') : null,
     };
   });
 }

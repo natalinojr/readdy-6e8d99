@@ -121,6 +121,8 @@ export interface PurchaseItem {
   cost_per_base_unit?: number;      // R$ por unidade de ESTOQUE (o "R$/kg")
   merchandise_category_id?: string; // categoria de mercadoria (Bebidas, Hortifruti...)
   notes?: string;                   // observação desta linha
+  supplier_code?: string | null;    // código do produto no fornecedor (NF-e)
+  ean?: string | null;              // código de barras do produto
 }
 
 export interface Purchase {

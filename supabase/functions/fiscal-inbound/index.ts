@@ -657,6 +657,9 @@ Deno.serve(async (req: Request) => {
             units_per_package: link?.ingredient_id ? link.units_per_package : 1,
             ingredient_id: link?.ingredient_id ?? null,
             cost_center_id: body.cost_center_id ?? null,
+            // Código do produto no fornecedor e EAN: o recebimento sugere e memoriza o insumo por eles
+            supplier_code: it.codigo ? String(it.codigo) : null,
+            ean: it.ean ?? null,
           };
         });
         // O purchase-write recalcula o total como Σ itens líquidos + frete. O vNF da nota também

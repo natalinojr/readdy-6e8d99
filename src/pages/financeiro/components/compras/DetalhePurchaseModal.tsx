@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { SUPABASE_URL } from '@/lib/supabase';
@@ -64,6 +64,47 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
     });
     return init;
   });
+
+  // Vínculo de cada item com um insumo, escolhido no recebimento (sugestão vem do servidor:
+  // o que já está na compra, o memorizado do fornecedor ou o histórico).
+  type IngOpt = { id: string; name: string; unit: string | null; purchase_unit: string | null; purchase_factor: number | null };
+  const [ingredients, setIngredients] = useState<IngOpt[]>([]);
+  const [links, setLinks] = useState<Record<string, { ingredient_id: string; units_per_package: number; source?: string }>>({});
+  const [ctxLoaded, setCtxLoaded] = useState(false);
+  const [stockApplied, setStockApplied] = useState(false);
+  useEffect(() => {
+    if (!showDeliveryForm || ctxLoaded || !user?.tenantId) return;
+    let alive = true;
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(SUPABASE_URL + '/functions/v1/purchase-confirm-delivery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (session?.access_token ?? '') },
+        body: JSON.stringify({ action: 'receipt_context', tenant_id: user.tenantId, payload: { purchase_id: purchase.id } }),
+      });
+      const out = await res.json().catch(() => null);
+      if (!alive || !res.ok || !out || out.error) return;
+      setIngredients(out.ingredients ?? []);
+      setLinks(out.suggestions ?? {});
+      setStockApplied(out.stock_already_applied === true);
+      setCtxLoaded(true);
+    })();
+    return () => { alive = false; };
+  }, [showDeliveryForm, ctxLoaded, user?.tenantId, purchase.id]);
+  const unitOf = (ingId?: string) => ingredients.find(i => i.id === ingId)?.unit ?? '';
+  const setLink = (itemId: string, patchLink: { ingredient_id?: string; units_per_package?: number }) => {
+    setLinks(prev => {
+      const cur = prev[itemId] ?? { ingredient_id: '', units_per_package: 1 };
+      const next = { ...cur, ...patchLink, source: 'manual' };
+      // Ao trocar de insumo sem fator definido, usa o fator padrão de compra do insumo
+      if (patchLink.ingredient_id && patchLink.units_per_package == null) {
+        const ing = ingredients.find(i => i.id === patchLink.ingredient_id);
+        if (ing?.purchase_factor && Number(ing.purchase_factor) > 0 && !cur.ingredient_id) next.units_per_package = Number(ing.purchase_factor);
+      }
+      return { ...prev, [itemId]: next };
+    });
+  };
+  const semInsumo = ctxLoaded ? (purchase.items ?? []).filter(i => !links[i.id]?.ingredient_id).length : 0;
 
   // Calcular novo total da compra baseado nas quantidades recebidas
   const newTotalAmount = useMemo(() => {
@@ -139,16 +180,18 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
         const receivedQty = received ? received.quantity : originalQty;
         const receivedTotal = received ? received.total : originalTotal;
 
-        // Só envia se houve alteração
-        if (receivedQty !== originalQty || receivedTotal !== originalTotal) {
-          return {
-            item_id: item.id,
-            received_quantity: receivedQty,
-            received_total_price: receivedTotal,
-          };
-        }
-        return null;
-      }).filter(Boolean) ?? [];
+        const link = links[item.id];
+        return {
+          item_id: item.id,
+          received_quantity: receivedQty,
+          received_total_price: receivedTotal,
+          // Vínculo com o insumo (só quando a lista de insumos carregou, para não apagar memorizados)
+          ...(ctxLoaded ? {
+            ingredient_id: link?.ingredient_id || null,
+            units_per_package: link?.ingredient_id ? (Number(link.units_per_package) > 0 ? Number(link.units_per_package) : 1) : (Number(item.units_per_package ?? 1) || 1),
+          } : {}),
+        };
+      }) ?? [];
 
       const res = await fetch(`${SUPABASE_URL}/functions/v1/purchase-confirm-delivery`, {
         method: 'POST',
@@ -370,7 +413,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                     <p className="text-sm font-bold text-green-800">Confirmar Recebimento da Mercadoria</p>
                   </div>
                   <p className="text-xs text-green-700">
-                    Ajuste as quantidades recebidas abaixo. Os itens vinculados a insumos entram no estoque agora, pela quantidade recebida. O valor total será recalculado automaticamente e as contas a pagar serão ajustadas proporcionalmente.
+                    Ajuste as quantidades recebidas e escolha o insumo de cada item. Os itens com insumo entram no estoque agora, pela quantidade recebida × o fator da embalagem, e o vínculo fica memorizado para as próximas notas deste fornecedor. O valor total será recalculado automaticamente e as contas a pagar serão ajustadas proporcionalmente.
                   </p>
 
                   {/* Tabela de itens com quantidade recebida */}
@@ -401,6 +444,41 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                                   <p className="text-xs font-medium text-zinc-800">{item.description || '—'}</p>
                                   {item.unit_label && (
                                     <p className="text-[10px] text-zinc-400">{item.unit_label}</p>
+                                  )}
+                                  {ctxLoaded && (
+                                    <div className="mt-1 flex items-center gap-1 flex-wrap">
+                                      <select
+                                        value={links[item.id]?.ingredient_id ?? ''}
+                                        onChange={(e) => setLink(item.id, { ingredient_id: e.target.value })}
+                                        disabled={stockApplied && !!item.ingredient_id}
+                                        title={stockApplied && item.ingredient_id ? 'Compra antiga: o estoque deste item já entrou na criação' : 'Insumo que recebe esta entrada no estoque'}
+                                        className={'text-[11px] border rounded px-1 py-0.5 max-w-[200px] bg-white ' + (links[item.id]?.ingredient_id ? 'border-green-300' : 'border-amber-300')}
+                                      >
+                                        <option value="">Não entra no estoque</option>
+                                        {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + i.unit + ')' : ''}</option>)}
+                                      </select>
+                                      {links[item.id]?.ingredient_id && (
+                                        <>
+                                          <span className="text-[10px] text-zinc-500">1 {item.unit_label || 'un'} =</span>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            step="0.001"
+                                            value={links[item.id].units_per_package}
+                                            onChange={(e) => setLink(item.id, { units_per_package: Number(e.target.value) || 0 })}
+                                            disabled={stockApplied && !!item.ingredient_id}
+                                            className="w-16 text-[11px] border border-zinc-200 rounded px-1 py-0.5"
+                                          />
+                                          <span className="text-[10px] text-zinc-500">{unitOf(links[item.id].ingredient_id)}</span>
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                  {ctxLoaded && links[item.id]?.source === 'memorizado' && (
+                                    <p className="text-[10px] text-blue-600 mt-0.5">vínculo memorizado deste fornecedor</p>
+                                  )}
+                                  {ctxLoaded && links[item.id]?.source === 'historico' && (
+                                    <p className="text-[10px] text-blue-600 mt-0.5">sugerido pela última compra deste item</p>
                                   )}
                                 </td>
                                 <td className="px-3 py-2 text-center text-xs text-zinc-500">
@@ -463,6 +541,12 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                         </tfoot>
                       </table>
                     </div>
+                  )}
+
+                  {semInsumo > 0 && (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      <i className="ri-error-warning-line mr-1" />{semInsumo} item(ns) sem insumo não entram no estoque.
+                    </p>
                   )}
 
                   <div>

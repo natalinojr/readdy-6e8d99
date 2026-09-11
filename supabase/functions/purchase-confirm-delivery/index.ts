@@ -48,6 +48,61 @@ Deno.serve(async (req) => {
       .single();
 
     if (purchaseErr || !purchase) return new Response(JSON.stringify({ error: 'Compra não encontrada' }), { status: 404, headers: corsHeaders });
+    // CNPJ do fornecedor: sugere e memoriza o vínculo item → insumo por (CNPJ, código do produto)
+    let supplierCnpj = '';
+    {
+      const base = supabase.from('fin_suppliers').select('cnpj').eq('tenant_id', tenant_id);
+      const { data: sp } = await (purchase.supplier_id ? base.eq('id', purchase.supplier_id) : base.ilike('name', String(purchase.supplier ?? '').trim())).limit(1).maybeSingle();
+      supplierCnpj = String(sp?.cnpj ?? '').replace(/\D/g, '');
+      if (!supplierCnpj) {
+        const { data: fd } = await supabase.from('fiscal_inbound_documents').select('emitente_cnpj').eq('tenant_id', tenant_id).eq('purchase_id', purchase_id).limit(1).maybeSingle();
+        supplierCnpj = String(fd?.emitente_cnpj ?? '').replace(/\D/g, '');
+      }
+    }
+
+    // Tela de recebimento: lista de insumos + sugestão de vínculo para cada item.
+    // Ordem: o que já está na compra → memorizado do fornecedor (código/EAN) → histórico pela descrição.
+    if (body.action === 'receipt_context') {
+      const its = (purchase.items ?? []) as Array<Record<string, any>>;
+      const codes = [...new Set(its.map((i) => String(i.supplier_code ?? '').trim()).filter(Boolean))];
+      const eans = [...new Set(its.map((i) => String(i.ean ?? '').trim()).filter(Boolean))];
+      const descs = [...new Set(its.filter((i) => !i.ingredient_id).map((i) => String(i.description ?? '')).filter(Boolean))].slice(0, 80);
+      const [ingsRes, memoRes, eanRes, histRes] = await Promise.all([
+        supabase.from('ingredients').select('id, name, unit, purchase_unit, purchase_factor').eq('tenant_id', tenant_id).is('deleted_at', null).order('name').limit(3000),
+        supplierCnpj && codes.length
+          ? supabase.from('fiscal_inbound_item_links').select('supplier_code, ingredient_id, units_per_package').eq('tenant_id', tenant_id).eq('supplier_cnpj', supplierCnpj).in('supplier_code', codes)
+          : Promise.resolve({ data: [] as any[] }),
+        eans.length
+          ? supabase.from('fiscal_inbound_item_links').select('ean, ingredient_id, units_per_package').eq('tenant_id', tenant_id).in('ean', eans)
+          : Promise.resolve({ data: [] as any[] }),
+        descs.length
+          ? supabase.from('fin_purchase_items').select('description, ingredient_id, units_per_package').eq('tenant_id', tenant_id).not('ingredient_id', 'is', null).in('description', descs).limit(500)
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
+      const ings = (ingsRes.data ?? []) as any[];
+      const valid = new Set(ings.map((i) => String(i.id)));
+      const byCode = new Map(((memoRes.data ?? []) as any[]).map((l) => [String(l.supplier_code), l]));
+      const byEan = new Map(((eanRes.data ?? []) as any[]).map((l) => [String(l.ean), l]));
+      const byDesc = new Map<string, any>();
+      for (const h of (histRes.data ?? []) as any[]) if (!byDesc.has(String(h.description))) byDesc.set(String(h.description), h);
+      const suggestions: Record<string, { ingredient_id: string; units_per_package: number; source: string }> = {};
+      for (const it of its) {
+        if (it.ingredient_id) {
+          suggestions[it.id] = { ingredient_id: String(it.ingredient_id), units_per_package: Number(it.units_per_package ?? 1) || 1, source: 'compra' };
+          continue;
+        }
+        const code = String(it.supplier_code ?? '').trim();
+        const ean = String(it.ean ?? '').trim();
+        const m = (code && byCode.get(code)) || (ean && byEan.get(ean)) || null;
+        const h = byDesc.get(String(it.description ?? ''));
+        const pick = m ? { l: m, s: 'memorizado' } : h ? { l: h, s: 'historico' } : null;
+        if (pick && valid.has(String(pick.l.ingredient_id))) {
+          suggestions[it.id] = { ingredient_id: String(pick.l.ingredient_id), units_per_package: Number(pick.l.units_per_package ?? 1) || 1, source: pick.s };
+        }
+      }
+      return new Response(JSON.stringify({ ingredients: ings, suggestions, stock_already_applied: Boolean(purchase.stock_applied_at) }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     if (purchase.delivery_confirmed_at) return new Response(JSON.stringify({ error: 'Recebimento já confirmado anteriormente' }), { status: 409, headers: corsHeaders });
 
     // Data em que a mercadoria chegou, escolhida pelo usuário (AAAA-MM-DD). Sem data = agora.
@@ -69,6 +124,39 @@ Deno.serve(async (req) => {
           received_quantity: Number(ri.received_quantity ?? 0),
           received_total_price: Number(ri.received_total_price ?? 0),
         });
+      }
+    }
+
+    // Vínculo item → insumo escolhido no recebimento (2026-09-11). O item recém-vinculado
+    // entra INTEIRO no estoque, mesmo em compra antiga (a entrada da criação não o incluiu).
+    // Em compra antiga, item que JÁ tinha insumo não troca (o estoque dele já entrou).
+    const newlyLinked = new Set<string>();
+    const linkChanges: Array<{ item: Record<string, unknown>; ingredient_id: string | null; upp: number }> = [];
+    if (Array.isArray(received_items)) {
+      const withLink = (received_items as any[]).filter((ri) => ri && Object.prototype.hasOwnProperty.call(ri, 'ingredient_id'));
+      const wanted = [...new Set(withLink.map((ri) => ri.ingredient_id).filter(Boolean).map(String))];
+      const { data: validIngs } = wanted.length
+        ? await supabase.from('ingredients').select('id').eq('tenant_id', tenant_id).is('deleted_at', null).in('id', wanted)
+        : { data: [] as any[] };
+      const valid = new Set((validIngs ?? []).map((v: any) => String(v.id)));
+      if (wanted.some((w) => !valid.has(w))) return new Response(JSON.stringify({ error: 'Insumo inválido para esta loja' }), { status: 400, headers: corsHeaders });
+      const itemsList = (purchase.items ?? []) as Array<Record<string, unknown>>;
+      for (const ri of withLink) {
+        const item = itemsList.find((it) => it.id === ri.item_id);
+        if (!item) continue;
+        const ing = ri.ingredient_id ? String(ri.ingredient_id) : null;
+        const upp = Number(ri.units_per_package) > 0 ? Number(ri.units_per_package) : (Number(item.units_per_package ?? 1) || 1);
+        const before = item.ingredient_id ? String(item.ingredient_id) : null;
+        if (purchase.stock_applied_at && before) continue;
+        if (ing !== before || upp !== (Number(item.units_per_package ?? 1) || 1)) {
+          const qty = Number(item.quantity ?? 0);
+          const costBase = qty * upp > 0 ? (Number(item.total_price ?? 0) + Number(item.freight_allocated ?? 0)) / (qty * upp) : null;
+          await supabase.from('fin_purchase_items').update({ ingredient_id: ing, units_per_package: upp, cost_per_base_unit: costBase }).eq('id', item.id as string).eq('tenant_id', tenant_id);
+          if (!before && ing) newlyLinked.add(String(item.id));
+          item.ingredient_id = ing;
+          item.units_per_package = upp;
+        }
+        linkChanges.push({ item, ingredient_id: ing, upp });
       }
     }
 
@@ -111,7 +199,8 @@ Deno.serve(async (req) => {
         const unitsPerPkg = Number(item.units_per_package ?? 1);
         const factor = unitsPerPkg > 0 ? unitsPerPkg : 1;
 
-        if (!stockAlreadyApplied) {
+        // Entrada inteira: compra nova (estoque só no recebimento) ou item vinculado agora
+        if (!stockAlreadyApplied || newlyLinked.has(itemId)) {
           const entrada = receivedQty * factor;
           if (entrada > 0) {
             const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
@@ -131,7 +220,7 @@ Deno.serve(async (req) => {
         }
 
         // Compra antiga: o estoque já entrou por completo na criação; aplica só o DELTA
-        const deltaStock = stockAlreadyApplied ? (receivedQty - originalQty) * factor : 0;
+        const deltaStock = stockAlreadyApplied && !newlyLinked.has(itemId) ? (receivedQty - originalQty) * factor : 0;
         if (deltaStock !== 0) {
           const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
             p_tenant_id: tenant_id,
@@ -169,6 +258,25 @@ Deno.serve(async (req) => {
             p_purchase_date: purchase.purchase_date,
           });
         }
+      }
+    }
+
+    // Memoriza o vínculo (fornecedor + código do produto) para as próximas notas e recebimentos
+    if (supplierCnpj) {
+      const nowIso = new Date().toISOString();
+      for (const ch of linkChanges) {
+        const code = String(ch.item.supplier_code ?? '').trim();
+        if (!code) continue;
+        if (!ch.ingredient_id) {
+          await supabase.from('fiscal_inbound_item_links').delete().eq('tenant_id', tenant_id).eq('supplier_cnpj', supplierCnpj).eq('supplier_code', code);
+          continue;
+        }
+        const { error: lkErr } = await supabase.from('fiscal_inbound_item_links').upsert({
+          tenant_id, supplier_cnpj: supplierCnpj, supplier_code: code, ean: ch.item.ean ?? null,
+          description: String(ch.item.description ?? '').slice(0, 250) || null, unit_label: ch.item.unit_label ?? null,
+          ingredient_id: ch.ingredient_id, units_per_package: ch.upp, updated_by: user.id, updated_at: nowIso,
+        }, { onConflict: 'tenant_id,supplier_cnpj,supplier_code' });
+        if (lkErr) console.error('[purchase-confirm-delivery] memorizar vínculo:', lkErr.message);
       }
     }
 
