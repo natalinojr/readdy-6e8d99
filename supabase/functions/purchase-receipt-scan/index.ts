@@ -7,6 +7,9 @@
 //                                       o insumo/apresentação do catálogo e as categorias.
 //                                       Vínculos já confirmados antes (purchase_receipt_item_links)
 //                                       têm prioridade sobre a sugestão da IA.
+//   qrcode { url }                      NFC-e pelo link do QR Code: consulta pública da SEFAZ-PR
+//                                       (grátis, dados oficiais, sem IA). Vínculo = memória ou nome.
+//                                       Avisa se a mesma nota (fornecedor + número) já foi lançada.
 //   learn { supplier_key, items: [{ raw_description, ingredient_id?, catalog_id?,
 //           merchandise_category_id?, dre_category_id?, unit_label?, pack_count?, pack_size? }] }
 //                                       memoriza o que o usuário confirmou ao salvar a compra.
@@ -156,6 +159,224 @@ function candidatesText(c: Candidates): string {
   return lines.join('\n');
 }
 
+// Vínculos memorizados para as descrições da nota. Mesmo fornecedor primeiro;
+// senão, o vínculo mais recente da mesma descrição em qualquer fornecedor.
+// deno-lint-ignore no-explicit-any
+async function loadLinks(admin: SupabaseClient, tenantId: string, supplierKey: string, descriptions: string[]): Promise<(dk: string) => any> {
+  const descKeys = [...new Set(descriptions.map(normKey).filter(Boolean))];
+  const { data: links } = descKeys.length
+    ? await admin.from('purchase_receipt_item_links')
+      .select('supplier_key, description_key, ingredient_id, catalog_id, merchandise_category_id, dre_category_id, unit_label, pack_count, pack_size, updated_at')
+      .eq('tenant_id', tenantId).in('description_key', descKeys)
+    : { data: [] };
+  return (dk: string) => {
+    const rows = (links ?? []).filter((l) => l.description_key === dk);
+    return rows.find((l) => supplierKey && l.supplier_key === supplierKey)
+      ?? rows.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0] ?? null;
+  };
+}
+
+// ── QR Code da NFC-e (consulta pública da SEFAZ) — grátis, dados oficiais ────
+// Por enquanto só o portal do Paraná (lojas atuais). Host fixo: a Edge nunca
+// busca uma URL arbitrária enviada pelo cliente.
+const QR_HOSTS = ['www.fazenda.pr.gov.br', 'fazenda.pr.gov.br'];
+const QR_TIMEOUT_MS = 20_000;
+const brNum = (s: unknown) => Number(String(s ?? '').trim().replace(/\./g, '').replace(',', '.')) || 0;
+const htmlText = (s: string | undefined) => String(s ?? '')
+  .replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+const QR_UNITS: Record<string, string> = {
+  UN: 'un', UND: 'un', UNID: 'un', KG: 'kg', G: 'g', GR: 'g', L: 'L', LT: 'L', ML: 'mL', CX: 'cx', FD: 'fardo',
+  FDO: 'fardo', PC: 'pacote', PCT: 'pacote', PT: 'pacote', SC: 'saco', LA: 'lata', LT_: 'lata', GF: 'garrafa', BD: 'bandeja', DZ: 'dúzia',
+};
+function qrPayment(label: string): string | null {
+  const k = normKey(label);
+  if (k.includes('dinheiro')) return 'Dinheiro';
+  if (k.includes('pix') || k.includes('instantaneo')) return 'PIX';
+  if (k.includes('credito') && k.includes('cartao')) return 'Cartão Crédito';
+  if (k.includes('debito')) return 'Cartão Débito';
+  if (k.includes('boleto')) return 'Boleto';
+  if (k.includes('transfer')) return 'Transferência';
+  return null;
+}
+
+// Vínculo por nome, sem IA: nome igual (normalizado) = alta; maioria das palavras em comum = média.
+function nameMatch(desc: string, cand: Candidates): { type: 'catalogo' | 'insumo'; id: string; conf: 'alta' | 'media' } | null {
+  const dk = normKey(desc);
+  const dt = new Set(dk.split(' ').filter((t) => t.length > 1));
+  let best: { type: 'catalogo' | 'insumo'; id: string; score: number } | null = null;
+  const consider = (type: 'catalogo' | 'insumo', id: string, name: string) => {
+    const nk = normKey(name);
+    let score: number;
+    if (nk === dk) score = 1;
+    else {
+      const nt = new Set(nk.split(' ').filter((t) => t.length > 1));
+      const inter = [...dt].filter((t) => nt.has(t)).length;
+      const union = new Set([...dt, ...nt]).size;
+      score = union ? inter / union : 0;
+    }
+    // Empate: catálogo (apresentação) vence insumo — traz embalagem e categorias.
+    if (!best || score > best.score || (score === best.score && type === 'catalogo' && best.type === 'insumo')) best = { type, id, score };
+  };
+  for (const c of cand.catalog) consider('catalogo', c.id, c.name);
+  for (const i of cand.ingredients) consider('insumo', i.id, i.name);
+  const b = best as { type: 'catalogo' | 'insumo'; id: string; score: number } | null;
+  if (!b || b.score < 0.6) return null;
+  return { type: b.type, id: b.id, conf: b.score >= 0.99 ? 'alta' : 'media' };
+}
+
+// deno-lint-ignore no-explicit-any
+async function actionQrcode(admin: SupabaseClient, tenantId: string, body: Record<string, any>) {
+  let url: URL;
+  try { url = new URL(String(body.url ?? '').trim()); } catch { return errResp('Link do QR Code inválido.'); }
+  if (!QR_HOSTS.includes(url.hostname.toLowerCase())) {
+    return errResp('Por enquanto a leitura pelo QR Code é só para NFC-e do Paraná. Use a leitura por foto.', 422);
+  }
+  const p = url.searchParams.get('p') ?? '';
+  const chave = p.split('|')[0] ?? '';
+  if (!/^\d{44}$/.test(chave) || chave.slice(20, 22) !== '65') return errResp('Este QR Code não é de uma NFC-e.');
+  const target = `https://www.fazenda.pr.gov.br/nfce/qrcode?p=${encodeURIComponent(p)}`;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), QR_TIMEOUT_MS);
+  let html: string;
+  try {
+    const res = await fetch(target, { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/html' }, signal: ctrl.signal });
+    html = new TextDecoder('utf-8').decode(new Uint8Array(await res.arrayBuffer()));
+    if (!res.ok) return errResp(`SEFAZ indisponível (HTTP ${res.status}). Tente de novo em instantes.`, 502);
+  } catch (err) {
+    log('WARN', 'qrcode', 'fetch failed', { error: String((err as Error)?.message ?? err) });
+    return errResp('A SEFAZ não respondeu. Tente de novo em instantes.', 502);
+  } finally { clearTimeout(timer); }
+
+  if (!html.includes('tabResult')) {
+    const m = html.match(/Aten[çc][ãa]o\s*<br\s*\/?>\s*([^<]+)/i);
+    return errResp(m ? `SEFAZ: ${htmlText(m[1])}` : 'A SEFAZ não devolveu os dados da nota. Tente de novo em instantes.', 422);
+  }
+
+  const supplierName = htmlText(html.match(/id="u20"[^>]*>([\s\S]*?)<\/div>/)?.[1]) || null;
+  const supplierCnpj = onlyDigits(html.match(/CNPJ:\s*([\d./-]+)/)?.[1]) || null;
+  const numero = html.match(/N[úu]mero:\s*<\/strong>\s*(\d+)/)?.[1] ?? null;
+  const serie = html.match(/S[ée]rie:\s*<\/strong>\s*(\d+)/)?.[1] ?? null;
+  const em = html.match(/Emiss[ãa]o:\s*<\/strong>\s*(\d{2})\/(\d{2})\/(\d{4})/);
+  const purchaseDate = em ? `${em[3]}-${em[2]}-${em[1]}` : null;
+  const docTotal = html.match(/Valor a pagar R\$:\s*<\/label>\s*<span[^>]*>([\d.,]+)/) ? round2(brNum(html.match(/Valor a pagar R\$:\s*<\/label>\s*<span[^>]*>([\d.,]+)/)![1])) : null;
+  const discount = round2(brNum(html.match(/Descontos? R\$:\s*<\/label>\s*<span[^>]*>([\d.,]+)/)?.[1]));
+  const payLabels = [...html.matchAll(/<label class="tx">([^<]+)<\/label>/g)].map((m) => htmlText(m[1]));
+  const paymentMethod = payLabels.map(qrPayment).find(Boolean) ?? null;
+
+  const chunks = html.split(/<tr id="Item \+ \d+">/).slice(1);
+  const parsed = chunks.map((c) => ({
+    descricao: htmlText(c.match(/class="txtTit2">([\s\S]*?)<\/span>/)?.[1]),
+    codigo: htmlText(c.match(/\(C[óo]digo:\s*([^)]*)\)/)?.[1]),
+    qtd: brNum(c.match(/Qtde\.:\s*<\/strong>\s*([\d.,]+)/)?.[1]),
+    un: htmlText(c.match(/UN:\s*<\/strong>\s*([^<]+)/)?.[1]).toUpperCase(),
+    vunit: brNum(c.match(/Vl\. Unit\.:\s*<\/strong>\s*([\d.,]+)/)?.[1]),
+    vtotal: round2(brNum(c.match(/class="valor">([\d.,]+)</)?.[1])),
+  })).filter((it) => it.descricao);
+  if (parsed.length === 0) return errResp('Não encontrei itens na consulta da SEFAZ.', 422);
+
+  const cand = await loadCandidates(admin, tenantId);
+  const catById = new Map(cand.catalog.map((x) => [x.id, x]));
+  const ingIds = new Set(cand.ingredients.map((x) => x.id));
+  const supplierKey = supplierKeyOf(supplierCnpj, supplierName);
+  const linkFor = await loadLinks(admin, tenantId, supplierKey, parsed.map((it) => it.descricao));
+
+  const items = parsed.map((it) => {
+    const link = linkFor(normKey(it.descricao));
+    let catalogId: string | null = null;
+    let ingredientId: string | null = null;
+    let merchId: string | null = null;
+    let dreId: string | null = null;
+    let unitLabel = QR_UNITS[it.un] ?? 'un';
+    let packCount: number | null = null;
+    let packSize: number | null = null;
+    let source: 'memoria' | 'ia' | null = null;
+    let confidence = 'alta';
+    if (link && (link.catalog_id ? catById.has(link.catalog_id) : true) && (link.ingredient_id ? ingIds.has(link.ingredient_id) : true)) {
+      catalogId = link.catalog_id ?? null;
+      ingredientId = link.ingredient_id ?? (catalogId ? catById.get(catalogId)?.ingredient_id ?? null : null);
+      merchId = link.merchandise_category_id ?? null;
+      dreId = link.dre_category_id ?? null;
+      if (link.unit_label) unitLabel = link.unit_label;
+      if (link.pack_count) { packCount = Number(link.pack_count); packSize = link.pack_size != null ? Number(link.pack_size) : null; }
+      source = 'memoria';
+    } else {
+      const m = nameMatch(it.descricao, cand);
+      if (m?.type === 'catalogo') {
+        const c = catById.get(m.id)!;
+        catalogId = c.id; ingredientId = c.ingredient_id; merchId = c.merchandise_category_id; dreId = c.dre_category_id;
+        source = 'ia'; confidence = m.conf;
+      } else if (m?.type === 'insumo') {
+        ingredientId = m.id; source = 'ia'; confidence = m.conf;
+      }
+    }
+    const gross = round2(it.qtd * it.vunit);
+    return {
+      raw_description: it.descricao,
+      quantity: it.qtd,
+      unit_label: unitLabel,
+      unit_price: it.vunit,
+      line_total: it.vtotal,
+      // Diferença entre qtd × unitário e o total da linha = desconto do item.
+      line_discount: gross > it.vtotal ? round2(gross - it.vtotal) : 0,
+      catalog_id: catalogId,
+      ingredient_id: ingredientId,
+      merchandise_category_id: merchId,
+      dre_category_id: dreId,
+      pack_count: packCount,
+      pack_size: packSize,
+      confidence,
+      match_source: source,
+    };
+  });
+
+  const warnings: string[] = [];
+  const itemsSum = round2(items.reduce((s, it) => s + it.line_total, 0));
+  if (docTotal != null && Math.abs(itemsSum - discount - docTotal) > 0.05) {
+    warnings.push(`Soma dos itens (R$ ${itemsSum.toFixed(2)}) difere do total da nota (R$ ${docTotal.toFixed(2)}).`);
+  }
+  if (payLabels.some((l) => normKey(l).includes('credito loja') || normKey(l).includes('crediario'))) {
+    warnings.push('Paga no crediário do fornecedor: se for pagar depois, mude a condição para "A Prazo".');
+  }
+
+  // Mesma nota já lançada? (fornecedor + número na mesma loja)
+  let duplicate: { id: string; purchase_date: string } | null = null;
+  if (numero) {
+    const { data: dups } = await admin.from('fin_purchases').select('id, purchase_date, supplier')
+      .eq('tenant_id', tenantId).eq('invoice_number', numero).limit(20);
+    const d = (dups ?? []).find((x) => normKey(x.supplier) === normKey(supplierName));
+    if (d) {
+      duplicate = { id: d.id, purchase_date: d.purchase_date };
+      warnings.unshift(`Esta nota (nº ${numero}) já foi lançada em ${String(d.purchase_date).split('-').reverse().join('/')}. Confira antes de salvar de novo.`);
+    }
+  }
+
+  log('INFO', 'qrcode', 'ok', { tenant_id: tenantId, items: items.length, matched: items.filter((i) => i.match_source).length });
+  return json({
+    success: true,
+    data: {
+      readable: true,
+      source: 'qrcode',
+      access_key: chave,
+      document_kind: 'cupom_fiscal',
+      supplier_name: supplierName,
+      supplier_cnpj: supplierCnpj,
+      supplier_key: supplierKey,
+      invoice_number: numero,
+      invoice_series: serie,
+      purchase_date: purchaseDate,
+      payment_method: paymentMethod,
+      document_total: docTotal,
+      discount_total: discount || null,
+      items_sum: itemsSum,
+      items,
+      warnings,
+      duplicate,
+    },
+  });
+}
+
 // deno-lint-ignore no-explicit-any
 async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<string, any>) {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
@@ -230,19 +451,7 @@ async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<
   const supplierKey = supplierKeyOf(out.fornecedor_cnpj, out.fornecedor_nome);
 
   const rawItems = Array.isArray(out.itens) ? out.itens : [];
-  const descKeys = [...new Set(rawItems.map((it: { descricao: string }) => normKey(it.descricao)).filter(Boolean))] as string[];
-  const { data: links } = descKeys.length
-    ? await admin.from('purchase_receipt_item_links')
-      .select('supplier_key, description_key, ingredient_id, catalog_id, merchandise_category_id, dre_category_id, unit_label, pack_count, pack_size, updated_at')
-      .eq('tenant_id', tenantId).in('description_key', descKeys)
-    : { data: [] };
-  // Mesmo fornecedor primeiro; senão, o vínculo mais recente da mesma descrição em qualquer fornecedor.
-  // deno-lint-ignore no-explicit-any
-  const linkFor = (dk: string): any => {
-    const rows = (links ?? []).filter((l) => l.description_key === dk);
-    return rows.find((l) => supplierKey && l.supplier_key === supplierKey)
-      ?? rows.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0] ?? null;
-  };
+  const linkFor = await loadLinks(admin, tenantId, supplierKey, rawItems.map((it: { descricao: string }) => it.descricao));
 
   // deno-lint-ignore no-explicit-any
   const items = rawItems.map((it: any) => {
@@ -404,6 +613,7 @@ Deno.serve(async (req: Request) => {
     const tenantId = String(match.tenant_id);
 
     if (action === 'scan') return await actionScan(admin, tenantId, body);
+    if (action === 'qrcode') return await actionQrcode(admin, tenantId, body);
     if (action === 'learn') return await actionLearn(admin, tenantId, userId, body);
     return errResp(`Ação desconhecida: ${action}`);
   } catch (err) {

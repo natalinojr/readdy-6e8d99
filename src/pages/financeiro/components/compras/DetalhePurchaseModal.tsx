@@ -47,6 +47,8 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
   const { user } = useAuth();
   const [confirmingDelivery, setConfirmingDelivery] = useState(false);
   const [deliveryNotes, setDeliveryNotes] = useState('');
+  // Data em que a mercadoria chegou (padrão: hoje, no fuso de Brasília)
+  const [receivedAt, setReceivedAt] = useState(() => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10));
   const [showDeliveryForm, setShowDeliveryForm] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [deliveryError, setDeliveryError] = useState('');
@@ -123,6 +125,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
 
   const handleConfirmDelivery = async () => {
     if (!user?.tenantId) return;
+    if (!receivedAt) { setDeliveryError('Informe a data do recebimento.'); return; }
     setConfirming(true);
     setDeliveryError('');
     try {
@@ -155,6 +158,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
           payload: {
             purchase_id: purchase.id,
             delivery_notes: deliveryNotes,
+            received_at: receivedAt,
             received_items: receivedItemsPayload,
           },
         }),
@@ -333,7 +337,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold text-green-800">Mercadoria Recebida</p>
                 <p className="text-xs text-green-600 mt-0.5">
-                  Confirmado em {new Date(purchase.delivery_confirmed_at!).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  Recebido em {new Date(purchase.delivery_confirmed_at!).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
                 </p>
                 {purchase.delivery_notes && (
                   <p className="text-xs text-green-700 mt-1 italic">"{purchase.delivery_notes}"</p>
@@ -460,6 +464,18 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                       </table>
                     </div>
                   )}
+
+                  <div>
+                    <label className="text-xs font-semibold text-zinc-600 block mb-1">Data do recebimento</label>
+                    <input
+                      type="date"
+                      value={receivedAt}
+                      max={new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10)}
+                      onChange={e => setReceivedAt(e.target.value)}
+                      className="border border-green-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 bg-white"
+                    />
+                    <p className="text-[11px] text-green-700 mt-1">Dia em que a mercadoria chegou. Aparece na lista de Compras e na conta a pagar.</p>
+                  </div>
 
                   <div>
                     <label className="text-xs font-semibold text-zinc-600 block mb-1">Observações (opcional)</label>

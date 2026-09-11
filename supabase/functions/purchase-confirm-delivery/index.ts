@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Usuario nao pertence ao tenant informado' }), { status: 403, headers: corsHeaders });
     }
 
-    const { purchase_id, delivery_notes, received_items } = payload;
+    const { purchase_id, delivery_notes, received_items, received_at } = payload;
     if (!purchase_id) return new Response(JSON.stringify({ error: 'purchase_id required' }), { status: 400, headers: corsHeaders });
 
     const { data: purchase, error: purchaseErr } = await supabase
@@ -50,7 +50,16 @@ Deno.serve(async (req) => {
     if (purchaseErr || !purchase) return new Response(JSON.stringify({ error: 'Compra não encontrada' }), { status: 404, headers: corsHeaders });
     if (purchase.delivery_confirmed_at) return new Response(JSON.stringify({ error: 'Recebimento já confirmado anteriormente' }), { status: 409, headers: corsHeaders });
 
-    const confirmedAt = new Date().toISOString();
+    // Data em que a mercadoria chegou, escolhida pelo usuário (AAAA-MM-DD). Sem data = agora.
+    // Gravada ao meio-dia de Brasília para não trocar de dia por causa do fuso.
+    const hojeBR = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+    let confirmedAt = new Date().toISOString();
+    if (received_at != null && received_at !== '') {
+      const d = String(received_at).slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return new Response(JSON.stringify({ error: 'Data do recebimento inválida' }), { status: 400, headers: corsHeaders });
+      if (d > hojeBR) return new Response(JSON.stringify({ error: 'A data do recebimento não pode ser no futuro' }), { status: 400, headers: corsHeaders });
+      confirmedAt = new Date(d + 'T12:00:00-03:00').toISOString();
+    }
 
     // Mapa de quantidades recebidas por item
     const receivedItemsMap = new Map<string, { received_quantity: number; received_total_price: number }>();

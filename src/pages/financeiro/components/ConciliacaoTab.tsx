@@ -7,6 +7,7 @@ import { parseOFX, parseCSV, findMatches } from '@/utils/ofxParser';
 import { formatCurrency } from '@/lib/formatters';
 import RegrasConciliacaoModal from './conciliacao/RegrasConciliacaoModal';
 import TransacaoDetalheModal from './conciliacao/TransacaoDetalheModal';
+import ConfirmarVinculosModal from './conciliacao/ConfirmarVinculosModal';
 import ReconciliacaoSaldoModal from './conciliacao/ReconciliacaoSaldoModal';
 import StoneConfigModal from './conciliacao/StoneConfigModal';
 import StoneImportPanel from './conciliacao/StoneImportPanel';
@@ -492,18 +493,32 @@ export default function ConciliacaoTab() {
     () => imports.filter(i => i.status === 'pending' && !i.reconciled && i.match_confidence === 'exato'),
     [imports],
   );
+  // Candidatos da pré-visualização: exatos (já marcados) e fortes (opcionais)
+  const vinculosPendentes = useMemo(
+    () => imports.filter(i => i.status === 'pending' && !i.reconciled
+      && (i.match_kind === 'payable' || i.match_kind === 'inbound_doc')
+      && (i.match_confidence === 'exato' || i.match_confidence === 'forte')),
+    [imports],
+  );
+  const [showConfirmarVinculos, setShowConfirmarVinculos] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const confirmarVinculos = useCallback(async (ids: string[]) => {
     if (!user?.tenantId || ids.length === 0) return;
     setConfirmando(true);
     type Res = { ok: boolean; msg: string; auto_imported?: boolean };
-    const r = await invokeWithAuth<{ success?: boolean; error?: string; results?: Res[] }>('conciliacao-pagamentos', { body: { action: 'confirm', tenant_id: user.tenantId, ids } });
+    // A edge aceita até 30 por chamada
+    const res: Res[] = [];
+    let err: string | undefined;
+    for (let i = 0; i < ids.length && !err; i += 30) {
+      const r = await invokeWithAuth<{ success?: boolean; error?: string; results?: Res[] }>('conciliacao-pagamentos', { body: { action: 'confirm', tenant_id: user.tenantId, ids: ids.slice(i, i + 30) } });
+      err = r.data?.error ?? r.error?.message;
+      res.push(...(r.data?.results ?? []));
+    }
     setConfirmando(false);
-    const res = r.data?.results ?? [];
+    setShowConfirmarVinculos(false);
     const ok = res.filter(x => x.ok).length;
     const auto = res.filter(x => x.ok && x.auto_imported).length;
     const falhas = res.filter(x => !x.ok);
-    const err = r.data?.error ?? r.error?.message;
     if (err) showToast(err, 'error');
     else showToast(
       ok + ' pagamento(s) conciliado(s)' + (auto ? ', ' + auto + ' nota(s) importada(s) automaticamente' : '') + (falhas.length ? ' · ' + falhas.length + ' com problema: ' + falhas[0].msg : ''),
@@ -824,20 +839,20 @@ export default function ConciliacaoTab() {
       </div>
 
       {/* Pagamentos com vínculo exato a confirmar */}
-      {exatosPendentes.length > 0 && (
+      {vinculosPendentes.length > 0 && (
         <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex-wrap">
           <i className="ri-links-line text-emerald-600 text-lg" />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-emerald-800">{exatosPendentes.length} pagamento(s) com vínculo exato a uma nota ou conta a pagar</p>
+            <p className="text-sm font-semibold text-emerald-800">{exatosPendentes.length} pagamento(s) com vínculo exato{vinculosPendentes.length > exatosPendentes.length ? ' e ' + (vinculosPendentes.length - exatosPendentes.length) + ' com vínculo forte' : ''} a notas ou contas a pagar</p>
             <p className="text-xs text-emerald-700">Boleto com o mesmo vencimento e valor da parcela, ou Pix para o mesmo CNPJ com o mesmo valor. Confirmar dá baixa na conta a pagar, lança juros e importa sozinha a nota que ainda não foi lançada.</p>
           </div>
           <button
-            onClick={() => confirmarVinculos(exatosPendentes.map(i => i.id))}
+            onClick={() => setShowConfirmarVinculos(true)}
             disabled={confirmando}
             className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 cursor-pointer whitespace-nowrap disabled:opacity-50"
           >
-            <i className={confirmando ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'} />
-            {confirmando ? 'Confirmando...' : 'Confirmar ' + exatosPendentes.length}
+            <i className="ri-list-check-2" />
+            Revisar e confirmar
           </button>
         </div>
       )}
@@ -1278,6 +1293,16 @@ export default function ConciliacaoTab() {
           onCreate={createRule}
           onUpdate={updateRule}
           onDelete={deleteRule}
+        />
+      )}
+
+      {/* Pré-visualização da confirmação em lote */}
+      {showConfirmarVinculos && (
+        <ConfirmarVinculosModal
+          rows={vinculosPendentes}
+          confirming={confirmando}
+          onClose={() => setShowConfirmarVinculos(false)}
+          onConfirm={confirmarVinculos}
         />
       )}
 

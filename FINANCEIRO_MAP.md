@@ -689,3 +689,7 @@ Front: `ComprasTab.tsx` tem botão de editar (lápis) na coluna Ações — chec
 **Teste com os dados reais (Paranaguá, 03 a 10/09):** Encarta, Bebidas Nova Geração e Copal saíram **exatos** (Encarta com R$ 12,63 de juros); Sequoia, Alvino e Voxy saíram **fortes**. As 5 primeiras notas estavam `new` e serão importadas no clique.
 
 **Pegadinha:** no boleto do Inter, `detalhes.cpfCnpj` é o CNPJ da **própria loja**; o valor de face sai dos 10 últimos dígitos da linha digitável (47) ou das posições 10–19 do código de barras (44), e os juros em `adicionado`.
+
+**Ajustes de 2026-09-11 (pedido do dono):**
+- **Confirmar em lote com pré-visualização:** o botão da Conciliação virou "Revisar e confirmar" e abre `ConfirmarVinculosModal`: período (de/até), lista com caixa de marcar, o que cada item vai baixar (nota/conta, parcela, vencimento) e o que acontece (importa a nota, baixa, juros, desconto), total selecionado. Exatos vêm marcados; fortes aparecem só se o usuário pedir. O front manda em lotes de 30 (limite da edge).
+- **Data do recebimento:** `purchase-confirm-delivery` aceita `payload.received_at` (AAAA-MM-DD, não pode ser futura) e grava `fin_purchases.delivery_confirmed_at` ao meio-dia de Brasília desse dia. O detalhe da compra pede a data (padrão hoje) e mostra "Recebido em"; a lista de Compras mostra "Recebido dd/mm/aa"; o detalhe da conta a pagar mostra "Recebida em". Recebimentos antigos continuam com o horário real do clique.

@@ -566,7 +566,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                         </span>
                         {p.delivery_confirmed_at ? (
                           <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 w-fit flex items-center gap-1">
-                            <i className="ri-truck-line text-xs" /> Recebido
+                            <i className="ri-truck-line text-xs" /> Recebido {new Date(p.delivery_confirmed_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: '2-digit' })}
                           </span>
                         ) : (
                           <span className="text-xs text-zinc-400 flex items-center gap-1">

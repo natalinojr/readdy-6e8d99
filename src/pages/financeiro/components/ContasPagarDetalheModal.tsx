@@ -360,10 +360,7 @@ export default function ContasPagarDetalheModal({ bill, onClose, onPay, onNaviga
                         <div>
                           <p className="text-xs font-semibold text-green-800">Mercadoria recebida</p>
                           <p className="text-[10px] text-green-700">
-                            {new Date(relatedPurchase.delivery_confirmed_at).toLocaleString('pt-BR', {
-                              day: '2-digit', month: '2-digit', year: 'numeric',
-                              hour: '2-digit', minute: '2-digit',
-                            })}
+                            Recebida em {new Date(relatedPurchase.delivery_confirmed_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
                           </p>
                           {relatedPurchase.delivery_notes && (
                             <p className="text-[10px] text-green-700 italic mt-0.5">"{relatedPurchase.delivery_notes}"</p>

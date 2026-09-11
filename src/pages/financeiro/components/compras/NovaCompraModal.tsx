@@ -55,12 +55,54 @@ interface ScanItem {
   confidence: string; match_source: 'memoria' | 'ia' | null;
 }
 interface ScanResult {
+  source?: 'qrcode';                 // presente quando veio da SEFAZ pelo QR Code
+  access_key?: string;               // chave de acesso da NFC-e (44 dígitos)
+  duplicate?: { id: string; purchase_date: string } | null;
   readable: boolean; supplier_name: string | null; supplier_key: string;
   invoice_number: string | null; purchase_date: string | null; payment_method: string | null;
   document_total: number | null; discount_total: number | null; items_sum: number;
   items: ScanItem[]; warnings: string[];
 }
 interface DreCategory { id: string; name: string; group_type: string | null; }
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error('Não foi possível abrir a imagem'));
+    i.src = url;
+  });
+}
+
+// Procura o QR Code da NFC-e na foto (no navegador, sem custo). Tenta alguns
+// tamanhos: QR pequeno numa foto grande precisa de resolução; foto tremida lê
+// melhor reduzida. jsQR é carregado só quando usado.
+async function decodeQrFromFile(file: File): Promise<string | null> {
+  if (!file.type.startsWith('image/')) return null;
+  const { default: jsQR } = await import('jsqr');
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    for (const max of [1600, 2400, 1000]) {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const px = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(px.data, px.width, px.height, { inversionAttempts: 'attemptBoth' });
+      if (code?.data) return code.data;
+      if (scale === 1) break; // imagem já menor que os próximos tamanhos
+    }
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// QR de NFC-e do Paraná (única SEFAZ suportada pela Edge por enquanto).
+const isNfcePrQr = (s: string) => /^https?:\/\/(www\.)?fazenda\.pr\.gov\.br\/nfce\/qrcode\?p=\d{44}/i.test(s.trim());
 
 // Foto do celular chega com 4–12 MB: reduz para ~2000px em JPEG antes de enviar
 // (lê igual e sobe em segundos no 4G). PDF vai como está.
@@ -74,12 +116,7 @@ async function fileToPayload(file: File): Promise<{ base64: string; mediaType: s
   if (file.type === 'application/pdf') return { base64: await readB64(file), mediaType: 'application/pdf' };
   const url = URL.createObjectURL(file);
   try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error('Não foi possível abrir a imagem'));
-      i.src = url;
-    });
+    const img = await loadImage(url);
     const MAX = 2000;
     const scale = Math.min(1, MAX / Math.max(img.width, img.height));
     const canvas = document.createElement('canvas');
@@ -185,6 +222,9 @@ export default function NovaCompraModal({
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scan, setScan] = useState<ScanResult | null>(null);
+  const [scanStage, setScanStage] = useState('');
+  const [qrLinkOpen, setQrLinkOpen] = useState(false);
+  const [qrLink, setQrLink] = useState('');
   const scanInputRef = useRef<HTMLInputElement | null>(null);
 
   // Categorias da DRE — para itens que não são insumo de estoque (limpeza, descartáveis...)
@@ -515,85 +555,131 @@ export default function NovaCompraModal({
   // A Edge purchase-receipt-scan lê o documento e já devolve, por linha, o
   // vínculo memorizado (ou sugerido) com insumo/catálogo/categorias. Aqui só
   // montamos as linhas do formulário — o usuário confere e salva normalmente.
+  // Chama a Edge e devolve o resultado — ou lança erro com a mensagem do servidor.
+  const callScan = async (body: Record<string, unknown>): Promise<ScanResult> => {
+    const { data, error } = await supabase.functions.invoke('purchase-receipt-scan', {
+      body: { ...body, tenant_id: user?.tenantId },
+    });
+    if (error) {
+      let msg = error.message;
+      const ctx = (error as { context?: Response }).context;
+      if (ctx && typeof ctx.json === 'function') {
+        try { const b = await ctx.json(); if (b?.error) msg = String(b.error); } catch { /* corpo não-JSON */ }
+      }
+      throw new Error(msg);
+    }
+    const resp = data as { success?: boolean; error?: string; data?: ScanResult } | null;
+    if (!resp?.success || !resp.data) throw new Error(resp?.error || 'Falha ao ler a nota');
+    return resp.data;
+  };
+
+  // Joga o resultado da leitura (QR Code ou foto) no formulário.
+  const applyScanResult = (r: ScanResult) => {
+    if (!r.readable || r.items.length === 0) {
+      setScan(null);
+      setScanError(r.warnings[0] || 'Não encontrei itens de compra nesta imagem. Tente uma foto mais nítida, reta e com boa luz.');
+      return;
+    }
+
+    // Cabeçalho: nunca sobrescreve o que o usuário já digitou.
+    setForm((f) => ({
+      ...f,
+      supplier: f.supplier.trim()
+        || (r.supplier_name
+          ? (suppliers.find((s) => s.trim().toLowerCase() === r.supplier_name!.trim().toLowerCase()) ?? r.supplier_name)
+          : ''),
+      invoice_number: f.invoice_number || r.invoice_number || '',
+      purchase_date: r.purchase_date || f.purchase_date,
+      payment_method: r.payment_method || f.payment_method,
+      notes: f.notes || (r.access_key ? `NFC-e ${r.access_key}` : ''),
+    }));
+
+    const WEIGHT_UNITS = ['kg', 'g', 'L', 'mL'];
+    const rows: ItemRow[] = r.items.map((si) => {
+      const cat = si.catalog_id ? catalogItems.find((c) => c.id === si.catalog_id) : null;
+      const ing = si.ingredient_id ? ingredients.find((g) => g.id === si.ingredient_id) : null;
+      const qty = si.quantity > 0 ? si.quantity : 1;
+      const unit = UNIT_OPTIONS.find((u) => u.toLowerCase() === String(si.unit_label).toLowerCase()) ?? 'un';
+      const unitPrice = si.unit_price > 0 ? si.unit_price : (si.line_total + si.line_discount) / qty;
+      const discountPerUnit = si.line_discount > 0 ? Math.round((si.line_discount / qty) * 10000) / 10000 : undefined;
+      // Embalagem: a da nota/memória; senão a da apresentação do catálogo — exceto
+      // produto pesado (kg/L), em que a quantidade da nota já é a de estoque.
+      const packCount = si.pack_count ?? (cat && !WEIGHT_UNITS.includes(unit) ? cat.pack_count ?? null : null);
+      const packSize = si.pack_count ? si.pack_size : (packCount ? cat?.pack_size ?? 1 : null);
+      const net = Math.max(0, unitPrice - (discountPerUnit ?? 0));
+      return {
+        description: cat?.name ?? ing?.name ?? si.raw_description,
+        ingredient_id: si.ingredient_id ?? undefined,
+        catalog_id: si.catalog_id,
+        dre_category_id: si.dre_category_id,
+        merchandise_category_id: si.merchandise_category_id ?? undefined,
+        quantity: qty,
+        unit_label: unit,
+        unit_price: Math.round(unitPrice * 10000) / 10000,
+        discount_per_unit: discountPerUnit,
+        total_price: Math.round(qty * net * 100) / 100,
+        pack_count: packCount ?? undefined,
+        pack_size: packCount ? (packSize ?? 1) : undefined,
+        units_per_package: packCount ? packCount * (packSize ?? 1) : undefined,
+        cost_center_id: '',
+        _raw: si.raw_description,
+        _conf: si.confidence,
+        _src: si.match_source,
+      };
+    });
+    // Mantém linhas que o usuário já preencheu; a linha vazia inicial é substituída.
+    setItems((prev) => [...prev.filter((it) => it.description?.trim()), ...rows]);
+    setItemSearch({});
+    setFreightPerItem({});
+    setScan(r);
+  };
+
+  // Foto/PDF: primeiro procura o QR Code da NFC-e (grátis, dados oficiais da
+  // SEFAZ); sem QR — notinha à mão, DANFE, pedido — lê a imagem com IA.
   const handleScanFile = async (file: File) => {
     if (file.size > 25 * 1024 * 1024) { setScanError('Arquivo grande demais (máx. 25 MB).'); return; }
     setScanError(null);
     setScanning(true);
     onLoadIngredients();
+    let qrErr: string | null = null;
     try {
-      const { base64, mediaType } = await fileToPayload(file);
-      const { data, error } = await supabase.functions.invoke('purchase-receipt-scan', {
-        body: { action: 'scan', tenant_id: user?.tenantId, file_base64: base64, media_type: mediaType },
-      });
-      if (error) {
-        let msg = error.message;
-        const ctx = (error as { context?: Response }).context;
-        if (ctx && typeof ctx.json === 'function') {
-          try { const b = await ctx.json(); if (b?.error) msg = String(b.error); } catch { /* corpo não-JSON */ }
+      setScanStage('Procurando o QR Code da nota…');
+      const qr = await decodeQrFromFile(file).catch(() => null);
+      if (qr && isNfcePrQr(qr)) {
+        setScanStage('Consultando a nota na SEFAZ…');
+        try {
+          applyScanResult(await callScan({ action: 'qrcode', url: qr }));
+          return;
+        } catch (err) {
+          // SEFAZ fora do ar ou nota ainda não disponível: segue pela leitura da imagem.
+          qrErr = err instanceof Error ? err.message : 'Falha na consulta à SEFAZ';
         }
-        throw new Error(msg);
       }
-      const resp = data as { success?: boolean; error?: string; data?: ScanResult } | null;
-      if (!resp?.success || !resp.data) throw new Error(resp?.error || 'Falha ao ler a nota');
-      const r = resp.data;
-      if (!r.readable || r.items.length === 0) {
-        setScan(null);
-        setScanError(r.warnings[0] || 'Não encontrei itens de compra nesta imagem. Tente uma foto mais nítida, reta e com boa luz.');
-        return;
-      }
-
-      // Cabeçalho: nunca sobrescreve o que o usuário já digitou.
-      setForm((f) => ({
-        ...f,
-        supplier: f.supplier.trim()
-          || (r.supplier_name
-            ? (suppliers.find((s) => s.trim().toLowerCase() === r.supplier_name!.trim().toLowerCase()) ?? r.supplier_name)
-            : ''),
-        invoice_number: f.invoice_number || r.invoice_number || '',
-        purchase_date: r.purchase_date || f.purchase_date,
-        payment_method: r.payment_method || f.payment_method,
-      }));
-
-      const WEIGHT_UNITS = ['kg', 'g', 'L', 'mL'];
-      const rows: ItemRow[] = r.items.map((si) => {
-        const cat = si.catalog_id ? catalogItems.find((c) => c.id === si.catalog_id) : null;
-        const ing = si.ingredient_id ? ingredients.find((g) => g.id === si.ingredient_id) : null;
-        const qty = si.quantity > 0 ? si.quantity : 1;
-        const unit = UNIT_OPTIONS.find((u) => u.toLowerCase() === String(si.unit_label).toLowerCase()) ?? 'un';
-        const unitPrice = si.unit_price > 0 ? si.unit_price : (si.line_total + si.line_discount) / qty;
-        const discountPerUnit = si.line_discount > 0 ? Math.round((si.line_discount / qty) * 10000) / 10000 : undefined;
-        // Embalagem: a da nota/memória; senão a da apresentação do catálogo — exceto
-        // produto pesado (kg/L), em que a quantidade da nota já é a de estoque.
-        const packCount = si.pack_count ?? (cat && !WEIGHT_UNITS.includes(unit) ? cat.pack_count ?? null : null);
-        const packSize = si.pack_count ? si.pack_size : (packCount ? cat?.pack_size ?? 1 : null);
-        const net = Math.max(0, unitPrice - (discountPerUnit ?? 0));
-        return {
-          description: cat?.name ?? ing?.name ?? si.raw_description,
-          ingredient_id: si.ingredient_id ?? undefined,
-          catalog_id: si.catalog_id,
-          dre_category_id: si.dre_category_id,
-          merchandise_category_id: si.merchandise_category_id ?? undefined,
-          quantity: qty,
-          unit_label: unit,
-          unit_price: Math.round(unitPrice * 10000) / 10000,
-          discount_per_unit: discountPerUnit,
-          total_price: Math.round(qty * net * 100) / 100,
-          pack_count: packCount ?? undefined,
-          pack_size: packCount ? (packSize ?? 1) : undefined,
-          units_per_package: packCount ? packCount * (packSize ?? 1) : undefined,
-          cost_center_id: '',
-          _raw: si.raw_description,
-          _conf: si.confidence,
-          _src: si.match_source,
-        };
-      });
-      // Mantém linhas que o usuário já preencheu; a linha vazia inicial é substituída.
-      setItems((prev) => [...prev.filter((it) => it.description?.trim()), ...rows]);
-      setItemSearch({});
-      setFreightPerItem({});
-      setScan(r);
+      setScanStage('Lendo a nota com IA… (leva alguns segundos)');
+      const { base64, mediaType } = await fileToPayload(file);
+      applyScanResult(await callScan({ action: 'scan', file_base64: base64, media_type: mediaType }));
     } catch (err) {
-      setScanError(err instanceof Error ? err.message : 'Falha ao ler a nota. Tente de novo.');
+      const msg = err instanceof Error ? err.message : 'Falha ao ler a nota. Tente de novo.';
+      setScanError(qrErr ? `QR Code: ${qrErr} — leitura da foto: ${msg}` : msg);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  // Link do QR Code colado (ex.: lido pela câmera do celular).
+  const handleQrLink = async () => {
+    const link = qrLink.trim();
+    if (!link) return;
+    setScanError(null);
+    setScanning(true);
+    onLoadIngredients();
+    try {
+      setScanStage('Consultando a nota na SEFAZ…');
+      applyScanResult(await callScan({ action: 'qrcode', url: link }));
+      setQrLinkOpen(false);
+      setQrLink('');
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : 'Falha na consulta à SEFAZ.');
     } finally {
       setScanning(false);
     }
@@ -821,6 +907,15 @@ export default function NovaCompraModal({
                     ? (<><i className="ri-loader-4-line animate-spin" /> Lendo nota...</>)
                     : (<><i className="ri-camera-line" /> Ler notinha (foto)</>)}
                 </button>
+                <button
+                  type="button"
+                  disabled={scanning}
+                  onClick={() => setQrLinkOpen((v) => !v)}
+                  title="Colar o link do QR Code da NFC-e (lido pela câmera do celular)"
+                  className="w-8 h-8 flex items-center justify-center rounded-lg border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 cursor-pointer disabled:opacity-60"
+                >
+                  <i className="ri-qr-code-line" />
+                </button>
               </>
             )}
             <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
@@ -855,10 +950,31 @@ export default function NovaCompraModal({
             </div>
           )}
           {/* Leitura da notinha por foto */}
+          {qrLinkOpen && !editingPurchase && (
+            <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 space-y-1.5">
+              <p className="text-xs font-semibold text-sky-900 flex items-center gap-1.5">
+                <i className="ri-qr-code-line" /> Link do QR Code da NFC-e
+              </p>
+              <div className="flex gap-2">
+                <input
+                  value={qrLink}
+                  onChange={(e) => setQrLink(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleQrLink(); } }}
+                  placeholder="https://www.fazenda.pr.gov.br/nfce/qrcode?p=..."
+                  className="flex-1 min-w-0 border border-sky-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white"
+                />
+                <button type="button" onClick={handleQrLink} disabled={scanning || !qrLink.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap">
+                  Buscar na SEFAZ
+                </button>
+              </div>
+              <p className="text-[10px] text-sky-700">Aponte a câmera do celular para o QR Code do cupom, copie o link e cole aqui. Grátis, com os dados oficiais da nota.</p>
+            </div>
+          )}
           {scanning && (
             <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-center gap-2 text-xs text-sky-800">
               <i className="ri-loader-4-line animate-spin" />
-              Lendo a nota e procurando os itens no seu estoque e catálogo… (leva alguns segundos)
+              {scanStage || 'Lendo a nota…'}
             </div>
           )}
           {scanError && (
@@ -875,6 +991,9 @@ export default function NovaCompraModal({
                 <p className="font-semibold flex items-center gap-1.5 flex-wrap">
                   <i className="ri-file-search-line text-sky-600" />
                   {lidos} ite{lidos !== 1 ? 'ns' : 'm'} lido{lidos !== 1 ? 's' : ''} da nota — confira antes de salvar.
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${scan.source === 'qrcode' ? 'bg-emerald-100 text-emerald-700' : 'bg-violet-100 text-violet-700'}`}>
+                    {scan.source === 'qrcode' ? 'SEFAZ · QR Code' : 'Leitura por IA'}
+                  </span>
                   {scan.document_total != null && (
                     <span className="font-normal text-sky-700">
                       Total da nota: <b>{formatCurrency(scan.document_total)}</b>
