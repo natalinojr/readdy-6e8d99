@@ -65,6 +65,8 @@ export interface PayrollEntry {
   // Campos customizáveis
   custom_proventos?: { field_id: string; name: string; value: number }[];
   custom_descontos?: { field_id: string; name: string; value: number }[];
+  // Rubricas importadas (Domínio) com categoria — base do relatório por item
+  rubricas?: { codigo: string; descricao: string; referencia: string | null; valor: number; tipo: 'P' | 'D'; categoria?: string }[];
   // Campos calculados (output)
   overtime_50: number;
   overtime_100: number;

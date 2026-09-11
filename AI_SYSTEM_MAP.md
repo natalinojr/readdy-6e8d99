@@ -1548,3 +1548,4 @@ numa VPS, pendente). Doc completa e estado em `assistente/README.md`.
 Critérios: escreve tarefas direto nas tabelas como o dono (`task-write` exige JWT);
 auth por `x-internal-key` = `ASSISTENTE_INTERNAL_KEY`; data/hora atual vai na
 mensagem do usuário, não no system, para preservar o cache do prompt.
+- **Folha estratificada por rubrica** (2026-09-11): a coluna `hr_payroll.rubricas` (jsonb `[{codigo, descricao, referencia, valor, tipo P|D, categoria}]`, migração `20260911120000_hr_payroll_rubricas.sql`) é preenchida pela importação do Domínio. As categorias estão em `CATEGORIAS_FOLHA` / `categorizarRubrica` (`src/lib/dominioExtrato.ts`). A aba RH › Relatórios › "Gasto por Item da Folha" soma por categoria, com detalhe por rubrica e por funcionário e uma matriz categoria × mês. Lançamento sem rubricas cai nos campos da folha.

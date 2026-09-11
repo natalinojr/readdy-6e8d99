@@ -273,3 +273,58 @@ export async function pdfWords(pdfjs: any, data: ArrayBuffer | Uint8Array): Prom
   }
   return out;
 }
+
+// ── Categorias das rubricas (para saber quanto se paga de cada coisa) ────────
+export type TipoCategoria = 'provento' | 'desconto' | 'encargo';
+export const CATEGORIAS_FOLHA: Record<string, { label: string; tipo: TipoCategoria }> = {
+  salario: { label: 'Salário (dias trabalhados)', tipo: 'provento' },
+  pro_labore: { label: 'Pró-labore', tipo: 'provento' },
+  hora_extra: { label: 'Horas extras', tipo: 'provento' },
+  dsr: { label: 'DSR (descanso semanal remunerado)', tipo: 'provento' },
+  adicional_noturno: { label: 'Adicional noturno', tipo: 'provento' },
+  decimo_terceiro: { label: '13º salário', tipo: 'provento' },
+  ferias: { label: 'Férias e 1/3', tipo: 'provento' },
+  salario_familia: { label: 'Salário-família', tipo: 'provento' },
+  rescisao: { label: 'Outras verbas de rescisão', tipo: 'provento' },
+  inss_socio: { label: 'INSS do pró-labore (pago pela empresa)', tipo: 'provento' },
+  outros_proventos: { label: 'Outros proventos', tipo: 'provento' },
+  inss: { label: 'INSS descontado', tipo: 'desconto' },
+  irrf: { label: 'IRRF', tipo: 'desconto' },
+  faltas: { label: 'Faltas e atrasos', tipo: 'desconto' },
+  vale_transporte: { label: 'Vale-transporte', tipo: 'desconto' },
+  vale_refeicao: { label: 'Vale-refeição / alimentação', tipo: 'desconto' },
+  emprestimo: { label: 'Empréstimo consignado', tipo: 'desconto' },
+  adiantamento: { label: 'Adiantamento', tipo: 'desconto' },
+  multa_rescisoria: { label: 'Multa rescisória', tipo: 'desconto' },
+  liquido_rescisao: { label: 'Líquido pago na rescisão', tipo: 'desconto' },
+  outros_descontos: { label: 'Outros descontos', tipo: 'desconto' },
+  fgts: { label: 'FGTS (empresa)', tipo: 'encargo' },
+};
+
+/** Categoria de uma rubrica do Domínio pela descrição (a ordem dos testes importa). */
+export function categorizarRubrica(r: Pick<Rubrica, 'descricao' | 'tipo'>): string {
+  const d = r.descricao.toUpperCase();
+  if (r.tipo === 'P') {
+    if (/PRO-?\s?LABORE/.test(d)) return 'pro_labore';
+    if (/DSR|REPOUSO/.test(d)) return 'dsr';
+    if (/EXTRA/.test(d)) return 'hora_extra';
+    if (/ADIC(IONAL|\.)?\s*NOTURNO/.test(d)) return 'adicional_noturno';
+    if (/\b13(O|º)?\b|DECIMO/.test(d)) return 'decimo_terceiro';
+    if (/FERIAS|\bFER\b|1\/3/.test(d)) return 'ferias';
+    if (/SALARIO\s+FAMILIA/.test(d)) return 'salario_familia';
+    if (/DIAS NORMAIS|SALDO DE SALARIO|SALARIO BASE|MENSALISTA|HORAS NORMAIS/.test(d)) return 'salario';
+    if (/RESCIS|AVISO|ESTOURO|INDENIZ/.test(d)) return 'rescisao';
+    return 'outros_proventos';
+  }
+  if (/LIQUIDO\s+RESCIS/.test(d)) return 'liquido_rescisao';
+  if (/I\.?N\.?S\.?S/.test(d)) return 'inss';
+  if (/I\.?R\.?R\.?F|IMPOSTO DE RENDA/.test(d)) return 'irrf';
+  if (/FALTA|ATRASO/.test(d)) return 'faltas';
+  if (/MULTA/.test(d)) return 'multa_rescisoria';
+  if (/EMP\.?\s*CRED|CONSIG|EMPREST/.test(d)) return 'emprestimo';
+  if (/ADIANT/.test(d)) return 'adiantamento';
+  if (/VALE[\s.-]*TRANSP|\bV\.?T\.?\b/.test(d)) return 'vale_transporte';
+  if (/VALE[\s.-]*(REFEI|ALIMENT)|\bV\.?R\b/.test(d)) return 'vale_refeicao';
+  return 'outros_descontos';
+}
+export const labelCategoria = (k: string) => CATEGORIAS_FOLHA[k]?.label ?? k;

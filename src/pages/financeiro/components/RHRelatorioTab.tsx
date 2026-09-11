@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { usePayrollHistory } from '@/hooks/useRH';
+import { CATEGORIAS_FOLHA, categorizarRubrica } from '@/lib/dominioExtrato';
 import { formatCurrency } from '@/lib/formatters';
 
 const DEPT_COLORS = [
@@ -198,29 +199,53 @@ export default function RHRelatorioTab() {
   }, [filteredRaw]);
 
   // ─── DADOS: POR ITEM ───
+  // Folha importada do Domínio traz as rubricas com categoria (hr_payroll.rubricas):
+  // soma por categoria, com detalhe por rubrica, mês e funcionário. Lançamentos manuais
+  // (sem rubricas) caem nos campos da folha.
   const itemData = useMemo(() => {
-    const items = [
-      { key: 'base_salary', label: 'Salário Base', type: 'provento' as const },
-      { key: 'overtime_50', label: 'HE Dia Útil', type: 'provento' as const },
-      { key: 'overtime_100', label: 'HE 100%', type: 'provento' as const },
-      { key: 'overtime_night', label: 'HE Noturna', type: 'provento' as const },
-      { key: 'night_shift_value', label: 'Adic. Noturno', type: 'provento' as const },
-      { key: 'dsr_value', label: 'DSR', type: 'provento' as const },
-      { key: 'bonuses', label: 'Bônus/Comissões', type: 'provento' as const },
-      { key: 'other_bonuses', label: 'Outros Proventos', type: 'provento' as const },
-      { key: 'inss', label: 'INSS', type: 'desconto' as const },
-      { key: 'irrf', label: 'IRRF', type: 'desconto' as const },
-      { key: 'vale_transporte', label: 'Vale Transporte', type: 'desconto' as const },
-      { key: 'vale_refeicao', label: 'Vale Refeição', type: 'desconto' as const },
-      { key: 'desconto_faltas', label: 'Desconto Faltas', type: 'desconto' as const },
-      { key: 'other_deductions', label: 'Outros Descontos', type: 'desconto' as const },
-      { key: 'fgts', label: 'FGTS (empresa)', type: 'encargo' as const },
-    ];
-    return items.map(item => {
-      const total = filteredRaw.reduce((s, e) => s + Number((e as Record<string, unknown>)[item.key] || 0), 0);
-      return { ...item, total };
-    }).filter(i => i.total > 0).sort((a, b) => b.total - a.total);
+    type Acc = { key: string; label: string; type: 'provento' | 'desconto' | 'encargo'; total: number;
+      porDesc: Record<string, number>; porMes: Record<string, number>; porFunc: Record<string, number> };
+    const acc: Record<string, Acc> = {};
+    const add = (cat: string, valor: number, desc: string, mes: string, func: string) => {
+      if (!valor) return;
+      const def = CATEGORIAS_FOLHA[cat] ?? CATEGORIAS_FOLHA.outros_proventos;
+      const it = acc[cat] ?? (acc[cat] = { key: cat, label: def.label, type: def.tipo, total: 0, porDesc: {}, porMes: {}, porFunc: {} });
+      it.total += valor;
+      it.porDesc[desc] = (it.porDesc[desc] ?? 0) + valor;
+      it.porMes[mes] = (it.porMes[mes] ?? 0) + valor;
+      it.porFunc[func] = (it.porFunc[func] ?? 0) + valor;
+    };
+    filteredRaw.forEach(e => {
+      const mes = e.reference_month;
+      const func = e.employee_name;
+      const rub = Array.isArray(e.rubricas) ? e.rubricas : [];
+      if (rub.length > 0) {
+        rub.forEach(r => add(r.categoria || categorizarRubrica(r), Number(r.valor || 0), r.descricao, mes, func));
+      } else {
+        const n = (v: unknown) => Number(v || 0);
+        const extras = n(e.overtime_50) + n(e.overtime_100);
+        const outrosP = n(e.bonuses) + n(e.other_bonuses);
+        const base = Math.max(0, n(e.total_proventos ?? e.gross_salary) - extras - n(e.night_shift_value) - n(e.dsr_value) - outrosP);
+        add('salario', base, 'Salário', mes, func);
+        add('hora_extra', n(e.overtime_50), 'Horas extras (dia útil)', mes, func);
+        add('hora_extra', n(e.overtime_100), 'Horas extras 100%', mes, func);
+        add('adicional_noturno', n(e.night_shift_value), 'Adicional noturno', mes, func);
+        add('dsr', n(e.dsr_value), 'DSR', mes, func);
+        add('outros_proventos', outrosP, 'Bônus / outros proventos', mes, func);
+        add('inss', n(e.inss), 'INSS', mes, func);
+        add('irrf', n(e.irrf), 'IRRF', mes, func);
+        add('faltas', n(e.desconto_faltas), 'Faltas', mes, func);
+        add('vale_transporte', n(e.vale_transporte), 'Vale-transporte', mes, func);
+        add('vale_refeicao', n(e.vale_refeicao), 'Vale-refeição', mes, func);
+        add('outros_descontos', n(e.other_deductions), 'Outros descontos', mes, func);
+      }
+      add('fgts', Number(e.fgts || 0), 'FGTS do mês', mes, func);
+    });
+    const ordem = { provento: 0, desconto: 1, encargo: 2 } as const;
+    return Object.values(acc).filter(i => i.total > 0.004)
+      .sort((x, y) => ordem[x.type] - ordem[y.type] || y.total - x.total);
   }, [filteredRaw]);
+  const [itemAberto, setItemAberto] = useState<string | null>(null);
 
   // ─── DADOS: POR CATEGORIA ───
   const categoriaData = useMemo(() => {
@@ -557,8 +582,10 @@ export default function RHRelatorioTab() {
                   const color = item.type === 'provento' ? '#10b981' : item.type === 'desconto' ? '#ef4444' : '#f59e0b';
                   return (
                     <div key={item.key}>
-                      <div className="flex items-center justify-between mb-1">
+                      <button type="button" onClick={() => setItemAberto(itemAberto === item.key ? null : item.key)}
+                        className="w-full flex items-center justify-between mb-1 cursor-pointer text-left">
                         <div className="flex items-center gap-2">
+                          <i className={`ri-arrow-${itemAberto === item.key ? 'down' : 'right'}-s-line text-zinc-400`} />
                           <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                           <span className="text-sm font-medium text-zinc-700">{item.label}</span>
                           <span className={`text-xs px-1.5 py-0.5 rounded-full ${item.type === 'provento' ? 'bg-green-100 text-green-700' : item.type === 'desconto' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -569,10 +596,30 @@ export default function RHRelatorioTab() {
                           <span className="text-sm font-bold text-zinc-800">{formatCurrency(item.total)}</span>
                           <span className="text-xs text-zinc-400 ml-2">{pct.toFixed(1)}%</span>
                         </div>
-                      </div>
+                      </button>
                       <div className="w-full bg-zinc-100 rounded-full h-2">
                         <div className="h-2 rounded-full transition-all duration-700" style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: color }} />
                       </div>
+                      {itemAberto === item.key && (
+                        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1 mt-2 mb-1 pl-6 text-xs">
+                          <div>
+                            <p className="font-semibold text-zinc-500 mb-1">Rubricas</p>
+                            {Object.entries(item.porDesc).sort((x, y) => y[1] - x[1]).map(([d, v]) => (
+                              <div key={d} className="flex justify-between gap-2 py-0.5 border-b border-zinc-100">
+                                <span className="text-zinc-600 truncate">{d}</span><span className="text-zinc-800 whitespace-nowrap">{formatCurrency(v)}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-zinc-500 mb-1">Por funcionário</p>
+                            {Object.entries(item.porFunc).sort((x, y) => y[1] - x[1]).map(([f, v]) => (
+                              <div key={f} className="flex justify-between gap-2 py-0.5 border-b border-zinc-100">
+                                <span className="text-zinc-600 truncate">{f}</span><span className="text-zinc-800 whitespace-nowrap">{formatCurrency(v)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -597,6 +644,35 @@ export default function RHRelatorioTab() {
               ));
             })()}
           </div>
+
+          {itemData.length > 0 && months.length > 0 && (
+            <div className="bg-white rounded-xl border border-zinc-200">
+              <div className="px-5 py-3 border-b border-zinc-100">
+                <h3 className="text-sm font-semibold text-zinc-800">Cada item, mês a mês</h3>
+                <p className="text-xs text-zinc-400">Quanto foi pago (proventos), descontado (descontos) e recolhido (FGTS) em cada competência.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-zinc-50 text-zinc-500">
+                    <tr>
+                      <th className="px-4 py-2 text-left font-semibold sticky left-0 bg-zinc-50">Item</th>
+                      {months.map(m => <th key={m} className="px-3 py-2 text-right font-semibold whitespace-nowrap">{monthLabel(m)}</th>)}
+                      <th className="px-4 py-2 text-right font-semibold">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {itemData.map(item => (
+                      <tr key={item.key} className="border-t border-zinc-100">
+                        <td className={`px-4 py-2 font-medium sticky left-0 bg-white whitespace-nowrap ${item.type === 'provento' ? 'text-green-700' : item.type === 'desconto' ? 'text-red-600' : 'text-amber-700'}`}>{item.label}</td>
+                        {months.map(m => <td key={m} className="px-3 py-2 text-right text-zinc-700 whitespace-nowrap">{item.porMes[m] ? formatCurrency(item.porMes[m]) : '—'}</td>)}
+                        <td className="px-4 py-2 text-right font-bold text-zinc-900 whitespace-nowrap">{formatCurrency(item.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

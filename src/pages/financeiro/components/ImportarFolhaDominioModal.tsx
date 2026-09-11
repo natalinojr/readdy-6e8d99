@@ -8,7 +8,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { callFinancialWrite, type Employee } from '@/hooks/useRH';
-import { parseExtratoDominio, pdfWords, refHoras, type ExtratoDominio, type FuncionarioExtrato, type Rubrica } from '@/lib/dominioExtrato';
+import { categorizarRubrica, labelCategoria, parseExtratoDominio, pdfWords, refHoras, type ExtratoDominio, type FuncionarioExtrato, type Rubrica } from '@/lib/dominioExtrato';
 
 const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -43,6 +43,7 @@ function mapearFolha(f: FuncionarioExtrato, modo: ModoImport = 'completa') {
       desconto_faltas: 0, horas_faltantes: 0, dias_faltas: 0, other_deductions: 0,
       deductions: 0, total_proventos: v, total_descontos: 0, gross_salary: v, net_salary: v,
       custom_proventos: [], custom_descontos: [], dependentes: 0, status: 'pending', entry_type: 'regular',
+      rubricas: [{ codigo: '', descricao: 'INSS do pró-labore (pago pela empresa)', referencia: null, valor: v, tipo: 'P' as const, categoria: 'inss_socio' }],
       notes: `Importado do Domínio — só o INSS${f.tipo === 'contribuinte' ? ' do pró-labore' : ''}: R$ ${reais(v)}. O valor de R$ ${reais(f.salario)} que aparece no extrato não foi pago.`,
     };
   }
@@ -98,6 +99,7 @@ function mapearFolha(f: FuncionarioExtrato, modo: ModoImport = 'completa') {
     deductions: f.descontos, total_proventos: f.proventos, total_descontos: f.descontos,
     gross_salary: f.proventos, net_salary: f.liquido,
     custom_proventos: [], custom_descontos: [], dependentes: 0,
+    rubricas: f.rubricas.map((r) => ({ ...r, categoria: categorizarRubrica(r) })),
     status: 'pending', entry_type: 'regular', notes: notas,
   };
 }
@@ -312,7 +314,7 @@ export default function ImportarFolhaDominioModal({ tenantId, employees, onClose
                                       <p className={`font-bold mt-2 mb-1 ${t === 'P' ? 'text-green-700' : 'text-red-600'}`}>{t === 'P' ? 'Proventos' : 'Descontos'}</p>
                                       {f.rubricas.filter((r) => r.tipo === t).map((r, k) => (
                                         <div key={k} className="flex justify-between gap-2 py-0.5 border-b border-zinc-100">
-                                          <span className="text-zinc-600 truncate">{r.codigo} {r.descricao}{r.referencia ? <span className="text-zinc-400"> ({r.referencia})</span> : null}</span>
+                                          <span className="text-zinc-600 truncate">{r.codigo} {r.descricao}{r.referencia ? <span className="text-zinc-400"> ({r.referencia})</span> : null} <span className="text-[10px] text-violet-600">· {labelCategoria(categorizarRubrica(r))}</span></span>
                                           <span className="text-zinc-800 whitespace-nowrap">{brl(r.valor)}</span>
                                         </div>
                                       ))}

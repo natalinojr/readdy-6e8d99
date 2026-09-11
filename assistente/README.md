@@ -52,14 +52,36 @@ Decisões:
   + ~5k de cache + ~400 de saída por mensagem ≈ US$ 0,02–0,03. Se ficar caro,
   trocar para `claude-sonnet-5` (mesma API).
 
+### VPS + Evolution API (NO AR desde 2026-09-11)
+
+- **Hetzner CX23** (2 vCPU, 4 GB, 40 GB, Helsinki), Ubuntu 24.04, US$ 7,09/mês.
+  IP `2.29.44.94`. Conta Hetzner do dono (em USD). SSH só por chave:
+  `~/.ssh/erpos_assistente_ed25519` na máquina do dono (usuário `root`).
+- Firewall ufw (22/80/443) + fail2ban. Docker CE.
+- Stack em `/opt/assistente` (`docker-compose.yml`, `.env`, `Caddyfile`):
+  `evoapicloud/evolution-api:latest` (v2.3.7) + postgres 16 + redis 7 +
+  **Caddy** (HTTPS automático via `2.29.44.94.sslip.io`) + **Uptime Kuma**
+  (`https://kuma.2.29.44.94.sslip.io`, ainda sem conta criada).
+- API: `https://2.29.44.94.sslip.io` (header `apikey` = secret `EVOLUTION_API_KEY`
+  no Supabase; também em `/opt/assistente/.env`). Manager web: `/manager`.
+- Instância `assistente` (Baileys) com webhook `MESSAGES_UPSERT` →
+  `assistente-webhook` (header `x-internal-key`), `groupsIgnore`, `rejectCall`.
+- Comandos úteis (na VPS): `cd /opt/assistente && docker compose ps`,
+  `docker logs evolution --tail 50`, `docker compose pull && docker compose up -d`.
+
+### assistente-webhook (NO AR desde 2026-09-11)
+
+Recebe o evento da Evolution, ignora `fromMe`/grupos/status, checa
+`asst_settings.allowed_chat_ids` (JID `55DDDNUMERO@s.whatsapp.net` ou só o
+número), chama o brain e responde via `/message/sendText/assistente`.
+Responde 200 na hora e processa com `EdgeRuntime.waitUntil` (a Evolution
+repete o webhook se demorar). Áudio/imagem ainda respondem "só texto".
+
 ## Pendente (ordem)
 
-1. **VPS Hetzner (CX22) + Evolution API** — dono precisa criar conta Hetzner e
-   arranjar um chip/número para o assistente. Depois: Docker + Evolution +
-   webhook apontando para `assistente-webhook`.
-2. `assistente-webhook`: recebe evento da Evolution, checa `allowed_chat_ids`,
-   baixa mídia, transcreve áudio (Whisper), chama o brain, responde pela API da
-   Evolution. Mensagens encaminhadas viram contexto ("resume isso e cria tarefa").
+1. **Número do assistente**: chip → parear com QR (`GET /instance/connect/assistente`
+   ou pelo `/manager`). Cadastrar o número do dono em `allowed_chat_ids`.
+2. Áudio: transcrição (Whisper na VPS ou API) no webhook; imagem → Claude vision.
 3. Envio de lembretes (`asst_reminders.sent_at is null and due_at <= now()`) —
    cron no Supabase (pg_cron + pg_net) chamando uma edge que manda pela Evolution.
 4. Resumo da manhã (tarefas do dia, agenda, contas vencendo) — mesmo mecanismo.
