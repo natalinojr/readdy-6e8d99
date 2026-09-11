@@ -5,6 +5,9 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
 import { type ItemPedidoCliente } from '@/types/mesaCliente';
+import TelaCartaoKiosk from './TelaCartaoKiosk';
+
+const NOME_TIPO: Record<string, string> = { pix: 'PIX', credit_card: 'Cartão de Crédito', debit_card: 'Cartão de Débito' };
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -510,6 +513,8 @@ export default function PagamentoKiosk({
   // Pix só é oferecido quando a loja tem provedor que confirma o pagamento (Inter/MP).
   const [pixDisponivel, setPixDisponivel] = useState<boolean | null>(null);
   const [metodosCarregados, setMetodosCarregados] = useState(false);
+  // Cartão cobrado na maquininha ao lado (Mercado Pago Point). Sem ela: "pague no balcão".
+  const [cartaoNaMaquininha, setCartaoNaMaquininha] = useState(false);
   // Forma escolhida para pagar no balcão (cartão/dinheiro): só informativa na confirmação.
   const [balcaoFormaNome, setBalcaoFormaNome] = useState<string | null>(null);
 
@@ -547,6 +552,12 @@ export default function PagamentoKiosk({
       .catch(() => setPixDisponivel((prev) => prev ?? false))
       .finally(() => clearTimeout(desiste));
   }, [tenantId]);
+  useEffect(() => {
+    if (!tenantId) return;
+    invokeWithAuth<{ point: boolean }>('pix-payment', { body: { action: 'kiosk_card_provider', tenant_id: tenantId } })
+      .then(({ data }) => setCartaoNaMaquininha(Boolean(data?.point)))
+      .catch(() => setCartaoNaMaquininha(false));
+  }, [tenantId]);
   const metodosVisiveis = paymentMethods.filter((m) => m.type !== 'pix' || pixDisponivel === true);
 
   // Pagar na entrega (modo fixo) — cria pedido ao montar
@@ -583,23 +594,24 @@ export default function PagamentoKiosk({
   };
 
   // Quando PIX é confirmado: cria pedido e finaliza
-  const handlePixPago = useCallback(async (pixPaymentId: string) => {
+  // Pagamento confirmado pelo provedor (Pix pelo banco ou cartão na maquininha).
+  const handlePixPago = useCallback(async (pixPaymentId: string, tipo: string = 'pix') => {
     setAguardando(true);
     setPagamentoError(null);
     try {
       // O id do pedido vem direto daqui: o estado do pai ainda não atualizou nesta chamada
       // (era por isso que o pagamento do Pix não entrava no caixa).
       const orderId = await onEntrarPagamento(pixPaymentId);
-      if (!orderId) throw new Error('O Pix foi recebido, mas o pedido não foi registrado. NÃO pague de novo — chame um atendente.');
+      if (!orderId) throw new Error('O pagamento foi recebido, mas o pedido não foi registrado. NÃO pague de novo — chame um atendente.');
       invokeWithAuth('pix-payment', { body: { action: 'attach_order', pix_payment_id: pixPaymentId, order_id: orderId } }).catch(() => {});
-      const pixMethod = paymentMethods.find((m) => m.type === 'pix');
-      if (!pixMethod) throw new Error('O Pix foi recebido, mas a loja não tem a forma de pagamento PIX cadastrada. NÃO pague de novo — chame um atendente.');
-      await onRegistrarPagamento(pixMethod.id, orderId);
+      const metodo = paymentMethods.find((m) => m.type === tipo);
+      if (!metodo) throw new Error(`O pagamento foi recebido, mas a loja não tem a forma de pagamento ${NOME_TIPO[tipo] ?? tipo} cadastrada. NÃO pague de novo — chame um atendente.`);
+      await onRegistrarPagamento(metodo.id, orderId);
       setConfirmado(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Erro ao registrar o pagamento.';
       // Volta pra escolha de forma com o aviso visível (na tela do Pix ele não aparece).
-      setPagamentoError(/NÃO pague de novo/.test(msg) ? msg : `O Pix foi recebido, mas houve um erro ao registrar: ${msg}. NÃO pague de novo — chame um atendente.`);
+      setPagamentoError(/NÃO pague de novo/.test(msg) ? msg : `O pagamento foi recebido, mas houve um erro ao registrar: ${msg}. NÃO pague de novo — chame um atendente.`);
       setForma(null);
       console.error('[PagamentoKiosk] Erro no pagamento PIX:', msg);
     } finally {
@@ -703,6 +715,19 @@ export default function PagamentoKiosk({
     );
   }
 
+  // ── Cartão na maquininha ao lado (Mercado Pago Point) ──
+  if (cartaoNaMaquininha && (forma?.type === 'credit_card' || forma?.type === 'debit_card')) {
+    return (
+      <TelaCartaoKiosk
+        total={total}
+        tenantId={tenantId}
+        method={forma.type as 'credit_card' | 'debit_card'}
+        onPago={handlePixPago}
+        onVoltar={() => setForma(null)}
+      />
+    );
+  }
+
   // ── Tela PIX (real) ──
   if (forma?.type === 'pix') {
     return (
@@ -785,6 +810,7 @@ export default function PagamentoKiosk({
 
     const getMethodDesc = (type: string) => {
       if (type === 'pix') return 'QR Code instantâneo';
+      if ((type === 'credit_card' || type === 'debit_card') && cartaoNaMaquininha) return 'Na maquininha ao lado';
       return 'Pague no balcão';
     };
 

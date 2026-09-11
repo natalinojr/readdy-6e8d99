@@ -27,7 +27,7 @@ const log = (level: string, scope: string, msg: string, extra?: unknown) =>
   console.log(JSON.stringify({ level, scope: `pix-payment/${scope}`, msg, ...(extra ? { extra } : {}) }));
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
-const PROVIDERS = ['inter_pix', 'mercadopago'];
+const PROVIDERS = ['inter_pix', 'mercadopago', 'mp_point'];
 const PIX_EXPIRATION_SEC = 600;
 // O tablet consulta a cada 2 s; o provedor é consultado no máximo a cada 1,5 s por cobrança.
 const RECONCILE_EVERY_MS = 1500;
@@ -127,13 +127,18 @@ type ProviderCfg = {
   client_id: string | null; client_secret: string | null; cert_pem: string | null; key_pem: string | null;
   pix_key: string | null; environment: string | null; conta_corrente: string | null;
   cert_expires_at: string | null; last_test_at: string | null; updated_at: string; token_expires_at: string | null;
+  terminal_id: string | null;
 };
 async function loadProviderCfgs(admin: Admin, tenantId: string) {
   const { data } = await admin.from('fin_payment_provider_config')
-    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at')
+    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at, terminal_id')
     .eq('tenant_id', tenantId).in('provider', PROVIDERS);
   const rows = (data ?? []) as ProviderCfg[];
-  return { inter: rows.find((r) => r.provider === 'inter_pix') ?? null, mp: rows.find((r) => r.provider === 'mercadopago') ?? null };
+  return {
+    inter: rows.find((r) => r.provider === 'inter_pix') ?? null,
+    mp: rows.find((r) => r.provider === 'mercadopago') ?? null,
+    point: rows.find((r) => r.provider === 'mp_point') ?? null,
+  };
 }
 const interReady = (c: ProviderCfg | null) => Boolean(c && c.is_active && c.client_id && c.client_secret && c.cert_pem && c.key_pem && c.pix_key);
 const mpReady = (c: ProviderCfg | null) => Boolean(c && c.is_active && c.access_token);
@@ -330,7 +335,7 @@ async function createMpPix(cfg: ProviderCfg, pixId: string, amount: number, desc
   };
 }
 
-async function cancelAtProvider(p: { inter: ProviderCfg | null; mp: ProviderCfg | null }, row: PixRow) {
+async function cancelAtProvider(p: { inter: ProviderCfg | null; mp: ProviderCfg | null; point?: ProviderCfg | null }, row: PixRow) {
   try {
     if (row.provider === 'inter_pix' && p.inter?.cert_pem) {
       await interApi(p.inter, `/pix/v2/cob/${row.provider_payment_id}`, {
@@ -339,8 +344,39 @@ async function cancelAtProvider(p: { inter: ProviderCfg | null; mp: ProviderCfg 
       });
     } else if (row.provider === 'mercadopago' && p.mp?.access_token) {
       await mpFetch(p.mp.access_token, `/v1/payments/${row.provider_payment_id}`, { method: 'PUT', body: JSON.stringify({ status: 'cancelled' }) });
+    } else if (row.provider === 'mp_point' && p.point?.access_token) {
+      // Só cancela se ainda não foi capturada pela maquininha; depois disso o MP recusa (e o
+      // cliente pode cancelar no próprio terminal).
+      await mpFetch(p.point.access_token, `/v1/orders/${row.provider_payment_id}/cancel`, { method: 'POST', headers: { 'X-Idempotency-Key': crypto.randomUUID() } });
     }
   } catch (e) { log('WARN', 'cancel', 'cancelar no provedor falhou', { id: row.id, error: String(e) }); }
+}
+
+// ── Mercado Pago Point (maquininha em modo PDV, API de Orders) ─────────────
+// A cobrança vai pro terminal escolhido (fin_payment_provider_config provider = 'mp_point',
+// token de uma aplicação "Point" — separada do Pix online). Teste: terminal virtual
+// NEWLAND_N950__SBX0000001 + POST /v1/orders/{id}/events pra simular o resultado; o
+// token precisa ser o de produção de uma CONTA VENDEDORA DE TESTE (token TEST- é recusado).
+const POINT_EXPIRATION = 'PT15M';
+const POINT_EXPIRATION_MS = 15 * 60 * 1000;
+const pointReady = (c: ProviderCfg | null) => Boolean(c && c.is_active && c.access_token && c.terminal_id);
+// deno-lint-ignore no-explicit-any
+const pointErr = (b: any) => String(b?.errors?.[0]?.message ?? b?.message ?? JSON.stringify(b ?? {}).slice(0, 200));
+
+async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: number, method: string, desc: string) {
+  const r = await mpFetch(String(cfg.access_token), '/v1/orders', {
+    method: 'POST', headers: { 'X-Idempotency-Key': chargeId },
+    body: JSON.stringify({
+      type: 'point', external_reference: chargeId, expiration_time: POINT_EXPIRATION, description: desc.slice(0, 150),
+      transactions: { payments: [{ amount: amount.toFixed(2) }] },
+      config: {
+        point: { terminal_id: cfg.terminal_id, print_on_terminal: 'no_ticket' },
+        payment_method: { default_type: method === 'debit_card' ? 'debit_card' : 'credit_card' },
+      },
+    }),
+  });
+  if (!r.ok || !r.body?.id) throw new Error(`Mercado Pago Point ${r.status}: ${pointErr(r.body)}`);
+  return { providerPaymentId: String(r.body.id), raw: { id: r.body.id, status: r.body.status } };
 }
 
 // ── Reconciliação: pergunta ao provedor e aplica na nossa linha ──────────────
@@ -355,6 +391,7 @@ async function reconcileRow(admin: Admin, row: PixRow): Promise<string> {
   const p = await loadProviderCfgs(admin, row.tenant_id);
   const now = new Date().toISOString();
   let paid = false; let gone = false; let got = 0; let raw: unknown = null;
+  let failed = false; let detail = ''; let cardMethod: string | null = null;
 
   if (row.provider === 'inter_pix') {
     if (!p.inter?.cert_pem) return row.status;
@@ -371,6 +408,20 @@ async function reconcileRow(admin: Admin, row: PixRow): Promise<string> {
     got = round2(pixList.reduce((s: number, x: any) => s + Number(x?.valor ?? 0), 0));
     // deno-lint-ignore no-explicit-any
     raw = { status: st, pix: pixList.map((x: any) => ({ endToEndId: x?.endToEndId, valor: x?.valor, horario: x?.horario })) };
+  } else if (row.provider === 'mp_point') {
+    if (!p.point?.access_token) return row.status;
+    const r = await mpFetch(p.point.access_token, `/v1/orders/${row.provider_payment_id}`);
+    if (!r.ok) { log('WARN', 'reconcile', 'GET order Point falhou', { id: row.id, http: r.status }); return row.status; }
+    const st = String(r.body.status ?? '');
+    const pay = r.body.transactions?.payments?.[0] ?? {};
+    paid = st === 'processed';
+    failed = st === 'failed';
+    gone = ['canceled', 'expired', 'refunded'].includes(st);
+    got = round2(Number(r.body.total_paid_amount ?? pay.paid_amount ?? pay.amount ?? 0));
+    cardMethod = pay.payment_method?.type === 'debit_card' ? 'debit_card' : 'credit_card';
+    detail = String(pay.status_detail ?? r.body.status_detail ?? '');
+    raw = { id: r.body.id, status: st, status_detail: detail, payment: { id: pay.id ?? null, method: pay.payment_method ?? null, reference: pay.reference ?? null } };
+    log('INFO', 'reconcile', 'point', { id: row.id, st, detail });
   } else {
     if (!p.mp?.access_token) return row.status;
     const r = await mpFetch(p.mp.access_token, `/v1/payments/${row.provider_payment_id}`);
@@ -390,10 +441,15 @@ async function reconcileRow(admin: Admin, row: PixRow): Promise<string> {
       await admin.from('fin_pix_payments').update({ error: `Pago R$ ${got.toFixed(2)}, cobrado R$ ${expected.toFixed(2)}`, raw_provider: raw, updated_at: now }).eq('id', row.id);
       return 'pending';
     }
-    await admin.from('fin_pix_payments').update({ status: 'confirmed', confirmed_at: now, updated_at: now, raw_provider: raw })
+    await admin.from('fin_pix_payments').update({ status: 'confirmed', confirmed_at: now, updated_at: now, raw_provider: raw, ...(cardMethod ? { method: cardMethod } : {}) })
       .eq('id', row.id).eq('status', 'pending');
     log('INFO', 'reconcile', 'confirmado pelo provedor', { id: row.id, provider: row.provider, amount: got });
     return 'confirmed';
+  }
+  if (failed) {
+    // Cartão recusado na maquininha: o tablet mostra o motivo e oferece tentar de novo.
+    await admin.from('fin_pix_payments').update({ status: 'failed', error: detail || 'failed', updated_at: now, raw_provider: raw }).eq('id', row.id).eq('status', 'pending');
+    return 'failed';
   }
   if (gone) {
     await admin.from('fin_pix_payments').update({ status: 'cancelled', updated_at: now, raw_provider: raw }).eq('id', row.id).eq('status', 'pending');
@@ -586,7 +642,14 @@ Deno.serve(async (req: Request) => {
         await supabase.from('fin_pix_payments').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', row.id).eq('status', 'pending');
         status = 'expired';
       }
-      return json({ status, confirmed_at: status === 'confirmed' ? (row.confirmed_at ?? new Date().toISOString()) : null, amount: row.amount, txid: row.txid });
+      // Cartão: qual forma o cliente usou (crédito/débito) e, se recusado, o motivo.
+      const { data: fresh } = (status === 'confirmed' || status === 'failed')
+        ? await supabase.from('fin_pix_payments').select('method, error').eq('id', row.id).maybeSingle()
+        : { data: null };
+      return json({
+        status, confirmed_at: status === 'confirmed' ? (row.confirmed_at ?? new Date().toISOString()) : null, amount: row.amount, txid: row.txid,
+        method: fresh?.method ?? null, error: status === 'failed' ? (fresh?.error ?? null) : null,
+      });
     }
 
     // ── ACTION: confirm — manual, só admin/gerente ────────────────────────
@@ -622,12 +685,138 @@ Deno.serve(async (req: Request) => {
         if (auth.error) return auth.error;
         // Antes de cancelar, confere: se o cliente já pagou, o pedido tem que seguir.
         const st = await reconcileRow(supabase, row);
-        if (st !== 'pending') return json({ success: true, status: st });
+        if (st !== 'pending') {
+          const { data: f } = await supabase.from('fin_pix_payments').select('method').eq('id', row.id).maybeSingle();
+          return json({ success: true, status: st, method: f?.method ?? null });
+        }
         await cancelAtProvider(await loadProviderCfgs(supabase, row.tenant_id), row);
       }
       await supabase.from('fin_pix_payments').update({ status: 'cancelled', updated_at: new Date().toISOString() })
         .eq('id', row.id).eq('status', 'pending');
       return json({ success: true, status: 'cancelled' });
+    }
+
+    // ── Maquininha (Mercado Pago Point) no autoatendimento ─────────────────
+    if (action === 'kiosk_card_provider') {
+      const tenantId = String(body.tenant_id ?? '');
+      const auth = await requireMember(req, supabase, tenantId);
+      if (auth.error) return auth.error;
+      const { point } = await loadProviderCfgs(supabase, tenantId);
+      return json({ point: pointReady(point), sandbox: point?.environment === 'sandbox' });
+    }
+
+    if (action === 'create_card_charge') {
+      const tenantId = String(body.tenant_id ?? '');
+      const amount = round2(Number(body.amount));
+      const method = body.method === 'debit_card' ? 'debit_card' : 'credit_card';
+      if (!tenantId || !(amount >= 0.01)) return json({ error: 'tenant_id e amount são obrigatórios' }, 400);
+      const auth = await requireMember(req, supabase, tenantId);
+      if (auth.error) return auth.error;
+      const { point } = await loadProviderCfgs(supabase, tenantId);
+      if (!pointReady(point)) return json({ error: 'A maquininha não está configurada nesta loja.', code: 'no_point' }, 422);
+
+      const chargeId = crypto.randomUUID();
+      const { data: tenant } = await supabase.from('tenants').select('name').eq('id', tenantId).maybeSingle();
+      let created: { providerPaymentId: string; raw: unknown };
+      try {
+        created = await createPointOrder(point!, chargeId, amount, method, `${tenant?.name ?? 'Restaurante'} - Autoatendimento`);
+      } catch (e) {
+        const detail = String((e as Error)?.message ?? e);
+        log('ERROR', 'create_card_charge', 'Mercado Pago recusou', { tenantId, detail });
+        return json({ error: 'Não foi possível enviar a cobrança para a maquininha. Tente de novo ou pague no balcão.', code: 'provider_error', detail }, 502);
+      }
+      const { data: row, error: insErr } = await supabase.from('fin_pix_payments').insert({
+        id: chargeId, tenant_id: tenantId, order_id: null, txid: chargeId.replace(/-/g, ''), amount, method,
+        pix_key: 'mp_point', pix_key_type: 'provider', beneficiary_name: 'Mercado Pago Point', city: '-', emv_payload: null,
+        status: 'pending', expires_at: new Date(Date.now() + POINT_EXPIRATION_MS).toISOString(),
+        provider: 'mp_point', provider_payment_id: created.providerPaymentId, raw_provider: created.raw,
+      }).select('id, expires_at').single();
+      if (insErr || !row) {
+        // Cobrança existe na maquininha mas não aqui: cancela lá pra não receber sem rastro.
+        await cancelAtProvider(await loadProviderCfgs(supabase, tenantId), { id: chargeId, provider: 'mp_point', provider_payment_id: created.providerPaymentId } as PixRow);
+        throw insErr ?? new Error('insert fin_pix_payments falhou');
+      }
+      log('INFO', 'create_card_charge', 'criado', { chargeId, mpOrder: created.providerPaymentId, amount, method, sandbox: point!.environment === 'sandbox' });
+      return json({ pix_payment_id: row.id, expires_at: row.expires_at, provider: 'mp_point', sandbox: point!.environment === 'sandbox' });
+    }
+
+    // Só no modo TESTE (terminal virtual): força o resultado da cobrança no Mercado Pago,
+    // como o cliente faria na maquininha. Em produção a ação é recusada.
+    if (action === 'simulate_card') {
+      const row = await loadRow(supabase, body);
+      if (!row || row.provider !== 'mp_point') return json({ error: 'Cobrança não encontrada' }, 404);
+      const auth = await requireMember(req, supabase, row.tenant_id);
+      if (auth.error) return auth.error;
+      const { point } = await loadProviderCfgs(supabase, row.tenant_id);
+      if (point?.environment !== 'sandbox') return json({ error: 'Simulação só existe no modo teste' }, 403);
+      const outcome = String(body.outcome ?? '');
+      const ev = outcome === 'declined'
+        ? { status: 'failed', payment_method_type: 'credit_card', installments: 1, payment_method_id: 'visa', status_detail: 'insufficient_amount' }
+        : outcome === 'approved_debit'
+          ? { status: 'processed', payment_method_type: 'debit_card', payment_method_id: 'debvisa', status_detail: 'accredited' }
+          : { status: 'processed', payment_method_type: 'credit_card', installments: 1, payment_method_id: 'visa', status_detail: 'accredited' };
+      const r = await mpFetch(String(point.access_token), `/v1/orders/${row.provider_payment_id}/events`, { method: 'POST', body: JSON.stringify(ev) });
+      if (!r.ok) return json({ error: `Simulação recusada pelo Mercado Pago (${r.status}): ${pointErr(r.body)}` }, 502);
+      log('INFO', 'simulate_card', 'ok', { id: row.id, outcome });
+      return json({ ok: true });
+    }
+
+    // ── Config da maquininha (Configurações › Formas de pagamento) ─────────
+    if (action === 'get_point_config') {
+      const tenantId = String(body.tenant_id ?? '');
+      const auth = await requireMember(req, supabase, tenantId);
+      if (auth.error) return auth.error;
+      const { point } = await loadProviderCfgs(supabase, tenantId);
+      return json({
+        configured: Boolean(point?.access_token), is_active: Boolean(point?.is_active),
+        environment: point?.environment === 'sandbox' ? 'sandbox' : 'production', terminal_id: point?.terminal_id ?? null,
+        token_hint: point?.access_token ? `…${point.access_token.slice(-6)}` : null, last_test_at: point?.last_test_at ?? null,
+      });
+    }
+
+    if (action === 'list_point_terminals' || action === 'set_point_mode' || action === 'save_point_config') {
+      const tenantId = String(body.tenant_id ?? '');
+      const auth = await requireMember(req, supabase, tenantId);
+      if (auth.error) return auth.error;
+      if (!isManager(auth.role)) return json({ error: 'Somente administrador ou gerente' }, 403);
+      const { point } = await loadProviderCfgs(supabase, tenantId);
+      const token = String(body.access_token ?? '').trim() || String(point?.access_token ?? '');
+      if (!token) return json({ error: 'Informe o Access Token da aplicação Point' }, 422);
+
+      if (action === 'list_point_terminals') {
+        const r = await mpFetch(token, '/terminals/v1/list?limit=50');
+        if (!r.ok) return json({ error: `O Mercado Pago recusou o token (${r.status}): ${pointErr(r.body)}` }, 422);
+        // deno-lint-ignore no-explicit-any
+        const list = ((r.body?.data?.terminals ?? []) as any[]).map((t) => ({ id: String(t.id), operating_mode: String(t.operating_mode ?? '') }));
+        return json({ terminals: list });
+      }
+
+      if (action === 'set_point_mode') {
+        const terminalId = String(body.terminal_id ?? '');
+        const mode = body.mode === 'STANDALONE' ? 'STANDALONE' : 'PDV';
+        if (!terminalId) return json({ error: 'Escolha a maquininha' }, 422);
+        const r = await mpFetch(token, '/terminals/v1/setup', { method: 'PATCH', body: JSON.stringify({ terminals: [{ id: terminalId, operating_mode: mode }] }) });
+        if (!r.ok) return json({ error: `O Mercado Pago recusou (${r.status}): ${pointErr(r.body)}` }, 422);
+        const modoFinal = r.body?.terminals?.[0]?.operating_mode ?? r.body?.data?.terminals?.[0]?.operating_mode ?? mode;
+        log('INFO', 'set_point_mode', 'ok', { tenantId, terminalId, mode, by: auth.userId });
+        return json({ ok: true, operating_mode: modoFinal });
+      }
+
+      // save_point_config — valida o token listando terminais (só responde com token válido).
+      const environment = body.environment === 'sandbox' ? 'sandbox' : 'production';
+      const terminalId = String(body.terminal_id ?? '').trim() || String(point?.terminal_id ?? '');
+      if (!terminalId) return json({ error: 'Escolha a maquininha' }, 422);
+      const test = await mpFetch(token, '/terminals/v1/list?limit=1');
+      if (!test.ok) return json({ error: `Token recusado pelo Mercado Pago (${test.status}): ${pointErr(test.body)}` }, 422);
+      const now = new Date().toISOString();
+      const isActive = typeof body.is_active === 'boolean' ? body.is_active : (point?.is_active ?? true);
+      const { error } = await supabase.from('fin_payment_provider_config').upsert({
+        tenant_id: tenantId, provider: 'mp_point', access_token: token, terminal_id: terminalId, environment, is_active: isActive,
+        account_label: environment === 'sandbox' ? 'Mercado Pago Point · TESTE' : 'Mercado Pago Point', last_test_at: now, updated_at: now,
+      }, { onConflict: 'tenant_id,provider' });
+      if (error) throw error;
+      log('INFO', 'save_point_config', 'ok', { tenantId, environment, terminalId, isActive, by: auth.userId });
+      return json({ ok: true, is_active: isActive });
     }
 
     // ── Config do Pix pelo Banco Inter (Configurações › Formas de pagamento) ──

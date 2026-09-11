@@ -10,6 +10,7 @@ import { subscribeReload } from '@/lib/reloadSignal';
 import { TPAG_OPTIONS, TPAG_AUTO } from '@/lib/fiscal';
 import MercadoPagoConfigModal from './MercadoPagoConfigModal';
 import InterPixConfigModal from './InterPixConfigModal';
+import MpPointConfigModal from './MpPointConfigModal';
 
 // ─── Static config ────────────────────────────────────────────────────────────
 const CORES = ['#f59e0b', '#f97316', '#10b981', '#06b6d4', '#8b5cf6', '#ec4899', '#ef4444', '#14b8a6'];
@@ -329,6 +330,8 @@ export default function EstacoesPagamentosTab() {
   const [mpAtivo, setMpAtivo] = useState<boolean | null>(null);
   const [showInterModal, setShowInterModal] = useState(false);
   const [interAtivo, setInterAtivo] = useState<boolean | null>(null);
+  const [showPointModal, setShowPointModal] = useState(false);
+  const [pointInfo, setPointInfo] = useState<{ is_active: boolean; sandbox: boolean } | null>(null);
   useEffect(() => {
     if (!user?.tenantId) return;
     invokeWithAuth<{ is_active: boolean }>('online-payments', { body: { action: 'get_config', tenant_id: user.tenantId } })
@@ -337,6 +340,9 @@ export default function EstacoesPagamentosTab() {
     invokeWithAuth<{ is_active: boolean }>('pix-payment', { body: { action: 'get_inter_pix_config', tenant_id: user.tenantId } })
       .then(({ data }) => setInterAtivo(Boolean(data?.is_active)))
       .catch(() => setInterAtivo(false));
+    invokeWithAuth<{ is_active: boolean; environment: string }>('pix-payment', { body: { action: 'get_point_config', tenant_id: user.tenantId } })
+      .then(({ data }) => setPointInfo({ is_active: Boolean(data?.is_active), sandbox: data?.environment === 'sandbox' }))
+      .catch(() => setPointInfo({ is_active: false, sandbox: false }));
   }, [user?.tenantId]);
 
   // Force re-render when kitchen_stations signal fires (ensures list updates after create)
@@ -612,6 +618,28 @@ export default function EstacoesPagamentosTab() {
             </div>
           </button>
 
+          {/* Maquininha do autoatendimento (Mercado Pago Point em modo PDV) */}
+          <button
+            type="button"
+            onClick={() => setShowPointModal(true)}
+            className={`w-full text-left border rounded-xl p-4 cursor-pointer transition-colors ${pointInfo?.is_active ? 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100/60' : 'bg-sky-50 border-sky-200 hover:bg-sky-100/60'}`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 flex items-center justify-center rounded-xl flex-shrink-0 ${pointInfo?.is_active ? 'bg-emerald-500' : 'bg-sky-600'}`}>
+                  <i className="ri-bank-card-line text-white text-lg" />
+                </div>
+                <div>
+                  <p className={`text-sm font-bold ${pointInfo?.is_active ? 'text-emerald-800' : 'text-sky-800'}`}>Maquininha do autoatendimento (Mercado Pago Point)</p>
+                  <p className={`text-xs ${pointInfo?.is_active ? 'text-emerald-600' : 'text-sky-600'}`}>O tablet manda a cobrança do cartão pra maquininha ao lado e o Mercado Pago confirma</p>
+                </div>
+              </div>
+              <span className={`text-[10px] font-semibold px-2.5 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap flex items-center gap-1 ${pointInfo?.is_active ? 'text-emerald-600 bg-emerald-100' : 'text-sky-700 bg-sky-100'}`}>
+                <i className={`text-sm ${pointInfo?.is_active ? 'ri-shield-check-line' : 'ri-settings-3-line'}`} />{pointInfo === null ? '…' : pointInfo.is_active ? (pointInfo.sandbox ? 'Teste' : 'Ativa') : 'Configurar'}
+              </span>
+            </div>
+          </button>
+
           {formas.length === 0 ? (
             <div className="text-center py-12 bg-white border border-zinc-100 rounded-xl">
               <div className="w-12 h-12 flex items-center justify-center bg-zinc-100 rounded-full mx-auto mb-3">
@@ -753,6 +781,9 @@ export default function EstacoesPagamentosTab() {
       )}
       {showInterModal && (
         <InterPixConfigModal onClose={() => setShowInterModal(false)} onSaved={info => setInterAtivo(info.is_active)} />
+      )}
+      {showPointModal && (
+        <MpPointConfigModal onClose={() => setShowPointModal(false)} onSaved={info => setPointInfo(prev => ({ is_active: info.is_active, sandbox: prev?.sandbox ?? false }))} />
       )}
       {formaModal && (
         <FormaModal

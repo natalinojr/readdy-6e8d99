@@ -98,10 +98,28 @@ Nova ação `confirm_statement_match` em `financial-write`, atômica, por tipo d
 - Nota cancelada na SEFAZ que foi paga ou importada.
 - Saldo do ERP × saldo real do Inter (já temos `synced_balance`).
 
-### Fase 5 — Entradas (depois)
-- `DOMICILIO_CARTAO` do Inter × API da Stone agrupada por dia (depende de configurar a chave da Stone).
-- Pix recebido de cliente × pagamentos Pix dos pedidos (valor + horário).
-- Observação: a loja tem 0 recebíveis de cartão, então as formas de pagamento de cartão estão com `days_to_receive = 0`. Precisa rever antes desta fase.
+### Fase 5 — Entradas: Stone × Inter (dados reais de 2026-09-11)
+**Como o dinheiro anda:** o repasse da maquininha vai por *domicílio bancário* direto para o Inter (`tipoTransacao=DOMICILIO_CARTAO`, descrição "Crédito domicílio cartão - Cartão De Débito/Antecipação - Stone"). Não passa pela Conta Stone. Na Conta Stone fica só o Pix recebido na maquininha, que o dono transfere depois para o Inter (Pix de "Ep Par Mall", banco STONE IP, CNPJ da própria loja).
+
+**Bate no centavo:**
+
+| Dia | Stone (API) | Inter (domicílio Stone) |
+|---|---|---|
+| 08/09 débito/crédito sem antecipação | 2.680,05 | 2.680,03 (3 linhas) |
+| 08/09 antecipado | 2.401,58 | 2.401,59 (3 linhas) |
+| 09/09 sem antecipação | 299,31 | 299,32 (2 linhas) |
+| 09/09 antecipado | 391,98 | 391,97 (2 linhas) |
+
+O Inter quebra por bandeira (1 a 3 linhas por grupo); diferença de 1–2 centavos é arredondamento.
+
+**Consequências para o desenho:**
+- As linhas da Stone são o **detalhe** (qual venda, bandeira, taxa); o dinheiro está no **Inter**. A conta "Stone" do ERP não pode somar esse dinheiro como saldo, senão conta 2×.
+- Match: crédito domicílio Stone no Inter ↔ grupo Stone (mesma data de pagamento, antecipado sim/não), tolerância de R$ 0,05 por grupo. Confirmar = baixar recebíveis (quando existirem) e lançar a taxa real.
+- Pix da Conta Stone para o Inter com CNPJ da própria loja = **transferência entre contas**, nunca receita.
+- Taxas reais medidas: débito ≈ 0,86%; antecipado ≈ 3,4% (inclui ≈ 1,45% de antecipação). No ERP todas as formas estão com taxa 0 e prazo 0.
+- O ERP quase não tem vendas registradas na loja (payments), então venda ERP × venda Stone só faz sentido depois do go-live do PDV. Até lá, a Stone é a fonte das vendas em cartão.
+- Também chegam no Inter: repasse iFood (domicílio + TED do iFood) e Pix da Tuna Pagamentos. Candidatos a regras.
+- Pendência: `payments_total` do arquivo Stone vem 0 (seção Payments não está sendo lida). Não afeta as linhas.
 
 ### Fase 6 — APIs novas (opcional)
 - **Inter Pagamentos:** pagar boleto/Pix a partir da conta a pagar; a conciliação já nasce fechada e o código de barras fica gravado. Exige integração nova no Inter com novo certificado.
