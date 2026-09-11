@@ -56,8 +56,10 @@ function supplierKeyOf(cnpj: unknown, name: unknown): string {
 }
 
 // ── Schema da saída (structured outputs) ─────────────────────────────────────
-const nullableString = { type: ['string', 'null'] };
-const nullableNumber = { type: ['number', 'null'] };
+// Opcionais como anyOf [tipo, null]: a API recusa `enum` junto de `type: [..., 'null']`
+// ("Enum value 'Dinheiro' does not match declared type"), então o padrão é anyOf em tudo.
+const nullableString = { anyOf: [{ type: 'string' }, { type: 'null' }] };
+const nullableNumber = { anyOf: [{ type: 'number' }, { type: 'null' }] };
 const OUTPUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -70,7 +72,7 @@ const OUTPUT_SCHEMA = {
     fornecedor_cnpj: nullableString,
     numero_documento: nullableString,
     data_compra: nullableString,
-    forma_pagamento: { type: ['string', 'null'], enum: [...PAYMENT_METHODS, null] },
+    forma_pagamento: { anyOf: [{ type: 'string', enum: PAYMENT_METHODS }, { type: 'null' }] },
     valor_total: nullableNumber,
     desconto_total: nullableNumber,
     itens: {
@@ -422,8 +424,15 @@ async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<
     }
     if (err instanceof Anthropic.RateLimitError) return errResp('Muitas leituras ao mesmo tempo. Tente de novo em alguns segundos.', 429);
     if (err instanceof Anthropic.BadRequestError) {
-      log('ERROR', 'scan', 'anthropic bad request', { error: String(err.message).slice(0, 500) });
-      return errResp('Não foi possível ler este arquivo. Tente uma foto mais nítida.', 400);
+      const detail = String(err.message);
+      log('ERROR', 'scan', 'anthropic bad request', { error: detail.slice(0, 500) });
+      // Só culpa o arquivo quando o erro é mesmo do arquivo (imagem/PDF inválido ou grande demais);
+      // erro de configuração da requisição não pode virar "tire outra foto".
+      if (/image|document|pdf|media_type|base64|too large|size/i.test(detail)) {
+        return errResp('Não foi possível ler este arquivo. Tente uma foto mais nítida ou outro formato (JPG/PNG/PDF).', 400);
+      }
+      if (/credit balance|billing/i.test(detail)) return errResp('Sem créditos na conta da Anthropic. Adicione créditos em console.anthropic.com › Billing.', 402);
+      return errResp('Erro de configuração na leitura por IA. Avise o suporte.', 500);
     }
     if (err instanceof Anthropic.APIError) {
       log('ERROR', 'scan', 'anthropic api error', { status: err.status, error: String(err.message).slice(0, 500) });
