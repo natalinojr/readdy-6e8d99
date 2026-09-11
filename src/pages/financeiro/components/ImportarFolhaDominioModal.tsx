@@ -20,11 +20,32 @@ const mesLabel = (ym: string) => {
 };
 const fmtCpf = (d: string | null) => (d && d.length === 11 ? `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}` : d ?? undefined);
 
+type ModoImport = 'completa' | 'inss' | 'nao';
+const INSS_RE = /I\.?N\.?S\.?S/;
+/** INSS da pessoa no extrato (rubricas de desconto de INSS). */
+const inssDe = (f: FuncionarioExtrato) => round2(f.rubricas.filter((r) => r.tipo === 'D' && INSS_RE.test(r.descricao)).reduce((s, r) => s + r.valor, 0));
+
 interface ExistingPay { id: string; employee_id: string | null; employee_name: string; status: string }
 
 /** Rubricas do Domínio → campos da folha do ERPOS. Tudo que não tem campo próprio
  *  vai para "outros proventos/descontos"; a lista completa fica nas observações. */
-function mapearFolha(f: FuncionarioExtrato) {
+function mapearFolha(f: FuncionarioExtrato, modo: ModoImport = 'completa') {
+  // Sócio que não retira pró-labore: o Domínio calcula o pró-labore mínimo só para recolher
+  // o INSS. Entra na folha apenas o INSS (é o que sai do caixa); o "salário" não foi pago.
+  if (modo === 'inss') {
+    const v = inssDe(f);
+    const reais = (n: number) => n.toFixed(2).replace('.', ',');
+    return {
+      base_salary: 0, overtime_50: 0, overtime_50_hours: 0, overtime_100: 0, overtime_100_hours: 0,
+      overtime_night: 0, overtime_night_hours: 0, overtime: 0, overtime_percent: 50,
+      night_shift_value: 0, night_shift_hours: 0, dsr_value: 0, bonuses: 0, other_bonuses: v,
+      inss: 0, irrf: 0, fgts: 0, vale_transporte: 0, vale_transporte_uses: false, vale_refeicao: 0,
+      desconto_faltas: 0, horas_faltantes: 0, dias_faltas: 0, other_deductions: 0,
+      deductions: 0, total_proventos: v, total_descontos: 0, gross_salary: v, net_salary: v,
+      custom_proventos: [], custom_descontos: [], dependentes: 0, status: 'pending', entry_type: 'regular',
+      notes: `Importado do Domínio — só o INSS${f.tipo === 'contribuinte' ? ' do pró-labore' : ''}: R$ ${reais(v)}. O valor de R$ ${reais(f.salario)} que aparece no extrato não foi pago.`,
+    };
+  }
   const soma = (rs: Rubrica[]) => round2(rs.reduce((s, r) => s + r.valor, 0));
   const horas = (rs: Rubrica[]) => round2(rs.reduce((s, r) => s + refHoras(r.referencia), 0));
   const P = f.rubricas.filter((r) => r.tipo === 'P');
@@ -93,7 +114,7 @@ export default function ImportarFolhaDominioModal({ tenantId, employees, onClose
   const [arquivo, setArquivo] = useState<string>('');
   const [ext, setExt] = useState<ExtratoDominio | null>(null);
   const [existentes, setExistentes] = useState<ExistingPay[]>([]);
-  const [marcados, setMarcados] = useState<Record<number, boolean>>({});
+  const [modo, setModo] = useState<Record<number, ModoImport>>({});
   const [aberto, setAberto] = useState<number | null>(null);
 
   const matchEmp = (f: FuncionarioExtrato): Employee | undefined => {
@@ -123,16 +144,20 @@ export default function ImportarFolhaDominioModal({ tenantId, employees, onClose
         setExistentes((data ?? []) as ExistingPay[]);
       }
       setExt(r);
-      setMarcados(Object.fromEntries(r.funcionarios.map((_, i) => [i, true])));
+      // Sócio (contribuinte) começa em "só o INSS"; dá para trocar na linha.
+      setModo(Object.fromEntries(r.funcionarios.map((f, i) => [i, f.tipo === 'contribuinte' ? 'inss' : 'completa'])));
     } catch (e) {
       setErro(`Não consegui abrir o PDF: ${String((e as Error)?.message ?? e)}`);
     } finally { setLendo(false); }
   };
 
-  const selecionados = useMemo(() => (ext?.funcionarios ?? []).filter((_, i) => marcados[i]), [ext, marcados]);
+  const selecionados = useMemo(() => (ext?.funcionarios ?? []).filter((_, i) => (modo[i] ?? 'completa') !== 'nao'), [ext, modo]);
   const bloqueados = selecionados.filter((f) => payDe(f).some((p) => p.status === 'paid'));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const totalSel = useMemo(() => round2(selecionados.reduce((s, f) => s + f.liquido, 0)), [selecionados]);
+  const totalSel = round2((ext?.funcionarios ?? []).reduce((s, f, i) => {
+    const m = modo[i] ?? 'completa';
+    if (m === 'nao' || payDe(f).some((p) => p.status === 'paid')) return s;
+    return s + (m === 'inss' ? inssDe(f) : f.liquido);
+  }, 0));
   const avisosLeitura = [...(ext?.avisos ?? []), ...(ext?.funcionarios ?? []).flatMap((f) => f.avisos.map((a) => `${f.nome}: ${a}`))];
 
   const importar = async () => {
@@ -142,13 +167,15 @@ export default function ImportarFolhaDominioModal({ tenantId, employees, onClose
     const substituir: string[] = [];
     let novos = 0; let atualizados = 0;
     try {
-      for (const f of selecionados) {
+      for (const [i, f] of ext.funcionarios.entries()) {
+        const m = modo[i] ?? 'completa';
+        if (m === 'nao') continue;
         const pays = payDe(f);
         if (pays.some((p) => p.status === 'paid')) continue; // já pago: não mexe
         const emp = matchEmp(f);
         const status = /DEMITID/i.test(f.situacao) ? 'inactive' : /F[EÉ]RIAS/i.test(f.situacao) ? 'vacation' : /AFAST|LICEN/i.test(f.situacao) ? 'leave' : 'active';
         const cadastro: Record<string, unknown> = {
-          name: f.nome, role: f.cargo || f.vinculo || 'Funcionário', salary: f.salario, status,
+          name: f.nome, role: f.cargo || f.vinculo || 'Funcionário', salary: m === 'inss' ? 0 : f.salario, status,
           ...(f.cpf ? { cpf: fmtCpf(f.cpf) } : {}),
           ...(f.admissao ? { hire_date: f.admissao } : {}),
           ...(emp ? { id: emp.id } : { department: f.tipo === 'contribuinte' ? 'Sócios' : 'Geral' }),
@@ -162,7 +189,7 @@ export default function ImportarFolhaDominioModal({ tenantId, employees, onClose
         registros.push({
           employee_id: empId, employee_name: f.nome, role: f.cargo || f.vinculo || 'Funcionário',
           department: emp?.department || (f.tipo === 'contribuinte' ? 'Sócios' : 'Geral'),
-          reference_month: ext.competencia, ...mapearFolha(f),
+          reference_month: ext.competencia, ...mapearFolha(f, m),
         });
       }
       for (const id of substituir) {
@@ -227,7 +254,7 @@ export default function ImportarFolhaDominioModal({ tenantId, employees, onClose
                 <table className="w-full text-sm min-w-[640px]">
                   <thead className="bg-zinc-50 text-[11px] uppercase text-zinc-500">
                     <tr>
-                      <th className="px-3 py-2 w-8" />
+                      <th className="px-3 py-2 text-left">Importar</th>
                       <th className="px-3 py-2 text-left">Funcionário</th>
                       <th className="px-3 py-2 text-right">Proventos</th>
                       <th className="px-3 py-2 text-right">Descontos</th>
@@ -245,8 +272,13 @@ export default function ImportarFolhaDominioModal({ tenantId, employees, onClose
                         <Fragment key={i}>
                           <tr className="border-t border-zinc-100 align-top">
                             <td className="px-3 py-2.5">
-                              <input type="checkbox" checked={!!marcados[i] && !pago} disabled={pago}
-                                onChange={(e) => setMarcados((m) => ({ ...m, [i]: e.target.checked }))} className="cursor-pointer" />
+                              <select value={pago ? 'nao' : (modo[i] ?? 'completa')} disabled={pago}
+                                onChange={(e) => setModo((m) => ({ ...m, [i]: e.target.value as ModoImport }))}
+                                className="text-xs border border-zinc-200 rounded-md px-1.5 py-1 bg-white cursor-pointer disabled:opacity-50">
+                                <option value="completa">Folha completa</option>
+                                <option value="inss">Só o INSS</option>
+                                <option value="nao">Não importar</option>
+                              </select>
                             </td>
                             <td className="px-3 py-2.5">
                               <button onClick={() => setAberto(aberto === i ? null : i)} className="text-left cursor-pointer">
@@ -261,6 +293,8 @@ export default function ImportarFolhaDominioModal({ tenantId, employees, onClose
                             <td className="px-3 py-2.5 text-right text-zinc-600">{brl(f.valorFgts)}</td>
                             <td className="px-3 py-2.5 text-[11px]">
                               {emp ? <span className="text-zinc-600">Cadastrado</span> : <span className="text-sky-700 font-semibold">Novo cadastro</span>}
+                              {!pago && modo[i] === 'inss' && <p className="text-violet-700 font-semibold">Entra só o INSS: {brl(inssDe(f))}</p>}
+                              {!pago && modo[i] === 'nao' && <p className="text-zinc-400">Fica de fora</p>}
                               {pago && <p className="text-green-700 font-semibold">Folha do mês já paga: mantida</p>}
                               {!pago && pays.length > 0 && <p className="text-amber-700">Substitui {pays.length} pendente(s)</p>}
                             </td>

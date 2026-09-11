@@ -1537,3 +1537,13 @@ A edge `stone-conciliation` estava morta desde a migração para multi-loja: bus
 - **Pegadinha de formato**: o PDF tem que ser salvo pelo Domínio (produtor Amyuni, com texto). "Microsoft Print to PDF" vira desenho (0 caracteres). O `.xls` que o Domínio exporta está corrompido (xlrd e SheetJS não leem as células).
 - **Validação**: por pessoa, a soma das rubricas bate com o total, e proventos − descontos = líquido. No geral, a soma dos líquidos = Líquido Geral. Grava pelo `financial-write` (upsert_employee, delete_payroll dos pendentes do mês, bulk_insert_payroll) como **pendente**. As rubricas completas ficam em `notes`. A folha já paga não é tocada.
 - **Não lançar guias FGTS/INSS em Contas a Pagar** a partir da folha: a DRE (`useDespesas`) já soma bruto + FGTS do `hr_payroll` → duplicaria.
+
+### 2026-09-11 — Assistente pessoal do dono (WhatsApp + Claude) — projeto PESSOAL
+
+Nova Edge Function `assistente-brain` + tabelas `asst_messages`, `asst_memories`,
+`asst_reminders`, `asst_settings` (RLS sem policies = só service role). **Não é
+feature do ERPOS**: nenhuma tela/rota; só o dono usa, via WhatsApp (Evolution API
+numa VPS, pendente). Doc completa e estado em `assistente/README.md`.
+Critérios: escreve tarefas direto nas tabelas como o dono (`task-write` exige JWT);
+auth por `x-internal-key` = `ASSISTENTE_INTERNAL_KEY`; data/hora atual vai na
+mensagem do usuário, não no system, para preservar o cache do prompt.
