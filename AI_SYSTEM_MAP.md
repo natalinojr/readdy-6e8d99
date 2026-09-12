@@ -1604,6 +1604,25 @@ valor `text-base md:text-xl`) — em 2 colunas de ~135px o layout em linha corta
 Clientes, Produtos) ganharam `flex-shrink-0` nos botões, senão o pill encolhe e o
 texto `whitespace-nowrap` escapa por cima do vizinho.
 
-Verificado com Chromium headless a 320px e 360px sobre o CSS já buildado
-(nenhum par de elementos irmãos com retângulos se cruzando; `scrollWidth` do
-documento = largura do viewport).
+**Regressão que veio junto (e a lição real):** ao reestruturar o header eu
+perdi o `flex-wrap` que a linha de controles tinha. Testei só 320px e 360px,
+achei que estava pronto — mas de 640px para cima o conjunto (toggle + presets
++ Mês + Personalizado + ações) não cabia numa linha e vazava para fora da
+viewport, levando os filtros de data junto (`scrollWidth` do documento: 940px
+numa tela de 640px; 1144px em 768/820/1024). Correções: `flex-wrap` de volta;
+o header só vira linha única a partir de `lg` (entre 640 e 1024 o layout
+empilhado dá a largura inteira para os filtros, uma linha em vez de três); e o
+subtítulo "Análises de vendas…" virou `hidden xl:block`, porque ocupava ~270px
+e era ele que empurrava os filtros para fora na faixa de tablet.
+
+**Critério para o próximo:** ao mexer em header/toolbar, varra a faixa inteira
+(320 → 1600), não só dois pontos no mobile. As quebras moram nos breakpoints
+(`sm` 640 / `md` 768 / `lg` 1024), onde labels escondidas aparecem de uma vez e
+o custo em largura dá um salto. E antes de remover qualquer classe de layout no
+meio de uma reestruturação, confira o que ela fazia — `flex-wrap` era a única
+coisa segurando esse header.
+
+Verificado com Chromium headless em 25 larguras de 320px a 1600px sobre o CSS
+já buildado: nenhum par de elementos irmãos com retângulos se cruzando, nenhum
+preset cortado fora do container e `scrollWidth` do documento igual à viewport
+em todas.
