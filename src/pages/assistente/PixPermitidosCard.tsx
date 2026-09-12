@@ -34,7 +34,7 @@ const input = 'w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:
 
 export default function PixPermitidosCard() {
   const [status, setStatus] = useState<{ has_pin: boolean; locked_until: string | null } | null>(null);
-  const [mode, setMode] = useState<'loading' | 'create' | 'locked' | 'open' | 'change'>('loading');
+  const [mode, setMode] = useState<'loading' | 'create' | 'locked' | 'open'>('loading');
   const [items, setItems] = useState<Item[]>([]);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -94,19 +94,6 @@ export default function PixPermitidosCard() {
     await openList(pinRef.current);
   };
 
-  const changePin = async () => {
-    if (!pinRef.current) { lock(); return; }
-    if (!validNewPin()) return;
-    setBusy(true); setMsg(null);
-    const r = await call('pix_allow_set_pin', { current_pin: pinRef.current, new_pin: pin1 });
-    setBusy(false);
-    if (!r.ok) { handleError(r.error); return; }
-    pinRef.current = pin1;
-    setPin1(''); setPin2('');
-    setMode('open'); touch();
-    setMsg({ ok: true, text: 'PIN trocado.' });
-  };
-
   const openList = async (pin: string | null) => {
     if (!pin) return;
     setBusy(true); setMsg(null);
@@ -152,7 +139,6 @@ export default function PixPermitidosCard() {
         </div>
         {mode === 'open' && (
           <div className="flex items-center gap-2">
-            <button onClick={() => { setMode('change'); setMsg(null); touch(); }} className="text-xs px-3 py-1.5 border border-zinc-200 rounded-lg text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">Trocar PIN</button>
             <button onClick={() => lock('Lista trancada.')} className="text-xs px-3 py-1.5 bg-zinc-800 text-white rounded-lg hover:bg-zinc-900 cursor-pointer whitespace-nowrap"><i className="ri-lock-line" /> Trancar</button>
           </div>
         )}
@@ -160,17 +146,16 @@ export default function PixPermitidosCard() {
 
       {mode === 'loading' && <div className="py-6 flex justify-center"><div className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" /></div>}
 
-      {(mode === 'create' || mode === 'change') && (
+      {mode === 'create' && (
         <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 space-y-3 max-w-md">
-          <p className="text-sm font-semibold text-zinc-800">{mode === 'create' ? 'Crie o PIN da lista' : 'Trocar o PIN da lista'}</p>
-          <p className="text-xs text-zinc-600">De 6 a 8 números. Ele protege esta lista e não é o mesmo PIN que você digita no Telegram para pagar. Ninguém consegue ver este PIN depois, nem a gente.</p>
+          <p className="text-sm font-semibold text-zinc-800">Crie o PIN da lista</p>
+          <p className="text-xs text-zinc-600">De 6 a 8 números. Ele protege esta lista e não é o mesmo PIN que você digita no Telegram para pagar. <strong>Ele não pode ser trocado pela tela</strong>: guarde bem. Ninguém consegue ver este PIN depois.</p>
           <input type="password" inputMode="numeric" autoComplete="new-password" maxLength={8} value={pin1} onChange={(e) => setPin1(e.target.value.replace(/\D/g, ''))} placeholder="PIN novo" className={pinInput} />
           <input type="password" inputMode="numeric" autoComplete="new-password" maxLength={8} value={pin2} onChange={(e) => setPin2(e.target.value.replace(/\D/g, ''))} placeholder="Repita o PIN" className={pinInput}
-            onKeyDown={(e) => { if (e.key === 'Enter') { if (mode === 'create') createPin(); else changePin(); } }} />
+            onKeyDown={(e) => { if (e.key === 'Enter') createPin(); }} />
           <div className="flex gap-2">
-            {mode === 'change' && <button onClick={() => { setMode('open'); setPin1(''); setPin2(''); touch(); }} className="px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-100 rounded-lg cursor-pointer">Voltar</button>}
-            <button onClick={mode === 'create' ? createPin : changePin} disabled={busy} className="flex-1 px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold hover:bg-violet-700 cursor-pointer disabled:opacity-50">
-              {busy ? 'Salvando...' : mode === 'create' ? 'Criar PIN e abrir a lista' : 'Salvar PIN novo'}
+            <button onClick={createPin} disabled={busy} className="flex-1 px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold hover:bg-violet-700 cursor-pointer disabled:opacity-50">
+              {busy ? 'Salvando...' : 'Criar PIN e abrir a lista'}
             </button>
           </div>
         </div>
@@ -188,6 +173,7 @@ export default function PixPermitidosCard() {
           </button>
         </div>
       )}
+      {mode === 'locked' && <p className="text-[11px] text-zinc-400">Esqueceu o PIN ou quer trocar? Isso não é feito pela tela: peça ao suporte (Claude Code).</p>}
       {mode === 'locked' && lockedUntil && <p className="text-xs text-red-600">Bloqueado por tentativas erradas até {lockedUntil.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</p>}
 
       {mode === 'open' && (

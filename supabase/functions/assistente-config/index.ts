@@ -12,7 +12,9 @@
 //   whatsapp_state      {}                estado da conexão (open | connecting | close)
 //   ── Pix permitidos (lista branca do Pix pelo assistente) — PIN PRÓPRIO, criado pelo dono ──
 //   pix_allow_status    {}                          { has_pin, locked_until }
-//   pix_allow_set_pin   { new_pin, current_pin? }   cria (1ª vez) ou troca (exige o atual); 6–8 dígitos
+//   pix_allow_set_pin   { new_pin }                 SÓ cria (1ª vez); 6–8 dígitos. Não há troca pela tela (decisão do
+//                                               dono, 2026-09-12): para trocar, o suporte apaga asst_settings.pix_allow_pin
+//                                               direto no banco e a tela pede um PIN novo na próxima abertura.
 //   pix_allow_list      { pin }                     itens ativos (da loja que tem o Inter conectado)
 //   pix_allow_save      { pin, id?, name, chave }   inclui ou edita
 //   pix_allow_remove    { pin, id }                 desativa
@@ -288,7 +290,7 @@ Deno.serve(async (req) => {
         const np = String(body.new_pin ?? '').trim();
         if (!/^\d{6,8}$/.test(np)) return fail('O PIN precisa ter de 6 a 8 números.');
         if (/^(\d)\1+$/.test(np) || '0123456789'.includes(np) || '9876543210'.includes(np)) return fail('PIN fácil demais (repetido ou sequência). Escolha outro.');
-        if (cfg.pix_allow_pin?.hash) await checkAllowPin(admin, cfg, body.current_pin); // trocar exige o atual
+        if (cfg.pix_allow_pin?.hash) return fail('O PIN da lista já foi criado e não pode ser trocado pela tela. Para trocar, peça ao suporte (Claude Code).', 403);
         const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
         await setSetting(admin, 'pix_allow_pin', { salt, hash: await pbkdf2(np, salt), iter: PIN_ITER, fails: 0, locked_until: null, set_at: new Date().toISOString(), set_by: user.id });
         return ok({ has_pin: true });
