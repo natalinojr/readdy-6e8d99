@@ -16,6 +16,10 @@
 // Pagamentos pelo Inter (2026-09-12): resumo com botões Pagar/Cancelar; o PIN digitado depois do
 // botão é interceptado aqui (nunca vai ao brain nem ao histórico) e a mensagem é apagada. /pin cria/troca.
 //
+// Entrada interna (header x-internal-key): { action: 'deliver', chat_key, text, actions } —
+// usada pela triagem de pedido de pagamento dos grupos do WhatsApp (assistente-webhook)
+// para avisar o dono já com o cartão de pagamento e os botões.
+//
 // Secrets: TELEGRAM_BOT_TOKEN, ASSISTENTE_INTERNAL_KEY, WHISPER_URL, WHISPER_API_KEY, FISCAL_INTERNAL_KEY (inter-bank).
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
@@ -716,12 +720,37 @@ async function handle(update: any) {
   await processOwner(admin, { chatId, chatKey, text, attachment, messageId, kind });
 }
 
+// Entrega interna (outra Edge Function): manda um aviso ao dono no Telegram com as
+// mesmas ações do brain — inclusive o cartão de pagamento com botões Pagar/Cancelar.
+// Usada pela triagem de pedido de pagamento nos grupos do WhatsApp (assistente-webhook).
+// deno-lint-ignore no-explicit-any
+async function deliver(body: any) {
+  const chatKey = String(body.chat_key ?? '');
+  if (!/^tg:-?\d+$/.test(chatKey)) throw new Error('chat_key inválido (esperado "tg:<id>")');
+  const chatId = Number(chatKey.slice(3));
+  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const text = String(body.text ?? '').trim();
+  if (text && text !== 'NO_REPLY') await sendText(chatId, text);
+  await runActions(admin, chatId, chatKey, body.actions);
+  log('INFO', 'aviso entregue', { chat: chatKey, actions: (Array.isArray(body.actions) ? body.actions : []).map((a: { type: string }) => a.type) });
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
-  if (internalKey.length < 20 || req.headers.get('x-telegram-bot-api-secret-token') !== internalKey) return json({ error: 'Unauthorized' }, 401);
+  const secretOk = internalKey.length >= 20 && req.headers.get('x-telegram-bot-api-secret-token') === internalKey;
+  const internalOk = internalKey.length >= 20 && req.headers.get('x-internal-key') === internalKey;
+  if (!secretOk && !internalOk) return json({ error: 'Unauthorized' }, 401);
   if (!botToken) return json({ error: 'TELEGRAM_BOT_TOKEN não configurado' }, 503);
   let update: unknown;
   try { update = await req.json(); } catch { return json({ error: 'JSON inválido' }, 400); }
+  // deno-lint-ignore no-explicit-any
+  const acao = String((update as any)?.action ?? '');
+  if (acao === 'deliver') {
+    try { await deliver(update); return json({ ok: true }); }
+    catch (e) { log('ERROR', 'entrega interna falhou', { error: errMsg(e) }); return json({ error: errMsg(e) }, 500); }
+  }
+  // Quem chega só com a chave interna (outra Edge Function) manda aviso, nunca update do Telegram.
+  if (!secretOk) return json({ error: 'Ação interna desconhecida' }, 400);
   const p = handle(update).catch((e) => log('ERROR', 'unhandled', { error: errMsg(e) }));
   // deno-lint-ignore no-explicit-any
   (globalThis as any).EdgeRuntime?.waitUntil?.(p);

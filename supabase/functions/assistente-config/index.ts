@@ -192,7 +192,9 @@ Deno.serve(async (req) => {
           admin.from('asst_memories').select('id, content, created_at').eq('is_active', true).order('created_at', { ascending: false }).limit(200),
           admin.from('asst_reminders').select('id, text, due_at, sent_at').is('sent_at', null).order('due_at').limit(100),
           admin.from('asst_reminders').select('id, text, due_at, sent_at').not('sent_at', 'is', null).order('sent_at', { ascending: false }).limit(20),
-          admin.from('asst_messages').select('id, role, content, channel, created_at').order('created_at', { ascending: false }).limit(80),
+          // channel 'grupo' = leitura automática de foto/PDF dos grupos: conta no custo,
+          // mas não é conversa, então fica fora da lista da tela.
+          admin.from('asst_messages').select('id, role, content, channel, created_at').neq('channel', 'grupo').order('created_at', { ascending: false }).limit(80),
           admin.from('asst_messages').select('usage').eq('role', 'assistant').gte('created_at', since).not('usage', 'is', null).limit(5000),
           whatsappState(),
         ]);

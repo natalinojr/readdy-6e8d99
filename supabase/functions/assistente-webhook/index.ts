@@ -13,6 +13,10 @@
 // brain como texto "[Áudio] ..."; foto/PDF → vão ao brain como anexo (Claude lê).
 // Mensagem encaminhada ganha o prefixo "[Encaminhada]".
 //
+// Grupos (2026-09-12): foto e PDF também são LIDOS (brain › ler_midia) e o conteúdo
+// fica em asst_group_messages; quando a mensagem é pedido de pagamento, a triagem
+// prepara o pagamento no Inter e avisa o dono no Telegram (ver triarPagamento).
+//
 // Secrets: ASSISTENTE_INTERNAL_KEY, EVOLUTION_URL, EVOLUTION_API_KEY,
 //          EVOLUTION_INSTANCE (padrão "assistente"), WHISPER_URL, WHISPER_API_KEY.
 
@@ -236,12 +240,132 @@ async function evoGet(path: string): Promise<any> {
   return r.json().catch(() => ({}));
 }
 
+// ── Leitura de mídia de grupo e triagem de pedido de pagamento (2026-09-12) ──
+// Antes, foto/PDF de grupo viravam só "[Foto]" e o assistente não sabia o que havia
+// na imagem. Agora a mídia é baixada e LIDA pelo brain (action 'ler_midia'): o
+// conteúdo vai para asst_group_messages.content/extracted. Quando a mensagem é um
+// PEDIDO DE PAGAMENTO (boleto, Pix), a triagem chama o brain em modo
+// 'triagem_grupo', que prepara o pagamento no Inter e avisa o dono no Telegram com
+// os botões Pagar/Cancelar — PIN e aprovação no app do Inter continuam valendo.
+// Liga/desliga em asst_settings.group_watch { read_media, pay_requests, max_per_day }.
+const GROUP_WATCH_DEFAULTS = { read_media: true, pay_requests: true, max_per_day: 30 };
+// Pré-filtro barato: só chama o modelo quando o texto cheira a pedido de pagamento.
+const PAY_HINT = /\bpag(a|ar|ue|uei|amento|amentos)\b|\bboleto|\bpix\b|linha digit|c[óo]digo de barras|copia e cola|transfer[êe]ncia|\bdep[óo]sit|vencimento|\bvence(u|ndo)?\b|\bfatura|cobran[çc]a|\bquita/i;
+const DOC_READABLE = (mime: string | null) => mime === 'application/pdf' || IMAGE_TYPES.includes(String(mime ?? ''));
+
+// deno-lint-ignore no-explicit-any
+async function brainCall(body: Record<string, unknown>): Promise<any> {
+  const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey }, body: JSON.stringify(body),
+  });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`brain ${r.status}: ${JSON.stringify(out).slice(0, 300)}`);
+  return out;
+}
+
+// Foto/PDF → { tipo_documento, resumo, texto, pagamento }. Erro aqui nunca derruba
+// a gravação da mensagem: sem leitura, a mensagem fica como era antes ("[Foto]").
+// deno-lint-ignore no-explicit-any
+async function lerMidia(b64: string, mime: string | null, legenda: string, contexto: string, chatId: string): Promise<any | null> {
+  const out = await brainCall({
+    action: 'ler_midia', attachment: { base64: b64, media_type: mime ?? 'image/jpeg' },
+    legenda, contexto, chat_id: chatId, channel: 'grupo',
+  });
+  return out?.lido ?? null;
+}
+
+// Destino do aviso ao dono. Pagamento com botões só existe no Telegram, então ele
+// tem preferência; sem Telegram, avisa no WhatsApp (o brain recusa preparar_pagamento
+// e responde dizendo que precisa ser pelo Telegram).
+// deno-lint-ignore no-explicit-any
+function ownerChatOf(cfg: Record<string, any>): string | null {
+  const tg = cfg.telegram_owner_chat_id ? `tg:${cfg.telegram_owner_chat_id}` : null;
+  const wa = typeof cfg.owner_chat_id === 'string' && cfg.owner_chat_id ? cfg.owner_chat_id : null;
+  return tg ?? wa;
+}
+
+// Entrega o aviso (texto + ações, inclusive o cartão de pagamento com botões).
+// No Telegram quem monta o cartão é o assistente-telegram (action 'deliver').
+// deno-lint-ignore no-explicit-any
+async function avisarDono(admin: SupabaseClient, ownerChat: string, reply: string, actions: any[]) {
+  if (ownerChat.startsWith('tg:')) {
+    const r = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({ action: 'deliver', chat_key: ownerChat, text: reply, actions }),
+    });
+    if (!r.ok) throw new Error(`assistente-telegram ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    return;
+  }
+  const number = ownerChat.replace(/@.*$/, '');
+  await sendText(number, reply);
+  await runActions(admin, number, ownerChat, actions);
+}
+
+// Triagem: mensagem de grupo que parece pedido de pagamento → brain (modo
+// 'triagem_grupo') → pagamento preparado + aviso ao dono. Uma linha por mensagem em
+// asst_group_requests (message_id único), então reenvio do webhook não prepara 2×.
+// deno-lint-ignore no-explicit-any
+async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string }) {
+  const conf = { ...GROUP_WATCH_DEFAULTS, ...(cfg.group_watch && typeof cfg.group_watch === 'object' ? cfg.group_watch : {}) };
+  if (conf.pay_requests === false) return;
+  const ownerChat = ownerChatOf(cfg);
+  if (!ownerChat) { log('WARN', 'pedido de pagamento sem destino', { group: g.name }); return; }
+  // Trava de custo: no máximo N triagens por dia (mensagem de grupo é de terceiros).
+  const desde = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const { count } = await admin.from('asst_group_requests').select('id', { count: 'exact', head: true }).gte('created_at', desde);
+  if ((count ?? 0) >= Number(conf.max_per_day ?? 30)) { log('WARN', 'limite diário de triagem atingido', { count }); return; }
+  // message_id único: se já existe, outra execução já cuidou deste pedido.
+  const { data: req, error } = await admin.from('asst_group_requests').insert({
+    message_id: msg.messageId, group_jid: g.group_jid, group_name: g.name, sender_name: msg.sender,
+    kind: 'pagamento', status: 'novo', data: { texto: msg.content, extraido: msg.extracted, sent_at: msg.sentAt },
+  }).select('id').maybeSingle();
+  if (error || !req) { if (error && !/duplicate|unique/i.test(error.message)) log('WARN', 'gravar solicitação', { error: error.message }); return; }
+
+  // Conteúdo de terceiros vai DELIMITADO (e sem forjar a própria tag nem os atributos):
+  // é dado, nunca ordem.
+  const limpo = msg.content.replace(/<\/?mensagem_do_grupo[^>]*>/gi, '').slice(0, 3000);
+  const attr = (v: string) => v.replace(/["<>]/g, ' ').slice(0, 80);
+  const quando = new Date(msg.sentAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const prompt = [
+    `[Sistema] Mensagem no grupo "${attr(String(g.name ?? ''))}" que parece pedido de pagamento (triagem automática).`,
+    `<mensagem_do_grupo grupo="${attr(String(g.name ?? ''))}" autor="${attr(msg.sender ?? 'desconhecido')}" quando="${quando}">`,
+    limpo,
+    '</mensagem_do_grupo>',
+    msg.extracted ? `Leitura automática do arquivo anexado: ${JSON.stringify(msg.extracted).slice(0, 2000)}` : '',
+    'Siga as regras de TRIAGEM AUTOMÁTICA DE GRUPO.',
+  ].filter(Boolean).join('\n');
+
+  try {
+    const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: 'triagem_grupo' });
+    const reply = String(out?.reply ?? '').trim();
+    // deno-lint-ignore no-explicit-any
+    const actions: any[] = Array.isArray(out?.actions) ? out.actions : [];
+    const pagamento = actions.find((a) => a?.type === 'payment');
+    if (!reply || reply === 'NO_REPLY') {
+      await admin.from('asst_group_requests').update({ status: 'ignorado', updated_at: new Date().toISOString() }).eq('id', req.id);
+      log('INFO', 'triagem: não era pedido de pagamento', { group: g.name });
+      return;
+    }
+    await avisarDono(admin, ownerChat, reply, actions);
+    await admin.from('asst_group_requests').update({
+      status: pagamento ? 'preparado' : 'incompleto', payment_id: pagamento ? String(pagamento.id) : null,
+      reply: reply.slice(0, 2000), notified_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq('id', req.id);
+    log('INFO', 'triagem de pagamento', { group: g.name, sender: msg.sender, preparado: !!pagamento });
+  } catch (e) {
+    await admin.from('asst_group_requests').update({ status: 'erro', error: errMsg(e).slice(0, 500), updated_at: new Date().toISOString() }).eq('id', req.id);
+    log('ERROR', 'triagem de pagamento falhou', { group: g.name, error: errMsg(e) });
+    // O dono precisa saber que chegou um pedido mesmo quando a triagem quebra.
+    await avisarDono(admin, ownerChat, `Chegou um pedido de pagamento no grupo *${g.name}*${msg.sender ? ` (${msg.sender})` : ''} e eu não consegui preparar: ${errMsg(e).slice(0, 160)}. Dá uma olhada lá.`, []).catch(() => {});
+  }
+}
+
 // Grupos: o assistente SÓ LÊ — guarda a mensagem em asst_group_messages e nunca
 // responde no grupo. Na primeira mensagem de um grupo busca nome e participantes;
 // a leitura só liga sozinha se o dono estiver no grupo (qualquer pessoa pode
 // adicionar o número do assistente num grupo). Liga/desliga na tela Assistente.
 // deno-lint-ignore no-explicit-any
-async function handleGroup(admin: SupabaseClient, data: any, allowed: string[]) {
+async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], cfg: Record<string, any> = {}) {
   const groupJid = String(data.key.remoteJid);
   const ownerNums = allowed.map((a) => a.replace(/@.*$/, ''));
   let { data: g } = await admin.from('asst_groups').select('group_jid, name, is_enabled').eq('group_jid', groupJid).maybeSingle();
@@ -264,33 +388,77 @@ async function handleGroup(admin: SupabaseClient, data: any, allowed: string[]) 
   }
   if (!g.is_enabled) return;
 
+  const conf = { ...GROUP_WATCH_DEFAULTS, ...(cfg.group_watch && typeof cfg.group_watch === 'object' ? cfg.group_watch : {}) };
   const p = parseMessage(data.message);
-  let content = p.text ? p.text.trim() : '';
+  const legenda = p.text ? p.text.trim() : '';
+  let content = legenda;
+  let baseText = legenda;          // o que a pessoa escreveu/falou (sem a leitura da mídia)
+  // deno-lint-ignore no-explicit-any
+  let extracted: any = null;
+  const sender = data.pushName ? String(data.pushName) : null;
   if (p.kind === 'audio') {
     try {
       const b64 = await mediaBase64(data);
       const t = b64 ? await transcribe(b64, p.mime ?? 'audio/ogg') : '';
       content = t ? `[Áudio] ${t}` : '[Áudio não transcrito]';
+      baseText = t || '';
     } catch (e) {
       log('WARN', 'transcrição de grupo falhou', { groupJid, error: errMsg(e) });
       content = '[Áudio não transcrito]';
     }
-  } else if (p.kind === 'image') content = `[Foto]${content ? ` ${content}` : ''}`;
-  else if (p.kind === 'document') content = `[Arquivo]${content ? ` ${content}` : ''}`;
-  else if (p.kind === 'video') content = `[Vídeo]${content ? ` ${content}` : ''}`;
+  } else if (p.kind === 'image' || p.kind === 'document') {
+    const rotulo = p.kind === 'image' ? '[Foto]' : '[Arquivo]';
+    content = `${rotulo}${legenda ? ` ${legenda}` : ''}`;
+    // Foto e PDF são LIDOS (o resto — planilha, áudio de vídeo, zip — continua só rótulo).
+    if (conf.read_media !== false && DOC_READABLE(p.mime ?? (p.kind === 'image' ? 'image/jpeg' : null))) {
+      try {
+        const b64 = await mediaBase64(data);
+        if (!b64) throw new Error('não consegui baixar o arquivo');
+        extracted = await lerMidia(b64, p.mime ?? 'image/jpeg', legenda, `Mensagem do grupo "${g.name}"${sender ? `, mandada por ${sender}` : ''}.`, `grupo:${groupJid}`);
+        const resumo = String(extracted?.resumo ?? '').trim();
+        const texto = String(extracted?.texto ?? '').trim();
+        if (resumo) content = `${content}\n${resumo}${texto ? `\nTexto do arquivo: ${texto}` : ''}`;
+      } catch (e) {
+        log('WARN', 'leitura de mídia de grupo falhou', { groupJid, kind: p.kind, error: errMsg(e) });
+        content = `${content}\n(não consegui ler o arquivo)`;
+      }
+    }
+  } else if (p.kind === 'video') content = `[Vídeo]${content ? ` ${content}` : ''}`;
   if (!content) return;
   if (p.forwarded) content = `[Encaminhada] ${content}`;
 
   const ts = Number(data.messageTimestamp);
-  await admin.from('asst_group_messages').upsert({
-    message_id: data.key.id ? String(data.key.id) : null,
+  const sentAt = ts > 0 ? new Date(ts * 1000).toISOString() : new Date().toISOString();
+  const messageId = data.key.id ? String(data.key.id) : null;
+  const linha = {
+    message_id: messageId,
     group_jid: groupJid,
     sender_jid: String(data.key.participantAlt ?? data.key.participant ?? '') || null,
-    sender_name: data.pushName ? String(data.pushName) : null,
+    sender_name: sender,
     content: content.slice(0, 4000),
     kind: p.kind,
-    sent_at: ts > 0 ? new Date(ts * 1000).toISOString() : new Date().toISOString(),
-  }, { onConflict: 'message_id', ignoreDuplicates: true });
+    sent_at: sentAt,
+  };
+  const gravar = (row: Record<string, unknown>) =>
+    admin.from('asst_group_messages').upsert(row, { onConflict: 'message_id', ignoreDuplicates: true }).select('id');
+  let { data: gravada, error: erroGravar } = await gravar({ ...linha, media_mime: p.mime ?? null, extracted });
+  if (erroGravar) {
+    // Migração 20260912160000 ainda não aplicada: grava sem as colunas novas em vez
+    // de perder a mensagem do grupo.
+    log('WARN', 'gravar mensagem de grupo com mídia falhou; tentando sem as colunas novas', { groupJid, error: erroGravar.message });
+    const r = await gravar(linha);
+    if (r.error) { log('ERROR', 'gravar mensagem de grupo', { groupJid, error: r.error.message }); return; }
+    gravada = r.data;
+  }
+  // Mensagem repetida (webhook reenviado): já foi tratada, não triar de novo.
+  if (messageId && !gravada?.length) return;
+
+  // Pedido de pagamento? A leitura da mídia manda quando existe; senão, o texto.
+  const pedido = extracted?.pagamento
+    ? extracted.pagamento.e_solicitacao === true
+    : PAY_HINT.test(baseText);
+  if (!pedido) return;
+  await triarPagamento(admin, cfg, g, { messageId, sender, content, extracted, sentAt });
 }
 
 // deno-lint-ignore no-explicit-any
@@ -519,7 +687,8 @@ async function handle(payload: any) {
   // messages.update chega a cada "entregue/lido" das nossas mensagens: só interessa voto em enquete.
   if (event === 'messages.update' && !(Array.isArray(data) ? data : [data]).some((it) => it?.pollUpdates || it?.message?.pollUpdates)) return;
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const { data: st } = await admin.from('asst_settings').select('key, value').in('key', ['allowed_chat_ids', 'ui', 'channels']);
+  const { data: st } = await admin.from('asst_settings').select('key, value')
+    .in('key', ['allowed_chat_ids', 'ui', 'channels', 'group_watch', 'owner_chat_id', 'telegram_owner_chat_id', 'primary_channel']);
   const cfg = Object.fromEntries((st ?? []).map((s) => [s.key, s.value]));
   const allowed: string[] = Array.isArray(cfg.allowed_chat_ids) ? cfg.allowed_chat_ids.map(String) : [];
   const ui: Record<string, unknown> = cfg.ui && typeof cfg.ui === 'object' ? cfg.ui : {};
@@ -553,7 +722,7 @@ async function handle(payload: any) {
   const jid = String(key.remoteJid ?? '');
   const altJid = String(key.remoteJidAlt ?? key.senderPn ?? '');
   if (!jid || jid === 'status@broadcast') return; // status: fora
-  if (jid.endsWith('@g.us')) { await handleGroup(admin, data, allowed); return; } // grupo: só lê
+  if (jid.endsWith('@g.us')) { await handleGroup(admin, data, allowed, cfg); return; } // grupo: só lê (mídia lida + triagem de pagamento)
   const candidates = [jid, altJid, jid.replace(/@.*$/, ''), altJid.replace(/@.*$/, '')].filter(Boolean);
   if (!candidates.some((c) => allowed.includes(c))) {
     log('WARN', 'remetente não autorizado (ignorado)', { jid, altJid, pushName: data.pushName });

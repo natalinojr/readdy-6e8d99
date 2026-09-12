@@ -470,6 +470,38 @@ A mesma mensagem é editada a cada toque (`assistente-telegram` › `dreView`/`s
   `d|<n>` continuam funcionando (legado). A resposta digitada antiga (número/nome/
   "grupo + nome"/"pular") também continua.
 
+### Solicitação de pagamento no grupo — mídia lida e pagamento preparado (2026-09-12)
+
+O que o dono pediu: *"nesse tipo de msg com solicitação é pra ler msg, imagem, doc ou áudio,
+pegar as informações, preparar o pagamento e me avisar"* — depois de o assistente dizer, sobre
+uma foto no grupo *Financeiro loja - EP MALL*, que só via o texto da mensagem.
+
+**Como ficou.** No grupo, foto e PDF passam a ser baixados e LIDOS: o webhook chama
+`assistente-brain` com `action: 'ler_midia'` (uma chamada curta, sem ferramentas, sem histórico)
+e guarda o resultado em `asst_group_messages.extracted`, com o resumo junto do `content` (é isso
+que o `ler_grupo` mostra depois). Áudio continua transcrito pelo Whisper.
+
+Se a mensagem parecer **pedido de pagamento** — `extracted.pagamento.e_solicitacao`, ou o
+pré-filtro `PAY_HINT` no texto/transcrição — o webhook grava a solicitação em
+`asst_group_requests` e chama o brain em `modo: 'triagem_grupo'`, no chat do dono. O brain
+prepara o pagamento (`preparar_pagamento`) e o aviso chega no Telegram já com os botões
+Pagar/Cancelar, pela entrada interna `{ action: 'deliver', chat_key, text, actions }` do
+`assistente-telegram`. Falta dado (linha ilegível, sem valor, chave que não é de fornecedor
+cadastrado nem dos Pix permitidos)? Ele avisa o que falta em vez de preparar. Não é pedido de
+pagamento? Responde `NO_REPLY` e nada é enviado.
+
+**Segurança e custo (as travas).**
+- Mensagem de grupo é de terceiro: vai delimitada em `<mensagem_do_grupo>` e o system manda
+  tratar como dado, nunca ordem. Preparar é só rascunho: o pagamento continua exigindo o botão,
+  o PIN (que não passa pelo modelo) e a aprovação no app do Inter. Pix só para fornecedor
+  cadastrado ou Pix permitido; o assistente não cadastra ninguém.
+- `asst_group_requests.message_id` é único: reenvio do webhook não prepara o mesmo pedido 2×.
+- Teto de `max_per_day` (padrão 30) triagens por 24 h e chaves de liga/desliga em
+  `asst_settings.group_watch = { read_media, pay_requests, max_per_day }`.
+- Migration: `supabase/migrations/20260912160000_assistente_grupo_midia_solicitacoes.sql`
+  (aplicar antes de publicar as funções; sem ela o webhook grava a mensagem sem `extracted` e a
+  triagem não roda).
+
 ## Pendente (ordem)
 
 1. Validar no uso real o Telegram: conversa, áudio, foto e clique em botão.
