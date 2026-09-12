@@ -130,6 +130,57 @@ de propósito: `auth_tenant_id()` usa o vínculo mais recente e isso não pode m
 `fn_get_users_list` e `fn_get_users_for_admin_panel` escondem o dono.
 Migração: `supabase/migrations/20260911210000_platform_owner_all_stores.sql`.
 
+### Grupos do WhatsApp — só leitura (2026-09-12)
+
+Evolution com `groupsIgnore=false`. O webhook manda mensagem de grupo (`@g.us`)
+para `handleGroup`: nunca responde no grupo; grava em `asst_group_messages`
+(texto; áudio transcrito pelo Whisper; foto/arquivo/vídeo viram "[Foto] legenda").
+Na 1ª mensagem de um grupo cria `asst_groups` com nome (Evolution
+`/group/findGroupInfos`) e `is_enabled = true` **só se o dono for participante**
+(qualquer um pode adicionar o número num grupo). Liga/desliga na tela
+Assistente › Configurações (`toggle_group`). Brain: `listar_grupos` e `ler_grupo`
+(grupo por nome parcial, período padrão 24 h, filtro por palavra, até 600
+mensagens / ~40k caracteres). O cron apaga mensagens de grupo com mais de 90 dias.
+Migração: `supabase/migrations/20260912000000_assistente_grupos.sql`.
+
+### Leitor universal — acesso de LEITURA a todo o ERPOS (2026-09-12)
+
+Motivo: com só as ferramentas prontas ele dizia "não tenho acesso" (ex.: conta
+paga, notas de entrada). Agora o brain tem `ver_tabelas`, `ver_colunas` e
+`consultar_banco` (SQL SELECT/WITH, 1 consulta, máx. 500 linhas, resultado
+cortado em 30k caracteres). Execução: conexão direta `SUPABASE_DB_URL`
+(postgres.js) → `BEGIN READ ONLY` → `SET LOCAL ROLE asst_reader` →
+`statement_timeout 10s`. O papel `asst_reader` (NOLOGIN, BYPASSRLS) tem SELECT
+**coluna a coluna** via `fn_asst_reader_refresh()`: bloqueia 8 tabelas de
+credenciais (Inter, provedor de pagamento, quiosque, Meta, push, links de
+tráfego, platform_owners, asst_settings) e toda coluna cujo nome case com
+secret/token/senha/pin_hash/cert/key_pem/api_key/client_id/... O cron roda o
+refresh 1×/dia às 04:00 (tabela nova entra sozinha, sem as colunas sensíveis).
+Tabela nova com segredo em coluna de nome "inocente" → adicionar em `v_block`.
+Também: `contas_a_pagar` aceita `fornecedor` e `incluir_pagas`.
+Migração: `supabase/migrations/20260912010000_assistente_leitor_universal.sql`.
+
+### Custo — mapa do banco + cache (2026-09-12)
+
+- **Mapa do banco** (`DB_MAP` no brain): tabelas principais, colunas, status e
+  regras (faturamento sem is_training/cancelados, cardápio em uso = is_active,
+  conta em aberto = status <> 'paid', fin_cash_flow = razão, CMV = compras,
+  NF de entrada = fiscal_inbound_documents). Vai no bloco fixo junto com as
+  instruções. Ao criar módulo novo relevante, acrescentar aqui.
+- **Cache:** ferramentas + instruções + mapa com `ttl: '1h'` (o dono manda
+  mensagens espaçadas; 5 min venceria). `cache_control` top-level (automático)
+  guarda o resto da conversa, então cada rodada de ferramenta relê o histórico
+  a 1/10 do preço. Histórico: 20 mensagens.
+- `effort` configurável (`asst_settings.effort`, padrão `medium`). Medido em
+  2026-09-12: `low` economiza só 1–3% com a mesma resposta → mantido `medium`.
+- `resumo_loja` manda só 10 alertas de estoque + o total.
+- `usage.cache_write_1h` separado (1 h = 2x; 5 min = 1,25x); a tela usa isso.
+
+Medição (Sonnet 5, cache quente): pergunta que garimpa o banco (Voxi) caiu de
+R$ 0,28 para ~R$ 0,06 (8 → 2 ferramentas); cardápio/clientes R$ 0,12 → R$ 0,05;
+"como tá a loja" ~R$ 0,07. A 1ª mensagem depois de >1 h sem uso paga a gravação
+do cache (~R$ 0,15). Script de medição: mesmas perguntas via `body.effort`.
+
 ## Pendente (ordem)
 
 1. **Número do assistente**: chip → parear com QR (`GET /instance/connect/assistente`

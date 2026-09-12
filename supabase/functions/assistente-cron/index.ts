@@ -124,6 +124,13 @@ Deno.serve(async (req) => {
   const result: Record<string, unknown> = {};
   try { result.reminders_sent = await sendReminders(admin, ownerChat); } catch (e) { result.reminders_error = errMsg(e); log('ERROR', 'reminders', { error: errMsg(e) }); }
   try { result.brief_sent = await morningBrief(admin, cfg, ownerChat); } catch (e) { result.brief_error = errMsg(e); log('ERROR', 'brief', { error: errMsg(e) }); }
+  // Mensagens de grupos: guardadas por 90 dias
+  await admin.from('asst_group_messages').delete().lt('sent_at', new Date(Date.now() - 90 * 86400000).toISOString());
+  // Leitor universal (asst_reader): tabelas/colunas novas entram sozinhas, 1×/dia às 04:00
+  if (localHHMM() === '04:00') {
+    const { error } = await admin.rpc('fn_asst_reader_refresh');
+    if (error) log('ERROR', 'reader refresh', { error: error.message });
+  }
   if (result.reminders_sent || result.brief_sent) log('INFO', 'tick', result);
   return json({ ok: true, ...result });
 });

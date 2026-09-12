@@ -23,7 +23,7 @@ const OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // US$ por milhão de tokens (Sonnet 5). Respostas antigas foram com Opus 5, então
 // o valor dos primeiros dias é aproximado — por isso a tela chama de "estimado".
-const PRICE = { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 };
+const PRICE = { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5, cache_write_1h: 4 };
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -106,8 +106,15 @@ Deno.serve(async (req) => {
         for (const r of usageRows.data ?? []) {
           // deno-lint-ignore no-explicit-any
           const u = (r.usage ?? {}) as any;
-          usd += ((u.input ?? 0) * PRICE.input + (u.output ?? 0) * PRICE.output
-            + (u.cache_read ?? 0) * PRICE.cache_read + (u.cache_write ?? 0) * PRICE.cache_write) / 1e6;
+          const w1h = u.cache_write_1h ?? 0; // cache de 1 h custa 2x; o resto é o de 5 min (1,25x)
+          usd += ((u.input ?? 0) * PRICE.input + (u.output ?? 0) * PRICE.output + (u.cache_read ?? 0) * PRICE.cache_read
+            + ((u.cache_write ?? 0) - w1h) * PRICE.cache_write + w1h * PRICE.cache_write_1h) / 1e6;
+        }
+        const { data: gs } = await admin.from('asst_groups').select('group_jid, name, is_enabled').order('name');
+        const groups = [];
+        for (const g of gs ?? []) {
+          const { data: last } = await admin.from('asst_group_messages').select('sent_at').eq('group_jid', g.group_jid).order('sent_at', { ascending: false }).limit(1).maybeSingle();
+          groups.push({ ...g, last_at: last?.sent_at ?? null });
         }
         const watched = Array.isArray(cfg.watched_tenant_ids) ? cfg.watched_tenant_ids : [];
         return ok({
@@ -122,6 +129,7 @@ Deno.serve(async (req) => {
           messages: (messages.data ?? []).reverse(),
           whatsapp: { ...wa, owner_chat_id: cfg.owner_chat_id ?? null },
           usage30d: { replies: (usageRows.data ?? []).length, usd: Math.round(usd * 100) / 100 },
+          groups,
         });
       }
 
@@ -160,6 +168,15 @@ Deno.serve(async (req) => {
         const { data, error } = await admin.from('asst_reminders').delete().eq('id', Number(body.id)).is('sent_at', null).select('id');
         if (error) throw new Error(error.message);
         if (!data?.length) return fail('Lembrete já enviado ou não encontrado.');
+        return ok();
+      }
+
+      case 'toggle_group': {
+        const { data, error } = await admin.from('asst_groups')
+          .update({ is_enabled: !!body.enabled, updated_at: new Date().toISOString() })
+          .eq('group_jid', String(body.group_jid ?? '')).select('group_jid');
+        if (error) throw new Error(error.message);
+        if (!data?.length) return fail('Grupo não encontrado.');
         return ok();
       }
 

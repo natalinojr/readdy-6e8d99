@@ -24,6 +24,7 @@ interface Overview {
   messages: Message[];
   whatsapp: { state: string | null; error?: string; owner_chat_id: string | null };
   usage30d: { replies: number; usd: number };
+  groups: { group_jid: string; name: string | null; is_enabled: boolean; last_at: string | null }[];
 }
 
 async function call<T = unknown>(action: string, extra: Record<string, unknown> = {}): Promise<T> {
@@ -372,6 +373,33 @@ export default function AssistentePage() {
                     />
                   </label>
                 )}
+              </div>
+
+              <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                <p className="text-sm font-bold text-zinc-800">Grupos do WhatsApp (só leitura)</p>
+                <p className="text-xs text-zinc-400 mb-3">
+                  O assistente guarda as mensagens dos grupos ligados (por 90 dias) e nunca escreve neles. Pergunte no privado: "resume o grupo da gerência de hoje".
+                  Grupo novo só liga sozinho se você também estiver nele.
+                </p>
+                {(ov.groups ?? []).length === 0 && <p className="text-sm text-zinc-400">Nenhum grupo ainda. Adicione o número do assistente num grupo em que você esteja.</p>}
+                <ul className="space-y-1.5">
+                  {(ov.groups ?? []).map((g) => (
+                    <li key={g.group_jid} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-zinc-100">
+                      <i className="ri-group-line text-zinc-400" />
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm truncate ${g.is_enabled ? 'text-zinc-900 font-semibold' : 'text-zinc-500'}`}>{g.name || g.group_jid}</p>
+                        <p className="text-[11px] text-zinc-400">{g.last_at ? `Última mensagem ${fmt(g.last_at)}` : 'Sem mensagens guardadas'}</p>
+                      </div>
+                      <button
+                        onClick={() => acao(() => call('toggle_group', { group_jid: g.group_jid, enabled: !g.is_enabled }), g.is_enabled ? 'Leitura do grupo desligada.' : 'Leitura do grupo ligada.')}
+                        className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ${g.is_enabled ? 'bg-violet-600' : 'bg-zinc-300'}`}
+                        aria-label={g.is_enabled ? 'Desligar leitura do grupo' : 'Ligar leitura do grupo'}
+                      >
+                        <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${g.is_enabled ? 'left-[22px]' : 'left-0.5'}`} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </div>
 
               <div className="rounded-2xl border border-zinc-200 bg-white p-4">

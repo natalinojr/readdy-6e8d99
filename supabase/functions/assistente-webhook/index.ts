@@ -14,7 +14,7 @@
 // Secrets: ASSISTENTE_INTERNAL_KEY, EVOLUTION_URL, EVOLUTION_API_KEY,
 //          EVOLUTION_INSTANCE (padrão "assistente"), WHISPER_URL, WHISPER_API_KEY.
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -46,6 +46,70 @@ async function evo(path: string, body: unknown) {
 }
 
 const sendText = (number: string, text: string) => evo(`/message/sendText/${evoInstance}`, { number, text });
+
+// deno-lint-ignore no-explicit-any
+async function evoGet(path: string): Promise<any> {
+  const r = await fetch(`${evoUrl}${path}`, { headers: { apikey: evoKey } });
+  if (!r.ok) throw new Error(`Evolution ${path} → ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  return r.json().catch(() => ({}));
+}
+
+// Grupos: o assistente SÓ LÊ — guarda a mensagem em asst_group_messages e nunca
+// responde no grupo. Na primeira mensagem de um grupo busca nome e participantes;
+// a leitura só liga sozinha se o dono estiver no grupo (qualquer pessoa pode
+// adicionar o número do assistente num grupo). Liga/desliga na tela Assistente.
+// deno-lint-ignore no-explicit-any
+async function handleGroup(admin: SupabaseClient, data: any, allowed: string[]) {
+  const groupJid = String(data.key.remoteJid);
+  const ownerNums = allowed.map((a) => a.replace(/@.*$/, ''));
+  let { data: g } = await admin.from('asst_groups').select('group_jid, name, is_enabled').eq('group_jid', groupJid).maybeSingle();
+  if (!g) {
+    let name: string = groupJid;
+    let ownerIn = false;
+    try {
+      const info = await evoGet(`/group/findGroupInfos/${evoInstance}?groupJid=${encodeURIComponent(groupJid)}`);
+      name = String(info?.subject ?? groupJid);
+      // deno-lint-ignore no-explicit-any
+      const parts: any[] = Array.isArray(info?.participants) ? info.participants : [];
+      ownerIn = parts.some((p) => [p.id, p.phoneNumber, p.jid].filter(Boolean)
+        .map((x) => String(x).replace(/@.*$/, '')).some((n) => ownerNums.includes(n)));
+    } catch (e) {
+      log('WARN', 'findGroupInfos falhou', { groupJid, error: errMsg(e) });
+    }
+    g = { group_jid: groupJid, name, is_enabled: ownerIn };
+    await admin.from('asst_groups').upsert(g, { onConflict: 'group_jid', ignoreDuplicates: true });
+    log('INFO', 'grupo novo', { groupJid, name, is_enabled: ownerIn });
+  }
+  if (!g.is_enabled) return;
+
+  const p = parseMessage(data.message);
+  let content = p.text ? p.text.trim() : '';
+  if (p.kind === 'audio') {
+    try {
+      const b64 = await mediaBase64(data);
+      const t = b64 ? await transcribe(b64, p.mime ?? 'audio/ogg') : '';
+      content = t ? `[Áudio] ${t}` : '[Áudio não transcrito]';
+    } catch (e) {
+      log('WARN', 'transcrição de grupo falhou', { groupJid, error: errMsg(e) });
+      content = '[Áudio não transcrito]';
+    }
+  } else if (p.kind === 'image') content = `[Foto]${content ? ` ${content}` : ''}`;
+  else if (p.kind === 'document') content = `[Arquivo]${content ? ` ${content}` : ''}`;
+  else if (p.kind === 'video') content = `[Vídeo]${content ? ` ${content}` : ''}`;
+  if (!content) return;
+  if (p.forwarded) content = `[Encaminhada] ${content}`;
+
+  const ts = Number(data.messageTimestamp);
+  await admin.from('asst_group_messages').upsert({
+    message_id: data.key.id ? String(data.key.id) : null,
+    group_jid: groupJid,
+    sender_jid: String(data.key.participantAlt ?? data.key.participant ?? '') || null,
+    sender_name: data.pushName ? String(data.pushName) : null,
+    content: content.slice(0, 4000),
+    kind: p.kind,
+    sent_at: ts > 0 ? new Date(ts * 1000).toISOString() : new Date().toISOString(),
+  }, { onConflict: 'message_id', ignoreDuplicates: true });
+}
 
 // deno-lint-ignore no-explicit-any
 type Parsed = { kind: 'text' | 'audio' | 'image' | 'document' | 'video' | 'other'; text: string | null; mime: string | null; forwarded: boolean; inner: any };
@@ -112,11 +176,12 @@ async function handle(payload: any) {
   // vem em remoteJidAlt/senderPn.
   const jid = String(key.remoteJid ?? '');
   const altJid = String(key.remoteJidAlt ?? key.senderPn ?? '');
-  if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast') return; // grupos/status: fora
+  if (!jid || jid === 'status@broadcast') return; // status: fora
 
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'allowed_chat_ids').maybeSingle();
   const allowed: string[] = Array.isArray(st?.value) ? st.value.map(String) : [];
+  if (jid.endsWith('@g.us')) { await handleGroup(admin, data, allowed); return; } // grupo: só lê
   const candidates = [jid, altJid, jid.replace(/@.*$/, ''), altJid.replace(/@.*$/, '')].filter(Boolean);
   if (!candidates.some((c) => allowed.includes(c))) {
     log('WARN', 'remetente não autorizado (ignorado)', { jid, altJid, pushName: data.pushName });
