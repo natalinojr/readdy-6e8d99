@@ -15,13 +15,15 @@ interface SupplierFormData {
   /** Razão social da nota fiscal, que costuma ser outra coisa. */
   legal_name: string;
   cnpj: string;
+  /** Chave Pix: o assistente só faz Pix para fornecedor com CNPJ ou chave Pix cadastrados aqui. */
+  pix_key: string;
   phone: string;
   email: string;
   address: string;
 }
 
 const emptyForm: SupplierFormData = {
-  name: '', legal_name: '', cnpj: '', phone: '', email: '', address: '',
+  name: '', legal_name: '', cnpj: '', pix_key: '', phone: '', email: '', address: '',
 };
 
 function SupplierForm({
@@ -95,6 +97,19 @@ function SupplierForm({
             className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-amber-400"
           />
         </div>
+      </div>
+      <div>
+        <label className="block text-[10px] font-semibold text-zinc-500 mb-1">
+          Chave Pix
+          <span className="text-zinc-400 font-normal ml-1">— só para Pix que não seja o próprio CNPJ</span>
+        </label>
+        <input
+          value={form.pix_key}
+          onChange={(e) => f('pix_key', e.target.value)}
+          placeholder="E-mail, telefone (+55...), CPF ou chave aleatória"
+          className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-amber-400"
+        />
+        <p className="text-[10px] text-zinc-400 mt-1">O assistente só faz Pix para o CNPJ ou a chave cadastrados aqui, e não consegue alterar este cadastro.</p>
       </div>
       <div>
         <label className="block text-[10px] font-semibold text-zinc-500 mb-1">E-mail</label>
@@ -263,6 +278,7 @@ export default function GerenciarFornecedoresModal({ onClose, onSelect, selectMo
                         name: s.name,
                         legal_name: s.legal_name ?? '',
                         cnpj: s.cnpj ?? '',
+                        pix_key: s.pix_key ?? '',
                         phone: s.phone ?? '',
                         email: s.email ?? '',
                         address: s.address ?? '',

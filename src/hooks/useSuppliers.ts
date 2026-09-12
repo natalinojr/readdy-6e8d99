@@ -10,6 +10,8 @@ export interface Supplier {
   /** Razão social, como vem na nota fiscal. Só para conferência e busca. */
   legal_name?: string | null;
   cnpj?: string;
+  /** Chave Pix do fornecedor. Só quem cadastra é uma pessoa na tela: é a lista branca do Pix pelo assistente. */
+  pix_key?: string | null;
   phone?: string;
   email?: string;
   address?: string;
@@ -31,7 +33,7 @@ export function useSuppliers() {
     try {
       const { data, error } = await supabase
         .from('fin_suppliers')
-        .select('id,name,legal_name,cnpj,phone,email,address,category,is_active,created_at')
+        .select('id,name,legal_name,cnpj,pix_key,phone,email,address,category,is_active,created_at')
         .eq('tenant_id', tenantId)
         .eq('is_active', true)
         .order('name');
@@ -57,6 +59,7 @@ export function useSuppliers() {
       name: data.name.trim(),
       legal_name: data.legal_name?.trim() || null,
       cnpj: data.cnpj?.trim() || null,
+      pix_key: data.pix_key?.trim() || null,
       phone: data.phone?.trim() || null,
       email: data.email?.trim() || null,
       address: data.address?.trim() || null,
