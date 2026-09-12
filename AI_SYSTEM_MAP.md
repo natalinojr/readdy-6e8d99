@@ -1563,3 +1563,11 @@ para nunca virarem o mais recente. O dono não aparece no painel de usuários
 `setup-tenant`/`bootstrap_tenant` usam `ON CONFLICT DO NOTHING`, então o gatilho
 não quebra a criação de loja. Migração em `supabase/migrations/20260911210000_platform_owner_all_stores.sql`.
 Também: módulo **Assistente** (`/assistente`, só o dono) — ver `assistente/README.md`.
+
+### 2026-09-12 — Cache de prompt (Claude): `effort` faz parte da chave
+
+Medido no assistente pessoal (Sonnet 5): uma chamada de aquecimento (`max_tokens: 0`)
+sem `output_config.effort` NÃO reaproveitou o cache gravado pelas chamadas reais
+com `effort: 'medium'` — gravou outra entrada. Ao mandar o mesmo effort, passou a
+ler. Regra: toda chamada que deve compartilhar cache precisa do MESMO modelo,
+ferramentas, bloco de instruções E effort/thinking. Detalhes em `assistente/README.md`.

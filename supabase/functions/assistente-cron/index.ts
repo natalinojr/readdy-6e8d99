@@ -112,6 +112,34 @@ async function morningBrief(admin: SupabaseClient, cfg: Record<string, any>, own
   return true;
 }
 
+// Mantém vivo o cache de 1 h do assistente enquanto o dono está usando: uma
+// leitura do cache (max_tokens 0) custa ~R$ 0,008 e renova o TTL; deixar vencer e
+// regravar custa ~R$ 0,15. Só dispara entre 07:00 e 23:00, se o dono falou nas
+// últimas 4 h e na janela de 50–58 min sem uso (antes disso ainda está vivo;
+// depois de 60 min já expirou e "aquecer" seria só regravar, sem economia).
+// deno-lint-ignore no-explicit-any
+async function keepWarm(admin: SupabaseClient, cfg: Record<string, any>) {
+  const now = localHHMM();
+  if (now < '07:00' || now > '23:00') return false;
+  const { data: lastUser } = await admin.from('asst_messages').select('created_at')
+    .eq('role', 'user').eq('channel', 'whatsapp').order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (!lastUser || Date.now() - Date.parse(lastUser.created_at) > 4 * 3600_000) return false;
+  const { data: lastAny } = await admin.from('asst_messages').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle();
+  const lastUse = Math.max(lastAny ? Date.parse(lastAny.created_at) : 0, cfg.last_warm_at ? Date.parse(String(cfg.last_warm_at)) : 0);
+  const idle = Date.now() - lastUse;
+  if (idle < 50 * 60_000 || idle > 58 * 60_000) return false;
+  await admin.from('asst_settings').upsert({ key: 'last_warm_at', value: new Date().toISOString(), updated_at: new Date().toISOString() });
+  const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+    body: JSON.stringify({ action: 'warm' }),
+  });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`warm ${r.status}: ${JSON.stringify(out).slice(0, 200)}`);
+  log('INFO', 'cache aquecido', { usage: out.usage });
+  return true;
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   if (internalKey.length < 20 || req.headers.get('x-internal-key') !== internalKey) return json({ error: 'Unauthorized' }, 401);
@@ -124,6 +152,9 @@ Deno.serve(async (req) => {
   const result: Record<string, unknown> = {};
   try { result.reminders_sent = await sendReminders(admin, ownerChat); } catch (e) { result.reminders_error = errMsg(e); log('ERROR', 'reminders', { error: errMsg(e) }); }
   try { result.brief_sent = await morningBrief(admin, cfg, ownerChat); } catch (e) { result.brief_error = errMsg(e); log('ERROR', 'brief', { error: errMsg(e) }); }
+  try { result.warmed = await keepWarm(admin, cfg); } catch (e) { result.warm_error = errMsg(e); log('ERROR', 'warm', { error: errMsg(e) }); }
+  // Fila do debounce: só serve por segundos; guarda 7 dias para diagnóstico
+  await admin.from('asst_inbox').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
   // Mensagens de grupos: guardadas por 90 dias
   await admin.from('asst_group_messages').delete().lt('sent_at', new Date(Date.now() - 90 * 86400000).toISOString());
   // Leitor universal (asst_reader): tabelas/colunas novas entram sozinhas, 1×/dia às 04:00

@@ -540,6 +540,30 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
+
+    // Aquecimento do cache (chamado pelo assistente-cron): max_tokens 0 só relê o
+    // prefixo fixo (ferramentas + instruções + mapa) e renova o TTL de 1 h, sem
+    // gerar resposta. O bloco com cache_control tem que ser idêntico ao da
+    // chamada real; sem cache automático aqui (prenderia o cache ao "warmup").
+    if (body.action === 'warm') {
+      // No Sonnet 5 o effort entra na chave do cache das instruções: o aquecimento
+      // tem que usar o MESMO effort das chamadas reais, senão grava uma entrada
+      // separada que nenhuma pergunta real lê (medido em 2026-09-12).
+      const { data: ef } = await admin.from('asst_settings').select('value').eq('key', 'effort').maybeSingle();
+      const warmEffort = ['low', 'medium', 'high'].includes(ef?.value) ? ef?.value : 'medium';
+      const client = new Anthropic({ apiKey });
+      const r = await client.messages.create({
+        model: MODEL,
+        max_tokens: 0,
+        output_config: { effort: warmEffort },
+        system: [{ type: 'text', text: `${SYSTEM_STABLE}\n\n${DB_MAP}`, cache_control: { type: 'ephemeral', ttl: '1h' } }],
+        tools: TOOLS,
+        messages: [{ role: 'user', content: 'warmup' }],
+      // deno-lint-ignore no-explicit-any
+      } as any);
+      return json({ success: true, usage: r.usage });
+    }
+
     let text = String(body.text ?? '').trim();
     // deno-lint-ignore no-explicit-any
     const att = body.attachment as any;
@@ -651,18 +675,19 @@ Deno.serve(async (req) => {
 
       const uses = (response.content as Anthropic.ContentBlock[]).filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
       messages.push({ role: 'assistant', content: response.content });
-      const results: Anthropic.ToolResultBlockParam[] = [];
-      for (const u of uses) {
+      // Ferramentas pedidas na mesma rodada rodam em paralelo (resposta mais rápida);
+      // todos os tool_result voltam numa única mensagem, na ordem dos pedidos.
+      const results: Anthropic.ToolResultBlockParam[] = await Promise.all(uses.map(async (u) => {
         try {
           const out = await runTool(ctx, u.name, u.input);
           toolCalls.push({ name: u.name, input: u.input, ok: true });
-          results.push({ type: 'tool_result', tool_use_id: u.id, content: out });
+          return { type: 'tool_result' as const, tool_use_id: u.id, content: out };
         } catch (e) {
           log('WARN', 'tool failed', { tool: u.name, error: errMsg(e) });
           toolCalls.push({ name: u.name, input: u.input, ok: false });
-          results.push({ type: 'tool_result', tool_use_id: u.id, content: `Erro: ${errMsg(e)}`, is_error: true });
+          return { type: 'tool_result' as const, tool_use_id: u.id, content: `Erro: ${errMsg(e)}`, is_error: true };
         }
-      }
+      }));
       messages.push({ role: 'user', content: results });
       if (round === MAX_TOOL_ROUNDS) reply = textOut || 'Fiz várias consultas mas não consegui fechar a resposta. Pode repetir de forma mais simples?';
     }

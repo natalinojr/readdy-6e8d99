@@ -176,6 +176,22 @@ Migração: `supabase/migrations/20260912010000_assistente_leitor_universal.sql`
 - `resumo_loja` manda só 10 alertas de estoque + o total.
 - `usage.cache_write_1h` separado (1 h = 2x; 5 min = 1,25x); a tela usa isso.
 
+- **Cache mantido aquecido** (`assistente-cron` › `keepWarm`): entre 07:00 e
+  23:00, se o dono falou nas últimas 4 h e está 50–58 min sem uso, chama o brain
+  com `{ action: 'warm' }` → `max_tokens: 0` com o MESMO bloco fixo (ferramentas
+  + instruções + mapa, `ttl: '1h'`, sem cache automático). Custa uma leitura
+  (~R$ 0,008) e renova o TTL; evita regravar (~R$ 0,15). Fora da janela não
+  aquece (se já venceu, aquecer = regravar). Controle: `asst_settings.last_warm_at`.
+  **Pegadinha medida:** no Sonnet 5 o `effort` entra na chave do cache das
+  instruções — o aquecimento sem `output_config.effort` (= padrão high) gravava
+  uma entrada separada que nenhuma pergunta real (medium) lia. O warm usa o mesmo
+  `asst_settings.effort`; confirmado: warm lê os 7.034 tokens gravados pela pergunta real.
+- **Debounce** (`assistente-webhook` › `debounce`, tabela `asst_inbox`): texto e
+  áudio esperam 6 s; se chegar outra mensagem, a mais nova responde por todas
+  (1 chamada ao Claude em vez de várias). Foto/PDF vão direto. Fila limpa pelo
+  cron após 7 dias.
+- **Ferramentas em paralelo:** as pedidas na mesma rodada rodam com Promise.all.
+
 Medição (Sonnet 5, cache quente): pergunta que garimpa o banco (Voxi) caiu de
 R$ 0,28 para ~R$ 0,06 (8 → 2 ferramentas); cardápio/clientes R$ 0,12 → R$ 0,05;
 "como tá a loja" ~R$ 0,07. A 1ª mensagem depois de >1 h sem uso paga a gravação

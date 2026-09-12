@@ -47,6 +47,24 @@ async function evo(path: string, body: unknown) {
 
 const sendText = (number: string, text: string) => evo(`/message/sendText/${evoInstance}`, { number, text });
 
+// Debounce: no WhatsApp é comum mandar 2–3 mensagens seguidas. Cada mensagem entra
+// em asst_inbox e espera DEBOUNCE_MS; se chegou outra depois dela, sai (a mais nova
+// responde por todas). A última pega todas as pendentes e manda juntas ao brain:
+// 1 chamada ao Claude e 1 resposta coerente em vez de 3.
+const DEBOUNCE_MS = 6000;
+async function debounce(admin: SupabaseClient, chatId: string, text: string): Promise<string | null> {
+  const { data: row, error } = await admin.from('asst_inbox').insert({ chat_id: chatId, text }).select('id').single();
+  if (error || !row) return text; // sem fila: responde só esta
+  await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
+  const { data: newer } = await admin.from('asst_inbox').select('id')
+    .eq('chat_id', chatId).is('processed_at', null).gt('id', row.id).limit(1);
+  if (newer?.length) return null;
+  const { data: batch } = await admin.from('asst_inbox').update({ processed_at: new Date().toISOString() })
+    .eq('chat_id', chatId).is('processed_at', null).select('id, text');
+  if (!batch?.length) return null;
+  return batch.sort((a, b) => Number(a.id) - Number(b.id)).map((b) => String(b.text)).join('\n');
+}
+
 // deno-lint-ignore no-explicit-any
 async function evoGet(path: string): Promise<any> {
   const r = await fetch(`${evoUrl}${path}`, { headers: { apikey: evoKey } });
@@ -219,6 +237,15 @@ async function handle(payload: any) {
       }
     }
     if (p.forwarded) text = `[Encaminhada] ${text}`.trim();
+
+    // Foto/PDF vai direto (o arquivo não entra na fila); texto e áudio esperam
+    // alguns segundos para juntar com as próximas mensagens.
+    if (!attachment) {
+      const merged = await debounce(admin, chatId, text);
+      if (merged === null) return; // uma mensagem mais nova vai responder por esta
+      text = merged;
+      await evo(`/chat/sendPresence/${evoInstance}`, { number, presence: 'composing', delay: 1200 }).catch(() => {});
+    }
 
     const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
       method: 'POST',
