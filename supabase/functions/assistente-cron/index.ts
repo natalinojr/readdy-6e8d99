@@ -51,7 +51,8 @@ const isJid = (s: string) => /@s\.whatsapp\.net$|@lid$/.test(s);
 const isTg = (s: string) => /^tg:-?\d+$/.test(s);
 // Telegram (canal principal desde 2026-09-12): chat_id "tg:<id>". HTML com *negrito* convertido.
 const tgToken = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? '';
-async function sendTelegram(chatKey: string, text: string) {
+// deno-lint-ignore no-explicit-any
+async function sendTelegram(chatKey: string, text: string, extra: Record<string, unknown> = {}): Promise<any> {
   if (!tgToken) throw new Error('TELEGRAM_BOT_TOKEN não configurado');
   const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const html = esc(text).replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, '$1<b>$2</b>');
@@ -59,8 +60,9 @@ async function sendTelegram(chatKey: string, text: string) {
     const r = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatKey.slice(3), ...body }) });
     const out = await r.json().catch(() => ({}));
     if (!r.ok || out?.ok === false) throw new Error(`Telegram → ${r.status}: ${String(out?.description ?? '').slice(0, 200)}`);
+    return out.result;
   };
-  try { await send({ text: html, parse_mode: 'HTML' }); } catch { await send({ text }); }
+  try { return await send({ text: html, parse_mode: 'HTML', ...extra }); } catch { return await send({ text, ...extra }); }
 }
 // Entrega para qualquer destino: JID do WhatsApp ou "tg:<id>" do Telegram.
 async function deliver(target: string, text: string) {
@@ -398,7 +400,7 @@ async function dreClassify(admin: SupabaseClient, tenants: Array<{ id: string; n
       const doGrupo = cats.filter((c) => c.group_type === g.key);
       for (const c of doGrupo) {
         const label = c.parent ? `${c.parent} › ${c.name}` : c.name;
-        options.push({ n: options.length + 1, label, category_id: c.id });
+        options.push({ n: options.length + 1, label, category_id: c.id, group: c.group_type });
         lines.push(`${options.length}. ${label}`);
       }
       if (!doGrupo.length) lines.push('_(sem categorias ainda)_');
@@ -418,16 +420,37 @@ async function dreClassify(admin: SupabaseClient, tenants: Array<{ id: string; n
     ].filter((l, i, a) => l !== '' || a[i - 1] !== '').join('\n').trim();
     if (dry) { out.push(text); continue; }
     if (!ownerChat) break;
-    const r = await fetch(`${evoUrl}/message/sendText/${evoInstance}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', apikey: evoKey },
-      body: JSON.stringify({ number: toNumber(ownerChat), text }),
-    });
-    const sent = await r.json().catch(() => ({}));
-    const msgId = sent?.key?.id ? String(sent.key.id) : null;
-    if (!r.ok || !msgId) { log('ERROR', 'pergunta DRE falhou', { status: r.status, out: JSON.stringify(sent).slice(0, 200) }); break; }
+    let msgId: string | null = null;
+    const header = `🏷️ *Classificar no DRE*${loja}`;
+    const footer = restantes > 1 ? `(depois desta, mais ${restantes - 1})` : '';
+    if (isTg(ownerChat)) {
+      // Telegram (desde 2026-09-12): 1º passo = escolher o GRUPO. As telas seguintes
+      // (categorias do grupo, ➕ nova categoria → grupo → nome) são montadas pelo
+      // assistente-telegram editando esta mesma mensagem (dreView) — manter iguais.
+      const tgText = `${header}\n${question}\n\nEscolha o *grupo*:${footer ? `\n\n${footer}` : ''}`;
+      const rows: Array<Array<{ text: string; callback_data: string }>> = grupos.map((g, i) => {
+        const n = options.filter((o) => o.group === g.key).length;
+        return [{ text: `${g.label}${n ? ` (${n})` : ''}`.slice(0, 60), callback_data: `d|g|${i}` }];
+      });
+      rows.push([{ text: '➕ Nova categoria', callback_data: 'd|n' }]);
+      rows.push([{ text: '⏭️ Pular (classifico no sistema)', callback_data: 'd|s' }]);
+      try {
+        const m = await sendTelegram(ownerChat, tgText, { reply_markup: { inline_keyboard: rows } });
+        msgId = m?.message_id ? `tgdre:${ownerChat.slice(3)}:${m.message_id}` : null;
+      } catch (e) { log('ERROR', 'pergunta DRE (Telegram) falhou', { error: errMsg(e) }); break; }
+      if (!msgId) break;
+    } else {
+      const r = await fetch(`${evoUrl}/message/sendText/${evoInstance}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', apikey: evoKey },
+        body: JSON.stringify({ number: toNumber(ownerChat), text }),
+      });
+      const sent = await r.json().catch(() => ({}));
+      msgId = sent?.key?.id ? String(sent.key.id) : null;
+      if (!r.ok || !msgId) { log('ERROR', 'pergunta DRE falhou', { status: r.status, out: JSON.stringify(sent).slice(0, 200) }); break; }
+    }
     await admin.from('asst_polls').insert({
       message_id: msgId, chat_id: ownerChat, question, options: options.map((o) => o.label), kind: 'dre_category',
-      ref: { tenant_id: b.tenant_id, bill_id: b.id, options, groups: grupos },
+      ref: { tenant_id: b.tenant_id, bill_id: b.id, options, groups: grupos, header, footer },
     });
     await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: text });
     out.push(b.id);
@@ -492,7 +515,7 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     const last = state.dre_checked_at ? Date.parse(state.dre_checked_at) : 0;
     if (dry || (now >= c.from && now <= c.to && Date.now() - last >= Number(c.every_min) * 60_000)) {
       if (!dry) { state.dre_checked_at = new Date().toISOString(); await saveState(); }
-      res.dre_classify = await dreClassify(admin, tenants, c, (typeof cfg.owner_chat_id === 'string' && cfg.owner_chat_id ? String(cfg.owner_chat_id) : ownerChat), dry); // enquete DRE é via Evolution: sempre o JID do WhatsApp
+      res.dre_classify = await dreClassify(admin, tenants, c, ownerChat, dry); // canal principal (Telegram com botões; WhatsApp em texto)
     }
   }
   return res;
@@ -520,7 +543,7 @@ Deno.serve(async (req) => {
     try {
       const c = { ...PRO_DEFAULTS.dre_classify, ...(cfg.proactive?.dre_classify ?? {}) };
       if (!c.enabled) return json({ ok: true, skipped: 'desligado' });
-      return json({ ok: true, dre_classify: await dreClassify(admin, await getTenants(admin, cfg), c, waOwnerChat ?? ownerChat, false) });
+      return json({ ok: true, dre_classify: await dreClassify(admin, await getTenants(admin, cfg), c, ownerChat, false) });
     } catch (e) { return json({ error: errMsg(e) }, 500); }
   }
 
@@ -531,6 +554,7 @@ Deno.serve(async (req) => {
   try { const pr = await proactive(admin, cfg, ownerChat); if (Object.keys(pr).length) result.proactive = pr; } catch (e) { result.proactive_error = errMsg(e); log('ERROR', 'proactive', { error: errMsg(e) }); }
   // Fila do debounce: só serve por segundos; guarda 7 dias para diagnóstico
   await admin.from('asst_inbox').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
+  await admin.from('asst_tg_updates').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
   // Mensagens de grupos: NÃO apagar (decisão do dono, 2026-09-12): histórico completo fica guardado.
   // Leitor universal (asst_reader): tabelas/colunas novas entram sozinhas, 1×/dia às 04:00
   if (localHHMM() === '04:00') {

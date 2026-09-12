@@ -18,7 +18,11 @@
  */
 
 const SHELL_CACHE = 'erpos-shell-v1';
-const ASSET_CACHE = 'erpos-assets';
+// v2 (2026-09-12): o cache antigo ('erpos-assets') guardou o index.html no lugar de
+// chunks que ainda não existiam no meio de um deploy (o rewrite do Vercel devolvia
+// o HTML com 200 e "immutable") → tela branca com "MIME type text/html". O activate
+// apaga o cache antigo; o fetch nunca mais guarda HTML como asset.
+const ASSET_CACHE = 'erpos-assets-v2';
 const OFFLINE_URL = '/';
 
 self.addEventListener('install', (event) => {
@@ -43,7 +47,7 @@ self.addEventListener('activate', (event) => {
       const nomes = await caches.keys();
       await Promise.all(
         nomes
-          .filter((n) => n.startsWith('erpos-shell-') && n !== SHELL_CACHE)
+          .filter((n) => (n.startsWith('erpos-shell-') && n !== SHELL_CACHE) || (n.startsWith('erpos-assets') && n !== ASSET_CACHE))
           .map((n) => caches.delete(n)),
       );
       await self.clients.claim();
@@ -90,10 +94,15 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       (async () => {
         const cache = await caches.open(ASSET_CACHE);
+        const ehHtml = (r) => (r.headers.get('content-type') || '').includes('text/html');
         const salvo = await cache.match(req);
-        if (salvo) return salvo;
-        const resp = await fetch(req);
-        if (resp.ok) cache.put(req, resp.clone());
+        if (salvo && !ehHtml(salvo)) return salvo;
+        if (salvo) await cache.delete(req);
+        let resp = await fetch(req);
+        // HTML no lugar de um chunk = arquivo que não existia (deploy no meio) ou cópia
+        // envenenada no cache HTTP: tenta de novo ignorando o cache e NUNCA guarda HTML.
+        if (ehHtml(resp)) resp = await fetch(req.url, { cache: 'reload' });
+        if (resp.ok && !ehHtml(resp)) cache.put(req, resp.clone());
         return resp;
       })(),
     );

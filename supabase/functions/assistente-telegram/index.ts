@@ -194,53 +194,175 @@ async function claimDre(admin: SupabaseClient, messageId: string, answer: string
   const { data } = await admin.from('asst_polls').update({ answered_at: new Date().toISOString(), answer: [answer] }).eq('message_id', messageId).is('answered_at', null).select('message_id');
   return !!data?.length;
 }
+// ── Navegação da pergunta DRE: a MESMA mensagem é editada a cada toque ──
+// Pedido do dono (2026-09-12): 1º escolhe o GRUPO, depois a CATEGORIA dentro dele; criar
+// categoria nova é um botão que lista os grupos e depois pede o nome.
+// Callbacks: d|g|<i> categorias do grupo i · d|c|<n> escolhe a opção n · d|n nova categoria
+// (lista os grupos) · d|ng|<i> nova categoria no grupo i (espera o nome digitado;
+// ref.awaiting_new = i) · d|b volta aos grupos · d|s pular. Legado (perguntas antigas): d|<n>.
+type Btn = { text: string; callback_data: string };
+// deno-lint-ignore no-explicit-any
+const dreGroups = (ref: any): Array<{ key: string; label: string }> => (Array.isArray(ref?.groups) ? ref.groups : []);
+// deno-lint-ignore no-explicit-any
+const dreOptions = (ref: any): any[] => (Array.isArray(ref?.options) ? ref.options : []);
+// deno-lint-ignore no-explicit-any
+function dreView(poll: any, mode: 'groups' | 'cats' | 'new' | 'await', gi = -1): { text: string; rows: Btn[][] } {
+  const ref = poll.ref ?? {};
+  const groups = dreGroups(ref);
+  const g = groups[gi];
+  const rows: Btn[][] = [];
+  let prompt = '';
+  if (mode === 'cats' && g) {
+    const cats = dreOptions(ref).filter((o) => o.group === g.key);
+    prompt = cats.length ? `Grupo *${g.label}* — escolha a categoria:` : `O grupo *${g.label}* ainda não tem categorias.`;
+    for (const o of cats) rows.push([{ text: String(o.label).slice(0, 60), callback_data: `d|c|${o.n}` }]);
+    rows.push([{ text: `➕ Nova categoria em ${g.label}`.slice(0, 60), callback_data: `d|ng|${gi}` }]);
+    rows.push([{ text: '⬅️ Grupos', callback_data: 'd|b' }]);
+  } else if (mode === 'new') {
+    prompt = 'Nova categoria: em qual *grupo*?';
+    groups.forEach((x, i) => rows.push([{ text: x.label.slice(0, 60), callback_data: `d|ng|${i}` }]));
+    rows.push([{ text: '⬅️ Voltar', callback_data: 'd|b' }]);
+  } else if (mode === 'await' && g) {
+    prompt = `Escreva o *nome* da nova categoria em *${g.label}*.`;
+    rows.push([{ text: '⬅️ Voltar', callback_data: 'd|b' }]);
+  } else {
+    prompt = 'Escolha o *grupo*:';
+    groups.forEach((x, i) => {
+      const n = dreOptions(ref).filter((o) => o.group === x.key).length;
+      rows.push([{ text: `${x.label}${n ? ` (${n})` : ''}`.slice(0, 60), callback_data: `d|g|${i}` }]);
+    });
+    rows.push([{ text: '➕ Nova categoria', callback_data: 'd|n' }]);
+    rows.push([{ text: '⏭️ Pular (classifico no sistema)', callback_data: 'd|s' }]);
+  }
+  const foot = mode === 'groups' && ref.footer ? `\n\n${ref.footer}` : '';
+  return { text: `${ref.header ?? '🏷️ *Classificar no DRE*'}\n${poll.question ?? ''}\n\n${prompt}${foot}`, rows };
+}
+async function showDre(chatId: number, mid: number, view: { text: string; rows: Btn[][] }) {
+  await tg('editMessageText', { chat_id: chatId, message_id: mid, text: toHtml(view.text), parse_mode: 'HTML', reply_markup: { inline_keyboard: view.rows } })
+    .catch((e) => { if (!/not modified/i.test(errMsg(e))) log('WARN', 'editar pergunta DRE', { error: errMsg(e) }); });
+}
+// deno-lint-ignore no-explicit-any
+async function setAwaiting(admin: SupabaseClient, poll: any, gi: number | null) {
+  const ref = { ...(poll.ref ?? {}) };
+  if (gi == null) delete ref.awaiting_new; else ref.awaiting_new = gi;
+  poll.ref = ref;
+  await admin.from('asst_polls').update({ ref }).eq('message_id', poll.message_id);
+}
+// Grava a escolha (uma vez só), mostra o resultado na própria pergunta e pede a próxima.
+// deno-lint-ignore no-explicit-any
+async function finishDre(admin: SupabaseClient, chatId: number, mid: number, poll: any, opt: any, userText: string): Promise<string | null> {
+  if (!(await claimDre(admin, poll.message_id, String(opt.label ?? userText)))) return null;
+  const reply = await applyDreChoice(admin, poll.ref, opt).catch((e) => { log('ERROR', 'resposta DRE', { error: errMsg(e) }); return 'Deu erro ao gravar a classificação; tenta no sistema.'; });
+  const head = `${poll.ref?.header ?? '🏷️ *Classificar no DRE*'}\n${poll.question ?? ''}`;
+  await tg('editMessageText', { chat_id: chatId, message_id: mid, text: toHtml(`${head}\n\n${reply}`), parse_mode: 'HTML' })
+    .catch(async () => { await sendText(chatId, reply).catch(() => {}); });
+  await admin.from('asst_messages').insert([
+    { channel: 'telegram', chat_id: `tg:${chatId}`, role: 'user', content: userText },
+    { channel: 'cron', chat_id: `tg:${chatId}`, role: 'assistant', content: reply },
+  ]);
+  nextDre();
+  return reply;
+}
 // deno-lint-ignore no-explicit-any
 async function handleDreClick(admin: SupabaseClient, cq: any) {
   const chatId = Number(cq.message?.chat?.id);
   const mid = Number(cq.message?.message_id);
   const key = `tgdre:${chatId}:${mid}`;
-  const { data: poll } = await admin.from('asst_polls').select('message_id, question, ref').eq('message_id', key).maybeSingle();
-  if (!poll) { await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Essa pergunta expirou.' }).catch(() => {}); return; }
-  const n = Number(String(cq.data).split('|')[1]);
-  // deno-lint-ignore no-explicit-any
-  const opt = n === 0 ? { skip: true, label: 'Pular' } : (Array.isArray(poll.ref?.options) ? poll.ref.options : []).find((o: any) => Number(o.n) === n);
-  if (!opt) { await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Opção inválida.' }).catch(() => {}); return; }
-  if (!(await claimDre(admin, key, String(opt.label)))) { await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Essa já foi respondida.' }).catch(() => {}); return; }
-  await tg('answerCallbackQuery', { callback_query_id: cq.id, text: `✔ ${String(opt.label).slice(0, 180)}` }).catch(() => {});
-  const reply = await applyDreChoice(admin, poll.ref, opt).catch((e) => { log('ERROR', 'resposta DRE', { error: errMsg(e) }); return 'Deu erro ao gravar a classificação; tenta no sistema.'; });
-  await tg('editMessageText', { chat_id: chatId, message_id: mid, text: toHtml(`🏷️ ${poll.question}\n${reply}`), parse_mode: 'HTML' }).catch(() => {});
-  await admin.from('asst_messages').insert([
-    { channel: 'telegram', chat_id: `tg:${chatId}`, role: 'user', content: `[Botão DRE "${poll.question}"] ${opt.label}` },
-    { channel: 'cron', chat_id: `tg:${chatId}`, role: 'assistant', content: reply },
-  ]);
-  nextDre();
+  const ack = (text?: string) => tg('answerCallbackQuery', { callback_query_id: cq.id, ...(text ? { text: text.slice(0, 190) } : {}) }).catch(() => {});
+  const { data: poll } = await admin.from('asst_polls').select('message_id, question, ref, answered_at').eq('message_id', key).maybeSingle();
+  if (!poll) { await ack('Essa pergunta expirou.'); return; }
+  if (poll.answered_at) { await ack('Essa já foi respondida.'); return; }
+  const [, op, argStr] = String(cq.data).split('|');
+  const arg = Number(argStr);
+  const groups = dreGroups(poll.ref);
+  if (/^\d+$/.test(op ?? '')) { // legado: d|<n> (0 = pular)
+    const n = Number(op);
+    const opt = n === 0 ? { skip: true, label: 'Pular' } : dreOptions(poll.ref).find((o) => Number(o.n) === n);
+    if (!opt) { await ack('Opção inválida.'); return; }
+    await ack(`✔ ${opt.label}`);
+    await finishDre(admin, chatId, mid, poll, opt, `[Botão DRE] ${opt.label}`);
+    return;
+  }
+  switch (op) {
+    case 'g':
+      if (!groups[arg]) break;
+      await ack();
+      if (poll.ref?.awaiting_new != null) await setAwaiting(admin, poll, null);
+      await showDre(chatId, mid, dreView(poll, 'cats', arg));
+      return;
+    case 'b':
+      await ack();
+      if (poll.ref?.awaiting_new != null) await setAwaiting(admin, poll, null);
+      await showDre(chatId, mid, dreView(poll, 'groups'));
+      return;
+    case 'n':
+      await ack();
+      await showDre(chatId, mid, dreView(poll, 'new'));
+      return;
+    case 'ng':
+      if (!groups[arg]) break;
+      await setAwaiting(admin, poll, arg);
+      await ack('Agora escreva o nome da categoria');
+      await showDre(chatId, mid, dreView(poll, 'await', arg));
+      return;
+    case 'c': {
+      const opt = dreOptions(poll.ref).find((o) => Number(o.n) === arg);
+      if (!opt) break;
+      await ack(`✔ ${opt.label}`);
+      await finishDre(admin, chatId, mid, poll, opt, `[Botão DRE] ${opt.label}`);
+      return;
+    }
+    case 's':
+      await ack('Ok, fica para o sistema');
+      await finishDre(admin, chatId, mid, poll, { skip: true, label: 'Pular' }, '[Botão DRE] Pular');
+      return;
+  }
+  await ack('Opção inválida.');
 }
-// Resposta DIGITADA a uma pergunta DRE aberta: a citada (reply) ou, sem citação, a única
-// em aberto — e aí só se o texto parece resposta (senão segue para o brain).
+// Resposta DIGITADA a uma pergunta DRE aberta. Prioridade: a citada (reply) → a que está
+// esperando o nome de categoria nova → a única em aberto (e aí só se parece resposta).
 async function tryDreAnswerTg(admin: SupabaseClient, chatId: number, text: string, replyTo: number | null, messageId: number | null): Promise<boolean> {
   if (!text) return false;
-  const q = admin.from('asst_polls').select('message_id, question, ref').eq('kind', 'dre_category').is('answered_at', null).like('message_id', `tgdre:${chatId}:%`);
-  const { data: rows } = replyTo ? await q.eq('message_id', `tgdre:${chatId}:${replyTo}`) : await q.order('created_at', { ascending: false }).limit(2);
-  if (!rows?.length || (!replyTo && rows.length > 1)) return false;
-  const row = rows[0];
-  const opt = dreAnswer(text, row.ref);
-  if (!opt && !replyTo) return false;
-  if (!opt || opt.invalid) {
-    await sendText(chatId, 'Não entendi. Toque num botão da pergunta, escreva o grupo + nome de uma categoria nova (ex.: Despesas Operacionais Consultoria) ou "pular".').catch(() => {});
-    if (messageId) await react(chatId, messageId, '🤔');
-    return true;
+  const { data: rows } = await admin.from('asst_polls').select('message_id, question, ref').eq('kind', 'dre_category').is('answered_at', null)
+    .like('message_id', `tgdre:${chatId}:%`).order('created_at', { ascending: false }).limit(5);
+  if (!rows?.length) return false;
+  const row = replyTo
+    ? rows.find((r) => r.message_id === `tgdre:${chatId}:${replyTo}`)
+    : (rows.find((r) => r.ref?.awaiting_new != null) ?? (rows.length === 1 ? rows[0] : undefined));
+  if (!row) return false;
+  const mid = Number(String(row.message_id).split(':')[2]);
+  const groups = dreGroups(row.ref);
+  const aw = row.ref?.awaiting_new;
+  // deno-lint-ignore no-explicit-any
+  let opt: any;
+  if (aw != null && groups[Number(aw)]) {
+    if (/^(cancelar|cancela|voltar|deixa)$/.test(semAcento(text))) {
+      await setAwaiting(admin, row, null);
+      await showDre(chatId, mid, dreView(row, 'groups'));
+      if (messageId) await react(chatId, messageId, '👍');
+      return true;
+    }
+    const nome = text.trim().replace(/^["'“”]+|["'“”.]+$/g, '').replace(/\s+/g, ' ');
+    if (!nome || nome.length > 60) {
+      await sendText(chatId, 'Manda só o nome da categoria (até 60 letras), ou toque em Voltar.').catch(() => {});
+      if (messageId) await react(chatId, messageId, '🤔');
+      return true;
+    }
+    const g = groups[Number(aw)];
+    const nomeFmt = nome.charAt(0).toUpperCase() + nome.slice(1);
+    opt = { group: g.key, name: nomeFmt, label: `${g.label} › ${nomeFmt}` };
+  } else {
+    opt = dreAnswer(text, row.ref);
+    if (!opt && !replyTo) return false;
+    if (!opt || opt.invalid) {
+      await sendText(chatId, 'Não entendi. Use os botões da pergunta (grupo → categoria, ou ➕ Nova categoria) ou escreva "pular".').catch(() => {});
+      if (messageId) await react(chatId, messageId, '🤔');
+      return true;
+    }
   }
-  if (!(await claimDre(admin, row.message_id, text))) return false;
-  const reply = await applyDreChoice(admin, row.ref, opt).catch((e) => { log('ERROR', 'resposta DRE', { error: errMsg(e) }); return 'Deu erro ao gravar a classificação; tenta no sistema.'; });
-  await sendText(chatId, reply).catch(() => {});
+  const reply = await finishDre(admin, chatId, mid, row, opt, text);
+  if (reply === null) return false;
   if (messageId) await react(chatId, messageId, '👍');
-  const qid = Number(String(row.message_id).split(':')[2]);
-  if (qid) await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: qid, reply_markup: { inline_keyboard: [] } }).catch(() => {});
-  await admin.from('asst_messages').insert([
-    { channel: 'telegram', chat_id: `tg:${chatId}`, role: 'user', content: text },
-    { channel: 'cron', chat_id: `tg:${chatId}`, role: 'assistant', content: reply },
-  ]);
-  nextDre();
   return true;
 }
 
@@ -283,6 +405,11 @@ async function processOwner(admin: SupabaseClient, m: Incoming) {
 // deno-lint-ignore no-explicit-any
 async function handle(update: any) {
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  // O Telegram reenvia o mesmo update se não recebeu 200 a tempo (ex.: 502 de cold start): processa uma vez só.
+  if (update?.update_id != null) {
+    const { data: fresh } = await admin.from('asst_tg_updates').upsert({ update_id: update.update_id }, { onConflict: 'update_id', ignoreDuplicates: true }).select('update_id');
+    if (!fresh?.length) { log('INFO', 'update repetido ignorado', { update_id: update.update_id }); return; }
+  }
   const { data: st } = await admin.from('asst_settings').select('key, value').in('key', ['telegram_allowed_ids']);
   const allowed = new Set(((st ?? []).find((s) => s.key === 'telegram_allowed_ids')?.value ?? []).map(String));
 
@@ -292,6 +419,7 @@ async function handle(update: any) {
     const chatId = Number(cq.message?.chat?.id);
     const from = String(cq.from?.id ?? '');
     if (!allowed.has(from)) { await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Não autorizado.' }).catch(() => {}); return; }
+    if (String(cq.data ?? '').startsWith('d|')) { await handleDreClick(admin, cq); return; } // classificação DRE
     const [tail, idxStr] = String(cq.data ?? '').split('|');
     const { data: polls } = await admin.from('asst_polls').select('message_id, question, options, answered_at').eq('kind', 'tg_buttons').like('message_id', `%${tail}`).limit(1);
     const poll = polls?.[0];
@@ -364,6 +492,8 @@ async function handle(update: any) {
     await sendText(chatId, 'Deu erro ao baixar isso. Tenta de novo?').catch(() => {});
     return;
   }
+  // Resposta digitada a uma pergunta de classificação DRE → grava direto, sem o modelo.
+  if (!attachment && kind === 'text' && await tryDreAnswerTg(admin, chatId, text, Number(msg.reply_to_message?.message_id) || null, messageId)) return;
   await processOwner(admin, { chatId, chatKey, text, attachment, messageId, kind });
 }
 

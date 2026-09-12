@@ -36,6 +36,8 @@ const whisperUrl = (Deno.env.get('WHISPER_URL') ?? '').replace(/\/$/, '');
 const whisperKey = Deno.env.get('WHISPER_API_KEY') ?? '';
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+// Vocabulário para o Whisper (initial_prompt): sem isso "Paranaguá" virou "parar na água" (2026-09-12).
+const WHISPER_PROMPT = 'Conversa sobre os restaurantes El Patrón em Paranaguá (PR), lojas Vila Leste e Paranaguá. Natalino, ERPOS, cardápio, fornecedor, conta a pagar, estoque, insumo, Pix, iFood, delivery, motoboy, hambúrguer, pastel, freezer, entrega.';
 
 async function evo(path: string, body: unknown) {
   const r = await fetch(`${evoUrl}${path}`, {
@@ -437,7 +439,7 @@ async function transcribe(b64: string, mime: string): Promise<string> {
   const bytes = Uint8Array.from(atob(b64.replace(/^data:[^;]+;base64,/, '')), (c) => c.charCodeAt(0));
   const form = new FormData();
   form.append('audio_file', new Blob([bytes], { type: mime.split(';')[0] || 'audio/ogg' }), 'audio.ogg');
-  const r = await fetch(`${whisperUrl}/asr?task=transcribe&language=pt&output=json&encode=true`, {
+  const r = await fetch(`${whisperUrl}/asr?task=transcribe&language=pt&output=json&encode=true&initial_prompt=${encodeURIComponent(WHISPER_PROMPT)}`, {
     method: 'POST',
     headers: { 'X-Api-Key': whisperKey },
     body: form,

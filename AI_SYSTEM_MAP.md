@@ -267,6 +267,13 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
 
+### 2026-09-12 — Loja ativa do app vale no banco (RLS multi-loja, correção de raiz)
+
+- **Sintoma:** o dono (vínculos de platform owner com `created_at = 2000-01-01`) via telas vazias na El Patron Paranaguá (Compras com 93 compras no banco). `auth_tenant_id()`/`get_user_tenant_id()` devolviam o vínculo mais recente ("Testes PDV") e `auth_role()` um vínculo qualquer, ignorando a loja escolhida no app (que só existe no `localStorage`).
+- **Correção:** `src/lib/supabase.ts` usa um `global.fetch` que manda o header `x-tenant-id` (= `erpos_selected_tenant_id`) em toda chamada `/rest/v1/` (tabelas e RPC). **Não** manda para `/functions/v1/`: o CORS das Edge Functions não libera o header. No banco, `app_selected_tenant()` lê `request.headers` e só aceita a loja se o usuário for membro; as três funções usam ela primeiro e, sem header ou com loja alheia, voltam ao comportamento antigo. Migração `20260912080000_tenant_selecionado_header.sql`.
+- **Antes disso, no mesmo dia:** policies `fin_*_select_membership` (`auth_is_member_of`) nas 24 tabelas do Financeiro (`20260912070000_fin_select_membership.sql`); continuam valendo.
+- **Pegadinhas:** Realtime (`postgres_changes`) não carrega o header, então continua caindo no vínculo mais recente. Edge Function que lê com o JWT do usuário também não recebe o header (use service role + `user_tenants`). Nenhuma tabela depende só de policy `user_tenants ... LIMIT 1` sem ordem (conferido).
+
 ### 2026-09-12 — Notas de entrada lançadas sozinhas (fornecedor já conhecido)
 
 - **Decisão do dono:** nota de fornecedor que JÁ teve nota lançada na loja entra sozinha, do mesmo jeito da última vez. NF-e vira compra, com as parcelas do boleto em Contas a Pagar, ou compra paga se foi paga na entrega (`pagoNaHora` = sem duplicata + forma 01/03/04/16/17/18). NFS-e vira despesa com a mesma `category`/`dre_category_id`/`cost_center_id` da última. **Não** mexe no estoque: continua só no recebimento.
@@ -1660,4 +1667,16 @@ preservadas). Body híbrido (`payload` + campos soltos + `tenant_id` e
 passam por confirmação explícita (regex de nome + flag `confirmado`). Auditoria em
 `asst_actions`. Levantamento completo dos contratos das 19 edges de escrita virou o
 `EDGE_MAP` no brain — fonte útil também para humanos. Detalhes em `assistente/README.md`.
+
+### 2026-09-12 — Pegadinhas de "agir como o usuário" (generateLink) e de canal Telegram
+
+(1) `auth.admin.generateLink` **invalida o link anterior do mesmo usuário**: gerar
+sessões em paralelo faz a maioria falhar no `verifyOtp` ("Email link is invalid or
+has expired"). Gerar uma por vez (promessa compartilhada) e reaproveitar o JWT até
+perto de vencer, guardado em tabela só do service role. (2) **Nunca**
+`signOut({ scope: 'others' })` numa sessão criada para automação: derruba as sessões
+reais do usuário em todos os aparelhos. (3) Telegram reenvia o update se não recebe
+200 a tempo (502 de cold start): deduplicar por `update_id`. (4) Whisper erra nome
+próprio sem contexto ("Paranaguá" → "parar na água"): passar `initial_prompt` com o
+vocabulário do negócio. Detalhes em `assistente/README.md`.
 

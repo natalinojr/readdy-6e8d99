@@ -424,6 +424,52 @@ uma vez por dia, "agora eu converso pelo Telegram").
   `channels.whatsapp_dm = false`. Mensagem de boas-vindas enviada pela API.
   Falta: 1ª conversa real pelo webhook e 1º clique em botão.
 
+### Testes reais no Telegram + correções (2026-09-12)
+
+Teste do dono: texto, 2 áudios e botão — tudo respondeu (reações, "digitando",
+botão virou "✅ escolha" e o brain seguiu). Achados e correções:
+- **Whisper errou nome de lugar** ("Paranaguá" → "parar na água"). Agora o `/asr`
+  recebe `initial_prompt` com o vocabulário (El Patrón, Paranaguá, Vila Leste,
+  ERPOS, cardápio, DRE, Pix, iFood…) no Telegram e nos áudios de grupo do WhatsApp.
+- **Sessão do dono em corrida:** o modelo pediu 8 `upsert_dre_category` em paralelo;
+  cada `generateLink` invalida o link anterior → 7 falharam com "Email link is
+  invalid or has expired" (ele repetiu e as 8 categorias foram criadas). Agora
+  `ownerToken` é **single-flight** (uma geração por vez no isolate), a sessão fica em
+  `asst_settings.owner_session` para outros isolates reaproveitarem, e há 1 retry.
+  Testado: 5 `session_check` simultâneos, todos ok.
+- **Bug grave removido:** depois de gerar a sessão o código chamava
+  `signOut({ scope: 'others' })`, que encerra TODAS as outras sessões do dono (ERPOS
+  no navegador/celular). Não houve revogação registrada hoje, mas foi removido.
+- **Update repetido do Telegram:** um 502 (cold start) faz o Telegram reenviar;
+  `asst_tg_updates` guarda o `update_id` e ignora repetidos (limpo em 7 dias pelo cron).
+- **Classificação DRE agora no Telegram, com botões** (pedido do dono): `dreClassify`
+  manda para o canal principal; no Telegram cada categoria é um botão (`d|<n>`,
+  `d|0` = pular), `asst_polls.message_id = tgdre:<chat>:<message_id>`. Clique grava
+  direto (sem modelo), edita a pergunta com o resultado e já pede a próxima
+  (`run: dre_classify`). Resposta digitada também vale (número, nome, "grupo + nome"
+  cria categoria, "pular"). `dreAnswer`/`applyDreChoice` são **cópia** das do
+  `assistente-webhook` — mudar nos dois. A pergunta que estava aberta no WhatsApp foi
+  apagada para ser refeita no Telegram.
+- Migração: `supabase/migrations/20260912090000_assistente_tg_updates.sql`.
+
+### Classificação DRE em duas etapas no Telegram (2026-09-12)
+
+Pedido do dono depois de classificar algumas: **primeiro o grupo, depois a categoria
+dentro dele**, e **"➕ Nova categoria" como botão** (escolhe o grupo e digita o nome).
+A mesma mensagem é editada a cada toque (`assistente-telegram` › `dreView`/`showDre`):
+- Tela 1 (enviada pelo cron): despesa + um botão por grupo com a contagem de
+  categorias, "➕ Nova categoria", "⏭️ Pular".
+- Tela 2 (`d|g|<i>`): categorias só daquele grupo (`d|c|<n>`), "➕ Nova categoria em
+  <grupo>" e "⬅️ Grupos".
+- Nova categoria (`d|n` → `d|ng|<i>`): lista os grupos; escolhido o grupo, grava
+  `asst_polls.ref.awaiting_new = i` e pede o nome. A próxima mensagem digitada vira o
+  nome (até 60 caracteres; "cancelar"/"voltar" desfaz), cria a categoria (raiz) no grupo
+  e classifica a conta. "⬅️ Voltar" limpa a espera.
+- Fim: a pergunta é editada com "✅ Classificada em …" e a próxima conta já chega.
+- `ref` ganhou `header`, `footer` e `options[].group` (o cron grava). Botões antigos
+  `d|<n>` continuam funcionando (legado). A resposta digitada antiga (número/nome/
+  "grupo + nome"/"pular") também continua.
+
 ## Pendente (ordem)
 
 1. Validar no uso real o Telegram: conversa, áudio, foto e clique em botão.
