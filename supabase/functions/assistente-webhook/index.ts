@@ -805,6 +805,29 @@ Deno.serve(async (req) => {
   let payload: unknown;
   try { payload = await req.json(); } catch { return json({ error: 'JSON inválido' }, 400); }
 
+  // Comprovante de pagamento no grupo (chamado pelo assistente-telegram quando o Inter
+  // confirma um pagamento ligado a um pedido de grupo). É a ÚNICA escrita em grupo: texto
+  // montado pelo código (não pelo modelo), só em grupo acompanhado, respondendo o pedido.
+  // deno-lint-ignore no-explicit-any
+  const gs = payload as any;
+  if (gs?.action === 'group_send') {
+    const jid = String(gs.group_jid ?? '');
+    const text = String(gs.text ?? '').slice(0, 3000);
+    if (!/@g\.us$/.test(jid) || !text) return json({ error: 'group_jid/text inválidos' }, 400);
+    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const { data: g } = await admin.from('asst_groups').select('is_enabled').eq('group_jid', jid).maybeSingle();
+    if (!g?.is_enabled) return json({ error: 'grupo não acompanhado' }, 403);
+    const quoted = gs.quoted_message_id ? { key: { id: String(gs.quoted_message_id), remoteJid: jid, fromMe: false }, message: { conversation: '' } } : null;
+    try {
+      await evo(`/message/sendText/${evoInstance}`, { number: jid, text, ...(quoted ? { quoted } : {}) });
+    } catch (e) {
+      if (!quoted) return json({ error: errMsg(e) }, 502);
+      log('WARN', 'comprovante com citação falhou; enviando sem', { error: errMsg(e) });
+      try { await evo(`/message/sendText/${evoInstance}`, { number: jid, text }); } catch (e2) { return json({ error: errMsg(e2) }, 502); }
+    }
+    return json({ ok: true });
+  }
+
   // Manutenção: relê a foto/PDF de uma mensagem de grupo já gravada (a imagem não
   // fica salva; a Evolution devolve pelo message_id). Só atualiza content/extracted,
   // não refaz a triagem de pagamento.

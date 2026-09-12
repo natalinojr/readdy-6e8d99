@@ -1,21 +1,21 @@
 // Calendário mensal das entrevistas + listas "próximas" e "aguardando registro".
 import { useMemo, useState } from 'react';
 import {
-  type Candidate, type Interview, type Loja, interviewStatusInfo, fmtTime, fmtDateTime, dayKey, lojaNome, firstName,
+  type Candidate, type Company, type Interview, interviewStatusInfo, fmtTime, fmtDateTime, dayKey, companyName, firstName,
 } from '../shared';
 
 interface Props {
   interviews: Interview[];
   candidates: Candidate[];
-  lojas: Loja[];
-  mostrarLoja: boolean;
+  companies: Company[];
+  mostrarEmpresa: boolean;
   onOpenInterview: (iv: Interview) => void;
   onNew: (date: string | null) => void;
 }
 
 const WEEK = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-export default function AgendaEntrevistas({ interviews, candidates, lojas, mostrarLoja, onOpenInterview, onNew }: Props) {
+export default function AgendaEntrevistas({ interviews, candidates, companies, mostrarEmpresa, onOpenInterview, onNew }: Props) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const byId = useMemo(() => new Map(candidates.map((c) => [c.id, c])), [candidates]);
   const nome = (iv: Interview) => byId.get(iv.candidate_id)?.full_name ?? 'Candidato removido';
@@ -42,6 +42,7 @@ export default function AgendaEntrevistas({ interviews, candidates, lojas, mostr
     .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)).slice(0, 8);
   const pendentes = interviews.filter((iv) => iv.status === 'agendada' && new Date(iv.scheduled_at) < now)
     .sort((a, b) => b.scheduled_at.localeCompare(a.scheduled_at));
+  const extra = (iv: Interview) => (mostrarEmpresa ? companyName(companies, iv.company_id) : null);
 
   const mesLabel = cursor.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
@@ -87,11 +88,9 @@ export default function AgendaEntrevistas({ interviews, candidates, lojas, mostr
 
       <div className="space-y-4">
         {pendentes.length > 0 && (
-          <Lista titulo="Aguardando registro" cor="text-orange-600" vazia="" itens={pendentes} nome={nome}
-            extra={(iv) => mostrarLoja ? lojaNome(lojas, iv.tenant_id) : null} onOpen={onOpenInterview} />
+          <Lista titulo="Aguardando registro" cor="text-orange-600" vazia="" itens={pendentes} nome={nome} extra={extra} onOpen={onOpenInterview} />
         )}
-        <Lista titulo="Próximas entrevistas" cor="text-violet-600" vazia="Nenhuma entrevista agendada." itens={proximas} nome={nome}
-          extra={(iv) => mostrarLoja ? lojaNome(lojas, iv.tenant_id) : null} onOpen={onOpenInterview} />
+        <Lista titulo="Próximas entrevistas" cor="text-violet-600" vazia="Nenhuma entrevista agendada." itens={proximas} nome={nome} extra={extra} onOpen={onOpenInterview} />
         <div className="flex flex-wrap gap-1.5">
           {(['agendada', 'realizada', 'faltou', 'cancelada'] as const).map((s) => (
             <span key={s} className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${interviewStatusInfo(s).cls}`}>{interviewStatusInfo(s).label}</span>

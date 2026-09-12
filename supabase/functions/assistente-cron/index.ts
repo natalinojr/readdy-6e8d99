@@ -73,6 +73,22 @@ async function deliver(target: string, text: string) {
 const localHHMM = () => new Date().toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false });
 const localDate = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
 
+// Pagamento do Inter em andamento (depois do PIN, esperando aprovação no app / agendado):
+// o assistente-telegram consulta o status, edita o cartão e posta o comprovante no grupo.
+// Não é sincronização de extrato — só roda enquanto existe pagamento que o dono mandou.
+async function payWatch(admin: SupabaseClient): Promise<unknown> {
+  const { count } = await admin.from('fin_inter_payments').select('id', { count: 'exact', head: true })
+    .in('status', ['sent', 'pending_approval', 'approved', 'scheduled']).like('chat_id', 'tg:%')
+    .gte('sent_at', new Date(Date.now() - 7 * 86400000).toISOString());
+  if (!count) return null;
+  const r = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey }, body: JSON.stringify({ action: 'pay_watch' }),
+  });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`assistente-telegram ${r.status}: ${JSON.stringify(out).slice(0, 200)}`);
+  return out;
+}
+
 async function getSettings(admin: SupabaseClient) {
   const { data } = await admin.from('asst_settings').select('key, value');
   // deno-lint-ignore no-explicit-any
@@ -552,6 +568,7 @@ Deno.serve(async (req) => {
   try { result.brief_sent = await morningBrief(admin, cfg, ownerChat); } catch (e) { result.brief_error = errMsg(e); log('ERROR', 'brief', { error: errMsg(e) }); }
   try { result.warmed = await keepWarm(admin, cfg); } catch (e) { result.warm_error = errMsg(e); log('ERROR', 'warm', { error: errMsg(e) }); }
   try { const pr = await proactive(admin, cfg, ownerChat); if (Object.keys(pr).length) result.proactive = pr; } catch (e) { result.proactive_error = errMsg(e); log('ERROR', 'proactive', { error: errMsg(e) }); }
+  try { const pw = await payWatch(admin); if (pw) result.pay_watch = pw; } catch (e) { result.pay_watch_error = errMsg(e); log('ERROR', 'pay_watch', { error: errMsg(e) }); }
   // Fila do debounce: só serve por segundos; guarda 7 dias para diagnóstico
   await admin.from('asst_inbox').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
   await admin.from('asst_tg_updates').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
@@ -561,6 +578,7 @@ Deno.serve(async (req) => {
     const { error } = await admin.rpc('fn_asst_reader_refresh');
     if (error) log('ERROR', 'reader refresh', { error: error.message });
   }
-  if (result.reminders_sent || result.brief_sent || result.proactive) log('INFO', 'tick', result);
+  // deno-lint-ignore no-explicit-any
+  if (result.reminders_sent || result.brief_sent || result.proactive || (result.pay_watch as any)?.changed) log('INFO', 'tick', result);
   return json({ ok: true, ...result });
 });

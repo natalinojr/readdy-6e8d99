@@ -1,14 +1,15 @@
-// Ficha do candidato: etapa, estrelas, loja, entrevistas, dados lidos do currículo e anotações.
+// Ficha do candidato: fase, estrelas, empresa, entrevistas, dados lidos do currículo e anotações.
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
-  type Candidate, type Interview, type Loja, type Status, BUCKET, STATUS, RECOMMENDATIONS,
-  fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS,
+  type Candidate, type Company, type Interview, type Stage, BUCKET, RECOMMENDATIONS,
+  fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf,
 } from '../shared';
 
 interface Props {
   c: Candidate;
-  lojas: Loja[];
+  companies: Company[];
+  stages: Stage[];
   interviews: Interview[];
   onClose: () => void;
   onUpdate: (patch: Partial<Candidate>) => void;
@@ -18,7 +19,7 @@ interface Props {
   onOpenInterview: (iv: Interview) => void;
 }
 
-export default function CandidatoDrawer({ c, lojas, interviews, onClose, onUpdate, onDelete, onOrganizar, onAgendar, onOpenInterview }: Props) {
+export default function CandidatoDrawer({ c, companies, stages, interviews, onClose, onUpdate, onDelete, onOrganizar, onAgendar, onOpenInterview }: Props) {
   const [notes, setNotes] = useState(c.notes ?? '');
   const [iaBusy, setIaBusy] = useState(false);
   const [iaErro, setIaErro] = useState<string | null>(null);
@@ -56,11 +57,11 @@ export default function CandidatoDrawer({ c, lojas, interviews, onClose, onUpdat
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          {/* Etapa, nota e loja */}
+          {/* Fase, nota e empresa */}
           <div className="flex flex-wrap items-center gap-2">
-            <select value={c.status} onChange={(e) => onUpdate({ status: e.target.value as Status })}
+            <select value={stageOf(stages, c.stage_id)?.id ?? ''} onChange={(e) => onUpdate({ stage_id: e.target.value })}
               className="h-9 px-3 rounded-lg border border-zinc-200 text-sm font-semibold cursor-pointer">
-              {STATUS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+              {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
             <div className="flex items-center">
               {[1, 2, 3, 4, 5].map((n) => (
@@ -69,10 +70,10 @@ export default function CandidatoDrawer({ c, lojas, interviews, onClose, onUpdat
                   title={`${n} estrela${n > 1 ? 's' : ''}`}>★</button>
               ))}
             </div>
-            <select value={c.tenant_id ?? ''} onChange={(e) => onUpdate({ tenant_id: e.target.value || null })}
-              className="ml-auto h-9 px-3 rounded-lg border border-zinc-200 text-sm cursor-pointer max-w-[190px]" title="Loja da vaga">
-              <option value="">Sem loja</option>
-              {lojas.map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
+            <select value={c.company_id ?? ''} onChange={(e) => onUpdate({ company_id: e.target.value || null })}
+              className="ml-auto h-9 px-3 rounded-lg border border-zinc-200 text-sm cursor-pointer max-w-[190px]" title="Empresa da vaga">
+              <option value="">Sem empresa</option>
+              {companies.filter((x) => x.is_active || x.id === c.company_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
             </select>
           </div>
 

@@ -19,6 +19,8 @@
 // Entrada interna (header x-internal-key): { action: 'deliver', chat_key, text, actions } —
 // usada pela triagem de pedido de pagamento dos grupos do WhatsApp (assistente-webhook)
 // para avisar o dono já com o cartão de pagamento e os botões.
+// { action: 'pay_watch' } — chamado pelo assistente-cron: atualiza sozinho o cartão dos
+// pagamentos em andamento e, quando pago, posta o comprovante no grupo que pediu.
 //
 // Secrets: TELEGRAM_BOT_TOKEN, ASSISTENTE_INTERNAL_KEY, WHISPER_URL, WHISPER_API_KEY, FISCAL_INTERNAL_KEY (inter-bank).
 
@@ -446,6 +448,82 @@ async function editPay(chatId: number, mid: number | null, p: any, extra: string
 }
 // deno-lint-ignore no-explicit-any
 const statusLine = (p: any) => `Status: ${PAY_STATUS[p.status] ?? p.status}${p.error ? `\n${p.error}` : ''}${p.status === 'pending_approval' ? '\nAbra o app do Inter › Aprovações para liberar.' : ''}`;
+// ── Acompanhamento automático + comprovante no grupo (2026-09-12) ──
+// Depois do PIN o pagamento fica esperando a aprovação no app do Inter; antes, o cartão só
+// mudava tocando em "Ver status". Agora o assistente-cron chama { action: 'pay_watch' } a cada
+// minuto enquanto houver pagamento em andamento, e o cartão é editado quando o status muda.
+// Pago + ligado a um pedido de grupo (asst_group_requests.payment_id) → comprovante no grupo,
+// respondendo a mensagem do pedido, uma vez só (receipt_sent_at é o trinco).
+const PAY_WATCH = ['sent', 'pending_approval', 'approved', 'scheduled'];
+const fmtDoc = (d: string) => { const x = d.replace(/\D/g, ''); return x.length === 14 ? x.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : d; };
+// deno-lint-ignore no-explicit-any
+function receiptText(p: any, loja: string | null): string {
+  const tp = p.response?.transacaoPix ?? {};
+  const quando = new Date(tp.dataHoraMovimento ?? p.paid_at ?? Date.now()).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const nome = tp.recebedor?.nome ?? p.beneficiary_name;
+  const doc = tp.recebedor?.cpfCnpj ?? p.beneficiary_doc;
+  const lines = ['✅ *Pagamento realizado*', `${p.kind === 'pix' ? 'Pix' : 'Boleto'} de *${brl(p.amount)}*`];
+  if (nome) lines.push(`Para: ${nome}${doc ? ` (${fmtDoc(String(doc))})` : ''}`);
+  if (p.description) lines.push(`Referente: ${p.description}`);
+  lines.push(`Pago em: ${quando}`);
+  if (p.kind === 'pix' && tp.endToEnd) lines.push(`ID da transação (E2E): ${tp.endToEnd}`);
+  if (p.kind === 'boleto' && p.digitavel) lines.push(`Linha digitável: ${p.digitavel}`);
+  if (p.inter_code) lines.push(`Código no Inter: ${p.inter_code}`);
+  lines.push(`Pago pela conta do Banco Inter${loja ? ` — ${loja}` : ''}.`);
+  return lines.join('\n');
+}
+// deno-lint-ignore no-explicit-any
+async function sendGroupReceipt(admin: SupabaseClient, p: any): Promise<string | null> {
+  if (p.status !== 'paid') return null;
+  const { data: claimed } = await admin.from('asst_group_requests').update({ receipt_sent_at: nowIso(), status: 'pago', receipt_error: null, updated_at: nowIso() })
+    .eq('payment_id', p.id).is('receipt_sent_at', null).select('id, group_jid, group_name, message_id');
+  const rq = claimed?.[0];
+  if (!rq) return null;
+  const { data: t } = await admin.from('tenants').select('name').eq('id', p.tenant_id).maybeSingle();
+  try {
+    const r = await fetch(`${supabaseUrl}/functions/v1/assistente-webhook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({ action: 'group_send', group_jid: rq.group_jid, text: receiptText(p, t?.name ?? null), quoted_message_id: rq.message_id }),
+    });
+    if (!r.ok) throw new Error(`webhook ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    log('INFO', 'comprovante enviado no grupo', { group: rq.group_name, payment: p.id });
+    return `📨 Comprovante enviado no grupo *${rq.group_name ?? 'do pedido'}*.`;
+  } catch (e) {
+    // Solta o trinco: tocar em "Ver status" tenta de novo.
+    await admin.from('asst_group_requests').update({ receipt_sent_at: null, receipt_error: errMsg(e).slice(0, 300), updated_at: nowIso() }).eq('id', rq.id);
+    log('ERROR', 'comprovante no grupo falhou', { group: rq.group_name, payment: p.id, error: errMsg(e) });
+    return `⚠️ Não consegui mandar o comprovante no grupo *${rq.group_name ?? ''}* (${errMsg(e).slice(0, 100)}).`;
+  }
+}
+// Cartão atualizado + comprovante quando pago. Usado no "Ver status", depois do PIN e no pay_watch.
+// deno-lint-ignore no-explicit-any
+async function afterPayStatus(admin: SupabaseClient, chatId: number, mid: number | null, p: any) {
+  const extra = await sendGroupReceipt(admin, p);
+  await editPay(chatId, mid, p, statusLine(p) + (extra ? `\n${extra}` : ''), PAY_DONE.includes(p.status) ? undefined : statusKb(p.id));
+}
+async function payWatch() {
+  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const { data: rows } = await admin.from('fin_inter_payments').select('*').in('status', PAY_WATCH).like('chat_id', 'tg:%')
+    .gte('sent_at', new Date(Date.now() - 7 * 86400_000).toISOString()).order('sent_at', { ascending: false }).limit(20);
+  let checked = 0, changed = 0;
+  for (const p of rows ?? []) {
+    // Recém-enviado (2 h): a cada ~minuto. Depois (ex.: boleto agendado): a cada 30 min, por até 7 dias.
+    const recent = Date.now() - new Date(p.sent_at).getTime() < 2 * 3600_000;
+    if (Date.now() - new Date(p.updated_at).getTime() < (recent ? 45_000 : 30 * 60_000)) continue;
+    checked++;
+    const antes = p.status;
+    try {
+      const out = await callInter('payment_status', { tenant_id: p.tenant_id, payment_id: p.id });
+      Object.assign(p, out.payment);
+    } catch (e) { log('WARN', 'acompanhar pagamento', { id: p.id, error: errMsg(e) }); }
+    if (p.status === antes) { await admin.from('fin_inter_payments').update({ updated_at: nowIso() }).eq('id', p.id).eq('status', antes); continue; }
+    changed++;
+    await afterPayStatus(admin, Number(String(p.chat_id).slice(3)), Number(p.tg_message_id) || null, p);
+    await admin.from('asst_messages').insert({ channel: 'telegram', chat_id: p.chat_id, role: 'assistant', content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status} (atualizado automaticamente)] id ${p.id}` });
+    log('INFO', 'pagamento mudou de status', { id: p.id, de: antes, para: p.status });
+  }
+  return { checked, changed };
+}
 async function checkPin(admin: SupabaseClient, chatId: number, pin: string): Promise<boolean> {
   const s = (await getSetting(admin, 'pay_pin')) ?? {};
   if (s.locked_until && new Date(s.locked_until).getTime() > Date.now()) {
@@ -488,7 +566,7 @@ async function handlePayClick(admin: SupabaseClient, cq: any) {
     try { const out = await callInter('payment_status', { tenant_id: p.tenant_id, payment_id: p.id }); Object.assign(p, out.payment); }
     catch (e) { await ack(errMsg(e).slice(0, 150)); return; }
     await ack(PAY_STATUS[p.status] ?? p.status);
-    await editPay(chatId, mid, p, statusLine(p), PAY_DONE.includes(p.status) ? undefined : statusKb(p.id));
+    await afterPayStatus(admin, chatId, mid, p);
     return;
   }
   if (op === 'ok') {
@@ -581,7 +659,7 @@ async function tryPayText(admin: SupabaseClient, chatId: number, text: string, m
     Object.assign(p, cur ?? { status: 'failed' });
     if (!p.error) p.error = errMsg(e);
   }
-  await editPay(chatId, mid, p, statusLine(p), PAY_DONE.includes(p.status) ? undefined : statusKb(p.id));
+  await afterPayStatus(admin, chatId, mid, p);
   await admin.from('asst_messages').insert({ channel: 'telegram', chat_id: chatKey, role: 'assistant', content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status}${p.error ? ` (${p.error})` : ''}] id ${p.id}` });
   return true;
 }
@@ -748,6 +826,10 @@ Deno.serve(async (req) => {
   if (acao === 'deliver') {
     try { await deliver(update); return json({ ok: true }); }
     catch (e) { log('ERROR', 'entrega interna falhou', { error: errMsg(e) }); return json({ error: errMsg(e) }, 500); }
+  }
+  if (acao === 'pay_watch' && internalOk) {
+    try { return json({ ok: true, ...(await payWatch()) }); }
+    catch (e) { log('ERROR', 'pay_watch falhou', { error: errMsg(e) }); return json({ error: errMsg(e) }, 500); }
   }
   // Quem chega só com a chave interna (outra Edge Function) manda aviso, nunca update do Telegram.
   if (!secretOk) return json({ error: 'Ação interna desconhecida' }, 400);

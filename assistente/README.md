@@ -492,6 +492,22 @@ message_id }` (aceita `Authorization: Bearer <SERVICE_ROLE_KEY>` — no projeto 
 `sb_secret_…`, não a JWT legada); a Evolution devolve a mídia pelo id. Só atualiza
 `content`/`extracted`, não refaz a triagem.
 
+**Status automático + comprovante no grupo (2026-09-12, à noite).** Antes o cartão do pagamento
+só mudava tocando em "Ver status". Agora o `assistente-cron`, a cada tick, conta os pagamentos em
+andamento (`sent/pending_approval/approved/scheduled`, enviados há até 7 dias, chat `tg:`) e, se
+houver, chama `assistente-telegram { action: 'pay_watch' }`: consulta o Inter (`payment_status`)
+a cada ~minuto nas primeiras 2 h e a cada 30 min depois, e edita o cartão quando o status muda.
+Não é sync de extrato (ver regra "conciliação sem cron"): só roda enquanto há pagamento mandado
+pelo dono. Quando vira `paid` e o pagamento está ligado a um pedido de grupo
+(`asst_group_requests.payment_id`), o comprovante em texto (valor, recebedor, data, E2E do Pix /
+linha digitável, código no Inter, loja pagadora) é postado no grupo **respondendo a mensagem do
+pedido**, via `assistente-webhook { action: 'group_send' }` — única escrita em grupo, texto do
+código (não do modelo), só em grupo com `is_enabled`. `receipt_sent_at` é o trinco (uma vez só);
+falhou → `receipt_error` e o "Ver status" tenta de novo. O vínculo nasce na triagem ou no
+`preparar_pagamento` (param `solicitacao_grupo_id`, ou pedido do grupo com o mesmo valor em 72 h).
+Comprovante em texto com o E2E (verificável no banco de quem recebe); a integração atual não
+busca PDF/imagem de comprovante no Inter — se um dia usar, é aqui que entra.
+
 Se a mensagem parecer **pedido de pagamento** — `extracted.pagamento.e_solicitacao`, ou o
 pré-filtro `PAY_HINT` no texto/transcrição — o webhook grava a solicitação em
 `asst_group_requests` e chama o brain em `modo: 'triagem_grupo'`, no chat do dono. O brain

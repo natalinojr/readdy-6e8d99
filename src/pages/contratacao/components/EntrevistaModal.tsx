@@ -1,20 +1,22 @@
 // Agendar uma entrevista e, depois, registrar como foi (ficha com notas por critério,
-// recomendação e anotações). Também atualiza a etapa do candidato.
+// recomendação e anotações). Também move o candidato de fase.
 import { useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
-  type Candidate, type Interview, type InterviewFormat, type InterviewStatus, type Loja, type Recommendation, type Status,
-  CRITERIA, FORMATS, INTERVIEW_STATUS, RECOMMENDATIONS, STATUS, whatsLink, firstName, lojaNome,
+  type Candidate, type Company, type Interview, type InterviewFormat, type InterviewStatus, type Recommendation, type Settings, type Stage,
+  FORMATS, INTERVIEW_STATUS, RECOMMENDATIONS, whatsLink, firstName, companyName, inviteText, stageOf, stageByKind,
 } from '../shared';
 
 interface Props {
   interview: Interview | null;
   candidates: Candidate[];
-  lojas: Loja[];
+  companies: Company[];
+  stages: Stage[];
+  settings: Settings;
   presetCandidateId?: string | null;
   presetDate?: string | null; // AAAA-MM-DD
   onClose: () => void;
-  onSaved: (iv: Interview, candidatePatch?: { id: string; status: Status }) => void;
+  onSaved: (iv: Interview, candidatePatch?: { id: string; stage_id: string }) => void;
   onDeleted: (id: string) => void;
 }
 
@@ -24,15 +26,15 @@ function splitLocal(iso: string) {
   return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
 }
 
-export default function EntrevistaModal({ interview, candidates, lojas, presetCandidateId, presetDate, onClose, onSaved, onDeleted }: Props) {
+export default function EntrevistaModal({ interview, candidates, companies, stages, settings, presetCandidateId, presetDate, onClose, onSaved, onDeleted }: Props) {
   const init = interview ? splitLocal(interview.scheduled_at) : { date: presetDate ?? splitLocal(new Date().toISOString()).date, time: '14:00' };
   const [candidateId, setCandidateId] = useState(interview?.candidate_id ?? presetCandidateId ?? '');
   const [date, setDate] = useState(init.date);
   const [time, setTime] = useState(init.time);
-  const [duration, setDuration] = useState(interview?.duration_min ?? 30);
+  const [duration, setDuration] = useState(interview?.duration_min ?? settings.default_duration);
   const [format, setFormat] = useState<InterviewFormat>(interview?.format ?? 'presencial');
-  const [location, setLocation] = useState(interview?.location ?? '');
-  const [interviewer, setInterviewer] = useState(interview?.interviewer ?? '');
+  const [location, setLocation] = useState(interview?.location ?? (interview ? '' : settings.default_location));
+  const [interviewer, setInterviewer] = useState(interview?.interviewer ?? (interview ? '' : settings.default_interviewer));
   const [status, setStatus] = useState<InterviewStatus>(interview?.status ?? 'agendada');
   const [scores, setScores] = useState<Record<string, number>>(interview?.scores ?? {});
   const [recommendation, setRecommendation] = useState<Recommendation | null>(interview?.recommendation ?? null);
@@ -40,24 +42,30 @@ export default function EntrevistaModal({ interview, candidates, lojas, presetCa
   const [busca, setBusca] = useState('');
   const [saving, setSaving] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [novaFase, setNovaFase] = useState<string>('');
 
   const cand = candidates.find((c) => c.id === candidateId) ?? null;
-  const [candStatus, setCandStatus] = useState<Status | ''>('');
+  const faseAtual = cand ? stageOf(stages, cand.stage_id) : null;
   const isPast = new Date(`${date}T${time}`) <= new Date();
   const [showRegistro, setShowRegistro] = useState(!!interview && (interview.status !== 'agendada' || new Date(interview.scheduled_at) <= new Date()));
 
+  const descartadoId = stageByKind(stages, 'descartado')?.id;
   const opcoes = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return candidates
-      .filter((c) => c.status !== 'descartado' || c.id === candidateId)
+      .filter((c) => c.stage_id !== descartadoId || c.id === candidateId)
       .filter((c) => !q || c.full_name.toLowerCase().includes(q))
       .slice(0, 50);
-  }, [candidates, busca, candidateId]);
+  }, [candidates, busca, candidateId, descartadoId]);
 
-  const convite = cand && whatsLink(cand.phone,
-    `Olá, ${firstName(cand.full_name)}! Recebemos seu currículo e gostaríamos de conversar com você. ` +
-    `Entrevista ${format === 'presencial' ? 'presencial' : format === 'telefone' ? 'por telefone' : 'por vídeo'} ` +
-    `no dia ${date.split('-').reverse().join('/')} às ${time}${location ? `, ${location}` : ''}. Pode confirmar?`);
+  const convite = cand && whatsLink(cand.phone, inviteText(settings.invite_template, {
+    nome: firstName(cand.full_name),
+    empresa: cand.company_id ? companyName(companies, cand.company_id) : '',
+    formato: FORMATS.find((f) => f.id === format)?.texto ?? '',
+    data: date.split('-').reverse().join('/'),
+    hora: time,
+    local: location.trim(),
+  }));
 
   const salvar = async () => {
     if (!candidateId) { setErro('Escolha o candidato.'); return; }
@@ -65,7 +73,7 @@ export default function EntrevistaModal({ interview, candidates, lojas, presetCa
     setSaving(true); setErro(null);
     const row = {
       candidate_id: candidateId,
-      tenant_id: cand?.tenant_id ?? null,
+      company_id: cand?.company_id ?? null,
       scheduled_at: new Date(`${date}T${time}`).toISOString(),
       duration_min: duration,
       format,
@@ -83,14 +91,13 @@ export default function EntrevistaModal({ interview, candidates, lojas, presetCa
     const { data, error } = await q;
     if (error || !data) { setSaving(false); setErro(error?.message ?? 'Falha ao salvar'); return; }
 
-    // Etapa do candidato: a escolhida no modal; senão, agendar leva novo/triagem para "entrevista".
-    let novo: Status | null = candStatus || null;
-    if (!novo && cand && !interview && (cand.status === 'novo' || cand.status === 'triagem')) novo = 'entrevista';
-    if (novo && cand && novo !== cand.status) {
-      await supabase.from('hiring_candidates').update({ status: novo, updated_at: new Date().toISOString() }).eq('id', cand.id);
-    }
+    // Fase: a escolhida no modal; senão, agendar tira o candidato de "Novo" para "Entrevista agendada".
+    let destino: string | null = novaFase || null;
+    if (!destino && cand && !interview && (!faseAtual || faseAtual.native_kind === 'novo')) destino = stageByKind(stages, 'entrevista')?.id ?? null;
+    const mudou = !!(destino && cand && destino !== cand.stage_id);
+    if (mudou) await supabase.from('hiring_candidates').update({ stage_id: destino, updated_at: new Date().toISOString() }).eq('id', cand!.id);
     setSaving(false);
-    onSaved(data as Interview, novo && cand && novo !== cand.status ? { id: cand.id, status: novo } : undefined);
+    onSaved(data as Interview, mudou ? { id: cand!.id, stage_id: destino! } : undefined);
   };
 
   const excluir = async () => {
@@ -99,6 +106,12 @@ export default function EntrevistaModal({ interview, candidates, lojas, presetCa
     if (error) { setErro(error.message); return; }
     onDeleted(interview.id);
   };
+
+  // Critérios atuais + notas antigas de critérios que foram apagados (continuam visíveis).
+  const criterios = [
+    ...settings.criteria,
+    ...Object.keys(scores).filter((k) => scores[k] > 0 && !settings.criteria.some((c) => c.id === k)).map((k) => ({ id: k, label: `${k} (removido)` })),
+  ];
 
   return (
     <>
@@ -111,12 +124,11 @@ export default function EntrevistaModal({ interview, candidates, lojas, presetCa
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-          {/* Candidato */}
           <div>
             <Label>Candidato</Label>
             {cand && (interview || presetCandidateId) ? (
               <p className="text-sm font-bold text-zinc-900">{cand.full_name}
-                <span className="font-normal text-zinc-500 text-xs"> · {cand.desired_role ?? 'cargo não informado'} · {lojaNome(lojas, cand.tenant_id)}</span>
+                <span className="font-normal text-zinc-500 text-xs"> · {cand.desired_role ?? 'cargo não informado'} · {companyName(companies, cand.company_id)}</span>
               </p>
             ) : (
               <>
@@ -128,9 +140,8 @@ export default function EntrevistaModal({ interview, candidates, lojas, presetCa
             )}
           </div>
 
-          {/* Quando e onde */}
           <div className="grid grid-cols-3 gap-2">
-            <div className="col-span-1"><Label>Data</Label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} /></div>
+            <div><Label>Data</Label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} /></div>
             <div><Label>Hora</Label><input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} /></div>
             <div><Label>Duração</Label>
               <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className={inputCls}>
@@ -161,7 +172,6 @@ export default function EntrevistaModal({ interview, candidates, lojas, presetCa
             </a>
           )}
 
-          {/* Registro: como foi */}
           {!showRegistro ? (
             <button onClick={() => setShowRegistro(true)} className="w-full h-9 rounded-lg border border-dashed border-zinc-300 text-xs font-bold text-zinc-600 cursor-pointer hover:bg-zinc-50">
               <i className="ri-edit-2-line" /> {isPast ? 'Registrar como foi a entrevista' : 'Já registrar o resultado'}
@@ -181,7 +191,7 @@ export default function EntrevistaModal({ interview, candidates, lojas, presetCa
               {status === 'realizada' && (
                 <>
                   <div className="space-y-1.5">
-                    {CRITERIA.map((cr) => (
+                    {criterios.map((cr) => (
                       <div key={cr.id} className="flex items-center gap-2">
                         <span className="flex-1 text-sm text-zinc-700">{cr.label}</span>
                         {[1, 2, 3, 4, 5].map((n) => (
@@ -217,10 +227,10 @@ export default function EntrevistaModal({ interview, candidates, lojas, presetCa
 
               {cand && (
                 <div>
-                  <Label>Mover o candidato para a etapa</Label>
-                  <select value={candStatus} onChange={(e) => setCandStatus(e.target.value as Status | '')} className={inputCls}>
-                    <option value="">Manter em "{STATUS.find((s) => s.id === cand.status)?.label}"</option>
-                    {STATUS.filter((s) => s.id !== cand.status).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  <Label>Mover o candidato para a fase</Label>
+                  <select value={novaFase} onChange={(e) => setNovaFase(e.target.value)} className={inputCls}>
+                    <option value="">Manter em "{faseAtual?.name ?? '—'}"</option>
+                    {stages.filter((s) => s.id !== faseAtual?.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
               )}

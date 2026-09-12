@@ -1,26 +1,51 @@
 // Tipos, constantes e helpers do módulo Contratação.
+// O módulo é independente das lojas do ERPOS: tem empresas próprias (hiring_companies),
+// fases do kanban editáveis (hiring_stages, 4 nativas) e configurações (hiring_settings).
 import { supabase } from '@/lib/supabase';
 
 export const OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 export const BUCKET = 'curriculos';
 
-export type Status = 'novo' | 'triagem' | 'entrevista' | 'aprovado' | 'contratado' | 'descartado';
-export const STATUS: { id: Status; label: string; cls: string; bar: string }[] = [
-  { id: 'novo', label: 'Novo', cls: 'bg-sky-50 text-sky-700 border-sky-200', bar: 'bg-sky-400' },
-  { id: 'triagem', label: 'Triagem', cls: 'bg-amber-50 text-amber-700 border-amber-200', bar: 'bg-amber-400' },
-  { id: 'entrevista', label: 'Entrevista', cls: 'bg-violet-50 text-violet-700 border-violet-200', bar: 'bg-violet-400' },
-  { id: 'aprovado', label: 'Aprovado', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', bar: 'bg-emerald-400' },
-  { id: 'contratado', label: 'Contratado', cls: 'bg-green-600 text-white border-green-600', bar: 'bg-green-600' },
-  { id: 'descartado', label: 'Descartado', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200', bar: 'bg-zinc-300' },
-];
-export const statusInfo = (s: string) => STATUS.find((x) => x.id === s) ?? STATUS[0];
+// ── Cores das fases (classes literais para o Tailwind) ──────────────────────
+export const COLORS: Record<string, { label: string; cls: string; bar: string; dot: string }> = {
+  sky: { label: 'Azul', cls: 'bg-sky-50 text-sky-700 border-sky-200', bar: 'bg-sky-400', dot: 'bg-sky-500' },
+  indigo: { label: 'Índigo', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200', bar: 'bg-indigo-400', dot: 'bg-indigo-500' },
+  violet: { label: 'Roxo', cls: 'bg-violet-50 text-violet-700 border-violet-200', bar: 'bg-violet-400', dot: 'bg-violet-500' },
+  rose: { label: 'Rosa', cls: 'bg-rose-50 text-rose-700 border-rose-200', bar: 'bg-rose-400', dot: 'bg-rose-500' },
+  orange: { label: 'Laranja', cls: 'bg-orange-50 text-orange-700 border-orange-200', bar: 'bg-orange-400', dot: 'bg-orange-500' },
+  amber: { label: 'Amarelo', cls: 'bg-amber-50 text-amber-700 border-amber-200', bar: 'bg-amber-400', dot: 'bg-amber-500' },
+  teal: { label: 'Verde-água', cls: 'bg-teal-50 text-teal-700 border-teal-200', bar: 'bg-teal-400', dot: 'bg-teal-500' },
+  emerald: { label: 'Verde', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', bar: 'bg-emerald-400', dot: 'bg-emerald-500' },
+  green: { label: 'Verde forte', cls: 'bg-green-600 text-white border-green-600', bar: 'bg-green-600', dot: 'bg-green-600' },
+  zinc: { label: 'Cinza', cls: 'bg-zinc-100 text-zinc-600 border-zinc-200', bar: 'bg-zinc-300', dot: 'bg-zinc-400' },
+};
+export const colorOf = (c: string | null | undefined) => COLORS[c ?? ''] ?? COLORS.zinc;
 
+// ── Fases e empresas ────────────────────────────────────────────────────────
+export type NativeKind = 'novo' | 'entrevista' | 'aprovado' | 'descartado';
+export interface Stage { id: string; name: string; color: string; sort_order: number; native_kind: NativeKind | null }
+export interface Company { id: string; name: string; sort_order: number; is_active: boolean }
+
+export const NATIVE_LABEL: Record<NativeKind, string> = {
+  novo: 'onde entram os currículos novos',
+  entrevista: 'para onde o candidato vai ao agendar entrevista',
+  aprovado: 'aprovados',
+  descartado: 'fora do processo (sai do ranking)',
+};
+
+export const stageOf = (stages: Stage[], id: string | null) =>
+  stages.find((s) => s.id === id) ?? stages.find((s) => s.native_kind === 'novo') ?? null;
+export const stageByKind = (stages: Stage[], k: NativeKind) => stages.find((s) => s.native_kind === k) ?? null;
+export const companyName = (companies: Company[], id: string | null) => (id ? companies.find((c) => c.id === id)?.name ?? 'Empresa removida' : 'Sem empresa');
+
+// ── Candidato ───────────────────────────────────────────────────────────────
 export interface Experience { empresa: string | null; cargo: string | null; inicio: string | null; fim: string | null; atual: boolean; descricao: string | null }
 export interface Education { instituicao: string | null; curso: string | null; nivel: string | null; situacao: string | null }
 
 export interface Candidate {
   id: string;
-  tenant_id: string | null;
+  company_id: string | null;
+  stage_id: string | null;
   full_name: string;
   email: string | null;
   phone: string | null;
@@ -38,11 +63,9 @@ export interface Candidate {
   availability: string | null;
   salary_expectation: string | null;
   driver_license: string | null;
-  food_service_experience: boolean | null;
   total_experience_months: number | null;
   strengths: string[];
   concerns: string[];
-  status: Status;
   rating: number | null;
   notes: string | null;
   file_path: string | null;
@@ -61,7 +84,7 @@ export type Recommendation = 'seguir' | 'talvez' | 'nao_seguir';
 export interface Interview {
   id: string;
   candidate_id: string;
-  tenant_id: string | null;
+  company_id: string | null;
   scheduled_at: string;
   duration_min: number;
   format: InterviewFormat;
@@ -82,10 +105,10 @@ export const INTERVIEW_STATUS: { id: InterviewStatus; label: string; cls: string
 ];
 export const interviewStatusInfo = (s: string) => INTERVIEW_STATUS.find((x) => x.id === s) ?? INTERVIEW_STATUS[0];
 
-export const FORMATS: { id: InterviewFormat; label: string; icon: string }[] = [
-  { id: 'presencial', label: 'Presencial', icon: 'ri-store-2-line' },
-  { id: 'telefone', label: 'Telefone', icon: 'ri-phone-line' },
-  { id: 'video', label: 'Vídeo', icon: 'ri-vidicon-line' },
+export const FORMATS: { id: InterviewFormat; label: string; icon: string; texto: string }[] = [
+  { id: 'presencial', label: 'Presencial', icon: 'ri-store-2-line', texto: 'presencial' },
+  { id: 'telefone', label: 'Telefone', icon: 'ri-phone-line', texto: 'por telefone' },
+  { id: 'video', label: 'Vídeo', icon: 'ri-vidicon-line', texto: 'por vídeo' },
 ];
 
 export const RECOMMENDATIONS: { id: Recommendation; label: string; cls: string }[] = [
@@ -94,23 +117,54 @@ export const RECOMMENDATIONS: { id: Recommendation; label: string; cls: string }
   { id: 'nao_seguir', label: 'Não seguir', cls: 'bg-red-600 text-white border-red-600' },
 ];
 
-// Critérios da ficha de entrevista (nota 1–5 cada).
-export const CRITERIA: { id: string; label: string }[] = [
-  { id: 'pontualidade', label: 'Pontualidade' },
-  { id: 'comunicacao', label: 'Comunicação' },
-  { id: 'experiencia', label: 'Experiência na função' },
-  { id: 'disponibilidade', label: 'Disponibilidade de horário' },
-  { id: 'atitude', label: 'Postura e atitude' },
-];
-
 export function avgScore(scores: Record<string, number> | null | undefined): number | null {
   const vals = Object.values(scores ?? {}).filter((v) => typeof v === 'number' && v > 0);
   return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
 }
 
-// ── Lojas ───────────────────────────────────────────────────────────────────
-export interface Loja { id: string; nome: string }
-export const lojaNome = (lojas: Loja[], id: string | null) => (id ? lojas.find((l) => l.id === id)?.nome ?? 'Outra loja' : 'Sem loja');
+// ── Configurações (hiring_settings.data) ────────────────────────────────────
+export interface Criterion { id: string; label: string }
+export interface Settings {
+  criteria: Criterion[];
+  invite_template: string;
+  default_duration: number;
+  default_location: string;
+  default_interviewer: string;
+}
+export const DEFAULT_SETTINGS: Settings = {
+  criteria: [
+    { id: 'pontualidade', label: 'Pontualidade' },
+    { id: 'comunicacao', label: 'Comunicação' },
+    { id: 'experiencia', label: 'Experiência na função' },
+    { id: 'disponibilidade', label: 'Disponibilidade de horário' },
+    { id: 'atitude', label: 'Postura e atitude' },
+  ],
+  invite_template: 'Olá, {nome}! Recebemos seu currículo para a {empresa} e gostaríamos de conversar com você. '
+    + 'Entrevista {formato} no dia {data} às {hora}{local}. Pode confirmar?',
+  default_duration: 30,
+  default_location: '',
+  default_interviewer: '',
+};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function mergeSettings(data: Record<string, any> | null | undefined): Settings {
+  const d = data ?? {};
+  return {
+    criteria: Array.isArray(d.criteria) && d.criteria.length ? d.criteria : DEFAULT_SETTINGS.criteria,
+    invite_template: typeof d.invite_template === 'string' && d.invite_template.trim() ? d.invite_template : DEFAULT_SETTINGS.invite_template,
+    default_duration: Number(d.default_duration) > 0 ? Number(d.default_duration) : DEFAULT_SETTINGS.default_duration,
+    default_location: typeof d.default_location === 'string' ? d.default_location : '',
+    default_interviewer: typeof d.default_interviewer === 'string' ? d.default_interviewer : '',
+  };
+}
+export function inviteText(template: string, v: { nome: string; empresa: string; formato: string; data: string; hora: string; local: string }) {
+  return template
+    .replace(/\{nome\}/g, v.nome)
+    .replace(/\{empresa\}/g, v.empresa || 'nossa empresa')
+    .replace(/\{formato\}/g, v.formato)
+    .replace(/\{data\}/g, v.data)
+    .replace(/\{hora\}/g, v.hora)
+    .replace(/\{local\}/g, v.local ? `, ${v.local}` : '');
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 export const onlyDigits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
@@ -118,6 +172,7 @@ export const safeName = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}
 export const norm = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 export const isoDate = (v: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : null);
 export const firstName = (s: string) => s.trim().split(/\s+/)[0] ?? s;
+export const slug = (s: string) => norm(s).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `c_${Date.now()}`;
 
 export function fmtPhone(p: string | null) {
   const d = onlyDigits(p);
@@ -202,7 +257,7 @@ export async function scanWithAi(file: File): Promise<AiOut> {
   return out;
 }
 
-// Resposta da IA → colunas da tabela. Sem status/nota/anotações/loja: isso é do usuário.
+// Resposta da IA → colunas da tabela. Sem fase/nota/anotações/empresa: isso é do usuário.
 export function aiFields(out: AiOut) {
   return {
     ...(out.nome ? { full_name: String(out.nome) } : {}),

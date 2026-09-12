@@ -348,6 +348,7 @@ TOOLS.push({
       descricao: { type: 'string', description: 'Descrição curta (vai no Pix e no histórico).' },
       conta_a_pagar_id: { type: 'string', description: 'uuid da conta a pagar correspondente, se houver (busque com consultar_banco/buscar_nome).' },
       loja: { type: 'string', description: 'Loja pagadora. Padrão: a loja que tem o Banco Inter conectado.' },
+      solicitacao_grupo_id: { type: 'number', description: 'id do pedido de pagamento vindo de grupo do WhatsApp (asst_group_requests.id), se souber. Sem isso, o pedido do grupo com o mesmo valor nas últimas 72 h é ligado sozinho. Pedido ligado = quando o pagamento for confirmado, o comprovante é postado no grupo automaticamente.' },
     },
     required: ['tipo'],
   },
@@ -517,8 +518,26 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       });
       const p = out.payment;
       ctx.outbound.push({ type: 'payment', id: String(p.id) });
+      // Liga ao pedido que veio de grupo (asst_group_requests): pago → o assistente-telegram
+      // posta o comprovante no grupo. Pelo id informado ou, sem id, pelo mesmo valor em 72 h.
+      let grupo: string | null = null;
+      try {
+        const cols = 'id, group_name, data';
+        const { data: reqs } = input.solicitacao_grupo_id
+          ? await ctx.admin.from('asst_group_requests').select(cols).eq('id', Number(input.solicitacao_grupo_id)).is('payment_id', null)
+          : await ctx.admin.from('asst_group_requests').select(cols).is('payment_id', null)
+            .gte('created_at', new Date(Date.now() - 72 * 3600_000).toISOString()).order('created_at', { ascending: false }).limit(20);
+        // deno-lint-ignore no-explicit-any
+        const hit = input.solicitacao_grupo_id ? reqs?.[0] : (reqs ?? []).find((r: any) => Math.abs(Number(r.data?.extraido?.pagamento?.valor ?? NaN) - Number(p.amount)) < 0.01);
+        if (hit) {
+          const { data: ok } = await ctx.admin.from('asst_group_requests').update({ payment_id: p.id, status: 'preparado', updated_at: new Date().toISOString() })
+            .eq('id', hit.id).is('payment_id', null).select('id');
+          if (ok?.length) grupo = hit.group_name ?? 'do pedido';
+        }
+      } catch (e) { log('WARN', 'ligar pagamento ao pedido do grupo', { error: errMsg(e) }); }
       return JSON.stringify({
         ok: true,
+        ...(grupo ? { comprovante_no_grupo: `Ligado ao pedido do grupo "${grupo}": quando o Inter confirmar, o comprovante vai sozinho no grupo. Pode avisar isso em meia frase.` } : {}),
         pagamento: { id: p.id, tipo: p.kind, valor: Number(p.amount), valor_do_boleto: p.face_value, vencimento: p.due_date, beneficiario: p.beneficiary_name, saldo_inter: p.saldo_inter },
         instrucao: 'O resumo com os botões Pagar/Cancelar será enviado logo abaixo. Diga só uma frase curta (ex.: se o vencimento já passou ou o saldo não cobre). Não repita os dados e não peça PIN.',
       });
