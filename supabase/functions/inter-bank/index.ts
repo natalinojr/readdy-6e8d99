@@ -25,8 +25,7 @@
 //   check_payment_scopes {}           (admin/gerente ou interno) token com escopos de pagamento + consulta só leitura
 //   save_pay_credentials { client_id, client_secret, cert_pem, key_pem, conta_corrente? }  (admin/gerente) credencial PRÓPRIA de
 //                    pagamento; só grava se o Inter der token com os escopos de pagamento · delete_pay_credentials {}
-//   list_pix_favorecidos {} · add_pix_favorecido { name, chave } · remove_pix_favorecido { id }
-//                    Pix permitidos além de fornecedores — só usuário logado admin/gerente (a chave interna é recusada)
+//   (Pix permitidos: fin_pix_favorecidos é gerenciada na tela Assistente — assistente-config, com PIN próprio)
 //
 // Autenticação: JWT do usuário (membership em user_tenants) OU chamada interna
 // (outra função) com header x-internal-key = FISCAL_INTERNAL_KEY.
@@ -571,7 +570,7 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
     } else {
       // Pix permitidos (pessoas cadastradas na tela do Banco Inter por admin/gerente)
       const { data: fav } = await admin.from('fin_pix_favorecidos').select('id, name, pix_key, pix_key_kind').eq('tenant_id', tenantId).eq('pix_key', k.key).eq('is_active', true).maybeSingle();
-      if (!fav) throw new Error('Essa chave Pix não é de fornecedor cadastrado nem está nos Pix permitidos. Por segurança só pago Pix para quem foi cadastrado no ERPOS (Fornecedores ou Banco Inter › Pix permitidos).');
+      if (!fav) throw new Error('Essa chave Pix não é de fornecedor cadastrado nem está nos Pix permitidos. Por segurança só pago Pix para quem foi cadastrado no ERPOS (Fornecedores ou Assistente › Pix permitidos).');
       Object.assign(row, { amount: valor, pix_key: k.key, pix_key_kind: k.kind, favorecido_id: fav.id, beneficiary_name: fav.name, beneficiary_doc: ['cpf', 'cnpj'].includes(fav.pix_key_kind) ? fav.pix_key : null });
     }
   } else {
@@ -914,29 +913,9 @@ Deno.serve(async (req: Request) => {
         return errResp(friendlyError(e));
       } finally { try { client?.close?.(); } catch { /* noop */ } }
     }
-    // ── Pix permitidos (além de fornecedores) — só pessoa logada, NUNCA a chave interna ──
+    // Pix permitidos: gerenciados na tela Assistente (assistente-config), com PIN próprio do dono.
     if (['list_pix_favorecidos', 'add_pix_favorecido', 'remove_pix_favorecido'].includes(action)) {
-      if (internal || !userId) return errResp('Pix permitidos só pela tela do ERPOS, com usuário logado.', 403);
-      if (!isManager) return errResp('Apenas admin/gerente', 403);
-      if (action === 'list_pix_favorecidos') {
-        const { data } = await admin.from('fin_pix_favorecidos').select('id, name, pix_key, pix_key_kind, is_active, created_at').eq('tenant_id', tenantId).eq('is_active', true).order('name');
-        return json({ success: true, favorecidos: data ?? [] });
-      }
-      if (action === 'add_pix_favorecido') {
-        const name = String(body.name ?? '').trim().slice(0, 80);
-        const k = normPixKey(String(body.chave ?? ''));
-        if (!name) return errResp('Informe o nome de quem vai receber.');
-        if (k.kind === 'desconhecida') return errResp('Chave Pix não reconhecida. Use CPF, CNPJ, e-mail, telefone com +55 ou a chave aleatória.');
-        const { data, error } = await admin.from('fin_pix_favorecidos')
-          .upsert({ tenant_id: tenantId, name, pix_key: k.key, pix_key_kind: k.kind, is_active: true, created_by: userId }, { onConflict: 'tenant_id,pix_key' })
-          .select('id, name, pix_key, pix_key_kind').single();
-        if (error) return errResp(`Salvar: ${error.message}`, 500);
-        log('INFO', 'add_pix_favorecido', 'ok', { tenantId, userId, kind: k.kind });
-        return json({ success: true, favorecido: data });
-      }
-      const { error } = await admin.from('fin_pix_favorecidos').update({ is_active: false }).eq('id', String(body.id ?? '')).eq('tenant_id', tenantId);
-      if (error) return errResp(error.message, 500);
-      return json({ success: true });
+      return errResp('A lista de Pix permitidos fica na tela Assistente do ERPOS, protegida por PIN.', 403);
     }
     if (action === 'delete_pay_credentials') {
       if (!isManager) return errResp('Apenas admin/gerente', 403);

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import PixPermitidosCard from './PixPermitidosCard';
 
 const OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -329,6 +330,13 @@ export default function AssistentePage() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* Pix permitidos (protegido por PIN próprio do dono) */}
+          {tab === 'config' && (
+            <div className="mb-4">
+              <PixPermitidosCard />
             </div>
           )}
 

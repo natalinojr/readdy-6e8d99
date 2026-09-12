@@ -74,12 +74,6 @@ export default function InterConfigModal({ onClose, onSaved }: Props) {
   const [payResult, setPayResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const payCertRef = useRef<HTMLInputElement>(null);
   const payKeyRef = useRef<HTMLInputElement>(null);
-  // Pix permitidos (além dos fornecedores)
-  const [favs, setFavs] = useState<Array<{ id: string; name: string; pix_key: string; pix_key_kind: string }>>([]);
-  const [favName, setFavName] = useState('');
-  const [favKey, setFavKey] = useState('');
-  const [favBusy, setFavBusy] = useState(false);
-  const [favMsg, setFavMsg] = useState<{ ok: boolean; msg: string } | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -164,31 +158,6 @@ export default function InterConfigModal({ onClose, onSaved }: Props) {
     if (resp.error || resp.data?.error) { setResult({ ok: false, msg: resp.error?.message ?? resp.data?.error ?? 'Erro ao remover.' }); return; }
     onSaved();
     onClose();
-  };
-
-  const loadFavs = async () => {
-    const resp = await invokeWithAuth<{ favorecidos?: Array<{ id: string; name: string; pix_key: string; pix_key_kind: string }> }>('inter-bank', { body: { action: 'list_pix_favorecidos', tenant_id: user?.tenantId } });
-    setFavs(resp.data?.favorecidos ?? []);
-  };
-  useEffect(() => { if (existing?.has_pay_credentials) loadFavs(); }, [existing?.has_pay_credentials]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const addFav = async () => {
-    if (!favName.trim() || !favKey.trim()) { setFavMsg({ ok: false, msg: 'Informe o nome e a chave Pix.' }); return; }
-    setFavBusy(true); setFavMsg(null);
-    const resp = await invokeWithAuth<{ success?: boolean; error?: string }>('inter-bank', { body: { action: 'add_pix_favorecido', tenant_id: user?.tenantId, name: favName.trim(), chave: favKey.trim() } });
-    setFavBusy(false);
-    const err = resp.error?.message ?? resp.data?.error;
-    if (err || !resp.data?.success) { setFavMsg({ ok: false, msg: err || 'Erro ao salvar.' }); return; }
-    setFavName(''); setFavKey('');
-    setFavMsg({ ok: true, msg: 'Adicionado. O assistente já pode preparar Pix para essa chave (sempre com PIN e aprovação no app).' });
-    await loadFavs();
-  };
-  const removeFav = async (id: string, name: string) => {
-    if (!window.confirm(`Tirar ${name} dos Pix permitidos?`)) return;
-    setFavBusy(true);
-    await invokeWithAuth('inter-bank', { body: { action: 'remove_pix_favorecido', tenant_id: user?.tenantId, id } });
-    setFavBusy(false);
-    await loadFavs();
   };
 
   const reloadConfig = async () => {
@@ -395,31 +364,7 @@ export default function InterConfigModal({ onClose, onSaved }: Props) {
                   </button>
                 </div>
                 {existing.has_pay_credentials && (
-                  <div className="pt-3 mt-1 border-t border-violet-200 space-y-2">
-                    <p className="text-xs font-semibold text-zinc-700">Pix permitidos <span className="font-normal text-zinc-400">— pessoas que podem receber Pix pelo assistente, além dos fornecedores</span></p>
-                    {favs.length > 0 ? (
-                      <ul className="space-y-1">
-                        {favs.map((fv) => (
-                          <li key={fv.id} className="flex items-center gap-2 text-xs bg-white border border-zinc-200 rounded-lg px-3 py-1.5">
-                            <span className="font-semibold text-zinc-700 truncate">{fv.name}</span>
-                            <span className="text-zinc-400 font-mono truncate">{fv.pix_key}</span>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 uppercase">{fv.pix_key_kind}</span>
-                            <div className="flex-1" />
-                            <button onClick={() => removeFav(fv.id, fv.name)} disabled={favBusy} className="text-red-500 hover:text-red-700 cursor-pointer disabled:opacity-50" title="Remover"><i className="ri-delete-bin-line" /></button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="text-[11px] text-zinc-400">Ninguém ainda. Fornecedores com CNPJ ou chave Pix no cadastro já são aceitos.</p>
-                    )}
-                    <div className="grid grid-cols-5 gap-2">
-                      <input value={favName} onChange={(e) => setFavName(e.target.value)} placeholder="Nome (ex.: Natalino)" className={`${inputCls} col-span-2`} />
-                      <input value={favKey} onChange={(e) => setFavKey(e.target.value)} placeholder="Chave: CPF, e-mail, +55 telefone..." className={`${inputCls} col-span-2 font-mono`} />
-                      <button onClick={addFav} disabled={favBusy} className="px-3 py-2 bg-violet-600 text-white rounded-lg text-xs font-semibold hover:bg-violet-700 cursor-pointer disabled:opacity-50"><i className="ri-add-line" /> Adicionar</button>
-                    </div>
-                    <p className="text-[10px] text-zinc-400">Telefone precisa do +55 (ex.: +5541999998888); 11 números sem +55 são lidos como CPF. O assistente não consegue mexer nesta lista.</p>
-                    {favMsg && <p className={`text-[11px] ${favMsg.ok ? 'text-green-700' : 'text-red-600'}`}>{favMsg.msg}</p>}
-                  </div>
+                  <p className="text-[11px] text-zinc-500 pt-2 border-t border-violet-200"><i className="ri-shield-keyhole-line" /> Quem pode receber Pix pelo assistente (além dos fornecedores) é definido na tela <strong>Assistente › Pix permitidos</strong>, protegida por PIN.</p>
                 )}
               </div>
             )}
