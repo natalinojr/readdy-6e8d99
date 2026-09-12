@@ -38,18 +38,12 @@ export interface PixRecebidoRow {
 // Pix que entrou no Inter (extrato importado pela edge inter-bank). Inclui a
 // transferência da Conta Stone da própria empresa (match_kind internal_transfer):
 // em Paranaguá é por ali que chega o Pix vendido na maquininha.
+// Via RPC: fin_bank_statement_imports não tem GRANT para o app (o extrato só é
+// lido pelas Edge Functions); a função expõe apenas os créditos Pix, por vínculo.
 export async function fetchPixRecebidos(tenantId: string, startDate: string, endDate: string) {
-  const { data, error } = await supabase
-    .from('fin_bank_statement_imports')
-    .select('id, transaction_date, amount, description, counterpart_name, match_kind, created_at')
-    .eq('tenant_id', tenantId)
-    .eq('source', 'inter')
-    .eq('transaction_type', 'credit')
-    .eq('raw->>tipoTransacao', 'PIX')
-    .gte('transaction_date', startDate)
-    .lte('transaction_date', endDate)
-    .order('transaction_date', { ascending: false })
-    .limit(5000);
+  const { data, error } = await supabase.rpc('fin_pix_recebidos', {
+    p_tenant: tenantId, p_start: startDate, p_end: endDate,
+  });
   return { rows: ((data ?? []) as PixRecebidoRow[]).map(r => ({ ...r, amount: Number(r.amount) })), error: error?.message ?? null };
 }
 
