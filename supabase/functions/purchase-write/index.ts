@@ -435,27 +435,43 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+    // Chamada interna: fiscal-inbound lançando sozinha a nota de entrada de um
+    // fornecedor já conhecido (sem usuário logado). Header x-internal-key =
+    // FISCAL_INTERNAL_KEY. Só pode CRIAR compra — nunca editar/excluir.
+    const internalKey = Deno.env.get('FISCAL_INTERNAL_KEY') ?? '';
+    const internal = internalKey.length >= 20 && (req.headers.get('x-internal-key') ?? '') === internalKey;
 
-    const { data: { user } } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''));
-    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+    // deno-lint-ignore no-explicit-any
+    let user: any = null;
+    if (!internal) {
+      const authHeader = req.headers.get('Authorization');
+      if (!authHeader) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+      const { data: authData } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''));
+      user = authData?.user ?? null;
+      if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+    }
 
     const body = await req.json();
     const { action, tenant_id, payload } = body;
 
     if (!tenant_id) return new Response(JSON.stringify({ error: 'tenant_id required' }), { status: 400, headers: corsHeaders });
 
-    // Valida que o usuario pertence ao tenant informado (antes qualquer
-    // usuario autenticado podia escrever em qualquer tenant via service role)
-    const { data: membership } = await supabase
-      .from('user_tenants')
-      .select('tenant_id')
-      .eq('user_id', user.id)
-      .eq('tenant_id', tenant_id)
-      .maybeSingle();
-    if (!membership) {
-      return new Response(JSON.stringify({ error: 'Usuario nao pertence ao tenant informado' }), { status: 403, headers: corsHeaders });
+    if (internal) {
+      if (action !== 'create_purchase') {
+        return new Response(JSON.stringify({ error: 'Chamada interna só pode criar compra' }), { status: 403, headers: corsHeaders });
+      }
+    } else {
+      // Valida que o usuario pertence ao tenant informado (antes qualquer
+      // usuario autenticado podia escrever em qualquer tenant via service role)
+      const { data: membership } = await supabase
+        .from('user_tenants')
+        .select('tenant_id')
+        .eq('user_id', user.id)
+        .eq('tenant_id', tenant_id)
+        .maybeSingle();
+      if (!membership) {
+        return new Response(JSON.stringify({ error: 'Usuario nao pertence ao tenant informado' }), { status: 403, headers: corsHeaders });
+      }
     }
 
     let result;
@@ -604,7 +620,7 @@ Deno.serve(async (req) => {
 
         const { data: purchase, error: purchaseError } = await supabase
           .from('fin_purchases')
-          .insert({ ...purchaseData, payment_status: finalStatus, tenant_id, created_by: user.id })
+          .insert({ ...purchaseData, payment_status: finalStatus, tenant_id, created_by: user?.id ?? null })
           .select().single();
 
         if (purchaseError) throw purchaseError;

@@ -1,7 +1,9 @@
 // assistente-webhook — ponte entre o WhatsApp (Evolution API na VPS) e o
 // assistente-brain. Projeto PESSOAL do dono; ver assistente/README.md.
 //
-// Evolution → POST aqui (evento MESSAGES_UPSERT, header x-internal-key).
+// Evolution → POST aqui (eventos MESSAGES_UPSERT e MESSAGES_UPDATE, header x-internal-key).
+// Feedback nativo: reação 👀/✅/⚠️/❌/👍 na mensagem do dono, "digitando…", enquete
+// (menu de decisão), localização e cartão de contato pedidos pelo brain (actions).
 // Só responde a chats listados em asst_settings.allowed_chat_ids; qualquer
 // outro remetente é ignorado em silêncio (o JID fica no log para cadastro).
 // Responde 200 imediatamente e processa em background (EdgeRuntime.waitUntil)
@@ -45,24 +47,80 @@ async function evo(path: string, body: unknown) {
   return r.json().catch(() => ({}));
 }
 
-const sendText = (number: string, text: string) => evo(`/message/sendText/${evoInstance}`, { number, text });
+// deno-lint-ignore no-explicit-any
+const sendText = (number: string, text: string): Promise<any> => evo(`/message/sendText/${evoInstance}`, { number, text });
+
+// ── Recursos nativos do WhatsApp (feedback sem gastar tokens) ──
+type MsgKey = { remoteJid: string; fromMe: boolean; id: string };
+// Reação na mensagem do dono: 👀 recebi / ✅ respondi / ⚠️ respondi com falha / ❌ erro / 👍 sem resposta. '' remove.
+const react = (key: MsgKey, emoji: string) =>
+  evo(`/message/sendReaction/${evoInstance}`, { key, reaction: emoji }).catch((e) => log('WARN', 'sendReaction falhou', { error: errMsg(e) }));
+// "digitando…"/"gravando…" por até `ms` (a Evolution segura a requisição pelo tempo
+// todo, então NUNCA aguardar: dispara e segue). Some sozinho quando a resposta sai.
+const presence = (number: string, kind: 'composing' | 'recording', ms: number) => {
+  evo(`/chat/sendPresence/${evoInstance}`, { number, presence: kind, delay: ms }).catch(() => {});
+};
+// Edita uma mensagem NOSSA já enviada (usado no modo "⏳ → resposta", opcional).
+const editText = (number: string, key: MsgKey, text: string) =>
+  evo(`/chat/updateMessage/${evoInstance}`, { number, key, text });
+
+// Ações que o brain pediu (enquete, localização, contato) — vão DEPOIS do texto.
+// deno-lint-ignore no-explicit-any
+async function runActions(admin: SupabaseClient, number: string, chatId: string, actions: any[]) {
+  for (const a of Array.isArray(actions) ? actions : []) {
+    try {
+      if (a.type === 'poll') {
+        const out = await evo(`/message/sendPoll/${evoInstance}`, { number, name: a.question, selectableCount: a.selectable ?? 1, values: a.options });
+        const id = out?.key?.id ? String(out.key.id) : null;
+        if (id) await admin.from('asst_polls').insert({ message_id: id, chat_id: chatId, question: String(a.question), options: a.options });
+        else log('WARN', 'sendPoll sem key.id', { out: JSON.stringify(out).slice(0, 300) });
+      } else if (a.type === 'location') {
+        await evo(`/message/sendLocation/${evoInstance}`, { number, name: a.name, address: a.address ?? '', latitude: a.lat, longitude: a.lng });
+      } else if (a.type === 'contact') {
+        await evo(`/message/sendContact/${evoInstance}`, { number, contact: [{ fullName: a.name, wuid: a.phone, phoneNumber: `+${a.phone}`, ...(a.org ? { organization: a.org } : {}) }] });
+      }
+    } catch (e) {
+      log('WARN', 'ação falhou', { type: a?.type, error: errMsg(e) });
+      await sendText(number, `Não consegui enviar ${a?.type === 'poll' ? 'a enquete' : a?.type === 'location' ? 'a localização' : 'o contato'} (${errMsg(e).slice(0, 120)}).`).catch(() => {});
+    }
+  }
+}
 
 // Debounce: no WhatsApp é comum mandar 2–3 mensagens seguidas. Cada mensagem entra
 // em asst_inbox e espera DEBOUNCE_MS; se chegou outra depois dela, sai (a mais nova
 // responde por todas). A última pega todas as pendentes e manda juntas ao brain:
-// 1 chamada ao Claude e 1 resposta coerente em vez de 3.
+// 1 chamada ao Claude e 1 resposta coerente em vez de 3. Devolve também as chaves
+// das mensagens do lote (para a reação final em todas).
 const DEBOUNCE_MS = 3000;
-async function debounce(admin: SupabaseClient, chatId: string, text: string): Promise<string | null> {
-  const { data: row, error } = await admin.from('asst_inbox').insert({ chat_id: chatId, text }).select('id').single();
-  if (error || !row) return text; // sem fila: responde só esta
+async function debounce(admin: SupabaseClient, chatId: string, text: string, key: MsgKey | null): Promise<{ text: string; keys: MsgKey[] } | null> {
+  const { data: row, error } = await admin.from('asst_inbox').insert({ chat_id: chatId, text, message_key: key }).select('id').single();
+  if (error || !row) return { text, keys: key ? [key] : [] }; // sem fila: responde só esta
   await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
   const { data: newer } = await admin.from('asst_inbox').select('id')
     .eq('chat_id', chatId).is('processed_at', null).gt('id', row.id).limit(1);
   if (newer?.length) return null;
   const { data: batch } = await admin.from('asst_inbox').update({ processed_at: new Date().toISOString() })
-    .eq('chat_id', chatId).is('processed_at', null).select('id, text');
+    .eq('chat_id', chatId).is('processed_at', null).select('id, text, message_key');
   if (!batch?.length) return null;
-  return batch.sort((a, b) => Number(a.id) - Number(b.id)).map((b) => String(b.text)).join('\n');
+  const sorted = batch.sort((a, b) => Number(a.id) - Number(b.id));
+  return { text: sorted.map((b) => String(b.text)).join('\n'), keys: sorted.map((b) => b.message_key as MsgKey | null).filter((k): k is MsgKey => !!k?.id) };
+}
+
+// Voto em enquete: a Evolution manda MESSAGES_UPDATE com pollUpdates (opções + votantes)
+// depois de decifrar. Achamos a enquete em asst_polls pela chave da mensagem e
+// transformamos em texto para o brain ("[Enquete "X"] Resposta: Y").
+// deno-lint-ignore no-explicit-any
+async function pollVoteText(admin: SupabaseClient, data: any): Promise<{ text: string; chatId: string } | null> {
+  const pollId = String(data?.key?.id ?? data?.keyId ?? data?.pollCreationMessageKey?.id ?? '');
+  // deno-lint-ignore no-explicit-any
+  const updates: any[] = Array.isArray(data?.pollUpdates) ? data.pollUpdates : Array.isArray(data?.message?.pollUpdates) ? data.message.pollUpdates : [];
+  if (!pollId || !updates.length) return null;
+  const { data: poll } = await admin.from('asst_polls').select('message_id, chat_id, question, options').eq('message_id', pollId).maybeSingle();
+  if (!poll) return null;
+  const chosen = updates.filter((u) => Array.isArray(u?.voters) ? u.voters.length > 0 : !!u?.name).map((u) => String(u.name)).filter(Boolean);
+  if (!chosen.length) return null; // desmarcou tudo
+  await admin.from('asst_polls').update({ answered_at: new Date().toISOString(), answer: chosen }).eq('message_id', pollId);
+  return { text: `[Enquete "${poll.question}"] Resposta: ${chosen.join(', ')}`, chatId: String(poll.chat_id) };
 }
 
 // deno-lint-ignore no-explicit-any
@@ -183,11 +241,95 @@ async function transcribe(b64: string, mime: string): Promise<string> {
   return String(out?.text ?? '').trim();
 }
 
+// Mensagem do dono (texto/áudio/foto/PDF, ou voto em enquete já convertido em
+// texto): debounce → brain → resposta + ações nativas + reação final.
+type Incoming = { chatId: string; kind: Parsed['kind'] | 'poll'; text: string; attachment: { base64: string; media_type: string | null } | null; key: MsgKey | null; forwarded: boolean };
+async function processOwner(admin: SupabaseClient, ui: Record<string, unknown>, m: Incoming) {
+  const number = m.chatId.replace(/@.*$/, '');
+  let text = m.text;
+  let keys: MsgKey[] = m.key ? [m.key] : [];
+  let placeholder: MsgKey | null = null;
+  try {
+    // Foto/PDF vai direto (o arquivo não entra na fila); texto e áudio esperam
+    // alguns segundos para juntar com as próximas mensagens.
+    if (!m.attachment) {
+      const merged = await debounce(admin, m.chatId, text, m.key);
+      if (merged === null) return; // uma mensagem mais nova vai responder por esta
+      text = merged.text;
+      keys = merged.keys.length ? merged.keys : keys;
+    }
+    presence(number, 'composing', 25_000);
+    // Modo opcional (asst_settings.ui.edit_placeholder): manda "⏳" e depois EDITA
+    // essa mensagem com a resposta, em vez de mandar uma segunda. Desligado por
+    // padrão: a reação 👀 + "digitando…" já dão o feedback e o WhatsApp marca
+    // a mensagem como "editada".
+    if (ui.edit_placeholder === true) {
+      const out = await sendText(number, '⏳').catch(() => null);
+      if (out?.key?.id) placeholder = { remoteJid: String(out.key.remoteJid ?? m.chatId), fromMe: true, id: String(out.key.id) };
+    }
+
+    const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({ text, chat_id: m.chatId, channel: 'whatsapp', attachment: m.attachment }),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok || !out?.reply) throw new Error(`brain ${r.status}: ${JSON.stringify(out).slice(0, 300)}`);
+    const reply = String(out.reply);
+    const toolCalls: Array<{ name: string; ok: boolean }> = Array.isArray(out.tool_calls) ? out.tool_calls : [];
+    const silent = reply === 'NO_REPLY';
+
+    if (silent) {
+      if (placeholder) await editText(number, placeholder, '👍').catch(() => {});
+    } else if (placeholder) {
+      await editText(number, placeholder, reply).catch(async (e) => {
+        log('WARN', 'updateMessage falhou; mandando nova', { error: errMsg(e) });
+        await sendText(number, reply);
+      });
+    } else {
+      await sendText(number, reply);
+    }
+    await runActions(admin, number, m.chatId, out.actions);
+
+    const emoji = silent ? '👍' : toolCalls.some((t) => t.ok === false) ? '⚠️' : '✅';
+    await Promise.all(keys.map((k) => react(k, emoji)));
+    log('INFO', silent ? 'sem resposta (NO_REPLY)' : 'respondido', { chatId: m.chatId, kind: m.kind, forwarded: m.forwarded, tools: toolCalls.map((t) => t.name), actions: (out.actions ?? []).map((a: { type: string }) => a.type) });
+  } catch (e) {
+    log('ERROR', 'falha ao responder', { chatId: m.chatId, kind: m.kind, error: errMsg(e) });
+    const msg = 'Deu erro aqui do meu lado. Tenta de novo em instantes.';
+    if (placeholder) await editText(number, placeholder, msg).catch(() => sendText(number, msg).catch(() => {}));
+    else await sendText(number, msg).catch(() => {});
+    await Promise.all(keys.map((k) => react(k, '❌')));
+  }
+}
+
 // deno-lint-ignore no-explicit-any
 async function handle(payload: any) {
   const event = String(payload?.event ?? '').toLowerCase().replace('_', '.');
-  if (event !== 'messages.upsert') return;
+  if (event !== 'messages.upsert' && event !== 'messages.update') return;
   const data = payload?.data ?? {};
+  // messages.update chega a cada "entregue/lido" das nossas mensagens: só interessa voto em enquete.
+  if (event === 'messages.update' && !(Array.isArray(data) ? data : [data]).some((it) => it?.pollUpdates || it?.message?.pollUpdates)) return;
+  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const { data: st } = await admin.from('asst_settings').select('key, value').in('key', ['allowed_chat_ids', 'ui']);
+  const cfg = Object.fromEntries((st ?? []).map((s) => [s.key, s.value]));
+  const allowed: string[] = Array.isArray(cfg.allowed_chat_ids) ? cfg.allowed_chat_ids.map(String) : [];
+  const ui: Record<string, unknown> = cfg.ui && typeof cfg.ui === 'object' ? cfg.ui : {};
+
+  // Voto em enquete (chega como atualização, não como mensagem nova).
+  if (event === 'messages.update') {
+    const items = Array.isArray(data) ? data : [data];
+    for (const it of items) {
+      if (!it?.pollUpdates && !it?.message?.pollUpdates) continue;
+      const vote = await pollVoteText(admin, it);
+      if (!vote) { log('INFO', 'pollUpdates sem enquete conhecida', { keys: Object.keys(it ?? {}), id: it?.key?.id ?? it?.keyId }); continue; }
+      const jidOk = [vote.chatId, vote.chatId.replace(/@.*$/, '')].some((c) => allowed.includes(c));
+      if (!jidOk) continue;
+      await processOwner(admin, ui, { chatId: vote.chatId, kind: 'poll', text: vote.text, attachment: null, key: null, forwarded: false });
+    }
+    return;
+  }
+
   const key = data.key ?? {};
   if (key.fromMe) return;
   // Contas novas do WhatsApp podem mandar o remetente como @lid; o número real
@@ -195,10 +337,6 @@ async function handle(payload: any) {
   const jid = String(key.remoteJid ?? '');
   const altJid = String(key.remoteJidAlt ?? key.senderPn ?? '');
   if (!jid || jid === 'status@broadcast') return; // status: fora
-
-  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'allowed_chat_ids').maybeSingle();
-  const allowed: string[] = Array.isArray(st?.value) ? st.value.map(String) : [];
   if (jid.endsWith('@g.us')) { await handleGroup(admin, data, allowed); return; } // grupo: só lê
   const candidates = [jid, altJid, jid.replace(/@.*$/, ''), altJid.replace(/@.*$/, '')].filter(Boolean);
   if (!candidates.some((c) => allowed.includes(c))) {
@@ -206,23 +344,26 @@ async function handle(payload: any) {
     return;
   }
   // Responde sempre ao JID que chegou (a Evolution resolve @lid e número).
-  const replyTo = jid.endsWith('@lid') && altJid ? altJid : jid;
-  const number = replyTo.replace(/@.*$/, '');
   const chatId = altJid && jid.endsWith('@lid') ? altJid : jid;
+  const number = chatId.replace(/@.*$/, '');
+  const msgKey: MsgKey | null = key.id ? { remoteJid: jid, fromMe: false, id: String(key.id) } : null;
 
   const p = parseMessage(data.message);
+  if (p.inner?.pollUpdateMessage) return; // voto cifrado: o decifrado vem em messages.update
   let text = p.text ? p.text.trim() : '';
   // deno-lint-ignore no-explicit-any
   let attachment: any = null;
 
-  try {
-    await evo(`/chat/sendPresence/${evoInstance}`, { number, presence: p.kind === 'audio' ? 'recording' : 'composing', delay: 1200 }).catch(() => {});
+  // Feedback imediato: 👀 na mensagem + "digitando…"/"gravando…" (sem gastar tokens).
+  if (msgKey) react(msgKey, '👀');
+  presence(number, p.kind === 'audio' ? 'recording' : 'composing', 8_000);
 
+  try {
     if (p.kind === 'audio') {
       const b64 = await mediaBase64(data);
       if (!b64) throw new Error('não consegui baixar o áudio');
       const transcript = await transcribe(b64, p.mime ?? 'audio/ogg');
-      if (!transcript) { await sendText(number, 'Não consegui entender o áudio. Pode repetir ou mandar em texto?'); return; }
+      if (!transcript) { await sendText(number, 'Não consegui entender o áudio. Pode repetir ou mandar em texto?'); if (msgKey) await react(msgKey, '❓'); return; }
       text = `[Áudio] ${transcript}`;
     } else if (p.kind === 'image' || (p.kind === 'document' && (p.mime === 'application/pdf' || IMAGE_TYPES.includes(p.mime ?? '')))) {
       const b64 = await mediaBase64(data);
@@ -233,33 +374,18 @@ async function handle(payload: any) {
         await sendText(number, p.kind === 'video'
           ? 'Vídeo eu ainda não consigo ver. Me conta em texto ou áudio o que precisa?'
           : 'Esse tipo de arquivo eu não leio. Manda como foto ou PDF, ou me diz em texto o que fazer.');
+        if (msgKey) await react(msgKey, '❓');
         return;
       }
     }
     if (p.forwarded) text = `[Encaminhada] ${text}`.trim();
-
-    // Foto/PDF vai direto (o arquivo não entra na fila); texto e áudio esperam
-    // alguns segundos para juntar com as próximas mensagens.
-    if (!attachment) {
-      const merged = await debounce(admin, chatId, text);
-      if (merged === null) return; // uma mensagem mais nova vai responder por esta
-      text = merged;
-      await evo(`/chat/sendPresence/${evoInstance}`, { number, presence: 'composing', delay: 1200 }).catch(() => {});
-    }
-
-    const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-      body: JSON.stringify({ text, chat_id: chatId, channel: 'whatsapp', attachment }),
-    });
-    const out = await r.json().catch(() => ({}));
-    if (!r.ok || !out?.reply) throw new Error(`brain ${r.status}: ${JSON.stringify(out).slice(0, 300)}`);
-    await sendText(number, String(out.reply));
-    log('INFO', 'respondido', { chatId, kind: p.kind, forwarded: p.forwarded, tools: (out.tool_calls ?? []).map((t: { name: string }) => t.name) });
   } catch (e) {
-    log('ERROR', 'falha ao responder', { chatId, kind: p.kind, error: errMsg(e) });
+    log('ERROR', 'falha ao preparar mensagem', { chatId, kind: p.kind, error: errMsg(e) });
     await sendText(number, 'Deu erro aqui do meu lado. Tenta de novo em instantes.').catch(() => {});
+    if (msgKey) await react(msgKey, '❌');
+    return;
   }
+  await processOwner(admin, ui, { chatId, kind: p.kind, text, attachment, key: msgKey, forwarded: p.forwarded });
 }
 
 Deno.serve(async (req) => {

@@ -267,6 +267,15 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
 
+### 2026-09-12 — Notas de entrada lançadas sozinhas (fornecedor já conhecido)
+
+- **Decisão do dono:** nota de fornecedor que JÁ teve nota lançada na loja entra sozinha, do mesmo jeito da última vez. NF-e vira compra, com as parcelas do boleto em Contas a Pagar, ou compra paga se foi paga na entrega (`pagoNaHora` = sem duplicata + forma 01/03/04/16/17/18). NFS-e vira despesa com a mesma `category`/`dre_category_id`/`cost_center_id` da última. **Não** mexe no estoque: continua só no recebimento.
+- **Onde:** `fiscal-inbound` › `autoLaunchTenant()`, chamado depois do `syncTenant` no `sync_all` (cron 06h/12h, 20 s por loja) e no `sync` (botão "Buscar notas", 45 s). Ação `auto_launch` (admin/gerente ou chave interna) coloca em dia o que está parado; o que passar do tempo fica para a próxima busca.
+- **Fica em "A conferir":** fornecedor novo, nota cancelada, remessa/bonificação (mesma regra `pareceNaoVenda`/CFOP da `NotasEntradaTab`), NFS-e de iFood/Rappi/99Food/Keeta (taxa já descontada do repasse), tipo diferente do anterior, valor > 3× o maior já lançado do fornecedor e XML incompleto. Se o lançamento falhar, a nota guarda `error_message` "Lançamento automático: ...".
+- **Refatoração:** o bloco de importação saiu do handler para `importDocument(ctx, doc, action, body)`, usado pela tela, pela conciliação e pelo automático. Sem usuário (`userToken=null`), a `purchase-write` é chamada com `x-internal-key` = `FISCAL_INTERNAL_KEY`. A `purchase-write` passou a aceitar chave interna **só para `create_purchase`** (`created_by` fica null) e segue com `verify_jwt=true`: a chamada interna manda a anon key no Authorization.
+- **Desfazer:** ação `undo_auto_import` (e o botão "Desfazer" na tela) exclui a compra via `delete_purchase` ou as contas da despesa e volta a nota para `new` com `auto_launch_blocked=true`, para não ser relançada. É bloqueado se já houver parcela paga, recebimento no estoque ou se o lançamento veio da conciliação (`auto_import_ref`). Liga/desliga por loja em `fiscal_settings.inbound_auto_launch` (padrão ligado, ainda sem tela). Migration `20260912100000_fiscal_inbound_auto_launch.sql`.
+- **Selo "automática":** `auto_import_ref` preenchido = veio da conciliação; nulo = lançamento automático por fornecedor conhecido.
+
 ### 2026-09-11 — Leitura de cupom/notinha por foto na Nova Compra (IA)
 
 - **Onde:** botão "Ler notinha (foto)" em `src/pages/financeiro/components/compras/NovaCompraModal.tsx` (só compra nova) → Edge `purchase-receipt-scan` (ações `scan` e `learn`, JWT + `user_tenants`). Primeira integração com LLM do projeto: `npm:@anthropic-ai/sdk`, modelo `claude-haiku-4-5`, trocado a pedido do usuário em 2026-09-11 para testar custo. Antes era Sonnet 5, cuja 1ª leitura real custou ~R$ 0,14; se o Haiku errar leitura ou vínculo (letra de mão), voltar para `claude-sonnet-5`. O Haiku às vezes devolve a data como DD/MM/AAAA mesmo com o prompt pedindo AAAA-MM-DD, e `toIsoDate()` na Edge converte, structured outputs (`output_config.format` json_schema). Secret: `ANTHROPIC_API_KEY`; sem ele a Edge responde 503 com mensagem clara.
@@ -1571,3 +1580,18 @@ sem `output_config.effort` NÃO reaproveitou o cache gravado pelas chamadas reai
 com `effort: 'medium'` — gravou outra entrada. Ao mandar o mesmo effort, passou a
 ler. Regra: toda chamada que deve compartilhar cache precisa do MESMO modelo,
 ferramentas, bloco de instruções E effort/thinking. Detalhes em `assistente/README.md`.
+
+### 2026-09-12 — Assistente: recursos nativos do WhatsApp (reação, enquete, localização, contato)
+
+Item 1.1 de `assistente/IDEIAS.md` (menos áudio). Edges `assistente-brain` e
+`assistente-webhook` publicadas via CLI; migração `20260912040000_assistente_ux_whatsapp.sql`
+via MCP. **Pegadinhas reutilizáveis:** (1) `chat/sendPresence` da Evolution **segura a
+requisição HTTP pelo `delay` inteiro** — chamar com `await` atrasa a resposta esse tempo;
+disparar sem esperar. (2) `messages.update` chega a cada "entregue/lido" das mensagens
+enviadas; ao assinar esse evento (necessário para voto em enquete, `pollUpdates`),
+descartar cedo os que não interessam, antes de abrir cliente/consultar banco.
+(3) Enquete nativa (`sendPoll`) é o substituto confiável de botões no WhatsApp pessoal
+(`sendButtons`/`sendList` são instáveis fora da Cloud API). (4) Ferramentas do brain que
+só fazem sentido num canal devem checar `ctx.channel` e falhar com mensagem clara, para o
+modelo cair no texto. Detalhes em `assistente/README.md`.
+

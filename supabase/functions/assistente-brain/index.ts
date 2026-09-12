@@ -73,6 +73,8 @@ type Ctx = {
   defaultTenant: string;
   tenants: Array<{ id: string; name: string }>;
   chatId: string;
+  channel: string;
+  outbound: OutboundAction[]; // enquete/localização/contato pedidos nesta resposta
 };
 
 function resolveTenant(ctx: Ctx, loja?: string): { id: string; name: string } {
@@ -232,12 +234,94 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['sql'],
     },
   },
+  // ── Recursos nativos do WhatsApp (executados pelo assistente-webhook após a resposta) ──
+  {
+    name: 'enviar_enquete',
+    description: 'Manda uma ENQUETE nativa do WhatsApp para o Natalino escolher entre opções (até 12) tocando, em vez de digitar. Use quando a decisão dele é entre alternativas claras: "qual conta pagar primeiro", "qual loja", "confirmar ou cancelar", "qual horário". A resposta dele chega depois como mensagem "[Enquete ...] Resposta: ...". Só funciona no WhatsApp.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pergunta: { type: 'string', description: 'Título curto da enquete (máx. 100 caracteres).' },
+        opcoes: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 12, description: 'Opções curtas (máx. 100 caracteres cada), sem repetição.' },
+        multipla: { type: 'boolean', description: 'true se ele puder marcar mais de uma. Padrão: false (uma só).' },
+      },
+      required: ['pergunta', 'opcoes'],
+    },
+  },
+  {
+    name: 'enviar_localizacao',
+    description: 'Manda uma LOCALIZAÇÃO nativa do WhatsApp (pino no mapa). Informe a loja (usa a coordenada cadastrada no delivery) OU latitude/longitude de outro lugar. Só funciona no WhatsApp.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        loja: { type: 'string', description: 'Nome (parcial) da loja cuja localização enviar.' },
+        latitude: { type: 'number' },
+        longitude: { type: 'number' },
+        nome: { type: 'string', description: 'Título do pino (padrão: nome da loja).' },
+        endereco: { type: 'string', description: 'Endereço em texto (opcional).' },
+      },
+    },
+  },
+  {
+    name: 'enviar_contato',
+    description: 'Manda um CARTÃO DE CONTATO nativo do WhatsApp (nome + telefone), para o Natalino salvar ou ligar com um toque. Use quando ele pedir o telefone/contato de fornecedor, funcionário, cliente etc. (busque o número no banco antes). Só funciona no WhatsApp.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        nome: { type: 'string' },
+        telefone: { type: 'string', description: 'Número com DDD; só dígitos ou formatado. Se não tiver o 55, é adicionado.' },
+        empresa: { type: 'string', description: 'Empresa/organização (opcional).' },
+      },
+      required: ['nome', 'telefone'],
+    },
+  },
 ];
+
+// Ações de saída para o WhatsApp: as ferramentas acima só ENFILEIRAM; quem
+// executa (Evolution API) é o assistente-webhook, depois de mandar o texto.
+export type OutboundAction =
+  | { type: 'poll'; question: string; options: string[]; selectable: number }
+  | { type: 'location'; lat: number; lng: number; name: string; address: string | null }
+  | { type: 'contact'; name: string; phone: string; org: string | null };
 
 // deno-lint-ignore no-explicit-any
 async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
   const { admin, ownerId } = ctx;
   switch (name) {
+    case 'enviar_enquete': {
+      if (ctx.channel !== 'whatsapp') throw new Error('Enquete só funciona no WhatsApp; pergunte em texto.');
+      const seen = new Set<string>();
+      const options = (Array.isArray(input.opcoes) ? input.opcoes : []).map((o: unknown) => String(o).trim().slice(0, 100))
+        .filter((o: string) => o && !seen.has(o.toLowerCase()) && seen.add(o.toLowerCase()));
+      if (options.length < 2) throw new Error('Preciso de pelo menos 2 opções distintas.');
+      const question = String(input.pergunta ?? '').trim().slice(0, 100) || 'Escolha:';
+      ctx.outbound.push({ type: 'poll', question, options: options.slice(0, 12), selectable: input.multipla ? 0 : 1 });
+      return `Enquete "${question}" será enviada com ${options.length} opções. Não repita as opções no texto; diga só uma frase curta de contexto.`;
+    }
+    case 'enviar_localizacao': {
+      if (ctx.channel !== 'whatsapp') throw new Error('Localização só funciona no WhatsApp; mande o endereço em texto.');
+      let lat = Number(input.latitude), lng = Number(input.longitude);
+      let nome = input.nome ? String(input.nome) : '';
+      if (!(Number.isFinite(lat) && Number.isFinite(lng))) {
+        const t = resolveTenant(ctx, input.loja);
+        const { data: ss } = await admin.from('system_settings').select('delivery_config').eq('tenant_id', t.id).maybeSingle();
+        // deno-lint-ignore no-explicit-any
+        const loc = (ss?.delivery_config as any)?.store_location;
+        if (!(loc && typeof loc.lat === 'number' && typeof loc.lng === 'number')) throw new Error(`A loja ${t.name} não tem localização cadastrada (Config › Delivery › localização da loja).`);
+        lat = loc.lat; lng = loc.lng; nome ||= t.name;
+      }
+      ctx.outbound.push({ type: 'location', lat, lng, name: nome || 'Local', address: input.endereco ? String(input.endereco) : null });
+      return `Localização "${nome || 'Local'}" (${lat}, ${lng}) será enviada como pino no mapa.`;
+    }
+    case 'enviar_contato': {
+      if (ctx.channel !== 'whatsapp') throw new Error('Cartão de contato só funciona no WhatsApp; mande o telefone em texto.');
+      let digits = String(input.telefone ?? '').replace(/\D/g, '');
+      if (digits.length >= 10 && digits.length <= 11) digits = `55${digits}`;
+      if (digits.length < 12 || digits.length > 13) throw new Error(`Telefone inválido: "${input.telefone}". Preciso de DDD + número.`);
+      const nome = String(input.nome ?? '').trim().slice(0, 80) || 'Contato';
+      ctx.outbound.push({ type: 'contact', name: nome, phone: digits, org: input.empresa ? String(input.empresa).slice(0, 80) : null });
+      return `Contato "${nome}" (+${digits}) será enviado como cartão.`;
+    }
     case 'listar_tarefas': {
       let q = admin.from('tasks')
         .select('id, title, due_date, due_has_time, priority, completed_at, list_id, task_lists(name), task_statuses(name, category)')
@@ -509,7 +593,9 @@ Como agir:
 - Você tem acesso de LEITURA a todo o banco do ERPOS (cardápio, preços, clientes, pedidos, pagamentos, notas fiscais de entrada e saída, extrato e conciliação bancária, compras, fornecedores, estoque, fichas técnicas, funcionários, folha, reservas, delivery...). Nunca diga que não tem acesso a uma informação do sistema sem antes procurar: vá direto no MAPA DO BANCO (abaixo) e em consultar_banco; use ver_tabelas/ver_colunas só quando o que precisa não estiver no mapa. Junte o que der numa consulta só (CTE/UNION) em vez de várias. Prefira as ferramentas prontas quando elas cobrem a pergunta (vendas/faturamento: use a ferramenta vendas, que é a mesma conta das telas).
 - Regras do SQL: quase toda tabela tem tenant_id — filtre sempre pelas lojas (ids listados abaixo). Em pedidos (orders) ignore is_training = true e, para faturamento, status 'cancelled'. Datas são timestamptz em UTC: para "hoje"/"este mês" use (coluna AT TIME ZONE 'America/Sao_Paulo'). Agregue (sum/count/group by) em vez de trazer milhares de linhas. Se a consulta der erro, leia a mensagem, corrija e tente de novo. Se procurou e não achou, diga onde procurou.
 - NOMES DIGITADOS PELO NATALINO PODEM ESTAR COM GRAFIA DIFERENTE da do sistema (Voxi × VOXY-SC LTDA, sem acento, abreviado, razão social × nome fantasia). Para achar fornecedor, cliente, item, insumo, funcionário etc. pelo nome, use primeiro buscar_nome (busca aproximada) e depois filtre pelo id/nome exato que ela devolver. NUNCA diga que algo "não existe" ou "não foi lançado" sem ter tentado buscar_nome.
-- Ao confirmar uma ação, diga o que foi feito em uma linha (ex.: "Criei a tarefa X na pasta Y, prazo sexta 9h").`;
+- Ao confirmar uma ação, diga o que foi feito em uma linha (ex.: "Criei a tarefa X na pasta Y, prazo sexta 9h").
+- Recursos nativos do WhatsApp: quando a decisão dele for entre alternativas claras (2 a 12), use enviar_enquete em vez de listar opções numeradas — ele responde tocando. A escolha volta como mensagem "[Enquete "pergunta"] Resposta: opção": trate como a resposta dele à pergunta e siga em frente sem perguntar de novo. Endereço/onde fica → enviar_localizacao; telefone de alguém → enviar_contato (o cartão vai junto com sua resposta; não repita o número no texto).
+- Se a mensagem dele não pede nada e não precisa de resposta (só "ok", "valeu", "beleza", "👍", um agradecimento, um "boa noite" final), responda EXATAMENTE NO_REPLY (nada mais): ele recebe só uma reação 👍 em vez de uma mensagem. Nunca use NO_REPLY quando houver pergunta, pedido, informação nova para guardar ou algo que mereça comentário.`;
 
 // Mapa do banco: fica no bloco fixo (cacheado por 1 h) para o modelo ir direto
 // na tabela certa sem gastar rodadas com ver_tabelas/ver_colunas. Manter curto e
@@ -641,7 +727,7 @@ Deno.serve(async (req) => {
     if (!tenants.length) return json({ error: 'Nenhuma loja configurada para o assistente' }, 500);
     const cfgDefault = String(cfg.default_tenant_id ?? '');
     const defaultTenant = tenants.some((t) => t.id === cfgDefault) ? cfgDefault : tenants[0].id;
-    const ctx: Ctx = { admin, ownerId, defaultTenant, tenants, chatId };
+    const ctx: Ctx = { admin, ownerId, defaultTenant, tenants, chatId, channel, outbound: [] };
 
     const [{ data: mem }, { data: hist }] = await Promise.all([
       admin.from('asst_memories').select('content').eq('is_active', true).order('created_at').limit(200),
@@ -730,9 +816,16 @@ Deno.serve(async (req) => {
     }
 
     reply = reply.trim() || 'Não entendi. Pode repetir?';
-    await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'assistant', content: reply, tool_calls: toolCalls, usage });
-    log('INFO', 'reply', { chat: chatId, ms: Date.now() - started, tools: toolCalls.map((t) => t.name), usage });
-    return json({ success: true, reply, tool_calls: toolCalls, usage });
+    // NO_REPLY (resposta silenciosa): o webhook só reage 👍. Se sobrou texto junto, vale o texto.
+    if (/^NO_REPLY\b/.test(reply)) reply = reply.replace(/^NO_REPLY[.!]?\s*/, '').trim() || 'NO_REPLY';
+    if (reply === 'NO_REPLY' && ctx.outbound.length) reply = 'Aí vai:';
+    // No histórico, a enquete/localização/contato fica descrita para o modelo saber o que já mandou.
+    const historyContent = ctx.outbound.length
+      ? `${reply}\n${ctx.outbound.map((a) => a.type === 'poll' ? `[Enquete enviada: "${a.question}" — ${a.options.join(' | ')}]` : a.type === 'location' ? `[Localização enviada: ${a.name}]` : `[Contato enviado: ${a.name} +${a.phone}]`).join('\n')}`
+      : reply;
+    await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'assistant', content: historyContent, tool_calls: toolCalls, usage });
+    log('INFO', 'reply', { chat: chatId, ms: Date.now() - started, tools: toolCalls.map((t) => t.name), actions: ctx.outbound.map((a) => a.type), usage });
+    return json({ success: true, reply, actions: ctx.outbound, tool_calls: toolCalls, usage });
   } catch (e) {
     log('ERROR', 'unhandled', { error: errMsg(e) });
     return json({ error: errMsg(e) }, 500);

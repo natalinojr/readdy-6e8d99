@@ -222,6 +222,38 @@ do Banco Central (`CotacaoDolarPeriodo`, `cotacaoVenda`). Guardada 1 h em
 cotação e fonte. Em 2026-09-11 o dólar estava ~R$ 5,13 (as estimativas antigas
 deste README usavam R$ 5,50 → ~7% acima do real).
 
+### Recursos nativos do WhatsApp — reação, enquete, localização, contato (2026-09-12)
+
+Item 1.1 de `IDEIAS.md` (sem a resposta por áudio). Tudo via Evolution API, sem tokens:
+- **Reação na mensagem do dono**: 👀 ao receber, depois ✅ (respondi), ⚠️ (respondi
+  mas alguma ferramenta falhou), ❌ (erro), ❓ (mídia que não leio), 👍 (sem resposta).
+  No debounce, a reação final vai em todas as mensagens do lote
+  (`asst_inbox.message_key`).
+- **"digitando…"/"gravando…"** (`sendPresence`): a Evolution segura a requisição pelo
+  `delay` inteiro, então é disparado sem `await` (antes bloqueava 1,2 s por mensagem).
+- **Resposta silenciosa**: se a mensagem não pede nada ("ok", "valeu", "👍"), o brain
+  responde exatamente `NO_REPLY` e o webhook só reage 👍. Fica `NO_REPLY` no histórico.
+- **Ações nativas pedidas pelo brain** (`actions[]` na resposta; o webhook executa
+  depois do texto): `enviar_enquete` (`sendPoll`, 2–12 opções, uma ou várias),
+  `enviar_localizacao` (`sendLocation`; pega `system_settings.delivery_config.store_location`
+  da loja ou lat/lng livres), `enviar_contato` (`sendContact`, vCard com +55).
+  Fora do WhatsApp (`channel` ≠ whatsapp) as ferramentas devolvem erro e o modelo
+  responde em texto. No histórico fica "[Enquete enviada: …]" etc.
+- **Voto na enquete**: enquete enviada é guardada em `asst_polls` (key.id). O webhook
+  da Evolution passou a assinar `MESSAGES_UPDATE` (alterado via `/webhook/set` na VPS);
+  o voto decifrado chega com `pollUpdates` → vira mensagem
+  `[Enquete "pergunta"] Resposta: opção` e segue o fluxo normal (debounce → brain).
+  Eventos `messages.update` sem `pollUpdates` (entregue/lido) são descartados antes
+  de tocar o banco. **Ainda não validado com voto real** — se não chegar, olhar o log
+  `pollUpdates sem enquete conhecida` (mostra as chaves do payload).
+- **Modo "⏳ → editar"** (`asst_settings.ui.edit_placeholder = true`): manda "⏳" e
+  edita a mesma mensagem com a resposta (`chat/updateMessage`). Desligado por padrão
+  (reação + digitando já bastam e o WhatsApp marca "editada").
+- Migração: `supabase/migrations/20260912040000_assistente_ux_whatsapp.sql`.
+  Testes diretos no brain (2026-09-12): "valeu!" → `NO_REPLY`; pedido de enquete →
+  `actions[poll]` com 3 lojas; "localização da principal + contato da Voxy" →
+  `actions[location, contact]` (buscar_nome achou VOXY-SC LTDA e o telefone).
+
 ## Pendente (ordem)
 
 1. **Número do assistente**: chip → parear com QR (`GET /instance/connect/assistente`

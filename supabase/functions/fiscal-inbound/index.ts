@@ -463,6 +463,279 @@ async function saveItemLinks(admin: Admin, tenantId: string, doc: any, links: Ma
   }
 }
 
+// ── Importar uma nota (tela, conciliação e lançamento automático) ───────────
+type ImportResult = { ok: true; data: Record<string, unknown> } | { ok: false; error: string; status: number };
+interface ImportCtx {
+  admin: Admin;
+  supabaseUrl: string;
+  tenantId: string;
+  userId: string | null;
+  /** JWT do usuário; null = lançamento automático (purchase-write pela chave interna) */
+  userToken: string | null;
+}
+
+// deno-lint-ignore no-explicit-any
+async function importDocument(ctx: ImportCtx, doc: any, action: 'import_purchase' | 'import_bill', body: Record<string, any>): Promise<ImportResult> {
+  const { admin, supabaseUrl, tenantId, userId } = ctx;
+  const fail = (error: string, status = 400): ImportResult => ({ ok: false, error, status });
+  if (doc.status === 'imported') return fail('Esta nota já foi lançada');
+  if (Number(doc.sefaz_status) === 2) return fail('A nota foi CANCELADA pelo fornecedor na SEFAZ — não lance');
+  if (action === 'import_purchase' && Number(doc.modelo) === 10) return fail('NFS-e é serviço, não mercadoria: lance como despesa');
+  const parcelas = normalizeParcelas(doc, body.parcelas);
+  const soma = round2(parcelas.reduce((s, p) => s + p.valor, 0));
+  const supplier = await upsertSupplier(admin, tenantId, doc);
+  if (!supplier) return fail('Não foi possível cadastrar o fornecedor', 500);
+  const numeroNf = doc.numero ? String(doc.numero) : null;
+  const notes = [String(body.notes ?? '').trim(), `NF-e de entrada — chave ${doc.chave}`].filter(Boolean).join(' · ');
+  const now = new Date().toISOString();
+
+  if (action === 'import_purchase') {
+    // Pelo purchase-write (fonte única da regra de compra: fornecedor, parcelas com
+    // reference_type='purchase' → CMV). Itens vinculados a um insumo dão entrada no
+    // estoque no recebimento (qtd × units_per_package, na unidade do insumo).
+    const linkMap = new Map<number, { ingredient_id: string | null; units_per_package: number }>();
+    if (Array.isArray(body.links)) {
+      const ids = [...new Set((body.links as any[]).map((l) => l?.ingredient_id).filter(Boolean).map(String))];
+      const { data: validos } = ids.length
+        ? await admin.from('ingredients').select('id').eq('tenant_id', tenantId).is('deleted_at', null).in('id', ids)
+        : { data: [] };
+      const ok = new Set((validos ?? []).map((v: any) => String(v.id)));
+      for (const l of body.links as any[]) {
+        const i = Number(l?.index);
+        if (!Number.isInteger(i) || i < 0) continue;
+        const ing = l?.ingredient_id ? String(l.ingredient_id) : null;
+        if (ing && !ok.has(ing)) return fail('Insumo inválido para esta loja');
+        const upp = Number(l?.units_per_package);
+        linkMap.set(i, { ingredient_id: ing, units_per_package: upp > 0 ? upp : 1 });
+      }
+    }
+    const itens: Record<string, any>[] = ((doc.itens ?? []) as any[]).map((it, i) => {
+      const link = linkMap.get(i);
+      return {
+        description: [it.descricao, it.codigo ? `(${it.codigo})` : null].filter(Boolean).join(' ').slice(0, 250),
+        quantity: Number(it.quantidade ?? 0) || 1,
+        unit_price: Number(it.valor_unitario ?? 0),
+        discount_per_unit: Number(it.quantidade) > 0 ? round2(Number(it.desconto ?? 0) / Number(it.quantidade)) : 0,
+        unit_label: it.unidade ?? null,
+        units_per_package: link?.ingredient_id ? link.units_per_package : 1,
+        ingredient_id: link?.ingredient_id ?? null,
+        cost_center_id: body.cost_center_id ?? null,
+        // Código do produto no fornecedor e EAN: o recebimento sugere e memoriza o insumo por eles
+        supplier_code: it.codigo ? String(it.codigo) : null,
+        ean: it.ean ?? null,
+      };
+    });
+    // O purchase-write recalcula o total como Σ itens líquidos + frete. O vNF da nota também
+    // soma ICMS-ST, IPI, seguro e outras despesas — sem isso a compra (e a conta a pagar de
+    // 1 parcela) sairia menor que o boleto. A diferença entra como uma linha própria.
+    const frete = Number(doc.frete ?? 0) || 0;
+    const itensLiquido = itens.reduce((s, it) => s + Math.round(it.quantity * Math.max(0, it.unit_price - it.discount_per_unit) * 100) / 100, 0);
+    const acrescimos = round2(Number(doc.valor_total ?? 0) - itensLiquido - frete);
+    if (itens.length > 0 && acrescimos >= 0.01) {
+      itens.push({
+        description: 'Acréscimos da nota (ICMS-ST, IPI, seguro, outras despesas)',
+        quantity: 1, unit_price: acrescimos, discount_per_unit: 0, unit_label: null, units_per_package: 1,
+        ingredient_id: null, cost_center_id: body.cost_center_id ?? null,
+      });
+    } else if (itens.length > 0 && acrescimos <= -0.01) {
+      // Desconto no total da nota que não veio rateado nos itens: aplica no maior item
+      const maior = itens.reduce((a, b) => (b.quantity * b.unit_price > a.quantity * a.unit_price ? b : a));
+      maior.discount_per_unit = round2(maior.discount_per_unit + (-acrescimos) / (maior.quantity || 1));
+    }
+
+    // Nota já paga (dinheiro/cartão/PIX na entrega): entra como compra paga — o purchase-write
+    // registra a saída no fluxo de caixa. Sem boleto em aberto, sem conta a pagar.
+    const jaPaga = body.pago === true;
+    const purchasePayload: Record<string, unknown> = {
+      supplier: supplier.name,
+      invoice_number: numeroNf,
+      purchase_date: String(doc.emitted_at ?? now).slice(0, 10),
+      payment_method: jaPaga ? String(body.payment_method ?? 'Dinheiro') : 'Boleto',
+      payment_status: jaPaga ? 'paid' : 'pending',
+      cost_center_id: body.cost_center_id ?? null,
+      bank_account_id: body.bank_account_id ?? null,
+      freight_amount: frete,
+      notes,
+      items: itens,
+    };
+    if (!jaPaga) {
+      if (parcelas.length >= 2) purchasePayload.custom_installments = parcelas.map((p) => ({ due_date: p.vencimento, amount: p.valor }));
+      else purchasePayload.due_date = parcelas[0].vencimento;
+    }
+    // Nota sem itens legíveis: total vem da nota
+    if (itens.length === 0) purchasePayload.total_amount = Number(doc.valor_total ?? soma);
+
+    // Usuário: purchase-write com o JWT dele (valida a loja e grava created_by).
+    // Automático: chave interna (purchase-write só aceita create_purchase por ela).
+    const anon = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', apikey: anon };
+    if (ctx.userToken) headers.Authorization = `Bearer ${ctx.userToken}`;
+    else {
+      headers.Authorization = `Bearer ${anon}`;
+      headers['x-internal-key'] = Deno.env.get('FISCAL_INTERNAL_KEY') ?? '';
+    }
+    const r = await fetch(`${supabaseUrl}/functions/v1/purchase-write`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ action: 'create_purchase', tenant_id: tenantId, payload: purchasePayload }),
+    });
+    const txt = await r.text();
+    let out: any = null; try { out = JSON.parse(txt); } catch { out = null; }
+    const purchase = out?.data ?? out?.result?.data ?? null;
+    if (!r.ok || !purchase?.id) {
+      const msg = typeof out?.error === 'string' ? out.error : txt.slice(0, 300);
+      log('ERROR', 'import_purchase', 'purchase-write falhou', { http: r.status, msg });
+      return fail(`Não foi possível lançar a compra: ${msg}`, 500);
+    }
+    if (linkMap.size > 0) await saveItemLinks(admin, tenantId, doc, linkMap, userId);
+    const { data: bills } = await admin.from('fin_accounts_payable').select('id').eq('tenant_id', tenantId).eq('reference_id', purchase.id);
+    await admin.from('fiscal_inbound_documents').update({
+      status: 'imported', import_type: 'purchase', purchase_id: purchase.id, supplier_id: supplier.id,
+      payable_ids: (bills ?? []).map((b: any) => b.id), imported_at: now, imported_by: userId, error_message: null, updated_at: now,
+    }).eq('id', doc.id);
+    return { ok: true, data: { purchase_id: purchase.id, parcelas: (bills ?? []).length, supplier: supplier.name } };
+  }
+
+  // import_bill: despesa que não é mercadoria (equipamento, uso e consumo...) — entra na DRE pela categoria
+  const categoria = String(body.category ?? 'Outros');
+  const n = parcelas.length;
+  const ids: string[] = [];
+  let parentId: string | null = null;
+  for (let i = 0; i < n; i++) {
+    const p = parcelas[i];
+    const { data: bill, error } = await admin.from('fin_accounts_payable').insert({
+      tenant_id: tenantId, supplier: supplier.name,
+      description: `${supplier.name}${numeroNf ? ` NF ${numeroNf}` : ''}${n > 1 ? ` (${i + 1}/${n})` : ''}`,
+      category: categoria, dre_category_id: body.dre_category_id ?? null, cost_center_id: body.cost_center_id ?? null,
+      amount: p.valor, due_date: p.vencimento, status: 'pending', is_recurring: false,
+      installments: n, installment_number: i + 1, parent_id: parentId, notes,
+      reference_id: doc.id, reference_type: 'nfe_entrada',
+    }).select('id').single();
+    if (error) {
+      // desfaz o que já entrou para não deixar metade das parcelas
+      if (ids.length) await admin.from('fin_accounts_payable').delete().in('id', ids);
+      return fail(`Falha ao lançar a parcela ${i + 1}: ${error.message}`, 500);
+    }
+    ids.push(bill.id);
+    if (i === 0) parentId = bill.id;
+  }
+  await admin.from('fiscal_inbound_documents').update({
+    status: 'imported', import_type: 'bill', supplier_id: supplier.id, payable_ids: ids,
+    imported_at: now, imported_by: userId, error_message: null, updated_at: now,
+  }).eq('id', doc.id);
+  return { ok: true, data: { parcelas: ids.length, supplier: supplier.name } };
+}
+
+// ── Lançamento automático ────────────────────────────────────────────────────
+// Nota de fornecedor que JÁ teve nota lançada nesta loja é lançada sozinha, do mesmo
+// jeito da última vez: NF-e → compra (a pagar pelo boleto, ou paga se foi paga na
+// entrega); NFS-e → despesa na mesma categoria/DRE/centro de custo. Fica para o usuário
+// conferir: fornecedor novo, remessa/bonificação, taxa de plataforma (já descontada do
+// repasse), nota cancelada, tipo diferente do anterior e valor > 3× o maior já lançado.
+// Mesmas regras de CFOP/pagamento da tela (NotasEntradaTab).
+const CFOP_NAO_VENDA = /^[56](9(0[1-9]|1[0-9]|2[0-4]|49)|55[0-9])$/;
+const TPAG: Record<string, string> = { '01': 'Dinheiro', '02': 'Cheque', '03': 'Cartão de crédito', '04': 'Cartão de débito', '05': 'Crédito loja', '15': 'Boleto', '16': 'Depósito', '17': 'PIX', '18': 'Transferência', '90': 'Sem pagamento', '99': 'Outros' };
+const PAGO_NA_HORA = new Set(['01', '03', '04', '17', '16', '18']);
+const DESCONTA_NO_REPASSE = /IFOOD|RAPPI|99\s?FOOD|AIQFOME|UBER\s?EATS|KEETA/i;
+const AUTO_NOTE = 'Lançada automaticamente: fornecedor já teve nota lançada antes';
+const AUTO_BUDGET_SYNC_MS = 45_000;  // botão "Buscar notas"
+const AUTO_BUDGET_CRON_MS = 20_000;  // por loja no cron (várias lojas na mesma execução)
+
+// deno-lint-ignore no-explicit-any
+function pareceNaoVenda(d: any): boolean {
+  const cfops = String(d.cfops ?? '').split(',').map((c) => c.trim()).filter(Boolean);
+  const pag = (d.pagamento ?? []) as any[];
+  const semPagamento = pag.length > 0 && pag.every((p) => String(p.forma) === '90' || Number(p.valor) === 0);
+  return semPagamento || (cfops.length > 0 && cfops.every((c) => CFOP_NAO_VENDA.test(c)));
+}
+// deno-lint-ignore no-explicit-any
+function pagoNaHora(d: any): boolean {
+  return (d.parcelas ?? []).length === 0 && ((d.pagamento ?? []) as any[]).some((p) => PAGO_NA_HORA.has(String(p.forma)));
+}
+// deno-lint-ignore no-explicit-any
+function formaPrincipal(d: any): string | undefined {
+  const f = ((d.pagamento ?? []) as any[]).slice().sort((a, b) => Number(b.valor) - Number(a.valor))[0]?.forma;
+  return f ? TPAG[String(f)] ?? 'Outros' : undefined;
+}
+
+async function autoLaunchTenant(admin: Admin, supabaseUrl: string, tenantId: string, deadline: number) {
+  const stats = { lancadas: 0, compras: 0, despesas: 0, erros: 0, puladas: {} as Record<string, number> };
+  const pular = (motivo: string) => { stats.puladas[motivo] = (stats.puladas[motivo] ?? 0) + 1; };
+  const { data: cfg } = await admin.from('fiscal_settings').select('inbound_auto_launch').eq('tenant_id', tenantId).maybeSingle();
+  if (cfg && cfg.inbound_auto_launch === false) return { ...stats, desligado: true };
+
+  const { data: pend } = await admin.from('fiscal_inbound_documents').select('*')
+    .eq('tenant_id', tenantId).eq('status', 'new').eq('xml_status', 'full').eq('auto_launch_blocked', false)
+    .not('emitente_cnpj', 'is', null).order('emitted_at', { ascending: true }).limit(300);
+  const docs = (pend ?? []) as any[];
+  if (docs.length === 0) return stats;
+
+  // Última decisão por fornecedor (CNPJ) e o maior valor já lançado dele
+  const cnpjs = [...new Set(docs.map((d) => String(d.emitente_cnpj)))];
+  const { data: hist } = await admin.from('fiscal_inbound_documents')
+    .select('emitente_cnpj, import_type, purchase_id, payable_ids, valor_total, imported_at')
+    .eq('tenant_id', tenantId).eq('status', 'imported').in('emitente_cnpj', cnpjs)
+    .order('imported_at', { ascending: false, nullsFirst: false });
+  const ultima = new Map<string, any>();
+  const teto = new Map<string, number>();
+  for (const h of (hist ?? []) as any[]) {
+    const k = String(h.emitente_cnpj);
+    if (!ultima.has(k)) ultima.set(k, h);
+    teto.set(k, Math.max(teto.get(k) ?? 0, Number(h.valor_total ?? 0)));
+  }
+  // Classificação da última despesa e centro de custo da última compra de cada fornecedor
+  const billIds = [...ultima.values()].filter((h) => h.import_type === 'bill' && h.payable_ids?.length).map((h) => h.payable_ids[0]);
+  const purIds = [...ultima.values()].filter((h) => h.import_type === 'purchase' && h.purchase_id).map((h) => h.purchase_id);
+  const [billsRes, pursRes] = await Promise.all([
+    billIds.length ? admin.from('fin_accounts_payable').select('id, category, dre_category_id, cost_center_id').in('id', billIds) : Promise.resolve({ data: [] as any[] }),
+    purIds.length ? admin.from('fin_purchases').select('id, cost_center_id').in('id', purIds) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const billById = new Map(((billsRes.data ?? []) as any[]).map((b) => [String(b.id), b]));
+  const purById = new Map(((pursRes.data ?? []) as any[]).map((p) => [String(p.id), p]));
+
+  const ctx: ImportCtx = { admin, supabaseUrl, tenantId, userId: null, userToken: null };
+  for (const doc of docs) {
+    if (Date.now() > deadline) { pular('tempo esgotado (continua na próxima busca)'); continue; }
+    const k = String(doc.emitente_cnpj);
+    const h = ultima.get(k);
+    const servico = Number(doc.modelo) === 10;
+    if (Number(doc.sefaz_status) === 2) { pular('cancelada pelo fornecedor'); continue; }
+    if (!h) { pular('fornecedor novo'); continue; }
+    if (servico && DESCONTA_NO_REPASSE.test(String(doc.emitente_nome ?? ''))) { pular('taxa já descontada no repasse'); continue; }
+    if (!servico && pareceNaoVenda(doc)) { pular('remessa/bonificação'); continue; }
+    if ((h.import_type === 'purchase') === servico) { pular('tipo diferente do lançamento anterior'); continue; }
+    const max = teto.get(k) ?? 0;
+    if (max > 0 && Number(doc.valor_total ?? 0) > max * 3) { pular('valor fora do normal do fornecedor'); continue; }
+
+    let r: ImportResult;
+    if (h.import_type === 'purchase') {
+      const pago = pagoNaHora(doc);
+      r = await importDocument(ctx, doc, 'import_purchase', {
+        pago, payment_method: pago ? formaPrincipal(doc) : undefined,
+        cost_center_id: purById.get(String(h.purchase_id))?.cost_center_id ?? null,
+        notes: AUTO_NOTE,
+      });
+    } else {
+      const b = billById.get(String(h.payable_ids?.[0]));
+      r = await importDocument(ctx, doc, 'import_bill', {
+        category: b?.category ?? 'Serviços de terceiros', dre_category_id: b?.dre_category_id ?? null,
+        cost_center_id: b?.cost_center_id ?? null, notes: AUTO_NOTE,
+      });
+    }
+    const now = new Date().toISOString();
+    if (r.ok) {
+      await admin.from('fiscal_inbound_documents').update({ auto_imported: true, auto_imported_at: now, auto_import_ref: null, updated_at: now }).eq('id', doc.id);
+      stats.lancadas++;
+      if (h.import_type === 'purchase') stats.compras++; else stats.despesas++;
+    } else {
+      stats.erros++;
+      await admin.from('fiscal_inbound_documents').update({ error_message: `Lançamento automático: ${r.error}`.slice(0, 500), updated_at: now }).eq('id', doc.id);
+      log('WARN', 'auto_launch', 'falhou', { tenantId, doc: doc.id, error: r.error });
+    }
+  }
+  log('INFO', 'auto_launch', 'ok', { tenantId, ...stats });
+  return stats;
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -495,7 +768,14 @@ Deno.serve(async (req: Request) => {
       if (!internal) return errResp('Unauthorized', 401);
       const { data: lojas } = await admin.from('fiscal_settings').select('tenant_id').not('provider_token', 'is', null).eq('inbound_auto_sync', true);
       const results = [];
-      for (const l of lojas ?? []) results.push(await syncTenant(admin, l.tenant_id, Number(body.days ?? 7), 40_000));
+      for (const l of lojas ?? []) {
+        const s = await syncTenant(admin, l.tenant_id, Number(body.days ?? 7), 40_000);
+        // Logo depois de trazer as notas, lança sozinhas as de fornecedor já conhecido
+        const auto = 'error' in s || 'skipped' in s
+          ? null
+          : await autoLaunchTenant(admin, supabaseUrl, l.tenant_id, Date.now() + AUTO_BUDGET_CRON_MS).catch((e) => ({ erro: String(e) }));
+        results.push({ ...s, auto });
+      }
       return json({ success: true, results });
     }
 
@@ -522,7 +802,17 @@ Deno.serve(async (req: Request) => {
 
     if (action === 'sync') {
       const r = await syncTenant(admin, tenantId, Number(body.days ?? 30));
-      return json({ success: !('error' in r), ...r });
+      const auto = 'error' in r || 'skipped' in r
+        ? null
+        : await autoLaunchTenant(admin, supabaseUrl, tenantId, Date.now() + AUTO_BUDGET_SYNC_MS).catch((e) => ({ erro: String(e) }));
+      return json({ success: !('error' in r), ...r, auto });
+    }
+
+    // Lança agora as notas paradas de fornecedores já conhecidos (colocar em dia)
+    if (action === 'auto_launch') {
+      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      const r = await autoLaunchTenant(admin, supabaseUrl, tenantId, Date.now() + 100_000);
+      return json({ success: true, ...r });
     }
 
     // Continua baixando os XMLs que ficaram para trás (a tela chama em sequência até zerar)
@@ -612,148 +902,47 @@ Deno.serve(async (req: Request) => {
       return json({ success: true });
     }
 
-    // ── Importar ──
-    if (action === 'import_purchase' || action === 'import_bill') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem lançar', 403);
-      if (doc.status === 'imported') return errResp('Esta nota já foi lançada');
-      if (Number(doc.sefaz_status) === 2) return errResp('A nota foi CANCELADA pelo fornecedor na SEFAZ — não lance');
-      if (action === 'import_purchase' && Number(doc.modelo) === 10) return errResp('NFS-e é serviço, não mercadoria: lance como despesa');
-      const parcelas = normalizeParcelas(doc, body.parcelas);
-      const soma = round2(parcelas.reduce((s, p) => s + p.valor, 0));
-      const supplier = await upsertSupplier(admin, tenantId, doc);
-      if (!supplier) return errResp('Não foi possível cadastrar o fornecedor', 500);
-      const numeroNf = doc.numero ? String(doc.numero) : null;
-      const notes = [String(body.notes ?? '').trim(), `NF-e de entrada — chave ${doc.chave}`].filter(Boolean).join(' · ');
+    // ── Desfazer lançamento automático ──
+    // Exclui a compra (ou as contas a pagar da despesa) e devolve a nota para "A conferir",
+    // travada para não ser relançada sozinha. Bloqueia se já houve pagamento ou recebimento.
+    if (action === 'undo_auto_import') {
+      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (internal || !token) return errResp('Desfazer precisa de um usuário logado');
+      if (doc.status !== 'imported' || !doc.auto_imported) return errResp('Só dá para desfazer um lançamento automático');
+      if (doc.auto_import_ref) return errResp('Esta nota foi lançada pela conciliação: desfaça pelo vínculo na Conciliação');
+      const payIds: string[] = (doc.payable_ids ?? []).map(String);
       const now = new Date().toISOString();
-
-      if (action === 'import_purchase') {
-        // Pelo purchase-write (fonte única da regra de compra: fornecedor, parcelas com
-        // reference_type='purchase' → CMV). Itens vinculados a um insumo dão entrada no
-        // estoque (qtd × units_per_package, na unidade do insumo); os demais só descrição.
-        const linkMap = new Map<number, { ingredient_id: string | null; units_per_package: number }>();
-        if (Array.isArray(body.links)) {
-          const ids = [...new Set((body.links as any[]).map((l) => l?.ingredient_id).filter(Boolean).map(String))];
-          const { data: validos } = ids.length
-            ? await admin.from('ingredients').select('id').eq('tenant_id', tenantId).is('deleted_at', null).in('id', ids)
-            : { data: [] };
-          const ok = new Set((validos ?? []).map((v: any) => String(v.id)));
-          for (const l of body.links as any[]) {
-            const i = Number(l?.index);
-            if (!Number.isInteger(i) || i < 0) continue;
-            const ing = l?.ingredient_id ? String(l.ingredient_id) : null;
-            if (ing && !ok.has(ing)) return errResp('Insumo inválido para esta loja');
-            const upp = Number(l?.units_per_package);
-            linkMap.set(i, { ingredient_id: ing, units_per_package: upp > 0 ? upp : 1 });
-          }
-        }
-        const itens: Record<string, any>[] = ((doc.itens ?? []) as any[]).map((it, i) => {
-          const link = linkMap.get(i);
-          return {
-            description: [it.descricao, it.codigo ? `(${it.codigo})` : null].filter(Boolean).join(' ').slice(0, 250),
-            quantity: Number(it.quantidade ?? 0) || 1,
-            unit_price: Number(it.valor_unitario ?? 0),
-            discount_per_unit: Number(it.quantidade) > 0 ? round2(Number(it.desconto ?? 0) / Number(it.quantidade)) : 0,
-            unit_label: it.unidade ?? null,
-            units_per_package: link?.ingredient_id ? link.units_per_package : 1,
-            ingredient_id: link?.ingredient_id ?? null,
-            cost_center_id: body.cost_center_id ?? null,
-            // Código do produto no fornecedor e EAN: o recebimento sugere e memoriza o insumo por eles
-            supplier_code: it.codigo ? String(it.codigo) : null,
-            ean: it.ean ?? null,
-          };
-        });
-        // O purchase-write recalcula o total como Σ itens líquidos + frete. O vNF da nota também
-        // soma ICMS-ST, IPI, seguro e outras despesas — sem isso a compra (e a conta a pagar de
-        // 1 parcela) sairia menor que o boleto. A diferença entra como uma linha própria.
-        const frete = Number(doc.frete ?? 0) || 0;
-        const itensLiquido = itens.reduce((s, it) => s + Math.round(it.quantity * Math.max(0, it.unit_price - it.discount_per_unit) * 100) / 100, 0);
-        const acrescimos = round2(Number(doc.valor_total ?? 0) - itensLiquido - frete);
-        if (itens.length > 0 && acrescimos >= 0.01) {
-          itens.push({
-            description: 'Acréscimos da nota (ICMS-ST, IPI, seguro, outras despesas)',
-            quantity: 1, unit_price: acrescimos, discount_per_unit: 0, unit_label: null, units_per_package: 1,
-            ingredient_id: null, cost_center_id: body.cost_center_id ?? null,
-          });
-        } else if (itens.length > 0 && acrescimos <= -0.01) {
-          // Desconto no total da nota que não veio rateado nos itens: aplica no maior item
-          const maior = itens.reduce((a, b) => (b.quantity * b.unit_price > a.quantity * a.unit_price ? b : a));
-          maior.discount_per_unit = round2(maior.discount_per_unit + (-acrescimos) / (maior.quantity || 1));
-        }
-
-        // Nota já paga (dinheiro/cartão/PIX na entrega): entra como compra paga — o purchase-write
-        // registra a saída no fluxo de caixa. Sem boleto em aberto, sem conta a pagar.
-        const jaPaga = body.pago === true;
-        const purchasePayload: Record<string, unknown> = {
-          supplier: supplier.name,
-          invoice_number: numeroNf,
-          purchase_date: String(doc.emitted_at ?? now).slice(0, 10),
-          payment_method: jaPaga ? String(body.payment_method ?? 'Dinheiro') : 'Boleto',
-          payment_status: jaPaga ? 'paid' : 'pending',
-          cost_center_id: body.cost_center_id ?? null,
-          bank_account_id: body.bank_account_id ?? null,
-          freight_amount: frete,
-          notes,
-          items: itens,
-        };
-        if (!jaPaga) {
-          if (parcelas.length >= 2) purchasePayload.custom_installments = parcelas.map((p) => ({ due_date: p.vencimento, amount: p.valor }));
-          else purchasePayload.due_date = parcelas[0].vencimento;
-        }
-        // Nota sem itens legíveis: total vem da nota
-        if (itens.length === 0) purchasePayload.total_amount = Number(doc.valor_total ?? soma);
-
-        // Chama o purchase-write com o JWT do próprio usuário (ele valida a loja e grava created_by)
-        if (!token || internal) return errResp('Lançamento de compra precisa de um usuário logado');
+      if (doc.import_type === 'purchase' && doc.purchase_id) {
+        const [{ data: p }, { data: bs }] = await Promise.all([
+          admin.from('fin_purchases').select('stock_applied_at').eq('id', doc.purchase_id).eq('tenant_id', tenantId).maybeSingle(),
+          admin.from('fin_accounts_payable').select('status, paid_amount').eq('tenant_id', tenantId).eq('reference_id', doc.purchase_id),
+        ]);
+        if (p?.stock_applied_at) return errResp('A mercadoria já deu entrada no estoque: desfaça o recebimento antes');
+        if ((bs ?? []).some((b: any) => b.status === 'paid' || Number(b.paid_amount ?? 0) > 0)) return errResp('Já tem parcela paga: estorne o pagamento antes de desfazer');
         const r = await fetch(`${supabaseUrl}/functions/v1/purchase-write`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '' },
-          body: JSON.stringify({ action: 'create_purchase', tenant_id: tenantId, payload: purchasePayload }),
+          body: JSON.stringify({ action: 'delete_purchase', tenant_id: tenantId, payload: { id: doc.purchase_id } }),
         });
-        const txt = await r.text();
-        let out: any = null; try { out = JSON.parse(txt); } catch { out = null; }
-        const purchase = out?.data ?? out?.result?.data ?? null;
-        if (!r.ok || !purchase?.id) {
-          const msg = typeof out?.error === 'string' ? out.error : txt.slice(0, 300);
-          log('ERROR', 'import_purchase', 'purchase-write falhou', { http: r.status, msg });
-          return errResp(`Não foi possível lançar a compra: ${msg}`, 500);
-        }
-        if (linkMap.size > 0) await saveItemLinks(admin, tenantId, doc, linkMap, userId);
-        const { data: bills } = await admin.from('fin_accounts_payable').select('id').eq('tenant_id', tenantId).eq('reference_id', purchase.id);
-        await admin.from('fiscal_inbound_documents').update({
-          status: 'imported', import_type: 'purchase', purchase_id: purchase.id, supplier_id: supplier.id,
-          payable_ids: (bills ?? []).map((b: any) => b.id), imported_at: now, imported_by: userId, error_message: null, updated_at: now,
-        }).eq('id', doc.id);
-        return json({ success: true, purchase_id: purchase.id, parcelas: (bills ?? []).length, supplier: supplier.name });
-      }
-
-      // import_bill: despesa que não é mercadoria (equipamento, uso e consumo...) — entra na DRE pela categoria
-      const categoria = String(body.category ?? 'Outros');
-      const n = parcelas.length;
-      const ids: string[] = [];
-      let parentId: string | null = null;
-      for (let i = 0; i < n; i++) {
-        const p = parcelas[i];
-        const { data: bill, error } = await admin.from('fin_accounts_payable').insert({
-          tenant_id: tenantId, supplier: supplier.name,
-          description: `${supplier.name}${numeroNf ? ` NF ${numeroNf}` : ''}${n > 1 ? ` (${i + 1}/${n})` : ''}`,
-          category: categoria, dre_category_id: body.dre_category_id ?? null, cost_center_id: body.cost_center_id ?? null,
-          amount: p.valor, due_date: p.vencimento, status: 'pending', is_recurring: false,
-          installments: n, installment_number: i + 1, parent_id: parentId, notes,
-          reference_id: doc.id, reference_type: 'nfe_entrada',
-        }).select('id').single();
-        if (error) {
-          // desfaz o que já entrou para não deixar metade das parcelas
-          if (ids.length) await admin.from('fin_accounts_payable').delete().in('id', ids);
-          return errResp(`Falha ao lançar a parcela ${i + 1}: ${error.message}`, 500);
-        }
-        ids.push(bill.id);
-        if (i === 0) parentId = bill.id;
+        if (!r.ok) return errResp(`Não foi possível excluir a compra: ${(await r.text()).slice(0, 200)}`, 500);
+      } else if (payIds.length) {
+        const { data: bs } = await admin.from('fin_accounts_payable').select('status, paid_amount').eq('tenant_id', tenantId).in('id', payIds);
+        if ((bs ?? []).some((b: any) => b.status === 'paid' || Number(b.paid_amount ?? 0) > 0)) return errResp('Já tem parcela paga: estorne o pagamento antes de desfazer');
+        await admin.from('fin_accounts_payable').delete().eq('tenant_id', tenantId).in('id', payIds);
       }
       await admin.from('fiscal_inbound_documents').update({
-        status: 'imported', import_type: 'bill', supplier_id: supplier.id, payable_ids: ids,
-        imported_at: now, imported_by: userId, error_message: null, updated_at: now,
+        status: 'new', import_type: null, purchase_id: null, payable_ids: [], imported_at: null, imported_by: null,
+        auto_imported: false, auto_imported_at: null, auto_launch_blocked: true, error_message: null, updated_at: now,
       }).eq('id', doc.id);
-      return json({ success: true, parcelas: ids.length, supplier: supplier.name });
+      log('INFO', 'undo_auto_import', 'ok', { tenantId, doc: doc.id, userId });
+      return json({ success: true });
+    }
+
+    // ── Importar ──
+    if (action === 'import_purchase' || action === 'import_bill') {
+      if (!isManager) return errResp('Apenas administradores e gerentes podem lançar', 403);
+      const r = await importDocument({ admin, supabaseUrl, tenantId, userId, userToken: internal ? null : token }, doc, action, body);
+      return r.ok ? json({ success: true, ...r.data }) : errResp(r.error, r.status);
     }
 
     return errResp(`Ação inválida: ${action}`);

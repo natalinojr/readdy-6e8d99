@@ -19,10 +19,12 @@ interface DocRow {
   status: 'new' | 'imported' | 'ignored'; import_type: 'purchase' | 'bill' | null; purchase_id: string | null;
   payable_ids: string[]; ignore_reason: string | null; manifest_status: string | null; error_message: string | null;
   imported_at: string | null;
-  /** Importada automaticamente pela conciliação bancária ao confirmar o pagamento */
+  /** Lançada sozinha: pela conciliação (auto_import_ref = linha do extrato) ou, sem ref,
+   *  logo após a busca na SEFAZ porque o fornecedor já tinha nota lançada antes */
   auto_imported?: boolean;
+  auto_import_ref?: string | null;
 }
-const COLS = 'id, chave, modelo, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at, auto_imported';
+const COLS = 'id, chave, modelo, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at, auto_imported, auto_import_ref';
 
 const brl = (n: number | null | undefined) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n ?? 0));
 const dataBR = (s: string | null | undefined) => (s ? new Date(s.length === 10 ? `${s}T12:00:00` : s).toLocaleDateString('pt-BR') : '—');
@@ -162,7 +164,7 @@ export default function NotasEntradaTab() {
         <div>
           <h2 className="text-sm font-bold text-zinc-800">Notas de entrada (SEFAZ)</h2>
           <p className="text-xs text-zinc-500 mt-0.5 max-w-2xl">
-            NF-e emitidas pelos fornecedores contra o CNPJ da loja. Confira e lance como compra (as parcelas do boleto vão para Contas a Pagar) ou ignore.
+            NF-e emitidas pelos fornecedores contra o CNPJ da loja. Nota de fornecedor que já teve nota lançada entra sozinha, do mesmo jeito da última vez (selo "automática"); aqui ficam só as que precisam de você: fornecedor novo, remessa/bonificação, taxa de plataforma e valor fora do normal.
           </p>
           <p className="text-[11px] text-zinc-400 mt-1">
             {ultimaSync.at ? `Última busca: ${new Date(ultimaSync.at).toLocaleString('pt-BR')}` : 'Ainda não buscamos notas nesta loja.'}
@@ -275,7 +277,9 @@ export default function NotasEntradaTab() {
                       </td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
                         {cancelada ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Cancelada na SEFAZ</span>
-                          : d.status === 'imported' ? <><span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{d.import_type === 'purchase' ? 'Lançada como compra' : 'Lançada como despesa'}</span>{d.auto_imported && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700" title="Importada automaticamente pela conciliação bancária ao confirmar o pagamento. Os itens não foram ligados ao estoque.">automática</span>}</>
+                          : d.status === 'imported' ? <><span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{d.import_type === 'purchase' ? 'Lançada como compra' : 'Lançada como despesa'}</span>{d.auto_imported && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700" title={d.auto_import_ref
+                            ? 'Importada automaticamente pela conciliação bancária ao confirmar o pagamento.'
+                            : 'Lançada automaticamente: este fornecedor já tinha nota lançada antes, e esta entrou do mesmo jeito. Se estiver errada, use "Desfazer".'}>automática</span>}</>
                           : d.status === 'ignored' ? <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500" title={d.ignore_reason ?? ''}>Ignorada</span>
                           : <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">A conferir</span>}
                         {d.error_message && d.status === 'new' && <p className="text-[10px] text-red-500 truncate max-w-[200px]" title={d.error_message}>{d.error_message}</p>}
@@ -308,6 +312,17 @@ export default function NotasEntradaTab() {
                           {d.status === 'ignored' && (
                             <button onClick={() => acao(d, { action: 'unignore' }, 'Nota voltou para conferência')} disabled={isBusy}
                               className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 cursor-pointer">Desfazer</button>
+                          )}
+                          {d.status === 'imported' && d.auto_imported && !d.auto_import_ref && podeLancar && (
+                            <button
+                              onClick={() => {
+                                if (window.confirm('Desfazer o lançamento automático?\n\nA compra (ou a conta a pagar) desta nota é excluída e a nota volta para "A conferir". Ela não será relançada sozinha.')) {
+                                  acao(d, { action: 'undo_auto_import' }, 'Lançamento desfeito: a nota voltou para conferência');
+                                }
+                              }}
+                              disabled={isBusy}
+                              title="Desfazer o lançamento automático"
+                              className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer">Desfazer</button>
                           )}
                         </div>
                       </td>
