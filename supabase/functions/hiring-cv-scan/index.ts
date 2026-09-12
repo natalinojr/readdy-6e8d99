@@ -28,9 +28,12 @@ function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string, ctx?: Record<string,
   if (level === 'ERROR') console.error(e); else if (level === 'WARN') console.warn(e); else console.log(e);
 }
 
-const nStr = { anyOf: [{ type: 'string' }, { type: 'null' }] };
-const nInt = { anyOf: [{ type: 'integer' }, { type: 'null' }] };
-const nBool = { anyOf: [{ type: 'boolean' }, { type: 'null' }] };
+// Sem campos anulável/anyOf: a API limita a 16 parâmetros com union por schema
+// ("Schemas contains too many parameters with union types"). Ausente = "" (texto),
+// 0 (número) ou "indefinido" (enum); normalize() converte para null antes de devolver.
+const nStr = { type: 'string' };
+const nInt = { type: 'integer' };
+const nBool = { type: 'string', enum: ['sim', 'nao', 'indefinido'] };
 const strArr = { type: 'array', items: { type: 'string' } };
 
 const OUTPUT_SCHEMA = {
@@ -85,17 +88,44 @@ const OUTPUT_SCHEMA = {
 const SYSTEM_PROMPT = `Você lê currículos de candidatos a vagas em restaurantes brasileiros (cozinha, salão, caixa, delivery, gerência) e organiza as informações para o dono decidir quem chamar para entrevista.
 
 Regras:
-- Transcreva só o que está no currículo. Nunca invente dado; o que não estiver lá é null (ou lista vazia).
+- Transcreva só o que está no currículo. Nunca invente dado. O que não estiver lá: texto "" (vazio), número 0, lista vazia.
 - nome com iniciais maiúsculas. telefone só com dígitos, com DDD (ex.: 41999998888). email em minúsculas.
 - data_nascimento no formato AAAA-MM-DD, só se estiver escrita. idade: a escrita no currículo, ou calculada da data de nascimento (hoje é ${new Date().toISOString().slice(0, 10)}).
 - experiencias da mais recente para a mais antiga. inicio/fim como "MM/AAAA" ou "AAAA" conforme o currículo; atual = true se ainda trabalha lá (fim null).
 - formacao.nivel: Fundamental, Médio, Técnico, Superior, Pós etc. situacao: Completo, Incompleto, Cursando.
 - resumo: 2 a 3 frases objetivas, em português, sobre o perfil profissional.
-- experiencia_food_service: true se já trabalhou em restaurante, lanchonete, bar, padaria, hotel, cozinha industrial, delivery de comida ou função equivalente; false se o currículo mostra experiências e nenhuma é da área; null se não há experiência listada.
-- tempo_experiencia_meses: soma aproximada dos períodos de trabalho (sem contar sobreposição); null se não der para estimar.
+- experiencia_food_service: "sim" se já trabalhou em restaurante, lanchonete, bar, padaria, hotel, cozinha industrial, delivery de comida ou função equivalente; "nao" se o currículo mostra experiências e nenhuma é da área; "indefinido" se não há experiência listada.
+- tempo_experiencia_meses: soma aproximada dos períodos de trabalho (sem contar sobreposição); 0 se não der para estimar.
+- experiencias[].fim: "" quando ainda trabalha lá.
 - pontos_fortes / pontos_atencao: até 4 frases curtas cada, relevantes para trabalhar em restaurante (ex.: "3 anos como chapeiro", "Muitos empregos curtos (menos de 6 meses)", "Mora longe", "Sem experiência na área"). Sem julgamentos sobre idade, gênero, aparência, religião, estado civil ou qualquer característica pessoal protegida.
 - legivel = false se o arquivo não for um currículo ou não der para ler; explique em avisos.
 - avisos: frases curtas sobre o que ficou ilegível ou duvidoso.`;
+
+// "" / 0 / "indefinido" do schema → null; mantém o contrato que a tela espera.
+// deno-lint-ignore no-explicit-any
+function normalize(o: Record<string, any>) {
+  const s = (v: unknown) => { const t = String(v ?? '').trim(); return t ? t : null; };
+  const n = (v: unknown) => (Number.isInteger(v) && Number(v) > 0 ? Number(v) : null);
+  const arr = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
+  return {
+    ...o,
+    nome: s(o.nome), email: s(o.email), telefone: s(o.telefone), cidade: s(o.cidade), bairro: s(o.bairro),
+    data_nascimento: s(o.data_nascimento), idade: n(o.idade), cargo_pretendido: s(o.cargo_pretendido), resumo: s(o.resumo),
+    disponibilidade: s(o.disponibilidade), pretensao_salarial: s(o.pretensao_salarial), cnh: s(o.cnh),
+    experiencia_food_service: o.experiencia_food_service === 'sim' ? true : o.experiencia_food_service === 'nao' ? false : null,
+    tempo_experiencia_meses: n(o.tempo_experiencia_meses),
+    habilidades: arr(o.habilidades), idiomas: arr(o.idiomas), cursos: arr(o.cursos),
+    pontos_fortes: arr(o.pontos_fortes), pontos_atencao: arr(o.pontos_atencao), avisos: arr(o.avisos),
+    // deno-lint-ignore no-explicit-any
+    experiencias: (Array.isArray(o.experiencias) ? o.experiencias : []).map((e: any) => ({
+      empresa: s(e.empresa), cargo: s(e.cargo), inicio: s(e.inicio), fim: s(e.fim), atual: !!e.atual, descricao: s(e.descricao),
+    })),
+    // deno-lint-ignore no-explicit-any
+    formacao: (Array.isArray(o.formacao) ? o.formacao : []).map((e: any) => ({
+      instituicao: s(e.instituicao), curso: s(e.curso), nivel: s(e.nivel), situacao: s(e.situacao),
+    })),
+  };
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -168,6 +198,7 @@ Deno.serve(async (req: Request) => {
     return errResp('A leitura voltou incompleta. Tente de novo.', 502);
   }
 
+  out = normalize(out);
   log('INFO', 'ok', {
     ms: Date.now() - started, model: response.model,
     input_tokens: response.usage?.input_tokens, output_tokens: response.usage?.output_tokens,
