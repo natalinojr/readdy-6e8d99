@@ -51,7 +51,7 @@ const sendText = (number: string, text: string) => evo(`/message/sendText/${evoI
 // em asst_inbox e espera DEBOUNCE_MS; se chegou outra depois dela, sai (a mais nova
 // responde por todas). A última pega todas as pendentes e manda juntas ao brain:
 // 1 chamada ao Claude e 1 resposta coerente em vez de 3.
-const DEBOUNCE_MS = 6000;
+const DEBOUNCE_MS = 3000;
 async function debounce(admin: SupabaseClient, chatId: string, text: string): Promise<string | null> {
   const { data: row, error } = await admin.from('asst_inbox').insert({ chat_id: chatId, text }).select('id').single();
   if (error || !row) return text; // sem fila: responde só esta

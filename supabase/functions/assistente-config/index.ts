@@ -65,6 +65,37 @@ async function setSetting(admin: SupabaseClient, key: string, value: unknown) {
   if (error) throw new Error(error.message);
 }
 
+// Cotação do dólar (venda, comercial — sem IOF do cartão) para mostrar o custo da IA
+// em reais. AwesomeAPI (atualiza ao longo do dia); se falhar, PTAX do Banco Central.
+// Guardada 1 h em asst_settings.usd_brl; sem nenhuma fonte, usa a última conhecida.
+type Fx = { rate: number; source: string; at: string };
+// deno-lint-ignore no-explicit-any
+async function usdBrl(admin: SupabaseClient, cfg: Record<string, any>): Promise<Fx | null> {
+  const cached = cfg.usd_brl;
+  if (cached?.rate && cached?.fetched_at && Date.now() - Date.parse(cached.fetched_at) < 3600_000) return cached;
+  let out: Fx | null = null;
+  try {
+    const j = await (await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL', { signal: AbortSignal.timeout(8000) })).json();
+    const rate = Number(j?.USDBRL?.ask);
+    if (rate > 0) out = { rate, source: 'AwesomeAPI', at: String(j.USDBRL.create_date ?? '') };
+  } catch { /* tenta o Banco Central */ }
+  if (!out) {
+    try {
+      const f = (d: Date) => `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}-${d.getFullYear()}`;
+      const url = 'https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)'
+        + `?@dataInicial='${f(new Date(Date.now() - 10 * 86400000))}'&@dataFinalCotacao='${f(new Date())}'`
+        + '&$top=1&$orderby=dataHoraCotacao%20desc&$format=json&$select=cotacaoVenda,dataHoraCotacao';
+      const v = (await (await fetch(url, { signal: AbortSignal.timeout(8000) })).json())?.value?.[0];
+      if (Number(v?.cotacaoVenda) > 0) out = { rate: Number(v.cotacaoVenda), source: 'PTAX Banco Central', at: String(v.dataHoraCotacao ?? '').slice(0, 16) };
+    } catch { /* sem cotação agora */ }
+  }
+  if (out) {
+    await setSetting(admin, 'usd_brl', { ...out, fetched_at: new Date().toISOString() });
+    return out;
+  }
+  return cached?.rate ? cached : null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   if (req.method !== 'POST') return fail('Method not allowed', 405);
@@ -110,6 +141,7 @@ Deno.serve(async (req) => {
           usd += ((u.input ?? 0) * PRICE.input + (u.output ?? 0) * PRICE.output + (u.cache_read ?? 0) * PRICE.cache_read
             + ((u.cache_write ?? 0) - w1h) * PRICE.cache_write + w1h * PRICE.cache_write_1h) / 1e6;
         }
+        const fx = await usdBrl(admin, cfg);
         const { data: gs } = await admin.from('asst_groups').select('group_jid, name, is_enabled').order('name');
         const groups = [];
         for (const g of gs ?? []) {
@@ -128,7 +160,14 @@ Deno.serve(async (req) => {
           reminders: { pending: pending.data ?? [], sent: sent.data ?? [] },
           messages: (messages.data ?? []).reverse(),
           whatsapp: { ...wa, owner_chat_id: cfg.owner_chat_id ?? null },
-          usage30d: { replies: (usageRows.data ?? []).length, usd: Math.round(usd * 100) / 100 },
+          usage30d: {
+            replies: (usageRows.data ?? []).length,
+            usd: Math.round(usd * 100) / 100,
+            brl: fx ? Math.round(usd * fx.rate * 100) / 100 : null,
+            rate: fx?.rate ?? null,
+            rate_source: fx?.source ?? null,
+            rate_at: fx?.at ?? null,
+          },
           groups,
         });
       }

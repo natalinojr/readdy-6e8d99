@@ -187,7 +187,7 @@ Migração: `supabase/migrations/20260912010000_assistente_leitor_universal.sql`
   uma entrada separada que nenhuma pergunta real (medium) lia. O warm usa o mesmo
   `asst_settings.effort`; confirmado: warm lê os 7.034 tokens gravados pela pergunta real.
 - **Debounce** (`assistente-webhook` › `debounce`, tabela `asst_inbox`): texto e
-  áudio esperam 6 s; se chegar outra mensagem, a mais nova responde por todas
+  áudio esperam 3 s (era 6 s até 2026-09-12); se chegar outra mensagem, a mais nova responde por todas
   (1 chamada ao Claude em vez de várias). Foto/PDF vão direto. Fila limpa pelo
   cron após 7 dias.
 - **Ferramentas em paralelo:** as pedidas na mesma rodada rodam com Promise.all.
@@ -196,6 +196,31 @@ Medição (Sonnet 5, cache quente): pergunta que garimpa o banco (Voxi) caiu de
 R$ 0,28 para ~R$ 0,06 (8 → 2 ferramentas); cardápio/clientes R$ 0,12 → R$ 0,05;
 "como tá a loja" ~R$ 0,07. A 1ª mensagem depois de >1 h sem uso paga a gravação
 do cache (~R$ 0,15). Script de medição: mesmas perguntas via `body.effort`.
+
+### Busca por nome aproximado — `buscar_nome` (2026-09-12)
+
+Caso real: "foi pago a **Voxi**?" → o sistema tem **VOXY-SC LTDA** (conta NF 3540
+paga em 08/09). Tanto o assistente quanto a checagem manual buscaram
+`ILIKE '%voxi%'` e concluíram, errado, que não existia. Correção:
+extensões `pg_trgm` + `unaccent` (schema `extensions`, `USAGE` para
+`asst_reader`) e a ferramenta `buscar_nome`, que usa `word_similarity ≥ 0.35`
+(ou "contém") sobre fornecedores, contas a pagar, notas de entrada, extrato,
+clientes, cardápio, insumos e funcionários das lojas acompanhadas. O prompt
+proíbe dizer "não existe/não foi lançado" sem ter usado `buscar_nome`.
+`unaccent` precisa do dicionário explícito
+(`extensions.unaccent('extensions.unaccent'::regdictionary, ...)`) porque o
+`asst_reader` não tem `extensions` no search_path.
+Migração: `supabase/migrations/20260912030000_assistente_busca_aproximada.sql`.
+
+### Custo em reais na tela (2026-09-12)
+
+O card "Custo IA estimado (30 dias)" mostra R$ convertido pela cotação do dia
+(venda, comercial, sem IOF do cartão): AwesomeAPI
+(`economia.awesomeapi.com.br/json/last/USD-BRL`, campo `ask`) e, se falhar, PTAX
+do Banco Central (`CotacaoDolarPeriodo`, `cotacaoVenda`). Guardada 1 h em
+`asst_settings.usd_brl`; sem fonte, usa a última conhecida. Abaixo do valor: US$,
+cotação e fonte. Em 2026-09-11 o dólar estava ~R$ 5,13 (as estimativas antigas
+deste README usavam R$ 5,50 → ~7% acima do real).
 
 ## Pendente (ordem)
 

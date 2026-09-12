@@ -23,7 +23,7 @@ interface Overview {
   reminders: { pending: Reminder[]; sent: Reminder[] };
   messages: Message[];
   whatsapp: { state: string | null; error?: string; owner_chat_id: string | null };
-  usage30d: { replies: number; usd: number };
+  usage30d: { replies: number; usd: number; brl: number | null; rate: number | null; rate_source: string | null; rate_at: string | null };
   groups: { group_jid: string; name: string | null; is_enabled: boolean; last_at: string | null }[];
 }
 
@@ -200,13 +200,24 @@ export default function AssistentePage() {
               { label: 'Lembretes pendentes', value: ov.reminders.pending.length, icon: 'ri-alarm-line' },
               { label: 'Memórias', value: ov.memories.length, icon: 'ri-brain-line' },
               { label: 'Respostas (30 dias)', value: ov.usage30d.replies, icon: 'ri-chat-check-line' },
-              { label: 'Custo IA estimado (30 dias)', value: `US$ ${ov.usage30d.usd.toFixed(2)}`, icon: 'ri-money-dollar-circle-line' },
+              {
+                label: 'Custo IA estimado (30 dias)',
+                value: ov.usage30d.brl != null
+                  ? ov.usage30d.brl.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+                  : `US$ ${ov.usage30d.usd.toFixed(2)}`,
+                icon: 'ri-money-dollar-circle-line',
+                sub: ov.usage30d.rate != null
+                  ? `US$ ${ov.usage30d.usd.toFixed(2)} · dólar R$ ${ov.usage30d.rate.toFixed(2).replace('.', ',')} (${ov.usage30d.rate_source})`
+                  : 'Cotação do dólar indisponível agora',
+                title: 'Cotação comercial de venda do dia, sem o IOF do cartão.',
+              },
             ].map((c) => (
-              <div key={c.label} className="rounded-2xl border border-zinc-200 bg-white px-4 py-3">
+              <div key={c.label} className="rounded-2xl border border-zinc-200 bg-white px-4 py-3" title={c.title}>
                 <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 font-semibold">
                   <i className={c.icon} /> {c.label}
                 </div>
                 <p className="text-lg font-black text-zinc-900 mt-0.5">{c.value}</p>
+                {c.sub && <p className="text-[10px] text-zinc-400 mt-0.5 leading-tight">{c.sub}</p>}
               </div>
             ))}
           </div>
