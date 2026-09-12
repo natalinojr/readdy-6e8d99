@@ -10,7 +10,8 @@ export type AppMode =
   | 'gestor_pedidos'
   | 'gestor_delivery'
   | 'tarefas'
-  | 'contratacao';
+  | 'contratacao'
+  | 'assistente';
 
 interface AppModeContextValue {
   mode: AppMode;

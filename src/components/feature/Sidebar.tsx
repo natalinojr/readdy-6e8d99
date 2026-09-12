@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ShoppingCart, Coffee, Tablet, Monitor, UtensilsCrossed,
   LayoutGrid, Package, BarChart3, Users, Settings, LogOut, ChefHat,
   Shield, Heart, HelpCircle, ClipboardList, Bell, Truck, ArrowLeft, DollarSign,
-  Tag, Gift, Bug, ShieldCheck, Megaphone, UserSearch,
+  Tag, Gift, Bug, ShieldCheck, Megaphone, UserSearch, Bot,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAprovacoes } from '../../contexts/AprovacoesContext';
@@ -78,6 +78,7 @@ const navSections: NavSection[] = [
       { label: 'Diagnóstico de Pedidos', icon: Bug,        path: '/diagnostico',  permissao: 'auditoria_ver', adminMasterOnly: true },
       { label: 'Admin Master',           icon: ShieldCheck, path: '/admin-master',                            adminMasterOnly: true },
       { label: 'Contratação',            icon: UserSearch,  path: '/contratacao',                             adminMasterOnly: true },
+      { label: 'Assistente',             icon: Bot,         path: '/assistente',                              adminMasterOnly: true },
     ],
   },
 ];

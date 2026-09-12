@@ -7,8 +7,12 @@
 // Responde 200 imediatamente e processa em background (EdgeRuntime.waitUntil)
 // para a Evolution não repetir o webhook por timeout.
 //
+// Mídia: áudio → transcrito pelo Whisper na VPS (sem custo por minuto) e vai ao
+// brain como texto "[Áudio] ..."; foto/PDF → vão ao brain como anexo (Claude lê).
+// Mensagem encaminhada ganha o prefixo "[Encaminhada]".
+//
 // Secrets: ASSISTENTE_INTERNAL_KEY, EVOLUTION_URL, EVOLUTION_API_KEY,
-//          EVOLUTION_INSTANCE (padrão "assistente").
+//          EVOLUTION_INSTANCE (padrão "assistente"), WHISPER_URL, WHISPER_API_KEY.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 
@@ -26,6 +30,10 @@ const internalKey = Deno.env.get('ASSISTENTE_INTERNAL_KEY') ?? '';
 const evoUrl = (Deno.env.get('EVOLUTION_URL') ?? '').replace(/\/$/, '');
 const evoKey = Deno.env.get('EVOLUTION_API_KEY') ?? '';
 const evoInstance = Deno.env.get('EVOLUTION_INSTANCE') || 'assistente';
+const whisperUrl = (Deno.env.get('WHISPER_URL') ?? '').replace(/\/$/, '');
+const whisperKey = Deno.env.get('WHISPER_API_KEY') ?? '';
+
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 async function evo(path: string, body: unknown) {
   const r = await fetch(`${evoUrl}${path}`, {
@@ -39,20 +47,58 @@ async function evo(path: string, body: unknown) {
 
 const sendText = (number: string, text: string) => evo(`/message/sendText/${evoInstance}`, { number, text });
 
-// Extrai o texto útil de uma mensagem do Baileys. Áudio/imagem sem legenda
-// voltam null com o tipo, para responder algo educado até a Fase 2.
 // deno-lint-ignore no-explicit-any
-function extractText(data: any): { text: string | null; kind: string } {
-  const m = data?.message ?? {};
-  if (typeof m.conversation === 'string' && m.conversation.trim()) return { text: m.conversation, kind: 'text' };
-  if (m.extendedTextMessage?.text) return { text: m.extendedTextMessage.text, kind: 'text' };
-  if (m.imageMessage) return { text: m.imageMessage.caption || null, kind: 'image' };
-  if (m.documentMessage) return { text: m.documentMessage.caption || null, kind: 'document' };
-  if (m.audioMessage) return { text: null, kind: 'audio' };
-  if (m.videoMessage) return { text: m.videoMessage.caption || null, kind: 'video' };
-  // Mensagem encaminhada com contexto de outra conversa
-  if (m.ephemeralMessage?.message) return extractText({ message: m.ephemeralMessage.message });
-  return { text: null, kind: String(data?.messageType ?? 'unknown') };
+type Parsed = { kind: 'text' | 'audio' | 'image' | 'document' | 'video' | 'other'; text: string | null; mime: string | null; forwarded: boolean; inner: any };
+
+// Desembrulha as mensagens do Baileys (efêmera / visualização única) e
+// classifica. O texto útil é a mensagem ou a legenda da mídia.
+// deno-lint-ignore no-explicit-any
+function parseMessage(msg: any): Parsed {
+  let m = msg ?? {};
+  for (let i = 0; i < 3; i++) {
+    const inner = m.ephemeralMessage?.message ?? m.viewOnceMessage?.message ?? m.viewOnceMessageV2?.message ?? m.documentWithCaptionMessage?.message;
+    if (!inner) break;
+    m = inner;
+  }
+  // deno-lint-ignore no-explicit-any
+  const ctxOf = (x: any) => x?.contextInfo ?? {};
+  if (typeof m.conversation === 'string' && m.conversation.trim()) return { kind: 'text', text: m.conversation, mime: null, forwarded: false, inner: m };
+  if (m.extendedTextMessage?.text) return { kind: 'text', text: m.extendedTextMessage.text, mime: null, forwarded: !!ctxOf(m.extendedTextMessage).isForwarded, inner: m };
+  if (m.audioMessage) return { kind: 'audio', text: null, mime: m.audioMessage.mimetype ?? 'audio/ogg', forwarded: !!ctxOf(m.audioMessage).isForwarded, inner: m };
+  if (m.imageMessage) return { kind: 'image', text: m.imageMessage.caption || null, mime: m.imageMessage.mimetype ?? 'image/jpeg', forwarded: !!ctxOf(m.imageMessage).isForwarded, inner: m };
+  if (m.documentMessage) return { kind: 'document', text: m.documentMessage.caption || null, mime: m.documentMessage.mimetype ?? null, forwarded: !!ctxOf(m.documentMessage).isForwarded, inner: m };
+  if (m.videoMessage) return { kind: 'video', text: m.videoMessage.caption || null, mime: null, forwarded: false, inner: m };
+  return { kind: 'other', text: null, mime: null, forwarded: false, inner: m };
+}
+
+// Base64 da mídia: vem no próprio webhook (webhookBase64=true); se não vier,
+// pede para a Evolution baixar e decifrar.
+// deno-lint-ignore no-explicit-any
+async function mediaBase64(data: any): Promise<string | null> {
+  const direct = data?.message?.base64 ?? data?.base64;
+  if (typeof direct === 'string' && direct.length > 0) return direct;
+  try {
+    const out = await evo(`/chat/getBase64FromMediaMessage/${evoInstance}`, { message: { key: data.key }, convertToMp4: false });
+    return typeof out?.base64 === 'string' ? out.base64 : null;
+  } catch (e) {
+    log('WARN', 'getBase64FromMediaMessage falhou', { error: errMsg(e) });
+    return null;
+  }
+}
+
+async function transcribe(b64: string, mime: string): Promise<string> {
+  if (!whisperUrl || !whisperKey) throw new Error('WHISPER_URL/WHISPER_API_KEY não configurados');
+  const bytes = Uint8Array.from(atob(b64.replace(/^data:[^;]+;base64,/, '')), (c) => c.charCodeAt(0));
+  const form = new FormData();
+  form.append('audio_file', new Blob([bytes], { type: mime.split(';')[0] || 'audio/ogg' }), 'audio.ogg');
+  const r = await fetch(`${whisperUrl}/asr?task=transcribe&language=pt&output=json&encode=true`, {
+    method: 'POST',
+    headers: { 'X-Api-Key': whisperKey },
+    body: form,
+  });
+  if (!r.ok) throw new Error(`Whisper ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const out = await r.json();
+  return String(out?.text ?? '').trim();
 }
 
 // deno-lint-ignore no-explicit-any
@@ -62,40 +108,64 @@ async function handle(payload: any) {
   const data = payload?.data ?? {};
   const key = data.key ?? {};
   if (key.fromMe) return;
+  // Contas novas do WhatsApp podem mandar o remetente como @lid; o número real
+  // vem em remoteJidAlt/senderPn.
   const jid = String(key.remoteJid ?? '');
-  if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast') return; // grupos/status: fora por enquanto
+  const altJid = String(key.remoteJidAlt ?? key.senderPn ?? '');
+  if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast') return; // grupos/status: fora
 
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'allowed_chat_ids').maybeSingle();
   const allowed: string[] = Array.isArray(st?.value) ? st.value.map(String) : [];
-  const number = jid.replace(/@.*$/, '');
-  if (!allowed.includes(jid) && !allowed.includes(number)) {
-    log('WARN', 'remetente não autorizado (ignorado)', { jid, pushName: data.pushName });
+  const candidates = [jid, altJid, jid.replace(/@.*$/, ''), altJid.replace(/@.*$/, '')].filter(Boolean);
+  if (!candidates.some((c) => allowed.includes(c))) {
+    log('WARN', 'remetente não autorizado (ignorado)', { jid, altJid, pushName: data.pushName });
     return;
   }
+  // Responde sempre ao JID que chegou (a Evolution resolve @lid e número).
+  const replyTo = jid.endsWith('@lid') && altJid ? altJid : jid;
+  const number = replyTo.replace(/@.*$/, '');
+  const chatId = altJid && jid.endsWith('@lid') ? altJid : jid;
 
-  const { text, kind } = extractText(data);
-  if (!text) {
-    const aviso = kind === 'audio'
-      ? 'Ainda não escuto áudio — me manda em texto que eu resolvo. (Transcrição chega na próxima fase.)'
-      : `Recebi ${kind === 'image' ? 'a imagem' : 'o arquivo'}, mas por enquanto só leio texto. Me diz o que fazer com isso?`;
-    await sendText(number, aviso);
-    return;
-  }
+  const p = parseMessage(data.message);
+  let text = p.text ? p.text.trim() : '';
+  // deno-lint-ignore no-explicit-any
+  let attachment: any = null;
 
   try {
-    await evo(`/chat/sendPresence/${evoInstance}`, { number, presence: 'composing', delay: 1200 }).catch(() => {});
+    await evo(`/chat/sendPresence/${evoInstance}`, { number, presence: p.kind === 'audio' ? 'recording' : 'composing', delay: 1200 }).catch(() => {});
+
+    if (p.kind === 'audio') {
+      const b64 = await mediaBase64(data);
+      if (!b64) throw new Error('não consegui baixar o áudio');
+      const transcript = await transcribe(b64, p.mime ?? 'audio/ogg');
+      if (!transcript) { await sendText(number, 'Não consegui entender o áudio. Pode repetir ou mandar em texto?'); return; }
+      text = `[Áudio] ${transcript}`;
+    } else if (p.kind === 'image' || (p.kind === 'document' && (p.mime === 'application/pdf' || IMAGE_TYPES.includes(p.mime ?? '')))) {
+      const b64 = await mediaBase64(data);
+      if (!b64) throw new Error('não consegui baixar o arquivo');
+      attachment = { base64: b64, media_type: p.mime };
+    } else if (p.kind === 'video' || p.kind === 'document' || p.kind === 'other') {
+      if (!text) {
+        await sendText(number, p.kind === 'video'
+          ? 'Vídeo eu ainda não consigo ver. Me conta em texto ou áudio o que precisa?'
+          : 'Esse tipo de arquivo eu não leio. Manda como foto ou PDF, ou me diz em texto o que fazer.');
+        return;
+      }
+    }
+    if (p.forwarded) text = `[Encaminhada] ${text}`.trim();
+
     const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-      body: JSON.stringify({ text, chat_id: jid, channel: 'whatsapp' }),
+      body: JSON.stringify({ text, chat_id: chatId, channel: 'whatsapp', attachment }),
     });
     const out = await r.json().catch(() => ({}));
     if (!r.ok || !out?.reply) throw new Error(`brain ${r.status}: ${JSON.stringify(out).slice(0, 300)}`);
     await sendText(number, String(out.reply));
-    log('INFO', 'respondido', { jid, tools: (out.tool_calls ?? []).map((t: { name: string }) => t.name) });
+    log('INFO', 'respondido', { chatId, kind: p.kind, forwarded: p.forwarded, tools: (out.tool_calls ?? []).map((t: { name: string }) => t.name) });
   } catch (e) {
-    log('ERROR', 'falha ao responder', { jid, error: errMsg(e) });
+    log('ERROR', 'falha ao responder', { chatId, kind: p.kind, error: errMsg(e) });
     await sendText(number, 'Deu erro aqui do meu lado. Tenta de novo em instantes.').catch(() => {});
   }
 }
@@ -110,7 +180,6 @@ Deno.serve(async (req) => {
   let payload: unknown;
   try { payload = await req.json(); } catch { return json({ error: 'JSON inválido' }, 400); }
 
-  // deno-lint-ignore no-explicit-any
   const p = handle(payload).catch((e) => log('ERROR', 'unhandled', { error: errMsg(e) }));
   // deno-lint-ignore no-explicit-any
   (globalThis as any).EdgeRuntime?.waitUntil?.(p);

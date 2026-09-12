@@ -11,6 +11,7 @@ import TimeInput from '@/components/base/TimeInput';
 import FolhaRelatorioPDF from './FolhaRelatorioPDF';
 import RHRelatorioTab from './RHRelatorioTab';
 import CamposCustomizadosModal from './CamposCustomizadosModal';
+import DetalheFolhaModal from './DetalheFolhaModal';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const today = new Date();
@@ -58,6 +59,10 @@ const PAYROLL_STATUS_COLORS: Record<string, string> = {
 const ENTRY_TYPE_LABELS: Record<string, string> = {
   regular: 'Folha', thirteenth_first: '13º 1ª', thirteenth_second: '13º 2ª', vacation_pay: 'Férias',
 };
+/** Lançamento vindo do Domínio: valores prontos da contabilidade, fora da calculadora do ERPOS. */
+const isImportado = (e: Partial<PayrollEntry>) => Array.isArray(e.rubricas) && e.rubricas.length > 0;
+const isRescisao = (e: Partial<PayrollEntry>) => isImportado(e) && /RESCIS[ÃA]O em/i.test(e.notes ?? '');
+
 const DEPARTMENTS = ['Cozinha', 'Salão', 'Caixa', 'Delivery', 'Gerência', 'Limpeza', 'Administrativo', 'Geral'];
 
 // ─── Employee Modal ───────────────────────────────────────────────────────────
@@ -1040,6 +1045,11 @@ function FechamentoFolhaModal({
                           <p className="text-xs text-zinc-400">{e.role}</p>
                         </td>
                         <td className="px-3 py-2.5 text-sm text-right text-zinc-600">{formatCurrency(e.net_salary)}</td>
+                        {isImportado(e) ? (
+                          <td colSpan={2} className="px-3 py-2.5 text-center text-[11px] text-sky-700">
+                            Faltas já descontadas no Domínio
+                          </td>
+                        ) : (<>
                         <td className="px-3 py-2.5 text-center">
                           <input
                             type="number"
@@ -1060,6 +1070,7 @@ function FechamentoFolhaModal({
                             className="w-16 border border-zinc-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:border-amber-400"
                           />
                         </td>
+                        </>)}
                         <td className="px-4 py-2.5 text-sm text-right font-semibold text-zinc-800">
                           {formatCurrency(novoLiquido)}
                           {descontoTotal > 0 && (
@@ -1244,6 +1255,7 @@ export default function RHTab() {
   const [camposCustomizadosModal, setCamposCustomizadosModal] = useState(false);
   const [importarDominio, setImportarDominio] = useState(false);
   const [avisoImport, setAvisoImport] = useState<string | null>(null);
+  const [detalhe, setDetalhe] = useState<PayrollEntry | null>(null);
   const { user } = useAuth();
   const [deptFilter, setDeptFilter] = useState('Todos');
   const [search, setSearch] = useState('');
@@ -1263,6 +1275,10 @@ export default function RHTab() {
     return matchDept && matchSearch;
   });
   const pendingEntries = entries.filter(e => e.status === 'pending');
+  // Guias do mês: INSS = descontado dos empregados + INSS do pró-labore pago pela empresa; FGTS = da folha.
+  const inssSocio = entries.reduce((s, e) => s + (e.rubricas ?? []).filter(r => r.categoria === 'inss_socio').reduce((a, r) => a + Number(r.valor || 0), 0), 0);
+  const guiaINSS = totalINSS + inssSocio;
+  const temImportado = entries.some(isImportado);
   const departments = ['Todos', ...Array.from(new Set(employees.map(e => e.department)))];
 
   const handleGenerateFolha = async () => {
@@ -1462,18 +1478,25 @@ export default function RHTab() {
               <h3 className="text-sm font-semibold text-zinc-800 mb-3 md:mb-4">Resumo — {monthLabel(selectedMonth)}</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 md:gap-4">
                 {[
-                  { label: 'Salário Bruto', value: totalBruto, color: 'text-zinc-800' },
-                  { label: 'INSS Total', value: totalINSS, color: 'text-orange-600' },
-                  { label: 'IRRF Total', value: totalIRRF, color: 'text-red-500' },
-                  { label: 'FGTS Total', value: totalFGTS, color: 'text-amber-600' },
-                  { label: 'Salário Líquido', value: totalLiquido, color: 'text-zinc-800' },
-                  { label: 'Já Pago', value: totalPago, color: 'text-green-600' },
+                  { label: 'Proventos (bruto)', value: totalBruto, color: 'text-zinc-800' },
+                  { label: 'Descontos', value: Math.max(0, totalBruto - totalLiquido), color: 'text-red-500' },
+                  { label: 'Líquido a pagar', value: totalLiquido, color: 'text-zinc-900' },
+                  { label: 'FGTS (empresa)', value: totalFGTS, color: 'text-amber-600' },
+                  { label: 'Custo total', value: totalBruto + totalFGTS, color: 'text-orange-700' },
+                  { label: 'Já pago', value: totalPago, color: 'text-green-600' },
                 ].map(item => (
                   <div key={item.label} className="text-center">
                     <p className="text-xs text-zinc-500 mb-1">{item.label}</p>
                     <p className={`text-base font-bold ${item.color}`}>{formatCurrency(item.value)}</p>
                   </div>
                 ))}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500 border-t border-zinc-100 pt-3">
+                <span><i className="ri-bank-line text-zinc-400" /> Guias do mês:</span>
+                <span>INSS <strong className="text-zinc-800">{formatCurrency(guiaINSS)}</strong></span>
+                <span>FGTS <strong className="text-zinc-800">{formatCurrency(totalFGTS)}</strong></span>
+                {totalIRRF > 0 && <span>IRRF <strong className="text-zinc-800">{formatCurrency(totalIRRF)}</strong></span>}
+                {temImportado && <span className="text-sky-700">· folha importada do Domínio</span>}
               </div>
               <div className="mt-4">
                 <div className="flex items-center justify-between mb-1.5">
@@ -1500,8 +1523,12 @@ export default function RHTab() {
                   <i className="ri-file-list-3-line text-zinc-400 text-2xl" />
                 </div>
                 <p className="text-sm font-semibold text-zinc-700">Nenhum lançamento em {monthLabel(selectedMonth)}</p>
-                <p className="text-xs text-zinc-400 mt-1 mb-4">Gere automaticamente ou adicione manualmente</p>
-                <div className="flex items-center justify-center gap-3">
+                <p className="text-xs text-zinc-400 mt-1 mb-4">Importe o extrato mensal do Domínio (PDF da contabilidade) ou lance manualmente</p>
+                <div className="flex items-center justify-center gap-3 flex-wrap">
+                  <button onClick={() => setImportarDominio(true)}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap transition-colors">
+                    <i className="ri-file-upload-line" /> Importar do Domínio
+                  </button>
                   {employees.filter(e => e.status === 'active').length > 0 && (
                     <button onClick={handleGenerateFolha}
                       className="flex items-center gap-1.5 px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap transition-colors">
@@ -1524,6 +1551,7 @@ export default function RHTab() {
                     <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">INSS</th>
                     <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">IRRF</th>
                     <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Descontos</th>
+                    <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">FGTS</th>
                     <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Líquido</th>
                     <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Status</th>
                     <th className="px-4 py-3" />
@@ -1535,6 +1563,10 @@ export default function RHTab() {
                       <td className="px-5 py-3.5">
                         <p className="text-sm font-semibold text-zinc-800">{entry.employee_name}</p>
                         <p className="text-xs text-zinc-400">{entry.role}</p>
+                        <div className="flex gap-1 mt-0.5">
+                          {isImportado(entry) && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">DOMÍNIO</span>}
+                          {isRescisao(entry) && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-600">RESCISÃO</span>}
+                        </div>
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex flex-col gap-1">
@@ -1550,6 +1582,7 @@ export default function RHTab() {
                       <td className="px-4 py-3.5 text-sm text-right text-orange-600">{formatCurrency(entry.inss)}</td>
                       <td className="px-4 py-3.5 text-sm text-right text-red-500">{formatCurrency(entry.irrf)}</td>
                       <td className="px-4 py-3.5 text-sm text-right text-red-600">{formatCurrency(entry.total_descontos ?? entry.deductions)}</td>
+                      <td className="px-4 py-3.5 text-sm text-right text-amber-600">{formatCurrency(entry.fgts)}</td>
                       <td className="px-4 py-3.5 text-sm text-right font-bold text-zinc-900">{formatCurrency(entry.net_salary)}</td>
                       <td className="px-4 py-3.5 text-center">
                         <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${PAYROLL_STATUS_COLORS[entry.status]}`}>
@@ -1568,9 +1601,10 @@ export default function RHTab() {
                               <i className="ri-check-line text-sm" />
                             </button>
                           )}
-                          <button onClick={() => setPayrollModal(entry)} title="Editar"
+                          <button onClick={() => (isImportado(entry) ? setDetalhe(entry) : setPayrollModal(entry))}
+                            title={isImportado(entry) ? 'Ver rubricas (Domínio)' : 'Editar'}
                             className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-500 cursor-pointer transition-colors">
-                            <i className="ri-edit-line text-sm" />
+                            <i className={`${isImportado(entry) ? 'ri-file-list-3-line' : 'ri-edit-line'} text-sm`} />
                           </button>
                           <button onClick={() => removePayroll(entry.id)} title="Remover"
                             className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-100 text-red-500 cursor-pointer transition-colors">
@@ -1588,6 +1622,7 @@ export default function RHTab() {
                     <td className="px-4 py-3 text-sm font-bold text-right text-orange-600">{formatCurrency(totalINSS)}</td>
                     <td className="px-4 py-3 text-sm font-bold text-right text-red-500">{formatCurrency(totalIRRF)}</td>
                     <td className="px-4 py-3 text-sm font-bold text-right text-red-600">{formatCurrency(totalLiquido > 0 ? totalBruto - totalLiquido : 0)}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right text-amber-600">{formatCurrency(totalFGTS)}</td>
                     <td className="px-4 py-3 text-sm font-bold text-right text-zinc-900">{formatCurrency(totalLiquido)}</td>
                     <td colSpan={2} />
                   </tr>
@@ -1671,13 +1706,16 @@ export default function RHTab() {
       {camposCustomizadosModal && (
         <CamposCustomizadosModal onClose={() => setCamposCustomizadosModal(false)} />
       )}
+      {detalhe && <DetalheFolhaModal entry={detalhe} onClose={() => setDetalhe(null)} />}
       {fechamentoModal && (
         <FechamentoFolhaModal
           entries={pendingEntries}
           onClose={() => setFechamentoModal(false)}
           onConfirm={async (updatedEntries) => {
-            // Salva os descontos aplicados no banco
-            for (const entry of updatedEntries) {
+            // Regrava só quem teve falta lançada neste fechamento (o modal devolve o
+            // mesmo objeto quando nada mudou). Os demais — e toda folha do Domínio — ficam intactos.
+            const alterados = updatedEntries.filter((u, i) => u !== pendingEntries[i] && !isImportado(u));
+            for (const entry of alterados) {
               await upsertPayroll(entry);
             }
             const newTotal = updatedEntries.reduce((s, e) => s + Number(e.net_salary), 0);

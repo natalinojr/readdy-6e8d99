@@ -1549,3 +1549,17 @@ Critérios: escreve tarefas direto nas tabelas como o dono (`task-write` exige J
 auth por `x-internal-key` = `ASSISTENTE_INTERNAL_KEY`; data/hora atual vai na
 mensagem do usuário, não no system, para preservar o cache do prompt.
 - **Folha estratificada por rubrica** (2026-09-11): a coluna `hr_payroll.rubricas` (jsonb `[{codigo, descricao, referencia, valor, tipo P|D, categoria}]`, migração `20260911120000_hr_payroll_rubricas.sql`) é preenchida pela importação do Domínio. As categorias estão em `CATEGORIAS_FOLHA` / `categorizarRubrica` (`src/lib/dominioExtrato.ts`). A aba RH › Relatórios › "Gasto por Item da Folha" soma por categoria, com detalhe por rubrica e por funcionário e uma matriz categoria × mês. Lançamento sem rubricas cai nos campos da folha.
+- **RH × folha do Domínio** (2026-09-11): o lançamento importado (`hr_payroll.rubricas` não vazio) **nunca passa pelo `upsertPayroll`/`recalcPayroll`**, porque isso sobrescreveria os valores da contabilidade. O "Fechar e Pagar" só regrava as linhas com falta lançada no próprio fechamento. O botão de editar de um importado abre o `DetalheFolhaModal.tsx`, só de leitura. Para corrigir um importado, reimporta-se o extrato: os pendentes do mês são substituídos.
+
+### 2026-09-11 — Dono da plataforma com acesso a todas as lojas (`platform_owners`)
+
+Tabela `platform_owners` + função `is_platform_owner(uuid)`. Backfill deu ao dono
+vínculo `admin` em todas as lojas e o gatilho `on_tenant_created_platform_owner`
+(função `fn_platform_owner_membership`) faz o mesmo em toda loja nova.
+**Pegadinha respeitada:** `auth_tenant_id()` = vínculo mais recente (103 policies
+em 37 tabelas). Os vínculos do dono criados assim têm `created_at = 2000-01-01`,
+para nunca virarem o mais recente. O dono não aparece no painel de usuários
+(`fn_get_users_list`) nem no modal multi-loja (`fn_get_users_for_admin_panel`).
+`setup-tenant`/`bootstrap_tenant` usam `ON CONFLICT DO NOTHING`, então o gatilho
+não quebra a criação de loja. Migração em `supabase/migrations/20260911210000_platform_owner_all_stores.sql`.
+Também: módulo **Assistente** (`/assistente`, só o dono) — ver `assistente/README.md`.
