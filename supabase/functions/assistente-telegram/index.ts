@@ -25,6 +25,7 @@
 // Secrets: TELEGRAM_BOT_TOKEN, ASSISTENTE_INTERNAL_KEY, WHISPER_URL, WHISPER_API_KEY, FISCAL_INTERNAL_KEY (inter-bank).
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { receiptPng, toBase64 } from './receipt.ts';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -479,14 +480,31 @@ async function sendGroupReceipt(admin: SupabaseClient, p: any): Promise<string |
     .eq('payment_id', p.id).is('receipt_sent_at', null).select('id, group_jid, group_name, message_id');
   const rq = claimed?.[0];
   if (!rq) return null;
-  const { data: t } = await admin.from('tenants').select('name').eq('id', p.tenant_id).maybeSingle();
+  const { data: t } = await admin.from('tenants').select('name, cnpj').eq('id', p.tenant_id).maybeSingle();
+  // Imagem do comprovante (receipt.ts); se falhar, vai o texto de sempre.
+  let png: Uint8Array | null = null;
+  try { png = await receiptPng(p, { name: t?.name ?? null, cnpj: t?.cnpj ?? null }); }
+  catch (e) { log('WARN', 'gerar imagem do comprovante', { payment: p.id, error: errMsg(e) }); }
+  const nome = p.response?.transacaoPix?.recebedor?.nome ?? p.beneficiary_name;
+  const legenda = `✅ Pagamento realizado: ${p.kind === 'pix' ? 'Pix' : 'boleto'} de *${brl(p.amount)}*${nome ? ` para ${nome}` : ''}.`;
   try {
     const r = await fetch(`${supabaseUrl}/functions/v1/assistente-webhook`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-      body: JSON.stringify({ action: 'group_send', group_jid: rq.group_jid, text: receiptText(p, t?.name ?? null), quoted_message_id: rq.message_id }),
+      body: JSON.stringify({
+        action: 'group_send', group_jid: rq.group_jid, quoted_message_id: rq.message_id,
+        ...(png ? { text: legenda, image_base64: toBase64(png) } : { text: receiptText(p, t?.name ?? null) }),
+      }),
     });
     if (!r.ok) throw new Error(`webhook ${r.status}: ${(await r.text()).slice(0, 200)}`);
-    log('INFO', 'comprovante enviado no grupo', { group: rq.group_name, payment: p.id });
+    log('INFO', 'comprovante enviado no grupo', { group: rq.group_name, payment: p.id, imagem: !!png });
+    // Cópia da imagem para o dono no Telegram.
+    if (png && /^tg:-?\d+$/.test(String(p.chat_id ?? ''))) {
+      const fd = new FormData();
+      fd.append('chat_id', String(p.chat_id).slice(3));
+      fd.append('photo', new Blob([png], { type: 'image/png' }), 'comprovante.png');
+      fd.append('caption', `Comprovante enviado no grupo ${rq.group_name ?? ''}`.trim());
+      await fetch(`${API}/sendPhoto`, { method: 'POST', body: fd }).catch((e) => log('WARN', 'comprovante no Telegram', { error: errMsg(e) }));
+    }
     return `📨 Comprovante enviado no grupo *${rq.group_name ?? 'do pedido'}*.`;
   } catch (e) {
     // Solta o trinco: tocar em "Ver status" tenta de novo.
@@ -495,11 +513,28 @@ async function sendGroupReceipt(admin: SupabaseClient, p: any): Promise<string |
     return `⚠️ Não consegui mandar o comprovante no grupo *${rq.group_name ?? ''}* (${errMsg(e).slice(0, 100)}).`;
   }
 }
-// Cartão atualizado + comprovante quando pago. Usado no "Ver status", depois do PIN e no pay_watch.
+// Baixa da conta a pagar pela conciliação (brain › baixa_conciliada). Devolve a linha do cartão.
+// deno-lint-ignore no-explicit-any
+async function settleBill(p: any): Promise<string | null> {
+  if (p.status !== 'paid' || !p.bill_id || p.settled_at) return null;
+  try {
+    const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({ action: 'baixa_conciliada', payment_id: p.id }),
+    });
+    // deno-lint-ignore no-explicit-any
+    const out: any = await r.json().catch(() => ({}));
+    if (out?.ok) return out.ja ? null : `🧾 Baixa feita pela conciliação: ${out.msg}`;
+    if (out?.pendente) return `🧾 Baixa: ${out.pendente} — tento de novo sozinho.`;
+    if (out?.sem_conta) return null;
+    return `⚠️ Baixa pela conciliação não saiu: ${String(out?.erro ?? out?.error ?? r.status).slice(0, 150)}`;
+  } catch (e) { return `⚠️ Baixa pela conciliação não saiu: ${errMsg(e).slice(0, 120)}`; }
+}
+// Cartão atualizado + comprovante + baixa quando pago. Usado no "Ver status", depois do PIN e no pay_watch.
 // deno-lint-ignore no-explicit-any
 async function afterPayStatus(admin: SupabaseClient, chatId: number, mid: number | null, p: any) {
-  const extra = await sendGroupReceipt(admin, p);
-  await editPay(chatId, mid, p, statusLine(p) + (extra ? `\n${extra}` : ''), PAY_DONE.includes(p.status) ? undefined : statusKb(p.id));
+  const extras = [await sendGroupReceipt(admin, p), await settleBill(p)].filter(Boolean);
+  await editPay(chatId, mid, p, statusLine(p) + (extras.length ? `\n${extras.join('\n')}` : ''), PAY_DONE.includes(p.status) ? undefined : statusKb(p.id));
 }
 async function payWatch() {
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
@@ -522,7 +557,21 @@ async function payWatch() {
     await admin.from('asst_messages').insert({ channel: 'telegram', chat_id: p.chat_id, role: 'assistant', content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status} (atualizado automaticamente)] id ${p.id}` });
     log('INFO', 'pagamento mudou de status', { id: p.id, de: antes, para: p.status });
   }
-  return { checked, changed };
+  // Pagos com conta a pagar e ainda sem baixa: o débito demora a aparecer no extrato do Inter.
+  // Tenta a cada 10 min por até 2 dias (15 tentativas). Só pagamentos feitos pelo assistente.
+  const { data: semBaixa } = await admin.from('fin_inter_payments').select('*').eq('status', 'paid').not('bill_id', 'is', null)
+    .is('settled_at', null).lt('settle_attempts', 15).like('chat_id', 'tg:%')
+    .gte('paid_at', new Date(Date.now() - 2 * 86400_000).toISOString()).limit(10);
+  let settled = 0;
+  for (const p of semBaixa ?? []) {
+    if (p.settle_last_try && Date.now() - new Date(p.settle_last_try).getTime() < 10 * 60_000) continue;
+    const linha = await settleBill(p);
+    if (linha?.startsWith('🧾 Baixa feita')) {
+      settled++;
+      await editPay(Number(String(p.chat_id).slice(3)), Number(p.tg_message_id) || null, p, `${statusLine(p)}\n${linha}`);
+    }
+  }
+  return { checked, changed, settled };
 }
 async function checkPin(admin: SupabaseClient, chatId: number, pin: string): Promise<boolean> {
   const s = (await getSetting(admin, 'pay_pin')) ?? {};
@@ -816,7 +865,8 @@ async function deliver(body: any) {
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   const secretOk = internalKey.length >= 20 && req.headers.get('x-telegram-bot-api-secret-token') === internalKey;
-  const internalOk = internalKey.length >= 20 && req.headers.get('x-internal-key') === internalKey;
+  const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const internalOk = (internalKey.length >= 20 && req.headers.get('x-internal-key') === internalKey) || (!!serviceRoleKey && bearer === serviceRoleKey);
   if (!secretOk && !internalOk) return json({ error: 'Unauthorized' }, 401);
   if (!botToken) return json({ error: 'TELEGRAM_BOT_TOKEN não configurado' }, 503);
   let update: unknown;
@@ -826,6 +876,16 @@ Deno.serve(async (req) => {
   if (acao === 'deliver') {
     try { await deliver(update); return json({ ok: true }); }
     catch (e) { log('ERROR', 'entrega interna falhou', { error: errMsg(e) }); return json({ error: errMsg(e) }, 500); }
+  }
+  // Manutenção: (re)envia o comprovante de um pagamento pago já ligado a um pedido de grupo.
+  if (acao === 'send_receipt' && internalOk) {
+    try {
+      const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      // deno-lint-ignore no-explicit-any
+      const { data: p } = await admin.from('fin_inter_payments').select('*').eq('id', String((update as any).payment_id ?? '')).maybeSingle();
+      if (!p) return json({ error: 'pagamento não encontrado' }, 404);
+      return json({ ok: true, resultado: await sendGroupReceipt(admin, p) });
+    } catch (e) { return json({ error: errMsg(e) }, 500); }
   }
   if (acao === 'pay_watch' && internalOk) {
     try { return json({ ok: true, ...(await payWatch()) }); }

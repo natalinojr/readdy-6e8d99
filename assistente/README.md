@@ -505,8 +505,32 @@ pedido**, via `assistente-webhook { action: 'group_send' }` — única escrita e
 código (não do modelo), só em grupo com `is_enabled`. `receipt_sent_at` é o trinco (uma vez só);
 falhou → `receipt_error` e o "Ver status" tenta de novo. O vínculo nasce na triagem ou no
 `preparar_pagamento` (param `solicitacao_grupo_id`, ou pedido do grupo com o mesmo valor em 72 h).
-Comprovante em texto com o E2E (verificável no banco de quem recebe); a integração atual não
-busca PDF/imagem de comprovante no Inter — se um dia usar, é aqui que entra.
+A API do Inter não entrega o comprovante oficial (não achamos endpoint), então o comprovante é
+uma **imagem gerada** (`assistente-telegram/receipt.ts`: SVG → PNG com `@resvg/resvg-wasm` e fonte
+Inter TTF do jsDelivr, layout aprovado pelo dono em 2026-09-12) com os dados do `response` do Inter
+(recebedor, pagador = tenant name/cnpj, E2E, código, horário de aprovação) e rodapé "gerado pelo
+ERPOS". Vai no grupo via `sendMedia` **citando a mensagem do pedido** (a citação leva o
+`participant` = autor, lido de `asst_group_messages.sender_jid`) e uma cópia vai ao dono no
+Telegram (`sendPhoto`). Se a imagem falhar, cai no texto. Reenvio manual:
+`assistente-telegram { action: 'send_receipt', payment_id }` (x-internal-key ou Bearer da chave
+`sb_secret_…`). Primeiro envio real: Pix do Sacolão (R$ 210,12) respondendo a foto da Thati.
+
+**Cupom de compra → compra → pagamento → estoque → baixa (2026-09-12, à noite).** Regra
+"CUPOM/NOTA DE COMPRA" no system do brain (vale na conversa e na triagem de grupo), na ordem:
+(1) ler todas as linhas; (2) casar com insumos — memória `purchase_receipt_item_links`
+(supplier_key = CNPJ/nome normalizado, description_key) e depois `buscar_nome`; dúvida → botões,
+sem insumo → avisa para criar; (3) `purchase-write create_purchase` com `payment_status 'pending'`
+(nunca `'paid'`: debitaria o banco e o extrato debitaria de novo; e nunca `upsert_bill` à parte —
+a compra já gera a conta); (4) `preparar_pagamento` com `conta_a_pagar_id` da conta gerada;
+(5) cupom de balcão (NFC-e) → `confirm_delivery` (estoque só entra no recebimento); entrega
+futura → não confirma; (6) baixa automática. **Baixa**: pago + `bill_id` → telegram chama
+`assistente-brain { action: 'baixa_conciliada', payment_id }`, que faz `inter-bank sync` (3 dias,
+só a loja), `conciliacao-pagamentos rematch` e confirma SÓ a linha de `fin_bank_statement_imports`
+com `match_kind='payable'` e `match_ref_id = bill_id` (mesmo caminho da tela: `pay_bill` com a
+conta do banco). Débito ainda não caiu no extrato → `pendente`; o `pay_watch` tenta de novo a cada
+10 min por até 2 dias (15 tentativas; colunas `fin_inter_payments.settled_at / settle_attempts /
+settle_last_try / settle_error`). É exceção deliberada à regra "conciliação sem cron": só roda para
+pagamento que o dono acabou de fazer pelo assistente.
 
 Se a mensagem parecer **pedido de pagamento** — `extracted.pagamento.e_solicitacao`, ou o
 pré-filtro `PAY_HINT` no texto/transcrição — o webhook grava a solicitação em

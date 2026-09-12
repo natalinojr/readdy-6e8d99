@@ -80,7 +80,11 @@ async function payWatch(admin: SupabaseClient): Promise<unknown> {
   const { count } = await admin.from('fin_inter_payments').select('id', { count: 'exact', head: true })
     .in('status', ['sent', 'pending_approval', 'approved', 'scheduled']).like('chat_id', 'tg:%')
     .gte('sent_at', new Date(Date.now() - 7 * 86400000).toISOString());
-  if (!count) return null;
+  // Também os pagos ainda sem baixa pela conciliação (o débito demora a cair no extrato).
+  const { count: semBaixa } = await admin.from('fin_inter_payments').select('id', { count: 'exact', head: true })
+    .eq('status', 'paid').not('bill_id', 'is', null).is('settled_at', null).lt('settle_attempts', 15).like('chat_id', 'tg:%')
+    .gte('paid_at', new Date(Date.now() - 2 * 86400000).toISOString());
+  if (!count && !semBaixa) return null;
   const r = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey }, body: JSON.stringify({ action: 'pay_watch' }),
   });
