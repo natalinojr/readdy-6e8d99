@@ -455,7 +455,9 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     const now = new Date();
     const from = new Date(now.getFullYear(), now.getMonth(), 1);
     from.setHours(0, 0, 0, 0);
-    loadMovimentacoes(from, now);
+    // Sem limite final: "até agora" usava o relógio do aparelho, e num PC atrasado as
+    // movimentações recentes (ex.: entrada de compra) sumiam da aba Movimentações (2026-09-12).
+    loadMovimentacoes(from);
     loadInventarioSessions();
 
     // ── Realtime: todas as tabelas que afetam estoque ─────────────────────
