@@ -87,27 +87,33 @@ export default function RelatoriosPage() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-3 md:px-6 py-3 md:py-4" style={{ background: '#ffffff', borderBottom: '1px solid #f4f4f5' }}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 md:gap-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2 md:gap-3">
           {/* Linha 1 no mobile: título + ações */}
-          <div className="flex items-center justify-between gap-2 md:gap-3 min-w-0 sm:flex-shrink-0">
+          <div className="flex items-center justify-between gap-2 md:gap-3 min-w-0 lg:flex-shrink-0">
             <div className="flex items-center gap-2 md:gap-3 min-w-0">
               <div className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-lg flex-shrink-0" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
                 <BarChart3 size={14} className="text-white" />
               </div>
               <div className="min-w-0">
-                <h1 className="text-sm md:text-base font-bold text-zinc-800">Relatórios</h1>
-                <p className="text-[10px] md:text-xs text-zinc-400 hidden sm:block">Análises de vendas, caixa, SLA e desempenho</p>
+                <h1 className="text-sm md:text-base font-bold text-zinc-800 truncate">Relatórios</h1>
+                {/* Subtítulo só a partir de xl: entre 640px e 1280px ele ocupava
+                    ~270px e empurrava os filtros de data para fora da tela. */}
+                <p className="text-[10px] md:text-xs text-zinc-400 hidden xl:block">Análises de vendas, caixa, SLA e desempenho</p>
               </div>
             </div>
 
             {/* Ações no mobile */}
-            <div className="flex sm:hidden items-center gap-1.5 flex-shrink-0">
+            <div className="flex lg:hidden items-center gap-1.5 flex-shrink-0">
               {acoes}
             </div>
           </div>
 
-          {/* Linha 2 no mobile / bloco da direita no desktop */}
-          <div className="flex items-center gap-1.5 md:gap-2 min-w-0">
+          {/* Linha 2 no mobile / bloco da direita no desktop.
+              `flex-wrap` é obrigatório: entre ~640px e ~1200px o conjunto
+              (toggle + presets + Mês + Personalizado + ações) não cabe numa
+              linha só e, sem wrap, vazava para fora da viewport levando os
+              filtros de data junto. */}
+          <div className="flex items-center lg:justify-end gap-1.5 md:gap-2 min-w-0 flex-wrap">
 
             {/* 1. Toggle Calendário/Sessão — SEMPRE VISÍVEL E FIXO */}
             <ModoFaturamentoToggle size="sm" showLabel={false} />
@@ -126,7 +132,7 @@ export default function RelatoriosPage() {
             </div>
 
             {/* 3. Ações no desktop */}
-            <div className="hidden sm:flex items-center gap-1.5 md:gap-2 flex-shrink-0">
+            <div className="hidden lg:flex items-center gap-1.5 md:gap-2 flex-shrink-0">
               {acoes}
             </div>
           </div>
