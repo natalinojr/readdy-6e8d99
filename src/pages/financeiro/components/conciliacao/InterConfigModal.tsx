@@ -22,6 +22,13 @@ export interface InterConfig {
   last_sync_error?: string | null;
   last_balance?: number | null;
   last_balance_at?: string | null;
+  // Credencial própria de pagamento (integração do Inter com os escopos de pagamento)
+  has_pay_credentials?: boolean;
+  pay_client_id_masked?: string | null;
+  pay_credentials_at?: string | null;
+  pay_source?: string | null;
+  pay_limit_tx?: number | null;
+  pay_limit_day?: number | null;
 }
 
 interface Props {
@@ -58,6 +65,15 @@ export default function InterConfigModal({ onClose, onSaved }: Props) {
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const certRef = useRef<HTMLInputElement>(null);
   const keyRef = useRef<HTMLInputElement>(null);
+  // Credencial de pagamento
+  const [payClientId, setPayClientId] = useState('');
+  const [paySecret, setPaySecret] = useState('');
+  const [payCert, setPayCert] = useState('');
+  const [payKey, setPayKey] = useState('');
+  const [paySaving, setPaySaving] = useState(false);
+  const [payResult, setPayResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const payCertRef = useRef<HTMLInputElement>(null);
+  const payKeyRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -142,6 +158,40 @@ export default function InterConfigModal({ onClose, onSaved }: Props) {
     if (resp.error || resp.data?.error) { setResult({ ok: false, msg: resp.error?.message ?? resp.data?.error ?? 'Erro ao remover.' }); return; }
     onSaved();
     onClose();
+  };
+
+  const reloadConfig = async () => {
+    const resp = await invokeWithAuth<Resp>('inter-bank', { body: { action: 'get_config', tenant_id: user?.tenantId } });
+    setExisting(resp.data?.config ?? null);
+  };
+
+  const handleSavePay = async () => {
+    const has = existing?.has_pay_credentials;
+    if (!has && (!payClientId.trim() || !paySecret.trim() || !payCert.trim() || !payKey.trim())) {
+      setPayResult({ ok: false, msg: 'Preencha o Client ID, o Client Secret e carregue o .crt e o .key da integração de pagamento.' });
+      return;
+    }
+    setPaySaving(true);
+    setPayResult(null);
+    const resp = await invokeWithAuth<Resp & { granted_scope?: string | null }>('inter-bank', {
+      body: { action: 'save_pay_credentials', tenant_id: user?.tenantId, client_id: payClientId.trim(), client_secret: paySecret.trim(), cert_pem: payCert, key_pem: payKey },
+    });
+    setPaySaving(false);
+    const err = resp.error?.message ?? resp.data?.error;
+    if (err || !resp.data?.success) { setPayResult({ ok: false, msg: err || 'Erro ao salvar a credencial de pagamento.' }); return; }
+    setPayResult({ ok: true, msg: 'Credencial de pagamento validada no Inter e salva. O assistente já pode preparar pagamentos.' });
+    setPayClientId(''); setPaySecret(''); setPayCert(''); setPayKey('');
+    await reloadConfig();
+  };
+
+  const handleRemovePay = async () => {
+    if (!window.confirm('Remover a credencial de pagamento? O assistente deixa de conseguir pagar pelo Inter.')) return;
+    setPaySaving(true);
+    const resp = await invokeWithAuth<Resp>('inter-bank', { body: { action: 'delete_pay_credentials', tenant_id: user?.tenantId } });
+    setPaySaving(false);
+    if (resp.error || resp.data?.error) { setPayResult({ ok: false, msg: resp.error?.message ?? resp.data?.error ?? 'Erro ao remover.' }); return; }
+    setPayResult({ ok: true, msg: 'Credencial de pagamento removida.' });
+    await reloadConfig();
   };
 
   const inputCls = 'w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
@@ -265,6 +315,56 @@ export default function InterConfigModal({ onClose, onSaved }: Props) {
               <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} className="rounded" />
               Atualizar o extrato sempre que alguém abrir a Conciliação
             </label>
+
+            {existing && (
+              <div className="border border-violet-200 rounded-xl p-4 space-y-3 bg-violet-50/40">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-zinc-800 flex items-center gap-1.5"><i className="ri-secure-payment-line text-violet-600" /> Credencial de pagamento <span className="text-zinc-400 font-normal text-xs">(opcional)</span></p>
+                    <p className="text-xs text-zinc-500 mt-0.5">Use se você criou no Inter uma integração separada com os escopos de <strong>Pagamentos</strong> (boleto e Pix). Ela é usada só pelo assistente para pagar, sempre com PIN e aprovação no app do Inter.</p>
+                  </div>
+                  {existing.has_pay_credentials && (
+                    <span className="text-[11px] px-2 py-1 rounded-full bg-green-100 text-green-700 font-semibold whitespace-nowrap"><i className="ri-checkbox-circle-fill" /> Salva · {existing.pay_client_id_masked}</span>
+                  )}
+                </div>
+                {existing.has_pay_credentials && existing.pay_credentials_at && (
+                  <p className="text-[11px] text-zinc-500">Validada em {new Date(existing.pay_credentials_at).toLocaleString('pt-BR')}{existing.pay_limit_tx != null ? ` · limite ${formatCurrency(Number(existing.pay_limit_tx))} por pagamento e ${formatCurrency(Number(existing.pay_limit_day ?? 0))} por dia` : ''}. Preencha abaixo só para trocar.</p>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <input type="text" value={payClientId} onChange={(e) => setPayClientId(e.target.value)} placeholder={existing.has_pay_credentials ? `Client ID (${existing.pay_client_id_masked})` : 'Client ID da integração de pagamento'} className={`${inputCls} font-mono`} />
+                  <input type="password" value={paySecret} onChange={(e) => setPaySecret(e.target.value)} placeholder={existing.has_pay_credentials ? 'Client Secret (manter)' : 'Client Secret'} className={`${inputCls} font-mono`} autoComplete="new-password" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <input ref={payCertRef} type="file" accept=".crt,.pem,.cer" className="hidden" onChange={(e) => readFile(e.target.files?.[0], setPayCert)} />
+                    <button type="button" onClick={() => payCertRef.current?.click()} className={`w-full px-3 py-2.5 rounded-lg text-xs font-semibold border cursor-pointer ${payCert ? 'border-green-300 bg-green-50 text-green-700' : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50'}`}>
+                      <i className={payCert ? 'ri-checkbox-circle-line' : 'ri-upload-2-line'} /> {payCert ? 'Certificado (.crt) carregado' : 'Carregar certificado (.crt)'}
+                    </button>
+                  </div>
+                  <div>
+                    <input ref={payKeyRef} type="file" accept=".key,.pem" className="hidden" onChange={(e) => readFile(e.target.files?.[0], setPayKey)} />
+                    <button type="button" onClick={() => payKeyRef.current?.click()} className={`w-full px-3 py-2.5 rounded-lg text-xs font-semibold border cursor-pointer ${payKey ? 'border-green-300 bg-green-50 text-green-700' : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50'}`}>
+                      <i className={payKey ? 'ri-checkbox-circle-line' : 'ri-upload-2-line'} /> {payKey ? 'Chave (.key) carregada' : 'Carregar chave (.key)'}
+                    </button>
+                  </div>
+                </div>
+                {payResult && (
+                  <div className={`flex items-start gap-2 px-3 py-2 rounded-lg text-xs font-medium ${payResult.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+                    <i className={`${payResult.ok ? 'ri-checkbox-circle-fill' : 'ri-error-warning-fill'} mt-0.5`} />
+                    <span className="break-words">{payResult.msg}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  {existing.has_pay_credentials && (
+                    <button onClick={handleRemovePay} disabled={paySaving} className="px-3 py-2 text-xs text-red-600 hover:bg-red-50 rounded-lg cursor-pointer disabled:opacity-50">Remover credencial</button>
+                  )}
+                  <div className="flex-1" />
+                  <button onClick={handleSavePay} disabled={paySaving} className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg text-xs font-semibold hover:bg-violet-700 cursor-pointer whitespace-nowrap disabled:opacity-50">
+                    {paySaving ? <><div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Validando no Inter...</> : <><i className="ri-shield-check-line" /> Validar e salvar credencial de pagamento</>}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {result && (
               <div className={`flex items-start gap-2 px-3 py-2.5 rounded-xl text-xs font-medium ${result.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>

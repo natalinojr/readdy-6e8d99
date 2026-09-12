@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { fetchComprasDRE } from '@/lib/comprasDRE';
+import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 
@@ -28,6 +29,8 @@ interface DRESnapshot {
   receitaAutoatendimento: number;
   /** Vendas em cartão liquidadas pela Stone (origin stone_sale). */
   receitaStone: number;
+  /** Pix que entrou no Inter — só com a fonte "pix" ligada (fin_revenue_settings). */
+  receitaPix?: number;
   receitaAReceber: number;
   cancelamentos: number;
   descontos: number;
@@ -209,7 +212,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
 }
 
 function calcDRE(d: DRESnapshot, _mode: 'caixa' | 'competencia') {
-  const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento + (d.receitaStone ?? 0);
+  const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento + (d.receitaStone ?? 0) + (d.receitaPix ?? 0);
   // BUG-41 (intencional, mesmo critério do DRETab): recebível pendente é SALDO, não receita
   // adicional. A venda a prazo já está no `payments`/`auto_sale`; somar `receitaAReceber` na
   // competência contava a mesma venda duas vezes. `receitaAReceber` segue exibido à parte.
@@ -320,7 +323,7 @@ export default function DREComparativoTab() {
     if (!user?.tenantId) return;
     setLoading(true);
     const { start, end } = getMonthRange(mes);
-    const [caixa, comp, catsRes] = await Promise.all([
+    const [caixa, comp, catsRes, extras] = await Promise.all([
       fetchCaixa(user.tenantId, start, end),
       fetchCompetencia(user.tenantId, start, end),
       supabase
@@ -329,9 +332,11 @@ export default function DREComparativoTab() {
         .eq('tenant_id', user.tenantId)
         .eq('is_active', true)
         .order('group_type').order('sort_order'),
+      // Regra dos recebidos da loja (Financeiro › Receitas › Fontes) — igual à DRE
+      loadRevenueExtras(user.tenantId, start, end),
     ]);
-    setCaixaData(caixa);
-    setCompData(comp);
+    setCaixaData(applyRevenueSources(caixa, extras.sources, extras.pix));
+    setCompData(applyRevenueSources(comp, extras.sources, extras.pix));
     setDreCats(catsRes.data ?? []);
     setLoading(false);
   }, [user?.tenantId, mes]);
@@ -526,6 +531,12 @@ export default function DREComparativoTab() {
             )}
             {(caixaData.receitaAutoatendimento > 0 || compData.receitaAutoatendimento > 0) && (
               <CompRow label="Autoatendimento" caixaVal={caixaData.receitaAutoatendimento} compVal={compData.receitaAutoatendimento} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
+            )}
+            {(caixaData.receitaStone > 0 || compData.receitaStone > 0) && (
+              <CompRow label="Vendas em Cartão (Stone)" caixaVal={caixaData.receitaStone} compVal={compData.receitaStone} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
+            )}
+            {((caixaData.receitaPix ?? 0) > 0 || (compData.receitaPix ?? 0) > 0) && (
+              <CompRow label="Pix Recebido (Inter)" caixaVal={caixaData.receitaPix ?? 0} compVal={compData.receitaPix ?? 0} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
             )}
             {/* BUG-41: saldo a receber é informação, NÃO soma na receita bruta (a venda a prazo
                 já está no payments/auto_sale — somar de novo era dupla contagem). */}

@@ -108,6 +108,33 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const [filterDelivery, setFilterDelivery] = useState('all'); // 'all' | 'pending' | 'confirmed'
   const [showFilters, setShowFilters] = useState(false);
 
+  // ── Navegação por mês (mesmo padrão da aba Contas a Pagar) ──
+  // A lista e os KPIs mostram o mês escolhido. "Data de/até" nos filtros tem
+  // prioridade: com intervalo preenchido, vale o intervalo em vez do mês.
+  const hoje = new Date();
+  const [mesSelecionado, setMesSelecionado] = useState(hoje.getMonth());
+  const [anoSelecionado, setAnoSelecionado] = useState(hoje.getFullYear());
+  const isMesAtual = mesSelecionado === hoje.getMonth() && anoSelecionado === hoje.getFullYear();
+  const irParaMesAnterior = () => {
+    if (mesSelecionado === 0) { setMesSelecionado(11); setAnoSelecionado((a) => a - 1); }
+    else setMesSelecionado((m) => m - 1);
+    setPage(1);
+  };
+  const irParaProximoMes = () => {
+    if (mesSelecionado === 11) { setMesSelecionado(0); setAnoSelecionado((a) => a + 1); }
+    else setMesSelecionado((m) => m + 1);
+    setPage(1);
+  };
+  const voltarMesAtual = () => { setMesSelecionado(hoje.getMonth()); setAnoSelecionado(hoje.getFullYear()); setPage(1); };
+  const mesPrefix = `${anoSelecionado}-${String(mesSelecionado + 1).padStart(2, '0')}`;
+  const usandoIntervalo = !!filterDateFrom || !!filterDateTo;
+  const comprasDoMes = useMemo(
+    () => purchases.filter((p) => p.purchase_date?.startsWith(mesPrefix)),
+    [purchases, mesPrefix],
+  );
+  // Base da lista e dos KPIs: o mês, ou todas as compras quando há intervalo de datas
+  const comprasBase = usandoIntervalo ? purchases : comprasDoMes;
+
   // Sort & pagination
   const [sortField, setSortField] = useState<SortField>('purchase_date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -235,7 +262,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
 
   // Filtered & sorted
   const filtered = useMemo(() => {
-    let result = [...purchases];
+    let result = [...comprasBase];
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter((p) =>
@@ -261,7 +288,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
     });
 
     return result;
-  }, [purchases, search, filterStatus, filterPayment, filterDateFrom, filterDateTo, filterDelivery, sortField, sortDir]);
+  }, [comprasBase, search, filterStatus, filterPayment, filterDateFrom, filterDateTo, filterDelivery, sortField, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -278,10 +305,11 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   };
 
   // KPIs
-  const totalCompras = purchases.reduce((s, p) => s + p.total_amount, 0);
-  const totalPago = purchases.filter((p) => p.payment_status === 'paid').reduce((s, p) => s + p.total_amount, 0);
-  const totalAPagar = purchases.filter((p) => p.payment_status !== 'paid').reduce((s, p) => s + p.total_amount, 0);
-  const totalParcelado = purchases.filter((p) => p.payment_status === 'partial').reduce((s, p) => s + p.total_amount, 0);
+  // KPIs do período em tela (mês selecionado, ou o intervalo "Data de/até")
+  const totalCompras = comprasBase.reduce((s, p) => s + Number(p.total_amount), 0);
+  const totalPago = comprasBase.filter((p) => p.payment_status === 'paid').reduce((s, p) => s + Number(p.total_amount), 0);
+  const totalAPagar = comprasBase.filter((p) => p.payment_status !== 'paid').reduce((s, p) => s + Number(p.total_amount), 0);
+  const totalParcelado = comprasBase.filter((p) => p.payment_status === 'partial').reduce((s, p) => s + Number(p.total_amount), 0);
 
   // Combina fornecedores cadastrados + os que aparecem nas compras (retrocompatibilidade)
   const suppliers = useMemo(() => {
@@ -372,6 +400,66 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
               </button>
             </div>
           )}
+
+          {/* ── Navegação por mês (igual à aba Contas a Pagar) ── */}
+          <div className="flex items-center justify-between bg-white border border-zinc-200 rounded-xl px-5 py-3">
+            <button
+              onClick={irParaMesAnterior}
+              disabled={usandoIntervalo}
+              className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 hover:bg-zinc-50 cursor-pointer transition-colors text-zinc-500 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <i className="ri-arrow-left-s-line text-base" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="text-center">
+                {usandoIntervalo ? (
+                  <>
+                    <p className="text-sm font-bold text-zinc-900">
+                      {filterDateFrom ? new Date(filterDateFrom + 'T00:00:00').toLocaleDateString('pt-BR') : 'Início'}
+                      {' – '}
+                      {filterDateTo ? new Date(filterDateTo + 'T00:00:00').toLocaleDateString('pt-BR') : 'hoje'}
+                    </p>
+                    <p className="text-xs text-zinc-400">
+                      {comprasBase.length} compra{comprasBase.length !== 1 ? 's' : ''} no período
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-bold text-zinc-900 capitalize">
+                      {new Date(anoSelecionado, mesSelecionado, 1).toLocaleDateString('pt-BR', { month: 'long' })} {anoSelecionado}
+                    </p>
+                    <p className="text-xs text-zinc-400">
+                      {comprasDoMes.length} compra{comprasDoMes.length !== 1 ? 's' : ''} neste mês
+                    </p>
+                  </>
+                )}
+              </div>
+              {usandoIntervalo ? (
+                <button
+                  onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); setPage(1); }}
+                  className="text-xs font-semibold px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 cursor-pointer transition-colors whitespace-nowrap"
+                >
+                  Voltar ao mês
+                </button>
+              ) : !isMesAtual && (
+                <button
+                  onClick={voltarMesAtual}
+                  className="text-xs font-semibold px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 cursor-pointer transition-colors whitespace-nowrap"
+                >
+                  Mês atual
+                </button>
+              )}
+            </div>
+
+            <button
+              onClick={irParaProximoMes}
+              disabled={usandoIntervalo}
+              className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 hover:bg-zinc-50 cursor-pointer transition-colors text-zinc-500 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <i className="ri-arrow-right-s-line text-base" />
+            </button>
+          </div>
 
           {/* KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
@@ -484,7 +572,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
           {(search || activeFiltersCount > 0) && (
             <p className="text-xs text-zinc-500">
               {filtered.length} resultado{filtered.length !== 1 ? 's' : ''} encontrado{filtered.length !== 1 ? 's' : ''}
-              {purchases.length !== filtered.length && ` de ${purchases.length} compras`}
+              {comprasBase.length !== filtered.length && ` de ${comprasBase.length} compras ${usandoIntervalo ? 'no período' : 'no mês'}`}
             </p>
           )}
 

@@ -1,9 +1,12 @@
 import { useState, useMemo } from 'react';
 import {
-  useReceitas, useInsertReceitaManual,
-  type ReceitasFilters, type ReceitaSource, type ReceitaItem,
-  SOURCE_LABELS_R, SOURCE_COLORS_R,
+  useReceitas, useInsertReceitaManual, useSaveRevenueSources,
+  type ReceitasFilters, type ReceitaSource, type ReceitaItem, type RevenueSettingSource,
+  SOURCE_LABELS_R, SOURCE_COLORS_R, REVENUE_SOURCE_INFO,
 } from '@/hooks/useReceitas';
+
+// Fonte da configuração da loja → fonte da linha exibida
+const SETTING_TO_ITEM: Record<RevenueSettingSource, ReceitaSource> = { orders: 'order', stone: 'stone', pix: 'pix', manual: 'manual' };
 import { formatCurrency } from '@/lib/formatters';
 import { todayBrasilia } from '@/lib/dateUtils';
 import {
@@ -240,6 +243,74 @@ function NovaReceitaModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
   );
 }
 
+// ─── Modal: o que conta como recebido ─────────────────────────────────────────
+function FontesReceitaModal({ current, onClose, onSaved }: {
+  current: RevenueSettingSource[]; onClose: () => void; onSaved: () => void;
+}) {
+  const { save, saving } = useSaveRevenueSources();
+  const [sel, setSel] = useState<RevenueSettingSource[]>(current);
+  const [error, setError] = useState('');
+
+  const toggle = (s: RevenueSettingSource) =>
+    setSel(v => v.includes(s) ? v.filter(x => x !== s) : [...v, s]);
+
+  const handleSave = async () => {
+    if (sel.length === 0) { setError('Escolha pelo menos uma fonte'); return; }
+    setError('');
+    const { error: err } = await save(sel);
+    if (err) { setError(err); return; }
+    onSaved();
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
+          <div>
+            <h3 className="text-base font-bold text-zinc-900">O que conta como recebido</h3>
+            <p className="text-xs text-zinc-500">Escolha de onde vêm os valores desta aba, para esta loja</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
+            <i className="ri-close-line text-zinc-500" />
+          </button>
+        </div>
+        <div className="p-6 space-y-3">
+          {(Object.keys(REVENUE_SOURCE_INFO) as RevenueSettingSource[]).map(s => (
+            <label key={s} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+              sel.includes(s) ? 'border-green-400 bg-green-50' : 'border-zinc-200 hover:bg-zinc-50'
+            }`}>
+              <input type="checkbox" checked={sel.includes(s)} onChange={() => toggle(s)} className="mt-1 accent-green-600" />
+              <div>
+                <p className="text-sm font-semibold text-zinc-800">{REVENUE_SOURCE_INFO[s].label}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">{REVENUE_SOURCE_INFO[s].desc}</p>
+              </div>
+            </label>
+          ))}
+          {sel.includes('orders') && sel.includes('stone') && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+              Pedidos do sistema + Stone contam a mesma venda de cartão duas vezes se o cartão também passa pelo PDV do ERP.
+            </div>
+          )}
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">{error}</div>
+          )}
+          <div className="flex gap-3 pt-1">
+            <button onClick={onClose}
+              className="flex-1 py-2.5 border border-zinc-200 rounded-lg text-sm font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
+              Cancelar
+            </button>
+            <button onClick={handleSave} disabled={saving}
+              className="flex-1 py-2.5 bg-green-500 hover:bg-green-600 disabled:opacity-40 text-white rounded-lg text-sm font-semibold cursor-pointer transition-colors whitespace-nowrap">
+              {saving ? 'Salvando...' : 'Salvar'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ReceitasTab() {
   const [viewMode, setViewMode] = useState<'tabela' | 'graficos' | 'analise'>('tabela');
@@ -252,10 +323,12 @@ export default function ReceitasTab() {
   });
   const [showFilters, setShowFilters] = useState(false);
   const [showNovaReceita, setShowNovaReceita] = useState(false);
+  const [showFontes, setShowFontes] = useState(false);
   const [sortField, setSortField] = useState<'date' | 'amount' | 'category'>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  const { items, summary, loading, error, truncated, refresh } = useReceitas(filters);
+  const { items, summary, loading, error, truncated, enabledSources, refresh } = useReceitas(filters);
+  const itemSources = enabledSources.map(s => SETTING_TO_ITEM[s]);
 
   const allCategories = useMemo(() => {
     const set = new Set(items.map(r => r.category));
@@ -321,14 +394,19 @@ export default function ReceitasTab() {
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-5">
 
-      {/* P4: rótulo — esta aba mede FATURAMENTO (venda), não caixa recebido */}
+      {/* Rótulo do que esta aba está somando — depende das fontes da loja */}
       <div className="flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
         <i className="ri-information-line mt-0.5" />
-        <span>
-          <strong>Faturamento por venda:</strong> pedidos entregues no período (base de vendas).
-          Difere do <strong>recebido em caixa</strong> da Visão Geral e da DRE — vendas no cartão a prazo
-          entram aqui na data da venda, mas no caixa só quando o dinheiro cai.
+        <span className="flex-1">
+          <strong>Contando como recebido:</strong> {enabledSources.map(s => REVENUE_SOURCE_INFO[s].label).join(' + ')}.
+          {enabledSources.includes('orders')
+            ? <> Pedidos entram na data da venda — vendas no cartão a prazo aparecem aqui antes de o dinheiro cair.</>
+            : <> Pedidos lançados no sistema não entram: vale o dinheiro que entrou na conta.</>}
         </span>
+        <button onClick={() => setShowFontes(true)}
+          className="px-2 py-1 rounded-md border border-blue-300 text-blue-700 font-semibold cursor-pointer hover:bg-blue-100 whitespace-nowrap flex items-center gap-1">
+          <i className="ri-settings-3-line" /> Fontes
+        </button>
       </div>
 
       {/* Falha de carga NUNCA pode passar por "não há vendas": sem este bloco a
@@ -363,13 +441,27 @@ export default function ReceitasTab() {
           color="bg-green-100 text-green-600"
           sub={`${items.length} lançamento(s)`}
         />
-        <KpiCard
-          label="Vendas (Pedidos)"
-          value={formatCurrency(summary?.fromOrders ?? 0)}
-          icon="ri-shopping-bag-3-line"
-          color="bg-emerald-100 text-emerald-600"
-          sub={`${items.filter(r => r.source === 'order').length} pedido(s) pago(s)`}
-        />
+        {enabledSources.includes('stone') || enabledSources.includes('pix') ? (
+          <KpiCard
+            label={enabledSources.includes('stone') && enabledSources.includes('pix') ? 'Cartão Stone / Pix' : enabledSources.includes('stone') ? 'Stone (cartão)' : 'Pix recebido'}
+            value={formatCurrency((summary?.fromStone ?? 0) + (summary?.fromPix ?? 0))}
+            icon="ri-bank-card-line"
+            color="bg-sky-100 text-sky-600"
+            sub={[
+              enabledSources.includes('stone') ? `Cartão ${formatCurrency(summary?.fromStone ?? 0)}` : null,
+              enabledSources.includes('pix') ? `Pix ${formatCurrency(summary?.fromPix ?? 0)}` : null,
+              enabledSources.includes('orders') ? `Pedidos ${formatCurrency(summary?.fromOrders ?? 0)}` : null,
+            ].filter(Boolean).join(' · ')}
+          />
+        ) : (
+          <KpiCard
+            label="Vendas (Pedidos)"
+            value={formatCurrency(summary?.fromOrders ?? 0)}
+            icon="ri-shopping-bag-3-line"
+            color="bg-emerald-100 text-emerald-600"
+            sub={`${items.filter(r => r.source === 'order').length} pedido(s) pago(s)`}
+          />
+        )}
         <KpiCard
           label="Lançamentos Manuais"
           value={formatCurrency(summary?.fromManual ?? 0)}
@@ -490,7 +582,7 @@ export default function ReceitasTab() {
               <div>
                 <p className="text-xs font-semibold text-zinc-600 mb-2">Fonte</p>
                 <div className="flex flex-wrap gap-2">
-                  {(['order', 'manual'] as ReceitaSource[]).map(s => (
+                  {itemSources.map(s => (
                     <button key={s} onClick={() => toggleSource(s)}
                       className={`px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors border ${
                         filters.sources.includes(s) ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'
@@ -559,7 +651,7 @@ export default function ReceitasTab() {
           </div>
           <p className="text-sm font-semibold text-zinc-700">Nenhuma receita encontrada</p>
           <p className="text-xs text-zinc-400 mt-1">
-            {hasActiveFilters ? 'Tente ajustar os filtros' : 'Pedidos pagos e lançamentos manuais aparecerão aqui'}
+            {hasActiveFilters ? 'Tente ajustar os filtros' : `${enabledSources.map(s => REVENUE_SOURCE_INFO[s].label).join(', ')} aparecerão aqui`}
           </p>
           <button onClick={() => setShowNovaReceita(true)}
             className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold cursor-pointer transition-colors whitespace-nowrap">
@@ -808,7 +900,7 @@ export default function ReceitasTab() {
               const avgDaily = summary.total / days;
               const avgPerItem = items.length > 0 ? summary.total / items.length : 0;
               const maxDay = summary.dailyTrend.reduce((max, d) => d.amount > max.amount ? d : max, summary.dailyTrend[0] ?? { date: '', amount: 0 });
-              const ordersPct = summary.total > 0 ? (summary.fromOrders / summary.total) * 100 : 0;
+              const ordersPct = summary.total > 0 ? ((summary.fromOrders + summary.fromStone + summary.fromPix) / summary.total) * 100 : 0;
               return (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-zinc-50 rounded-xl p-4 text-center">
@@ -829,7 +921,7 @@ export default function ReceitasTab() {
                   <div className="bg-zinc-50 rounded-xl p-4 text-center">
                     <p className="text-xs text-zinc-500 mb-1">% de Vendas</p>
                     <p className="text-lg font-bold text-green-600">{ordersPct.toFixed(1)}%</p>
-                    <p className="text-xs text-zinc-400 mt-0.5">via pedidos</p>
+                    <p className="text-xs text-zinc-400 mt-0.5">{enabledSources.includes('orders') ? 'via pedidos' : 'via cartão/Pix'}</p>
                   </div>
                 </div>
               );
@@ -850,7 +942,7 @@ export default function ReceitasTab() {
                       <span className="text-sm font-bold text-green-700">{formatCurrency(item.amount)}</span>
                       <span className="text-xs px-2 py-0.5 rounded-full font-medium"
                         style={{ backgroundColor: SOURCE_COLORS_R[item.source] + '22', color: SOURCE_COLORS_R[item.source] }}>
-                        {item.source === 'order' ? 'Pedido' : 'Manual'}
+                        {item.source === 'order' ? 'Pedido' : item.source === 'stone' ? 'Stone' : item.source === 'pix' ? 'Pix' : 'Manual'}
                       </span>
                     </div>
                   </div>
@@ -859,6 +951,10 @@ export default function ReceitasTab() {
             </div>
           </div>
         </div>
+      )}
+
+      {showFontes && (
+        <FontesReceitaModal current={enabledSources} onClose={() => setShowFontes(false)} onSaved={refresh} />
       )}
 
       {/* Modal nova receita */}

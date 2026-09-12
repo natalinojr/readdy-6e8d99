@@ -1619,6 +1619,22 @@ Deno.serve(async (req) => {
         break;
       }
 
+      // ── Fontes dos recebidos (aba Receitas) ─────────────────────────────
+      case 'set_revenue_sources': {
+        const ALLOWED = ['orders', 'stone', 'pix', 'manual'];
+        const raw = (payload ?? {}) as { sources?: unknown };
+        const sources = Array.isArray(raw.sources)
+          ? [...new Set(raw.sources.map(String))].filter(s => ALLOWED.includes(s))
+          : [];
+        if (sources.length === 0) {
+          return new Response(JSON.stringify({ error: 'Escolha pelo menos uma fonte de receita' }), { status: 400, headers: corsHeaders });
+        }
+        result = await supabase.from('fin_revenue_settings')
+          .upsert({ tenant_id, sources, updated_at: new Date().toISOString(), updated_by: user.id }, { onConflict: 'tenant_id' })
+          .select().single();
+        break;
+      }
+
       default:
         return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), { status: 400, headers: corsHeaders });
     }

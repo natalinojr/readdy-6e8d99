@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase, SUPABASE_URL } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { dateKeyBrasilia } from '@/lib/dateUtils';
+import { DEFAULT_REVENUE_SOURCES, fetchRevenueSources, fetchPixRecebidos, type RevenueSettingSource } from '@/lib/revenueSources';
 
 // Formato das linhas lidas nas queries paginadas (o helper é genérico, então
 // o tipo precisa ser declarado aqui em vez de inferido pelo supabase-js).
@@ -20,7 +21,12 @@ interface CashFlowRow {
 import { useAuth } from '@/contexts/AuthContext';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-export type ReceitaSource = 'order' | 'manual';
+export type ReceitaSource = 'order' | 'stone' | 'pix' | 'manual';
+
+// Fontes configuráveis por loja (fin_revenue_settings.sources) — regra única
+// compartilhada com DRE e Visão Geral, em src/lib/revenueSources.ts.
+export { DEFAULT_REVENUE_SOURCES, REVENUE_SOURCE_INFO } from '@/lib/revenueSources';
+export type { RevenueSettingSource } from '@/lib/revenueSources';
 export type ReceitaStatus = 'received' | 'pending';
 
 export interface ReceitaItem {
@@ -41,6 +47,8 @@ export interface ReceitaItem {
 export interface ReceitasSummary {
   total: number;
   fromOrders: number;
+  fromStone: number;
+  fromPix: number;
   fromManual: number;
   byCategory: { category: string; total: number; count: number }[];
   bySource: { source: ReceitaSource; total: number; count: number }[];
@@ -60,11 +68,15 @@ export interface ReceitasFilters {
 
 export const SOURCE_LABELS_R: Record<ReceitaSource, string> = {
   order: 'Vendas (Pedidos)',
+  stone: 'Stone (cartão)',
+  pix: 'Pix recebido',
   manual: 'Lançamento Manual',
 };
 
 export const SOURCE_COLORS_R: Record<ReceitaSource, string> = {
   order: '#10b981',
+  stone: '#0ea5e9',
+  pix: '#8b5cf6',
   manual: '#f59e0b',
 };
 
@@ -87,12 +99,26 @@ export function useReceitas(filters: ReceitasFilters) {
   // "nenhuma receita encontrada" — indistinguível de um período sem vendas.
   const [error, setError] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
+  const [enabledSources, setEnabledSources] = useState<RevenueSettingSource[]>(DEFAULT_REVENUE_SOURCES);
 
   const fetchReceitas = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
 
     const { startDate, endDate, categories, sources, search, minAmount, maxAmount } = filters;
+
+    // Quais fontes contam como recebido nesta loja (configurável na própria aba).
+    const { sources: enabled, error: cfgErr } = await fetchRevenueSources(user.tenantId);
+    if (cfgErr) {
+      console.error('[useReceitas] Falha ao ler fontes de receita:', cfgErr);
+      setError(cfgErr);
+      setItems([]);
+      setSummary(null);
+      setLoading(false);
+      return;
+    }
+    setEnabledSources(enabled);
+    const empty = Promise.resolve({ rows: [] as never[], error: null, truncated: false });
     // Fuso EXPLÍCITO de Brasília: sem o offset, 'T23:59:59' é interpretado como
     // UTC contra um timestamptz e o período fechava às 20:59 do horário local —
     // todo o faturamento das 21h à meia-noite do último dia caía fora.
@@ -102,9 +128,9 @@ export function useReceitas(filters: ReceitasFilters) {
     // PAGINADO: sem .range() o PostgREST corta em ~1000 linhas SEM ERRO, e o
     // total da aba simplesmente parava de crescer em períodos longos
     // ("Últimos 3 Meses", "Este Ano") sem nada indicar o truncamento.
-    const [ordersRes, manualRes] = await Promise.all([
+    const [ordersRes, manualRes, stoneRes, pixRes] = await Promise.all([
       // Pedidos entregues (fonte única de verdade: status = 'delivered')
-      fetchAllRows<OrderRow>((from, to) => supabase
+      !enabled.includes('orders') ? empty : fetchAllRows<OrderRow>((from, to) => supabase
         .from('orders')
         // NÃO peça `payment_method`: essa coluna NÃO existe em `orders` (a forma
         // de pagamento vive em `payments`). O PostgREST devolvia 400
@@ -126,7 +152,7 @@ export function useReceitas(filters: ReceitasFilters) {
         .range(from, to)),
 
       // Receitas manuais no fin_cash_flow
-      fetchAllRows<CashFlowRow>((from, to) => supabase
+      !enabled.includes('manual') ? empty : fetchAllRows<CashFlowRow>((from, to) => supabase
         .from('fin_cash_flow')
         .select('id, description, amount, date, category, origin, payment_method_id, notes, created_at')
         .eq('tenant_id', user.tenantId)
@@ -136,9 +162,28 @@ export function useReceitas(filters: ReceitasFilters) {
         .lte('date', endDate)
         .order('date', { ascending: false })
         .range(from, to)),
+
+      // Vendas em cartão liquidadas pela Stone (lançadas pela edge
+      // stone-conciliation com post_to_ledger ligado). Datadas pelo dia do
+      // pagamento da Stone = dinheiro que efetivamente entrou.
+      !enabled.includes('stone') ? empty : fetchAllRows<CashFlowRow>((from, to) => supabase
+        .from('fin_cash_flow')
+        .select('id, description, amount, date, category, origin, payment_method_id, notes, created_at')
+        .eq('tenant_id', user.tenantId)
+        .eq('type', 'income')
+        .eq('origin', 'stone_sale')
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: false })
+        .range(from, to)),
+
+      // Pix que entrou no Inter (extrato), inclusive o da maquininha vindo da Conta Stone
+      !enabled.includes('pix')
+        ? Promise.resolve({ rows: [], error: null })
+        : fetchPixRecebidos(user.tenantId, startDate, endDate),
     ]);
 
-    const falha = ordersRes.error ?? manualRes.error;
+    const falha = ordersRes.error ?? manualRes.error ?? stoneRes.error ?? (pixRes.error ? { message: pixRes.error } : null);
     if (falha) {
       console.error('[useReceitas] Falha ao carregar receitas:', falha.message);
       setError(falha.message);
@@ -148,7 +193,7 @@ export function useReceitas(filters: ReceitasFilters) {
       return;
     }
     setError(null);
-    setTruncated(ordersRes.truncated || manualRes.truncated);
+    setTruncated(ordersRes.truncated || manualRes.truncated || stoneRes.truncated);
 
     const allItems: ReceitaItem[] = [];
 
@@ -196,6 +241,39 @@ export function useReceitas(filters: ReceitasFilters) {
         reference_id: c.id,
         notes: c.notes ?? undefined,
         created_at: c.created_at,
+      });
+    });
+
+    // Vendas Stone (uma linha por dia de pagamento)
+    (stoneRes.rows ?? []).forEach(c => {
+      allItems.push({
+        id: `stone_${c.id}`,
+        source: 'stone',
+        description: c.description || 'Vendas em cartão (Stone)',
+        category: 'Cartão (Stone)',
+        amount: Number(c.amount),
+        date: c.date,
+        status: 'received',
+        origin_detail: 'Conciliação Stone',
+        reference_id: c.id,
+        notes: c.notes ?? undefined,
+        created_at: c.created_at,
+      });
+    });
+
+    // Pix recebido no Inter
+    pixRes.rows.forEach(p => {
+      allItems.push({
+        id: `pix_${p.id}`,
+        source: 'pix',
+        description: p.description || 'Pix recebido',
+        category: 'Pix',
+        amount: p.amount,
+        date: p.transaction_date,
+        status: 'received',
+        origin_detail: p.match_kind === 'internal_transfer' ? 'Transferido da Conta Stone (Pix da maquininha)' : (p.counterpart_name ?? 'Banco Inter'),
+        reference_id: p.id,
+        created_at: p.created_at,
       });
     });
 
@@ -266,11 +344,15 @@ export function useReceitas(filters: ReceitasFilters) {
 
     const fromOrders = filtered.filter(r => r.source === 'order').reduce((s, r) => s + r.amount, 0);
     const fromManual = filtered.filter(r => r.source === 'manual').reduce((s, r) => s + r.amount, 0);
+    const fromStone = filtered.filter(r => r.source === 'stone').reduce((s, r) => s + r.amount, 0);
+    const fromPix = filtered.filter(r => r.source === 'pix').reduce((s, r) => s + r.amount, 0);
 
     setItems(filtered);
     setSummary({
       total: filtered.reduce((s, r) => s + r.amount, 0),
       fromOrders,
+      fromStone,
+      fromPix,
       fromManual,
       byCategory,
       bySource,
@@ -282,7 +364,39 @@ export function useReceitas(filters: ReceitasFilters) {
 
   useEffect(() => { fetchReceitas(); }, [fetchReceitas]);
 
-  return { items, summary, loading, error, truncated, refresh: fetchReceitas };
+  return { items, summary, loading, error, truncated, enabledSources, refresh: fetchReceitas };
+}
+
+// ─── Hook para salvar as fontes dos recebidos da loja ────────────────────────
+export function useSaveRevenueSources() {
+  const { user } = useAuth();
+  const [saving, setSaving] = useState(false);
+
+  const save = useCallback(async (sources: RevenueSettingSource[]) => {
+    if (!user?.tenantId) return { error: 'Sem tenant' };
+    setSaving(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return { error: 'Sessão expirada' };
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/financial-write`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'apikey': import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY as string,
+        },
+        body: JSON.stringify({ action: 'set_revenue_sources', tenant_id: user.tenantId, payload: { sources } }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.error) return { error: String(json?.error ?? 'Erro ao salvar') };
+      return { error: null };
+    } finally {
+      setSaving(false);
+    }
+  }, [user?.tenantId]);
+
+  return { save, saving };
 }
 
 // ─── Hook para inserir receita manual ────────────────────────────────────────

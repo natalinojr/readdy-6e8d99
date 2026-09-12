@@ -13,7 +13,10 @@
 // TECLADO INLINE (botões), localização e contato nativos. Reações: 👀 recebi,
 // 👍 respondi, 🤔 ferramenta falhou, 😱 erro, 🫡 sem resposta (NO_REPLY).
 //
-// Secrets: TELEGRAM_BOT_TOKEN, ASSISTENTE_INTERNAL_KEY, WHISPER_URL, WHISPER_API_KEY.
+// Pagamentos pelo Inter (2026-09-12): resumo com botões Pagar/Cancelar; o PIN digitado depois do
+// botão é interceptado aqui (nunca vai ao brain nem ao histórico) e a mensagem é apagada. /pin cria/troca.
+//
+// Secrets: TELEGRAM_BOT_TOKEN, ASSISTENTE_INTERNAL_KEY, WHISPER_URL, WHISPER_API_KEY, FISCAL_INTERNAL_KEY (inter-bank).
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 
@@ -118,6 +121,14 @@ async function runActions(admin: SupabaseClient, chatId: number, chatKey: string
         await admin.from('asst_polls').update({ ref: { tg_message_id: m.message_id } }).eq('message_id', key);
       } else if (a.type === 'location') {
         await tg('sendVenue', { chat_id: chatId, latitude: a.lat, longitude: a.lng, title: a.name, address: a.address ?? '' });
+      } else if (a.type === 'payment') {
+        const { data: p } = await admin.from('fin_inter_payments').select('*').eq('id', String(a.id)).maybeSingle();
+        if (!p) throw new Error('pedido de pagamento não encontrado');
+        const m = await tg('sendMessage', {
+          chat_id: chatId, text: toHtml(payText(p, 'Tocar em *Pagar* pede seu PIN. Depois o Inter ainda pede a sua aprovação no app.')), parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: payKb(p.id) },
+        });
+        await admin.from('fin_inter_payments').update({ tg_message_id: m.message_id, chat_id: chatKey }).eq('id', p.id);
       } else if (a.type === 'contact') {
         await tg('sendContact', { chat_id: chatId, phone_number: `+${a.phone}`, first_name: a.name, vcard: a.org ? `BEGIN:VCARD\nVERSION:3.0\nFN:${a.name}\nORG:${a.org}\nTEL:+${a.phone}\nEND:VCARD` : undefined });
       }
@@ -366,6 +377,211 @@ async function tryDreAnswerTg(admin: SupabaseClient, chatId: number, text: strin
   return true;
 }
 
+// ── Pagamentos pelo Banco Inter (2026-09-12) ──
+// Botões: p|ok|<id> pagar · p|no|<id> cancelar · p|st|<id> ver status. "Pagar" põe o pedido em
+// awaiting_pin; o PRÓXIMO texto só com números (4–8) em até 5 min é o PIN: apagado do chat, conferido
+// contra asst_settings.pay_pin (sha256), e aí inter-bank › execute_payment envia ao Inter.
+// 3 PINs errados seguidos = bloqueio de 15 min. /pin cria ou troca o PIN (pede o atual antes).
+const fiscalKey = Deno.env.get('FISCAL_INTERNAL_KEY') ?? '';
+const PIN_WINDOW_MS = 5 * 60_000;
+const PAY_TTL_MS = 30 * 60_000;
+const nowIso = () => new Date().toISOString();
+const brl = (n: unknown) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtDate = (d: unknown) => (d ? String(d).slice(0, 10).split('-').reverse().join('/') : '');
+const PAY_STATUS: Record<string, string> = {
+  draft: 'aguardando você tocar em Pagar', awaiting_pin: 'esperando o PIN', sending: 'enviando ao Inter', sent: 'enviado ao Inter',
+  pending_approval: '⏳ aguardando sua aprovação no app do Inter', approved: 'aprovado, processando', scheduled: '📅 agendado no Inter',
+  paid: '✅ pago', cancelled: '✖️ cancelado', rejected: '❌ recusado pelo Inter', failed: '❌ não foi enviado', expired: 'expirado',
+};
+const PAY_DONE = ['paid', 'cancelled', 'rejected', 'failed', 'expired'];
+async function sha256hex(text: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+const pinHash = (pin: string, chatId: number) => sha256hex(`erpos-pay:${chatId}:${pin}`);
+// deno-lint-ignore no-explicit-any
+async function getSetting(admin: SupabaseClient, key: string): Promise<any> {
+  const { data } = await admin.from('asst_settings').select('value').eq('key', key).maybeSingle();
+  return data?.value ?? null;
+}
+async function setSetting(admin: SupabaseClient, key: string, value: unknown) {
+  await admin.from('asst_settings').upsert({ key, value, updated_at: nowIso() });
+}
+// deno-lint-ignore no-explicit-any
+async function callInter(action: string, body: Record<string, unknown>): Promise<any> {
+  const r = await fetch(`${supabaseUrl}/functions/v1/inter-bank`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': fiscalKey }, body: JSON.stringify({ action, ...body }),
+  });
+  // deno-lint-ignore no-explicit-any
+  const out: any = await r.json().catch(() => ({}));
+  if (!r.ok || out?.success === false) throw new Error(String(out?.error ?? `inter-bank HTTP ${r.status}`));
+  return out;
+}
+// deno-lint-ignore no-explicit-any
+function payText(p: any, extra = ''): string {
+  const lines = [p.kind === 'pix' ? '💸 *Pix pela conta do Inter*' : '💸 *Boleto pela conta do Inter*'];
+  if (p.beneficiary_name) lines.push(`Para: ${p.beneficiary_name}`);
+  if (p.kind === 'pix') lines.push(`Chave: ${p.pix_key}`);
+  if (p.kind === 'boleto') {
+    if (p.bank_code) lines.push(`Banco do boleto: ${p.bank_code}`);
+    if (p.due_date) lines.push(`Vencimento: ${fmtDate(p.due_date)}`);
+    if (p.face_value != null && Math.abs(Number(p.face_value) - Number(p.amount)) > 0.005) lines.push(`Valor do boleto: ${brl(p.face_value)}`);
+  }
+  lines.push(`*Valor a pagar: ${brl(p.amount)}*`);
+  if (p.description) lines.push(`Descrição: ${p.description}`);
+  return lines.join('\n') + (extra ? `\n\n${extra}` : '');
+}
+const payKb = (id: string): Btn[][] => [[{ text: '✅ Pagar', callback_data: `p|ok|${id}` }, { text: '✖️ Cancelar', callback_data: `p|no|${id}` }]];
+const statusKb = (id: string): Btn[][] => [[{ text: '🔄 Ver status', callback_data: `p|st|${id}` }, { text: '✖️ Cancelar', callback_data: `p|no|${id}` }]];
+// deno-lint-ignore no-explicit-any
+async function editPay(chatId: number, mid: number | null, p: any, extra: string, kb?: Btn[][]) {
+  const text = toHtml(payText(p, extra));
+  if (!mid) { await tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', ...(kb ? { reply_markup: { inline_keyboard: kb } } : {}) }).catch(() => {}); return; }
+  await tg('editMessageText', { chat_id: chatId, message_id: mid, text, parse_mode: 'HTML', ...(kb ? { reply_markup: { inline_keyboard: kb } } : {}) })
+    .catch((e) => { if (!/not modified/i.test(errMsg(e))) log('WARN', 'editar pagamento', { error: errMsg(e) }); });
+}
+// deno-lint-ignore no-explicit-any
+const statusLine = (p: any) => `Status: ${PAY_STATUS[p.status] ?? p.status}${p.error ? `\n${p.error}` : ''}${p.status === 'pending_approval' ? '\nAbra o app do Inter › Aprovações para liberar.' : ''}`;
+async function checkPin(admin: SupabaseClient, chatId: number, pin: string): Promise<boolean> {
+  const s = (await getSetting(admin, 'pay_pin')) ?? {};
+  if (s.locked_until && new Date(s.locked_until).getTime() > Date.now()) {
+    await sendText(chatId, `🔒 PIN bloqueado até ${new Date(s.locked_until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })} por tentativas erradas.`).catch(() => {});
+    return false;
+  }
+  if (!s.hash) { await sendText(chatId, 'Você ainda não tem PIN de pagamento. Mande /pin para criar.').catch(() => {}); return false; }
+  if ((await pinHash(pin, chatId)) === s.hash) {
+    if (s.fails) await setSetting(admin, 'pay_pin', { ...s, fails: 0, locked_until: null });
+    return true;
+  }
+  const fails = Number(s.fails ?? 0) + 1;
+  const locked = fails >= 3 ? new Date(Date.now() + 15 * 60_000).toISOString() : null;
+  await setSetting(admin, 'pay_pin', { ...s, fails: locked ? 0 : fails, locked_until: locked });
+  log('WARN', 'PIN de pagamento errado', { chat: chatId, fails, locked: !!locked });
+  await sendText(chatId, locked ? '🔒 PIN errado 3 vezes. Bloqueado por 15 minutos.' : `PIN errado (${fails}/3). Digite de novo.`).catch(() => {});
+  return false;
+}
+// deno-lint-ignore no-explicit-any
+async function handlePayClick(admin: SupabaseClient, cq: any) {
+  const chatId = Number(cq.message?.chat?.id);
+  const mid = Number(cq.message?.message_id) || null;
+  const [, op, id] = String(cq.data ?? '').split('|');
+  const ack = (t?: string) => tg('answerCallbackQuery', { callback_query_id: cq.id, ...(t ? { text: t.slice(0, 190) } : {}) }).catch(() => {});
+  const { data: p } = await admin.from('fin_inter_payments').select('*').eq('id', id).maybeSingle();
+  if (!p) { await ack('Pedido não encontrado.'); return; }
+  if (op === 'no') {
+    try {
+      const out = await callInter('cancel_payment', { tenant_id: p.tenant_id, payment_id: p.id });
+      Object.assign(p, out.payment);
+      await ack('Cancelado');
+      await editPay(chatId, mid, p, p.inter_code ? '✖️ Cancelado no Inter.' : '✖️ Cancelado. Nada foi enviado ao Inter.');
+    } catch (e) {
+      await ack('Não deu para cancelar');
+      await sendText(chatId, `Não consegui cancelar: ${errMsg(e)}`).catch(() => {});
+    }
+    return;
+  }
+  if (op === 'st') {
+    try { const out = await callInter('payment_status', { tenant_id: p.tenant_id, payment_id: p.id }); Object.assign(p, out.payment); }
+    catch (e) { await ack(errMsg(e).slice(0, 150)); return; }
+    await ack(PAY_STATUS[p.status] ?? p.status);
+    await editPay(chatId, mid, p, statusLine(p), PAY_DONE.includes(p.status) ? undefined : statusKb(p.id));
+    return;
+  }
+  if (op === 'ok') {
+    if (p.status !== 'draft') { await ack(`Esse já está: ${PAY_STATUS[p.status] ?? p.status}`); return; }
+    if (Date.now() - new Date(p.created_at).getTime() > PAY_TTL_MS) {
+      await admin.from('fin_inter_payments').update({ status: 'expired', updated_at: nowIso() }).eq('id', p.id).eq('status', 'draft');
+      p.status = 'expired';
+      await ack('Expirou');
+      await editPay(chatId, mid, p, 'Pedido expirado (30 minutos). Me peça de novo.');
+      return;
+    }
+    const pin = await getSetting(admin, 'pay_pin');
+    if (!pin?.hash) {
+      await ack('Crie seu PIN primeiro');
+      await editPay(chatId, mid, p, '🔐 Você ainda não tem PIN de pagamento. Mande /pin, crie o PIN e depois toque em Pagar de novo.', payKb(p.id));
+      return;
+    }
+    if (pin.locked_until && new Date(pin.locked_until).getTime() > Date.now()) { await ack('PIN bloqueado por alguns minutos'); return; }
+    const { data: moved } = await admin.from('fin_inter_payments').update({ status: 'awaiting_pin', pin_requested_at: nowIso(), updated_at: nowIso() }).eq('id', p.id).eq('status', 'draft').select('id');
+    if (!moved?.length) { await ack('Esse já foi tocado'); return; }
+    p.status = 'awaiting_pin';
+    await ack('Digite o PIN');
+    await editPay(chatId, mid, p, '🔐 *Digite seu PIN agora* (a mensagem some depois de lida). Vale por 5 minutos.', [[{ text: '✖️ Cancelar', callback_data: `p|no|${p.id}` }]]);
+    return;
+  }
+  await ack('Opção inválida.');
+}
+// Texto que pertence ao fluxo de pagamento: /pin, criação/troca do PIN, ou o PIN de um pedido.
+// Devolve true se tratou (e aí NADA vai para o brain/histórico).
+async function tryPayText(admin: SupabaseClient, chatId: number, text: string, messageId: number | null): Promise<boolean> {
+  const chatKey = `tg:${chatId}`;
+  const t = text.trim();
+  const isPin = /^\d{4,8}$/.test(t);
+  const del = () => (messageId ? tg('deleteMessage', { chat_id: chatId, message_id: messageId }).catch(() => {}) : Promise.resolve());
+  if (/^\/pin(@\w+)?$/i.test(t)) {
+    const pin = await getSetting(admin, 'pay_pin');
+    await setSetting(admin, 'pay_pin_setup', { chat: chatKey, step: pin?.hash ? 'current' : 'new', at: nowIso() });
+    await sendText(chatId, pin?.hash ? '🔐 Para trocar o PIN de pagamento, digite primeiro o PIN atual.' : '🔐 Crie seu PIN de pagamento: digite de 4 a 8 números. A mensagem some depois de lida.');
+    return true;
+  }
+  const setup = await getSetting(admin, 'pay_pin_setup');
+  const setupActive = setup?.chat === chatKey && Date.now() - new Date(setup.at).getTime() < PIN_WINDOW_MS;
+  if (setupActive && /^(cancelar|cancela)$/i.test(t)) {
+    await admin.from('asst_settings').delete().eq('key', 'pay_pin_setup');
+    await sendText(chatId, 'Ok, PIN não alterado.');
+    return true;
+  }
+  if (setupActive && isPin) {
+    await del();
+    if (setup.step === 'current') {
+      if (!(await checkPin(admin, chatId, t))) return true;
+      await setSetting(admin, 'pay_pin_setup', { chat: chatKey, step: 'new', at: nowIso() });
+      await sendText(chatId, 'Agora digite o PIN novo (4 a 8 números).');
+      return true;
+    }
+    if (setup.step === 'new') {
+      if (/^(\d)\1+$/.test(t) || '01234567890'.includes(t) || '09876543210'.includes(t)) { await sendText(chatId, 'Esse PIN é fácil demais (repetido ou sequência). Escolha outro.'); return true; }
+      await setSetting(admin, 'pay_pin_setup', { chat: chatKey, step: 'confirm', first: await pinHash(t, chatId), at: nowIso() });
+      await sendText(chatId, 'Digite o PIN novo mais uma vez para confirmar.');
+      return true;
+    }
+    if (setup.step === 'confirm') {
+      const h = await pinHash(t, chatId);
+      if (h !== setup.first) {
+        await setSetting(admin, 'pay_pin_setup', { chat: chatKey, step: 'new', at: nowIso() });
+        await sendText(chatId, 'Não bateu com o primeiro. Digite o PIN novo de novo.');
+        return true;
+      }
+      await setSetting(admin, 'pay_pin', { hash: h, fails: 0, locked_until: null, set_at: nowIso() });
+      await admin.from('asst_settings').delete().eq('key', 'pay_pin_setup');
+      await admin.from('asst_messages').insert({ channel: 'telegram', chat_id: chatKey, role: 'assistant', content: '[PIN de pagamento criado/alterado pelo /pin]' });
+      await sendText(chatId, '✅ PIN de pagamento salvo. Ele só é pedido depois que você toca em Pagar.');
+      return true;
+    }
+  }
+  if (!isPin) return false;
+  const { data: rows } = await admin.from('fin_inter_payments').select('*').eq('chat_id', chatKey).eq('status', 'awaiting_pin')
+    .gte('pin_requested_at', new Date(Date.now() - PIN_WINDOW_MS).toISOString()).order('pin_requested_at', { ascending: false }).limit(1);
+  const p = rows?.[0];
+  if (!p) return false;
+  await del();
+  if (!(await checkPin(admin, chatId, t))) return true;
+  const mid = Number(p.tg_message_id) || null;
+  await editPay(chatId, mid, p, '⏳ PIN ok. Enviando ao Inter...');
+  try {
+    const out = await callInter('execute_payment', { tenant_id: p.tenant_id, payment_id: p.id });
+    Object.assign(p, out.payment);
+  } catch (e) {
+    const { data: cur } = await admin.from('fin_inter_payments').select('*').eq('id', p.id).maybeSingle();
+    Object.assign(p, cur ?? { status: 'failed' });
+    if (!p.error) p.error = errMsg(e);
+  }
+  await editPay(chatId, mid, p, statusLine(p), PAY_DONE.includes(p.status) ? undefined : statusKb(p.id));
+  await admin.from('asst_messages').insert({ channel: 'telegram', chat_id: chatKey, role: 'assistant', content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status}${p.error ? ` (${p.error})` : ''}] id ${p.id}` });
+  return true;
+}
+
 type Incoming = { chatId: number; chatKey: string; text: string; attachment: { base64: string; media_type: string } | null; messageId: number | null; kind: string };
 async function processOwner(admin: SupabaseClient, m: Incoming) {
   let text = m.text;
@@ -420,6 +636,7 @@ async function handle(update: any) {
     const from = String(cq.from?.id ?? '');
     if (!allowed.has(from)) { await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Não autorizado.' }).catch(() => {}); return; }
     if (String(cq.data ?? '').startsWith('d|')) { await handleDreClick(admin, cq); return; } // classificação DRE
+    if (String(cq.data ?? '').startsWith('p|')) { await handlePayClick(admin, cq); return; } // pagamento pelo Inter
     const [tail, idxStr] = String(cq.data ?? '').split('|');
     const { data: polls } = await admin.from('asst_polls').select('message_id, question, options, answered_at').eq('kind', 'tg_buttons').like('message_id', `%${tail}`).limit(1);
     const poll = polls?.[0];
@@ -492,6 +709,8 @@ async function handle(update: any) {
     await sendText(chatId, 'Deu erro ao baixar isso. Tenta de novo?').catch(() => {});
     return;
   }
+  // PIN / criação de PIN de pagamento → tratado aqui, NUNCA vai ao modelo nem ao histórico.
+  if (!attachment && kind === 'text' && !msg.edit_date && await tryPayText(admin, chatId, text, messageId)) return;
   // Resposta digitada a uma pergunta de classificação DRE → grava direto, sem o modelo.
   if (!attachment && kind === 'text' && await tryDreAnswerTg(admin, chatId, text, Number(msg.reply_to_message?.message_id) || null, messageId)) return;
   await processOwner(admin, { chatId, chatKey, text, attachment, messageId, kind });

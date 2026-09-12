@@ -8,6 +8,7 @@ import type { SessionInfo } from '@/hooks/useSessions';
 import { formatCurrency } from '@/lib/formatters';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { fetchRevenueSources, fetchPixRecebidos } from '@/lib/revenueSources';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, CartesianGrid, ComposedChart, Line,
@@ -83,16 +84,34 @@ function useReceitaVsDespesa(meses: number) {
     if (!user?.tenantId) return;
     setLoading(true);
     try {
-      // ═══ Receita: fin_cash_flow auto_sale + manual (livro-razão único) ═══
+      // ═══ Receita: regra dos recebidos da loja (Financeiro › Receitas › Fontes) ═══
+      // pedidos → auto_sale, manual → manual, stone → stone_sale, pix → extrato do Inter
       const startDateStr = new Date(new Date().setMonth(new Date().getMonth() - meses)).toISOString().split('T')[0];
+      const { sources } = await fetchRevenueSources(user.tenantId);
+      const origins = [
+        sources.includes('orders') ? 'auto_sale' : null,
+        sources.includes('manual') ? 'manual' : null,
+        sources.includes('stone') ? 'stone_sale' : null,
+      ].filter(Boolean) as string[];
 
-      const { data: incomeData } = await supabase
-        .from('fin_cash_flow')
-        .select('date, amount')
-        .eq('tenant_id', user.tenantId)
-        .eq('type', 'income')
-        .in('origin', ['auto_sale', 'manual'])
-        .gte('date', startDateStr);
+      const [{ data: ledgerIncome }, pixRes] = await Promise.all([
+        origins.length === 0
+          ? Promise.resolve({ data: [] as { date: string; amount: number }[] })
+          : supabase
+            .from('fin_cash_flow')
+            .select('date, amount')
+            .eq('tenant_id', user.tenantId)
+            .eq('type', 'income')
+            .in('origin', origins)
+            .gte('date', startDateStr),
+        sources.includes('pix')
+          ? fetchPixRecebidos(user.tenantId, startDateStr, '2999-12-31')
+          : Promise.resolve({ rows: [], error: null }),
+      ]);
+      const incomeData = [
+        ...(ledgerIncome ?? []),
+        ...pixRes.rows.map(r => ({ date: r.transaction_date, amount: r.amount })),
+      ];
 
       // Despesas: fin_cash_flow saídas (já inclui auto_purchase, auto_bill_payment, auto_payroll)
       const { data: expData } = await supabase

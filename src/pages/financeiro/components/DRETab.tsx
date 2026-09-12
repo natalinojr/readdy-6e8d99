@@ -3,6 +3,7 @@ import { useImpressoras, PRINTER_KEY_RELATORIOS } from '@/contexts/ImpressorasCo
 import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
 import { fetchComprasDRE } from '@/lib/comprasDRE';
+import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Cell,
@@ -53,6 +54,8 @@ interface DREData {
   receitaManual: number;
   /** Vendas em cartão liquidadas pela Stone (fin_cash_flow origin stone_sale). Só existe com a opção ligada na integração. */
   receitaStone: number;
+  /** Pix que entrou no Inter — só com a fonte "pix" ligada (fin_revenue_settings). */
+  receitaPix?: number;
   cancelamentos: number;
   descontos: number;
   /** Compras do período que são MERCADORIA — é a linha CMV da DRE. */
@@ -816,11 +819,18 @@ export default function DRETab() {
     return match ? { key: g.key, label: match.label } : g;
   });
 
+  // A receita segue a regra dos recebidos da loja (Financeiro › Receitas › Fontes):
+  // o que não está ligado zera, e o Pix do Inter entra quando escolhido.
   const fetchFn = useCallback(
-    (tenantId: string, start: string, end: string) =>
-      dreMode === 'competencia'
-        ? fetchDREDataCompetencia(tenantId, start, end)
-        : fetchDREData(tenantId, start, end),
+    async (tenantId: string, start: string, end: string) => {
+      const [d, extras] = await Promise.all([
+        dreMode === 'competencia'
+          ? fetchDREDataCompetencia(tenantId, start, end)
+          : fetchDREData(tenantId, start, end),
+        loadRevenueExtras(tenantId, start, end),
+      ]);
+      return applyRevenueSources(d, extras.sources, extras.pix);
+    },
     [dreMode]
   );
 
@@ -860,7 +870,9 @@ export default function DRETab() {
     const results = await Promise.all(months.map(async m => {
       const { start, end } = getMonthRange(m);
       const d = await fetchFn(user.tenantId, start, end);
-      const receitaBase = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento;
+      // Mesma receita da tabela (antes o gráfico ignorava manuais e Stone).
+      const receitaBase = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento
+        + d.receitaManual + (d.receitaStone ?? 0) + (d.receitaPix ?? 0);
       // BUG-41: receitaAReceber não soma na receita (é saldo, não receita adicional)
       const receita = receitaBase;
       const cmv = d.cmvCompras ?? 0; // CMV = compras realizadas (2026-09-05)
@@ -890,7 +902,7 @@ export default function DRETab() {
   }
   if (!data) return null;
 
-  const receitaRecebida = data.receitaBalcao + data.receitaDelivery + data.receitaMesa + data.receitaAutoatendimento + data.receitaManual + (data.receitaStone ?? 0);
+  const receitaRecebida = data.receitaBalcao + data.receitaDelivery + data.receitaMesa + data.receitaAutoatendimento + data.receitaManual + (data.receitaStone ?? 0) + (data.receitaPix ?? 0);
 
   // BUG-41: receitaAReceber é saldo (balanço), não receita adicional.
   // No regime de competência a receita já está no auto_sale do fin_cash_flow
@@ -952,7 +964,7 @@ export default function DRETab() {
   const margemBruta = receitaBruta > 0 ? (lucroBruto / receitaBruta) * 100 : 0;
 
   const prevReceitaRecebida = (prevData?.receitaBalcao ?? 0) + (prevData?.receitaDelivery ?? 0)
-    + (prevData?.receitaMesa ?? 0) + (prevData?.receitaAutoatendimento ?? 0) + (prevData?.receitaManual ?? 0) + (prevData?.receitaStone ?? 0);
+    + (prevData?.receitaMesa ?? 0) + (prevData?.receitaAutoatendimento ?? 0) + (prevData?.receitaManual ?? 0) + (prevData?.receitaStone ?? 0) + (prevData?.receitaPix ?? 0);
 
   const prevReceitaBruta = prevReceitaRecebida;
 
@@ -1305,6 +1317,16 @@ export default function DRETab() {
                   receitaBruta={receitaBruta}
                   depth={1}
                   origin="Livro-razão: fin_cash_flow → stone_sale (valor bruto liquidado pela Stone; as taxas estão em Taxas de Cartão)"
+                />
+              )}
+              {(data.receitaPix ?? 0) > 0 && (
+                <DRERow
+                  label="Pix Recebido (Inter)"
+                  atual={data.receitaPix ?? 0}
+                  anterior={prevData?.receitaPix}
+                  receitaBruta={receitaBruta}
+                  depth={1}
+                  origin="Extrato do Banco Inter → créditos Pix (inclui o Pix da maquininha transferido da Conta Stone)"
                 />
               )}
               {data.receitaManual > 0 && (

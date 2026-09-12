@@ -326,6 +326,51 @@ TOOLS.push({
     required: ['funcao', 'action', 'dados', 'resumo'],
   },
 });
+// ── Pagamentos pelo Banco Inter (2026-09-12) ──
+// O brain só PREPARA: valida e grava o pedido (inter-bank › prepare_payment) e pede ao canal os
+// botões Pagar/Cancelar. O PIN é digitado no Telegram depois do botão e interceptado pelo
+// assistente-telegram (nunca passa pelo modelo nem pelo histórico); o Inter ainda exige aprovação no app.
+TOOLS.push({
+  name: 'preparar_pagamento',
+  description: 'PREPARA um pagamento pela conta do Banco Inter (boleto ou Pix) e manda ao Natalino o resumo com botões Pagar/Cancelar. Só sai depois que ele toca em Pagar, digita o PIN (que NÃO passa por você) e aprova no app do Inter. Use quando ele pedir para pagar um boleto (linha digitável, código de barras ou FOTO do boleto: copie os números exatamente) ou fazer Pix para fornecedor. Nunca peça nem repita PIN.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      tipo: { type: 'string', enum: ['boleto', 'pix'] },
+      linha_digitavel: { type: 'string', description: 'Boleto: linha digitável (47 ou 48 números) ou código de barras (44). Copie exatamente, só os números.' },
+      chave_pix: { type: 'string', description: 'Pix: chave do fornecedor (CNPJ, e-mail, telefone +55 ou aleatória). Só fornecedor cadastrado.' },
+      valor: { type: 'number', description: 'Reais. Boleto: só se diferente do valor do código (juros/desconto) ou se o código não traz valor. Pix: obrigatório.' },
+      descricao: { type: 'string', description: 'Descrição curta (vai no Pix e no histórico).' },
+      conta_a_pagar_id: { type: 'string', description: 'uuid da conta a pagar correspondente, se houver (busque com consultar_banco/buscar_nome).' },
+      loja: { type: 'string', description: 'Loja pagadora. Padrão: a loja que tem o Banco Inter conectado.' },
+    },
+    required: ['tipo'],
+  },
+});
+TOOLS.push({
+  name: 'status_pagamento',
+  description: 'Consulta no Inter o status de um pagamento feito pelo assistente (aguardando aprovação no app, agendado, pago, recusado...). Sem id, lista os 10 últimos pedidos.',
+  input_schema: { type: 'object', properties: { id: { type: 'string', description: 'id do pagamento (fin_inter_payments.id).' } } },
+});
+// deno-lint-ignore no-explicit-any
+async function callInter(action: string, body: Record<string, unknown>): Promise<any> {
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/inter-bank`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
+    body: JSON.stringify({ action, ...body }),
+    signal: AbortSignal.timeout(40_000),
+  });
+  // deno-lint-ignore no-explicit-any
+  const out: any = await r.json().catch(() => ({}));
+  if (!r.ok || out?.success === false) throw new Error(String(out?.error ?? `inter-bank HTTP ${r.status}`));
+  return out;
+}
+async function interTenant(ctx: Ctx, loja?: string): Promise<string> {
+  if (loja) return resolveTenant(ctx, loja).id;
+  const { data } = await ctx.admin.from('fin_inter_config').select('tenant_id').eq('is_active', true).limit(1);
+  if (!data?.length) throw new Error('Nenhuma loja tem o Banco Inter conectado.');
+  return String(data[0].tenant_id);
+}
 const CHAT_CHANNELS = new Set(['whatsapp', 'telegram']);
 const EDGE_ALLOW = new Set(['menu-write', 'financial-write', 'purchase-write', 'stock-write', 'customer-write', 'reservation-write', 'table-write', 'config-write', 'voucher-write', 'production-write', 'user-write', 'task-write', 'delivery-write', 'order-write', 'fiscal-write', 'implementation-write']);
 // Ações que exigem confirmação explícita na conversa (padrão de nome; o mapa também marca).
@@ -419,7 +464,8 @@ async function geocode(city: string): Promise<{ lat: number; lng: number; label:
 export type OutboundAction =
   | { type: 'poll'; question: string; options: string[]; selectable: number }
   | { type: 'location'; lat: number; lng: number; name: string; address: string | null }
-  | { type: 'contact'; name: string; phone: string; org: string | null };
+  | { type: 'contact'; name: string; phone: string; org: string | null }
+  | { type: 'payment'; id: string };
 
 // deno-lint-ignore no-explicit-any
 async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
@@ -450,6 +496,32 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       });
       if (!ok) throw new Error(err ?? `${funcao}/${action} → HTTP ${res?.status}: ${JSON.stringify(b).slice(0, 400)}`);
       return JSON.stringify({ ok: true, loja: t.name, funcao, action, resultado: b }).slice(0, 6000);
+    }
+    case 'preparar_pagamento': {
+      if (ctx.channel !== 'telegram') throw new Error('Pagamento só pelo Telegram (botões + PIN). Peça para ele mandar por lá.');
+      const tenantId = await interTenant(ctx, input.loja);
+      const out = await callInter('prepare_payment', {
+        tenant_id: tenantId, tipo: input.tipo, linha: input.linha_digitavel, chave: input.chave_pix, valor: input.valor,
+        descricao: input.descricao, bill_id: input.conta_a_pagar_id, requested_by: ctx.ownerId, channel: 'telegram', chat_id: ctx.chatId,
+      });
+      const p = out.payment;
+      ctx.outbound.push({ type: 'payment', id: String(p.id) });
+      return JSON.stringify({
+        ok: true,
+        pagamento: { id: p.id, tipo: p.kind, valor: Number(p.amount), valor_do_boleto: p.face_value, vencimento: p.due_date, beneficiario: p.beneficiary_name, saldo_inter: p.saldo_inter },
+        instrucao: 'O resumo com os botões Pagar/Cancelar será enviado logo abaixo. Diga só uma frase curta (ex.: se o vencimento já passou ou o saldo não cobre). Não repita os dados e não peça PIN.',
+      });
+    }
+    case 'status_pagamento': {
+      if (input.id) {
+        const { data: row } = await ctx.admin.from('fin_inter_payments').select('tenant_id').eq('id', String(input.id)).maybeSingle();
+        if (!row) throw new Error('Pagamento não encontrado.');
+        const out = await callInter('payment_status', { tenant_id: row.tenant_id, payment_id: String(input.id) });
+        const p = out.payment;
+        return JSON.stringify({ id: p.id, tipo: p.kind, valor: Number(p.amount), status: p.status, status_inter: p.inter_status, beneficiario: p.beneficiary_name, erro: p.error, enviado_em: p.sent_at, pago_em: p.paid_at });
+      }
+      const { data } = await ctx.admin.from('fin_inter_payments').select('id, kind, status, amount, due_date, beneficiary_name, description, inter_status, error, created_at, paid_at').order('created_at', { ascending: false }).limit(10);
+      return JSON.stringify({ pagamentos: data ?? [], legenda: 'draft=esperando o botão; awaiting_pin=esperando o PIN; pending_approval=aguardando aprovação no app do Inter; scheduled=agendado; paid=pago; cancelled/rejected/failed/expired=não saiu' });
     }
     case 'dados_publicos': {
       const tipo = String(input.tipo ?? '');
@@ -814,7 +886,7 @@ Como agir:
 - NOMES DIGITADOS PELO NATALINO PODEM ESTAR COM GRAFIA DIFERENTE da do sistema (Voxi × VOXY-SC LTDA, sem acento, abreviado, razão social × nome fantasia). Para achar fornecedor, cliente, item, insumo, funcionário etc. pelo nome, use primeiro buscar_nome (busca aproximada) e depois filtre pelo id/nome exato que ela devolver. NUNCA diga que algo "não existe" ou "não foi lançado" sem ter tentado buscar_nome.
 - Ao confirmar uma ação, diga o que foi feito em uma linha (ex.: "Criei a tarefa X na pasta Y, prazo sexta 9h").
 - Botões/enquete: quando a decisão dele for entre alternativas claras (2 a 12) — inclusive confirmar/cancelar uma ação sensível — use enviar_enquete em vez de listar opções numeradas ou pedir "sim"; ele responde tocando. A escolha volta como mensagem "[Botão "pergunta"] Resposta: opção" (ou [Enquete ...]): trate como a resposta dele à pergunta e siga em frente sem perguntar de novo. Endereço/onde fica → enviar_localizacao; telefone de alguém → enviar_contato (o cartão vai junto com sua resposta; não repita o número no texto).
-- AÇÕES NO ERPOS (erpos_executar): você age como o próprio Natalino, pelas mesmas Edge Functions das telas — cardápio, contas, compras, estoque, clientes, reservas, mesas, cupons, produção, configurações, usuários. Fluxo: (1) entenda o pedido e busque no banco os ids/nomes exatos que a ação precisa (item, categoria, fornecedor, conta) — nunca chute id; (2) se faltar dado essencial (preço, categoria, valor, vencimento), pergunte em uma linha; (3) execute; (4) confirme em uma linha o que ficou feito, com nome e valor. Ações que mexem em dinheiro, apagam, cancelam, estornam ou fecham (pagar conta, excluir item, cancelar reserva, fechar caixa...) exigem confirmação: descreva exatamente o que vai fazer e o valor, espere o "sim" e só então chame com confirmado=true. Criar/editar cardápio, cadastrar cliente/fornecedor, lançar conta a pagar e ajustar estoque podem ir direto quando o pedido dele já é claro e completo. Se a edge devolver erro, leia a mensagem, corrija os campos e tente de novo uma vez; se persistir, explique o erro em uma linha. Use o MAPA DE AÇÕES abaixo para funcao/action/campos; se a ação que ele quer não estiver no mapa, diga que essa ainda não está disponível pelo WhatsApp (não improvise chamadas).
+- AÇÕES NO ERPOS (erpos_executar): você age como o próprio Natalino, pelas mesmas Edge Functions das telas — cardápio, contas, compras, estoque, clientes, reservas, mesas, cupons, produção, configurações, usuários. Fluxo: (1) entenda o pedido e busque no banco os ids/nomes exatos que a ação precisa (item, categoria, fornecedor, conta) — nunca chute id; (2) se faltar dado essencial (preço, categoria, valor, vencimento), pergunte em uma linha; (3) execute; (4) confirme em uma linha o que ficou feito, com nome e valor. Ações que mexem em dinheiro, apagam, cancelam, estornam ou fecham (pagar conta, excluir item, cancelar reserva, fechar caixa...) exigem confirmação: descreva exatamente o que vai fazer e o valor, espere o "sim" e só então chame com confirmado=true. Criar/editar cardápio, cadastrar cliente/fornecedor, lançar conta a pagar e ajustar estoque podem ir direto quando o pedido dele já é claro e completo. Se a edge devolver erro, leia a mensagem, corrija os campos e tente de novo uma vez; se persistir, explique o erro em uma linha. Use o MAPA DE AÇÕES abaixo para funcao/action/campos; se a ação que ele quer não estiver no mapa, diga que essa ainda não está disponível pelo WhatsApp (não improvise chamadas). PAGAMENTOS PELO INTER: para pagar boleto ou fazer Pix use preparar_pagamento (nunca erpos_executar); ele manda os botões Pagar/Cancelar e o PIN é digitado depois, direto no canal, sem passar por você. Nunca peça, aceite ou repita PIN; se ele mandar números soltos que parecem PIN, não comente. Da foto do boleto copie a linha digitável exatamente; se a ferramenta disser que o dígito não confere, peça para ele conferir ou digitar a linha. Se houver conta a pagar correspondente (mesmo fornecedor/valor/vencimento), passe o conta_a_pagar_id. Status depois: status_pagamento. O pagamento ainda precisa da aprovação dele no app do Inter; diga isso numa frase.
 - Fora do ERPOS: dados_publicos (CNPJ, CEP, feriados, taxas, NCM), previsao_tempo (loja/cidade) e web_search (internet: preço de mercado, notícia, dúvida geral, endereço/telefone de terceiros). Use web_search só quando a resposta não está no sistema nem nas outras ferramentas; no máximo 3 buscas por mensagem; cite a fonte em uma palavra quando importar.
 - Se a mensagem dele não pede nada e não precisa de resposta (só "ok", "valeu", "beleza", "👍", um agradecimento, um "boa noite" final), responda EXATAMENTE NO_REPLY (nada mais): ele recebe só uma reação 👍 em vez de uma mensagem. Nunca use NO_REPLY quando houver pergunta, pedido, informação nova para guardar ou algo que mereça comentário.`;
 
@@ -1094,7 +1166,7 @@ Deno.serve(async (req) => {
     if (reply === 'NO_REPLY' && ctx.outbound.length) reply = 'Aí vai:';
     // No histórico, a enquete/localização/contato fica descrita para o modelo saber o que já mandou.
     const historyContent = ctx.outbound.length
-      ? `${reply}\n${ctx.outbound.map((a) => a.type === 'poll' ? `[Enquete enviada: "${a.question}" — ${a.options.join(' | ')}]` : a.type === 'location' ? `[Localização enviada: ${a.name}]` : `[Contato enviado: ${a.name} +${a.phone}]`).join('\n')}`
+      ? `${reply}\n${ctx.outbound.map((a) => a.type === 'poll' ? `[Enquete enviada: "${a.question}" — ${a.options.join(' | ')}]` : a.type === 'location' ? `[Localização enviada: ${a.name}]` : a.type === 'payment' ? '[Pedido de pagamento enviado com botões Pagar/Cancelar]' : `[Contato enviado: ${a.name} +${a.phone}]`).join('\n')}`
       : reply;
     await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'assistant', content: historyContent, tool_calls: toolCalls, usage });
     log('INFO', 'reply', { chat: chatId, ms: Date.now() - started, tools: toolCalls.map((t) => t.name), actions: ctx.outbound.map((a) => a.type), usage });

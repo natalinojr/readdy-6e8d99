@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, SUPABASE_URL, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { translateSupabaseError } from '@/hooks/useQueryError';
+import { fetchRevenueSources, fetchStoneSales, fetchPixRecebidos } from '@/lib/revenueSources';
 import type {
   CostCenter, BillPayable, CashFlowEntry, Purchase,
   Supplier, FinanceiroDashboard, Anticipation, ReceivableInstallment,
@@ -758,20 +759,40 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       if (billsVencendo.error) console.error('[useFinanceiro] contas vencendo:', billsVencendo.error.message);
       if (payrollPendingMes.error) console.error('[useFinanceiro] folha pendente:', payrollPendingMes.error.message);
 
-      // Fonte única de verdade: auto_sale + entradas manuais do fluxo de caixa
-      const manualHojeTotal = (manualIncomeHoje.data ?? []).reduce((s, m) => s + Number(m.amount), 0);
-      const manualMesTotal = (manualIncomeMes.data ?? []).reduce((s, m) => s + Number(m.amount), 0);
-      const receitaHoje = (autoSaleHoje.data ?? []).reduce((s, o) => s + Number(o.amount), 0) + manualHojeTotal;
-      const receitaMes = (autoSaleMes.data ?? []).reduce((s, o) => s + Number(o.amount), 0) + manualMesTotal;
-      const receitaPrevMes = (autoSalePrevMes.data ?? []).reduce((s, o) => s + Number(o.amount), 0);
+      // Regra dos recebidos da loja (Financeiro › Receitas › Fontes): pedidos
+      // (auto_sale), manuais, Stone (stone_sale) e Pix do Inter entram só se ligados.
+      const { sources } = await fetchRevenueSources(user.tenantId);
+      const on = (s: string) => (sources as string[]).includes(s);
+      const extraStart = prevMonthStartDate < thirtyDaysAgoDate ? prevMonthStartDate : thirtyDaysAgoDate;
+      const [stoneRes, pixRes] = await Promise.all([
+        on('stone') ? fetchStoneSales(user.tenantId, extraStart, monthEndDate) : Promise.resolve({ rows: [], error: null }),
+        on('pix') ? fetchPixRecebidos(user.tenantId, extraStart, monthEndDate) : Promise.resolve({ rows: [], error: null }),
+      ]);
+      const extraRows = [
+        ...stoneRes.rows.map(r => ({ date: r.date, amount: r.amount, label: 'Cartão (Stone)' })),
+        ...pixRes.rows.map(r => ({ date: r.transaction_date, amount: r.amount, label: 'Pix recebido' })),
+      ];
+      const extraIn = (from: string, to: string) =>
+        extraRows.filter(r => r.date >= from && r.date <= to).reduce((s, r) => s + r.amount, 0);
+
+      const sumRows = (rows: { amount: number }[] | null) => (rows ?? []).reduce((s, o) => s + Number(o.amount), 0);
+      const autoMesReal = sumRows(autoSaleMes.data);
+      const manualHojeTotal = on('manual') ? sumRows(manualIncomeHoje.data) : 0;
+      const manualMesTotal = on('manual') ? sumRows(manualIncomeMes.data) : 0;
+      const receitaHoje = (on('orders') ? sumRows(autoSaleHoje.data) : 0) + manualHojeTotal + extraIn(todayStr, todayStr);
+      const receitaMes = (on('orders') ? autoMesReal : 0) + manualMesTotal + extraIn(monthStartDate, monthEndDate);
+      const receitaPrevMes = (on('orders') ? sumRows(autoSalePrevMes.data) : 0) + extraIn(prevMonthStartDate, prevMonthEndDate);
       const crescimentoMes = receitaPrevMes > 0 ? ((receitaMes - receitaPrevMes) / receitaPrevMes) * 100 : 0;
       const totalOrdersMes = (ordersMesCount as any).count;
-      const ticketMedio = totalOrdersMes > 0 ? (receitaMes - manualMesTotal) / totalOrdersMes : 0;
+      // Ticket médio é dos PEDIDOS (venda no ERP), independente das fontes.
+      const ticketMedio = totalOrdersMes > 0 ? autoMesReal / totalOrdersMes : 0;
 
-      // entradas: exclui auto_sale e manual income (já contados em receitaMes)
-      // mantém outras origens de receita (ex: antecipações, estornos, etc.)
+      // entradas: exclui auto_sale, manual e stone_sale — ou já estão em receitaMes,
+      // ou a loja escolheu não contá-los como recebido (ex.: pedidos do PDV em
+      // Paranaguá, onde o dinheiro real vem por Stone/Pix e somaria 2x no saldo).
+      // Mantém outras origens de receita (antecipações, estornos etc.).
       const entradas = (cashFlow.data ?? [])
-        .filter(e => e.type === 'income' && !['auto_sale', 'manual'].includes((e as any).origin ?? ''))
+        .filter(e => e.type === 'income' && !['auto_sale', 'manual', 'stone_sale'].includes((e as any).origin ?? ''))
         .reduce((s, e) => s + Number(e.amount), 0);
       // saidas: TODAS as despesas — incluindo manual, auto_card_fee, auto_purchase, auto_bill_payment, auto_payroll
       const saidas = (cashFlow.data ?? []).filter(e => e.type === 'expense').reduce((s, e) => s + Number(e.amount), 0);
@@ -793,13 +814,16 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       // Receita por forma de pagamento (últimos 30 dias) — auto_sale + entradas manuais
       const paymentMap: Record<string, number> = {};
       const colors = ['#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444', '#06b6d4'];
-      (autoSale30d.data ?? []).forEach((e: Record<string, unknown>) => {
+      if (on('orders')) (autoSale30d.data ?? []).forEach((e: Record<string, unknown>) => {
         const name = (e.payment_methods as Record<string, string> | null)?.name ?? 'Venda Direta';
         paymentMap[name] = (paymentMap[name] ?? 0) + Number(e.amount);
       });
-      (manualIncome30d.data ?? []).forEach((m: Record<string, unknown>) => {
+      if (on('manual')) (manualIncome30d.data ?? []).forEach((m: Record<string, unknown>) => {
         const name = (m.payment_methods as Record<string, string> | null)?.name ?? 'Entrada Manual';
         paymentMap[name] = (paymentMap[name] ?? 0) + Number(m.amount);
+      });
+      extraRows.filter(r => r.date >= thirtyDaysAgoDate).forEach(r => {
+        paymentMap[r.label] = (paymentMap[r.label] ?? 0) + r.amount;
       });
       const receitaPorPagamento = Object.entries(paymentMap).map(([name, value], i) => ({
         name, value, color: colors[i % colors.length],
@@ -811,11 +835,14 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
         const d = new Date(nowBR.getTime() - i * 86400000).toISOString().split('T')[0];
         dailyMap[d] = 0;
       }
-      (autoSale30d.data ?? []).forEach((e: { amount: number; date: string }) => {
+      if (on('orders')) (autoSale30d.data ?? []).forEach((e: { amount: number; date: string }) => {
         if (e.date in dailyMap) dailyMap[e.date] += Number(e.amount);
       });
-      (manualIncome30d.data ?? []).forEach((m: { amount: number; date: string }) => {
+      if (on('manual')) (manualIncome30d.data ?? []).forEach((m: { amount: number; date: string }) => {
         if (m.date in dailyMap) dailyMap[m.date] += Number(m.amount);
+      });
+      extraRows.forEach(r => {
+        if (r.date in dailyMap) dailyMap[r.date] += r.amount;
       });
 
       setDashboard({

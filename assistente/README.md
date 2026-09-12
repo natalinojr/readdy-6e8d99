@@ -473,6 +473,6 @@ A mesma mensagem é editada a cada toque (`assistente-telegram` › `dreView`/`s
 ## Pendente (ordem)
 
 1. Validar no uso real o Telegram: conversa, áudio, foto e clique em botão.
-2. Pagar boleto/Pix pelo Inter (escopos de pagamento na integração Inter + confirmação por botão).
+2. Pagar boleto/Pix pelo Inter. **Código no ar desde 2026-09-12**: tools `preparar_pagamento` e `status_pagamento`, botões Pagar e Cancelar no Telegram, PIN criado por `/pin` e interceptado sem passar pelo modelo, e aprovação final no app do Inter. Detalhes em `AI_SYSTEM_MAP.md`. **Bloqueio:** a integração do Inter (client_id final 078f) ainda só tem `extrato.read`. Os escopos `pagamento-boleto.*` e `pagamento-pix.*` voltam "No registered scope value". Depois de liberar, rodar `inter-bank › check_payment_scopes` e fazer o 1º boleto pequeno real.
 3. Google Agenda + Gmail (OAuth do dono, tokens em `asst_settings`).
 4. Nome do assistente (ainda não escolhido; bot aparece como "John Snow").
