@@ -46,3 +46,21 @@ input, textarea, select {
     transition: padding-bottom 0.2s ease;
   }
 }
+
+/**
+ * .scrollbar-hide — esconde a barra de rolagem mantendo o scroll funcional.
+ *
+ * A classe já era usada em ~20 telas (abas de Relatórios, Financeiro, PDV…),
+ * mas nunca existiu de fato: sem plugin e sem definição, o Tailwind a
+ * ignorava e o navegador desenhava a barra por cima do conteúdo — no mobile
+ * ela aparecia sobreposta às abas.
+ */
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;      /* IE / Edge legado */
+    scrollbar-width: none;          /* Firefox */
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;                  /* Chrome / Safari / Android */
+  }
+}

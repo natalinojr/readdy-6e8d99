@@ -1571,3 +1571,39 @@ sem `output_config.effort` NÃO reaproveitou o cache gravado pelas chamadas reai
 com `effort: 'medium'` — gravou outra entrada. Ao mandar o mesmo effort, passou a
 ler. Regra: toda chamada que deve compartilhar cache precisa do MESMO modelo,
 ferramentas, bloco de instruções E effort/thinking. Detalhes em `assistente/README.md`.
+
+### 2026-09-12 — Relatórios no mobile: `.scrollbar-hide` não existia + header disputando espaço
+
+Dois problemas somados davam a sensação de "informação sobreposta" na tela de Relatórios no celular:
+
+1. **`.scrollbar-hide` era uma classe fantasma.** Usada em ~20 telas (abas de
+   Relatórios, Financeiro, PDV, mesa-QR, gestor-pedidos), mas nunca foi definida
+   no `index.css` e o projeto não tem o plugin `tailwind-scrollbar-hide`. Resultado:
+   o Tailwind ignorava a classe e o Android desenhava a barra de rolagem por cima
+   das abas. Corrigido com um `@layer utilities` no fim de `src/index.css`
+   (`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`).
+   **Critério:** antes de usar uma classe "utilitária" que não é do Tailwind padrão,
+   confirme que ela existe no `index.css` ou em algum plugin.
+
+2. **Header de `relatorios/page.tsx` apertado demais.** Toggle + presets de período
+   + Atualizar + Exportar dividiam uma única linha. O wrapper do filtro tinha
+   `flex-1 min-w-0` e os presets `whitespace-nowrap` sem `flex-shrink-0`: o grupo
+   encolhia para perto de zero e o texto vazava por baixo dos botões ("30 dias"
+   ficava atrás do Exportar). Agora, no mobile, as ações (Atualizar/Exportar) sobem
+   para a linha do título (`acoes` é uma variável JSX renderizada duas vezes,
+   `sm:hidden` / `hidden sm:flex`) e o filtro fica sozinho na segunda linha. Os
+   presets ganharam `overflow-x-auto scrollbar-hide` + `flex-shrink-0` como rede de
+   segurança.
+   **Pegadinha:** não coloque `overflow-x-auto` no wrapper do `FiltroRelatorio`/
+   `SessaoSelector` — os dois têm dropdown `absolute` e o overflow clipa o painel.
+   O scroll vai só no grupo de pills, que não tem popover.
+
+Também: cards de KPI da aba Produtos empilham no mobile (`flex-col sm:flex-row`,
+valor `text-base md:text-xl`) — em 2 colunas de ~135px o layout em linha cortava
+"R$ 10.633,85"; e vários grupos de sub-abas/ordenação (CMV, Cancelamentos,
+Clientes, Produtos) ganharam `flex-shrink-0` nos botões, senão o pill encolhe e o
+texto `whitespace-nowrap` escapa por cima do vizinho.
+
+Verificado com Chromium headless a 320px e 360px sobre o CSS já buildado
+(nenhum par de elementos irmãos com retângulos se cruzando; `scrollWidth` do
+documento = largura do viewport).

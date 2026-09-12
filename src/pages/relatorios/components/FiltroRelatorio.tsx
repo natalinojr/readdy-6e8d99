@@ -68,13 +68,15 @@ export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioP
   };
 
   return (
-    <div className="flex items-center gap-1.5 md:gap-3">
-      <div className="flex items-center gap-0.5 bg-zinc-100 rounded-lg p-0.5 md:p-1">
+    <div className="flex items-center gap-1.5 md:gap-3 min-w-0">
+      {/* Presets: rolam na horizontal quando não cabem, em vez de vazar por
+          cima dos botões vizinhos (Atualizar/Exportar) no mobile. */}
+      <div className="flex items-center gap-0.5 bg-zinc-100 rounded-lg p-0.5 md:p-1 min-w-0 overflow-x-auto scrollbar-hide">
         {PRESETS.map((p) => (
           <button
             key={p}
             onClick={() => onPeriodo(p)}
-            className={`px-2 md:px-3 py-1 md:py-1.5 text-[10px] md:text-xs font-semibold rounded-md transition-colors whitespace-nowrap cursor-pointer ${
+            className={`px-2 md:px-3 py-1 md:py-1.5 text-[10px] md:text-xs font-semibold rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${
               isPreset(p)
                 ? 'bg-white text-zinc-900 shadow-sm'
                 : 'text-zinc-500 hover:text-zinc-700'

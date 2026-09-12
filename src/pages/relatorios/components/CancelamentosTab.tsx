@@ -291,7 +291,7 @@ export default function CancelamentosTab({ periodo }: Props) {
           { id: 'gorjetas', label: 'Gorjetas', count: gorjetas.length },
         ] as { id: SubTab; label: string; count: number }[]).map((t) => (
           <button key={t.id} onClick={() => setSub(t.id)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${sub === t.id ? 'bg-white text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'}`}>
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap flex items-center gap-1.5 flex-shrink-0 ${sub === t.id ? 'bg-white text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'}`}>
             {t.label}
             {t.count > 0 && (
               <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${sub === t.id ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-200 text-zinc-500'}`}>

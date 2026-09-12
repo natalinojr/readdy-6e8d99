@@ -58,24 +58,56 @@ export default function RelatoriosPage() {
     setTimeout(() => setRefreshing(false), 800);
   };
 
+  // Ações do header (atualizar + exportar). No mobile ficam na linha do título;
+  // no desktop, à direita dos filtros. Assim os presets de período nunca
+  // disputam espaço com os botões (era o que causava a sobreposição).
+  const acoes = (
+    <>
+      <button
+        onClick={handleRefresh}
+        className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-lg border border-amber-200/60 bg-white/60 hover:bg-white/90 transition-colors cursor-pointer text-zinc-500 flex-shrink-0"
+        title="Atualizar dados"
+      >
+        <div className={`w-3.5 h-3.5 flex items-center justify-center ${refreshing ? 'animate-spin' : ''}`}>
+          <RefreshCw size={13} />
+        </div>
+      </button>
+
+      <button className="flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-1.5 md:py-2 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 transition-colors whitespace-nowrap cursor-pointer flex-shrink-0">
+        <div className="w-3.5 h-3.5 flex items-center justify-center">
+          <Download size={12} />
+        </div>
+        <span className="hidden sm:inline">Exportar</span>
+        <span className="sm:hidden">Export</span>
+      </button>
+    </>
+  );
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-3 md:px-6 py-3 md:py-4" style={{ background: '#ffffff', borderBottom: '1px solid #f4f4f5' }}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 md:gap-3">
-          {/* Título */}
-          <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
-            <div className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-lg flex-shrink-0" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
-              <BarChart3 size={14} className="text-white" />
+          {/* Linha 1 no mobile: título + ações */}
+          <div className="flex items-center justify-between gap-2 md:gap-3 min-w-0 sm:flex-shrink-0">
+            <div className="flex items-center gap-2 md:gap-3 min-w-0">
+              <div className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-lg flex-shrink-0" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
+                <BarChart3 size={14} className="text-white" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-sm md:text-base font-bold text-zinc-800">Relatórios</h1>
+                <p className="text-[10px] md:text-xs text-zinc-400 hidden sm:block">Análises de vendas, caixa, SLA e desempenho</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-sm md:text-base font-bold text-zinc-800">Relatórios</h1>
-              <p className="text-[10px] md:text-xs text-zinc-400 hidden sm:block">Análises de vendas, caixa, SLA e desempenho</p>
+
+            {/* Ações no mobile */}
+            <div className="flex sm:hidden items-center gap-1.5 flex-shrink-0">
+              {acoes}
             </div>
           </div>
 
-          {/* Controles do header — ordem fixa */}
-          <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
+          {/* Linha 2 no mobile / bloco da direita no desktop */}
+          <div className="flex items-center gap-1.5 md:gap-2 min-w-0">
 
             {/* 1. Toggle Calendário/Sessão — SEMPRE VISÍVEL E FIXO */}
             <ModoFaturamentoToggle size="sm" showLabel={false} />
@@ -93,25 +125,10 @@ export default function RelatoriosPage() {
               )}
             </div>
 
-            {/* 3. Botão refresh */}
-            <button
-              onClick={handleRefresh}
-              className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-lg border border-amber-200/60 bg-white/60 hover:bg-white/90 transition-colors cursor-pointer text-zinc-500 flex-shrink-0"
-              title="Atualizar dados"
-            >
-              <div className={`w-3.5 h-3.5 flex items-center justify-center ${refreshing ? 'animate-spin' : ''}`}>
-                <RefreshCw size={13} />
-              </div>
-            </button>
-
-            {/* 4. Botão exportar */}
-            <button className="flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-1.5 md:py-2 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 transition-colors whitespace-nowrap cursor-pointer flex-shrink-0">
-              <div className="w-3.5 h-3.5 flex items-center justify-center">
-                <Download size={12} />
-              </div>
-              <span className="hidden sm:inline">Exportar</span>
-              <span className="sm:hidden">Export</span>
-            </button>
+            {/* 3. Ações no desktop */}
+            <div className="hidden sm:flex items-center gap-1.5 md:gap-2 flex-shrink-0">
+              {acoes}
+            </div>
           </div>
         </div>
 
