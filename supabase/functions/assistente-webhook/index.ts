@@ -331,7 +331,7 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
     `<mensagem_do_grupo grupo="${attr(String(g.name ?? ''))}" autor="${attr(msg.sender ?? 'desconhecido')}" quando="${quando}">`,
     limpo,
     '</mensagem_do_grupo>',
-    msg.extracted ? `Leitura automática do arquivo anexado: ${JSON.stringify(msg.extracted).slice(0, 2000)}` : '',
+    msg.extracted ? `Leitura automática do arquivo anexado: ${JSON.stringify(msg.extracted).slice(0, 12000)}` : '',
     'Siga as regras de TRIAGEM AUTOMÁTICA DE GRUPO.',
   ].filter(Boolean).join('\n');
 
@@ -797,11 +797,38 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   const url = new URL(req.url);
   const provided = req.headers.get('x-internal-key') ?? url.searchParams.get('key') ?? '';
-  if (internalKey.length < 20 || provided !== internalKey) return json({ error: 'Unauthorized' }, 401);
+  const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const okBearer = !!serviceRoleKey && bearer === serviceRoleKey; // chamada entre edges/manutenção
+  if (!okBearer && (internalKey.length < 20 || provided !== internalKey)) return json({ error: 'Unauthorized' }, 401);
   if (!evoUrl || !evoKey) return json({ error: 'EVOLUTION_URL/EVOLUTION_API_KEY não configurados' }, 503);
 
   let payload: unknown;
   try { payload = await req.json(); } catch { return json({ error: 'JSON inválido' }, 400); }
+
+  // Manutenção: relê a foto/PDF de uma mensagem de grupo já gravada (a imagem não
+  // fica salva; a Evolution devolve pelo message_id). Só atualiza content/extracted,
+  // não refaz a triagem de pagamento.
+  // deno-lint-ignore no-explicit-any
+  const pl = payload as any;
+  if (pl?.action === 'reler_midia' && pl?.message_id) {
+    try {
+      const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      const { data: m } = await admin.from('asst_group_messages').select('id, message_id, group_jid, sender_name, sender_jid, content, media_mime')
+        .eq('message_id', String(pl.message_id)).maybeSingle();
+      if (!m) return json({ error: 'mensagem não encontrada' }, 404);
+      const b64 = await mediaBase64({ key: { id: m.message_id, remoteJid: m.group_jid, fromMe: false, participant: m.sender_jid ?? undefined } });
+      if (!b64) return json({ error: 'Evolution não devolveu a mídia' }, 502);
+      const extracted = await lerMidia(b64, m.media_mime ?? 'image/jpeg', '', `Mensagem de grupo${m.sender_name ? `, mandada por ${m.sender_name}` : ''}.`, `grupo:${m.group_jid}`);
+      const cabeca = String(m.content ?? '').split('\n')[0];
+      const resumo = String(extracted?.resumo ?? '').trim();
+      const texto = String(extracted?.texto ?? '').trim();
+      const content = resumo ? `${cabeca}\n${resumo}${texto ? `\nTexto do arquivo: ${texto}` : ''}` : m.content;
+      await admin.from('asst_group_messages').update({ content: String(content).slice(0, 4000), extracted }).eq('id', m.id);
+      return json({ ok: true, extracted });
+    } catch (e) {
+      return json({ error: errMsg(e) }, 500);
+    }
+  }
 
   const p = handle(payload).catch((e) => log('ERROR', 'unhandled', { error: errMsg(e) }));
   // deno-lint-ignore no-explicit-any

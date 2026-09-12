@@ -481,6 +481,17 @@ uma foto no grupo *Financeiro loja - EP MALL*, que só via o texto da mensagem.
 e guarda o resultado em `asst_group_messages.extracted`, com o resumo junto do `content` (é isso
 que o `ler_grupo` mostra depois). Áudio continua transcrito pelo Whisper.
 
+**Itens de cupom/nota (2026-09-12, à noite).** A primeira versão pedia "transcrição curta (até
+600 caracteres)" com `max_tokens` 1200 e não tinha campo de itens: no cupom do Sacolão veio só
+cabeçalho + total, e o assistente disse ao dono que o cupom não tinha valor por item. Agora
+`extracted.itens = [{ descricao, quantidade, unidade, valor_unitario, valor_total }]` (todas as
+linhas), `texto` até 3000 caracteres, `max_tokens` 6000; o `ler_grupo` devolve os itens em
+`documentos_de_pagamento` e a triagem manda até 12000 caracteres da leitura. A imagem não fica
+salva: para reler uma mensagem já gravada, `POST assistente-webhook { action: 'reler_midia',
+message_id }` (aceita `Authorization: Bearer <SERVICE_ROLE_KEY>` — no projeto é a chave
+`sb_secret_…`, não a JWT legada); a Evolution devolve a mídia pelo id. Só atualiza
+`content`/`extracted`, não refaz a triagem.
+
 Se a mensagem parecer **pedido de pagamento** — `extracted.pagamento.e_solicitacao`, ou o
 pré-filtro `PAY_HINT` no texto/transcrição — o webhook grava a solicitação em
 `asst_group_requests` e chama o brain em `modo: 'triagem_grupo'`, no chat do dono. O brain

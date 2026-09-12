@@ -3,6 +3,7 @@ import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import type { InterConfig } from './InterConfigModal';
+import { todayBrasilia } from '@/lib/dateUtils';
 
 // Painel de status da integração com o Banco Inter dentro da Conciliação:
 // saldo real, última sincronização, erro e botão "Sincronizar agora".
@@ -20,7 +21,9 @@ export default function InterSyncPanel({ onSyncDone, onConfigureClick, refreshKe
   const [config, setConfig] = useState<InterConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [days, setDays] = useState<number | ''>('');
+  // Período a importar. Vazio = desde o último sync (comportamento padrão).
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState(todayBrasilia());
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -32,10 +35,12 @@ export default function InterSyncPanel({ onSyncDone, onConfigureClick, refreshKe
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
-  const handleSync = async () => {
+  const handleSync = async (range: boolean) => {
     setSyncing(true);
     setResult(null);
-    const resp = await invokeWithAuth<SyncResp>('inter-bank', { body: { action: 'sync', tenant_id: user?.tenantId, ...(days ? { days: Number(days) } : {}) } });
+    const resp = await invokeWithAuth<SyncResp>('inter-bank', {
+      body: { action: 'sync', tenant_id: user?.tenantId, ...(range && dateFrom ? { date_from: dateFrom, date_to: dateTo } : {}) },
+    });
     setSyncing(false);
     const err = resp.error?.message ?? resp.data?.error;
     if (err || !resp.data?.success) {
@@ -101,15 +106,22 @@ export default function InterSyncPanel({ onSyncDone, onConfigureClick, refreshKe
           </p>
           {config.last_balance_at && <p className="text-[10px] text-zinc-400">{new Date(config.last_balance_at).toLocaleString('pt-BR')}</p>}
         </div>
-        <div className="flex items-center gap-2">
-          <select value={days} onChange={(e) => setDays(e.target.value ? Number(e.target.value) : '')} className="border border-zinc-200 rounded-lg px-2 py-2 text-xs bg-white" title="Período a buscar">
-            <option value="">Desde o último sync</option>
-            <option value="7">Últimos 7 dias</option>
-            <option value="30">Últimos 30 dias</option>
-            <option value="90">Últimos 90 dias</option>
-          </select>
-          <button onClick={handleSync} disabled={syncing || !config.is_active} className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg text-sm font-semibold hover:bg-orange-700 cursor-pointer whitespace-nowrap disabled:opacity-50">
-            {syncing ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Sincronizando...</> : <><i className="ri-refresh-line" /> Sincronizar agora</>}
+        <div className="flex items-end gap-2 flex-wrap">
+          <div>
+            <label className="block text-[11px] text-zinc-500 mb-0.5">De</label>
+            <input type="date" value={dateFrom} max={dateTo} onChange={(e) => setDateFrom(e.target.value)}
+              className="border border-zinc-200 rounded-lg px-2 py-1.5 text-xs bg-white" />
+          </div>
+          <div>
+            <label className="block text-[11px] text-zinc-500 mb-0.5">Até</label>
+            <input type="date" value={dateTo} min={dateFrom || undefined} max={todayBrasilia()} onChange={(e) => setDateTo(e.target.value)}
+              className="border border-zinc-200 rounded-lg px-2 py-1.5 text-xs bg-white" />
+          </div>
+          <button onClick={() => handleSync(true)} disabled={syncing || !config.is_active || !dateFrom || !dateTo} className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg text-sm font-semibold hover:bg-orange-700 cursor-pointer whitespace-nowrap disabled:opacity-50" title="Busca o extrato do Inter entre as datas escolhidas (reimportar não duplica)">
+            {syncing ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Importando...</> : <><i className="ri-download-cloud-line" /> Importar período</>}
+          </button>
+          <button onClick={() => handleSync(false)} disabled={syncing || !config.is_active} className="flex items-center gap-2 px-3 py-2 border border-orange-300 text-orange-700 rounded-lg text-sm font-semibold hover:bg-orange-50 cursor-pointer whitespace-nowrap disabled:opacity-50" title="Busca desde a última sincronização">
+            <i className="ri-refresh-line" /> Desde o último sync
           </button>
           <button onClick={onConfigureClick} className="w-9 h-9 flex items-center justify-center border border-zinc-200 rounded-lg hover:bg-zinc-50 cursor-pointer" title="Configurar">
             <i className="ri-settings-3-line text-zinc-500" />

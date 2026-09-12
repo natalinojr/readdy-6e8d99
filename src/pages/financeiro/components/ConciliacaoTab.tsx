@@ -452,13 +452,47 @@ export default function ConciliacaoTab() {
   // Extratos dos bancos integrados (Inter e Stone): buscados ao abrir a tela e no botão
   // "Atualizar bancos". Não há rotina automática no servidor.
   const [bankSync, setBankSync] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
-  const runBankSync = useCallback(async () => {
+  // Período a importar dos bancos (De/Até no topo). Sem período = desde o último sync.
+  const hojeBR = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+  const shiftISO = (iso: string, n: number) => {
+    const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
+  };
+  const [importFrom, setImportFrom] = useState(() => shiftISO(hojeBR(), -7));
+  const [importTo, setImportTo] = useState(() => hojeBR());
+  const runBankSync = useCallback(async (range?: { from: string; to: string }) => {
     if (!user?.tenantId) return;
     setBankSync({ running: true, msg: null, error: false });
     type SyncResp = { success?: boolean; not_configured?: boolean; skipped?: boolean; error?: string; inserted?: number };
+    type Resp = { data: SyncResp | null; error: Error | null };
+
+    // Stone: o arquivo do dia só sai no dia seguinte (Até ≤ ontem) e a edge aceita
+    // no máximo 31 dias por chamada → divide o período em blocos.
+    const stoneRange = async (): Promise<Resp> => {
+      const ontem = shiftISO(hojeBR(), -1);
+      const fim = range!.to > ontem ? ontem : range!.to;
+      if (range!.from > fim) return { data: { success: true, skipped: true }, error: null };
+      let inserted = 0; let lastErr: string | undefined; let ok = false; let notConf = false;
+      for (let ini = range!.from; ini <= fim; ini = shiftISO(ini, 31)) {
+        const blocoFim = shiftISO(ini, 30) > fim ? fim : shiftISO(ini, 30);
+        const r = await invokeWithAuth<SyncResp & { days_ok?: number }>('stone-conciliation', {
+          body: { action: 'import_range', tenant_id: user.tenantId, date_from: ini, date_to: blocoFim },
+        });
+        const err = r.data?.error ?? r.error?.message;
+        if (/não configurad/i.test(String(err ?? ''))) { notConf = true; break; }
+        if (err || !r.data?.success) lastErr = err || 'falhou'; else ok = true;
+        inserted += Number(r.data?.inserted ?? 0);
+      }
+      if (notConf) return { data: { not_configured: true }, error: null };
+      return { data: { success: ok || !lastErr, inserted, error: ok ? undefined : lastErr }, error: null };
+    };
+
     const [inter, stone] = await Promise.all([
-      invokeWithAuth<SyncResp>('inter-bank', { body: { action: 'sync', tenant_id: user.tenantId } }),
-      invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId } }),
+      invokeWithAuth<SyncResp>('inter-bank', {
+        body: { action: 'sync', tenant_id: user.tenantId, ...(range ? { date_from: range.from, date_to: range.to } : {}) },
+      }),
+      range
+        ? stoneRange()
+        : invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId } }),
     ]);
     const parts: string[] = [];
     let hasError = false;
@@ -475,7 +509,8 @@ export default function ConciliacaoTab() {
     read('Inter', inter);
     read('Stone', stone);
     const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    setBankSync({ running: false, error: hasError, msg: parts.length > 0 ? `Bancos atualizados às ${hora} · ${parts.join(' · ')}` : null });
+    const periodo = range ? ` (${range.from.split('-').reverse().join('/')} a ${range.to.split('-').reverse().join('/')})` : '';
+    setBankSync({ running: false, error: hasError, msg: parts.length > 0 ? `Bancos atualizados às ${hora}${periodo} · ${parts.join(' · ')}` : null });
     // Sugere de novo os vínculos pagamento × nota/conta (a nota pode ter chegado depois do pagamento)
     await invokeWithAuth('conciliacao-pagamentos', { body: { action: 'rematch', tenant_id: user.tenantId } });
     void novos;
@@ -757,7 +792,7 @@ export default function ConciliacaoTab() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {bankAccounts.length > 1 && (
             <select
               value={selectedAccountId}
@@ -769,13 +804,31 @@ export default function ConciliacaoTab() {
               ))}
             </select>
           )}
+          {/* Período a importar do Inter e da Stone */}
+          <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1" title="Período a importar dos bancos (Inter e Stone)">
+            <input type="date" value={importFrom} max={importTo}
+              onChange={e => setImportFrom(e.target.value)}
+              className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
+            <span className="text-zinc-300 text-xs">até</span>
+            <input type="date" value={importTo} min={importFrom} max={hojeBR()}
+              onChange={e => setImportTo(e.target.value)}
+              className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
+          </div>
           <button
-            onClick={runBankSync}
-            disabled={bankSync.running}
+            onClick={() => runBankSync({ from: importFrom, to: importTo })}
+            disabled={bankSync.running || !importFrom || !importTo || importFrom > importTo}
             className="flex items-center gap-1.5 px-3 py-2 border border-blue-300 text-blue-700 bg-blue-50 rounded-lg text-sm font-semibold hover:bg-blue-100 cursor-pointer whitespace-nowrap transition-colors disabled:opacity-50"
-            title="Busca agora o extrato do Inter e o arquivo da Stone"
+            title="Busca o extrato do Inter e os arquivos da Stone entre as datas escolhidas (reimportar não duplica)"
           >
-            <i className={`ri-refresh-line ${bankSync.running ? 'animate-spin' : ''}`} /> Atualizar bancos
+            <i className={`ri-download-cloud-line ${bankSync.running ? 'animate-pulse' : ''}`} /> Importar período
+          </button>
+          <button
+            onClick={() => runBankSync()}
+            disabled={bankSync.running}
+            className="w-9 h-9 flex items-center justify-center border border-blue-300 text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 cursor-pointer transition-colors disabled:opacity-50"
+            title="Atualizar bancos: busca desde o último sync"
+          >
+            <i className={`ri-refresh-line ${bankSync.running ? 'animate-spin' : ''}`} />
           </button>
           <button
             onClick={() => setShowStoneConfig(true)}

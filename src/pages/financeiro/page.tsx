@@ -82,8 +82,10 @@ export default function FinanceiroPage() {
             <p className="text-xs text-zinc-400 hidden sm:block">Gestão financeira completa do restaurante</p>
           </div>
         </div>
-        {/* Tabs — scroll horizontal no mobile */}
-        <div className="flex gap-0.5 overflow-x-auto scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
+        {/* Tabs — scroll horizontal no mobile; a partir de md quebram em linhas
+            (com a barra de rolagem escondida, as abas da direita ficavam
+            inalcançáveis no desktop quando a janela era estreita) */}
+        <div className="flex md:flex-wrap gap-0.5 overflow-x-auto md:overflow-visible scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
           {TABS.map(tab => (
             <button
               key={tab.id}

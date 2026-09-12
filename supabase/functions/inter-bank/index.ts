@@ -200,7 +200,7 @@ function applyRule(rules: Rule[], description: string, txType: 'credit' | 'debit
 }
 
 // ── Sync de uma loja ─────────────────────────────────────────────────────────
-async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number } = {}) {
+async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number; date_from?: string; date_to?: string } = {}) {
   const action = 'sync';
   const { data: cfg } = await admin.from('fin_inter_config').select('*').eq('tenant_id', tenantId).maybeSingle();
   if (!cfg) return { tenant_id: tenantId, error: 'Banco Inter não configurado nesta loja' };
@@ -210,11 +210,17 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number 
   const creds: InterCreds = { environment: cfg.environment, client_id: cfg.client_id, client_secret: cfg.client_secret, cert_pem: cfg.cert_pem, key_pem: cfg.key_pem, conta_corrente: cfg.conta_corrente };
   const today = todayBR();
   let from: string;
-  if (opts.days && opts.days > 0) from = addDays(today, -Math.min(opts.days, 365));
+  // Período escolhido na tela (De/Até): vale como está, inclusive antes do
+  // sync_from da config — o usuário pediu aquele intervalo explicitamente.
+  const explicit = Boolean(opts.date_from);
+  if (explicit) from = String(opts.date_from);
+  else if (opts.days && opts.days > 0) from = addDays(today, -Math.min(opts.days, 365));
   else if (cfg.last_sync_at) from = addDays(String(cfg.last_sync_at).slice(0, 10), -MATCH_DAYS);
   else from = String(cfg.sync_from ?? addDays(today, -30));
-  if (from < String(cfg.sync_from ?? from)) from = String(cfg.sync_from);
+  if (!explicit && from < String(cfg.sync_from ?? from)) from = String(cfg.sync_from);
   if (from > today) from = today;
+  const to = opts.date_to && opts.date_to < today ? opts.date_to : today;
+  if (from > to) from = to;
 
   let client: HttpClient | null = null;
   try {
@@ -231,8 +237,8 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number 
     // Extrato em janelas de ≤ 90 dias
     const txs: InterTx[] = [];
     let cursor = from;
-    while (cursor <= today) {
-      const end = daysBetween(cursor, today) > MAX_WINDOW_DAYS ? addDays(cursor, MAX_WINDOW_DAYS) : today;
+    while (cursor <= to) {
+      const end = daysBetween(cursor, to) > MAX_WINDOW_DAYS ? addDays(cursor, MAX_WINDOW_DAYS) : to;
       let chunk: InterTx[];
       try {
         chunk = await getStatement(creds, client, token, cursor, end);
@@ -323,7 +329,7 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number 
     // Stone × Inter: repasses da maquininha (domicílio) e transferências entre contas próprias.
     // Roda sempre (não só com linhas novas): a Stone pode ter sido importada depois do Inter.
     try {
-      const { data: si, error: siErr } = await admin.rpc('fn_match_stone_inter', { p_tenant: tenantId, p_from: addDays(today, -20), p_to: today });
+      const { data: si, error: siErr } = await admin.rpc('fn_match_stone_inter', { p_tenant: tenantId, p_from: from < addDays(today, -20) ? from : addDays(today, -20), p_to: today });
       if (siErr) log('WARN', action, 'fn_match_stone_inter falhou', { tenantId, error: siErr.message });
       else if (si) log('INFO', action, 'stone×inter', { tenantId, ...(si as Record<string, unknown>) });
     } catch (e) {
@@ -332,7 +338,7 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number 
 
     // Pagamentos × notas de entrada / contas a pagar: só SUGERE (a baixa é confirmada pelo usuário).
     try {
-      const { data: mp, error: mpErr } = await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: addDays(today, -120), p_to: today });
+      const { data: mp, error: mpErr } = await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: from < addDays(today, -120) ? from : addDays(today, -120), p_to: today });
       if (mpErr) log('WARN', action, 'fn_match_payments falhou', { tenantId, error: mpErr.message });
       else if (mp) log('INFO', action, 'pagamentos×notas', { tenantId, ...(mp as Record<string, unknown>) });
     } catch (e) {
@@ -351,9 +357,14 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number 
       log('WARN', action, 'saldo falhou', { tenantId, error: String(e) });
     }
 
-    await admin.from('fin_inter_config').update({ last_sync_at: new Date().toISOString(), last_sync_error: null, updated_at: new Date().toISOString() }).eq('id', cfg.id);
-    log('INFO', action, 'ok', { tenantId, from, to: today, fetched: txs.length, inserted: inserted.length, matched, classified, balance });
-    return { tenant_id: tenantId, from, to: today, fetched: txs.length, inserted: inserted.length, matched, classified, balance };
+    // Importação de um período antigo (Até < hoje) não mexe no last_sync_at: senão o
+    // próximo "desde o último sync" pularia os dias entre o sync real e hoje.
+    await admin.from('fin_inter_config').update({
+      ...(to === today ? { last_sync_at: new Date().toISOString() } : {}),
+      last_sync_error: null, updated_at: new Date().toISOString(),
+    }).eq('id', cfg.id);
+    log('INFO', action, 'ok', { tenantId, from, to, fetched: txs.length, inserted: inserted.length, matched, classified, balance });
+    return { tenant_id: tenantId, from, to, fetched: txs.length, inserted: inserted.length, matched, classified, balance };
   } catch (e) {
     const msg = friendlyError(e);
     log('ERROR', action, 'falhou', { tenantId, error: msg });
@@ -927,7 +938,15 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'sync') {
-      const r = await syncTenant(admin, tenantId, { days: body.days ? Number(body.days) : undefined });
+      const isoOk = (v: unknown) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+      if ((body.date_from && !isoOk(body.date_from)) || (body.date_to && !isoOk(body.date_to))) return errResp('Datas inválidas (use AAAA-MM-DD)');
+      if (body.date_from && body.date_to && body.date_from > body.date_to) return errResp('A data inicial é depois da final');
+      if (body.date_from && daysBetween(body.date_from, body.date_to ?? todayBR()) > 366) return errResp('Máximo de 1 ano por importação');
+      const r = await syncTenant(admin, tenantId, {
+        days: body.days ? Number(body.days) : undefined,
+        date_from: body.date_from || undefined,
+        date_to: body.date_to || undefined,
+      });
       return json({ success: !('error' in r), ...r });
     }
 
