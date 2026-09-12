@@ -110,17 +110,121 @@ async function debounce(admin: SupabaseClient, chatId: string, text: string, key
 // depois de decifrar. Achamos a enquete em asst_polls pela chave da mensagem e
 // transformamos em texto para o brain ("[Enquete "X"] Resposta: Y").
 // deno-lint-ignore no-explicit-any
-async function pollVoteText(admin: SupabaseClient, data: any): Promise<{ text: string; chatId: string } | null> {
+async function pollVoteText(admin: SupabaseClient, data: any): Promise<{ text: string; chatId: string; kind: string | null; ref: any; chosen: string[] } | null> {
   const pollId = String(data?.key?.id ?? data?.keyId ?? data?.pollCreationMessageKey?.id ?? '');
   // deno-lint-ignore no-explicit-any
   const updates: any[] = Array.isArray(data?.pollUpdates) ? data.pollUpdates : Array.isArray(data?.message?.pollUpdates) ? data.message.pollUpdates : [];
   if (!pollId || !updates.length) return null;
-  const { data: poll } = await admin.from('asst_polls').select('message_id, chat_id, question, options').eq('message_id', pollId).maybeSingle();
+  const { data: poll } = await admin.from('asst_polls').select('message_id, chat_id, question, options, kind, ref').eq('message_id', pollId).maybeSingle();
   if (!poll) return null;
   const chosen = updates.filter((u) => Array.isArray(u?.voters) ? u.voters.length > 0 : !!u?.name).map((u) => String(u.name)).filter(Boolean);
   if (!chosen.length) return null; // desmarcou tudo
   await admin.from('asst_polls').update({ answered_at: new Date().toISOString(), answer: chosen }).eq('message_id', pollId);
-  return { text: `[Enquete "${poll.question}"] Resposta: ${chosen.join(', ')}`, chatId: String(poll.chat_id) };
+  return { text: `[Enquete "${poll.question}"] Resposta: ${chosen.join(', ')}`, chatId: String(poll.chat_id), kind: poll.kind ?? null, ref: poll.ref ?? null, chosen };
+}
+
+// Enquete do sistema "qual a classificação DRE desta conta?" (asst_polls.kind =
+// 'dre_category', enviada pelo assistente-cron). O voto grava direto na conta, sem
+// passar pelo modelo. Grupo sem categoria → reaproveita/cria a categoria raiz com o
+// nome do grupo (mesma regra do pay_bill e do catálogo de compras).
+// deno-lint-ignore no-explicit-any
+async function handleDreVote(admin: SupabaseClient, ref: any, chosen: string[]): Promise<string> {
+  // deno-lint-ignore no-explicit-any
+  const opt = (Array.isArray(ref?.options) ? ref.options : []).find((o: any) => o?.label === chosen[0]);
+  if (!opt) return 'Não entendi a opção dessa enquete; classifica no sistema, por favor.';
+  return applyDreChoice(admin, ref, opt);
+}
+
+// Pergunta DRE em TEXTO (a enquete foi abandonada: o voto não chegava). Interpreta a
+// resposta do dono: número da lista, "Grupo" ou "Grupo Categoria nova", nome exato de
+// uma categoria, ou "pular". Devolve null se o texto não parece resposta.
+const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+// deno-lint-ignore no-explicit-any
+function dreAnswer(text: string, ref: any): any | null {
+  const t = text.trim();
+  const n = semAcento(t);
+  if (/^(pular|pula|depois|nao sei|eu classifico|no sistema)\b/.test(n)) return { skip: true };
+  // deno-lint-ignore no-explicit-any
+  const options: any[] = Array.isArray(ref?.options) ? ref.options : [];
+  const num = n.match(/^(?:opcao |op |n )?(\d{1,2})\.?$/);
+  if (num) return options.find((o) => Number(o.n) === Number(num[1])) ?? { invalid: true };
+  const exata = options.find((o) => semAcento(String(o.label)) === n || semAcento(String(o.label).split('›').pop() ?? '') === n);
+  if (exata) return exata;
+  // deno-lint-ignore no-explicit-any
+  const groups: any[] = (Array.isArray(ref?.groups) ? ref.groups : []).slice().sort((a: any, b: any) => String(b.label).length - String(a.label).length);
+  for (const g of groups) {
+    const gl = semAcento(String(g.label));
+    if (n === gl) return { group: g.key, name: g.label, label: g.label };
+    if (n.startsWith(gl + ' ')) {
+      const nome = t.split(/\s+/).slice(gl.split(' ').length).join(' ').replace(/^[›>:\-–]+/, '').trim();
+      if (!nome) return { group: g.key, name: g.label, label: g.label };
+      const nomeFmt = nome.charAt(0).toUpperCase() + nome.slice(1);
+      return { group: g.key, name: nomeFmt, label: `${g.label} › ${nomeFmt}` };
+    }
+  }
+  return null;
+}
+
+// Pergunta DRE aberta a que esta mensagem responde: a citada (reply) ou, sem citação,
+// a única em aberto — e aí só se o texto parece resposta.
+// deno-lint-ignore no-explicit-any
+async function tryDreAnswer(admin: SupabaseClient, number: string, chatId: string, text: string, stanzaId: string | null, msgKey: MsgKey | null): Promise<boolean> {
+  if (!text) return false;
+  const q = admin.from('asst_polls').select('message_id, ref').eq('kind', 'dre_category').is('answered_at', null);
+  const { data: rows } = stanzaId ? await q.eq('message_id', stanzaId) : await q.order('created_at', { ascending: false }).limit(2);
+  if (!rows?.length || (!stanzaId && rows.length > 1)) return false;
+  const row = rows[0];
+  const opt = dreAnswer(text, row.ref);
+  if (!opt && !stanzaId) return false; // sem citação e não parece resposta → conversa normal
+  if (!opt || opt.invalid) {
+    await sendText(number, `Não entendi. Responde com o *número* da lista, com o grupo + nome de uma categoria nova (ex.: _Despesas fixas Consultoria_) ou "pular".`).catch(() => {});
+    if (msgKey) react(msgKey, '❓');
+    return true;
+  }
+  await admin.from('asst_polls').update({ answered_at: new Date().toISOString(), answer: [text] }).eq('message_id', row.message_id);
+  const reply = await applyDreChoice(admin, row.ref, opt).catch((e) => { log('ERROR', 'resposta DRE', { error: errMsg(e) }); return 'Deu erro ao gravar a classificação; tenta no sistema.'; });
+  await sendText(number, reply).catch(() => {});
+  if (msgKey) react(msgKey, reply.startsWith('✅') ? '✅' : '👍');
+  await admin.from('asst_messages').insert([
+    { channel: 'whatsapp', chat_id: chatId, role: 'user', content: text },
+    { channel: 'cron', chat_id: chatId, role: 'assistant', content: reply },
+  ]);
+  // Próxima pergunta já (sem esperar o tick do cron)
+  fetch(`${supabaseUrl}/functions/v1/assistente-cron`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+    body: JSON.stringify({ run: 'dre_classify' }),
+  }).catch((e) => log('WARN', 'próxima pergunta DRE', { error: errMsg(e) }));
+  return true;
+}
+
+// deno-lint-ignore no-explicit-any
+async function applyDreChoice(admin: SupabaseClient, ref: any, opt: any): Promise<string> {
+  const tenantId = String(ref?.tenant_id ?? '');
+  const billId = String(ref?.bill_id ?? '');
+  if (!tenantId || !billId) return 'Não achei a conta dessa pergunta; classifica no sistema, por favor.';
+  const { data: bill } = await admin.from('fin_accounts_payable').select('id, description, amount, dre_category_id')
+    .eq('id', billId).eq('tenant_id', tenantId).maybeSingle();
+  if (!bill) return 'Essa conta não existe mais no sistema.';
+  const desc = `${bill.description} (${Number(bill.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})`;
+  if (opt.skip) return `Ok, fica pra você classificar no sistema: ${desc}.`;
+  if (bill.dre_category_id) return `Essa conta já tinha sido classificada no sistema: ${desc}.`;
+
+  let catId: string | null = opt.category_id ?? null;
+  if (!catId && opt.group) {
+    const nome = String(opt.name ?? opt.label).trim();
+    const { data: cats } = await admin.from('fin_dre_categories').select('id, name').eq('tenant_id', tenantId).eq('group_type', opt.group);
+    catId = (cats ?? []).find((c) => String(c.name).trim().toLowerCase() === nome.toLowerCase())?.id ?? null;
+    if (!catId) {
+      const { data: nova, error } = await admin.from('fin_dre_categories')
+        .insert({ tenant_id: tenantId, name: nome, group_type: opt.group, sort_order: 0, is_active: true }).select('id').single();
+      if (error || !nova) { log('ERROR', 'criar categoria DRE falhou', { tenantId, error: error?.message }); return 'Não consegui criar a categoria; classifica no sistema, por favor.'; }
+      catId = nova.id;
+    }
+  }
+  const { error } = await admin.from('fin_accounts_payable').update({ dre_category_id: catId })
+    .eq('id', billId).eq('tenant_id', tenantId).is('dre_category_id', null);
+  if (error) { log('ERROR', 'classificar conta falhou', { billId, error: error.message }); return 'Deu erro ao gravar a classificação; tenta no sistema.'; }
+  return `✅ Classificada em *${opt.label}*: ${desc}.`;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -226,6 +330,108 @@ async function mediaBase64(data: any): Promise<string | null> {
   }
 }
 
+// ── Importar histórico de grupo (arquivo "Exportar conversa" do WhatsApp) ──
+// O WhatsApp não entrega a um participante novo as mensagens anteriores à entrada
+// dele no grupo, então o único jeito de o assistente ver o passado é o dono exportar
+// a conversa no celular (Grupo › ⋮ › Mais › Exportar conversa › Sem mídia) e mandar
+// o .txt aqui. Formatos: Android "12/09/2026 10:31 - Nome: msg" e iPhone
+// "[12/09/2026, 10:31:05] Nome: msg". Linhas sem data continuam a mensagem anterior.
+type ImportedMsg = { sent_at: string; sender: string; content: string; kind: string };
+function parseWhatsAppExport(raw: string): ImportedMsg[] {
+  const clean = raw.replace(/^﻿/, '').replace(/[‎‏‪-‮]/g, '');
+  const head = /^\[?(\d{1,2})\/(\d{1,2})\/(\d{2,4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([ap]\.?\s?m\.?)?\]?\s*(?:[-–]\s*)?(.*)$/i;
+  const out: ImportedMsg[] = [];
+  for (const line of clean.split(/\r?\n/)) {
+    const m = head.exec(line);
+    if (!m) { if (out.length && line.trim()) out[out.length - 1].content += `\n${line}`; continue; }
+    const [, d, mo, yRaw, hRaw, mi, s, ampm, rest] = m;
+    const y = yRaw.length === 2 ? 2000 + Number(yRaw) : Number(yRaw);
+    let h = Number(hRaw);
+    if (ampm) { const pm = /p/i.test(ampm); if (pm && h < 12) h += 12; if (!pm && h === 12) h = 0; }
+    const pad = (n: number | string) => String(n).padStart(2, '0');
+    const sent_at = `${y}-${pad(mo)}-${pad(d)}T${pad(h)}:${mi}:${s ?? '00'}-03:00`;
+    if (Number.isNaN(Date.parse(sent_at))) continue;
+    const sep = /^([^:]{1,80}?):\s(.*)$/s.exec(rest);
+    if (!sep) continue; // linha de sistema ("Fulano entrou", "criou o grupo"...)
+    let content = sep[2].trim();
+    let kind = 'text';
+    if (/^<(mídia|media|arquivo de mídia) (oculta|omitted|oculto)>$/i.test(content) || /\((arquivo anexado|file attached)\)$/i.test(content)) { kind = 'media'; content = '[Mídia]'; }
+    if (/^(mensagem apagada|você apagou esta mensagem|this message was deleted)/i.test(content)) continue;
+    out.push({ sent_at, sender: sep[1].trim(), content, kind });
+  }
+  return out;
+}
+// Hash curto e determinístico (FNV-1a) para message_id: reimportar o mesmo arquivo não duplica.
+function fnv(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, '0') + s.length.toString(16);
+}
+// deno-lint-ignore no-explicit-any
+async function importGroupExport(admin: SupabaseClient, number: string, data: any, p: Parsed, msgKey: MsgKey | null, allowed: string[]) {
+  const fileName = String(p.inner?.documentMessage?.fileName ?? '');
+  const caption = (p.text ?? '').trim();
+  // Grupo: pela legenda, senão pelo nome do arquivo ("Conversa do WhatsApp com X.txt").
+  const fromFile = fileName.replace(/\.txt$/i, '').replace(/^(conversa do whatsapp com|whatsapp chat with|chat do whatsapp com)\s+/i, '').trim();
+  const hint = caption || fromFile;
+  const { data: groups } = await admin.from('asst_groups').select('group_jid, name, is_enabled');
+  // deno-lint-ignore no-explicit-any
+  let known: any[] = groups ?? [];
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const pick = (list: typeof known, h: string) => {
+    const k = norm(h);
+    const exact = list.filter((g) => norm(String(g.name ?? '')) === k);
+    if (exact.length === 1) return exact[0];
+    const part = list.filter((g) => k && (norm(String(g.name ?? '')).includes(k) || k.includes(norm(String(g.name ?? '')))));
+    return part.length === 1 ? part[0] : null;
+  };
+  let g = hint ? pick(known, hint) : null;
+  if (!g && hint) {
+    // Ainda não chegou mensagem do grupo desde a entrada do assistente: procura na Evolution.
+    try {
+      const all = await evoGet(`/group/fetchAllGroups/${evoInstance}?getParticipants=false`);
+      // deno-lint-ignore no-explicit-any
+      const cand = (Array.isArray(all) ? all : []).map((x: any) => ({ group_jid: String(x.id), name: String(x.subject ?? x.id), is_enabled: true }));
+      const hit = pick(cand, hint);
+      if (hit) {
+        await admin.from('asst_groups').upsert(hit, { onConflict: 'group_jid', ignoreDuplicates: true });
+        g = hit;
+      }
+    } catch (e) { log('WARN', 'fetchAllGroups falhou', { error: errMsg(e) }); }
+  }
+  if (!g) {
+    await sendText(number, `Recebi o arquivo${fileName ? ` "${fileName}"` : ''}, mas não sei de qual grupo é. Manda de novo com o nome do grupo na legenda${known.length ? ` (acompanho: ${known.map((x) => x.name).join(', ')})` : ''}.`);
+    if (msgKey) await react(msgKey, '❓');
+    return;
+  }
+  const b64 = await mediaBase64(data);
+  if (!b64) throw new Error('não consegui baixar o arquivo');
+  const bytes = Uint8Array.from(atob(b64.replace(/^data:[^;]+;base64,/, '')), (c) => c.charCodeAt(0));
+  const msgs = parseWhatsAppExport(new TextDecoder('utf-8').decode(bytes));
+  if (!msgs.length) {
+    await sendText(number, 'Não achei mensagens nesse arquivo. É o .txt do "Exportar conversa" do WhatsApp? (no iPhone vem em .zip: descompacta e manda o _chat.txt)');
+    if (msgKey) await react(msgKey, '❓');
+    return;
+  }
+  const rows = msgs.map((m) => ({
+    message_id: `import:${g.group_jid}:${fnv(`${m.sent_at}|${m.sender}|${m.content}`)}`,
+    group_jid: g.group_jid, sender_jid: null, sender_name: m.sender.slice(0, 120),
+    content: m.content.slice(0, 4000), kind: m.kind, sent_at: m.sent_at,
+  }));
+  let inserted = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const { data: ins, error } = await admin.from('asst_group_messages').upsert(rows.slice(i, i + 500), { onConflict: 'message_id', ignoreDuplicates: true }).select('id');
+    if (error) throw new Error(error.message);
+    inserted += ins?.length ?? 0;
+  }
+  if (!g.is_enabled) await admin.from('asst_groups').update({ is_enabled: true, updated_at: new Date().toISOString() }).eq('group_jid', g.group_jid);
+  const fmt = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const first = msgs[0].sent_at, last = msgs[msgs.length - 1].sent_at;
+  await sendText(number, `Importei ${inserted} mensagens do grupo *${g.name}* (${fmt(first)} a ${fmt(last)}${rows.length - inserted ? `; ${rows.length - inserted} já estavam` : ''}). Já dá pra perguntar sobre esse período.`);
+  if (msgKey) await react(msgKey, '✅');
+  log('INFO', 'histórico de grupo importado', { group: g.name, total: rows.length, inserted, owner: allowed.length > 0 });
+}
+
 async function transcribe(b64: string, mime: string): Promise<string> {
   if (!whisperUrl || !whisperKey) throw new Error('WHISPER_URL/WHISPER_API_KEY não configurados');
   const bytes = Uint8Array.from(atob(b64.replace(/^data:[^;]+;base64,/, '')), (c) => c.charCodeAt(0));
@@ -325,6 +531,12 @@ async function handle(payload: any) {
       if (!vote) { log('INFO', 'pollUpdates sem enquete conhecida', { keys: Object.keys(it ?? {}), id: it?.key?.id ?? it?.keyId }); continue; }
       const jidOk = [vote.chatId, vote.chatId.replace(/@.*$/, '')].some((c) => allowed.includes(c));
       if (!jidOk) continue;
+      if (vote.kind === 'dre_category') {
+        const reply = await handleDreVote(admin, vote.ref, vote.chosen).catch((e) => { log('ERROR', 'voto DRE', { error: errMsg(e) }); return 'Deu erro ao gravar a classificação; tenta no sistema.'; });
+        await sendText(vote.chatId.replace(/@.*$/, ''), reply).catch(() => {});
+        await admin.from('asst_messages').insert({ channel: 'cron', chat_id: vote.chatId, role: 'assistant', content: `${vote.text}\n${reply}` });
+        continue;
+      }
       await processOwner(admin, ui, { chatId: vote.chatId, kind: 'poll', text: vote.text, attachment: null, key: null, forwarded: false });
     }
     return;
@@ -365,6 +577,10 @@ async function handle(payload: any) {
       const transcript = await transcribe(b64, p.mime ?? 'audio/ogg');
       if (!transcript) { await sendText(number, 'Não consegui entender o áudio. Pode repetir ou mandar em texto?'); if (msgKey) await react(msgKey, '❓'); return; }
       text = `[Áudio] ${transcript}`;
+    } else if (p.kind === 'document' && ((p.mime ?? '').startsWith('text/plain') || /\.txt$/i.test(String(p.inner?.documentMessage?.fileName ?? '')))) {
+      // .txt = exportação de conversa do WhatsApp → histórico de grupo (sem passar pelo brain)
+      await importGroupExport(admin, number, data, p, msgKey, allowed);
+      return;
     } else if (p.kind === 'image' || (p.kind === 'document' && (p.mime === 'application/pdf' || IMAGE_TYPES.includes(p.mime ?? '')))) {
       const b64 = await mediaBase64(data);
       if (!b64) throw new Error('não consegui baixar o arquivo');
@@ -384,6 +600,13 @@ async function handle(payload: any) {
     await sendText(number, 'Deu erro aqui do meu lado. Tenta de novo em instantes.').catch(() => {});
     if (msgKey) await react(msgKey, '❌');
     return;
+  }
+  // Resposta a uma pergunta do sistema (classificação DRE): gravada direto, sem modelo.
+  if (!attachment && !p.forwarded && (p.kind === 'text' || p.kind === 'audio')) {
+    const stanza = p.inner?.extendedTextMessage?.contextInfo?.stanzaId;
+    const answered = await tryDreAnswer(admin, number, chatId, text.replace(/^\[Áudio\]\s*/, '').replace(/[.!]+$/, ''), stanza ? String(stanza) : null, msgKey)
+      .catch((e) => { log('ERROR', 'tryDreAnswer', { error: errMsg(e) }); return false; });
+    if (answered) return;
   }
   await processOwner(admin, ui, { chatId, kind: p.kind, text, attachment, key: msgKey, forwarded: p.forwarded });
 }

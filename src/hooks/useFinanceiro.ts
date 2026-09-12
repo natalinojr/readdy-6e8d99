@@ -320,8 +320,13 @@ export function useBillsPayable() {
   // Lança em caso de erro: antes o resultado era ignorado, então uma recusa do
   // pay_bill (conta já quitada, valor inválido, falha de rede) passava
   // despercebida — o modal fechava e o usuário achava que tinha pago.
-  const pay = async (id: string, paid_date: string, paid_amount: number, payment_method: string) => {
-    const result = await invokeFinancial('pay_bill', user!.tenantId, { id, paid_date, paid_amount, payment_method });
+  // `dre`: classificação DRE escolhida na hora da baixa — o pay_bill recusa conta
+  // sem classificação (exceto compra e folha). Ver DreClassificacaoSelect.
+  const pay = async (
+    id: string, paid_date: string, paid_amount: number, payment_method: string,
+    dre?: { dre_category_id?: string; dre_group?: string; dre_category_name?: string },
+  ) => {
+    const result = await invokeFinancial('pay_bill', user!.tenantId, { id, paid_date, paid_amount, payment_method, ...(dre ?? {}) });
     await fetchBills();
     if (result?.error) throw new Error(String(result.error));
     return result;

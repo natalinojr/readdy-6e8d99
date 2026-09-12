@@ -159,6 +159,7 @@ margemLiquida     = resultadoOperacional / receitaBruta × 100
 ```
 - **Não há linha de EBITDA** explícita.
 - Categorias DRE: `fin_dre_categories` (`group_type ∈ revenue|cost|expense|tax` ou a `key` de um grupo customizado, hierárquicas via `parent_id`). Grupos customizados ficam em **`fin_dre_groups`** desde 2026-09-05 (antes era `localStorage` por tenant; ver §9f).
+- **Sem classificação não há baixa (2026-09-12).** `pay_bill` recusa (422, `code: 'dre_category_required'`) conta sem `dre_category_id`, exceto `reference_type` `purchase` (CMV pelos itens) e `hr_payroll`. A baixa pode trazer `dre_category_id` ou `dre_group` (+ `dre_category_name`, cria/reaproveita a categoria raiz; quase nenhuma loja tem categorias). Front: `DreClassificacaoSelect` nos modais de ContasPagarTab e ContasVencidasPanel. Recorrente herda a categoria; juros da conciliação vão para "Juros e multas". Conta sem classificação é perguntada ao dono no WhatsApp (assistente-cron `dre_classify`, ver `assistente/README.md`).
 - Regime **Competência**: receita reconhecida = `receitaRecebida` (recebível pendente é **saldo**, não soma na receita — comentado como "BUG-41", intencional); CMV/despesas por `purchase_date`/`due_date`.
 
 ---

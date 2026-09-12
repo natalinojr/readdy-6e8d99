@@ -45,21 +45,21 @@ Conclusão: o núcleo já está no nível dos produtos pagos. O que falta é
 - **`NO_REPLY` silencioso**: o modelo pode decidir não responder (ex.: "ok",
   "valeu") — economiza tokens e não polui o chat.
 
-### 1.2 Dados públicos brasileiros (BrasilAPI, grátis, sem chave)
+### 1.2 Dados públicos brasileiros (BrasilAPI, grátis, sem chave) — FEITO 2026-09-12
 - **CNPJ do fornecedor** ao lançar nota: situação cadastral, CNAE, sócios.
 - **CEP, feriados nacionais, tabela FIPE, SELIC/CDI, NCM.** Feriado é útil para
   o próprio assistente ("amanhã é feriado, quer abrir?").
 
-### 1.3 Clima (Open-Meteo, grátis, 10k chamadas/dia)
+### 1.3 Clima (Open-Meteo, grátis, 10k chamadas/dia) — FEITO 2026-09-12
 - Previsão no resumo da manhã e **alerta de chuva** para as lojas ("vai chover
   das 18h às 21h em Paranaguá, delivery tende a subir / salão cair").
 - Base para a Camada 3 (previsão de demanda com clima).
 
-### 1.4 Busca na web (ferramenta nativa do Claude, ~US$ 0,01/busca)
+### 1.4 Busca na web (ferramenta nativa do Claude, ~US$ 0,01/busca) — FEITO 2026-09-12
 - Ligar `web_search` no brain com limite de usos por mensagem. Permite
   "quanto tá o quilo do contrafilé no atacado?", notícias, dúvida qualquer.
 
-### 1.5 Proatividade barata a partir do que já está no banco
+### 1.5 Proatividade barata a partir do que já está no banco — FEITO 2026-09-12
 - **Alerta de anomalia de venda**: venda do dia até agora vs. mesma hora nas 4
   últimas semanas; avisar só se desvio > X%. Toast/Square fazem isso ("sales
   fluctuations").
@@ -102,7 +102,7 @@ Conclusão: o núcleo já está no nível dos produtos pagos. O que falta é
   adaptadas ao dia (o que aconteceu, decisão tomada, pendência) e guarda;
   rollup semanal/mensal. Tom "sóbrio e direto", sem terapia.
 
-### 2.4 Ações no ERPOS (hoje ele só lê)
+### 2.4 Ações no ERPOS — FEITO 2026-09-12 (erpos_executar: age como o dono pelas edges; falta só pagar pelo Inter)
 - **Lançar conta a pagar da foto do boleto** (pendente nº 2 do README).
 - **Lançar compra da notinha** reaproveitando a leitura por QR/IA que já existe
   na Nova Compra.

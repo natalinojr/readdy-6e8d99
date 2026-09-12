@@ -140,7 +140,7 @@ Na 1ª mensagem de um grupo cria `asst_groups` com nome (Evolution
 (qualquer um pode adicionar o número num grupo). Liga/desliga na tela
 Assistente › Configurações (`toggle_group`). Brain: `listar_grupos` e `ler_grupo`
 (grupo por nome parcial, período padrão 24 h, filtro por palavra, até 600
-mensagens / ~40k caracteres). O cron apaga mensagens de grupo com mais de 90 dias.
+mensagens / ~40k caracteres). Mensagens de grupo não são apagadas (histórico completo; decisão de 2026-09-12).
 Migração: `supabase/migrations/20260912000000_assistente_grupos.sql`.
 
 ### Leitor universal — acesso de LEITURA a todo o ERPOS (2026-09-12)
@@ -253,6 +253,131 @@ Item 1.1 de `IDEIAS.md` (sem a resposta por áudio). Tudo via Evolution API, sem
   Testes diretos no brain (2026-09-12): "valeu!" → `NO_REPLY`; pedido de enquete →
   `actions[poll]` com 3 lojas; "localização da principal + contato da Voxy" →
   `actions[location, contact]` (buscar_nome achou VOXY-SC LTDA e o telefone).
+
+### Importar histórico de grupo (arquivo "Exportar conversa") — 2026-09-12
+
+O WhatsApp **não entrega a um participante novo as mensagens anteriores** à entrada
+dele no grupo (nem a Evolution tem como buscar). Para o assistente conhecer o passado,
+o dono exporta no celular (Grupo › ⋮ › Mais › Exportar conversa › **Sem mídia**) e
+manda o `.txt` para o assistente, com o nome do grupo na legenda se o nome do arquivo
+não bastar. O webhook (`importGroupExport`) reconhece `text/plain`/`.txt`, faz o parse
+dos formatos Android (`12/09/2026 10:31 - Nome: msg`) e iPhone
+(`[12/09/2026, 10:31:05] Nome: msg`, inclusive AM/PM), junta linhas de continuação,
+troca mídia por `[Mídia]`, ignora linhas de sistema e mensagens apagadas, e grava em
+`asst_group_messages` com `message_id = import:<jid>:<hash>` (reimportar não duplica).
+Se o grupo ainda não tem linha em `asst_groups` (nenhuma mensagem chegou desde a
+entrada), procura pelo nome em `/group/fetchAllGroups` e cria já habilitado. Responde
+"Importei N mensagens do grupo X (data a data)" sem passar pelo brain (custo zero).
+No iPhone a exportação vem em `.zip`: descompactar e mandar o `_chat.txt`.
+**Retenção:** mensagens de grupo **não são apagadas** (decisão do dono em 2026-09-12;
+antes o cron apagava com mais de 90 dias).
+
+### Camada 1 completa — dados públicos, clima, busca na web e proatividade (2026-09-12)
+
+Itens 1.2–1.5 de `IDEIAS.md`. Brain (`assistente-brain`):
+- `dados_publicos` (BrasilAPI, grátis, sem chave): `cnpj` (situação, CNAE, sócios,
+  endereço), `cep`, `feriados` (ano), `taxas` (SELIC/CDI/IPCA), `ncm`. CNPJ
+  inexistente/inválido → 404 da API → ferramenta falha e o modelo pede conferir.
+- `previsao_tempo` (Open-Meteo, grátis): loja (coordenada de
+  `system_settings.delivery_config.store_location`; sem ela, geocodifica
+  `delivery_city`), cidade ou lat/lng. Devolve agora, próximas 12 h (hora a hora,
+  % e mm de chuva) e 3 dias. Códigos WMO traduzidos.
+- **Busca na web** nativa da Anthropic (`web_search_20250305`, `max_uses: 3`,
+  localização aproximada Paranaguá/PR). US$ 10 por 1.000 buscas + tokens; contado em
+  `usage.web_searches`. `API_TOOLS = [...TOOLS, WEB_SEARCH]` é usado na chamada real
+  E no aquecimento (senão o cache não bate). Prompt: só quando a resposta não está
+  no ERPOS nem nas outras ferramentas.
+
+Cron (`assistente-cron` › `proactive`), **sem modelo** (regras em SQL via
+`SUPABASE_DB_URL`, texto montado no código; custo zero por aviso). Configuração em
+`asst_settings.proactive` (mesclada com os padrões abaixo); estado em
+`asst_settings.proactive_state`. Cada aviso vai ao dono e entra em `asst_messages`
+(`channel = 'cron'`) para o brain saber o que já foi dito.
+- `closing` (23:00, janela 2 h, 1×/dia): fechamento por loja com
+  `fn_get_sales_report` (mesma conta das telas) + cancelados, descontos, quebra de
+  caixa e caixas abertos; compara com o mesmo dia da semana passada. Sem movimento em
+  todas as lojas → não manda.
+- `anomaly` (11:30–22:30, a cada 30 min): venda de hoje até agora × média do mesmo
+  dia da semana nas últimas 4 semanas até o mesmo horário (só semanas com venda,
+  mínimo 2, base ≥ R$ 300). Queda ≥ 30% → 📉; alta ≥ 50% → 📈. 1 aviso por loja por dia.
+- `due_tomorrow` (17:00): contas em aberto que vencem amanhã (na sexta: sáb+dom+seg),
+  total de atrasadas e `synced_balance` dos bancos. Nada vencendo e nada atrasado → não manda.
+- `stock` (09:00): estoque crítico (`current_stock <= min_stock`, `min_stock > 0`,
+  sem deletados) — manda **só o que entrou** em crítico desde o último aviso e
+  quantos saíram; estado por loja (lista de ids). A 1ª execução lista tudo (baseline).
+- `tasks_overdue` (18:00): tarefas do dono vencidas e não concluídas (até 12).
+- **Prévia sem enviar:** `POST assistente-cron { preview: 'closing'|'anomaly'|'due_tomorrow'|'stock'|'tasks_overdue' }`
+  (com `x-internal-key`) devolve o texto que seria enviado; não marca estado.
+  Testado 2026-09-12: os 5 geram; `due_tomorrow` achou 1 conta (COPAL) + 35 atrasadas
+  + saldo Inter; `stock` listou 14 + 31 itens; `tasks_overdue` 1.
+- Desligar um aviso: `proactive.<nome>.enabled = false`; mudar horário: `.time`
+  (`HH:MM`); anomalia: `drop_pct`, `spike_pct`, `min_base`, `from`, `to`, `every_min`.
+- Resumo da manhã passou a pedir a previsão do tempo da loja principal (uma linha)
+  e a não repetir o estoque crítico (o cron já avisa o que muda).
+
+### Sistema pergunta pelo WhatsApp — classificação DRE (2026-09-12)
+
+Regra do dono: **"sempre que o sistema não souber fazer algo, pergunta pra mim no
+WhatsApp"**. 1º caso: conta a pagar sem classificação DRE (o `pay_bill` da
+`financial-write` passou a recusar a baixa sem ela, exceto compra e folha).
+- **Enquete foi abandonada (2026-09-12):** o dono votou e o voto nunca chegou ao
+  webhook, e ele achou que enquete "fica em aberto". Agora é **mensagem de texto**.
+- `assistente-cron` › `proactive.dre_classify` (08:00–21:00, checa a cada 2 min, **uma
+  pergunta aberta por vez**): conta sem `dre_category_id` (pagas primeiro) → texto com a
+  lista numerada **grupo › categoria** (todos os grupos, mesmo sem categoria) + quantas
+  faltam. Cada conta é perguntada uma vez só.
+- Resposta (webhook `tryDreAnswer`/`dreAnswer`, **sem modelo**): citando a pergunta ou
+  não (sem citação só vale se houver uma única aberta e o texto parecer resposta):
+  número da lista · nome exato da categoria · "Grupo Nome novo" (cria a categoria no
+  grupo) · só o nome do grupo (categoria raiz) · "pular". Texto que não parece resposta
+  segue para o brain normalmente. Depois de gravar, o webhook chama
+  `assistente-cron { run: 'dre_classify' }` e a próxima pergunta sai na hora.
+- `asst_polls` ganhou `kind` e `ref` (migração `20260912060000_asst_polls_kind_dre.sql`);
+  a pergunta em texto usa a mesma tabela (`message_id` = id da mensagem enviada,
+  `ref = { tenant_id, bill_id, options[{n,label,category_id}], groups[{key,label}] }`).
+  `handleDreVote` (voto de enquete) ficou só por compatibilidade.
+- Prévia: `POST assistente-cron { preview: 'dre_classify' }`. Resposta em texto ainda
+  não validada com uso real.
+- Novo caso de "perguntar ao dono" = novo `kind` em `asst_polls` + tratador no webhook.
+
+### Ações no ERPOS como o dono — `erpos_executar` (2026-09-12)
+
+Pedido do dono: "o assistente executa tudo no ERPOS como se fosse eu". Em vez de
+escrever nas tabelas (pularia regra de negócio), o brain **age com uma sessão real
+do dono** e chama as mesmas Edge Functions das telas.
+
+- **Sessão do dono** (`ownerToken`): `auth.admin.generateLink({type:'magiclink'})` →
+  `verifyOtp({token_hash, type:'magiclink'})` com a anon key → JWT do dono válido por
+  1 h, guardado em memória do isolate e renovado 2 min antes de vencer. Nenhum e-mail
+  é enviado. Diagnóstico: `POST assistente-brain { action: 'session_check' }`.
+- **Ferramenta `erpos_executar`** `{ funcao, action, dados, loja?, confirmado?, resumo }`:
+  allowlist de funções (`EDGE_ALLOW`: menu, financial, purchase, stock, customer,
+  reservation, table, config, voucher, production, user, task, delivery, order,
+  fiscal, implementation; `create_order` bloqueado; mesa-write e print-queue-write
+  fora por não autenticarem). `callEdge` manda `dados` **como `payload` e também no
+  nível de cima**, e o tenant nos dois nomes (`tenant_id` e `active_tenant_id`),
+  porque as edges divergem de convenção. Timeout 25 s.
+- **Confirmação:** ações cujo nome casa com `SENSITIVE`
+  (delete/pay/refund/cancel/void/close/reset/archive/…) exigem `confirmado=true`; sem
+  isso a ferramenta devolve erro pedindo para perguntar ao dono. O prompt manda
+  descrever ação + valor, esperar o "sim" e só então repetir com `confirmado`.
+  Criar/editar cardápio, cliente, fornecedor, conta a pagar e ajuste de estoque
+  podem ir direto quando o pedido é claro.
+- **Auditoria:** cada chamada em `asst_actions` (função, ação, payload com `_resumo`
+  e `_loja`, ok/status/result/error/ms). O `audit_log` do ERPOS registra o dono.
+- **MAPA DE AÇÕES** (`EDGE_MAP`, no bloco fixo cacheado junto com o `DB_MAP`):
+  contratos reais extraídos do código das 19 edges (ações, campos, enums, (S) para
+  sensível, formato de retorno). Ao mudar uma edge, atualizar o mapa.
+- Pegadinhas das edges (do levantamento): `stock-write` e `task-write` caem no
+  primeiro tenant se o enviado não bater; `user-write` devolve erros com HTTP 200
+  `{error}` (tratado: `ok` exige sem `error` e sem `success:false`); `config-write`
+  não autentica (o `tenant_id` do body é lei); `menu-write upsert_item` com
+  `option_groups` substitui todos os grupos.
+- Migração: `supabase/migrations/20260912070000_assistente_acoes_erpos.sql`.
+- Testes 2026-09-12 (via brain, depois limpos): criar item inativo "Teste Assistente"
+  na categoria com mais itens (achou Pasteis sozinho) → ok; lançar conta a pagar de
+  R$ 1 → ok; "paga a COPAL" → parou e pediu confirmação com valor; "apaga o item" →
+  pediu confirmação, "sim" → `delete_item` com `confirmado=true`; idem `delete_bill`.
 
 ## Pendente (ordem)
 

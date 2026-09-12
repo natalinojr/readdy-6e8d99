@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBillsPayable } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
+import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
 
 interface ContaVencida {
   id: string;
@@ -78,6 +79,9 @@ export default function ContasVencidasPanel() {
   const [payingId, setPayingId] = useState<string | null>(null);
   const [payModal, setPayModal] = useState<ContaVencida | null>(null);
   const [payForm, setPayForm] = useState({ paid_date: today, paid_amount: '', payment_method: 'Dinheiro' });
+  const [payDre, setPayDre] = useState('');
+  const { toPayload: dreToPayload } = useDreEscolha();
+  useEffect(() => { setPayDre(''); }, [payModal?.id]);
   const [receitaBruta, setReceitaBruta] = useState(0);
 
   const loadData = useCallback(async () => {
@@ -87,7 +91,7 @@ export default function ContasVencidasPanel() {
     const [billsRes, catsRes, receitaRes] = await Promise.all([
       supabase
         .from('fin_accounts_payable')
-        .select('id, description, supplier, category, amount, paid_amount, due_date, status, dre_category_id')
+        .select('id, description, supplier, category, amount, paid_amount, due_date, status, dre_category_id, reference_type')
         .eq('tenant_id', user.tenantId)
         // 'partial' incluído: conta paga pela metade e vencida é a de MAIOR
         // risco (o fornecedor já cobrou parte) e sumia inteira desta tela.
@@ -236,7 +240,8 @@ export default function ContasVencidasPanel() {
     setPayingId(payModal.id);
     setPayError(null);
     try {
-      await pay(payModal.id, payForm.paid_date, valor, payForm.payment_method);
+      await pay(payModal.id, payForm.paid_date, valor, payForm.payment_method,
+        precisaClassificarDRE(payModal) ? dreToPayload(payDre) : undefined);
       const restante = Math.max(0, Number(payModal.amount ?? 0) - Number(payModal.paid_amount ?? 0) - valor);
       // Pagamento parcial mantém a conta na lista (ainda vencida e em aberto)
       if (restante < 0.005) {
@@ -575,6 +580,9 @@ export default function ContasVencidasPanel() {
                   Venceu em {new Date(payModal.due_date + 'T00:00:00').toLocaleDateString('pt-BR')} — {payModal.days_overdue}d em atraso
                 </p>
               </div>
+              {precisaClassificarDRE(payModal) && (
+                <DreClassificacaoSelect value={payDre} onChange={setPayDre} categorias={dreCats} />
+              )}
               <div>
                 <label className="text-xs font-semibold text-zinc-600 block mb-1">Valor Pago</label>
                 <input

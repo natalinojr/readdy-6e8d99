@@ -277,6 +277,123 @@ const TOOLS: Anthropic.Tool[] = [
   },
 ];
 
+// ── Ferramentas externas gratuitas (2026-09-12) ──
+TOOLS.push(
+  {
+    name: 'dados_publicos',
+    description: 'Consulta dados públicos brasileiros (BrasilAPI, grátis): cnpj (situação cadastral, razão social, CNAE, sócios, endereço), cep (endereço), feriados (nacionais do ano), taxas (SELIC, CDI, IPCA), ncm (descrição de código NCM). Use para conferir fornecedor novo, endereço, feriado próximo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tipo: { type: 'string', enum: ['cnpj', 'cep', 'feriados', 'taxas', 'ncm'] },
+        valor: { type: 'string', description: 'CNPJ (só dígitos ou formatado), CEP, ano (feriados), código NCM. Não usado em taxas.' },
+      },
+      required: ['tipo'],
+    },
+  },
+  {
+    name: 'previsao_tempo',
+    description: 'Previsão do tempo (Open-Meteo, grátis) para uma loja (coordenada cadastrada no delivery), uma cidade ou lat/lng: próximas horas (chuva, temperatura) e próximos 3 dias. Use para "vai chover?", planejar delivery/salão, e no resumo da manhã.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        loja: { type: 'string', description: 'Nome (parcial) da loja. Padrão: loja principal.' },
+        cidade: { type: 'string', description: 'Nome da cidade (alternativa à loja).' },
+        latitude: { type: 'number' },
+        longitude: { type: 'number' },
+      },
+    },
+  },
+);
+// ── Ações no ERPOS como o dono (2026-09-12) ──
+// O brain obtém uma sessão REAL do dono (auth.admin.generateLink magiclink →
+// verifyOtp; nada de e-mail é enviado) e chama as mesmas Edge Functions que as
+// telas usam, com o JWT dele. Assim toda regra de negócio (estoque, CMV, contas,
+// auditoria) roda igual à tela e o audit_log registra o dono como autor.
+TOOLS.push({
+  name: 'erpos_executar',
+  description: 'EXECUTA uma ação de escrita no ERPOS em nome do Natalino, chamando a Edge Function que a tela usa (mesma regra de negócio). Use o MAPA DE AÇÕES nas instruções para escolher funcao/action e montar dados. Antes de executar algo que mexe em dinheiro, apaga, cancela ou estorna, confirme com ele (confirmado=true só depois do "sim"). Para consultar, NÃO use isto: use consultar_banco.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      funcao: { type: 'string', description: 'Nome da Edge Function (ex.: menu-write, financial-write, purchase-write, stock-write, customer-write, reservation-write, config-write, voucher-write, production-write, table-write, user-write, delivery-write).' },
+      action: { type: 'string', description: 'Ação dentro da função (ex.: create_item, update_item, create_bill, pay_bill...).' },
+      dados: { type: 'object', description: 'Campos da ação, exatamente como o mapa descreve (enviados como payload e também no nível de cima). Não inclua tenant_id: é preenchido pela loja.' },
+      loja: { type: 'string', description: 'Nome (parcial) da loja. Padrão: loja principal.' },
+      confirmado: { type: 'boolean', description: 'true = o Natalino confirmou explicitamente ESTA ação nesta conversa. Obrigatório para ações sensíveis (pagar, apagar, cancelar, estornar, fechar).' },
+      resumo: { type: 'string', description: 'Uma linha em português do que está sendo feito (vai para a auditoria).' },
+    },
+    required: ['funcao', 'action', 'dados', 'resumo'],
+  },
+});
+const EDGE_ALLOW = new Set(['menu-write', 'financial-write', 'purchase-write', 'stock-write', 'customer-write', 'reservation-write', 'table-write', 'config-write', 'voucher-write', 'production-write', 'user-write', 'task-write', 'delivery-write', 'order-write', 'fiscal-write', 'implementation-write']);
+// Ações que exigem confirmação explícita na conversa (padrão de nome; o mapa também marca).
+const SENSITIVE = /(^|_)(delete|remove|pay|refund|cancel|void|close|reset|archive|purge|reverse|estorn|excluir|pagar|cancelar|fechar)(_|$)/i;
+
+let ownerSession: { token: string; exp: number; userId: string } | null = null;
+async function ownerToken(admin: SupabaseClient, ownerId: string): Promise<string> {
+  if (ownerSession && ownerSession.userId === ownerId && ownerSession.exp - 120_000 > Date.now()) return ownerSession.token;
+  const { data: u, error: ue } = await admin.auth.admin.getUserById(ownerId);
+  if (ue || !u?.user?.email) throw new Error(`Usuário do dono não encontrado: ${ue?.message ?? ownerId}`);
+  const { data: link, error: le } = await admin.auth.admin.generateLink({ type: 'magiclink', email: u.user.email });
+  const tokenHash = link?.properties?.hashed_token;
+  if (le || !tokenHash) throw new Error(`generateLink falhou: ${le?.message ?? 'sem hashed_token'}`);
+  const anon = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_ANON_KEY') ?? '', { auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } });
+  const { data: s, error: ve } = await anon.auth.verifyOtp({ token_hash: tokenHash, type: 'magiclink' });
+  if (ve || !s?.session?.access_token) throw new Error(`verifyOtp falhou: ${ve?.message ?? 'sem sessão'}`);
+  ownerSession = { token: s.session.access_token, exp: (s.session.expires_at ?? Math.floor(Date.now() / 1000) + 3000) * 1000, userId: ownerId };
+  await anon.auth.signOut({ scope: 'others' }).catch(() => {}); // não acumula sessões antigas
+  return ownerSession.token;
+}
+// Chama a Edge Function com o JWT do dono. Manda `dados` como payload E no nível de
+// cima (as edges divergem: umas leem body.payload, outras campos soltos), e o tenant
+// nos dois nomes usados (tenant_id / active_tenant_id).
+// deno-lint-ignore no-explicit-any
+async function callEdge(ctx: Ctx, funcao: string, action: string, dados: Record<string, unknown>, tenantId: string): Promise<{ status: number; body: any; ms: number }> {
+  const token = await ownerToken(ctx.admin, ctx.ownerId);
+  const body = { ...dados, action, payload: { ...dados, tenant_id: tenantId }, tenant_id: tenantId, active_tenant_id: tenantId };
+  const started = Date.now();
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/${funcao}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(25_000),
+  });
+  const text = await r.text();
+  let out: unknown; try { out = JSON.parse(text); } catch { out = { raw: text.slice(0, 500) }; }
+  return { status: r.status, body: out, ms: Date.now() - started };
+}
+
+// Busca na web nativa da Anthropic (US$ 10 por 1.000 buscas + tokens). Limite por
+// mensagem para não virar custo: o modelo só usa quando a resposta não está no ERPOS.
+const WEB_SEARCH = { type: 'web_search_20250305', name: 'web_search', max_uses: 3, user_location: { type: 'approximate', city: 'Paranaguá', region: 'Paraná', country: 'BR', timezone: 'America/Sao_Paulo' } };
+// deno-lint-ignore no-explicit-any
+const API_TOOLS: any[] = [...TOOLS, WEB_SEARCH];
+
+async function fetchJson(url: string, timeoutMs = 8000): Promise<unknown> {
+  const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: { Accept: 'application/json' } });
+  if (!r.ok) throw new Error(`${r.status} em ${new URL(url).pathname}`);
+  return r.json();
+}
+// deno-lint-ignore no-explicit-any
+async function storeCoords(ctx: Ctx, loja?: string): Promise<{ lat: number; lng: number; label: string; city: string | null }> {
+  const t = resolveTenant(ctx, loja);
+  const { data: ss } = await ctx.admin.from('system_settings').select('delivery_config, delivery_city').eq('tenant_id', t.id).maybeSingle();
+  // deno-lint-ignore no-explicit-any
+  const loc = (ss?.delivery_config as any)?.store_location;
+  const city = ss?.delivery_city ? String(ss.delivery_city) : null;
+  if (loc && typeof loc.lat === 'number' && typeof loc.lng === 'number') return { lat: loc.lat, lng: loc.lng, label: t.name, city };
+  if (city) { const g = await geocode(city); return { ...g, label: `${t.name} (${g.label})`, city }; }
+  throw new Error(`A loja ${t.name} não tem localização nem cidade cadastrada.`);
+}
+async function geocode(city: string): Promise<{ lat: number; lng: number; label: string }> {
+  // deno-lint-ignore no-explicit-any
+  const g: any = await fetchJson(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=pt&format=json`);
+  const r = g?.results?.[0];
+  if (!r) throw new Error(`Cidade não encontrada: ${city}`);
+  return { lat: r.latitude, lng: r.longitude, label: `${r.name}${r.admin1 ? ` - ${r.admin1}` : ''}` };
+}
+
 // Ações de saída para o WhatsApp: as ferramentas acima só ENFILEIRAM; quem
 // executa (Evolution API) é o assistente-webhook, depois de mandar o texto.
 export type OutboundAction =
@@ -288,6 +405,88 @@ export type OutboundAction =
 async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
   const { admin, ownerId } = ctx;
   switch (name) {
+    case 'erpos_executar': {
+      const funcao = String(input.funcao ?? '').trim();
+      const action = String(input.action ?? '').trim();
+      const dados: Record<string, unknown> = input.dados && typeof input.dados === 'object' ? { ...input.dados } : {};
+      if (!EDGE_ALLOW.has(funcao)) throw new Error(`Função não permitida: ${funcao}. Permitidas: ${[...EDGE_ALLOW].join(', ')}.`);
+      if (!action) throw new Error('action é obrigatória.');
+      if (funcao === 'order-write' && action === 'create_order') throw new Error('Criar pedido/venda não está disponível pelo assistente.');
+      if (SENSITIVE.test(action) && input.confirmado !== true) {
+        throw new Error(`A ação "${action}" é sensível: pergunte ao Natalino se confirma (diga exatamente o que vai fazer e o valor) e só chame de novo com confirmado=true depois do "sim" dele.`);
+      }
+      delete dados.tenant_id; delete dados.active_tenant_id;
+      const t = resolveTenant(ctx, input.loja);
+      let res: { status: number; body: unknown; ms: number } | null = null;
+      let err: string | null = null;
+      try { res = await callEdge(ctx, funcao, action, dados, t.id); } catch (e) { err = errMsg(e); }
+      // deno-lint-ignore no-explicit-any
+      const b: any = res?.body ?? {};
+      const ok = !!res && res.status < 400 && !b?.error && b?.success !== false;
+      await admin.from('asst_actions').insert({
+        chat_id: ctx.chatId, tenant_id: t.id, funcao, action, payload: { ...dados, _resumo: input.resumo ?? null, _loja: t.name },
+        ok, status: res?.status ?? null, result: ok ? (typeof b === 'object' ? b : { value: b }) : null,
+        error: ok ? null : (err ?? (typeof b?.error === 'string' ? b.error : JSON.stringify(b?.error ?? b).slice(0, 500))), ms: res?.ms ?? null,
+      });
+      if (!ok) throw new Error(err ?? `${funcao}/${action} → HTTP ${res?.status}: ${JSON.stringify(b).slice(0, 400)}`);
+      return JSON.stringify({ ok: true, loja: t.name, funcao, action, resultado: b }).slice(0, 6000);
+    }
+    case 'dados_publicos': {
+      const tipo = String(input.tipo ?? '');
+      const v = String(input.valor ?? '').trim();
+      const base = 'https://brasilapi.com.br/api';
+      if (tipo === 'cnpj') {
+        const d = v.replace(/\D/g, '');
+        if (d.length !== 14) throw new Error('CNPJ precisa ter 14 dígitos.');
+        // deno-lint-ignore no-explicit-any
+        const j: any = await fetchJson(`${base}/cnpj/v1/${d}`);
+        return JSON.stringify({
+          cnpj: j.cnpj, razao_social: j.razao_social, nome_fantasia: j.nome_fantasia, situacao: j.descricao_situacao_cadastral, desde: j.data_inicio_atividade,
+          porte: j.porte, natureza: j.natureza_juridica, cnae_principal: `${j.cnae_fiscal} - ${j.cnae_fiscal_descricao}`, simples: j.opcao_pelo_simples, mei: j.opcao_pelo_mei,
+          endereco: `${j.descricao_tipo_de_logradouro ?? ''} ${j.logradouro ?? ''}, ${j.numero ?? ''} ${j.complemento ?? ''} - ${j.bairro ?? ''}, ${j.municipio ?? ''}/${j.uf ?? ''} ${j.cep ?? ''}`.replace(/\s+/g, ' ').trim(),
+          telefone: j.ddd_telefone_1, email: j.email, capital_social: j.capital_social,
+          // deno-lint-ignore no-explicit-any
+          socios: (j.qsa ?? []).slice(0, 8).map((s: any) => `${s.nome_socio} (${s.qualificacao_socio})`),
+        });
+      }
+      if (tipo === 'cep') {
+        const d = v.replace(/\D/g, '');
+        if (d.length !== 8) throw new Error('CEP precisa ter 8 dígitos.');
+        return JSON.stringify(await fetchJson(`${base}/cep/v2/${d}`));
+      }
+      if (tipo === 'feriados') {
+        const ano = /^\d{4}$/.test(v) ? v : String(new Date().getFullYear());
+        return JSON.stringify({ ano, feriados_nacionais: await fetchJson(`${base}/feriados/v1/${ano}`) });
+      }
+      if (tipo === 'taxas') return JSON.stringify(await fetchJson(`${base}/taxas/v1`));
+      if (tipo === 'ncm') {
+        const d = v.replace(/\D/g, '');
+        if (!d) throw new Error('Informe o código NCM.');
+        return JSON.stringify(await fetchJson(`${base}/ncm/v1/${d}`));
+      }
+      throw new Error(`tipo desconhecido: ${tipo}`);
+    }
+    case 'previsao_tempo': {
+      let lat = Number(input.latitude), lng = Number(input.longitude), label = 'Local';
+      if (Number.isFinite(lat) && Number.isFinite(lng)) label = `${lat.toFixed(3)}, ${lng.toFixed(3)}`;
+      else if (input.cidade) { const g = await geocode(String(input.cidade)); lat = g.lat; lng = g.lng; label = g.label; }
+      else { const s = await storeCoords(ctx, input.loja); lat = s.lat; lng = s.lng; label = s.label; }
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&timezone=America%2FSao_Paulo&forecast_days=3`
+        + `&current=temperature_2m,precipitation,weather_code,wind_speed_10m`
+        + `&hourly=temperature_2m,precipitation_probability,precipitation,weather_code`
+        + `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max`;
+      // deno-lint-ignore no-explicit-any
+      const w: any = await fetchJson(url);
+      const WMO: Record<number, string> = { 0: 'céu limpo', 1: 'quase limpo', 2: 'parcialmente nublado', 3: 'nublado', 45: 'nevoeiro', 48: 'nevoeiro', 51: 'garoa fraca', 53: 'garoa', 55: 'garoa forte', 61: 'chuva fraca', 63: 'chuva', 65: 'chuva forte', 80: 'pancadas fracas', 81: 'pancadas', 82: 'pancadas fortes', 95: 'trovoada', 96: 'trovoada com granizo', 99: 'trovoada forte' };
+      const desc = (c: number) => WMO[c] ?? `código ${c}`;
+      const nowIdx = Math.max(0, (w.hourly?.time ?? []).findIndex((t: string) => t >= (w.current?.time ?? '')));
+      const proximas = [] as string[];
+      for (let i = nowIdx; i < Math.min(nowIdx + 12, (w.hourly?.time ?? []).length); i++) {
+        proximas.push(`${String(w.hourly.time[i]).slice(11, 16)} ${Math.round(w.hourly.temperature_2m[i])}°C chuva ${w.hourly.precipitation_probability[i]}%${w.hourly.precipitation[i] > 0 ? ` (${w.hourly.precipitation[i]} mm)` : ''} ${desc(w.hourly.weather_code[i])}`);
+      }
+      const dias = (w.daily?.time ?? []).map((d: string, i: number) => ({ dia: d, condicao: desc(w.daily.weather_code[i]), min: Math.round(w.daily.temperature_2m_min[i]), max: Math.round(w.daily.temperature_2m_max[i]), chuva_mm: w.daily.precipitation_sum[i], prob_chuva_max: w.daily.precipitation_probability_max[i] }));
+      return JSON.stringify({ local: label, agora: { temperatura: Math.round(w.current?.temperature_2m), condicao: desc(w.current?.weather_code), vento_kmh: Math.round(w.current?.wind_speed_10m) }, proximas_12h: proximas, proximos_dias: dias, fonte: 'Open-Meteo' });
+    }
     case 'enviar_enquete': {
       if (ctx.channel !== 'whatsapp') throw new Error('Enquete só funciona no WhatsApp; pergunte em texto.');
       const seen = new Set<string>();
@@ -595,7 +794,52 @@ Como agir:
 - NOMES DIGITADOS PELO NATALINO PODEM ESTAR COM GRAFIA DIFERENTE da do sistema (Voxi × VOXY-SC LTDA, sem acento, abreviado, razão social × nome fantasia). Para achar fornecedor, cliente, item, insumo, funcionário etc. pelo nome, use primeiro buscar_nome (busca aproximada) e depois filtre pelo id/nome exato que ela devolver. NUNCA diga que algo "não existe" ou "não foi lançado" sem ter tentado buscar_nome.
 - Ao confirmar uma ação, diga o que foi feito em uma linha (ex.: "Criei a tarefa X na pasta Y, prazo sexta 9h").
 - Recursos nativos do WhatsApp: quando a decisão dele for entre alternativas claras (2 a 12), use enviar_enquete em vez de listar opções numeradas — ele responde tocando. A escolha volta como mensagem "[Enquete "pergunta"] Resposta: opção": trate como a resposta dele à pergunta e siga em frente sem perguntar de novo. Endereço/onde fica → enviar_localizacao; telefone de alguém → enviar_contato (o cartão vai junto com sua resposta; não repita o número no texto).
+- AÇÕES NO ERPOS (erpos_executar): você age como o próprio Natalino, pelas mesmas Edge Functions das telas — cardápio, contas, compras, estoque, clientes, reservas, mesas, cupons, produção, configurações, usuários. Fluxo: (1) entenda o pedido e busque no banco os ids/nomes exatos que a ação precisa (item, categoria, fornecedor, conta) — nunca chute id; (2) se faltar dado essencial (preço, categoria, valor, vencimento), pergunte em uma linha; (3) execute; (4) confirme em uma linha o que ficou feito, com nome e valor. Ações que mexem em dinheiro, apagam, cancelam, estornam ou fecham (pagar conta, excluir item, cancelar reserva, fechar caixa...) exigem confirmação: descreva exatamente o que vai fazer e o valor, espere o "sim" e só então chame com confirmado=true. Criar/editar cardápio, cadastrar cliente/fornecedor, lançar conta a pagar e ajustar estoque podem ir direto quando o pedido dele já é claro e completo. Se a edge devolver erro, leia a mensagem, corrija os campos e tente de novo uma vez; se persistir, explique o erro em uma linha. Use o MAPA DE AÇÕES abaixo para funcao/action/campos; se a ação que ele quer não estiver no mapa, diga que essa ainda não está disponível pelo WhatsApp (não improvise chamadas).
+- Fora do ERPOS: dados_publicos (CNPJ, CEP, feriados, taxas, NCM), previsao_tempo (loja/cidade) e web_search (internet: preço de mercado, notícia, dúvida geral, endereço/telefone de terceiros). Use web_search só quando a resposta não está no sistema nem nas outras ferramentas; no máximo 3 buscas por mensagem; cite a fonte em uma palavra quando importar.
 - Se a mensagem dele não pede nada e não precisa de resposta (só "ok", "valeu", "beleza", "👍", um agradecimento, um "boa noite" final), responda EXATAMENTE NO_REPLY (nada mais): ele recebe só uma reação 👍 em vez de uma mensagem. Nunca use NO_REPLY quando houver pergunta, pedido, informação nova para guardar ou algo que mereça comentário.`;
+
+// Mapa de ações: contratos reais das Edge Functions de escrita (extraído do código em
+// 2026-09-12). Entra no bloco fixo cacheado. Ao mudar uma edge, atualizar aqui.
+const EDGE_MAP = `MAPA DE AÇÕES (erpos_executar: funcao + action + dados). Ids são uuid: obtenha antes com consultar_banco/buscar_nome. Datas AAAA-MM-DD. "id?" = com id atualiza, sem id cria. (S) = sensível, exige confirmado=true.
+
+menu-write (cardápio; retorna {success,data})
+- upsert_item: id?, category_id, name, description, price, is_active?(true), sla_minutes?(10), sort_order?, channels?{cashier,waiter,delivery,table_qr,self_service}, option_groups?[{id?,name,is_required,min_selections,max_selections,options[{id?,name,additional_price,is_active}]}] (substitui todos os grupos: para só mudar preço/nome/ativo, NÃO mande option_groups), promotions?[{promotional_price,days_of_week[],is_recurring,specific_date,is_active}]. Para editar, mande id + os campos completos do item (busque antes em menu_items).
+- delete_item (S): id. upsert_category: id?, name, station_id?, sort_order?, is_active?. delete_category (S): id.
+- set_category_channel: category_id, disponibilidade 'ambos'|'casa'|'delivery'. upsert_combo: id?, name, description, price, is_active?, items?[{item_id,name,quantity}]. delete_combo (S): id.
+- upsert_item_ingredients (ficha técnica): item_id, ingredients[{ingredient_id,quantity,unit}]. upsert_highlight: id?, item_id, custom_price?, sort_order?, is_active?, channel?('ambos').
+- Esgotar/voltar item: upsert_item com id + is_active false/true (mande também category_id, name, price atuais).
+
+financial-write (financeiro/RH; retorna {data})
+- upsert_bill (conta a pagar): id?, supplier, description, category?, amount, due_date, status?('pending'), dre_category_id?, bank_account_id?, notes?, is_recurring?, installments?.
+- pay_bill (S): id, paid_date, paid_amount, payment_method, bank_account_id?, dre_category_id? (conta sem classificação DRE e não vinda de compra/folha → erro dre_category_required: pergunte a categoria; ids em fin_dre_categories). delete_bill (S): id.
+- insert_cash_flow: type 'income'|'expense', amount, description, category?, date, cost_center_id?, origin 'manual'. delete_cash_flow (S): id.
+- bank_manual_transaction (S): bank_account_id, type 'debit'|'credit', amount, description, transaction_date?.
+- upsert_supplier: id?, name, legal_name?, cnpj?, phone?, category?, email?. upsert_cost_center: id?, name. upsert_dre_category: id?, name, group_type.
+- receive_installment (S): id (recebível de cartão). insert_anticipation (S): gross_amount, fee_percent, net_amount, installment_ids[].
+- RH: upsert_employee: id?, name, role, salary, hire_date, status, phone?, cpf?, pix_key?. delete_employee (S): id. upsert_payroll: id?, employee_id, employee_name, reference_month, gross_salary, net_salary, status. pay_payroll (S): id, paid_date, payment_method. pay_all_payroll (S): ids[], paid_date, payment_method.
+- Orçamentos: upsert_budget: id?, titulo, fornecedor, items[{descricao,quantidade,unidade,valor_unitario}], observacoes?; update_budget_status: id, status; convert_budget_to_purchase (S): budget_id, payment_method?, payment_status?, due_date?.
+
+purchase-write (compras; retorna {data})
+- create_purchase: supplier, purchase_date, items[{ingredient_id?, description, quantity, unit_price, unit_label?, discount_per_unit?}], invoice_number?, due_date?, payment_method?, payment_status?('pending'|'paid' — 'paid' já lança caixa/banco), bank_account_id?, freight_amount?, notes?, installment_count?, custom_installments?[{amount,due_date}]. Total é recalculado. Gera conta(s) a pagar. Estoque só entra em confirm_delivery.
+- confirm_delivery: purchase_id, delivery_notes? (lança estoque). update_purchase (S): id + payload completo (409 se já recebida/paga). delete_purchase (S): id.
+
+stock-write (estoque; campos soltos; retorna {data}|{ok})
+- add_stock_movement: ingredient_id, type 'entrada'|'saida_manual'|'perda'|'ajuste_inventario', quantity, unit ('kg','g','ml','L','un'), reason?, notes?.
+- upsert_ingredient: id?, name, unit, unit_price?, min_stock?, current_stock?, category?, supplier?, supplier_id?, purchase_unit?, purchase_factor? (campo ausente preserva o atual). mark_depleted: ingredient_id, depleted?(true). delete_ingredient (S): ingredient_id.
+- create_batch: ingredient_id, quantity_received, unit, unit_cost, expiry_date?, supplier_id?, batch_code?.
+
+customer-write: update_customer: customer_id + name?, phone?, birth_date?, email?, cpf?, notes?, manual_tags?[], accepts_marketing?. touch_contact: customer_id.
+delivery-write: save_customer (cliente de delivery): phone, name, street?, number?, neighborhood_id?, complement?, reference_point?, birth_date?. set_delivery_state (S): op 'open'|'close'|'pause'|'resume', minutes?. add_delivery_note: order_id, kind 'problema'|'observacao', text. set_driver_active: driver_id, is_active.
+
+reservation-write: create_reservation: customer_name, customer_phone, party_size, reservation_date, reservation_time ('HH:MM'), table_id?, duration_minutes?(90), notes?, occasion?. confirm_reservation: reservation_id. cancel_reservation (S): reservation_id, cancellation_reason?. mark_no_show (S): reservation_id. seat_reservation: reservation_id, table_id?.
+table-write: update_table_status: table_id, status. close_table (S): table_session_id.
+config-write (retorna {success,data}): create_table: number, capacity?, area?; update_table: id + number?, capacity?, area?, observation?; delete_table (S): id. create_payment_method: name, type ('cash'|'credit_card'|'debit_card'|'pix'|'meal_voucher'), fee_percentage?, days_to_receive?; update_payment_method: id + campos + is_active?; delete_payment_method (S): id. create_kitchen_station: name, color?, sla_minutes?; update_kitchen_station: id + name?, sla_minutes?, is_active?. create_ingredient_category: name. update_tenant: name?, phone?, address?, city?, state?, zip_code?, cnpj?, email?. upsert_system_settings: só chaves da lista (service_fee_enabled, service_fee_percentage, gorjeta_enabled, gorjeta_percentage, kitchen_close_time, default_prep_time, delivery_eta_minutes, welcome_message_new, welcome_message_returning...) — confirme antes.
+voucher-write: issue_voucher: voucher_type 'gift_card'|'discount'|'cashback'|'free_item', original_amount, discount_type?('percent'|'fixed'), discount_value?, code?, expires_at?, max_uses?, min_order_amount?, customer_id?, customer_name?, notes?. cancel_voucher (S): voucher_id, reason?. set_birthday_config: config{enabled, discount_type, discount_value, min_order_amount, validity_days, only_opt_in, message}.
+order-write: create_promotion_rule: name, promo_type ('item_percent'|'item_fixed'|'category_percent'|'order_percent'|'order_fixed'|'buy_x_get_y'|'combo_price'|'free_item'), target_item_id?, target_category_id?, discount_value?, special_price?, buy_quantity?, get_quantity?, min_order_amount?, valid_from?, valid_until?, days_of_week?[], time_from?, time_until?, channels?{}, coupon_code?. update_promotion_rule: promotion_id + campos. delete_promotion_rule (S): promotion_id. cancel_order (S): order_id, reason?, restock_items?. add_cash_movement (S): cash_register_id, type 'in'|'out', amount, reason. close_cash_register (S): cash_register_id, closing_value?, closing_notes?. apply_discount (S): order_id, discount_type 'fixed'|'percent', discount_value, reason?.
+user-write (erros vêm com HTTP 200 {error}): create_user: nome, email?, senha (mín. 6), perfil 'admin'|'gerente'|'caixa'|'garcom'|'cozinha'|'gestor_entregas'|'tarefas', pin?(4-8 dígitos), matricula?. reset_password (S): user_id, nova_senha. set_pin: user_id, pin. delete_user (S): user_id.
+task-write (campos soltos): update_task: task_id + title?, description?, due_date?, priority?, status_category?('todo'|'in_progress'|'done'), assignee_id?, list_id?. add_comment: task_id, body. add_checklist_item: task_id, title. create_list: name, color?.
+fiscal-write: emit: source_type 'order'|'table_session', source_id, customer_cpf?. retry: document_id. cancel (S): document_id, justificativa (≥15 caracteres). run_pending.
+Não disponíveis pelo WhatsApp: criar venda/pedido (create_order), mesa do cliente, fila de impressão, configuração fiscal.`;
 
 // Mapa do banco: fica no bloco fixo (cacheado por 1 h) para o modelo ir direto
 // na tabela certa sem gastar rodadas com ver_tabelas/ver_colunas. Manter curto e
@@ -679,12 +923,20 @@ Deno.serve(async (req) => {
         model: MODEL,
         max_tokens: 0,
         output_config: { effort: warmEffort },
-        system: [{ type: 'text', text: `${SYSTEM_STABLE}\n\n${DB_MAP}`, cache_control: { type: 'ephemeral', ttl: '1h' } }],
-        tools: TOOLS,
+        system: [{ type: 'text', text: `${SYSTEM_STABLE}\n\n${DB_MAP}\n\n${EDGE_MAP}`, cache_control: { type: 'ephemeral', ttl: '1h' } }],
+        tools: API_TOOLS,
         messages: [{ role: 'user', content: 'warmup' }],
       // deno-lint-ignore no-explicit-any
       } as any);
       return json({ success: true, usage: r.usage });
+    }
+
+    // Diagnóstico da sessão do dono (usada pelo erpos_executar): devolve quem é o JWT.
+    if (body.action === 'session_check') {
+      const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'owner_user_id').maybeSingle();
+      const token = await ownerToken(admin, String(st?.value ?? ''));
+      const { data: who, error } = await admin.auth.getUser(token);
+      return json({ success: !error, user: who?.user ? { id: who.user.id, email: who.user.email, role: who.user.role } : null, error: error?.message ?? null, expires_at: ownerSession?.exp ?? null });
     }
 
     let text = String(body.text ?? '').trim();
@@ -751,7 +1003,7 @@ Deno.serve(async (req) => {
     // ── Loop de ferramentas ──
     const client = new Anthropic({ apiKey });
     const toolCalls: Array<{ name: string; input: unknown; ok: boolean }> = [];
-    const usage = { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0 };
+    const usage = { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0, web_searches: 0 };
     let reply = '';
     const started = Date.now();
 
@@ -768,10 +1020,10 @@ Deno.serve(async (req) => {
           // O cache automático (top-level) guarda o resto da conversa, então cada
           // rodada de ferramenta relê o histórico a 1/10 do preço.
           system: [
-            { type: 'text', text: `${SYSTEM_STABLE}\n\n${DB_MAP}`, cache_control: { type: 'ephemeral', ttl: '1h' } },
+            { type: 'text', text: `${SYSTEM_STABLE}\n\n${DB_MAP}\n\n${EDGE_MAP}`, cache_control: { type: 'ephemeral', ttl: '1h' } },
             { type: 'text', text: systemDynamic },
           ],
-          tools: TOOLS,
+          tools: API_TOOLS,
           messages,
           cache_control: { type: 'ephemeral' },
         // deno-lint-ignore no-explicit-any
@@ -790,6 +1042,7 @@ Deno.serve(async (req) => {
       usage.cache_read += response.usage?.cache_read_input_tokens ?? 0;
       usage.cache_write += response.usage?.cache_creation_input_tokens ?? 0;
       usage.cache_write_1h += response.usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0; // parte de cache_write (2x o preço)
+      usage.web_searches += response.usage?.server_tool_use?.web_search_requests ?? 0; // US$ 0,01 cada
 
       const textOut = (response.content as Anthropic.ContentBlock[]).filter((b) => b.type === 'text').map((b) => (b as Anthropic.TextBlock).text).join('');
       if (response.stop_reason === 'refusal') { reply = 'Não consigo ajudar com isso.'; break; }

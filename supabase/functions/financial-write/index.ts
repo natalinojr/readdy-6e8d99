@@ -343,6 +343,52 @@ Deno.serve(async (req) => {
         if (billRec.status === 'paid') {
           return new Response(JSON.stringify({ error: 'Conta já está quitada' }), { status: 409, headers: corsHeaders });
         }
+
+        // Sem classificação DRE não há baixa (decisão do dono, 2026-09-12): a despesa
+        // cairia em "sem categoria" na DRE. Compra fica de fora (entra no CMV pelos
+        // itens) e folha também (a DRE lê hr_payroll). A própria baixa pode trazer a
+        // classificação: `dre_category_id`, ou `dre_group` (+ `dre_category_name`), que
+        // reaproveita/cria a categoria raiz do grupo — quase nenhuma loja tem categorias.
+        let dreCategoryId = (billRec.dre_category_id as string | null) ?? null;
+        const exigeDre = !['purchase', 'hr_payroll'].includes(String(billRec.reference_type ?? ''));
+        if (exigeDre && !dreCategoryId) {
+          if (payload.dre_category_id) {
+            const { data: cat } = await supabase.from('fin_dre_categories').select('id, group_type')
+              .eq('id', payload.dre_category_id).eq('tenant_id', tenant_id).maybeSingle();
+            // revenue/tax: a DRE não subtrai esses grupos, o valor sumiria do resultado
+            if (!cat || ['revenue', 'tax'].includes(String(cat.group_type))) {
+              return new Response(JSON.stringify({ error: 'Categoria DRE inválida para despesa nesta loja' }), { status: 400, headers: corsHeaders });
+            }
+            dreCategoryId = cat.id as string;
+          } else if (payload.dre_group) {
+            const grupo = String(payload.dre_group);
+            if (grupo !== 'expense') {
+              const { data: g } = await supabase.from('fin_dre_groups').select('key').eq('tenant_id', tenant_id).eq('key', grupo).maybeSingle();
+              if (!g || ['revenue', 'tax', 'cost'].includes(grupo)) {
+                return new Response(JSON.stringify({ error: 'Grupo DRE inválido para despesa' }), { status: 400, headers: corsHeaders });
+              }
+            }
+            const nome = String(payload.dre_category_name || (grupo === 'expense' ? 'Despesas Operacionais' : grupo)).trim().slice(0, 120);
+            const { data: existentes } = await supabase.from('fin_dre_categories').select('id, name')
+              .eq('tenant_id', tenant_id).eq('group_type', grupo);
+            const achada = (existentes ?? []).find((c) => String(c.name).trim().toLowerCase() === nome.toLowerCase());
+            if (achada) dreCategoryId = achada.id as string;
+            else {
+              const { data: nova, error: catErr } = await supabase.from('fin_dre_categories')
+                .insert({ tenant_id, name: nome, group_type: grupo, sort_order: 0, is_active: true }).select('id').single();
+              if (catErr || !nova) {
+                return new Response(JSON.stringify({ error: `Não foi possível criar a categoria DRE: ${extractErrorMessage(catErr)}` }), { status: 500, headers: corsHeaders });
+              }
+              dreCategoryId = nova.id as string;
+            }
+          }
+          if (!dreCategoryId) {
+            return new Response(JSON.stringify({
+              error: 'Classifique a conta no DRE antes de dar baixa (sem classificação ela não entra no resultado certo).',
+              code: 'dre_category_required',
+            }), { status: 422, headers: corsHeaders });
+          }
+        }
         if (!(paymentAmount > 0)) {
           return new Response(JSON.stringify({ error: 'Valor do pagamento deve ser maior que zero' }), { status: 400, headers: corsHeaders });
         }
@@ -367,6 +413,7 @@ Deno.serve(async (req) => {
             paid_date,
             paid_amount: newPaidTotal,
             payment_method,
+            dre_category_id: dreCategoryId,
           })
           .eq('id', id)
           .eq('tenant_id', tenant_id)
@@ -448,6 +495,8 @@ Deno.serve(async (req) => {
               description: (bill as Record<string, unknown>).description,
               category: (bill as Record<string, unknown>).category,
               cost_center_id: (bill as Record<string, unknown>).cost_center_id,
+              // mantém a classificação: sem isso toda recorrente travaria na baixa do mês seguinte
+              dre_category_id: dreCategoryId,
               bank_account_id: (bill as Record<string, unknown>).bank_account_id,
               amount: (bill as Record<string, unknown>).amount,
               due_date: nextDueStr,

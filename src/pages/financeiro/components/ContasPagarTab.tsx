@@ -8,6 +8,7 @@ import { formatCurrency } from '@/lib/formatters';
 import AgingContasPagar from '@/pages/financeiro/components/AgingContasPagar';
 import ContasPagarDREModal from '@/pages/financeiro/components/ContasPagarDREModal';
 import ContasPagarDetalheModal from '@/pages/financeiro/components/ContasPagarDetalheModal';
+import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
 
 interface Props {
   onNavigateToCompras?: (purchaseId?: string) => void;
@@ -127,6 +128,9 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
   const [showModal, setShowModal] = useState(false);
   const [payModal, setPayModal] = useState<BillPayable | null>(null);
+  const [payDre, setPayDre] = useState('');
+  const { toPayload: dreToPayload } = useDreEscolha();
+  useEffect(() => { setPayDre(''); }, [payModal?.id]);
   const [detalheModal, setDetalheModal] = useState<BillPayable | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -315,7 +319,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     if (!payModal) return;
     setPayError(null);
     try {
-      await pay(payModal.id, payForm.paid_date, Number(payForm.paid_amount), payForm.payment_method);
+      await pay(payModal.id, payForm.paid_date, Number(payForm.paid_amount), payForm.payment_method,
+        precisaClassificarDRE(payModal) ? dreToPayload(payDre) : undefined);
       setPayModal(null);
     } catch (err) {
       // `pay` agora lança: recusa do backend (valor acima do saldo, conta já
@@ -1217,6 +1222,9 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                   </p>
                 )}
               </div>
+              {precisaClassificarDRE(payModal) && (
+                <DreClassificacaoSelect value={payDre} onChange={setPayDre} categorias={dreCats} />
+              )}
               <div>
                 <label className="text-xs font-semibold text-zinc-600 block mb-1">Data do Pagamento</label>
                 <input type="date" value={payForm.paid_date} onChange={e => setPayForm(f => ({ ...f, paid_date: e.target.value }))}

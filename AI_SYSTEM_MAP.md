@@ -1633,3 +1633,31 @@ texto `whitespace-nowrap` escapa por cima do vizinho.
 Verificado com Chromium headless a 320px e 360px sobre o CSS já buildado
 (nenhum par de elementos irmãos com retângulos se cruzando; `scrollWidth` do
 documento = largura do viewport).
+
+### 2026-09-12 — Assistente: Camada 1 completa (BrasilAPI, Open-Meteo, web search, proatividade sem modelo)
+
+`assistente-brain`: ferramentas `dados_publicos`, `previsao_tempo` e busca na web
+nativa (`web_search_20250305`, `max_uses: 3`). `assistente-cron`: avisos proativos
+determinísticos (fechamento 23h, anomalia de venda a cada 30 min, vencimentos 17h,
+estoque crítico só o que mudou 9h, tarefas vencidas 18h) com `preview` para testar
+sem enviar. **Critérios:** (1) aviso recorrente = regra em SQL + texto no código;
+modelo só quando precisa interpretar — custo zero e sem alucinação de número.
+(2) Alerta "só quando muda" guarda o conjunto anterior em `asst_settings` (jsonb)
+e diffa; a 1ª execução é o baseline. (3) Anomalia compara "até a mesma hora" do
+mesmo dia da semana (média de até 4 semanas com venda), nunca dia inteiro × parcial.
+(4) Ferramenta de servidor (web_search) entra no MESMO array de tools do warm-up,
+senão a chave do cache muda e o aquecimento grava entrada que ninguém lê.
+Detalhes em `assistente/README.md`.
+
+### 2026-09-12 — Assistente age no ERPOS como o dono (`erpos_executar`)
+
+Padrão reutilizável para qualquer automação que precise agir "como um usuário":
+**sessão real via `auth.admin.generateLink` (magiclink) + `verifyOtp` com a anon key**
+→ JWT do usuário sem e-mail e sem senha, válido 1 h; chamar as Edge Functions
+existentes com esse JWT em vez de escrever nas tabelas (regra de negócio e auditoria
+preservadas). Body híbrido (`payload` + campos soltos + `tenant_id` e
+`active_tenant_id`) cobre as duas convenções das edges. Ações destrutivas/financeiras
+passam por confirmação explícita (regex de nome + flag `confirmado`). Auditoria em
+`asst_actions`. Levantamento completo dos contratos das 19 edges de escrita virou o
+`EDGE_MAP` no brain — fonte útil também para humanos. Detalhes em `assistente/README.md`.
+

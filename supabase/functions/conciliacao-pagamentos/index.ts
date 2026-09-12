@@ -163,7 +163,8 @@ async function confirmOne(ctx: Ctx, rowId: string): Promise<Result> {
     if (jurosBillId) {
       const pj = await callEdge(ctx, 'financial-write', {
         action: 'pay_bill', tenant_id: tenantId,
-        payload: { id: jurosBillId, paid_date: paidDate, paid_amount: juros, payment_method: metodo, bank_account_id: row.bank_account_id },
+        // pay_bill exige classificação DRE: juros/multa vão para "Juros e multas" (despesa)
+        payload: { id: jurosBillId, paid_date: paidDate, paid_amount: juros, payment_method: metodo, bank_account_id: row.bank_account_id, dre_group: 'expense', dre_category_name: 'Juros e multas' },
       });
       if (!pj.ok) log('WARN', 'confirm', 'baixa dos juros falhou', { tenantId, rowId, error: pj.error });
     } else log('WARN', 'confirm', 'criar conta de juros falhou', { tenantId, rowId, error: nb.error });
