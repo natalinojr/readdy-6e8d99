@@ -463,13 +463,16 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
             ant: null,
           },
         ].map(s => (
-          <div key={s.label} className="bg-white border border-zinc-100 rounded-xl p-4 flex items-center gap-3">
-            <div className={`w-9 h-9 flex items-center justify-center rounded-xl flex-shrink-0 ${s.color}`}>
-              <i className={`${s.icon} text-base`} />
+          // No mobile o card empilha (ícone em cima, valor embaixo): em 2 colunas
+          // o layout em linha não deixava largura para valores como "R$ 10.633,85"
+          // e o texto vazava para fora do card.
+          <div key={s.label} className="bg-white border border-zinc-100 rounded-xl p-3 md:p-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+            <div className={`w-8 h-8 md:w-9 md:h-9 flex items-center justify-center rounded-xl flex-shrink-0 ${s.color}`}>
+              <i className={`${s.icon} text-sm md:text-base`} />
             </div>
             <div className="min-w-0">
-              <p className="text-xl font-bold text-zinc-900">{s.value}</p>
-              <p className="text-xs text-zinc-500 mt-0.5">{s.label}</p>
+              <p className="text-base md:text-xl font-bold text-zinc-900 leading-tight break-words">{s.value}</p>
+              <p className="text-[11px] md:text-xs text-zinc-500 mt-0.5 leading-snug">{s.label}</p>
               {s.ant !== null && s.ant > 0 && (
                 <VarBadge atual={s.label === 'Total de unidades' ? totalQtd : totalReceita} anterior={s.ant} />
               )}
@@ -489,7 +492,7 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
           <button
             key={tab.id}
             onClick={() => setAbaAtiva(tab.id)}
-            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 md:px-4 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex-shrink-0 ${
               abaAtiva === tab.id ? 'bg-white text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'
             }`}
           >
@@ -738,25 +741,25 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
         <div className="space-y-4">
           {/* Gráfico de barras horizontal top 10 */}
           {top10.length > 0 && (
-            <div className="bg-white border border-zinc-100 rounded-xl p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div>
+            <div className="bg-white border border-zinc-100 rounded-xl p-4 md:p-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 mb-4">
+                <div className="min-w-0">
                   <h3 className="text-sm font-semibold text-zinc-800">Top 10 Produtos</h3>
                   <p className="text-xs text-zinc-400">
                     {sortBy === 'receita' ? 'Por receita gerada' : 'Por quantidade vendida'}
                     {categoriaFiltro !== 'todas' && ` · Categoria: ${categoriaFiltro}`}
                   </p>
                 </div>
-                <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-0.5">
+                <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-0.5 self-start max-w-full overflow-x-auto scrollbar-hide">
                   <button
                     onClick={() => setSortBy('receita')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${sortBy === 'receita' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${sortBy === 'receita' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
                   >
                     R$
                   </button>
                   <button
                     onClick={() => setSortBy('qtd')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${sortBy === 'qtd' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${sortBy === 'qtd' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
                   >
                     Qtd
                   </button>
@@ -843,13 +846,13 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
                 <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto scrollbar-hide">
                   <button
                     onClick={() => setSortBy('receita')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${sortBy === 'receita' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${sortBy === 'receita' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
                   >
                     Por Receita
                   </button>
                   <button
                     onClick={() => setSortBy('qtd')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${sortBy === 'qtd' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${sortBy === 'qtd' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
                   >
                     Por Quantidade
                   </button>
@@ -1076,13 +1079,13 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
                   { label: 'Unidades vendidas', value: totalQtdComplementos.toString(), icon: 'ri-stack-line', color: 'text-emerald-700 bg-emerald-50' },
                   { label: 'Receita em complementos', value: fmt(totalReceitaComplementos), icon: 'ri-money-dollar-circle-line', color: 'text-emerald-700 bg-emerald-50' },
                 ].map(s => (
-                  <div key={s.label} className="bg-white border border-zinc-100 rounded-xl p-4 flex items-center gap-3">
-                    <div className={`w-9 h-9 flex items-center justify-center rounded-xl flex-shrink-0 ${s.color}`}>
-                      <i className={`${s.icon} text-base`} />
+                  <div key={s.label} className="bg-white border border-zinc-100 rounded-xl p-3 md:p-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                    <div className={`w-8 h-8 md:w-9 md:h-9 flex items-center justify-center rounded-xl flex-shrink-0 ${s.color}`}>
+                      <i className={`${s.icon} text-sm md:text-base`} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xl font-bold text-zinc-900">{s.value}</p>
-                      <p className="text-xs text-zinc-500 mt-0.5">{s.label}</p>
+                      <p className="text-base md:text-xl font-bold text-zinc-900 leading-tight break-words">{s.value}</p>
+                      <p className="text-[11px] md:text-xs text-zinc-500 mt-0.5 leading-snug">{s.label}</p>
                     </div>
                   </div>
                 ))}
@@ -1100,16 +1103,16 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
                     className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none"
                   />
                 </div>
-                <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 self-start">
+                <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 self-start max-w-full overflow-x-auto scrollbar-hide">
                   <button
                     onClick={() => setSortBy('receita')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${sortBy === 'receita' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${sortBy === 'receita' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
                   >
                     Por Receita
                   </button>
                   <button
                     onClick={() => setSortBy('qtd')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${sortBy === 'qtd' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${sortBy === 'qtd' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
                   >
                     Por Quantidade
                   </button>

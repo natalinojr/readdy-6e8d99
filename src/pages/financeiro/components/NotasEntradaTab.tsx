@@ -16,7 +16,7 @@ interface DocRow {
   valor_total: number; emitted_at: string | null; sefaz_status: number | null;
   xml_status: 'pending' | 'full' | 'summary' | 'error';
   parcelas: Parcela[]; itens: Item[]; frete: number | null; desconto: number | null; pagamento: Pag[];
-  status: 'new' | 'imported' | 'ignored'; import_type: 'purchase' | 'bill' | null; purchase_id: string | null;
+  status: 'new' | 'imported' | 'ignored'; import_type: 'purchase' | 'bill' | 'bonus' | null; purchase_id: string | null;
   payable_ids: string[]; ignore_reason: string | null; manifest_status: string | null; error_message: string | null;
   imported_at: string | null;
   /** Lançada sozinha: pela conciliação (auto_import_ref = linha do extrato) ou, sem ref,
@@ -47,6 +47,12 @@ function pareceNaoVenda(d: { cfops: string | null; pagamento?: Pag[] }): boolean
   const cfops = (d.cfops ?? '').split(',').map((c) => c.trim()).filter(Boolean);
   const semPagamento = (d.pagamento ?? []).length > 0 && (d.pagamento ?? []).every((p) => p.forma === '90' || Number(p.valor) === 0);
   return semPagamento || (cfops.length > 0 && cfops.every((c) => CFOP_NAO_VENDA.test(c)));
+}
+// Bonificação/brinde (CFOP x910): sem custo, mas a mercadoria entra no estoque.
+const CFOP_BONIFICACAO = /^[56]910$/;
+function isBonificacao(d: { cfops: string | null }): boolean {
+  const cfops = (d.cfops ?? '').split(',').map((c) => c.trim()).filter(Boolean);
+  return cfops.length > 0 && cfops.every((c) => CFOP_BONIFICACAO.test(c));
 }
 // Plataformas cuja NFS-e é a comissão/taxa já descontada do repasse — lançar de novo duplica.
 const DESCONTA_NO_REPASSE = /IFOOD|RAPPI|99\s?FOOD|AIQFOME|UBER\s?EATS|KEETA/i;
@@ -269,7 +275,8 @@ export default function NotasEntradaTab() {
                             ? <span className="text-[11px] font-semibold text-violet-600" title="Taxa/comissão já descontada do repasse da plataforma — lançar de novo pode duplicar">descontado no repasse?</span>
                             : <span className="text-[11px] text-zinc-500">serviço · comp. {dataBR((d.itens ?? [])[0]?.competencia ?? null)}</span>
                         ) : d.xml_status !== 'full' ? <span className="text-[11px] text-sky-600">aguardando XML</span>
-                          : pareceNaoVenda(d) ? <span className="text-[11px] font-semibold text-violet-600" title="CFOP de remessa/bonificação ou nota sem pagamento — normalmente se ignora">remessa/bonificação?</span>
+                          : isBonificacao(d) ? <span className="text-[11px] font-semibold text-emerald-700" title="Bonificação: sem custo, mas a mercadoria entra no estoque no recebimento">bonificação</span>
+                          : pareceNaoVenda(d) ? <span className="text-[11px] font-semibold text-violet-600" title="CFOP de remessa/devolução/outras saídas ou nota sem pagamento — normalmente se ignora">remessa/devolução?</span>
                           : (d.parcelas ?? []).length === 0 ? <span className="text-[11px] text-zinc-500">sem boleto · {formaResumo(d.pagamento) || 'pago na hora?'}</span>
                           : <>
                               <span className="text-xs">{(d.parcelas ?? []).length}× · próx. {dataBR(proxima?.vencimento)}</span>
@@ -277,7 +284,7 @@ export default function NotasEntradaTab() {
                       </td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
                         {cancelada ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Cancelada na SEFAZ</span>
-                          : d.status === 'imported' ? <><span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{d.import_type === 'purchase' ? 'Lançada como compra' : 'Lançada como despesa'}</span>{d.auto_imported && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700" title={d.auto_import_ref
+                          : d.status === 'imported' ? <><span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{d.import_type === 'purchase' ? 'Lançada como compra' : d.import_type === 'bonus' ? 'Lançada como bonificação' : 'Lançada como despesa'}</span>{d.auto_imported && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700" title={d.auto_import_ref
                             ? 'Importada automaticamente pela conciliação bancária ao confirmar o pagamento.'
                             : 'Lançada automaticamente: este fornecedor já tinha nota lançada antes, e esta entrou do mesmo jeito. Se estiver errada, use "Desfazer".'}>automática</span>}</>
                           : d.status === 'ignored' ? <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500" title={d.ignore_reason ?? ''}>Ignorada</span>
@@ -361,7 +368,10 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
     : [{ numero: '1', vencimento: (doc.emitted_at ?? new Date().toISOString()).slice(0, 10), valor: Number(doc.valor_total ?? 0) }];
   const [parcelas, setParcelas] = useState<Parcela[]>(parcelasIniciais);
   const servico = isServico(doc);
-  const [tipo, setTipo] = useState<'purchase' | 'bill'>(servico ? 'bill' : 'purchase');
+  const bonificacao = !servico && isBonificacao(doc);
+  // 'bonus' = bonificação: compra com itens a R$ 0, só para dar entrada no estoque
+  const [tipo, setTipo] = useState<'purchase' | 'bill' | 'bonus'>(servico ? 'bill' : bonificacao ? 'bonus' : 'purchase');
+  const comEstoque = tipo === 'purchase' || tipo === 'bonus';
   const semBoleto = (doc.parcelas ?? []).length === 0;
   const pagoNaHora = semBoleto && (doc.pagamento ?? []).some((p) => PAGO_NA_HORA.has(p.forma));
   const [pago, setPago] = useState<boolean>(pagoNaHora);
@@ -419,22 +429,25 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
   const lancar = async () => {
     setEnviando(true);
     const r = await call<{ parcelas?: number; supplier?: string }>({
-      action: tipo === 'purchase' ? 'import_purchase' : 'import_bill',
+      action: tipo === 'bill' ? 'import_bill' : 'import_purchase',
       document_id: doc.id,
       parcelas,
+      bonus: tipo === 'bonus',
       pago: tipo === 'purchase' && pago,
       payment_method: formaPrincipal ? (TPAG[formaPrincipal] ?? 'Outros') : undefined,
       cost_center_id: centro || null,
       dre_category_id: tipo === 'bill' ? (dre || null) : null,
       category: tipo === 'bill' ? (dres.find((d) => d.id === dre)?.name ?? 'Outros') : undefined,
       // Só manda se os vínculos carregaram — senão um erro de rede apagaria os memorizados
-      links: tipo === 'purchase' && vinculosCarregados
+      links: comEstoque && vinculosCarregados
         ? vinculos.map((v, i) => ({ index: i, ingredient_id: v.ingredient_id || null, units_per_package: v.units_per_package > 0 ? v.units_per_package : 1 }))
         : undefined,
     });
     setEnviando(false);
     if (!r.success) { onErro('Não foi possível lançar', r.error); return; }
-    onLancado(tipo === 'purchase' && pago
+    onLancado(tipo === 'bonus'
+      ? 'Bonificação lançada · entra no estoque ao confirmar o recebimento, sem custo'
+      : tipo === 'purchase' && pago
       ? 'Compra lançada como paga · saída registrada no Fluxo de Caixa'
       : `${tipo === 'purchase' ? 'Compra lançada' : 'Despesa lançada'} · ${r.parcelas ?? parcelas.length} parcela(s) em Contas a Pagar`);
   };
@@ -493,7 +506,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-bold text-zinc-700">Itens da nota ({itens.length})</p>
-                {tipo === 'purchase' && vinculosCarregados && (
+                {comEstoque && vinculosCarregados && (
                   <p className="text-[11px] text-zinc-500">{vinculos.filter((v) => v.ingredient_id).length} de {itens.length} vinculado(s) ao estoque</p>
                 )}
               </div>
@@ -502,7 +515,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
                   <thead className="bg-zinc-50 text-zinc-400 uppercase text-[10px] sticky top-0 z-10">
                     <tr>
                       <th className="text-left px-3 py-1.5">Produto</th><th className="text-right px-3 py-1.5">Qtd</th><th className="text-right px-3 py-1.5">Total</th>
-                      {tipo === 'purchase' && <th className="text-left px-3 py-1.5 min-w-[260px]">Insumo do estoque</th>}
+                      {comEstoque && <th className="text-left px-3 py-1.5 min-w-[260px]">Insumo do estoque</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -515,7 +528,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
                           <td className="px-3 py-1.5 text-zinc-700">{it.descricao}<span className="text-zinc-400"> {it.codigo ? `· cód. ${it.codigo}` : ''}</span></td>
                           <td className="px-3 py-1.5 text-right text-zinc-600 whitespace-nowrap">{Number(it.quantidade ?? 0).toLocaleString('pt-BR')} {it.unidade}<p className="text-[10px] text-zinc-400">{brl(it.valor_unitario)}</p></td>
                           <td className="px-3 py-1.5 text-right font-medium text-zinc-800 whitespace-nowrap">{brl(it.valor_total)}</td>
-                          {tipo === 'purchase' && (
+                          {comEstoque && (
                             <td className="px-3 py-1.5">
                               <select value={v?.ingredient_id ?? ''} onChange={(e) => setVinculo(i, { ingredient_id: e.target.value })} disabled={!vinculosCarregados}
                                 className={`w-full text-xs border rounded-lg px-2 py-1 focus:outline-none focus:border-amber-400 cursor-pointer ${v?.ingredient_id ? 'border-emerald-300 bg-emerald-50/50' : 'border-zinc-200'}`}>
@@ -541,17 +554,22 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
                 </table>
               </div>
               <p className="text-[10px] text-zinc-400 mt-1">
-                {tipo === 'purchase'
+                {comEstoque
                   ? 'Itens vinculados a um insumo entram no estoque quando você confirmar o recebimento da compra (Compras › detalhe › Confirmar recebimento). O vínculo fica memorizado: nas próximas notas deste fornecedor o item já vem vinculado. Confira o fator quando a nota vier em caixa/fardo (ex.: 1 CX = 12 un).'
                   : 'Despesa não movimenta o estoque.'}
               </p>
             </div>
           )}
 
-          {naoVenda && (
+          {bonificacao ? (
+            <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-100 rounded-lg p-3">
+              <i className="ri-gift-line text-emerald-600" />
+              <p className="text-xs text-emerald-800">Esta nota é <strong>bonificação</strong> (CFOP {doc.cfops}): não tem custo, mas a mercadoria entra no estoque. Lance como <strong>Bonificação</strong> e vincule os itens aos insumos; eles entram no recebimento, sem conta a pagar e sem mexer no custo médio.</p>
+            </div>
+          ) : naoVenda && (
             <div className="flex items-start gap-2 bg-violet-50 border border-violet-100 rounded-lg p-3">
               <i className="ri-error-warning-line text-violet-500" />
-              <p className="text-xs text-violet-800">Esta nota parece <strong>remessa, bonificação ou outra saída</strong> (CFOP {doc.cfops}). Normalmente não se lança: feche e use o botão de ignorar na lista.</p>
+              <p className="text-xs text-violet-800">Esta nota parece <strong>remessa, devolução ou outra saída</strong> (CFOP {doc.cfops}). Normalmente não se lança: feche e use o botão de ignorar na lista.</p>
             </div>
           )}
 
@@ -575,7 +593,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
           )}
 
           {/* Parcelas */}
-          {!(tipo === 'purchase' && pago) && (
+          {tipo !== 'bonus' && !(tipo === 'purchase' && pago) && (
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-bold text-zinc-700">
@@ -609,7 +627,14 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
           {!servico && (
           <div>
             <p className="text-xs font-bold text-zinc-700 mb-2">Como lançar</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className={`grid grid-cols-1 gap-2 ${bonificacao ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+              {bonificacao && (
+                <button onClick={() => setTipo('bonus')}
+                  className={`text-left p-3 rounded-xl border cursor-pointer ${tipo === 'bonus' ? 'border-amber-400 bg-amber-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
+                  <p className="text-sm font-bold text-zinc-800"><i className="ri-gift-line mr-1" />Bonificação</p>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">Sem custo: entra no estoque no recebimento. Não gera conta a pagar nem CMV.</p>
+                </button>
+              )}
               <button onClick={() => setTipo('purchase')}
                 className={`text-left p-3 rounded-xl border cursor-pointer ${tipo === 'purchase' ? 'border-amber-400 bg-amber-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
                 <p className="text-sm font-bold text-zinc-800"><i className="ri-shopping-cart-2-line mr-1" />Compra de mercadoria</p>

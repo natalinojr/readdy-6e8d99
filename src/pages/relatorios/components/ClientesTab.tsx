@@ -170,7 +170,7 @@ export default function ClientesTab({ periodo }: Props) {
             <button
               key={t.id}
               onClick={() => setVistaTab(t.id as typeof vistaTab)}
-              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap ${vistaTab === t.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
+              className={`flex items-center gap-1.5 px-3 md:px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap flex-shrink-0 ${vistaTab === t.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
             >
               <i className={t.icon} />
               {t.label}

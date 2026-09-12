@@ -343,6 +343,9 @@ async function createBillsForPurchase(
 ) {
   const { hasCustomInstallments, customInstallments, isLegacyInstallment, installmentCount, installmentIntervalDays } = opts;
 
+  // Bonificação: mercadoria sem custo — nada a pagar, nenhuma saída de caixa.
+  if (purchaseData.is_bonus === true) return;
+
   if (hasCustomInstallments) {
     const numParcelas = customInstallments.length;
     const firstInst = customInstallments[0];

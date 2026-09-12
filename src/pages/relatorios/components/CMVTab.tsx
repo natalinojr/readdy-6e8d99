@@ -245,7 +245,7 @@ export default function CMVTab({ periodo }: Props) {
               <button
                 key={f.id}
                 onClick={() => setFiltro(f.id)}
-                className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer transition-colors whitespace-nowrap ${
+                className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer transition-colors whitespace-nowrap flex-shrink-0 ${
                   filtro === f.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
                 }`}
               >
@@ -262,7 +262,7 @@ export default function CMVTab({ periodo }: Props) {
               <button
                 key={s.id}
                 onClick={() => setSortBy(s.id)}
-                className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer transition-colors whitespace-nowrap ${
+                className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer transition-colors whitespace-nowrap flex-shrink-0 ${
                   sortBy === s.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
                 }`}
               >

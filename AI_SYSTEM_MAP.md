@@ -275,6 +275,9 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
 - **Refatoração:** o bloco de importação saiu do handler para `importDocument(ctx, doc, action, body)`, usado pela tela, pela conciliação e pelo automático. Sem usuário (`userToken=null`), a `purchase-write` é chamada com `x-internal-key` = `FISCAL_INTERNAL_KEY`. A `purchase-write` passou a aceitar chave interna **só para `create_purchase`** (`created_by` fica null) e segue com `verify_jwt=true`: a chamada interna manda a anon key no Authorization.
 - **Desfazer:** ação `undo_auto_import` (e o botão "Desfazer" na tela) exclui a compra via `delete_purchase` ou as contas da despesa e volta a nota para `new` com `auto_launch_blocked=true`, para não ser relançada. É bloqueado se já houver parcela paga, recebimento no estoque ou se o lançamento veio da conciliação (`auto_import_ref`). Liga/desliga por loja em `fiscal_settings.inbound_auto_launch` (padrão ligado, ainda sem tela). Migration `20260912100000_fiscal_inbound_auto_launch.sql`.
 - **Selo "automática":** `auto_import_ref` preenchido = veio da conciliação; nulo = lançamento automático por fornecedor conhecido.
+- **Bonificação (decisão do dono 2026-09-12: sem custo, mas entra no estoque):** CFOP 5910/6910 vira compra com `fin_purchases.is_bonus=true`, itens a R$ 0, `payment_status='paid'`, forma "Bonificação" e `fiscal_inbound_documents.import_type='bonus'`. A `purchase-write` (`createBillsForPurchase`) não gera conta a pagar nem saída de caixa quando `is_bonus`. `fn_update_ingredient_price_from_purchase` ignora `is_bonus`, senão o custo médio do insumo cairia. O estoque entra no recebimento, como toda compra. O automático lança bonificação **mesmo de fornecedor novo** (não envolve dinheiro); devolução e "outras saídas" continuam para conferir. Na tela, o modal ganha a opção "Bonificação", com vínculo dos itens ao estoque. Migration `20260912110000_purchase_is_bonus.sql`, que também amplia o CHECK `fiscal_inbound_import_type_chk`.
+- **Pegadinha (quase duplicou):** o CHECK de `import_type` só aceitava purchase/bill, e o update da nota não verifica o erro. Resultado: a compra era criada, a nota ficava `new` e seria relançada a cada sync. Antes de gravar valor novo numa coluna de texto, conferir os CHECKs (`pg_constraint`); é o mesmo tipo de erro do "Lançar despesa" em 09-11.
+- **Recebimento pelo grupo do WhatsApp (desenhado, não implementado):** o assistente avisa o dono de cada entrega com o id da mensagem gravado. A resposta citada chega no webhook em `extendedTextMessage.contextInfo.stanzaId`, e o `ctxOf()` já lê o contextInfo, o que liga a resposta à compra certa. A alternativa é uma **enquete** por entrega (o `asst_polls` e o `pollUpdates` já existem). Depende de o número do assistente entrar no grupo da loja (`asst_groups` vazia em 09-12).
 
 ### 2026-09-11 — Leitura de cupom/notinha por foto na Nova Compra (IA)
 
@@ -1595,3 +1598,38 @@ descartar cedo os que não interessam, antes de abrir cliente/consultar banco.
 só fazem sentido num canal devem checar `ctx.channel` e falhar com mensagem clara, para o
 modelo cair no texto. Detalhes em `assistente/README.md`.
 
+### 2026-09-12 — Relatórios no mobile: `.scrollbar-hide` não existia + header disputando espaço
+
+Dois problemas somados davam a sensação de "informação sobreposta" na tela de Relatórios no celular:
+
+1. **`.scrollbar-hide` era uma classe fantasma.** Usada em ~20 telas (abas de
+   Relatórios, Financeiro, PDV, mesa-QR, gestor-pedidos), mas nunca foi definida
+   no `index.css` e o projeto não tem o plugin `tailwind-scrollbar-hide`. Resultado:
+   o Tailwind ignorava a classe e o Android desenhava a barra de rolagem por cima
+   das abas. Corrigido com um `@layer utilities` no fim de `src/index.css`
+   (`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`).
+   **Critério:** antes de usar uma classe "utilitária" que não é do Tailwind padrão,
+   confirme que ela existe no `index.css` ou em algum plugin.
+
+2. **Header de `relatorios/page.tsx` apertado demais.** Toggle + presets de período
+   + Atualizar + Exportar dividiam uma única linha. O wrapper do filtro tinha
+   `flex-1 min-w-0` e os presets `whitespace-nowrap` sem `flex-shrink-0`: o grupo
+   encolhia para perto de zero e o texto vazava por baixo dos botões ("30 dias"
+   ficava atrás do Exportar). Agora, no mobile, as ações (Atualizar/Exportar) sobem
+   para a linha do título (`acoes` é uma variável JSX renderizada duas vezes,
+   `sm:hidden` / `hidden sm:flex`) e o filtro fica sozinho na segunda linha. Os
+   presets ganharam `overflow-x-auto scrollbar-hide` + `flex-shrink-0` como rede de
+   segurança.
+   **Pegadinha:** não coloque `overflow-x-auto` no wrapper do `FiltroRelatorio`/
+   `SessaoSelector` — os dois têm dropdown `absolute` e o overflow clipa o painel.
+   O scroll vai só no grupo de pills, que não tem popover.
+
+Também: cards de KPI da aba Produtos empilham no mobile (`flex-col sm:flex-row`,
+valor `text-base md:text-xl`) — em 2 colunas de ~135px o layout em linha cortava
+"R$ 10.633,85"; e vários grupos de sub-abas/ordenação (CMV, Cancelamentos,
+Clientes, Produtos) ganharam `flex-shrink-0` nos botões, senão o pill encolhe e o
+texto `whitespace-nowrap` escapa por cima do vizinho.
+
+Verificado com Chromium headless a 320px e 360px sobre o CSS já buildado
+(nenhum par de elementos irmãos com retângulos se cruzando; `scrollWidth` do
+documento = largura do viewport).
