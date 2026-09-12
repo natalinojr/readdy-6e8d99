@@ -237,7 +237,7 @@ const TOOLS: Anthropic.Tool[] = [
   // ── Recursos nativos do WhatsApp (executados pelo assistente-webhook após a resposta) ──
   {
     name: 'enviar_enquete',
-    description: 'Manda uma ENQUETE nativa do WhatsApp para o Natalino escolher entre opções (até 12) tocando, em vez de digitar. Use quando a decisão dele é entre alternativas claras: "qual conta pagar primeiro", "qual loja", "confirmar ou cancelar", "qual horário". A resposta dele chega depois como mensagem "[Enquete ...] Resposta: ...". Só funciona no WhatsApp.',
+    description: 'Manda BOTÕES (Telegram) ou ENQUETE (WhatsApp) para o Natalino escolher entre opções (até 12) tocando, em vez de digitar. Use quando a decisão dele é entre alternativas claras: "qual conta pagar primeiro", "qual loja", "confirmar ou cancelar", "qual horário". A resposta dele chega depois como mensagem "[Botão ...] Resposta: ..." ou "[Enquete ...] Resposta: ...".',
     input_schema: {
       type: 'object',
       properties: {
@@ -326,13 +326,32 @@ TOOLS.push({
     required: ['funcao', 'action', 'dados', 'resumo'],
   },
 });
+const CHAT_CHANNELS = new Set(['whatsapp', 'telegram']);
 const EDGE_ALLOW = new Set(['menu-write', 'financial-write', 'purchase-write', 'stock-write', 'customer-write', 'reservation-write', 'table-write', 'config-write', 'voucher-write', 'production-write', 'user-write', 'task-write', 'delivery-write', 'order-write', 'fiscal-write', 'implementation-write']);
 // Ações que exigem confirmação explícita na conversa (padrão de nome; o mapa também marca).
 const SENSITIVE = /(^|_)(delete|remove|pay|refund|cancel|void|close|reset|archive|purge|reverse|estorn|excluir|pagar|cancelar|fechar)(_|$)/i;
 
 let ownerSession: { token: string; exp: number; userId: string } | null = null;
-async function ownerToken(admin: SupabaseClient, ownerId: string): Promise<string> {
-  if (ownerSession && ownerSession.userId === ownerId && ownerSession.exp - 120_000 > Date.now()) return ownerSession.token;
+// Uma geração por vez: cada generateLink INVALIDA o link anterior, então chamadas
+// paralelas (o modelo pede 8 ações de uma vez) derrubavam umas às outras com
+// "Email link is invalid or has expired" (visto em 2026-09-12). A sessão também fica
+// em asst_settings.owner_session (só service role; bloqueada no asst_reader) para
+// outro isolate reaproveitar em vez de gerar outra.
+let ownerTokenInflight: Promise<string> | null = null;
+function ownerToken(admin: SupabaseClient, ownerId: string): Promise<string> {
+  if (ownerSession && ownerSession.userId === ownerId && ownerSession.exp - 120_000 > Date.now()) return Promise.resolve(ownerSession.token);
+  if (ownerTokenInflight) return ownerTokenInflight;
+  ownerTokenInflight = (async () => {
+    const { data: saved } = await admin.from('asst_settings').select('value').eq('key', 'owner_session').maybeSingle();
+    // deno-lint-ignore no-explicit-any
+    const v = saved?.value as any;
+    if (v?.token && v.userId === ownerId && Number(v.exp) - 120_000 > Date.now()) { ownerSession = v; return String(v.token); }
+    try { return await mintOwnerToken(admin, ownerId); }
+    catch (e) { if (!/invalid or has expired/i.test(errMsg(e))) throw e; return await mintOwnerToken(admin, ownerId); } // outro isolate gerou junto: tenta 1×
+  })().finally(() => { ownerTokenInflight = null; });
+  return ownerTokenInflight;
+}
+async function mintOwnerToken(admin: SupabaseClient, ownerId: string): Promise<string> {
   const { data: u, error: ue } = await admin.auth.admin.getUserById(ownerId);
   if (ue || !u?.user?.email) throw new Error(`Usuário do dono não encontrado: ${ue?.message ?? ownerId}`);
   const { data: link, error: le } = await admin.auth.admin.generateLink({ type: 'magiclink', email: u.user.email });
@@ -342,7 +361,8 @@ async function ownerToken(admin: SupabaseClient, ownerId: string): Promise<strin
   const { data: s, error: ve } = await anon.auth.verifyOtp({ token_hash: tokenHash, type: 'magiclink' });
   if (ve || !s?.session?.access_token) throw new Error(`verifyOtp falhou: ${ve?.message ?? 'sem sessão'}`);
   ownerSession = { token: s.session.access_token, exp: (s.session.expires_at ?? Math.floor(Date.now() / 1000) + 3000) * 1000, userId: ownerId };
-  await anon.auth.signOut({ scope: 'others' }).catch(() => {}); // não acumula sessões antigas
+  // NUNCA signOut aqui: scope 'others' derrubava as sessões do dono no ERPOS (navegador/celular).
+  await admin.from('asst_settings').upsert({ key: 'owner_session', value: ownerSession, updated_at: new Date().toISOString() });
   return ownerSession.token;
 }
 // Chama a Edge Function com o JWT do dono. Manda `dados` como payload E no nível de
@@ -488,7 +508,7 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       return JSON.stringify({ local: label, agora: { temperatura: Math.round(w.current?.temperature_2m), condicao: desc(w.current?.weather_code), vento_kmh: Math.round(w.current?.wind_speed_10m) }, proximas_12h: proximas, proximos_dias: dias, fonte: 'Open-Meteo' });
     }
     case 'enviar_enquete': {
-      if (ctx.channel !== 'whatsapp') throw new Error('Enquete só funciona no WhatsApp; pergunte em texto.');
+      if (!CHAT_CHANNELS.has(ctx.channel)) throw new Error('Enquete só funciona no Telegram/WhatsApp; pergunte em texto.');
       const seen = new Set<string>();
       const options = (Array.isArray(input.opcoes) ? input.opcoes : []).map((o: unknown) => String(o).trim().slice(0, 100))
         .filter((o: string) => o && !seen.has(o.toLowerCase()) && seen.add(o.toLowerCase()));
@@ -498,7 +518,7 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       return `Enquete "${question}" será enviada com ${options.length} opções. Não repita as opções no texto; diga só uma frase curta de contexto.`;
     }
     case 'enviar_localizacao': {
-      if (ctx.channel !== 'whatsapp') throw new Error('Localização só funciona no WhatsApp; mande o endereço em texto.');
+      if (!CHAT_CHANNELS.has(ctx.channel)) throw new Error('Localização só funciona no Telegram/WhatsApp; mande o endereço em texto.');
       let lat = Number(input.latitude), lng = Number(input.longitude);
       let nome = input.nome ? String(input.nome) : '';
       if (!(Number.isFinite(lat) && Number.isFinite(lng))) {
@@ -513,7 +533,7 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       return `Localização "${nome || 'Local'}" (${lat}, ${lng}) será enviada como pino no mapa.`;
     }
     case 'enviar_contato': {
-      if (ctx.channel !== 'whatsapp') throw new Error('Cartão de contato só funciona no WhatsApp; mande o telefone em texto.');
+      if (!CHAT_CHANNELS.has(ctx.channel)) throw new Error('Cartão de contato só funciona no Telegram/WhatsApp; mande o telefone em texto.');
       let digits = String(input.telefone ?? '').replace(/\D/g, '');
       if (digits.length >= 10 && digits.length <= 11) digits = `55${digits}`;
       if (digits.length < 12 || digits.length > 13) throw new Error(`Telefone inválido: "${input.telefone}". Preciso de DDD + número.`);
@@ -777,10 +797,10 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
 }
 
 // Prompt estável primeiro (cacheável); tudo que muda (data, memórias) vai depois.
-const SYSTEM_STABLE = `Você é o assistente pessoal do Natalino, dono da rede de restaurantes El Patrón (ERPOS é o sistema de gestão dele). Vocês conversam pelo WhatsApp.
+const SYSTEM_STABLE = `Você é o assistente pessoal do Natalino, dono da rede de restaurantes El Patrón (ERPOS é o sistema de gestão dele). Vocês conversam pelo Telegram (canal principal) ou WhatsApp.
 
 Como agir:
-- Responda em português do Brasil, direto, curto e sem enrolação. Uma mensagem de WhatsApp, não um relatório. Nada de cabeçalhos Markdown, tabelas ou listas longas; use *negrito* do WhatsApp com moderação e quebras de linha.
+- Responda em português do Brasil, direto, curto e sem enrolação. Uma mensagem de chat, não um relatório. Nada de cabeçalhos Markdown, tabelas ou listas longas; use *negrito* (asteriscos simples) com moderação e quebras de linha.
 - Use as ferramentas sempre que a resposta depender de dados do sistema. Não invente números. Se uma ferramenta falhar, diga o que falhou em uma linha.
 - Quando ele pedir para lembrar/anotar algo com data e hora, use criar_lembrete. Quando for algo a fazer, use criar_tarefa. Quando for um fato sobre pessoas, preferências ou decisões, use salvar_memoria. Se tiver dúvida entre tarefa e lembrete, crie a tarefa.
 - Datas relativas ("amanhã", "sexta", "daqui a 2 horas") são calculadas a partir da data/hora atual informada abaixo, no fuso America/Sao_Paulo (-03:00).
@@ -793,7 +813,7 @@ Como agir:
 - Regras do SQL: quase toda tabela tem tenant_id — filtre sempre pelas lojas (ids listados abaixo). Em pedidos (orders) ignore is_training = true e, para faturamento, status 'cancelled'. Datas são timestamptz em UTC: para "hoje"/"este mês" use (coluna AT TIME ZONE 'America/Sao_Paulo'). Agregue (sum/count/group by) em vez de trazer milhares de linhas. Se a consulta der erro, leia a mensagem, corrija e tente de novo. Se procurou e não achou, diga onde procurou.
 - NOMES DIGITADOS PELO NATALINO PODEM ESTAR COM GRAFIA DIFERENTE da do sistema (Voxi × VOXY-SC LTDA, sem acento, abreviado, razão social × nome fantasia). Para achar fornecedor, cliente, item, insumo, funcionário etc. pelo nome, use primeiro buscar_nome (busca aproximada) e depois filtre pelo id/nome exato que ela devolver. NUNCA diga que algo "não existe" ou "não foi lançado" sem ter tentado buscar_nome.
 - Ao confirmar uma ação, diga o que foi feito em uma linha (ex.: "Criei a tarefa X na pasta Y, prazo sexta 9h").
-- Recursos nativos do WhatsApp: quando a decisão dele for entre alternativas claras (2 a 12), use enviar_enquete em vez de listar opções numeradas — ele responde tocando. A escolha volta como mensagem "[Enquete "pergunta"] Resposta: opção": trate como a resposta dele à pergunta e siga em frente sem perguntar de novo. Endereço/onde fica → enviar_localizacao; telefone de alguém → enviar_contato (o cartão vai junto com sua resposta; não repita o número no texto).
+- Botões/enquete: quando a decisão dele for entre alternativas claras (2 a 12) — inclusive confirmar/cancelar uma ação sensível — use enviar_enquete em vez de listar opções numeradas ou pedir "sim"; ele responde tocando. A escolha volta como mensagem "[Botão "pergunta"] Resposta: opção" (ou [Enquete ...]): trate como a resposta dele à pergunta e siga em frente sem perguntar de novo. Endereço/onde fica → enviar_localizacao; telefone de alguém → enviar_contato (o cartão vai junto com sua resposta; não repita o número no texto).
 - AÇÕES NO ERPOS (erpos_executar): você age como o próprio Natalino, pelas mesmas Edge Functions das telas — cardápio, contas, compras, estoque, clientes, reservas, mesas, cupons, produção, configurações, usuários. Fluxo: (1) entenda o pedido e busque no banco os ids/nomes exatos que a ação precisa (item, categoria, fornecedor, conta) — nunca chute id; (2) se faltar dado essencial (preço, categoria, valor, vencimento), pergunte em uma linha; (3) execute; (4) confirme em uma linha o que ficou feito, com nome e valor. Ações que mexem em dinheiro, apagam, cancelam, estornam ou fecham (pagar conta, excluir item, cancelar reserva, fechar caixa...) exigem confirmação: descreva exatamente o que vai fazer e o valor, espere o "sim" e só então chame com confirmado=true. Criar/editar cardápio, cadastrar cliente/fornecedor, lançar conta a pagar e ajustar estoque podem ir direto quando o pedido dele já é claro e completo. Se a edge devolver erro, leia a mensagem, corrija os campos e tente de novo uma vez; se persistir, explique o erro em uma linha. Use o MAPA DE AÇÕES abaixo para funcao/action/campos; se a ação que ele quer não estiver no mapa, diga que essa ainda não está disponível pelo WhatsApp (não improvise chamadas).
 - Fora do ERPOS: dados_publicos (CNPJ, CEP, feriados, taxas, NCM), previsao_tempo (loja/cidade) e web_search (internet: preço de mercado, notícia, dúvida geral, endereço/telefone de terceiros). Use web_search só quando a resposta não está no sistema nem nas outras ferramentas; no máximo 3 buscas por mensagem; cite a fonte em uma palavra quando importar.
 - Se a mensagem dele não pede nada e não precisa de resposta (só "ok", "valeu", "beleza", "👍", um agradecimento, um "boa noite" final), responda EXATAMENTE NO_REPLY (nada mais): ele recebe só uma reação 👍 em vez de uma mensagem. Nunca use NO_REPLY quando houver pergunta, pedido, informação nova para guardar ou algo que mereça comentário.`;

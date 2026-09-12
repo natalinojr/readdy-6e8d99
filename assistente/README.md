@@ -379,12 +379,54 @@ do dono** e chama as mesmas Edge Functions das telas.
   R$ 1 → ok; "paga a COPAL" → parou e pediu confirmação com valor; "apaga o item" →
   pediu confirmação, "sim" → `delete_item` com `confirmado=true`; idem `delete_bill`.
 
+### Telegram — canal principal de conversa (2026-09-12)
+
+Decisão do dono: conversa, áudio, fotos, confirmações e avisos do cron vão pelo
+**Telegram** (botões nativos, sem risco de banimento, grátis); o **WhatsApp fica só
+para leitura de grupos** (`channels.whatsapp_dm = false` → DM no WhatsApp recebe,
+uma vez por dia, "agora eu converso pelo Telegram").
+
+- Edge **`assistente-telegram`** (webhook do Bot API; `setWebhook` com
+  `secret_token = ASSISTENTE_INTERNAL_KEY`, conferido no header
+  `X-Telegram-Bot-Api-Secret-Token`; `allowed_updates = message, callback_query`).
+  Secret `TELEGRAM_BOT_TOKEN`. Só responde a `asst_settings.telegram_allowed_ids`;
+  desconhecido recebe o próprio id (para cadastro).
+- Entrada: texto; voz/áudio (`getFile` → Whisper na VPS); foto (maior tamanho) e PDF
+  → anexo do brain; localização/contato viram texto; encaminhada ganha
+  `[Encaminhada]`. Debounce de 2,5 s na mesma `asst_inbox` (chat_id `tg:<id>`).
+  `.txt` de exportação de grupo continua só pelo WhatsApp.
+- Saída: `*negrito*`/`_itálico_` do modelo → HTML do Telegram (fallback texto puro);
+  mensagens > 3.900 caracteres quebram em parágrafos. **`enviar_enquete` vira
+  teclado inline** (1 botão por opção; `callback_data = <fim do id>|<índice>`;
+  registro em `asst_polls` com `kind = 'tg_buttons'`). Clique → `answerCallbackQuery`,
+  a mensagem é editada para "❓ pergunta / ✅ escolha" (botões somem), e o brain
+  recebe `[Botão "pergunta"] Resposta: X`. `enviar_localizacao` → `sendVenue`;
+  `enviar_contato` → `sendContact` (vCard).
+- Reações (conjunto limitado do Telegram): 👀 recebi, 👍 respondi, 🤔 alguma ferramenta
+  falhou, 😱 erro, 🫡 NO_REPLY. "digitando…" renovado a cada 4,5 s durante o brain.
+- Brain: `channel = 'telegram'`, `chat_id = tg:<id>` (histórico separado do WhatsApp;
+  memórias são compartilhadas). Prompt pede botões também para confirmar ação
+  sensível (em vez de "manda sim").
+- Cron: `deliver(target)` manda para Telegram quando o destino é `tg:<id>`; o
+  destino do dono é `tg:<telegram_owner_chat_id>` quando `primary_channel =
+  'telegram'`, senão o JID do WhatsApp. Lembretes criados no Telegram guardam
+  `chat_id = tg:...` e voltam lá. **Exceção:** a enquete de classificação DRE
+  (`dreClassify`, do Codex) usa `sendPoll` da Evolution e continua indo ao WhatsApp.
+- Setup (uma vez): criar bot no @BotFather → `supabase secrets set TELEGRAM_BOT_TOKEN=...`
+  → `setWebhook` → dono manda /start → id aparece na resposta e no log → gravar
+  `telegram_allowed_ids = [id]`, `telegram_owner_chat_id = id`,
+  `primary_channel = 'telegram'`, `channels.whatsapp_dm = false`.
+- Migração (só settings): `supabase/migrations/20260912080000_assistente_telegram.sql`.
+- **NO AR 2026-09-12:** bot `@assistente_erpos_bot` (t.me/assistente_erpos_bot,
+  nome de exibição ainda "John Snow"); webhook confirmado pelo `getWebhookInfo`;
+  dono = Telegram id `8745495079` (em `telegram_allowed_ids` e
+  `telegram_owner_chat_id`); `primary_channel = 'telegram'`;
+  `channels.whatsapp_dm = false`. Mensagem de boas-vindas enviada pela API.
+  Falta: 1ª conversa real pelo webhook e 1º clique em botão.
+
 ## Pendente (ordem)
 
-1. **Número do assistente**: chip → parear com QR (`GET /instance/connect/assistente`
-   ou pelo `/manager`). Cadastrar o número do dono em `allowed_chat_ids` **e**
-   `owner_chat_id` (JID `55DDDNUMERO@s.whatsapp.net`).
-2. Ferramenta para lançar conta a pagar direto da foto do boleto (hoje o
-   assistente só sugere criar tarefa).
+1. Validar no uso real o Telegram: conversa, áudio, foto e clique em botão.
+2. Pagar boleto/Pix pelo Inter (escopos de pagamento na integração Inter + confirmação por botão).
 3. Google Agenda + Gmail (OAuth do dono, tokens em `asst_settings`).
-4. Nome do assistente (ainda não escolhido).
+4. Nome do assistente (ainda não escolhido; bot aparece como "John Snow").

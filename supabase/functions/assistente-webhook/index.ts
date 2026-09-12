@@ -517,10 +517,12 @@ async function handle(payload: any) {
   // messages.update chega a cada "entregue/lido" das nossas mensagens: só interessa voto em enquete.
   if (event === 'messages.update' && !(Array.isArray(data) ? data : [data]).some((it) => it?.pollUpdates || it?.message?.pollUpdates)) return;
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const { data: st } = await admin.from('asst_settings').select('key, value').in('key', ['allowed_chat_ids', 'ui']);
+  const { data: st } = await admin.from('asst_settings').select('key, value').in('key', ['allowed_chat_ids', 'ui', 'channels']);
   const cfg = Object.fromEntries((st ?? []).map((s) => [s.key, s.value]));
   const allowed: string[] = Array.isArray(cfg.allowed_chat_ids) ? cfg.allowed_chat_ids.map(String) : [];
   const ui: Record<string, unknown> = cfg.ui && typeof cfg.ui === 'object' ? cfg.ui : {};
+  // channels.whatsapp_dm = false → o WhatsApp só lê grupos (conversa é no Telegram desde 2026-09-12)
+  const dmEnabled = cfg.channels?.whatsapp_dm !== false;
 
   // Voto em enquete (chega como atualização, não como mensagem nova).
   if (event === 'messages.update') {
@@ -559,6 +561,15 @@ async function handle(payload: any) {
   const chatId = altJid && jid.endsWith('@lid') ? altJid : jid;
   const number = chatId.replace(/@.*$/, '');
   const msgKey: MsgKey | null = key.id ? { remoteJid: jid, fromMe: false, id: String(key.id) } : null;
+  if (!dmEnabled) {
+    // Só avisa uma vez por dia para não virar conversa
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    if (ui.wa_dm_notice_date !== today) {
+      await admin.from('asst_settings').upsert({ key: 'ui', value: { ...ui, wa_dm_notice_date: today }, updated_at: new Date().toISOString() });
+      await sendText(number, 'Agora eu converso pelo Telegram. Aqui no WhatsApp só acompanho os grupos.').catch(() => {});
+    }
+    return;
+  }
 
   const p = parseMessage(data.message);
   if (p.inner?.pollUpdateMessage) return; // voto cifrado: o decifrado vem em messages.update

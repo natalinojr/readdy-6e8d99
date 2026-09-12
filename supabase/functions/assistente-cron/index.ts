@@ -48,6 +48,25 @@ async function sendText(number: string, text: string) {
 
 const toNumber = (chatId: string) => chatId.replace(/@.*$/, '');
 const isJid = (s: string) => /@s\.whatsapp\.net$|@lid$/.test(s);
+const isTg = (s: string) => /^tg:-?\d+$/.test(s);
+// Telegram (canal principal desde 2026-09-12): chat_id "tg:<id>". HTML com *negrito* convertido.
+const tgToken = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? '';
+async function sendTelegram(chatKey: string, text: string) {
+  if (!tgToken) throw new Error('TELEGRAM_BOT_TOKEN não configurado');
+  const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const html = esc(text).replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, '$1<b>$2</b>');
+  const send = async (body: Record<string, unknown>) => {
+    const r = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatKey.slice(3), ...body }) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok || out?.ok === false) throw new Error(`Telegram → ${r.status}: ${String(out?.description ?? '').slice(0, 200)}`);
+  };
+  try { await send({ text: html, parse_mode: 'HTML' }); } catch { await send({ text }); }
+}
+// Entrega para qualquer destino: JID do WhatsApp ou "tg:<id>" do Telegram.
+async function deliver(target: string, text: string) {
+  if (isTg(target)) return sendTelegram(target, text);
+  return sendText(toNumber(target), text);
+}
 // "HH:MM" local de SP e AAAA-MM-DD local
 const localHHMM = () => new Date().toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false });
 const localDate = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
@@ -71,7 +90,7 @@ async function sendReminders(admin: SupabaseClient, ownerChat: string | null) {
     if (!claimed?.length) continue; // outro tick pegou
     const text = `⏰ *Lembrete:* ${r.text}`;
     try {
-      await sendText(toNumber(target), text);
+      await deliver(target, text);
       await admin.from('asst_messages').insert({ channel: 'cron', chat_id: target, role: 'assistant', content: text });
       sent++;
     } catch (e) {
@@ -115,7 +134,7 @@ async function morningBrief(admin: SupabaseClient, cfg: Record<string, any>, own
     await admin.from('asst_settings').upsert({ key: 'last_brief_date', value: null, updated_at: new Date().toISOString() });
     throw new Error(`brain ${r.status}: ${JSON.stringify(out).slice(0, 300)}`);
   }
-  await sendText(toNumber(ownerChat), String(out.reply));
+  await deliver(ownerChat, String(out.reply));
   return true;
 }
 
@@ -432,7 +451,7 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
   const deliver = async (kind: string, text: string) => {
     res[kind] = dry ? text : true;
     if (dry || !ownerChat) return;
-    await sendText(toNumber(ownerChat), text);
+    await deliver(ownerChat, text);
     await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: text });
   };
   const want = (k: string) => (only ? only === k : pro[k].enabled && !!ownerChat);
@@ -473,7 +492,7 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     const last = state.dre_checked_at ? Date.parse(state.dre_checked_at) : 0;
     if (dry || (now >= c.from && now <= c.to && Date.now() - last >= Number(c.every_min) * 60_000)) {
       if (!dry) { state.dre_checked_at = new Date().toISOString(); await saveState(); }
-      res.dre_classify = await dreClassify(admin, tenants, c, ownerChat, dry);
+      res.dre_classify = await dreClassify(admin, tenants, c, (typeof cfg.owner_chat_id === 'string' && cfg.owner_chat_id ? String(cfg.owner_chat_id) : ownerChat), dry); // enquete DRE é via Evolution: sempre o JID do WhatsApp
     }
   }
   return res;
@@ -486,7 +505,10 @@ Deno.serve(async (req) => {
 
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const cfg = await getSettings(admin);
-  const ownerChat = typeof cfg.owner_chat_id === 'string' && cfg.owner_chat_id ? cfg.owner_chat_id : null;
+  // Destino padrão do dono: Telegram quando configurado como canal principal, senão o JID do WhatsApp.
+  const waOwnerChat = typeof cfg.owner_chat_id === 'string' && cfg.owner_chat_id ? cfg.owner_chat_id : null;
+  const tgOwnerChat = cfg.telegram_owner_chat_id ? `tg:${cfg.telegram_owner_chat_id}` : null;
+  const ownerChat = (cfg.primary_channel === 'telegram' && tgOwnerChat) ? tgOwnerChat : waOwnerChat;
   // deno-lint-ignore no-explicit-any
   const body: any = await req.json().catch(() => ({}));
   if (typeof body.preview === 'string') {
@@ -498,7 +520,7 @@ Deno.serve(async (req) => {
     try {
       const c = { ...PRO_DEFAULTS.dre_classify, ...(cfg.proactive?.dre_classify ?? {}) };
       if (!c.enabled) return json({ ok: true, skipped: 'desligado' });
-      return json({ ok: true, dre_classify: await dreClassify(admin, await getTenants(admin, cfg), c, ownerChat, false) });
+      return json({ ok: true, dre_classify: await dreClassify(admin, await getTenants(admin, cfg), c, waOwnerChat ?? ownerChat, false) });
     } catch (e) { return json({ error: errMsg(e) }, 500); }
   }
 

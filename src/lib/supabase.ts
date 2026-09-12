@@ -14,12 +14,33 @@ export const SUPABASE_URL = supabaseUrl;
 /** Anon key publica do projeto Supabase — use este export em vez de import.meta.env direto */
 export const SUPABASE_ANON_KEY = supabaseAnonKey;
 
+/**
+ * Loja ativa do app vai para o banco no header `x-tenant-id` (2026-09-12).
+ * As funções de RLS (`auth_tenant_id()`, `get_user_tenant_id()`, `auth_role()`)
+ * usam essa loja se o usuário for membro dela; sem isso pegavam o vínculo mais
+ * recente e quem tem várias lojas (o dono) só enxergava uma. Só nas chamadas
+ * REST/RPC: as Edge Functions não liberam esse header no CORS.
+ */
+const fetchComLoja: typeof fetch = (input, init) => {
+  try {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const tenantId = localStorage.getItem('erpos_selected_tenant_id');
+    if (tenantId && url.includes('/rest/v1/')) {
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      headers.set('x-tenant-id', tenantId);
+      return fetch(input, { ...init, headers });
+    }
+  } catch { /* localStorage bloqueado: segue sem o header */ }
+  return fetch(input, init);
+};
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: false,
     detectSessionInUrl: true,
   },
+  global: { fetch: fetchComLoja },
 });
 
 // ─── Helpers seguros para evitar que "Invalid Refresh Token" estoure na UI ──
