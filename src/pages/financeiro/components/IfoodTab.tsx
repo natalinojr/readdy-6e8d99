@@ -61,6 +61,7 @@ export default function IfoodTab() {
   const [view, setView] = useState<'resumo' | IfoodApiView>('resumo');
   const [apiOn, setApiOn] = useState(false);
   const [nomes, setNomes] = useState<Record<string, string>>({});
+  const [editLoja, setEditLoja] = useState<{ id: string; curto: string; nome: string; salvando: boolean; erro: string | null } | null>(null);
   const [ondemand, setOndemand] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
 
   const loadImports = useCallback(async () => {
@@ -190,14 +191,19 @@ export default function IfoodTab() {
   const lojas = [...new Map(imports.map((i) => [i.merchant_id, i.merchant_short || i.merchant_id.slice(0, 8)])).entries()];
   const nomeLoja = (id: string, curto?: string | null) => (nomes[id] ? `${nomes[id]} (${curto ?? id.slice(0, 8)})` : `Loja ${curto ?? id.slice(0, 8)}`);
 
-  const renomearLoja = async (id: string) => {
-    if (!user?.tenantId) return;
-    const atual = nomes[id] ?? '';
-    const novo = window.prompt('Nome desta loja no iFood (como aparece no Portal do Parceiro):', atual);
-    if (novo === null) return;
-    const r = await invokeWithAuth<{ success?: boolean; error?: string }>('ifood-financial', { body: { action: 'set_merchant_name', tenant_id: user.tenantId, merchant_id: id, name: novo } });
-    if (r.data?.error || r.error) { setError(r.data?.error ?? r.error?.message ?? 'Falhou'); return; }
-    setNomes((n) => ({ ...n, [id]: novo.trim() }));
+  const renomearLoja = (id: string) => {
+    const curto = lojas.find(([lid]) => lid === id)?.[1] ?? id.slice(0, 8);
+    setEditLoja({ id, curto, nome: nomes[id] ?? '', salvando: false, erro: null });
+  };
+
+  const salvarNomeLoja = async () => {
+    if (!user?.tenantId || !editLoja) return;
+    setEditLoja({ ...editLoja, salvando: true, erro: null });
+    const nome = editLoja.nome.trim();
+    const r = await invokeWithAuth<{ success?: boolean; error?: string }>('ifood-financial', { body: { action: 'set_merchant_name', tenant_id: user.tenantId, merchant_id: editLoja.id, name: nome } });
+    if (r.data?.error || r.error) { setEditLoja({ ...editLoja, salvando: false, erro: r.data?.error ?? r.error?.message ?? 'Não foi possível salvar.' }); return; }
+    setNomes((n) => { const x = { ...n }; if (nome) x[editLoja.id] = nome; else delete x[editLoja.id]; return x; });
+    setEditLoja(null);
   };
   const impsMes = imports.filter((i) => i.competence === competence && (!loja || i.merchant_id === loja));
 
@@ -412,6 +418,54 @@ export default function IfoodTab() {
             <p className="text-[11px] text-amber-600">Só uma loja iFood importada. Se houver outra, baixe o relatório dela no Portal do Parceiro (troque a loja no topo do portal) e importe também.</p>
           )}
         </>
+      )}
+
+      {editLoja && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => !editLoja.salvando && setEditLoja(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-red-100">
+                  <i className="ri-store-2-line text-red-600 text-lg" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-zinc-900">Nome da loja no iFood</h3>
+                  <p className="text-xs text-zinc-500">Código {editLoja.curto}</p>
+                </div>
+              </div>
+              <button onClick={() => setEditLoja(null)} disabled={editLoja.salvando}
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
+                <i className="ri-close-line text-zinc-500" />
+              </button>
+            </div>
+            <form className="p-6 space-y-4" onSubmit={(e) => { e.preventDefault(); salvarNomeLoja(); }}>
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Nome</label>
+                <input autoFocus type="text" value={editLoja.nome} maxLength={120}
+                  onChange={(e) => setEditLoja({ ...editLoja, nome: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === 'Escape') setEditLoja(null); }}
+                  placeholder="Ex.: El Patrón - Burritos e Nachos"
+                  className="w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" />
+                <p className="text-[11px] text-zinc-400 mt-1.5">
+                  Use o nome que aparece no topo do Portal do Parceiro ao escolher esta loja. Deixe em branco para voltar a mostrar só o código.
+                </p>
+              </div>
+              {editLoja.erro && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">{editLoja.erro}</div>
+              )}
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => setEditLoja(null)} disabled={editLoja.salvando}
+                  className="flex-1 py-2.5 border border-zinc-200 rounded-lg text-sm font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer">
+                  Cancelar
+                </button>
+                <button type="submit" disabled={editLoja.salvando}
+                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold cursor-pointer flex items-center justify-center gap-2">
+                  {editLoja.salvando ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Salvando...</> : 'Salvar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {showConfig && (
