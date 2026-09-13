@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import {
   type Candidate, type Company, type Criterion, type Settings, type Stage, COLORS, NATIVE_LABEL, DEFAULT_SETTINGS, colorOf, slug,
 } from '../shared';
+import { confirmar, avisar } from '../dialog';
 
 interface Props {
   companies: Company[];
@@ -27,7 +28,7 @@ export default function ConfiguracoesContratacao({ companies, stages, settings, 
 
 async function run(p: PromiseLike<{ error: { message: string } | null }>) {
   const { error } = await p;
-  if (error) alert(`Não foi possível salvar: ${error.message}`);
+  if (error) avisar(`Não foi possível salvar: ${error.message}`);
   return !error;
 }
 
@@ -52,7 +53,15 @@ function Empresas({ companies, candidates, onReload }: { companies: Company[]; c
   };
   const remove = async (c: Company) => {
     const n = count(c.id);
-    if (!confirm(n ? `${c.name} tem ${n} candidato(s). Eles ficam "Sem empresa". Excluir mesmo assim?` : `Excluir ${c.name}?`)) return;
+    const ok = await confirmar({
+      titulo: `Excluir ${c.name}?`,
+      mensagem: n
+        ? <><b className="text-zinc-900">{n} candidato{n > 1 ? 's' : ''}</b> desta empresa {n > 1 ? 'ficarão' : 'ficará'} como "Sem empresa". Se só quer esconder, use o olho para desativar.</>
+        : 'A empresa será removida da lista.',
+      confirmarLabel: 'Excluir',
+      perigo: true,
+    });
+    if (!ok) return;
     if (await run(supabase.from('hiring_companies').delete().eq('id', c.id))) await onReload();
   };
   const move = async (i: number, dir: -1 | 1) => {
@@ -112,7 +121,15 @@ function Fases({ stages, candidates, onReload }: { stages: Stage[]; candidates: 
   };
   const remove = async (s: Stage) => {
     const n = count(s.id);
-    if (!confirm(n ? `${n} candidato(s) estão em "${s.name}" e vão para "${novoStage?.name ?? 'Novo'}". Excluir a fase?` : `Excluir a fase "${s.name}"?`)) return;
+    const ok = await confirmar({
+      titulo: `Excluir a fase "${s.name}"?`,
+      mensagem: n
+        ? <><b className="text-zinc-900">{n} candidato{n > 1 ? 's' : ''}</b> nesta fase {n > 1 ? 'vão' : 'vai'} para "{novoStage?.name ?? 'Novo'}".</>
+        : 'A coluna sai do kanban.',
+      confirmarLabel: 'Excluir',
+      perigo: true,
+    });
+    if (!ok) return;
     if (n && novoStage) await supabase.from('hiring_candidates').update({ stage_id: novoStage.id }).eq('stage_id', s.id);
     if (await run(supabase.from('hiring_stages').delete().eq('id', s.id))) await onReload();
   };
@@ -225,7 +242,7 @@ function FichaEConvite({ settings, onSaved }: { settings: Settings; onSaved: (s:
     setSaving(true); setOk(false);
     const { error } = await supabase.from('hiring_settings').upsert({ id: 1, data: s, updated_at: new Date().toISOString() });
     setSaving(false);
-    if (error) { alert(`Não foi possível salvar: ${error.message}`); return; }
+    if (error) { avisar(`Não foi possível salvar: ${error.message}`); return; }
     setOk(true);
     onSaved(s);
   };

@@ -7,6 +7,7 @@ import {
   type Candidate, type Company, type Decision, type Interview, type InterviewFormat, type InterviewStatus, type Settings, type Stage,
   FORMATS, INTERVIEW_STATUS, DECISIONS, whatsLink, firstName, companyName, inviteText, stageOf, stageByKind, withEmpresa,
 } from '../shared';
+import { confirmar } from '../dialog';
 
 export type CandidatePatch = { id: string; stage_id?: string; decision?: Decision | null };
 
@@ -122,7 +123,14 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
   };
 
   const excluir = async () => {
-    if (!interview || !confirm('Excluir esta entrevista?')) return;
+    if (!interview) return;
+    const ok = await confirmar({
+      titulo: 'Excluir entrevista?',
+      mensagem: 'O agendamento e tudo o que foi preenchido nela serão apagados.',
+      confirmarLabel: 'Excluir',
+      perigo: true,
+    });
+    if (!ok) return;
     const { error } = await supabase.from('hiring_interviews').delete().eq('id', interview.id);
     if (error) { setErro(error.message); return; }
     onDeleted(interview.id);

@@ -14,6 +14,7 @@ import {
   OWNER_EMAIL, BUCKET, DECISIONS, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind,
 } from './shared';
 import type { CandidatePatch } from './components/EntrevistaModal';
+import { DialogHost, confirmar, avisar } from './dialog';
 import CandidatosLista from './components/CandidatosLista';
 import CandidatoDrawer from './components/CandidatoDrawer';
 import EntrevistaModal from './components/EntrevistaModal';
@@ -172,7 +173,7 @@ export default function ContratacaoPage() {
   const updateCandidate = useCallback(async (id: string, patch: Partial<Candidate>) => {
     setItems((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
     const { error } = await supabase.from('hiring_candidates').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id);
-    if (error) { alert(`Não foi possível salvar: ${error.message}`); carregar(); return; }
+    if (error) { avisar(`Não foi possível salvar: ${error.message}`); carregar(); return; }
     // Empresa trocada: as entrevistas acompanham o candidato.
     if ('company_id' in patch) {
       await supabase.from('hiring_interviews').update({ company_id: patch.company_id ?? null }).eq('candidate_id', id);
@@ -194,9 +195,15 @@ export default function ContratacaoPage() {
   }, []);
 
   const deleteCandidate = useCallback(async (c: Candidate) => {
-    if (!confirm(`Excluir o currículo de ${c.full_name}? As entrevistas dele também são apagadas. Não dá para desfazer.`)) return;
+    const ok = await confirmar({
+      titulo: 'Excluir currículo?',
+      mensagem: <>O currículo de <b className="text-zinc-900">{c.full_name}</b> e as entrevistas dele serão apagados. Não dá para desfazer.</>,
+      confirmarLabel: 'Excluir',
+      perigo: true,
+    });
+    if (!ok) return;
     const { error } = await supabase.from('hiring_candidates').delete().eq('id', c.id);
-    if (error) { alert(`Não foi possível excluir: ${error.message}`); return; }
+    if (error) { avisar(`Não foi possível excluir: ${error.message}`); return; }
     if (c.file_path) await supabase.storage.from(BUCKET).remove([c.file_path]);
     setItems((prev) => prev.filter((x) => x.id !== c.id));
     setInterviews((prev) => prev.filter((x) => x.candidate_id !== c.id));
@@ -463,6 +470,8 @@ export default function ContratacaoPage() {
           onDeleted={(id) => { setInterviews((prev) => prev.filter((x) => x.id !== id)); setModal(null); }}
         />
       )}
+
+      <DialogHost />
     </div>
   );
 }

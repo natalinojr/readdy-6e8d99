@@ -5,6 +5,7 @@ import {
   type Candidate, type Company, type Decision, type Interview, type Stage, BUCKET, DECISIONS,
   fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf, decisionOf, withEmpresa, ageOf, companyName,
 } from '../shared';
+import { avisar } from '../dialog';
 
 interface Props {
   c: Candidate;
@@ -36,7 +37,7 @@ export default function CandidatoDrawer({ c, companies, stages, interviews, onCl
   const abrirArquivo = async () => {
     if (!c.file_path) return;
     const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(c.file_path, 300);
-    if (error || !data?.signedUrl) { alert('Não foi possível abrir o arquivo.'); return; }
+    if (error || !data?.signedUrl) { avisar('Não foi possível abrir o arquivo do currículo.'); return; }
     window.open(data.signedUrl, '_blank', 'noopener');
   };
 
