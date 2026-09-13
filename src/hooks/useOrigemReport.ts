@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { getPeriodDates, getPeriodoAnterior, labelPeriodoAnterior } from '@/lib/dateUtils';
+import { fetchIfoodVendas } from '@/lib/ifoodVendas';
 
 export interface OrigemItem {
   origem: string;
@@ -20,6 +21,8 @@ export interface OrigemHoraItem {
   mesa: number;
   auto: number;
   delivery: number;
+  /** Pedidos do iFood (relatório de conciliação importado em Financeiro › iFood). */
+  ifood: number;
 }
 
 export interface OrigemReportData {
@@ -36,6 +39,7 @@ const ORIGEM_LABEL: Record<string, string> = {
   qr_universal: 'QR CODE',
   self_service: 'Autoatendimento',
   delivery: 'Delivery',
+  ifood: 'iFood',
 };
 
 const ORIGEM_COR: Record<string, string> = {
@@ -45,6 +49,7 @@ const ORIGEM_COR: Record<string, string> = {
   qr_universal: '#8b5cf6',
   self_service: '#f97316',
   delivery: '#ef4444',
+  ifood: '#ea1d2c',
 };
 
 /** @deprecated Use getPeriodoAnterior de @/lib/dateUtils */
@@ -112,6 +117,25 @@ export function useOrigemReport(periodo: string) {
         })
         .sort((a, b) => b.valor - a.valor);
 
+      // ── iFood: pedidos do relatório de conciliação importado (não passam pelo PDV do ERP) ──
+      // Valor das vendas como no Portal do Parceiro, na data/hora do pedido, todas as lojas iFood.
+      const ifood = await fetchIfoodVendas(user.tenantId, from, to);
+      if (ifood.error) console.warn('[useOrigemReport] iFood:', ifood.error);
+      if (ifood.pedidos > 0 || Math.abs(ifood.total) > 0.005) {
+        totalValor += ifood.total;
+        totalPedidos += ifood.pedidos;
+        porOrigem.push({
+          origem: ORIGEM_LABEL.ifood,
+          origemKey: 'ifood',
+          pedidos: ifood.pedidos,
+          valor: ifood.total,
+          ticketMedio: ifood.pedidos > 0 ? Math.round((ifood.total / ifood.pedidos) * 100) / 100 : 0,
+          pct: 0,
+          cor: ORIGEM_COR.ifood,
+        });
+        porOrigem.sort((a, b) => b.valor - a.valor);
+      }
+
       // Recalcular percentuais com o total correto
       porOrigem.forEach((o) => {
         o.pct = totalValor > 0 ? Math.round((o.valor / totalValor) * 1000) / 10 : 0;
@@ -131,8 +155,13 @@ export function useOrigemReport(periodo: string) {
           .gte('created_at', from)
           .lte('created_at', to);
 
+        const horaMap: Record<string, { caixa: number; garcom: number; mesa: number; auto: number; delivery: number; ifood: number }> = {};
+        const vazio = () => ({ caixa: 0, garcom: 0, mesa: 0, auto: 0, delivery: 0, ifood: 0 });
+        for (const [hora, valor] of Object.entries(ifood.porHora)) {
+          if (!horaMap[hora]) horaMap[hora] = vazio();
+          horaMap[hora].ifood += valor;
+        }
         if (!ordersErr && ordersData && ordersData.length > 0) {
-          const horaMap: Record<string, { caixa: number; garcom: number; mesa: number; auto: number; delivery: number }> = {};
           ordersData.forEach((o: any) => {
             const hora = new Date(o.created_at).toLocaleTimeString('pt-BR', {
               timeZone: 'America/Sao_Paulo',
@@ -141,15 +170,15 @@ export function useOrigemReport(periodo: string) {
             });
             const origem = o.origin_type ?? 'cashier';
             const valor = Number(o.total_amount ?? 0);
-            if (!horaMap[hora]) {
-              horaMap[hora] = { caixa: 0, garcom: 0, mesa: 0, auto: 0, delivery: 0 };
-            }
+            if (!horaMap[hora]) horaMap[hora] = vazio();
             if (origem === 'cashier') horaMap[hora].caixa += valor;
             else if (origem === 'waiter') horaMap[hora].garcom += valor;
             else if (origem === 'table') horaMap[hora].mesa += valor;
             else if (origem === 'self_service') horaMap[hora].auto += valor;
             else if (origem === 'delivery') horaMap[hora].delivery += valor;
           });
+        }
+        if (Object.keys(horaMap).length > 0) {
           porHora = Object.entries(horaMap)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([hora, v]) => ({
@@ -159,6 +188,7 @@ export function useOrigemReport(periodo: string) {
               mesa: Math.round(v.mesa * 100) / 100,
               auto: Math.round(v.auto * 100) / 100,
               delivery: Math.round(v.delivery * 100) / 100,
+              ifood: Math.round(v.ifood * 100) / 100,
             }));
         }
       } catch (horaErr) {

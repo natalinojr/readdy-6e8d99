@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import DiaDetalheModal from './DiaDetalheModal';
+import { fetchIfoodVendas } from '@/lib/ifoodVendas';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -13,6 +14,9 @@ interface DayRevenue {
   date: string; // YYYY-MM-DD
   revenue: number;
   orders: number;
+  /** Parte do iFood no dia (relatório de conciliação importado em Financeiro › iFood) — já somada em revenue/orders. */
+  ifood?: number;
+  ifoodOrders?: number;
 }
 
 interface WeekRow {
@@ -72,6 +76,18 @@ export default function CalendarioFaturamentoTab() {
       const fromStr = `${year}-${monthStr}-01T00:00:00-03:00`;
       const toStr   = `${year}-${monthStr}-${daysInMonth}T23:59:59-03:00`;
 
+      // Soma o iFood de cada dia (pedidos do relatório de conciliação — não passam pelo PDV do ERP).
+      const ifood = await fetchIfoodVendas(user.tenantId, fromStr, toStr);
+      const comIfood = (lista: DayRevenue[]): DayRevenue[] => {
+        const mapa = new Map(lista.map((d) => [d.date, { ...d }]));
+        for (const [date, v] of Object.entries(ifood.porDia)) {
+          const d = mapa.get(date) ?? { date, revenue: 0, orders: 0 };
+          d.revenue += v.valor; d.orders += v.pedidos; d.ifood = v.valor; d.ifoodOrders = v.pedidos;
+          mapa.set(date, d);
+        }
+        return [...mapa.values()];
+      };
+
       // ESTRATÉGIA 1: Usar a RPC fn_get_sales_report (igual ao Dashboard) que passa
       // tenant_id explicitamente e não sofre com RLS de múltiplos tenants.
       // A RPC retorna orders_by_day que já tem os dados agrupados por dia.
@@ -84,11 +100,11 @@ export default function CalendarioFaturamentoTab() {
 
       if (!rpcError && rpcData && (rpcData as any).orders_by_day) {
         const ordersByDay = (rpcData as any).orders_by_day as Array<{ day: string; orders: number; revenue: number }>;
-        setDayData(ordersByDay.map((d) => ({
+        setDayData(comIfood(ordersByDay.map((d) => ({
           date: d.day,
           revenue: Number(d.revenue ?? 0),
           orders: Number(d.orders ?? 0),
-        })));
+        }))));
         setLastUpdated(new Date());
         setLoading(false);
         return;
@@ -117,11 +133,11 @@ export default function CalendarioFaturamentoTab() {
         grouped[key].count += 1;
       });
 
-      setDayData(Object.entries(grouped).map(([date, v]) => ({
+      setDayData(comIfood(Object.entries(grouped).map(([date, v]) => ({
         date,
         revenue: v.revenue,
         orders: v.count,
-      })));
+      }))));
       setLastUpdated(new Date());
     } catch (e) {
       console.error('[CalendarioFaturamento]', e);
@@ -309,6 +325,14 @@ export default function CalendarioFaturamentoTab() {
             <i className="ri-cursor-line text-[11px] text-zinc-400" />
             <span className="text-[11px] text-zinc-500">clique em um dia para ver detalhes</span>
           </div>
+          {dayData.some((d) => d.ifood) && (
+            <div className="flex items-center gap-2">
+              <i className="ri-restaurant-2-line text-[11px] text-red-500" />
+              <span className="text-[11px] text-zinc-500">
+                inclui iFood ({fmt(dayData.reduce((s, d) => s + (d.ifood ?? 0), 0))} no mês) — relatório de conciliação importado em Financeiro › iFood
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Resumo do mês */}
@@ -371,6 +395,11 @@ function DayCell({ day, maxRevenue, minRevenue, onClick }: DayCellProps) {
       </p>
       {day.orders > 0 && (
         <p className="text-[9px] text-zinc-400 text-right">{day.orders} ped.</p>
+      )}
+      {!!day.ifood && (
+        <p className="text-[9px] text-red-500 text-right whitespace-nowrap" title={`${day.ifoodOrders ?? 0} pedido(s) do iFood`}>
+          iFood {fmt(day.ifood)}
+        </p>
       )}
     </td>
   );

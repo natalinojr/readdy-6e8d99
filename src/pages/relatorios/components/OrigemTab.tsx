@@ -19,7 +19,10 @@ const ICONES: Record<string, string> = {
   'QR CODE': 'ri-qr-code-line',
   'Autoatendimento': 'ri-tablet-line',
   'Delivery': 'ri-motorbike-line',
+  'iFood': 'ri-restaurant-2-line',
 };
+
+const LEGENDA_HORA: Record<string, string> = { caixa: 'Caixa', garcom: 'Garçom', mesa: 'Mesa (QR)', auto: 'Autoatendimento', delivery: 'Delivery', ifood: 'iFood' };
 
 // Badge de variação
 function VarBadge({ atual, anterior }: { atual: number; anterior: number }) {
@@ -222,6 +225,12 @@ export default function OrigemTab({ periodo, externalSession }: Props) {
         })}
       </div>
 
+      {!isSessao && origens.some((o) => o.origemKey === 'ifood') && (
+        <p className="text-[11px] text-zinc-400 -mt-2">
+          <i className="ri-restaurant-2-line text-red-500" /> iFood: pedidos do relatório de conciliação importado em Financeiro › iFood (todas as lojas), com o valor das vendas como no Portal do Parceiro e na data do pedido. Os meses sem relatório importado ficam sem iFood.
+        </p>
+      )}
+
       {/* Resumo global */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white border border-zinc-100 rounded-xl p-4 text-center">
@@ -253,17 +262,18 @@ export default function OrigemTab({ periodo, externalSession }: Props) {
                 <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false}
                   tickFormatter={(v) => `R$${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`} width={44} />
                 <Tooltip
-                  formatter={(val: number, name: string) => [fmt(val), { caixa: 'Caixa', garcom: 'Garçom', mesa: 'Mesa (QR)', auto: 'Autoatendimento', delivery: 'Delivery' }[name] ?? name]}
+                  formatter={(val: number, name: string) => [fmt(val), LEGENDA_HORA[name] ?? name]}
                   contentStyle={{ borderRadius: 8, fontSize: 11, border: '1px solid #e4e4e7' }}
                 />
                 <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }}
-                  formatter={(v) => ({ caixa: 'Caixa', garcom: 'Garçom', mesa: 'Mesa (QR)', auto: 'Autoatendimento', delivery: 'Delivery' }[v] ?? v)}
+                  formatter={(v) => LEGENDA_HORA[v] ?? v}
                 />
                 <Bar dataKey="caixa" stackId="a" fill="#f59e0b" />
                 <Bar dataKey="garcom" stackId="a" fill="#10b981" />
                 <Bar dataKey="mesa" stackId="a" fill="#06b6d4" />
                 <Bar dataKey="auto" stackId="a" fill="#f97316" />
-                <Bar dataKey="delivery" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="delivery" stackId="a" fill="#ef4444" />
+                <Bar dataKey="ifood" stackId="a" fill="#ea1d2c" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

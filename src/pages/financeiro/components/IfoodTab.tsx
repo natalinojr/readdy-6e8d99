@@ -6,6 +6,7 @@ import { todayBrasilia } from '@/lib/dateUtils';
 import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 import IfoodApiViews, { type IfoodApiView } from './IfoodApiViews';
 import IfoodProdutos from './IfoodProdutos';
+import { portalBucket } from '@/lib/ifoodVendas';
 
 // Aba iFood: o relatório de conciliação do iFood (fin_ifood_entries, gravado pela edge
 // ifood-financial) por competência — vendas, comissões/taxas, promoções e repasses,
@@ -33,21 +34,7 @@ const compLabel = (c: string) => {
 };
 const dataBR = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
 // Mesma regra da edge: receita = entradas e subsídios; taxas = cobranças e retenções.
-// Mesma divisão do Portal do Parceiro (Financeiro › Faturamento) — igual à edge ifood-financial:
-// vendas − taxas − serviços + ajustes = faturamento; faturamento − pago direto à loja = repasses.
-function portalBucket(e: EntryRow) {
-  const t = (e.tipo_lancamento ?? '').toLowerCase();
-  const d = (e.descricao ?? '').toLowerCase();
-  const v = e.valor;
-  const z = { vendas: 0, taxas: 0, servicos: 0, ajustes: 0, loja: 0 };
-  // "Recebido direto pela loja" = Entrada fora do repasse (não pelo responsável: há Entrada LOJA no repasse).
-  if (t.includes('entrada')) { z.vendas = v; if (!e.impacto_repasse) z.loja = v; }
-  else if (t.includes('subs')) { if (/custeada pela loja/.test(d)) { z.vendas = -v; z.servicos = -v; } else z.vendas = v; }
-  else if (t.includes('reten')) z.vendas = v;
-  else if (t.includes('cobran')) { if (/comiss|transa|mensalidade/.test(d)) z.taxas = -v; else z.servicos = -v; }
-  else z.ajustes = v;
-  return z;
-}
+// Divisão igual ao Portal do Parceiro — compartilhada com os Relatórios (Origem e Calendário).
 
 function Kpi({ label, value, sub, tone = 'zinc' }: { label: string; value: string; sub?: string; tone?: 'zinc' | 'green' | 'red' | 'amber' }) {
   const color = { zinc: 'text-zinc-900', green: 'text-green-700', red: 'text-red-600', amber: 'text-amber-700' }[tone];
