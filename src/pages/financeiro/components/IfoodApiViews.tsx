@@ -49,6 +49,8 @@ function Empty() {
 export default function IfoodApiViews({ tenantId, competence, view }: Props) {
   const [rows, setRows] = useState<any[]>([]);
   const [antecip, setAntecip] = useState<any[]>([]);
+  // Conferência entre fontes, por data de repasse: eventos × relatório de conciliação × liquidação.
+  const [conf, setConf] = useState<{ data: string; eventos: number | null; conciliacao: number | null; liquidado: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [soImpacto, setSoImpacto] = useState(true);
@@ -79,12 +81,27 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
         res = await supabase.from('fin_ifood_sales').select('*').eq('tenant_id', tenantId)
           .gte('sale_created_at', `${start}T00:00:00-03:00`).lte('sale_created_at', `${end}T23:59:59-03:00`).order('sale_created_at', { ascending: false }).limit(3000);
       } else if (view === 'repasses') {
-        const [s, a] = await Promise.all([
+        const [s, a, ev, rec] = await Promise.all([
           supabase.from('fin_ifood_settlements').select('*').eq('tenant_id', tenantId).gte('payment_date', start).lte('payment_date', end).order('payment_date'),
           supabase.from('fin_ifood_anticipations').select('*').eq('tenant_id', tenantId).gte('anticipated_date', start).lte('anticipated_date', end).order('anticipated_date'),
+          supabase.from('fin_ifood_events').select('expected_settlement, amount').eq('tenant_id', tenantId).eq('has_transfer_impact', true).gte('expected_settlement', start).lte('expected_settlement', end).limit(20000),
+          supabase.from('fin_ifood_entries').select('data_repasse, valor').eq('tenant_id', tenantId).eq('impacto_repasse', true).gte('data_repasse', start).lte('data_repasse', end).limit(50000),
         ]);
         res = s;
-        if (alive) setAntecip(a.data ?? []);
+        if (alive) {
+          setAntecip(a.data ?? []);
+          const mapa = new Map<string, { eventos: number | null; conciliacao: number | null; liquidado: number | null }>();
+          const soma = (d: string | null, k: 'eventos' | 'conciliacao' | 'liquidado', v: number) => {
+            if (!d) return;
+            const x = mapa.get(d) ?? { eventos: null, conciliacao: null, liquidado: null };
+            x[k] = (x[k] ?? 0) + v;
+            mapa.set(d, x);
+          };
+          for (const e of ev.data ?? []) soma(e.expected_settlement, 'eventos', n(e.amount));
+          for (const e of rec.data ?? []) soma(e.data_repasse, 'conciliacao', n(e.valor));
+          for (const r of s.data ?? []) if (String(r.type ?? '').toUpperCase() === 'REPASSE') soma(r.payment_date, 'liquidado', n(r.amount));
+          setConf([...mapa.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([data, v]) => ({ data, ...v })));
+        }
       } else {
         res = await supabase.from('fin_ifood_events').select('*').eq('tenant_id', tenantId)
           .gte('event_at', `${start}T00:00:00-03:00`).lte('event_at', `${end}T23:59:59-03:00`).order('event_at', { ascending: false }).limit(5000);
@@ -163,10 +180,47 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
   }
 
   if (view === 'repasses') {
-    if (rows.length === 0 && antecip.length === 0) return <Empty />;
+    if (rows.length === 0 && antecip.length === 0 && conf.length === 0) return <Empty />;
+    // Fontes batem se as disponíveis diferem até R$ 0,05 entre si.
+    const situacao = (c: { eventos: number | null; conciliacao: number | null; liquidado: number | null }) => {
+      const vals = [c.eventos, c.conciliacao, c.liquidado].filter((v): v is number => v !== null);
+      if (vals.length < 2) return { t: 'Só uma fonte', c: 'bg-zinc-100 text-zinc-600' };
+      return Math.max(...vals) - Math.min(...vals) <= 0.05 ? { t: 'Conferido', c: 'bg-green-100 text-green-700' } : { t: 'Diferença', c: 'bg-amber-100 text-amber-700' };
+    };
     const conta = (a: any) => (a ? `${a.bankName ?? a.bankNumber ?? ''} ag. ${a.branchCode ?? ''} c/c ${String(a.accountNumber ?? '').replace(/.(?=.{4})/g, '•')}${a.accountDigit ? '-' + a.accountDigit : ''}` : '—');
     return (
       <div className="space-y-4">
+        {conf.length > 0 && (
+          <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
+            <div className="px-4 py-3 border-b border-zinc-100">
+              <p className="text-sm font-semibold text-zinc-800">Conferência entre fontes do iFood</p>
+              <p className="text-xs text-zinc-500">Por data de repasse: soma dos eventos financeiros que afetam o repasse × relatório de conciliação × valor liquidado (tipo Repasse). As três devem bater.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[640px]">
+                <thead className="bg-zinc-50 text-xs text-zinc-500">
+                  <tr><th className="text-left px-3 py-2">Repasse</th><th className="text-right px-3 py-2">Eventos</th><th className="text-right px-3 py-2">Conciliação</th><th className="text-right px-3 py-2">Liquidado</th><th className="text-left px-3 py-2">Situação</th></tr>
+                </thead>
+                <tbody>
+                  {conf.map((c) => {
+                    const st = situacao(c);
+                    const cel = (v: number | null) => (v === null ? <span className="text-zinc-300">—</span> : formatCurrency(v));
+                    return (
+                      <tr key={c.data} className="border-t border-zinc-100">
+                        <td className="px-3 py-2 whitespace-nowrap">{dBR(c.data)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{cel(c.eventos)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{cel(c.conciliacao)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{cel(c.liquidado)}</td>
+                        <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${st.c}`}>{st.t}</span></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
           <div className="px-4 py-3 border-b border-zinc-100">
             <p className="text-sm font-semibold text-zinc-800">Liquidações do iFood</p>
@@ -197,24 +251,41 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
         <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
           <div className="px-4 py-3 border-b border-zinc-100">
             <p className="text-sm font-semibold text-zinc-800">Antecipações</p>
-            <p className="text-xs text-zinc-500">Recebimentos adiantados pelo iFood e a taxa cobrada por isso.</p>
+            <p className="text-xs text-zinc-500">Recebimentos adiantados pelo iFood, quantos dias antes e quanto isso custou — compare com esperar o prazo normal (D+30), que não tem taxa.</p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[700px]">
+            <table className="w-full text-sm min-w-[760px]">
               <thead className="bg-zinc-50 text-xs text-zinc-500">
-                <tr><th className="text-left px-3 py-2">Data original → antecipada</th><th className="text-right px-3 py-2">Valor original</th><th className="text-right px-3 py-2">Taxa</th><th className="text-right px-3 py-2">Recebido</th><th className="text-left px-3 py-2">Situação</th></tr>
+                <tr><th className="text-left px-3 py-2">Data original → antecipada</th><th className="text-right px-3 py-2">Valor original</th><th className="text-right px-3 py-2">Taxa</th><th className="text-right px-3 py-2">Recebido</th><th className="text-right px-3 py-2">Adiantou</th><th className="text-left px-3 py-2">Situação</th></tr>
               </thead>
               <tbody>
-                {antecip.map((a) => (
-                  <tr key={a.id} className="border-t border-zinc-100">
-                    <td className="px-3 py-2 text-xs whitespace-nowrap">{dBR(a.original_date)} → <strong>{dBR(a.anticipated_date)}</strong></td>
-                    <td className="px-3 py-2 text-right font-mono">{formatCurrency(n(a.original_amount))}</td>
-                    <td className="px-3 py-2 text-right font-mono text-red-600">{formatCurrency(n(a.fee_amount))} <span className="text-xs text-zinc-400">({n(a.fee_percentage).toFixed(2)}%)</span></td>
-                    <td className="px-3 py-2 text-right font-mono text-green-700">{formatCurrency(n(a.anticipated_amount))}</td>
-                    <td className="px-3 py-2 text-xs">{pt(a.status)}</td>
-                  </tr>
-                ))}
-                {antecip.length === 0 && <tr><td colSpan={5} className="px-3 py-4 text-center text-xs text-zinc-400">Nenhuma antecipação neste mês.</td></tr>}
+                {antecip.map((a) => {
+                  const dias = a.original_date && a.anticipated_date
+                    ? Math.round((new Date(a.original_date + 'T12:00:00Z').getTime() - new Date(a.anticipated_date + 'T12:00:00Z').getTime()) / 86400000) : 0;
+                  const pct = n(a.original_amount) > 0 ? (n(a.fee_amount) / n(a.original_amount)) * 100 : n(a.fee_percentage);
+                  const aoMes = dias > 0 ? (pct / dias) * 30 : null;
+                  return (
+                    <tr key={a.id} className="border-t border-zinc-100">
+                      <td className="px-3 py-2 text-xs whitespace-nowrap">{dBR(a.original_date)} → <strong>{dBR(a.anticipated_date)}</strong></td>
+                      <td className="px-3 py-2 text-right font-mono">{formatCurrency(n(a.original_amount))}</td>
+                      <td className="px-3 py-2 text-right font-mono text-red-600">{formatCurrency(n(a.fee_amount))} <span className="text-xs text-zinc-400">({pct.toFixed(2)}%)</span></td>
+                      <td className="px-3 py-2 text-right font-mono text-green-700">{formatCurrency(n(a.anticipated_amount))}</td>
+                      <td className="px-3 py-2 text-right text-xs whitespace-nowrap">{dias > 0 ? `${dias} dia(s)` : '—'}{aoMes !== null && <span className="block text-zinc-400">custo ≈ {aoMes.toFixed(2)}% ao mês</span>}</td>
+                      <td className="px-3 py-2 text-xs">{pt(a.status)}</td>
+                    </tr>
+                  );
+                })}
+                {antecip.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-xs text-zinc-400">Nenhuma antecipação neste mês.</td></tr>}
+                {antecip.length > 0 && (() => {
+                  const taxa = antecip.reduce((s, a) => s + n(a.fee_amount), 0);
+                  return (
+                    <tr className="border-t border-zinc-200 text-xs">
+                      <td colSpan={6} className="px-3 py-2 text-zinc-600">
+                        Neste mês a loja pagou <strong className="text-red-600">{formatCurrency(taxa)}</strong> para receber antes. Esperando o prazo normal (D+30), esse valor teria entrado inteiro no caixa.
+                      </td>
+                    </tr>
+                  );
+                })()}
               </tbody>
             </table>
           </div>

@@ -14,6 +14,7 @@ interface ImportRow {
   id: string; merchant_id: string; merchant_short: string | null;
   competence: string; source: 'api' | 'file'; file_name: string | null;
   lines: number; orders: number; gross: number; fees: number; net: number; updated_at: string;
+  expected_lines?: number | null; expected_orders?: number | null; integrity_ok?: boolean | null;
 }
 interface EntryRow {
   fato_gerador: string | null; tipo_lancamento: string | null; descricao: string | null;
@@ -66,7 +67,7 @@ export default function IfoodTab() {
     if (!user?.tenantId) return;
     const [{ data, error: err }, cfg, mer] = await Promise.all([
       supabase.from('fin_ifood_imports')
-        .select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at')
+        .select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at, expected_lines, expected_orders, integrity_ok')
         .eq('tenant_id', user.tenantId).order('competence', { ascending: false }),
       invokeWithAuth<{ config?: { post_to_ledger?: boolean; authorized?: boolean; merchant_id?: string | null } | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user.tenantId } }),
       supabase.from('fin_ifood_merchants').select('merchant_id, name').eq('tenant_id', user.tenantId),
@@ -403,6 +404,8 @@ export default function IfoodTab() {
           {impsMes.map((imp) => (
             <p key={imp.id} className="text-[11px] text-zinc-400">
               {nomeLoja(imp.merchant_id, imp.merchant_short)}: {imp.source === 'api' ? 'API do iFood' : `arquivo ${imp.file_name ?? ''}`} · {imp.lines} linha(s) · atualizado em {new Date(imp.updated_at).toLocaleString('pt-BR')}
+              {imp.integrity_ok === true && <span className="text-green-600"> · conferido com o iFood ({imp.expected_lines ?? '—'} linhas, {imp.expected_orders ?? '—'} pedidos)</span>}
+              {imp.integrity_ok === false && <span className="text-red-600 font-semibold"> · ATENÇÃO: o arquivo difere do que o iFood informou ({imp.expected_lines ?? '—'} linhas e {imp.expected_orders ?? '—'} pedidos esperados) — gere o relatório de novo</span>}
             </p>
           ))}
           {lojas.length === 1 && (

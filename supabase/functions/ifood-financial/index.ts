@@ -287,18 +287,25 @@ async function sha256Hex(bytes: Uint8Array) {
 }
 
 // Grava uma loja + competência (substitui a anterior da mesma loja), lança no razão e casa com o Inter.
-async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, competence: string, entries: Entry[], meta: { source: 'api' | 'file'; merchant_id: string; file_name?: string | null; sha256?: string | null; userId?: string | null }) {
+async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, competence: string, entries: Entry[], meta: { source: 'api' | 'file'; merchant_id: string; file_name?: string | null; sha256?: string | null; userId?: string | null; expected?: { lines: number | null; orders: number | null; read_lines: number; read_orders: number } }) {
   const valid = entries.filter((e) => e.data_repasse || e.valor);
   const sig = valid.filter((e) => e.impacto_repasse);
   const gross = round2(sig.filter(isRevenue).reduce((s, e) => s + e.valor, 0));
   const fees = round2(-sig.filter((e) => !isRevenue(e)).reduce((s, e) => s + e.valor, 0));
   const orders = new Set(valid.map((e) => e.order_id).filter(Boolean)).size;
   const now = new Date().toISOString();
+  // Integridade: contagens do metadata do iFood × o que foi lido do arquivo (null = sem metadata).
+  const ex = meta.expected;
+  const integrity = ex && (ex.lines != null || ex.orders != null)
+    ? (ex.lines == null || ex.lines === ex.read_lines) && (ex.orders == null || ex.orders === ex.read_orders)
+    : null;
+  if (integrity === false) log('WARN', 'integrity', 'arquivo difere do metadata do iFood', { tenantId, competence, ...ex });
 
   const { data: imp, error: impErr } = await admin.from('fin_ifood_imports').upsert({
     tenant_id: tenantId, merchant_id: meta.merchant_id, merchant_short: valid.find((e) => e.merchant_short)?.merchant_short ?? null,
     competence, source: meta.source, file_name: meta.file_name ?? null, sha256: meta.sha256 ?? null,
     lines: valid.length, orders, gross, fees, net: round2(gross - fees), created_by: meta.userId ?? null, updated_at: now,
+    expected_lines: meta.expected?.lines ?? null, expected_orders: meta.expected?.orders ?? null, integrity_ok: integrity,
   }, { onConflict: 'tenant_id,merchant_id,competence' }).select('id').single();
   if (impErr || !imp) throw new Error('Registrar importação: ' + (impErr?.message ?? 'sem id'));
   if (meta.merchant_id) {
@@ -339,7 +346,14 @@ async function syncCompetence(admin: Admin, cfg: any, competence: string) {
   const entries = rows.map(toEntry).filter((e) => !e.competence || e.competence === competence);
   // Arquivo sem lançamentos (mês sem movimento): não cria importação vazia.
   if (entries.length === 0) return { competence, skipped: true, reason: 'relatório sem lançamentos' };
-  return await saveCompetence(admin, cfg.tenant_id, cfg, competence, entries, { source: 'api', merchant_id: cfg.merchant_id, sha256: sha || await sha256Hex(bytes) });
+  const md = last.metadata ?? {};
+  const expected = {
+    lines: md.total_linhas != null ? Number(md.total_linhas) : null,
+    orders: md.total_pedido_associado_ifood != null ? Number(md.total_pedido_associado_ifood) : null,
+    read_lines: rows.length,
+    read_orders: new Set(rows.map((r) => str(r['pedido_associado_ifood'])).filter(Boolean)).size,
+  };
+  return await saveCompetence(admin, cfg.tenant_id, cfg, competence, entries, { source: 'api', merchant_id: cfg.merchant_id, sha256: sha || await sha256Hex(bytes), expected });
 }
 
 // ── Demais APIs do módulo Financial (vendas, eventos, liquidações, antecipações) ──
@@ -554,7 +568,7 @@ Deno.serve(async (req) => {
     if (action === 'get_config') return json({ success: true, config: safeConfig(cfg) });
 
     if (action === 'list_imports') {
-      const { data } = await admin.from('fin_ifood_imports').select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at').eq('tenant_id', tenantId).order('competence', { ascending: false }).limit(48);
+      const { data } = await admin.from('fin_ifood_imports').select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at, expected_lines, expected_orders, integrity_ok').eq('tenant_id', tenantId).order('competence', { ascending: false }).limit(48);
       return json({ success: true, imports: data ?? [] });
     }
 

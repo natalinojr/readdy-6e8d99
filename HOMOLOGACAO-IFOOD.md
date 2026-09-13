@@ -61,7 +61,9 @@ chamado **separado** para o Financial · questionário com dados do **ambiente d
 - **Anticipations:** `beginAnticipatedPaymentDate`/`endAnticipatedPaymentDate`, com valor original,
   taxa (R$ e %), valor antecipado e datas.
 - **Reconciliation:** por competência (AAAA-MM); baixamos o `downloadPath`, descompactamos o CSV `.gz`
-  (separador `;`) e comparamos o `sha256` do `metadata` para não reprocessar arquivo repetido.
+  (separador `;`), comparamos o `sha256` do `metadata` para não reprocessar arquivo repetido e validamos
+  `total_linhas` e `total_pedido_associado_ifood` contra o que foi lido.
+- **Conferência cruzada:** por data de repasse, Financial Events (com impacto) × Reconciliation × Settlements.
 - **Reconciliation On-Demand:** POST com a competência; em **409** reutilizamos o `requestId` do pedido
   em andamento; consultamos o GET com backoff exponencial até o arquivo ficar pronto e então importamos.
 - Autenticação: fluxo **distribuído** (`userCode` + `authorizationCode` + `refresh_token`) e **centralizado**
@@ -132,11 +134,18 @@ Antes de gravar: gerar 2–3 pedidos de teste (Portal › Pedidos de teste › G
 
 ---
 
-## 5. Pontos que o iFood pode cobrar e ainda não fizemos (honesto)
+## 5. Conferências e validações (feitas em 2026-09-13)
 
-- **Reconciliar uma API contra a outra** (ex.: somar Financial Events e comparar com Settlements; total de
-  vendas contra o relatório). Hoje as telas mostram cada fonte; a conferência automática entre elas não existe.
-- **Validar o arquivo pelo `metadata`** (`total_linhas`, `total_pedido_associado_ifood`) além do `sha256`.
-- **"Economia versus D+30"** nas antecipações.
-- A loja de teste não gera Settlements, Anticipations nem Reconciliation — esses cenários serão mostrados
-  vazios ou com dados reais.
+- **Conferência entre APIs:** subaba Repasses › "Conferência entre fontes do iFood" — por data de repasse,
+  soma dos Financial Events com `hasTransferImpact` × linhas do Reconciliation com impacto no repasse ×
+  valor liquidado (Settlements tipo REPASSE). Situação "Conferido" quando as fontes disponíveis diferem até
+  R$ 0,05; "Diferença" caso contrário.
+- **Integridade do arquivo de conciliação:** além do `sha256`, comparamos `metadata.total_linhas` e
+  `metadata.total_pedido_associado_ifood` com as linhas e pedidos lidos do arquivo; a importação fica marcada
+  como conferida ou com diferença (aviso em vermelho na aba iFood, com orientação para gerar de novo).
+- **Antecipações × D+30:** para cada antecipação mostramos quantos dias o dinheiro chegou antes, a taxa em
+  R$ e %, o custo equivalente ao mês e o total pago no mês para receber antes (que no prazo normal, D+30,
+  entraria inteiro).
+
+**Limitação da loja de teste:** ela não gera Settlements, Anticipations nem Reconciliation — esses cenários
+serão mostrados vazios (com as mensagens de erro/aviso) ou gravados com dados reais de uma loja.
