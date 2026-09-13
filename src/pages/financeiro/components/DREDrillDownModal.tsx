@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
+import { fetchComprasPeriodo, fetchComprasLinhas } from '@/lib/comprasDRE';
 
 interface Props {
   type: string;
@@ -19,6 +20,8 @@ interface DetailItem {
   amount: number;
   extra?: Record<string, string | number>;
   source: string;
+  /** Agrupador opcional (drill-down do CMV: categoria ou fornecedor). */
+  group?: string;
 }
 
 function getMonthRange(mes: string) {
@@ -46,6 +49,9 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
   const [items, setItems] = useState<DetailItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
+  const [cmvAgrupar, setCmvAgrupar] = useState<'categoria' | 'fornecedor'>('categoria');
+  const [cmvDespesa, setCmvDespesa] = useState(0);
+  const [abertos, setAbertos] = useState<Record<string, boolean>>({});
 
   const loadDetails = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -234,50 +240,43 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
 
     // ── CMV ──
     else if (type === 'cmv') {
-      // P2: CMV por consumo — custo dos itens vendidos (order_items.unit_cost × qtd),
-      // agrupado por produto. Não usa mais compras (fin_purchases).
-      const { data: rows } = await supabase
-        .from('order_items')
-        .select('item_name, quantity, unit_cost, orders!inner(tenant_id, created_at, is_paid, status, is_training, is_draft)')
-        .eq('orders.tenant_id', user.tenantId)
-        .eq('orders.is_paid', true)
-        .eq('orders.is_training', false)
-        .eq('orders.is_draft', false)
-        .not('orders.status', 'in', '(cancelled,draft)')
-        .gte('orders.created_at', start.slice(0, 10))
-        .lte('orders.created_at', end);
-
-      const agg: Record<string, { qty: number; cost: number }> = {};
-      for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
-        const name = (r.item_name as string) || 'Item';
-        const qty = Number(r.quantity ?? 0);
-        const uc = Number(r.unit_cost ?? 0);
-        if (!agg[name]) agg[name] = { qty: 0, cost: 0 };
-        agg[name].qty += qty;
-        agg[name].cost += uc * qty;
-      }
-
-      result = Object.entries(agg)
-        .filter(([, v]) => v.cost > 0)
-        .sort((a, b) => b[1].cost - a[1].cost)
-        .map(([name, v], idx) => ({
-          id: `cmv-${idx}`,
-          date: start.slice(0, 10),
-          description: name,
-          amount: v.cost,
-          source: 'Consumo (ficha técnica)',
-          extra: { Qtd: v.qty, 'Custo unit.': Number((v.cost / (v.qty || 1)).toFixed(2)) },
+      // CMV = COMPRAS (regra de 2026-09-05). O drill-down ainda lia o consumo por ficha
+      // técnica (order_items.unit_cost), que a loja quase não tem — abria VAZIO enquanto a
+      // linha mostrava o valor das compras. Agora usa exatamente o mesmo conjunto e o
+      // mesmo peso da DRE (caixa = pago no mês; competência = comprado no mês).
+      const compras = await fetchComprasPeriodo(user.tenantId, start.slice(0, 10), end.slice(0, 10), mode);
+      const linhas = await fetchComprasLinhas(user.tenantId, compras);
+      result = linhas
+        .filter(l => l.destino === 'cmv')
+        .sort((a, b) => b.valor - a.valor)
+        .map(l => ({
+          id: l.id,
+          date: l.data || start.slice(0, 10),
+          description: l.descricao,
+          amount: l.valor,
+          source: l.nota ? `NF ${l.nota}` : 'Compra',
+          group: cmvAgrupar === 'categoria' ? l.categoria : l.fornecedor,
+          extra: {
+            ...(cmvAgrupar === 'categoria' ? { Fornecedor: l.fornecedor } : { Categoria: l.categoria }),
+            ...(l.quantidade != null ? { Qtd: `${l.quantidade.toLocaleString('pt-BR')}${l.unidade ? ` ${l.unidade}` : ''}` } : {}),
+            ...(l.pago != null ? { 'Pago no mês': `${(l.pago * 100).toFixed(0)}% da compra` } : {}),
+          },
         }));
+      setCmvDespesa(linhas.filter(l => l.destino === 'despesa').reduce((s, l) => s + l.valor, 0));
     }
 
     // ── CUSTO PESSOAL ──
     else if (type === 'custo_pessoal') {
-      const { data } = await supabase
+      // Mesmo critério da linha: caixa = folha paga no mês (paid_date); competência =
+      // folha do mês de referência, paga ou não.
+      let q = supabase
         .from('hr_payroll')
         .select('id,reference_month,net_salary,gross_salary,fgts,employee_id,hr_employees(name,role)')
-        .eq('tenant_id', user.tenantId)
-        .eq('reference_month', monthStr)
-        .order('gross_salary', { ascending: false });
+        .eq('tenant_id', user.tenantId);
+      q = mode === 'caixa'
+        ? q.eq('status', 'paid').gte('paid_date', start.slice(0, 10)).lte('paid_date', end.slice(0, 10))
+        : q.eq('reference_month', monthStr);
+      const { data } = await q.order('gross_salary', { ascending: false });
       result = (data ?? []).map((p: Record<string, unknown>) => ({
         id: p.id as string,
         date: `${monthStr}-01`,
@@ -349,11 +348,51 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
     setItems(result);
     setTotal(result.reduce((s, i) => s + i.amount, 0));
     setLoading(false);
-  }, [user?.tenantId, type, categoryId, month, mode]);
+  }, [user?.tenantId, type, categoryId, month, mode, cmvAgrupar]);
 
   useEffect(() => { loadDetails(); }, [loadDetails]);
 
   const label = categoryName || TYPE_LABELS[type] || type;
+
+  // Grupos (hoje só o CMV usa): ordenados pelo valor, com subtotal e % do total.
+  const temGrupos = items.some(i => i.group);
+  const grupos = temGrupos
+    ? Object.entries(items.reduce((acc, i) => {
+        const g = i.group || '—';
+        (acc[g] ??= []).push(i);
+        return acc;
+      }, {} as Record<string, DetailItem[]>))
+        .map(([nome, lista]) => ({ nome, lista, soma: lista.reduce((s, i) => s + i.amount, 0) }))
+        .sort((a, b) => b.soma - a.soma)
+    : [];
+
+  const renderItem = (item: DetailItem) => (
+    <tr key={item.id} className="hover:bg-zinc-50 transition-colors">
+      <td className="px-5 py-3 text-xs text-zinc-500 whitespace-nowrap">
+        {new Date(item.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+      </td>
+      <td className="px-4 py-3">
+        <p className="text-xs font-medium text-zinc-800">{item.description}</p>
+        {item.extra && Object.entries(item.extra).length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-1">
+            {Object.entries(item.extra).map(([k, v]) => (
+              <span key={k} className="text-[10px] text-zinc-400 bg-zinc-50 px-1.5 py-0.5 rounded">
+                {k}: <span className="text-zinc-600 font-medium">{String(v)}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </td>
+      <td className="px-4 py-3">
+        <span className="text-[10px] font-medium text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full whitespace-nowrap">
+          {item.source}
+        </span>
+      </td>
+      <td className="px-5 py-3 text-right">
+        <span className="text-xs font-bold text-zinc-800 tabular-nums">{formatCurrency(item.amount)}</span>
+      </td>
+    </tr>
+  );
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
@@ -366,10 +405,33 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
               {items.length} registro{items.length !== 1 ? 's' : ''} — Total: {formatCurrency(total)}
             </p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
-            <i className="ri-close-line text-zinc-500" />
-          </button>
+          <div className="flex items-center gap-2">
+            {type === 'cmv' && (
+              <div className="flex bg-zinc-100 p-0.5 rounded-lg">
+                {(['categoria', 'fornecedor'] as const).map(g => (
+                  <button
+                    key={g}
+                    onClick={() => { setCmvAgrupar(g); setAbertos({}); }}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md cursor-pointer ${cmvAgrupar === g ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                  >
+                    Por {g}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
+              <i className="ri-close-line text-zinc-500" />
+            </button>
+          </div>
         </div>
+        {type === 'cmv' && !loading && (
+          <div className="px-6 py-2 bg-zinc-50 border-b border-zinc-100 text-[11px] text-zinc-500">
+            {mode === 'caixa'
+              ? 'Caixa: compras PAGAS neste mês (inclui compras de meses anteriores pagas agora; parcela paga é proporcional).'
+              : 'Competência: compras feitas neste mês, pagas ou não.'}
+            {cmvDespesa > 0 && <> Itens classificados como despesa ({formatCurrency(cmvDespesa)}) ficam fora do CMV.</>}
+          </div>
+        )}
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-0">
@@ -394,33 +456,33 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-50">
-                {items.map(item => (
-                  <tr key={item.id} className="hover:bg-zinc-50 transition-colors">
-                    <td className="px-5 py-3 text-xs text-zinc-500 whitespace-nowrap">
-                      {new Date(item.date + 'T00:00:00').toLocaleDateString('pt-BR')}
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="text-xs font-medium text-zinc-800">{item.description}</p>
-                      {item.extra && Object.entries(item.extra).length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-1">
-                          {Object.entries(item.extra).map(([k, v]) => (
-                            <span key={k} className="text-[10px] text-zinc-400 bg-zinc-50 px-1.5 py-0.5 rounded">
-                              {k}: <span className="text-zinc-600 font-medium">{String(v)}</span>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-[10px] font-medium text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full">
-                        {item.source}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      <span className="text-xs font-bold text-zinc-800">{formatCurrency(item.amount)}</span>
-                    </td>
-                  </tr>
-                ))}
+                {temGrupos
+                  ? grupos.map(g => {
+                      const aberto = abertos[g.nome] ?? grupos.length <= 3;
+                      return (
+                        <Fragment key={g.nome}>
+                          <tr
+                            onClick={() => setAbertos(a => ({ ...a, [g.nome]: !aberto }))}
+                            className="bg-zinc-50/80 hover:bg-amber-50/50 cursor-pointer"
+                          >
+                            <td colSpan={3} className="px-5 py-2.5">
+                              <div className="flex items-center gap-2">
+                                <i className={`ri-arrow-${aberto ? 'down' : 'right'}-s-line text-zinc-400`} />
+                                <span className="text-xs font-bold text-zinc-800">{g.nome}</span>
+                                <span className="text-[10px] text-zinc-400">{g.lista.length} ite{g.lista.length !== 1 ? 'ns' : 'm'}</span>
+                                <div className="hidden sm:block w-20 h-1.5 rounded-full bg-zinc-200 overflow-hidden ml-2">
+                                  <div className="h-full bg-orange-400" style={{ width: `${total > 0 ? (g.soma / total) * 100 : 0}%` }} />
+                                </div>
+                                <span className="text-[10px] text-zinc-500 tabular-nums">{total > 0 ? ((g.soma / total) * 100).toFixed(1).replace('.', ',') : '0'}%</span>
+                              </div>
+                            </td>
+                            <td className="px-5 py-2.5 text-right text-xs font-bold text-zinc-900 tabular-nums">{formatCurrency(g.soma)}</td>
+                          </tr>
+                          {aberto && g.lista.map(renderItem)}
+                        </Fragment>
+                      );
+                    })
+                  : items.map(renderItem)}
               </tbody>
             </table>
           )}

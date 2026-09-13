@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, Fragment, type ReactNode } from 'reac
 import { useImpressoras, PRINTER_KEY_RELATORIOS } from '@/contexts/ImpressorasContext';
 import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
-import { fetchComprasDRE } from '@/lib/comprasDRE';
+import { fetchComprasDRE, fetchComprasPeriodo } from '@/lib/comprasDRE';
 import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -118,7 +118,6 @@ const STANDARD_GROUPS = STANDARD_GROUP_KEYS;
 // ─── Fetch — Regime de Caixa ──────────────────────────────────────────────────
 async function fetchDREData(tenantId: string, startDate: string, endDate: string): Promise<DREData> {
   const endDateTime = endDate + 'T23:59:59';
-  const monthStr = startDate.slice(0, 7);
 
   // ═══ LIVRO-RAZÃO ÚNICO: fin_cash_flow é a fonte de verdade para receita ═══
   // auto_sale = vendas recebidas à vista; manual = entradas manuais
@@ -201,16 +200,17 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .gte('purchase_date', startDate)
       .lte('purchase_date', endDate),
 
-    // REGIME DE CAIXA: só entra a folha efetivamente PAGA. Antes o filtro era apenas
-    // `reference_month`, então a folha do mês virava saída de caixa mesmo sem ter sido paga
-    // (o regime de competência é que reconhece por mês de referência — ver a query gêmea em
-    // fetchDREDataCompetencia, que continua sem filtro de status de propósito).
+    // REGIME DE CAIXA: entra a folha PAGA NO MÊS (paid_date), de qualquer mês de
+    // referência. A folha de agosto é paga no 5º dia útil de setembro — filtrar por
+    // `reference_month` do próprio mês a jogava num mês em que ainda não tinha sido paga
+    // e ela nunca aparecia no caixa. A competência (query gêmea) segue por referência.
     supabase
       .from('hr_payroll')
       .select('net_salary, gross_salary, fgts')
       .eq('tenant_id', tenantId)
       .eq('status', 'paid')
-      .eq('reference_month', monthStr),
+      .gte('paid_date', startDate)
+      .lte('paid_date', endDate),
 
     supabase
       .from('payment_methods')
@@ -301,7 +301,10 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   // compra classificado como DESPESA sai do CMV e vai para a categoria dele; todo o
   // resto é mercadoria. Os dois destinos são exclusivos, então a mercadoria continua
   // sem ser contada 2x (P1/P23): `billsRes` já exclui `reference_type='purchase'`.
-  const compras = await fetchComprasDRE(tenantId, purchasesRes.data ?? []);
+  // Caixa: o que foi PAGO de compras no mês (conta a pagar da compra pela paid_date,
+  // ou compra à vista pela data), não "compras do mês que já estão pagas".
+  void purchasesRes;
+  const compras = await fetchComprasDRE(tenantId, await fetchComprasPeriodo(tenantId, startDate, endDate, 'caixa'));
   const cmvCompras = compras.cmv;
   const comprasTotal = compras.total;
   const despesasPorCategoria: Record<string, number> = { ...compras.despesasPorCategoria };
@@ -1438,12 +1441,17 @@ export default function DRETab() {
                   receitaBruta={receitaBruta}
                   isNeg
                   depth={1}
-                  origin="Compras realizadas no período (itens classificados como mercadoria)"
+                  origin={dreMode === 'caixa'
+                    ? 'Compras pagas no mês (conta a pagar da compra pela data do pagamento, ou compra à vista)'
+                    : 'Compras feitas no mês (itens classificados como mercadoria)'}
                   clickable={cmvTotal > 0}
                   onClick={cmvTotal > 0 ? () => setDrillDown({ type: 'cmv' }) : undefined}
                 />
                 <NoteRow>
-                  CMV = compras realizadas no mês. Total comprado: <strong className="text-zinc-500">{formatCurrency(data.comprasTotal ?? 0)}</strong>
+                  {dreMode === 'caixa'
+                    ? <>CMV (caixa) = compras <strong className="text-zinc-500">pagas neste mês</strong>, inclusive de meses anteriores. Total pago em compras: </>
+                    : <>CMV (competência) = compras <strong className="text-zinc-500">feitas neste mês</strong>, pagas ou não. Total comprado: </>}
+                  <strong className="text-zinc-500">{formatCurrency(data.comprasTotal ?? 0)}</strong>
                   {comprasComoDespesa > 0 && (
                     <>, dos quais <strong className="text-zinc-500">{formatCurrency(comprasComoDespesa)}</strong> foram classificados como despesa</>
                   )}.
@@ -1470,7 +1478,7 @@ export default function DRETab() {
                     isNeg
                     depth={1}
                     origin={dreMode === 'caixa'
-                      ? 'Folha PAGA no mês de referência + encargos patronais (regime de caixa)'
+                      ? 'Folha marcada como PAGA com data de pagamento neste mês + FGTS (regime de caixa)'
                       : 'Folha do mês de referência + encargos patronais (paga ou não)'}
                     badge="RH"
                     badgeColor="bg-amber-100 text-amber-700"

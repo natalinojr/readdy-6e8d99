@@ -79,6 +79,23 @@ describe('splitComprasDRE', () => {
     expect(r.despesasPorCategoria).toEqual({});
   });
 
+  it('regime de caixa: aplica o peso (parte paga no mês) a itens e compras sem itens', () => {
+    const r = splitComprasDRE(
+      [
+        item({ purchase_id: 'p1', total_price: 800 }),
+        item({ purchase_id: 'p1', total_price: 200, dre_category_id: 'cat-limpeza' }),
+      ],
+      [
+        { id: 'p1', total_amount: 1000, peso: 0.5 }, // metade paga no mês
+        { id: 'p2', total_amount: 300 },             // sem peso = inteira
+      ],
+      DESPESAS,
+    );
+    expect(r.cmv).toBe(400 + 300);
+    expect(r.despesasPorCategoria).toEqual({ 'cat-limpeza': 100 });
+    expect(r.total).toBe(800);
+  });
+
   it('sem compras devolve tudo zerado', () => {
     const r = splitComprasDRE([], [], DESPESAS);
     expect(r).toEqual({ cmv: 0, despesasPorCategoria: {}, total: 0 });

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { fetchComprasDRE } from '@/lib/comprasDRE';
+import { fetchComprasDRE, fetchComprasPeriodo } from '@/lib/comprasDRE';
 import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
@@ -108,8 +108,8 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string):
     // Mantido o filtro do P1 (compras fora, senão a mercadoria conta 2x com o CMV).
     supabase.from('fin_accounts_payable').select('dre_category_id, amount, paid_amount, status').eq('tenant_id', tenantId).in('status', ['paid', 'partial']).or('reference_type.is.null,reference_type.neq.purchase').gte('paid_date', startDate).lte('paid_date', endDate),
     supabase.from('fin_purchases').select('id, total_amount, payment_status').eq('tenant_id', tenantId).in('payment_status', ['paid', 'partial']).gte('purchase_date', startDate).lte('purchase_date', endDate),
-    // Regime de caixa: só folha efetivamente paga.
-    supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('status', 'paid').eq('reference_month', monthStr),
+    // Regime de caixa: folha PAGA no mês (paid_date), de qualquer mês de referência — igual ao DRETab.
+    supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('status', 'paid').gte('paid_date', startDate).lte('paid_date', endDate),
     // P7: taxa de maquininha vem do razão (auto_card_fee), igual ao DRETab.
     supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'expense').eq('origin', 'auto_card_fee').gte('date', startDate).lte('date', endDate),
   ]);
@@ -135,7 +135,9 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string):
   const descontos = (descontosRes.data ?? []).reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
   // CMV = compras realizadas; item classificado como despesa sai do CMV (mesmo
   // critério do DRETab, via helper compartilhado).
-  const compras = await fetchComprasDRE(tenantId, purchasesRes.data ?? []);
+  // Caixa: compras PAGAS no mês (mesmo critério do DRETab, ver fetchComprasPeriodo).
+  void purchasesRes;
+  const compras = await fetchComprasDRE(tenantId, await fetchComprasPeriodo(tenantId, startDate, endDate, 'caixa'));
   const cmvCompras = compras.cmv;
   const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime);
   const despesasPorCategoria: Record<string, number> = { ...compras.despesasPorCategoria };
