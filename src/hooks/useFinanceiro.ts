@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, SUPABASE_URL, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { translateSupabaseError } from '@/hooks/useQueryError';
-import { fetchRevenueSources, fetchStoneSales, fetchPixRecebidos } from '@/lib/revenueSources';
+import { fetchRevenueSources, fetchStoneSales, fetchPixRecebidos, fetchIfoodSales } from '@/lib/revenueSources';
 import type {
   CostCenter, BillPayable, CashFlowEntry, Purchase,
   Supplier, FinanceiroDashboard, Anticipation, ReceivableInstallment,
@@ -764,13 +764,15 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       const { sources } = await fetchRevenueSources(user.tenantId);
       const on = (s: string) => (sources as string[]).includes(s);
       const extraStart = prevMonthStartDate < thirtyDaysAgoDate ? prevMonthStartDate : thirtyDaysAgoDate;
-      const [stoneRes, pixRes] = await Promise.all([
+      const [stoneRes, pixRes, ifoodRes] = await Promise.all([
         on('stone') ? fetchStoneSales(user.tenantId, extraStart, monthEndDate) : Promise.resolve({ rows: [], error: null }),
         on('pix') ? fetchPixRecebidos(user.tenantId, extraStart, monthEndDate) : Promise.resolve({ rows: [], error: null }),
+        on('ifood') ? fetchIfoodSales(user.tenantId, extraStart, monthEndDate) : Promise.resolve({ rows: [], error: null }),
       ]);
       const extraRows = [
         ...stoneRes.rows.map(r => ({ date: r.date, amount: r.amount, label: 'Cartão (Stone)' })),
         ...pixRes.rows.map(r => ({ date: r.transaction_date, amount: r.amount, label: 'Pix recebido' })),
+        ...ifoodRes.rows.map(r => ({ date: r.date, amount: r.amount, label: 'iFood' })),
       ];
       const extraIn = (from: string, to: string) =>
         extraRows.filter(r => r.date >= from && r.date <= to).reduce((s, r) => s + r.amount, 0);
@@ -787,12 +789,12 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       // Ticket médio é dos PEDIDOS (venda no ERP), independente das fontes.
       const ticketMedio = totalOrdersMes > 0 ? autoMesReal / totalOrdersMes : 0;
 
-      // entradas: exclui auto_sale, manual e stone_sale — ou já estão em receitaMes,
+      // entradas: exclui auto_sale, manual, stone_sale e ifood_sale — ou já estão em receitaMes,
       // ou a loja escolheu não contá-los como recebido (ex.: pedidos do PDV em
       // Paranaguá, onde o dinheiro real vem por Stone/Pix e somaria 2x no saldo).
       // Mantém outras origens de receita (antecipações, estornos etc.).
       const entradas = (cashFlow.data ?? [])
-        .filter(e => e.type === 'income' && !['auto_sale', 'manual', 'stone_sale'].includes((e as any).origin ?? ''))
+        .filter(e => e.type === 'income' && !['auto_sale', 'manual', 'stone_sale', 'ifood_sale'].includes((e as any).origin ?? ''))
         .reduce((s, e) => s + Number(e.amount), 0);
       // saidas: TODAS as despesas — incluindo manual, auto_card_fee, auto_purchase, auto_bill_payment, auto_payroll
       const saidas = (cashFlow.data ?? []).filter(e => e.type === 'expense').reduce((s, e) => s + Number(e.amount), 0);

@@ -21,7 +21,7 @@ interface CashFlowRow {
 import { useAuth } from '@/contexts/AuthContext';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-export type ReceitaSource = 'order' | 'stone' | 'pix' | 'manual';
+export type ReceitaSource = 'order' | 'stone' | 'pix' | 'ifood' | 'manual';
 
 // Fontes configuráveis por loja (fin_revenue_settings.sources) — regra única
 // compartilhada com DRE e Visão Geral, em src/lib/revenueSources.ts.
@@ -49,6 +49,7 @@ export interface ReceitasSummary {
   fromOrders: number;
   fromStone: number;
   fromPix: number;
+  fromIfood: number;
   fromManual: number;
   byCategory: { category: string; total: number; count: number }[];
   bySource: { source: ReceitaSource; total: number; count: number }[];
@@ -70,6 +71,7 @@ export const SOURCE_LABELS_R: Record<ReceitaSource, string> = {
   order: 'Vendas (Pedidos)',
   stone: 'Stone (cartão)',
   pix: 'Pix recebido',
+  ifood: 'iFood',
   manual: 'Lançamento Manual',
 };
 
@@ -77,6 +79,7 @@ export const SOURCE_COLORS_R: Record<ReceitaSource, string> = {
   order: '#10b981',
   stone: '#0ea5e9',
   pix: '#8b5cf6',
+  ifood: '#ea1d2c',
   manual: '#f59e0b',
 };
 
@@ -128,7 +131,7 @@ export function useReceitas(filters: ReceitasFilters) {
     // PAGINADO: sem .range() o PostgREST corta em ~1000 linhas SEM ERRO, e o
     // total da aba simplesmente parava de crescer em períodos longos
     // ("Últimos 3 Meses", "Este Ano") sem nada indicar o truncamento.
-    const [ordersRes, manualRes, stoneRes, pixRes] = await Promise.all([
+    const [ordersRes, manualRes, stoneRes, pixRes, ifoodRes] = await Promise.all([
       // Pedidos entregues (fonte única de verdade: status = 'delivered')
       !enabled.includes('orders') ? empty : fetchAllRows<OrderRow>((from, to) => supabase
         .from('orders')
@@ -181,9 +184,21 @@ export function useReceitas(filters: ReceitasFilters) {
       !enabled.includes('pix')
         ? Promise.resolve({ rows: [], error: null })
         : fetchPixRecebidos(user.tenantId, startDate, endDate),
+
+      // Vendas do iFood por dia de repasse (edge ifood-financial com post_to_ledger)
+      !enabled.includes('ifood') ? empty : fetchAllRows<CashFlowRow>((from, to) => supabase
+        .from('fin_cash_flow')
+        .select('id, description, amount, date, category, origin, payment_method_id, notes, created_at')
+        .eq('tenant_id', user.tenantId)
+        .eq('type', 'income')
+        .eq('origin', 'ifood_sale')
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: false })
+        .range(from, to)),
     ]);
 
-    const falha = ordersRes.error ?? manualRes.error ?? stoneRes.error ?? (pixRes.error ? { message: pixRes.error } : null);
+    const falha = ordersRes.error ?? manualRes.error ?? stoneRes.error ?? ifoodRes.error ?? (pixRes.error ? { message: pixRes.error } : null);
     if (falha) {
       console.error('[useReceitas] Falha ao carregar receitas:', falha.message);
       setError(falha.message);
@@ -193,7 +208,7 @@ export function useReceitas(filters: ReceitasFilters) {
       return;
     }
     setError(null);
-    setTruncated(ordersRes.truncated || manualRes.truncated || stoneRes.truncated);
+    setTruncated(ordersRes.truncated || manualRes.truncated || stoneRes.truncated || ifoodRes.truncated);
 
     const allItems: ReceitaItem[] = [];
 
@@ -277,6 +292,23 @@ export function useReceitas(filters: ReceitasFilters) {
       });
     });
 
+    // Vendas iFood (uma linha por dia de repasse, antes das comissões)
+    (ifoodRes.rows ?? []).forEach(c => {
+      allItems.push({
+        id: `ifood_${c.id}`,
+        source: 'ifood',
+        description: c.description || 'Vendas iFood',
+        category: 'iFood',
+        amount: Number(c.amount),
+        date: c.date,
+        status: 'received',
+        origin_detail: 'Conciliação iFood',
+        reference_id: c.id,
+        notes: c.notes ?? undefined,
+        created_at: c.created_at,
+      });
+    });
+
     // Aplicar filtros
     let filtered = allItems;
 
@@ -346,6 +378,7 @@ export function useReceitas(filters: ReceitasFilters) {
     const fromManual = filtered.filter(r => r.source === 'manual').reduce((s, r) => s + r.amount, 0);
     const fromStone = filtered.filter(r => r.source === 'stone').reduce((s, r) => s + r.amount, 0);
     const fromPix = filtered.filter(r => r.source === 'pix').reduce((s, r) => s + r.amount, 0);
+    const fromIfood = filtered.filter(r => r.source === 'ifood').reduce((s, r) => s + r.amount, 0);
 
     setItems(filtered);
     setSummary({
@@ -353,6 +386,7 @@ export function useReceitas(filters: ReceitasFilters) {
       fromOrders,
       fromStone,
       fromPix,
+      fromIfood,
       fromManual,
       byCategory,
       bySource,

@@ -4,14 +4,15 @@ import { supabase } from '@/lib/supabase';
 // Uma única regra para Receitas, DRE, DRE Comparativo e Visão Geral: cada loja
 // escolhe o que conta como receita recebida. Sem linha na tabela vale o
 // comportamento antigo (pedidos do sistema + manuais).
-export type RevenueSettingSource = 'orders' | 'stone' | 'pix' | 'manual';
+export type RevenueSettingSource = 'orders' | 'stone' | 'pix' | 'ifood' | 'manual';
 
 export const DEFAULT_REVENUE_SOURCES: RevenueSettingSource[] = ['orders', 'manual'];
 
 export const REVENUE_SOURCE_INFO: Record<RevenueSettingSource, { label: string; desc: string }> = {
   orders: { label: 'Pedidos do sistema', desc: 'Pedidos pagos no ERP (livro-razão auto_sale). Não confirma que o dinheiro entrou na conta.' },
   stone: { label: 'Conciliação Stone', desc: 'Vendas em cartão liquidadas pela Stone (valor bruto), na data em que a Stone pagou. Exige a opção "lançar no financeiro" ligada na integração Stone.' },
-  pix: { label: 'Pix recebido (Inter)', desc: 'Todo Pix que entrou no Banco Inter, incluindo o Pix da maquininha transferido da Conta Stone. Atenção: aporte de sócio por Pix também entra.' },
+  pix: { label: 'Pix recebido (Inter)', desc: 'Todo Pix que entrou no Banco Inter, incluindo o Pix da maquininha transferido da Conta Stone. Repasses do iFood já conciliados ficam de fora. Atenção: aporte de sócio por Pix também entra.' },
+  ifood: { label: 'Conciliação iFood', desc: 'Vendas do iFood (antes das comissões e taxas), na data do repasse. Exige a integração iFood com "lançar no financeiro" ligado; as comissões entram como Taxas iFood.' },
   manual: { label: 'Lançamentos manuais', desc: 'Receitas lançadas à mão pelo botão "Nova Receita" (eventos, aluguel etc.).' },
 };
 
@@ -60,21 +61,38 @@ export async function fetchStoneSales(tenantId: string, startDate: string, endDa
   return { rows: ((data ?? []) as { date: string; amount: number }[]).map(r => ({ ...r, amount: Number(r.amount) })), error: error?.message ?? null };
 }
 
+// Vendas do iFood por dia de repasse (fin_cash_flow origin ifood_sale, lançadas
+// pela edge ifood-financial com post_to_ledger ligado).
+export async function fetchIfoodSales(tenantId: string, startDate: string, endDate: string) {
+  const { data, error } = await supabase
+    .from('fin_cash_flow')
+    .select('date, amount')
+    .eq('tenant_id', tenantId)
+    .eq('type', 'income')
+    .eq('origin', 'ifood_sale')
+    .gte('date', startDate)
+    .lte('date', endDate);
+  return { rows: ((data ?? []) as { date: string; amount: number }[]).map(r => ({ ...r, amount: Number(r.amount) })), error: error?.message ?? null };
+}
+
 export const sumAmount = (rows: { amount: number }[]) => rows.reduce((s, r) => s + Number(r.amount), 0);
 
-// Fontes da loja + total de Pix do período (só busca o extrato se Pix estiver ligado).
+// Fontes da loja + totais de Pix e iFood do período (só busca o que estiver ligado).
 export async function loadRevenueExtras(tenantId: string, startDate: string, endDate: string) {
   const { sources } = await fetchRevenueSources(tenantId);
-  const pix = sources.includes('pix') ? sumAmount((await fetchPixRecebidos(tenantId, startDate, endDate)).rows) : 0;
-  return { sources, pix };
+  const [pix, ifood] = await Promise.all([
+    sources.includes('pix') ? fetchPixRecebidos(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
+    sources.includes('ifood') ? fetchIfoodSales(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
+  ]);
+  return { sources, pix, ifood };
 }
 
 // Aplica a regra dos recebidos a um snapshot de DRE: zera o que a loja não
-// escolheu e acrescenta o Pix. Pedidos = as linhas por destino (auto_sale).
+// escolheu e acrescenta Pix e iFood. Pedidos = as linhas por destino (auto_sale).
 export function applyRevenueSources<T extends {
   receitaBalcao: number; receitaDelivery: number; receitaMesa: number; receitaAutoatendimento: number;
-  receitaStone: number; receitaManual?: number; receitaPix?: number;
-}>(d: T, sources: RevenueSettingSource[], pix: number): T {
+  receitaStone: number; receitaManual?: number; receitaPix?: number; receitaIfood?: number;
+}>(d: T, sources: RevenueSettingSource[], pix: number, ifood = 0): T {
   const on = (s: RevenueSettingSource) => sources.includes(s);
   return {
     ...d,
@@ -85,5 +103,6 @@ export function applyRevenueSources<T extends {
     receitaStone: on('stone') ? d.receitaStone : 0,
     ...(d.receitaManual !== undefined ? { receitaManual: on('manual') ? d.receitaManual : 0 } : {}),
     receitaPix: on('pix') ? pix : 0,
+    receitaIfood: on('ifood') ? ifood : 0,
   };
 }

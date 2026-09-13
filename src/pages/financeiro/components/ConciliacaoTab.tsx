@@ -11,6 +11,7 @@ import ConfirmarVinculosModal from './conciliacao/ConfirmarVinculosModal';
 import ReconciliacaoSaldoModal from './conciliacao/ReconciliacaoSaldoModal';
 import StoneConfigModal from './conciliacao/StoneConfigModal';
 import StoneImportPanel from './conciliacao/StoneImportPanel';
+import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 import InterConfigModal from './conciliacao/InterConfigModal';
 import InterSyncPanel from './conciliacao/InterSyncPanel';
 import type { OFXTransaction, MatchCandidate } from '@/utils/ofxParser';
@@ -389,6 +390,7 @@ export default function ConciliacaoTab() {
   const [selectedTransaction, setSelectedTransaction] = useState<StatementImport | null>(null);
   const [showSaldoModal, setShowSaldoModal] = useState(false);
   const [showStoneConfig, setShowStoneConfig] = useState(false);
+  const [showIfoodConfig, setShowIfoodConfig] = useState(false);
   const [showInterConfig, setShowInterConfig] = useState(false);
   const [interRefreshKey, setInterRefreshKey] = useState(0);
   const [activeImportTab, setActiveImportTab] = useState<'manual' | 'stone' | 'inter'>('manual');
@@ -486,6 +488,18 @@ export default function ConciliacaoTab() {
       return { data: { success: ok || !lastErr, inserted, error: ok ? undefined : lastErr }, error: null };
     };
 
+    // iFood: relatório de conciliação por competência (mês); o período escolhido vira a lista de meses.
+    const competencias = (() => {
+      if (!range) return undefined;
+      const out: string[] = [];
+      for (let m = range.from.slice(0, 7); m <= range.to.slice(0, 7) && out.length < 12; ) {
+        out.push(m);
+        const [y, mm] = m.split('-').map(Number);
+        m = mm === 12 ? `${y + 1}-01` : `${y}-${String(mm + 1).padStart(2, '0')}`;
+      }
+      return out;
+    })();
+
     const [inter, stone] = await Promise.all([
       invokeWithAuth<SyncResp>('inter-bank', {
         body: { action: 'sync', tenant_id: user.tenantId, ...(range ? { date_from: range.from, date_to: range.to } : {}) },
@@ -494,6 +508,10 @@ export default function ConciliacaoTab() {
         ? stoneRange()
         : invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId } }),
     ]);
+    // Depois do Inter: os depósitos do iFood casam com o extrato que acabou de chegar.
+    const ifood = await invokeWithAuth<SyncResp>('ifood-financial', {
+      body: { action: 'sync', tenant_id: user.tenantId, ...(competencias ? { competences: competencias } : {}) },
+    });
     const parts: string[] = [];
     let hasError = false;
     let novos = 0;
@@ -508,6 +526,7 @@ export default function ConciliacaoTab() {
     };
     read('Inter', inter);
     read('Stone', stone);
+    read('iFood', ifood);
     const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const periodo = range ? ` (${range.from.split('-').reverse().join('/')} a ${range.to.split('-').reverse().join('/')})` : '';
     setBankSync({ running: false, error: hasError, msg: parts.length > 0 ? `Bancos atualizados às ${hora}${periodo} · ${parts.join(' · ')}` : null });
@@ -835,6 +854,13 @@ export default function ConciliacaoTab() {
             className="flex items-center gap-1.5 px-3 py-2 border border-green-300 text-green-700 bg-green-50 rounded-lg text-sm font-semibold hover:bg-green-100 cursor-pointer whitespace-nowrap transition-colors"
           >
             <i className="ri-bank-card-line" /> Stone
+          </button>
+          <button
+            onClick={() => setShowIfoodConfig(true)}
+            className="flex items-center gap-1.5 px-3 py-2 border border-red-300 text-red-700 bg-red-50 rounded-lg text-sm font-semibold hover:bg-red-100 cursor-pointer whitespace-nowrap transition-colors"
+            title="Repasses, comissões e taxas do iFood (API ou relatório do Portal do Parceiro)"
+          >
+            <i className="ri-restaurant-2-line" /> iFood
           </button>
           <button
             onClick={() => setActiveImportTab(activeImportTab === 'inter' ? 'manual' : 'inter')}
@@ -1406,6 +1432,14 @@ export default function ConciliacaoTab() {
         <StoneConfigModal
           onClose={() => setShowStoneConfig(false)}
           onSaved={() => { setShowStoneConfig(false); }}
+        />
+      )}
+
+      {/* iFood Config Modal */}
+      {showIfoodConfig && (
+        <IfoodConfigModal
+          onClose={() => setShowIfoodConfig(false)}
+          onImported={() => { refresh(); loadAlerts(); }}
         />
       )}
     </div>

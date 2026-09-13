@@ -13,7 +13,8 @@
 //   test_config    { ...mesmos campos opcionais }  testa token + saldo (usa o que estiver gravado se omitido)
 //   delete_config  {}                              admin/manager
 //   sync           { days? }                       extrato + saldo desde o último sync (ou N dias)
-//   sync_all       {}                              (interno) todas as lojas com auto_sync — sem cron: o front chama `sync` ao abrir a Conciliação
+//   sync_all       {}                              (interno) todas as lojas com auto_sync — cron diário 07h (inter-bank-sync);
+//                                                  o front também chama `sync` ao abrir a Conciliação, e o pagamento pago dispara `sync` na hora
 //   probe_mtls     { cert_pem, key_pem }           (interno) diagnóstico do suporte a mTLS no runtime
 //   ── Pagamentos (2026-09-12) — só o assistente (x-internal-key), depois do botão Pagar + PIN no Telegram:
 //   prepare_payment  { tipo: 'boleto'|'pix', linha?, chave?, valor?, descricao?, bill_id?, requested_by?, channel?, chat_id? }
@@ -863,11 +864,31 @@ Deno.serve(async (req: Request) => {
         return json({ success: true, client_id_tail: String(creds.client_id).slice(-4), results: out });
       } finally { try { client?.close?.(); } catch { /* noop */ } }
     }
+    // Pagamento confirmado → extrato do Inter na hora (o débito já aparece e concilia
+    // sem esperar a rotina diária). Falha aqui não desfaz nem esconde o pagamento.
+    // deno-lint-ignore no-explicit-any
+    const syncAfterPayment = async (p: any, before?: string) => {
+      if (p?.status !== 'paid' || before === 'paid') return;
+      try {
+        const r = await syncTenant(admin, tenantId, { days: 2 });
+        if ('error' in r) log('WARN', action, 'sync pós-pagamento', { tenantId, error: r.error });
+      } catch (e) { log('WARN', action, 'sync pós-pagamento', { tenantId, error: String((e as Error)?.message ?? e) }); }
+    };
     try {
       if (action === 'prepare_payment') return json({ success: true, payment: await preparePayment(admin, tenantId, body) });
-      if (action === 'execute_payment') return json({ success: true, payment: await executePayment(admin, tenantId, String(body.payment_id ?? '')) });
+      if (action === 'execute_payment') {
+        const payment = await executePayment(admin, tenantId, String(body.payment_id ?? ''));
+        await syncAfterPayment(payment);
+        return json({ success: true, payment });
+      }
       if (action === 'cancel_payment') return json({ success: true, payment: await cancelPayment(admin, tenantId, String(body.payment_id ?? '')) });
-      if (action === 'payment_status') return json({ success: true, payment: await refreshPayment(admin, tenantId, String(body.payment_id ?? '')) });
+      if (action === 'payment_status') {
+        const id = String(body.payment_id ?? '');
+        const before = (await getPayment(admin, tenantId, id)).status;
+        const payment = await refreshPayment(admin, tenantId, id);
+        await syncAfterPayment(payment, before);
+        return json({ success: true, payment });
+      }
       if (action === 'check_payment_scopes') return json({ success: true, ...(await checkPaymentScopes(admin, tenantId)) });
       if (action === 'list_payments') {
         const { data } = await admin.from('fin_inter_payments').select('id, kind, status, amount, due_date, beneficiary_name, pix_key, description, inter_status, error, created_at, sent_at, paid_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(Math.min(Number(body.limit ?? 20), 100));

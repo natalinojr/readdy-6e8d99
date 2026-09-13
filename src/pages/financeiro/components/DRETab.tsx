@@ -56,6 +56,8 @@ interface DREData {
   receitaStone: number;
   /** Pix que entrou no Inter — só com a fonte "pix" ligada (fin_revenue_settings). */
   receitaPix?: number;
+  /** Vendas do iFood por dia de repasse (fin_cash_flow origin ifood_sale) — só com a fonte "ifood" ligada. */
+  receitaIfood?: number;
   cancelamentos: number;
   descontos: number;
   /** Compras do período que são MERCADORIA — é a linha CMV da DRE. */
@@ -331,7 +333,8 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
     .select('amount')
     .eq('tenant_id', tenantId)
     .eq('type', 'expense')
-    .eq('origin', 'auto_card_fee')
+    // ifood_fee: comissões e taxas do iFood (edge ifood-financial)
+    .in('origin', ['auto_card_fee', 'ifood_fee'])
     .gte('date', startDate)
     .lte('date', endDate);
   const taxasMaquininha = (cardFeeRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
@@ -530,7 +533,8 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     .select('amount')
     .eq('tenant_id', tenantId)
     .eq('type', 'expense')
-    .eq('origin', 'auto_card_fee')
+    // ifood_fee: comissões e taxas do iFood (edge ifood-financial)
+    .in('origin', ['auto_card_fee', 'ifood_fee'])
     .gte('date', startDate)
     .lte('date', endDate);
   const taxasMaquininha = (cardFeeRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
@@ -911,7 +915,7 @@ export default function DRETab() {
           : fetchDREData(tenantId, start, end),
         loadRevenueExtras(tenantId, start, end),
       ]);
-      return applyRevenueSources(d, extras.sources, extras.pix);
+      return applyRevenueSources(d, extras.sources, extras.pix, extras.ifood);
     },
     [dreMode]
   );
@@ -954,7 +958,7 @@ export default function DRETab() {
       const d = await fetchFn(user.tenantId, start, end);
       // Mesma receita da tabela (antes o gráfico ignorava manuais e Stone).
       const receitaBase = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento
-        + d.receitaManual + (d.receitaStone ?? 0) + (d.receitaPix ?? 0);
+        + d.receitaManual + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0);
       // BUG-41: receitaAReceber não soma na receita (é saldo, não receita adicional)
       const receita = receitaBase;
       const cmv = d.cmvCompras ?? 0; // CMV = compras realizadas (2026-09-05)
@@ -984,7 +988,7 @@ export default function DRETab() {
   }
   if (!data) return null;
 
-  const receitaRecebida = data.receitaBalcao + data.receitaDelivery + data.receitaMesa + data.receitaAutoatendimento + data.receitaManual + (data.receitaStone ?? 0) + (data.receitaPix ?? 0);
+  const receitaRecebida = data.receitaBalcao + data.receitaDelivery + data.receitaMesa + data.receitaAutoatendimento + data.receitaManual + (data.receitaStone ?? 0) + (data.receitaPix ?? 0) + (data.receitaIfood ?? 0);
 
   // BUG-41: receitaAReceber é saldo (balanço), não receita adicional.
   // No regime de competência a receita já está no auto_sale do fin_cash_flow
@@ -1046,7 +1050,7 @@ export default function DRETab() {
   const margemBruta = receitaBruta > 0 ? (lucroBruto / receitaBruta) * 100 : 0;
 
   const prevReceitaRecebida = (prevData?.receitaBalcao ?? 0) + (prevData?.receitaDelivery ?? 0)
-    + (prevData?.receitaMesa ?? 0) + (prevData?.receitaAutoatendimento ?? 0) + (prevData?.receitaManual ?? 0) + (prevData?.receitaStone ?? 0) + (prevData?.receitaPix ?? 0);
+    + (prevData?.receitaMesa ?? 0) + (prevData?.receitaAutoatendimento ?? 0) + (prevData?.receitaManual ?? 0) + (prevData?.receitaStone ?? 0) + (prevData?.receitaPix ?? 0) + (prevData?.receitaIfood ?? 0);
 
   const prevReceitaBruta = prevReceitaRecebida;
 
@@ -1402,6 +1406,10 @@ export default function DRETab() {
                   <DRERow label="Pix recebido (Inter)" atual={data.receitaPix ?? 0} anterior={prevData?.receitaPix} receitaBruta={receitaBruta} depth={1}
                     origin="Extrato do Banco Inter → créditos Pix (inclui o Pix da maquininha transferido da Conta Stone)" />
                 )}
+                {(data.receitaIfood ?? 0) > 0 && (
+                  <DRERow label="Vendas iFood" atual={data.receitaIfood ?? 0} anterior={prevData?.receitaIfood} receitaBruta={receitaBruta} depth={1}
+                    origin="Livro-razão: fin_cash_flow → ifood_sale (vendas do iFood por dia de repasse; comissões e taxas estão em Taxas de cartão, Pix e iFood)" />
+                )}
                 {data.receitaManual > 0 && (
                   <DRERow label="Entradas manuais (fluxo de caixa)" atual={data.receitaManual} anterior={prevData?.receitaManual} receitaBruta={receitaBruta} depth={1}
                     origin="Movimentações manuais registradas no Fluxo de Caixa" clickable onClick={() => setDrillDown({ type: 'receita_manual' })} />
@@ -1488,13 +1496,13 @@ export default function DRETab() {
                 )}
                 {taxasMaquininha > 0 && (
                   <DRERow
-                    label="Taxas de cartão / Pix"
+                    label="Taxas de cartão, Pix e iFood"
                     atual={taxasMaquininha}
                     anterior={prevData?.taxasMaquininha}
                     receitaBruta={receitaBruta}
                     isNeg
                     depth={1}
-                    origin="Livro-razão: fin_cash_flow → auto_card_fee"
+                    origin="Livro-razão: fin_cash_flow → auto_card_fee + ifood_fee (comissões e taxas do iFood)"
                   />
                 )}
                 {hasDynCats && expenseCats.length > 0 ? (

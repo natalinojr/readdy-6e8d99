@@ -92,6 +92,7 @@ function useReceitaVsDespesa(meses: number) {
         sources.includes('orders') ? 'auto_sale' : null,
         sources.includes('manual') ? 'manual' : null,
         sources.includes('stone') ? 'stone_sale' : null,
+        sources.includes('ifood') ? 'ifood_sale' : null,
       ].filter(Boolean) as string[];
 
       const [{ data: ledgerIncome }, pixRes] = await Promise.all([

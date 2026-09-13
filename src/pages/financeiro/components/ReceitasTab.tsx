@@ -6,7 +6,7 @@ import {
 } from '@/hooks/useReceitas';
 
 // Fonte da configuração da loja → fonte da linha exibida
-const SETTING_TO_ITEM: Record<RevenueSettingSource, ReceitaSource> = { orders: 'order', stone: 'stone', pix: 'pix', manual: 'manual' };
+const SETTING_TO_ITEM: Record<RevenueSettingSource, ReceitaSource> = { orders: 'order', stone: 'stone', pix: 'pix', ifood: 'ifood', manual: 'manual' };
 import { formatCurrency } from '@/lib/formatters';
 import { todayBrasilia } from '@/lib/dateUtils';
 import {
@@ -441,15 +441,20 @@ export default function ReceitasTab() {
           color="bg-green-100 text-green-600"
           sub={`${items.length} lançamento(s)`}
         />
-        {enabledSources.includes('stone') || enabledSources.includes('pix') ? (
+        {enabledSources.includes('stone') || enabledSources.includes('pix') || enabledSources.includes('ifood') ? (
           <KpiCard
-            label={enabledSources.includes('stone') && enabledSources.includes('pix') ? 'Cartão Stone / Pix' : enabledSources.includes('stone') ? 'Stone (cartão)' : 'Pix recebido'}
-            value={formatCurrency((summary?.fromStone ?? 0) + (summary?.fromPix ?? 0))}
+            label={[
+              enabledSources.includes('stone') ? 'Cartão Stone' : null,
+              enabledSources.includes('pix') ? 'Pix' : null,
+              enabledSources.includes('ifood') ? 'iFood' : null,
+            ].filter(Boolean).join(' / ')}
+            value={formatCurrency((summary?.fromStone ?? 0) + (summary?.fromPix ?? 0) + (summary?.fromIfood ?? 0))}
             icon="ri-bank-card-line"
             color="bg-sky-100 text-sky-600"
             sub={[
               enabledSources.includes('stone') ? `Cartão ${formatCurrency(summary?.fromStone ?? 0)}` : null,
               enabledSources.includes('pix') ? `Pix ${formatCurrency(summary?.fromPix ?? 0)}` : null,
+              enabledSources.includes('ifood') ? `iFood ${formatCurrency(summary?.fromIfood ?? 0)}` : null,
               enabledSources.includes('orders') ? `Pedidos ${formatCurrency(summary?.fromOrders ?? 0)}` : null,
             ].filter(Boolean).join(' · ')}
           />
@@ -942,7 +947,7 @@ export default function ReceitasTab() {
                       <span className="text-sm font-bold text-green-700">{formatCurrency(item.amount)}</span>
                       <span className="text-xs px-2 py-0.5 rounded-full font-medium"
                         style={{ backgroundColor: SOURCE_COLORS_R[item.source] + '22', color: SOURCE_COLORS_R[item.source] }}>
-                        {item.source === 'order' ? 'Pedido' : item.source === 'stone' ? 'Stone' : item.source === 'pix' ? 'Pix' : 'Manual'}
+                        {item.source === 'order' ? 'Pedido' : item.source === 'stone' ? 'Stone' : item.source === 'pix' ? 'Pix' : item.source === 'ifood' ? 'iFood' : 'Manual'}
                       </span>
                     </div>
                   </div>

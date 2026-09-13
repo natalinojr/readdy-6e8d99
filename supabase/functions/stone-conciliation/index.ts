@@ -17,7 +17,7 @@
 //   import_range  { date_from, date_to }                      até 31 dias
 //   get_history   {}
 //   sync          {}                                          ontem + dias sem sucesso dos últimos 3 (ao abrir a Conciliação)
-//   sync_all      {}                                          (interno) o mesmo para todas as lojas
+//   sync_all      {}                                          (interno) o mesmo para todas as lojas — cron diário 07h15 (stone-sync)
 //
 // Autenticação: JWT do usuário (membership em user_tenants) OU header x-internal-key = FISCAL_INTERNAL_KEY.
 // Stone: HTTP Basic com a Chave Secreta como usuário e senha vazia + x-user-type: client.
@@ -555,7 +555,14 @@ Deno.serve(async (req: Request) => {
       if (!internal) return errResp('Unauthorized', 401);
       const { data: lojas } = await admin.from('fin_stone_config').select('*').eq('is_active', true).not('api_key_b64', 'is', null).not('bank_account_id', 'is', null);
       const out = [];
-      for (const cfg of lojas ?? []) out.push({ tenant_id: cfg.tenant_id, ...(await syncStoneTenant(admin, cfg)) });
+      for (const cfg of lojas ?? []) {
+        if (cfg.auto_sync === false) continue;
+        const r = await syncStoneTenant(admin, cfg);
+        // Mesmo recasamento do `sync` (o Inter do dia já rodou antes, às 07h)
+        const { error: siErr } = await admin.rpc('fn_match_stone_inter', { p_tenant: cfg.tenant_id, p_from: addDays(todayBR(), -20), p_to: todayBR() });
+        if (siErr) log('WARN', 'sync_all', 'fn_match_stone_inter falhou', { tenantId: cfg.tenant_id, error: siErr.message });
+        out.push({ tenant_id: cfg.tenant_id, ...r });
+      }
       return json({ success: true, results: out });
     }
 

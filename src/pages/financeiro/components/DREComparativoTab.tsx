@@ -31,6 +31,8 @@ interface DRESnapshot {
   receitaStone: number;
   /** Pix que entrou no Inter — só com a fonte "pix" ligada (fin_revenue_settings). */
   receitaPix?: number;
+  /** Vendas do iFood (origin ifood_sale) — só com a fonte "ifood" ligada. */
+  receitaIfood?: number;
   receitaAReceber: number;
   cancelamentos: number;
   descontos: number;
@@ -111,7 +113,7 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string):
     // Regime de caixa: folha PAGA no mês (paid_date), de qualquer mês de referência — igual ao DRETab.
     supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('status', 'paid').gte('paid_date', startDate).lte('paid_date', endDate),
     // P7: taxa de maquininha vem do razão (auto_card_fee), igual ao DRETab.
-    supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'expense').eq('origin', 'auto_card_fee').gte('date', startDate).lte('date', endDate),
+    supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'expense').in('origin', ['auto_card_fee', 'ifood_fee']).gte('date', startDate).lte('date', endDate),
   ]);
 
   const autoSalePaymentIds = new Set(
@@ -173,7 +175,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
     supabase.from('fin_purchases').select('id, total_amount, payment_status').eq('tenant_id', tenantId).gte('purchase_date', startDate).lte('purchase_date', endDate),
     // Competência: folha pelo mês de referência, paga ou não (igual ao DRETab).
     supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('reference_month', monthStr),
-    supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'expense').eq('origin', 'auto_card_fee').gte('date', startDate).lte('date', endDate),
+    supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'expense').in('origin', ['auto_card_fee', 'ifood_fee']).gte('date', startDate).lte('date', endDate),
   ]);
 
   // Mesmo crivo do DRETab (competência): só payments com auto_sale correspondente no razão.
@@ -214,7 +216,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
 }
 
 function calcDRE(d: DRESnapshot, _mode: 'caixa' | 'competencia') {
-  const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento + (d.receitaStone ?? 0) + (d.receitaPix ?? 0);
+  const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0);
   // BUG-41 (intencional, mesmo critério do DRETab): recebível pendente é SALDO, não receita
   // adicional. A venda a prazo já está no `payments`/`auto_sale`; somar `receitaAReceber` na
   // competência contava a mesma venda duas vezes. `receitaAReceber` segue exibido à parte.
@@ -337,8 +339,8 @@ export default function DREComparativoTab() {
       // Regra dos recebidos da loja (Financeiro › Receitas › Fontes) — igual à DRE
       loadRevenueExtras(user.tenantId, start, end),
     ]);
-    setCaixaData(applyRevenueSources(caixa, extras.sources, extras.pix));
-    setCompData(applyRevenueSources(comp, extras.sources, extras.pix));
+    setCaixaData(applyRevenueSources(caixa, extras.sources, extras.pix, extras.ifood));
+    setCompData(applyRevenueSources(comp, extras.sources, extras.pix, extras.ifood));
     setDreCats(catsRes.data ?? []);
     setLoading(false);
   }, [user?.tenantId, mes]);
@@ -539,6 +541,9 @@ export default function DREComparativoTab() {
             )}
             {((caixaData.receitaPix ?? 0) > 0 || (compData.receitaPix ?? 0) > 0) && (
               <CompRow label="Pix Recebido (Inter)" caixaVal={caixaData.receitaPix ?? 0} compVal={compData.receitaPix ?? 0} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
+            )}
+            {((caixaData.receitaIfood ?? 0) > 0 || (compData.receitaIfood ?? 0) > 0) && (
+              <CompRow label="Vendas iFood" caixaVal={caixaData.receitaIfood ?? 0} compVal={compData.receitaIfood ?? 0} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
             )}
             {/* BUG-41: saldo a receber é informação, NÃO soma na receita bruta (a venda a prazo
                 já está no payments/auto_sale — somar de novo era dupla contagem). */}
