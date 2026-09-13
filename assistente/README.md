@@ -545,10 +545,13 @@ com `asst_settings.group_watch.purchase_entries = false`. Primeiro caso: cupom d
 
 **Currículos pelo WhatsApp — só recebimento (2026-09-13).** O dono recebe currículos no WhatsApp
 dele e ENCAMINHA para o número do assistente. Com `channels.whatsapp_dm = false`, a conversa
-particular continua desligada, com uma exceção no webhook: PDF, foto ou texto ≥ 250 caracteres
-(exceto `.txt` de exportação de conversa) vai para `cvFromWhatsApp` → `hiring-cv-scan › intake`
-(x-internal-key), sem passar pelo modelo, e a resposta é uma linha "✅ Currículo salvo: Nome —
-cargo" (⚠️ se repetido; ❌ com o motivo se não salvou). Se o modo de currículos do Telegram
+particular continua desligada, com uma exceção no webhook — **só depois de o dono avisar**
+(decisão dele: PDF sem aviso não é currículo): mensagem curta com "currículo" abre 1 h de
+recebimento (`asst_settings.wa_cv_intake { until, count }`, renovada a cada arquivo); nesse
+período PDF, foto ou texto ≥ 250 caracteres vai para `cvFromWhatsApp` → `hiring-cv-scan › intake`
+(x-internal-key), sem passar pelo modelo; "pronto" encerra com a contagem. Arquivo com "currículo"
+na legenda vale mesmo sem aviso. Arquivo sem aviso → resposta pedindo o aviso (nada é salvo).
+Confirmação por arquivo: "✅ Currículo salvo: Nome — cargo" (⚠️ se repetido; ❌ com o motivo). Se o modo de currículos do Telegram
 estiver ligado (`asst_settings.hiring_intake`, válido), usa a mesma empresa/vaga; senão o
 candidato entra no banco geral em "Novo". Triagem, vaga e conversa ficam no Telegram.
 

@@ -370,7 +370,7 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
 // resto (triagem, vaga, conversa) é no Telegram. Se o modo de currículos do Telegram estiver ligado
 // (asst_settings.hiring_intake), usa a mesma empresa/vaga.
 // deno-lint-ignore no-explicit-any
-async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: MsgKey | null, data: any, p: Parsed) {
+async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: MsgKey | null, data: any, p: Parsed): Promise<boolean> {
   if (msgKey) react(msgKey, '👀');
   const fileName = String(p.inner?.documentMessage?.fileName ?? '').trim() || null;
   const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'hiring_intake').maybeSingle();
@@ -384,13 +384,13 @@ async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: Msg
     if (mime !== 'application/pdf' && !IMAGE_TYPES.includes(mime)) {
       await sendText(number, `Recebi${fileName ? ` "${fileName}"` : ''}, mas só consigo ler currículo em PDF, foto ou texto.`).catch(() => {});
       if (msgKey) react(msgKey, '❓');
-      return;
+      return false;
     }
     const b64 = await mediaBase64(data).catch(() => null);
     if (!b64) {
       await sendText(number, 'Não consegui baixar esse arquivo. Manda de novo?').catch(() => {});
       if (msgKey) react(msgKey, '😱');
-      return;
+      return false;
     }
     entrada = { file_base64: b64, media_type: mime, file_name: fileName };
   }
@@ -409,13 +409,14 @@ async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: Msg
     log('WARN', 'currículo (WhatsApp) não salvo', { error: out?.error ?? null });
     await sendText(number, `❌ Não salvei ${fileName ? `"${fileName}"` : 'esse currículo'}: ${out?.error ?? 'erro desconhecido'}`).catch(() => {});
     if (msgKey) react(msgKey, '🤔');
-    return;
+    return false;
   }
   const c = out.candidate ?? {};
   const destino = [out.company_name, out.job_title ? `vaga ${out.job_title}` : null].filter(Boolean).join(' › ');
   await sendText(number, `✅ Currículo salvo: *${c.full_name ?? 'candidato'}*${c.desired_role ? ` — ${c.desired_role}` : ''}${destino ? ` (${destino})` : ''}${out.duplicate ? `\n⚠️ Parece repetido: já existe ${out.duplicate}.` : ''}`).catch(() => {});
   if (msgKey) react(msgKey, '👍');
   log('INFO', 'currículo salvo (WhatsApp)', { candidate: c.id ?? null, job: alvo.job_id ?? null });
+  return true;
 }
 
 // Grupos: o assistente SÓ LÊ — guarda a mensagem em asst_group_messages e nunca
@@ -794,11 +795,42 @@ async function handle(payload: any) {
   const number = chatId.replace(/@.*$/, '');
   const msgKey: MsgKey | null = key.id ? { remoteJid: jid, fromMe: false, id: String(key.id) } : null;
   if (!dmEnabled) {
-    // Exceção: currículo encaminhado (PDF, foto ou texto longo) é recebido e salvo em Contratação.
+    // Exceção: recebimento de currículos. Só vale quando o dono AVISA antes ("vou mandar currículos"
+    // abre 1 h de recebimento; "pronto" encerra) ou põe "currículo" na legenda do arquivo. Arquivo sem
+    // aviso não é tratado como currículo (decisão do dono, 2026-09-13).
     const p0 = parseMessage(data.message);
+    const txt0 = String(p0.text ?? '').trim();
     const isTxt = p0.kind === 'document' && ((p0.mime ?? '').startsWith('text/plain') || /\.txt$/i.test(String(p0.inner?.documentMessage?.fileName ?? '')));
-    const pareceCv = (p0.kind === 'document' && !isTxt) || p0.kind === 'image' || (p0.kind === 'text' && String(p0.text ?? '').trim().length >= 250);
-    if (pareceCv) { await cvFromWhatsApp(admin, number, msgKey, data, p0); return; }
+    const arquivo = (p0.kind === 'document' && !isTxt) || p0.kind === 'image';
+    const falaDeCv = /curr[ií]cul/i.test(txt0);
+    const { data: jan } = await admin.from('asst_settings').select('value').eq('key', 'wa_cv_intake').maybeSingle();
+    // deno-lint-ignore no-explicit-any
+    const janela: any = jan?.value?.until && new Date(jan.value.until).getTime() > Date.now() ? jan.value : null;
+    if (p0.kind === 'text' && janela && /^(pronto|acabou|terminei|fim|encerrar|encerra|chega|s[oó] isso|era isso|finaliza[r]?)\b/i.test(txt0)) {
+      await admin.from('asst_settings').delete().eq('key', 'wa_cv_intake');
+      const n = Number(janela.count ?? 0);
+      await sendText(number, n ? `Fechado: ${n} currículo${n > 1 ? 's' : ''} salvo${n > 1 ? 's' : ''} em Contratação.` : 'Fechado. Não chegou nenhum currículo.').catch(() => {});
+      if (msgKey) react(msgKey, '👍');
+      return;
+    }
+    if (p0.kind === 'text' && falaDeCv && txt0.length < 250) {
+      await admin.from('asst_settings').upsert({ key: 'wa_cv_intake', value: { until: new Date(Date.now() + 60 * 60_000).toISOString(), count: Number(janela?.count ?? 0) }, updated_at: new Date().toISOString() });
+      await sendText(number, 'Pode mandar os currículos (PDF, foto ou texto). Quando terminar, manda "pronto".').catch(() => {});
+      if (msgKey) react(msgKey, '👍');
+      return;
+    }
+    if ((arquivo && (janela || falaDeCv)) || (p0.kind === 'text' && janela && txt0.length >= 250)) {
+      const salvo = await cvFromWhatsApp(admin, number, msgKey, data, p0);
+      if (salvo && janela) {
+        await admin.from('asst_settings').upsert({ key: 'wa_cv_intake', value: { until: new Date(Date.now() + 60 * 60_000).toISOString(), count: Number(janela.count ?? 0) + 1 }, updated_at: new Date().toISOString() });
+      }
+      return;
+    }
+    if (arquivo) {
+      await sendText(number, 'Recebi o arquivo. Se for currículo, me avisa antes ("vou mandar currículos") ou manda de novo com "currículo" na legenda. O resto eu vejo pelo Telegram.').catch(() => {});
+      if (msgKey) react(msgKey, '❓');
+      return;
+    }
     // Só avisa uma vez por dia para não virar conversa
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
     if (ui.wa_dm_notice_date !== today) {
