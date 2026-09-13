@@ -12,6 +12,8 @@ export interface CurriculoLocal {
   age: number | null;
   city: string | null;
   neighborhood: string | null;
+  address: string | null;
+  marital_status: string | null;
   desired_role: string | null;
   food_service_experience: boolean | null;
   raw_text: string;
@@ -109,6 +111,12 @@ export async function readCurriculoPdf(file: File): Promise<CurriculoLocal | nul
   const cityM = raw_text.match(new RegExp(`([\\p{Lu}][\\p{L}' ]{2,40}?)\\s*[-/–,]\\s*(${UFS})\\b`, 'u'));
   const city = cityM ? titleCase(cityM[1].trim().replace(/^.*\b(cidade|endere[cç]o)\s*:?\s*/i, '')) : null;
   const neighborhood = afterLabel(lines, /\bbairro\b\s*:?/, 50)?.split(/[,-]/)[0].trim() || null;
+  // Endereço: rótulo "Endereço:" ou a primeira linha que começa com Rua/Av./Travessa…
+  const address = afterLabel(lines, /\bendereco\b\s*:?/, 120)
+    ?? lines.find((l) => /^(rua|r\.|avenida|av\.?|travessa|tv\.?|alameda|estrada|rodovia|servidao)\s/i.test(l.trim()))?.trim().slice(0, 120)
+    ?? null;
+  const ecM = strip(raw_text).match(/\b(solteir[oa]|casad[oa]|divorciad[oa]|separad[oa]|viuv[oa]|uniao estavel|amasiad[oa])\b/);
+  const marital_status = ecM ? titleCase(ecM[1].replace('viuv', 'viúv').replace('uniao estavel', 'união estável')) : null;
   const desired_role = afterLabel(lines, /\b(objetivo( profissional)?|cargo pretendido|vaga pretendida|cargo)\b\s*:?/, 80);
 
   return {
@@ -119,6 +127,8 @@ export async function readCurriculoPdf(file: File): Promise<CurriculoLocal | nul
     age,
     city,
     neighborhood,
+    address,
+    marital_status,
     desired_role,
     // Só marca "sim" por palavra-chave; ausência não prova nada (fica null).
     food_service_experience: FOOD_WORDS.test(strip(raw_text)) ? true : null,

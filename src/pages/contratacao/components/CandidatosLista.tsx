@@ -2,9 +2,16 @@
 import { useMemo, useState } from 'react';
 import {
   type Candidate, type Company, type Interview, type Stage, colorOf, stageOf, fmtMonths, fmtDate, fmtDateTime, companyName, avgScore,
+  ageOf, decisionOf, withEmpresa, DECISIONS,
 } from '../shared';
 
-type SortKey = 'nome' | 'empresa' | 'cargo' | 'idade' | 'local' | 'exp' | 'fase' | 'nota' | 'entrevista' | 'recebido';
+type SortKey = 'nome' | 'empresa' | 'cargo' | 'idade' | 'local' | 'exp' | 'fase' | 'decisao' | 'nota' | 'entrevista' | 'recebido';
+
+function DecisionBadge({ c, companies }: { c: Candidate; companies: Company[] }) {
+  const d = decisionOf(c.decision);
+  if (!d) return null;
+  return <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${d.cls}`} title={withEmpresa(d.label, companyName(companies, c.company_id))}>{d.sigla}</span>;
+}
 
 interface Props {
   view: 'cards' | 'tabela';
@@ -23,7 +30,7 @@ export default function CandidatosLista(props: Props) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {items.map((c) => (
-          <CandidateCard key={c.id} c={c} stage={stageOf(stages, c.stage_id)} empresa={mostrarEmpresa ? companyName(companies, c.company_id) : null}
+          <CandidateCard key={c.id} c={c} companies={companies} stage={stageOf(stages, c.stage_id)} empresa={mostrarEmpresa ? companyName(companies, c.company_id) : null}
             entrevista={proximaEntrevista.get(c.id) ?? null} onOpen={() => onOpen(c.id)} />
         ))}
       </div>
@@ -41,7 +48,8 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
         case 'nome': return c.full_name.toLowerCase();
         case 'empresa': return companyName(companies, c.company_id);
         case 'cargo': return (c.desired_role ?? '').toLowerCase() || '￿';
-        case 'idade': return c.age ?? 999;
+        case 'idade': return ageOf(c) ?? 999;
+        case 'decisao': { const i = DECISIONS.findIndex((d) => d.id === c.decision); return i < 0 ? 99 : i; }
         case 'local': return `${c.city ?? ''} ${c.neighborhood ?? ''}`.toLowerCase() || '￿';
         case 'exp': return c.total_experience_months ?? -1;
         case 'fase': return stageOf(stages, c.stage_id)?.sort_order ?? 0;
@@ -75,6 +83,7 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
             <Th k="local">Bairro / cidade</Th>
             <Th k="exp">Experiência</Th>
             <Th k="fase">Fase</Th>
+            <Th k="decisao">Decisão</Th>
             <Th k="nota">Nota</Th>
             <Th k="entrevista">Entrevista</Th>
             <Th k="recebido">Recebido</Th>
@@ -93,10 +102,11 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
                 </td>
                 {mostrarEmpresa && <td className="px-3 py-2 text-xs text-zinc-600 whitespace-nowrap">{companyName(companies, c.company_id)}</td>}
                 <td className="px-3 py-2 text-xs text-zinc-700 max-w-[180px] truncate">{c.desired_role ?? '—'}</td>
-                <td className="px-3 py-2 text-xs text-zinc-700">{c.age ?? '—'}</td>
+                <td className="px-3 py-2 text-xs text-zinc-700">{ageOf(c) ?? '—'}</td>
                 <td className="px-3 py-2 text-xs text-zinc-700 max-w-[180px] truncate">{[c.neighborhood, c.city].filter(Boolean).join(', ') || '—'}</td>
                 <td className="px-3 py-2 text-xs text-zinc-700 whitespace-nowrap">{fmtMonths(c.total_experience_months) ?? '—'}</td>
                 <td className="px-3 py-2">{st && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${colorOf(st.color).cls}`}>{st.name}</span>}</td>
+                <td className="px-3 py-2">{c.decision ? <DecisionBadge c={c} companies={companies} /> : <span className="text-zinc-300 text-xs">—</span>}</td>
                 <td className="px-3 py-2 text-xs whitespace-nowrap">
                   {media != null ? <span className="font-bold text-zinc-800">{media.toFixed(1)}</span> : null}
                   {c.rating ? <span className="text-amber-500 ml-1">{'★'.repeat(c.rating)}</span> : media == null ? <span className="text-zinc-300">—</span> : null}
@@ -112,9 +122,10 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
   );
 }
 
-export function CandidateCard({ c, stage, empresa, entrevista, onOpen, compact = false }: {
-  c: Candidate; stage: Stage | null; empresa: string | null; entrevista: Interview | null; onOpen: () => void; compact?: boolean;
+export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen, compact = false }: {
+  c: Candidate; companies: Company[]; stage: Stage | null; empresa: string | null; entrevista: Interview | null; onOpen: () => void; compact?: boolean;
 }) {
+  const idade = ageOf(c);
   const ultima = c.experiences[0];
   return (
     <button onClick={onOpen} className={`w-full text-left ${compact ? 'p-3' : 'p-4'} rounded-2xl border border-zinc-200 bg-white hover:border-rose-300 hover:shadow-sm transition-all cursor-pointer`}>
@@ -127,10 +138,11 @@ export function CandidateCard({ c, stage, empresa, entrevista, onOpen, compact =
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <p className={`font-bold text-zinc-900 truncate ${compact ? 'text-sm' : ''}`}>{c.full_name}</p>
+            <DecisionBadge c={c} companies={companies} />
             {c.rating ? <span className="text-amber-500 text-xs whitespace-nowrap">{'★'.repeat(c.rating)}</span> : null}
           </div>
           <p className="text-xs text-zinc-500 truncate">
-            {[c.desired_role, c.age ? `${c.age} anos` : null, [c.neighborhood, c.city].filter(Boolean).join(', ') || null].filter(Boolean).join(' · ') || '—'}
+            {[c.desired_role, idade != null ? `${idade} anos` : null, [c.neighborhood, c.city].filter(Boolean).join(', ') || null].filter(Boolean).join(' · ') || '—'}
           </p>
           {ultima && !compact && (
             <p className="text-xs text-zinc-400 truncate mt-0.5">

@@ -1,11 +1,14 @@
-// Agendar uma entrevista e, depois, registrar como foi (ficha com notas por critério,
-// recomendação e anotações). Também move o candidato de fase.
+// Agendar uma entrevista e, depois, registrar como foi: questionário (perguntas das
+// Configurações), notas por critério, considerações adicionais e a tomada de decisão
+// (GPC/PC/R/NA, gravada também no candidato). Também move o candidato de fase.
 import { useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
-  type Candidate, type Company, type Interview, type InterviewFormat, type InterviewStatus, type Recommendation, type Settings, type Stage,
-  FORMATS, INTERVIEW_STATUS, RECOMMENDATIONS, whatsLink, firstName, companyName, inviteText, stageOf, stageByKind,
+  type Candidate, type Company, type Decision, type Interview, type InterviewFormat, type InterviewStatus, type Settings, type Stage,
+  FORMATS, INTERVIEW_STATUS, DECISIONS, whatsLink, firstName, companyName, inviteText, stageOf, stageByKind, withEmpresa,
 } from '../shared';
+
+export type CandidatePatch = { id: string; stage_id?: string; decision?: Decision | null };
 
 interface Props {
   interview: Interview | null;
@@ -16,7 +19,7 @@ interface Props {
   presetCandidateId?: string | null;
   presetDate?: string | null; // AAAA-MM-DD
   onClose: () => void;
-  onSaved: (iv: Interview, candidatePatch?: { id: string; stage_id: string }) => void;
+  onSaved: (iv: Interview, candidatePatch?: CandidatePatch) => void;
   onDeleted: (id: string) => void;
 }
 
@@ -37,7 +40,8 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
   const [interviewer, setInterviewer] = useState(interview?.interviewer ?? (interview ? '' : settings.default_interviewer));
   const [status, setStatus] = useState<InterviewStatus>(interview?.status ?? 'agendada');
   const [scores, setScores] = useState<Record<string, number>>(interview?.scores ?? {});
-  const [recommendation, setRecommendation] = useState<Recommendation | null>(interview?.recommendation ?? null);
+  const [answers, setAnswers] = useState<Record<string, string>>(interview?.answers ?? {});
+  const [decision, setDecision] = useState<Decision | null>(interview?.recommendation ?? null);
   const [notes, setNotes] = useState(interview?.notes ?? '');
   const [busca, setBusca] = useState('');
   const [saving, setSaving] = useState(false);
@@ -45,6 +49,7 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
   const [novaFase, setNovaFase] = useState<string>('');
 
   const cand = candidates.find((c) => c.id === candidateId) ?? null;
+  const empresa = cand?.company_id ? companyName(companies, cand.company_id) : '';
   const faseAtual = cand ? stageOf(stages, cand.stage_id) : null;
   const isPast = new Date(`${date}T${time}`) <= new Date();
   const [showRegistro, setShowRegistro] = useState(!!interview && (interview.status !== 'agendada' || new Date(interview.scheduled_at) <= new Date()));
@@ -60,17 +65,23 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
 
   const convite = cand && whatsLink(cand.phone, inviteText(settings.invite_template, {
     nome: firstName(cand.full_name),
-    empresa: cand.company_id ? companyName(companies, cand.company_id) : '',
+    empresa,
     formato: FORMATS.find((f) => f.id === format)?.texto ?? '',
     data: date.split('-').reverse().join('/'),
     hora: time,
     local: location.trim(),
   }));
 
+  const abrirRegistro = () => {
+    setShowRegistro(true);
+    if (status === 'agendada') setStatus('realizada');
+  };
+
   const salvar = async () => {
     if (!candidateId) { setErro('Escolha o candidato.'); return; }
     if (!date || !time) { setErro('Informe data e hora.'); return; }
     setSaving(true); setErro(null);
+    const cleanAnswers = Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v));
     const row = {
       candidate_id: candidateId,
       company_id: cand?.company_id ?? null,
@@ -81,7 +92,8 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
       interviewer: interviewer.trim() || null,
       status,
       scores,
-      recommendation,
+      answers: cleanAnswers,
+      recommendation: decision,
       notes: notes.trim() || null,
       updated_at: new Date().toISOString(),
     };
@@ -91,13 +103,22 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
     const { data, error } = await q;
     if (error || !data) { setSaving(false); setErro(error?.message ?? 'Falha ao salvar'); return; }
 
-    // Fase: a escolhida no modal; senão, agendar tira o candidato de "Novo" para "Entrevista agendada".
-    let destino: string | null = novaFase || null;
-    if (!destino && cand && !interview && (!faseAtual || faseAtual.native_kind === 'novo')) destino = stageByKind(stages, 'entrevista')?.id ?? null;
-    const mudou = !!(destino && cand && destino !== cand.stage_id);
-    if (mudou) await supabase.from('hiring_candidates').update({ stage_id: destino, updated_at: new Date().toISOString() }).eq('id', cand!.id);
+    // Candidato: fase escolhida (ou "Novo" → "Entrevista agendada" ao agendar) e a tomada de decisão.
+    const patch: CandidatePatch | null = cand ? { id: cand.id } : null;
+    if (cand && patch) {
+      let destino: string | null = novaFase || null;
+      if (!destino && !interview && (!faseAtual || faseAtual.native_kind === 'novo')) destino = stageByKind(stages, 'entrevista')?.id ?? null;
+      if (destino && destino !== cand.stage_id) patch.stage_id = destino;
+      if (decision && decision !== cand.decision) patch.decision = decision;
+      const upd: Record<string, unknown> = {};
+      if (patch.stage_id) upd.stage_id = patch.stage_id;
+      if (patch.decision) upd.decision = patch.decision;
+      if (Object.keys(upd).length) {
+        await supabase.from('hiring_candidates').update({ ...upd, updated_at: new Date().toISOString() }).eq('id', cand.id);
+      }
+    }
     setSaving(false);
-    onSaved(data as Interview, mudou ? { id: cand!.id, stage_id: destino! } : undefined);
+    onSaved(data as Interview, patch && (patch.stage_id || patch.decision) ? patch : undefined);
   };
 
   const excluir = async () => {
@@ -107,7 +128,11 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
     onDeleted(interview.id);
   };
 
-  // Critérios atuais + notas antigas de critérios que foram apagados (continuam visíveis).
+  // Perguntas/critérios atuais + respostas/notas antigas de itens que foram removidos (continuam visíveis).
+  const perguntas = [
+    ...settings.questions,
+    ...Object.keys(answers).filter((k) => answers[k]?.trim() && !settings.questions.some((q) => q.id === k)).map((k) => ({ id: k, label: `${k} (pergunta removida)` })),
+  ];
   const criterios = [
     ...settings.criteria,
     ...Object.keys(scores).filter((k) => scores[k] > 0 && !settings.criteria.some((c) => c.id === k)).map((k) => ({ id: k, label: `${k} (removido)` })),
@@ -116,7 +141,7 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-[60]" onClick={onClose} />
-      <div className="fixed inset-x-0 bottom-0 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-[70] w-full sm:max-w-lg max-h-[92vh] bg-white sm:rounded-2xl rounded-t-2xl shadow-2xl flex flex-col">
+      <div className="fixed inset-x-0 bottom-0 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-[70] w-full sm:max-w-2xl max-h-[94vh] bg-white sm:rounded-2xl rounded-t-2xl shadow-2xl flex flex-col">
         <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-100">
           <i className="ri-calendar-event-line text-xl text-violet-600" />
           <h2 className="flex-1 font-black text-zinc-900">{interview ? 'Entrevista' : 'Agendar entrevista'}</h2>
@@ -173,12 +198,12 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
           )}
 
           {!showRegistro ? (
-            <button onClick={() => setShowRegistro(true)} className="w-full h-9 rounded-lg border border-dashed border-zinc-300 text-xs font-bold text-zinc-600 cursor-pointer hover:bg-zinc-50">
-              <i className="ri-edit-2-line" /> {isPast ? 'Registrar como foi a entrevista' : 'Já registrar o resultado'}
+            <button onClick={abrirRegistro} className="w-full h-10 rounded-lg border border-dashed border-violet-300 bg-violet-50/50 text-sm font-bold text-violet-700 cursor-pointer hover:bg-violet-50">
+              <i className="ri-edit-2-line" /> {isPast ? 'Preencher a entrevista' : 'Já preencher a entrevista'}
             </button>
           ) : (
             <div className="rounded-2xl border border-zinc-200 p-4 space-y-4 bg-zinc-50/50">
-              <p className="text-xs font-black uppercase tracking-wider text-zinc-500">Como foi a entrevista</p>
+              <p className="text-xs font-black uppercase tracking-wider text-zinc-500">Registro da entrevista</p>
               <div className="flex flex-wrap gap-1.5">
                 {INTERVIEW_STATUS.map((s) => (
                   <button key={s.id} onClick={() => setStatus(s.id)}
@@ -190,40 +215,61 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
 
               {status === 'realizada' && (
                 <>
-                  <div className="space-y-1.5">
-                    {criterios.map((cr) => (
-                      <div key={cr.id} className="flex items-center gap-2">
-                        <span className="flex-1 text-sm text-zinc-700">{cr.label}</span>
-                        {[1, 2, 3, 4, 5].map((n) => (
-                          <button key={n} onClick={() => setScores((s) => ({ ...s, [cr.id]: s[cr.id] === n ? 0 : n }))}
-                            className={`w-7 h-7 rounded-md text-xs font-bold border cursor-pointer ${
-                              (scores[cr.id] ?? 0) >= n ? 'bg-amber-400 border-amber-400 text-white' : 'bg-white border-zinc-200 text-zinc-400'}`}>
-                            {n}
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                  <div>
-                    <Label>Recomendação</Label>
-                    <div className="flex gap-1.5">
-                      {RECOMMENDATIONS.map((r) => (
-                        <button key={r.id} onClick={() => setRecommendation(recommendation === r.id ? null : r.id)}
-                          className={`flex-1 h-9 rounded-lg border text-xs font-bold cursor-pointer ${recommendation === r.id ? r.cls : 'bg-white text-zinc-600 border-zinc-200'}`}>
-                          {r.label}
-                        </button>
+                  {perguntas.length > 0 && (
+                    <div className="space-y-3">
+                      {perguntas.map((q, i) => (
+                        <div key={q.id}>
+                          <p className="text-sm font-semibold text-zinc-800 mb-1">{i + 1}. {withEmpresa(q.label, empresa)}</p>
+                          <textarea value={answers[q.id] ?? ''} rows={2}
+                            onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                            className={`${inputCls} h-auto py-2`} />
+                        </div>
                       ))}
                     </div>
-                  </div>
+                  )}
+
+                  {criterios.length > 0 && (
+                    <div className="space-y-1.5">
+                      <Label>Avaliação (1 a 5)</Label>
+                      {criterios.map((cr) => (
+                        <div key={cr.id} className="flex items-center gap-2">
+                          <span className="flex-1 text-sm text-zinc-700">{cr.label}</span>
+                          {[1, 2, 3, 4, 5].map((n) => (
+                            <button key={n} onClick={() => setScores((s) => ({ ...s, [cr.id]: s[cr.id] === n ? 0 : n }))}
+                              className={`w-7 h-7 rounded-md text-xs font-bold border cursor-pointer ${
+                                (scores[cr.id] ?? 0) >= n ? 'bg-amber-400 border-amber-400 text-white' : 'bg-white border-zinc-200 text-zinc-400'}`}>
+                              {n}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
 
               <div>
-                <Label>O que aconteceu</Label>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={5}
-                  placeholder="Chegou no horário? Como se comunicou? Experiência real, disponibilidade de horários, pretensão, referências, impressão geral…"
+                <Label>{status === 'realizada' ? 'Considerações adicionais' : 'Observações'}</Label>
+                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4}
+                  placeholder={status === 'realizada' ? 'Impressão geral, postura, referências, o que mais chamou atenção…' : 'Ex.: avisou que não viria, remarcar…'}
                   className={`${inputCls} h-auto py-2`} />
               </div>
+
+              {status === 'realizada' && (
+                <div>
+                  <Label>Tomada de decisão</Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {DECISIONS.map((d) => (
+                      <button key={d.id} onClick={() => setDecision(decision === d.id ? null : d.id)}
+                        className={`flex items-center gap-2 px-3 h-10 rounded-lg border text-left text-xs font-semibold cursor-pointer ${
+                          decision === d.id ? d.cls : 'bg-white text-zinc-700 border-zinc-200 hover:border-zinc-300'}`}>
+                        <span className="font-black text-sm w-9">{d.sigla}</span>
+                        <span className="leading-tight">{withEmpresa(d.label, empresa)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {cand && (
                 <div>

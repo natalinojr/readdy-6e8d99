@@ -2,8 +2,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
-  type Candidate, type Company, type Interview, type Stage, BUCKET, RECOMMENDATIONS,
-  fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf,
+  type Candidate, type Company, type Decision, type Interview, type Stage, BUCKET, DECISIONS,
+  fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf, decisionOf, withEmpresa, ageOf, companyName,
 } from '../shared';
 
 interface Props {
@@ -41,6 +41,9 @@ export default function CandidatoDrawer({ c, companies, stages, interviews, onCl
   };
 
   const minhas = [...interviews].sort((a, b) => b.scheduled_at.localeCompare(a.scheduled_at));
+  const empresa = c.company_id ? companyName(companies, c.company_id) : '';
+  const idade = ageOf(c);
+  const dec = decisionOf(c.decision);
 
   return (
     <>
@@ -49,8 +52,9 @@ export default function CandidatoDrawer({ c, companies, stages, interviews, onCl
         <div className="flex items-start gap-3 px-5 py-4 border-b border-zinc-100">
           <div className="flex-1 min-w-0">
             <h2 className="text-lg font-black text-zinc-900">{c.full_name}</h2>
-            <p className="text-xs text-zinc-500">{[c.desired_role, c.age ? `${c.age} anos` : null].filter(Boolean).join(' · ')}</p>
+            <p className="text-xs text-zinc-500">{[c.desired_role, idade != null ? `${idade} anos` : null, c.marital_status].filter(Boolean).join(' · ')}</p>
           </div>
+          {dec && <span className={`text-xs font-black px-2.5 py-1 rounded-lg border ${dec.cls}`} title={withEmpresa(dec.label, empresa)}>{dec.sigla}</span>}
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-500 cursor-pointer">
             <i className="ri-close-line text-lg" />
           </button>
@@ -77,6 +81,21 @@ export default function CandidatoDrawer({ c, companies, stages, interviews, onCl
             </select>
           </div>
 
+          {/* Tomada de decisão */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">Tomada de decisão</p>
+            <div className="grid grid-cols-4 gap-1.5">
+              {DECISIONS.map((d) => (
+                <button key={d.id} title={withEmpresa(d.label, empresa)}
+                  onClick={() => onUpdate({ decision: c.decision === d.id ? null : (d.id as Decision) })}
+                  className={`h-9 rounded-lg border text-xs font-black cursor-pointer ${c.decision === d.id ? d.cls : 'bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300'}`}>
+                  {d.sigla}
+                </button>
+              ))}
+            </div>
+            {dec && <p className="text-[11px] text-zinc-500 mt-1">{withEmpresa(dec.label, empresa)}</p>}
+          </div>
+
           {!c.ai_processed && (
             <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
               <p className="text-xs text-sky-900">
@@ -99,7 +118,7 @@ export default function CandidatoDrawer({ c, companies, stages, interviews, onCl
                 {minhas.map((iv) => {
                   const st = interviewStatusInfo(iv.status);
                   const media = avgScore(iv.scores);
-                  const rec = RECOMMENDATIONS.find((r) => r.id === iv.recommendation);
+                  const rec = decisionOf(iv.recommendation);
                   return (
                     <li key={iv.id}>
                       <button onClick={() => onOpenInterview(iv)} className="w-full text-left rounded-xl border border-zinc-200 hover:border-violet-300 p-2.5 cursor-pointer">
@@ -111,7 +130,7 @@ export default function CandidatoDrawer({ c, companies, stages, interviews, onCl
                         {(media != null || rec || iv.notes) && (
                           <p className="text-xs text-zinc-500 mt-1 line-clamp-2">
                             {media != null && <b className="text-zinc-700">Nota {media.toFixed(1)} · </b>}
-                            {rec && <b className="text-zinc-700">{rec.label} · </b>}
+                            {rec && <b className="text-zinc-700">{rec.sigla} · </b>}
                             {iv.notes}
                           </p>
                         )}
@@ -136,8 +155,14 @@ export default function CandidatoDrawer({ c, companies, stages, interviews, onCl
                 </p>
               )}
               {c.email && <p className="flex items-center gap-2"><i className="ri-mail-line text-zinc-400" /> <a href={`mailto:${c.email}`} className="text-sky-700">{c.email}</a></p>}
-              {(c.city || c.neighborhood) && <p className="flex items-center gap-2"><i className="ri-map-pin-line text-zinc-400" /> {[c.neighborhood, c.city].filter(Boolean).join(', ')}</p>}
-              {c.birth_date && <p className="flex items-center gap-2"><i className="ri-cake-2-line text-zinc-400" /> {c.birth_date.split('-').reverse().join('/')}</p>}
+              {(c.address || c.city || c.neighborhood) && (
+                <p className="flex items-start gap-2"><i className="ri-map-pin-line text-zinc-400 mt-0.5" /> {[c.address, c.neighborhood, c.city].filter(Boolean).join(', ')}</p>
+              )}
+              {c.birth_date && (
+                <p className="flex items-center gap-2"><i className="ri-cake-2-line text-zinc-400" /> {c.birth_date.split('-').reverse().join('/')}
+                  {idade != null && <span className="text-zinc-500">({idade} anos)</span>}</p>
+              )}
+              {c.marital_status && <p className="flex items-center gap-2"><i className="ri-user-heart-line text-zinc-400" /> {c.marital_status}</p>}
               {!c.phone && !c.email && !c.city && <p className="text-zinc-400 text-xs">Sem dados de contato no currículo.</p>}
             </div>
           </Section>
@@ -193,10 +218,16 @@ export default function CandidatoDrawer({ c, companies, stages, interviews, onCl
             </Section>
           )}
 
-          {(c.skills.length > 0 || c.courses.length > 0 || c.languages.length > 0) && (
-            <Section title="Habilidades e cursos">
+          {c.courses.length > 0 && (
+            <Section title="Outros cursos">
+              <ul className="space-y-1 text-sm text-zinc-700">{c.courses.map((s, i) => <li key={i}>• {s}</li>)}</ul>
+            </Section>
+          )}
+
+          {(c.skills.length > 0 || c.languages.length > 0) && (
+            <Section title="Habilidades e idiomas">
               <div className="flex flex-wrap gap-1.5">
-                {[...c.skills, ...c.courses, ...c.languages].map((s, i) => (
+                {[...c.skills, ...c.languages].map((s, i) => (
                   <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-700">{s}</span>
                 ))}
               </div>

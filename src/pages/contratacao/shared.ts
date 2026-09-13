@@ -51,6 +51,9 @@ export interface Candidate {
   phone: string | null;
   city: string | null;
   neighborhood: string | null;
+  address: string | null;
+  marital_status: string | null;
+  decision: Decision | null;
   birth_date: string | null;
   age: number | null;
   desired_role: string | null;
@@ -79,7 +82,8 @@ export interface Candidate {
 // ── Entrevistas ─────────────────────────────────────────────────────────────
 export type InterviewStatus = 'agendada' | 'realizada' | 'faltou' | 'cancelada';
 export type InterviewFormat = 'presencial' | 'telefone' | 'video';
-export type Recommendation = 'seguir' | 'talvez' | 'nao_seguir';
+// Tomada de decisão ao fim da entrevista (gravada na entrevista e no candidato).
+export type Decision = 'gpc' | 'pc' | 'r' | 'na';
 
 export interface Interview {
   id: string;
@@ -92,7 +96,8 @@ export interface Interview {
   interviewer: string | null;
   status: InterviewStatus;
   scores: Record<string, number>;
-  recommendation: Recommendation | null;
+  answers: Record<string, string>;
+  recommendation: Decision | null; // coluna guarda a tomada de decisão (gpc/pc/r/na)
   notes: string | null;
   created_at: string;
 }
@@ -111,11 +116,24 @@ export const FORMATS: { id: InterviewFormat; label: string; icon: string; texto:
   { id: 'video', label: 'Vídeo', icon: 'ri-vidicon-line', texto: 'por vídeo' },
 ];
 
-export const RECOMMENDATIONS: { id: Recommendation; label: string; cls: string }[] = [
-  { id: 'seguir', label: 'Seguir no processo', cls: 'bg-emerald-600 text-white border-emerald-600' },
-  { id: 'talvez', label: 'Talvez', cls: 'bg-amber-500 text-white border-amber-500' },
-  { id: 'nao_seguir', label: 'Não seguir', cls: 'bg-red-600 text-white border-red-600' },
+export const DECISIONS: { id: Decision; sigla: string; label: string; cls: string; bar: string }[] = [
+  { id: 'gpc', sigla: 'GPC', label: 'Grande potencial de contratação', cls: 'bg-emerald-600 text-white border-emerald-600', bar: 'bg-emerald-500' },
+  { id: 'pc', sigla: 'PC', label: 'Potencial de contratação', cls: 'bg-sky-600 text-white border-sky-600', bar: 'bg-sky-500' },
+  { id: 'r', sigla: 'R', label: 'Quadro de reserva', cls: 'bg-amber-500 text-white border-amber-500', bar: 'bg-amber-400' },
+  { id: 'na', sigla: 'NA', label: 'Não adequado à {empresa}', cls: 'bg-zinc-500 text-white border-zinc-500', bar: 'bg-zinc-400' },
 ];
+export const decisionOf = (d: string | null | undefined) => DECISIONS.find((x) => x.id === d) ?? null;
+export const withEmpresa = (text: string, empresa: string | null | undefined) => text.replace(/\{empresa\}/g, empresa || 'empresa');
+
+/** Idade pela data de nascimento (sempre atual); sem data, a idade escrita no currículo. */
+export function ageOf(c: { birth_date: string | null; age: number | null }): number | null {
+  const m = c.birth_date?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return c.age;
+  const now = new Date();
+  let a = now.getFullYear() - Number(m[1]);
+  if (now.getMonth() + 1 < Number(m[2]) || (now.getMonth() + 1 === Number(m[2]) && now.getDate() < Number(m[3]))) a--;
+  return a >= 0 && a < 120 ? a : c.age;
+}
 
 export function avgScore(scores: Record<string, number> | null | undefined): number | null {
   const vals = Object.values(scores ?? {}).filter((v) => typeof v === 'number' && v > 0);
@@ -125,6 +143,7 @@ export function avgScore(scores: Record<string, number> | null | undefined): num
 // ── Configurações (hiring_settings.data) ────────────────────────────────────
 export interface Criterion { id: string; label: string }
 export interface Settings {
+  questions: Criterion[]; // perguntas do questionário da entrevista ({empresa} vira o nome da empresa)
   criteria: Criterion[];
   invite_template: string;
   default_duration: number;
@@ -132,6 +151,16 @@ export interface Settings {
   default_interviewer: string;
 }
 export const DEFAULT_SETTINGS: Settings = {
+  questions: [
+    { id: 'filhos', label: 'Filhos' },
+    { id: 'contribuicao', label: 'Como sua formação e experiência anterior poderá contribuir com a {empresa}?' },
+    { id: 'moradia', label: 'Onde mora e como virá ao trabalho (distância e deslocamento)?' },
+    { id: 'salario', label: 'Salário pretendido?' },
+    { id: 'horario', label: 'Horário de trabalho?' },
+    { id: 'motivo', label: 'Por que precisa do trabalho?' },
+    { id: 'inicio', label: 'Quando pode começar a trabalhar?' },
+    { id: 'porque_contratar', label: 'Por que a empresa deveria contratá-la?' },
+  ],
   criteria: [
     { id: 'pontualidade', label: 'Pontualidade' },
     { id: 'comunicacao', label: 'Comunicação' },
@@ -149,7 +178,9 @@ export const DEFAULT_SETTINGS: Settings = {
 export function mergeSettings(data: Record<string, any> | null | undefined): Settings {
   const d = data ?? {};
   return {
-    criteria: Array.isArray(d.criteria) && d.criteria.length ? d.criteria : DEFAULT_SETTINGS.criteria,
+    // Lista salva (mesmo vazia) vale; sem nada salvo, usa o padrão.
+    questions: Array.isArray(d.questions) ? d.questions : DEFAULT_SETTINGS.questions,
+    criteria: Array.isArray(d.criteria) ? d.criteria : DEFAULT_SETTINGS.criteria,
     invite_template: typeof d.invite_template === 'string' && d.invite_template.trim() ? d.invite_template : DEFAULT_SETTINGS.invite_template,
     default_duration: Number(d.default_duration) > 0 ? Number(d.default_duration) : DEFAULT_SETTINGS.default_duration,
     default_location: typeof d.default_location === 'string' ? d.default_location : '',
@@ -265,6 +296,8 @@ export function aiFields(out: AiOut) {
     phone: onlyDigits(out.telefone) || null,
     city: out.cidade ?? null,
     neighborhood: out.bairro ?? null,
+    address: out.endereco ?? null,
+    marital_status: out.estado_civil ?? null,
     birth_date: isoDate(out.data_nascimento),
     age: Number.isInteger(out.idade) ? out.idade : null,
     desired_role: out.cargo_pretendido ?? null,

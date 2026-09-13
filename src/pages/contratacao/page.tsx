@@ -11,8 +11,9 @@ import { supabase } from '@/lib/supabase';
 import { readCurriculoPdf } from '@/lib/curriculoLocal';
 import {
   type Candidate, type Company, type Interview, type Settings, type Stage,
-  OWNER_EMAIL, BUCKET, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind,
+  OWNER_EMAIL, BUCKET, DECISIONS, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind,
 } from './shared';
+import type { CandidatePatch } from './components/EntrevistaModal';
 import CandidatosLista from './components/CandidatosLista';
 import CandidatoDrawer from './components/CandidatoDrawer';
 import EntrevistaModal from './components/EntrevistaModal';
@@ -52,6 +53,7 @@ export default function ContratacaoPage() {
   const [view, setView] = useState<'cards' | 'tabela'>(() => (lsGet('contratacao_view') === 'tabela' ? 'tabela' : 'cards'));
   const [busca, setBusca] = useState('');
   const [faseFiltro, setFaseFiltro] = useState<string>('todas');
+  const [decisaoFiltro, setDecisaoFiltro] = useState<string>('todas');
   const [empresaFiltro, setEmpresaFiltro] = useState<string>(() => lsGet('contratacao_empresa') ?? 'todas');
   const [empresaUpload, setEmpresaUpload] = useState<string>('');
   const [selId, setSelId] = useState<string | null>(null);
@@ -207,13 +209,15 @@ export default function ContratacaoPage() {
 
   const buscados = useMemo(() => {
     const q = norm(busca).trim();
-    if (!q) return daEmpresa;
-    return daEmpresa.filter((c) => {
+    const base = decisaoFiltro === 'todas' ? daEmpresa
+      : daEmpresa.filter((c) => (decisaoFiltro === 'sem' ? !c.decision : c.decision === decisaoFiltro));
+    if (!q) return base;
+    return base.filter((c) => {
       const hay = norm([c.full_name, c.desired_role, c.city, c.neighborhood, c.phone, c.email, c.skills.join(' '),
         c.experiences.map((e) => `${e.empresa} ${e.cargo}`).join(' '), c.raw_text ?? ''].join(' '));
       return q.split(/\s+/).every((t) => hay.includes(t));
     });
-  }, [daEmpresa, busca]);
+  }, [daEmpresa, busca, decisaoFiltro]);
 
   const counts = useMemo(() => {
     const m: Record<string, number> = { todas: buscados.length };
@@ -249,9 +253,12 @@ export default function ContratacaoPage() {
   const sel = items.find((c) => c.id === selId) ?? null;
   const mostrarEmpresa = empresaFiltro === 'todas' && companies.length > 1;
 
-  const onInterviewSaved = (iv: Interview, candidatePatch?: { id: string; stage_id: string }) => {
+  const onInterviewSaved = (iv: Interview, candidatePatch?: CandidatePatch) => {
     setInterviews((prev) => [...prev.filter((x) => x.id !== iv.id), iv].sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)));
-    if (candidatePatch) setItems((prev) => prev.map((c) => (c.id === candidatePatch.id ? { ...c, stage_id: candidatePatch.stage_id } : c)));
+    if (candidatePatch) {
+      const { id, ...rest } = candidatePatch;
+      setItems((prev) => prev.map((c) => (c.id === id ? { ...c, ...rest } : c)));
+    }
     setModal(null);
   };
 
@@ -380,6 +387,12 @@ export default function ContratacaoPage() {
                 placeholder="Buscar por nome, cargo, cidade, empresa, palavra do currículo…"
                 className="w-full h-10 pl-9 pr-3 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-rose-300" />
             </div>
+            <select value={decisaoFiltro} onChange={(e) => setDecisaoFiltro(e.target.value)} title="Tomada de decisão"
+              className="h-10 px-3 rounded-xl border border-zinc-200 text-sm text-zinc-700 cursor-pointer">
+              <option value="todas">Toda decisão</option>
+              {DECISIONS.map((d) => <option key={d.id} value={d.id}>{d.sigla} — {d.label.replace(' à {empresa}', '')}</option>)}
+              <option value="sem">Sem decisão</option>
+            </select>
             {aba === 'candidatos' && (
               <div className="flex rounded-xl border border-zinc-200 overflow-hidden">
                 {([['cards', 'ri-layout-grid-line', 'Cards'], ['tabela', 'ri-table-line', 'Tabela']] as const).map(([v, icon, label]) => (

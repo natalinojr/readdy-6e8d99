@@ -188,6 +188,23 @@ function FichaEConvite({ settings, onSaved }: { settings: Settings; onSaved: (s:
   const dirty = JSON.stringify(s) !== JSON.stringify(settings);
 
   const setCrit = (list: Criterion[]) => setS((x) => ({ ...x, criteria: list }));
+  const [novaPerg, setNovaPerg] = useState('');
+  const setPergs = (list: Criterion[]) => setS((x) => ({ ...x, questions: list }));
+  const addPerg = () => {
+    const label = novaPerg.trim();
+    if (!label) return;
+    let id = slug(label).slice(0, 40);
+    while (s.questions.some((q) => q.id === id)) id = `${id}_2`;
+    setPergs([...s.questions, { id, label }]);
+    setNovaPerg('');
+  };
+  const movePerg = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= s.questions.length) return;
+    const list = [...s.questions];
+    [list[i], list[j]] = [list[j], list[i]];
+    setPergs(list);
+  };
   const addCrit = () => {
     const label = novoCrit.trim();
     if (!label) return;
@@ -214,16 +231,38 @@ function FichaEConvite({ settings, onSaved }: { settings: Settings; onSaved: (s:
   };
 
   return (
-    <Card titulo="Entrevistas" desc="Critérios da ficha (nota de 1 a 5 cada) e os padrões usados ao agendar.">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Critérios da ficha</p>
+    <Card titulo="Entrevistas" desc="Perguntas do questionário, critérios de avaliação (nota de 1 a 5) e os padrões usados ao agendar. No fim de toda entrevista entram as Considerações adicionais e a Tomada de decisão (GPC, PC, R, NA).">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Perguntas do questionário</p>
+      <ul className="space-y-1.5">
+        {s.questions.map((q, i) => (
+          <li key={q.id} className="flex items-center gap-2">
+            <Arrows onUp={() => movePerg(i, -1)} onDown={() => movePerg(i, 1)} />
+            <span className="w-5 text-xs font-bold text-zinc-400 text-right">{i + 1}.</span>
+            <input value={q.label} onChange={(e) => setPergs(s.questions.map((x) => (x.id === q.id ? { ...x, label: e.target.value } : x)))}
+              className="flex-1 h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
+            <button onClick={() => setPergs(s.questions.filter((x) => x.id !== q.id))}
+              className="w-8 h-8 rounded-lg hover:bg-red-50 text-red-500 cursor-pointer"><i className="ri-delete-bin-line" /></button>
+          </li>
+        ))}
+      </ul>
+      <div className="flex gap-2 mt-2">
+        <input value={novaPerg} onChange={(e) => setNovaPerg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addPerg()}
+          placeholder="Nova pergunta" className="flex-1 h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
+        <button onClick={addPerg} className="px-3 h-9 rounded-lg border border-zinc-200 text-sm font-bold text-zinc-700 cursor-pointer"><i className="ri-add-line" /></button>
+      </div>
+      <p className="text-[10px] text-zinc-400 mt-1">Escreva {'{empresa}'} para aparecer o nome da empresa do candidato (ex.: "…contribuir com a {'{empresa}'}?").
+        <button onClick={() => setPergs(DEFAULT_SETTINGS.questions)} className="ml-2 text-sky-700 font-semibold cursor-pointer">Restaurar perguntas padrão</button>
+      </p>
+
+      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5 mt-5">Critérios de avaliação (opcional)</p>
       <ul className="space-y-1.5">
         {s.criteria.map((c, i) => (
           <li key={c.id} className="flex items-center gap-2">
             <Arrows onUp={() => moveCrit(i, -1)} onDown={() => moveCrit(i, 1)} />
             <input value={c.label} onChange={(e) => setCrit(s.criteria.map((x) => (x.id === c.id ? { ...x, label: e.target.value } : x)))}
               className="flex-1 h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
-            <button onClick={() => setCrit(s.criteria.filter((x) => x.id !== c.id))} disabled={s.criteria.length <= 1}
-              className="w-8 h-8 rounded-lg hover:bg-red-50 text-red-500 disabled:opacity-30 cursor-pointer"><i className="ri-delete-bin-line" /></button>
+            <button onClick={() => setCrit(s.criteria.filter((x) => x.id !== c.id))}
+              className="w-8 h-8 rounded-lg hover:bg-red-50 text-red-500 cursor-pointer"><i className="ri-delete-bin-line" /></button>
           </li>
         ))}
       </ul>
@@ -232,7 +271,7 @@ function FichaEConvite({ settings, onSaved }: { settings: Settings; onSaved: (s:
           placeholder="Novo critério (ex.: Higiene pessoal)" className="flex-1 h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
         <button onClick={addCrit} className="px-3 h-9 rounded-lg border border-zinc-200 text-sm font-bold text-zinc-700 cursor-pointer"><i className="ri-add-line" /></button>
       </div>
-      <p className="text-[10px] text-zinc-400 mt-1">Apagar um critério não apaga as notas já dadas; elas só deixam de aparecer.</p>
+      <p className="text-[10px] text-zinc-400 mt-1">Pode deixar sem nenhum critério. Apagar critério ou pergunta não apaga o que já foi preenchido.</p>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-5">
         <label className="block">

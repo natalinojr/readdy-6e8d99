@@ -2,7 +2,8 @@
 // comparecimento, média da ficha por critério, quadro por empresa e ranking.
 import { useMemo } from 'react';
 import {
-  type Candidate, type Company, type Interview, type Settings, type Stage, RECOMMENDATIONS, avgScore, companyName, norm, colorOf, stageOf,
+  type Candidate, type Company, type Interview, type Settings, type Stage, DECISIONS, avgScore, companyName, norm, colorOf, stageOf,
+  decisionOf, withEmpresa,
 } from '../shared';
 
 interface Props {
@@ -64,19 +65,21 @@ export default function RelatoriosContratacao({ candidates, interviews, companie
       const vals = realizadasList.map((i) => i.scores?.[cr.id]).filter((v): v is number => typeof v === 'number' && v > 0);
       return { ...cr, media: vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null };
     });
-    const recs = RECOMMENDATIONS.map((rc) => ({ ...rc, count: realizadasList.filter((i) => i.recommendation === rc.id).length }));
+    // Tomada de decisão: a do candidato (última palavra do dono).
+    const decisoes = DECISIONS.map((d) => ({ ...d, count: candidates.filter((c) => c.decision === d.id).length }));
+    const semDecisao = candidates.filter((c) => !c.decision).length;
 
-    // Ranking: melhor média da ficha (última entrevista realizada) ou estrelas; sem descartados.
+    // Ranking: decisão (GPC > PC > R) e depois média da ficha / estrelas; sem descartados nem NA.
     const ultima = new Map<string, Interview>();
     for (const i of realizadasList) {
       const cur = ultima.get(i.candidate_id);
       if (!cur || i.scheduled_at > cur.scheduled_at) ultima.set(i.candidate_id, i);
     }
     const ranking = candidates
-      .filter((c) => faseDe(c) !== descartadoId)
-      .map((c) => ({ c, media: avgScore(ultima.get(c.id)?.scores), rec: ultima.get(c.id)?.recommendation ?? null }))
-      .filter((x) => x.media != null || x.c.rating)
-      .sort((a, b) => (b.media ?? (b.c.rating ?? 0)) - (a.media ?? (a.c.rating ?? 0)))
+      .filter((c) => faseDe(c) !== descartadoId && c.decision !== 'na')
+      .map((c) => ({ c, media: avgScore(ultima.get(c.id)?.scores), rank: c.decision ? DECISIONS.findIndex((d) => d.id === c.decision) : 9 }))
+      .filter((x) => x.media != null || x.c.rating || x.c.decision)
+      .sort((a, b) => a.rank - b.rank || (b.media ?? (b.c.rating ?? 0)) - (a.media ?? (a.c.rating ?? 0)))
       .slice(0, 10);
 
     const porEmpresa = mostrarEmpresa
@@ -89,7 +92,7 @@ export default function RelatoriosContratacao({ candidates, interviews, companie
 
     return {
       total, novos7, porFase, realizadas, faltas, agendadasFuturas, comparecimento, aprovados, semanas,
-      criterios, recs, ranking, porEmpresa,
+      criterios, decisoes, semDecisao, ranking, porEmpresa,
       cargos: topCounts(candidates.map((c) => c.desired_role)),
       locais: topCounts(candidates.map((c) => c.neighborhood || c.city)),
     };
@@ -117,6 +120,16 @@ export default function RelatoriosContratacao({ candidates, interviews, companie
           </div>
         </Card>
 
+        <Card titulo="Tomada de decisão">
+          <div className="space-y-2">
+            {r.decisoes.map((d) => (
+              <Bar key={d.id} label={`${d.sigla} · ${withEmpresa(d.label, mostrarEmpresa ? 'empresa' : companyName(companies, candidates[0]?.company_id ?? null))}`}
+                count={d.count} total={r.total} cls={d.bar} />
+            ))}
+            <Bar label="Sem decisão ainda" count={r.semDecisao} total={r.total} cls="bg-zinc-200" />
+          </div>
+        </Card>
+
         <Card titulo="Currículos recebidos por semana">
           <div className="flex items-end gap-2 h-36">
             {r.semanas.map((s) => (
@@ -138,7 +151,7 @@ export default function RelatoriosContratacao({ candidates, interviews, companie
         </Card>
 
         <Card titulo="Entrevistas realizadas: média por critério">
-          {r.realizadas === 0 ? <Vazio texto="Registre entrevistas com a ficha para ver as médias." /> : (
+          {r.realizadas === 0 || r.criterios.length === 0 ? <Vazio texto="Registre entrevistas com a avaliação para ver as médias." /> : (
             <>
               <div className="space-y-2">
                 {r.criterios.map((cr) => (
@@ -148,9 +161,6 @@ export default function RelatoriosContratacao({ candidates, interviews, companie
                     <span className="w-8 text-right text-xs font-bold text-zinc-700">{cr.media != null ? cr.media.toFixed(1) : '—'}</span>
                   </div>
                 ))}
-              </div>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {r.recs.map((rc) => <span key={rc.id} className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${rc.cls}`}>{rc.label}: {rc.count}</span>)}
               </div>
             </>
           )}
@@ -180,12 +190,12 @@ export default function RelatoriosContratacao({ candidates, interviews, companie
         )}
       </div>
 
-      <Card titulo="Mais bem avaliados (fora os descartados)">
-        {r.ranking.length === 0 ? <Vazio texto="Dê estrelas ou registre entrevistas para montar o ranking." /> : (
+      <Card titulo="Mais bem avaliados (por decisão, fora NA e descartados)">
+        {r.ranking.length === 0 ? <Vazio texto="Classifique (GPC/PC/R), dê estrelas ou registre entrevistas para montar o ranking." /> : (
           <ol className="divide-y divide-zinc-100">
-            {r.ranking.map(({ c, media, rec }, i) => {
+            {r.ranking.map(({ c, media }, i) => {
               const st = stageOf(stages, c.stage_id);
-              const recInfo = RECOMMENDATIONS.find((x) => x.id === rec);
+              const recInfo = decisionOf(c.decision);
               return (
                 <li key={c.id}>
                   <button onClick={() => onOpen(c.id)} className="w-full flex items-center gap-3 py-2 text-left hover:bg-zinc-50 rounded-lg px-2 cursor-pointer">
@@ -194,7 +204,7 @@ export default function RelatoriosContratacao({ candidates, interviews, companie
                       <p className="text-sm font-semibold text-zinc-900 truncate">{c.full_name}</p>
                       <p className="text-[11px] text-zinc-500 truncate">{[c.desired_role, mostrarEmpresa ? companyName(companies, c.company_id) : null].filter(Boolean).join(' · ')}</p>
                     </div>
-                    {recInfo && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${recInfo.cls}`}>{recInfo.label}</span>}
+                    {recInfo && <span className={`text-[10px] font-black px-2 py-0.5 rounded border ${recInfo.cls}`}>{recInfo.sigla}</span>}
                     {st && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${colorOf(st.color).cls}`}>{st.name}</span>}
                     <span className="w-16 text-right text-xs">
                       {media != null ? <b className="text-zinc-800">{media.toFixed(1)}</b> : null}

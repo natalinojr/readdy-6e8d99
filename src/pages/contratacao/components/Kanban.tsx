@@ -44,7 +44,7 @@ export default function Kanban({ items, stages, companies, mostrarEmpresa, proxi
             <div className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[70vh]">
               {list.map((c) => (
                 <div key={c.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', c.id); e.dataTransfer.effectAllowed = 'move'; }}>
-                  <CandidateCard compact c={c} stage={s} empresa={mostrarEmpresa ? companyName(companies, c.company_id) : null}
+                  <CandidateCard compact c={c} companies={companies} stage={s} empresa={mostrarEmpresa ? companyName(companies, c.company_id) : null}
                     entrevista={proximaEntrevista.get(c.id) ?? null} onOpen={() => onOpen(c.id)} />
                 </div>
               ))}
