@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useState, useEffect, useCallback, Fragment, type ReactNode } from 'react';
 import { useImpressoras, PRINTER_KEY_RELATORIOS } from '@/contexts/ImpressorasContext';
 import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
@@ -6,7 +6,7 @@ import { fetchComprasDRE } from '@/lib/comprasDRE';
 import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Cell,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Cell, ReferenceLine,
 } from 'recharts';
 import { formatCurrency } from '@/lib/formatters';
 import DREDrillDownModal from './DREDrillDownModal';
@@ -600,6 +600,24 @@ const CustomTooltip = ({
   );
 };
 
+// Variação vs. mês anterior. `inverse` = linha de custo/despesa: subir é ruim.
+function VarChip({ atual, anterior, inverse }: { atual: number; anterior?: number; inverse?: boolean }) {
+  if (anterior === undefined || anterior === null) return <span className="text-zinc-300 text-xs">—</span>;
+  const v = variacao(atual, anterior);
+  if (v === null) return <span className="text-zinc-300 text-xs">—</span>;
+  if (Math.abs(v) < 0.05) {
+    return <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[11px] font-semibold bg-zinc-100 text-zinc-500 tabular-nums">0,0%</span>;
+  }
+  const up = v > 0;
+  const good = inverse ? !up : up;
+  return (
+    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-semibold tabular-nums ${good ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+      <i className={up ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />
+      {Math.abs(v).toFixed(1).replace('.', ',')}%
+    </span>
+  );
+}
+
 interface DRERowProps {
   label: string;
   atual: number;
@@ -613,61 +631,109 @@ interface DRERowProps {
   badgeColor?: string;
   onClick?: () => void;
   clickable?: boolean;
+  /** Linha só para conferência (não entra na conta). */
+  muted?: boolean;
 }
 
 function DRERow({
-  label, atual, anterior, receitaBruta, isTotal, isNeg, depth = 0, origin, badge, badgeColor, onClick, clickable,
+  label, atual, anterior, receitaBruta, isTotal, isNeg, depth = 0, origin, badge, badgeColor, onClick, clickable, muted,
 }: DRERowProps) {
-  const v = variacao(atual, anterior ?? 0);
-  const showVar = anterior !== undefined && anterior !== null;
-  const indent = depth * 20;
+  const fmt = (n: number) => (isNeg ? `(${formatCurrency(Math.abs(n))})` : formatCurrency(n));
+  const share = receitaBruta > 0 ? Math.min(100, (Math.abs(atual) / receitaBruta) * 100) : 0;
+  const valueTone = muted
+    ? 'text-zinc-400'
+    : isNeg ? 'text-red-500' : atual < 0 ? 'text-red-500' : isTotal ? 'text-zinc-900' : 'text-zinc-800';
 
   return (
     <tr
       onClick={onClick}
-      className={`${isTotal ? 'bg-zinc-50 border-t-2 border-zinc-200' : 'hover:bg-zinc-50/50'} transition-colors ${clickable ? 'cursor-pointer hover:bg-amber-50/40' : ''}`}
+      className={`group transition-colors ${isTotal ? 'bg-zinc-50' : ''} ${clickable ? 'cursor-pointer hover:bg-amber-50/60' : isTotal ? '' : 'hover:bg-zinc-50/70'}`}
     >
-      <td className={`px-5 py-2.5 text-sm ${isTotal ? 'font-bold text-zinc-900' : depth === 0 ? 'font-medium text-zinc-700' : 'text-zinc-500'}`}>
-        <div className="flex items-center gap-2" style={{ paddingLeft: indent }}>
-          {depth > 0 && <span className="text-zinc-300 text-xs">└</span>}
-          <span>{label}</span>
-          {clickable && (
-            <i className="ri-arrow-right-s-line text-zinc-300 text-xs opacity-0 group-hover:opacity-100" />
+      <td className={`pl-5 pr-3 ${isTotal ? 'py-3' : 'py-2'}`}>
+        <div className="flex items-center gap-2 min-w-0" style={{ paddingLeft: Math.max(0, depth - 1) * 18 }}>
+          {isTotal && (
+            <span className="w-5 h-5 rounded-md bg-zinc-900 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">=</span>
           )}
+          {depth > 1 && <span className="w-2.5 h-px bg-zinc-300 flex-shrink-0" />}
+          <span className={`truncate ${
+            isTotal ? 'text-[13px] font-bold text-zinc-900'
+              : muted ? 'text-[13px] text-zinc-400'
+              : depth <= 1 ? 'text-sm text-zinc-700'
+              : 'text-[13px] text-zinc-500'
+          }`}>
+            {label}
+          </span>
           {badge && (
-            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${badgeColor ?? 'bg-zinc-100 text-zinc-500'}`}>
+            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap ${badgeColor ?? 'bg-zinc-100 text-zinc-500'}`}>
               {badge}
             </span>
           )}
           {origin && (
-            <span className="text-zinc-300 text-xs font-normal" title={`Fonte: ${origin}`}>
-              <i className="ri-link text-zinc-300" />
-            </span>
+            <i className="ri-information-line text-zinc-300 hover:text-zinc-500 text-xs cursor-help" title={`Fonte: ${origin}`} />
+          )}
+          {clickable && (
+            <i className="ri-arrow-right-s-line text-amber-500 opacity-0 group-hover:opacity-100 transition-opacity" />
           )}
         </div>
       </td>
-      <td className={`px-4 py-2.5 text-sm text-right ${isTotal ? 'font-bold' : 'font-medium'} ${isNeg ? 'text-red-500' : atual < 0 ? 'text-red-500' : 'text-zinc-800'}`}>
-        {isNeg ? `(${formatCurrency(Math.abs(atual))})` : formatCurrency(atual)}
+      <td className={`px-4 text-right tabular-nums whitespace-nowrap ${isTotal ? 'py-3 text-sm font-bold' : 'py-2 text-sm font-medium'} ${valueTone}`}>
+        {fmt(atual)}
       </td>
-      <td className="px-4 py-2.5 text-xs text-right text-zinc-400">{pct(atual, receitaBruta)}</td>
-      <td className={`px-4 py-2.5 text-sm text-right ${isTotal ? 'font-bold' : ''} text-zinc-400`}>
-        {showVar ? (isNeg ? `(${formatCurrency(Math.abs(anterior!))})` : formatCurrency(anterior!)) : '—'}
-      </td>
-      <td className="px-4 py-2.5 text-xs text-right">
-        {showVar && v !== null ? (
-          <span className={`font-semibold px-1.5 py-0.5 rounded text-xs ${v >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-            {v >= 0 ? '+' : ''}{v.toFixed(1)}%
+      <td className="px-4 py-2">
+        <div className="flex items-center justify-end gap-2">
+          {!muted && !isTotal && (
+            <div className="hidden md:block w-14 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+              <div className={`h-full rounded-full ${isNeg ? 'bg-red-300' : 'bg-amber-400'}`} style={{ width: `${share}%` }} />
+            </div>
+          )}
+          <span className={`text-xs tabular-nums w-12 text-right ${isTotal ? 'font-semibold text-zinc-600' : 'text-zinc-400'}`}>
+            {pct(atual, receitaBruta)}
           </span>
-        ) : '—'}
+        </div>
+      </td>
+      <td className={`px-4 py-2 text-right text-[13px] tabular-nums whitespace-nowrap text-zinc-400 ${isTotal ? 'font-semibold' : ''}`}>
+        {anterior !== undefined && anterior !== null ? fmt(anterior) : '—'}
+      </td>
+      <td className="pl-4 pr-5 py-2 text-right">
+        {muted ? <span className="text-zinc-300 text-xs">—</span> : <VarChip atual={atual} anterior={anterior} inverse={isNeg} />}
       </td>
     </tr>
   );
 }
 
-function SectionHeader({ label }: { label: string }) {
+const SECTION_TONES: Record<string, string> = {
+  emerald: 'bg-emerald-50 text-emerald-600',
+  orange: 'bg-orange-50 text-orange-600',
+  rose: 'bg-rose-50 text-rose-600',
+  zinc: 'bg-zinc-100 text-zinc-600',
+};
+
+function SectionHeader({ label, icon = 'ri-folder-line', tone = 'zinc' }: { label: string; icon?: string; tone?: string }) {
   return (
-    <tr className="bg-amber-50/70 border-y border-amber-100">
-      <td colSpan={5} className="px-5 py-2.5 text-xs font-bold text-amber-800 uppercase tracking-wider">{label}</td>
+    <tr>
+      <td colSpan={5} className="px-5 pt-5 pb-2">
+        <div className="flex items-center gap-2.5">
+          <span className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${SECTION_TONES[tone] ?? SECTION_TONES.zinc}`}>
+            <i className={`${icon} text-sm`} />
+          </span>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">{label}</span>
+          <span className="flex-1 h-px bg-zinc-100" />
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// Nota curta embaixo de uma linha (sem caixa — só texto de apoio).
+function NoteRow({ children }: { children: ReactNode }) {
+  return (
+    <tr>
+      <td colSpan={5} className="pl-10 pr-5 pb-2.5 pt-0">
+        <p className="text-[11px] leading-relaxed text-zinc-400 flex items-start gap-1.5">
+          <i className="ri-information-line mt-px flex-shrink-0" />
+          <span>{children}</span>
+        </p>
+      </td>
     </tr>
   );
 }
@@ -720,61 +786,74 @@ function CatTreeRows({
   );
 }
 
-// ─── Mode Toggle ──────────────────────────────────────────────────────────────
+// ─── Controles ────────────────────────────────────────────────────────────────
 const MODE_TOOLTIPS: Record<DREMode, string> = {
   caixa: 'Mostra apenas transações efetivamente pagas/recebidas',
   competencia: 'Reconhece receitas pela data da venda e despesas pela data de vencimento (não pela data de pagamento)',
 };
 
-function DreModeToggle({ mode, onChange }: { mode: DREMode; onChange: (m: DREMode) => void }) {
+function Segmented<T extends string>({
+  value, onChange, options,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { id: T; label: string; icon: string; title?: string }[];
+}) {
   return (
-    <div className="flex gap-2 items-center">
-      <div className="relative group">
+    <div className="flex bg-zinc-100 p-1 rounded-xl">
+      {options.map(o => (
         <button
-          onClick={() => onChange('caixa')}
-          className={`px-4 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
-            mode === 'caixa'
-              ? 'bg-zinc-900 text-white shadow-sm'
-              : 'bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-800'
+          key={o.id}
+          title={o.title}
+          onClick={() => onChange(o.id)}
+          className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
+            value === o.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'
           }`}
         >
-          <i className="ri-money-dollar-circle-line" />
-          Regime de Caixa
-          {mode === 'caixa' && <i className="ri-information-line text-zinc-400 text-xs" />}
+          <i className={`${o.icon} text-sm`} />
+          {o.label}
         </button>
-        <div className="absolute bottom-full left-0 mb-2 w-56 bg-zinc-900 text-white text-xs rounded-lg px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-lg">
-          <div className="flex items-start gap-1.5">
-            <i className="ri-information-line text-zinc-400 flex-shrink-0 mt-0.5" />
-            <span>{MODE_TOOLTIPS.caixa}</span>
-          </div>
-          <div className="absolute top-full left-4 border-4 border-transparent border-t-zinc-900" />
-        </div>
-      </div>
-
-      <div className="relative group">
-        <button
-          onClick={() => onChange('competencia')}
-          className={`px-4 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
-            mode === 'competencia'
-              ? 'bg-zinc-900 text-white shadow-sm'
-              : 'bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-800'
-          }`}
-        >
-          <i className="ri-calendar-check-line" />
-          Regime de Competência
-          {mode === 'competencia' && <i className="ri-information-line text-zinc-400 text-xs" />}
-        </button>
-        <div className="absolute bottom-full left-0 mb-2 w-64 bg-zinc-900 text-white text-xs rounded-lg px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-lg">
-          <div className="flex items-start gap-1.5">
-            <i className="ri-information-line text-zinc-400 flex-shrink-0 mt-0.5" />
-            <span>{MODE_TOOLTIPS.competencia}</span>
-          </div>
-          <div className="absolute top-full left-4 border-4 border-transparent border-t-zinc-900" />
-        </div>
-      </div>
+      ))}
     </div>
   );
 }
+
+function KpiCard({
+  label, icon, value, valueTone, sub, subTone, atual, anterior, inverse, highlight,
+}: {
+  label: string;
+  icon: string;
+  value: string;
+  valueTone?: string;
+  sub?: string;
+  subTone?: string;
+  atual: number;
+  anterior?: number;
+  inverse?: boolean;
+  highlight?: 'pos' | 'neg';
+}) {
+  const ring = highlight === 'pos'
+    ? 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white'
+    : highlight === 'neg'
+    ? 'border-red-200 bg-gradient-to-br from-red-50 to-white'
+    : 'border-zinc-200 bg-white';
+  return (
+    <div className={`rounded-2xl border p-4 flex flex-col gap-2 ${ring}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0">
+            <i className={`${icon} text-sm`} />
+          </span>
+          <span className="text-xs font-semibold text-zinc-500 truncate">{label}</span>
+        </div>
+        <VarChip atual={atual} anterior={anterior} inverse={inverse} />
+      </div>
+      <p className={`text-2xl font-bold tabular-nums tracking-tight ${valueTone ?? 'text-zinc-900'}`}>{value}</p>
+      {sub && <p className={`text-xs ${subTone ?? 'text-zinc-400'}`}>{sub}</p>}
+    </div>
+  );
+}
+
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function DRETab() {
@@ -988,88 +1067,103 @@ export default function DRETab() {
   const prevMesLabel = addMonths(mes, -1);
   const canGoNext = mes < `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
 
+  // Totais para os cards (mesmos componentes que formam o resultado acima).
+  const totalCustosDespesas = cmvTotal + totalCustosCat + totalDespesasOp + data.custoPessoal + taxasMaquininha + totalCustomGroups;
+  const prevTotalCustosDespesas = prevCmvTotal + prevTotalCustosCat + prevTotalDespesasOp + (prevData?.custoPessoal ?? 0) + prevTaxasMaquininha + prevTotalCustomGroups;
+
+  const mesExtenso = (() => {
+    const [y, m] = mes.split('-').map(Number);
+    const s = new Date(y, m - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  })();
+  const fmtPct = (n: number) => `${n.toFixed(1).replace('.', ',')}%`;
+
+  const saude = (() => {
+    if (receitaBruta <= 0) return null;
+    const score = (margemLiquida >= 10 ? 2 : margemLiquida >= 0 ? 1 : 0)
+      + (margemBruta >= 30 ? 2 : margemBruta >= 15 ? 1 : 0)
+      + (resultadoOperacional >= 0 ? 1 : 0);
+    return score >= 4
+      ? { label: 'Saudável', cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', icon: 'ri-heart-pulse-line' }
+      : score >= 2
+      ? { label: 'Atenção', cor: 'bg-amber-50 border-amber-200 text-amber-700', icon: 'ri-alert-line' }
+      : { label: 'Crítico', cor: 'bg-red-50 border-red-200 text-red-700', icon: 'ri-alarm-warning-line' };
+  })();
+
+  // "Para onde foi a receita": cada fatia é parte do que foi subtraído da receita.
+  // Cancelamentos/descontos ficam fora — já não estão na receita (são só informativos).
+  const composicao = [
+    { label: 'CMV', value: cmvTotal, color: 'bg-orange-400' },
+    { label: 'Pessoal', value: data.custoPessoal, color: 'bg-rose-400' },
+    { label: 'Despesas operacionais', value: totalDespesasOp, color: 'bg-amber-400' },
+    { label: 'Taxas de cartão', value: taxasMaquininha, color: 'bg-pink-400' },
+    { label: 'Outros custos', value: totalCustosCat, color: 'bg-yellow-600' },
+    ...customGroupTrees.map(g => ({ label: g.group.label, value: g.total, color: 'bg-zinc-400' })),
+    { label: resultadoOperacional >= 0 ? 'Lucro' : 'Prejuízo', value: Math.abs(resultadoOperacional), color: resultadoOperacional >= 0 ? 'bg-emerald-500' : 'bg-red-500', isResult: true },
+  ].filter(s => s.value > 0);
+  // Com prejuízo, as fatias de custo passam da receita: a escala é o total de custos.
+  const composicaoBase = Math.max(receitaBruta, totalCustosDespesas);
+  const barraComposicao = composicao.filter(s => !(s as { isResult?: boolean }).isResult || resultadoOperacional >= 0);
+
+  const drillCat = (id: string, name: string) => setDrillDown({ type: 'dre_category', categoryId: id, categoryName: name });
+
   return (
-    <div className="p-6 space-y-5">
-      {/* Controles */}
+    <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
+      {/* ── Barra de controles ── */}
       <div className="flex items-center gap-3 flex-wrap">
-        {/* Navegação de mês */}
-        <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg overflow-hidden">
+        <div className="flex items-center bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
           <button
             onClick={() => setMes(m => addMonths(m, -1))}
-            className="w-9 h-9 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 hover:text-zinc-800 transition-colors"
+            className="w-9 h-10 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 hover:text-zinc-800 transition-colors"
+            title="Mês anterior"
           >
-            <i className="ri-arrow-left-s-line" />
+            <i className="ri-arrow-left-s-line text-lg" />
           </button>
-          <input
-            type="month" value={mes}
-            onChange={e => setMes(e.target.value)}
-            className="border-0 px-2 py-2 text-sm font-semibold text-zinc-800 focus:outline-none bg-transparent text-center"
-          />
+          <div className="relative px-2 min-w-[150px] text-center">
+            <p className="text-sm font-bold text-zinc-900 leading-tight">{mesExtenso}</p>
+            <p className="text-[10px] text-zinc-400 leading-tight">clique para escolher</p>
+            <input
+              type="month" value={mes}
+              onChange={e => e.target.value && setMes(e.target.value)}
+              className="absolute inset-0 opacity-0 cursor-pointer"
+              aria-label="Escolher mês"
+            />
+          </div>
           <button
             onClick={() => canGoNext && setMes(m => addMonths(m, 1))}
             disabled={!canGoNext}
-            className="w-9 h-9 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 hover:text-zinc-800 transition-colors disabled:opacity-30"
+            className="w-9 h-10 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 hover:text-zinc-800 transition-colors disabled:opacity-30 disabled:cursor-default"
+            title="Próximo mês"
           >
-            <i className="ri-arrow-right-s-line" />
+            <i className="ri-arrow-right-s-line text-lg" />
           </button>
         </div>
 
-        {/* Toggle Caixa / Competência */}
-        <DreModeToggle mode={dreMode} onChange={m => { setDreMode(m); }} />
+        <Segmented<DREMode>
+          value={dreMode}
+          onChange={setDreMode}
+          options={[
+            { id: 'caixa', label: 'Caixa', icon: 'ri-money-dollar-circle-line', title: MODE_TOOLTIPS.caixa },
+            { id: 'competencia', label: 'Competência', icon: 'ri-calendar-check-line', title: MODE_TOOLTIPS.competencia },
+          ]}
+        />
 
-        {/* Toggle Tabela / Gráfico */}
-        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-          <button
-            onClick={() => setActiveView('tabela')}
-            className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'tabela' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
-          >
-            <i className="ri-table-line" /> Tabela
-          </button>
-          <button
-            onClick={() => setActiveView('grafico')}
-            className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'grafico' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
-          >
-            <i className="ri-bar-chart-grouped-line" /> Gráfico
-          </button>
-        </div>
+        <Segmented<'tabela' | 'grafico'>
+          value={activeView}
+          onChange={setActiveView}
+          options={[
+            { id: 'tabela', label: 'Tabela', icon: 'ri-table-line' },
+            { id: 'grafico', label: 'Gráfico', icon: 'ri-bar-chart-grouped-line' },
+          ]}
+        />
 
-        {/* KPIs */}
-        <div className="flex gap-2 ml-auto flex-wrap items-center">
-          {receitaBruta > 0 && (() => {
-            const score = (margemLiquida >= 10 ? 2 : margemLiquida >= 0 ? 1 : 0)
-              + (margemBruta >= 30 ? 2 : margemBruta >= 15 ? 1 : 0)
-              + (resultadoOperacional >= 0 ? 1 : 0);
-            const nivel = score >= 4
-              ? { label: 'Saudável', cor: 'bg-green-100 border-green-200 text-green-700', icon: 'ri-heart-pulse-line', dot: 'bg-green-500' }
-              : score >= 2
-              ? { label: 'Atenção', cor: 'bg-amber-50 border-amber-200 text-amber-700', icon: 'ri-alert-line', dot: 'bg-amber-500' }
-              : { label: 'Crítico', cor: 'bg-red-50 border-red-200 text-red-700', icon: 'ri-alarm-warning-line', dot: 'bg-red-500' };
-            return (
-              <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${nivel.cor}`}>
-                <div className={`w-2 h-2 rounded-full ${nivel.dot}`} />
-                <i className={`${nivel.icon} text-sm`} />
-                <span className="text-xs font-bold">{nivel.label}</span>
-              </div>
-            );
-          })()}
-
-          <div className="bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2 text-center">
-            <p className="text-xs text-zinc-500">Receita Bruta</p>
-            <p className="text-sm font-bold text-zinc-800">{formatCurrency(receitaBruta)}</p>
-          </div>
-          <div className={`border rounded-xl px-4 py-2 text-center ${margemBruta >= 30 ? 'bg-green-50 border-green-200' : margemBruta >= 10 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'}`}>
-            <p className={`text-xs font-semibold ${margemBruta >= 30 ? 'text-green-600' : margemBruta >= 10 ? 'text-amber-600' : 'text-red-600'}`}>Margem Bruta</p>
-            <p className={`text-sm font-bold ${margemBruta >= 30 ? 'text-green-700' : margemBruta >= 10 ? 'text-amber-700' : 'text-red-700'}`}>{margemBruta.toFixed(1)}%</p>
-          </div>
-          <div className={`border rounded-xl px-4 py-2 text-center ${resultadoOperacional >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-            <p className={`text-xs font-semibold ${resultadoOperacional >= 0 ? 'text-green-600' : 'text-red-600'}`}>Resultado Líquido</p>
-            <p className={`text-sm font-bold ${resultadoOperacional >= 0 ? 'text-green-700' : 'text-red-700'}`}>{formatCurrency(resultadoOperacional)}</p>
-          </div>
-          <div className={`border rounded-xl px-4 py-2 text-center ${margemLiquida >= 10 ? 'bg-green-50 border-green-200' : margemLiquida >= 0 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'}`}>
-            <p className={`text-xs font-semibold ${margemLiquida >= 10 ? 'text-green-600' : margemLiquida >= 0 ? 'text-amber-600' : 'text-red-600'}`}>Margem Líquida</p>
-            <p className={`text-sm font-bold ${margemLiquida >= 10 ? 'text-green-700' : margemLiquida >= 0 ? 'text-amber-700' : 'text-red-700'}`}>{margemLiquida.toFixed(1)}%</p>
-          </div>
-
+        <div className="flex gap-2 ml-auto items-center">
+          {saude && (
+            <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-bold ${saude.cor}`} title="Saúde do mês: margem bruta, margem líquida e resultado">
+              <i className={`${saude.icon} text-sm`} />
+              {saude.label}
+            </div>
+          )}
           <button
             onClick={() => {
               const imp = getImpressoraParaEstacao(PRINTER_KEY_RELATORIOS);
@@ -1081,161 +1175,174 @@ export default function DRETab() {
                 window.print();
               }
             }}
-            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap"
+            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
           >
             <i className="ri-printer-line text-sm" /> Imprimir
           </button>
         </div>
       </div>
 
-      {/* Banner de modo competência */}
-      {dreMode === 'competencia' && (
-        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
-          <div className="flex items-start gap-3 mb-3">
-            <div className="w-7 h-7 flex items-center justify-center bg-indigo-100 rounded-lg flex-shrink-0">
-              <i className="ri-calendar-check-line text-indigo-600 text-sm" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-indigo-800">Regime de Competência ativo</p>
-              <p className="text-xs text-indigo-700 mt-0.5">
-                Receitas incluem todas as vendas do período, independente de quando o dinheiro entra. Os recebíveis pendentes aparecem como <strong>saldo</strong> (não somam na receita bruta). Despesas incluem <strong>todas</strong> as contas com vencimento no mês (pagas, pendentes e vencidas). O CMV é o custo dos produtos vendidos (consumo por ficha técnica), igual nos dois regimes.
-              </p>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-white border border-indigo-100 rounded-lg p-3">
-              <div className="flex items-center gap-1.5 mb-1">
-                <div className="w-2 h-2 rounded-full bg-indigo-400" />
-                <p className="text-xs font-semibold text-indigo-700">Saldo a Receber</p>
-              </div>
-              <p className="text-sm font-bold text-indigo-800">{formatCurrency(data.receitaAReceber)}</p>
-              <p className="text-xs text-indigo-400 mt-0.5">Recebíveis pendentes (já contabilizados na receita)</p>
-            </div>
-            <div className="bg-white border border-orange-100 rounded-lg p-3">
-              <div className="flex items-center gap-1.5 mb-1">
-                <div className="w-2 h-2 rounded-full bg-orange-400" />
-                <p className="text-xs font-semibold text-orange-700">Despesas a Pagar</p>
-              </div>
-              <p className="text-sm font-bold text-orange-800">{formatCurrency(data.despesasAPagar)}</p>
-              <p className="text-xs text-orange-400 mt-0.5">Contas pendentes/vencidas no período</p>
-            </div>
-            <div className="bg-white border border-amber-100 rounded-lg p-3">
-              <div className="flex items-center gap-1.5 mb-1">
-                <div className="w-2 h-2 rounded-full bg-amber-400" />
-                <p className="text-xs font-semibold text-amber-700">Compras a Pagar</p>
-              </div>
-              <p className="text-sm font-bold text-amber-800">{formatCurrency(data.cmvComprasPendentes)}</p>
-              <p className="text-xs text-amber-400 mt-0.5">Compras não pagas no período (estoque)</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Barra de composição */}
-      <div className="bg-white rounded-xl border border-zinc-200 p-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-zinc-600">Composição da Receita Bruta</span>
-          <span className="text-xs text-zinc-400">{formatCurrency(receitaBruta)}</span>
-        </div>
-        <div className="flex h-3 rounded-full overflow-hidden gap-0.5">
-          {receitaBruta > 0 && [
-            { label: 'Resultado', value: Math.max(0, resultadoOperacional), color: 'bg-green-500' },
-            { label: 'Custo Pessoal', value: data.custoPessoal, color: 'bg-rose-400' },
-            { label: 'Despesas Op.', value: totalDespesasOp, color: 'bg-amber-400' },
-            { label: 'Taxas Cartão', value: taxasMaquininha, color: 'bg-pink-400' },
-            { label: 'CMV', value: cmvTotal, color: 'bg-orange-400' },
-            { label: 'Deduções', value: data.cancelamentos + data.descontos, color: 'bg-red-400' },
-            ...(customGroupTrees.filter(g => g.total > 0).map(g => ({
-              label: g.group.label,
-              value: g.total,
-              color: 'bg-zinc-400',
-            }))),
-          ].filter(s => s.value > 0).map(s => (
-            <div
-              key={s.label}
-              className={`${s.color} transition-all`}
-              style={{ width: `${(s.value / receitaBruta) * 100}%` }}
-              title={`${s.label}: ${formatCurrency(s.value)}`}
-            />
-          ))}
-        </div>
-        <div className="flex gap-4 mt-2 flex-wrap">
-          {[
-            { label: 'Resultado', color: 'bg-green-500', value: resultadoOperacional },
-            { label: 'Custo Pessoal', color: 'bg-rose-400', value: data.custoPessoal },
-            { label: 'Despesas Op.', color: 'bg-amber-400', value: totalDespesasOp },
-            { label: 'Taxas Cartão/PIX', color: 'bg-pink-400', value: taxasMaquininha },
-            { label: 'CMV', color: 'bg-orange-400', value: cmvTotal },
-            { label: 'Deduções', color: 'bg-red-400', value: data.cancelamentos + data.descontos },
-            ...(customGroupTrees.filter(g => g.total > 0).map(g => ({
-              label: g.group.label,
-              color: 'bg-zinc-400',
-              value: g.total,
-            }))),
-          ].map(s => (
-            <div key={s.label} className="flex items-center gap-1.5">
-              <div className={`w-2 h-2 rounded-full ${s.color}`} />
-              <span className="text-xs text-zinc-500">{s.label}: <strong className="text-zinc-700">{formatCurrency(s.value)}</strong></span>
-            </div>
-          ))}
-        </div>
+      {/* ── Cards de resumo ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard
+          label="Receita bruta"
+          icon="ri-money-dollar-box-line"
+          value={formatCurrency(receitaBruta)}
+          sub={`${mesLabel(prevMesLabel)}: ${formatCurrency(prevReceitaBruta)}`}
+          atual={receitaBruta}
+          anterior={prevReceitaBruta}
+        />
+        <KpiCard
+          label="Lucro bruto"
+          icon="ri-scales-3-line"
+          value={formatCurrency(lucroBruto)}
+          valueTone={lucroBruto < 0 ? 'text-red-600' : undefined}
+          sub={`Margem bruta ${fmtPct(margemBruta)}`}
+          subTone={margemBruta >= 30 ? 'text-emerald-600 font-semibold' : margemBruta >= 10 ? 'text-amber-600 font-semibold' : 'text-red-600 font-semibold'}
+          atual={lucroBruto}
+          anterior={prevLucroBruto}
+        />
+        <KpiCard
+          label="Custos + despesas"
+          icon="ri-bill-line"
+          value={formatCurrency(totalCustosDespesas)}
+          sub={receitaBruta > 0 ? `${fmtPct((totalCustosDespesas / receitaBruta) * 100)} da receita` : 'Sem receita no mês'}
+          atual={totalCustosDespesas}
+          anterior={prevTotalCustosDespesas}
+          inverse
+        />
+        <KpiCard
+          label="Resultado líquido"
+          icon={resultadoOperacional >= 0 ? 'ri-line-chart-line' : 'ri-arrow-down-circle-line'}
+          value={formatCurrency(resultadoOperacional)}
+          valueTone={resultadoOperacional >= 0 ? 'text-emerald-700' : 'text-red-600'}
+          sub={`Margem líquida ${fmtPct(margemLiquida)}`}
+          subTone={margemLiquida >= 10 ? 'text-emerald-600 font-semibold' : margemLiquida >= 0 ? 'text-amber-600 font-semibold' : 'text-red-600 font-semibold'}
+          atual={resultadoOperacional}
+          anterior={prevResultado}
+          highlight={receitaBruta > 0 || resultadoOperacional !== 0 ? (resultadoOperacional >= 0 ? 'pos' : 'neg') : undefined}
+        />
       </div>
 
-      {/* Alertas */}
+      {/* ── Para onde foi a receita ── */}
+      {composicao.length > 0 && composicaoBase > 0 && (
+        <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+          <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
+            <div>
+              <h3 className="text-sm font-bold text-zinc-800">Para onde foi a receita</h3>
+              <p className="text-xs text-zinc-400">
+                {resultadoOperacional >= 0
+                  ? `De cada R$ 100 recebidos, sobraram R$ ${(receitaBruta > 0 ? (resultadoOperacional / receitaBruta) * 100 : 0).toFixed(2).replace('.', ',')} de lucro`
+                  : `Custos e despesas superaram a receita em ${formatCurrency(Math.abs(resultadoOperacional))}`}
+              </p>
+            </div>
+            <span className="text-xs text-zinc-400 tabular-nums">Receita: <strong className="text-zinc-700">{formatCurrency(receitaBruta)}</strong></span>
+          </div>
+          <div className="flex h-4 rounded-full overflow-hidden gap-0.5 bg-zinc-100">
+            {barraComposicao.map(s => (
+              <div
+                key={s.label}
+                className={`${s.color} transition-all first:rounded-l-full last:rounded-r-full`}
+                style={{ width: `${(s.value / composicaoBase) * 100}%` }}
+                title={`${s.label}: ${formatCurrency(s.value)}`}
+              />
+            ))}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-x-4 gap-y-2.5 mt-4">
+            {composicao.map(s => (
+              <div key={s.label} className="flex items-start gap-2 min-w-0">
+                <span className={`w-2.5 h-2.5 rounded-sm mt-1 flex-shrink-0 ${s.color}`} />
+                <div className="min-w-0">
+                  <p className="text-[11px] text-zinc-500 truncate">{s.label}</p>
+                  <p className="text-sm font-semibold text-zinc-800 tabular-nums leading-tight">
+                    {formatCurrency(s.value)}
+                    <span className="text-[11px] font-normal text-zinc-400 ml-1">{pct(s.value, receitaBruta)}</span>
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Competência: saldos em aberto ── */}
+      {dreMode === 'competencia' && (
+        <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-4">
+          <p className="text-xs text-indigo-700 mb-3 flex items-start gap-1.5">
+            <i className="ri-calendar-check-line mt-px" />
+            <span>
+              <strong>Regime de competência:</strong> despesas pela data de vencimento (pagas ou não). Recebíveis pendentes são <strong>saldo</strong> e não somam na receita.
+            </span>
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {[
+              { label: 'Saldo a receber', value: data.receitaAReceber, hint: 'Recebíveis pendentes (já na receita)', dot: 'bg-indigo-400' },
+              { label: 'Despesas a pagar', value: data.despesasAPagar, hint: 'Contas pendentes/vencidas no mês', dot: 'bg-orange-400' },
+              { label: 'Compras a pagar', value: data.cmvComprasPendentes, hint: 'Compras do mês ainda não pagas', dot: 'bg-amber-400' },
+            ].map(s => (
+              <div key={s.label} className="bg-white border border-indigo-100 rounded-xl px-3 py-2.5">
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${s.dot}`} />
+                  <p className="text-xs font-semibold text-zinc-600">{s.label}</p>
+                </div>
+                <p className="text-base font-bold text-zinc-900 tabular-nums">{formatCurrency(s.value)}</p>
+                <p className="text-[11px] text-zinc-400">{s.hint}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Alertas ── */}
       {!hasDynCats && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-          <div className="w-7 h-7 flex items-center justify-center bg-amber-100 rounded-lg flex-shrink-0">
-            <i className="ri-information-line text-amber-600 text-sm" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-amber-800">Configure as categorias do DRE</p>
-            <p className="text-xs text-amber-700 mt-0.5">
-              Acesse a aba <strong>Categorias DRE</strong> para criar categorias e subcategorias. As despesas das <strong>Contas a Pagar</strong> serão vinculadas a elas automaticamente.
-            </p>
-          </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
+          <i className="ri-information-line text-amber-600 mt-0.5" />
+          <p className="text-xs text-amber-800">
+            <strong>Configure as categorias do DRE</strong> na aba <strong>Categorias DRE</strong>. As despesas das Contas a Pagar serão vinculadas a elas automaticamente.
+          </p>
         </div>
       )}
-
       {semCategoria > 0 && (
-        <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-4 flex items-start gap-3">
-          <div className="w-7 h-7 flex items-center justify-center bg-zinc-100 rounded-lg flex-shrink-0">
-            <i className="ri-alert-line text-zinc-500 text-sm" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-zinc-700">
-              {formatCurrency(semCategoria)} em despesas sem categoria DRE
-            </p>
-            <p className="text-xs text-zinc-500 mt-0.5">
-              Esse valor <strong>já está subtraído do resultado</strong> (na linha "Sem categoria DRE" das despesas operacionais), mas sem classificação — não aparece em nenhuma categoria. Edite essas contas em <strong>Contas a Pagar</strong> e selecione a categoria correspondente.
-            </p>
-          </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
+          <i className="ri-alert-line text-amber-600 mt-0.5" />
+          <p className="text-xs text-amber-800">
+            <strong>{formatCurrency(semCategoria)} em despesas sem categoria DRE.</strong>{' '}
+            O valor já está subtraído do resultado (linha "Sem categoria"), mas não aparece em nenhuma categoria. Classifique essas contas em <strong>Contas a Pagar</strong>.
+          </p>
         </div>
       )}
 
-      {/* Gráfico histórico */}
+      {/* ── Gráfico histórico ── */}
       {activeView === 'grafico' && (
-        <div className="bg-white rounded-xl border border-zinc-200 p-5">
+        <div className="bg-white rounded-2xl border border-zinc-200 p-5">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-zinc-800">Evolução — Últimos 6 Meses</h3>
-            <span className="text-xs text-zinc-400 bg-zinc-50 border border-zinc-200 px-2 py-1 rounded-lg">
+            <div>
+              <h3 className="text-sm font-bold text-zinc-800">Evolução dos últimos 6 meses</h3>
+              <p className="text-xs text-zinc-400">Receita, custos + despesas e resultado por mês</p>
+            </div>
+            <span className="text-xs text-zinc-500 bg-zinc-100 px-2 py-1 rounded-lg font-semibold">
               {dreMode === 'competencia' ? 'Competência' : 'Caixa'}
             </span>
           </div>
           {loadingChart ? (
-            <div className="flex items-center justify-center h-48 text-zinc-400 text-sm">Carregando histórico...</div>
+            <div className="flex items-center justify-center h-64 text-zinc-400 text-sm gap-2">
+              <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+              Carregando histórico...
+            </div>
           ) : (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={chartHistory} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" />
-                <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#71717a' }} />
-                <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="receita" name="Receita" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={32} />
-                <Bar dataKey="despesas" name="Despesas" fill="#e5e7eb" radius={[4, 4, 0, 0]} maxBarSize={32} />
-                <Bar dataKey="resultado" name="Resultado" radius={[4, 4, 0, 0]} maxBarSize={32}>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={chartHistory} margin={{ top: 8, right: 8, left: 0, bottom: 4 }} barGap={4}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
+                <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: '#fafafa' }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" />
+                <ReferenceLine y={0} stroke="#d4d4d8" />
+                <Bar dataKey="receita" name="Receita" fill="#f59e0b" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                <Bar dataKey="despesas" name="Custos + despesas" fill="#d4d4d8" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                <Bar dataKey="resultado" name="Resultado" radius={[6, 6, 0, 0]} maxBarSize={28}>
                   {chartHistory.map((entry, i) => (
-                    <Cell key={i} fill={entry.resultado >= 0 ? '#22c55e' : '#ef4444'} />
+                    <Cell key={i} fill={entry.resultado >= 0 ? '#10b981' : '#ef4444'} />
                   ))}
                 </Bar>
               </BarChart>
@@ -1244,360 +1351,261 @@ export default function DRETab() {
         </div>
       )}
 
-      {/* Tabela DRE */}
+      {/* ── Tabela DRE ── */}
       {activeView === 'tabela' && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-stone-50 border-b-2 border-amber-300/60 text-stone-600">
-                <th className="text-left px-5 py-3.5 text-xs font-bold uppercase tracking-wide w-[38%]">Descrição</th>
-                <th className="text-right px-4 py-3.5 text-xs font-bold uppercase tracking-wide">{mes}</th>
-                <th className="text-right px-4 py-3.5 text-xs font-bold uppercase tracking-wide">% Receita</th>
-                <th className="text-right px-4 py-3.5 text-xs font-bold uppercase tracking-wide text-stone-400">{mesLabel(prevMesLabel)}</th>
-                <th className="text-right px-4 py-3.5 text-xs font-bold uppercase tracking-wide text-stone-400">Var. %</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+            <h3 className="text-sm font-bold text-zinc-800">Demonstrativo de Resultado</h3>
+            <span className="text-[11px] text-zinc-400 flex items-center gap-1">
+              <i className="ri-cursor-line" /> Clique numa linha para ver o que compõe o valor
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px]">
+              <thead>
+                <tr className="border-b border-zinc-200 text-zinc-400">
+                  <th className="text-left pl-5 pr-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide w-[40%]">Descrição</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-700">{mesLabel(mes)}</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide">% Receita</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide">{mesLabel(prevMesLabel)}</th>
+                  <th className="text-right pl-4 pr-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide">Var.</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100/80">
 
-              {/* ── RECEITAS ── */}
-              <SectionHeader label="Receitas" />
-              {data.receitaBalcao > 0 && (
-                <DRERow
-                  label="Vendas Balcão / Hora"
-                  atual={data.receitaBalcao}
-                  anterior={prevData?.receitaBalcao}
-                  receitaBruta={receitaBruta}
-                  depth={1}
-                  origin="Livro-razão: fin_cash_flow → auto_sale"
-                  clickable
-                  onClick={() => setDrillDown({ type: 'receita_balcao' })}
-                />
-              )}
-              {data.receitaDelivery > 0 && (
-                <DRERow
-                  label="Vendas Delivery"
-                  atual={data.receitaDelivery}
-                  anterior={prevData?.receitaDelivery}
-                  receitaBruta={receitaBruta}
-                  depth={1}
-                  origin="Livro-razão: fin_cash_flow → auto_sale"
-                  clickable
-                  onClick={() => setDrillDown({ type: 'receita_delivery' })}
-                />
-              )}
-              {data.receitaMesa > 0 && (
-                <DRERow
-                  label="Vendas Mesa"
-                  atual={data.receitaMesa}
-                  anterior={prevData?.receitaMesa}
-                  receitaBruta={receitaBruta}
-                  depth={1}
-                  origin="Livro-razão: fin_cash_flow → auto_sale"
-                  clickable
-                  onClick={() => setDrillDown({ type: 'receita_mesa' })}
-                />
-              )}
-              {data.receitaAutoatendimento > 0 && (
-                <DRERow
-                  label="Autoatendimento"
-                  atual={data.receitaAutoatendimento}
-                  anterior={prevData?.receitaAutoatendimento}
-                  receitaBruta={receitaBruta}
-                  depth={1}
-                  origin="Livro-razão: fin_cash_flow → auto_sale"
-                  clickable
-                  onClick={() => setDrillDown({ type: 'receita_autoatendimento' })}
-                />
-              )}
-              {(data.receitaStone ?? 0) > 0 && (
-                <DRERow
-                  label="Vendas em Cartão (Stone)"
-                  atual={data.receitaStone}
-                  anterior={prevData?.receitaStone}
-                  receitaBruta={receitaBruta}
-                  depth={1}
-                  origin="Livro-razão: fin_cash_flow → stone_sale (valor bruto liquidado pela Stone; as taxas estão em Taxas de Cartão)"
-                />
-              )}
-              {(data.receitaPix ?? 0) > 0 && (
-                <DRERow
-                  label="Pix Recebido (Inter)"
-                  atual={data.receitaPix ?? 0}
-                  anterior={prevData?.receitaPix}
-                  receitaBruta={receitaBruta}
-                  depth={1}
-                  origin="Extrato do Banco Inter → créditos Pix (inclui o Pix da maquininha transferido da Conta Stone)"
-                />
-              )}
-              {data.receitaManual > 0 && (
-                <DRERow
-                  label="Entradas Manuais (Fluxo de Caixa)"
-                  atual={data.receitaManual}
-                  anterior={prevData?.receitaManual}
-                  receitaBruta={receitaBruta}
-                  depth={1}
-                  origin="Movimentações manuais registradas no Fluxo de Caixa"
-                  clickable
-                  onClick={() => setDrillDown({ type: 'receita_manual' })}
-                />
-              )}
-              {receitaBruta === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-5 py-3 text-xs text-zinc-400 text-center">Nenhuma receita registrada neste período</td>
-                </tr>
-              )}
-              <DRERow label="(=) RECEITA BRUTA" atual={receitaBruta} anterior={prevReceitaBruta} receitaBruta={receitaBruta} isTotal />
-              {dreMode === 'competencia' && data.receitaAReceber > 0 && (
-                <tr className="bg-indigo-50/30 border-t border-dashed border-indigo-200">
-                  <td className="px-5 py-2 text-xs text-indigo-600" colSpan={5}>
-                    <div className="flex items-center gap-2">
-                      <i className="ri-information-line text-indigo-400" />
-                      <span>
-                        <strong>Saldo a receber no período: {formatCurrency(data.receitaAReceber)}</strong>
-                        {' '}— Esses valores já estão contabilizados na receita bruta acima (vendas já reconhecidas, dinheiro ainda não entrou).
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              )}
-              {/* Cancelamentos e descontos são INFORMATIVOS: já estão fora da receita bruta
-                  (pedido cancelado não gera payment/auto_sale e o payments.amount já vem
-                  líquido de desconto). Subtraí-los outra vez era dedução dupla. */}
-              <DRERow label="(i) Cancelamentos (informativo — já fora da receita)" atual={data.cancelamentos} anterior={prevData?.cancelamentos} receitaBruta={receitaBruta} depth={1} origin="Pedidos cancelados — não deduzido da receita (nunca entrou)" badge="Informativo" badgeColor="bg-zinc-100 text-zinc-500" clickable={data.cancelamentos > 0} onClick={data.cancelamentos > 0 ? () => setDrillDown({ type: 'cancelamentos' }) : undefined} />
-              <DRERow label="(i) Descontos Concedidos (informativo — já fora da receita)" atual={data.descontos} anterior={prevData?.descontos} receitaBruta={receitaBruta} depth={1} origin="Descontos aplicados nos pedidos — o valor recebido já é líquido" badge="Informativo" badgeColor="bg-zinc-100 text-zinc-500" clickable={data.descontos > 0} onClick={data.descontos > 0 ? () => setDrillDown({ type: 'descontos' }) : undefined} />
-              {(data.cancelamentos > 0 || data.descontos > 0) && (
-                <tr>
-                  <td colSpan={5} className="px-3 pb-2">
-                    <div className="flex items-start gap-2 rounded-lg px-3 py-2 text-xs bg-zinc-50 text-zinc-500 border border-zinc-200">
-                      <i className="ri-information-line mt-0.5" />
-                      <span>
-                        Cancelamentos e descontos <strong>não são mais subtraídos</strong> da receita:
-                        pedido cancelado nunca vira recebimento e o valor recebido já entra líquido do desconto.
-                        Descontar de novo reduzia a receita líquida em dobro. As linhas seguem aqui só para conferência.
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              )}
-              <DRERow label="(=) RECEITA LÍQUIDA" atual={receitaLiquida} anterior={prevReceitaLiquida} receitaBruta={receitaBruta} isTotal />
+                {/* ── RECEITAS ── */}
+                <SectionHeader label="Receitas" icon="ri-arrow-down-circle-line" tone="emerald" />
+                {data.receitaBalcao > 0 && (
+                  <DRERow label="Vendas balcão / hora" atual={data.receitaBalcao} anterior={prevData?.receitaBalcao} receitaBruta={receitaBruta} depth={1}
+                    origin="Livro-razão: fin_cash_flow → auto_sale" clickable onClick={() => setDrillDown({ type: 'receita_balcao' })} />
+                )}
+                {data.receitaDelivery > 0 && (
+                  <DRERow label="Vendas delivery" atual={data.receitaDelivery} anterior={prevData?.receitaDelivery} receitaBruta={receitaBruta} depth={1}
+                    origin="Livro-razão: fin_cash_flow → auto_sale" clickable onClick={() => setDrillDown({ type: 'receita_delivery' })} />
+                )}
+                {data.receitaMesa > 0 && (
+                  <DRERow label="Vendas mesa" atual={data.receitaMesa} anterior={prevData?.receitaMesa} receitaBruta={receitaBruta} depth={1}
+                    origin="Livro-razão: fin_cash_flow → auto_sale" clickable onClick={() => setDrillDown({ type: 'receita_mesa' })} />
+                )}
+                {data.receitaAutoatendimento > 0 && (
+                  <DRERow label="Autoatendimento" atual={data.receitaAutoatendimento} anterior={prevData?.receitaAutoatendimento} receitaBruta={receitaBruta} depth={1}
+                    origin="Livro-razão: fin_cash_flow → auto_sale" clickable onClick={() => setDrillDown({ type: 'receita_autoatendimento' })} />
+                )}
+                {(data.receitaStone ?? 0) > 0 && (
+                  <DRERow label="Vendas em cartão (Stone)" atual={data.receitaStone} anterior={prevData?.receitaStone} receitaBruta={receitaBruta} depth={1}
+                    origin="Livro-razão: fin_cash_flow → stone_sale (valor bruto liquidado pela Stone; as taxas estão em Taxas de Cartão)" />
+                )}
+                {(data.receitaPix ?? 0) > 0 && (
+                  <DRERow label="Pix recebido (Inter)" atual={data.receitaPix ?? 0} anterior={prevData?.receitaPix} receitaBruta={receitaBruta} depth={1}
+                    origin="Extrato do Banco Inter → créditos Pix (inclui o Pix da maquininha transferido da Conta Stone)" />
+                )}
+                {data.receitaManual > 0 && (
+                  <DRERow label="Entradas manuais (fluxo de caixa)" atual={data.receitaManual} anterior={prevData?.receitaManual} receitaBruta={receitaBruta} depth={1}
+                    origin="Movimentações manuais registradas no Fluxo de Caixa" clickable onClick={() => setDrillDown({ type: 'receita_manual' })} />
+                )}
+                {receitaBruta === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-3 text-xs text-zinc-400 text-center">Nenhuma receita registrada neste período</td>
+                  </tr>
+                )}
+                <DRERow label="Receita bruta" atual={receitaBruta} anterior={prevReceitaBruta} receitaBruta={receitaBruta} isTotal />
+                {dreMode === 'competencia' && data.receitaAReceber > 0 && (
+                  <NoteRow>
+                    Saldo a receber no período: <strong className="text-zinc-500">{formatCurrency(data.receitaAReceber)}</strong> — já contabilizado na receita acima (venda reconhecida, dinheiro ainda não entrou).
+                  </NoteRow>
+                )}
+                {/* Cancelamentos e descontos são INFORMATIVOS: já estão fora da receita bruta
+                    (pedido cancelado não gera payment/auto_sale e o payments.amount já vem
+                    líquido de desconto). Subtraí-los outra vez era dedução dupla. */}
+                {(data.cancelamentos > 0 || (prevData?.cancelamentos ?? 0) > 0) && (
+                  <DRERow label="Cancelamentos" atual={data.cancelamentos} anterior={prevData?.cancelamentos} receitaBruta={receitaBruta} depth={1} muted
+                    origin="Pedidos cancelados — não deduzido da receita (nunca entrou)" badge="Só conferência"
+                    clickable={data.cancelamentos > 0} onClick={data.cancelamentos > 0 ? () => setDrillDown({ type: 'cancelamentos' }) : undefined} />
+                )}
+                {(data.descontos > 0 || (prevData?.descontos ?? 0) > 0) && (
+                  <DRERow label="Descontos concedidos" atual={data.descontos} anterior={prevData?.descontos} receitaBruta={receitaBruta} depth={1} muted
+                    origin="Descontos aplicados nos pedidos — o valor recebido já é líquido" badge="Só conferência"
+                    clickable={data.descontos > 0} onClick={data.descontos > 0 ? () => setDrillDown({ type: 'descontos' }) : undefined} />
+                )}
+                <DRERow label="Receita líquida" atual={receitaLiquida} anterior={prevReceitaLiquida} receitaBruta={receitaBruta} isTotal />
 
-              {/* ── CUSTOS ── */}
-              <SectionHeader label="Custos" />
-              <DRERow
-                label="CMV — Custo dos Produtos Vendidos"
-                atual={cmvTotal}
-                anterior={prevCmvTotal}
-                receitaBruta={receitaBruta}
-                isNeg
-                depth={1}
-                origin="Custo dos insumos consumidos nas vendas (ficha técnica × qtd vendida)"
-                badge={dreMode === 'competencia' ? 'Competência' : undefined}
-                badgeColor="bg-orange-100 text-orange-600"
-                clickable={cmvTotal > 0}
-                onClick={cmvTotal > 0 ? () => setDrillDown({ type: 'cmv' }) : undefined}
-              />
-              {/* P2: CMV aqui é baseado em COMPRAS, não no custo do que foi vendido.
-                  O CMV correto (consumo via ficha técnica) só é confiável com cobertura alta. */}
-              <tr>
-                <td colSpan={5} className="px-3 pb-2">
-                  <div className="flex items-start gap-2 rounded-lg px-3 py-2 text-xs bg-zinc-50 text-zinc-500 border border-zinc-200">
-                    <i className="ri-information-line mt-0.5" />
-                    <span>
-                      CMV = <strong>compras realizadas no período</strong>.
-                      Total comprado: <strong>{formatCurrency(data.comprasTotal ?? 0)}</strong>
-                      {comprasComoDespesa > 0 && (
-                        <>, dos quais <strong>{formatCurrency(comprasComoDespesa)}</strong> foram classificados como despesa operacional e saíram do CMV</>
-                      )}.
-                      {' '}Ainda sem ajuste de estoque inicial/final, que exige inventário valorizado por mês.
-                      {typeof data.cmvTeorico === 'number' && data.cmvTeorico > 0 && (
-                        <>
-                          {' '}CMV teórico por ficha técnica, apenas comparativo: <strong>{formatCurrency(data.cmvTeorico)}</strong>
-                          {typeof data.fichaCobertura === 'number' && <> (cobertura de {data.fichaCobertura.toFixed(0)}%)</>}.
-                        </>
+                {/* ── CUSTOS ── */}
+                <SectionHeader label="Custos" icon="ri-shopping-cart-2-line" tone="orange" />
+                <DRERow
+                  label="CMV — custo das mercadorias"
+                  atual={cmvTotal}
+                  anterior={prevCmvTotal}
+                  receitaBruta={receitaBruta}
+                  isNeg
+                  depth={1}
+                  origin="Compras realizadas no período (itens classificados como mercadoria)"
+                  clickable={cmvTotal > 0}
+                  onClick={cmvTotal > 0 ? () => setDrillDown({ type: 'cmv' }) : undefined}
+                />
+                <NoteRow>
+                  CMV = compras realizadas no mês. Total comprado: <strong className="text-zinc-500">{formatCurrency(data.comprasTotal ?? 0)}</strong>
+                  {comprasComoDespesa > 0 && (
+                    <>, dos quais <strong className="text-zinc-500">{formatCurrency(comprasComoDespesa)}</strong> foram classificados como despesa</>
+                  )}.
+                  {typeof data.cmvTeorico === 'number' && data.cmvTeorico > 0 && (
+                    <>
+                      {' '}CMV teórico pela ficha técnica (só comparativo): <strong className="text-zinc-500">{formatCurrency(data.cmvTeorico)}</strong>
+                      {typeof data.fichaCobertura === 'number' && <> · cobertura {data.fichaCobertura.toFixed(0)}%</>}.
+                    </>
+                  )}
+                </NoteRow>
+                {hasDynCats && costCats.length > 0 && (
+                  <CatTreeRows cats={costCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
+                )}
+                <DRERow label="Lucro bruto" atual={lucroBruto} anterior={prevLucroBruto} receitaBruta={receitaBruta} isTotal />
+
+                {/* ── DESPESAS OPERACIONAIS ── */}
+                <SectionHeader label="Despesas operacionais" icon="ri-bill-line" tone="rose" />
+                {data.custoPessoal > 0 && (
+                  <DRERow
+                    label="Pessoal (folha + FGTS)"
+                    atual={data.custoPessoal}
+                    anterior={prevData?.custoPessoal}
+                    receitaBruta={receitaBruta}
+                    isNeg
+                    depth={1}
+                    origin={dreMode === 'caixa'
+                      ? 'Folha PAGA no mês de referência + encargos patronais (regime de caixa)'
+                      : 'Folha do mês de referência + encargos patronais (paga ou não)'}
+                    badge="RH"
+                    badgeColor="bg-amber-100 text-amber-700"
+                    clickable
+                    onClick={() => setDrillDown({ type: 'custo_pessoal' })}
+                  />
+                )}
+                {taxasMaquininha > 0 && (
+                  <DRERow
+                    label="Taxas de cartão / Pix"
+                    atual={taxasMaquininha}
+                    anterior={prevData?.taxasMaquininha}
+                    receitaBruta={receitaBruta}
+                    isNeg
+                    depth={1}
+                    origin="Livro-razão: fin_cash_flow → auto_card_fee"
+                  />
+                )}
+                {hasDynCats && expenseCats.length > 0 ? (
+                  <CatTreeRows cats={expenseCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-5 text-center">
+                      <div className="flex flex-col items-center gap-1.5">
+                        <i className="ri-folder-chart-line text-zinc-300 text-2xl" />
+                        <p className="text-xs text-zinc-400">
+                          Crie categorias na aba <strong className="text-zinc-600">Categorias DRE</strong> e vincule suas contas a pagar a elas
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                {/* Despesas sem categoria DRE: SOMAM no resultado (antes sumiam da conta).
+                    Ficam nesta linha até serem classificadas em Contas a Pagar. */}
+                {despesasSemCategoria > 0 && (
+                  <DRERow
+                    label="Sem categoria (a classificar)"
+                    atual={despesasSemCategoria}
+                    anterior={prevDespesasSemCategoria}
+                    receitaBruta={receitaBruta}
+                    isNeg
+                    depth={1}
+                    origin="Contas a pagar sem dre_category_id — já subtraídas do resultado"
+                    badge="A classificar"
+                    badgeColor="bg-amber-100 text-amber-700"
+                  />
+                )}
+
+                {/* ── GRUPOS CUSTOMIZADOS ── */}
+                {customGroupTrees.map(({ group, cats, total }) => (
+                  total > 0 || cats.length > 0 ? (
+                    <Fragment key={group.key}>
+                      <SectionHeader label={group.label} icon="ri-folder-line" />
+                      {cats.length > 0 ? (
+                        <CatTreeRows cats={cats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="px-5 py-3 text-xs text-zinc-400 text-center">
+                            Nenhuma despesa neste grupo no período
+                          </td>
+                        </tr>
                       )}
-                    </span>
-                  </div>
-                </td>
-              </tr>
-              {hasDynCats && costCats.length > 0 && (
-                <CatTreeRows
-                  cats={costCats}
-                  depth={1}
-                  data={data}
-                  prevData={prevData}
-                  receitaBruta={receitaBruta}
-                  mode={dreMode}
-                  onDrillDown={(id, name) => setDrillDown({ type: 'dre_category', categoryId: id, categoryName: name })}
-                />
-              )}
-              <DRERow label="(=) LUCRO BRUTO" atual={lucroBruto} anterior={prevLucroBruto} receitaBruta={receitaBruta} isTotal />
+                    </Fragment>
+                  ) : null
+                ))}
 
-              {/* ── DESPESAS OPERACIONAIS ── */}
-              <SectionHeader label="Despesas Operacionais" />
-              {data.custoPessoal > 0 && (
-                <DRERow
-                  label="Custo com Pessoal (Folha + FGTS)"
-                  atual={data.custoPessoal}
-                  anterior={prevData?.custoPessoal}
-                  receitaBruta={receitaBruta}
-                  isNeg
-                  depth={1}
-                  origin={dreMode === 'caixa'
-                    ? 'Folha PAGA no mês de referência + encargos patronais (regime de caixa)'
-                    : 'Folha do mês de referência + encargos patronais (paga ou não)'}
-                  badge="RH"
-                  badgeColor="bg-amber-100 text-amber-700"
-                  clickable
-                  onClick={() => setDrillDown({ type: 'custo_pessoal' })}
-                />
-              )}
-              {taxasMaquininha > 0 && (
-                <DRERow
-                  label="Taxas de Intermediação (Maquininha/PIX)"
-                  atual={taxasMaquininha}
-                  anterior={prevData?.taxasMaquininha}
-                  receitaBruta={receitaBruta}
-                  isNeg
-                  depth={1}
-                  origin="Formas de pagamento com taxa cadastradas"
-                  badge="Financeiro"
-                  badgeColor="bg-orange-100 text-orange-700"
-                  clickable={false}
-                />
-              )}
-              {hasDynCats && expenseCats.length > 0 ? (
-                <CatTreeRows
-                  cats={expenseCats}
-                  depth={1}
-                  data={data}
-                  prevData={prevData}
-                  receitaBruta={receitaBruta}
-                  mode={dreMode}
-                  onDrillDown={(id, name) => setDrillDown({ type: 'dre_category', categoryId: id, categoryName: name })}
-                />
-              ) : (
-                <tr>
-                  <td colSpan={5} className="px-5 py-5 text-center">
-                    <div className="flex flex-col items-center gap-1.5">
-                      <i className="ri-folder-chart-line text-zinc-300 text-2xl" />
-                      <p className="text-xs text-zinc-400">
-                        Crie categorias na aba <strong className="text-zinc-600">Categorias DRE</strong> e vincule suas contas a pagar a elas
-                      </p>
+                {/* ── RESULTADO ── (operacional = líquido: não há IR/financeiro separado) */}
+                <tr className={resultadoOperacional >= 0 ? 'bg-emerald-50' : 'bg-red-50'}>
+                  <td className="pl-5 pr-3 py-4">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-6 h-6 rounded-md text-white text-xs font-bold flex items-center justify-center ${resultadoOperacional >= 0 ? 'bg-emerald-600' : 'bg-red-500'}`}>=</span>
+                      <span className="text-sm font-bold text-zinc-900 uppercase tracking-wide">Resultado líquido</span>
                     </div>
                   </td>
+                  <td className={`px-4 py-4 text-lg font-bold text-right tabular-nums whitespace-nowrap ${resultadoOperacional >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                    {formatCurrency(resultadoOperacional)}
+                  </td>
+                  <td className="px-4 py-4 text-right">
+                    <span className="text-xs font-semibold text-zinc-600 tabular-nums">{pct(resultadoOperacional, receitaBruta)}</span>
+                  </td>
+                  <td className={`px-4 py-4 text-sm font-semibold text-right tabular-nums whitespace-nowrap ${prevResultado >= 0 ? 'text-emerald-600/70' : 'text-red-500/70'}`}>
+                    {formatCurrency(prevResultado)}
+                  </td>
+                  <td className="pl-4 pr-5 py-4 text-right">
+                    <VarChip atual={resultadoOperacional} anterior={prevResultado} />
+                  </td>
                 </tr>
-              )}
-              {/* Despesas sem categoria DRE: agora SOMAM no resultado (antes sumiam da conta).
-                  Ficam nesta linha até serem classificadas em Contas a Pagar. */}
-              {despesasSemCategoria > 0 && (
-                <DRERow
-                  label="Sem categoria DRE (a classificar)"
-                  atual={despesasSemCategoria}
-                  anterior={prevDespesasSemCategoria}
-                  receitaBruta={receitaBruta}
-                  isNeg
-                  depth={1}
-                  origin="Contas a pagar sem dre_category_id — já subtraídas do resultado"
-                  badge="A classificar"
-                  badgeColor="bg-zinc-200 text-zinc-600"
-                />
-              )}
-
-              {/* ── GRUPOS CUSTOMIZADOS ── */}
-              {customGroupTrees.map(({ group, cats, total, prevTotal }) => (
-                total > 0 || cats.length > 0 ? (
-                  <Fragment key={group.key}>
-                    <SectionHeader label={group.label} />
-                    {cats.length > 0 ? (
-                      <CatTreeRows
-                        cats={cats}
-                        depth={1}
-                        data={data}
-                        prevData={prevData}
-                        receitaBruta={receitaBruta}
-                        mode={dreMode}
-                        onDrillDown={(id, name) => setDrillDown({ type: 'dre_category', categoryId: id, categoryName: name })}
-                      />
-                    ) : (
-                      <tr>
-                        <td colSpan={5} className="px-5 py-3 text-xs text-zinc-400 text-center">
-                          Nenhuma despesa neste grupo no período
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                ) : null
-              ))}
-
-              <DRERow label="(=) RESULTADO OPERACIONAL" atual={resultadoOperacional} anterior={prevResultado} receitaBruta={receitaBruta} isTotal />
-
-              {/* ── RESULTADO ── */}
-              <SectionHeader label="Resultado" />
-              <tr className="bg-stone-50 border-t-2 border-amber-300/60">
-                <td className="px-5 py-3.5 text-sm font-bold text-stone-800">(=) RESULTADO LÍQUIDO</td>
-                <td className={`px-4 py-3.5 text-base font-bold text-right ${resultadoOperacional >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                  {formatCurrency(resultadoOperacional)}
-                </td>
-                <td className="px-4 py-3.5 text-xs text-right text-stone-400">{pct(resultadoOperacional, receitaBruta)}</td>
-                <td className={`px-4 py-3.5 text-sm font-bold text-right opacity-60 ${prevResultado >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                  {formatCurrency(prevResultado)}
-                </td>
-                <td className="px-4 py-3.5 text-xs text-right">
-                  {(() => {
-                    const v = variacao(resultadoOperacional, prevResultado);
-                    return v !== null ? (
-                      <span className={`font-bold ${v >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                        {v >= 0 ? '+' : ''}{v.toFixed(1)}%
-                      </span>
-                    ) : '—';
-                  })()}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
-      {/* Dica de clique */}
-      {activeView === 'tabela' && (
-        <div className="flex items-center gap-2 text-xs text-zinc-400">
-          <i className="ri-cursor-line" />
-          <span>Clique em qualquer linha do DRE para ver o que compõe esse valor</span>
-        </div>
-      )}
-
-      {/* Legenda de fontes */}
-      <div className="bg-zinc-50 border border-zinc-100 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-xs font-semibold text-zinc-600">Fontes dos dados</p>
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${dreMode === 'competencia' ? 'bg-indigo-100 text-indigo-600' : 'bg-zinc-200 text-zinc-600'}`}>
-            {dreMode === 'competencia' ? 'Regime de Competência' : 'Regime de Caixa'}
+      {/* ── Como ler / fontes ── */}
+      <details className="group bg-zinc-50 border border-zinc-200 rounded-2xl">
+        <summary className="flex items-center justify-between px-4 py-3 cursor-pointer list-none select-none">
+          <span className="text-xs font-semibold text-zinc-600 flex items-center gap-2">
+            <i className="ri-book-open-line text-zinc-400" /> Como ler este DRE e fontes dos dados
           </span>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {(dreMode === 'caixa' ? [
-            { icon: 'ri-shopping-bag-line', label: 'Receitas', desc: 'Livro-razão (fin_cash_flow): auto_sale + entradas manuais' },
-            { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Custo dos produtos vendidos (consumo via ficha técnica)' },
-            { icon: 'ri-bill-line', label: 'Despesas', desc: 'Contas a Pagar pagas e parciais, pelo valor pago (compras excluídas) + folha paga' },
-            { icon: 'ri-price-tag-3-line', label: 'Deduções', desc: 'Cancelamentos e descontos: informativos — já fora da receita, não são subtraídos de novo' },
-          ] : [
-            { icon: 'ri-shopping-bag-line', label: 'Receitas', desc: 'Livro-razão (fin_cash_flow): auto_sale + entradas manuais (recebíveis são saldo, já contabilizados)' },
-            { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Custo dos produtos vendidos (consumo via ficha técnica)' },
-            { icon: 'ri-bill-line', label: 'Despesas', desc: 'Todas as contas com vencimento no período — compras excluídas (evita dupla contagem)' },
-            { icon: 'ri-price-tag-3-line', label: 'Deduções', desc: 'Cancelamentos e descontos: informativos — já fora da receita, não são subtraídos de novo' },
-          ]).map((f) => (
+          <span className="flex items-center gap-2">
+            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${dreMode === 'competencia' ? 'bg-indigo-100 text-indigo-600' : 'bg-zinc-200 text-zinc-600'}`}>
+              {dreMode === 'competencia' ? 'Regime de Competência' : 'Regime de Caixa'}
+            </span>
+            <i className="ri-arrow-down-s-line text-zinc-400 transition-transform group-open:rotate-180" />
+          </span>
+        </summary>
+        <div className="px-4 pb-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          {[
+            {
+              icon: 'ri-shopping-bag-line', label: 'Receitas',
+              desc: dreMode === 'caixa'
+                ? 'Livro-razão (fin_cash_flow): vendas recebidas + entradas manuais, conforme as fontes ligadas em Receitas › Fontes.'
+                : 'Livro-razão (fin_cash_flow): vendas + entradas manuais. Recebíveis pendentes são saldo, já contabilizados.',
+            },
+            { icon: 'ri-shopping-cart-line', label: 'CMV', desc: 'Compras realizadas no mês que são mercadoria. Itens de compra classificados como despesa vão para a categoria deles.' },
+            {
+              icon: 'ri-bill-line', label: 'Despesas',
+              desc: dreMode === 'caixa'
+                ? 'Contas a Pagar pagas e parciais, pelo valor pago (compras excluídas) + folha paga + taxas de cartão.'
+                : 'Todas as contas com vencimento no mês (compras excluídas, evita dupla contagem) + folha do mês.',
+            },
+            { icon: 'ri-price-tag-3-line', label: 'Cancelamentos e descontos', desc: 'Só para conferência: pedido cancelado nunca vira recebimento e o valor recebido já vem líquido de desconto — não são subtraídos de novo.' },
+          ].map(f => (
             <div key={f.label} className="flex items-start gap-2">
               <div className="w-6 h-6 flex items-center justify-center bg-white border border-zinc-200 rounded-lg flex-shrink-0">
                 <i className={`${f.icon} text-zinc-500 text-xs`} />
               </div>
               <div>
                 <p className="text-xs font-semibold text-zinc-700">{f.label}</p>
-                <p className="text-xs text-zinc-400">{f.desc}</p>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">{f.desc}</p>
               </div>
             </div>
           ))}
         </div>
-      </div>
+      </details>
 
       {/* Drill-down Modal */}
       {drillDown && (
