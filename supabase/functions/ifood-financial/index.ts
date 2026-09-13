@@ -226,20 +226,22 @@ type LedgerEntry = Pick<Entry, 'data_repasse' | 'valor' | 'tipo_lancamento' | 'i
 // − recebido direto pela loja 1.757,80 = repasses 5.005,95.
 //   vendas   = Entrada Financeira (iFood e loja) + subsídio iFood/indústria + retenções (taxa de entrega e
 //              de serviço cobradas do cliente, parcelamento) + promoção da loja somada de volta
-//   taxas    = cobranças de comissão e taxa de transação
+//   taxas    = cobranças de comissão, taxa de transação e mensalidade do plano
 //   serviços = demais cobranças (entrega sob demanda) + promoção custeada pela loja
-//   ajustes  = ressarcimentos e outros tipos
-//   loja     = Entrada Financeira com responsável LOJA (pago na entrega, fora do repasse)
-type PortalEntry = Pick<Entry, 'tipo_lancamento' | 'descricao' | 'responsavel' | 'valor'>;
+//   ajustes  = ressarcimentos, débitos de ocorrência e outros tipos
+//   loja     = Entrada Financeira FORA do repasse (impacto_no_repasse = NÃO: pago direto à loja).
+//              Não usar o responsável: em jun/26 há Entrada com responsável LOJA que entra no repasse.
+// Com isso repasses = soma das linhas com impacto no repasse, sempre.
+type PortalEntry = Pick<Entry, 'tipo_lancamento' | 'descricao' | 'responsavel' | 'valor' | 'impacto_repasse'>;
 function portalBucket(e: PortalEntry) {
   const t = (e.tipo_lancamento ?? '').toLowerCase();
   const d = (e.descricao ?? '').toLowerCase();
   const v = e.valor;
   const z = { vendas: 0, taxas: 0, servicos: 0, ajustes: 0, loja: 0 };
-  if (t.includes('entrada')) { z.vendas = v; if ((e.responsavel ?? '').toUpperCase() === 'LOJA') z.loja = v; }
+  if (t.includes('entrada')) { z.vendas = v; if (!e.impacto_repasse) z.loja = v; }
   else if (t.includes('subs')) { if (/custeada pela loja/.test(d)) { z.vendas = -v; z.servicos = -v; } else z.vendas = v; }
   else if (t.includes('reten')) z.vendas = v;
-  else if (t.includes('cobran')) { if (/comiss|transa/.test(d)) z.taxas = -v; else z.servicos = -v; }
+  else if (t.includes('cobran')) { if (/comiss|transa|mensalidade/.test(d)) z.taxas = -v; else z.servicos = -v; }
   else z.ajustes = v;
   return z;
 }

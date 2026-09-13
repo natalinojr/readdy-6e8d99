@@ -39,10 +39,11 @@ function portalBucket(e: EntryRow) {
   const d = (e.descricao ?? '').toLowerCase();
   const v = e.valor;
   const z = { vendas: 0, taxas: 0, servicos: 0, ajustes: 0, loja: 0 };
-  if (t.includes('entrada')) { z.vendas = v; if ((e.responsavel ?? '').toUpperCase() === 'LOJA') z.loja = v; }
+  // "Recebido direto pela loja" = Entrada fora do repasse (não pelo responsável: há Entrada LOJA no repasse).
+  if (t.includes('entrada')) { z.vendas = v; if (!e.impacto_repasse) z.loja = v; }
   else if (t.includes('subs')) { if (/custeada pela loja/.test(d)) { z.vendas = -v; z.servicos = -v; } else z.vendas = v; }
   else if (t.includes('reten')) z.vendas = v;
-  else if (t.includes('cobran')) { if (/comiss|transa/.test(d)) z.taxas = -v; else z.servicos = -v; }
+  else if (t.includes('cobran')) { if (/comiss|transa|mensalidade/.test(d)) z.taxas = -v; else z.servicos = -v; }
   else z.ajustes = v;
   return z;
 }
@@ -73,6 +74,7 @@ export default function IfoodTab() {
   const [openRepasse, setOpenRepasse] = useState<string | null>(null);
   const [view, setView] = useState<'resumo' | IfoodApiView>('resumo');
   const [apiOn, setApiOn] = useState(false);
+  const [homolog, setHomolog] = useState(false);
   const [nomes, setNomes] = useState<Record<string, string>>({});
   const [editLoja, setEditLoja] = useState<{ id: string; curto: string; nome: string; salvando: boolean; erro: string | null } | null>(null);
   const [ondemand, setOndemand] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
@@ -92,6 +94,7 @@ export default function IfoodTab() {
     setImports(rows);
     setPostToLedger(cfg.data?.config?.post_to_ledger === true);
     setApiOn(cfg.data?.config?.authorized === true && !!cfg.data?.config?.merchant_id);
+    setHomolog((cfg.data?.config as { homologation_mode?: boolean } | null | undefined)?.homologation_mode === true);
     setCompetence((c) => (c && rows.some((r) => r.competence === c) ? c : rows[0]?.competence ?? ''));
     if (rows.length === 0) setLoading(false);
   }, [user?.tenantId]);
@@ -289,7 +292,13 @@ export default function IfoodTab() {
         ))}
       </div>
 
-      {/* Onde entra no resto do financeiro */}
+      {/* Onde entra no resto do financeiro (no modo homologação: dados de teste, nunca lançados) */}
+      {homolog ? (
+        <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+          <i className="ri-flask-line mt-0.5" />
+          <span><strong>Modo homologação:</strong> dados da loja de teste do iFood, buscados com o header de homologação. Eles aparecem aqui para conferência e <strong>não entram</strong> em Receitas, DRE nem Fluxo de Caixa.</span>
+        </div>
+      ) : (
       <div className={`flex flex-wrap items-start gap-2 rounded-lg border px-3 py-2 text-xs ${postToLedger ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
         <i className={`${postToLedger ? 'ri-checkbox-circle-line' : 'ri-information-line'} mt-0.5`} />
         <span className="flex-1 min-w-[220px]">
@@ -302,6 +311,7 @@ export default function IfoodTab() {
           {togglingLedger ? 'Salvando...' : postToLedger ? 'Parar de lançar' : 'Lançar no financeiro'}
         </button>
       </div>
+      )}
 
       {error && (
         <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">Falha ao carregar: {error}</div>
@@ -312,7 +322,10 @@ export default function IfoodTab() {
       ) : !loading && imports.length === 0 ? (
         <div className="bg-white rounded-xl border border-zinc-100 p-8 text-center space-y-2">
           <i className="ri-file-excel-2-line text-3xl text-zinc-300" />
-          <p className="text-sm font-semibold text-zinc-700">Nenhum relatório do iFood importado</p>
+          <p className="text-sm font-semibold text-zinc-700">{homolog ? 'A loja de teste do iFood não tem relatório de conciliação' : 'Nenhum relatório do iFood importado'}</p>
+          {homolog && (
+            <p className="text-xs text-blue-700 max-w-md mx-auto">O iFood não gera lançamentos financeiros para a loja de teste (o "Gerar relatório agora" devolve essa resposta). Os dados de teste estão nas abas <strong>Pedidos</strong> e <strong>Eventos</strong>.</p>
+          )}
           <p className="text-xs text-zinc-500 max-w-md mx-auto">No Portal do Parceiro: Financeiro › Exportar, depois Relatórios › Exportações › Baixar (página cinza → Ctrl+S). Suba o arquivo em "Importar / configurar". Com a API conectada, entra sozinho todo dia às 07h20.</p>
         </div>
       ) : loading ? (
