@@ -86,10 +86,13 @@ function apiError(r: { status: number; data: any; raw: string }, what: string) {
 // Token válido (renova com refresh_token 5 min antes de expirar).
 async function getToken(admin: Admin, cfg: any): Promise<string> {
   if (cfg.access_token && cfg.token_expires_at && new Date(cfg.token_expires_at).getTime() - Date.now() > 5 * 60_000) return cfg.access_token;
-  if (!cfg.refresh_token) throw new Error('A loja ainda não autorizou o app no Portal do Parceiro (gere o código na configuração do iFood).');
-  const r = await ifoodForm('/authentication/v1.0/oauth/token', {
-    grantType: 'refresh_token', clientId: cfg.client_id, clientSecret: cfg.client_secret, refreshToken: cfg.refresh_token,
-  }, cfg.homologation_mode === true);
+  // Centralizado: client_credentials direto. Distribuído: refresh_token da autorização da loja.
+  const centralized = cfg.app_type === 'centralized';
+  if (!centralized && !cfg.refresh_token) throw new Error('A loja ainda não autorizou o app no Portal do Parceiro (gere o código na configuração do iFood).');
+  const r = await ifoodForm('/authentication/v1.0/oauth/token', centralized
+    ? { grantType: 'client_credentials', clientId: cfg.client_id, clientSecret: cfg.client_secret }
+    : { grantType: 'refresh_token', clientId: cfg.client_id, clientSecret: cfg.client_secret, refreshToken: cfg.refresh_token },
+  cfg.homologation_mode === true);
   if (!r.ok || !r.data?.accessToken) throw new Error(apiError(r, 'Renovar acesso'));
   const upd = {
     access_token: r.data.accessToken,
@@ -101,6 +104,9 @@ async function getToken(admin: Admin, cfg: any): Promise<string> {
   Object.assign(cfg, upd);
   return upd.access_token;
 }
+
+// API utilizável: loja escolhida e (distribuído) autorizada ou (centralizado) só credenciais.
+const connected = (cfg: any) => Boolean(cfg?.client_id && cfg?.merchant_id && (cfg.refresh_token || cfg.app_type === 'centralized'));
 
 // GET/POST autenticados: 401 → força renovação do token e tenta uma vez mais.
 async function apiGet(admin: Admin, cfg: any, path: string) {
@@ -295,6 +301,11 @@ async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, c
     lines: valid.length, orders, gross, fees, net: round2(gross - fees), created_by: meta.userId ?? null, updated_at: now,
   }, { onConflict: 'tenant_id,merchant_id,competence' }).select('id').single();
   if (impErr || !imp) throw new Error('Registrar importação: ' + (impErr?.message ?? 'sem id'));
+  if (meta.merchant_id) {
+    // Cadastro da loja (o nome vem da API ou é digitado na aba iFood; aqui não sobrescreve).
+    await admin.from('fin_ifood_merchants').upsert({ tenant_id: tenantId, merchant_id: meta.merchant_id, merchant_short: valid.find((e) => e.merchant_short)?.merchant_short ?? null },
+      { onConflict: 'tenant_id,merchant_id', ignoreDuplicates: true });
+  }
 
   const { error: delErr } = await admin.from('fin_ifood_entries').delete().eq('import_id', imp.id);
   if (delErr) throw new Error('Limpar linhas anteriores: ' + delErr.message);
@@ -304,7 +315,8 @@ async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, c
     if (error) throw new Error('Gravar linhas: ' + error.message);
   }
 
-  const ledger = await postLedger(admin, tenantId, imp.id, cfg?.post_to_ledger === true, valid);
+  // Modo homologação (loja de teste): nunca lança no financeiro da loja.
+  const ledger = await postLedger(admin, tenantId, imp.id, cfg?.post_to_ledger === true && cfg?.homologation_mode !== true, valid);
   const matched = await matchInter(admin, tenantId);
   return { competence, import_id: imp.id, lines: valid.length, orders, gross, fees, net: round2(gross - fees), ledger, matched_deposits: matched };
 }
@@ -471,7 +483,8 @@ function safeConfig(cfg: any) {
     client_id: cfg.client_id ? String(cfg.client_id).slice(0, 4) + '…' + String(cfg.client_id).slice(-4) : null,
     has_secret: Boolean(cfg.client_secret),
     merchant_id: cfg.merchant_id, merchant_name: cfg.merchant_name,
-    authorized: Boolean(cfg.refresh_token), authorized_at: cfg.authorized_at,
+    app_type: cfg.app_type ?? 'distributed',
+    authorized: Boolean(cfg.refresh_token) || (cfg.app_type === 'centralized' && Boolean(cfg.authorized_at)), authorized_at: cfg.authorized_at,
     user_code: cfg.user_code_expires_at && new Date(cfg.user_code_expires_at).getTime() > Date.now() ? cfg.user_code : null,
     user_code_expires_at: cfg.user_code_expires_at, verification_url: cfg.verification_url,
     is_active: cfg.is_active, auto_sync: cfg.auto_sync, post_to_ledger: cfg.post_to_ledger, homologation_mode: cfg.homologation_mode === true,
@@ -503,7 +516,7 @@ Deno.serve(async (req) => {
       for (const cfg of lojas ?? []) {
         const r: Record<string, unknown> = { tenant_id: cfg.tenant_id };
         try {
-          if (cfg.auto_sync !== false && cfg.refresh_token && cfg.merchant_id) r.sync = await syncTenant(admin, cfg);
+          if (cfg.auto_sync !== false && connected(cfg)) r.sync = await syncTenant(admin, cfg);
           // Arquivo importado à mão também: repasses que venceram desde ontem entram no razão.
           if (cfg.post_to_ledger) r.ledger = await repostImports(admin, cfg.tenant_id, true, minComp);
         } catch (e) { r.error = String((e as Error)?.message ?? e); }
@@ -543,7 +556,7 @@ Deno.serve(async (req) => {
 
     if (action === 'sync') {
       if (!cfg || !cfg.client_id) return json({ success: false, not_configured: true });
-      if (!cfg.refresh_token || !cfg.merchant_id) return json({ success: true, skipped: true });
+      if (!connected(cfg)) return json({ success: true, skipped: true });
       if (!cfg.is_active || cfg.auto_sync === false) return json({ success: true, skipped: true });
       const comps = Array.isArray(body.competences) ? body.competences.map(String).filter((c: string) => /^\d{4}-\d{2}$/.test(c)).slice(0, 12) : undefined;
       const r = await syncTenant(admin, cfg, comps);
@@ -601,9 +614,18 @@ Deno.serve(async (req) => {
       return json({ success: true, ledger });
     }
 
+    if (action === 'set_merchant_name') {
+      const merchantId = String(body.merchant_id ?? '').trim();
+      const name = String(body.name ?? '').trim().slice(0, 120);
+      if (!merchantId) return errResp('Loja não informada.');
+      const { error } = await admin.from('fin_ifood_merchants').upsert({ tenant_id: tenantId, merchant_id: merchantId, name: name || null, updated_at: new Date().toISOString() }, { onConflict: 'tenant_id,merchant_id' });
+      if (error) return errResp('Salvar: ' + error.message, 500);
+      return json({ success: true });
+    }
+
     // ── Relatório de conciliação sob demanda (POST gera; GET consulta até ficar pronto) ──
     if (action === 'request_ondemand') {
-      if (!cfg?.refresh_token || !cfg.merchant_id) return errResp('Conecte a API do iFood antes (credenciais + autorização da loja).');
+      if (!connected(cfg)) return errResp('Conecte a API do iFood antes (credenciais + autorização da loja).');
       const competence = String(body.competence ?? '');
       if (!/^\d{4}-\d{2}$/.test(competence)) return errResp('Competência inválida (use AAAA-MM).');
       const r = await apiPost(admin, cfg, finPath(cfg, '/reconciliation/on-demand'), { competence });
@@ -622,7 +644,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'ondemand_status') {
-      if (!cfg?.refresh_token || !cfg.merchant_id) return errResp('API do iFood não conectada.');
+      if (!connected(cfg)) return errResp('API do iFood não conectada.');
       const requestId = String(body.request_id ?? '');
       const { data: od } = await admin.from('fin_ifood_ondemand').select('*').eq('tenant_id', tenantId).eq('request_id', requestId).maybeSingle();
       if (!od) return errResp('Pedido de relatório não encontrado.');
@@ -653,6 +675,7 @@ Deno.serve(async (req) => {
       const now = new Date().toISOString();
       const row: Record<string, unknown> = {
         tenant_id: tenantId, client_id: clientId, client_secret: clientSecret || cfg?.client_secret,
+        app_type: body.app_type === 'centralized' ? 'centralized' : 'distributed',
         auto_sync: body.auto_sync === false ? false : true,
         is_active: true, updated_at: now,
       };
@@ -694,8 +717,28 @@ Deno.serve(async (req) => {
       const m = await ifoodGet('/merchant/v1.0/merchants', access, cfg.homologation_mode === true);
       const merchants = (Array.isArray(m.data) ? m.data : []).map((x: any) => ({ id: String(x.id), name: String(x.name ?? x.corporateName ?? x.id) }));
       if (merchants.length === 1) { upd.merchant_id = merchants[0].id; upd.merchant_name = merchants[0].name; }
+      if (merchants.length > 0) {
+        await admin.from('fin_ifood_merchants').upsert(merchants.map((m: { id: string; name: string }) => ({ tenant_id: tenantId, merchant_id: m.id, name: m.name, updated_at: new Date().toISOString() })), { onConflict: 'tenant_id,merchant_id' });
+      }
       await admin.from('fin_ifood_config').update(upd).eq('id', cfg.id);
       if (!r.data.refreshToken) log('WARN', 'confirm_authorization', 'token sem refreshToken', { tenantId });
+      return json({ success: true, merchants, merchant_id: upd.merchant_id ?? null });
+    }
+
+    // App centralizado (ex.: app de teste "C"): token por client_credentials e lista das lojas liberadas.
+    if (action === 'connect_centralized') {
+      if (!cfg?.client_id || !cfg.client_secret || cfg.app_type !== 'centralized') return errResp('Salve antes as credenciais de um app centralizado.');
+      cfg.token_expires_at = null;
+      const token = await getToken(admin, cfg);
+      const m = await ifoodGet('/merchant/v1.0/merchants', token, cfg.homologation_mode === true);
+      if (!m.ok) return errResp(apiError(m, 'Listar lojas'));
+      const merchants = (Array.isArray(m.data) ? m.data : []).map((x: any) => ({ id: String(x.id), name: String(x.name ?? x.corporateName ?? x.id) }));
+      const upd: Record<string, unknown> = { authorized_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      if (merchants.length === 1) { upd.merchant_id = merchants[0].id; upd.merchant_name = merchants[0].name; }
+      await admin.from('fin_ifood_config').update(upd).eq('id', cfg.id);
+      if (merchants.length > 0) {
+        await admin.from('fin_ifood_merchants').upsert(merchants.map((x: { id: string; name: string }) => ({ tenant_id: tenantId, merchant_id: x.id, name: x.name, updated_at: new Date().toISOString() })), { onConflict: 'tenant_id,merchant_id' });
+      }
       return json({ success: true, merchants, merchant_id: upd.merchant_id ?? null });
     }
 

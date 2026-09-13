@@ -94,6 +94,56 @@ function computePurchaseItems(tenant_id: string, items: unknown): ComputedItem[]
   });
 }
 
+// Conversão da unidade de COMPRA para a unidade do INSUMO (2026-09-13). Tela e nota sempre mandam
+// units_per_package/pack_count; o assistente (cupom) não mandava, e o item entrava 1:1 — "4 un" de
+// milho 170 g viravam 4 g no estoque. Sem conversão explícita, resolve pelo insumo: mesma unidade → 1;
+// kg↔g e L↔ml → 1000; embalagem memorizada no insumo (purchase_unit + purchase_factor ≠ 1) quando a
+// unidade bate. Não deu → mantém 1:1 e devolve aviso para quem chamou perguntar.
+const UNIT_ALIAS: Record<string, string> = {
+  unit: 'un', un: 'un', und: 'un', unid: 'un', unidade: 'un', unidades: 'un', pc: 'un', pca: 'un', 'pç': 'un',
+  kg: 'kg', kgs: 'kg', quilo: 'kg', g: 'g', gr: 'g', grama: 'g', gramas: 'g', l: 'l', lt: 'l', litro: 'l', litros: 'l', ml: 'ml',
+};
+const normUnit = (u: unknown) => { const s = String(u ?? '').trim().toLowerCase().replace(/\.$/, ''); return UNIT_ALIAS[s] ?? s; };
+const METRIC: Record<string, number> = { 'kg>g': 1000, 'g>kg': 0.001, 'l>ml': 1000, 'ml>l': 0.001 };
+
+// deno-lint-ignore no-explicit-any
+async function applyIngredientConversions(supabase: any, tenant_id: string, rawItems: unknown, computed: ComputedItem[]): Promise<string[]> {
+  const raws = (Array.isArray(rawItems) ? rawItems : []) as Array<Record<string, unknown>>;
+  const semConversao = (i: number) => {
+    const r = raws[i];
+    return !!r && r.pack_count == null && r.units_per_package == null && r.purchase_factor == null;
+  };
+  const ids = [...new Set(computed.filter((c, i) => c.ingredient_id && semConversao(i)).map((c) => c.ingredient_id as string))];
+  if (ids.length === 0) return [];
+  const { data: ings } = await supabase.from('ingredients').select('id, name, unit, purchase_unit, purchase_factor').eq('tenant_id', tenant_id).in('id', ids);
+  // deno-lint-ignore no-explicit-any
+  const byId = new Map((ings ?? []).map((g: any) => [String(g.id), g]));
+  const avisos: string[] = [];
+  computed.forEach((c, i) => {
+    if (!c.ingredient_id || !semConversao(i)) return;
+    // deno-lint-ignore no-explicit-any
+    const ing: any = byId.get(c.ingredient_id);
+    if (!ing) return;
+    const de = normUnit(c.unit_label);
+    const para = normUnit(ing.unit);
+    const fatorInsumo = Number(ing.purchase_factor);
+    let f: number | null = null;
+    if (!de || de === para) f = 1;
+    else if (METRIC[`${de}>${para}`]) f = METRIC[`${de}>${para}`];
+    else if (fatorInsumo > 0 && fatorInsumo !== 1 && normUnit(ing.purchase_unit) === de) f = fatorInsumo;
+    if (f == null) {
+      avisos.push(`${c.description}: comprado em "${c.unit_label}" e o insumo "${ing.name}" é controlado em "${ing.unit}" — sem conversão, entrou 1:1. Informe units_per_package (quanto 1 ${c.unit_label} vale em ${ing.unit}) ou corrija o cadastro do insumo.`);
+      return;
+    }
+    if (f !== 1) {
+      c.units_per_package = f;
+      const su = c.quantity * f;
+      c.cost_per_base_unit = su > 0 ? (c.total_price + c.freight_allocated) / su : null;
+    }
+  });
+  return avisos;
+}
+
 // Fornecedor por FK: resolve pelo nome dentro DESTE tenant e cria se não
 // existir. Antes o vínculo era só o texto + um ilike solto, que falhava
 // silenciosamente em nomes com espaço duplo/sobrando.
@@ -604,6 +654,7 @@ Deno.serve(async (req) => {
         if (!freightAmount) purchaseData.freight_amount = 0;
 
         const computedItems = computePurchaseItems(tenant_id, items);
+        const avisosConversao = await applyIngredientConversions(supabase, tenant_id, items, computedItems);
         if (computedItems.length > 0) {
           const itemsSubtotal = computedItems.reduce((s, it) => s + Number(it.total_price ?? 0), 0);
           purchaseData.total_amount = Math.round((itemsSubtotal + freightAmount) * 100) / 100;
@@ -645,7 +696,7 @@ Deno.serve(async (req) => {
           installmentIntervalDays: installment_interval_days,
         });
 
-        result = { data: purchase };
+        result = { data: purchase, ...(avisosConversao.length ? { avisos_conversao: avisosConversao } : {}) };
         break;
       }
 
@@ -720,6 +771,7 @@ Deno.serve(async (req) => {
         if (!freightAmount) purchaseData.freight_amount = 0;
 
         const computedItems = computePurchaseItems(tenant_id, items);
+        const avisosConversao = await applyIngredientConversions(supabase, tenant_id, items, computedItems);
         if (computedItems.length > 0) {
           const itemsSubtotal = computedItems.reduce((s, it) => s + Number(it.total_price ?? 0), 0);
           purchaseData.total_amount = Math.round((itemsSubtotal + freightAmount) * 100) / 100;
@@ -761,7 +813,7 @@ Deno.serve(async (req) => {
           installmentIntervalDays: installment_interval_days,
         });
 
-        result = { data: updated };
+        result = { data: updated, ...(avisosConversao.length ? { avisos_conversao: avisosConversao } : {}) };
         break;
       }
 

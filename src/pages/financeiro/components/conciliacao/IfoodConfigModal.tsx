@@ -23,6 +23,7 @@ interface IfoodConfig {
   last_sync_at: string | null;
   last_sync_error: string | null;
   homologation_mode?: boolean;
+  app_type?: 'distributed' | 'centralized';
 }
 
 interface ImportRow {
@@ -59,6 +60,7 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
   const [autoSync, setAutoSync] = useState(true);
   const [postToLedger, setPostToLedger] = useState(false);
   const [authCode, setAuthCode] = useState('');
+  const [appType, setAppType] = useState<'distributed' | 'centralized'>('distributed');
   const [merchants, setMerchants] = useState<{ id: string; name: string }[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -74,6 +76,7 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
     if (conf) {
       setAutoSync(conf.auto_sync !== false);
       setPostToLedger(conf.post_to_ledger === true);
+      setAppType(conf.app_type === 'centralized' ? 'centralized' : 'distributed');
     }
     setImports(i.data?.imports ?? []);
     setLoading(false);
@@ -98,6 +101,7 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
       client_id: clientId.trim() || undefined,
       client_secret: clientSecret.trim(),
       auto_sync: autoSync,
+      app_type: appType,
     });
     if (!d) return;
     setClientSecret('');
@@ -144,6 +148,21 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
       setResult({ ok: true, msg: 'Autorizado. Escolha abaixo qual loja do iFood é esta.' });
     } else {
       setResult({ ok: true, msg: 'Autorizado! Os dados do iFood passam a ser buscados todo dia às 07h20 e ao abrir a Conciliação.' });
+    }
+    load();
+  };
+
+  // App centralizado: sem código — pega o token direto e lista as lojas liberadas para o app.
+  const handleConnectCentral = async () => {
+    const d = await call<{ merchants?: { id: string; name: string }[]; merchant_id?: string | null }>('connect', { action: 'connect_centralized' });
+    if (!d) return;
+    if (!d.merchant_id && (d.merchants?.length ?? 0) > 1) {
+      setMerchants(d.merchants ?? []);
+      setResult({ ok: true, msg: 'Conectado. Escolha abaixo qual loja do iFood usar.' });
+    } else if ((d.merchants?.length ?? 0) === 0) {
+      setResult({ ok: false, msg: 'Conectou, mas o iFood não liberou nenhuma loja para este app.' });
+    } else {
+      setResult({ ok: true, msg: `Conectado à loja ${d.merchants?.[0]?.name ?? ''}. Clique em "Buscar agora" para puxar os dados.` });
     }
     load();
   };
@@ -268,6 +287,18 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
               </ol>
 
               <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Tipo do aplicativo</label>
+                <div className="flex gap-2">
+                  {([['distributed', 'Distribuído (código da loja)'], ['centralized', 'Centralizado (sem código)']] as const).map(([k, label]) => (
+                    <button key={k} type="button" onClick={() => setAppType(k)}
+                      className={`flex-1 px-3 py-2 rounded-lg border text-xs font-semibold cursor-pointer ${appType === k ? 'border-red-400 bg-red-50 text-red-700' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-zinc-400 mt-1">Para testar: app "Teste (C)" = centralizado, já liberado na loja de teste.</p>
+              </div>
+              <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Client ID</label>
                 <input type="text" value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder={cfg?.client_id ?? 'Cole o Client ID'} className={inputCls} />
               </div>
@@ -296,7 +327,13 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
                   className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 cursor-pointer disabled:opacity-50">
                   {busy === 'save' ? <>{spinner} Salvando...</> : <><i className="ri-save-line" /> Salvar</>}
                 </button>
-                {cfg?.client_id && (
+                {cfg?.client_id && cfg.app_type === 'centralized' && (
+                  <button onClick={handleConnectCentral} disabled={busy !== null}
+                    className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 cursor-pointer disabled:opacity-50">
+                    {busy === 'connect' ? 'Conectando...' : <><i className="ri-plug-line" /> Conectar</>}
+                  </button>
+                )}
+                {cfg?.client_id && cfg.app_type !== 'centralized' && (
                   <button onClick={handleUserCode} disabled={busy !== null}
                     className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 cursor-pointer disabled:opacity-50">
                     {busy === 'code' ? 'Gerando...' : <><i className="ri-key-2-line" /> Gerar código</>}

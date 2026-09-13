@@ -719,3 +719,10 @@ Front: `ComprasTab.tsx` tem botão de editar (lápis) na coluna Ações — chec
 - **Sugestões (`fn_item_suggest`):** insumo ligado, NCM 01–24/2501 e gelo/sal/sachê/carvão → CMV auto; embalagem/descartável (pote, sacola, copo, canudo, guardanapo; NCM 3923/3924/4819/4823/7612/7615, exceto saco de lixo) → CMV auto; limpeza (NCM 34/3808/9603/4818/2207, detergente, álcool, luva, pano…) e papelaria (bobina térmica, resma, fita) → só **sugestão** de despesa com a categoria da loja de mesmo nome ("Limpeza", "Papelaria…").
 - **Carga inicial (09-12):** Paranaguá 98 itens (18 pendentes, 11 com sugestão pronta); Vila Leste 79 (10 pendentes — a loja não tem categorias Limpeza/Papelaria, a sugestão vem sem categoria).
 - Migrations `20260912230000_item_classification_registry.sql` + `20260912231000_item_classification_tuning.sql`.
+
+## 9g. Conversão unidade de compra → unidade do insumo (2026-09-13)
+
+**Bug:** o estoque entra `quantity × units_per_package` do ITEM. Tela e nota sempre mandam o fator; o assistente (cupom) não mandava e o item entrava 1:1 — 4 pacotes de milho 170 g viraram 4 g; 1 maço de coentro virou 1 g. O `ingredients.purchase_factor` só pré-preenchia a tela.
+- **Fix (`purchase-write` › `applyIngredientConversions`, create e update):** item com insumo e SEM `units_per_package`/`pack_count`/`purchase_factor` explícitos → mesma unidade = 1; kg↔g e L↔ml = 1000; senão a embalagem do insumo (`purchase_unit` igual + `purchase_factor` ≠ 1). Não resolveu → entra 1:1 e a resposta traz `avisos_conversao` (o assistente pergunta). Recalcula `cost_per_base_unit`.
+- **Pegadinha do cadastro:** `stock-write upsert_ingredient` **ignora `current_stock` em edição** — saldo só muda por movimentação (`add_stock_movement`). Trocar a unidade de um insumo com saldo não converte o saldo.
+- Regra de cadastro: `unit` = unidade de uso na ficha técnica (g/ml/kg/un); `purchase_unit` + `purchase_factor` = embalagem (pacote 170 g → `g`, `un`, 170).

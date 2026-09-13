@@ -59,16 +59,19 @@ export default function IfoodTab() {
   const [openRepasse, setOpenRepasse] = useState<string | null>(null);
   const [view, setView] = useState<'resumo' | IfoodApiView>('resumo');
   const [apiOn, setApiOn] = useState(false);
+  const [nomes, setNomes] = useState<Record<string, string>>({});
   const [ondemand, setOndemand] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
 
   const loadImports = useCallback(async () => {
     if (!user?.tenantId) return;
-    const [{ data, error: err }, cfg] = await Promise.all([
+    const [{ data, error: err }, cfg, mer] = await Promise.all([
       supabase.from('fin_ifood_imports')
         .select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at')
         .eq('tenant_id', user.tenantId).order('competence', { ascending: false }),
       invokeWithAuth<{ config?: { post_to_ledger?: boolean; authorized?: boolean; merchant_id?: string | null } | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user.tenantId } }),
+      supabase.from('fin_ifood_merchants').select('merchant_id, name').eq('tenant_id', user.tenantId),
     ]);
+    setNomes(Object.fromEntries(((mer.data ?? []) as { merchant_id: string; name: string | null }[]).filter((m) => m.name).map((m) => [m.merchant_id, m.name as string])));
     if (err) { setError(err.message); setLoading(false); return; }
     const rows = (data ?? []) as ImportRow[];
     setImports(rows);
@@ -174,6 +177,17 @@ export default function IfoodTab() {
   const hoje = todayBrasilia();
   const competencias = [...new Set(imports.map((i) => i.competence))];
   const lojas = [...new Map(imports.map((i) => [i.merchant_id, i.merchant_short || i.merchant_id.slice(0, 8)])).entries()];
+  const nomeLoja = (id: string, curto?: string | null) => (nomes[id] ? `${nomes[id]} (${curto ?? id.slice(0, 8)})` : `Loja ${curto ?? id.slice(0, 8)}`);
+
+  const renomearLoja = async (id: string) => {
+    if (!user?.tenantId) return;
+    const atual = nomes[id] ?? '';
+    const novo = window.prompt('Nome desta loja no iFood (como aparece no Portal do Parceiro):', atual);
+    if (novo === null) return;
+    const r = await invokeWithAuth<{ success?: boolean; error?: string }>('ifood-financial', { body: { action: 'set_merchant_name', tenant_id: user.tenantId, merchant_id: id, name: novo } });
+    if (r.data?.error || r.error) { setError(r.data?.error ?? r.error?.message ?? 'Falhou'); return; }
+    setNomes((n) => ({ ...n, [id]: novo.trim() }));
+  };
   const impsMes = imports.filter((i) => i.competence === competence && (!loja || i.merchant_id === loja));
 
   return (
@@ -190,12 +204,18 @@ export default function IfoodTab() {
           </div>
         </div>
         <div className="flex-1" />
-        {lojas.length > 1 && (
-          <select value={loja} onChange={(e) => setLoja(e.target.value)}
-            className="border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white">
-            <option value="">Todas as lojas iFood</option>
-            {lojas.map(([id, curto]) => <option key={id} value={id}>Loja {curto}</option>)}
-          </select>
+        {lojas.length > 0 && (
+          <div className="flex items-center gap-1">
+            <select value={loja} onChange={(e) => setLoja(e.target.value)}
+              className="border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white max-w-[260px]">
+              {lojas.length > 1 && <option value="">Todas as lojas iFood</option>}
+              {lojas.map(([id, curto]) => <option key={id} value={id}>{nomeLoja(id, curto)}</option>)}
+            </select>
+            <button onClick={() => renomearLoja(loja || lojas[0][0])} title="Dar nome a esta loja"
+              className="w-9 h-9 flex items-center justify-center border border-zinc-200 rounded-lg text-zinc-500 hover:bg-zinc-50 cursor-pointer">
+              <i className="ri-pencil-line" />
+            </button>
+          </div>
         )}
         {competencias.length > 0 && (
           <select value={competence} onChange={(e) => setCompetence(e.target.value)}
@@ -372,7 +392,7 @@ export default function IfoodTab() {
 
           {impsMes.map((imp) => (
             <p key={imp.id} className="text-[11px] text-zinc-400">
-              Loja {imp.merchant_short ?? imp.merchant_id.slice(0, 8)}: {imp.source === 'api' ? 'API do iFood' : `arquivo ${imp.file_name ?? ''}`} · {imp.lines} linha(s) · atualizado em {new Date(imp.updated_at).toLocaleString('pt-BR')}
+              {nomeLoja(imp.merchant_id, imp.merchant_short)}: {imp.source === 'api' ? 'API do iFood' : `arquivo ${imp.file_name ?? ''}`} · {imp.lines} linha(s) · atualizado em {new Date(imp.updated_at).toLocaleString('pt-BR')}
             </p>
           ))}
           {lojas.length === 1 && (
