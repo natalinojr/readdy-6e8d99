@@ -169,7 +169,16 @@ export default function IfoodTab() {
       await new Promise((res) => setTimeout(res, wait));
       const s = await invokeWithAuth<{ success?: boolean; error?: string; status?: string; imported?: unknown; error_message?: string | null }>('ifood-financial', { body: { action: 'ondemand_status', tenant_id: user.tenantId, request_id: reqId } });
       if (s.data?.error) { setOndemand({ running: false, msg: s.data.error, error: true }); return; }
-      if (s.data?.error_message) { setOndemand({ running: false, msg: `iFood: ${s.data.error_message}`, error: true }); return; }
+      if (s.data?.error_message) {
+        const original = s.data.error_message;
+        const explicado = /no financial entries/i.test(original)
+          ? `O iFood não tem lançamentos financeiros desta loja em ${compLabel(comp)}, então não há relatório para gerar.`
+          : /timeout|timed out/i.test(original)
+            ? 'O iFood demorou demais para gerar o relatório. Tente de novo em alguns minutos.'
+            : 'O iFood não conseguiu gerar o relatório.';
+        setOndemand({ running: false, msg: `${explicado} (mensagem do iFood: ${original})`, error: true });
+        return;
+      }
       if (s.data?.imported) { setOndemand({ running: false, msg: `Relatório de ${compLabel(comp)} atualizado agora (${new Date().toLocaleTimeString('pt-BR')}).`, error: false }); loadImports(); loadCompetence(); return; }
     }
     setOndemand({ running: false, msg: 'O iFood ainda está gerando. Clique de novo daqui a alguns minutos (o pedido é reaproveitado).', error: false });
