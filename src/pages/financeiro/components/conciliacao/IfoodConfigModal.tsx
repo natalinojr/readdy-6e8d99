@@ -96,12 +96,27 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
       action: 'save_config',
       client_id: clientId.trim() || undefined,
       client_secret: clientSecret.trim(),
-      auto_sync: autoSync, post_to_ledger: postToLedger,
+      auto_sync: autoSync,
     });
     if (!d) return;
     setClientSecret('');
     setResult({ ok: true, msg: d.message || 'Configuração salva.' });
     load();
+  };
+
+  // Grava na hora (não depende das credenciais da API) e relança os meses já importados.
+  const handleLedger = async (on: boolean) => {
+    setPostToLedger(on);
+    const d = await call<{ ledger?: { rows: number; receita: number; taxas: number } }>('ledger', { action: 'set_options', post_to_ledger: on });
+    if (!d) { setPostToLedger(!on); return; }
+    setResult({
+      ok: true,
+      msg: on
+        ? `Lançado no financeiro: vendas ${formatCurrency(d.ledger?.receita ?? 0)} e taxas ${formatCurrency(d.ledger?.taxas ?? 0)} dos repasses já pagos. Os próximos entram sozinhos na data do repasse.`
+        : 'Lançamentos do iFood removidos do financeiro.',
+    });
+    load();
+    onImported();
   };
 
   const handleUserCode = async () => {
@@ -213,10 +228,10 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
             </div>
 
             <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
-              <input type="checkbox" checked={postToLedger} onChange={(e) => setPostToLedger(e.target.checked)} className="rounded mt-0.5" />
+              <input type="checkbox" checked={postToLedger} disabled={busy !== null} onChange={(e) => handleLedger(e.target.checked)} className="rounded mt-0.5" />
               <span>
-                Lançar no financeiro as vendas do iFood e as comissões/taxas de cada repasse já pago (entram na DRE e no Fluxo de Caixa).
-                <span className="block text-zinc-400 mt-0.5">Depois ligue a fonte "Conciliação iFood" em Receitas › Fontes. Vale para as próximas importações: salve e reimporte o mês. Desligar remove os lançamentos do iFood.</span>
+                Lançar no financeiro as vendas do iFood e as comissões/taxas de cada repasse já pago (entram na DRE, em Receitas e no Fluxo de Caixa).
+                <span className="block text-zinc-400 mt-0.5">Grava na hora e vale para os meses já importados. Para aparecer em Receitas e na DRE, a fonte "Conciliação iFood" precisa estar ligada em Receitas › Fontes. Desligar remove os lançamentos do iFood.</span>
               </span>
             </label>
 

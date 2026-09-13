@@ -12,7 +12,8 @@
 //
 // Ações (POST JSON { action, tenant_id, ... }):
 //   get_config            {}                                   sem segredos
-//   save_config           { client_id, client_secret?, auto_sync?, post_to_ledger? }   admin/gerente
+//   save_config           { client_id, client_secret?, auto_sync? }   admin/gerente (credenciais da API)
+//   set_options           { post_to_ledger, auto_sync? }       admin/gerente; relança o razão das importações já gravadas
 //   request_user_code     {}                                   gera o código que a loja digita no Portal do Parceiro
 //   confirm_authorization { authorization_code }               troca pelo token e descobre a(s) loja(s)
 //   select_merchant       { merchant_id }
@@ -182,7 +183,67 @@ function toEntry(r: Row) {
 type Entry = ReturnType<typeof toEntry>;
 
 // Receita = entradas e subsídios que afetam o repasse; taxas = cobranças e retenções.
-const isRevenue = (e: Entry) => /entrada|subs[ií]dio/i.test(e.tipo_lancamento ?? '') || (!/cobran|reten/i.test(e.tipo_lancamento ?? '') && e.valor > 0);
+type LedgerEntry = Pick<Entry, 'data_repasse' | 'valor' | 'tipo_lancamento' | 'impacto_repasse' | 'order_id'>;
+const isRevenue = (e: Pick<Entry, 'tipo_lancamento' | 'valor'>) => /entrada|subs[ií]dio/i.test(e.tipo_lancamento ?? '') || (!/cobran|reten/i.test(e.tipo_lancamento ?? '') && e.valor > 0);
+
+// Livro-razão de uma importação: apaga o que ela lançou e relança (se ligado), por dia de
+// repasse JÁ vencido — o que ainda vai cair entra quando a data chegar (rotina diária).
+async function postLedger(admin: Admin, tenantId: string, importId: string, on: boolean, entries: LedgerEntry[]) {
+  const { error: cfErr } = await admin.from('fin_cash_flow').delete().eq('tenant_id', tenantId).eq('reference_id', importId).in('origin', ['ifood_sale', 'ifood_fee']);
+  if (cfErr) throw new Error('Limpar lançamentos: ' + cfErr.message);
+  if (!on) return { rows: 0, receita: 0, taxas: 0 };
+  const today = todayBR();
+  const days = new Map<string, { rev: number; fee: number; n: Set<string> }>();
+  for (const e of entries) {
+    if (!e.impacto_repasse || !e.data_repasse || e.data_repasse > today) continue;
+    const d = days.get(e.data_repasse) ?? { rev: 0, fee: 0, n: new Set<string>() };
+    if (isRevenue(e)) d.rev += e.valor; else d.fee += -e.valor;
+    if (e.order_id) d.n.add(e.order_id);
+    days.set(e.data_repasse, d);
+  }
+  const cf: Record<string, unknown>[] = [];
+  for (const [d, x] of days) {
+    const dd = d.slice(8, 10) + '/' + d.slice(5, 7);
+    if (Math.abs(x.rev) > 0.004) cf.push({ tenant_id: tenantId, reference_id: importId, date: d, type: x.rev > 0 ? 'income' : 'expense', origin: x.rev > 0 ? 'ifood_sale' : 'ifood_fee', category: x.rev > 0 ? 'Vendas' : 'Taxas iFood', amount: round2(Math.abs(x.rev)), description: `Vendas iFood do repasse de ${dd} (${x.n.size} pedido(s), valor antes das taxas)` });
+    if (Math.abs(x.fee) > 0.004) cf.push({ tenant_id: tenantId, reference_id: importId, date: d, type: x.fee > 0 ? 'expense' : 'income', origin: x.fee > 0 ? 'ifood_fee' : 'ifood_sale', category: x.fee > 0 ? 'Taxas iFood' : 'Vendas', amount: round2(Math.abs(x.fee)), description: `Comissões e taxas iFood do repasse de ${dd}` });
+  }
+  if (cf.length > 0) {
+    const { error } = await admin.from('fin_cash_flow').insert(cf);
+    if (error) throw new Error('Lançar no financeiro: ' + error.message);
+  }
+  const sum = (o: string) => round2(cf.filter((r) => r.origin === o).reduce((s, r) => s + Number(r.amount), 0));
+  return { rows: cf.length, receita: sum('ifood_sale'), taxas: sum('ifood_fee') };
+}
+
+// Classifica no extrato do Inter os créditos do iFood do período coberto pelas importações.
+async function matchInter(admin: Admin, tenantId: string) {
+  const [{ data: lo }, { data: hi }] = await Promise.all([
+    admin.from('fin_ifood_entries').select('data_repasse').eq('tenant_id', tenantId).not('data_repasse', 'is', null).order('data_repasse', { ascending: true }).limit(1),
+    admin.from('fin_ifood_entries').select('data_repasse').eq('tenant_id', tenantId).not('data_repasse', 'is', null).order('data_repasse', { ascending: false }).limit(1),
+  ]);
+  const from = lo?.[0]?.data_repasse; const to = hi?.[0]?.data_repasse;
+  if (!from || !to) return 0;
+  const { data, error } = await admin.rpc('fn_match_ifood_inter', { p_tenant: tenantId, p_from: from, p_to: to });
+  if (error) { log('WARN', 'match', 'fn_match_ifood_inter falhou', { tenantId, error: error.message }); return 0; }
+  return Number(data ?? 0);
+}
+
+// Relança o razão das importações já gravadas (ligar/desligar a opção, repasses que venceram).
+async function repostImports(admin: Admin, tenantId: string, on: boolean, minCompetence?: string) {
+  let q = admin.from('fin_ifood_imports').select('id, competence').eq('tenant_id', tenantId);
+  if (minCompetence) q = q.gte('competence', minCompetence);
+  const { data: imps, error } = await q;
+  if (error) throw new Error('Ler importações: ' + error.message);
+  const tot = { imports: 0, rows: 0, receita: 0, taxas: 0 };
+  for (const imp of imps ?? []) {
+    const { data: ents, error: eErr } = await admin.from('fin_ifood_entries')
+      .select('data_repasse, valor, tipo_lancamento, impacto_repasse, order_id').eq('import_id', imp.id).limit(50000);
+    if (eErr) throw new Error('Ler linhas: ' + eErr.message);
+    const l = await postLedger(admin, tenantId, imp.id, on, (ents ?? []).map((e: any) => ({ ...e, valor: Number(e.valor) })));
+    tot.imports++; tot.rows += l.rows; tot.receita = round2(tot.receita + l.receita); tot.taxas = round2(tot.taxas + l.taxas);
+  }
+  return { ...tot, matched: await matchInter(admin, tenantId) };
+}
 
 async function sha256Hex(bytes: Uint8Array) {
   const h = await crypto.subtle.digest('SHA-256', bytes);
@@ -212,41 +273,8 @@ async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, c
     if (error) throw new Error('Gravar linhas: ' + error.message);
   }
 
-  // Livro-razão: só dias de repasse já vencidos (o que ainda vai cair entra quando chegar a data).
-  const { error: cfErr } = await admin.from('fin_cash_flow').delete().eq('tenant_id', tenantId).eq('reference_id', imp.id).in('origin', ['ifood_sale', 'ifood_fee']);
-  if (cfErr) throw new Error('Limpar lançamentos: ' + cfErr.message);
-  let ledger = { rows: 0, receita: 0, taxas: 0 };
-  if (cfg?.post_to_ledger) {
-    const today = todayBR();
-    const days = new Map<string, { rev: number; fee: number; n: Set<string> }>();
-    for (const e of sig) {
-      if (!e.data_repasse || e.data_repasse > today) continue;
-      const d = days.get(e.data_repasse) ?? { rev: 0, fee: 0, n: new Set<string>() };
-      if (isRevenue(e)) d.rev += e.valor; else d.fee += -e.valor;
-      if (e.order_id) d.n.add(e.order_id);
-      days.set(e.data_repasse, d);
-    }
-    const cf: Record<string, unknown>[] = [];
-    for (const [d, x] of days) {
-      const dd = d.slice(8, 10) + '/' + d.slice(5, 7);
-      if (Math.abs(x.rev) > 0.004) cf.push({ tenant_id: tenantId, reference_id: imp.id, date: d, type: x.rev > 0 ? 'income' : 'expense', origin: x.rev > 0 ? 'ifood_sale' : 'ifood_fee', category: x.rev > 0 ? 'Vendas' : 'Taxas iFood', amount: round2(Math.abs(x.rev)), description: `Vendas iFood do repasse de ${dd} (${x.n.size} pedido(s), valor antes das taxas)` });
-      if (Math.abs(x.fee) > 0.004) cf.push({ tenant_id: tenantId, reference_id: imp.id, date: d, type: x.fee > 0 ? 'expense' : 'income', origin: x.fee > 0 ? 'ifood_fee' : 'ifood_sale', category: x.fee > 0 ? 'Taxas iFood' : 'Vendas', amount: round2(Math.abs(x.fee)), description: `Comissões e taxas iFood do repasse de ${dd}` });
-    }
-    if (cf.length > 0) {
-      const { error } = await admin.from('fin_cash_flow').insert(cf);
-      if (error) throw new Error('Lançar no financeiro: ' + error.message);
-    }
-    ledger = { rows: cf.length, receita: round2(cf.filter((r) => r.origin === 'ifood_sale').reduce((s, r) => s + Number(r.amount), 0)), taxas: round2(cf.filter((r) => r.origin === 'ifood_fee').reduce((s, r) => s + Number(r.amount), 0)) };
-  }
-
-  // Depósitos × Inter (competência inteira, com folga para repasses do mês seguinte)
-  const reps = valid.map((e) => e.data_repasse).filter(Boolean).sort() as string[];
-  let matched = 0;
-  if (reps.length > 0) {
-    const { data: m, error: mErr } = await admin.rpc('fn_match_ifood_inter', { p_tenant: tenantId, p_from: reps[0], p_to: reps[reps.length - 1] });
-    if (mErr) log('WARN', 'match', 'fn_match_ifood_inter falhou', { tenantId, error: mErr.message });
-    else matched = Number(m ?? 0);
-  }
+  const ledger = await postLedger(admin, tenantId, imp.id, cfg?.post_to_ledger === true, valid);
+  const matched = await matchInter(admin, tenantId);
   return { competence, import_id: imp.id, lines: valid.length, orders, gross, fees, net: round2(gross - fees), ledger, matched_deposits: matched };
 }
 
@@ -323,9 +351,18 @@ Deno.serve(async (req) => {
   try {
     if (action === 'sync_all') {
       if (!internal) return errResp('Unauthorized', 401);
-      const { data: lojas } = await admin.from('fin_ifood_config').select('*').eq('is_active', true).eq('auto_sync', true).not('refresh_token', 'is', null);
+      const { data: lojas } = await admin.from('fin_ifood_config').select('*').eq('is_active', true);
       const out = [];
-      for (const cfg of lojas ?? []) out.push(await syncTenant(admin, cfg));
+      const minComp = defaultCompetences()[0];
+      for (const cfg of lojas ?? []) {
+        const r: Record<string, unknown> = { tenant_id: cfg.tenant_id };
+        try {
+          if (cfg.auto_sync !== false && cfg.refresh_token && cfg.merchant_id) r.sync = await syncTenant(admin, cfg);
+          // Arquivo importado à mão também: repasses que venceram desde ontem entram no razão.
+          if (cfg.post_to_ledger) r.ledger = await repostImports(admin, cfg.tenant_id, true, minComp);
+        } catch (e) { r.error = String((e as Error)?.message ?? e); }
+        out.push(r);
+      }
       return json({ success: true, results: out });
     }
 
@@ -399,6 +436,21 @@ Deno.serve(async (req) => {
     // ── Configuração ──
     if (!isManager) return errResp('Apenas admin/gerente', 403);
 
+    // Opções que não dependem da API (vale para quem só importa o arquivo do portal).
+    if (action === 'set_options') {
+      const on = body.post_to_ledger === true;
+      const row: Record<string, unknown> = {
+        tenant_id: tenantId, post_to_ledger: on,
+        auto_sync: body.auto_sync === undefined ? (cfg?.auto_sync ?? true) : body.auto_sync !== false,
+        is_active: true, updated_at: new Date().toISOString(),
+      };
+      if (!cfg) row.created_by = userId;
+      const { error } = await admin.from('fin_ifood_config').upsert(row, { onConflict: 'tenant_id' });
+      if (error) return errResp('Salvar: ' + error.message, 500);
+      const ledger = await repostImports(admin, tenantId, on);
+      return json({ success: true, ledger });
+    }
+
     if (action === 'save_config') {
       const clientId = String(body.client_id ?? '').trim();
       const clientSecret = String(body.client_secret ?? '').trim();
@@ -409,17 +461,12 @@ Deno.serve(async (req) => {
       const row: Record<string, unknown> = {
         tenant_id: tenantId, client_id: clientId, client_secret: clientSecret || cfg?.client_secret,
         auto_sync: body.auto_sync === false ? false : true,
-        post_to_ledger: body.post_to_ledger === true,
         is_active: true, updated_at: now,
       };
       if (!cfg) { row.created_by = userId; }
       if (changedApp) Object.assign(row, { access_token: null, refresh_token: null, token_expires_at: null, merchant_id: null, merchant_name: null, authorized_at: null, user_code: null, auth_verifier_secret: null });
       const { error } = await admin.from('fin_ifood_config').upsert(row, { onConflict: 'tenant_id' });
       if (error) return errResp('Salvar: ' + error.message, 500);
-      // Desligar o lançamento no financeiro remove o que o iFood lançou.
-      if (cfg?.post_to_ledger && body.post_to_ledger !== true) {
-        await admin.from('fin_cash_flow').delete().eq('tenant_id', tenantId).in('origin', ['ifood_sale', 'ifood_fee']);
-      }
       return json({ success: true, message: changedApp || !cfg?.refresh_token ? 'Credenciais salvas. Agora gere o código e autorize no Portal do Parceiro.' : 'Configuração salva.' });
     }
 

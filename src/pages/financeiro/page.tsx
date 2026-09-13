@@ -19,10 +19,12 @@ import DespesasTab from './components/DespesasTab';
 import ReceitasTab from './components/ReceitasTab';
 import NotasEntradaTab from './components/NotasEntradaTab';
 import ItensClassificacaoTab from './components/ItensClassificacaoTab';
+import IfoodTab from './components/IfoodTab';
 
 const TABS = [
   { id: 'visao', label: 'Visão Geral', icon: 'ri-dashboard-line' },
   { id: 'receitas', label: 'Receitas', icon: 'ri-arrow-down-circle-line' },
+  { id: 'ifood', label: 'iFood', icon: 'ri-restaurant-2-line' },
   { id: 'despesas', label: 'Despesas', icon: 'ri-pie-chart-2-line' },
   { id: 'fluxo', label: 'Fluxo de Caixa', icon: 'ri-exchange-dollar-line' },
   { id: 'pagar', label: 'Contas a Pagar', icon: 'ri-bill-line' },
@@ -110,6 +112,7 @@ export default function FinanceiroPage() {
       <div className="flex-1 overflow-y-auto">
         {activeTab === 'visao' && <VisaoGeralFinTab />}
         {activeTab === 'receitas' && <ReceitasTab />}
+        {activeTab === 'ifood' && <IfoodTab />}
         {activeTab === 'despesas' && <DespesasTab />}
         {/* 'previsao' era uma aba separada; a projeção virou a visão PADRÃO do
             Fluxo de Caixa. O id antigo continua roteando para cá por causa de
