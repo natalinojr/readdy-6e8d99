@@ -39,7 +39,7 @@ const strArr = { type: 'array', items: { type: 'string' } };
 const OUTPUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['legivel', 'nome', 'email', 'telefone', 'cidade', 'bairro', 'data_nascimento', 'idade', 'cargo_pretendido',
+  required: ['legivel', 'nome', 'email', 'telefone', 'endereco', 'cidade', 'bairro', 'estado_civil', 'data_nascimento', 'idade', 'cargo_pretendido',
     'resumo', 'experiencias', 'formacao', 'habilidades', 'idiomas', 'cursos', 'disponibilidade', 'pretensao_salarial',
     'cnh', 'experiencia_food_service', 'tempo_experiencia_meses', 'pontos_fortes', 'pontos_atencao', 'avisos'],
   properties: {
@@ -47,8 +47,10 @@ const OUTPUT_SCHEMA = {
     nome: nStr,
     email: nStr,
     telefone: nStr,
+    endereco: nStr,
     cidade: nStr,
     bairro: nStr,
+    estado_civil: nStr,
     data_nascimento: nStr,
     idade: nInt,
     cargo_pretendido: nStr,
@@ -90,6 +92,9 @@ const SYSTEM_PROMPT = `Você lê currículos de candidatos a vagas em restaurant
 Regras:
 - Transcreva só o que está no currículo. Nunca invente dado. O que não estiver lá: texto "" (vazio), número 0, lista vazia.
 - nome com iniciais maiúsculas. telefone só com dígitos, com DDD (ex.: 41999998888). email em minúsculas.
+- endereco: rua, número e complemento como estão no currículo (sem cidade/UF, que vão em cidade; bairro vai em bairro).
+- estado_civil: como escrito (Solteiro(a), Casado(a), União estável, Divorciado(a), Viúvo(a)); "" se não estiver.
+- cursos: cursos complementares e livres (fora a formação escolar/acadêmica, que vai em formacao).
 - data_nascimento no formato AAAA-MM-DD, só se estiver escrita. idade: a escrita no currículo, ou calculada da data de nascimento (hoje é ${new Date().toISOString().slice(0, 10)}).
 - experiencias da mais recente para a mais antiga. inicio/fim como "MM/AAAA" ou "AAAA" conforme o currículo; atual = true se ainda trabalha lá (fim null).
 - formacao.nivel: Fundamental, Médio, Técnico, Superior, Pós etc. situacao: Completo, Incompleto, Cursando.
@@ -109,7 +114,8 @@ function normalize(o: Record<string, any>) {
   const arr = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
   return {
     ...o,
-    nome: s(o.nome), email: s(o.email), telefone: s(o.telefone), cidade: s(o.cidade), bairro: s(o.bairro),
+    nome: s(o.nome), email: s(o.email), telefone: s(o.telefone), endereco: s(o.endereco), estado_civil: s(o.estado_civil),
+    cidade: s(o.cidade), bairro: s(o.bairro),
     data_nascimento: s(o.data_nascimento), idade: n(o.idade), cargo_pretendido: s(o.cargo_pretendido), resumo: s(o.resumo),
     disponibilidade: s(o.disponibilidade), pretensao_salarial: s(o.pretensao_salarial), cnh: s(o.cnh),
     experiencia_food_service: o.experiencia_food_service === 'sim' ? true : o.experiencia_food_service === 'nao' ? false : null,
