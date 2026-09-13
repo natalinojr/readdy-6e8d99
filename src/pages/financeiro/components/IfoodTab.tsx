@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import { todayBrasilia } from '@/lib/dateUtils';
 import IfoodConfigModal from './conciliacao/IfoodConfigModal';
+import IfoodApiViews, { type IfoodApiView } from './IfoodApiViews';
 
 // Aba iFood: o relatório de conciliação do iFood (fin_ifood_entries, gravado pela edge
 // ifood-financial) por competência — vendas, comissões/taxas, promoções e repasses,
@@ -56,6 +57,9 @@ export default function IfoodTab() {
   const [showConfig, setShowConfig] = useState(false);
   const [togglingLedger, setTogglingLedger] = useState(false);
   const [openRepasse, setOpenRepasse] = useState<string | null>(null);
+  const [view, setView] = useState<'resumo' | IfoodApiView>('resumo');
+  const [apiOn, setApiOn] = useState(false);
+  const [ondemand, setOndemand] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
 
   const loadImports = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -63,12 +67,13 @@ export default function IfoodTab() {
       supabase.from('fin_ifood_imports')
         .select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at')
         .eq('tenant_id', user.tenantId).order('competence', { ascending: false }),
-      invokeWithAuth<{ config?: { post_to_ledger?: boolean } | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user.tenantId } }),
+      invokeWithAuth<{ config?: { post_to_ledger?: boolean; authorized?: boolean; merchant_id?: string | null } | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user.tenantId } }),
     ]);
     if (err) { setError(err.message); setLoading(false); return; }
     const rows = (data ?? []) as ImportRow[];
     setImports(rows);
     setPostToLedger(cfg.data?.config?.post_to_ledger === true);
+    setApiOn(cfg.data?.config?.authorized === true && !!cfg.data?.config?.merchant_id);
     setCompetence((c) => (c && rows.some((r) => r.competence === c) ? c : rows[0]?.competence ?? ''));
     if (rows.length === 0) setLoading(false);
   }, [user?.tenantId]);
@@ -128,6 +133,44 @@ export default function IfoodTab() {
     setPostToLedger(!postToLedger);
   };
 
+  // Exporta o relatório de conciliação da competência (colunas originais do iFood) em CSV.
+  const exportCsv = async () => {
+    if (!user?.tenantId || !competence) return;
+    let q = supabase.from('fin_ifood_entries').select('raw').eq('tenant_id', user.tenantId).eq('competence', competence);
+    if (loja) q = q.eq('merchant_id', loja);
+    const { data, error: err } = await q.limit(50000);
+    if (err) { setError(err.message); return; }
+    const raws = ((data ?? []) as { raw: Record<string, unknown> | null }[]).map((r) => r.raw ?? {});
+    if (raws.length === 0) return;
+    const cols = Object.keys(raws[0]);
+    const cell = (v: unknown) => { const s = v === null || v === undefined ? '' : String(v); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const csv = '﻿' + [cols.join(';'), ...raws.map((r) => cols.map((c) => cell(r[c])).join(';'))].join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `conciliacao-ifood-${competence}${loja ? '-' + loja.slice(0, 8) : ''}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Relatório sob demanda (API): pede ao iFood e consulta com backoff exponencial até ficar pronto.
+  const gerarAgora = async () => {
+    if (!user?.tenantId) return;
+    const comp = competence || todayBrasilia().slice(0, 7);
+    setOndemand({ running: true, msg: 'Pedindo o relatório ao iFood...', error: false });
+    const r = await invokeWithAuth<{ success?: boolean; error?: string; request_id?: string }>('ifood-financial', { body: { action: 'request_ondemand', tenant_id: user.tenantId, competence: comp } });
+    const reqId = r.data?.request_id;
+    if (!reqId) { setOndemand({ running: false, msg: r.data?.error ?? r.error?.message ?? 'Falhou.', error: true }); return; }
+    for (let i = 0, wait = 3000; i < 8; i++, wait = Math.min(wait * 2, 60_000)) {
+      setOndemand({ running: true, msg: `iFood gerando o relatório de ${compLabel(comp)}... (consulta ${i + 1}/8)`, error: false });
+      await new Promise((res) => setTimeout(res, wait));
+      const s = await invokeWithAuth<{ success?: boolean; error?: string; status?: string; imported?: unknown; error_message?: string | null }>('ifood-financial', { body: { action: 'ondemand_status', tenant_id: user.tenantId, request_id: reqId } });
+      if (s.data?.error) { setOndemand({ running: false, msg: s.data.error, error: true }); return; }
+      if (s.data?.error_message) { setOndemand({ running: false, msg: `iFood: ${s.data.error_message}`, error: true }); return; }
+      if (s.data?.imported) { setOndemand({ running: false, msg: `Relatório de ${compLabel(comp)} atualizado agora (${new Date().toLocaleTimeString('pt-BR')}).`, error: false }); loadImports(); loadCompetence(); return; }
+    }
+    setOndemand({ running: false, msg: 'O iFood ainda está gerando. Clique de novo daqui a alguns minutos (o pedido é reaproveitado).', error: false });
+  };
+
   const hoje = todayBrasilia();
   const competencias = [...new Set(imports.map((i) => i.competence))];
   const lojas = [...new Map(imports.map((i) => [i.merchant_id, i.merchant_short || i.merchant_id.slice(0, 8)])).entries()];
@@ -160,10 +203,36 @@ export default function IfoodTab() {
             {competencias.map((c) => <option key={c} value={c}>{compLabel(c)}</option>)}
           </select>
         )}
+        {competence && (
+          <button onClick={exportCsv} title="Baixar o relatório de conciliação deste mês em CSV"
+            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 text-zinc-700 rounded-lg text-sm font-semibold hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
+            <i className="ri-file-download-line" /> Exportar CSV
+          </button>
+        )}
+        {apiOn && (
+          <button onClick={gerarAgora} disabled={ondemand.running}
+            className="flex items-center gap-1.5 px-3 py-2 border border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 cursor-pointer whitespace-nowrap disabled:opacity-50">
+            <i className={`ri-refresh-line ${ondemand.running ? 'animate-spin' : ''}`} /> Gerar relatório agora
+          </button>
+        )}
         <button onClick={() => setShowConfig(true)}
           className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 cursor-pointer whitespace-nowrap">
           <i className="ri-upload-2-line" /> Importar / configurar
         </button>
+      </div>
+
+      {ondemand.msg && (
+        <div className={`rounded-lg border px-3 py-2 text-xs ${ondemand.error ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>{ondemand.msg}</div>
+      )}
+
+      {/* Subabas */}
+      <div className="flex gap-1 border-b border-zinc-100">
+        {([['resumo', 'Resumo'], ['pedidos', 'Pedidos'], ['repasses', 'Repasses'], ['eventos', 'Eventos']] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setView(k)}
+            className={`px-3 py-2 text-xs font-semibold border-b-2 cursor-pointer ${view === k ? 'border-red-500 text-red-600' : 'border-transparent text-zinc-400 hover:text-zinc-700'}`}>
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Onde entra no resto do financeiro */}
@@ -184,7 +253,9 @@ export default function IfoodTab() {
         <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">Falha ao carregar: {error}</div>
       )}
 
-      {!loading && imports.length === 0 ? (
+      {view !== 'resumo' ? (
+        user?.tenantId ? <IfoodApiViews tenantId={user.tenantId} competence={competence || hoje.slice(0, 7)} view={view} /> : null
+      ) : !loading && imports.length === 0 ? (
         <div className="bg-white rounded-xl border border-zinc-100 p-8 text-center space-y-2">
           <i className="ri-file-excel-2-line text-3xl text-zinc-300" />
           <p className="text-sm font-semibold text-zinc-700">Nenhum relatório do iFood importado</p>

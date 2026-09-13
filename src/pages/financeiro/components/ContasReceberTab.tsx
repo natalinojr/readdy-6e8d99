@@ -1,9 +1,10 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useAntecipacoes, useReceivableInstallments } from '@/hooks/useFinanceiro';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import type { ReceivableInstallment } from '@/types/financeiro';
 import AgingRecebiveis, { buildAgingBuckets } from '@/pages/financeiro/components/AgingRecebiveis';
-import IfoodRecebiveis from '@/pages/financeiro/components/IfoodRecebiveis';
 
 const PAGE_SIZE = 10;
 
@@ -311,10 +312,39 @@ export default function ContasReceberTab() {
 
   const today = new Date().toISOString().split('T')[0];
 
-  const enriched = useMemo(() => installments.map((inst) => ({
+  // Repasses do iFood (relatório de conciliação importado — aba iFood) como linhas SÓ
+  // DE LEITURA: não viram fin_receivable_installments, porque "Dar baixa" lança
+  // auto_sale no caixa e a venda do iFood já entra pelo razão (ifood_sale) na data do
+  // repasse — seria receita em dobro. Data passada = recebido; futura = pendente.
+  const { user } = useAuth();
+  const [ifoodRows, setIfoodRows] = useState<ReceivableInstallment[]>([]);
+  useEffect(() => {
+    if (!user?.tenantId) return;
+    const de = new Date(Date.now() - 400 * 86400_000).toISOString().slice(0, 10);
+    const ate = new Date(Date.now() + 400 * 86400_000).toISOString().slice(0, 10);
+    supabase.rpc('fin_ifood_repasses', { p_tenant: user.tenantId, p_from: de, p_to: ate }).then(({ data }) => {
+      setIfoodRows(((data ?? []) as { data_repasse: string; esperado: number; depositos: number }[]).map((r) => ({
+        id: `ifood:${r.data_repasse}`,
+        tenant_id: user.tenantId,
+        installment_number: 1,
+        total_installments: 1,
+        amount: Number(r.esperado),
+        due_date: r.data_repasse,
+        received_at: r.data_repasse <= today ? r.data_repasse : undefined,
+        status: (r.data_repasse <= today ? 'received' : 'pending') as ReceivableInstallment['status'],
+        created_at: r.data_repasse,
+        is_anticipated: false,
+        order_number: 'iFood',
+        payment_method_name: `Repasse iFood${r.depositos > 1 ? ` (${r.depositos} depósitos)` : ''}`,
+      })));
+    });
+  }, [user?.tenantId, today]);
+
+  const enriched = useMemo(() => [...installments, ...ifoodRows].map((inst) => ({
     ...inst,
+    isIfood: inst.id.startsWith('ifood:'),
     isOverdue: inst.status !== 'received' && !inst.is_anticipated && !!inst.due_date && inst.due_date < today,
-  })), [installments, today]);
+  })), [installments, ifoodRows, today]);
 
   const monthStart = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-01`;
   const monthEnd = new Date(viewYear, viewMonth + 1, 0).toISOString().split('T')[0];
@@ -498,9 +528,6 @@ export default function ContasReceberTab() {
         ))}
       </div>
 
-      {/* Repasses do iFood previstos (relatório de conciliação importado) */}
-      <IfoodRecebiveis />
-
       {/* Aging de Recebíveis */}
       <AgingRecebiveis
         installments={enriched}
@@ -611,7 +638,9 @@ export default function ContasReceberTab() {
                     className={`hover:bg-zinc-50 transition-colors ${inst.isOverdue ? 'bg-red-50/30' : ''} ${isAntecipado ? 'bg-violet-50/20' : ''}`}
                   >
                     <td className="px-4 py-3">
-                      {inst.order_number ? (
+                      {inst.isIfood ? (
+                        <span className="text-xs font-bold text-red-600 flex items-center gap-1"><i className="ri-restaurant-2-line" /> iFood</span>
+                      ) : inst.order_number ? (
                         <span className="text-xs font-bold text-zinc-800">#{inst.order_number}</span>
                       ) : (
                         <span className="text-xs text-zinc-400 font-mono">{inst.order_id?.slice(0, 8)}...</span>
@@ -661,7 +690,11 @@ export default function ContasReceberTab() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {isReceived ? (
+                      {inst.isIfood ? (
+                        <span className="text-xs text-zinc-400 flex items-center gap-1" title="Entra sozinho em Receitas e no caixa na data do repasse (Financeiro › iFood)">
+                          <i className="ri-robot-2-line" /> Automático
+                        </span>
+                      ) : isReceived ? (
                         <span className="text-xs text-zinc-300 flex items-center gap-1">
                           <i className="ri-check-double-line" /> Concluído
                         </span>

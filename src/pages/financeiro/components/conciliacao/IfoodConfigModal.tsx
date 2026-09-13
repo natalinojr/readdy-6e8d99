@@ -22,6 +22,7 @@ interface IfoodConfig {
   post_to_ledger: boolean;
   last_sync_at: string | null;
   last_sync_error: string | null;
+  homologation_mode?: boolean;
 }
 
 interface ImportRow {
@@ -101,6 +102,14 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
     if (!d) return;
     setClientSecret('');
     setResult({ ok: true, msg: d.message || 'Configuração salva.' });
+    load();
+  };
+
+  // Modo homologação: toda chamada à API vai com x-request-homologation: true (ambiente de teste).
+  const handleHomolog = async (on: boolean) => {
+    const d = await call('homolog', { action: 'set_options', homologation_mode: on });
+    if (!d) return;
+    setResult({ ok: true, msg: on ? 'Modo homologação ligado: as chamadas vão marcadas como teste para o iFood.' : 'Modo homologação desligado.' });
     load();
   };
 
@@ -275,6 +284,12 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
               <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
                 <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} className="rounded" />
                 Buscar todo dia às 07h20 e ao abrir a Conciliação
+              </label>
+              <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
+                <input type="checkbox" checked={cfg?.homologation_mode === true} disabled={busy !== null} onChange={(e) => handleHomolog(e.target.checked)} className="rounded mt-0.5" />
+                <span>Modo homologação (app de teste)
+                  <span className="block text-zinc-400">Marca todas as chamadas como teste (header x-request-homologation). Use com o app de teste e a loja de teste do iFood; desligue quando o app oficial for aprovado.</span>
+                </span>
               </label>
               <div className="flex flex-wrap gap-2">
                 <button onClick={handleSave} disabled={busy !== null}

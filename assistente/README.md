@@ -532,6 +532,17 @@ conta do banco). Débito ainda não caiu no extrato → `pendente`; o `pay_watch
 settle_last_try / settle_error`). É exceção deliberada à regra "conciliação sem cron": só roda para
 pagamento que o dono acabou de fazer pelo assistente.
 
+**Entrada de compra pelo grupo, sem pedido de pagamento (2026-09-13).** Cupom/nota postado só
+"para avisar que chegou" (ex.: mercado pago em dinheiro, só marcando o dono) antes era descartado
+pela triagem. Agora, se a leitura da mídia diz `tipo_documento` nota_fiscal/cupom/pedido com
+`itens` e não há pedido de pagamento, o webhook chama `triarPagamento(..., 'compra')`:
+`asst_group_requests.kind = 'compra'` e brain em `modo: 'entrada_compra_grupo'` (regra
+ENTRADA DE COMPRA PELO GRUPO): casar insumos, lançar a compra e confirmar recebimento do cupom de
+balcão, **sem** `preparar_pagamento`. Pago na hora (dinheiro/cartão/Pix no cupom) → compra
+`'paid'` com essa forma e sem conta bancária (não abre conta a pagar); senão `'pending'`. Desliga
+com `asst_settings.group_watch.purchase_entries = false`. Primeiro caso: cupom da Condor
+(R$ 29,31, dinheiro) — o modelo perguntou as dúvidas de insumo antes de lançar.
+
 Se a mensagem parecer **pedido de pagamento** — `extracted.pagamento.e_solicitacao`, ou o
 pré-filtro `PAY_HINT` no texto/transcrição — o webhook grava a solicitação em
 `asst_group_requests` e chama o brain em `modo: 'triagem_grupo'`, no chat do dono. O brain

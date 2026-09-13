@@ -305,9 +305,12 @@ async function avisarDono(admin: SupabaseClient, ownerChat: string, reply: strin
 // 'triagem_grupo') → pagamento preparado + aviso ao dono. Uma linha por mensagem em
 // asst_group_requests (message_id único), então reenvio do webhook não prepara 2×.
 // deno-lint-ignore no-explicit-any
-async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string }) {
+// tipo 'compra' (2026-09-13): cupom/nota de compra postado SEM pedido de pagamento (ex.: "chegou",
+// mercado pago em dinheiro) → o brain (modo 'entrada_compra_grupo') lança a compra e avisa o dono.
+async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string }, tipo: 'pagamento' | 'compra' = 'pagamento') {
   const conf = { ...GROUP_WATCH_DEFAULTS, ...(cfg.group_watch && typeof cfg.group_watch === 'object' ? cfg.group_watch : {}) };
-  if (conf.pay_requests === false) return;
+  if (tipo === 'pagamento' && conf.pay_requests === false) return;
+  if (tipo === 'compra' && conf.purchase_entries === false) return;
   const ownerChat = ownerChatOf(cfg);
   if (!ownerChat) { log('WARN', 'pedido de pagamento sem destino', { group: g.name }); return; }
   // Trava de custo: no máximo N triagens por dia (mensagem de grupo é de terceiros).
@@ -317,7 +320,7 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
   // message_id único: se já existe, outra execução já cuidou deste pedido.
   const { data: req, error } = await admin.from('asst_group_requests').insert({
     message_id: msg.messageId, group_jid: g.group_jid, group_name: g.name, sender_name: msg.sender,
-    kind: 'pagamento', status: 'novo', data: { texto: msg.content, extraido: msg.extracted, sent_at: msg.sentAt },
+    kind: tipo, status: 'novo', data: { texto: msg.content, extraido: msg.extracted, sent_at: msg.sentAt },
   }).select('id').maybeSingle();
   if (error || !req) { if (error && !/duplicate|unique/i.test(error.message)) log('WARN', 'gravar solicitação', { error: error.message }); return; }
 
@@ -327,16 +330,18 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
   const attr = (v: string) => v.replace(/["<>]/g, ' ').slice(0, 80);
   const quando = new Date(msg.sentAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const prompt = [
-    `[Sistema] Mensagem no grupo "${attr(String(g.name ?? ''))}" que parece pedido de pagamento (triagem automática).`,
+    tipo === 'compra'
+      ? `[Sistema] Cupom/nota de compra postado no grupo "${attr(String(g.name ?? ''))}" sem pedido de pagamento (entrada de compra automática).`
+      : `[Sistema] Mensagem no grupo "${attr(String(g.name ?? ''))}" que parece pedido de pagamento (triagem automática).`,
     `<mensagem_do_grupo grupo="${attr(String(g.name ?? ''))}" autor="${attr(msg.sender ?? 'desconhecido')}" quando="${quando}">`,
     limpo,
     '</mensagem_do_grupo>',
     msg.extracted ? `Leitura automática do arquivo anexado: ${JSON.stringify(msg.extracted).slice(0, 12000)}` : '',
-    'Siga as regras de TRIAGEM AUTOMÁTICA DE GRUPO.',
+    tipo === 'compra' ? 'Siga as regras de ENTRADA DE COMPRA PELO GRUPO.' : 'Siga as regras de TRIAGEM AUTOMÁTICA DE GRUPO.',
   ].filter(Boolean).join('\n');
 
   try {
-    const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: 'triagem_grupo' });
+    const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: tipo === 'compra' ? 'entrada_compra_grupo' : 'triagem_grupo' });
     const reply = String(out?.reply ?? '').trim();
     // deno-lint-ignore no-explicit-any
     const actions: any[] = Array.isArray(out?.actions) ? out.actions : [];
@@ -457,8 +462,11 @@ async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], 
   const pedido = extracted?.pagamento
     ? extracted.pagamento.e_solicitacao === true
     : PAY_HINT.test(baseText);
-  if (!pedido) return;
-  await triarPagamento(admin, cfg, g, { messageId, sender, content, extracted, sentAt });
+  if (pedido) { await triarPagamento(admin, cfg, g, { messageId, sender, content, extracted, sentAt }); return; }
+  // Cupom/nota de compra sem pedido de pagamento ("chegou", mercado pago em dinheiro): dar entrada em Compras.
+  const compra = !!extracted && ['nota_fiscal', 'cupom', 'pedido'].includes(String(extracted.tipo_documento ?? ''))
+    && Array.isArray(extracted.itens) && extracted.itens.length > 0;
+  if (compra) await triarPagamento(admin, cfg, g, { messageId, sender, content, extracted, sentAt }, 'compra');
 }
 
 // deno-lint-ignore no-explicit-any

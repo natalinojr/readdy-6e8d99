@@ -20,6 +20,10 @@
 //   delete_config         {}
 //   sync                  { competences?: ['AAAA-MM'] }        padrão: mês atual (+ anterior até o dia 15)
 //   import_file           { file_b64, file_name }              .xlsx do portal, .csv ou .csv.gz
+//   request_ondemand      { competence }                       POST reconciliation/on-demand (409 → reutiliza o requestId)
+//   ondemand_status       { request_id }                       GET do pedido; pronto → baixa e importa o arquivo
+//   (a busca diária também grava Sales, Financial Events, Settlements e Anticipations em fin_ifood_*)
+//   homologation_mode (set_options) → header x-request-homologation: true em toda chamada (ambiente de teste)
 //   list_imports          {}
 //   sync_all              {}                                   (interno) todas as lojas com auto_sync — cron 07h20
 //
@@ -49,20 +53,31 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 const todayBR = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
 
 // ── API do iFood ─────────────────────────────────────────────────────────────
-async function ifoodForm(path: string, form: Record<string, string>) {
-  const r = await fetch(API + path, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form).toString() });
-  const raw = await r.text();
-  let data: any = null;
-  try { data = JSON.parse(raw); } catch { /* texto */ }
-  return { ok: r.ok, status: r.status, data, raw };
+// Toda chamada: header de homologação (ambiente de teste, exigido na homologação) e
+// retentativa com backoff exponencial em 429/5xx (respeita Retry-After).
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function ifoodFetch(path: string, init: RequestInit, homolog: boolean) {
+  const headers = new Headers(init.headers);
+  if (homolog) headers.set('x-request-homologation', 'true');
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(API + path, { ...init, headers });
+    if ((r.status === 429 || r.status >= 500) && attempt < 4) {
+      const ra = Number(r.headers.get('retry-after'));
+      await sleep(ra > 0 ? Math.min(ra * 1000, 15_000) : Math.min(8000, 500 * 2 ** attempt) + Math.random() * 250);
+      continue;
+    }
+    const raw = await r.text();
+    let data: any = null;
+    try { data = JSON.parse(raw); } catch { /* texto */ }
+    return { ok: r.ok, status: r.status, data, raw };
+  }
 }
-async function ifoodGet(path: string, token: string) {
-  const r = await fetch(API + path, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-  const raw = await r.text();
-  let data: any = null;
-  try { data = JSON.parse(raw); } catch { /* texto */ }
-  return { ok: r.ok, status: r.status, data, raw };
-}
+const ifoodForm = (path: string, form: Record<string, string>, homolog = false) =>
+  ifoodFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form).toString() }, homolog);
+const ifoodGet = (path: string, token: string, homolog = false) =>
+  ifoodFetch(path, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }, homolog);
+const ifoodPostJson = (path: string, token: string, body: unknown, homolog = false) =>
+  ifoodFetch(path, { method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, homolog);
 function apiError(r: { status: number; data: any; raw: string }, what: string) {
   const d = r.data?.error?.message ?? r.data?.message ?? r.data?.error_description ?? r.data?.error ?? r.raw;
   return `${what}: iFood respondeu ${r.status}${d ? ' — ' + String(typeof d === 'string' ? d : JSON.stringify(d)).slice(0, 200) : ''}`;
@@ -74,7 +89,7 @@ async function getToken(admin: Admin, cfg: any): Promise<string> {
   if (!cfg.refresh_token) throw new Error('A loja ainda não autorizou o app no Portal do Parceiro (gere o código na configuração do iFood).');
   const r = await ifoodForm('/authentication/v1.0/oauth/token', {
     grantType: 'refresh_token', clientId: cfg.client_id, clientSecret: cfg.client_secret, refreshToken: cfg.refresh_token,
-  });
+  }, cfg.homologation_mode === true);
   if (!r.ok || !r.data?.accessToken) throw new Error(apiError(r, 'Renovar acesso'));
   const upd = {
     access_token: r.data.accessToken,
@@ -86,6 +101,19 @@ async function getToken(admin: Admin, cfg: any): Promise<string> {
   Object.assign(cfg, upd);
   return upd.access_token;
 }
+
+// GET/POST autenticados: 401 → força renovação do token e tenta uma vez mais.
+async function apiGet(admin: Admin, cfg: any, path: string) {
+  let r = await ifoodGet(path, await getToken(admin, cfg), cfg.homologation_mode === true);
+  if (r.status === 401) { cfg.token_expires_at = null; r = await ifoodGet(path, await getToken(admin, cfg), cfg.homologation_mode === true); }
+  return r;
+}
+async function apiPost(admin: Admin, cfg: any, path: string, body: unknown) {
+  let r = await ifoodPostJson(path, await getToken(admin, cfg), body, cfg.homologation_mode === true);
+  if (r.status === 401) { cfg.token_expires_at = null; r = await ifoodPostJson(path, await getToken(admin, cfg), body, cfg.homologation_mode === true); }
+  return r;
+}
+const finPath = (cfg: any, rest: string) => `/financial/v3.0/merchants/${encodeURIComponent(cfg.merchant_id)}${rest}`;
 
 // ── Leitura do relatório (xlsx do portal, csv ou csv.gz da API) ──────────────
 type Row = Record<string, unknown>;
@@ -283,8 +311,7 @@ async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, c
 
 // Baixa e grava uma competência pela API.
 async function syncCompetence(admin: Admin, cfg: any, competence: string) {
-  const token = await getToken(admin, cfg);
-  const r = await ifoodGet(`/financial/v3.0/merchants/${encodeURIComponent(cfg.merchant_id)}/reconciliation?competence=${competence}`, token);
+  const r = await apiGet(admin, cfg, finPath(cfg, `/reconciliation?competence=${competence}`));
   if (r.status === 404) return { competence, skipped: true, reason: 'sem arquivo para a competência' };
   if (!r.ok) throw new Error(apiError(r, `Conciliação ${competence}`));
   const list: any[] = Array.isArray(r.data) ? r.data : (r.data ? [r.data] : []);
@@ -299,6 +326,112 @@ async function syncCompetence(admin: Admin, cfg: any, competence: string) {
   const rows = await readReport(bytes, 'reconciliation.csv.gz');
   const entries = rows.map(toEntry).filter((e) => !e.competence || e.competence === competence);
   return await saveCompetence(admin, cfg.tenant_id, cfg, competence, entries, { source: 'api', merchant_id: cfg.merchant_id, sha256: sha || await sha256Hex(bytes) });
+}
+
+// ── Demais APIs do módulo Financial (vendas, eventos, liquidações, antecipações) ──
+const addDaysISO = (d: string, n: number) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+const hashKey = async (v: unknown) => (await sha256Hex(new TextEncoder().encode(JSON.stringify(v)))).slice(0, 40);
+async function upsertRows(admin: Admin, table: string, rows: Map<string, Record<string, unknown>>, onConflict: string) {
+  const list = [...rows.values()];
+  for (let i = 0; i < list.length; i += 500) {
+    const { error } = await admin.from(table).upsert(list.slice(i, i + 500), { onConflict });
+    if (error) throw new Error(`${table}: ${error.message}`);
+  }
+  return list.length;
+}
+
+async function syncSales(admin: Admin, cfg: any, from: string, to: string) {
+  let n = 0;
+  for (let page = 1, pageCount = 1; page <= pageCount && page <= 50; page++) {
+    const r = await apiGet(admin, cfg, finPath(cfg, `/sales?beginSalesDate=${from}&endSalesDate=${to}&page=${page}`));
+    if (r.status === 404) break;
+    if (!r.ok) throw new Error(apiError(r, 'Vendas'));
+    const sales: any[] = r.data?.sales ?? [];
+    pageCount = Number(r.data?.pageCount ?? 1) || 1;
+    const rows = new Map<string, Record<string, unknown>>();
+    const now = new Date().toISOString();
+    for (const s of sales) {
+      if (!s?.id) continue;
+      rows.set(String(s.id), {
+        tenant_id: cfg.tenant_id, merchant_id: String(s.merchant?.id ?? cfg.merchant_id), sale_id: String(s.id), short_id: str(s.shortId),
+        sale_created_at: tsOrNull(s.createdAt), type: str(s.type), category: str(s.category), sales_channel: str(s.salesChannel), current_status: str(s.currentStatus),
+        gross_bag: num(s.saleGrossValue?.bag), delivery_fee: num(s.saleGrossValue?.deliveryFee), service_fee: num(s.saleGrossValue?.serviceFee),
+        benefits_total: num(s.benefits?.totalValue), sale_balance: num(s.billingSummary?.saleBalance),
+        payment_methods: s.payments?.methods ?? null, billing_entries: s.billingSummary?.billingEntries ?? null, raw: s, synced_at: now,
+      });
+    }
+    n += await upsertRows(admin, 'fin_ifood_sales', rows, 'tenant_id,sale_id');
+    if (sales.length === 0) break;
+  }
+  return n;
+}
+
+// Janela máxima de 33 dias por consulta (regra do iFood).
+async function syncEvents(admin: Admin, cfg: any, from: string, to: string) {
+  let n = 0;
+  for (let page = 1; page <= 100; page++) {
+    const r = await apiGet(admin, cfg, finPath(cfg, `/financial-events?beginDate=${from}&endDate=${to}&page=${page}&size=100`));
+    if (r.status === 404) break;
+    if (!r.ok) throw new Error(apiError(r, 'Eventos financeiros'));
+    const evs: any[] = r.data?.financialEvents ?? [];
+    const rows = new Map<string, Record<string, unknown>>();
+    const now = new Date().toISOString();
+    for (const e of evs) {
+      const key = await hashKey([e.name, e.trigger, e.dateTime, e.reference?.id, e.amount?.value, e.product, e.payment?.method, e.settlement?.expectedDate]);
+      rows.set(key, {
+        tenant_id: cfg.tenant_id, merchant_id: String(e.receiver?.businessId ?? cfg.merchant_id), event_key: key,
+        name: str(e.name), description: str(e.description), product: str(e.product), trigger: str(e.trigger),
+        event_at: tsOrNull(e.dateTime), competence: str(e.competence), period_begin: dateOnly(e.period?.beginDate), period_end: dateOnly(e.period?.endDate),
+        reference_type: str(e.reference?.type), reference_id: str(e.reference?.id), reference_date: dateOnly(e.reference?.date),
+        has_transfer_impact: e.hasTransferImpact === true, amount: num(e.amount?.value), base_value: num(e.billing?.baseValue), fee_percentage: num(e.billing?.feePercentage),
+        expected_settlement: dateOnly(e.settlement?.expectedDate), payment_method: str(e.payment?.method), payment_brand: str(e.payment?.brand), payment_liability: str(e.payment?.liability),
+        raw: e, synced_at: now,
+      });
+    }
+    n += await upsertRows(admin, 'fin_ifood_events', rows, 'tenant_id,event_key');
+    if (!r.data?.hasNextPage || evs.length === 0) break;
+  }
+  return n;
+}
+
+async function syncSettlements(admin: Admin, cfg: any, from: string, to: string) {
+  const r = await apiGet(admin, cfg, finPath(cfg, `/settlements?beginPaymentDate=${from}&endPaymentDate=${to}`));
+  if (r.status === 404) return 0;
+  if (!r.ok) throw new Error(apiError(r, 'Liquidações'));
+  const rows = new Map<string, Record<string, unknown>>();
+  const now = new Date().toISOString();
+  for (const s of r.data?.settlements ?? []) {
+    for (const it of s.closingItems ?? []) {
+      const key = it.id ? String(it.id) : await hashKey([it.type, it.paymentDate, it.amount, s.startDateCalculation, it.transactionId]);
+      rows.set(key, {
+        tenant_id: cfg.tenant_id, merchant_id: String(r.data?.merchantId ?? cfg.merchant_id), item_key: key, item_id: str(it.id),
+        type: str(it.type), product: str(it.product), amount: num(it.amount), status: str(it.status), transaction_id: str(it.transactionId),
+        payment_date: dateOnly(it.paymentDate), calc_begin: dateOnly(s.startDateCalculation), calc_end: dateOnly(s.endDateCalculation),
+        account_details: it.accountDetails ?? null, raw: it, synced_at: now,
+      });
+    }
+  }
+  return await upsertRows(admin, 'fin_ifood_settlements', rows, 'tenant_id,item_key');
+}
+
+async function syncAnticipations(admin: Admin, cfg: any, from: string, to: string) {
+  const r = await apiGet(admin, cfg, finPath(cfg, `/anticipations?beginAnticipatedPaymentDate=${from}&endAnticipatedPaymentDate=${to}`));
+  if (r.status === 404) return 0;
+  if (!r.ok) throw new Error(apiError(r, 'Antecipações'));
+  const rows = new Map<string, Record<string, unknown>>();
+  const now = new Date().toISOString();
+  for (const s of r.data?.settlements ?? []) {
+    for (const it of s.closingItems ?? []) {
+      const key = await hashKey([it.type, it.originalPaymentDate, it.anticipatedPaymentDate, it.originalPaymentAmount, s.startDateCalculation]);
+      rows.set(key, {
+        tenant_id: cfg.tenant_id, merchant_id: String(r.data?.merchantId ?? cfg.merchant_id), item_key: key, type: str(it.type),
+        original_amount: num(it.originalPaymentAmount), fee_percentage: num(it.feePercentage), fee_amount: num(it.feeAmount), anticipated_amount: num(it.anticipatedPaymentAmount),
+        status: str(it.status), original_date: dateOnly(it.originalPaymentDate), anticipated_date: dateOnly(it.anticipatedPaymentDate),
+        calc_begin: dateOnly(s.startDateCalculation), calc_end: dateOnly(s.endDateCalculation), account_details: it.accountDetails ?? null, raw: it, synced_at: now,
+      });
+    }
+  }
+  return await upsertRows(admin, 'fin_ifood_anticipations', rows, 'tenant_id,item_key');
 }
 
 function defaultCompetences() {
@@ -318,8 +451,18 @@ async function syncTenant(admin: Admin, cfg: any, competences?: string[]) {
     try { results.push(await syncCompetence(admin, cfg, c)); }
     catch (e) { lastErr = String((e as Error)?.message ?? e); results.push({ competence: c, error: lastErr }); }
   }
+  // Demais APIs: janelas móveis (eventos: máx. 33 dias; liquidações/antecipações: passado e futuro).
+  const today = todayBR();
+  const apis: Record<string, unknown> = {};
+  const run = async (k: string, fn: () => Promise<number>) => {
+    try { apis[k] = await fn(); } catch (e) { lastErr = String((e as Error)?.message ?? e); apis[k] = { error: lastErr }; }
+  };
+  await run('sales', () => syncSales(admin, cfg, addDaysISO(today, -30), today));
+  await run('events', () => syncEvents(admin, cfg, addDaysISO(today, -32), today));
+  await run('settlements', () => syncSettlements(admin, cfg, addDaysISO(today, -35), addDaysISO(today, 35)));
+  await run('anticipations', () => syncAnticipations(admin, cfg, addDaysISO(today, -35), addDaysISO(today, 35)));
   await admin.from('fin_ifood_config').update({ last_sync_at: new Date().toISOString(), last_sync_error: lastErr, updated_at: new Date().toISOString() }).eq('id', cfg.id);
-  return { tenant_id: cfg.tenant_id, results, error: lastErr ?? undefined };
+  return { tenant_id: cfg.tenant_id, results, apis, error: lastErr ?? undefined };
 }
 
 function safeConfig(cfg: any) {
@@ -331,7 +474,7 @@ function safeConfig(cfg: any) {
     authorized: Boolean(cfg.refresh_token), authorized_at: cfg.authorized_at,
     user_code: cfg.user_code_expires_at && new Date(cfg.user_code_expires_at).getTime() > Date.now() ? cfg.user_code : null,
     user_code_expires_at: cfg.user_code_expires_at, verification_url: cfg.verification_url,
-    is_active: cfg.is_active, auto_sync: cfg.auto_sync, post_to_ledger: cfg.post_to_ledger,
+    is_active: cfg.is_active, auto_sync: cfg.auto_sync, post_to_ledger: cfg.post_to_ledger, homologation_mode: cfg.homologation_mode === true,
     last_sync_at: cfg.last_sync_at, last_sync_error: cfg.last_sync_error,
   };
 }
@@ -446,17 +589,59 @@ Deno.serve(async (req) => {
 
     // Opções que não dependem da API (vale para quem só importa o arquivo do portal).
     if (action === 'set_options') {
-      const on = body.post_to_ledger === true;
-      const row: Record<string, unknown> = {
-        tenant_id: tenantId, post_to_ledger: on,
-        auto_sync: body.auto_sync === undefined ? (cfg?.auto_sync ?? true) : body.auto_sync !== false,
-        is_active: true, updated_at: new Date().toISOString(),
-      };
+      // Só altera o que veio no corpo (ligar a homologação não mexe no lançamento, e vice-versa).
+      const row: Record<string, unknown> = { tenant_id: tenantId, is_active: true, updated_at: new Date().toISOString() };
+      if (typeof body.post_to_ledger === 'boolean') row.post_to_ledger = body.post_to_ledger;
+      if (typeof body.auto_sync === 'boolean') row.auto_sync = body.auto_sync;
+      if (typeof body.homologation_mode === 'boolean') row.homologation_mode = body.homologation_mode;
       if (!cfg) row.created_by = userId;
       const { error } = await admin.from('fin_ifood_config').upsert(row, { onConflict: 'tenant_id' });
       if (error) return errResp('Salvar: ' + error.message, 500);
-      const ledger = await repostImports(admin, tenantId, on);
+      const ledger = typeof body.post_to_ledger === 'boolean' ? await repostImports(admin, tenantId, body.post_to_ledger) : null;
       return json({ success: true, ledger });
+    }
+
+    // ── Relatório de conciliação sob demanda (POST gera; GET consulta até ficar pronto) ──
+    if (action === 'request_ondemand') {
+      if (!cfg?.refresh_token || !cfg.merchant_id) return errResp('Conecte a API do iFood antes (credenciais + autorização da loja).');
+      const competence = String(body.competence ?? '');
+      if (!/^\d{4}-\d{2}$/.test(competence)) return errResp('Competência inválida (use AAAA-MM).');
+      const r = await apiPost(admin, cfg, finPath(cfg, '/reconciliation/on-demand'), { competence });
+      let requestId: string | null = r.data?.requestId ? String(r.data.requestId) : null;
+      if (r.status === 409) {
+        // Já existe pedido em andamento para a competência: reutiliza o requestId.
+        if (!requestId) {
+          const { data: prev } = await admin.from('fin_ifood_ondemand').select('request_id').eq('tenant_id', tenantId).eq('competence', competence).order('created_at', { ascending: false }).limit(1);
+          requestId = prev?.[0]?.request_id ?? null;
+        }
+        if (!requestId) return errResp('O iFood já está gerando esse relatório. Tente de novo em alguns minutos.');
+      } else if (!r.ok || !requestId) return errResp(apiError(r, 'Gerar relatório'));
+      const now = new Date().toISOString();
+      await admin.from('fin_ifood_ondemand').upsert({ tenant_id: tenantId, merchant_id: cfg.merchant_id, competence, request_id: requestId, status: 'REQUESTED', requested_by: userId, updated_at: now }, { onConflict: 'tenant_id,request_id' });
+      return json({ success: true, request_id: requestId, reused: r.status === 409 });
+    }
+
+    if (action === 'ondemand_status') {
+      if (!cfg?.refresh_token || !cfg.merchant_id) return errResp('API do iFood não conectada.');
+      const requestId = String(body.request_id ?? '');
+      const { data: od } = await admin.from('fin_ifood_ondemand').select('*').eq('tenant_id', tenantId).eq('request_id', requestId).maybeSingle();
+      if (!od) return errResp('Pedido de relatório não encontrado.');
+      const r = await apiGet(admin, cfg, finPath(cfg, `/reconciliation/on-demand/${encodeURIComponent(requestId)}`));
+      if (!r.ok) return errResp(apiError(r, 'Status do relatório'));
+      const status = String(r.data?.status ?? 'PROCESSING');
+      const filePath = str(r.data?.filePath);
+      let imported: unknown = null;
+      if (filePath && !od.imported_at && /complet|conclu|done|success|ready|finish|available|generated/i.test(status)) {
+        const f = await fetch(filePath);
+        if (!f.ok) return errResp(`Baixar relatório: HTTP ${f.status}`);
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        const rows = await readReport(bytes, 'ondemand.csv.gz');
+        const entries = rows.map(toEntry).filter((e) => !e.competence || e.competence === od.competence);
+        imported = await saveCompetence(admin, tenantId, cfg, od.competence, entries, { source: 'api', merchant_id: cfg.merchant_id, sha256: await sha256Hex(bytes), userId });
+      }
+      const now = new Date().toISOString();
+      await admin.from('fin_ifood_ondemand').update({ status, file_path: filePath, error_message: str(r.data?.errorMessage), imported_at: imported ? now : od.imported_at, updated_at: now }).eq('id', od.id);
+      return json({ success: true, status, file_path: filePath, error_message: str(r.data?.errorMessage), imported });
     }
 
     if (action === 'save_config') {
@@ -480,7 +665,7 @@ Deno.serve(async (req) => {
 
     if (action === 'request_user_code') {
       if (!cfg?.client_id) return errResp('Salve primeiro o Client ID e o Client Secret.');
-      const r = await ifoodForm('/authentication/v1.0/oauth/userCode', { clientId: cfg.client_id });
+      const r = await ifoodForm('/authentication/v1.0/oauth/userCode', { clientId: cfg.client_id }, cfg.homologation_mode === true);
       if (!r.ok || !r.data?.userCode) return errResp(apiError(r, 'Gerar código'));
       await admin.from('fin_ifood_config').update({
         user_code: r.data.userCode, auth_verifier_secret: r.data.authorizationCodeVerifier,
@@ -498,7 +683,7 @@ Deno.serve(async (req) => {
       const r = await ifoodForm('/authentication/v1.0/oauth/token', {
         grantType: 'authorization_code', clientId: cfg.client_id, clientSecret: cfg.client_secret,
         authorizationCode: code, authorizationCodeVerifier: cfg.auth_verifier_secret,
-      });
+      }, cfg.homologation_mode === true);
       if (!r.ok || !r.data?.accessToken) return errResp(apiError(r, 'Autorizar'));
       const access = r.data.accessToken as string;
       const upd: Record<string, unknown> = {
@@ -506,7 +691,7 @@ Deno.serve(async (req) => {
         token_expires_at: new Date(Date.now() + Number(r.data.expiresIn ?? 21600) * 1000).toISOString(),
         authorized_at: new Date().toISOString(), user_code: null, auth_verifier_secret: null, updated_at: new Date().toISOString(),
       };
-      const m = await ifoodGet('/merchant/v1.0/merchants', access);
+      const m = await ifoodGet('/merchant/v1.0/merchants', access, cfg.homologation_mode === true);
       const merchants = (Array.isArray(m.data) ? m.data : []).map((x: any) => ({ id: String(x.id), name: String(x.name ?? x.corporateName ?? x.id) }));
       if (merchants.length === 1) { upd.merchant_id = merchants[0].id; upd.merchant_name = merchants[0].name; }
       await admin.from('fin_ifood_config').update(upd).eq('id', cfg.id);
