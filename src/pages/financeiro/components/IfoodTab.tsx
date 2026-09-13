@@ -32,7 +32,20 @@ const compLabel = (c: string) => {
 };
 const dataBR = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
 // Mesma regra da edge: receita = entradas e subsídios; taxas = cobranças e retenções.
-const isRevenue = (e: EntryRow) => /entrada|subs[ií]dio/i.test(e.tipo_lancamento ?? '') || (!/cobran|reten/i.test(e.tipo_lancamento ?? '') && e.valor > 0);
+// Mesma divisão do Portal do Parceiro (Financeiro › Faturamento) — igual à edge ifood-financial:
+// vendas − taxas − serviços + ajustes = faturamento; faturamento − pago direto à loja = repasses.
+function portalBucket(e: EntryRow) {
+  const t = (e.tipo_lancamento ?? '').toLowerCase();
+  const d = (e.descricao ?? '').toLowerCase();
+  const v = e.valor;
+  const z = { vendas: 0, taxas: 0, servicos: 0, ajustes: 0, loja: 0 };
+  if (t.includes('entrada')) { z.vendas = v; if ((e.responsavel ?? '').toUpperCase() === 'LOJA') z.loja = v; }
+  else if (t.includes('subs')) { if (/custeada pela loja/.test(d)) { z.vendas = -v; z.servicos = -v; } else z.vendas = v; }
+  else if (t.includes('reten')) z.vendas = v;
+  else if (t.includes('cobran')) { if (/comiss|transa/.test(d)) z.taxas = -v; else z.servicos = -v; }
+  else z.ajustes = v;
+  return z;
+}
 
 function Kpi({ label, value, sub, tone = 'zinc' }: { label: string; value: string; sub?: string; tone?: 'zinc' | 'green' | 'red' | 'amber' }) {
   const color = { zinc: 'text-zinc-900', green: 'text-green-700', red: 'text-red-600', amber: 'text-amber-700' }[tone];
@@ -108,25 +121,29 @@ export default function IfoodTab() {
   useEffect(() => { loadCompetence(); }, [loadCompetence]);
 
   const resumo = useMemo(() => {
-    const sig = entries.filter((e) => e.impacto_repasse);
-    const vendas = sig.filter(isRevenue).reduce((s, e) => s + e.valor, 0);
-    const taxasMap = new Map<string, number>();
-    for (const e of sig.filter((x) => !isRevenue(x))) {
-      const k = e.descricao || e.tipo_lancamento || 'Outros';
-      taxasMap.set(k, (taxasMap.get(k) ?? 0) - e.valor);
+    const z = { vendas: 0, taxas: 0, servicos: 0, ajustes: 0, loja: 0 };
+    const custo = new Map<string, number>(); // "para onde foi o dinheiro": taxas + serviços − ajustes por descrição
+    for (const e of entries) {
+      const b = portalBucket(e);
+      z.vendas += b.vendas; z.taxas += b.taxas; z.servicos += b.servicos; z.ajustes += b.ajustes; z.loja += b.loja;
+      const c = b.taxas + b.servicos - b.ajustes;
+      if (Math.abs(c) > 0.004) {
+        const k = e.descricao || e.tipo_lancamento || 'Outros';
+        custo.set(k, (custo.get(k) ?? 0) + c);
+      }
     }
-    const taxas = [...taxasMap.values()].reduce((s, v) => s + v, 0);
+    const faturamento = z.vendas - z.taxas - z.servicos + z.ajustes;
     // `|| 0` evita o "-R$ 0,00" (zero negativo) quando não há promoção.
-    const promoLoja = -entries.filter((e) => !e.impacto_repasse && /promo/i.test(e.descricao ?? '')).reduce((s, e) => s + e.valor, 0) || 0;
-    const promoIfood = entries.filter((e) => e.impacto_repasse && /promo[çc][ãa]o custeada pelo ifood/i.test(e.descricao ?? '')).reduce((s, e) => s + e.valor, 0);
-    const recebidoLoja = entries.filter((e) => !e.impacto_repasse && (e.responsavel ?? '').toUpperCase() === 'LOJA' && e.valor > 0).reduce((s, e) => s + e.valor, 0);
+    const promoLoja = -entries.filter((e) => /custeada pela loja/i.test(e.descricao ?? '')).reduce((s, e) => s + e.valor, 0) || 0;
+    const promoIfood = entries.filter((e) => /custeada pelo ifood|custeada pela ind[uú]stria/i.test(e.descricao ?? '')).reduce((s, e) => s + e.valor, 0) || 0;
     const pedidos = new Set(entries.filter((e) => e.fato_gerador === 'Venda' && e.order_id).map((e) => e.order_id)).size;
     const cancelados = new Set(entries.filter((e) => /cancelamento/i.test(e.fato_gerador ?? '') && e.order_id).map((e) => e.order_id)).size;
     return {
-      vendas, taxas, liquido: vendas - taxas, promoLoja, promoIfood, recebidoLoja, pedidos, cancelados,
-      ticket: pedidos > 0 ? vendas / pedidos : 0,
-      taxaEfetiva: vendas > 0 ? (taxas / vendas) * 100 : 0,
-      taxasLista: [...taxasMap.entries()].filter(([, v]) => Math.abs(v) > 0.004).sort((a, b) => b[1] - a[1]),
+      ...z, faturamento, liquido: faturamento - z.loja, custoTotal: z.taxas + z.servicos - z.ajustes,
+      promoLoja, promoIfood, pedidos, cancelados,
+      ticket: pedidos > 0 ? z.vendas / pedidos : 0,
+      taxaEfetiva: z.vendas > 0 ? ((z.taxas + z.servicos - z.ajustes) / z.vendas) * 100 : 0,
+      taxasLista: [...custo.entries()].filter(([, v]) => Math.abs(v) > 0.004).sort((a, b) => b[1] - a[1]),
     };
   }, [entries]);
 
@@ -304,17 +321,22 @@ export default function IfoodTab() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Kpi label="Vendas (base do repasse)" value={formatCurrency(resumo.vendas)} sub={`${resumo.pedidos} pedido(s) · ticket ${formatCurrency(resumo.ticket)}`} />
-            <Kpi label="Comissões e taxas" value={formatCurrency(resumo.taxas)} sub={`${resumo.taxaEfetiva.toFixed(1)}% das vendas`} tone="red" />
-            <Kpi label="Líquido (repasses)" value={formatCurrency(resumo.liquido)} sub={`${repasses.length} data(s) de repasse`} tone="green" />
-            <Kpi label="Promoções pagas pela loja" value={formatCurrency(resumo.promoLoja)} sub={`iFood bancou ${formatCurrency(resumo.promoIfood)}${resumo.cancelados ? ` · ${resumo.cancelados} cancelado(s)` : ''}`} tone="amber" />
+          {/* Mesmos cartões e mesma conta do Portal do Parceiro › Financeiro › Faturamento */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <Kpi label="Valor das vendas" value={formatCurrency(resumo.vendas)} sub={`${resumo.pedidos} pedido(s) · ticket ${formatCurrency(resumo.ticket)}${resumo.cancelados ? ` · ${resumo.cancelados} cancelado(s)` : ''}`} />
+            <Kpi label="Taxas e comissões" value={formatCurrency(-resumo.taxas || 0)} sub={`${resumo.vendas > 0 ? ((resumo.taxas / resumo.vendas) * 100).toFixed(1) : '0.0'}% das vendas`} tone="red" />
+            <Kpi label="Serviços e promoções" value={formatCurrency(-resumo.servicos || 0)} sub={`promoções da loja ${formatCurrency(resumo.promoLoja)}`} tone="red" />
+            <Kpi label="Ajustes" value={formatCurrency(resumo.ajustes)} sub="ressarcimentos do iFood" tone={resumo.ajustes < 0 ? 'red' : 'green'} />
+            <Kpi label="Total faturamento" value={formatCurrency(resumo.faturamento)} sub={`iFood bancou ${formatCurrency(resumo.promoIfood)} em promoções`} tone="green" />
           </div>
-          {resumo.recebidoLoja > 0 && (
-            <p className="text-xs text-zinc-500">
-              Além disso, {formatCurrency(resumo.recebidoLoja)} foram pagos direto à loja na entrega (fora do repasse — entram pela maquininha/Pix).
-            </p>
-          )}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-xl border border-zinc-100 bg-white px-4 py-3 text-sm">
+            <span className="text-zinc-500">Faturamento</span>
+            <span className="font-mono">{formatCurrency(resumo.faturamento)}</span>
+            <span className="text-zinc-400">=</span>
+            <span><span className="text-zinc-500">Total em repasses </span><strong className="font-mono text-green-700">{formatCurrency(resumo.liquido)}</strong> <span className="text-xs text-zinc-400">(cai no banco · {repasses.length} data(s))</span></span>
+            <span className="text-zinc-400">+</span>
+            <span><span className="text-zinc-500">Recebido direto pela loja </span><strong className="font-mono">{formatCurrency(resumo.loja)}</strong> <span className="text-xs text-zinc-400">(pago na entrega · entra pela maquininha/Pix)</span></span>
+          </div>
 
           {/* Repasses */}
           <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
@@ -401,7 +423,7 @@ export default function IfoodTab() {
                 <tr className="border-t border-zinc-200 font-semibold">
                   <td className="px-4 py-2">Total</td>
                   <td className="px-4 py-2 text-right text-xs text-zinc-500">{resumo.taxaEfetiva.toFixed(1)}%</td>
-                  <td className="px-4 py-2 text-right font-mono text-red-600">{formatCurrency(resumo.taxas)}</td>
+                  <td className="px-4 py-2 text-right font-mono text-red-600">{formatCurrency(resumo.custoTotal)}</td>
                 </tr>
               </tbody>
             </table>

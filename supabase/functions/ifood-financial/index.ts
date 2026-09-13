@@ -219,8 +219,38 @@ function toEntry(r: Row) {
 type Entry = ReturnType<typeof toEntry>;
 
 // Receita = entradas e subsídios que afetam o repasse; taxas = cobranças e retenções.
-type LedgerEntry = Pick<Entry, 'data_repasse' | 'valor' | 'tipo_lancamento' | 'impacto_repasse' | 'order_id'>;
-const isRevenue = (e: Pick<Entry, 'tipo_lancamento' | 'valor'>) => /entrada|subs[ií]dio/i.test(e.tipo_lancamento ?? '') || (!/cobran|reten/i.test(e.tipo_lancamento ?? '') && e.valor > 0);
+type LedgerEntry = Pick<Entry, 'data_repasse' | 'valor' | 'tipo_lancamento' | 'impacto_repasse' | 'order_id' | 'descricao' | 'responsavel'>;
+
+// Mesma divisão do Portal do Parceiro (Financeiro › Faturamento). Conferido com ago/26 (3189551):
+// vendas 9.201,06 − taxas 1.660,03 − serviços 849,50 + ajustes 72,22 = faturamento 6.763,75;
+// − recebido direto pela loja 1.757,80 = repasses 5.005,95.
+//   vendas   = Entrada Financeira (iFood e loja) + subsídio iFood/indústria + retenções (taxa de entrega e
+//              de serviço cobradas do cliente, parcelamento) + promoção da loja somada de volta
+//   taxas    = cobranças de comissão e taxa de transação
+//   serviços = demais cobranças (entrega sob demanda) + promoção custeada pela loja
+//   ajustes  = ressarcimentos e outros tipos
+//   loja     = Entrada Financeira com responsável LOJA (pago na entrega, fora do repasse)
+type PortalEntry = Pick<Entry, 'tipo_lancamento' | 'descricao' | 'responsavel' | 'valor'>;
+function portalBucket(e: PortalEntry) {
+  const t = (e.tipo_lancamento ?? '').toLowerCase();
+  const d = (e.descricao ?? '').toLowerCase();
+  const v = e.valor;
+  const z = { vendas: 0, taxas: 0, servicos: 0, ajustes: 0, loja: 0 };
+  if (t.includes('entrada')) { z.vendas = v; if ((e.responsavel ?? '').toUpperCase() === 'LOJA') z.loja = v; }
+  else if (t.includes('subs')) { if (/custeada pela loja/.test(d)) { z.vendas = -v; z.servicos = -v; } else z.vendas = v; }
+  else if (t.includes('reten')) z.vendas = v;
+  else if (t.includes('cobran')) { if (/comiss|transa/.test(d)) z.taxas = -v; else z.servicos = -v; }
+  else z.ajustes = v;
+  return z;
+}
+function portalTotals(list: PortalEntry[]) {
+  const z = { vendas: 0, taxas: 0, servicos: 0, ajustes: 0, loja: 0 };
+  for (const e of list) { const b = portalBucket(e); z.vendas += b.vendas; z.taxas += b.taxas; z.servicos += b.servicos; z.ajustes += b.ajustes; z.loja += b.loja; }
+  const faturamento = z.vendas - z.taxas - z.servicos + z.ajustes;
+  // No razão: receita = vendas sem o que a loja recebeu direto (esse entra por maquininha/Pix);
+  // taxas = taxas + serviços − ajustes. receita − taxas = repasses.
+  return { ...z, faturamento, repasse: faturamento - z.loja, receita: z.vendas - z.loja, custo: z.taxas + z.servicos - z.ajustes };
+}
 
 // Livro-razão de uma importação: apaga o que ela lançou e relança (se ligado), por dia de
 // repasse JÁ vencido — o que ainda vai cair entra quando a data chegar (rotina diária).
@@ -231,9 +261,10 @@ async function postLedger(admin: Admin, tenantId: string, importId: string, on: 
   const today = todayBR();
   const days = new Map<string, { rev: number; fee: number; n: Set<string> }>();
   for (const e of entries) {
-    if (!e.impacto_repasse || !e.data_repasse || e.data_repasse > today) continue;
+    if (!e.data_repasse || e.data_repasse > today) continue;
     const d = days.get(e.data_repasse) ?? { rev: 0, fee: 0, n: new Set<string>() };
-    if (isRevenue(e)) d.rev += e.valor; else d.fee += -e.valor;
+    const t = portalTotals([e]);
+    d.rev += t.receita; d.fee += t.custo;
     if (e.order_id) d.n.add(e.order_id);
     days.set(e.data_repasse, d);
   }
@@ -273,9 +304,13 @@ async function repostImports(admin: Admin, tenantId: string, on: boolean, minCom
   const tot = { imports: 0, rows: 0, receita: 0, taxas: 0 };
   for (const imp of imps ?? []) {
     const { data: ents, error: eErr } = await admin.from('fin_ifood_entries')
-      .select('data_repasse, valor, tipo_lancamento, impacto_repasse, order_id').eq('import_id', imp.id).limit(50000);
+      .select('data_repasse, valor, tipo_lancamento, impacto_repasse, order_id, descricao, responsavel').eq('import_id', imp.id).limit(50000);
     if (eErr) throw new Error('Ler linhas: ' + eErr.message);
-    const l = await postLedger(admin, tenantId, imp.id, on, (ents ?? []).map((e: any) => ({ ...e, valor: Number(e.valor) })));
+    const list = (ents ?? []).map((e: any) => ({ ...e, valor: Number(e.valor) }));
+    const l = await postLedger(admin, tenantId, imp.id, on, list);
+    // Resumo da importação na mesma divisão do portal.
+    const t = portalTotals(list);
+    await admin.from('fin_ifood_imports').update({ gross: round2(t.receita), fees: round2(t.custo), net: round2(t.repasse) }).eq('id', imp.id);
     tot.imports++; tot.rows += l.rows; tot.receita = round2(tot.receita + l.receita); tot.taxas = round2(tot.taxas + l.taxas);
   }
   return { ...tot, matched: await matchInter(admin, tenantId) };
@@ -289,9 +324,9 @@ async function sha256Hex(bytes: Uint8Array) {
 // Grava uma loja + competência (substitui a anterior da mesma loja), lança no razão e casa com o Inter.
 async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, competence: string, entries: Entry[], meta: { source: 'api' | 'file'; merchant_id: string; file_name?: string | null; sha256?: string | null; userId?: string | null; expected?: { lines: number | null; orders: number | null; read_lines: number; read_orders: number } }) {
   const valid = entries.filter((e) => e.data_repasse || e.valor);
-  const sig = valid.filter((e) => e.impacto_repasse);
-  const gross = round2(sig.filter(isRevenue).reduce((s, e) => s + e.valor, 0));
-  const fees = round2(-sig.filter((e) => !isRevenue(e)).reduce((s, e) => s + e.valor, 0));
+  const tot = portalTotals(valid);
+  const gross = round2(tot.receita);
+  const fees = round2(tot.custo);
   const orders = new Set(valid.map((e) => e.order_id).filter(Boolean)).size;
   const now = new Date().toISOString();
   // Integridade: contagens do metadata do iFood × o que foi lido do arquivo (null = sem metadata).
