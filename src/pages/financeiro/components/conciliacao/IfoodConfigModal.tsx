@@ -27,7 +27,7 @@ interface IfoodConfig {
 }
 
 interface ImportRow {
-  id: string; competence: string; source: 'api' | 'file'; file_name: string | null;
+  id: string; competence: string; source: 'api' | 'file'; file_name: string | null; merchant_short?: string | null;
   lines: number; orders: number; gross: number; fees: number; net: number; updated_at: string;
 }
 
@@ -253,13 +253,23 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
                 {busy === 'file' ? <>{spinner} Importando...</> : <><i className="ri-upload-2-line" /> Escolher arquivo</>}
               </button>
               {imports.length > 0 && (
-                <div className="text-xs text-zinc-600 space-y-1">
-                  {imports.slice(0, 6).map((i) => (
-                    <div key={i.id} className="flex justify-between gap-2 border-t border-zinc-100 pt-1">
-                      <span>{compLabel(i.competence)} · {i.orders} pedidos · {i.source === 'api' ? 'API' : 'arquivo'}</span>
-                      <span className="font-mono">{formatCurrency(Number(i.gross))} − {formatCurrency(Number(i.fees))} = <strong>{formatCurrency(Number(i.net))}</strong></span>
-                    </div>
-                  ))}
+                <div>
+                  <p className="text-[11px] font-semibold text-zinc-500 mb-1">Relatórios importados ({imports.length})</p>
+                  {/* Rolagem própria: a lista cresce a cada mês/loja e não pode empurrar o resto do modal. */}
+                  <div className="max-h-48 overflow-y-auto rounded-lg border border-zinc-100 divide-y divide-zinc-100 text-xs text-zinc-600">
+                    {imports.map((i) => (
+                      <div key={i.id} className="flex items-center justify-between gap-3 px-2.5 py-1.5">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-zinc-700">{compLabel(i.competence)} · Loja {i.merchant_short ?? '—'}</p>
+                          <p className="text-[11px] text-zinc-400">{i.orders} pedidos · {i.source === 'api' ? 'API' : 'arquivo'}</p>
+                        </div>
+                        <p className="font-mono text-right whitespace-nowrap">
+                          {formatCurrency(Number(i.gross))} − {formatCurrency(Number(i.fees))}
+                          <span className="block font-bold text-zinc-800">= {formatCurrency(Number(i.net))}</span>
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
