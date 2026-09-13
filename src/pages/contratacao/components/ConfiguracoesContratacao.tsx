@@ -35,7 +35,13 @@ async function run(p: PromiseLike<{ error: { message: string } | null }>) {
 // ── Empresas ────────────────────────────────────────────────────────────────
 function Empresas({ companies, candidates, onReload }: { companies: Company[]; candidates: Candidate[]; onReload: () => Promise<void> }) {
   const [novo, setNovo] = useState('');
+  const [aberta, setAberta] = useState<string | null>(null);
   const count = (id: string) => candidates.filter((c) => c.company_id === id).length;
+  const saveField = async (c: Company, field: 'address' | 'city' | 'description', value: string) => {
+    const v = value.trim() || null;
+    if (v === (c[field] ?? null)) return;
+    if (await run(supabase.from('hiring_companies').update({ [field]: v }).eq('id', c.id))) await onReload();
+  };
 
   const add = async () => {
     const name = novo.trim();
@@ -79,8 +85,13 @@ function Empresas({ companies, candidates, onReload }: { companies: Company[]; c
     <Card titulo="Empresas / lojas" desc="As empresas deste módulo são próprias e não têm ligação com as lojas do ERPOS. Cada currículo é salvo em uma delas.">
       <ul className="divide-y divide-zinc-100">
         {companies.map((c, i) => (
-          <li key={c.id} className="flex items-center gap-2 py-2">
+          <li key={c.id} className="py-2">
+           <div className="flex items-center gap-2">
             <Arrows onUp={() => move(i, -1)} onDown={() => move(i, 1)} />
+            <button onClick={() => setAberta(aberta === c.id ? null : c.id)} title="Endereço e sobre a loja (usados na análise das vagas)"
+              className={`w-8 h-8 rounded-lg cursor-pointer ${c.address ? 'text-rose-600 hover:bg-rose-50' : 'text-zinc-400 hover:bg-zinc-100'}`}>
+              <i className={aberta === c.id ? 'ri-arrow-up-s-line' : 'ri-map-pin-line'} />
+            </button>
             <input defaultValue={c.name} onBlur={(e) => rename(c, e.target.value)}
               className={`flex-1 h-9 px-3 rounded-lg border border-zinc-200 text-sm ${c.is_active ? '' : 'text-zinc-400 line-through'}`} />
             <span className="text-[11px] text-zinc-400 w-20 text-right">{count(c.id)} candidato{count(c.id) === 1 ? '' : 's'}</span>
@@ -89,6 +100,28 @@ function Empresas({ companies, candidates, onReload }: { companies: Company[]; c
               <i className={c.is_active ? 'ri-eye-line' : 'ri-eye-off-line'} />
             </button>
             <button onClick={() => remove(c)} className="w-8 h-8 rounded-lg hover:bg-red-50 text-red-500 cursor-pointer"><i className="ri-delete-bin-line" /></button>
+           </div>
+           {aberta === c.id && (
+             <div className="mt-2 ml-8 grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-xl bg-zinc-50 border border-zinc-100 p-3">
+               <label className="sm:col-span-2 block">
+                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Endereço</span>
+                 <input defaultValue={c.address ?? ''} onBlur={(e) => saveField(c, 'address', e.target.value)} placeholder="Rua, número, bairro"
+                   className="w-full h-9 px-3 rounded-lg border border-zinc-200 text-sm mt-1 bg-white" />
+               </label>
+               <label className="block">
+                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Cidade</span>
+                 <input defaultValue={c.city ?? ''} onBlur={(e) => saveField(c, 'city', e.target.value)} placeholder="Ex.: Paranaguá - PR"
+                   className="w-full h-9 px-3 rounded-lg border border-zinc-200 text-sm mt-1 bg-white" />
+               </label>
+               <label className="sm:col-span-3 block">
+                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Sobre a loja</span>
+                 <textarea defaultValue={c.description ?? ''} onBlur={(e) => saveField(c, 'description', e.target.value)} rows={2}
+                   placeholder="Tipo de operação, público, ritmo, turnos (ex.: hamburgueria em shopping, movimento forte à noite e fim de semana)"
+                   className="w-full px-3 py-2 rounded-lg border border-zinc-200 text-sm mt-1 bg-white" />
+               </label>
+               <p className="sm:col-span-3 text-[10px] text-zinc-400">A IA usa estes dados para comparar os currículos com as vagas desta empresa (deslocamento e perfil da operação).</p>
+             </div>
+           )}
           </li>
         ))}
         {companies.length === 0 && <li className="py-3 text-xs text-zinc-400">Nenhuma empresa ainda. Cadastre a primeira abaixo.</li>}

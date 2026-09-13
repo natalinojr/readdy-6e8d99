@@ -24,7 +24,65 @@ export const colorOf = (c: string | null | undefined) => COLORS[c ?? ''] ?? COLO
 // ── Fases e empresas ────────────────────────────────────────────────────────
 export type NativeKind = 'novo' | 'entrevista' | 'aprovado' | 'descartado';
 export interface Stage { id: string; name: string; color: string; sort_order: number; native_kind: NativeKind | null }
-export interface Company { id: string; name: string; sort_order: number; is_active: boolean }
+export interface Company {
+  id: string; name: string; sort_order: number; is_active: boolean;
+  address: string | null; city: string | null; description: string | null; // usados na análise currículo × vaga
+}
+
+// ── Vagas e candidaturas ────────────────────────────────────────────────────
+export type JobStatus = 'aberta' | 'pausada' | 'fechada';
+export interface Job {
+  id: string;
+  company_id: string | null;
+  title: string;
+  description: string | null;
+  requirements: string | null;
+  desirable: string | null;
+  schedule: string | null;
+  salary: string | null;
+  benefits: string | null;
+  contract_type: string | null;
+  openings: number;
+  status: JobStatus;
+  notes: string | null;
+  opened_at: string;
+  closed_at: string | null;
+  created_at: string;
+}
+export const JOB_STATUS: { id: JobStatus; label: string; cls: string }[] = [
+  { id: 'aberta', label: 'Aberta', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { id: 'pausada', label: 'Pausada', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { id: 'fechada', label: 'Fechada', cls: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
+];
+export const jobStatusInfo = (s: string) => JOB_STATUS.find((x) => x.id === s) ?? JOB_STATUS[0];
+export const CONTRACT_TYPES = ['CLT', 'Temporário', 'Freelancer / diária', 'Jovem aprendiz', 'Estágio', 'PJ'];
+
+export interface MatchAnalysis {
+  resumo: string;
+  pontos_fortes: string[];
+  lacunas: string[];
+  deslocamento: string;
+  perguntas_entrevista: string[];
+  alertas: string[];
+}
+export type Fit = 'alta' | 'media' | 'baixa';
+export interface Application {
+  id: string;
+  job_id: string;
+  candidate_id: string;
+  score: number | null;
+  fit: Fit | null;
+  analysis: MatchAnalysis | null;
+  analyzed_at: string | null;
+  error: string | null;
+  created_at: string;
+}
+export const FIT: Record<Fit, { label: string; cls: string; bar: string }> = {
+  alta: { label: 'Alta aderência', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', bar: 'bg-emerald-500' },
+  media: { label: 'Média aderência', cls: 'bg-amber-50 text-amber-700 border-amber-200', bar: 'bg-amber-400' },
+  baixa: { label: 'Baixa aderência', cls: 'bg-zinc-100 text-zinc-600 border-zinc-200', bar: 'bg-zinc-400' },
+};
+export const fitOf = (score: number | null): Fit | null => (score == null ? null : score >= 75 ? 'alta' : score >= 50 ? 'media' : 'baixa');
 
 export const NATIVE_LABEL: Record<NativeKind, string> = {
   novo: 'onde entram os currículos novos',
@@ -279,6 +337,11 @@ async function invokeScan(body: Record<string, unknown>): Promise<AiOut> {
   const resp = data as { success?: boolean; error?: string; data?: AiOut } | null;
   if (!resp?.success || !resp.data) throw new Error(resp?.error || 'Falha ao ler o currículo');
   return resp.data;
+}
+
+/** Compara currículo × vaga × loja (IA) e grava a candidatura. */
+export async function matchWithAi(candidateId: string, jobId: string): Promise<Application> {
+  return await invokeScan({ action: 'match', candidate_id: candidateId, job_id: jobId }) as unknown as Application;
 }
 
 export async function scanWithAi(file: File): Promise<AiOut> {

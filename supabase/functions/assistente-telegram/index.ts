@@ -713,6 +713,79 @@ async function tryPayText(admin: SupabaseClient, chatId: number, text: string, m
   return true;
 }
 
+// ── Currículos → módulo Contratação (2026-09-13) ──
+// Com asst_settings.hiring_intake ligado para este chat (e dentro do prazo), cada PDF/foto ou texto
+// com cara de currículo (≥ 250 caracteres) vai para hiring-cv-scan › intake e o dono recebe a
+// confirmação. "pronto"/"acabou" encerra. Mensagem curta segue para o brain normalmente.
+const HIRING_DONE = /^(pronto|acabou|terminei|fim|encerrar|encerra|parar|para|chega|so isso|só isso|era isso|finalizar|finaliza)\b/i;
+async function tryHiringIntake(
+  admin: SupabaseClient, chatId: number, chatKey: string, text: string,
+  attachment: { base64: string; media_type: string } | null, messageId: number | null, fileName: string | null,
+): Promise<boolean> {
+  const { data } = await admin.from('asst_settings').select('value').eq('key', 'hiring_intake').maybeSingle();
+  // deno-lint-ignore no-explicit-any
+  const st: any = data?.value;
+  if (!st || st.chat_id !== chatKey || !st.until || new Date(st.until).getTime() < Date.now()) return false;
+  const destino = [st.company_name, st.job_title ? `vaga ${st.job_title}` : null].filter(Boolean).join(' › ');
+  if (!attachment) {
+    if (HIRING_DONE.test(text.trim())) {
+      await admin.from('asst_settings').delete().eq('key', 'hiring_intake');
+      const n = Number(st.count ?? 0);
+      await sendText(chatId, n
+        ? `Fechado! ${n} currículo${n > 1 ? 's' : ''} salvo${n > 1 ? 's' : ''} em Contratação${destino ? ` › ${destino}` : ''}.`
+        : 'Fechado. Não chegou nenhum currículo desta vez.');
+      if (messageId) await react(chatId, messageId, '👍');
+      return true;
+    }
+    if (text.length < 250) return false; // conversa normal
+  }
+  typing(chatId);
+  const keep = setInterval(() => typing(chatId), 4500);
+  // deno-lint-ignore no-explicit-any
+  let out: any = {};
+  let ok = false;
+  try {
+    const r = await fetch(`${supabaseUrl}/functions/v1/hiring-cv-scan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({
+        action: 'intake', company_id: st.company_id ?? null, job_id: st.job_id ?? null,
+        ...(attachment ? { file_base64: attachment.base64, media_type: attachment.media_type, file_name: fileName } : { text }),
+      }),
+    });
+    out = await r.json().catch(() => ({}));
+    ok = r.ok && !!out?.success;
+  } catch (e) {
+    out = { error: errMsg(e) };
+  } finally { clearInterval(keep); }
+  if (!ok) {
+    log('WARN', 'currículo não salvo', { chat: chatKey, error: out?.error ?? null });
+    await sendText(chatId, `❌ Não consegui salvar ${fileName ? `"${fileName}"` : 'esse currículo'}: ${out?.error ?? 'erro desconhecido'}`);
+    if (messageId) await react(chatId, messageId, '🤔');
+    return true;
+  }
+  const c = out.candidate ?? {};
+  const count = Number(st.count ?? 0) + 1;
+  await admin.from('asst_settings').upsert({ key: 'hiring_intake', value: { ...st, count, until: new Date(Date.now() + 60 * 60 * 1000).toISOString() } }, { onConflict: 'key' });
+  let idade: number | null = c.age ?? null;
+  const bd = String(c.birth_date ?? '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (bd) {
+    const now = new Date();
+    idade = now.getFullYear() - Number(bd[1]) - ((now.getMonth() + 1 < Number(bd[2]) || (now.getMonth() + 1 === Number(bd[2]) && now.getDate() < Number(bd[3]))) ? 1 : 0);
+  }
+  const linha1 = [c.desired_role, idade != null ? `${idade} anos` : null, c.neighborhood || c.city].filter(Boolean).join(' · ');
+  const linhas = [
+    `✅ *${c.full_name ?? 'Candidato'}*${linha1 ? ` — ${linha1}` : ''}`,
+    `Salvo em Contratação${destino ? ` › ${destino}` : ''} (${count}º)`,
+  ];
+  if (out.match?.score != null) linhas.push(`Aderência à vaga: *${out.match.score}/100* (${out.match.fit})${out.match.resumo ? `\n_${out.match.resumo}_` : ''}`);
+  else if (out.match?.error) linhas.push(`Análise da vaga falhou: ${out.match.error}`);
+  if (out.duplicate) linhas.push(`⚠️ Parece repetido: já existe ${out.duplicate} com o mesmo telefone/e-mail.`);
+  await sendText(chatId, linhas.join('\n'));
+  if (messageId) await react(chatId, messageId, '👍');
+  log('INFO', 'currículo salvo', { chat: chatKey, candidate: c.id ?? null, job: st.job_id ?? null, score: out.match?.score ?? null });
+  return true;
+}
+
 type Incoming = { chatId: number; chatKey: string; text: string; attachment: { base64: string; media_type: string } | null; messageId: number | null; kind: string };
 async function processOwner(admin: SupabaseClient, m: Incoming) {
   let text = m.text;
@@ -840,6 +913,10 @@ async function handle(update: any) {
     await sendText(chatId, 'Deu erro ao baixar isso. Tenta de novo?').catch(() => {});
     return;
   }
+  // Modo de recebimento de currículos (ligado pelo brain › modo_curriculos): arquivo ou texto longo vai
+  // direto para o módulo Contratação, sem passar pelo modelo da conversa.
+  const cvName = msg.document?.file_name ? String(msg.document.file_name) : (msg.photo?.length ? `foto-${messageId ?? Date.now()}.jpg` : null);
+  if (kind !== 'audio' && await tryHiringIntake(admin, chatId, chatKey, text, attachment, messageId, cvName)) return;
   // PIN / criação de PIN de pagamento → tratado aqui, NUNCA vai ao modelo nem ao histórico.
   if (!attachment && kind === 'text' && !msg.edit_date && await tryPayText(admin, chatId, text, messageId)) return;
   // Resposta digitada a uma pergunta de classificação DRE → grava direto, sem o modelo.

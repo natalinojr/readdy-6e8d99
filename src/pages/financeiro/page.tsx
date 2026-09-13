@@ -18,6 +18,7 @@ import ContasVencidasPanel from './components/ContasVencidasPanel';
 import DespesasTab from './components/DespesasTab';
 import ReceitasTab from './components/ReceitasTab';
 import NotasEntradaTab from './components/NotasEntradaTab';
+import ItensClassificacaoTab from './components/ItensClassificacaoTab';
 
 const TABS = [
   { id: 'visao', label: 'Visão Geral', icon: 'ri-dashboard-line' },
@@ -29,6 +30,7 @@ const TABS = [
   { id: 'orcamentos', label: 'Orçamentos', icon: 'ri-file-list-3-line' },
   { id: 'compras', label: 'Compras', icon: 'ri-shopping-cart-2-line' },
   { id: 'notas-entrada', label: 'Notas de Entrada', icon: 'ri-inbox-archive-line' },
+  { id: 'itens', label: 'Classificação de Itens', icon: 'ri-price-tag-3-line' },
   { id: 'rh', label: 'RH / Folha', icon: 'ri-team-line' },
   { id: 'rh-relatorio', label: 'Relatório RH', icon: 'ri-bar-chart-grouped-line' },
   { id: 'centros', label: 'Centro de Custos', icon: 'ri-pie-chart-line' },
@@ -117,6 +119,7 @@ export default function FinanceiroPage() {
         {activeTab === 'receber' && <ContasReceberTab />}
         {activeTab === 'orcamentos' && <OrcamentosTab />}
         {activeTab === 'notas-entrada' && <NotasEntradaTab />}
+        {activeTab === 'itens' && <ItensClassificacaoTab />}
         {activeTab === 'compras' && <ComprasTab highlightId={highlightPurchaseId} onHighlightConsumed={handleClearHighlight} />}
         {activeTab === 'rh' && <RHTab />}
         {activeTab === 'rh-relatorio' && <RHRelatorioTab />}

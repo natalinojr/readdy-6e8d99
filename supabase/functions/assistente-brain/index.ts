@@ -80,6 +80,7 @@ type Ctx = {
   chatId: string;
   channel: string;
   outbound: OutboundAction[]; // enquete/localização/contato pedidos nesta resposta
+  attachment?: { base64: string; media_type: string } | null; // foto/PDF desta mensagem (usado por salvar_curriculo)
 };
 
 function resolveTenant(ctx: Ctx, loja?: string): { id: string; name: string } {
@@ -331,6 +332,74 @@ TOOLS.push({
     required: ['funcao', 'action', 'dados', 'resumo'],
   },
 });
+// ── Contratação: currículos pelo assistente (2026-09-13) ──
+// "Vou mandar currículos" → modo_curriculos liga um modo de recebimento (asst_settings.hiring_intake):
+// o assistente-telegram manda cada arquivo/texto longo direto para hiring-cv-scan › intake, sem passar
+// pelo modelo. Arquivo avulso com pedido explícito → salvar_curriculo (usa o anexo desta mensagem).
+TOOLS.push({
+  name: 'modo_curriculos',
+  description: 'Liga/desliga o MODO DE RECEBIMENTO DE CURRÍCULOS do módulo Contratação. Use quando o Natalino disser que vai mandar currículos ("vou te mandar uns currículos", "salva esses currículos pra vaga de atendente"). Ligado, cada PDF, foto ou texto de currículo que ele mandar é lido e salvo sozinho no banco de currículos (e na vaga, se informada), com confirmação por arquivo. "pronto" encerra. Desliga sozinho após 1 h sem arquivos.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      acao: { type: 'string', enum: ['ligar', 'desligar'] },
+      empresa: { type: 'string', description: 'Empresa/loja do módulo Contratação (nome parcial), se ele disser. Opcional.' },
+      vaga: { type: 'string', description: 'Vaga aberta (título parcial) para inscrever os currículos e comparar com a vaga. Opcional.' },
+    },
+    required: ['acao'],
+  },
+});
+TOOLS.push({
+  name: 'salvar_curriculo',
+  description: 'Salva UM currículo no módulo Contratação: o PDF/foto anexado NESTA mensagem, ou o texto do currículo que ele colou (campo texto). Use quando ele mandar um currículo avulso pedindo para salvar. Para vários seguidos, prefira modo_curriculos.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      texto: { type: 'string', description: 'Texto completo do currículo, quando ele colou em vez de mandar arquivo.' },
+      empresa: { type: 'string', description: 'Empresa/loja do módulo Contratação (nome parcial). Opcional.' },
+      vaga: { type: 'string', description: 'Vaga aberta (título parcial). Opcional.' },
+    },
+  },
+});
+
+// Empresa/vaga do módulo Contratação pelo nome parcial (sem acento, sem caixa).
+async function hiringTarget(admin: SupabaseClient, empresa?: string, vaga?: string) {
+  const nk = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+  const out: { company_id: string | null; company_name: string | null; job_id: string | null; job_title: string | null } = { company_id: null, company_name: null, job_id: null, job_title: null };
+  const { data: comps } = await admin.from('hiring_companies').select('id, name').eq('is_active', true);
+  if (vaga) {
+    const { data: jobs } = await admin.from('hiring_jobs').select('id, title, company_id, status').neq('status', 'fechada');
+    const q = nk(vaga);
+    const achou = (jobs ?? []).filter((j) => nk(j.title).includes(q) || q.includes(nk(j.title)));
+    const lista = (jobs ?? []).map((j) => `${j.title} (${(comps ?? []).find((c) => c.id === j.company_id)?.name ?? 'sem empresa'})`).join('; ') || 'nenhuma';
+    if (!achou.length) throw new Error(`Vaga "${vaga}" não encontrada entre as abertas: ${lista}. Pergunte qual é ou siga sem vaga.`);
+    const emp = empresa ? achou.find((j) => nk((comps ?? []).find((c) => c.id === j.company_id)?.name).includes(nk(empresa))) : null;
+    if (achou.length > 1 && !emp) throw new Error(`Mais de uma vaga casa com "${vaga}": ${achou.map((j) => `${j.title} (${(comps ?? []).find((c) => c.id === j.company_id)?.name ?? 'sem empresa'})`).join('; ')}. Pergunte qual.`);
+    const j = emp ?? achou[0];
+    out.job_id = j.id; out.job_title = j.title; out.company_id = j.company_id;
+    out.company_name = (comps ?? []).find((c) => c.id === j.company_id)?.name ?? null;
+  }
+  if (empresa && !out.company_id) {
+    const q = nk(empresa);
+    const c = (comps ?? []).find((x) => nk(x.name).includes(q) || q.includes(nk(x.name)));
+    if (!c) throw new Error(`Empresa "${empresa}" não existe no módulo Contratação. Cadastradas: ${(comps ?? []).map((x) => x.name).join('; ') || 'nenhuma'}.`);
+    out.company_id = c.id; out.company_name = c.name;
+  }
+  return out;
+}
+
+// deno-lint-ignore no-explicit-any
+async function callHiring(body: Record<string, unknown>): Promise<any> {
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/hiring-cv-scan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('ASSISTENTE_INTERNAL_KEY') ?? '' },
+    body: JSON.stringify(body),
+  });
+  const b = await r.json().catch(() => ({}));
+  if (!r.ok || !b?.success) throw new Error(String(b?.error ?? `hiring-cv-scan HTTP ${r.status}`));
+  return b;
+}
+
 // ── Pagamentos pelo Banco Inter (2026-09-12) ──
 // O brain só PREPARA: valida e grava o pedido (inter-bank › prepare_payment) e pede ao canal os
 // botões Pagar/Cancelar. O PIN é digitado no Telegram depois do botão e interceptado pelo
@@ -508,6 +577,31 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       });
       if (!ok) throw new Error(err ?? `${funcao}/${action} → HTTP ${res?.status}: ${JSON.stringify(b).slice(0, 400)}`);
       return JSON.stringify({ ok: true, loja: t.name, funcao, action, resultado: b }).slice(0, 6000);
+    }
+    case 'modo_curriculos': {
+      const { data: cur } = await admin.from('asst_settings').select('value').eq('key', 'hiring_intake').maybeSingle();
+      if (input.acao === 'desligar') {
+        await admin.from('asst_settings').delete().eq('key', 'hiring_intake');
+        return JSON.stringify({ ok: true, desligado: true, curriculos_recebidos: Number(cur?.value?.count ?? 0) });
+      }
+      const alvo = await hiringTarget(admin, input.empresa, input.vaga);
+      const value = { chat_id: ctx.chatId, until: new Date(Date.now() + 60 * 60 * 1000).toISOString(), count: 0, ...alvo };
+      const { error } = await admin.from('asst_settings').upsert({ key: 'hiring_intake', value }, { onConflict: 'key' });
+      if (error) throw new Error(error.message);
+      return JSON.stringify({
+        ok: true, ligado: true, destino: [alvo.company_name ?? 'sem empresa', alvo.job_title ? `vaga ${alvo.job_title}` : null].filter(Boolean).join(' › '),
+        instrucao: 'Diga em 1–2 linhas que pode mandar os currículos (PDF, foto ou texto colado), que cada um é salvo sozinho com confirmação, e que "pronto" encerra. Não chame salvar_curriculo para eles.',
+      });
+    }
+    case 'salvar_curriculo': {
+      const alvo = await hiringTarget(admin, input.empresa, input.vaga);
+      const texto = String(input.texto ?? '').trim();
+      if (!ctx.attachment && texto.length < 40) throw new Error('Não há PDF/foto nesta mensagem nem texto de currículo. Peça para ele mandar o arquivo.');
+      const r = await callHiring({
+        action: 'intake', company_id: alvo.company_id, job_id: alvo.job_id,
+        ...(ctx.attachment ? { file_base64: ctx.attachment.base64, media_type: ctx.attachment.media_type } : { text: texto }),
+      });
+      return JSON.stringify({ ok: true, ...r, empresa: r.company_name ?? alvo.company_name, vaga: r.job_title ?? alvo.job_title }).slice(0, 3000);
     }
     case 'preparar_pagamento': {
       if (ctx.channel !== 'telegram') throw new Error('Pagamento só pelo Telegram (botões + PIN). Peça para ele mandar por lá.');
@@ -1248,7 +1342,10 @@ Deno.serve(async (req) => {
     if (!tenants.length) return json({ error: 'Nenhuma loja configurada para o assistente' }, 500);
     const cfgDefault = String(cfg.default_tenant_id ?? '');
     const defaultTenant = tenants.some((t) => t.id === cfgDefault) ? cfgDefault : tenants[0].id;
-    const ctx: Ctx = { admin, ownerId, defaultTenant, tenants, chatId, channel, outbound: [] };
+    const ctx: Ctx = {
+      admin, ownerId, defaultTenant, tenants, chatId, channel, outbound: [],
+      attachment: att?.base64 ? { base64: String(att.base64), media_type: String(att.media_type ?? '') } : null,
+    };
 
     const [{ data: mem }, { data: hist }] = await Promise.all([
       admin.from('asst_memories').select('content').eq('is_active', true).order('created_at').limit(200),

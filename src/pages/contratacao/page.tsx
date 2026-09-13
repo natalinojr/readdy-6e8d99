@@ -10,11 +10,14 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { readCurriculoPdf } from '@/lib/curriculoLocal';
 import {
-  type Candidate, type Company, type Interview, type Settings, type Stage,
+  type Application, type Candidate, type Company, type Interview, type Job, type Settings, type Stage, matchWithAi,
   OWNER_EMAIL, BUCKET, DECISIONS, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind,
 } from './shared';
 import type { CandidatePatch } from './components/EntrevistaModal';
 import { DialogHost, confirmar, avisar } from './dialog';
+import Vagas, { appKey } from './components/Vagas';
+import VagaModal, { type JobDraft } from './components/VagaModal';
+import AdicionarCandidatosModal from './components/AdicionarCandidatosModal';
 import CandidatosLista from './components/CandidatosLista';
 import CandidatoDrawer from './components/CandidatoDrawer';
 import EntrevistaModal from './components/EntrevistaModal';
@@ -24,7 +27,7 @@ import Kanban from './components/Kanban';
 import ConfiguracoesContratacao from './components/ConfiguracoesContratacao';
 
 interface QueueItem { key: string; name: string; state: 'lendo' | 'ok' | 'erro'; msg?: string }
-type Aba = 'candidatos' | 'kanban' | 'agenda' | 'relatorios' | 'config';
+type Aba = 'candidatos' | 'vagas' | 'kanban' | 'agenda' | 'relatorios' | 'config';
 type ModalState = { interview: Interview | null; candidateId?: string | null; date?: string | null } | null;
 
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -32,6 +35,7 @@ const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } ca
 
 const ABAS: { id: Aba; label: string; icon: string }[] = [
   { id: 'candidatos', label: 'Candidatos', icon: 'ri-group-line' },
+  { id: 'vagas', label: 'Vagas', icon: 'ri-briefcase-4-line' },
   { id: 'kanban', label: 'Kanban', icon: 'ri-layout-column-line' },
   { id: 'agenda', label: 'Agenda', icon: 'ri-calendar-2-line' },
   { id: 'relatorios', label: 'Relatórios', icon: 'ri-bar-chart-2-line' },
@@ -46,6 +50,14 @@ export default function ContratacaoPage() {
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [analyzing, setAnalyzing] = useState<Set<string>>(new Set());
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [jobModal, setJobModal] = useState<{ job: Job | null } | null>(null);
+  const [addToJob, setAddToJob] = useState<Job | null>(null);
+  const [vagaUpload, setVagaUpload] = useState<string>('');
+  const pendingJobRef = useRef<string | null>(null);
   const [settings, setSettings] = useState<Settings>(mergeSettings(null));
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -87,16 +99,20 @@ export default function ContratacaoPage() {
 
   const carregar = useCallback(async () => {
     setLoading(true);
-    const [cand, ivs, cfgErr] = await Promise.all([
+    const [cand, ivs, jb, ap, cfgErr] = await Promise.all([
       supabase.from('hiring_candidates').select('*').order('created_at', { ascending: false }).limit(2000),
       supabase.from('hiring_interviews').select('*').order('scheduled_at', { ascending: true }).limit(2000),
+      supabase.from('hiring_jobs').select('*').order('created_at', { ascending: false }).limit(500),
+      supabase.from('hiring_applications').select('*').limit(5000),
       carregarConfig(),
     ]);
-    const err = cand.error ?? ivs.error ?? cfgErr;
+    const err = cand.error ?? ivs.error ?? jb.error ?? ap.error ?? cfgErr;
     if (err) setLoadError(err.message);
     else {
       setItems((cand.data ?? []) as Candidate[]);
       setInterviews((ivs.data ?? []) as Interview[]);
+      setJobs((jb.data ?? []) as Job[]);
+      setApplications((ap.data ?? []) as Application[]);
       setLoadError(null);
     }
     setLoading(false);
@@ -106,7 +122,36 @@ export default function ContratacaoPage() {
 
   const novoStageId = stageByKind(stages, 'novo')?.id ?? null;
 
-  const processFile = useCallback(async (file: File, key: string, companyId: string | null) => {
+  // Análise currículo × vaga × loja (IA). Uma candidatura por vez por chave; a tela mostra o "analisando".
+  const analyze = useCallback(async (jobId: string, candidateId: string) => {
+    const k = appKey(jobId, candidateId);
+    setAnalyzing((s) => new Set(s).add(k));
+    try {
+      const app = await matchWithAi(candidateId, jobId);
+      setApplications((prev) => [...prev.filter((a) => !(a.job_id === jobId && a.candidate_id === candidateId)), app]);
+    } catch (e) {
+      setApplications((prev) => prev.map((a) => (a.job_id === jobId && a.candidate_id === candidateId ? { ...a, error: (e as Error).message } : a)));
+    } finally {
+      setAnalyzing((s) => { const n = new Set(s); n.delete(k); return n; });
+    }
+  }, []);
+
+  // Inscreve candidatos do banco numa vaga e analisa (2 por vez).
+  const applyToJob = useCallback(async (jobId: string, candidateIds: string[]) => {
+    if (!candidateIds.length) return;
+    const { data, error } = await supabase.from('hiring_applications')
+      .upsert(candidateIds.map((cid) => ({ job_id: jobId, candidate_id: cid })), { onConflict: 'job_id,candidate_id', ignoreDuplicates: true })
+      .select('*');
+    if (error) { avisar(`Não foi possível inscrever na vaga: ${error.message}`); return; }
+    const novos = (data ?? []) as Application[];
+    setApplications((prev) => [...prev.filter((a) => !novos.some((n) => n.id === a.id)), ...novos]);
+    const fila = novos.map((n) => n.candidate_id);
+    let i = 0;
+    const worker = async () => { while (i < fila.length) { const cid = fila[i++]; await analyze(jobId, cid); } };
+    await Promise.all([worker(), worker()]);
+  }, [analyze]);
+
+  const processFile = useCallback(async (file: File, key: string, companyId: string | null, jobId: string | null) => {
     const upd = (p: Partial<QueueItem>) => setQueue((q) => q.map((x) => (x.key === key ? { ...x, ...p } : x)));
     try {
       const okType = file.type === 'application/pdf' || file.type.startsWith('image/');
@@ -152,23 +197,28 @@ export default function ContratacaoPage() {
       const avisos: string[] = [modo];
       if (dup) avisos.push(`possível duplicado de ${dup.full_name}`);
       if (upErr) avisos.push('arquivo original não foi salvo');
+      if (jobId) avisos.push('inscrito na vaga, analisando');
       upd({ state: 'ok', msg: [cand.full_name, ...avisos].join(' · ') });
+      if (jobId) applyToJob(jobId, [cand.id]);
     } catch (e) {
       upd({ state: 'erro', msg: (e as Error).message });
     }
-  }, [novoStageId]);
+  }, [novoStageId, applyToJob]);
 
-  const addFiles = useCallback(async (files: FileList | File[]) => {
+  // jobIdArg: vaga escolhida na tela da vaga; sem ela, vale o seletor "Vaga" da área de envio.
+  const addFiles = useCallback(async (files: FileList | File[], jobIdArg?: string | null) => {
     const list = Array.from(files);
     if (!list.length) return;
-    const companyId = empresaUpload || null;
+    const jobId = jobIdArg !== undefined && jobIdArg !== null ? jobIdArg : (vagaUpload || null);
+    const job = jobId ? jobs.find((j) => j.id === jobId) ?? null : null;
+    const companyId = job ? job.company_id : (empresaUpload || null);
     const entries = list.map((f) => ({ file: f, key: crypto.randomUUID() }));
     setQueue((q) => [...entries.map(({ file, key }) => ({ key, name: file.name, state: 'lendo' as const })), ...q]);
     // 2 por vez: rápido sem estourar o limite da API.
     let i = 0;
-    const worker = async () => { while (i < entries.length) { const e = entries[i++]; await processFile(e.file, e.key, companyId); } };
+    const worker = async () => { while (i < entries.length) { const e = entries[i++]; await processFile(e.file, e.key, companyId, jobId); } };
     await Promise.all([worker(), worker()]);
-  }, [processFile, empresaUpload]);
+  }, [processFile, empresaUpload, vagaUpload, jobs]);
 
   const updateCandidate = useCallback(async (id: string, patch: Partial<Candidate>) => {
     setItems((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
@@ -210,6 +260,50 @@ export default function ContratacaoPage() {
     setSelId(null);
   }, []);
 
+  // ── Vagas ──
+  const saveJob = useCallback(async (d: JobDraft): Promise<boolean> => {
+    const { id, ...rest } = d;
+    const antes = id ? jobs.find((j) => j.id === id) : null;
+    const hoje = new Date().toISOString().slice(0, 10);
+    const row = {
+      ...rest,
+      closed_at: rest.status === 'fechada' ? (antes?.closed_at ?? hoje) : null,
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = id
+      ? await supabase.from('hiring_jobs').update(row).eq('id', id).select('*').single()
+      : await supabase.from('hiring_jobs').insert(row).select('*').single();
+    if (error || !data) { avisar(`Não foi possível salvar a vaga: ${error?.message ?? 'erro'}`); return false; }
+    const job = data as Job;
+    setJobs((prev) => (id ? prev.map((j) => (j.id === id ? job : j)) : [job, ...prev]));
+    if (!id) setSelectedJobId(job.id);
+    return true;
+  }, [jobs]);
+
+  const deleteJob = useCallback(async (job: Job) => {
+    const n = applications.filter((a) => a.job_id === job.id).length;
+    const ok = await confirmar({
+      titulo: `Excluir a vaga ${job.title}?`,
+      mensagem: n ? `As ${n} inscrições e análises desta vaga serão apagadas. Os currículos continuam no banco.` : 'A vaga será apagada.',
+      confirmarLabel: 'Excluir', perigo: true,
+    });
+    if (!ok) return;
+    const { error } = await supabase.from('hiring_jobs').delete().eq('id', job.id);
+    if (error) { avisar(`Não foi possível excluir: ${error.message}`); return; }
+    setJobs((prev) => prev.filter((j) => j.id !== job.id));
+    setApplications((prev) => prev.filter((a) => a.job_id !== job.id));
+    setSelectedJobId(null);
+  }, [applications]);
+
+  const removeApplication = useCallback(async (app: Application) => {
+    const nome = items.find((c) => c.id === app.candidate_id)?.full_name ?? 'o candidato';
+    const ok = await confirmar({ titulo: 'Tirar da vaga?', mensagem: `${nome} sai desta vaga; o currículo continua no banco.`, confirmarLabel: 'Tirar' });
+    if (!ok) return;
+    const { error } = await supabase.from('hiring_applications').delete().eq('id', app.id);
+    if (error) { avisar(`Não foi possível: ${error.message}`); return; }
+    setApplications((prev) => prev.filter((a) => a.id !== app.id));
+  }, [items]);
+
   // ── Filtros ──
   const daEmpresa = useMemo(() => items.filter((c) =>
     empresaFiltro === 'todas' || (empresaFiltro === 'sem' ? !c.company_id : c.company_id === empresaFiltro)), [items, empresaFiltro]);
@@ -234,6 +328,10 @@ export default function ContratacaoPage() {
 
   const filtrados = useMemo(() =>
     faseFiltro === 'todas' ? buscados : buscados.filter((c) => stageOf(stages, c.stage_id)?.id === faseFiltro), [buscados, faseFiltro, stages]);
+
+  const jobsDaEmpresa = useMemo(() => jobs.filter((j) =>
+    empresaFiltro === 'todas' || (empresaFiltro === 'sem' ? !j.company_id : j.company_id === empresaFiltro)), [jobs, empresaFiltro]);
+  const vagasUpload = useMemo(() => jobs.filter((j) => j.status !== 'fechada' && (!empresaUpload || j.company_id === empresaUpload)), [jobs, empresaUpload]);
 
   const ivsDaEmpresa = useMemo(() => {
     const ids = new Set(daEmpresa.map((c) => c.id));
@@ -294,13 +392,18 @@ export default function ContratacaoPage() {
           </select>
         )}
         {aba !== 'config' && (
-          <button onClick={() => fileRef.current?.click()}
+          <button onClick={() => { pendingJobRef.current = aba === 'vagas' ? selectedJobId : null; fileRef.current?.click(); }}
             className="flex items-center gap-2 px-4 h-10 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-sm font-bold cursor-pointer whitespace-nowrap">
             <i className="ri-upload-2-line" /> Adicionar currículos
           </button>
         )}
         <input ref={fileRef} type="file" multiple accept="application/pdf,image/*" className="hidden"
-          onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ''; }} />
+          onChange={(e) => {
+            const jid = pendingJobRef.current;
+            pendingJobRef.current = null;
+            if (e.target.files) addFiles(e.target.files, jid);
+            e.target.value = '';
+          }} />
       </div>
 
       {/* Abas */}
@@ -330,6 +433,20 @@ export default function ContratacaoPage() {
         <ConfiguracoesContratacao companies={companies} stages={stages} settings={settings} candidates={items}
           onReload={async () => { await carregarConfig(); const { data } = await supabase.from('hiring_candidates').select('*').order('created_at', { ascending: false }).limit(2000); if (data) setItems(data as Candidate[]); }}
           onSettingsSaved={setSettings} />
+      ) : aba === 'vagas' ? (
+        <Vagas
+          jobs={jobsDaEmpresa} companies={companies} candidates={items} applications={applications} stages={stages}
+          mostrarEmpresa={mostrarEmpresa} analyzing={analyzing}
+          selectedJobId={selectedJobId} onSelectJob={setSelectedJobId}
+          onNewJob={() => setJobModal({ job: null })}
+          onEditJob={(job) => setJobModal({ job })}
+          onDeleteJob={deleteJob}
+          onAddFromBank={setAddToJob}
+          onUploadToJob={(job) => { pendingJobRef.current = job.id; fileRef.current?.click(); }}
+          onReanalyze={(a) => analyze(a.job_id, a.candidate_id)}
+          onRemoveApplication={removeApplication}
+          onOpenCandidate={setSelId}
+        />
       ) : aba === 'agenda' ? (
         <AgendaEntrevistas interviews={ivsDaEmpresa} candidates={items} companies={companies} mostrarEmpresa={mostrarEmpresa}
           onOpenInterview={(iv) => setModal({ interview: iv })} onNew={(date) => setModal({ interview: null, date })} />
@@ -356,10 +473,20 @@ export default function ContratacaoPage() {
             {ativas.length > 0 && (
               <label className="flex items-center gap-2 text-xs font-semibold text-zinc-600">
                 Salvar em
-                <select value={empresaUpload} onChange={(e) => setEmpresaUpload(e.target.value)}
+                <select value={empresaUpload} onChange={(e) => { setEmpresaUpload(e.target.value); setVagaUpload(''); }}
                   className="h-8 px-2 rounded-lg border border-zinc-200 text-xs bg-white cursor-pointer">
                   {ativas.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   <option value="">Sem empresa</option>
+                </select>
+              </label>
+            )}
+            {vagasUpload.length > 0 && (
+              <label className="flex items-center gap-2 text-xs font-semibold text-zinc-600">
+                Vaga
+                <select value={vagaUpload} onChange={(e) => setVagaUpload(e.target.value)}
+                  className="h-8 px-2 rounded-lg border border-zinc-200 text-xs bg-white cursor-pointer max-w-[200px]">
+                  <option value="">Só no banco</option>
+                  {vagasUpload.map((j) => <option key={j.id} value={j.id}>{j.title}</option>)}
                 </select>
               </label>
             )}
@@ -447,6 +574,11 @@ export default function ContratacaoPage() {
           companies={companies}
           stages={stages}
           interviews={interviews.filter((iv) => iv.candidate_id === sel.id)}
+          jobs={jobs}
+          applications={applications.filter((a) => a.candidate_id === sel.id)}
+          analyzing={analyzing}
+          onApply={(jobId) => applyToJob(jobId, [sel.id])}
+          onOpenJob={(jobId) => { setSelId(null); setSelectedJobId(jobId); setAba('vagas'); }}
           onClose={() => setSelId(null)}
           onUpdate={(patch) => updateCandidate(sel.id, patch)}
           onDelete={() => deleteCandidate(sel)}
@@ -469,6 +601,19 @@ export default function ContratacaoPage() {
           onSaved={onInterviewSaved}
           onDeleted={(id) => { setInterviews((prev) => prev.filter((x) => x.id !== id)); setModal(null); }}
         />
+      )}
+
+      {jobModal && (
+        <VagaModal job={jobModal.job} companies={companies}
+          presetCompanyId={empresaFiltro !== 'todas' && empresaFiltro !== 'sem' ? empresaFiltro : null}
+          onClose={() => setJobModal(null)} onSave={saveJob} />
+      )}
+
+      {addToJob && (
+        <AdicionarCandidatosModal job={addToJob} candidates={items} companies={companies} stages={stages}
+          jaInscritos={new Set(applications.filter((a) => a.job_id === addToJob.id).map((a) => a.candidate_id))}
+          onClose={() => setAddToJob(null)}
+          onAdd={(ids) => applyToJob(addToJob.id, ids)} />
       )}
 
       <DialogHost />

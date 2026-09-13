@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
-  type Candidate, type Company, type Decision, type Interview, type Stage, BUCKET, DECISIONS,
+  type Application, type Candidate, type Company, type Decision, type Interview, type Job, type Stage, BUCKET, DECISIONS, FIT, fitOf,
   fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf, decisionOf, withEmpresa, ageOf, companyName,
 } from '../shared';
 import { avisar } from '../dialog';
@@ -12,6 +12,11 @@ interface Props {
   companies: Company[];
   stages: Stage[];
   interviews: Interview[];
+  jobs: Job[];
+  applications: Application[];
+  analyzing: Set<string>;
+  onApply: (jobId: string) => void;
+  onOpenJob: (jobId: string) => void;
   onClose: () => void;
   onUpdate: (patch: Partial<Candidate>) => void;
   onDelete: () => void;
@@ -20,7 +25,11 @@ interface Props {
   onOpenInterview: (iv: Interview) => void;
 }
 
-export default function CandidatoDrawer({ c, companies, stages, interviews, onClose, onUpdate, onDelete, onOrganizar, onAgendar, onOpenInterview }: Props) {
+export default function CandidatoDrawer({
+  c, companies, stages, interviews, jobs, applications, analyzing, onApply, onOpenJob,
+  onClose, onUpdate, onDelete, onOrganizar, onAgendar, onOpenInterview,
+}: Props) {
+  const vagasAbertas = jobs.filter((j) => j.status !== 'fechada' && !applications.some((a) => a.job_id === j.id));
   const [notes, setNotes] = useState(c.notes ?? '');
   const [iaBusy, setIaBusy] = useState(false);
   const [iaErro, setIaErro] = useState<string | null>(null);
@@ -111,6 +120,40 @@ export default function CandidatoDrawer({ c, companies, stages, interviews, onCl
               {iaErro && <p className="text-xs text-red-600 mt-1.5">{iaErro}</p>}
             </div>
           )}
+
+          {/* Vagas em que está inscrito (com a aderência calculada pela IA) */}
+          <Section title="Vagas">
+            {applications.length > 0 && (
+              <ul className="space-y-1.5 mb-2">
+                {applications.map((a) => {
+                  const job = jobs.find((j) => j.id === a.job_id);
+                  const fit = a.fit ?? fitOf(a.score);
+                  const loading = analyzing.has(`${a.job_id}:${a.candidate_id}`);
+                  return (
+                    <li key={a.id}>
+                      <button onClick={() => onOpenJob(a.job_id)} className="w-full text-left rounded-xl border border-zinc-200 hover:border-rose-300 p-2.5 cursor-pointer">
+                        <div className="flex items-center gap-2">
+                          <i className="ri-briefcase-4-line text-zinc-400" />
+                          <span className="flex-1 text-sm font-semibold text-zinc-800 truncate">{job?.title ?? 'Vaga removida'}</span>
+                          {loading ? <span className="text-[10px] text-zinc-400">analisando…</span>
+                            : a.score != null ? <b className="text-sm text-zinc-900">{a.score}<span className="text-[10px] text-zinc-400">/100</span></b> : null}
+                          {fit && !loading && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${FIT[fit].cls}`}>{FIT[fit].label}</span>}
+                        </div>
+                        {a.analysis?.resumo && <p className="text-xs text-zinc-500 mt-1 line-clamp-2">{a.analysis.resumo}</p>}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {vagasAbertas.length > 0 ? (
+              <select value="" onChange={(e) => { if (e.target.value) onApply(e.target.value); }}
+                className="h-8 px-2 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 cursor-pointer">
+                <option value="">+ Inscrever em uma vaga…</option>
+                {vagasAbertas.map((j) => <option key={j.id} value={j.id}>{j.title}{j.company_id ? ` — ${companyName(companies, j.company_id)}` : ''}</option>)}
+              </select>
+            ) : applications.length === 0 && <p className="text-xs text-zinc-400">Nenhuma vaga aberta. Abra na aba Vagas.</p>}
+          </Section>
 
           {/* Entrevistas */}
           <Section title="Entrevistas">

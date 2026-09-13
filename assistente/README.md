@@ -553,6 +553,25 @@ pagamento? Responde `NO_REPLY` e nada é enviado.
   (aplicar antes de publicar as funções; sem ela o webhook grava a mensagem sem `extracted` e a
   triagem não roda).
 
+### Currículos para o módulo Contratação (2026-09-13)
+
+Pedido do dono: "sempre que eu enviar arquivo eu falo que vou enviar e ele sobe pro módulo Contratação".
+- Brain: ferramenta **`modo_curriculos`** `{acao: ligar|desligar, empresa?, vaga?}`. Ela grava
+  `asst_settings.hiring_intake = { chat_id, until (+1 h), count, company_id/name, job_id/title }`.
+  Empresa e vaga vêm do módulo Contratação (`hiring_companies`/`hiring_jobs`, por nome parcial) e
+  não das lojas do ERPOS.
+- Com o modo ligado, o `assistente-telegram` (`tryHiringIntake`, antes do PIN/DRE) manda **cada
+  PDF/foto, ou texto ≥ 250 caracteres**, direto para `hiring-cv-scan › intake`, **sem passar pelo
+  modelo**. O intake lê com o Haiku, guarda o arquivo no bucket `curriculos`, cria o candidato em
+  "Novo" e, se houver vaga, inscreve e roda a análise currículo × vaga. O dono recebe "✅ Nome —
+  cargo · idade · bairro / salvo em … / aderência". "pronto"/"acabou" encerra; mensagem curta vai
+  ao brain normalmente; o modo desliga sozinho após 1 h sem arquivo.
+- Arquivo avulso ("salva esse currículo pra vaga X"): ferramenta **`salvar_curriculo`**
+  `{texto?, empresa?, vaga?}`, que usa o anexo da mensagem atual (`ctx.attachment`).
+- `hiring-cv-scan` aceita `x-internal-key = ASSISTENTE_INTERNAL_KEY` (publicada com
+  `--no-verify-jwt`; o login do dono é conferido dentro). WhatsApp DM continua desligado, então o
+  canal é o Telegram.
+
 ## Pendente (ordem)
 
 1. Validar no uso real o Telegram: conversa, áudio, foto e clique em botão.

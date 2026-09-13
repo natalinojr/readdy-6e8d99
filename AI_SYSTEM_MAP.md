@@ -94,7 +94,7 @@ Rotas dentro do layout autenticado:
 - `/diagnostico/checklist`: `src/pages/diagnostico/ChecklistTeste.tsx`
 - `/imprimir-qrcodes`: `src/pages/imprimir-qrcodes/page.tsx`
 - `/admin-master`: `src/pages/admin-master/page.tsx`
-- `/contratacao`: `src/pages/contratacao/page.tsx` (banco de currículos; só o e-mail do dono. Leitura híbrida: PDF com texto é lido grátis no navegador por `src/lib/curriculoLocal.ts` (pdf.js + regras: nome, contato, nascimento, cidade/UF, cargo, texto completo pesquisável); foto/PDF escaneado vai direto à IA; nos demais a IA só roda no botão "Organizar com IA". Abas Candidatos (cards/tabela), Kanban, Agenda de entrevistas (`hiring_interviews`, ficha com notas 1–5 por critério), Relatórios e Configurações. **Independente das lojas do ERPOS**: empresas próprias `hiring_companies` (`company_id`), fases editáveis `hiring_stages` (`stage_id`; 4 nativas por `native_kind`, que não podem ser apagadas) e `hiring_settings` (id=1). `tenant_id`/`status` em hiring_candidates são legado. Entrevista = questionário (`settings.questions` → `hiring_interviews.answers`) + considerações (`notes`) + tomada de decisão GPC/PC/R/NA (`hiring_interviews.recommendation` e `hiring_candidates.decision`). Structured outputs da Anthropic aceita no máx. 16 campos union/nullable por schema: acima disso dá 400, então use ""/0/enum e normalize na Edge. Edge `hiring-cv-scan` lê PDF/foto com IA → tabela `hiring_candidates` + bucket privado `curriculos`, RLS por `is_hiring_admin()` = e-mail do JWT, não por tenant)
+- `/contratacao`: `src/pages/contratacao/page.tsx` (banco de currículos; só o e-mail do dono. Leitura híbrida: PDF com texto é lido grátis no navegador por `src/lib/curriculoLocal.ts` (pdf.js + regras: nome, contato, nascimento, cidade/UF, cargo, texto completo pesquisável); foto/PDF escaneado vai direto à IA; nos demais a IA só roda no botão "Organizar com IA". Abas Candidatos (cards/tabela), Kanban, Agenda de entrevistas (`hiring_interviews`, ficha com notas 1–5 por critério), Relatórios e Configurações. **Independente das lojas do ERPOS**: empresas próprias `hiring_companies` (`company_id`), fases editáveis `hiring_stages` (`stage_id`; 4 nativas por `native_kind`, que não podem ser apagadas) e `hiring_settings` (id=1). `tenant_id`/`status` em hiring_candidates são legado. **Vagas** (`hiring_jobs`) + candidaturas (`hiring_applications`: score 0–100, fit, `analysis` jsonb): `hiring-cv-scan › match` compara currículo × vaga × loja (endereço/descrição em `hiring_companies`) sem enviar idade/estado civil/filhos; `› intake` (x-internal-key) é a entrada do assistente no Telegram (`modo_curriculos`/`salvar_curriculo`). A função é publicada com `--no-verify-jwt` e confere o login dentro. Entrevista = questionário (`settings.questions` → `hiring_interviews.answers`) + considerações (`notes`) + tomada de decisão GPC/PC/R/NA (`hiring_interviews.recommendation` e `hiring_candidates.decision`). Structured outputs da Anthropic aceita no máx. 16 campos union/nullable por schema: acima disso dá 400, então use ""/0/enum e normalize na Edge. Edge `hiring-cv-scan` lê PDF/foto com IA → tabela `hiring_candidates` + bucket privado `curriculos`, RLS por `is_hiring_admin()` = e-mail do JWT, não por tenant)
 
 ## Mapa por dominio
 
@@ -1748,3 +1748,19 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   mensagem sem as colunas novas em vez de perder a mensagem do grupo. (4) Pagamento com botões só
   existe no Telegram: sem `telegram_owner_chat_id`, o aviso vai pelo WhatsApp e o brain explica
   que precisa ser pelo Telegram.
+
+### Classificação por item: CMV × despesa (2026-09-12)
+
+- **Critério:** classificar pelo ITEM da nota (fornecedor + código), nunca pelo pagamento/CNPJ —
+  a mesma nota mistura bebida (CMV) e limpeza (despesa). Embalagem de delivery = CMV.
+- **Onde:** `fin_item_classifications` + triggers em `fiscal_inbound_documents` (itens da NF-e ao
+  chegar o XML) e em `fin_purchase_items` (BEFORE INSERT, todo caminho de compra: aplica a
+  despesa em `dre_category_id`). Classificação em lote: RPC `fn_item_classify` (admin) — reaplica
+  nas compras já lançadas. Tela: Financeiro › Classificação de Itens (`ItensClassificacaoTab`).
+  Detalhes em `FINANCEIRO_MAP.md` §9f.
+- **Pegadinhas:** (1) item com insumo é sempre CMV (não recebe categoria de despesa). (2) compra
+  antiga de NF-e tem o código só na descrição "X (código)" — `fn_item_key` extrai para não duplicar.
+  (3) a sugestão de despesa só vem com categoria se a loja tiver uma de nome parecido
+  ("Limpeza", "Papelaria"). (4) os triggers nunca derrubam a sync de notas nem o lançamento
+  (erro vira `raise warning`). (5) `fn_item_classify` checa `user_tenants.role` admin/manager
+  por `p_tenant`, não `auth_tenant_id()` (multi-loja).
