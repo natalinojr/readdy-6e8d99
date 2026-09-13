@@ -340,7 +340,13 @@ function GestorCard({
     const fmtBRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
     const fee = pedido.deliveryFee ?? 0;
     const total = pedido.totalAmount ?? 0;
-    const valoresLinha = `\n💰 Cobrar do cliente: *${fmtBRL(total)}*${fee > 0 ? `\n🛵 Taxa de entrega: ${fmtBRL(fee)}` : ''}`;
+    const taxaLinha = fee > 0 ? `\n🛵 Taxa de entrega: ${fmtBRL(fee)}` : '';
+    // Pedido já pago (Pix pelo app confirmado ou baixa no caixa): o motoboy NÃO cobra
+    // na entrega — mesma regra do portal /motoboy e do Gestor de Entregas.
+    const pixOnline = /pix pelo app/i.test(pedido.notes ?? '');
+    const valoresLinha = isPaid
+      ? `\n✅ *JÁ PAGO${pixOnline ? ' (Pix pelo app)' : ''} — NÃO COBRAR NA ENTREGA*\n🧾 Valor do pedido (conferência): ${fmtBRL(total)}${taxaLinha}`
+      : `\n💰 Cobrar do cliente: *${fmtBRL(total)}*${taxaLinha}`;
     // Alerta configurável (Config. do Delivery → "Avisar o motoboy").
     const bebidaLinha = alertasMotoboy.length > 0
       ? `\n⚠️ *ATENÇÃO: este pedido tem ${alertasMotoboy.join(', ')} — não esquecer!*`
