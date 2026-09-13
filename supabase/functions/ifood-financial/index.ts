@@ -733,7 +733,25 @@ Deno.serve(async (req) => {
       const { error } = await admin.from('fin_ifood_config').upsert(row, { onConflict: 'tenant_id' });
       if (error) return errResp('Salvar: ' + error.message, 500);
       const ledger = typeof body.post_to_ledger === 'boolean' ? await repostImports(admin, tenantId, body.post_to_ledger) : null;
-      return json({ success: true, ledger });
+      // Ligar o lançamento sem a fonte "ifood" em Receitas › Fontes deixava o iFood fora de Receitas/DRE
+      // (caso Vila Leste, 2026-09-13). Liga a fonte junto — exceto se a loja lança pedidos iFood no PDV
+      // (aí o iFood já está em "Pedidos do sistema" e somar o relatório contaria em dobro).
+      let fonte: string | null = null;
+      if (body.post_to_ledger === true) {
+        const desde = new Date(Date.now() - 90 * 86400_000).toISOString();
+        const { count: noPdv } = await admin.from('orders').select('id', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId).eq('delivery_platform', 'ifood').gte('created_at', desde);
+        if ((noPdv ?? 0) > 0) fonte = 'nao_ligada_pdv_tem_ifood';
+        else {
+          const { data: rs } = await admin.from('fin_revenue_settings').select('sources').eq('tenant_id', tenantId).maybeSingle();
+          const atuais: string[] = rs?.sources ?? ['orders', 'manual'];
+          if (!atuais.includes('ifood')) {
+            await admin.from('fin_revenue_settings').upsert({ tenant_id: tenantId, sources: [...atuais, 'ifood'], updated_at: new Date().toISOString(), updated_by: userId }, { onConflict: 'tenant_id' });
+            fonte = 'ligada';
+          } else fonte = 'ja_estava';
+        }
+      }
+      return json({ success: true, ledger, fonte });
     }
 
     if (action === 'set_merchant_name') {
