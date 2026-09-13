@@ -177,6 +177,8 @@ function toEntry(r: Row) {
     responsavel: str(r['responsavel_transacao']),
     canal: str(r['canal_vendas']),
     impacto_repasse: !impacto.startsWith('N'),
+    merchant_id: str(r['loja_id']) ?? str(r['loja_id_curto']),
+    merchant_short: str(r['loja_id_curto']),
     raw: r,
   };
 }
@@ -250,8 +252,8 @@ async function sha256Hex(bytes: Uint8Array) {
   return [...new Uint8Array(h)].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
 
-// Grava uma competência (substitui a anterior), lança no razão e casa com o Inter.
-async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, competence: string, entries: Entry[], meta: { source: 'api' | 'file'; file_name?: string | null; sha256?: string | null; userId?: string | null }) {
+// Grava uma loja + competência (substitui a anterior da mesma loja), lança no razão e casa com o Inter.
+async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, competence: string, entries: Entry[], meta: { source: 'api' | 'file'; merchant_id: string; file_name?: string | null; sha256?: string | null; userId?: string | null }) {
   const valid = entries.filter((e) => e.data_repasse || e.valor);
   const sig = valid.filter((e) => e.impacto_repasse);
   const gross = round2(sig.filter(isRevenue).reduce((s, e) => s + e.valor, 0));
@@ -260,9 +262,10 @@ async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, c
   const now = new Date().toISOString();
 
   const { data: imp, error: impErr } = await admin.from('fin_ifood_imports').upsert({
-    tenant_id: tenantId, competence, source: meta.source, file_name: meta.file_name ?? null, sha256: meta.sha256 ?? null,
+    tenant_id: tenantId, merchant_id: meta.merchant_id, merchant_short: valid.find((e) => e.merchant_short)?.merchant_short ?? null,
+    competence, source: meta.source, file_name: meta.file_name ?? null, sha256: meta.sha256 ?? null,
     lines: valid.length, orders, gross, fees, net: round2(gross - fees), created_by: meta.userId ?? null, updated_at: now,
-  }, { onConflict: 'tenant_id,competence' }).select('id').single();
+  }, { onConflict: 'tenant_id,merchant_id,competence' }).select('id').single();
   if (impErr || !imp) throw new Error('Registrar importação: ' + (impErr?.message ?? 'sem id'));
 
   const { error: delErr } = await admin.from('fin_ifood_entries').delete().eq('import_id', imp.id);
@@ -288,14 +291,14 @@ async function syncCompetence(admin: Admin, cfg: any, competence: string) {
   const last = list.filter((x) => x?.downloadPath).sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))[0];
   if (!last) return { competence, skipped: true, reason: 'iFood ainda não gerou o arquivo' };
   const sha = String(last.metadata?.sha256 ?? '');
-  const { data: prev } = await admin.from('fin_ifood_imports').select('sha256').eq('tenant_id', cfg.tenant_id).eq('competence', competence).maybeSingle();
+  const { data: prev } = await admin.from('fin_ifood_imports').select('sha256').eq('tenant_id', cfg.tenant_id).eq('merchant_id', cfg.merchant_id).eq('competence', competence).maybeSingle();
   if (sha && prev?.sha256 === sha) return { competence, unchanged: true };
   const f = await fetch(last.downloadPath);
   if (!f.ok) throw new Error(`Baixar arquivo ${competence}: HTTP ${f.status}`);
   const bytes = new Uint8Array(await f.arrayBuffer());
   const rows = await readReport(bytes, 'reconciliation.csv.gz');
   const entries = rows.map(toEntry).filter((e) => !e.competence || e.competence === competence);
-  return await saveCompetence(admin, cfg.tenant_id, cfg, competence, entries, { source: 'api', sha256: sha || await sha256Hex(bytes) });
+  return await saveCompetence(admin, cfg.tenant_id, cfg, competence, entries, { source: 'api', merchant_id: cfg.merchant_id, sha256: sha || await sha256Hex(bytes) });
 }
 
 function defaultCompetences() {
@@ -391,7 +394,7 @@ Deno.serve(async (req) => {
     if (action === 'get_config') return json({ success: true, config: safeConfig(cfg) });
 
     if (action === 'list_imports') {
-      const { data } = await admin.from('fin_ifood_imports').select('id, competence, source, file_name, lines, orders, gross, fees, net, updated_at').eq('tenant_id', tenantId).order('competence', { ascending: false }).limit(24);
+      const { data } = await admin.from('fin_ifood_imports').select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at').eq('tenant_id', tenantId).order('competence', { ascending: false }).limit(48);
       return json({ success: true, imports: data ?? [] });
     }
 
@@ -419,17 +422,22 @@ Deno.serve(async (req) => {
         return errResp('Esse arquivo não parece o "Relatório de Conciliação" do iFood (faltam as colunas valor e data_repasse_esperada).');
       }
       const entries = rows.map(toEntry);
-      const byComp = new Map<string, Entry[]>();
+      // Uma importação por loja + competência (o arquivo pode ter mais de uma loja).
+      const groups = new Map<string, { merchant: string; competence: string; list: Entry[] }>();
       for (const e of entries) {
         const c = e.competence && /^\d{4}-\d{2}$/.test(e.competence) ? e.competence : (e.data_repasse ?? '').slice(0, 7);
         if (!/^\d{4}-\d{2}$/.test(c)) continue;
-        byComp.set(c, [...(byComp.get(c) ?? []), e]);
+        const m = e.merchant_id ?? '';
+        const k = `${m}|${c}`;
+        const g = groups.get(k) ?? { merchant: m, competence: c, list: [] };
+        g.list.push(e);
+        groups.set(k, g);
       }
-      if (byComp.size === 0) return errResp('Nenhuma linha com competência válida no arquivo.');
+      if (groups.size === 0) return errResp('Nenhuma linha com competência válida no arquivo.');
       const sha = await sha256Hex(bytes);
       const results = [];
-      for (const [c, list] of byComp) results.push(await saveCompetence(admin, tenantId, cfg, c, list, { source: 'file', file_name: fileName, sha256: sha, userId }));
-      log('INFO', 'import_file', 'ok', { tenantId, fileName, competences: [...byComp.keys()] });
+      for (const g of groups.values()) results.push({ merchant_short: g.list.find((e) => e.merchant_short)?.merchant_short ?? null, ...(await saveCompetence(admin, tenantId, cfg, g.competence, g.list, { source: 'file', merchant_id: g.merchant, file_name: fileName, sha256: sha, userId })) });
+      log('INFO', 'import_file', 'ok', { tenantId, fileName, groups: [...groups.keys()] });
       return json({ success: true, results });
     }
 

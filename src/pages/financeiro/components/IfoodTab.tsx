@@ -10,7 +10,8 @@ import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 // com a conferência de cada repasse contra os créditos do iFood no extrato do Inter.
 
 interface ImportRow {
-  id: string; competence: string; source: 'api' | 'file'; file_name: string | null;
+  id: string; merchant_id: string; merchant_short: string | null;
+  competence: string; source: 'api' | 'file'; file_name: string | null;
   lines: number; orders: number; gross: number; fees: number; net: number; updated_at: string;
 }
 interface EntryRow {
@@ -46,6 +47,7 @@ export default function IfoodTab() {
   const { user } = useAuth();
   const [imports, setImports] = useState<ImportRow[]>([]);
   const [competence, setCompetence] = useState<string>('');
+  const [loja, setLoja] = useState<string>(''); // '' = todas as lojas iFood do tenant
   const [entries, setEntries] = useState<EntryRow[]>([]);
   const [repasses, setRepasses] = useState<RepasseRow[]>([]);
   const [postToLedger, setPostToLedger] = useState(false);
@@ -59,7 +61,7 @@ export default function IfoodTab() {
     if (!user?.tenantId) return;
     const [{ data, error: err }, cfg] = await Promise.all([
       supabase.from('fin_ifood_imports')
-        .select('id, competence, source, file_name, lines, orders, gross, fees, net, updated_at')
+        .select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at')
         .eq('tenant_id', user.tenantId).order('competence', { ascending: false }),
       invokeWithAuth<{ config?: { post_to_ledger?: boolean } | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user.tenantId } }),
     ]);
@@ -74,9 +76,11 @@ export default function IfoodTab() {
   const loadCompetence = useCallback(async () => {
     if (!user?.tenantId || !competence) return;
     setLoading(true);
-    const { data, error: err } = await supabase.from('fin_ifood_entries')
+    let q = supabase.from('fin_ifood_entries')
       .select('fato_gerador, tipo_lancamento, descricao, valor, impacto_repasse, responsavel, order_id, data_repasse')
-      .eq('tenant_id', user.tenantId).eq('competence', competence).limit(20000);
+      .eq('tenant_id', user.tenantId).eq('competence', competence);
+    if (loja) q = q.eq('merchant_id', loja);
+    const { data, error: err } = await q.limit(20000);
     if (err) { setError(err.message); setLoading(false); return; }
     const rows = ((data ?? []) as EntryRow[]).map((e) => ({ ...e, valor: Number(e.valor) }));
     setEntries(rows);
@@ -88,7 +92,7 @@ export default function IfoodTab() {
     } else setRepasses([]);
     setError(null);
     setLoading(false);
-  }, [user?.tenantId, competence]);
+  }, [user?.tenantId, competence, loja]);
 
   useEffect(() => { loadImports(); }, [loadImports]);
   useEffect(() => { loadCompetence(); }, [loadCompetence]);
@@ -125,7 +129,9 @@ export default function IfoodTab() {
   };
 
   const hoje = todayBrasilia();
-  const imp = imports.find((i) => i.competence === competence);
+  const competencias = [...new Set(imports.map((i) => i.competence))];
+  const lojas = [...new Map(imports.map((i) => [i.merchant_id, i.merchant_short || i.merchant_id.slice(0, 8)])).entries()];
+  const impsMes = imports.filter((i) => i.competence === competence && (!loja || i.merchant_id === loja));
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-5">
@@ -141,10 +147,17 @@ export default function IfoodTab() {
           </div>
         </div>
         <div className="flex-1" />
-        {imports.length > 0 && (
+        {lojas.length > 1 && (
+          <select value={loja} onChange={(e) => setLoja(e.target.value)}
+            className="border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="">Todas as lojas iFood</option>
+            {lojas.map(([id, curto]) => <option key={id} value={id}>Loja {curto}</option>)}
+          </select>
+        )}
+        {competencias.length > 0 && (
           <select value={competence} onChange={(e) => setCompetence(e.target.value)}
             className="border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white capitalize">
-            {imports.map((i) => <option key={i.competence} value={i.competence}>{compLabel(i.competence)}</option>)}
+            {competencias.map((c) => <option key={c} value={c}>{compLabel(c)}</option>)}
           </select>
         )}
         <button onClick={() => setShowConfig(true)}
@@ -199,7 +212,7 @@ export default function IfoodTab() {
           <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
             <div className="px-4 py-3 border-b border-zinc-100">
               <p className="text-sm font-semibold text-zinc-800">Repasses</p>
-              <p className="text-xs text-zinc-500">O que o iFood diz que paga × créditos com "iFood" no extrato do Inter (na data e no dia seguinte). O cartão chega como "Crédito domicílio cartão", em valores próprios, então compare o total do dia.</p>
+              <p className="text-xs text-zinc-500">O que o iFood diz que paga × créditos com "iFood" no extrato do Inter (na data e no dia seguinte). O cartão chega como "Crédito domicílio cartão", em valores próprios, então compare o total do dia. Soma <strong>todas as lojas iFood importadas</strong> (o Inter recebe as duas na mesma conta): importe o relatório de cada loja para o total bater.</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -286,10 +299,13 @@ export default function IfoodTab() {
             </table>
           </div>
 
-          {imp && (
-            <p className="text-[11px] text-zinc-400">
-              Fonte: {imp.source === 'api' ? 'API do iFood' : `arquivo ${imp.file_name ?? ''}`} · {imp.lines} linha(s) · atualizado em {new Date(imp.updated_at).toLocaleString('pt-BR')}
+          {impsMes.map((imp) => (
+            <p key={imp.id} className="text-[11px] text-zinc-400">
+              Loja {imp.merchant_short ?? imp.merchant_id.slice(0, 8)}: {imp.source === 'api' ? 'API do iFood' : `arquivo ${imp.file_name ?? ''}`} · {imp.lines} linha(s) · atualizado em {new Date(imp.updated_at).toLocaleString('pt-BR')}
             </p>
+          ))}
+          {lojas.length === 1 && (
+            <p className="text-[11px] text-amber-600">Só uma loja iFood importada. Se houver outra, baixe o relatório dela no Portal do Parceiro (troque a loja no topo do portal) e importe também.</p>
           )}
         </>
       )}

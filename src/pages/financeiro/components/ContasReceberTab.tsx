@@ -3,6 +3,7 @@ import { useAntecipacoes, useReceivableInstallments } from '@/hooks/useFinanceir
 import { formatCurrency } from '@/lib/formatters';
 import type { ReceivableInstallment } from '@/types/financeiro';
 import AgingRecebiveis, { buildAgingBuckets } from '@/pages/financeiro/components/AgingRecebiveis';
+import IfoodRecebiveis from '@/pages/financeiro/components/IfoodRecebiveis';
 
 const PAGE_SIZE = 10;
 
@@ -496,6 +497,9 @@ export default function ContasReceberTab() {
           </div>
         ))}
       </div>
+
+      {/* Repasses do iFood previstos (relatório de conciliação importado) */}
+      <IfoodRecebiveis />
 
       {/* Aging de Recebíveis */}
       <AgingRecebiveis
