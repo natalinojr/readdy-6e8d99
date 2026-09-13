@@ -40,6 +40,12 @@ chamado **separado** para o Financial · questionário com dados do **ambiente d
 > - APIs integradas (financial/v3.0): Sales, Financial Events, Settlements, Anticipations, Reconciliation e
 >   Reconciliation On-Demand, todas testadas com o header `x-request-homologation: true`.
 >
+> Observação sobre o ambiente de teste: a API Sales devolve para a loja de teste o pedido de exemplo
+> #0686 (01/08/2025, merchant "ABC"), que é o que aparece nas nossas evidências; Settlements e
+> Anticipations vêm vazios e o Reconciliation On-Demand responde "No financial entries exist for merchant…"
+> — tratamos e exibimos essa mensagem ao usuário. O Resumo (Reconciliation) foi demonstrado com dados de
+> uma loja real nossa, cujos totais conferem no centavo com o Portal do Parceiro.
+>
 > Ficamos no aguardo do questionário e das orientações para o envio dos vídeos dos cenários.
 >
 > Obrigado!

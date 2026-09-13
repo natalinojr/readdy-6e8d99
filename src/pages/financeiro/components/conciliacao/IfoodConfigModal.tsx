@@ -191,6 +191,15 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
     const b64 = await fileToBase64(file);
     const d = await call<{ results?: Array<{ competence: string; lines: number; orders: number; gross: number; fees: number; net: number; matched_deposits: number; ledger: { rows: number } }> }>('file', { action: 'import_file', file_b64: b64, file_name: file.name });
     if (!d) return;
+    // Relatório de Cardápio (produtos vendidos) — a edge reconhece pelas abas Itens/Complementos.
+    const card = (d as unknown as { cardapio?: { period_start: string; period_end: string; itens: number; complementos: number; lojas: { nome: string; codigo: string }[] } }).cardapio;
+    if (card) {
+      const dd = (x: string) => `${x.slice(8, 10)}/${x.slice(5, 7)}/${x.slice(0, 4)}`;
+      setResult({ ok: true, msg: `Cardápio de ${dd(card.period_start)} a ${dd(card.period_end)}: ${card.itens} produto(s) e ${card.complementos} complemento(s)${card.lojas.length ? ` · ${card.lojas.map((l) => `${l.nome} (${l.codigo})`).join(', ')}` : ''}. Veja em iFood › Produtos.` });
+      load();
+      onImported();
+      return;
+    }
     const msg = (d.results ?? []).map((r) =>
       `${compLabel(r.competence)}: ${r.orders} pedido(s), vendas ${formatCurrency(r.gross)} − taxas ${formatCurrency(r.fees)} = ${formatCurrency(r.net)} · ${r.matched_deposits} depósito(s) casado(s) com o Inter${r.ledger.rows ? ` · ${r.ledger.rows} lançamento(s) no financeiro` : ''}`,
     ).join('\n');
@@ -236,7 +245,7 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
             <div className="rounded-xl border border-zinc-200 p-4 space-y-3">
               <p className="text-sm font-semibold text-zinc-800 flex items-center gap-1.5"><i className="ri-file-excel-2-line text-green-600" /> Importar relatório do Portal do Parceiro</p>
               <p className="text-xs text-zinc-500">
-                No Portal do Parceiro: <strong>Financeiro › Exportar</strong>, depois <strong>Relatórios › Exportações › Baixar</strong> (se abrir uma página cinza, aperte Ctrl+S). Aceita .xlsx, .csv e .csv.gz. Reimportar o mesmo mês substitui o anterior.
+                No Portal do Parceiro: <strong>Financeiro › Exportar</strong>, depois <strong>Relatórios › Exportações › Baixar</strong> (se abrir uma página cinza, aperte Ctrl+S). Aceita .xlsx, .csv e .csv.gz. Reimportar o mesmo mês substitui o anterior. O relatório de <strong>Cardápio</strong> (Relatórios › Cardápio) também entra por aqui e vai para a aba Produtos.
               </p>
               <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.gz" className="hidden" onChange={handleFile} />
               <button onClick={() => fileRef.current?.click()} disabled={busy !== null}

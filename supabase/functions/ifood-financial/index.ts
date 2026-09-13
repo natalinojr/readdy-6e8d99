@@ -365,6 +365,64 @@ async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, c
   return { competence, import_id: imp.id, lines: valid.length, orders, gross, fees, net: round2(gross - fees), ledger, matched_deposits: matched };
 }
 
+// ── Relatório de Cardápio (Portal › Relatórios › Cardápio): abas "Funil Loja", "Itens", "Complementos" ──
+// Grava produtos e complementos vendidos por loja e período (substitui o mesmo período/loja) e aproveita o
+// "Nome da Loja" da aba Funil para dar nome às lojas cadastradas.
+async function importCardapio(admin: Admin, tenantId: string, wb: any, fileName: string, userId: string | null) {
+  const aba = (prefixo: string): Row[] => {
+    const nome = (wb.SheetNames as string[]).find((n) => n.trim().toLowerCase().startsWith(prefixo));
+    if (!nome) return [];
+    return XLSX.utils.sheet_to_json<Row>(wb.Sheets[nome], { defval: null, raw: true })
+      .map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.trim().toLowerCase(), v])));
+  };
+  const funil = aba('funil'); const itens = aba('itens'); const comps = aba('complementos');
+  if (itens.length === 0 && comps.length === 0) throw new Error('O relatório não tem as abas Itens/Complementos.');
+  const periodo = String(itens[0]?.['período'] ?? comps[0]?.['período'] ?? funil[0]?.['período'] ?? '');
+  const m = periodo.match(/(\d{2})\/(\d{2})\/(\d{4})\s*-\s*(\d{2})\/(\d{2})\/(\d{4})/);
+  if (!m) throw new Error(`Período não reconhecido: "${periodo}"`);
+  const start = `${m[3]}-${m[2]}-${m[1]}`; const end = `${m[6]}-${m[5]}-${m[4]}`;
+
+  // Loja: código curto e nome vêm da aba Funil; itens/complementos só trazem o nome.
+  const codigoPorNome = new Map<string, string>();
+  for (const f of funil) {
+    const nome = str(f['nome da loja']); const cod = str(f['id da loja']);
+    if (nome && cod) codigoPorNome.set(nome, cod);
+  }
+  const unicaLoja = codigoPorNome.size === 1 ? [...codigoPorNome.values()][0] : null;
+  const lojaDe = (r: Row) => codigoPorNome.get(String(r['nome da loja'] ?? '').trim()) ?? unicaLoja;
+
+  // Nome das lojas já cadastradas (pelo código curto), sem sobrescrever nome digitado.
+  for (const [nome, cod] of codigoPorNome) {
+    await admin.from('fin_ifood_merchants').update({ name: nome, updated_at: new Date().toISOString() })
+      .eq('tenant_id', tenantId).eq('merchant_short', cod).is('name', null);
+  }
+
+  const base = { tenant_id: tenantId, period_start: start, period_end: end, file_name: fileName, created_by: userId };
+  const rows = [
+    ...itens.filter((r) => str(r['nome do item'])).map((r) => ({
+      ...base, kind: 'item', merchant_short: lojaDe(r), store_name: str(r['nome da loja']), group_name: str(r['categoria']),
+      name: String(r['nome do item']).trim(), visits: num(r['visitas']), orders: num(r['pedidos']), conversion: num(r['conversão']),
+      quantity: num(r['vendas total (quantidade)']), promo_quantity: num(r['vendas total com promoção']),
+      promo_orders: num(r['pedidos total com promoção']), total_value: num(r['valor total']),
+    })),
+    ...comps.filter((r) => str(r['nome do complemento'])).map((r) => ({
+      ...base, kind: 'complemento', merchant_short: lojaDe(r), store_name: str(r['nome da loja']), group_name: str(r['classificação']),
+      name: String(r['nome do complemento']).trim(), orders: num(r['pedidos']),
+      quantity: num(r['vendas total (quantidade)']), total_value: num(r['valor total']),
+    })),
+  ];
+  const lojas = [...new Set(rows.map((r) => r.merchant_short).filter(Boolean))] as string[];
+  let del = admin.from('fin_ifood_menu_sales').delete().eq('tenant_id', tenantId).eq('period_start', start).eq('period_end', end);
+  if (lojas.length > 0) del = del.in('merchant_short', lojas);
+  const { error: dErr } = await del;
+  if (dErr) throw new Error('Limpar período anterior: ' + dErr.message);
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await admin.from('fin_ifood_menu_sales').insert(rows.slice(i, i + 500));
+    if (error) throw new Error('Gravar produtos: ' + error.message);
+  }
+  return { period_start: start, period_end: end, itens: rows.filter((r) => r.kind === 'item').length, complementos: rows.filter((r) => r.kind === 'complemento').length, lojas: [...codigoPorNome.entries()].map(([nome, cod]) => ({ nome, codigo: cod })) };
+}
+
 // Baixa e grava uma competência pela API.
 async function syncCompetence(admin: Admin, cfg: any, competence: string) {
   const r = await apiGet(admin, cfg, finPath(cfg, `/reconciliation?competence=${competence}`));
@@ -626,6 +684,15 @@ Deno.serve(async (req) => {
       if (b64.length > 14_000_000) return errResp('Arquivo muito grande (máx. 10 MB).');
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       const fileName = String(body.file_name ?? 'relatorio.xlsx');
+      // Relatório de Cardápio (abas Itens/Complementos) — mesmo botão de importar.
+      if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
+        let wb: any = null;
+        try { wb = XLSX.read(bytes, { type: 'array' }); } catch { wb = null; }
+        if (wb && (wb.SheetNames as string[]).some((n) => /^itens$/i.test(n.trim()))) {
+          try { return json({ success: true, cardapio: await importCardapio(admin, tenantId, wb, fileName, userId) }); }
+          catch (e) { return errResp('Não consegui ler o relatório de cardápio: ' + String((e as Error)?.message ?? e).slice(0, 180)); }
+        }
+      }
       let rows: Row[];
       try { rows = await readReport(bytes, fileName); }
       catch (e) { return errResp('Não consegui ler o arquivo: ' + String((e as Error)?.message ?? e).slice(0, 150)); }
