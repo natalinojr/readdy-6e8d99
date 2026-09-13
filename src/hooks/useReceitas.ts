@@ -142,7 +142,11 @@ export function useReceitas(filters: ReceitasFilters) {
         // períodos, sem nada na tela indicando falha. O campo nunca era usado.
         .select('id, number, total_amount, is_paid, paid_at, created_at, origin_type, destination_type, table_number, waiter_name, status')
         .eq('tenant_id', user.tenantId)
-        .eq('status', 'delivered')
+        // Pedido PAGO é receita, esteja "entregue" ou não: orders.status pode ficar
+        // 'ready' com o pedido já pago e entregue (não sincroniza). Exigir 'delivered'
+        // deixava fora pedidos que o razão (auto_sale), a Visão Geral e os Relatórios
+        // contam — Vila Leste set/26: 4 pedidos, R$ 56,00 a menos só nesta aba.
+        .not('status', 'in', '(cancelled,draft)')
         // is_paid era SELECIONADO e nunca aplicado: comanda entregue e não
         // fechada (fiado, mesa aberta) entrava como receita recebida, inflando
         // a aba. Contrato do FINANCEIRO_MAP §5: delivered AND is_paid.
