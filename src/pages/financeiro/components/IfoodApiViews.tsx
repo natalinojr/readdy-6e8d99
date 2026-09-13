@@ -131,7 +131,9 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
 
   if (view === 'pedidos') {
     if (rows.length === 0) return <Empty />;
-    const bruto = rows.reduce((s, r) => s + n(r.gross_bag) + n(r.delivery_fee) + n(r.service_fee), 0);
+    // Bruto = itens + entrega. A taxa de serviço (cobrada do cliente e repassada ao iFood) vem negativa
+    // da API e aparece na composição do líquido — somá-la aqui reduzia o bruto indevidamente.
+    const bruto = rows.reduce((s, r) => s + n(r.gross_bag) + n(r.delivery_fee), 0);
     const saldo = rows.reduce((s, r) => s + n(r.sale_balance), 0);
     return (
       <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
@@ -146,13 +148,18 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
               <tr>
                 <th className="text-left px-3 py-2">Pedido</th><th className="text-left px-3 py-2">Data</th><th className="text-left px-3 py-2">Situação</th>
                 <th className="text-left px-3 py-2">Pagamento</th><th className="text-right px-3 py-2">Bruto</th><th className="text-right px-3 py-2">Promoções</th>
-                <th className="text-left px-3 py-2">Comissões e taxas</th><th className="text-right px-3 py-2">Líquido</th>
+                <th className="text-left px-3 py-2">Composição do líquido</th><th className="text-right px-3 py-2">Líquido</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => {
                 const metodos = (r.payment_methods ?? []) as any[];
-                const taxas = ((r.billing_entries ?? []) as any[]).filter((b) => Number(b.value) !== 0);
+                // Créditos (pagamento, promoção paga pelo iFood) primeiro; depois os descontos.
+                const taxas = ((r.billing_entries ?? []) as any[]).filter((b) => Number(b.value) !== 0).sort((a, b) => Number(b.value) - Number(a.value));
+                // Quem bancou as promoções do pedido (iFood, loja…), a partir do JSON original da venda.
+                const patrocinios = ((r.raw?.benefits?.benefits ?? []) as any[]).flatMap((bf) => (bf?.sponsorships ?? []) as any[]).filter((sp) => Number(sp?.value) !== 0);
+                const lojaPagou = patrocinios.some((sp) => /merchant|loja/i.test(String(sp?.name ?? '')));
+                const quem = [...new Set(patrocinios.map((sp) => (/ifood/i.test(String(sp?.name ?? '')) ? 'iFood' : /merchant|loja/i.test(String(sp?.name ?? '')) ? 'loja' : String(sp?.name ?? ''))))].filter(Boolean).join(' + ');
                 return (
                   <tr key={r.id} className="border-t border-zinc-100 align-top">
                     <td className="px-3 py-2 font-mono text-xs">#{r.short_id ?? String(r.sale_id).slice(0, 8)}</td>
@@ -163,10 +170,24 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
                         <div key={i}>{[nm(m.method), m.card?.brand, m.wallet?.name, nm(m.type)].filter(Boolean).join(' · ')} <span className="text-zinc-400">({m.liability === 'IFOOD' ? 'pago ao iFood' : m.liability === 'MERCHANT' ? 'pago à loja' : m.liability ?? '—'})</span></div>
                       ))}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">{formatCurrency(n(r.gross_bag) + n(r.delivery_fee) + n(r.service_fee))}</td>
-                    <td className="px-3 py-2 text-right font-mono text-amber-700">{n(r.benefits_total) ? formatCurrency(n(r.benefits_total)) : '—'}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatCurrency(n(r.gross_bag) + n(r.delivery_fee))}</td>
+                    <td className={`px-3 py-2 text-right font-mono ${lojaPagou ? 'text-red-600' : 'text-zinc-700'}`}>
+                      {n(r.benefits_total) ? formatCurrency(n(r.benefits_total)) : '—'}
+                      {n(r.benefits_total) !== 0 && quem && <span className="block text-[11px] font-sans text-zinc-400">pago por {quem}</span>}
+                    </td>
                     <td className="px-3 py-2 text-xs">
-                      {taxas.map((b, i) => <div key={i} className="flex justify-between gap-2"><span>{nm(b.name)}</span><span className="font-mono">{formatCurrency(Number(b.value))}</span></div>)}
+                      {taxas.map((b, i) => (
+                        <div key={i} className="flex justify-between gap-2">
+                          <span>{nm(b.name)}</span>
+                          <span className={`font-mono ${Number(b.value) < 0 ? 'text-red-600' : 'text-green-700'}`}>{Number(b.value) > 0 ? '+' : ''}{formatCurrency(Number(b.value))}</span>
+                        </div>
+                      ))}
+                      {taxas.length > 0 && (
+                        <div className="flex justify-between gap-2 border-t border-zinc-200 mt-1 pt-1 font-semibold">
+                          <span>= Líquido</span>
+                          <span className="font-mono">{formatCurrency(taxas.reduce((s, b) => s + Number(b.value), 0))}</span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-green-700">{formatCurrency(n(r.sale_balance))}</td>
                   </tr>
