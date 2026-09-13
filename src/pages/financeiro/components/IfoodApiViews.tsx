@@ -54,8 +54,20 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
   const [soImpacto, setSoImpacto] = useState(true);
   // Mês próprio: a API pode ter dados de meses sem relatório importado (a loja de teste devolve 2025).
   const [mes, setMes] = useState(competence);
-  useEffect(() => { setMes(competence); }, [competence]);
+  const [pulou, setPulou] = useState(false); // já saltou para o último mês com dados?
+  useEffect(() => { setMes(competence); setPulou(false); }, [competence, view]);
   const { start, end } = monthRange(mes);
+
+  // Mês sem dados → vai sozinho para o último mês que tem (uma vez por visão).
+  useEffect(() => {
+    if (loading || pulou || rows.length > 0 || antecip.length > 0) return;
+    setPulou(true);
+    const [tabela, col] = view === 'pedidos' ? ['fin_ifood_sales', 'sale_created_at'] : view === 'repasses' ? ['fin_ifood_settlements', 'payment_date'] : ['fin_ifood_events', 'event_at'];
+    supabase.from(tabela).select(col).eq('tenant_id', tenantId).not(col, 'is', null).order(col, { ascending: false }).limit(1).then(({ data }) => {
+      const ultimo = (data?.[0] as Record<string, string> | undefined)?.[col];
+      if (ultimo && ultimo.slice(0, 7) !== mes) setMes(ultimo.slice(0, 7));
+    });
+  }, [loading, pulou, rows.length, antecip.length, view, tenantId, mes]);
 
   useEffect(() => {
     let alive = true;

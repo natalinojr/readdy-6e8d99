@@ -114,7 +114,8 @@ export default function IfoodTab() {
       taxasMap.set(k, (taxasMap.get(k) ?? 0) - e.valor);
     }
     const taxas = [...taxasMap.values()].reduce((s, v) => s + v, 0);
-    const promoLoja = -entries.filter((e) => !e.impacto_repasse && /promo/i.test(e.descricao ?? '')).reduce((s, e) => s + e.valor, 0);
+    // `|| 0` evita o "-R$ 0,00" (zero negativo) quando não há promoção.
+    const promoLoja = -entries.filter((e) => !e.impacto_repasse && /promo/i.test(e.descricao ?? '')).reduce((s, e) => s + e.valor, 0) || 0;
     const promoIfood = entries.filter((e) => e.impacto_repasse && /promo[çc][ãa]o custeada pelo ifood/i.test(e.descricao ?? '')).reduce((s, e) => s + e.valor, 0);
     const recebidoLoja = entries.filter((e) => !e.impacto_repasse && (e.responsavel ?? '').toUpperCase() === 'LOJA' && e.valor > 0).reduce((s, e) => s + e.valor, 0);
     const pedidos = new Set(entries.filter((e) => e.fato_gerador === 'Venda' && e.order_id).map((e) => e.order_id)).size;
