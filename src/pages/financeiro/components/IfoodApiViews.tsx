@@ -22,6 +22,18 @@ const STATUS_PT: Record<string, string> = {
   CONCLUDED: 'Concluído', CANCELED: 'Cancelado', DISPATCHED: 'Despachado', CONFIRMED: 'Confirmado',
 };
 const pt = (s?: string | null) => (s ? STATUS_PT[s.toUpperCase()] ?? s : '—');
+// Nomes técnicos que a API devolve em lançamentos, eventos e formas de pagamento.
+const NOME_PT: Record<string, string> = {
+  ORDER_COMMISSION: 'Comissão iFood', COMMISSION: 'Comissão iFood', PAYMENT_TRANSACTION_FEE: 'Taxa de transação', SERVICE_FEE: 'Taxa de serviço',
+  SERVICE_FEE_IFOOD: 'Taxa de serviço iFood', ORDER_PAYMENT: 'Pagamento do pedido', IN_APP_PAYMENT_CREDIT: 'Pago no app (crédito)',
+  EXTERNAL_PAYMENT: 'Pago fora do app', IFOOD_SUBSIDY: 'Promoção paga pelo iFood', MERCHANT_SUBSIDY: 'Promoção paga pela loja',
+  DELIVERY_REQUEST: 'Entrega iFood', ON_DEMAND_ON_PLATFORM: 'Entrega sob demanda', DELIVERY_FEE: 'Taxa de entrega',
+  REFUND_SERVICE_FEE: 'Estorno da taxa de serviço', REFUND: 'Estorno', ORDER_CONCLUDED: 'Pedido concluído',
+  LOGISTIC_SHIPPING_CHARGE: 'Cobrança de entrega', SINGLE_OCCURRENCE: 'Lançamento avulso', ORDER_CANCELLED: 'Pedido cancelado',
+  PIX: 'Pix', CREDIT: 'Crédito', DEBIT: 'Débito', MEAL_VOUCHER: 'Vale-refeição', FOOD_VOUCHER: 'Vale-alimentação', CASH: 'Dinheiro',
+  BANK_PAY: 'Pagamento bancário', DIGITAL_WALLET: 'Carteira digital', ONLINE: 'Online', OFFLINE: 'Na entrega',
+};
+const nm = (s?: string | null) => (s ? NOME_PT[s.toUpperCase()] ?? s : '');
 const TIPO_PT: Record<string, string> = { REPASSE: 'Repasse', BOLETO: 'Boleto (loja deve ao iFood)', REGISTRO_RECEBIVEIS: 'Registro de recebíveis' };
 
 function Empty() {
@@ -40,7 +52,10 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [soImpacto, setSoImpacto] = useState(true);
-  const { start, end } = monthRange(competence);
+  // Mês próprio: a API pode ter dados de meses sem relatório importado (a loja de teste devolve 2025).
+  const [mes, setMes] = useState(competence);
+  useEffect(() => { setMes(competence); }, [competence]);
+  const { start, end } = monthRange(mes);
 
   useEffect(() => {
     let alive = true;
@@ -72,8 +87,18 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
 
   const eventos = useMemo(() => (soImpacto ? rows.filter((e) => e.has_transfer_impact) : rows), [rows, soImpacto]);
 
-  if (loading) return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-red-500 border-t-transparent rounded-full animate-spin" /></div>;
-  if (error) return <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">Falha ao carregar: {error}</div>;
+  const seletor = (
+    <div className="flex items-center gap-2 text-xs text-zinc-500">
+      <span>Mês:</span>
+      <input type="month" value={mes} onChange={(e) => e.target.value && setMes(e.target.value)}
+        className="border border-zinc-200 rounded-lg px-2 py-1 text-sm bg-white" />
+    </div>
+  );
+  if (loading) return <div className="space-y-3">{seletor}<div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-red-500 border-t-transparent rounded-full animate-spin" /></div></div>;
+  if (error) return <div className="space-y-3">{seletor}<div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">Falha ao carregar: {error}</div></div>;
+  return <div className="space-y-3">{seletor}{conteudo()}</div>;
+
+  function conteudo() {
 
   if (view === 'pedidos') {
     if (rows.length === 0) return <Empty />;
@@ -106,13 +131,13 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
                     <td className="px-3 py-2 text-xs">{pt(r.current_status)}</td>
                     <td className="px-3 py-2 text-xs">
                       {metodos.map((m, i) => (
-                        <div key={i}>{[m.method, m.card?.brand, m.wallet?.name].filter(Boolean).join(' · ')} <span className="text-zinc-400">({m.liability === 'IFOOD' ? 'pago ao iFood' : m.liability === 'MERCHANT' ? 'pago à loja' : m.liability ?? '—'})</span></div>
+                        <div key={i}>{[nm(m.method), m.card?.brand, m.wallet?.name, nm(m.type)].filter(Boolean).join(' · ')} <span className="text-zinc-400">({m.liability === 'IFOOD' ? 'pago ao iFood' : m.liability === 'MERCHANT' ? 'pago à loja' : m.liability ?? '—'})</span></div>
                       ))}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{formatCurrency(n(r.gross_bag) + n(r.delivery_fee) + n(r.service_fee))}</td>
                     <td className="px-3 py-2 text-right font-mono text-amber-700">{n(r.benefits_total) ? formatCurrency(n(r.benefits_total)) : '—'}</td>
                     <td className="px-3 py-2 text-xs">
-                      {taxas.map((b, i) => <div key={i} className="flex justify-between gap-2"><span>{b.name}</span><span className="font-mono">{formatCurrency(Number(b.value))}</span></div>)}
+                      {taxas.map((b, i) => <div key={i} className="flex justify-between gap-2"><span>{nm(b.name)}</span><span className="font-mono">{formatCurrency(Number(b.value))}</span></div>)}
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-green-700">{formatCurrency(n(r.sale_balance))}</td>
                   </tr>
@@ -207,9 +232,9 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
             {eventos.map((e) => (
               <tr key={e.id} className={`border-t border-zinc-100 ${e.has_transfer_impact ? '' : 'text-zinc-400'}`}>
                 <td className="px-3 py-2 text-xs whitespace-nowrap">{e.event_at ? new Date(e.event_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</td>
-                <td className="px-3 py-2 text-xs">{e.description || e.name}{e.fee_percentage ? <span className="text-zinc-400"> · {(n(e.fee_percentage) <= 1 ? n(e.fee_percentage) * 100 : n(e.fee_percentage)).toFixed(1)}% de {formatCurrency(n(e.base_value))}</span> : null}</td>
-                <td className="px-3 py-2 text-xs">{e.trigger ?? '—'}</td>
-                <td className="px-3 py-2 text-xs">{[e.payment_method, e.payment_brand].filter(Boolean).join(' · ') || '—'}{e.payment_liability ? <span className="text-zinc-400"> ({e.payment_liability})</span> : null}</td>
+                <td className="px-3 py-2 text-xs">{nm(e.name)}{e.description && nm(e.description) !== nm(e.name) ? <span className="text-zinc-400"> · {nm(e.description)}</span> : null}{e.fee_percentage ? <span className="text-zinc-400"> · {(n(e.fee_percentage) <= 1 ? n(e.fee_percentage) * 100 : n(e.fee_percentage)).toFixed(1)}% de {formatCurrency(n(e.base_value))}</span> : null}</td>
+                <td className="px-3 py-2 text-xs">{nm(e.trigger) || '—'}</td>
+                <td className="px-3 py-2 text-xs">{[nm(e.payment_method), e.payment_brand].filter(Boolean).join(' · ') || '—'}{e.payment_liability ? <span className="text-zinc-400"> ({e.payment_liability === 'IFOOD' ? 'iFood' : e.payment_liability === 'MERCHANT' ? 'loja' : e.payment_liability})</span> : null}</td>
                 <td className={`px-3 py-2 text-right font-mono ${n(e.amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>{formatCurrency(n(e.amount))}</td>
                 <td className="px-3 py-2 text-xs whitespace-nowrap">{dBR(e.expected_settlement)}{e.has_transfer_impact ? '' : ' (não afeta)'}</td>
               </tr>
@@ -219,4 +244,5 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
       </div>
     </div>
   );
+  }
 }

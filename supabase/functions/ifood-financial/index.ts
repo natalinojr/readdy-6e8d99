@@ -337,6 +337,8 @@ async function syncCompetence(admin: Admin, cfg: any, competence: string) {
   const bytes = new Uint8Array(await f.arrayBuffer());
   const rows = await readReport(bytes, 'reconciliation.csv.gz');
   const entries = rows.map(toEntry).filter((e) => !e.competence || e.competence === competence);
+  // Arquivo sem lançamentos (mês sem movimento): não cria importação vazia.
+  if (entries.length === 0) return { competence, skipped: true, reason: 'relatório sem lançamentos' };
   return await saveCompetence(admin, cfg.tenant_id, cfg, competence, entries, { source: 'api', merchant_id: cfg.merchant_id, sha256: sha || await sha256Hex(bytes) });
 }
 
@@ -391,9 +393,11 @@ async function syncEvents(admin: Admin, cfg: any, from: string, to: string) {
     for (const e of evs) {
       const key = await hashKey([e.name, e.trigger, e.dateTime, e.reference?.id, e.amount?.value, e.product, e.payment?.method, e.settlement?.expectedDate]);
       rows.set(key, {
-        tenant_id: cfg.tenant_id, merchant_id: String(e.receiver?.businessId ?? cfg.merchant_id), event_key: key,
+        // A resposta real não traz dateTime: data = do pedido (reference.date) ou início do período apurado.
+        tenant_id: cfg.tenant_id, merchant_id: String(e.receiver?.merchantId ?? e.receiver?.businessId ?? cfg.merchant_id), event_key: key,
         name: str(e.name), description: str(e.description), product: str(e.product), trigger: str(e.trigger),
-        event_at: tsOrNull(e.dateTime), competence: str(e.competence), period_begin: dateOnly(e.period?.beginDate), period_end: dateOnly(e.period?.endDate),
+        event_at: tsOrNull(e.dateTime) ?? tsOrNull(e.reference?.date) ?? (dateOnly(e.period?.beginDate) ? `${dateOnly(e.period?.beginDate)}T12:00:00Z` : null),
+        competence: str(e.competence), period_begin: dateOnly(e.period?.beginDate), period_end: dateOnly(e.period?.endDate),
         reference_type: str(e.reference?.type), reference_id: str(e.reference?.id), reference_date: dateOnly(e.reference?.date),
         has_transfer_impact: e.hasTransferImpact === true, amount: num(e.amount?.value), base_value: num(e.billing?.baseValue), fee_percentage: num(e.billing?.feePercentage),
         expected_settlement: dateOnly(e.settlement?.expectedDate), payment_method: str(e.payment?.method), payment_brand: str(e.payment?.brand), payment_liability: str(e.payment?.liability),
