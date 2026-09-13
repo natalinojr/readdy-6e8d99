@@ -6,6 +6,7 @@ import {
 import { TrendingUp, ShoppingBag, Percent } from 'lucide-react';
 import { useSalesReport, useSalesReportBySession } from '@/hooks/useSalesReport';
 import { useVisaoGeralExtras } from '@/hooks/useVisaoGeralExtras';
+import { useIfoodVendas } from '@/hooks/useIfoodVendas';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import { getPeriodDateObjects, getPeriodoAnterior } from '@/lib/dateUtils';
 import type { SessionInfo } from '@/hooks/useSessions';
@@ -37,6 +38,7 @@ const fmt = (v: number) =>
 
 // by_destination agora usa origin_type
 const DEST_LABELS: Record<string, string> = {
+  ifood: 'iFood',
   cashier: 'PDV Caixa',
   waiter: 'PDV Garçom',
   table: 'Mesa (QR)',
@@ -109,6 +111,10 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
 
   const { data: extras, loading: extrasLoading } = useVisaoGeralExtras(periodo);
 
+  // iFood: pedidos do relatório de conciliação importado (Financeiro › iFood) — só no modo calendário.
+  const { data: ifood } = useIfoodVendas(isSessao ? '' : periodo);
+  const { data: ifoodAnt } = useIfoodVendas(isSessao ? '' : periodoAnterior);
+
   const report = isSessao ? reportSessao : reportCalendario;
   const loading = isSessao ? loadingSessao : loadingCalendario;
   const hasRealData = isSessao ? hasSessao : hasCalendario;
@@ -149,7 +155,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
     );
   }
 
-  if (!hasRealData && !isSessao) {
+  if (!hasRealData && !isSessao && !(ifood && ifood.pedidos > 0)) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-zinc-400">
         <div className="w-16 h-16 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
@@ -162,13 +168,23 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
     );
   }
 
-  const faturamento = Number(report!.total_revenue);
-  const pedidos = report!.total_orders;
-  const ticketMedio = Number(report!.avg_ticket);
+  // Mês só com iFood (sem pedido no PDV) não tem relatório do ERP: usa um vazio.
+  const rep = (report ?? {
+    total_revenue: 0, total_orders: 0, avg_ticket: 0, orders_by_day: [], by_payment: [],
+    by_destination: [], top_items: [], top_options: [],
+  }) as unknown as NonNullable<typeof report>;
 
-  const faturamentoAnt = Number(reportAnterior?.total_revenue ?? 0);
-  const pedidosAnt = Number(reportAnterior?.total_orders ?? 0);
-  const ticketAnt = Number(reportAnterior?.avg_ticket ?? 0);
+  // Totais = pedidos do ERP + iFood (valor das vendas como no Portal do Parceiro, pela data do pedido).
+  const faturamentoErp = Number(rep.total_revenue);
+  const ifTot = ifood?.total ?? 0;
+  const ifPed = ifood?.pedidos ?? 0;
+  const faturamento = faturamentoErp + ifTot;
+  const pedidos = rep.total_orders + ifPed;
+  const ticketMedio = pedidos > 0 ? faturamento / pedidos : 0;
+
+  const faturamentoAnt = Number(reportAnterior?.total_revenue ?? 0) + (ifoodAnt?.total ?? 0);
+  const pedidosAnt = Number(reportAnterior?.total_orders ?? 0) + (ifoodAnt?.pedidos ?? 0);
+  const ticketAnt = pedidosAnt > 0 ? faturamentoAnt / pedidosAnt : 0;
   const varFat = isSessao ? null : variacaoPct(faturamento, faturamentoAnt);
   const varPed = isSessao ? null : variacaoPct(pedidos, pedidosAnt);
   const varTkt = isSessao ? null : variacaoPct(ticketMedio, ticketAnt);
@@ -182,14 +198,22 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
     return `vs ${diffDias}d anteriores`;
   })();
 
-  const semanalData = report!.orders_by_day.map((d) => ({
-    dia: new Date(d.day + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' }).slice(0, 6),
-    valor: Number(d.revenue),
-    pedidos: d.orders,
+  const diasMap = new Map<string, { erp: number; ifood: number; pedidos: number }>();
+  rep.orders_by_day.forEach((d) => diasMap.set(d.day, { erp: Number(d.revenue), ifood: 0, pedidos: d.orders }));
+  for (const [dia, v] of Object.entries(ifood?.porDia ?? {})) {
+    const x = diasMap.get(dia) ?? { erp: 0, ifood: 0, pedidos: 0 };
+    x.ifood += v.valor; x.pedidos += v.pedidos;
+    diasMap.set(dia, x);
+  }
+  const semanalData = [...diasMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, v]) => ({
+    dia: new Date(day + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' }).slice(0, 6),
+    valor: v.erp,
+    ifood: Math.round(v.ifood * 100) / 100,
+    pedidos: v.pedidos,
   }));
 
-  const paymentTotal = report!.by_payment.reduce((s, p) => s + Number(p.total), 0);
-  const paymentData = report!.by_payment.map((p, i) => ({
+  const paymentTotal = rep.by_payment.reduce((s, p) => s + Number(p.total), 0);
+  const paymentData = rep.by_payment.map((p, i) => ({
     forma: p.payment_method ?? p.payment_type ?? 'Outro',
     valor: Number(p.total),
     percentual: paymentTotal > 0 ? Math.round((Number(p.total) / paymentTotal) * 100) : 0,
@@ -198,18 +222,29 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
   }));
 
   // Cobertura de pagamentos: percentual do faturamento coberto por registros de pagamento
-  const coberturaPayment = faturamento > 0 ? Math.round((paymentTotal / faturamento) * 100) : 0;
+  // Cobertura só sobre o ERP: o iFood é pago no app do iFood e não tem pagamento no caixa.
+  const coberturaPayment = faturamentoErp > 0 ? Math.round((paymentTotal / faturamentoErp) * 100) : 0;
   const temPagamentosParciais = paymentData.length > 0 && coberturaPayment < 95;
   const semPagamentos = paymentData.length === 0;
 
-  const destData = report!.by_destination.length > 0 ? report!.by_destination : null;
+  const destData = rep.by_destination.length > 0 ? rep.by_destination : null;
 
   // Dados de hora — apenas no modo calendário
-  const hourlyData = !isSessao ? (extras?.by_hour ?? []).map((h) => ({
-    hora: `${String(h.hour).padStart(2, '0')}h`,
-    valor: h.revenue,
-    pedidos: h.orders,
-  })) : [];
+  const ifoodHora: Record<number, number> = {};
+  for (const [hm, v] of Object.entries(ifood?.porHora ?? {})) {
+    const h = Number(hm.slice(0, 2));
+    ifoodHora[h] = (ifoodHora[h] ?? 0) + v;
+  }
+  const hourlyData = !isSessao ? (() => {
+    const base = new Map<number, { rev: number; ord: number }>((extras?.by_hour ?? []).map((h) => [h.hour, { rev: h.revenue, ord: h.orders }]));
+    for (const h of Object.keys(ifoodHora).map(Number)) if (!base.has(h)) base.set(h, { rev: 0, ord: 0 });
+    return [...base.entries()].sort(([a], [b]) => a - b).map(([h, v]) => ({
+      hora: `${String(h).padStart(2, '0')}h`,
+      valor: Math.round((v.rev + (ifoodHora[h] ?? 0)) * 100) / 100,
+      ifood: Math.round((ifoodHora[h] ?? 0) * 100) / 100,
+      pedidos: v.ord,
+    }));
+  })() : [];
 
   // Categorias — apenas no modo calendário
   const catData = !isSessao ? (extras?.by_category ?? []) : [];
@@ -244,6 +279,11 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
           {!isSessao && <VariacaoBadge pct={varTkt} label={labelPeriodoAnt} />}
         </MetricCard>
       </div>
+      {!isSessao && ifPed > 0 && (
+        <p className="text-[11px] text-zinc-400 -mt-2">
+          <i className="ri-restaurant-2-line text-red-500" /> Inclui iFood: <strong className="text-zinc-600">{fmt(ifTot)}</strong> em {ifPed} pedido(s) — relatório de conciliação importado em Financeiro › iFood (valor das vendas como no Portal do Parceiro, na data do pedido).
+        </p>
+      )}
 
       {/* Gráfico semanal + Formas de pagamento */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4">
@@ -263,9 +303,10 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
                   <XAxis dataKey="dia" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false}
                     tickFormatter={(v) => `${(v / 1000).toFixed(1)}k`} width={32} />
-                  <Tooltip formatter={(val: number) => [fmt(val), 'Receita']}
+                  <Tooltip formatter={(val: number, name: string) => [fmt(val), name === 'ifood' ? 'iFood' : 'PDV / salão']}
                     contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 11 }} />
-                  <Bar dataKey="valor" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={32} />
+                  <Bar dataKey="valor" stackId="v" fill="#f59e0b" maxBarSize={32} />
+                  <Bar dataKey="ifood" stackId="v" fill="#ea1d2c" radius={[4, 4, 0, 0]} maxBarSize={32} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -291,8 +332,8 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
                   <i className="ri-bank-card-line text-amber-600 text-base" />
                 </div>
                 <div className="flex-1">
-                  <p className="text-sm font-bold text-zinc-900">{fmt(faturamento)}</p>
-                  <p className="text-[10px] text-zinc-500">Faturamento total — {pedidos} pedidos</p>
+                  <p className="text-sm font-bold text-zinc-900">{fmt(faturamentoErp)}</p>
+                  <p className="text-[10px] text-zinc-500">Faturamento do PDV — {rep.total_orders} pedidos</p>
                 </div>
               </div>
               <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-100 rounded-lg">
@@ -343,11 +384,19 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
                   <p className="text-[10px] text-zinc-400">Transações</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-sm md:text-base font-bold text-zinc-900">{pedidos}</p>
+                  <p className="text-sm md:text-base font-bold text-zinc-900">{rep.total_orders}</p>
                   <p className="text-[10px] text-zinc-400">Pedidos</p>
                 </div>
               </div>
             </>
+          )}
+          {!isSessao && ifPed > 0 && (
+            <div className="mt-3 flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-100 rounded-lg">
+              <i className="ri-restaurant-2-line text-red-500 text-xs flex-shrink-0 mt-0.5" />
+              <p className="text-[10px] text-red-700">
+                + iFood {fmt(ifTot)} ({ifPed} pedidos) — pago no app do iFood e recebido pelos repasses (Financeiro › iFood), por isso não aparece nas formas de pagamento do caixa.
+              </p>
+            </div>
           )}
         </div>
       </div>
@@ -384,7 +433,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
                     width={36}
                   />
                   <Tooltip
-                    formatter={(val: number) => [fmt(val), 'Faturamento']}
+                    formatter={(val: number, name: string) => [fmt(val), name === 'ifood' ? 'Só iFood' : 'Faturamento total']}
                     labelFormatter={(label) => `Hora: ${label}`}
                     contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 11 }}
                   />
@@ -396,6 +445,9 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
                     dot={false}
                     activeDot={{ r: 4, fill: '#f59e0b' }}
                   />
+                  {ifPed > 0 && (
+                    <Line type="monotone" dataKey="ifood" stroke="#ea1d2c" strokeWidth={1.5} strokeDasharray="4 3" dot={false} activeDot={{ r: 3, fill: '#ea1d2c' }} />
+                  )}
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -448,38 +500,45 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
       )}
 
       {/* Origem dos pedidos */}
-      {destData && (
+      {(destData || (!isSessao && ifPed > 0)) && (
         <div className="bg-white border border-zinc-100 rounded-xl p-4 md:p-5">
           <div className="flex items-center justify-between mb-3 md:mb-4">
             <h3 className="text-sm font-semibold text-zinc-800">Origem dos Pedidos</h3>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 md:gap-3">
-            {destData.map((d, i) => {
-              const total = destData.reduce((s, x) => s + Number(x.revenue), 0);
-              const pct = total > 0 ? Math.round((Number(d.revenue) / total) * 100) : 0;
+            {(() => {
+              const origens = [
+                ...(destData ?? []),
+                ...(!isSessao && ifPed > 0 ? [{ destination: 'ifood', orders: ifPed, revenue: ifTot }] : []),
+              ];
+              const total = origens.reduce((s, x) => s + Number(x.revenue), 0);
               const colors = ['#f59e0b', '#10b981', '#06b6d4', '#f97316', '#8b5cf6'];
-              return (
-                <div key={d.destination} className="bg-zinc-50 rounded-xl p-3 md:p-4 text-center">
-                  <p className="text-xl md:text-2xl font-black" style={{ color: colors[i % colors.length] }}>{d.orders}</p>
-                  <p className="text-xs font-semibold text-zinc-700 mt-0.5">{DEST_LABELS[d.destination] ?? d.destination}</p>
-                  <p className="text-xs text-zinc-400 mt-0.5 hidden sm:block">{fmt(Number(d.revenue))}</p>
-                  <p className="text-[10px] font-bold mt-1" style={{ color: colors[i % colors.length] }}>{pct}%</p>
-                </div>
-              );
-            })}
+              return origens.map((d, i) => {
+                const pct = total > 0 ? Math.round((Number(d.revenue) / total) * 100) : 0;
+                const cor = d.destination === 'ifood' ? '#ea1d2c' : colors[i % colors.length];
+                return (
+                  <div key={d.destination} className="bg-zinc-50 rounded-xl p-3 md:p-4 text-center">
+                    <p className="text-xl md:text-2xl font-black" style={{ color: cor }}>{d.orders}</p>
+                    <p className="text-xs font-semibold text-zinc-700 mt-0.5">{DEST_LABELS[d.destination] ?? d.destination}</p>
+                    <p className="text-xs text-zinc-400 mt-0.5 hidden sm:block">{fmt(Number(d.revenue))}</p>
+                    <p className="text-[10px] font-bold mt-1" style={{ color: cor }}>{pct}%</p>
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
       )}
 
       {/* Top itens */}
-      {report!.top_items.length > 0 && (
+      {rep.top_items.length > 0 && (
         <div className="bg-white border border-zinc-100 rounded-xl p-4 md:p-5">
           <div className="flex items-center justify-between mb-3 md:mb-4">
             <h3 className="text-sm font-semibold text-zinc-800">Top Itens Vendidos</h3>
           </div>
           <div className="space-y-2">
-            {report!.top_items.slice(0, 8).map((item, idx) => {
-              const maxQty = report!.top_items[0]?.total_qty ?? 1;
+            {rep.top_items.slice(0, 8).map((item, idx) => {
+              const maxQty = rep.top_items[0]?.total_qty ?? 1;
               return (
                 <div key={item.item_name} className="flex items-center gap-2 md:gap-3">
                   <span className={`w-5 h-5 md:w-6 md:h-6 flex items-center justify-center rounded-full text-[10px] font-black flex-shrink-0 ${
@@ -505,7 +564,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
 
       {/* Top complementos */}
       {(() => {
-        const complementos = (report!.top_options ?? []).filter((o) => Number(o.total_revenue) > 0);
+        const complementos = (rep.top_options ?? []).filter((o) => Number(o.total_revenue) > 0);
         if (complementos.length === 0) return null;
         const maxRev = Number(complementos[0]?.total_revenue) || 1;
         return (

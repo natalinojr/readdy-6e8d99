@@ -390,15 +390,27 @@ function DayCell({ day, maxRevenue, minRevenue, onClick }: DayCellProps) {
           </span>
         )}
       </div>
-      <p className={`text-[11px] font-bold mt-1 text-right whitespace-nowrap ${day.revenue > 0 ? 'text-zinc-700' : 'text-zinc-300'}`}>
-        {fmt(day.revenue)}
-      </p>
-      {day.orders > 0 && (
-        <p className="text-[9px] text-zinc-400 text-right">{day.orders} ped.</p>
+      {day.ifood ? (
+        // Dia com iFood: ERPOS, iFood e total separados.
+        <div className="mt-1 space-y-0.5 text-right">
+          <p className="text-[9px] text-zinc-500 whitespace-nowrap">
+            ERPOS <span className="font-semibold text-zinc-700">{fmt(day.revenue - day.ifood)}</span>
+          </p>
+          <p className="text-[9px] text-red-500 whitespace-nowrap">
+            iFood <span className="font-semibold">{fmt(day.ifood)}</span>
+          </p>
+          <p className="text-[11px] font-bold text-zinc-800 whitespace-nowrap border-t border-zinc-100 pt-0.5">
+            {fmt(day.revenue)}
+          </p>
+        </div>
+      ) : (
+        <p className={`text-[11px] font-bold mt-1 text-right whitespace-nowrap ${day.revenue > 0 ? 'text-zinc-700' : 'text-zinc-300'}`}>
+          {fmt(day.revenue)}
+        </p>
       )}
-      {!!day.ifood && (
-        <p className="text-[9px] text-red-500 text-right whitespace-nowrap" title={`${day.ifoodOrders ?? 0} pedido(s) do iFood`}>
-          iFood {fmt(day.ifood)}
+      {day.orders > 0 && (
+        <p className="text-[9px] text-zinc-400 text-right">
+          {day.orders} ped.{day.ifoodOrders ? ` (${day.ifoodOrders} iFood)` : ''}
         </p>
       )}
     </td>
