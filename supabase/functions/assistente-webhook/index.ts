@@ -365,6 +365,59 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
   }
 }
 
+// Currículos pelo WhatsApp (2026-09-13): o dono recebe currículos no WhatsApp e só ENCAMINHA para
+// o número do assistente — aqui só RECEBE (hiring-cv-scan › intake) e confirma numa linha; todo o
+// resto (triagem, vaga, conversa) é no Telegram. Se o modo de currículos do Telegram estiver ligado
+// (asst_settings.hiring_intake), usa a mesma empresa/vaga.
+// deno-lint-ignore no-explicit-any
+async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: MsgKey | null, data: any, p: Parsed) {
+  if (msgKey) react(msgKey, '👀');
+  const fileName = String(p.inner?.documentMessage?.fileName ?? '').trim() || null;
+  const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'hiring_intake').maybeSingle();
+  // deno-lint-ignore no-explicit-any
+  const alvo: any = st?.value?.until && new Date(st.value.until).getTime() > Date.now() ? st.value : {};
+  let entrada: Record<string, unknown>;
+  if (p.kind === 'text') {
+    entrada = { text: String(p.text ?? '').trim() };
+  } else {
+    const mime = String(p.mime ?? (p.kind === 'image' ? 'image/jpeg' : '')).split(';')[0].toLowerCase();
+    if (mime !== 'application/pdf' && !IMAGE_TYPES.includes(mime)) {
+      await sendText(number, `Recebi${fileName ? ` "${fileName}"` : ''}, mas só consigo ler currículo em PDF, foto ou texto.`).catch(() => {});
+      if (msgKey) react(msgKey, '❓');
+      return;
+    }
+    const b64 = await mediaBase64(data).catch(() => null);
+    if (!b64) {
+      await sendText(number, 'Não consegui baixar esse arquivo. Manda de novo?').catch(() => {});
+      if (msgKey) react(msgKey, '😱');
+      return;
+    }
+    entrada = { file_base64: b64, media_type: mime, file_name: fileName };
+  }
+  // deno-lint-ignore no-explicit-any
+  let out: any = {};
+  let ok = false;
+  try {
+    const r = await fetch(`${supabaseUrl}/functions/v1/hiring-cv-scan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({ action: 'intake', company_id: alvo.company_id ?? null, job_id: alvo.job_id ?? null, ...entrada }),
+    });
+    out = await r.json().catch(() => ({}));
+    ok = r.ok && !!out?.success;
+  } catch (e) { out = { error: errMsg(e) }; }
+  if (!ok) {
+    log('WARN', 'currículo (WhatsApp) não salvo', { error: out?.error ?? null });
+    await sendText(number, `❌ Não salvei ${fileName ? `"${fileName}"` : 'esse currículo'}: ${out?.error ?? 'erro desconhecido'}`).catch(() => {});
+    if (msgKey) react(msgKey, '🤔');
+    return;
+  }
+  const c = out.candidate ?? {};
+  const destino = [out.company_name, out.job_title ? `vaga ${out.job_title}` : null].filter(Boolean).join(' › ');
+  await sendText(number, `✅ Currículo salvo: *${c.full_name ?? 'candidato'}*${c.desired_role ? ` — ${c.desired_role}` : ''}${destino ? ` (${destino})` : ''}${out.duplicate ? `\n⚠️ Parece repetido: já existe ${out.duplicate}.` : ''}`).catch(() => {});
+  if (msgKey) react(msgKey, '👍');
+  log('INFO', 'currículo salvo (WhatsApp)', { candidate: c.id ?? null, job: alvo.job_id ?? null });
+}
+
 // Grupos: o assistente SÓ LÊ — guarda a mensagem em asst_group_messages e nunca
 // responde no grupo. Na primeira mensagem de um grupo busca nome e participantes;
 // a leitura só liga sozinha se o dono estiver no grupo (qualquer pessoa pode
@@ -741,6 +794,11 @@ async function handle(payload: any) {
   const number = chatId.replace(/@.*$/, '');
   const msgKey: MsgKey | null = key.id ? { remoteJid: jid, fromMe: false, id: String(key.id) } : null;
   if (!dmEnabled) {
+    // Exceção: currículo encaminhado (PDF, foto ou texto longo) é recebido e salvo em Contratação.
+    const p0 = parseMessage(data.message);
+    const isTxt = p0.kind === 'document' && ((p0.mime ?? '').startsWith('text/plain') || /\.txt$/i.test(String(p0.inner?.documentMessage?.fileName ?? '')));
+    const pareceCv = (p0.kind === 'document' && !isTxt) || p0.kind === 'image' || (p0.kind === 'text' && String(p0.text ?? '').trim().length >= 250);
+    if (pareceCv) { await cvFromWhatsApp(admin, number, msgKey, data, p0); return; }
     // Só avisa uma vez por dia para não virar conversa
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
     if (ui.wa_dm_notice_date !== today) {
