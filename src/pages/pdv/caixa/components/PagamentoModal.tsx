@@ -232,7 +232,10 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
 
   const totalPago = pagamentos.reduce((acc, p) => acc + p.valor, 0);
   const restante = Math.max(0, totalComDesconto - totalPago);
-  const troco = totalPago > totalComDesconto ? totalPago - totalComDesconto : 0;
+  // Dinheiro acima do restante já entra com valor = restante e o troco guardado em p.troco,
+  // então totalPago nunca passa do total: o troco exibido tem que somar p.troco.
+  const troco = (totalPago > totalComDesconto ? totalPago - totalComDesconto : 0)
+    + pagamentos.reduce((acc, p) => acc + (p.troco ?? 0), 0);
 
   useEffect(() => {
     if (!user?.tenantId) return;

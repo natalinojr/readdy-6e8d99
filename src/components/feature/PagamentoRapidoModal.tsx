@@ -264,7 +264,9 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
 
   const totalPago = pagamentos.reduce((acc, p) => acc + p.valor, 0);
   const restante = Math.max(0, totalAPagar - totalPago);
-  const troco = totalPago > totalAPagar ? totalPago - totalAPagar : 0;
+  // Dinheiro acima do restante já entra com valor = restante e o troco em p.troco (ver handleAddPagamento).
+  const troco = (totalPago > totalAPagar ? totalPago - totalAPagar : 0)
+    + pagamentos.reduce((acc, p) => acc + (p.troco ?? 0), 0);
 
   // Base do desconto manual (valor efetivo já menos o voucher)
   const baseDesconto = Math.max(0, totalEfetivo - voucherValor);
