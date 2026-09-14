@@ -334,6 +334,9 @@ function AutoatendimentoPageInner() {
   // Ref para bloquear criação duplicada de pedido no mesmo tick
   // (state pendingOrderId não atualiza rápido o suficiente para dois toques simultâneos)
   const criarPedidoRef = useRef(false);
+  // Criação em andamento: quem chegar no meio (ex.: 2º aviso de pagamento aprovado) espera
+  // e recebe o MESMO pedido, em vez de null ("pedido não registrado" falso com o pedido pago).
+  const criacaoEmAndamentoRef = useRef<Promise<string | null> | null>(null);
 
   // Cria o pedido no banco e retorna o ID e número
   const criarPedidoBanco = useCallback(async (paidPixPaymentId?: string): Promise<{ id: string; numero: number } | null> => {
@@ -484,15 +487,15 @@ function AutoatendimentoPageInner() {
     // - criarPedidoRef bloqueia no mesmo tick (state não atualiza rápido o suficiente)
     // - pendingOrderId bloqueia chamadas subsequentes após o primeiro ciclo
     if (criarPedidoRef.current) {
-      console.log('[Autoatendimento] handleAvancarPagamento: bloqueado por ref — criação já em andamento');
-      return null;
+      console.log('[Autoatendimento] handleAvancarPagamento: criação já em andamento — aguardando o mesmo pedido');
+      return criacaoEmAndamentoRef.current ? await criacaoEmAndamentoRef.current : null;
     }
     if (pendingOrderId) {
       console.log('[Autoatendimento] handleAvancarPagamento: pedido já criado, ignorando', pendingOrderId);
       return pendingOrderId;
     }
     criarPedidoRef.current = true;
-    try {
+    const criacao = (async (): Promise<string | null> => {
       console.log('[Autoatendimento] handleAvancarPagamento: chamando criarPedidoBanco...');
       const result = await criarPedidoBanco(typeof paidPixPaymentId === 'string' ? paidPixPaymentId : undefined);
       console.log('[Autoatendimento] handleAvancarPagamento: pedido criado =', result);
@@ -505,8 +508,13 @@ function AutoatendimentoPageInner() {
       }
       console.warn('[Autoatendimento] handleAvancarPagamento: criarPedidoBanco retornou null — pedido não salvo no banco');
       return null;
+    })();
+    criacaoEmAndamentoRef.current = criacao;
+    try {
+      return await criacao;
     } finally {
       criarPedidoRef.current = false;
+      criacaoEmAndamentoRef.current = null;
     }
   }, [criarPedidoBanco, pendingOrderId]);
 
