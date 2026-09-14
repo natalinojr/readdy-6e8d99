@@ -592,6 +592,16 @@ WhatsApp do assistente. Edge **`hiring-scheduler`** (x-internal-key/service role
   `fn_hiring_free_slots(job, limit)` (janelas, duração+intervalo, antecedência, datas bloqueadas,
   capacidade por horário, fuso SP); `fn_hiring_book(sessão, início, force)` atômica (lock por vaga):
   entrevista 'agendada' + candidato em "Entrevista agendada" (+ cancela a anterior na remarcação).
+- **Status das conversas (2026-09-14, Fase 3):** aba Contratação › **Agendamentos**
+  (`AgendamentosPainel.tsx`): linha do tempo Enviada → Entregue → Lida → Respondeu → Agendada →
+  Confirmada, filtros por status/vaga, conversa completa (`history`), pedidos aguardando entrevistador
+  (código) e quem está em "Chamar p/ entrevista" SEM convite com o motivo (vaga sem config/incompleta,
+  sem telefone, fora do horário, fila). Recibos: `hiring-scheduler` guarda o `key.id` da última
+  mensagem ao candidato (`last_out_msg_id`); o `assistente-webhook` trata `messages.update`
+  (`hiringReceipts`: DELIVERY_ACK → `delivered_at`, READ/PLAYED → `read_at`). Confirmação de
+  presença: a véspera pede "1 confirma / 2 não posso" (`confirm_requested_at`); no dia, das 8h até
+  1 h antes, pede de novo se faltar; "1" → `confirmed_at` + aviso aos entrevistadores; "2" → cancela
+  e oferece remarcar. Migration `20260914230000_hiring_agendamento_status.sql`.
 - Pegadinhas: `hiring_interviews.format` aceita presencial/telefone/**video** (não "online");
   enquete do WhatsApp não entrega voto (por isso respostas por número/texto).
 
@@ -690,6 +700,14 @@ MESMO número do assistente (a conversa direta dele estava parada desde que foi 
   WhatsApp com "Abrir candidato" e "Falar pelo meu WhatsApp".
 - Novo propósito (reservas, fornecedores…): valor novo em `bot_channels.purpose` + prompt/ferramentas
   próprias no `canal-publico` (hoje só `curriculos`).
+
+### Confirmação do currículo do WhatsApp também no Telegram (2026-09-14)
+
+Currículo salvo pela rota do WhatsApp do dono (`cvFromWhatsApp`) agora manda cópia da confirmação no
+Telegram ("📲 ✅ Currículo salvo…"). Caso real: 13:08, o PDF da Eduarda foi salvo e a confirmação saiu
+pela Evolution, mas o dono não viu nada no WhatsApp. **Publicado isolado** (último commit + só esse
+trecho, via `--workdir` numa pasta temporária) porque o arquivo local tinha `hiringReceipts` (recibos
+do agendamento) ainda não commitado de outra sessão; o arquivo local tem as duas mudanças.
 
 ### Último anexo por conversa + inscrever na vaga (2026-09-14)
 

@@ -486,8 +486,20 @@ async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: Msg
   }
   const c = out.candidate ?? {};
   const destino = [out.company_name, out.job_title ? `vaga ${out.job_title}` : null].filter(Boolean).join(' › ');
-  await sendText(number, `✅ Currículo salvo: *${c.full_name ?? 'candidato'}*${c.desired_role ? ` — ${c.desired_role}` : ''}${destino ? ` (${destino})` : ''}${out.duplicate ? `\n⚠️ Parece repetido: já existe ${out.duplicate}.` : ''}`).catch(() => {});
+  const confirmacao = `✅ Currículo salvo: *${c.full_name ?? 'candidato'}*${c.desired_role ? ` — ${c.desired_role}` : ''}${destino ? ` (${destino})` : ''}${out.duplicate ? `\n⚠️ Parece repetido: já existe ${out.duplicate}.` : ''}`;
+  await sendText(number, confirmacao).catch(() => {});
   if (msgKey) react(msgKey, '👍');
+  // Cópia no Telegram (canal principal): em 2026-09-14 a confirmação pelo WhatsApp não chegou e o dono
+  // achou que nada tinha acontecido. Lá também dá para seguir ("coloca na vaga X").
+  try {
+    const { data: tgId } = await admin.from('asst_settings').select('value').eq('key', 'telegram_owner_chat_id').maybeSingle();
+    if (tgId?.value) {
+      await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+        body: JSON.stringify({ action: 'deliver', chat_key: `tg:${tgId.value}`, text: `📲 ${confirmacao}${fileName ? `\n_${fileName}_` : ''}\nSe quiser, me diga a vaga que eu inscrevo.` }),
+      });
+    }
+  } catch (e) { log('WARN', 'cópia da confirmação no Telegram falhou', { error: errMsg(e) }); }
   log('INFO', 'currículo salvo (WhatsApp)', { candidate: c.id ?? null, job: alvo.job_id ?? null });
   return 'ok';
 }
@@ -507,6 +519,26 @@ async function ownerTestingPublic(admin: SupabaseClient, chatId: string, data: a
   const { data: conv } = await admin.from('bot_conversations').select('id').eq('contact_jid', chatId).eq('is_test', true).eq('status', 'aberta')
     .gt('last_message_at', new Date(Date.now() - 30 * 60_000).toISOString()).limit(1).maybeSingle();
   return !!conv;
+}
+
+// Recibo do WhatsApp (entregue / lida) da última mensagem do agendamento a cada candidato
+// (hiring_scheduling_sessions.last_out_msg_id) → painel Contratação › Agendamentos.
+// deno-lint-ignore no-explicit-any
+async function hiringReceipts(items: any[]) {
+  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  for (const it of items) {
+    if (it?.fromMe === false || it?.key?.fromMe === false) continue; // só recibos das NOSSAS mensagens
+    const id = String(it?.keyId ?? it?.key?.id ?? '');
+    const st = String(it?.status ?? it?.update?.status ?? '').toUpperCase();
+    if (!id || !st) continue;
+    const now = new Date().toISOString();
+    if (['DELIVERY_ACK', 'READ', 'PLAYED', '3', '4', '5'].includes(st)) {
+      await admin.from('hiring_scheduling_sessions').update({ delivered_at: now }).eq('last_out_msg_id', id).is('delivered_at', null);
+    }
+    if (['READ', 'PLAYED', '4', '5'].includes(st)) {
+      await admin.from('hiring_scheduling_sessions').update({ read_at: now }).eq('last_out_msg_id', id).is('read_at', null);
+    }
+  }
 }
 
 // Agendamento de entrevista: texto (ou áudio transcrito) de quem não é o dono vai primeiro ao
@@ -893,8 +925,12 @@ async function handle(payload: any) {
   const event = String(payload?.event ?? '').toLowerCase().replace('_', '.');
   if (event !== 'messages.upsert' && event !== 'messages.update') return;
   const data = payload?.data ?? {};
-  // messages.update chega a cada "entregue/lido" das nossas mensagens: só interessa voto em enquete.
-  if (event === 'messages.update' && !(Array.isArray(data) ? data : [data]).some((it) => it?.pollUpdates || it?.message?.pollUpdates)) return;
+  // messages.update chega a cada "entregue/lido" das nossas mensagens: interessa o voto em enquete e,
+  // desde 2026-09-14, o recibo (entregue/lida) das mensagens do agendamento de entrevista.
+  if (event === 'messages.update' && !(Array.isArray(data) ? data : [data]).some((it) => it?.pollUpdates || it?.message?.pollUpdates)) {
+    await hiringReceipts(Array.isArray(data) ? data : [data]).catch((e) => log('WARN', 'recibo do agendamento', { error: errMsg(e) }));
+    return;
+  }
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const { data: st } = await admin.from('asst_settings').select('key, value')
     .in('key', ['allowed_chat_ids', 'ui', 'channels', 'group_watch', 'owner_chat_id', 'telegram_owner_chat_id', 'primary_channel']);

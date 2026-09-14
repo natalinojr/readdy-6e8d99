@@ -47,11 +47,14 @@ const evoUrl = (Deno.env.get('EVOLUTION_URL') ?? '').replace(/\/$/, '');
 const evoKey = Deno.env.get('EVOLUTION_API_KEY') ?? '';
 const evoInstance = Deno.env.get('EVOLUTION_INSTANCE') || 'assistente';
 
-async function sendText(number: string, text: string) {
+// Devolve o id da mensagem no WhatsApp (key.id): o webhook usa para marcar entregue/lida no painel.
+async function sendText(number: string, text: string): Promise<string | null> {
   const r = await fetch(`${evoUrl}/message/sendText/${evoInstance}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', apikey: evoKey }, body: JSON.stringify({ number, text }),
   });
   if (!r.ok) throw new Error(`Evolution sendText → ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const out = await r.json().catch(() => ({}));
+  return out?.key?.id ? String(out.key.id) : null;
 }
 
 // ── utilidades ──
@@ -127,8 +130,8 @@ async function addHist(admin: SupabaseClient, sessId: string, de: string, texto:
   await admin.from('hiring_scheduling_sessions').update({ history: hist.slice(-80), updated_at: new Date().toISOString(), ...extra }).eq('id', sessId);
 }
 async function toCand(admin: SupabaseClient, c: Ctx, text: string, extra: Row = {}) {
-  await sendText(c.sess.phone, text);
-  await addHist(admin, c.sess.id, 'assistente', text, { last_out_at: new Date().toISOString(), ...extra });
+  const msgId = await sendText(c.sess.phone, text);
+  await addHist(admin, c.sess.id, 'assistente', text, { last_out_at: new Date().toISOString(), last_out_msg_id: msgId, delivered_at: null, read_at: null, ...extra });
 }
 async function toInterviewers(c: Ctx, text: string) {
   for (const it of (Array.isArray(c.cfg.interviewers) ? c.cfg.interviewers : []) as Row[]) {
@@ -150,6 +153,8 @@ async function book(admin: SupabaseClient, c: Ctx, startsAt: string, force: bool
       : 'Esse horário acabou de ser preenchido 😕 Vou ver outras opções com a equipe e te chamo.', { offered: livres, status: 'negociando' });
     return false;
   }
+  // Nova data = nova confirmação de presença
+  await admin.from('hiring_scheduling_sessions').update({ confirmed_at: null, confirm_requested_at: null }).eq('id', c.sess.id);
   const quando = fmtSlot(startsAt);
   const notas = String(c.cfg.candidate_notes ?? '').trim();
   await toCand(admin, c, `✅ Entrevista confirmada: *${quando}*\n${onde(c)}${notas ? `\n\n${notas}` : ''}\n\nSe tiver algum imprevisto, é só me avisar por aqui.`);
@@ -216,11 +221,18 @@ async function offerAgain(admin: SupabaseClient, c: Ctx, intro: string) {
   { offered: livres, status: 'negociando', pending_request: null });
 }
 
+// Candidato confirmou presença (pedido na véspera e, se faltar, na manhã do dia)
+async function confirmPresence(admin: SupabaseClient, c: Ctx) {
+  await admin.from('hiring_scheduling_sessions').update({ confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', c.sess.id);
+  await toCand(admin, c, `Perfeito, presença confirmada ✅ Te esperamos${c.sess.interview_at ? ` ${fmtSlot(c.sess.interview_at)}` : ''}!`);
+  await toInterviewers(c, `✅ ${c.cand.full_name} confirmou presença na entrevista (${c.job.title})${c.sess.interview_at ? ` — ${fmtSlot(c.sess.interview_at)}` : ''}.`);
+}
+
 async function cancelInterview(admin: SupabaseClient, c: Ctx) {
   if (c.sess.interview_id) await admin.from('hiring_interviews').update({ status: 'cancelada', updated_at: new Date().toISOString() }).eq('id', c.sess.interview_id).eq('status', 'agendada');
   const { data: st } = await admin.from('hiring_stages').select('id').eq('native_kind', 'agendar').maybeSingle();
   if (st?.id) await admin.from('hiring_candidates').update({ stage_id: st.id }).eq('id', c.cand.id);
-  await admin.from('hiring_scheduling_sessions').update({ interview_id: null, status: 'negociando', updated_at: new Date().toISOString() }).eq('id', c.sess.id);
+  await admin.from('hiring_scheduling_sessions').update({ interview_id: null, status: 'negociando', confirmed_at: null, confirm_requested_at: null, updated_at: new Date().toISOString() }).eq('id', c.sess.id);
 }
 
 async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
@@ -238,6 +250,16 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
   if (pend?.kind === 'proposta_gestor' && pend.starts_at) {
     if (/^(1|sim|pode|ok|confirm|fechado|beleza|combinado)\b/i.test(t)) { await book(admin, c, pend.starts_at, true); return; }
     if (/^(2|n[aã]o)\b/i.test(t)) { await offerAgain(admin, c, 'Sem problema! Estes são os horários da agenda:'); return; }
+  }
+  // Confirmação de presença pedida (véspera / no dia): "1" confirma, "2" não vai
+  if (sess.status === 'agendado' && sess.confirm_requested_at && !sess.confirmed_at) {
+    if (/^(1|sim|confirm|vou|estarei|ok|pode|combinado)\b/i.test(t)) { await confirmPresence(admin, c); return; }
+    if (/^(2|n[aã]o)\b/i.test(t)) {
+      await toInterviewers(c, `❌ ${c.cand.full_name} avisou que não vai à entrevista de ${c.job.title}${c.sess.interview_at ? ` (${fmtSlot(c.sess.interview_at)})` : ''}.`);
+      await cancelInterview(admin, c);
+      await offerAgain(admin, c, 'Sem problema, obrigado por avisar! Quer remarcar? Tenho estes horários:');
+      return;
+    }
   }
   const offered: string[] = Array.isArray(sess.offered) ? sess.offered : [];
   const num = t.match(/^\s*(?:op[çc][aã]o\s*)?(\d{1,2})\s*[).]?\s*$/i);
@@ -274,6 +296,7 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
     await toInterviewers(c, `ℹ️ ${c.cand.full_name} não quer mais participar da vaga ${c.job.title}.`);
     return;
   }
+  if (intencao === 'confirmar' && sess.status === 'agendado' && !sess.confirmed_at) { await confirmPresence(admin, c); return; }
   const resp = String(r.resposta ?? '').trim();
   if (resp) { await toCand(admin, c, resp.slice(0, 700)); return; }
   if (sess.status !== 'agendado' && offered.length) await toCand(admin, c, `Pra marcar, responda com o número do horário:\n${slotsText(offered)}`);
@@ -342,7 +365,7 @@ async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
 
 // ── tick: convites, cobrança, lembretes ──
 async function tick(admin: SupabaseClient) {
-  const res = { invited: 0, followups: 0, sem_resposta: 0, reminded: 0 };
+  const res = { invited: 0, followups: 0, sem_resposta: 0, reminded: 0, confirm_asked: 0 };
   const hora = localHour();
   const comercial = hora >= HOUR_START && hora < HOUR_END;
 
@@ -421,9 +444,28 @@ async function tick(admin: SupabaseClient) {
       const c = await loadCtx(admin, s);
       if (!c) continue;
       const quando = fmtSlot(iv.scheduled_at);
-      await toCand(admin, c, `Oi, ${firstName(c.cand.full_name)}! Lembrando da sua entrevista amanhã: *${quando}*\n${onde(c)}\n\nSe não puder ir, me avise por aqui.`, { reminder_sent_at: new Date().toISOString() });
+      await toCand(admin, c, `Oi, ${firstName(c.cand.full_name)}! Lembrando da sua entrevista amanhã: *${quando}*\n${onde(c)}\n\nConfirma presença? Responda *1* para confirmar ou *2* se não puder ir.`,
+        { reminder_sent_at: new Date().toISOString(), confirm_requested_at: new Date().toISOString() });
       await toInterviewers(c, `⏰ Amanhã: entrevista com ${c.cand.full_name} (${c.job.title}) — ${quando}.`);
       res.reminded++;
+    }
+  }
+
+  // No dia (a partir das 8h, até 1 h antes): quem ainda não confirmou recebe o pedido de confirmação
+  if (hora >= 8 && hora < 20) {
+    const hoje = localDate(new Date());
+    const { data: doDia } = await admin.from('hiring_scheduling_sessions').select('*, hiring_interviews!hiring_scheduling_sessions_interview_id_fkey(scheduled_at, status)')
+      .eq('status', 'agendado').is('confirmed_at', null).not('interview_id', 'is', null).limit(50);
+    for (const s of (doDia ?? []) as Row[]) {
+      const iv = s.hiring_interviews as Row | null;
+      if (!iv || iv.status !== 'agendada' || localDate(new Date(iv.scheduled_at)) !== hoje) continue;
+      if (new Date(iv.scheduled_at).getTime() - Date.now() < 3600_000) continue;
+      if (s.confirm_requested_at && localDate(new Date(s.confirm_requested_at)) === hoje) continue; // já pediu hoje
+      const c = await loadCtx(admin, s);
+      if (!c) continue;
+      await toCand(admin, c, `Bom dia, ${firstName(c.cand.full_name)}! Hoje é o dia da sua entrevista: *${fmtSlot(iv.scheduled_at)}*\n${onde(c)}\n\nResponda *1* para confirmar ou *2* se não puder ir.`,
+        { confirm_requested_at: new Date().toISOString() });
+      res.confirm_asked++;
     }
   }
   return res;

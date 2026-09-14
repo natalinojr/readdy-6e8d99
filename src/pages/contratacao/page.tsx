@@ -28,9 +28,10 @@ import RelatoriosContratacao from './components/RelatoriosContratacao';
 import Kanban from './components/Kanban';
 import ConfiguracoesContratacao from './components/ConfiguracoesContratacao';
 import LinksWhatsApp from './components/LinksWhatsApp';
+import AgendamentosPainel from './components/AgendamentosPainel';
 
 interface QueueItem { key: string; name: string; state: 'lendo' | 'ok' | 'erro'; msg?: string }
-type Aba = 'candidatos' | 'vagas' | 'kanban' | 'agenda' | 'relatorios' | 'links' | 'config';
+type Aba = 'candidatos' | 'vagas' | 'kanban' | 'agenda' | 'agendamentos' | 'relatorios' | 'links' | 'config';
 type ModalState = { interview: Interview | null; candidateId?: string | null; date?: string | null } | null;
 
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -41,6 +42,7 @@ const ABAS: { id: Aba; label: string; icon: string }[] = [
   { id: 'vagas', label: 'Vagas', icon: 'ri-briefcase-4-line' },
   { id: 'kanban', label: 'Kanban', icon: 'ri-layout-column-line' },
   { id: 'agenda', label: 'Agenda', icon: 'ri-calendar-2-line' },
+  { id: 'agendamentos', label: 'Agendamentos', icon: 'ri-chat-check-line' },
   { id: 'relatorios', label: 'Relatórios', icon: 'ri-bar-chart-2-line' },
   { id: 'links', label: 'Links WhatsApp', icon: 'ri-whatsapp-line' },
   { id: 'config', label: 'Configurações', icon: 'ri-settings-3-line' },
@@ -517,6 +519,8 @@ export default function ContratacaoPage() {
       ) : aba === 'agenda' ? (
         <AgendaEntrevistas interviews={ivsDaEmpresa} candidates={items} companies={companies} mostrarEmpresa={mostrarEmpresa}
           onOpenInterview={(iv) => setModal({ interview: iv })} onNew={(date) => setModal({ interview: null, date })} />
+      ) : aba === 'agendamentos' ? (
+        <AgendamentosPainel candidates={items} jobs={jobs} companies={companies} stages={stages} mostrarEmpresa={mostrarEmpresa} onOpenCandidate={setSelId} />
       ) : aba === 'relatorios' ? (
         <RelatoriosContratacao candidates={daEmpresa} interviews={interviews} companies={companies} stages={stages} settings={settings}
           mostrarEmpresa={mostrarEmpresa} onOpen={setSelId} />
