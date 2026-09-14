@@ -121,7 +121,7 @@ async function loadCtx(admin: SupabaseClient, sess: Row): Promise<Ctx | null> {
     admin.from('hiring_candidates').select('id, full_name, phone, stage_id').eq('id', sess.candidate_id).maybeSingle(),
   ]);
   if (!job || !cfg || !cand) return null;
-  const { data: company } = job.company_id ? await admin.from('hiring_companies').select('name, address').eq('id', job.company_id).maybeSingle() : { data: null };
+  const { data: company } = job.company_id ? await admin.from('hiring_companies').select('name, address, city, lat, lng').eq('id', job.company_id).maybeSingle() : { data: null };
   return { sess, job, cfg, cand, company };
 }
 
@@ -133,6 +133,15 @@ async function freeSlots(admin: SupabaseClient, jobId: string, limit = OFFER): P
 const slotsText = (slots: string[]) => slots.map((s, i) => `${i + 1}) ${fmtSlot(s)}`).join('\n');
 const onde = (c: Ctx) => c.cfg.format === 'video' ? `online${c.cfg.location ? ` (${c.cfg.location})` : ''}` : c.cfg.format === 'telefone' ? 'por telefone' : `presencial${c.cfg.location ? ` — ${c.cfg.location}` : ''}`;
 const empresa = (c: Ctx) => c.company?.name ?? 'nossa equipe';
+// Link do mapa (entrevista presencial): pelo pin da loja; sem pin, pelo endereço. Vai só depois que
+// o candidato marca (confirmação e lembretes), não no convite.
+function mapa(c: Ctx): string {
+  if (c.cfg.format !== 'presencial') return '';
+  const co = c.company;
+  const q = co?.lat != null && co?.lng != null ? `${co.lat},${co.lng}`
+    : [co?.address, co?.city].filter(Boolean).join(', ') ? encodeURIComponent([co?.address, co?.city].filter(Boolean).join(', ')) : '';
+  return q ? `\n📍 Como chegar: https://www.google.com/maps/search/?api=1&query=${q}` : '';
+}
 
 async function addHist(admin: SupabaseClient, sessId: string, de: string, texto: string, extra: Row = {}) {
   const { data } = await admin.from('hiring_scheduling_sessions').select('history').eq('id', sessId).maybeSingle();
@@ -186,7 +195,7 @@ async function book(admin: SupabaseClient, c: Ctx, startsAt: string, force: bool
   await admin.from('hiring_scheduling_sessions').update({ confirmed_at: null, confirm_requested_at: null }).eq('id', c.sess.id);
   const quando = fmtSlot(startsAt);
   const notas = String(c.cfg.candidate_notes ?? '').trim();
-  await toCand(admin, c, `✅ Entrevista confirmada: *${quando}*\n${onde(c)}${notas ? `\n\n${notas}` : ''}\n\nSe tiver algum imprevisto, é só me avisar por aqui.`);
+  await toCand(admin, c, `✅ Entrevista confirmada: *${quando}*\n${onde(c)}${mapa(c)}${notas ? `\n\n${notas}` : ''}\n\nSe tiver algum imprevisto, é só me avisar por aqui.`);
   await toInterviewers(c, `📅 Entrevista agendada — ${c.job.title}\n${c.cand.full_name} (${digits(c.cand.phone)})\n${quando} · ${onde(c)}${force ? '\n(horário fora da agenda, aceito pela equipe)' : ''}`);
   log('INFO', 'entrevista agendada', { sess: c.sess.id, starts_at: startsAt, force });
   return true;
@@ -547,7 +556,7 @@ async function tick(admin: SupabaseClient) {
       const c = await loadCtx(admin, s);
       if (!c) continue;
       const quando = fmtSlot(iv.scheduled_at);
-      await toCand(admin, c, `Oi, ${firstName(c.cand.full_name)}! Lembrando da sua entrevista amanhã: *${quando}*\n${onde(c)}\n\nVocê confirma presença? Responda *sim* para confirmar ou *não* se não puder ir.`,
+      await toCand(admin, c, `Oi, ${firstName(c.cand.full_name)}! Lembrando da sua entrevista amanhã: *${quando}*\n${onde(c)}${mapa(c)}\n\nVocê confirma presença? Responda *sim* para confirmar ou *não* se não puder ir.`,
         { reminder_sent_at: new Date().toISOString(), confirm_requested_at: new Date().toISOString() });
       await toInterviewers(c, `⏰ Amanhã: entrevista com ${c.cand.full_name} (${c.job.title}) — ${quando}.`);
       res.reminded++;
@@ -566,7 +575,7 @@ async function tick(admin: SupabaseClient) {
       if (s.confirm_requested_at && localDate(new Date(s.confirm_requested_at)) === hoje) continue; // já pediu hoje
       const c = await loadCtx(admin, s);
       if (!c) continue;
-      await toCand(admin, c, `Bom dia, ${firstName(c.cand.full_name)}! Hoje é o dia da sua entrevista: *${fmtSlot(iv.scheduled_at)}*\n${onde(c)}\n\nVocê confirma presença? Responda *sim* para confirmar ou *não* se não puder ir.`,
+      await toCand(admin, c, `Bom dia, ${firstName(c.cand.full_name)}! Hoje é o dia da sua entrevista: *${fmtSlot(iv.scheduled_at)}*\n${onde(c)}${mapa(c)}\n\nVocê confirma presença? Responda *sim* para confirmar ou *não* se não puder ir.`,
         { confirm_requested_at: new Date().toISOString() });
       res.confirm_asked++;
     }
