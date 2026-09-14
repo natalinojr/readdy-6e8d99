@@ -49,12 +49,13 @@ const SHARE_OPTIONS: [string, string][] = [
 const DEFAULT_SHARE = ['company', 'schedule', 'contract_type', 'description', 'benefits'];
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const newCode = () => `CV-${Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => ALPHA[b % ALPHA.length]).join('')}`;
-// Link curto para divulgar: /v/CÓDIGO → vercel.json redireciona para canal-publico?go=, que manda
-// para o wa.me com a mensagem pronta do canal (a mensagem pode mudar sem trocar o link).
-const APP_URL = String(import.meta.env.VITE_APP_URL || window.location.origin).replace(/\/$/, '');
-const shortLink = (code: string) => `${APP_URL}/v/${code}`;
-const defaultStart = (job: Job | null, company: Company | null, code: string) =>
-  `Olá! Quero enviar meu currículo${job ? ` para a vaga de ${job.title}` : ''}${company ? ` na ${company.name}` : ''}. (código ${code})`;
+// Divulga SEMPRE o wa.me direto: dentro do WhatsApp/Instagram só um link wa.me abre a conversa na hora.
+// Link curto próprio (/v/CÓDIGO no vercel.json) passa pelo navegador e para na página "Continuar para
+// a conversa" (teste do dono, 2026-09-14). Para o link ficar curto, a mensagem pronta é curta e sem acento.
+const waLink = (num: string, text: string) => `https://wa.me/${num}?text=${encodeURIComponent(text)}`;
+// Curta e sem acento (cada acento vira %C3%xx no link). O atendente já sabe a vaga e a loja pelo código.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const defaultStart = (_job: Job | null, _company: Company | null, code: string) => `Quero me candidatar (${code})`;
 const NUM_KEY = 'contratacao_wa_number';
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* sem storage */ } };
@@ -111,7 +112,7 @@ export default function LinksWhatsApp({ companies, jobs, onOpenCandidate }: Prop
 
   const copiar = async (ch: BotChannel) => {
     if (!number) { avisar('Informe o número do WhatsApp do assistente primeiro.'); return; }
-    try { await navigator.clipboard.writeText(shortLink(ch.code)); setCopied(ch.id); setTimeout(() => setCopied(null), 1800); }
+    try { await navigator.clipboard.writeText(waLink(number, ch.start_text)); setCopied(ch.id); setTimeout(() => setCopied(null), 1800); }
     catch { avisar('Não consegui copiar. Abra o QR Code e copie o link de lá.'); }
   };
 
@@ -389,7 +390,7 @@ function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) =
 
 // ── QR Code ──
 function QrModal({ ch, number, onClose }: { ch: BotChannel; number: string; onClose: () => void }) {
-  const link = number ? shortLink(ch.code) : '';
+  const link = number ? waLink(number, ch.start_text) : '';
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-[60]" onClick={onClose} />

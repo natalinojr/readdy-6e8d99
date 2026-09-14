@@ -1888,6 +1888,12 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
   com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
   causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
+- **Link de candidatura = wa.me direto (2026-09-14)**. Tentamos um link curto próprio
+  (`erpos.vercel.app/v/CÓDIGO` → `vercel.json` → `canal-publico?go=` → 302 para wa.me). Tecnicamente
+  funciona, mas dentro do WhatsApp/Instagram só um link `wa.me` abre a conversa na hora; o curto passa
+  pelo navegador e para na página "Continuar para a conversa". A tela copia sempre o `wa.me`; para ficar
+  curto, a mensagem pronta é curta e sem acento ("Quero me candidatar (CV-XXXX)"). O `/v/` ficou no
+  ar só para quem já recebeu.
 - **Agendamento de entrevista: respostas livres (2026-09-14)**. O candidato não precisa responder
   com número. O `classify` do `hiring-scheduler` recebe as últimas falas e devolve `preferencia`
   ({data, depois_de, antes_de, periodo}) para pedidos vagos ("segunda depois das 16h"). Aí o
