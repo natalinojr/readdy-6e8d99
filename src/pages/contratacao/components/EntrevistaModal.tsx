@@ -7,7 +7,7 @@ import {
   type Candidate, type Company, type Decision, type Interview, type InterviewFormat, type InterviewStatus, type Settings, type Stage,
   FORMATS, INTERVIEW_STATUS, DECISIONS, whatsLink, firstName, companyName, inviteText, stageOf, stageByKind, withEmpresa,
 } from '../shared';
-import { confirmar } from '../dialog';
+import { confirmar, avisar } from '../dialog';
 
 export type CandidatePatch = { id: string; stage_id?: string; decision?: Decision | null };
 
@@ -115,7 +115,13 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
       if (patch.stage_id) upd.stage_id = patch.stage_id;
       if (patch.decision) upd.decision = patch.decision;
       if (Object.keys(upd).length) {
-        await supabase.from('hiring_candidates').update({ ...upd, updated_at: new Date().toISOString() }).eq('id', cand.id);
+        const { error: candErr } = await supabase.from('hiring_candidates').update({ ...upd, updated_at: new Date().toISOString() }).eq('id', cand.id);
+        // Ficha incompleta (trava do banco): a entrevista fica salva, mas o candidato não muda de fase.
+        if (candErr && patch.stage_id) {
+          delete patch.stage_id;
+          if (patch.decision) await supabase.from('hiring_candidates').update({ decision: patch.decision, updated_at: new Date().toISOString() }).eq('id', cand.id);
+          avisar(`Entrevista salva, mas o candidato continua na fase atual. ${candErr.message}`);
+        }
       }
     }
     setSaving(false);

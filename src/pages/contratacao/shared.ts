@@ -191,6 +191,7 @@ export interface Candidate {
   file_type: string | null;
   raw_text: string | null;
   ai_processed: boolean;
+  source?: string | null; // 'whatsapp_link' quando veio pelo link público
   created_at: string;
 }
 
@@ -255,9 +256,47 @@ export function avgScore(scores: Record<string, number> | null | undefined): num
   return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
 }
 
+// ── Dados mínimos da ficha ──────────────────────────────────────────────────
+// Mesma regra da função do banco hiring_missing_fields (que trava a saída de "Novo") e do
+// atendente do WhatsApp (canal-publico), que pergunta ao candidato o que faltar.
+export type RequiredField = 'full_name' | 'phone' | 'email' | 'birth_date' | 'address' | 'neighborhood' | 'city' | 'marital_status'
+  | 'education' | 'experiences' | 'availability' | 'desired_role' | 'salary_expectation' | 'driver_license';
+export const REQUIRED_FIELDS: { id: RequiredField; label: string; sensivel?: boolean }[] = [
+  { id: 'full_name', label: 'Nome completo' },
+  { id: 'phone', label: 'Telefone' },
+  { id: 'email', label: 'E-mail' },
+  { id: 'birth_date', label: 'Data de nascimento' },
+  { id: 'address', label: 'Endereço (rua e número)' },
+  { id: 'neighborhood', label: 'Bairro' },
+  { id: 'city', label: 'Cidade' },
+  { id: 'marital_status', label: 'Estado civil', sensivel: true },
+  { id: 'education', label: 'Escolaridade' },
+  { id: 'experiences', label: 'Experiências anteriores' },
+  { id: 'availability', label: 'Disponibilidade de horário' },
+  { id: 'desired_role', label: 'Cargo pretendido' },
+  { id: 'salary_expectation', label: 'Pretensão salarial' },
+  { id: 'driver_license', label: 'CNH' },
+];
+export const DEFAULT_REQUIRED: RequiredField[] = ['full_name', 'phone', 'birth_date', 'address', 'city', 'education', 'experiences'];
+const vazio = (v: unknown) => !String(v ?? '').trim();
+/** Dados mínimos que faltam na ficha (vazio = completa). */
+export function faltasFicha(c: Candidate, required: RequiredField[]): { id: RequiredField; label: string }[] {
+  const falta = (f: RequiredField) => {
+    switch (f) {
+      case 'phone': return onlyDigits(c.phone).length < 10;
+      case 'email': return !String(c.email ?? '').includes('@');
+      case 'education': return !(c.education?.length);
+      case 'experiences': return !(c.experiences?.length);
+      default: return vazio(c[f]);
+    }
+  };
+  return REQUIRED_FIELDS.filter((f) => required.includes(f.id) && falta(f.id));
+}
+
 // ── Configurações (hiring_settings.data) ────────────────────────────────────
 export interface Criterion { id: string; label: string }
 export interface Settings {
+  required_fields: RequiredField[]; // dados mínimos para sair da fase "Novo"
   questions: Criterion[]; // perguntas do questionário da entrevista ({empresa} vira o nome da empresa)
   criteria: Criterion[];
   invite_template: string;
@@ -266,6 +305,7 @@ export interface Settings {
   default_interviewer: string;
 }
 export const DEFAULT_SETTINGS: Settings = {
+  required_fields: DEFAULT_REQUIRED,
   questions: [
     { id: 'filhos', label: 'Filhos' },
     { id: 'contribuicao', label: 'Como sua formação e experiência anterior poderá contribuir com a {empresa}?' },
@@ -293,7 +333,10 @@ export const DEFAULT_SETTINGS: Settings = {
 export function mergeSettings(data: Record<string, any> | null | undefined): Settings {
   const d = data ?? {};
   return {
+    ...d, // preserva chaves que esta tela não conhece
     // Lista salva (mesmo vazia) vale; sem nada salvo, usa o padrão.
+    required_fields: Array.isArray(d.required_fields)
+      ? d.required_fields.filter((f: string) => REQUIRED_FIELDS.some((x) => x.id === f)) : DEFAULT_REQUIRED,
     questions: Array.isArray(d.questions) ? d.questions : DEFAULT_SETTINGS.questions,
     criteria: Array.isArray(d.criteria) ? d.criteria : DEFAULT_SETTINGS.criteria,
     invite_template: typeof d.invite_template === 'string' && d.invite_template.trim() ? d.invite_template : DEFAULT_SETTINGS.invite_template,

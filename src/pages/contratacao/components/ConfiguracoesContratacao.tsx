@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
   type Candidate, type Company, type Criterion, type Settings, type Stage, COLORS, NATIVE_LABEL, DEFAULT_SETTINGS, colorOf, slug, geocodeText,
+  type RequiredField, REQUIRED_FIELDS, DEFAULT_REQUIRED, faltasFicha,
 } from '../shared';
 
 // Leaflet só carrega quando alguém abre o mapa de uma loja.
@@ -26,6 +27,7 @@ export default function ConfiguracoesContratacao({ companies, stages, settings, 
     <div className="space-y-5 max-w-3xl">
       <Empresas companies={companies} candidates={candidates} onReload={onReload} onRecalcCompany={onRecalcCompany} />
       <Fases stages={stages} candidates={candidates} onReload={onReload} />
+      <DadosMinimos settings={settings} candidates={candidates} stages={stages} onSaved={onSettingsSaved} />
       <FichaEConvite settings={settings} onSaved={onSettingsSaved} />
     </div>
   );
@@ -247,6 +249,55 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (c: string)
         </>
       )}
     </div>
+  );
+}
+
+// ── Dados mínimos da ficha ──────────────────────────────────────────────────
+// Sem eles o candidato não sai de "Novo" (trava no banco) e o atendente do WhatsApp pergunta o que faltar.
+function DadosMinimos({ settings, candidates, stages, onSaved }: {
+  settings: Settings; candidates: Candidate[]; stages: Stage[]; onSaved: (s: Settings) => void;
+}) {
+  const [sel, setSel] = useState<RequiredField[]>(settings.required_fields);
+  const [saving, setSaving] = useState(false);
+  const [ok, setOk] = useState(false);
+  useEffect(() => { setSel(settings.required_fields); }, [settings.required_fields]);
+  const dirty = JSON.stringify([...sel].sort()) !== JSON.stringify([...settings.required_fields].sort());
+  const novoId = stages.find((s) => s.native_kind === 'novo')?.id ?? null;
+  const emNovo = candidates.filter((c) => !c.stage_id || c.stage_id === novoId);
+  const incompletos = emNovo.filter((c) => faltasFicha(c, sel).length > 0).length;
+  const toggle = (id: RequiredField) => { setOk(false); setSel((x) => (x.includes(id) ? x.filter((f) => f !== id) : [...x, id])); };
+
+  const salvar = async () => {
+    setSaving(true); setOk(false);
+    const next: Settings = { ...settings, required_fields: REQUIRED_FIELDS.map((f) => f.id).filter((f) => sel.includes(f)) };
+    const { error } = await supabase.from('hiring_settings').upsert({ id: 1, data: next, updated_at: new Date().toISOString() });
+    setSaving(false);
+    if (error) { avisar(`Não foi possível salvar: ${error.message}`); return; }
+    setOk(true);
+    onSaved(next);
+  };
+
+  return (
+    <Card titulo="Dados mínimos da ficha" desc='O candidato só sai da fase "Novo" com estes dados preenchidos (pode ir direto para "Descartado"). Quando o currículo chega pelo link do WhatsApp sem algum deles, o atendente pergunta ao candidato e vai preenchendo a ficha.'>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+        {REQUIRED_FIELDS.map((f) => (
+          <label key={f.id} className={`flex items-center gap-2 px-3 h-9 rounded-lg border text-sm cursor-pointer ${sel.includes(f.id) ? 'border-rose-300 bg-rose-50 text-zinc-900' : 'border-zinc-200 text-zinc-600'}`}>
+            <input type="checkbox" checked={sel.includes(f.id)} onChange={() => toggle(f.id)} className="accent-rose-600" />
+            {f.label}
+            {f.sensivel && <span className="ml-auto text-[10px] text-amber-600" title="Pergunta pessoal: exigir pode ser visto como discriminatório na seleção">sensível</span>}
+          </label>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-3 mt-3">
+        <button onClick={salvar} disabled={!dirty || saving}
+          className="px-4 h-9 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-sm font-bold cursor-pointer">
+          {saving ? 'Salvando…' : 'Salvar'}
+        </button>
+        <button onClick={() => { setOk(false); setSel(DEFAULT_REQUIRED); }} className="text-xs text-sky-700 font-semibold cursor-pointer">Restaurar padrão</button>
+        {ok && !dirty && <span className="text-xs text-emerald-600 font-semibold"><i className="ri-check-line" /> Salvo</span>}
+        <span className="text-[11px] text-zinc-500 sm:ml-auto">{incompletos} de {emNovo.length} candidato{emNovo.length === 1 ? '' : 's'} em "Novo" com ficha incompleta</span>
+      </div>
+    </Card>
   );
 }
 

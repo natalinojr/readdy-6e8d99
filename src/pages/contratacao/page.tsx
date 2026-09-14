@@ -13,7 +13,7 @@ import { readCurriculoPdf } from '@/lib/curriculoLocal';
 import {
   type Application, type Candidate, type Company, type Interview, type Job, type Settings, type Stage, matchWithAi,
   type Distance, calcDistancesAi, distancesForCompany,
-  BUCKET, DECISIONS, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind,
+  BUCKET, DECISIONS, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind, faltasFicha,
 } from './shared';
 import type { CandidatePatch } from './components/EntrevistaModal';
 import { DialogHost, confirmar, avisar } from './dialog';
@@ -244,6 +244,19 @@ export default function ContratacaoPage() {
   }, [processFile, empresaUpload, vagaUpload, jobs]);
 
   const updateCandidate = useCallback(async (id: string, patch: Partial<Candidate>) => {
+    // Ficha incompleta não sai de "Novo" (exceto para "Descartado"). O banco também trava.
+    if (patch.stage_id) {
+      const atual = items.find((x) => x.id === id);
+      const de = atual ? stageOf(stages, atual.stage_id) : null;
+      const para = stages.find((s) => s.id === patch.stage_id);
+      if (atual && de?.native_kind === 'novo' && para && para.native_kind !== 'novo' && para.native_kind !== 'descartado') {
+        const faltam = faltasFicha({ ...atual, ...patch }, settings.required_fields);
+        if (faltam.length) {
+          avisar(`Ficha incompleta: faltam ${faltam.map((f) => f.label.toLowerCase()).join(', ')}. Complete os dados mínimos na ficha antes de tirar ${atual.full_name.split(' ')[0]} de "${de.name}".`);
+          return;
+        }
+      }
+    }
     setItems((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
     const { error } = await supabase.from('hiring_candidates').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id);
     if (error) { avisar(`Não foi possível salvar: ${error.message}`); carregar(); return; }
@@ -256,7 +269,7 @@ export default function ContratacaoPage() {
       if (patch.company_id) calcDistances(id).catch(() => {});
       else await supabase.from('hiring_distances').delete().eq('candidate_id', id);
     }
-  }, [carregar, calcDistances]);
+  }, [carregar, calcDistances, items, stages, settings.required_fields]);
 
   // IA sob demanda: baixa o original do bucket e completa a ficha (mantém fase/nota/anotações/empresa).
   const organizarComIA = useCallback(async (c: Candidate) => {
@@ -645,6 +658,7 @@ export default function ContratacaoPage() {
           c={sel}
           companies={companies}
           stages={stages}
+          required={settings.required_fields}
           interviews={interviews.filter((iv) => iv.candidate_id === sel.id)}
           jobs={jobs}
           applications={applications.filter((a) => a.candidate_id === sel.id)}

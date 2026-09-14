@@ -1874,6 +1874,13 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   edge `canal-publico` (Haiku, sem sessão do dono, só ferramentas do canal). Regra: o que o
   atendente público pode dizer vem SÓ do canal (`share_fields`, `extra_info`); o limite é no
   servidor, nunca só no prompt. Detalhes em `assistente/README.md` › "Canais públicos".
+- **Dados mínimos da ficha (Contratação, 2026-09-14)**: lista em `hiring_settings.data.required_fields`
+  (Configurações › Dados mínimos). A regra fica em UM lugar, no banco: `hiring_missing_fields(c)`
+  e `hiring_missing_fields_by_id(uuid)`. O trigger `hiring_candidates_stage_guard` barra a saída de
+  "Novo" (menos para "Descartado") com ficha incompleta, seja pela tela, pelo assistente ou por outra
+  edge. A tela espelha a regra em `faltasFicha` (shared.ts) só para avisar antes. No `canal-publico`,
+  o atendente pergunta o que falta e grava pela ferramenta `completar_ficha`. Campo novo na
+  lista = mexer nos três: o CASE da função SQL, `REQUIRED_FIELDS` e `FIELD_LABELS`/`FIELD_ASK`.
 - **Loja × perfil pelo Admin Master**: `fn_admin_set_user_tenant` (upsert em `user_tenants`,
   papéis admin/manager/cashier/waiter/kitchen/delivery_manager/tasks_only) e
   `fn_admin_remove_user_tenant`. A pessoa só vê a mudança no próximo login/troca de loja

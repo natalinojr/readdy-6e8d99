@@ -5,6 +5,7 @@ import {
   type Application, type Candidate, type Company, type Decision, type Interview, type Job, type Stage, BUCKET, DECISIONS, FIT, fitOf,
   type Distance, fmtKm, distCls, PRECISION_LABEL,
   fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf, decisionOf, withEmpresa, ageOf, companyName,
+  type RequiredField, REQUIRED_FIELDS, faltasFicha, onlyDigits,
 } from '../shared';
 import { avisar } from '../dialog';
 
@@ -12,6 +13,7 @@ interface Props {
   c: Candidate;
   companies: Company[];
   stages: Stage[];
+  required: RequiredField[];
   interviews: Interview[];
   jobs: Job[];
   applications: Application[];
@@ -29,7 +31,7 @@ interface Props {
 }
 
 export default function CandidatoDrawer({
-  c, companies, stages, interviews, jobs, applications, analyzing, onApply, onOpenJob, distances, onCalcDistances,
+  c, companies, stages, required, interviews, jobs, applications, analyzing, onApply, onOpenJob, distances, onCalcDistances,
   onClose, onUpdate, onDelete, onOrganizar, onAgendar, onOpenInterview,
 }: Props) {
   // Distância só até a loja escolhida na ficha (regra do dono). Calcula sozinha ao abrir quando a
@@ -78,6 +80,9 @@ export default function CandidatoDrawer({
   const empresa = c.company_id ? companyName(companies, c.company_id) : '';
   const idade = ageOf(c);
   const dec = decisionOf(c.decision);
+  const faltam = faltasFicha(c, required);
+  const [editando, setEditando] = useState(false);
+  useEffect(() => { setEditando(false); }, [c.id]);
 
   return (
     <>
@@ -114,6 +119,25 @@ export default function CandidatoDrawer({
               {companies.filter((x) => x.is_active || x.id === c.company_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
             </select>
           </div>
+
+          {/* Dados mínimos: aviso do que falta + edição */}
+          {(faltam.length > 0 || editando) ? (
+            <div className={`rounded-xl border p-3 ${faltam.length ? 'border-amber-200 bg-amber-50' : 'border-zinc-200 bg-zinc-50'}`}>
+              {faltam.length > 0 ? (
+                <p className="text-xs text-amber-900">
+                  <b><i className="ri-error-warning-line" /> Ficha incompleta.</b> Faltam: {faltam.map((f) => f.label.toLowerCase()).join(', ')}.
+                  {' '}Sem esses dados o candidato não sai de "{stages.find((s) => s.native_kind === 'novo')?.name ?? 'Novo'}".
+                  {c.source?.startsWith('whatsapp_link') && ' O atendente do WhatsApp está perguntando ao candidato.'}
+                </p>
+              ) : <p className="text-xs font-bold text-zinc-600">Dados mínimos</p>}
+              <DadosMinimosForm key={c.id} c={c} campos={editando ? REQUIRED_FIELDS.filter((f) => required.includes(f.id)) : faltam}
+                onSave={(patch) => { onUpdate(patch); setEditando(false); }} onCancel={editando ? () => setEditando(false) : undefined} />
+            </div>
+          ) : required.length > 0 && (
+            <button onClick={() => setEditando(true)} className="text-xs font-semibold text-emerald-700 cursor-pointer">
+              <i className="ri-checkbox-circle-line" /> Dados mínimos completos · editar
+            </button>
+          )}
 
           {/* Tomada de decisão */}
           <div>
@@ -376,6 +400,62 @@ export default function CandidatoDrawer({
         </div>
       </aside>
     </>
+  );
+}
+
+// Campos dos dados mínimos. Escolaridade e experiências viram um item de texto livre (não apaga
+// os itens lidos do currículo: quando já existem, só mostra quantos são).
+function DadosMinimosForm({ c, campos, onSave, onCancel }: {
+  c: Candidate; campos: { id: RequiredField; label: string }[];
+  onSave: (patch: Partial<Candidate>) => void; onCancel?: () => void;
+}) {
+  const inicial = (id: RequiredField) => (id === 'education' || id === 'experiences' ? '' : String(c[id] ?? ''));
+  const [v, setV] = useState<Record<string, string>>(() => Object.fromEntries(campos.map((f) => [f.id, inicial(f.id)])));
+  if (!campos.length) return null;
+  const set = (k: string, x: string) => setV((o) => ({ ...o, [k]: x }));
+  const salvar = () => {
+    const patch: Record<string, unknown> = {};
+    for (const f of campos) {
+      const x = (v[f.id] ?? '').trim();
+      if (f.id === 'education') { if (x) patch.education = [...(c.education ?? []), { instituicao: null, curso: null, nivel: x, situacao: null }]; continue; }
+      if (f.id === 'experiences') { if (x) patch.experiences = [...(c.experiences ?? []), { empresa: null, cargo: null, inicio: null, fim: null, atual: false, descricao: x }]; continue; }
+      const val = f.id === 'phone' ? onlyDigits(x) || null : x || null;
+      if (val !== (c[f.id] ?? null)) patch[f.id] = f.id === 'full_name' ? (val ?? c.full_name) : val;
+    }
+    // Endereço mudou: a localização antiga deixa de valer (o "Recalcular" refaz).
+    if (['address', 'neighborhood', 'city'].some((k) => k in patch)) Object.assign(patch, { lat: null, lng: null, geo_label: null, geo_precision: null });
+    onSave(patch as Partial<Candidate>);
+  };
+  const inputCls = 'w-full h-9 px-3 rounded-lg border border-zinc-200 bg-white text-sm mt-0.5';
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {campos.map((f) => {
+          const lista = f.id === 'education' ? c.education : f.id === 'experiences' ? c.experiences : null;
+          const longo = lista != null;
+          return (
+            <label key={f.id} className={`block ${longo ? 'sm:col-span-2' : ''}`}>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{f.label}</span>
+              {longo ? (
+                <>
+                  {lista!.length > 0 && <span className="block text-[10px] text-zinc-400">{lista!.length} já na ficha — escreva só para acrescentar</span>}
+                  <textarea value={v[f.id] ?? ''} onChange={(e) => set(f.id, e.target.value)} rows={2}
+                    placeholder={f.id === 'education' ? 'Ex.: Ensino médio completo' : 'Ex.: Atendente no Burger X, 1 ano (ou "sem experiência anterior")'}
+                    className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white text-sm mt-0.5" />
+                </>
+              ) : (
+                <input type={f.id === 'birth_date' ? 'date' : f.id === 'email' ? 'email' : 'text'} value={v[f.id] ?? ''}
+                  onChange={(e) => set(f.id, e.target.value)} className={inputCls} />
+              )}
+            </label>
+          );
+        })}
+      </div>
+      <div className="flex justify-end gap-2">
+        {onCancel && <button onClick={onCancel} className="px-3 h-8 rounded-lg text-xs font-semibold text-zinc-500 hover:bg-zinc-100 cursor-pointer">Cancelar</button>}
+        <button onClick={salvar} className="px-4 h-8 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold cursor-pointer">Salvar dados</button>
+      </div>
+    </div>
   );
 }
 
