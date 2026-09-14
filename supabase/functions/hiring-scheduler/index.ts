@@ -64,6 +64,14 @@ async function sendText(number: string, text: string): Promise<string | null> {
 const digits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
 const phone55 = (s: unknown) => { const d = digits(s); return d.length === 10 || d.length === 11 ? `55${d}` : d; };
 const last11 = (s: unknown) => digits(s).slice(-11);
+// Chave do telefone sem o 9 do celular: DDD + 8 dígitos. O WhatsApp de números antigos chega sem o 9
+// (ex.: 554184098094) mesmo quando a ficha tem 41 98409-8094 (bug do teste de 2026-09-14).
+const foneKey = (s: unknown) => {
+  let d = digits(s);
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) d = d.slice(2);
+  if (d.length === 11 && d[2] === '9') d = d.slice(0, 2) + d.slice(3);
+  return d;
+};
 const firstName = (n: unknown) => String(n ?? '').trim().split(/\s+/)[0] ?? '';
 const newCode = () => Math.random().toString(36).slice(2, 6).toUpperCase();
 function fmtSlot(iso: string) {
@@ -375,9 +383,12 @@ async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
   const text = String(body.text ?? '').trim();
   const replyTo = isLid(body.reply_to) ? String(body.reply_to) : null;
   if (num.length < 10 || !text) return false;
-  // 1) candidato com conversa de agendamento aberta
-  const { data: ss } = await admin.from('hiring_scheduling_sessions').select('*').in('status', ACTIVE).like('phone', `%${num}`).order('updated_at', { ascending: false }).limit(1);
-  if (ss?.[0]) {
+  // 1) candidato com conversa de agendamento aberta (compara pelo telefone com ou sem o 9)
+  const key = foneKey(num);
+  const { data: abertas } = await admin.from('hiring_scheduling_sessions').select('*').in('status', ACTIVE)
+    .like('phone', `%${key.slice(-8)}`).order('updated_at', { ascending: false }).limit(20);
+  const ss = ((abertas ?? []) as Row[]).filter((s) => foneKey(s.phone) === key);
+  if (ss[0]) {
     // Guarda o @lid de onde ele respondeu: daqui em diante as mensagens vão para lá.
     if (replyTo && ss[0].jid !== replyTo) {
       await admin.from('hiring_scheduling_sessions').update({ jid: replyTo }).eq('id', ss[0].id);
@@ -388,18 +399,19 @@ async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
   }
   // 2) entrevistador de vaga com agendamento ligado
   const { data: cfgs } = await admin.from('hiring_job_scheduling').select('job_id, interviewers').eq('enabled', true);
-  const minhas = ((cfgs ?? []) as Row[]).filter((c) => (Array.isArray(c.interviewers) ? c.interviewers : []).some((i: Row) => last11(i?.phone) === num));
+  const minhas = ((cfgs ?? []) as Row[]).filter((c) => (Array.isArray(c.interviewers) ? c.interviewers : []).some((i: Row) => foneKey(i?.phone) === key));
   const jobIds = minhas.map((c) => c.job_id);
   if (jobIds.length && replyTo) {
     // Guarda o @lid do entrevistador na configuração da vaga (usado pelos avisos em toInterviewers).
     for (const cfg of minhas) {
-      const lista = (cfg.interviewers as Row[]).map((i) => (last11(i?.phone) === num && i?.jid !== replyTo ? { ...i, jid: replyTo } : i));
+      const lista = (cfg.interviewers as Row[]).map((i) => (foneKey(i?.phone) === key && i?.jid !== replyTo ? { ...i, jid: replyTo } : i));
       if (JSON.stringify(lista) !== JSON.stringify(cfg.interviewers)) {
         await admin.from('hiring_job_scheduling').update({ interviewers: lista }).eq('job_id', cfg.job_id);
       }
     }
   }
-  if (jobIds.length) return await handleInterviewer(admin, jobIds, text, replyTo ?? phone55(num));
+  const bruto = digits(body.number);
+  if (jobIds.length) return await handleInterviewer(admin, jobIds, text, replyTo ?? (bruto.startsWith('55') ? bruto : phone55(bruto)));
   return false;
 }
 

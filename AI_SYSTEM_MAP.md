@@ -1884,6 +1884,10 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   também cria os próprios campos (`custom_fields`, id `x_…`, valor em `hiring_candidates.extra_fields`,
   sem código novo). "Mover mesmo assim" = a tela grava `required_waived_at` junto com o `stage_id`,
   e o trigger libera.
+- **Pegadinha do 9 no WhatsApp (2026-09-14)**: número antigo de celular chega no webhook SEM o 9
+  (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
+  com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
+  causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
 - **Loja × perfil pelo Admin Master**: `fn_admin_set_user_tenant` (upsert em `user_tenants`,
   papéis admin/manager/cashier/waiter/kitchen/delivery_manager/tasks_only) e
   `fn_admin_remove_user_tenant`. A pessoa só vê a mudança no próximo login/troca de loja
