@@ -599,6 +599,19 @@ async function instanceNumber(): Promise<string | null> {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  // Link curto: erpos.vercel.app/v/CV-XXXX (redirect do vercel.json) → ?go=CV-XXXX → wa.me com a
+  // mensagem pronta do canal. Público: só revela o que o próprio link wa.me já revelaria.
+  if (req.method === 'GET') {
+    const code = String(new URL(req.url).searchParams.get('go') ?? '').trim().toUpperCase();
+    const txt = (s: string, status: number) => new Response(s, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    if (!/^[A-Z]{2,4}-[A-Z0-9]{4}$/.test(code)) return txt('Link inválido.', 404);
+    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const { data: ch } = await admin.from('bot_channels').select('start_text, is_active').eq('code', code).maybeSingle();
+    if (!ch || !ch.is_active) return txt('Este link de candidatura não está mais ativo. Obrigado pelo interesse!', 410);
+    const num = await instanceNumber().catch(() => null);
+    if (!num) return txt('WhatsApp indisponível no momento. Tente de novo mais tarde.', 503);
+    return new Response(null, { status: 302, headers: { Location: `https://wa.me/${num}?text=${encodeURIComponent(String(ch.start_text ?? code))}`, 'Cache-Control': 'no-store' } });
+  }
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   // deno-lint-ignore no-explicit-any
