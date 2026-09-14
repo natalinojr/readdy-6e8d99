@@ -1888,6 +1888,13 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
   com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
   causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
+- **Agendamento de entrevista: respostas livres (2026-09-14)**. O candidato não precisa responder
+  com número. O `classify` do `hiring-scheduler` recebe as últimas falas e devolve `preferencia`
+  ({data, depois_de, antes_de, periodo}) para pedidos vagos ("segunda depois das 16h"). Aí o
+  scheduler oferece só os horários livres que casam; quando é um só, pergunta "posso marcar?"
+  (`pending_request.kind = 'unico_horario'`) e um "sim" marca. A presença SÓ é confirmada quando
+  foi pedida (véspera e manhã do dia, `confirm_requested_at`). "Obrigado" depois de marcar é
+  `agradecer`, não confirmação.
 - **Loja × perfil pelo Admin Master**: `fn_admin_set_user_tenant` (upsert em `user_tenants`,
   papéis admin/manager/cashier/waiter/kitchen/delivery_manager/tasks_only) e
   `fn_admin_remove_user_tenant`. A pessoa só vê a mudança no próximo login/troca de loja

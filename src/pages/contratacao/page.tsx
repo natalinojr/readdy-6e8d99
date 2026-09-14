@@ -106,8 +106,9 @@ export default function ContratacaoPage() {
     return comp.error ?? stg.error ?? set.error ?? null;
   }, []);
 
-  const carregar = useCallback(async () => {
-    setLoading(true);
+  // silencioso = atualização automática (sem spinner; erro não troca a tela).
+  const carregar = useCallback(async (silencioso = false) => {
+    if (!silencioso) setLoading(true);
     const [cand, ivs, jb, ap, dst, cfgErr] = await Promise.all([
       supabase.from('hiring_candidates').select('*').order('created_at', { ascending: false }).limit(2000),
       supabase.from('hiring_interviews').select('*').order('scheduled_at', { ascending: true }).limit(2000),
@@ -117,7 +118,7 @@ export default function ContratacaoPage() {
       carregarConfig(),
     ]);
     const err = cand.error ?? ivs.error ?? jb.error ?? ap.error ?? dst.error ?? cfgErr;
-    if (err) setLoadError(err.message);
+    if (err) { if (!silencioso) setLoadError(err.message); }
     else {
       setItems((cand.data ?? []) as Candidate[]);
       setInterviews((ivs.data ?? []) as Interview[]);
@@ -130,6 +131,17 @@ export default function ContratacaoPage() {
   }, [carregarConfig]);
 
   useEffect(() => { if (isOwner) carregar(); }, [isOwner, carregar]);
+
+  // O assistente (WhatsApp/Telegram) cria candidatos, marca entrevistas e muda fases por fora da tela:
+  // atualiza sozinho a cada minuto e ao voltar para a aba.
+  useEffect(() => {
+    if (!isOwner) return;
+    const tick = () => { if (document.visibilityState === 'visible') carregar(true); };
+    const t = setInterval(tick, 60_000);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
+  }, [isOwner, carregar]);
 
   const novoStageId = stageByKind(stages, 'novo')?.id ?? null;
 

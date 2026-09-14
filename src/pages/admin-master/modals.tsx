@@ -110,7 +110,7 @@ export function NewInviteModal({ onClose, onCreated }: NewInviteModalProps) {
     setCopied(true); setTimeout(() => setCopied(false), 2500);
   };
 
-  const SYSTEM_URL = 'https://erpos.readdy.co/';
+  const SYSTEM_URL = 'https://erpos.vercel.app/';
 
   const mensagem = created
     ? `Olá! Você foi convidado para configurar seu restaurante no ERPOS V2.\n\nSeu código de convite é:\n*${created.invite_code}*\n\nFaça login no sistema e insira esse código para configurar sua loja.\n\n*Acesse agora:*\n${SYSTEM_URL}`
@@ -544,7 +544,7 @@ export function CreateUserModal({ invites, onClose, onCreated }: CreateUserModal
     }
   };
 
-  const SYSTEM_URL = 'https://erpos.readdy.co/';
+  const SYSTEM_URL = 'https://erpos.vercel.app/';
   const saudacao = created?.apelido || created?.nome?.split(' ')[0] || created?.nome || '';
 
   const mensagem = created
@@ -1006,7 +1006,7 @@ interface ResendCredentialsModalProps {
 }
 
 export function ResendCredentialsModal({ user, onClose }: ResendCredentialsModalProps) {
-  const SYSTEM_URL = 'https://erpos.readdy.co/';
+  const SYSTEM_URL = 'https://erpos.vercel.app/';
   const [novaSenha, setNovaSenha] = useState('');
   const [showSenha, setShowSenha] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
