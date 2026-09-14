@@ -335,7 +335,10 @@ async function createMpPix(cfg: ProviderCfg, pixId: string, amount: number, desc
   };
 }
 
-async function cancelAtProvider(p: { inter: ProviderCfg | null; mp: ProviderCfg | null; point?: ProviderCfg | null }, row: PixRow) {
+// Devolve false só quando o provedor RECUSOU o cancelamento da maquininha (cobrança já
+// capturada no terminal) — aí a linha não pode virar 'cancelled', senão um pagamento que
+// o MP confirma depois (visto 2026-09-14: ~2 min de atraso) entra sem pedido e sem rastro.
+async function cancelAtProvider(p: { inter: ProviderCfg | null; mp: ProviderCfg | null; point?: ProviderCfg | null }, row: PixRow): Promise<boolean> {
   try {
     if (row.provider === 'inter_pix' && p.inter?.cert_pem) {
       await interApi(p.inter, `/pix/v2/cob/${row.provider_payment_id}`, {
@@ -347,9 +350,14 @@ async function cancelAtProvider(p: { inter: ProviderCfg | null; mp: ProviderCfg 
     } else if (row.provider === 'mp_point' && p.point?.access_token) {
       // Só cancela se ainda não foi capturada pela maquininha; depois disso o MP recusa (e o
       // cliente pode cancelar no próprio terminal).
-      await mpFetch(p.point.access_token, `/v1/orders/${row.provider_payment_id}/cancel`, { method: 'POST', headers: { 'X-Idempotency-Key': crypto.randomUUID() } });
+      const r = await mpFetch(p.point.access_token, `/v1/orders/${row.provider_payment_id}/cancel`, { method: 'POST', headers: { 'X-Idempotency-Key': crypto.randomUUID() } });
+      if (!r.ok) {
+        log('WARN', 'cancel', 'MP recusou cancelar a order Point', { id: row.id, status: r.status, body: r.body });
+        return false;
+      }
     }
   } catch (e) { log('WARN', 'cancel', 'cancelar no provedor falhou', { id: row.id, error: String(e) }); }
+  return true;
 }
 
 // ── Mercado Pago Point (maquininha em modo PDV, API de Orders) ─────────────
@@ -696,7 +704,9 @@ Deno.serve(async (req: Request) => {
           const { data: f } = await supabase.from('fin_pix_payments').select('method').eq('id', row.id).maybeSingle();
           return json({ success: true, status: st, method: f?.method ?? null });
         }
-        await cancelAtProvider(await loadProviderCfgs(supabase, row.tenant_id), row);
+        const cancelou = await cancelAtProvider(await loadProviderCfgs(supabase, row.tenant_id), row);
+        // Maquininha já com a cobrança: continua pendente (o cliente pode estar pagando).
+        if (!cancelou) return json({ success: false, status: 'pending', code: 'at_terminal' });
       }
       await supabase.from('fin_pix_payments').update({ status: 'cancelled', updated_at: new Date().toISOString() })
         .eq('id', row.id).eq('status', 'pending');
