@@ -27,7 +27,30 @@ export interface Stage { id: string; name: string; color: string; sort_order: nu
 export interface Company {
   id: string; name: string; sort_order: number; is_active: boolean;
   address: string | null; city: string | null; description: string | null; // usados na análise currículo × vaga
+  lat: number | null; lng: number | null; // pin da loja (distância até os candidatos)
 }
+
+// ── Distância loja × candidato (hiring_distances, calculada pela Edge com o ORS) ──
+export type GeoPrecision = 'endereco' | 'rua' | 'bairro' | 'cidade';
+export interface Distance {
+  company_id: string;
+  candidate_id: string;
+  km: number;
+  minutes: number | null;
+  method: 'rota' | 'estimativa';
+  precision: GeoPrecision | null;
+  computed_at: string;
+}
+export const PRECISION_LABEL: Record<GeoPrecision, string> = {
+  endereco: 'endereço exato',
+  rua: 'pela rua',
+  bairro: 'aproximado pelo bairro',
+  cidade: 'só pela cidade (impreciso)',
+};
+export const fmtKm = (km: number) => (km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1).replace('.', ',')} km`);
+/** Cor do chip pela distância: perto, médio, longe. */
+export const distCls = (km: number) => (km <= 5 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  : km <= 12 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200');
 
 // ── Vagas e candidaturas ────────────────────────────────────────────────────
 export type JobStatus = 'aberta' | 'pausada' | 'fechada';
@@ -112,6 +135,10 @@ export interface Candidate {
   address: string | null;
   marital_status: string | null;
   decision: Decision | null;
+  lat: number | null;
+  lng: number | null;
+  geo_label: string | null;
+  geo_precision: string | null; // endereco | rua | bairro | cidade | nao_encontrado
   birth_date: string | null;
   age: number | null;
   desired_role: string | null;
@@ -337,6 +364,19 @@ async function invokeScan(body: Record<string, unknown>): Promise<AiOut> {
   const resp = data as { success?: boolean; error?: string; data?: AiOut } | null;
   if (!resp?.success || !resp.data) throw new Error(resp?.error || 'Falha ao ler o currículo');
   return resp.data;
+}
+
+/** Distância do candidato até todas as lojas com pin (grava em hiring_distances). */
+export async function calcDistancesAi(candidateId: string): Promise<Distance[]> {
+  return await invokeScan({ action: 'distance', candidate_id: candidateId }) as unknown as Distance[];
+}
+/** Um lote de candidatos até uma loja (chamar de novo enquanto remaining > 0). */
+export async function distancesForCompany(companyId: string): Promise<{ done: number; processed: number; remaining: number }> {
+  return await invokeScan({ action: 'distance_company', company_id: companyId }) as unknown as { done: number; processed: number; remaining: number };
+}
+/** Endereço → coordenada (ORS), com foco opcional na região. */
+export async function geocodeText(text: string, focus?: { lat: number; lng: number } | null) {
+  return await invokeScan({ action: 'geocode', text, focus: focus ?? null }) as unknown as { lat: number; lng: number; label: string; precision: GeoPrecision };
 }
 
 /** Compara currículo × vaga × loja (IA) e grava a candidatura. */

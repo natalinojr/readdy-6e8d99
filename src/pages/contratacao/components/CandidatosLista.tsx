@@ -2,10 +2,10 @@
 import { useMemo, useState } from 'react';
 import {
   type Candidate, type Company, type Interview, type Stage, colorOf, stageOf, fmtMonths, fmtDate, fmtDateTime, companyName, avgScore,
-  ageOf, decisionOf, withEmpresa, DECISIONS,
+  ageOf, decisionOf, withEmpresa, DECISIONS, type Distance, fmtKm, distCls,
 } from '../shared';
 
-type SortKey = 'nome' | 'empresa' | 'cargo' | 'idade' | 'local' | 'exp' | 'fase' | 'decisao' | 'nota' | 'entrevista' | 'recebido';
+type SortKey = 'nome' | 'empresa' | 'cargo' | 'idade' | 'local' | 'dist' | 'exp' | 'fase' | 'decisao' | 'nota' | 'entrevista' | 'recebido';
 
 function DecisionBadge({ c, companies }: { c: Candidate; companies: Company[] }) {
   const d = decisionOf(c.decision);
@@ -21,17 +21,19 @@ interface Props {
   mostrarEmpresa: boolean;
   proximaEntrevista: Map<string, Interview>;
   ultimaAvaliacao: Map<string, Interview>;
+  /** Distância até a loja de referência (a do filtro ou a do candidato). */
+  distancia: (c: Candidate) => Distance | null;
   onOpen: (id: string) => void;
 }
 
 export default function CandidatosLista(props: Props) {
-  const { view, items, companies, stages, mostrarEmpresa, proximaEntrevista, onOpen } = props;
+  const { view, items, companies, stages, mostrarEmpresa, proximaEntrevista, distancia, onOpen } = props;
   if (view === 'cards') {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {items.map((c) => (
           <CandidateCard key={c.id} c={c} companies={companies} stage={stageOf(stages, c.stage_id)} empresa={mostrarEmpresa ? companyName(companies, c.company_id) : null}
-            entrevista={proximaEntrevista.get(c.id) ?? null} onOpen={() => onOpen(c.id)} />
+            entrevista={proximaEntrevista.get(c.id) ?? null} dist={distancia(c)} onOpen={() => onOpen(c.id)} />
         ))}
       </div>
     );
@@ -39,7 +41,7 @@ export default function CandidatosLista(props: Props) {
   return <Tabela {...props} />;
 }
 
-function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, ultimaAvaliacao, onOpen }: Props) {
+function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, ultimaAvaliacao, distancia, onOpen }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'recebido', dir: -1 });
 
   const rows = useMemo(() => {
@@ -52,6 +54,7 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
         case 'decisao': { const i = DECISIONS.findIndex((d) => d.id === c.decision); return i < 0 ? 99 : i; }
         case 'local': return `${c.city ?? ''} ${c.neighborhood ?? ''}`.toLowerCase() || '￿';
         case 'exp': return c.total_experience_months ?? -1;
+        case 'dist': return distancia(c)?.km ?? 9999;
         case 'fase': return stageOf(stages, c.stage_id)?.sort_order ?? 0;
         case 'nota': return avgScore(ultimaAvaliacao.get(c.id)?.scores) ?? c.rating ?? 0;
         case 'entrevista': return proximaEntrevista.get(c.id)?.scheduled_at ?? '￿';
@@ -62,7 +65,7 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
       const va = val(a); const vb = val(b);
       return (va < vb ? -1 : va > vb ? 1 : 0) * sort.dir;
     });
-  }, [items, sort, companies, stages, proximaEntrevista, ultimaAvaliacao]);
+  }, [items, sort, companies, stages, proximaEntrevista, ultimaAvaliacao, distancia]);
 
   const Th = ({ k, children }: { k: SortKey; children: React.ReactNode }) => (
     <th onClick={() => setSort((s) => ({ key: k, dir: s.key === k ? (s.dir === 1 ? -1 : 1) : 1 }))}
@@ -81,6 +84,7 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
             <Th k="cargo">Cargo pretendido</Th>
             <Th k="idade">Idade</Th>
             <Th k="local">Bairro / cidade</Th>
+            <Th k="dist">Distância</Th>
             <Th k="exp">Experiência</Th>
             <Th k="fase">Fase</Th>
             <Th k="decisao">Decisão</Th>
@@ -104,6 +108,18 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
                 <td className="px-3 py-2 text-xs text-zinc-700 max-w-[180px] truncate">{c.desired_role ?? '—'}</td>
                 <td className="px-3 py-2 text-xs text-zinc-700">{ageOf(c) ?? '—'}</td>
                 <td className="px-3 py-2 text-xs text-zinc-700 max-w-[180px] truncate">{[c.neighborhood, c.city].filter(Boolean).join(', ') || '—'}</td>
+                <td className="px-3 py-2 text-xs whitespace-nowrap">
+                  {(() => {
+                    const d = distancia(c);
+                    if (!d) return <span className="text-zinc-300">—</span>;
+                    return (
+                      <span className={`font-semibold px-1.5 py-0.5 rounded border ${distCls(d.km)}`}
+                        title={`${d.minutes != null ? `~${d.minutes} min de carro · ` : ''}${d.precision === 'bairro' || d.precision === 'cidade' ? 'endereço aproximado' : 'endereço localizado'}`}>
+                        {fmtKm(d.km)}{d.precision === 'bairro' || d.precision === 'cidade' ? '*' : ''}
+                      </span>
+                    );
+                  })()}
+                </td>
                 <td className="px-3 py-2 text-xs text-zinc-700 whitespace-nowrap">{fmtMonths(c.total_experience_months) ?? '—'}</td>
                 <td className="px-3 py-2">{st && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${colorOf(st.color).cls}`}>{st.name}</span>}</td>
                 <td className="px-3 py-2">{c.decision ? <DecisionBadge c={c} companies={companies} /> : <span className="text-zinc-300 text-xs">—</span>}</td>
@@ -122,8 +138,9 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
   );
 }
 
-export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen, compact = false }: {
+export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen, compact = false, dist = null }: {
   c: Candidate; companies: Company[]; stage: Stage | null; empresa: string | null; entrevista: Interview | null; onOpen: () => void; compact?: boolean;
+  dist?: Distance | null;
 }) {
   const idade = ageOf(c);
   const ultima = c.experiences[0];
@@ -154,6 +171,11 @@ export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen
       </div>
       <div className="flex flex-wrap gap-1.5 mt-2">
         {empresa && <Chip cls="bg-zinc-50 text-zinc-600 border-zinc-200"><i className="ri-building-line" /> {empresa}</Chip>}
+        {dist && (
+          <Chip cls={distCls(dist.km)}>
+            <i className="ri-car-line" /> {fmtKm(dist.km)}{dist.minutes != null ? ` · ${dist.minutes} min` : ''}{dist.precision === 'bairro' || dist.precision === 'cidade' ? ' (aprox.)' : ''}
+          </Chip>
+        )}
         {entrevista && <Chip cls="bg-violet-50 text-violet-700 border-violet-200"><i className="ri-calendar-event-line" /> {fmtDateTime(entrevista.scheduled_at)}</Chip>}
         {c.total_experience_months != null && !compact && <Chip cls="bg-zinc-50 text-zinc-600 border-zinc-200">{fmtMonths(c.total_experience_months)} de experiência</Chip>}
         {c.concerns.length > 0 && !compact && <Chip cls="bg-orange-50 text-orange-700 border-orange-200">{c.concerns.length} ponto{c.concerns.length > 1 ? 's' : ''} de atenção</Chip>}

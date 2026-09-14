@@ -1,8 +1,9 @@
 // Ficha do candidato: fase, estrelas, empresa, entrevistas, dados lidos do currículo e anotações.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
   type Application, type Candidate, type Company, type Decision, type Interview, type Job, type Stage, BUCKET, DECISIONS, FIT, fitOf,
+  type Distance, fmtKm, distCls, PRECISION_LABEL,
   fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf, decisionOf, withEmpresa, ageOf, companyName,
 } from '../shared';
 import { avisar } from '../dialog';
@@ -17,6 +18,8 @@ interface Props {
   analyzing: Set<string>;
   onApply: (jobId: string) => void;
   onOpenJob: (jobId: string) => void;
+  distances: Distance[];
+  onCalcDistances: () => Promise<void>;
   onClose: () => void;
   onUpdate: (patch: Partial<Candidate>) => void;
   onDelete: () => void;
@@ -26,9 +29,30 @@ interface Props {
 }
 
 export default function CandidatoDrawer({
-  c, companies, stages, interviews, jobs, applications, analyzing, onApply, onOpenJob,
+  c, companies, stages, interviews, jobs, applications, analyzing, onApply, onOpenJob, distances, onCalcDistances,
   onClose, onUpdate, onDelete, onOrganizar, onAgendar, onOpenInterview,
 }: Props) {
+  // Distância só até a loja escolhida na ficha (regra do dono). Calcula sozinha ao abrir quando a
+  // loja tem pin, o candidato tem endereço e ainda não há distância (uma tentativa por abertura/loja).
+  const [distBusy, setDistBusy] = useState(false);
+  const [distErro, setDistErro] = useState<string | null>(null);
+  const tentouDist = useRef<string | null>(null);
+  const loja = companies.find((x) => x.id === c.company_id) ?? null;
+  const lojaTemPin = loja?.lat != null && loja?.lng != null;
+  const dist = distances.find((d) => d.company_id === c.company_id) ?? null;
+  const temEndereco = !!(c.address || c.neighborhood || c.city || c.lat != null);
+  const calcular = async () => {
+    setDistBusy(true); setDistErro(null);
+    try { await onCalcDistances(); } catch (e) { setDistErro((e as Error).message); } finally { setDistBusy(false); }
+  };
+  useEffect(() => {
+    const chave = `${c.id}:${c.company_id ?? ''}`;
+    if (tentouDist.current === chave) return;
+    tentouDist.current = chave;
+    if (!lojaTemPin || !temEndereco || dist || c.geo_precision === 'nao_encontrado') return;
+    calcular();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [c.id, c.company_id]);
   const vagasAbertas = jobs.filter((j) => j.status !== 'fechada' && !applications.some((a) => a.job_id === j.id));
   const [notes, setNotes] = useState(c.notes ?? '');
   const [iaBusy, setIaBusy] = useState(false);
@@ -209,6 +233,39 @@ export default function CandidatoDrawer({
               {c.marital_status && <p className="flex items-center gap-2"><i className="ri-user-heart-line text-zinc-400" /> {c.marital_status}</p>}
               {!c.phone && !c.email && !c.city && <p className="text-zinc-400 text-xs">Sem dados de contato no currículo.</p>}
             </div>
+          </Section>
+
+          <Section title={loja ? `Distância até ${loja.name}` : 'Distância até a loja'}>
+            {!loja ? (
+              <p className="text-xs text-zinc-400">Escolha a loja da ficha (no topo) para calcular a distância.</p>
+            ) : !lojaTemPin ? (
+              <p className="text-xs text-zinc-400">Marque a localização de {loja.name} em Configurações › Empresas (ícone de mapa) para calcular.</p>
+            ) : !temEndereco ? (
+              <p className="text-xs text-zinc-400">O currículo não tem endereço, bairro nem cidade.</p>
+            ) : (
+              <>
+                {c.geo_precision === 'nao_encontrado' && !dist && (
+                  <p className="text-xs text-orange-700 mb-1.5">Não achei o endereço deste currículo no mapa.</p>
+                )}
+                {dist && (
+                  <div className="flex items-center gap-2 mb-1">
+                    <i className="ri-car-line text-zinc-400" />
+                    <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full border ${distCls(dist.km)}`}>{fmtKm(dist.km)}</span>
+                    {dist.minutes != null && <span className="text-sm text-zinc-600">~{dist.minutes} min de carro</span>}
+                  </div>
+                )}
+                {dist?.precision && (
+                  <p className="text-[11px] text-zinc-400">
+                    {dist.method === 'rota' ? 'Pela rota' : 'Estimativa em linha reta'} · endereço {PRECISION_LABEL[dist.precision]}
+                    {c.geo_label ? ` (${c.geo_label})` : ''}
+                  </p>
+                )}
+                <button onClick={calcular} disabled={distBusy} className="mt-1 text-xs font-semibold text-sky-700 disabled:opacity-50 cursor-pointer">
+                  {distBusy ? 'Calculando…' : dist ? 'Recalcular' : 'Calcular distância'}
+                </button>
+                {distErro && <p className="text-xs text-red-600 mt-1">{distErro}</p>}
+              </>
+            )}
           </Section>
 
           {c.summary && <Section title="Resumo"><p className="text-sm text-zinc-700 leading-relaxed">{c.summary}</p></Section>}

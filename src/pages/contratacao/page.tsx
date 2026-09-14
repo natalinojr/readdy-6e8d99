@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase';
 import { readCurriculoPdf } from '@/lib/curriculoLocal';
 import {
   type Application, type Candidate, type Company, type Interview, type Job, type Settings, type Stage, matchWithAi,
+  type Distance, calcDistancesAi, distancesForCompany,
   OWNER_EMAIL, BUCKET, DECISIONS, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind,
 } from './shared';
 import type { CandidatePatch } from './components/EntrevistaModal';
@@ -52,6 +53,7 @@ export default function ContratacaoPage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
+  const [distances, setDistances] = useState<Distance[]>([]);
   const [analyzing, setAnalyzing] = useState<Set<string>>(new Set());
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [jobModal, setJobModal] = useState<{ job: Job | null } | null>(null);
@@ -99,20 +101,22 @@ export default function ContratacaoPage() {
 
   const carregar = useCallback(async () => {
     setLoading(true);
-    const [cand, ivs, jb, ap, cfgErr] = await Promise.all([
+    const [cand, ivs, jb, ap, dst, cfgErr] = await Promise.all([
       supabase.from('hiring_candidates').select('*').order('created_at', { ascending: false }).limit(2000),
       supabase.from('hiring_interviews').select('*').order('scheduled_at', { ascending: true }).limit(2000),
       supabase.from('hiring_jobs').select('*').order('created_at', { ascending: false }).limit(500),
       supabase.from('hiring_applications').select('*').limit(5000),
+      supabase.from('hiring_distances').select('*').limit(20000),
       carregarConfig(),
     ]);
-    const err = cand.error ?? ivs.error ?? jb.error ?? ap.error ?? cfgErr;
+    const err = cand.error ?? ivs.error ?? jb.error ?? ap.error ?? dst.error ?? cfgErr;
     if (err) setLoadError(err.message);
     else {
       setItems((cand.data ?? []) as Candidate[]);
       setInterviews((ivs.data ?? []) as Interview[]);
       setJobs((jb.data ?? []) as Job[]);
       setApplications((ap.data ?? []) as Application[]);
+      setDistances((dst.data ?? []) as Distance[]);
       setLoadError(null);
     }
     setLoading(false);
@@ -121,6 +125,15 @@ export default function ContratacaoPage() {
   useEffect(() => { if (isOwner) carregar(); }, [isOwner, carregar]);
 
   const novoStageId = stageByKind(stages, 'novo')?.id ?? null;
+
+  // Distância do candidato até as lojas com pin (Edge + OpenRouteService; grátis).
+  const calcDistances = useCallback(async (candidateId: string) => {
+    const rows = await calcDistancesAi(candidateId);
+    setDistances((prev) => [...prev.filter((d) => !(d.candidate_id === candidateId && rows.some((r) => r.company_id === d.company_id))), ...rows]);
+    // O geocode grava lat/lng/precisão no candidato: traz de volta para a ficha.
+    const { data } = await supabase.from('hiring_candidates').select('lat, lng, geo_label, geo_precision').eq('id', candidateId).maybeSingle();
+    if (data) setItems((prev) => prev.map((c) => (c.id === candidateId ? { ...c, ...data } : c)));
+  }, []);
 
   // Análise currículo × vaga × loja (IA). Uma candidatura por vez por chave; a tela mostra o "analisando".
   const analyze = useCallback(async (jobId: string, candidateId: string) => {
@@ -199,11 +212,13 @@ export default function ContratacaoPage() {
       if (upErr) avisos.push('arquivo original não foi salvo');
       if (jobId) avisos.push('inscrito na vaga, analisando');
       upd({ state: 'ok', msg: [cand.full_name, ...avisos].join(' · ') });
-      if (jobId) applyToJob(jobId, [cand.id]);
+      // Distância antes da análise da vaga (a análise usa os km reais).
+      // Sem loja escolhida não há distância a calcular.
+      (companyId ? calcDistances(cand.id).catch(() => {}) : Promise.resolve()).finally(() => { if (jobId) applyToJob(jobId, [cand.id]); });
     } catch (e) {
       upd({ state: 'erro', msg: (e as Error).message });
     }
-  }, [novoStageId, applyToJob]);
+  }, [novoStageId, applyToJob, calcDistances]);
 
   // jobIdArg: vaga escolhida na tela da vaga; sem ela, vale o seletor "Vaga" da área de envio.
   const addFiles = useCallback(async (files: FileList | File[], jobIdArg?: string | null) => {
@@ -228,8 +243,12 @@ export default function ContratacaoPage() {
     if ('company_id' in patch) {
       await supabase.from('hiring_interviews').update({ company_id: patch.company_id ?? null }).eq('candidate_id', id);
       setInterviews((prev) => prev.map((iv) => (iv.candidate_id === id ? { ...iv, company_id: patch.company_id ?? null } : iv)));
+      // Trocou a loja: a distância antiga some e, com loja nova, recalcula (a Edge apaga as outras).
+      setDistances((prev) => prev.filter((d) => d.candidate_id !== id));
+      if (patch.company_id) calcDistances(id).catch(() => {});
+      else await supabase.from('hiring_distances').delete().eq('candidate_id', id);
     }
-  }, [carregar]);
+  }, [carregar, calcDistances]);
 
   // IA sob demanda: baixa o original do bucket e completa a ficha (mantém fase/nota/anotações/empresa).
   const organizarComIA = useCallback(async (c: Candidate) => {
@@ -237,12 +256,16 @@ export default function ContratacaoPage() {
     const { data: blob, error } = await supabase.storage.from(BUCKET).download(c.file_path);
     if (error || !blob) throw new Error('Não foi possível baixar o arquivo original.');
     const file = new File([blob], c.file_name ?? 'curriculo', { type: c.file_type ?? blob.type });
-    const patch = aiFields(await scanWithAi(file)) as Partial<Candidate>;
+    // Endereço pode mudar com a leitura da IA: zera a localização para o geocode refazer.
+    const patch = { ...aiFields(await scanWithAi(file)), lat: null, lng: null, geo_label: null, geo_precision: null } as Partial<Candidate>;
     const { error: upErr } = await supabase.from('hiring_candidates')
       .update({ ...patch, updated_at: new Date().toISOString() }).eq('id', c.id);
     if (upErr) throw new Error(upErr.message);
     setItems((prev) => prev.map((x) => (x.id === c.id ? { ...x, ...patch } : x)));
-  }, []);
+    await supabase.from('hiring_distances').delete().eq('candidate_id', c.id);
+    setDistances((prev) => prev.filter((d) => d.candidate_id !== c.id));
+    calcDistances(c.id).catch(() => {});
+  }, [calcDistances]);
 
   const deleteCandidate = useCallback(async (c: Candidate) => {
     const ok = await confirmar({
@@ -258,6 +281,18 @@ export default function ContratacaoPage() {
     setItems((prev) => prev.filter((x) => x.id !== c.id));
     setInterviews((prev) => prev.filter((x) => x.candidate_id !== c.id));
     setSelId(null);
+  }, []);
+
+  // Loja ganhou/mudou o pin: calcula a distância de todos os candidatos até ela, em lotes
+  // (a Edge respeita o limite do ORS). Depois recarrega as distâncias da loja.
+  const recalcCompany = useCallback(async (companyId: string) => {
+    for (let i = 0; i < 60; i++) {
+      let r: { done: number; processed: number; remaining: number };
+      try { r = await distancesForCompany(companyId); } catch { break; }
+      if (!r.remaining || !r.processed) break;
+    }
+    const { data } = await supabase.from('hiring_distances').select('*').eq('company_id', companyId);
+    setDistances((prev) => [...prev.filter((d) => d.company_id !== companyId), ...((data ?? []) as Distance[])]);
   }, []);
 
   // ── Vagas ──
@@ -355,6 +390,12 @@ export default function ContratacaoPage() {
     return { proximaEntrevista: prox, ultimaAvaliacao: ult };
   }, [interviews]);
 
+  const distMap = useMemo(() => new Map(distances.map((d) => [`${d.company_id}:${d.candidate_id}`, d])), [distances]);
+  const distancia = useCallback((candidateId: string, companyId: string | null) =>
+    (companyId ? distMap.get(`${companyId}:${candidateId}`) ?? null : null), [distMap]);
+  // Distância só existe até a loja escolhida na ficha do candidato.
+  const distanciaLista = useCallback((c: Candidate) => distancia(c.id, c.company_id), [distancia]);
+
   const sel = items.find((c) => c.id === selId) ?? null;
   const mostrarEmpresa = empresaFiltro === 'todas' && companies.length > 1;
 
@@ -432,11 +473,11 @@ export default function ContratacaoPage() {
       ) : aba === 'config' ? (
         <ConfiguracoesContratacao companies={companies} stages={stages} settings={settings} candidates={items}
           onReload={async () => { await carregarConfig(); const { data } = await supabase.from('hiring_candidates').select('*').order('created_at', { ascending: false }).limit(2000); if (data) setItems(data as Candidate[]); }}
-          onSettingsSaved={setSettings} />
+          onSettingsSaved={setSettings} onRecalcCompany={recalcCompany} />
       ) : aba === 'vagas' ? (
         <Vagas
           jobs={jobsDaEmpresa} companies={companies} candidates={items} applications={applications} stages={stages}
-          mostrarEmpresa={mostrarEmpresa} analyzing={analyzing}
+          mostrarEmpresa={mostrarEmpresa} analyzing={analyzing} distancia={distancia}
           selectedJobId={selectedJobId} onSelectJob={setSelectedJobId}
           onNewJob={() => setJobModal({ job: null })}
           onEditJob={(job) => setJobModal({ job })}
@@ -560,7 +601,7 @@ export default function ContratacaoPage() {
                   <p className="text-sm font-semibold mt-2">{daEmpresa.length ? 'Nenhum candidato com esses filtros' : 'Nenhum currículo ainda'}</p>
                 </div>
               ) : (
-                <CandidatosLista view={view} items={filtrados} companies={companies} stages={stages} mostrarEmpresa={mostrarEmpresa}
+                <CandidatosLista view={view} items={filtrados} companies={companies} stages={stages} mostrarEmpresa={mostrarEmpresa} distancia={distanciaLista}
                   proximaEntrevista={proximaEntrevista} ultimaAvaliacao={ultimaAvaliacao} onOpen={setSelId} />
               )}
             </>
@@ -579,6 +620,8 @@ export default function ContratacaoPage() {
           analyzing={analyzing}
           onApply={(jobId) => applyToJob(jobId, [sel.id])}
           onOpenJob={(jobId) => { setSelId(null); setSelectedJobId(jobId); setAba('vagas'); }}
+          distances={distances.filter((d) => d.candidate_id === sel.id)}
+          onCalcDistances={() => calcDistances(sel.id)}
           onClose={() => setSelId(null)}
           onUpdate={(patch) => updateCandidate(sel.id, patch)}
           onDelete={() => deleteCandidate(sel)}

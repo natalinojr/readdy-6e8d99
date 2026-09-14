@@ -1,10 +1,13 @@
 // Configurações do módulo Contratação: empresas, fases do kanban, ficha de entrevista
 // e padrões do convite. Empresas e fases gravam na hora; o resto tem botão Salvar.
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
-  type Candidate, type Company, type Criterion, type Settings, type Stage, COLORS, NATIVE_LABEL, DEFAULT_SETTINGS, colorOf, slug,
+  type Candidate, type Company, type Criterion, type Settings, type Stage, COLORS, NATIVE_LABEL, DEFAULT_SETTINGS, colorOf, slug, geocodeText,
 } from '../shared';
+
+// Leaflet só carrega quando alguém abre o mapa de uma loja.
+const MapaPin = lazy(() => import('@/components/feature/MapaPin'));
 import { confirmar, avisar } from '../dialog';
 
 interface Props {
@@ -14,12 +17,14 @@ interface Props {
   candidates: Candidate[];
   onReload: () => Promise<void>;
   onSettingsSaved: (s: Settings) => void;
+  /** Loja ganhou/mudou o pin: recalcula a distância de todos os candidatos até ela. */
+  onRecalcCompany: (companyId: string) => Promise<void>;
 }
 
-export default function ConfiguracoesContratacao({ companies, stages, settings, candidates, onReload, onSettingsSaved }: Props) {
+export default function ConfiguracoesContratacao({ companies, stages, settings, candidates, onReload, onSettingsSaved, onRecalcCompany }: Props) {
   return (
     <div className="space-y-5 max-w-3xl">
-      <Empresas companies={companies} candidates={candidates} onReload={onReload} />
+      <Empresas companies={companies} candidates={candidates} onReload={onReload} onRecalcCompany={onRecalcCompany} />
       <Fases stages={stages} candidates={candidates} onReload={onReload} />
       <FichaEConvite settings={settings} onSaved={onSettingsSaved} />
     </div>
@@ -33,8 +38,13 @@ async function run(p: PromiseLike<{ error: { message: string } | null }>) {
 }
 
 // ── Empresas ────────────────────────────────────────────────────────────────
-function Empresas({ companies, candidates, onReload }: { companies: Company[]; candidates: Candidate[]; onReload: () => Promise<void> }) {
+function Empresas({ companies, candidates, onReload, onRecalcCompany }: {
+  companies: Company[]; candidates: Candidate[]; onReload: () => Promise<void>; onRecalcCompany: (companyId: string) => Promise<void>;
+}) {
   const [novo, setNovo] = useState('');
+  const [novoEnd, setNovoEnd] = useState('');
+  const [novaCidade, setNovaCidade] = useState('');
+  const [criando, setCriando] = useState(false);
   const [aberta, setAberta] = useState<string | null>(null);
   const count = (id: string) => candidates.filter((c) => c.company_id === id).length;
   const saveField = async (c: Company, field: 'address' | 'city' | 'description', value: string) => {
@@ -43,12 +53,27 @@ function Empresas({ companies, candidates, onReload }: { companies: Company[]; c
     if (await run(supabase.from('hiring_companies').update({ [field]: v }).eq('id', c.id))) await onReload();
   };
 
+  // Cria a empresa já com endereço; se achar no mapa, deixa o pin sugerido e abre o painel para conferir.
   const add = async () => {
     const name = novo.trim();
     if (!name) return;
-    if (await run(supabase.from('hiring_companies').insert({ name, sort_order: (companies.at(-1)?.sort_order ?? 0) + 10 }))) {
-      setNovo(''); await onReload();
+    setCriando(true);
+    const address = novoEnd.trim() || null;
+    const city = novaCidade.trim() || null;
+    let geo: { lat: number; lng: number } | null = null;
+    if (address) {
+      const ref = companies.find((x) => x.lat != null && x.lng != null);
+      try { geo = await geocodeText([address, city].filter(Boolean).join(', '), ref ? { lat: ref.lat!, lng: ref.lng! } : null); } catch { geo = null; }
     }
+    const { data, error } = await supabase.from('hiring_companies')
+      .insert({ name, address, city, lat: geo?.lat ?? null, lng: geo?.lng ?? null, sort_order: (companies.at(-1)?.sort_order ?? 0) + 10 })
+      .select('id').single();
+    setCriando(false);
+    if (error) { avisar(`Não foi possível salvar: ${error.message}`); return; }
+    setNovo(''); setNovoEnd(''); setNovaCidade('');
+    await onReload();
+    if (data?.id) setAberta(data.id);
+    if (data?.id && geo) onRecalcCompany(data.id);
   };
   const rename = async (c: Company, name: string) => {
     if (!name.trim() || name.trim() === c.name) return;
@@ -120,16 +145,33 @@ function Empresas({ companies, candidates, onReload }: { companies: Company[]; c
                    className="w-full px-3 py-2 rounded-lg border border-zinc-200 text-sm mt-1 bg-white" />
                </label>
                <p className="sm:col-span-3 text-[10px] text-zinc-400">A IA usa estes dados para comparar os currículos com as vagas desta empresa (deslocamento e perfil da operação).</p>
+               <div className="sm:col-span-3">
+                 <LocalizacaoLoja c={c} referencia={companies.find((x) => x.id !== c.id && x.lat != null && x.lng != null) ?? null}
+                   onSaved={async () => { await onReload(); await onRecalcCompany(c.id); }} />
+               </div>
              </div>
            )}
           </li>
         ))}
         {companies.length === 0 && <li className="py-3 text-xs text-zinc-400">Nenhuma empresa ainda. Cadastre a primeira abaixo.</li>}
       </ul>
-      <div className="flex gap-2 mt-3">
-        <input value={novo} onChange={(e) => setNovo(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()}
-          placeholder="Nome da empresa ou loja" className="flex-1 h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
-        <button onClick={add} className="px-4 h-9 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-sm font-bold cursor-pointer"><i className="ri-add-line" /> Adicionar</button>
+      <div className="mt-3 rounded-xl border border-dashed border-zinc-200 p-3 space-y-2">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Nova empresa / loja</p>
+        <input value={novo} onChange={(e) => setNovo(e.target.value)}
+          placeholder="Nome da empresa ou loja" className="w-full h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <input value={novoEnd} onChange={(e) => setNovoEnd(e.target.value)}
+            placeholder="Endereço (rua, número, bairro)" className="sm:col-span-2 h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
+          <input value={novaCidade} onChange={(e) => setNovaCidade(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()}
+            placeholder="Cidade - UF" className="h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
+        </div>
+        <div className="flex items-center gap-2">
+          <p className="flex-1 text-[10px] text-zinc-400">Com o endereço, o sistema localiza a loja no mapa e calcula a distância até cada candidato. Depois dá para ajustar o pin.</p>
+          <button onClick={add} disabled={criando || !novo.trim()}
+            className="px-4 h-9 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-sm font-bold cursor-pointer whitespace-nowrap">
+            {criando ? 'Salvando…' : <><i className="ri-add-line" /> Adicionar</>}
+          </button>
+        </div>
       </div>
     </Card>
   );
@@ -360,6 +402,65 @@ function FichaEConvite({ settings, onSaved }: { settings: Settings; onSaved: (s:
         {ok && !dirty && <span className="text-xs text-emerald-600 font-semibold"><i className="ri-check-line" /> Salvo</span>}
       </div>
     </Card>
+  );
+}
+
+// ── Pin da loja no mapa ─────────────────────────────────────────────────────
+// Arrasta o mapa até a porta da loja (pin fixo no centro) e salva. "Localizar pelo endereço"
+// usa o geocode; em cidade pequena ele erra, por isso o pin é o que vale.
+function LocalizacaoLoja({ c, referencia, onSaved }: { c: Company; referencia: Company | null; onSaved: () => Promise<void> }) {
+  const [pos, setPos] = useState<{ lat: number; lng: number } | null>(c.lat != null && c.lng != null ? { lat: c.lat, lng: c.lng } : null);
+  const [busy, setBusy] = useState<'geo' | 'save' | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const mudou = pos != null && (pos.lat !== c.lat || pos.lng !== c.lng);
+
+  const localizar = async () => {
+    const texto = [c.address, c.city].filter(Boolean).join(', ');
+    if (!texto) { setMsg('Preencha o endereço e a cidade acima primeiro.'); return; }
+    setBusy('geo'); setMsg(null);
+    try {
+      const g = await geocodeText(texto, referencia?.lat != null ? { lat: referencia.lat, lng: referencia.lng! } : null);
+      setPos({ lat: g.lat, lng: g.lng });
+      setMsg(`Achei: ${g.label}. Confira se o pin está na porta da loja e salve.`);
+    } catch (e) { setMsg((e as Error).message); } finally { setBusy(null); }
+  };
+
+  const salvar = async () => {
+    if (!pos) return;
+    setBusy('save'); setMsg(null);
+    // Pin mudou: as distâncias antigas até esta loja deixam de valer.
+    const { error } = await supabase.from('hiring_companies').update({ lat: pos.lat, lng: pos.lng }).eq('id', c.id);
+    if (!error) await supabase.from('hiring_distances').delete().eq('company_id', c.id);
+    setBusy(null);
+    if (error) { avisar(`Não foi possível salvar o pin: ${error.message}`); return; }
+    setMsg('Localização salva. Calculando a distância dos candidatos…');
+    await onSaved();
+    setMsg('Localização salva e distâncias atualizadas.');
+  };
+
+  const centro: [number, number] | undefined = referencia?.lat != null ? [referencia.lat, referencia.lng!] : undefined;
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2 mb-1.5">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Localização da loja</span>
+        {c.lat != null ? <span className="text-[10px] font-semibold text-emerald-600"><i className="ri-map-pin-2-fill" /> marcada</span>
+          : <span className="text-[10px] font-semibold text-orange-600">não marcada</span>}
+        <button onClick={localizar} disabled={busy !== null} className="ml-auto px-2.5 h-7 rounded-lg border border-zinc-200 bg-white text-[11px] font-bold text-zinc-700 disabled:opacity-50 cursor-pointer">
+          {busy === 'geo' ? 'Procurando…' : <><i className="ri-search-line" /> Localizar pelo endereço</>}
+        </button>
+      </div>
+      <Suspense fallback={<div className="h-56 rounded-xl bg-zinc-100 animate-pulse" />}>
+        <MapaPin lat={pos?.lat ?? null} lng={pos?.lng ?? null} altura="h-56" defaultCenter={centro}
+          onChange={(lat, lng) => setPos({ lat, lng })} />
+      </Suspense>
+      <div className="flex items-center gap-2 mt-1.5">
+        <p className="flex-1 text-[10px] text-zinc-500">{msg ?? 'Arraste o mapa até a porta da loja (o pin fica no centro) e salve.'}</p>
+        <button onClick={salvar} disabled={!mudou || busy !== null}
+          className="px-3 h-8 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-xs font-bold cursor-pointer whitespace-nowrap">
+          {busy === 'save' ? 'Salvando…' : 'Salvar localização'}
+        </button>
+      </div>
+    </div>
   );
 }
 

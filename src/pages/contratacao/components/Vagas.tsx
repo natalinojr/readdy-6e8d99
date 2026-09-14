@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import {
   type Application, type Candidate, type Company, type Job, type Stage, FIT, JOB_STATUS, jobStatusInfo, companyName,
-  fmtDate, fmtDateTime, ageOf, colorOf, stageOf, decisionOf, fitOf,
+  fmtDate, fmtDateTime, ageOf, colorOf, stageOf, decisionOf, fitOf, type Distance, fmtKm, distCls,
 } from '../shared';
 
 interface Props {
@@ -14,6 +14,7 @@ interface Props {
   stages: Stage[];
   mostrarEmpresa: boolean;
   analyzing: Set<string>;
+  distancia: (candidateId: string, companyId: string | null) => Distance | null;
   selectedJobId: string | null;
   onSelectJob: (id: string | null) => void;
   onNewJob: () => void;
@@ -95,7 +96,7 @@ function ListaVagas({ jobs, companies, applications, mostrarEmpresa, onSelectJob
 }
 
 function DetalheVaga({
-  job, companies, candidates, applications, stages, analyzing, onSelectJob, onEditJob, onDeleteJob,
+  job, companies, candidates, applications, stages, analyzing, distancia, onSelectJob, onEditJob, onDeleteJob,
   onAddFromBank, onUploadToJob, onReanalyze, onRemoveApplication, onOpenCandidate,
 }: Props & { job: Job }) {
   const [aberto, setAberto] = useState<string | null>(null);
@@ -167,6 +168,7 @@ function DetalheVaga({
             const stg = stageOf(stages, c.stage_id);
             const dec = decisionOf(c.decision);
             const idade = ageOf(c);
+            const dist = distancia(c.id, job.company_id);
             const open = aberto === a.id;
             return (
               <div key={a.id} className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
@@ -180,7 +182,13 @@ function DetalheVaga({
                     </p>
                   </button>
                   <div className="hidden sm:flex items-center gap-1.5">
-                    {fit && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${FIT[fit].cls}`}>{FIT[fit].label}</span>}
+                    {dist && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${distCls(dist.km)}`}
+                        title={dist.precision === 'bairro' || dist.precision === 'cidade' ? 'Endereço aproximado' : 'Rota de carro até a loja'}>
+                        <i className="ri-car-line" /> {fmtKm(dist.km)}{dist.minutes != null ? ` · ${dist.minutes} min` : ''}
+                      </span>
+                    )}
+                    {fit &&<span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${FIT[fit].cls}`}>{FIT[fit].label}</span>}
                     {stg && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${colorOf(stg.color).cls}`}>{stg.name}</span>}
                     {dec && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${dec.cls}`}>{dec.sigla}</span>}
                   </div>
