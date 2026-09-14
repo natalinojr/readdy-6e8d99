@@ -249,7 +249,32 @@ export interface CompraLinha {
   categoria: string;
   valor: number;
   destino: 'cmv' | 'despesa';
+  dreCategoryId: string | null;
   pago?: number;
+}
+
+export interface ComprasDREDetalhado extends ComprasDREBreakdown {
+  /** CMV aberto pela categoria de mercadoria (do item ou do insumo). Soma = `cmv`. */
+  cmvPorCategoria: Record<string, number>;
+}
+
+/**
+ * Mesmo resultado de `fetchComprasDRE` + o CMV por categoria de mercadoria, que a
+ * DRE mostra como sublinhas do CMV. Tudo sai das mesmas linhas (mesmo peso), então
+ * a soma das categorias fecha com a linha CMV.
+ */
+export async function fetchComprasDREDetalhado(tenantId: string, purchases: PurchaseRef[]): Promise<ComprasDREDetalhado> {
+  const out: ComprasDREDetalhado = { cmv: 0, despesasPorCategoria: {}, total: 0, cmvPorCategoria: {} };
+  for (const l of await fetchComprasLinhas(tenantId, purchases)) {
+    out.total += l.valor;
+    if (l.destino === 'despesa' && l.dreCategoryId) {
+      out.despesasPorCategoria[l.dreCategoryId] = (out.despesasPorCategoria[l.dreCategoryId] ?? 0) + l.valor;
+    } else {
+      out.cmv += l.valor;
+      out.cmvPorCategoria[l.categoria] = (out.cmvPorCategoria[l.categoria] ?? 0) + l.valor;
+    }
+  }
+  return out;
 }
 
 /**
@@ -327,6 +352,7 @@ export async function fetchComprasLinhas(tenantId: string, purchases: PurchaseRe
       categoria: categoriaDo(it),
       valor: (Number(it.total_price ?? 0) + Number(it.freight_allocated ?? 0)) * peso,
       destino: it.dre_category_id && despesaIds.has(it.dre_category_id) ? 'despesa' : 'cmv',
+      dreCategoryId: it.dre_category_id,
       pago: peso < 1 ? peso : undefined,
     });
   }
@@ -346,6 +372,7 @@ export async function fetchComprasLinhas(tenantId: string, purchases: PurchaseRe
       categoria: 'Sem categoria',
       valor: Number(p.total_amount ?? 0) * peso,
       destino: 'cmv',
+      dreCategoryId: null,
       pago: peso < 1 ? peso : undefined,
     });
   }

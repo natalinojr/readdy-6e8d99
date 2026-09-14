@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, Fragment } from 'react';
 import { useImpressoras, PRINTER_KEY_RELATORIOS } from '@/contexts/ImpressorasContext';
 import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
-import { fetchComprasDRE, fetchComprasPeriodo } from '@/lib/comprasDRE';
+import { fetchComprasDREDetalhado, fetchComprasPeriodo } from '@/lib/comprasDRE';
 import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
@@ -62,6 +62,8 @@ interface DREData {
   cmvCompras: number;
   /** Tudo que foi comprado no período (mercadoria + itens classificados como despesa). */
   comprasTotal: number;
+  /** CMV aberto por categoria de mercadoria — sublinhas do CMV na DRE. */
+  cmvPorCategoria?: Record<string, number>;
   despesasPorCategoria: Record<string, number>;
   custoPessoal: number;
   taxasMaquininha: number;
@@ -304,7 +306,8 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   // Caixa: o que foi PAGO de compras no mês (conta a pagar da compra pela paid_date,
   // ou compra à vista pela data), não "compras do mês que já estão pagas".
   void purchasesRes;
-  const compras = await fetchComprasDRE(tenantId, await fetchComprasPeriodo(tenantId, startDate, endDate, 'caixa'));
+  const compras = await fetchComprasDREDetalhado(tenantId, await fetchComprasPeriodo(tenantId, startDate, endDate, 'caixa'));
+  const cmvPorCategoria = compras.cmvPorCategoria;
   const cmvCompras = compras.cmv;
   const comprasTotal = compras.total;
   const despesasPorCategoria: Record<string, number> = { ...compras.despesasPorCategoria };
@@ -352,7 +355,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
     receitaManual, receitaStone,
-    cancelamentos, descontos, cmvCompras, comprasTotal, despesasPorCategoria,
+    cancelamentos, descontos, cmvCompras, comprasTotal, cmvPorCategoria, despesasPorCategoria,
     custoPessoal, taxasMaquininha,
     receitaAReceber: 0,
     despesasAPagar: 0,
@@ -500,7 +503,8 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
   // compra classificado como DESPESA sai do CMV e vai para a categoria dele; todo o
   // resto é mercadoria. Os dois destinos são exclusivos, então a mercadoria continua
   // sem ser contada 2x (P1/P23): `billsRes` já exclui `reference_type='purchase'`.
-  const compras = await fetchComprasDRE(tenantId, purchasesRes.data ?? []);
+  const compras = await fetchComprasDREDetalhado(tenantId, purchasesRes.data ?? []);
+  const cmvPorCategoria = compras.cmvPorCategoria;
   const cmvCompras = compras.cmv;
   const comprasTotal = compras.total;
   const despesasPorCategoria: Record<string, number> = { ...compras.despesasPorCategoria };
@@ -552,7 +556,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
     receitaManual, receitaStone,
-    cancelamentos, descontos, cmvCompras, comprasTotal, despesasPorCategoria,
+    cancelamentos, descontos, cmvCompras, comprasTotal, cmvPorCategoria, despesasPorCategoria,
     custoPessoal, taxasMaquininha,
     receitaAReceber,
     despesasAPagar,
@@ -1338,6 +1342,32 @@ export default function DRETab() {
                   clickable={cmvTotal > 0}
                   onClick={cmvTotal > 0 ? () => setDrillDown({ type: 'cmv' }) : undefined}
                 />
+                {/* CMV aberto por categoria de mercadoria (do item ou do insumo vinculado).
+                    "Sem categoria" fica por último: é o que falta classificar nas compras. */}
+                {(() => {
+                  const atual = data.cmvPorCategoria ?? {};
+                  const ant = prevData?.cmvPorCategoria ?? {};
+                  const nomes = [...new Set([...Object.keys(atual), ...Object.keys(ant)])]
+                    .filter(n => (atual[n] ?? 0) > 0.005 || (ant[n] ?? 0) > 0.005)
+                    .sort((a, b) => (a === 'Sem categoria' ? 1 : b === 'Sem categoria' ? -1 : (atual[b] ?? 0) - (atual[a] ?? 0)));
+                  // Uma única "Sem categoria" repetiria a linha do CMV sem informar nada.
+                  if (nomes.length === 0 || (nomes.length === 1 && nomes[0] === 'Sem categoria')) return null;
+                  return nomes.map(n => (
+                    <DRERow
+                      key={`cmv-${n}`}
+                      label={n}
+                      atual={atual[n] ?? 0}
+                      anterior={ant[n] ?? 0}
+                      receitaBruta={receitaBruta}
+                      isNeg
+                      depth={2}
+                      badge={n === 'Sem categoria' ? 'Classificar nas compras' : undefined}
+                      badgeColor="bg-amber-100 text-amber-700"
+                      clickable={(atual[n] ?? 0) > 0}
+                      onClick={(atual[n] ?? 0) > 0 ? () => setDrillDown({ type: 'cmv', categoryName: n }) : undefined}
+                    />
+                  ));
+                })()}
                 <NoteRow>
                   {dreMode === 'caixa'
                     ? <>CMV (caixa) = compras <strong className="text-zinc-500">pagas neste mês</strong>, inclusive de meses anteriores. Total pago em compras: </>

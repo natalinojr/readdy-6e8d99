@@ -7,12 +7,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { supabase } from '@/lib/supabase';
 import { readCurriculoPdf } from '@/lib/curriculoLocal';
 import {
   type Application, type Candidate, type Company, type Interview, type Job, type Settings, type Stage, matchWithAi,
   type Distance, calcDistancesAi, distancesForCompany,
-  OWNER_EMAIL, BUCKET, DECISIONS, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind,
+  BUCKET, DECISIONS, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind,
 } from './shared';
 import type { CandidatePatch } from './components/EntrevistaModal';
 import { DialogHost, confirmar, avisar } from './dialog';
@@ -45,7 +46,9 @@ const ABAS: { id: Aba; label: string; icon: string }[] = [
 
 export default function ContratacaoPage() {
   const { user } = useAuth();
-  const isOwner = user?.email?.toLowerCase() === OWNER_EMAIL;
+  // Dono ou usuário liberado no Admin Master (mesmo critério do is_hiring_admin() da RLS).
+  const { hasModule, loading: acessoLoading } = useModuleAccess();
+  const isOwner = hasModule('contratacao');
 
   const [items, setItems] = useState<Candidate[]>([]);
   const [interviews, setInterviews] = useState<Interview[]>([]);
@@ -408,7 +411,7 @@ export default function ContratacaoPage() {
     setModal(null);
   };
 
-  if (user && !isOwner) return <Navigate to="/modulos" replace />;
+  if (user && !acessoLoading && !isOwner) return <Navigate to="/modulos" replace />;
 
   const lendo = queue.filter((q) => q.state === 'lendo').length;
   const semEmpresas = !loading && companies.length === 0;

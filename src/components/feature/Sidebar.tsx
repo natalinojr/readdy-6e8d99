@@ -3,8 +3,9 @@ import {
   LayoutDashboard, ShoppingCart, Coffee, Tablet, Monitor, UtensilsCrossed,
   LayoutGrid, Package, BarChart3, Users, Settings, LogOut, ChefHat,
   Shield, Heart, HelpCircle, ClipboardList, Bell, Truck, ArrowLeft, DollarSign,
-  Tag, Gift, Bug, ShieldCheck, Megaphone, UserSearch, Bot,
+  Tag, Gift, ShieldCheck, Megaphone, UserSearch, Bot,
 } from 'lucide-react';
+import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAprovacoes } from '../../contexts/AprovacoesContext';
 import { useAppMode } from '../../contexts/AppModeContext';
@@ -21,6 +22,8 @@ interface NavItem {
   permissao?: PermissaoKey;
   pdvTerminal?: string;
   adminMasterOnly?: boolean;
+  /** Módulo sem loja: aparece para quem foi liberado no Admin Master. */
+  modulo?: ModuloLivre;
 }
 
 interface NavSection {
@@ -75,10 +78,9 @@ const navSections: NavSection[] = [
   {
     title: 'Ferramentas',
     items: [
-      { label: 'Diagnóstico de Pedidos', icon: Bug,        path: '/diagnostico',  permissao: 'auditoria_ver', adminMasterOnly: true },
-      { label: 'Admin Master',           icon: ShieldCheck, path: '/admin-master',                            adminMasterOnly: true },
-      { label: 'Contratação',            icon: UserSearch,  path: '/contratacao',                             adminMasterOnly: true },
-      { label: 'Assistente',             icon: Bot,         path: '/assistente',                              adminMasterOnly: true },
+      { label: 'Admin Master', icon: ShieldCheck, path: '/admin-master', adminMasterOnly: true },
+      { label: 'Contratação',  icon: UserSearch,  path: '/contratacao',  modulo: 'contratacao' },
+      { label: 'Assistente',   icon: Bot,         path: '/assistente',   adminMasterOnly: true },
     ],
   },
 ];
@@ -105,6 +107,7 @@ export default function Sidebar({ gestaoMode = false, isOpen = false, onClose }:
   const { totalBadge: financeiroBadge, contasVencidas } = useFinanceiroAlertas();
   const { settings } = useSystemSettings();
   const { hasPermissao } = usePermissoes();
+  const { hasModule } = useModuleAccess();
 
   const handleLogout = () => {
     logout();
@@ -123,6 +126,7 @@ export default function Sidebar({ gestaoMode = false, isOpen = false, onClose }:
     .map((section) => {
       const filteredItems = section.items.filter((item) => {
         if (item.adminMasterOnly && user?.email !== ADMIN_MASTER_EMAIL) return false;
+        if (item.modulo && !hasModule(item.modulo)) return false;
         if (item.permissao && !hasPermissao(item.permissao)) return false;
         if (item.pdvTerminal) {
           const terminalAtivo = pdvConfig[item.pdvTerminal as keyof typeof pdvConfig] ?? true;

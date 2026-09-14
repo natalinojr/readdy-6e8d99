@@ -461,7 +461,12 @@ Deno.serve(async (req: Request) => {
     if (!token) return errResp('Unauthorized', 401);
     const { data: u, error: uErr } = await admin.auth.getUser(token);
     if (uErr || !u?.user) return errResp('Unauthorized', 401);
-    if (String(u.user.email ?? '').toLowerCase() !== OWNER_EMAIL) return errResp('Sem acesso ao módulo Contratação', 403);
+    // Dono ou usuário liberado no Admin Master (user_module_access, mesmo critério do is_hiring_admin()).
+    if (String(u.user.email ?? '').toLowerCase() !== OWNER_EMAIL) {
+      const { data: acc } = await admin.from('user_module_access').select('user_id')
+        .eq('user_id', u.user.id).eq('module', 'contratacao').maybeSingle();
+      if (!acc) return errResp('Sem acesso ao módulo Contratação', 403);
+    }
   }
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';

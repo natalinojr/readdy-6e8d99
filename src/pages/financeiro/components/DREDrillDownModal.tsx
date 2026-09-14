@@ -246,8 +246,9 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
       // mesmo peso da DRE (caixa = pago no mês; competência = comprado no mês).
       const compras = await fetchComprasPeriodo(user.tenantId, start.slice(0, 10), end.slice(0, 10), mode);
       const linhas = await fetchComprasLinhas(user.tenantId, compras);
+      // Clique numa sublinha do CMV (categoria) abre só aquela categoria.
       result = linhas
-        .filter(l => l.destino === 'cmv')
+        .filter(l => l.destino === 'cmv' && (!categoryName || l.categoria === categoryName))
         .sort((a, b) => b.valor - a.valor)
         .map(l => ({
           id: l.id,

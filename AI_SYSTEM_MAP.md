@@ -88,20 +88,16 @@ Rotas dentro do layout autenticado:
 - `/auditoria`: `src/pages/auditoria/page.tsx`
 - `/promocoes`: `src/pages/promocoes/page.tsx`
 - `/vouchers`: `src/pages/vouchers/page.tsx`
-- `/diagnostico`: `src/pages/diagnostico/page.tsx`
-- `/diagnostico/simulacao`: `src/pages/diagnostico/SimulacaoPedidos.tsx`
-- `/diagnostico/qa`: `src/pages/diagnostico/QADashboard.tsx`
-- `/diagnostico/checklist`: `src/pages/diagnostico/ChecklistTeste.tsx`
 - `/imprimir-qrcodes`: `src/pages/imprimir-qrcodes/page.tsx`
-- `/admin-master`: `src/pages/admin-master/page.tsx`
-- `/contratacao`: `src/pages/contratacao/page.tsx` (banco de currículos; só o e-mail do dono. Leitura híbrida: PDF com texto é lido grátis no navegador por `src/lib/curriculoLocal.ts` (pdf.js + regras: nome, contato, nascimento, cidade/UF, cargo, texto completo pesquisável); foto/PDF escaneado vai direto à IA; nos demais a IA só roda no botão "Organizar com IA". Abas Candidatos (cards/tabela), Kanban, Agenda de entrevistas (`hiring_interviews`, ficha com notas 1–5 por critério), Relatórios e Configurações. **Independente das lojas do ERPOS**: empresas próprias `hiring_companies` (`company_id`), fases editáveis `hiring_stages` (`stage_id`; 4 nativas por `native_kind`, que não podem ser apagadas) e `hiring_settings` (id=1). `tenant_id`/`status` em hiring_candidates são legado. **Vagas** (`hiring_jobs`) + candidaturas (`hiring_applications`: score 0–100, fit, `analysis` jsonb): `hiring-cv-scan › match` compara currículo × vaga × loja (endereço/descrição em `hiring_companies`) sem enviar idade/estado civil/filhos; `› intake` (x-internal-key) é a entrada do assistente no Telegram (`modo_curriculos`/`salvar_curriculo`). A função é publicada com `--no-verify-jwt` e confere o login dentro. **Distância loja × candidato**: pin da loja (`hiring_companies.lat/lng`, `MapaPin` nas Configurações) + geocode ORS do endereço do candidato (`hiring_candidates.lat/lng/geo_precision`) → rota de carro ORS (fallback linha reta × 1,3) em `hiring_distances`; ações `geocode`, `distance`, `distance_company` (lotes de 20, 1,5 s entre rotas). Regra: só existe distância até a loja da ficha do candidato (`company_id`); sem loja, não calcula. Entrevista = questionário (`settings.questions` → `hiring_interviews.answers`) + considerações (`notes`) + tomada de decisão GPC/PC/R/NA (`hiring_interviews.recommendation` e `hiring_candidates.decision`). Structured outputs da Anthropic aceita no máx. 16 campos union/nullable por schema: acima disso dá 400, então use ""/0/enum e normalize na Edge. Edge `hiring-cv-scan` lê PDF/foto com IA → tabela `hiring_candidates` + bucket privado `curriculos`, RLS por `is_hiring_admin()` = e-mail do JWT, não por tenant)
+- `/admin-master`: `src/pages/admin-master/page.tsx` (abas Lojas / Usuários / Módulos / Convites; modais em `modals.tsx`, gestão de acesso em `acessos.tsx`)
+- `/contratacao`: `src/pages/contratacao/page.tsx` (banco de currículos; só o e-mail do dono. Leitura híbrida: PDF com texto é lido grátis no navegador por `src/lib/curriculoLocal.ts` (pdf.js + regras: nome, contato, nascimento, cidade/UF, cargo, texto completo pesquisável); foto/PDF escaneado vai direto à IA; nos demais a IA só roda no botão "Organizar com IA". Abas Candidatos (cards/tabela), Kanban, Agenda de entrevistas (`hiring_interviews`, ficha com notas 1–5 por critério), Relatórios e Configurações. **Independente das lojas do ERPOS**: empresas próprias `hiring_companies` (`company_id`), fases editáveis `hiring_stages` (`stage_id`; 4 nativas por `native_kind`, que não podem ser apagadas) e `hiring_settings` (id=1). `tenant_id`/`status` em hiring_candidates são legado. **Vagas** (`hiring_jobs`) + candidaturas (`hiring_applications`: score 0–100, fit, `analysis` jsonb): `hiring-cv-scan › match` compara currículo × vaga × loja (endereço/descrição em `hiring_companies`) sem enviar idade/estado civil/filhos; `› intake` (x-internal-key) é a entrada do assistente no Telegram (`modo_curriculos`/`salvar_curriculo`). A função é publicada com `--no-verify-jwt` e confere o login dentro. **Distância loja × candidato**: pin da loja (`hiring_companies.lat/lng`, `MapaPin` nas Configurações) + geocode ORS do endereço do candidato (`hiring_candidates.lat/lng/geo_precision`) → rota de carro ORS (fallback linha reta × 1,3) em `hiring_distances`; ações `geocode`, `distance`, `distance_company` (lotes de 20, 1,5 s entre rotas). Regra: só existe distância até a loja da ficha do candidato (`company_id`); sem loja, não calcula. Entrevista = questionário (`settings.questions` → `hiring_interviews.answers`) + considerações (`notes`) + tomada de decisão GPC/PC/R/NA (`hiring_interviews.recommendation` e `hiring_candidates.decision`). Structured outputs da Anthropic aceita no máx. 16 campos union/nullable por schema: acima disso dá 400, então use ""/0/enum e normalize na Edge. Edge `hiring-cv-scan` lê PDF/foto com IA → tabela `hiring_candidates` + bucket privado `curriculos`, RLS por `is_hiring_admin()` = e-mail do dono OU usuário liberado em `user_module_access` (Admin Master › Módulos), não por tenant)
 
 ## Mapa por dominio
 
 Autenticacao, lojas e permissoes:
 - Telas: `src/pages/login`, `src/pages/selecionar-loja`, `src/pages/admin-master`, `src/pages/usuarios`.
 - Contexts/hooks: `AuthContext`, `PermissoesContext`, `useUsuarios`, `useValidarPIN`, `useKioskTokens`.
-- Supabase RPCs: `get_user_profile_for_tenant`, `get_user_tenants`, `fn_get_users_list`, `fn_update_user`, `fn_toggle_user_active`, `fn_admin_list_users_v3`.
+- Supabase RPCs: `get_user_profile_for_tenant`, `get_user_tenants`, `fn_get_users_list`, `fn_update_user`, `fn_toggle_user_active`, `fn_admin_list_users_v4` (Admin Master: vínculos + módulos), `fn_admin_set_user_tenant`, `fn_admin_remove_user_tenant`, `fn_admin_set_module_access`, `fn_my_modules` (hook `useModuleAccess`).
 - Edge Functions: `login-pin`, `kiosk-auth`, `user-write`, `admin-create-user`, `admin-manage-user`, `setup-tenant`, `bootstrap-admin`.
 
 Cardapio e produtos:
@@ -153,7 +149,7 @@ Delivery externo e autoatendimento:
 - Edge Functions: `delivery-write`, `kiosk-auth`, `login-pin`, `pix-payment`.
 
 Relatorios, dashboard e auditoria:
-- Telas: `src/pages/dashboard`, `src/pages/relatorios`, `src/pages/auditoria`, `src/pages/diagnostico`.
+- Telas: `src/pages/dashboard`, `src/pages/relatorios`, `src/pages/auditoria`.
 - Hooks: `useDashboardMetrics`, `useSalesReport`, `useCaixaReport`, `useDeliveryReport`, `useCancelamentosReport`, `useClientesReport`, `useOrigemReport`, `useSLAHistorico`, `useConsumo*`.
 - Context: `AuditoriaContext`.
 - RPCs: `fn_get_dashboard_metrics`, `fn_get_sales_report`, `fn_get_cash_sessions_v2`, `fn_get_cancelamentos_report`, `fn_get_clientes_report`, `fn_get_audit_log_v3`.
@@ -240,7 +236,6 @@ Slugs importantes:
 - Fiscal: `fiscal-write` (NFC-e via Brasil NFe: emit/retry/cancel/get_pdf/get_xml/print_danfe/test_connection/save_settings).
 - Estoque/producao: `stock-write`, `production-write`.
 - Impressao: `printer-ping`, `printer-raw`, `print-queue-write`, `print-queue-agent`.
-- QA/diagnostico: `simulate-orders`, `simulate-pdv-orders`, `qa-full-simulation`.
 - Auditoria/notificacoes: `audit-write`, `weekly-divergence-alert`.
 
 ## Alertas e cuidado
@@ -1720,6 +1715,11 @@ Edge **`ifood-financial`** (no ar) + migration `20260913140000_ifood_financial.s
 - **Um bloco "Pendências"** (vínculos exatos/fortes a confirmar + alertas de `fn_conciliacao_alertas`) e **uma linha de números**: saldo no banco (API), saldo no ERP, diferença (clica → Reconciliar saldo) e % conciliado no período. Saíram os 6 KPIs, a barra de progresso, o resumo por categoria (duplicava o filtro) e o quadro "Formatos suportados".
 - **Status unificado "Conciliado"** = `reconciled` OU `status` matched/manual (`situacao()`); antes o filtro usava `matched` e o selo/KPI usavam `reconciled`. Coluna "Tipo" removida (o sinal/cor do valor já diz).
 
+### Classificação de itens: busca na categoria + CMV com categoria (2026-09-14)
+
+- `src/pages/financeiro/components/CategoriaCombobox.tsx`: seletor com busca reutilizável (sem acento, várias palavras, procura no nome e no `sub`; ↑/↓/Enter/Esc; lista em portal `position: fixed` para não ser cortada por `overflow-x-auto`). Usado em `ItensClassificacaoTab` para despesa (categoria DRE + grupo) e CMV.
+- CMV agora tem categoria = **categoria de mercadoria** (`fin_merchandise_categories`, a lista dos insumos desde 2026-08-26; `ingredient_categories` e `ingredients.category` são legado). Coluna `fin_item_classifications.merchandise_category_id`; `fn_item_classify` com 5º parâmetro `p_merchandise_category_id` (a versão de 4 foi removida para não haver sobrecarga ambígua no PostgREST) reaplica em `fin_purchase_items.merchandise_category_id`, que a DRE já usa (`comprasDRE.categoriaDo`: item → insumo → "Sem categoria"). Nenhum item de compra antigo tinha categoria que casasse com o cadastro: os itens de CMV sem insumo são categorizados na tela (filtro "CMV sem categoria"). Front pendente de push.
+
 ### "Como o dinheiro entra": banco e maquininha viram configuração (2026-09-14)
 
 Pedido do dono: não ficar preso à Stone e ao Inter. **Conector** (código por empresa, inevitável: cada API é diferente) ≠ **papel** (configuração da loja). Migration `20260914120000_como_o_dinheiro_entra.sql` (aplicada), `financial-write › set_money_flow` (publicada), tela `conciliacao/ComoDinheiroEntraModal.tsx` no ⚙ da Conciliação (front pendente de push).
@@ -1824,3 +1824,24 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
 - **Pegadinha de deploy:** `npx supabase functions deploy a b --no-verify-jwt` aplica a flag a
   TODAS as funções do comando. `purchase-write` é `verify_jwt: true`; as `assistente-*` são
   `false`. Nunca publicar os dois tipos no mesmo comando — confira em `list_edge_functions`.
+
+### Admin Master: acessos por loja/perfil e módulos sem loja; fim do Diagnóstico (2026-09-14)
+
+- **Diagnóstico de Pedidos removido** (rotas `/diagnostico*`, `src/pages/diagnostico`, item da Sidebar
+  e a edge local `qa-full-simulation`). As edges `simulate-orders`, `simulate-pdv-orders` e
+  `qa-full-simulation` publicadas não têm mais chamador.
+- **Módulos sem loja (Tarefas, Contratação)**: acesso por PESSOA na tabela `user_module_access`
+  (`user_id`, `module`), gerida só pelo Admin Master (`fn_admin_set_module_access`). O front lê
+  `fn_my_modules()` pelo hook `useModuleAccess` (cards de /modulos com campo `modulo`, item
+  "Contratação" da Sidebar e o guard de `/contratacao`). O dono sempre tem todos; o papel
+  `tasks_only` sempre tem Tarefas (senão o hard-lock da `RotaProtegida` entra em loop).
+  Backfill: quem tinha admin/gerente/tarefas em alguma loja ganhou Tarefas.
+- Contratação: `is_hiring_admin()` (RLS de `hiring_*` e do bucket `curriculos`) e a edge
+  `hiring-cv-scan` aceitam o dono OU quem está em `user_module_access`. O banco de candidatos é
+  um só: quem tem acesso vê tudo.
+- **Loja × perfil pelo Admin Master**: `fn_admin_set_user_tenant` (upsert em `user_tenants`,
+  papéis admin/manager/cashier/waiter/kitchen/delivery_manager/tasks_only) e
+  `fn_admin_remove_user_tenant`. A pessoa só vê a mudança no próximo login/troca de loja
+  (o `AuthContext` guarda os vínculos da sessão).
+- Layout do Admin Master segue a DRE: `Segmented` de `dreUi`, cards `rounded-2xl border-zinc-200`,
+  tabelas com cabeçalho `text-[11px] uppercase text-zinc-400`.

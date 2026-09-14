@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDreGroups, isGrupoDespesa } from '@/hooks/useDreGroups';
+import CategoriaCombobox from './CategoriaCombobox';
 
 // ── Classificação de itens (base de correlações) ──
 // Cada item comprado (fornecedor + código do produto; sem código, descrição) tem UMA
@@ -10,6 +11,9 @@ import { useDreGroups, isGrupoDespesa } from '@/hooks/useDreGroups';
 // (CMV) do produto de limpeza (despesa) — o pagamento/CNPJ não classifica nada.
 // Alimentada sozinha pelo banco (fin_item_classifications): toda nota de entrada e todo item
 // de compra entram aqui; item novo fica pendente. Classificar reaplica nas compras já lançadas.
+// CMV também tem categoria: a categoria de mercadoria (fin_merchandise_categories — a mesma
+// lista dos insumos). Item ligado a insumo usa a do insumo. Classificar grava a categoria nos
+// itens de compra já lançados, e é dela que a DRE abre o CMV por categoria.
 
 interface Row {
   id: string;
@@ -22,6 +26,7 @@ interface Row {
   unit_label: string | null;
   classe: 'cmv' | 'despesa' | null;
   dre_category_id: string | null;
+  merchandise_category_id: string | null;
   ingredient_id: string | null;
   suggested_classe: 'cmv' | 'despesa' | null;
   suggested_dre_category_id: string | null;
@@ -30,10 +35,11 @@ interface Row {
   last_unit_price: number | null;
   last_seen_at: string | null;
   last_source: string | null;
-  ingredients: { name: string } | null;
+  ingredients: { name: string; merchandise_category_id: string | null } | null;
 }
 interface Cat { id: string; name: string; group_type: string }
-type Filtro = 'pendentes' | 'conferir' | 'cmv' | 'despesa' | 'todos';
+interface Merc { id: string; name: string }
+type Filtro = 'pendentes' | 'conferir' | 'cmv' | 'cmv_sem' | 'despesa' | 'todos';
 
 const brl = (n: number | null | undefined) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n ?? 0));
 const dataBR = (s: string | null | undefined) => (s ? new Date(s).toLocaleDateString('pt-BR') : '—');
@@ -51,25 +57,30 @@ export default function ItensClassificacaoTab() {
 
   const [rows, setRows] = useState<Row[]>([]);
   const [cats, setCats] = useState<Cat[]>([]);
+  const [mercs, setMercs] = useState<Merc[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtro, setFiltro] = useState<Filtro>('pendentes');
   const [busca, setBusca] = useState('');
   const [fornecedor, setFornecedor] = useState('');
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [catLote, setCatLote] = useState('');
+  const [mercLote, setMercLote] = useState('');
   const [busy, setBusy] = useState(false);
 
   const carregar = useCallback(async () => {
     if (!tenantId) return;
-    const [{ data, error }, { data: c }] = await Promise.all([
-      supabase.from('fin_item_classifications').select('*, ingredients(name)').eq('tenant_id', tenantId)
+    const [{ data, error }, { data: c }, { data: m }] = await Promise.all([
+      supabase.from('fin_item_classifications').select('*, ingredients(name, merchandise_category_id)').eq('tenant_id', tenantId)
         .order('last_seen_at', { ascending: false, nullsFirst: false }).range(0, 4999),
       supabase.from('fin_dre_categories').select('id, name, group_type').eq('tenant_id', tenantId)
         .is('deleted_at', null).eq('is_active', true).order('name'),
+      supabase.from('fin_merchandise_categories').select('id, name').eq('tenant_id', tenantId)
+        .eq('is_active', true).order('sort_order').order('name'),
     ]);
     if (error) toastErr('Não foi possível carregar os itens', error.message);
     setRows((data ?? []) as unknown as Row[]);
     setCats(((c ?? []) as Cat[]).filter((x) => isGrupoDespesa(x.group_type)));
+    setMercs((m ?? []) as Merc[]);
     setLoading(false);
   }, [tenantId, toastErr]);
 
@@ -82,12 +93,24 @@ export default function ItensClassificacaoTab() {
     return g ? `${c.name} · ${g}` : c.name;
   }, [cats, groupMeta]);
 
+  const mercNome = useCallback((id: string | null | undefined) => (id ? mercs.find((x) => x.id === id)?.name ?? null : null), [mercs]);
+  // Categoria do CMV que vale para o item: a do insumo (item de estoque) ou a escolhida aqui
+  const cmvCat = useCallback((r: Row) => (r.ingredient_id ? mercNome(r.ingredients?.merchandise_category_id) : mercNome(r.merchandise_category_id)), [mercNome]);
+
+  // Opções dos seletores com busca: despesa = categoria + grupo da DRE; CMV = categorias de mercadoria
+  const catOptions = useMemo(
+    () => cats.map((c) => ({ id: c.id, label: c.name, sub: groupMeta(c.group_type)?.label ?? null })),
+    [cats, groupMeta],
+  );
+  const mercOptions = useMemo(() => mercs.map((m) => ({ id: m.id, label: m.name, sub: 'CMV' })), [mercs]);
+
   const resumo = useMemo(() => ({
     pendentes: rows.filter((r) => !r.classe).length,
     conferir: rows.filter((r) => r.auto_classified).length,
     cmv: rows.filter((r) => r.classe === 'cmv').length,
+    cmvSem: rows.filter((r) => r.classe === 'cmv' && !cmvCat(r)).length,
     despesa: rows.filter((r) => r.classe === 'despesa').length,
-  }), [rows]);
+  }), [rows, cmvCat]);
 
   const fornecedores = useMemo(() => [...new Set(rows.map((r) => r.supplier_name ?? '').filter(Boolean))].sort(), [rows]);
 
@@ -97,18 +120,22 @@ export default function ItensClassificacaoTab() {
       if (filtro === 'pendentes' && r.classe) return false;
       if (filtro === 'conferir' && !r.auto_classified) return false;
       if (filtro === 'cmv' && r.classe !== 'cmv') return false;
+      if (filtro === 'cmv_sem' && (r.classe !== 'cmv' || cmvCat(r))) return false;
       if (filtro === 'despesa' && r.classe !== 'despesa') return false;
       if (fornecedor && r.supplier_name !== fornecedor) return false;
       if (!q) return true;
-      return [r.description, r.supplier_name, r.supplier_code, r.ncm, r.ingredients?.name].some((v) => (v ?? '').toLowerCase().includes(q));
+      return [r.description, r.supplier_name, r.supplier_code, r.ncm, r.ingredients?.name, cmvCat(r)].some((v) => (v ?? '').toLowerCase().includes(q));
     });
-  }, [rows, filtro, fornecedor, busca]);
+  }, [rows, filtro, fornecedor, busca, cmvCat]);
 
-  const classificar = async (ids: string[], classe: 'cmv' | 'despesa' | null, cat: string | null = null) => {
+  // merc = categoria de mercadoria do CMV; sem ela, o item mantém a que já tinha.
+  const classificar = async (ids: string[], classe: 'cmv' | 'despesa' | null, cat: string | null = null, merc: string | null = null) => {
     if (!tenantId || ids.length === 0) return false;
     if (classe === 'despesa' && !cat) { toastErr('Escolha a categoria da despesa', ''); return false; }
     setBusy(true);
-    const { data, error } = await supabase.rpc('fn_item_classify', { p_tenant: tenantId, p_ids: ids, p_classe: classe, p_dre_category_id: cat });
+    const { data, error } = await supabase.rpc('fn_item_classify', {
+      p_tenant: tenantId, p_ids: ids, p_classe: classe, p_dre_category_id: cat, p_merchandise_category_id: merc,
+    });
     setBusy(false);
     if (error) { toastErr('Não foi possível classificar', error.message); return false; }
     const r = (data ?? {}) as { itens?: number; lancamentos_atualizados?: number };
@@ -117,8 +144,8 @@ export default function ItensClassificacaoTab() {
     return true;
   };
 
-  const aplicar = async (ids: string[], classe: 'cmv' | 'despesa' | null, cat: string | null = null) => {
-    if (await classificar(ids, classe, cat)) { setSel(new Set()); await carregar(); }
+  const aplicar = async (ids: string[], classe: 'cmv' | 'despesa' | null, cat: string | null = null, merc: string | null = null) => {
+    if (await classificar(ids, classe, cat, merc)) { setSel(new Set()); await carregar(); }
   };
 
   // Aceita as sugestões dos selecionados, agrupando por (classe, categoria).
@@ -147,9 +174,9 @@ export default function ItensClassificacaoTab() {
       <div>
         <h2 className="text-sm font-bold text-zinc-800">Classificação de itens</h2>
         <p className="text-xs text-zinc-500 mt-0.5 max-w-3xl">
-          Cada produto de cada fornecedor tem uma classificação: <b>CMV</b> (comida, bebida, embalagem de delivery) ou <b>despesa</b> com categoria da DRE (limpeza, papelaria, manutenção…).
+          Cada produto de cada fornecedor tem uma classificação: <b>CMV</b> com a categoria de mercadoria (a mesma dos insumos: Proteínas, Bebidas, Embalagens…) ou <b>despesa</b> com categoria da DRE (limpeza, papelaria, manutenção…).
           É ela que separa, numa mesma nota, a bebida do produto de limpeza. Toda nota de entrada e toda compra lançada entram aqui sozinhas; item novo fica pendente.
-          Item ligado a insumo do estoque é sempre CMV. Ao classificar, as compras já lançadas desse item são corrigidas na DRE.
+          Item ligado a insumo do estoque é sempre CMV, na categoria do insumo. Ao classificar, as compras já lançadas desse item são corrigidas na DRE.
         </p>
       </div>
 
@@ -157,7 +184,7 @@ export default function ItensClassificacaoTab() {
         {([
           ['pendentes', 'Pendentes', resumo.pendentes, 'text-amber-600', 'sem classificação (contam como CMV)'],
           ['conferir', 'Automáticos', resumo.conferir, 'text-sky-600', 'CMV pelo NCM/insumo — confira'],
-          ['cmv', 'CMV', resumo.cmv, 'text-zinc-700', 'custo da mercadoria'],
+          ['cmv', 'CMV', resumo.cmv, 'text-zinc-700', resumo.cmvSem > 0 ? `${resumo.cmvSem} sem categoria` : 'custo da mercadoria'],
           ['despesa', 'Despesa', resumo.despesa, 'text-violet-600', 'sai do CMV na DRE'],
         ] as const).map(([id, label, n, cor, sub]) => (
           <button key={id} onClick={() => setFiltro(id)}
@@ -170,10 +197,10 @@ export default function ItensClassificacaoTab() {
       </div>
 
       <div className="bg-white rounded-xl border border-zinc-100 p-3 flex flex-wrap items-center gap-2">
-        {([['pendentes', 'Pendentes'], ['conferir', 'Automáticos'], ['cmv', 'CMV'], ['despesa', 'Despesa'], ['todos', 'Todos']] as const).map(([id, label]) => (
+        {([['pendentes', 'Pendentes'], ['conferir', 'Automáticos'], ['cmv', 'CMV'], ['cmv_sem', 'CMV sem categoria'], ['despesa', 'Despesa'], ['todos', 'Todos']] as const).map(([id, label]) => (
           <button key={id} onClick={() => setFiltro(id)}
             className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${filtro === id ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-            {label}
+            {label}{id === 'cmv_sem' && resumo.cmvSem > 0 ? ` (${resumo.cmvSem})` : ''}
           </button>
         ))}
         <select value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}
@@ -181,20 +208,23 @@ export default function ItensClassificacaoTab() {
           <option value="">Todos os fornecedores</option>
           {fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
         </select>
-        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Produto, código, NCM ou insumo"
+        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Produto, código, NCM, insumo ou categoria"
           className="flex-1 min-w-[180px] text-sm border border-zinc-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-amber-400" />
       </div>
 
       {podeClassificar && sel.size > 0 && (
         <div className="sticky top-0 z-10 bg-zinc-900 text-white rounded-xl p-3 flex flex-wrap items-center gap-2 text-xs">
           <span className="font-semibold">{sel.size} selecionado(s)</span>
-          <button disabled={busy} onClick={() => aplicar([...sel], 'cmv')}
+          <CategoriaCombobox value={mercLote} options={mercOptions} onChange={setMercLote}
+            placeholder="Categoria do CMV…"
+            buttonClassName="bg-white text-zinc-900 rounded-lg px-2 py-1.5 w-[190px] cursor-pointer" />
+          <button disabled={busy} onClick={() => aplicar([...sel], 'cmv', null, mercLote || null)}
+            title={mercLote ? '' : 'Sem categoria escolhida, cada item mantém a categoria que já tem'}
             className="px-3 py-1.5 rounded-lg bg-white text-zinc-900 font-semibold hover:bg-zinc-100 disabled:opacity-50 cursor-pointer">Marcar como CMV</button>
           <span className="w-px h-5 bg-zinc-700" />
-          <select value={catLote} onChange={(e) => setCatLote(e.target.value)} className="text-zinc-900 rounded-lg px-2 py-1.5">
-            <option value="">Categoria da despesa…</option>
-            {cats.map((c) => <option key={c.id} value={c.id}>{catNome(c.id)}</option>)}
-          </select>
+          <CategoriaCombobox value={catLote} options={catOptions} onChange={setCatLote}
+            placeholder="Categoria da despesa…"
+            buttonClassName="bg-white text-zinc-900 rounded-lg px-2 py-1.5 w-[220px] cursor-pointer" />
           <button disabled={busy || !catLote} onClick={() => aplicar([...sel], 'despesa', catLote)}
             className="px-3 py-1.5 rounded-lg bg-violet-500 font-semibold hover:bg-violet-600 disabled:opacity-50 cursor-pointer">Marcar como despesa</button>
           <span className="w-px h-5 bg-zinc-700" />
@@ -212,7 +242,7 @@ export default function ItensClassificacaoTab() {
         ) : filtrados.length === 0 ? (
           <div className="p-10 text-center">
             <i className="ri-price-tag-3-line text-3xl text-zinc-300" />
-            <p className="text-sm text-zinc-500 mt-2">{rows.length === 0 ? 'Nenhum item ainda: eles aparecem quando chegam notas de entrada ou compras.' : filtro === 'pendentes' ? 'Nenhum item pendente. Tudo classificado.' : 'Nada neste filtro.'}</p>
+            <p className="text-sm text-zinc-500 mt-2">{rows.length === 0 ? 'Nenhum item ainda: eles aparecem quando chegam notas de entrada ou compras.' : filtro === 'pendentes' ? 'Nenhum item pendente. Tudo classificado.' : filtro === 'cmv_sem' ? 'Todo item de CMV já tem categoria.' : 'Nada neste filtro.'}</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -235,6 +265,7 @@ export default function ItensClassificacaoTab() {
               <tbody>
                 {filtrados.map((r) => {
                   const sugCat = r.suggested_dre_category_id ? catNome(r.suggested_dre_category_id) : null;
+                  const catCmv = cmvCat(r);
                   return (
                     <tr key={r.id} className={`border-b border-zinc-50 hover:bg-zinc-50/60 ${sel.has(r.id) ? 'bg-amber-50/50' : ''}`}>
                       {podeClassificar && (
@@ -257,23 +288,25 @@ export default function ItensClassificacaoTab() {
                         <p>{dataBR(r.last_seen_at)}</p>
                         <p className="text-zinc-400">{r.last_unit_price != null ? brl(r.last_unit_price) : ''}</p>
                       </td>
-                      <td className="px-3 py-2.5 min-w-[260px]">
+                      <td className="px-3 py-2.5 min-w-[380px]">
                         <div className="flex flex-wrap items-center gap-1.5">
                           {r.ingredient_id ? (
-                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-700" title="Item de estoque é sempre CMV">CMV · estoque</span>
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-700" title="Item de estoque é sempre CMV, na categoria do insumo (Estoque › Insumos)">
+                              CMV · {catCmv ?? 'estoque sem categoria'}
+                            </span>
                           ) : podeClassificar ? (
                             <>
-                              <button disabled={busy} onClick={() => aplicar([r.id], 'cmv')}
-                                className={`text-[11px] font-bold px-2 py-1 rounded-lg cursor-pointer disabled:opacity-50 ${r.classe === 'cmv' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>CMV</button>
-                              <select value={r.classe === 'despesa' ? r.dre_category_id ?? '' : ''} disabled={busy}
-                                onChange={(e) => { if (e.target.value) aplicar([r.id], 'despesa', e.target.value); }}
-                                className={`text-[11px] font-semibold rounded-lg px-1.5 py-1 max-w-[190px] cursor-pointer ${r.classe === 'despesa' ? 'bg-violet-500 text-white' : 'bg-zinc-100 text-zinc-600'}`}>
-                                <option value="">Despesa…</option>
-                                {cats.map((c) => <option key={c.id} value={c.id}>{catNome(c.id)}</option>)}
-                              </select>
+                              <CategoriaCombobox value={r.classe === 'cmv' ? r.merchandise_category_id ?? '' : ''} disabled={busy}
+                                options={mercOptions} placeholder={r.classe === 'cmv' ? 'CMV · sem categoria' : 'CMV…'}
+                                onChange={(id) => { if (id) aplicar([r.id], 'cmv', null, id); }}
+                                buttonClassName={`text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[170px] cursor-pointer ${r.classe === 'cmv' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600'}`} />
+                              <CategoriaCombobox value={r.classe === 'despesa' ? r.dre_category_id ?? '' : ''} disabled={busy}
+                                options={catOptions} placeholder="Despesa…"
+                                onChange={(id) => { if (id) aplicar([r.id], 'despesa', id); }}
+                                buttonClassName={`text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[190px] cursor-pointer ${r.classe === 'despesa' ? 'bg-violet-500 text-white' : 'bg-zinc-100 text-zinc-600'}`} />
                             </>
                           ) : (
-                            <span className="text-xs text-zinc-600">{r.classe === 'cmv' ? 'CMV' : r.classe === 'despesa' ? catNome(r.dre_category_id) ?? 'Despesa' : 'Pendente'}</span>
+                            <span className="text-xs text-zinc-600">{r.classe === 'cmv' ? `CMV${catCmv ? ` · ${catCmv}` : ''}` : r.classe === 'despesa' ? catNome(r.dre_category_id) ?? 'Despesa' : 'Pendente'}</span>
                           )}
                           {r.auto_classified && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700" title={r.suggestion_reason ?? ''}>automático</span>}
                         </div>

@@ -7,6 +7,7 @@ import { useModoTreino } from '@/contexts/ModoTreinoContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useUsuarios } from '@/hooks/useUsuarios';
+import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { ChefHat, LogOut, Monitor, Store } from 'lucide-react';
 import OnboardingShareModal from '@/pages/modulos/components/OnboardingShareModal';
 
@@ -25,6 +26,8 @@ interface ModuloCard {
   perfis?: string[];
   /** Quando definido, só estes e-mails veem o módulo (independe do perfil). */
   emails?: string[];
+  /** Módulo sem loja: só aparece para quem foi liberado no Admin Master. */
+  modulo?: ModuloLivre;
 }
 
 const MODULOS: ModuloCard[] = [
@@ -117,7 +120,7 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-indigo-50',
     acentoBorder: 'border-indigo-200/70',
     tag: 'Admin',
-    perfis: ['admin', 'gerente', 'tarefas'],
+    modulo: 'tarefas',
   },
   {
     id: 'contratacao',
@@ -130,7 +133,7 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-rose-50',
     acentoBorder: 'border-rose-200/70',
     tag: 'Admin',
-    emails: ['natalinojr.engel@gmail.com'],
+    modulo: 'contratacao',
   },
   {
     id: 'assistente',
@@ -281,6 +284,7 @@ export default function ModulosPage() {
   const { settings, loading: settingsLoading, carregar } = useSystemSettings();
   const { hasPermissao } = usePermissoes();
   const { usuarios } = useUsuarios();
+  const { hasModule } = useModuleAccess();
   const [acessoNegadoMsg, setAcessoNegadoMsg] = useState<string | null>(null);
   const [showTotens, setShowTotens] = useState(false);
   const [hora, setHora] = useState(() =>
@@ -376,6 +380,7 @@ export default function ModulosPage() {
 
   const modulosVisiveis = MODULOS.filter((m) => {
     if (m.emails && !m.emails.includes(user?.email?.toLowerCase() ?? '')) return false;
+    if (m.modulo && !hasModule(m.modulo)) return false;
     const perfilOk = !m.perfis || !user?.perfil || m.perfis.includes(user.perfil);
     let cfgOk = true;
     if (!settingsLoading) {
