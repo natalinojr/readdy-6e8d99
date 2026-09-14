@@ -135,7 +135,7 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
 
               <div className="text-[11px] text-zinc-600 bg-sky-50 border border-sky-100 rounded-xl p-3.5 space-y-1.5">
                 <p className="font-bold text-sky-800 text-xs">Como configurar</p>
-                <p>1. Use a aplicação <strong>"ERPOS Autoatendimento Point"</strong> (Suas integrações no Mercado Pago) e copie o <strong>Access Token</strong>.</p>
+                <p>1. Na conta do Mercado Pago <strong>em que a maquininha está ativada</strong>, crie uma aplicação do tipo <strong>Point</strong> (Suas integrações) e copie o <strong>Access Token de produção</strong>.</p>
                 <p>2. Clique em <strong>Buscar maquininhas</strong>, escolha a do tablet e ligue o <strong>modo PDV</strong>.</p>
                 <p>3. Em modo PDV a maquininha só cobra o que o sistema mandar. Se o sistema cair, use <strong>Voltar ao modo normal</strong>.</p>
               </div>

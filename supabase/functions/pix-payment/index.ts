@@ -361,7 +361,11 @@ const POINT_EXPIRATION = 'PT15M';
 const POINT_EXPIRATION_MS = 15 * 60 * 1000;
 const pointReady = (c: ProviderCfg | null) => Boolean(c && c.is_active && c.access_token && c.terminal_id);
 // deno-lint-ignore no-explicit-any
-const pointErr = (b: any) => String(b?.errors?.[0]?.message ?? b?.message ?? JSON.stringify(b ?? {}).slice(0, 200));
+const pointErr = (b: any) => {
+  const e = b?.errors?.[0];
+  const det = Array.isArray(e?.details) && e.details.length ? ` — ${e.details.join('; ')}` : '';
+  return String(e?.message ?? b?.message ?? JSON.stringify(b ?? {}).slice(0, 200)) + det;
+};
 
 async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: number, method: string, desc: string) {
   const r = await mpFetch(String(cfg.access_token), '/v1/orders', {
@@ -375,7 +379,10 @@ async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: numb
       },
     }),
   });
-  if (!r.ok || !r.body?.id) throw new Error(`Mercado Pago Point ${r.status}: ${pointErr(r.body)}`);
+  if (!r.ok || !r.body?.id) {
+    log('WARN', 'create_point_order', 'recusado', { chargeId, status: r.status, body: r.body });
+    throw new Error(`Mercado Pago Point ${r.status}: ${pointErr(r.body)}`);
+  }
   return { providerPaymentId: String(r.body.id), raw: { id: r.body.id, status: r.body.status } };
 }
 
@@ -714,6 +721,8 @@ Deno.serve(async (req: Request) => {
       if (auth.error) return auth.error;
       const { point } = await loadProviderCfgs(supabase, tenantId);
       if (!pointReady(point)) return json({ error: 'A maquininha não está configurada nesta loja.', code: 'no_point' }, 422);
+      // Orders API recusa amount < 1.00 ("Must be greater than or equal to 1.00").
+      if (amount < 1) return json({ error: 'Cartão na maquininha só a partir de R$ 1,00. Escolha outra forma ou pague no balcão.', code: 'min_amount' }, 422);
 
       const chargeId = crypto.randomUUID();
       const { data: tenant } = await supabase.from('tenants').select('name').eq('id', tenantId).maybeSingle();
@@ -800,14 +809,7 @@ Deno.serve(async (req: Request) => {
         const terminalId = String(body.terminal_id ?? '');
         const mode = body.mode === 'STANDALONE' ? 'STANDALONE' : 'PDV';
         if (!terminalId) return json({ error: 'Escolha a maquininha' }, 422);
-        let r = await mpFetch(token, '/terminals/v1/setup', { method: 'PATCH', body: JSON.stringify({ terminals: [{ id: terminalId, operating_mode: mode }] }) });
-        // Alguns terminais (N950 recém-ativada, 2026-09-14) respondem 404 no endpoint novo mesmo
-        // listados, com loja e caixa — tenta o endpoint legado da API de Integração.
-        if (r.status === 404) {
-          log('WARN', 'set_point_mode', 'setup 404, tentando endpoint legado', { tenantId, terminalId });
-          r = await mpFetch(token, `/point/integration-api/devices/${encodeURIComponent(terminalId)}`, { method: 'PATCH', body: JSON.stringify({ operating_mode: mode }) });
-          if (r.ok && r.body?.operating_mode) r.body = { terminals: [{ id: terminalId, operating_mode: r.body.operating_mode }] };
-        }
+        const r = await mpFetch(token, '/terminals/v1/setup', { method: 'PATCH', body: JSON.stringify({ terminals: [{ id: terminalId, operating_mode: mode }] }) });
         if (!r.ok) {
           log('WARN', 'set_point_mode', 'recusado', { tenantId, terminalId, mode, status: r.status, body: r.body });
           return json({ error: `O Mercado Pago recusou (${r.status}): ${pointErr(r.body)}` }, 422);

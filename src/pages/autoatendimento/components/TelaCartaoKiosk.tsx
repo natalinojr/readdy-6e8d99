@@ -41,6 +41,7 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onPagoRef = useRef(onPago);
   onPagoRef.current = onPago;
+  const avisouPagoRef = useRef(false);
 
   const pararPolling = () => { if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; } };
 
@@ -67,6 +68,8 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
         });
         if (st?.status === 'confirmed') {
           pararPolling();
+          if (avisouPagoRef.current) return; // consulta paralela que também voltou "confirmed"
+          avisouPagoRef.current = true;
           setEstado('aprovado');
           const tipo = st.method === 'debit_card' ? 'debit_card' : 'credit_card';
           setTimeout(() => onPagoRef.current(id, tipo), 3500);

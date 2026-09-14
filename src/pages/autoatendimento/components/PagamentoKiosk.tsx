@@ -207,6 +207,7 @@ function TelaPix({
   const pixDataRef = useRef<PixPaymentData | null>(null);
   const onPagoRef = useRef(onPago);
   onPagoRef.current = onPago;
+  const avisouPagoRef = useRef(false);
 
   // Gera o PIX ao montar
   useEffect(() => {
@@ -263,6 +264,8 @@ function TelaPix({
         });
         if (data?.status === 'confirmed') {
           clearInterval(pollingRef.current!);
+          if (avisouPagoRef.current) return; // consulta paralela que também voltou "confirmed"
+          avisouPagoRef.current = true;
           setPollingStatus('confirmed');
           setTimeout(() => onPagoRef.current(pixPaymentId), 3500);
         } else if (data?.status === 'expired') {
@@ -593,9 +596,15 @@ export default function PagamentoKiosk({
     await handlePagarNaEntregaEscolhido();
   };
 
+  const pagosTratadosRef = useRef<Set<string>>(new Set());
+
   // Quando PIX é confirmado: cria pedido e finaliza
   // Pagamento confirmado pelo provedor (Pix pelo banco ou cartão na maquininha).
   const handlePixPago = useCallback(async (pixPaymentId: string, tipo: string = 'pix') => {
+    // Um pagamento confirmado só cria um pedido: o polling pode avisar duas vezes (consultas
+    // em paralelo) e a 2ª chamada, bloqueada pela 1ª, mostrava "pedido não registrado".
+    if (pagosTratadosRef.current.has(pixPaymentId)) return;
+    pagosTratadosRef.current.add(pixPaymentId);
     setAguardando(true);
     setPagamentoError(null);
     try {
