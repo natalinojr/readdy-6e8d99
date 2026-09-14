@@ -75,7 +75,11 @@ export interface ReceivableMatch {
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
-export function useConciliacao(bankAccountId?: string) {
+// period: filtra as linhas pela data da transação. Sem período o servidor devolve só as
+// últimas 500 linhas da conta — os totais viram uma janela arbitrária.
+export function useConciliacao(bankAccountId?: string, period?: { from?: string; to?: string }) {
+  const periodFrom = period?.from || undefined;
+  const periodTo = period?.to || undefined;
   const { user } = useAuth();
   const [imports, setImports] = useState<StatementImport[]>([]);
   const [rules, setRules] = useState<ReconciliationRule[]>([]);
@@ -91,7 +95,7 @@ export function useConciliacao(bankAccountId?: string) {
         body: {
           action: 'list_statement_imports',
           tenant_id: user.tenantId,
-          payload: { bank_account_id: bankAccountId },
+          payload: { bank_account_id: bankAccountId, date_from: periodFrom, date_to: periodTo },
         },
       });
       if (error) console.error('[useConciliacao] Erro:', error.message);
@@ -100,7 +104,7 @@ export function useConciliacao(bankAccountId?: string) {
       console.error('[useConciliacao] Erro fetchImports:', err);
     }
     setLoading(false);
-  }, [user?.tenantId, bankAccountId]);
+  }, [user?.tenantId, bankAccountId, periodFrom, periodTo]);
 
   // Fetch rules via Edge Function (bypasses RLS permission issue)
   const fetchRules = useCallback(async () => {

@@ -372,6 +372,67 @@ function ImportPreviewModal({ rows, onClose, onConfirm, saving }: ImportPreviewP
   );
 }
 
+// ── Menu suspenso simples (fecha ao clicar fora) ────────────────────────────
+
+function DropMenu({ button, children, open, setOpen, width = 'w-72' }: {
+  button: React.ReactNode;
+  children: React.ReactNode;
+  open: boolean;
+  setOpen: (v: boolean) => void;
+  width?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open, setOpen]);
+  return (
+    <div ref={ref} className="relative">
+      {button}
+      {open && (
+        <div className={`absolute right-0 top-full mt-1 z-40 ${width} max-w-[calc(100vw-2rem)] bg-white border border-zinc-200 rounded-xl shadow-lg py-1.5`}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ icon, label, hint, onClick, disabled }: { icon: string; label: string; hint?: string; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-zinc-50 cursor-pointer disabled:opacity-50 disabled:cursor-default"
+    >
+      <i className={`${icon} text-zinc-500 mt-0.5`} />
+      <span className="min-w-0">
+        <span className="block text-sm text-zinc-800">{label}</span>
+        {hint && <span className="block text-xs text-zinc-400">{hint}</span>}
+      </span>
+    </button>
+  );
+}
+
+// Estado único da linha, do ponto de vista de quem usa: conciliado, pendente ou ignorado.
+// (No banco, "matched" e "reconciled" são campos distintos; para a tela é a mesma coisa.)
+type Situacao = 'pending' | 'conciliado' | 'ignored';
+function situacao(s: StatementImport): Situacao {
+  if (s.status === 'ignored') return 'ignored';
+  if (s.reconciled || s.status === 'matched' || s.status === 'manual') return 'conciliado';
+  return 'pending';
+}
+
+const SITUACAO_CONFIG: Record<Situacao, { label: string; color: string; icon: string }> = {
+  pending: { label: 'Pendente', color: 'bg-amber-100 text-amber-700', icon: 'ri-time-line' },
+  conciliado: { label: 'Conciliado', color: 'bg-green-100 text-green-700', icon: 'ri-checkbox-circle-fill' },
+  ignored: { label: 'Ignorado', color: 'bg-zinc-100 text-zinc-500', icon: 'ri-eye-off-line' },
+};
+
+const fmtDataBR = (iso: string) => iso.split('-').reverse().join('/');
+
 // ── Main Component ──────────────────────────────────────────────────────────
 
 export default function ConciliacaoTab() {
@@ -385,23 +446,32 @@ export default function ConciliacaoTab() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
-  // Modals
+  // Menus e modais
+  const [menuImportar, setMenuImportar] = useState(false);
+  const [menuConfig, setMenuConfig] = useState(false);
   const [showRules, setShowRules] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<StatementImport | null>(null);
   const [showSaldoModal, setShowSaldoModal] = useState(false);
   const [showStoneConfig, setShowStoneConfig] = useState(false);
   const [showIfoodConfig, setShowIfoodConfig] = useState(false);
   const [showInterConfig, setShowInterConfig] = useState(false);
+  const [showIntegracoes, setShowIntegracoes] = useState(false);
   const [interRefreshKey, setInterRefreshKey] = useState(0);
-  const [activeImportTab, setActiveImportTab] = useState<'manual' | 'stone' | 'inter'>('manual');
 
-  // Filters
+  // Período único: define o que aparece na tabela, os números e o que buscar nos bancos
+  const hojeBR = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+  const shiftISO = (iso: string, n: number) => {
+    const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
+  };
+  const [periodFrom, setPeriodFrom] = useState(() => shiftISO(hojeBR(), -30));
+  const [periodTo, setPeriodTo] = useState(() => hojeBR());
+  const periodoValido = Boolean(periodFrom && periodTo && periodFrom <= periodTo);
+
+  // Filtros
   const [search, setSearch] = useState('');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'matched' | 'ignored' | 'manual'>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | Situacao>('all');
   const [filterType, setFilterType] = useState<'all' | 'credit' | 'debit'>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
   const [page, setPage] = useState(1);
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
@@ -432,15 +502,7 @@ export default function ConciliacaoTab() {
     createRule,
     updateRule,
     deleteRule,
-    totalMatched,
-    totalPending,
-    totalReconciled,
-    totalIgnored,
-    saldoCreditos,
-    saldoDebitos,
-    saldoLiquido,
-    pctConciliado,
-  } = useConciliacao(selectedAccountId);
+  } = useConciliacao(selectedAccountId, periodoValido ? { from: periodFrom, to: periodTo } : undefined);
 
   // Alertas de confiabilidade (fn_conciliacao_alertas)
   type AlertaBloco = { count: number; total: number; itens: Array<{ label: string; valor: number; data: string | null }> };
@@ -451,16 +513,9 @@ export default function ConciliacaoTab() {
     if (r.data?.alerts) setAlertas(r.data.alerts);
   }, [user?.tenantId]);
 
-  // Extratos dos bancos integrados (Inter e Stone): buscados ao abrir a tela e no botão
-  // "Atualizar bancos". Não há rotina automática no servidor.
+  // Extratos dos bancos integrados (Inter, Stone e iFood): o cron diário das 07h já busca;
+  // aqui buscamos de novo ao abrir a tela e pelo menu "Importar".
   const [bankSync, setBankSync] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
-  // Período a importar dos bancos (De/Até no topo). Sem período = desde o último sync.
-  const hojeBR = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
-  const shiftISO = (iso: string, n: number) => {
-    const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
-  };
-  const [importFrom, setImportFrom] = useState(() => shiftISO(hojeBR(), -7));
-  const [importTo, setImportTo] = useState(() => hojeBR());
   const runBankSync = useCallback(async (range?: { from: string; to: string }) => {
     if (!user?.tenantId) return;
     setBankSync({ running: true, msg: null, error: false });
@@ -514,34 +569,31 @@ export default function ConciliacaoTab() {
     });
     const parts: string[] = [];
     let hasError = false;
-    let novos = 0;
     const read = (label: string, r: { data: SyncResp | null; error: Error | null }) => {
       const d = r.data;
       const err = d?.error ?? r.error?.message;
       if (d?.not_configured || /não configurad/i.test(String(err ?? ''))) return; // banco não integrado nesta loja
       if (d?.skipped) return;
       if (err || !d?.success) { hasError = true; parts.push(`${label}: falhou`); return; }
-      novos += Number(d.inserted ?? 0);
       parts.push(`${label}: ${Number(d.inserted ?? 0)} novo(s)`);
     };
     read('Inter', inter);
     read('Stone', stone);
     read('iFood', ifood);
     const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    const periodo = range ? ` (${range.from.split('-').reverse().join('/')} a ${range.to.split('-').reverse().join('/')})` : '';
+    const periodo = range ? ` (${fmtDataBR(range.from)} a ${fmtDataBR(range.to)})` : '';
     setBankSync({ running: false, error: hasError, msg: parts.length > 0 ? `Bancos atualizados às ${hora}${periodo} · ${parts.join(' · ')}` : null });
     // Sugere de novo os vínculos pagamento × nota/conta (a nota pode ter chegado depois do pagamento)
     await invokeWithAuth('conciliacao-pagamentos', { body: { action: 'rematch', tenant_id: user.tenantId } });
-    void novos;
     refresh();
     loadAlerts();
     if (parts.length > 0) { refetchAccounts(); setInterRefreshKey((k) => k + 1); }
-  }, [user?.tenantId, refresh, refetchAccounts, loadAlerts]);
+  }, [user?.tenantId, refresh, refetchAccounts, loadAlerts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Uma vez ao abrir a tela (e ao trocar de loja)
   useEffect(() => { runBankSync(); }, [user?.tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── File import ─────────────────────────────────────────────────────────────
+  // ── Vínculos pagamento × nota/conta ─────────────────────────────────────────
   // Pagamentos com vínculo EXATO a uma nota/conta: confirmados em lote (decisão do dono)
   const exatosPendentes = useMemo(
     () => imports.filter(i => i.status === 'pending' && !i.reconciled && i.match_confidence === 'exato'),
@@ -582,6 +634,7 @@ export default function ConciliacaoTab() {
     loadAlerts();
   }, [user?.tenantId, refresh, loadAlerts]);
 
+  // ── File import ─────────────────────────────────────────────────────────────
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user?.tenantId || !selectedAccountId) return;
@@ -722,7 +775,7 @@ export default function ConciliacaoTab() {
   // ── Manual actions ────────────────────────────────────────────────────────
   const handleConciliar = async (id: string) => {
     const ok = await reconcile(id);
-    if (ok) { showToast('Lançamento reconciliado!'); refresh(); }
+    if (ok) { showToast('Lançamento conciliado!'); refresh(); }
   };
 
   const handleIgnorar = async (id: string) => {
@@ -735,6 +788,15 @@ export default function ConciliacaoTab() {
     if (ok) { showToast('Status reaberto.'); refresh(); }
   };
 
+  // ── Números do período ────────────────────────────────────────────────────
+  const contagem = useMemo(() => {
+    const c = { pending: 0, conciliado: 0, ignored: 0 };
+    imports.forEach(i => { c[situacao(i)]++; });
+    return c;
+  }, [imports]);
+  const considerados = contagem.pending + contagem.conciliado;
+  const pctConciliado = considerados > 0 ? Math.round((contagem.conciliado / considerados) * 100) : 0;
+
   // ── Filters ───────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let result = [...imports];
@@ -745,13 +807,11 @@ export default function ConciliacaoTab() {
         s.category?.toLowerCase().includes(q)
       );
     }
-    if (filterStatus !== 'all') result = result.filter(s => s.status === filterStatus);
+    if (filterStatus !== 'all') result = result.filter(s => situacao(s) === filterStatus);
     if (filterType !== 'all') result = result.filter(s => s.transaction_type === filterType);
     if (filterCategory !== 'all') result = result.filter(s => s.category === filterCategory);
-    if (filterDateFrom) result = result.filter(s => s.transaction_date >= filterDateFrom);
-    if (filterDateTo) result = result.filter(s => s.transaction_date <= filterDateTo);
     return result;
-  }, [imports, search, filterStatus, filterType, filterCategory, filterDateFrom, filterDateTo]);
+  }, [imports, search, filterStatus, filterType, filterCategory]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -763,32 +823,28 @@ export default function ConciliacaoTab() {
     return Array.from(cats).sort();
   }, [imports]);
 
-  // Resumo por categoria
-  const categorySummary = useMemo(() => {
-    const map: Record<string, { credit: number; debit: number; count: number }> = {};
-    imports.forEach(i => {
-      const cat = i.category || 'Sem categoria';
-      if (!map[cat]) map[cat] = { credit: 0, debit: 0, count: 0 };
-      map[cat].count++;
-      if (i.transaction_type === 'credit') map[cat].credit += Number(i.amount);
-      else map[cat].debit += Number(i.amount);
-    });
-    return Object.entries(map)
-      .map(([name, { credit, debit, count }]) => ({ name, credit, debit, count, net: credit - debit }))
-      .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
-  }, [imports]);
-
   const selectedAccount = bankAccounts.find(a => a.id === selectedAccountId);
 
-  const STATUS_CONFIG = {
-    pending: { label: 'Pendente', color: 'bg-amber-100 text-amber-700', icon: 'ri-time-line' },
-    matched: { label: 'Conciliado', color: 'bg-green-100 text-green-700', icon: 'ri-checkbox-circle-fill' },
-    ignored: { label: 'Ignorado', color: 'bg-zinc-100 text-zinc-500', icon: 'ri-eye-off-line' },
-    manual: { label: 'Manual', color: 'bg-orange-100 text-orange-700', icon: 'ri-edit-line' },
-  };
+  // Pendências: vínculos a confirmar + alertas de confiabilidade, num bloco só
+  const ALERTAS_DEF: Array<[string, string, 'red' | 'amber']> = [
+    ['contas_vencidas', 'Contas a pagar vencidas em aberto', 'red'],
+    ['notas_vencidas', 'Notas com parcela vencida e sem pagamento no extrato', 'red'],
+    ['duplicidades', 'Possíveis pagamentos em duplicidade', 'red'],
+    ['notas_canceladas_lancadas', 'Notas canceladas na SEFAZ que foram lançadas', 'red'],
+    ['pagamentos_sem_nota', 'Pagamentos a empresas sem nota de entrada', 'amber'],
+    ['juros_mes', 'Juros e multas pagos no mês', 'amber'],
+  ];
+  const alertasAtivos = alertas ? ALERTAS_DEF.filter(([k]) => Number(alertas[k]?.count ?? 0) > 0) : [];
+  const temPendencias = vinculosPendentes.length > 0 || alertasAtivos.length > 0;
+
+  const saldoBanco = selectedAccount?.synced_balance != null ? Number(selectedAccount.synced_balance) : null;
+  const saldoErp = selectedAccount ? Number(selectedAccount.current_balance) : null;
+  const diferenca = saldoBanco != null && saldoErp != null ? Math.round((saldoBanco - saldoErp) * 100) / 100 : null;
+
+  const trocarFiltroStatus = (s: 'all' | Situacao) => { setFilterStatus(s); setPage(1); };
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4">
       {/* Toast */}
       {toast && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl text-sm font-semibold flex items-center gap-2 ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
@@ -798,308 +854,202 @@ export default function ConciliacaoTab() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
           <h2 className="text-base font-bold text-zinc-900">Conciliação Bancária</h2>
-          <p className="text-xs text-zinc-500 mt-0.5">Importe extratos, classifique automaticamente e reconcilie com o sistema</p>
-          {bankSync.running && (
-            <p className="text-xs text-blue-600 mt-1 flex items-center gap-1"><i className="ri-loader-4-line animate-spin" /> Buscando extratos dos bancos integrados...</p>
-          )}
-          {!bankSync.running && bankSync.msg && (
-            <p className={`text-xs mt-1 flex items-center gap-1 ${bankSync.error ? 'text-red-600' : 'text-green-700'}`}>
-              <i className={bankSync.error ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'} /> {bankSync.msg}
+          {bankSync.running ? (
+            <p className="text-xs text-blue-600 mt-0.5 flex items-center gap-1"><i className="ri-loader-4-line animate-spin" /> Buscando extratos dos bancos integrados...</p>
+          ) : bankSync.msg ? (
+            <p className={`text-xs mt-0.5 flex items-center gap-1 ${bankSync.error ? 'text-red-600' : 'text-zinc-500'}`}>
+              <i className={bankSync.error ? 'ri-error-warning-line' : 'ri-checkbox-circle-line text-green-600'} /> {bankSync.msg}
             </p>
+          ) : (
+            <p className="text-xs text-zinc-500 mt-0.5">Extrato do banco × lançamentos do sistema</p>
           )}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
           {bankAccounts.length > 1 && (
             <select
               value={selectedAccountId}
               onChange={e => { setSelectedAccountId(e.target.value); setPage(1); }}
-              className="border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+              className="border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white max-w-[12rem]"
             >
               {bankAccounts.map(a => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
           )}
-          {/* Período a importar do Inter e da Stone */}
-          <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1" title="Período a importar dos bancos (Inter e Stone)">
-            <input type="date" value={importFrom} max={importTo}
-              onChange={e => setImportFrom(e.target.value)}
-              className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
-            <span className="text-zinc-300 text-xs">até</span>
-            <input type="date" value={importTo} min={importFrom} max={hojeBR()}
-              onChange={e => setImportTo(e.target.value)}
-              className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
-          </div>
-          <button
-            onClick={() => runBankSync({ from: importFrom, to: importTo })}
-            disabled={bankSync.running || !importFrom || !importTo || importFrom > importTo}
-            className="flex items-center gap-1.5 px-3 py-2 border border-blue-300 text-blue-700 bg-blue-50 rounded-lg text-sm font-semibold hover:bg-blue-100 cursor-pointer whitespace-nowrap transition-colors disabled:opacity-50"
-            title="Busca o extrato do Inter e os arquivos da Stone entre as datas escolhidas (reimportar não duplica)"
-          >
-            <i className={`ri-download-cloud-line ${bankSync.running ? 'animate-pulse' : ''}`} /> Importar período
-          </button>
-          <button
-            onClick={() => runBankSync()}
-            disabled={bankSync.running}
-            className="w-9 h-9 flex items-center justify-center border border-blue-300 text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 cursor-pointer transition-colors disabled:opacity-50"
-            title="Atualizar bancos: busca desde o último sync"
-          >
-            <i className={`ri-refresh-line ${bankSync.running ? 'animate-spin' : ''}`} />
-          </button>
-          <button
-            onClick={() => setShowStoneConfig(true)}
-            className="flex items-center gap-1.5 px-3 py-2 border border-green-300 text-green-700 bg-green-50 rounded-lg text-sm font-semibold hover:bg-green-100 cursor-pointer whitespace-nowrap transition-colors"
-          >
-            <i className="ri-bank-card-line" /> Stone
-          </button>
-          <button
-            onClick={() => setShowIfoodConfig(true)}
-            className="flex items-center gap-1.5 px-3 py-2 border border-red-300 text-red-700 bg-red-50 rounded-lg text-sm font-semibold hover:bg-red-100 cursor-pointer whitespace-nowrap transition-colors"
-            title="Repasses, comissões e taxas do iFood (API ou relatório do Portal do Parceiro)"
-          >
-            <i className="ri-restaurant-2-line" /> iFood
-          </button>
-          <button
-            onClick={() => setActiveImportTab(activeImportTab === 'inter' ? 'manual' : 'inter')}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap transition-colors ${
-              activeImportTab === 'inter'
-                ? 'bg-orange-600 text-white hover:bg-orange-700'
-                : 'border border-orange-300 text-orange-700 bg-orange-50 hover:bg-orange-100'
-            }`}
-            title="Extrato e saldo automáticos pela API do Banco Inter"
-          >
-            <i className="ri-bank-line" /> Banco Inter
-          </button>
-          <button
-            onClick={() => setShowRules(true)}
-            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-sm font-semibold hover:bg-zinc-50 cursor-pointer whitespace-nowrap transition-colors"
-          >
-            <i className="ri-filter-3-line" /> Regras ({rules.length})
-          </button>
-          <button
-            onClick={() => setShowSaldoModal(true)}
-            disabled={!selectedAccount}
-            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-sm font-semibold hover:bg-zinc-50 cursor-pointer whitespace-nowrap transition-colors disabled:opacity-50"
-          >
-            <i className="ri-scales-3-line" /> Reconciliar Saldo
-          </button>
+
           <input ref={fileRef} type="file" accept=".ofx,.csv,.txt" className="hidden" onChange={handleFileChange} />
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={!selectedAccountId || parsing}
-            className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50"
+          <DropMenu
+            open={menuImportar}
+            setOpen={setMenuImportar}
+            button={
+              <button
+                onClick={() => setMenuImportar(!menuImportar)}
+                disabled={bankSync.running || parsing}
+                className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 transition-colors cursor-pointer whitespace-nowrap disabled:opacity-60"
+              >
+                {bankSync.running || parsing
+                  ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  : <i className="ri-download-cloud-line" />}
+                Importar
+                <i className="ri-arrow-down-s-line" />
+              </button>
+            }
           >
-            {parsing ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                Processando...
-              </>
-            ) : (
-              <>
-                <i className="ri-upload-2-line" /> Importar Extrato
-              </>
-            )}
-          </button>
-          <button
-            onClick={() => setActiveImportTab(activeImportTab === 'stone' ? 'manual' : 'stone')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-              activeImportTab === 'stone'
-                ? 'bg-green-600 text-white hover:bg-green-700'
-                : 'border border-green-300 text-green-700 hover:bg-green-50'
-            }`}
+            <MenuItem
+              icon="ri-refresh-line"
+              label="Atualizar bancos agora"
+              hint="Inter, Stone e iFood, desde a última busca"
+              onClick={() => { setMenuImportar(false); runBankSync(); }}
+            />
+            <MenuItem
+              icon="ri-calendar-line"
+              label="Buscar o período filtrado"
+              hint={periodoValido ? `${fmtDataBR(periodFrom)} a ${fmtDataBR(periodTo)} · reimportar não duplica` : 'Escolha um período válido abaixo'}
+              disabled={!periodoValido}
+              onClick={() => { setMenuImportar(false); runBankSync({ from: periodFrom, to: periodTo }); }}
+            />
+            <div className="border-t border-zinc-100 my-1" />
+            <MenuItem
+              icon="ri-upload-2-line"
+              label="Arquivo OFX ou CSV"
+              hint="Para bancos sem integração (OFX é o mais confiável)"
+              disabled={!selectedAccountId}
+              onClick={() => { setMenuImportar(false); fileRef.current?.click(); }}
+            />
+          </DropMenu>
+
+          <DropMenu
+            open={menuConfig}
+            setOpen={setMenuConfig}
+            width="w-64"
+            button={
+              <button
+                onClick={() => setMenuConfig(!menuConfig)}
+                className="w-9 h-9 flex items-center justify-center border border-zinc-200 rounded-lg hover:bg-zinc-50 cursor-pointer bg-white"
+                title="Integrações, regras e saldo"
+              >
+                <i className="ri-settings-3-line text-zinc-600" />
+              </button>
+            }
           >
-            <i className="ri-bank-card-line" />
-            {activeImportTab === 'stone' ? 'Ocultar Stone' : 'Importar Stone'}
-          </button>
+            <MenuItem icon="ri-filter-3-line" label={`Regras de classificação (${rules.length})`} onClick={() => { setMenuConfig(false); setShowRules(true); }} />
+            <MenuItem icon="ri-scales-3-line" label="Reconciliar saldo" disabled={!selectedAccount} onClick={() => { setMenuConfig(false); setShowSaldoModal(true); }} />
+            <div className="border-t border-zinc-100 my-1" />
+            <p className="px-3 pt-1 pb-0.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wide">Integrações</p>
+            <MenuItem icon="ri-pulse-line" label="Status e histórico" hint="Última busca, erros, dias da Stone" onClick={() => { setMenuConfig(false); setShowIntegracoes(true); }} />
+            <MenuItem icon="ri-bank-line" label="Banco Inter" onClick={() => { setMenuConfig(false); setShowInterConfig(true); }} />
+            <MenuItem icon="ri-bank-card-line" label="Stone" onClick={() => { setMenuConfig(false); setShowStoneConfig(true); }} />
+            <MenuItem icon="ri-restaurant-2-line" label="iFood" onClick={() => { setMenuConfig(false); setShowIfoodConfig(true); }} />
+          </DropMenu>
         </div>
       </div>
 
-      {/* Pagamentos com vínculo exato a confirmar */}
-      {vinculosPendentes.length > 0 && (
-        <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex-wrap">
-          <i className="ri-links-line text-emerald-600 text-lg" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-emerald-800">{exatosPendentes.length} pagamento(s) com vínculo exato{vinculosPendentes.length > exatosPendentes.length ? ' e ' + (vinculosPendentes.length - exatosPendentes.length) + ' com vínculo forte' : ''} a notas ou contas a pagar</p>
-            <p className="text-xs text-emerald-700">Boleto com o mesmo vencimento e valor da parcela, ou Pix para o mesmo CNPJ com o mesmo valor. Confirmar dá baixa na conta a pagar, lança juros e importa sozinha a nota que ainda não foi lançada.</p>
-          </div>
-          <button
-            onClick={() => setShowConfirmarVinculos(true)}
-            disabled={confirmando}
-            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 cursor-pointer whitespace-nowrap disabled:opacity-50"
-          >
-            <i className="ri-list-check-2" />
-            Revisar e confirmar
-          </button>
-        </div>
-      )}
-
-      {/* Alertas */}
-      {alertas && (() => {
-        const defs: Array<[string, string, string, string]> = [
-          ['contas_vencidas', 'Contas a pagar vencidas em aberto', 'ri-alarm-warning-line', 'text-red-800 bg-red-50 border-red-200'],
-          ['notas_vencidas', 'Notas com parcela vencida e sem pagamento no extrato', 'ri-file-warning-line', 'text-red-800 bg-red-50 border-red-200'],
-          ['duplicidades', 'Possíveis pagamentos em duplicidade', 'ri-file-copy-2-line', 'text-red-800 bg-red-50 border-red-200'],
-          ['notas_canceladas_lancadas', 'Notas canceladas na SEFAZ que foram lançadas', 'ri-close-circle-line', 'text-red-800 bg-red-50 border-red-200'],
-          ['pagamentos_sem_nota', 'Pagamentos a empresas sem nota de entrada', 'ri-question-line', 'text-amber-800 bg-amber-50 border-amber-200'],
-          ['juros_mes', 'Juros e multas pagos no mês', 'ri-percent-line', 'text-amber-800 bg-amber-50 border-amber-200'],
-        ];
-        const ativos = defs.filter(([k]) => Number(alertas[k]?.count ?? 0) > 0);
-        if (ativos.length === 0) return null;
-        return (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {ativos.map(([k, title, icon, cls]) => {
-              const a = alertas[k]!;
-              return (
-                <details key={k} className={'rounded-xl border px-4 py-3 ' + cls}>
-                  <summary className="cursor-pointer list-none flex items-center gap-2 text-sm font-semibold">
-                    <i className={icon} />
-                    <span className="flex-1">{title}</span>
-                    <span className="whitespace-nowrap">{a.count} · {fmtCur(Number(a.total))}</span>
-                  </summary>
-                  <div className="mt-2 space-y-1">
-                    {a.itens.map((it, i) => (
-                      <div key={i} className="flex justify-between gap-2 text-xs">
-                        <span className="truncate">{it.data ? new Date(String(it.data).slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR') + ' · ' : ''}{it.label}</span>
-                        <span className="whitespace-nowrap font-semibold">{fmtCur(Number(it.valor))}</span>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              );
-            })}
-          </div>
-        );
-      })()}
-
-      {/* Conta selecionada */}
-      {selectedAccount && (
-        <div className="flex items-center gap-3 bg-white border border-zinc-200 rounded-xl px-4 py-3">
-          <div className="w-8 h-8 flex items-center justify-center rounded-lg flex-shrink-0" style={{ backgroundColor: selectedAccount.color + '20' }}>
-            <i className={`${selectedAccount.icon} text-sm`} style={{ color: selectedAccount.color }} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-zinc-800">{selectedAccount.name}</p>
-            <p className="text-xs text-zinc-400">{selectedAccount.bank_name || 'Conta bancária'}</p>
-          </div>
-          {selectedAccount.synced_balance != null && (
-            <div className="text-right">
-              <p className="text-xs text-zinc-400">Saldo no banco (API)</p>
-              <p className={`text-sm font-bold ${Number(selectedAccount.synced_balance) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                {formatCurrency(Number(selectedAccount.synced_balance))}
+      {/* Pendências */}
+      {temPendencias && (
+        <div className="bg-white rounded-xl border border-zinc-200 divide-y divide-zinc-100">
+          {vinculosPendentes.length > 0 && (
+            <div className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+              <i className="ri-links-line text-emerald-600" />
+              <p className="flex-1 min-w-0 text-sm text-zinc-800">
+                <span className="font-semibold">{vinculosPendentes.length} pagamento(s)</span> batem com notas ou contas a pagar
+                <span className="text-zinc-400"> · {exatosPendentes.length} exato(s){vinculosPendentes.length > exatosPendentes.length ? `, ${vinculosPendentes.length - exatosPendentes.length} forte(s)` : ''}</span>
               </p>
+              <button
+                onClick={() => setShowConfirmarVinculos(true)}
+                disabled={confirmando}
+                title="Confirmar dá baixa na conta a pagar, lança juros e importa sozinha a nota que ainda não foi lançada"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 cursor-pointer whitespace-nowrap disabled:opacity-50"
+              >
+                <i className="ri-list-check-2" /> Revisar e confirmar
+              </button>
             </div>
           )}
-          <div className="text-right">
-            <p className="text-xs text-zinc-400">{selectedAccount.synced_balance != null ? 'Saldo no ERP' : 'Saldo atual'}</p>
-            <p className={`text-sm font-bold ${Number(selectedAccount.current_balance) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-              {formatCurrency(Number(selectedAccount.current_balance))}
+          {alertasAtivos.map(([k, title, tom]) => {
+            const a = alertas![k]!;
+            return (
+              <details key={k} className="group px-4 py-2.5">
+                <summary className="cursor-pointer list-none flex items-center gap-3 text-sm">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${tom === 'red' ? 'bg-red-500' : 'bg-amber-400'}`} />
+                  <span className="flex-1 min-w-0 text-zinc-800">{title}</span>
+                  <span className="whitespace-nowrap text-zinc-500 text-xs"><span className="font-semibold text-zinc-800">{a.count}</span> · {fmtCur(Number(a.total))}</span>
+                  <i className="ri-arrow-down-s-line text-zinc-400 group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="mt-2 ml-5 space-y-1">
+                  {a.itens.map((it, i) => (
+                    <div key={i} className="flex justify-between gap-2 text-xs text-zinc-600">
+                      <span className="truncate">{it.data ? new Date(String(it.data).slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR') + ' · ' : ''}{it.label}</span>
+                      <span className="whitespace-nowrap font-semibold">{fmtCur(Number(it.valor))}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Números */}
+      {selectedAccount && (
+        <div className="bg-white rounded-xl border border-zinc-200 grid grid-cols-2 md:grid-cols-4 divide-x divide-zinc-100">
+          <div className="px-4 py-3">
+            <p className="text-xs text-zinc-400 flex items-center gap-1.5">
+              <i className={`${selectedAccount.icon} text-xs`} style={{ color: selectedAccount.color }} />
+              {saldoBanco != null ? `Saldo no banco · ${selectedAccount.name}` : selectedAccount.name}
+            </p>
+            <p className={`text-base font-bold ${(saldoBanco ?? saldoErp ?? 0) >= 0 ? 'text-zinc-900' : 'text-red-600'}`}>
+              {formatCurrency(saldoBanco ?? saldoErp ?? 0)}
             </p>
           </div>
-        </div>
-      )}
-
-      {/* Banco Inter (API) */}
-      {activeImportTab === 'inter' && (
-        <InterSyncPanel
-          refreshKey={interRefreshKey}
-          onSyncDone={() => { refresh(); refetchAccounts(); }}
-          onConfigureClick={() => setShowInterConfig(true)}
-        />
-      )}
-
-      {/* Stone Import Panel */}
-      {activeImportTab === 'stone' && (
-        <StoneImportPanel
-          onImportDone={() => { refresh(); }}
-          onConfigureClick={() => setShowStoneConfig(true)}
-        />
-      )}
-
-      {/* KPIs */}
-      <div className="grid grid-cols-6 gap-3">
-        {[
-          { label: 'Importado', value: imports.length, icon: 'ri-list-check', color: 'text-zinc-700', bg: 'bg-zinc-100' },
-          { label: 'Reconciliado', value: totalReconciled, icon: 'ri-shield-check-line', color: 'text-green-700', bg: 'bg-green-100' },
-          { label: 'Pendentes', value: totalPending, icon: 'ri-time-line', color: 'text-amber-700', bg: 'bg-amber-100' },
-          { label: 'Créditos', value: fmtCur(saldoCreditos), icon: 'ri-arrow-down-circle-line', color: 'text-green-700', bg: 'bg-green-100' },
-          { label: 'Débitos', value: fmtCur(saldoDebitos), icon: 'ri-arrow-up-circle-line', color: 'text-red-600', bg: 'bg-red-100' },
-          { label: 'Líquido', value: fmtCur(saldoLiquido), icon: 'ri-exchange-line', color: saldoLiquido >= 0 ? 'text-green-700' : 'text-red-600', bg: saldoLiquido >= 0 ? 'bg-green-100' : 'bg-red-100' },
-        ].map(kpi => (
-          <div key={kpi.label} className="bg-white rounded-xl border border-zinc-200 p-4 flex items-center gap-3">
-            <div className={`w-9 h-9 flex items-center justify-center rounded-lg ${kpi.bg} flex-shrink-0`}>
-              <i className={`${kpi.icon} ${kpi.color} text-base`} />
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500">{kpi.label}</p>
-              <p className={`text-base font-bold ${kpi.color}`}>{kpi.value}</p>
-            </div>
+          <div className="px-4 py-3">
+            <p className="text-xs text-zinc-400">Saldo no ERP</p>
+            <p className="text-base font-bold text-zinc-900">{saldoErp != null ? formatCurrency(saldoErp) : '—'}</p>
           </div>
-        ))}
-      </div>
-
-      {/* Progress */}
-      {imports.length > 0 && (
-        <div className="bg-white rounded-xl border border-zinc-200 p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-zinc-600">Progresso da Conciliação</span>
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-bold text-zinc-900">{pctConciliado}%</span>
-              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                saldoLiquido >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-              }`}>
-                Saldo: {saldoLiquido >= 0 ? '+' : ''}{fmtCur(saldoLiquido)}
-              </span>
-            </div>
-          </div>
-          <div className="w-full bg-zinc-100 rounded-full h-2.5">
-            <div
-              className="bg-green-500 h-2.5 rounded-full transition-all duration-700"
-              style={{ width: `${pctConciliado}%` }}
-            />
-          </div>
-          <div className="flex items-center gap-4 text-xs">
-            <span className="text-green-600 font-medium">{totalReconciled} reconciliados</span>
-            <span className="text-amber-600 font-medium">{totalPending} pendentes</span>
-            {totalIgnored > 0 && <span className="text-zinc-400">{totalIgnored} ignorados</span>}
-            {pctConciliado === 100 && totalPending === 0 && (
-              <span className="ml-auto flex items-center gap-1 text-green-600 font-semibold">
-                <i className="ri-shield-check-line" /> Extrato totalmente conciliado!
-              </span>
+          <div className="px-4 py-3 border-t md:border-t-0 border-zinc-100">
+            <p className="text-xs text-zinc-400">Diferença banco − ERP</p>
+            {diferenca == null ? (
+              <p className="text-base font-bold text-zinc-300">—</p>
+            ) : diferenca === 0 ? (
+              <p className="text-base font-bold text-green-700 flex items-center gap-1"><i className="ri-check-line" /> Bate</p>
+            ) : (
+              <button onClick={() => setShowSaldoModal(true)} className="text-base font-bold text-red-600 hover:underline cursor-pointer" title="Abrir a reconciliação de saldo">
+                {diferenca > 0 ? '+' : '−'}{fmtCur(diferenca)}
+              </button>
             )}
           </div>
-        </div>
-      )}
-
-      {/* Category summary */}
-      {categorySummary.length > 0 && (
-        <div className="bg-white rounded-xl border border-zinc-200 p-4">
-          <p className="text-xs font-semibold text-zinc-600 mb-3">Resumo por Categoria</p>
-          <div className="grid grid-cols-4 gap-2">
-            {categorySummary.slice(0, 8).map(cat => (
-              <button
-                key={cat.name}
-                onClick={() => setFilterCategory(filterCategory === cat.name ? 'all' : cat.name)}
-                className={`text-left p-2.5 rounded-lg border transition-colors cursor-pointer ${
-                  filterCategory === cat.name ? 'border-amber-400 bg-amber-50' : 'border-zinc-200 hover:border-amber-300'
-                }`}
-              >
-                <p className="text-xs font-medium text-zinc-700 truncate">{cat.name}</p>
-                <p className={`text-xs font-bold ${cat.net >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                  {cat.net >= 0 ? '+' : ''}{fmtCur(cat.net)}
-                </p>
-                <p className="text-xs text-zinc-400">{cat.count} lanç.</p>
-              </button>
-            ))}
+          <div className="px-4 py-3 border-t md:border-t-0 border-zinc-100">
+            <p className="text-xs text-zinc-400">Conciliado no período</p>
+            <div className="flex items-baseline gap-2">
+              <p className={`text-base font-bold ${pctConciliado === 100 ? 'text-green-700' : 'text-zinc-900'}`}>{pctConciliado}%</p>
+              {contagem.pending > 0 && (
+                <button onClick={() => trocarFiltroStatus('pending')} className="text-xs font-semibold text-amber-600 hover:underline cursor-pointer">
+                  {contagem.pending} pendente(s)
+                </button>
+              )}
+            </div>
+            <div className="w-full bg-zinc-100 rounded-full h-1.5 mt-1">
+              <div className="bg-green-500 h-1.5 rounded-full transition-all duration-700" style={{ width: `${pctConciliado}%` }} />
+            </div>
           </div>
         </div>
       )}
 
-      {/* Toolbar */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-48">
+      {/* Filtros */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1.5" title="Período: vale para a tabela, os números e a busca nos bancos">
+          <i className="ri-calendar-line text-zinc-400 text-sm" />
+          <input type="date" value={periodFrom} max={periodTo || undefined}
+            onChange={e => { setPeriodFrom(e.target.value); setPage(1); }}
+            className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
+          <span className="text-zinc-300 text-xs">até</span>
+          <input type="date" value={periodTo} min={periodFrom || undefined} max={hojeBR()}
+            onChange={e => { setPeriodTo(e.target.value); setPage(1); }}
+            className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
+        </div>
+
+        <div className="relative flex-1 min-w-[12rem]">
           <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
           <input
             value={search}
@@ -1110,58 +1060,40 @@ export default function ConciliacaoTab() {
         </div>
 
         <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-          {(['all', 'pending', 'matched', 'ignored'] as const).map(s => (
+          {(['all', 'pending', 'conciliado', 'ignored'] as const).map(s => (
             <button
               key={s}
-              onClick={() => { setFilterStatus(s); setPage(1); }}
+              onClick={() => trocarFiltroStatus(s)}
               className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${filterStatus === s ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
             >
-              {s === 'all' ? 'Todos' : s === 'pending' ? 'Pendentes' : s === 'matched' ? 'Conciliados' : 'Ignorados'}
-              <span className={`ml-1 text-xs rounded-full px-1.5 py-0.5 font-bold ${filterStatus === s ? 'bg-white/20 text-white' : 'bg-zinc-100 text-zinc-500'}`}>
-                {s === 'all' ? imports.length : imports.filter(i => i.status === s).length}
+              {s === 'all' ? 'Todos' : s === 'pending' ? 'Pendentes' : s === 'conciliado' ? 'Conciliados' : 'Ignorados'}
+              <span className={`ml-1 ${filterStatus === s ? 'text-white/80' : 'text-zinc-400'}`}>
+                {s === 'all' ? imports.length : contagem[s]}
               </span>
             </button>
           ))}
         </div>
 
-        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-          {(['all', 'credit', 'debit'] as const).map(t => (
-            <button
-              key={t}
-              onClick={() => { setFilterType(t); setPage(1); }}
-              className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${filterType === t ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
-            >
-              {t === 'all' ? 'Todos' : t === 'credit' ? 'Créditos' : 'Débitos'}
-            </button>
-          ))}
-        </div>
+        <select
+          value={filterType}
+          onChange={e => { setFilterType(e.target.value as typeof filterType); setPage(1); }}
+          className="border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+        >
+          <option value="all">Entradas e saídas</option>
+          <option value="credit">Só entradas</option>
+          <option value="debit">Só saídas</option>
+        </select>
 
         {uniqueCategories.length > 0 && (
           <select
             value={filterCategory}
             onChange={e => { setFilterCategory(e.target.value); setPage(1); }}
-            className="border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+            className="border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white max-w-[12rem]"
           >
             <option value="all">Todas categorias</option>
             {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         )}
-
-        <div className="flex items-center gap-2">
-          <input
-            type="date"
-            value={filterDateFrom}
-            onChange={e => { setFilterDateFrom(e.target.value); setPage(1); }}
-            className="border border-zinc-200 rounded-lg px-2 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-          />
-          <span className="text-zinc-400 text-xs">até</span>
-          <input
-            type="date"
-            value={filterDateTo}
-            onChange={e => { setFilterDateTo(e.target.value); setPage(1); }}
-            className="border border-zinc-200 rounded-lg px-2 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-          />
-        </div>
       </div>
 
       {/* Table */}
@@ -1177,112 +1109,105 @@ export default function ConciliacaoTab() {
               <i className="ri-bank-line text-3xl text-zinc-300" />
             </div>
             <p className="text-sm font-medium text-zinc-500">
-              {imports.length === 0 ? 'Nenhum extrato importado' : 'Nenhum resultado encontrado'}
+              {imports.length === 0 ? 'Nenhum lançamento neste período' : 'Nenhum resultado para os filtros'}
             </p>
             {imports.length === 0 && (
-              <p className="text-xs text-zinc-400 mt-1">Clique em "Importar Extrato" para começar</p>
+              <p className="text-xs text-zinc-400 mt-1">Amplie o período ou use "Importar" para buscar nos bancos</p>
             )}
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-zinc-50 border-b border-zinc-200">
-              <tr>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Data</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Descrição</th>
-                <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Tipo</th>
-                <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500">Valor</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Categoria</th>
-                <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Status</th>
-                <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-50">
-              {paginated.map(s => {
-                const cfg = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.pending;
-                return (
-                  <tr
-                    key={s.id}
-                    className={`transition-colors hover:bg-zinc-50 cursor-pointer ${s.status === 'ignored' ? 'opacity-50' : ''}`}
-                    onClick={() => setSelectedTransaction(s)}
-                  >
-                    <td className="px-4 py-3 text-zinc-700 font-medium whitespace-nowrap text-xs">
-                      {new Date(s.transaction_date + 'T00:00:00').toLocaleDateString('pt-BR')}
-                    </td>
-                    <td className="px-4 py-3 max-w-xs">
-                      <p className="text-xs font-medium text-zinc-800 truncate">{s.description || '—'}</p>
-                      {s.external_id && (
-                        <p className="text-xs text-zinc-400 mt-0.5 font-mono truncate">ID: {s.external_id}</p>
-                      )}
-                      {s.notes && (
-                        <p className="text-xs text-amber-500 mt-0.5 truncate"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>
-                      )}
-                      {s.match_detail && (s.match_kind === 'payable' || s.match_kind === 'inbound_doc') && (
-                        <p className={'text-xs mt-0.5 truncate ' + (s.reconciled ? 'text-emerald-600' : 'text-blue-600')}>
-                          <i className="ri-links-line text-xs" /> {s.reconciled ? 'Pago: ' : 'Sugestão (' + (s.match_confidence ?? '') + '): '}{String(s.match_detail.label ?? '')}
-                          {!s.reconciled && s.match_detail.auto_import ? ' · nota será importada' : ''}
-                          {s.reconciled && (s.match_detail.confirmed as Record<string, unknown> | undefined)?.auto_imported ? ' · nota importada automaticamente' : ''}
-                          {Number(s.match_detail.juros ?? 0) > 0 ? ' · juros ' + fmtCur(Number(s.match_detail.juros)) : ''}
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${s.transaction_type === 'credit' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {s.transaction_type === 'credit' ? 'Crédito' : 'Débito'}
-                      </span>
-                    </td>
-                    <td className={`px-4 py-3 text-right font-bold text-sm ${s.transaction_type === 'credit' ? 'text-green-700' : 'text-red-600'}`}>
-                      {s.transaction_type === 'debit' ? '-' : '+'}{fmtCur(Number(s.amount))}
-                    </td>
-                    <td className="px-4 py-3">
-                      {s.category ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
-                          {s.category}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-50 border-b border-zinc-200">
+                <tr>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Data</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Descrição</th>
+                  <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500">Valor</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Categoria</th>
+                  <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Status</th>
+                  <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-50">
+                {paginated.map(s => {
+                  const sit = situacao(s);
+                  const cfg = SITUACAO_CONFIG[sit];
+                  return (
+                    <tr
+                      key={s.id}
+                      className={`transition-colors hover:bg-zinc-50 cursor-pointer ${sit === 'ignored' ? 'opacity-50' : ''}`}
+                      onClick={() => setSelectedTransaction(s)}
+                    >
+                      <td className="px-4 py-3 text-zinc-700 font-medium whitespace-nowrap text-xs">
+                        {new Date(s.transaction_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                      </td>
+                      <td className="px-4 py-3 max-w-xs">
+                        <p className="text-xs font-medium text-zinc-800 truncate">{s.description || '—'}</p>
+                        {s.notes && (
+                          <p className="text-xs text-amber-500 mt-0.5 truncate"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>
+                        )}
+                        {s.match_detail && (s.match_kind === 'payable' || s.match_kind === 'inbound_doc') && (
+                          <p className={'text-xs mt-0.5 truncate ' + (s.reconciled ? 'text-emerald-600' : 'text-blue-600')}>
+                            <i className="ri-links-line text-xs" /> {s.reconciled ? 'Pago: ' : 'Sugestão (' + (s.match_confidence ?? '') + '): '}{String(s.match_detail.label ?? '')}
+                            {!s.reconciled && s.match_detail.auto_import ? ' · nota será importada' : ''}
+                            {s.reconciled && (s.match_detail.confirmed as Record<string, unknown> | undefined)?.auto_imported ? ' · nota importada automaticamente' : ''}
+                            {Number(s.match_detail.juros ?? 0) > 0 ? ' · juros ' + fmtCur(Number(s.match_detail.juros)) : ''}
+                          </p>
+                        )}
+                      </td>
+                      <td className={`px-4 py-3 text-right font-bold text-sm whitespace-nowrap ${s.transaction_type === 'credit' ? 'text-green-700' : 'text-red-600'}`}>
+                        {s.transaction_type === 'debit' ? '−' : '+'}{fmtCur(Number(s.amount))}
+                      </td>
+                      <td className="px-4 py-3">
+                        {s.category ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
+                            {s.category}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-zinc-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${cfg.color}`}>
+                          <i className={`${cfg.icon} text-xs`} />
+                          {cfg.label}
                         </span>
-                      ) : (
-                        <span className="text-xs text-zinc-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${cfg.color}`}>
-                        <i className={`${cfg.icon} text-xs`} />
-                        {s.reconciled ? 'Reconciliado' : cfg.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center justify-center gap-1">
-                        {s.status === 'pending' && (
-                          <>
+                      </td>
+                      <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1">
+                          {sit === 'pending' ? (
+                            <>
+                              <button
+                                onClick={() => handleConciliar(s.id)}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg bg-green-50 text-green-700 hover:bg-green-100 cursor-pointer transition-colors"
+                                title="Marcar como conciliado"
+                              >
+                                <i className="ri-check-line text-sm" />
+                              </button>
+                              <button
+                                onClick={() => handleIgnorar(s.id)}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer"
+                                title="Ignorar"
+                              >
+                                <i className="ri-eye-off-line text-zinc-400 text-sm" />
+                              </button>
+                            </>
+                          ) : (
                             <button
-                              onClick={() => handleConciliar(s.id)}
-                              className="flex items-center gap-1 px-2 py-1 bg-green-50 text-green-700 rounded-lg text-xs font-semibold hover:bg-green-100 cursor-pointer whitespace-nowrap transition-colors"
-                              title="Reconciliar"
+                              onClick={() => handleReabrir(s.id)}
+                              className="text-xs text-zinc-400 hover:text-amber-600 cursor-pointer whitespace-nowrap transition-colors"
                             >
-                              <i className="ri-checkbox-circle-line text-xs" />
+                              Reabrir
                             </button>
-                            <button
-                              onClick={() => handleIgnorar(s.id)}
-                              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer"
-                              title="Ignorar"
-                            >
-                              <i className="ri-eye-off-line text-zinc-400 text-sm" />
-                            </button>
-                          </>
-                        )}
-                        {(s.status === 'matched' || s.status === 'ignored') && (
-                          <button
-                            onClick={() => handleReabrir(s.id)}
-                            className="text-xs text-zinc-400 hover:text-amber-600 cursor-pointer whitespace-nowrap transition-colors"
-                          >
-                            Reabrir
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {/* Pagination */}
@@ -1323,35 +1248,11 @@ export default function ConciliacaoTab() {
         )}
       </div>
 
-      {/* Formatos suportados */}
-      <div className="bg-zinc-50 rounded-xl border border-zinc-200 p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <i className="ri-information-line text-zinc-400" />
-          <p className="text-xs font-semibold text-zinc-600">Formatos suportados</p>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <p className="text-xs font-semibold text-zinc-700 mb-1.5">OFX (recomendado)</p>
-            <div className="space-y-1">
-              {['Banco do Brasil', 'Itaú', 'Bradesco', 'Santander', 'Caixa Econômica', 'Sicoob', 'Sicredi'].map(b => (
-                <div key={b} className="flex items-center gap-1.5 text-xs text-zinc-500">
-                  <i className="ri-checkbox-circle-line text-green-500 text-xs" /> {b}
-                </div>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-zinc-700 mb-1.5">CSV</p>
-            <div className="space-y-1">
-              {['Banco do Brasil (Data;Histórico;Documento;Crédito;Débito)', 'Itaú (Data;Valor;Identificador;Descrição)', 'Nubank (date,title,amount)', 'Bradesco (Data;Histórico;Valor)', 'Genérico (Data;Descrição;Valor)'].map(b => (
-                <div key={b} className="flex items-center gap-1.5 text-xs text-zinc-500">
-                  <i className="ri-checkbox-circle-line text-amber-500 text-xs" /> {b}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
+      {imports.length >= 500 && (
+        <p className="text-xs text-amber-600 flex items-center gap-1">
+          <i className="ri-information-line" /> O período tem mais de 500 lançamentos; só os 500 mais recentes aparecem. Reduza o período para ver todos.
+        </p>
+      )}
 
       {/* Import Preview Modal */}
       {importRows && (
@@ -1417,6 +1318,31 @@ export default function ConciliacaoTab() {
           account={selectedAccount}
           onClose={() => setShowSaldoModal(false)}
         />
+      )}
+
+      {/* Status das integrações (Inter + Stone): última busca, erros e histórico por dia */}
+      {showIntegracoes && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowIntegracoes(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 flex-shrink-0">
+              <h3 className="font-bold text-zinc-900">Integrações bancárias</h3>
+              <button onClick={() => setShowIntegracoes(false)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
+                <i className="ri-close-line text-zinc-500" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <InterSyncPanel
+                refreshKey={interRefreshKey}
+                onSyncDone={() => { refresh(); refetchAccounts(); }}
+                onConfigureClick={() => setShowInterConfig(true)}
+              />
+              <StoneImportPanel
+                onImportDone={() => { refresh(); }}
+                onConfigureClick={() => setShowStoneConfig(true)}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Banco Inter Config Modal */}
