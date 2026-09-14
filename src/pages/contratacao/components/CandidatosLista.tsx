@@ -5,7 +5,7 @@ import {
   ageOf, decisionOf, withEmpresa, DECISIONS, type Distance, fmtKm, distCls,
 } from '../shared';
 
-type SortKey = 'nome' | 'empresa' | 'cargo' | 'idade' | 'local' | 'dist' | 'exp' | 'fase' | 'decisao' | 'nota' | 'entrevista' | 'recebido';
+type SortKey = 'nome' | 'empresa' | 'vaga' | 'idade' | 'local' | 'dist' | 'exp' | 'fase' | 'decisao' | 'nota' | 'entrevista' | 'recebido';
 
 function DecisionBadge({ c, companies }: { c: Candidate; companies: Company[] }) {
   const d = decisionOf(c.decision);
@@ -23,6 +23,8 @@ interface Props {
   ultimaAvaliacao: Map<string, Interview>;
   /** Distância até a loja de referência (a do filtro ou a do candidato). */
   distancia: (c: Candidate) => Distance | null;
+  /** Títulos das vagas em que o candidato está inscrito (coluna Vaga da tabela). */
+  vagasDe: (c: Candidate) => string[];
   onOpen: (id: string) => void;
 }
 
@@ -41,15 +43,15 @@ export default function CandidatosLista(props: Props) {
   return <Tabela {...props} />;
 }
 
-function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, ultimaAvaliacao, distancia, onOpen }: Props) {
+function Tabela({ items, companies, stages, proximaEntrevista, ultimaAvaliacao, distancia, vagasDe, onOpen }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'recebido', dir: -1 });
 
   const rows = useMemo(() => {
     const val = (c: Candidate): string | number => {
       switch (sort.key) {
         case 'nome': return c.full_name.toLowerCase();
-        case 'empresa': return companyName(companies, c.company_id);
-        case 'cargo': return (c.desired_role ?? '').toLowerCase() || '￿';
+        case 'empresa': return c.company_id ? companyName(companies, c.company_id).toLowerCase() : '￿';
+        case 'vaga': return vagasDe(c).join(', ').toLowerCase() || '￿';
         case 'idade': return ageOf(c) ?? 999;
         case 'decisao': { const i = DECISIONS.findIndex((d) => d.id === c.decision); return i < 0 ? 99 : i; }
         case 'local': return `${c.city ?? ''} ${c.neighborhood ?? ''}`.toLowerCase() || '￿';
@@ -65,7 +67,7 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
       const va = val(a); const vb = val(b);
       return (va < vb ? -1 : va > vb ? 1 : 0) * sort.dir;
     });
-  }, [items, sort, companies, stages, proximaEntrevista, ultimaAvaliacao, distancia]);
+  }, [items, sort, companies, stages, proximaEntrevista, ultimaAvaliacao, distancia, vagasDe]);
 
   const Th = ({ k, children }: { k: SortKey; children: React.ReactNode }) => (
     <th onClick={() => setSort((s) => ({ key: k, dir: s.key === k ? (s.dir === 1 ? -1 : 1) : 1 }))}
@@ -80,8 +82,8 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
         <thead className="bg-zinc-50 border-b border-zinc-200">
           <tr>
             <Th k="nome">Nome</Th>
-            {mostrarEmpresa && <Th k="empresa">Empresa</Th>}
-            <Th k="cargo">Cargo pretendido</Th>
+            <Th k="empresa">Loja</Th>
+            <Th k="vaga">Vaga</Th>
             <Th k="idade">Idade</Th>
             <Th k="local">Bairro / cidade</Th>
             <Th k="dist">Distância</Th>
@@ -104,8 +106,16 @@ function Tabela({ items, companies, stages, mostrarEmpresa, proximaEntrevista, u
                   <p className="font-semibold text-zinc-900 whitespace-nowrap">{c.full_name}</p>
                   {!c.ai_processed && <p className="text-[10px] text-sky-600">leitura simples</p>}
                 </td>
-                {mostrarEmpresa && <td className="px-3 py-2 text-xs text-zinc-600 whitespace-nowrap">{companyName(companies, c.company_id)}</td>}
-                <td className="px-3 py-2 text-xs text-zinc-700 max-w-[180px] truncate">{c.desired_role ?? '—'}</td>
+                <td className="px-3 py-2 text-xs text-zinc-700 whitespace-nowrap">
+                  {c.company_id ? companyName(companies, c.company_id) : <span className="text-zinc-300">—</span>}
+                </td>
+                <td className="px-3 py-2 text-xs text-zinc-700 max-w-[200px]">
+                  {(() => {
+                    const vagas = vagasDe(c);
+                    if (!vagas.length) return <span className="text-zinc-300">—</span>;
+                    return <span className="block truncate" title={vagas.join(', ')}>{vagas[0]}{vagas.length > 1 ? <span className="text-zinc-400"> +{vagas.length - 1}</span> : null}</span>;
+                  })()}
+                </td>
                 <td className="px-3 py-2 text-xs text-zinc-700">{ageOf(c) ?? '—'}</td>
                 <td className="px-3 py-2 text-xs text-zinc-700 max-w-[180px] truncate">{[c.neighborhood, c.city].filter(Boolean).join(', ') || '—'}</td>
                 <td className="px-3 py-2 text-xs whitespace-nowrap">

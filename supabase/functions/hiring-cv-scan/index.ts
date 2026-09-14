@@ -550,6 +550,26 @@ Deno.serve(async (req: Request) => {
         companyId ? admin.from('hiring_companies').select('name').eq('id', companyId).maybeSingle() : Promise.resolve({ data: null }),
       ]);
 
+      // Currículo repetido NÃO entra (regra do dono, 2026-09-14): mesmo telefone (últimos 11 dígitos),
+      // e-mail ou nome. Confere antes de subir o arquivo. A tela também é travada por índice único.
+      const fields = candidateFields(out);
+      const fone = onlyDigits(fields.phone).slice(-11);
+      const email = String(fields.email ?? '').trim().toLowerCase();
+      const nomeKey = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const nome = nomeKey(fields.full_name);
+      const { data: todos } = await admin.from('hiring_candidates').select('id, full_name, phone, email, created_at');
+      // deno-lint-ignore no-explicit-any
+      const dup = (todos ?? []).find((c: any) =>
+        (fone.length >= 10 && onlyDigits(c.phone).slice(-11) === fone)
+        || (email.includes('@') && String(c.email ?? '').trim().toLowerCase() === email)
+        || (nome.length >= 5 && nomeKey(c.full_name) === nome));
+      if (dup) {
+        return json({
+          success: false, duplicate: true, existing: { id: dup.id, full_name: dup.full_name },
+          error: `Currículo repetido: ${dup.full_name} já está em Contratação (desde ${new Date(dup.created_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}). Não salvei de novo.`,
+        }, 409);
+      }
+
       // Arquivo original no bucket privado (falha no upload não perde a leitura).
       let filePath: string | null = null;
       const fileName = String(body.file_name ?? '').trim() || (input.file ? (input.file.mediaType === 'application/pdf' ? 'curriculo.pdf' : 'curriculo.jpg') : null);
@@ -560,14 +580,7 @@ Deno.serve(async (req: Request) => {
         if (upErr) log('WARN', 'upload falhou', { error: upErr.message }); else filePath = path;
       }
 
-      const fields = candidateFields(out);
-      // Duplicado: mesmo telefone ou e-mail já no banco (grava assim mesmo e avisa).
-      let duplicate: string | null = null;
-      if (fields.phone || fields.email) {
-        const ors = [fields.phone ? `phone.eq.${fields.phone}` : '', fields.email ? `email.eq.${fields.email}` : ''].filter(Boolean).join(',');
-        const { data: dups } = await admin.from('hiring_candidates').select('full_name').or(ors).limit(1);
-        duplicate = dups?.[0]?.full_name ?? null;
-      }
+      const duplicate: string | null = null; // repetido já foi recusado acima
       const { data: cand, error } = await admin.from('hiring_candidates').insert({
         ...fields,
         full_name: fields.full_name || (fileName ?? 'Candidato sem nome').replace(/\.[^.]+$/, ''),

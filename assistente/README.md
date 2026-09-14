@@ -571,6 +571,16 @@ uma). A resposta sai no Telegram (`deliver`, prefixo 📲). No WhatsApp: 👀 re
 ❌ falhou (+ aviso). Exceções que continuam no WhatsApp: janela de currículos (abaixo) e `.txt` de
 exportação de conversa (histórico de grupo). Arquivo sem aviso de currículo também é repassado.
 
+**Nada repetido (2026-09-14, regra do dono).** Currículo repetido não entra: `hiring-cv-scan ›
+intake` confere telefone (últimos 11 dígitos), e-mail ou nome ANTES de subir o arquivo e responde
+409 `{duplicate: true}`; a tela (grava direto) é travada pelos índices únicos
+`hiring_candidates_phone_uniq` / `hiring_candidates_email_uniq` (migration
+`20260914190000_hiring_candidates_sem_repetido.sql`, que também removeu a Natalia duplicada). No
+WhatsApp, `cvFromWhatsApp` devolve `ok | dup | not_cv | erro`: repetido → "⚠️ … não salvei" (🔁);
+não é currículo (422, ex.: demanda encaminhada com a janela aberta) → `relayToTelegram`. Brain:
+antes de criar tarefa/lembrete/compra/conta/cadastro confere se já existe; `task-write
+delete_task` documentado no `EDGE_MAP`.
+
 **Currículos pelo WhatsApp — só recebimento (2026-09-13).** O dono recebe currículos no WhatsApp
 dele e ENCAMINHA para o número do assistente. Com `channels.whatsapp_dm = false`, a conversa
 particular continua desligada, com uma exceção no webhook — **só depois de o dono avisar**

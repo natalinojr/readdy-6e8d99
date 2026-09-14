@@ -203,7 +203,8 @@ export default function ContratacaoPage() {
         file_type: file.type,
       };
       const { data: ins, error } = await supabase.from('hiring_candidates').insert(row).select('*').single();
-      if (error) throw new Error(error.message);
+      // Índice único no banco (telefone/e-mail): currículo repetido não entra (regra do dono, 2026-09-14)
+      if (error) throw new Error(error.code === '23505' ? 'Currículo repetido: já existe um candidato com esse telefone ou e-mail. Não foi salvo de novo.' : error.message);
       const cand = ins as Candidate;
 
       // Aviso de duplicado (mesmo telefone ou e-mail já cadastrado).
@@ -400,6 +401,17 @@ export default function ContratacaoPage() {
     (companyId ? distMap.get(`${companyId}:${candidateId}`) ?? null : null), [distMap]);
   // Distância só existe até a loja escolhida na ficha do candidato.
   const distanciaLista = useCallback((c: Candidate) => distancia(c.id, c.company_id), [distancia]);
+  // Vagas de cada candidato (coluna Vaga da tabela).
+  const vagasPorCandidato = useMemo(() => {
+    const titulo = new Map(jobs.map((j) => [j.id, j.title]));
+    const m = new Map<string, string[]>();
+    for (const a of applications) {
+      const t = titulo.get(a.job_id);
+      if (t) m.set(a.candidate_id, [...(m.get(a.candidate_id) ?? []), t]);
+    }
+    return m;
+  }, [applications, jobs]);
+  const vagasDe = useCallback((c: Candidate) => vagasPorCandidato.get(c.id) ?? [], [vagasPorCandidato]);
 
   const sel = items.find((c) => c.id === selId) ?? null;
   const mostrarEmpresa = empresaFiltro === 'todas' && companies.length > 1;
@@ -616,7 +628,7 @@ export default function ContratacaoPage() {
                   <p className="text-sm font-semibold mt-2">{daEmpresa.length ? 'Nenhum candidato com esses filtros' : 'Nenhum currículo ainda'}</p>
                 </div>
               ) : (
-                <CandidatosLista view={view} items={filtrados} companies={companies} stages={stages} mostrarEmpresa={mostrarEmpresa} distancia={distanciaLista}
+                <CandidatosLista view={view} items={filtrados} companies={companies} stages={stages} mostrarEmpresa={mostrarEmpresa} distancia={distanciaLista} vagasDe={vagasDe}
                   proximaEntrevista={proximaEntrevista} ultimaAvaliacao={ultimaAvaliacao} onOpen={setSelId} />
               )}
             </>

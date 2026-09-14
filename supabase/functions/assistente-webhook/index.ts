@@ -436,7 +436,9 @@ async function relayToTelegram(
 // resto (triagem, vaga, conversa) é no Telegram. Se o modo de currículos do Telegram estiver ligado
 // (asst_settings.hiring_intake), usa a mesma empresa/vaga.
 // deno-lint-ignore no-explicit-any
-async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: MsgKey | null, data: any, p: Parsed): Promise<boolean> {
+// Resultado: 'ok' salvo · 'dup' repetido (avisado, não salvo) · 'not_cv' não é currículo (quem chamou
+// repassa ao Telegram) · 'erro' falhou (avisado).
+async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: MsgKey | null, data: any, p: Parsed): Promise<'ok' | 'dup' | 'not_cv' | 'erro'> {
   if (msgKey) react(msgKey, '👀');
   const fileName = String(p.inner?.documentMessage?.fileName ?? '').trim() || null;
   const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'hiring_intake').maybeSingle();
@@ -447,16 +449,12 @@ async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: Msg
     entrada = { text: String(p.text ?? '').trim() };
   } else {
     const mime = String(p.mime ?? (p.kind === 'image' ? 'image/jpeg' : '')).split(';')[0].toLowerCase();
-    if (mime !== 'application/pdf' && !IMAGE_TYPES.includes(mime)) {
-      await sendText(number, `Recebi${fileName ? ` "${fileName}"` : ''}, mas só consigo ler currículo em PDF, foto ou texto.`).catch(() => {});
-      if (msgKey) react(msgKey, '❓');
-      return false;
-    }
+    if (mime !== 'application/pdf' && !IMAGE_TYPES.includes(mime)) return 'not_cv';
     const b64 = await mediaBase64(data).catch(() => null);
     if (!b64) {
       await sendText(number, 'Não consegui baixar esse arquivo. Manda de novo?').catch(() => {});
       if (msgKey) react(msgKey, '😱');
-      return false;
+      return 'erro';
     }
     entrada = { file_base64: b64, media_type: mime, file_name: fileName };
   }
@@ -470,19 +468,28 @@ async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: Msg
     });
     out = await r.json().catch(() => ({}));
     ok = r.ok && !!out?.success;
+    out._status = r.status;
   } catch (e) { out = { error: errMsg(e) }; }
   if (!ok) {
+    // Repetido: avisa e não salva (regra do dono, 2026-09-14)
+    if (out?._status === 409 || out?.duplicate) {
+      await sendText(number, `⚠️ ${out?.error ?? 'Currículo repetido: não salvei de novo.'}`).catch(() => {});
+      if (msgKey) react(msgKey, '🔁');
+      return 'dup';
+    }
+    // Não é currículo (demanda, print, conversa…): quem chamou repassa ao Telegram
+    if (out?._status === 422) return 'not_cv';
     log('WARN', 'currículo (WhatsApp) não salvo', { error: out?.error ?? null });
     await sendText(number, `❌ Não salvei ${fileName ? `"${fileName}"` : 'esse currículo'}: ${out?.error ?? 'erro desconhecido'}`).catch(() => {});
     if (msgKey) react(msgKey, '🤔');
-    return false;
+    return 'erro';
   }
   const c = out.candidate ?? {};
   const destino = [out.company_name, out.job_title ? `vaga ${out.job_title}` : null].filter(Boolean).join(' › ');
   await sendText(number, `✅ Currículo salvo: *${c.full_name ?? 'candidato'}*${c.desired_role ? ` — ${c.desired_role}` : ''}${destino ? ` (${destino})` : ''}${out.duplicate ? `\n⚠️ Parece repetido: já existe ${out.duplicate}.` : ''}`).catch(() => {});
   if (msgKey) react(msgKey, '👍');
   log('INFO', 'currículo salvo (WhatsApp)', { candidate: c.id ?? null, job: alvo.job_id ?? null });
-  return true;
+  return 'ok';
 }
 
 // ── Canais públicos (links wa.me com código; atendimento na edge canal-publico) ──
@@ -942,8 +949,10 @@ async function handle(payload: any) {
       return;
     }
     if ((arquivo && (janela || falaDeCv)) || (p0.kind === 'text' && janela && txt0.length >= 250)) {
-      const salvo = await cvFromWhatsApp(admin, number, msgKey, data, p0);
-      if (salvo && janela) {
+      const res = await cvFromWhatsApp(admin, number, msgKey, data, p0);
+      // Não era currículo (ex.: demanda encaminhada com a janela aberta) → vai para o Telegram
+      if (res === 'not_cv') { await relayToTelegram(admin, cfg, chatId, number, msgKey, data, p0); return; }
+      if (res === 'ok' && janela) {
         await admin.from('asst_settings').upsert({ key: 'wa_cv_intake', value: { until: new Date(Date.now() + 60 * 60_000).toISOString(), count: Number(janela.count ?? 0) + 1 }, updated_at: new Date().toISOString() });
       }
       return;
