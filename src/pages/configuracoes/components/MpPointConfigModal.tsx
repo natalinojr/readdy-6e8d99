@@ -22,6 +22,7 @@ interface ConfigInfo {
   webhook_url?: string;
 }
 interface Terminal { id: string; operating_mode: string }
+interface TabletRow { id: string; label: string; last_used_at: string | null; point_terminal_id: string | null }
 
 interface Props {
   onClose: () => void;
@@ -37,6 +38,26 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
+  const [tablets, setTablets] = useState<TabletRow[]>([]);
+  const [salvandoTablet, setSalvandoTablet] = useState<string | null>(null);
+
+  // Vários tablets na loja: cada um cobra na sua maquininha (sem escolha = a maquininha padrão acima).
+  useEffect(() => {
+    if (!tenantId) return;
+    invokeWithAuth<{ tablets: TabletRow[] }>('pix-payment', { body: { action: 'list_point_tablets', tenant_id: tenantId } })
+      .then(({ data }) => setTablets(data?.tablets ?? []));
+  }, [tenantId]);
+
+  const vincularTablet = async (tabletId: string, terminal: string) => {
+    setSalvandoTablet(tabletId);
+    const { data, error } = await invokeWithAuth<{ ok?: boolean }>('pix-payment', {
+      body: { action: 'set_tablet_terminal', tenant_id: tenantId, tablet_user_id: tabletId, terminal_id: terminal },
+    });
+    setSalvandoTablet(null);
+    if (error || !data?.ok) { toastError(error?.message || 'Não foi possível salvar a maquininha do tablet'); return; }
+    setTablets(prev => prev.map(t => t.id === tabletId ? { ...t, point_terminal_id: terminal || null } : t));
+    toastSuccess(terminal ? 'Maquininha do tablet salva' : 'Tablet usa a maquininha padrão');
+  };
   const [ambiente, setAmbiente] = useState<'production' | 'sandbox'>('production');
   const [terminalId, setTerminalId] = useState('');
   const [terminais, setTerminais] = useState<Terminal[] | null>(null);
@@ -197,6 +218,36 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
                 )}
                 {modoAtual && <p className="text-[10px] text-zinc-500 mt-1">Modo atual: <strong>{modoAtual}</strong></p>}
               </div>
+
+              {tablets.length > 0 && (
+                <div className="p-3 border border-zinc-200 rounded-xl space-y-2">
+                  <p className="text-xs font-semibold text-zinc-700">Maquininha de cada tablet</p>
+                  <p className="text-[11px] text-zinc-500">
+                    Com mais de um tablet, escolha a maquininha ao lado de cada um. Sem escolha, o tablet usa a maquininha acima.
+                    Toda maquininha escolhida precisa estar em <strong>modo PDV</strong> (escolha ela acima e clique em Ligar modo PDV).
+                  </p>
+                  {tablets.map(t => (
+                    <div key={t.id} className="flex items-center gap-2">
+                      <span className="flex-1 min-w-0 text-sm text-zinc-700 truncate">{t.label}</span>
+                      {terminais && terminais.length > 0 ? (
+                        <select value={t.point_terminal_id ?? ''} disabled={salvandoTablet === t.id}
+                          onChange={e => vincularTablet(t.id, e.target.value)}
+                          className="w-56 max-w-[60%] text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400">
+                          <option value="">Padrão (acima)</option>
+                          {terminais.map(tm => <option key={tm.id} value={tm.id}>{tm.id.split('__').pop()} · {tm.operating_mode}</option>)}
+                          {t.point_terminal_id && !terminais.some(tm => tm.id === t.point_terminal_id) && (
+                            <option value={t.point_terminal_id}>{t.point_terminal_id.split('__').pop()}</option>
+                          )}
+                        </select>
+                      ) : (
+                        <span className="text-[11px] text-zinc-500 truncate">
+                          {t.point_terminal_id ? t.point_terminal_id.split('__').pop() : 'Padrão'} · <button type="button" onClick={buscarTerminais} className="text-amber-700 font-semibold hover:underline cursor-pointer">Buscar maquininhas</button>
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {info?.webhook_url && ambiente === 'production' && (
                 <div className="p-3 border border-zinc-200 rounded-xl space-y-2">

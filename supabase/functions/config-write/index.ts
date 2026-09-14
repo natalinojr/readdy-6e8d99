@@ -678,6 +678,7 @@ Deno.serve(async (req) => {
         pdv_config: 'pdv_config',
         delivery_commission_rates: 'delivery_commission_rates',
         delivery_payment_methods: 'delivery_payment_methods',
+        self_service_payment_methods: 'self_service_payment_methods',
         delivery_print_enabled: 'delivery_print_enabled',
       }
 

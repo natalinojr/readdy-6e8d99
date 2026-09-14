@@ -121,17 +121,43 @@ async function requireMember(req: Request, admin: Admin, tenantId: string) {
 }
 const isManager = (role: string) => role === 'admin' || role === 'manager';
 
+// Tablet do autoatendimento que está chamando: o kiosk-auth cria um usuário por token
+// (user_metadata.kiosk_token_id; e-mail kiosk-<token_id>@kiosk.erpos.internal).
+async function kioskTokenIdOf(admin: Admin, userId: string): Promise<string | null> {
+  if (!userId) return null;
+  const { data } = await admin.auth.admin.getUserById(userId);
+  const u = data?.user;
+  const meta = String(u?.user_metadata?.kiosk_token_id ?? '');
+  if (meta) return meta;
+  const m = String(u?.email ?? '').match(/^kiosk-([0-9a-f-]{36})@kiosk\.erpos\.internal$/i);
+  return m ? m[1] : null;
+}
+
+// Maquininha de quem está cobrando. Os tablets entram com usuário próprio (perfil 'tablet',
+// criado em Usuários): mapa fin_payment_provider_config.tablet_terminals { user_id: terminal }.
+// Depois o kiosk_tokens.point_terminal_id (acesso por token) e, sem vínculo, a padrão da loja.
+async function terminalForCaller(admin: Admin, tenantId: string, userId: string, point: ProviderCfg) {
+  const porUsuario = point.tablet_terminals?.[userId];
+  if (porUsuario) return porUsuario;
+  const tokenId = await kioskTokenIdOf(admin, userId);
+  if (tokenId) {
+    const { data } = await admin.from('kiosk_tokens').select('point_terminal_id').eq('id', tokenId).eq('tenant_id', tenantId).maybeSingle();
+    if (data?.point_terminal_id) return String(data.point_terminal_id);
+  }
+  return point.terminal_id;
+}
+
 // ── Config dos provedores ────────────────────────────────────────────────────
 type ProviderCfg = {
   id: string; provider: string; is_active: boolean; access_token: string | null; account_label: string | null;
   client_id: string | null; client_secret: string | null; cert_pem: string | null; key_pem: string | null;
   pix_key: string | null; environment: string | null; conta_corrente: string | null;
   cert_expires_at: string | null; last_test_at: string | null; updated_at: string; token_expires_at: string | null;
-  terminal_id: string | null; webhook_secret?: string | null;
+  terminal_id: string | null; webhook_secret?: string | null; tablet_terminals?: Record<string, string> | null;
 };
 async function loadProviderCfgs(admin: Admin, tenantId: string) {
   const { data } = await admin.from('fin_payment_provider_config')
-    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at, terminal_id, webhook_secret')
+    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at, terminal_id, webhook_secret, tablet_terminals')
     .eq('tenant_id', tenantId).in('provider', PROVIDERS);
   const rows = (data ?? []) as ProviderCfg[];
   return {
@@ -790,8 +816,9 @@ Deno.serve(async (req: Request) => {
       const chargeId = crypto.randomUUID();
       const { data: tenant } = await supabase.from('tenants').select('name').eq('id', tenantId).maybeSingle();
       let created: { providerPaymentId: string; raw: unknown };
+      const terminalId = await terminalForCaller(supabase, tenantId, auth.userId, point!);
       try {
-        created = await createPointOrder(point!, chargeId, amount, method, `${tenant?.name ?? 'Restaurante'} - Autoatendimento`);
+        created = await createPointOrder({ ...point!, terminal_id: terminalId }, chargeId, amount, method, `${tenant?.name ?? 'Restaurante'} - Autoatendimento`);
       } catch (e) {
         const detail = String((e as Error)?.message ?? e);
         log('ERROR', 'create_card_charge', 'Mercado Pago recusou', { tenantId, detail });
@@ -808,7 +835,7 @@ Deno.serve(async (req: Request) => {
         await cancelAtProvider(await loadProviderCfgs(supabase, tenantId), { id: chargeId, provider: 'mp_point', provider_payment_id: created.providerPaymentId } as PixRow);
         throw insErr ?? new Error('insert fin_pix_payments falhou');
       }
-      log('INFO', 'create_card_charge', 'criado', { chargeId, mpOrder: created.providerPaymentId, amount, method, sandbox: point!.environment === 'sandbox' });
+      log('INFO', 'create_card_charge', 'criado', { chargeId, mpOrder: created.providerPaymentId, amount, method, terminalId, sandbox: point!.environment === 'sandbox' });
       return json({ pix_payment_id: row.id, expires_at: row.expires_at, provider: 'mp_point', sandbox: point!.environment === 'sandbox' });
     }
 
@@ -846,6 +873,43 @@ Deno.serve(async (req: Request) => {
         has_webhook_secret: Boolean(point?.webhook_secret),
         webhook_url: `${Deno.env.get('SUPABASE_URL') ?? ''}/functions/v1/pix-payment?webhook=point&tenant_id=${tenantId}`,
       });
+    }
+
+    // Tablets da loja × maquininha de cada um (vários tablets, cada um com a sua Point).
+    if (action === 'list_point_tablets' || action === 'set_tablet_terminal') {
+      const tenantId = String(body.tenant_id ?? '');
+      const auth = await requireMember(req, supabase, tenantId);
+      if (auth.error) return auth.error;
+      if (!isManager(auth.role)) return json({ error: 'Somente administrador ou gerente' }, 403);
+      const { point } = await loadProviderCfgs(supabase, tenantId);
+      if (action === 'set_tablet_terminal') {
+        const tabletUserId = String(body.tablet_user_id ?? '');
+        const terminalId = String(body.terminal_id ?? '').trim();
+        if (!tabletUserId) return json({ error: 'Escolha o tablet' }, 422);
+        if (!point) return json({ error: 'Salve a configuração da maquininha antes' }, 422);
+        const { data: m } = await supabase.from('user_tenants').select('user_id')
+          .eq('user_id', tabletUserId).eq('tenant_id', tenantId).eq('role', 'tablet').limit(1).maybeSingle();
+        if (!m) return json({ error: 'Tablet não encontrado nesta loja' }, 404);
+        const mapa: Record<string, string> = { ...(point.tablet_terminals ?? {}) };
+        if (terminalId) mapa[tabletUserId] = terminalId; else delete mapa[tabletUserId];
+        const { error: updErr } = await supabase.from('fin_payment_provider_config')
+          .update({ tablet_terminals: mapa, updated_at: new Date().toISOString() }).eq('id', point.id);
+        if (updErr) throw updErr;
+        log('INFO', 'set_tablet_terminal', 'ok', { tenantId, tabletUserId, terminalId: terminalId || null, by: auth.userId });
+        return json({ ok: true });
+      }
+      // Tablets = usuários com perfil 'tablet' na loja (criados em Usuários).
+      const { data: vinculos, error: listErr } = await supabase.from('user_tenants')
+        .select('user_id, created_at').eq('tenant_id', tenantId).eq('role', 'tablet').order('created_at', { ascending: true });
+      if (listErr) throw listErr;
+      const ids = (vinculos ?? []).map((v) => String(v.user_id));
+      const { data: nomes } = ids.length ? await supabase.from('users').select('id, name').in('id', ids) : { data: [] };
+      const nomePorId = new Map((nomes ?? []).map((u) => [String(u.id), String(u.name ?? '')]));
+      const tablets = ids.map((id, i) => ({
+        id, label: nomePorId.get(id) || `Tablet ${i + 1}`, last_used_at: null,
+        point_terminal_id: point?.tablet_terminals?.[id] ?? null,
+      }));
+      return json({ tablets });
     }
 
     if (action === 'list_point_terminals' || action === 'set_point_mode' || action === 'save_point_config') {

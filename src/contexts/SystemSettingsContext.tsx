@@ -78,6 +78,8 @@ export interface SystemSettings {
   kitchen_close_time: string;
   self_service_id_type: 'nome' | 'senha' | 'comanda' | 'senha_balcao' | 'nenhum';
   self_service_payment_type: 'hora' | 'entrega' | 'ambos';
+  /** Formas de pagamento exibidas no tablet (ids de payment_methods); null = todas as ativas. */
+  self_service_payment_methods?: string[] | null;
   welcome_message_new: string;
   welcome_message_returning: string;
   stone_client_id: string;
@@ -216,6 +218,7 @@ function parseRow(data: Record<string, unknown>): SystemSettings {
       : DEFAULT_SETTINGS.kitchen_close_time,
     self_service_id_type: normalizeIdType(data.self_service_id_type as string),
     self_service_payment_type: normalizePaymentType(data.self_service_payment_type as string),
+    self_service_payment_methods: Array.isArray(data.self_service_payment_methods) ? (data.self_service_payment_methods as string[]) : null,
     welcome_message_new: (data.welcome_message_new as string) ?? DEFAULT_SETTINGS.welcome_message_new,
     welcome_message_returning: (data.welcome_message_returning as string) ?? DEFAULT_SETTINGS.welcome_message_returning,
     stone_client_id: (data.stone_client_id as string) ?? '',

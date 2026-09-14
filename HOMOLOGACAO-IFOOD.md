@@ -126,14 +126,20 @@ chamado **separado** para o Financial · questionário com dados do **ambiente d
 
 ## 4. Roteiro dos vídeos (loja "Testes PDV" do ERP, modo homologação ligado)
 
+Orientação do iFood no chamado (2026-09-14): mostrar navegação, consulta às APIs e que os dados da tela
+**correspondem exatamente** ao que a API devolveu; Settlements/Anticipations vazios e o "No financial entries
+exist…" do On-Demand mostrados na interface; Resumo com loja real deixando claro **qual loja** e que os totais
+**conferem com o Portal do Parceiro**. Para a correspondência, cada linha de Pedidos/Eventos/Repasses tem o botão
+**{ }** que abre o JSON original gravado da API — abrir e comparar com os valores da linha.
+
 | # | Cenário | O que mostrar |
 |---|---|---|
-| 1 | Autenticação | Financeiro › iFood › Importar/configurar: tipo de app, Client ID, segredo oculto, Modo homologação, **Conectar** → loja 4117700 encontrada; "Buscar agora" |
-| 2 | Sales | Subaba **Pedidos**: o pedido de teste e todos os campos (pagamento/responsável, bruto, promoções, comissões, líquido) |
-| 3 | Financial Events | Subaba **Eventos**: valores com sinal, datas, repasse previsto; ligar/desligar "só o que afeta o repasse" |
-| 4 | Settlements / Anticipations | Subaba **Repasses** (na loja de teste vem vazio — mostrar a tela e a mensagem) |
-| 5 | On-Demand | **Gerar relatório agora** → mensagem de andamento → mensagem de erro clara do iFood |
-| 6 | Reconciliation | Subaba **Resumo** + **Exportar CSV**. A loja de teste não tem relatório de conciliação; gravar com dados reais de uma loja e explicar isso no chamado |
+| 1 | Autenticação | Loja **Testes PDV** › Financeiro › iFood › Importar/configurar: tipo de app, Client ID, segredo oculto, **Modo homologação**, **Conectar** → loja 4117700 encontrada; **Buscar agora** |
+| 2 | Sales | Subaba **Pedidos**: pedido **#0686** (merchant "ABC") com pagamento/responsável, bruto, promoções, composição do líquido; clicar **{ }** e mostrar `grossBag`, `billingEntries`, `saleBalance` batendo com a linha |
+| 3 | Financial Events | Subaba **Eventos**: comissões, taxas, subsídio, valores com sinal, repasse previsto; ligar/desligar "Só o que afeta o repasse" (pagamento fora do app aparece como "não afeta"); **{ }** em uma comissão |
+| 4 | Settlements / Anticipations | Subaba **Repasses**: "Nenhuma liquidação neste mês" / "Nenhuma antecipação neste mês" + a conferência entre fontes (só eventos) |
+| 5 | On-Demand | **Gerar relatório agora** → andamento → mensagem "No financial entries exist for merchant…" exibida ao usuário |
+| 6 | Reconciliation | Trocar para a loja **El Patron Paranaguá** (dizer em voz/legenda que é loja real, merchant 3189551): subaba **Resumo** do mês + **Exportar CSV**; em seguida abrir o **Portal do Parceiro › Financeiro** do mesmo mês e mostrar os mesmos totais (set/26: 4.373,78 − 1.641,54 = 2.732,24) |
 
 Antes de gravar: gerar 2–3 pedidos de teste (Portal › Pedidos de teste › Gerar pedido de teste) e clicar
 "Buscar agora" no ERP.

@@ -89,6 +89,8 @@ export default function OperacaoTab() {
   const [deliveryCommissionRates, setDeliveryCommissionRates] = useState<Record<string, number>>({});
   // IDs das formas de pagamento aceitas no delivery (null = todas aceitas)
   const [deliveryPaymentMethods, setDeliveryPaymentMethods] = useState<string[] | null>(null);
+  // Formas de pagamento exibidas no tablet do autoatendimento (null = todas as ativas)
+  const [kioskPaymentMethods, setKioskPaymentMethods] = useState<string[] | null>(null);
   const [showSecret, setShowSecret] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [salvo, setSalvo] = useState(false);
@@ -174,6 +176,8 @@ export default function OperacaoTab() {
     } else {
       setDeliveryPaymentMethods(null); // null = todas aceitas
     }
+    const savedKioskMethods = settings.self_service_payment_methods;
+    setKioskPaymentMethods(Array.isArray(savedKioskMethods) ? savedKioskMethods : null);
   }, [settings, settingsLoading]);
 
   const set = <K extends keyof ConfigOperacao>(k: K, v: ConfigOperacao[K]) =>
@@ -215,6 +219,7 @@ export default function OperacaoTab() {
       delivery_eta_minutes: (cfg as Record<string, unknown>).deliveryTempoEstimado as number ?? 45,
       delivery_commission_rates: deliveryCommissionRates,
       delivery_payment_methods: deliveryPaymentMethods,
+      self_service_payment_methods: kioskPaymentMethods,
       pdv_config: {
         // Mantém valores do banco como base e aplica as seleções da tela
         ...(settings.pdv_config ?? {}),
@@ -232,7 +237,7 @@ export default function OperacaoTab() {
     setTimeout(() => setSalvo(false), 2500);
   // pdvTerminais DEVE estar nas deps — sem isso o React reutiliza o closure antigo
   // e qualquer toggle feito pelo usuário é ignorado no save (stale closure bug)
-  }, [cfg, pixCfg, salvar, pdvTerminais, settings.pdv_config, deliveryCommissionRates, deliveryPaymentMethods, toastSuccess, toastError]);
+  }, [cfg, pixCfg, salvar, pdvTerminais, settings.pdv_config, deliveryCommissionRates, deliveryPaymentMethods, kioskPaymentMethods, toastSuccess, toastError]);
 
   const handleToggleTreino = useCallback(
     async (userId: string) => {
@@ -688,6 +693,53 @@ export default function OperacaoTab() {
               ))}
             </div>
           </div>
+          {cfg.autoatendimentoPagamento !== 'entrega' && formasPagamento.length > 0 && (
+            <div className="border-t border-zinc-50 pt-4">
+              <label className="block text-xs font-semibold text-zinc-600 mb-1">Formas de pagamento no tablet</label>
+              <p className="text-[11px] text-zinc-400 mb-2">
+                O que o cliente pode escolher no totem. Pix só aparece com o Pix automático configurado; cartão vai para a maquininha se ela estiver ativa (senão, paga no balcão).
+              </p>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-3 py-2 bg-zinc-50 rounded-xl border border-zinc-100">
+                  <span className="text-xs font-semibold text-zinc-600">Mostrar todas as formas ativas</span>
+                  <button
+                    onClick={() => setKioskPaymentMethods(kioskPaymentMethods === null ? formasPagamento.map(f => f.id) : null)}
+                    className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ${kioskPaymentMethods === null ? 'bg-amber-500' : 'bg-zinc-200'}`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${kioskPaymentMethods === null ? 'left-6' : 'left-1'}`} />
+                  </button>
+                </div>
+                {kioskPaymentMethods !== null && (
+                  <div className="space-y-1.5 pt-1">
+                    {formasPagamento.map((forma) => {
+                      const ativa = kioskPaymentMethods.includes(forma.id);
+                      return (
+                        <button
+                          key={forma.id}
+                          onClick={() => setKioskPaymentMethods((prev) => {
+                            if (!prev) return [forma.id];
+                            return prev.includes(forma.id) ? prev.filter(id => id !== forma.id) : [...prev, forma.id];
+                          })}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-all text-left ${ativa ? 'border-amber-300 bg-amber-50' : 'border-zinc-100 bg-zinc-50 hover:border-zinc-200'}`}
+                        >
+                          <span className="flex-1 text-sm font-medium text-zinc-700">{forma.nome}</span>
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${ativa ? 'border-amber-500 bg-amber-500' : 'border-zinc-300'}`}>
+                            {ativa && <i className="ri-check-line text-white text-[9px]" />}
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {kioskPaymentMethods.length === 0 && (
+                      <p className="text-xs text-red-500 flex items-center gap-1 px-1">
+                        <i className="ri-error-warning-line" />
+                        Selecione ao menos uma forma de pagamento
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           <div className="border-t border-zinc-50 pt-4">
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5 flex items-center gap-1">
               <div className="w-3 h-3 flex items-center justify-center"><MessageSquare size={11} /></div>

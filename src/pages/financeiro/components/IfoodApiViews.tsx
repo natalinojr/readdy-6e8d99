@@ -54,6 +54,8 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [soImpacto, setSoImpacto] = useState(true);
+  // Resposta original da API (coluna raw) aberta no botão { } de cada linha.
+  const [json, setJson] = useState<unknown>(null);
   // Mês próprio: a API pode ter dados de meses sem relatório importado (a loja de teste devolve 2025).
   const [mes, setMes] = useState(competence);
   const [pulou, setPulou] = useState(false); // já saltou para o último mês com dados?
@@ -123,9 +125,27 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
         className="border border-zinc-200 rounded-lg px-2 py-1 text-sm bg-white" />
     </div>
   );
+  const verApi = (raw: unknown) => (
+    <button type="button" onClick={() => setJson(raw ?? {})} title="Ver a resposta original da API do iFood"
+      className="px-1.5 py-0.5 rounded border border-zinc-200 font-mono text-[11px] text-zinc-500 hover:text-red-600 hover:border-red-300">{'{ }'}</button>
+  );
+  const modal = json !== null && (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setJson(null)}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b border-zinc-100 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-zinc-800">Resposta original da API do iFood</p>
+            <p className="text-xs text-zinc-500">JSON exatamente como veio na busca, sem alteração.</p>
+          </div>
+          <button type="button" onClick={() => setJson(null)} className="text-zinc-400 hover:text-zinc-700"><i className="ri-close-line text-xl" /></button>
+        </div>
+        <pre className="p-4 overflow-auto text-xs font-mono text-zinc-700 bg-zinc-50 rounded-b-xl">{JSON.stringify(json, null, 2)}</pre>
+      </div>
+    </div>
+  );
   if (loading) return <div className="space-y-3">{seletor}<div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-red-500 border-t-transparent rounded-full animate-spin" /></div></div>;
   if (error) return <div className="space-y-3">{seletor}<div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">Falha ao carregar: {error}</div></div>;
-  return <div className="space-y-3">{seletor}{conteudo()}</div>;
+  return <div className="space-y-3">{seletor}{conteudo()}{modal}</div>;
 
   function conteudo() {
 
@@ -148,7 +168,7 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
               <tr>
                 <th className="text-left px-3 py-2">Pedido</th><th className="text-left px-3 py-2">Data</th><th className="text-left px-3 py-2">Situação</th>
                 <th className="text-left px-3 py-2">Pagamento</th><th className="text-right px-3 py-2">Bruto</th><th className="text-right px-3 py-2">Promoções</th>
-                <th className="text-left px-3 py-2">Composição do líquido</th><th className="text-right px-3 py-2">Líquido</th>
+                <th className="text-left px-3 py-2">Composição do líquido</th><th className="text-right px-3 py-2">Líquido</th><th className="px-3 py-2">API</th>
               </tr>
             </thead>
             <tbody>
@@ -190,6 +210,7 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
                       )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-green-700">{formatCurrency(n(r.sale_balance))}</td>
+                    <td className="px-3 py-2 text-center">{verApi(r.raw)}</td>
                   </tr>
                 );
               })}
@@ -250,7 +271,7 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[700px]">
               <thead className="bg-zinc-50 text-xs text-zinc-500">
-                <tr><th className="text-left px-3 py-2">Pagamento</th><th className="text-left px-3 py-2">Tipo</th><th className="text-left px-3 py-2">Período apurado</th><th className="text-right px-3 py-2">Valor</th><th className="text-left px-3 py-2">Situação</th><th className="text-left px-3 py-2">Conta</th></tr>
+                <tr><th className="text-left px-3 py-2">Pagamento</th><th className="text-left px-3 py-2">Tipo</th><th className="text-left px-3 py-2">Período apurado</th><th className="text-right px-3 py-2">Valor</th><th className="text-left px-3 py-2">Situação</th><th className="text-left px-3 py-2">Conta</th><th className="px-3 py-2">API</th></tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
@@ -261,9 +282,10 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
                     <td className={`px-3 py-2 text-right font-mono ${n(r.amount) < 0 || String(r.type).toUpperCase() === 'BOLETO' ? 'text-red-600' : 'text-green-700'}`}>{formatCurrency(n(r.amount))}</td>
                     <td className="px-3 py-2 text-xs">{pt(r.status)}</td>
                     <td className="px-3 py-2 text-xs text-zinc-500">{String(r.status ?? '').toUpperCase() === 'SUCCEED' ? conta(r.account_details) : '—'}</td>
+                    <td className="px-3 py-2 text-center">{verApi(r.raw)}</td>
                   </tr>
                 ))}
-                {rows.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-xs text-zinc-400">Nenhuma liquidação neste mês.</td></tr>}
+                {rows.length === 0 && <tr><td colSpan={7} className="px-3 py-4 text-center text-xs text-zinc-400">Nenhuma liquidação neste mês.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -277,7 +299,7 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[760px]">
               <thead className="bg-zinc-50 text-xs text-zinc-500">
-                <tr><th className="text-left px-3 py-2">Data original → antecipada</th><th className="text-right px-3 py-2">Valor original</th><th className="text-right px-3 py-2">Taxa</th><th className="text-right px-3 py-2">Recebido</th><th className="text-right px-3 py-2">Adiantou</th><th className="text-left px-3 py-2">Situação</th></tr>
+                <tr><th className="text-left px-3 py-2">Data original → antecipada</th><th className="text-right px-3 py-2">Valor original</th><th className="text-right px-3 py-2">Taxa</th><th className="text-right px-3 py-2">Recebido</th><th className="text-right px-3 py-2">Adiantou</th><th className="text-left px-3 py-2">Situação</th><th className="px-3 py-2">API</th></tr>
               </thead>
               <tbody>
                 {antecip.map((a) => {
@@ -293,15 +315,16 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
                       <td className="px-3 py-2 text-right font-mono text-green-700">{formatCurrency(n(a.anticipated_amount))}</td>
                       <td className="px-3 py-2 text-right text-xs whitespace-nowrap">{dias > 0 ? `${dias} dia(s)` : '—'}{aoMes !== null && <span className="block text-zinc-400">custo ≈ {aoMes.toFixed(2)}% ao mês</span>}</td>
                       <td className="px-3 py-2 text-xs">{pt(a.status)}</td>
+                      <td className="px-3 py-2 text-center">{verApi(a.raw)}</td>
                     </tr>
                   );
                 })}
-                {antecip.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-xs text-zinc-400">Nenhuma antecipação neste mês.</td></tr>}
+                {antecip.length === 0 && <tr><td colSpan={7} className="px-3 py-4 text-center text-xs text-zinc-400">Nenhuma antecipação neste mês.</td></tr>}
                 {antecip.length > 0 && (() => {
                   const taxa = antecip.reduce((s, a) => s + n(a.fee_amount), 0);
                   return (
                     <tr className="border-t border-zinc-200 text-xs">
-                      <td colSpan={6} className="px-3 py-2 text-zinc-600">
+                      <td colSpan={7} className="px-3 py-2 text-zinc-600">
                         Neste mês a loja pagou <strong className="text-red-600">{formatCurrency(taxa)}</strong> para receber antes. Esperando o prazo normal (D+30), esse valor teria entrado inteiro no caixa.
                       </td>
                     </tr>
@@ -330,7 +353,7 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm min-w-[760px]">
           <thead className="bg-zinc-50 text-xs text-zinc-500">
-            <tr><th className="text-left px-3 py-2">Data</th><th className="text-left px-3 py-2">Evento</th><th className="text-left px-3 py-2">Gatilho</th><th className="text-left px-3 py-2">Pagamento</th><th className="text-right px-3 py-2">Valor</th><th className="text-left px-3 py-2">Repasse previsto</th></tr>
+            <tr><th className="text-left px-3 py-2">Data</th><th className="text-left px-3 py-2">Evento</th><th className="text-left px-3 py-2">Gatilho</th><th className="text-left px-3 py-2">Pagamento</th><th className="text-right px-3 py-2">Valor</th><th className="text-left px-3 py-2">Repasse previsto</th><th className="px-3 py-2">API</th></tr>
           </thead>
           <tbody>
             {eventos.map((e) => (
@@ -341,6 +364,7 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
                 <td className="px-3 py-2 text-xs">{[nm(e.payment_method), e.payment_brand].filter(Boolean).join(' · ') || '—'}{e.payment_liability ? <span className="text-zinc-400"> ({e.payment_liability === 'IFOOD' ? 'iFood' : e.payment_liability === 'MERCHANT' ? 'loja' : e.payment_liability})</span> : null}</td>
                 <td className={`px-3 py-2 text-right font-mono ${n(e.amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>{formatCurrency(n(e.amount))}</td>
                 <td className="px-3 py-2 text-xs whitespace-nowrap">{dBR(e.expected_settlement)}{e.has_transfer_impact ? '' : ' (não afeta)'}</td>
+                <td className="px-3 py-2 text-center">{verApi(e.raw)}</td>
               </tr>
             ))}
           </tbody>

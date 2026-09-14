@@ -36,6 +36,8 @@ interface PagamentoKioskProps {
   modoIdentificacao: 'nome' | 'senha' | 'comanda' | 'senha_balcao' | 'nenhum';
   pagarNaEntrega: boolean;
   modoPagamento: 'hora' | 'entrega' | 'ambos';
+  /** Formas liberadas para o tablet em Configurações › Operação (null = todas as ativas). */
+  formasPermitidas?: string[] | null;
   hasCaixa: boolean;
   formaPagamentoNome?: string;
   orderNumber?: number;
@@ -490,6 +492,7 @@ export default function PagamentoKiosk({
   modoIdentificacao,
   pagarNaEntrega,
   modoPagamento,
+  formasPermitidas,
   hasCaixa,
   formaPagamentoNome,
   orderNumber,
@@ -561,7 +564,9 @@ export default function PagamentoKiosk({
       .then(({ data }) => setCartaoNaMaquininha(Boolean(data?.point)))
       .catch(() => setCartaoNaMaquininha(false));
   }, [tenantId]);
-  const metodosVisiveis = paymentMethods.filter((m) => m.type !== 'pix' || pixDisponivel === true);
+  const metodosVisiveis = paymentMethods
+    .filter((m) => !Array.isArray(formasPermitidas) || formasPermitidas.includes(m.id))
+    .filter((m) => m.type !== 'pix' || pixDisponivel === true);
 
   // Pagar na entrega (modo fixo) — cria pedido ao montar
   useEffect(() => {

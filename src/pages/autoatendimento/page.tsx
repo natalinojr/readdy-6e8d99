@@ -1081,6 +1081,7 @@ function AutoatendimentoPageInner() {
             modoIdentificacao={modoIdentificacao}
             pagarNaEntrega={pagarNaEntrega}
             modoPagamento={modoPagamento}
+            formasPermitidas={settings.self_service_payment_methods ?? null}
             hasCaixa={!!caixa}
             formaPagamentoNome={formaPagamentoNome ?? undefined}
             orderNumber={pendingOrderNumber ?? undefined}
