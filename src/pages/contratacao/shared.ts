@@ -22,7 +22,36 @@ export const COLORS: Record<string, { label: string; cls: string; bar: string; d
 export const colorOf = (c: string | null | undefined) => COLORS[c ?? ''] ?? COLORS.zinc;
 
 // ── Fases e empresas ────────────────────────────────────────────────────────
-export type NativeKind = 'novo' | 'entrevista' | 'aprovado' | 'descartado';
+export type NativeKind = 'novo' | 'agendar' | 'entrevista' | 'aprovado' | 'descartado';
+
+// ── Agendamento de entrevista pelo assistente (hiring_job_scheduling, por vaga) ──
+export interface SchedulingSlot { dow: number; start: string; end: string }
+export interface SchedulingInterviewer { name: string; phone: string }
+export interface JobScheduling {
+  job_id: string;
+  enabled: boolean;
+  slots: SchedulingSlot[];
+  blocked_dates: string[];
+  duration_min: number;
+  gap_min: number;
+  per_slot: number;
+  min_notice_hours: number;
+  horizon_days: number;
+  format: string;
+  location: string | null;
+  interviewers: SchedulingInterviewer[];
+  candidate_notes: string | null;
+}
+export const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+/** O que falta para o assistente poder convidar candidatos desta vaga (vazio = pronto). */
+export function faltasAgendamento(s: Pick<JobScheduling, 'slots' | 'interviewers' | 'format' | 'location'>): string[] {
+  const f: string[] = [];
+  const slotsOk = s.slots.filter((x) => /^\d{2}:\d{2}$/.test(x.start) && /^\d{2}:\d{2}$/.test(x.end) && x.start < x.end);
+  if (slotsOk.length === 0) f.push('pelo menos um dia e horário disponível');
+  if (!s.interviewers.some((i) => i.name.trim() && i.phone.replace(/\D/g, '').length >= 10)) f.push('pelo menos um entrevistador com nome e WhatsApp');
+  if (s.format === 'presencial' && !(s.location ?? '').trim()) f.push('o local da entrevista');
+  return f;
+}
 export interface Stage { id: string; name: string; color: string; sort_order: number; native_kind: NativeKind | null }
 export interface Company {
   id: string; name: string; sort_order: number; is_active: boolean;
@@ -109,6 +138,7 @@ export const fitOf = (score: number | null): Fit | null => (score == null ? null
 
 export const NATIVE_LABEL: Record<NativeKind, string> = {
   novo: 'onde entram os currículos novos',
+  agendar: 'o assistente chama o candidato no WhatsApp para marcar a entrevista',
   entrevista: 'para onde o candidato vai ao agendar entrevista',
   aprovado: 'aprovados',
   descartado: 'fora do processo (sai do ranking)',

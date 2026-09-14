@@ -667,6 +667,19 @@ MESMO número do assistente (a conversa direta dele estava parada desde que foi 
 - Novo propósito (reservas, fornecedores…): valor novo em `bot_channels.purpose` + prompt/ferramentas
   próprias no `canal-publico` (hoje só `curriculos`).
 
+### Queda do WhatsApp em 2026-09-14 + Word no canal público
+
+- 15:21 UTC: candidata entrou pelo link, a boas-vindas foi aceita pela Evolution e gravada em
+  `bot_messages`, mas a sessão caiu 1 s depois (`stream:error 401 conflict device_removed`,
+  instância `state: close`). Só a reação chegou. **Parear de novo** (Assistente › Configurações ›
+  QR). Diagnóstico: `docker logs evolution | grep device_removed` e
+  `docker exec evolution node -e "fetch('http://localhost:8080/instance/connectionState/assistente',{headers:{apikey:process.env.AUTHENTICATION_API_KEY}}).then(r=>r.text()).then(console.log)"`.
+- `canal-publico`: se o envio pela Evolution falhar, avisa o dono no Telegram (1× a cada 30 min,
+  `asst_settings.wa_public_down_alert_at`). Primeira resposta padrão = "Olá! Por favor, nos envie seu
+  currículo (pode ser em PDF, imagens ou em word)". Aceita **Word .docx**: o webhook baixa, o
+  canal extrai o texto (`fflate`, `word/document.xml`) → intake como texto, e o .docx original vai
+  para o bucket `curriculos`. O `.doc` antigo continua sem suporte (pede PDF/foto).
+
 ## Pendente (ordem)
 
 1. Validar no uso real o Telegram: conversa, áudio, foto e clique em botão.

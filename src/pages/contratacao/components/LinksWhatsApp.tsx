@@ -323,7 +323,7 @@ function CanalModal({ ch, companies, jobs, onClose, onSave }: {
           </Field>
           <Field label="Primeira resposta (opcional)">
             <textarea value={d.welcome ?? ''} onChange={(e) => set('welcome', e.target.value)} rows={3}
-              placeholder="Em branco = mensagem padrão (pede o currículo em PDF ou foto e oferece perguntas se a pessoa não tiver). Use {nome}, {empresa} e {vaga}." className={areaCls} />
+              placeholder={'Em branco = "Olá! Por favor, nos envie seu currículo (pode ser em PDF, imagens ou em word)". Use {nome}, {empresa} e {vaga}.'} className={areaCls} />
           </Field>
           <div>
             <span className="block text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-1">O que o atendente pode contar sobre a vaga</span>

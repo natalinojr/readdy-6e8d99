@@ -1,6 +1,7 @@
 // Criar/editar vaga. Os campos alimentam a análise da IA (currículo × vaga × loja).
 import { useState } from 'react';
 import { type Company, type Job, type JobStatus, CONTRACT_TYPES, JOB_STATUS } from '../shared';
+import AgendamentoVaga from './AgendamentoVaga';
 
 export type JobDraft = Omit<Job, 'id' | 'created_at' | 'opened_at' | 'closed_at'> & { id?: string };
 
@@ -98,6 +99,13 @@ export default function VagaModal({ job, companies, presetCompanyId, onClose, on
             A IA compara cada currículo com estes dados e com o endereço e a descrição da loja (Configurações › Empresas).
             Idade, estado civil e filhos nunca entram na comparação.
           </p>
+          {job?.id ? (
+            <AgendamentoVaga jobId={job.id} defaultLocation={companies.find((c) => c.id === d.company_id)?.address ?? null} />
+          ) : (
+            <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg px-2 py-1.5">
+              <i className="ri-robot-2-line" /> Depois de abrir a vaga, edite-a para configurar as entrevistas pelo assistente (dias, horários e entrevistadores).
+            </p>
+          )}
           {erro && <p className="text-xs text-red-600">{erro}</p>}
         </div>
 

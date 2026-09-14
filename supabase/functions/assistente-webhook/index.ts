@@ -525,12 +525,14 @@ async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | 
     } else if (p.kind === 'image' || p.kind === 'document') {
       const mime = String(p.mime ?? (p.kind === 'image' ? 'image/jpeg' : '')).split(';')[0].toLowerCase();
       const name = String(p.inner?.documentMessage?.fileName ?? '').trim() || null;
-      if (mime === 'application/pdf' || IMAGE_TYPES.includes(mime)) {
+      // PDF, foto e Word .docx (o canal-publico extrai o texto do .docx).
+      const isDocx = mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(name ?? '');
+      if (mime === 'application/pdf' || IMAGE_TYPES.includes(mime) || isDocx) {
         const b64 = await mediaBase64(data);
         if (!b64) { await sendText(number, 'Não consegui baixar esse arquivo. Pode mandar de novo?').catch(() => {}); return; }
-        file = { base64: b64, mime, name };
+        file = { base64: b64, mime: isDocx ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : mime, name };
       } else {
-        file = null; // tipo que não lemos (Word etc.): o canal-publico responde pedindo PDF/foto
+        file = null; // tipo que não lemos (.doc antigo etc.): o canal-publico responde pedindo PDF/foto/Word
         text = text || `[Arquivo${name ? ` "${name}"` : ''}]`;
       }
     }
