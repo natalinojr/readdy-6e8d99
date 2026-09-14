@@ -384,7 +384,7 @@ async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
   const replyTo = isLid(body.reply_to) ? String(body.reply_to) : null;
   if (num.length < 10 || !text) return false;
   // 1) candidato com conversa de agendamento aberta (compara pelo telefone com ou sem o 9)
-  const key = foneKey(num);
+  const key = foneKey(body.number); // do número completo (last11 corta o 55 e quebra a chave)
   const { data: abertas } = await admin.from('hiring_scheduling_sessions').select('*').in('status', ACTIVE)
     .like('phone', `%${key.slice(-8)}`).order('updated_at', { ascending: false }).limit(20);
   const ss = ((abertas ?? []) as Row[]).filter((s) => foneKey(s.phone) === key);
