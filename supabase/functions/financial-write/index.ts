@@ -1147,23 +1147,33 @@ Deno.serve(async (req) => {
       // ── Statement Imports (Conciliation) ──────────────────────────────────
       case 'list_statement_imports': {
         const { bank_account_id, date_from, date_to, status: filterStatus } = payload ?? {};
-        let query = supabase
-          .from('fin_bank_statement_imports')
-          .select('*')
-          .eq('tenant_id', tenant_id)
-          .order('transaction_date', { ascending: false })
-          .order('created_at', { ascending: false })
-          .limit(500);
-        if (bank_account_id) query = query.eq('bank_account_id', bank_account_id);
-        if (date_from) query = query.gte('transaction_date', date_from);
-        if (date_to) query = query.lte('transaction_date', date_to);
-        if (filterStatus && filterStatus !== 'ignored') query = query.neq('status', 'ignored');
-        const { data, error } = await query;
-        if (error) {
-          console.error('[list_statement_imports] error:', error.message);
-          return new Response(JSON.stringify({ error: extractErrorMessage(error) }), { status: 500, headers: corsHeaders });
+        // Com período: pagina de 1000 em 1000 até 10 mil linhas (antes parava em 500 e o
+        // começo do período sumia). Sem período: só as 500 mais recentes, como antes.
+        const PAGE_SI = 1000;
+        const MAX_SI = date_from ? 10000 : 500;
+        const rows: unknown[] = [];
+        for (let from = 0; from < MAX_SI; from += PAGE_SI) {
+          let query = supabase
+            .from('fin_bank_statement_imports')
+            .select('*')
+            .eq('tenant_id', tenant_id)
+            .order('transaction_date', { ascending: false })
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .range(from, Math.min(from + PAGE_SI, MAX_SI) - 1);
+          if (bank_account_id) query = query.eq('bank_account_id', bank_account_id);
+          if (date_from) query = query.gte('transaction_date', date_from);
+          if (date_to) query = query.lte('transaction_date', date_to);
+          if (filterStatus && filterStatus !== 'ignored') query = query.neq('status', 'ignored');
+          const { data, error } = await query;
+          if (error) {
+            console.error('[list_statement_imports] error:', error.message);
+            return new Response(JSON.stringify({ error: extractErrorMessage(error) }), { status: 500, headers: corsHeaders });
+          }
+          rows.push(...(data ?? []));
+          if ((data ?? []).length < Math.min(PAGE_SI, MAX_SI - from)) break;
         }
-        return new Response(JSON.stringify({ data: data ?? [] }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ data: rows, limit: MAX_SI }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       case 'list_statement_imports_external_ids': {

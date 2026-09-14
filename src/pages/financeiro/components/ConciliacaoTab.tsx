@@ -1324,9 +1324,9 @@ export default function ConciliacaoTab() {
         )}
       </div>
 
-      {imports.length >= 500 && (
+      {imports.length >= (periodoValido ? 10000 : 500) && (
         <p className="text-xs text-amber-600 flex items-center gap-1">
-          <i className="ri-information-line" /> O período tem mais de 500 lançamentos; só os 500 mais recentes aparecem. Reduza o período para ver todos.
+          <i className="ri-information-line" /> O período tem mais de {periodoValido ? '10.000' : '500'} lançamentos; só os mais recentes aparecem. Reduza o período para ver todos.
         </p>
       )}
 
