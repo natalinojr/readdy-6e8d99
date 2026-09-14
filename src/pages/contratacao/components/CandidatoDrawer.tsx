@@ -5,7 +5,7 @@ import {
   type Application, type Candidate, type Company, type Decision, type Interview, type Job, type Stage, BUCKET, DECISIONS, FIT, fitOf,
   type Distance, fmtKm, distCls, PRECISION_LABEL,
   fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf, decisionOf, withEmpresa, ageOf, companyName,
-  type RequiredField, REQUIRED_FIELDS, faltasFicha, onlyDigits,
+  type FichaCfg, fieldsOf, faltasFicha, onlyDigits,
 } from '../shared';
 import { avisar } from '../dialog';
 
@@ -13,7 +13,7 @@ interface Props {
   c: Candidate;
   companies: Company[];
   stages: Stage[];
-  required: RequiredField[];
+  ficha: FichaCfg;
   interviews: Interview[];
   jobs: Job[];
   applications: Application[];
@@ -31,7 +31,7 @@ interface Props {
 }
 
 export default function CandidatoDrawer({
-  c, companies, stages, required, interviews, jobs, applications, analyzing, onApply, onOpenJob, distances, onCalcDistances,
+  c, companies, stages, ficha, interviews, jobs, applications, analyzing, onApply, onOpenJob, distances, onCalcDistances,
   onClose, onUpdate, onDelete, onOrganizar, onAgendar, onOpenInterview,
 }: Props) {
   // Distância só até a loja escolhida na ficha (regra do dono). Calcula sozinha ao abrir quando a
@@ -80,7 +80,8 @@ export default function CandidatoDrawer({
   const empresa = c.company_id ? companyName(companies, c.company_id) : '';
   const idade = ageOf(c);
   const dec = decisionOf(c.decision);
-  const faltam = faltasFicha(c, required);
+  const faltam = faltasFicha(c, ficha);
+  const extras = (ficha.custom_fields ?? []).filter((f) => String(c.extra_fields?.[f.id] ?? '').trim());
   const [editando, setEditando] = useState(false);
   useEffect(() => { setEditando(false); }, [c.id]);
 
@@ -130,10 +131,10 @@ export default function CandidatoDrawer({
                   {c.source?.startsWith('whatsapp_link') && ' O atendente do WhatsApp está perguntando ao candidato.'}
                 </p>
               ) : <p className="text-xs font-bold text-zinc-600">Dados mínimos</p>}
-              <DadosMinimosForm key={c.id} c={c} campos={editando ? REQUIRED_FIELDS.filter((f) => required.includes(f.id)) : faltam}
+              <DadosMinimosForm key={c.id} c={c} campos={editando ? fieldsOf(ficha).filter((f) => ficha.required_fields.includes(f.id)) : faltam}
                 onSave={(patch) => { onUpdate(patch); setEditando(false); }} onCancel={editando ? () => setEditando(false) : undefined} />
             </div>
-          ) : required.length > 0 && (
+          ) : ficha.required_fields.length > 0 && (
             <button onClick={() => setEditando(true)} className="text-xs font-semibold text-emerald-700 cursor-pointer">
               <i className="ri-checkbox-circle-line" /> Dados mínimos completos · editar
             </button>
@@ -359,12 +360,16 @@ export default function CandidatoDrawer({
             </Section>
           )}
 
-          {(c.availability || c.salary_expectation || c.driver_license) && (
+          {(c.availability || c.salary_expectation || c.driver_license || extras.length > 0) && (
             <Section title="Outras informações">
               <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-sm">
                 {c.availability && <><dt className="text-zinc-400">Disponibilidade</dt><dd>{c.availability}</dd></>}
                 {c.salary_expectation && <><dt className="text-zinc-400">Pretensão</dt><dd>{c.salary_expectation}</dd></>}
                 {c.driver_license && <><dt className="text-zinc-400">CNH</dt><dd>{c.driver_license}</dd></>}
+                {extras.flatMap((f) => [
+                  <dt key={`${f.id}-t`} className="text-zinc-400">{f.label}</dt>,
+                  <dd key={`${f.id}-v`}>{c.extra_fields?.[f.id]}</dd>,
+                ])}
               </dl>
             </Section>
           )}
@@ -406,22 +411,28 @@ export default function CandidatoDrawer({
 // Campos dos dados mínimos. Escolaridade e experiências viram um item de texto livre (não apaga
 // os itens lidos do currículo: quando já existem, só mostra quantos são).
 function DadosMinimosForm({ c, campos, onSave, onCancel }: {
-  c: Candidate; campos: { id: RequiredField; label: string }[];
+  c: Candidate; campos: { id: string; label: string; custom?: boolean }[];
   onSave: (patch: Partial<Candidate>) => void; onCancel?: () => void;
 }) {
-  const inicial = (id: RequiredField) => (id === 'education' || id === 'experiences' ? '' : String(c[id] ?? ''));
-  const [v, setV] = useState<Record<string, string>>(() => Object.fromEntries(campos.map((f) => [f.id, inicial(f.id)])));
+  const atual = (f: { id: string; custom?: boolean }): unknown =>
+    (f.custom ? c.extra_fields?.[f.id] : (c as unknown as Record<string, unknown>)[f.id]) ?? null;
+  const inicial = (f: { id: string; custom?: boolean }) => (f.id === 'education' || f.id === 'experiences' ? '' : String(atual(f) ?? ''));
+  const [v, setV] = useState<Record<string, string>>(() => Object.fromEntries(campos.map((f) => [f.id, inicial(f)])));
   if (!campos.length) return null;
   const set = (k: string, x: string) => setV((o) => ({ ...o, [k]: x }));
   const salvar = () => {
     const patch: Record<string, unknown> = {};
+    const extra: Record<string, string> = { ...(c.extra_fields ?? {}) };
+    let extraMudou = false;
     for (const f of campos) {
       const x = (v[f.id] ?? '').trim();
+      if (f.custom) { if (x !== (extra[f.id] ?? '')) { if (x) extra[f.id] = x; else delete extra[f.id]; extraMudou = true; } continue; }
       if (f.id === 'education') { if (x) patch.education = [...(c.education ?? []), { instituicao: null, curso: null, nivel: x, situacao: null }]; continue; }
       if (f.id === 'experiences') { if (x) patch.experiences = [...(c.experiences ?? []), { empresa: null, cargo: null, inicio: null, fim: null, atual: false, descricao: x }]; continue; }
       const val = f.id === 'phone' ? onlyDigits(x) || null : x || null;
-      if (val !== (c[f.id] ?? null)) patch[f.id] = f.id === 'full_name' ? (val ?? c.full_name) : val;
+      if (val !== atual(f)) patch[f.id] = f.id === 'full_name' ? (val ?? c.full_name) : val;
     }
+    if (extraMudou) patch.extra_fields = extra;
     // Endereço mudou: a localização antiga deixa de valer (o "Recalcular" refaz).
     if (['address', 'neighborhood', 'city'].some((k) => k in patch)) Object.assign(patch, { lat: null, lng: null, geo_label: null, geo_precision: null });
     onSave(patch as Partial<Candidate>);

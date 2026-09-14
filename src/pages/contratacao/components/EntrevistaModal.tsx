@@ -118,9 +118,19 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
         const { error: candErr } = await supabase.from('hiring_candidates').update({ ...upd, updated_at: new Date().toISOString() }).eq('id', cand.id);
         // Ficha incompleta (trava do banco): a entrevista fica salva, mas o candidato não muda de fase.
         if (candErr && patch.stage_id) {
-          delete patch.stage_id;
-          if (patch.decision) await supabase.from('hiring_candidates').update({ decision: patch.decision, updated_at: new Date().toISOString() }).eq('id', cand.id);
-          avisar(`Entrevista salva, mas o candidato continua na fase atual. ${candErr.message}`);
+          const forcar = await confirmar({
+            titulo: 'Entrevista salva — ficha incompleta',
+            mensagem: `${candErr.message} Quer mover o candidato de fase mesmo assim?`,
+            confirmarLabel: 'Mover mesmo assim',
+          });
+          const { error: e2 } = forcar
+            ? await supabase.from('hiring_candidates').update({ ...upd, required_waived_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', cand.id)
+            : { error: candErr };
+          if (e2) {
+            delete patch.stage_id;
+            if (patch.decision) await supabase.from('hiring_candidates').update({ decision: patch.decision, updated_at: new Date().toISOString() }).eq('id', cand.id);
+            if (forcar) avisar(`Não foi possível mover: ${e2.message}`);
+          }
         }
       }
     }

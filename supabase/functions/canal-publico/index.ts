@@ -99,6 +99,17 @@ async function missingOf(admin: any, candId: string | null): Promise<string[]> {
   if (error) { log('WARN', 'dados mínimos', { error: error.message }); return []; }
   return Array.isArray(data) ? data.map(String) : [];
 }
+// Dados criados pelo dono (hiring_settings.data.custom_fields, id "x_…"): entram nos rótulos/perguntas.
+// deno-lint-ignore no-explicit-any
+async function loadCustomFields(admin: any) {
+  const { data } = await admin.from('hiring_settings').select('data').eq('id', 1).maybeSingle();
+  const list = Array.isArray(data?.data?.custom_fields) ? data.data.custom_fields : [];
+  for (const f of list) {
+    if (!f?.id || !f?.label) continue;
+    FIELD_LABELS[f.id] = String(f.label).toLowerCase();
+    FIELD_ASK[f.id] = String(f.ask ?? '').trim() || `Pode me informar: ${String(f.label).toLowerCase()}?`;
+  }
+}
 // Data de nascimento: aceita AAAA-MM-DD ou DD/MM/AAAA; idade plausível (14 a 80).
 function birthIso(s: string): string | null {
   const t = s.trim();
@@ -199,7 +210,7 @@ ${ch.forbidden ? `8. NUNCA fale sobre: ${ch.forbidden}` : ''}
 ${faltas.length ? `
 DADOS QUE FALTAM NA FICHA (o currículo já foi recebido, mas veio sem): ${faltas.map((f) => `${FIELD_LABELS[f] ?? f} [${f}]`).join('; ')}.
 - Peça um dado por vez, com gentileza, nesta ordem. Sugestões de pergunta: ${faltas.map((f) => `${f}: "${FIELD_ASK[f] ?? ''}"`).join(' | ')}.
-- A cada resposta, chame completar_ficha só com o que a pessoa disse (pode ser mais de um campo). Não invente nem complete sozinho.
+- A cada resposta, chame completar_ficha só com o que a pessoa disse (pode ser mais de um campo). Não invente nem complete sozinho. Os ids que começam com x_ vão dentro de "extras".
 - Data de nascimento sempre em AAAA-MM-DD. Se a pessoa não quiser informar algum dado, não insista: chame chamar_equipe dizendo qual ficou faltando.
 - Se a pessoa fizer uma pergunta no meio, responda e depois volte ao dado que falta.` : ''}`.trim();
 }
@@ -238,6 +249,10 @@ const TOOLS: Anthropic.Tool[] = [
         experiences: { type: 'string', description: 'Experiências como a pessoa contou: empresa, função, tempo' },
         sem_experiencia: { type: 'boolean', description: 'true se a pessoa disse que nunca trabalhou (primeiro emprego)' },
         availability: { type: 'string' }, desired_role: { type: 'string' }, salary_expectation: { type: 'string' }, driver_license: { type: 'string' },
+        extras: {
+          type: 'object', additionalProperties: { type: 'string' },
+          description: 'Dados da lista cujo id começa com x_ (criados pela empresa): { "x_id": "resposta" }',
+        },
       },
     },
   },
@@ -245,7 +260,7 @@ const TOOLS: Anthropic.Tool[] = [
 
 // Resposta do candidato → colunas da ficha. Devolve o que faltar depois de gravar.
 async function completarFicha(admin: SupabaseClient, candId: string, inp: Row): Promise<{ ok: boolean; faltas: string[]; erro?: string }> {
-  const { data: c } = await admin.from('hiring_candidates').select('education, experiences').eq('id', candId).maybeSingle();
+  const { data: c } = await admin.from('hiring_candidates').select('education, experiences, extra_fields').eq('id', candId).maybeSingle();
   if (!c) return { ok: false, faltas: [], erro: 'ficha não encontrada' };
   const txt = (k: string) => { const v = String(inp[k] ?? '').trim(); return v ? v.slice(0, 500) : null; };
   const patch: Row = {};
@@ -264,6 +279,15 @@ async function completarFicha(admin: SupabaseClient, candId: string, inp: Row): 
   if (txt('education')) patch.education = [...(Array.isArray(c.education) ? c.education : []), { instituicao: null, curso: null, nivel: txt('education'), situacao: null }];
   const exp = txt('experiences') ?? (inp.sem_experiencia === true ? 'Sem experiência anterior (primeiro emprego), informado pelo candidato' : null);
   if (exp) patch.experiences = [...(Array.isArray(c.experiences) ? c.experiences : []), { empresa: null, cargo: null, inicio: null, fim: null, atual: false, descricao: exp }];
+  if (inp.extras && typeof inp.extras === 'object') {
+    const extra: Row = { ...(c.extra_fields && typeof c.extra_fields === 'object' ? c.extra_fields : {}) };
+    let mudou = false;
+    for (const [k, val] of Object.entries(inp.extras as Row)) {
+      const v = String(val ?? '').trim();
+      if (/^x_[a-z0-9_]+$/.test(k) && v) { extra[k] = v.slice(0, 500); mudou = true; }
+    }
+    if (mudou) patch.extra_fields = extra;
+  }
   // Endereço novo: a localização e as distâncias antigas deixam de valer.
   if (patch.address || patch.neighborhood || patch.city) {
     Object.assign(patch, { lat: null, lng: null, geo_label: null, geo_precision: null });
@@ -336,6 +360,7 @@ async function findConversation(admin: SupabaseClient, chatId: string) {
 async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void> {
   const text = String(m.text ?? '').trim();
   const code = text.match(CODE_RE)?.[1]?.toUpperCase() ?? null;
+  await loadCustomFields(admin).catch((e) => log('WARN', 'campos criados', { error: errMsg(e) }));
   let conv = await findConversation(admin, m.chat_id);
 
   // Dono: só entra aqui testando (código) ou com teste em andamento. "#sair" encerra o teste.

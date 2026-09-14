@@ -192,6 +192,8 @@ export interface Candidate {
   raw_text: string | null;
   ai_processed: boolean;
   source?: string | null; // 'whatsapp_link' quando veio pelo link público
+  extra_fields?: Record<string, string> | null; // respostas dos dados mínimos criados pelo dono
+  required_waived_at?: string | null;          // "mover mesmo assim" com ficha incompleta
   created_at: string;
 }
 
@@ -259,9 +261,13 @@ export function avgScore(scores: Record<string, number> | null | undefined): num
 // ── Dados mínimos da ficha ──────────────────────────────────────────────────
 // Mesma regra da função do banco hiring_missing_fields (que trava a saída de "Novo") e do
 // atendente do WhatsApp (canal-publico), que pergunta ao candidato o que faltar.
-export type RequiredField = 'full_name' | 'phone' | 'email' | 'birth_date' | 'address' | 'neighborhood' | 'city' | 'marital_status'
+export type BuiltinField = 'full_name' | 'phone' | 'email' | 'birth_date' | 'address' | 'neighborhood' | 'city' | 'marital_status'
   | 'education' | 'experiences' | 'availability' | 'desired_role' | 'salary_expectation' | 'driver_license';
-export const REQUIRED_FIELDS: { id: RequiredField; label: string; sensivel?: boolean }[] = [
+/** Campo nativo ou criado pelo dono (id "x_…", valor em hiring_candidates.extra_fields). */
+export type RequiredField = string;
+export interface CustomField { id: string; label: string; ask?: string }
+export type FichaCfg = Pick<Settings, 'required_fields' | 'custom_fields'>;
+export const REQUIRED_FIELDS: { id: BuiltinField; label: string; sensivel?: boolean }[] = [
   { id: 'full_name', label: 'Nome completo' },
   { id: 'phone', label: 'Telefone' },
   { id: 'email', label: 'E-mail' },
@@ -279,24 +285,29 @@ export const REQUIRED_FIELDS: { id: RequiredField; label: string; sensivel?: boo
 ];
 export const DEFAULT_REQUIRED: RequiredField[] = ['full_name', 'phone', 'birth_date', 'address', 'city', 'education', 'experiences'];
 const vazio = (v: unknown) => !String(v ?? '').trim();
+/** Todos os campos possíveis: nativos + criados pelo dono. */
+export const fieldsOf = (s: FichaCfg): { id: string; label: string; custom?: boolean; sensivel?: boolean }[] =>
+  [...REQUIRED_FIELDS, ...(s.custom_fields ?? []).map((f) => ({ id: f.id, label: f.label, custom: true }))];
 /** Dados mínimos que faltam na ficha (vazio = completa). */
-export function faltasFicha(c: Candidate, required: RequiredField[]): { id: RequiredField; label: string }[] {
-  const falta = (f: RequiredField) => {
-    switch (f) {
+export function faltasFicha(c: Candidate, s: FichaCfg): { id: string; label: string; custom?: boolean }[] {
+  const falta = (f: { id: string; custom?: boolean }) => {
+    if (f.custom) return vazio(c.extra_fields?.[f.id]);
+    switch (f.id) {
       case 'phone': return onlyDigits(c.phone).length < 10;
       case 'email': return !String(c.email ?? '').includes('@');
       case 'education': return !(c.education?.length);
       case 'experiences': return !(c.experiences?.length);
-      default: return vazio(c[f]);
+      default: return vazio(c[f.id as BuiltinField]);
     }
   };
-  return REQUIRED_FIELDS.filter((f) => required.includes(f.id) && falta(f.id));
+  return fieldsOf(s).filter((f) => s.required_fields.includes(f.id) && falta(f));
 }
 
 // ── Configurações (hiring_settings.data) ────────────────────────────────────
 export interface Criterion { id: string; label: string }
 export interface Settings {
   required_fields: RequiredField[]; // dados mínimos para sair da fase "Novo"
+  custom_fields: CustomField[];     // dados criados pelo dono (entram na lista acima quando marcados)
   questions: Criterion[]; // perguntas do questionário da entrevista ({empresa} vira o nome da empresa)
   criteria: Criterion[];
   invite_template: string;
@@ -306,6 +317,7 @@ export interface Settings {
 }
 export const DEFAULT_SETTINGS: Settings = {
   required_fields: DEFAULT_REQUIRED,
+  custom_fields: [],
   questions: [
     { id: 'filhos', label: 'Filhos' },
     { id: 'contribuicao', label: 'Como sua formação e experiência anterior poderá contribuir com a {empresa}?' },
@@ -332,11 +344,14 @@ export const DEFAULT_SETTINGS: Settings = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function mergeSettings(data: Record<string, any> | null | undefined): Settings {
   const d = data ?? {};
+  const custom_fields: CustomField[] = Array.isArray(d.custom_fields)
+    ? d.custom_fields.filter((f: CustomField) => f && typeof f.id === 'string' && typeof f.label === 'string') : [];
+  const conhecido = (f: string) => REQUIRED_FIELDS.some((x) => x.id === f) || custom_fields.some((x) => x.id === f);
   return {
     ...d, // preserva chaves que esta tela não conhece
+    custom_fields,
     // Lista salva (mesmo vazia) vale; sem nada salvo, usa o padrão.
-    required_fields: Array.isArray(d.required_fields)
-      ? d.required_fields.filter((f: string) => REQUIRED_FIELDS.some((x) => x.id === f)) : DEFAULT_REQUIRED,
+    required_fields: Array.isArray(d.required_fields) ? d.required_fields.filter(conhecido) : DEFAULT_REQUIRED,
     questions: Array.isArray(d.questions) ? d.questions : DEFAULT_SETTINGS.questions,
     criteria: Array.isArray(d.criteria) ? d.criteria : DEFAULT_SETTINGS.criteria,
     invite_template: typeof d.invite_template === 'string' && d.invite_template.trim() ? d.invite_template : DEFAULT_SETTINGS.invite_template,

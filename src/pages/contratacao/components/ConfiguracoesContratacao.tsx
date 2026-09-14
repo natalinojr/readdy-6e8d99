@@ -4,7 +4,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
   type Candidate, type Company, type Criterion, type Settings, type Stage, COLORS, NATIVE_LABEL, DEFAULT_SETTINGS, colorOf, slug, geocodeText,
-  type RequiredField, REQUIRED_FIELDS, DEFAULT_REQUIRED, faltasFicha,
+  type RequiredField, type CustomField, REQUIRED_FIELDS, DEFAULT_REQUIRED, faltasFicha,
 } from '../shared';
 
 // Leaflet só carrega quando alguém abre o mapa de uma loja.
@@ -258,18 +258,41 @@ function DadosMinimos({ settings, candidates, stages, onSaved }: {
   settings: Settings; candidates: Candidate[]; stages: Stage[]; onSaved: (s: Settings) => void;
 }) {
   const [sel, setSel] = useState<RequiredField[]>(settings.required_fields);
+  const [custom, setCustom] = useState<CustomField[]>(settings.custom_fields);
+  const [novoCampo, setNovoCampo] = useState('');
+  const [novaPergunta, setNovaPergunta] = useState('');
   const [saving, setSaving] = useState(false);
   const [ok, setOk] = useState(false);
-  useEffect(() => { setSel(settings.required_fields); }, [settings.required_fields]);
-  const dirty = JSON.stringify([...sel].sort()) !== JSON.stringify([...settings.required_fields].sort());
+  useEffect(() => { setSel(settings.required_fields); setCustom(settings.custom_fields); }, [settings.required_fields, settings.custom_fields]);
+  const dirty = JSON.stringify([...sel].sort()) !== JSON.stringify([...settings.required_fields].sort())
+    || JSON.stringify(custom) !== JSON.stringify(settings.custom_fields);
   const novoId = stages.find((s) => s.native_kind === 'novo')?.id ?? null;
   const emNovo = candidates.filter((c) => !c.stage_id || c.stage_id === novoId);
-  const incompletos = emNovo.filter((c) => faltasFicha(c, sel).length > 0).length;
+  const incompletos = emNovo.filter((c) => faltasFicha(c, { required_fields: sel, custom_fields: custom }).length > 0).length;
   const toggle = (id: RequiredField) => { setOk(false); setSel((x) => (x.includes(id) ? x.filter((f) => f !== id) : [...x, id])); };
+  // Dado criado pelo dono: id "x_…" (o banco e o WhatsApp tratam como texto livre em extra_fields).
+  const addCampo = () => {
+    const label = novoCampo.trim();
+    if (!label) return;
+    let id = `x_${slug(label).slice(0, 30)}`;
+    while (custom.some((f) => f.id === id) || REQUIRED_FIELDS.some((f) => f.id === id)) id = `${id}_2`;
+    setOk(false);
+    setCustom((x) => [...x, { id, label, ...(novaPergunta.trim() ? { ask: novaPergunta.trim() } : {}) }]);
+    setSel((x) => [...x, id]);
+    setNovoCampo(''); setNovaPergunta('');
+  };
+  const removeCampo = async (f: CustomField) => {
+    const ok = await confirmar({ titulo: `Excluir "${f.label}"?`, mensagem: 'Sai da lista de dados mínimos. O que os candidatos já responderam continua guardado.', confirmarLabel: 'Excluir', perigo: true });
+    if (!ok) return;
+    setOk(false);
+    setCustom((x) => x.filter((y) => y.id !== f.id));
+    setSel((x) => x.filter((y) => y !== f.id));
+  };
 
   const salvar = async () => {
     setSaving(true); setOk(false);
-    const next: Settings = { ...settings, required_fields: REQUIRED_FIELDS.map((f) => f.id).filter((f) => sel.includes(f)) };
+    const ordem = [...REQUIRED_FIELDS.map((f) => f.id as string), ...custom.map((f) => f.id)];
+    const next: Settings = { ...settings, custom_fields: custom, required_fields: ordem.filter((f) => sel.includes(f)) };
     const { error } = await supabase.from('hiring_settings').upsert({ id: 1, data: next, updated_at: new Date().toISOString() });
     setSaving(false);
     if (error) { avisar(`Não foi possível salvar: ${error.message}`); return; }
@@ -278,7 +301,7 @@ function DadosMinimos({ settings, candidates, stages, onSaved }: {
   };
 
   return (
-    <Card titulo="Dados mínimos da ficha" desc='O candidato só sai da fase "Novo" com estes dados preenchidos (pode ir direto para "Descartado"). Quando o currículo chega pelo link do WhatsApp sem algum deles, o atendente pergunta ao candidato e vai preenchendo a ficha.'>
+    <Card titulo="Dados mínimos da ficha" desc='O candidato só sai da fase "Novo" com estes dados preenchidos (pode ir direto para "Descartado", e dá para "mover mesmo assim"). Quando o currículo chega pelo link do WhatsApp sem algum deles, o atendente pergunta ao candidato e vai preenchendo a ficha.'>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
         {REQUIRED_FIELDS.map((f) => (
           <label key={f.id} className={`flex items-center gap-2 px-3 h-9 rounded-lg border text-sm cursor-pointer ${sel.includes(f.id) ? 'border-rose-300 bg-rose-50 text-zinc-900' : 'border-zinc-200 text-zinc-600'}`}>
@@ -287,6 +310,29 @@ function DadosMinimos({ settings, candidates, stages, onSaved }: {
             {f.sensivel && <span className="ml-auto text-[10px] text-amber-600" title="Pergunta pessoal: exigir pode ser visto como discriminatório na seleção">sensível</span>}
           </label>
         ))}
+        {custom.map((f) => (
+          <div key={f.id} className={`flex items-center gap-2 pl-3 pr-1 h-9 rounded-lg border text-sm ${sel.includes(f.id) ? 'border-rose-300 bg-rose-50 text-zinc-900' : 'border-zinc-200 text-zinc-600'}`}>
+            <label className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer" title={f.ask ? `Pergunta no WhatsApp: ${f.ask}` : undefined}>
+              <input type="checkbox" checked={sel.includes(f.id)} onChange={() => toggle(f.id)} className="accent-rose-600" />
+              <span className="truncate">{f.label}</span>
+              <span className="text-[10px] text-sky-600 shrink-0">criado</span>
+            </label>
+            <button onClick={() => removeCampo(f)} title="Excluir" className="w-7 h-7 rounded-lg hover:bg-red-50 text-red-500 cursor-pointer"><i className="ri-delete-bin-line" /></button>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 rounded-xl border border-dashed border-zinc-200 p-3 space-y-2">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Adicionar dado mínimo</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input value={novoCampo} onChange={(e) => setNovoCampo(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addCampo()}
+            placeholder="Nome do dado (ex.: Tamanho do uniforme)" className="h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
+          <input value={novaPergunta} onChange={(e) => setNovaPergunta(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addCampo()}
+            placeholder="Pergunta no WhatsApp (opcional)" className="h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
+        </div>
+        <div className="flex items-center gap-2">
+          <p className="flex-1 text-[10px] text-zinc-400">Entra marcado como obrigatório. Sem pergunta, o atendente pergunta com as palavras dele. Depois clique em Salvar.</p>
+          <button onClick={addCampo} disabled={!novoCampo.trim()} className="px-3 h-9 rounded-lg border border-zinc-200 text-sm font-bold text-zinc-700 disabled:opacity-40 cursor-pointer whitespace-nowrap"><i className="ri-add-line" /> Adicionar</button>
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-3 mt-3">
         <button onClick={salvar} disabled={!dirty || saving}

@@ -250,10 +250,15 @@ export default function ContratacaoPage() {
       const de = atual ? stageOf(stages, atual.stage_id) : null;
       const para = stages.find((s) => s.id === patch.stage_id);
       if (atual && de?.native_kind === 'novo' && para && para.native_kind !== 'novo' && para.native_kind !== 'descartado') {
-        const faltam = faltasFicha({ ...atual, ...patch }, settings.required_fields);
+        const faltam = faltasFicha({ ...atual, ...patch }, settings);
         if (faltam.length) {
-          avisar(`Ficha incompleta: faltam ${faltam.map((f) => f.label.toLowerCase()).join(', ')}. Complete os dados mínimos na ficha antes de tirar ${atual.full_name.split(' ')[0]} de "${de.name}".`);
-          return;
+          const ok = await confirmar({
+            titulo: 'Ficha incompleta',
+            mensagem: `Faltam: ${faltam.map((f) => f.label.toLowerCase()).join(', ')}. O ideal é completar na ficha antes de tirar ${atual.full_name.split(' ')[0]} de "${de.name}". Quer mover mesmo assim?`,
+            confirmarLabel: 'Mover mesmo assim',
+          });
+          if (!ok) return;
+          patch = { ...patch, required_waived_at: new Date().toISOString() };
         }
       }
     }
@@ -269,7 +274,7 @@ export default function ContratacaoPage() {
       if (patch.company_id) calcDistances(id).catch(() => {});
       else await supabase.from('hiring_distances').delete().eq('candidate_id', id);
     }
-  }, [carregar, calcDistances, items, stages, settings.required_fields]);
+  }, [carregar, calcDistances, items, stages, settings]);
 
   // IA sob demanda: baixa o original do bucket e completa a ficha (mantém fase/nota/anotações/empresa).
   const organizarComIA = useCallback(async (c: Candidate) => {
@@ -658,7 +663,7 @@ export default function ContratacaoPage() {
           c={sel}
           companies={companies}
           stages={stages}
-          required={settings.required_fields}
+          ficha={settings}
           interviews={interviews.filter((iv) => iv.candidate_id === sel.id)}
           jobs={jobs}
           applications={applications.filter((a) => a.candidate_id === sel.id)}

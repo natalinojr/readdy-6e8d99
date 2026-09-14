@@ -1879,8 +1879,11 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   e `hiring_missing_fields_by_id(uuid)`. O trigger `hiring_candidates_stage_guard` barra a saída de
   "Novo" (menos para "Descartado") com ficha incompleta, seja pela tela, pelo assistente ou por outra
   edge. A tela espelha a regra em `faltasFicha` (shared.ts) só para avisar antes. No `canal-publico`,
-  o atendente pergunta o que falta e grava pela ferramenta `completar_ficha`. Campo novo na
-  lista = mexer nos três: o CASE da função SQL, `REQUIRED_FIELDS` e `FIELD_LABELS`/`FIELD_ASK`.
+  o atendente pergunta o que falta e grava pela ferramenta `completar_ficha`. Campo NATIVO novo
+  = mexer nos três: o CASE da função SQL, `REQUIRED_FIELDS` e `FIELD_LABELS`/`FIELD_ASK`. O dono
+  também cria os próprios campos (`custom_fields`, id `x_…`, valor em `hiring_candidates.extra_fields`,
+  sem código novo). "Mover mesmo assim" = a tela grava `required_waived_at` junto com o `stage_id`,
+  e o trigger libera.
 - **Loja × perfil pelo Admin Master**: `fn_admin_set_user_tenant` (upsert em `user_tenants`,
   papéis admin/manager/cashier/waiter/kitchen/delivery_manager/tasks_only) e
   `fn_admin_remove_user_tenant`. A pessoa só vê a mudança no próximo login/troca de loja
