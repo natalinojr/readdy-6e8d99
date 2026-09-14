@@ -12,6 +12,11 @@
 //   alerts                 {}                    fn_conciliacao_alertas
 //   confirm                { ids: string[] }     admin/gerente: importa a nota (se preciso), baixa a parcela, lança juros
 //   undo                   { id }                admin/gerente: estorna a baixa feita pela confirmação
+//   monthly_candidates     { document_id }       pagamentos do extrato do fornecedor perto da emissão + combinação sugerida
+//   link_monthly           { document_id, ids, cost_center_id?, links?, dre_category_id?, category?, saldo_vencimento? }
+//                          admin/gerente — NOTA DO MÊS: 1 nota cobre vários pagamentos já feitos; lança na data de
+//                          emissão com 1 parcela por pagamento, cada uma baixada; saldo que faltar fica a pagar
+//   unlink_monthly         { document_id }       desfaz tudo (estorna as baixas, apaga a compra, nota volta a conferir)
 //   save_counterpart_rule  { counterpart_doc, counterpart_label?, category, cost_center_id?, transaction_type }
 //   create_from_statement  { ids, kind: 'despesa'|'compra', dre_category_id?, merchandise_category_id?, description?,
 //                            supplier?, cost_center_id?, allow_payroll? }   admin/gerente — pagamento SEM NOTA:
@@ -314,6 +319,188 @@ async function createOne(ctx: Ctx, rowId: string, o: CreateOpts): Promise<Result
   return { id: row.id, ok: true, msg: (o.kind === 'compra' ? 'Compra' : 'Despesa') + ' de R$ ' + brl(valor) + ' lançada: "' + descricao + '"' };
 }
 
+// ── Nota do mês: 1 nota ↔ vários pagamentos ─────────────────────────────────
+// Fornecedor que emite UMA nota no mês cobrindo vários Pix/boletos já pagos. A nota vira compra
+// (ou despesa) na data de EMISSÃO (decisão do dono 2026-09-14), com uma parcela por pagamento,
+// cada uma baixada na data/conta do extrato; o saldo que faltar fica a pagar.
+const NOME_GENERICO = new Set(['LTDA', 'EIRELI', 'COMERCIAL', 'COMERCIO', 'DISTRIBUIDORA', 'DISTRIBUIDOR', 'INDUSTRIA',
+  'ALIMENTOS', 'EMPRESA', 'SERVICOS', 'BRASIL', 'DOS', 'DAS', 'COM', 'IND', 'CIA']);
+// Mesma regra de fn_name_key (SQL): 1ª palavra significativa, sem acento
+function nameKey(s: unknown): string | null {
+  const t = String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().split(/[^A-Z0-9]+/);
+  return t.find((w) => w.length >= 3 && !NOME_GENERICO.has(w)) ?? null;
+}
+const MONTHLY_ANTES = 45;   // dias antes da emissão
+const MONTHLY_DEPOIS = 20;  // dias depois (nota emitida no começo do mês, pagamento atrasado)
+
+async function monthlyCandidates(ctx: Ctx, doc: Row) {
+  const { admin, tenantId } = ctx;
+  const emissao = String(doc.emitted_at ?? '').slice(0, 10);
+  const raiz = soDigitos(doc.emitente_cnpj).slice(0, 8);
+  const chave = nameKey(doc.emitente_nome);
+  const { data } = await admin.from('fin_bank_statement_imports')
+    .select('id, transaction_date, amount, counterpart_doc, counterpart_name, description, match_kind, match_detail, raw')
+    .eq('tenant_id', tenantId).eq('source', 'inter').eq('transaction_type', 'debit').eq('status', 'pending').eq('reconciled', false)
+    .gte('transaction_date', addDays(emissao, -MONTHLY_ANTES)).lte('transaction_date', addDays(emissao, MONTHLY_DEPOIS))
+    .order('transaction_date');
+  return ((data ?? []) as Row[]).filter((r) => {
+    const mk = String(r.match_kind ?? '');
+    // Linha com outro destino (vínculo com outra nota/conta, transferência, repasse) fica de fora
+    if (mk && !(['payable', 'inbound_doc'].includes(mk) && String(r.match_detail?.doc_id ?? '') === String(doc.id))) return false;
+    const cp = soDigitos(r.counterpart_doc);
+    if (cp.length === 14 && raiz) return cp.slice(0, 8) === raiz;
+    // Boleto: o CNPJ no extrato é o da própria loja — casa pelo nome
+    return !!chave && nameKey(r.counterpart_name ?? r.description) === chave;
+  }).map((r) => ({
+    id: String(r.id), data: String(r.transaction_date), valor: round2(Number(r.amount)),
+    nome: String(r.counterpart_name ?? r.description ?? ''),
+    tipo: String(r.raw?.tipoTransacao ?? '') === 'PAGAMENTO' ? 'Boleto' : String(r.raw?.tipoTransacao ?? '') === 'PIX' ? 'Pix' : 'Transferência',
+  }));
+}
+
+// Combinação de pagamentos que soma o valor da nota (centavos; 1º os do mês da emissão)
+function sugerirCombinacao(cands: { id: string; data: string; valor: number }[], total: number, emissao: string): string[] {
+  const alvo = Math.round(total * 100);
+  const mes = emissao.slice(0, 7);
+  const doMes = cands.filter((c) => c.data.slice(0, 7) === mes);
+  const somaMes = doMes.reduce((s, c) => s + Math.round(c.valor * 100), 0);
+  if (doMes.length > 0 && Math.abs(somaMes - alvo) <= 1) return doMes.map((c) => c.id);
+  if (alvo <= 0 || alvo > 20_000_000) return [];
+  // Mais próximos da emissão primeiro; no máximo 40 pagamentos
+  const dist = (d: string) => Math.abs(new Date(d).getTime() - new Date(emissao).getTime());
+  const itens = cands.slice().sort((a, b) => dist(a.data) - dist(b.data)).slice(0, 40);
+  const cent = itens.map((c) => Math.round(c.valor * 100));
+  const lim = alvo + 1;
+  const pai = new Int16Array(lim + 1);  // item (+1) que alcançou a soma pela 1ª vez
+  const ok = new Uint8Array(lim + 1);
+  ok[0] = 1;
+  for (let i = 0; i < cent.length; i++) {
+    const a = cent[i];
+    for (let s = lim; s >= a; s--) if (!ok[s] && ok[s - a]) { ok[s] = 1; pai[s] = i + 1; }
+  }
+  const s0 = ok[alvo] ? alvo : ok[alvo - 1] ? alvo - 1 : ok[alvo + 1] ? alvo + 1 : -1;
+  if (s0 <= 0) return [];
+  const out: string[] = [];
+  for (let s = s0; s > 0;) { const i = pai[s] - 1; out.push(itens[i].id); s -= cent[i]; }
+  return out;
+}
+
+async function linkMonthly(ctx: Ctx, doc: Row, ids: string[], body: Row): Promise<{ ok: boolean; msg: string }> {
+  const { admin, tenantId } = ctx;
+  if (doc.status !== 'new') return { ok: false, msg: 'Esta nota já foi lançada ou está ignorada' };
+  if (Number(doc.sefaz_status) === 2) return { ok: false, msg: 'A nota foi CANCELADA na SEFAZ — não lance' };
+  const servico = Number(doc.modelo) === 10;
+  const validos = new Map((await monthlyCandidates(ctx, doc)).map((c) => [c.id, c]));
+  const rows = ids.map((id) => validos.get(id)).filter(Boolean) as { id: string; data: string; valor: number; tipo: string }[];
+  if (rows.length === 0 || rows.length !== ids.length) return { ok: false, msg: 'Algum pagamento escolhido não está mais disponível (já conciliado?). Recarregue.' };
+  rows.sort((a, b) => a.data.localeCompare(b.data));
+  const total = round2(Number(doc.valor_total ?? 0));
+  const soma = round2(rows.reduce((s, r) => s + r.valor, 0));
+  if (soma > total + 0.01) return { ok: false, msg: 'Os pagamentos somam R$ ' + brl(soma) + ', mais que a nota (R$ ' + brl(total) + '): desmarque algum' };
+
+  const parcelas = rows.map((r, i) => ({ numero: String(i + 1), vencimento: r.data, valor: r.valor }));
+  const saldo = round2(total - soma);
+  const vencSaldo = /^\d{4}-\d{2}-\d{2}$/.test(String(body.saldo_vencimento ?? '')) ? String(body.saldo_vencimento) : todayBR();
+  if (saldo >= 0.02) parcelas.push({ numero: String(parcelas.length + 1), vencimento: vencSaldo, valor: saldo });
+  else if (saldo > 0) parcelas[parcelas.length - 1].valor = round2(parcelas[parcelas.length - 1].valor + saldo); // 1 centavo de arredondamento
+
+  const nota = 'Nota do mês: quitada por ' + rows.length + ' pagamento(s) do extrato (' + br(rows[0].data) + ' a ' + br(rows[rows.length - 1].data) + ')';
+  const imp = await callEdge(ctx, 'fiscal-inbound', servico
+    ? { action: 'import_bill', tenant_id: tenantId, document_id: doc.id, parcelas, notes: nota,
+        category: body.category ?? 'Serviços de terceiros', dre_category_id: body.dre_category_id ?? null, cost_center_id: body.cost_center_id ?? null }
+    : { action: 'import_purchase', tenant_id: tenantId, document_id: doc.id, parcelas, notes: nota,
+        cost_center_id: body.cost_center_id ?? null, links: body.links });
+  if (!imp.ok) return { ok: false, msg: 'Lançar a nota: ' + (imp.error ?? 'falhou') };
+
+  const { data: d2 } = await admin.from('fiscal_inbound_documents').select('payable_ids').eq('id', doc.id).maybeSingle();
+  const { data: bills } = await admin.from('fin_accounts_payable').select('id, amount, due_date').eq('tenant_id', tenantId).in('id', (d2?.payable_ids ?? []) as string[]);
+  const livres = ((bills ?? []) as Row[]).slice();
+  const feitos: { row: typeof rows[number]; billId: string; valor: number }[] = [];
+  let erro: string | null = null;
+  for (const r of rows) {
+    const k = livres.findIndex((b) => b.due_date === r.data && Math.abs(Number(b.amount) - r.valor) <= 0.015);
+    const b = k >= 0 ? livres.splice(k, 1)[0] : null;
+    if (!b) { erro = 'não achei a parcela de ' + br(r.data); break; }
+    const valor = round2(Math.min(r.valor, Number(b.amount)));
+    const { data: linha } = await admin.from('fin_bank_statement_imports').select('bank_account_id, match_kind, category').eq('id', r.id).maybeSingle();
+    const pay = await callEdge(ctx, 'financial-write', {
+      action: 'pay_bill', tenant_id: tenantId,
+      payload: { id: b.id, paid_date: r.data, paid_amount: valor, payment_method: r.tipo, bank_account_id: linha?.bank_account_id ?? null },
+    });
+    if (!pay.ok) { erro = 'baixa de ' + br(r.data) + ': ' + (pay.error ?? 'falhou'); break; }
+    feitos.push({ row: r, billId: b.id, valor });
+    const now = new Date().toISOString();
+    await admin.from('fin_bank_statement_imports').update({
+      status: 'matched', reconciled: true, reconciled_at: now, reconciled_by: ctx.userId, matched_at: now, matched_by: ctx.userId,
+      match_kind: 'payable', match_ref_id: b.id, match_confidence: 'manual',
+      match_detail: {
+        doc_id: doc.id, label: 'NF ' + (doc.numero ?? '?') + ' — ' + (doc.emitente_nome ?? '') + ' (nota do mês)', valor, monthly: true,
+        prev_match_kind: linha?.match_kind ?? null, prev_category: linha?.category ?? null,
+        confirmed: { bill_id: b.id, juros_bill_id: null, pay_amount: valor, juros: 0, desconto: 0, auto_imported: false, monthly_doc_id: doc.id, at: now, by: ctx.userId },
+      },
+    }).eq('id', r.id);
+  }
+  if (erro) {
+    // Desfaz tudo: nada de nota meio vinculada
+    await admin.from('fiscal_inbound_documents').update({ settlement: 'monthly', settlement_statement_ids: feitos.map((f) => f.row.id) }).eq('id', doc.id);
+    const u = await unlinkMonthly(ctx, { ...doc, status: 'imported' }, true);
+    return { ok: false, msg: 'Vincular: ' + erro + (u.ok ? ' (nada foi lançado)' : ' — e desfazer falhou: ' + u.msg) };
+  }
+  await admin.from('fiscal_inbound_documents').update({
+    settlement: 'monthly', settlement_statement_ids: rows.map((r) => r.id), updated_at: new Date().toISOString(),
+  }).eq('id', doc.id);
+  return { ok: true, msg: (servico ? 'Despesa' : 'Compra') + ' lançada em ' + br(String(doc.emitted_at).slice(0, 10)) + ' e quitada por ' + rows.length + ' pagamento(s)' + (saldo >= 0.02 ? ' · saldo de R$ ' + brl(saldo) + ' em Contas a Pagar' : '') };
+}
+
+async function unlinkMonthly(ctx: Ctx, doc: Row, silencioso = false): Promise<{ ok: boolean; msg: string }> {
+  const { admin, tenantId } = ctx;
+  const { data: cur } = await admin.from('fiscal_inbound_documents').select('*').eq('id', doc.id).eq('tenant_id', tenantId).maybeSingle();
+  if (!cur || cur.settlement !== 'monthly' || cur.status !== 'imported') return { ok: false, msg: 'Esta nota não foi vinculada a pagamentos do mês' };
+  if (cur.purchase_id) {
+    const { data: p } = await admin.from('fin_purchases').select('stock_applied_at').eq('id', cur.purchase_id).maybeSingle();
+    if (p?.stock_applied_at) return { ok: false, msg: 'A mercadoria já deu entrada no estoque: desfaça o recebimento antes' };
+  }
+  const linhas = ((cur.settlement_statement_ids ?? []) as string[]);
+  const { data: rs } = linhas.length
+    ? await admin.from('fin_bank_statement_imports').select('*').eq('tenant_id', tenantId).in('id', linhas)
+    : { data: [] as Row[] };
+  const nossos = new Set<string>();
+  for (const r of (rs ?? []) as Row[]) {
+    const c = r.match_detail?.confirmed as Row | undefined;
+    if (c?.monthly_doc_id === cur.id && c.bill_id) nossos.add(String(c.bill_id));
+  }
+  // Parcela (o saldo) paga por fora: estorne primeiro
+  const payIds = ((cur.payable_ids ?? []) as string[]);
+  if (payIds.length) {
+    const { data: bs } = await admin.from('fin_accounts_payable').select('id, paid_amount').in('id', payIds);
+    if (((bs ?? []) as Row[]).some((b) => !nossos.has(String(b.id)) && Number(b.paid_amount ?? 0) > 0)) {
+      return { ok: false, msg: 'O saldo desta nota já foi pago por outro lançamento: estorne esse pagamento antes' };
+    }
+  }
+  for (const r of (rs ?? []) as Row[]) {
+    const det = (r.match_detail ?? {}) as Row;
+    const c = det.confirmed as Row | undefined;
+    if (!(c?.monthly_doc_id === cur.id && c.bill_id)) continue;
+    await reversePayment(ctx, String(c.bill_id), round2(Number(c.pay_amount)), r.bank_account_id, String(r.transaction_date));
+    await admin.from('fin_bank_statement_imports').update({
+      status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null,
+      match_kind: det.prev_match_kind ?? null, match_ref_id: null, match_confidence: null, match_detail: null, category: det.prev_category ?? null,
+    }).eq('id', r.id);
+  }
+  if (cur.purchase_id) {
+    const del = await callEdge(ctx, 'purchase-write', { action: 'delete_purchase', tenant_id: tenantId, payload: { id: cur.purchase_id } });
+    if (!del.ok) return { ok: false, msg: 'Pagamentos estornados, mas excluir a compra falhou: ' + (del.error ?? '') };
+  } else if (payIds.length) {
+    await admin.from('fin_accounts_payable').delete().eq('tenant_id', tenantId).in('id', payIds);
+  }
+  await admin.from('fiscal_inbound_documents').update({
+    status: 'new', import_type: null, purchase_id: null, payable_ids: [], imported_at: null, imported_by: null,
+    settlement: null, settlement_statement_ids: null, auto_launch_blocked: true, error_message: null, updated_at: new Date().toISOString(),
+  }).eq('id', cur.id);
+  if (!silencioso) log('INFO', 'unlink_monthly', 'ok', { tenantId, doc: cur.id, linhas: linhas.length });
+  return { ok: true, msg: 'Vínculo desfeito: os pagamentos voltaram a pendentes e a nota voltou para "A conferir"' };
+}
+
 // ── Desfazer (estorno) ───────────────────────────────────────────────────────
 async function reversePayment(ctx: Ctx, billId: string, amount: number, bankAccountId: string | null, date: string) {
   const { admin, tenantId } = ctx;
@@ -348,6 +535,7 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
   const det = (row.match_detail ?? {}) as Row;
   const c = det.confirmed as Row | undefined;
   if (!c?.bill_id) return { id: rowId, ok: false, msg: 'Não há baixa feita pela conciliação neste lançamento' };
+  if (c.monthly_doc_id) return { id: rowId, ok: false, msg: 'Este pagamento faz parte de uma nota do mês: desfaça pela nota em Notas de Entrada (desfaz todos os pagamentos juntos)' };
   const date = String(row.transaction_date);
 
   if (c.juros_bill_id && Number(c.juros) > 0) {
@@ -472,6 +660,26 @@ Deno.serve(async (req: Request) => {
       }
       log('INFO', 'create', 'ok', { tenantId, userId, kind, total: results.length, ok: results.filter((r) => r.ok).length });
       return json({ success: true, results });
+    }
+
+    if (action === 'monthly_candidates' || action === 'link_monthly' || action === 'unlink_monthly') {
+      const { data: doc } = await admin.from('fiscal_inbound_documents').select('*').eq('id', String(body.document_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+      if (!doc) return errResp('Nota não encontrada', 404);
+      if (action === 'monthly_candidates') {
+        const cands = await monthlyCandidates(ctx, doc);
+        const sugestao = sugerirCombinacao(cands, Number(doc.valor_total ?? 0), String(doc.emitted_at ?? '').slice(0, 10));
+        return json({ success: true, candidates: cands, suggestion: sugestao });
+      }
+      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (action === 'link_monthly') {
+        const ids = Array.isArray(body.ids) ? [...new Set((body.ids as unknown[]).map(String))].slice(0, 60) : [];
+        if (ids.length === 0) return errResp('Escolha os pagamentos que esta nota cobre');
+        const r = await linkMonthly(ctx, doc, ids, body);
+        log(r.ok ? 'INFO' : 'WARN', 'link_monthly', r.msg, { tenantId, userId, doc: doc.id, n: ids.length });
+        return r.ok ? json({ success: true, message: r.msg }) : errResp(r.msg);
+      }
+      const r = await unlinkMonthly(ctx, doc);
+      return r.ok ? json({ success: true, message: r.msg }) : errResp(r.msg);
     }
 
     if (action === 'save_counterpart_rule') {

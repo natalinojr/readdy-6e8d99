@@ -1724,6 +1724,14 @@ Edge `conciliacao-pagamentos › create_from_statement` (publicada, verify_jwt=t
 - Alerta novo `notas_de_compra_do_extrato` (`fn_conciliacao_alertas`): nota `new` do mesmo CNPJ raiz e valor (±0,05) de uma compra lançada pelo extrato, emitida entre −15 e +5 dias do pagamento — para não importar a mesma compra 2×.
 - **PEGADINHA corrigida:** o check `fin_accounts_payable_reference_type_check` não aceitava `'conciliacao_juros'` — a conta de juros/multa da confirmação de vínculo falhava em silêncio. Em Paranaguá: 17 pagamentos com juros sem conta (R$ 166,57, 21/07–03/09) ficaram fora da DRE; o check agora aceita e os próximos entram. Os 17 antigos não foram corrigidos.
 
+### Nota do mês: 1 nota de entrada ↔ vários pagamentos (2026-09-14)
+
+Fornecedor que emite UMA nota no mês cobrindo vários Pix/boletos já pagos ficava eterno em "A conferir": `fn_match_payments` só casa 1 pagamento ↔ 1 parcela. Migration `20260914220000_nota_mensal.sql` (aplicada: `fiscal_inbound_documents.settlement='monthly'` + `settlement_statement_ids uuid[]`), edge `conciliacao-pagamentos` (publicada) e `NotasEntradaTab › Conferir` (front pendente de push).
+- `monthly_candidates`: débitos Inter pendentes de −45 a +20 dias da emissão, do mesmo CNPJ raiz (Pix) ou mesma chave de nome (boleto — o CNPJ no extrato é da própria loja); fora os que já têm outro destino. Sugestão: todos do mês da emissão se somam o total (±1 centavo), senão subset-sum em centavos (40 mais próximos). A tela liga "nota do mês" sozinha quando 2+ pagamentos batem exato.
+- `link_monthly`: importa pelo `fiscal-inbound` (compra ou despesa) com **data = EMISSÃO** (decisão do dono) e **1 parcela por pagamento** (vencimento = data do pagamento) + saldo em aberto (vence hoje) se faltar; soma > nota é recusada. Cada parcela recebe `pay_bill` na data/conta do extrato e a linha vira `match_kind='payable'`, `match_detail.monthly=true`, `confirmed.monthly_doc_id`. Erro no meio → desfaz tudo.
+- `unlink_monthly` (botão Desfazer na lista): estorna todas as baixas, apaga a compra/contas, linhas voltam a pendente, nota volta a conferir com `auto_launch_blocked`. Recusa se o estoque já entrou ou se o saldo foi pago por fora. O `undo` de uma linha só na Conciliação é recusado (tem que ser pela nota).
+- Lançamento automático (`fiscal-inbound › autoLaunchTenant`) **pula** fornecedor cuja última nota foi `monthly` ("nota do mês: vincular aos pagamentos") — senão viraria conta a pagar em dobro com os Pix soltos.
+
 ### Classificação de itens: vincular produto a insumo (2026-09-14)
 
 Migration `20260914180000_item_vinculo_insumo.sql` (aplicada) + `ItensClassificacaoTab` (front pendente de push).

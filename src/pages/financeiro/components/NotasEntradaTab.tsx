@@ -23,8 +23,19 @@ interface DocRow {
    *  logo após a busca na SEFAZ porque o fornecedor já tinha nota lançada antes */
   auto_imported?: boolean;
   auto_import_ref?: string | null;
+  /** 'monthly' = nota do mês, quitada por vários pagamentos do extrato */
+  settlement?: 'monthly' | null;
+  settlement_statement_ids?: string[] | null;
 }
-const COLS = 'id, chave, modelo, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at, auto_imported, auto_import_ref';
+const COLS = 'id, chave, modelo, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at, auto_imported, auto_import_ref, settlement, settlement_statement_ids';
+interface PagtoExtrato { id: string; data: string; valor: number; nome: string; tipo: string }
+
+// Nota do mês (1 nota ↔ vários pagamentos): edge conciliacao-pagamentos
+async function callConc<T>(tenantId: string | undefined, body: Record<string, unknown>) {
+  const { data, error } = await invokeWithAuth<T & { success?: boolean; error?: string; message?: string }>('conciliacao-pagamentos', { body: { tenant_id: tenantId, ...body } });
+  if (error) return { success: false, error: error.message } as unknown as T & { success?: boolean; error?: string; message?: string };
+  return (data ?? { success: false, error: 'Sem resposta' }) as T & { success?: boolean; error?: string; message?: string };
+}
 
 const brl = (n: number | null | undefined) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n ?? 0));
 const dataBR = (s: string | null | undefined) => (s ? new Date(s.length === 10 ? `${s}T12:00:00` : s).toLocaleDateString('pt-BR') : '—');
@@ -286,7 +297,7 @@ export default function NotasEntradaTab() {
                         {cancelada ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Cancelada na SEFAZ</span>
                           : d.status === 'imported' ? <><span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{d.import_type === 'purchase' ? 'Lançada como compra' : d.import_type === 'bonus' ? 'Lançada como bonificação' : 'Lançada como despesa'}</span>{d.auto_imported && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700" title={d.auto_import_ref
                             ? 'Importada automaticamente pela conciliação bancária ao confirmar o pagamento.'
-                            : 'Lançada automaticamente: este fornecedor já tinha nota lançada antes, e esta entrou do mesmo jeito. Se estiver errada, use "Desfazer".'}>automática</span>}</>
+                            : 'Lançada automaticamente: este fornecedor já tinha nota lançada antes, e esta entrou do mesmo jeito. Se estiver errada, use "Desfazer".'}>automática</span>}{d.settlement === 'monthly' && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700" title="Nota do mês: quitada pelos pagamentos do extrato">paga no mês · {(d.settlement_statement_ids ?? []).length} pagto(s)</span>}</>
                           : d.status === 'ignored' ? <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500" title={d.ignore_reason ?? ''}>Ignorada</span>
                           : <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">A conferir</span>}
                         {d.error_message && d.status === 'new' && <p className="text-[10px] text-red-500 truncate max-w-[200px]" title={d.error_message}>{d.error_message}</p>}
@@ -320,7 +331,21 @@ export default function NotasEntradaTab() {
                             <button onClick={() => acao(d, { action: 'unignore' }, 'Nota voltou para conferência')} disabled={isBusy}
                               className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 cursor-pointer">Desfazer</button>
                           )}
-                          {d.status === 'imported' && d.auto_imported && !d.auto_import_ref && podeLancar && (
+                          {d.status === 'imported' && d.settlement === 'monthly' && podeLancar && (
+                            <button
+                              onClick={async () => {
+                                if (!window.confirm('Desfazer o vínculo com os pagamentos do mês?\n\nAs baixas são estornadas, a compra (ou despesa) desta nota é excluída, os pagamentos voltam a pendentes na Conciliação e a nota volta para "A conferir".')) return;
+                                setBusy(d.id);
+                                const r = await callConc(tenantId, { action: 'unlink_monthly', document_id: d.id });
+                                setBusy(null);
+                                if (r.success) toastOk(r.message ?? 'Vínculo desfeito'); else toastErr('Não foi possível desfazer', r.error ?? '');
+                                await carregar();
+                              }}
+                              disabled={isBusy}
+                              title="Desfazer o vínculo com os pagamentos do mês"
+                              className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer">Desfazer</button>
+                          )}
+                          {d.status === 'imported' && d.auto_imported && !d.auto_import_ref && d.settlement !== 'monthly' && podeLancar && (
                             <button
                               onClick={() => {
                                 if (window.confirm('Desfazer o lançamento automático?\n\nA compra (ou a conta a pagar) desta nota é excluída e a nota volta para "A conferir". Ela não será relançada sozinha.')) {
@@ -401,6 +426,28 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
       });
   }, [call, doc.id, doc.itens, servico]);
 
+  // Nota do mês: pagamentos do extrato a este fornecedor perto da emissão
+  const [pagtos, setPagtos] = useState<PagtoExtrato[]>([]);
+  const [selPagtos, setSelPagtos] = useState<Set<string>>(new Set());
+  const [mensal, setMensal] = useState(false);
+  useEffect(() => {
+    if (bonificacao) return;
+    callConc<{ candidates?: PagtoExtrato[]; suggestion?: string[] }>(tenantId, { action: 'monthly_candidates', document_id: doc.id })
+      .then((r) => {
+        if (!r.success) return;
+        const cands = r.candidates ?? [];
+        setPagtos(cands);
+        const sug = new Set(r.suggestion ?? []);
+        setSelPagtos(sug);
+        const somaSug = cands.filter((c) => sug.has(c.id)).reduce((s, c) => s + c.valor, 0);
+        // Liga sozinho quando 2+ pagamentos somam exatamente o valor da nota
+        if (sug.size >= 2 && Math.abs(somaSug - Number(doc.valor_total ?? 0)) <= 0.02) setMensal(true);
+      });
+  }, [tenantId, doc.id, doc.valor_total, bonificacao]);
+  const somaSel = Math.round(pagtos.filter((p) => selPagtos.has(p.id)).reduce((s, p) => s + p.valor, 0) * 100) / 100;
+  const saldoMensal = Math.round((Number(doc.valor_total ?? 0) - somaSel) * 100) / 100;
+  const usarMensal = mensal && tipo !== 'bonus';
+
   const setVinculo = (i: number, patch: Partial<Vinculo>) => setVinculos((vs) => vs.map((v, j) => {
     if (j !== i) return v;
     const nv = { ...v, ...patch };
@@ -428,6 +475,21 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
 
   const lancar = async () => {
     setEnviando(true);
+    if (usarMensal) {
+      const rm = await callConc(tenantId, {
+        action: 'link_monthly', document_id: doc.id, ids: [...selPagtos],
+        cost_center_id: centro || null,
+        dre_category_id: tipo === 'bill' ? (dre || null) : null,
+        category: tipo === 'bill' ? (dres.find((d) => d.id === dre)?.name ?? 'Outros') : undefined,
+        links: comEstoque && vinculosCarregados
+          ? vinculos.map((v, i) => ({ index: i, ingredient_id: v.ingredient_id || null, units_per_package: v.units_per_package > 0 ? v.units_per_package : 1 }))
+          : undefined,
+      });
+      setEnviando(false);
+      if (!rm.success) { onErro('Não foi possível vincular', rm.error); return; }
+      onLancado(rm.message ?? 'Nota do mês lançada');
+      return;
+    }
     const r = await call<{ parcelas?: number; supplier?: string }>({
       action: tipo === 'bill' ? 'import_bill' : 'import_purchase',
       document_id: doc.id,
@@ -573,7 +635,50 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
             </div>
           )}
 
-          {tipo === 'purchase' && (
+          {/* Nota do mês: vários pagamentos já feitos */}
+          {tipo !== 'bonus' && pagtos.length > 0 && (
+            <div className={`border rounded-xl p-3 ${usarMensal ? 'border-violet-200 bg-violet-50/40' : 'border-zinc-100'}`}>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="checkbox" checked={mensal} onChange={(e) => setMensal(e.target.checked)} className="mt-0.5 cursor-pointer" />
+                <span>
+                  <span className="text-xs font-bold text-zinc-800">Esta nota cobre pagamentos já feitos (nota do mês)</span>
+                  <span className="block text-[11px] text-zinc-500">
+                    {pagtos.length} pagamento(s) a este fornecedor no extrato perto da emissão. A {tipo === 'bill' ? 'despesa' : 'compra'} entra na data da nota ({dataBR(doc.emitted_at)}) e cada pagamento dá baixa numa parcela, na data e na conta do extrato.
+                  </span>
+                </span>
+              </label>
+              {usarMensal && (
+                <>
+                  <div className="mt-2 border border-zinc-100 bg-white rounded-lg overflow-auto max-h-56">
+                    <table className="w-full text-xs">
+                      <tbody>
+                        {pagtos.map((p) => (
+                          <tr key={p.id} className="border-t border-zinc-50 first:border-t-0">
+                            <td className="px-2 py-1.5 w-6">
+                              <input type="checkbox" checked={selPagtos.has(p.id)} className="cursor-pointer"
+                                onChange={(e) => setSelPagtos((s) => { const n = new Set(s); if (e.target.checked) n.add(p.id); else n.delete(p.id); return n; })} />
+                            </td>
+                            <td className="px-2 py-1.5 text-zinc-600 whitespace-nowrap">{dataBR(p.data)}</td>
+                            <td className="px-2 py-1.5 text-zinc-500">{p.tipo}</td>
+                            <td className="px-2 py-1.5 text-zinc-500 truncate max-w-[220px]" title={p.nome}>{p.nome}</td>
+                            <td className="px-2 py-1.5 text-right font-medium text-zinc-800 whitespace-nowrap">{brl(p.valor)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className={`text-[11px] mt-1.5 ${saldoMensal < -0.01 ? 'text-red-600 font-semibold' : Math.abs(saldoMensal) <= 0.01 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    {selPagtos.size} selecionado(s): {brl(somaSel)} de {brl(doc.valor_total)}
+                    {saldoMensal < -0.01 ? ' · passa do valor da nota: desmarque algum'
+                      : Math.abs(saldoMensal) <= 0.01 ? ' · confere com a nota'
+                      : ` · saldo de ${brl(saldoMensal)} fica em Contas a Pagar (vence hoje)`}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
+          {tipo === 'purchase' && !usarMensal && (
             <div>
               <p className="text-xs font-bold text-zinc-700 mb-2">Pagamento</p>
               <div className="grid grid-cols-2 gap-2">
@@ -593,7 +698,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
           )}
 
           {/* Parcelas */}
-          {tipo !== 'bonus' && !(tipo === 'purchase' && pago) && (
+          {tipo !== 'bonus' && !usarMensal && !(tipo === 'purchase' && pago) && (
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-bold text-zinc-700">
@@ -671,10 +776,13 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
 
         <div className="p-4 border-t border-zinc-100 flex items-center justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-lg hover:bg-zinc-200 cursor-pointer">Cancelar</button>
-          <button onClick={lancar} disabled={!podeLancar || enviando || (!(tipo === 'purchase' && pago) && (parcelas.length === 0 || soma <= 0)) || (tipo === 'bill' && !dre)}
+          <button onClick={lancar}
+            disabled={!podeLancar || enviando || (tipo === 'bill' && !dre) || (usarMensal
+              ? selPagtos.size === 0 || saldoMensal < -0.01
+              : (!(tipo === 'purchase' && pago) && (parcelas.length === 0 || soma <= 0)))}
             title={!podeLancar ? 'Apenas administradores e gerentes' : undefined}
             className="px-4 py-2 text-sm font-semibold text-white bg-amber-500 rounded-lg hover:bg-amber-600 disabled:opacity-40 cursor-pointer">
-            {enviando ? 'Lançando…' : tipo === 'purchase' ? (pago ? 'Lançar compra paga' : `Lançar compra · ${parcelas.length} parcela(s)`) : `Lançar despesa · ${parcelas.length} parcela(s)`}
+            {enviando ? 'Lançando…' : usarMensal ? `Lançar e vincular ${selPagtos.size} pagamento(s)` : tipo === 'purchase' ? (pago ? 'Lançar compra paga' : `Lançar compra · ${parcelas.length} parcela(s)`) : `Lançar despesa · ${parcelas.length} parcela(s)`}
           </button>
         </div>
       </div>

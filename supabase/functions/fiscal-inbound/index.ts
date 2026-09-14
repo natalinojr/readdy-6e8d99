@@ -687,7 +687,7 @@ async function autoLaunchTenant(admin: Admin, supabaseUrl: string, tenantId: str
   // Última decisão por fornecedor (CNPJ) e o maior valor já lançado dele
   const cnpjs = [...new Set(docs.map((d) => String(d.emitente_cnpj)))];
   const { data: hist } = await admin.from('fiscal_inbound_documents')
-    .select('emitente_cnpj, import_type, purchase_id, payable_ids, valor_total, imported_at')
+    .select('emitente_cnpj, import_type, purchase_id, payable_ids, valor_total, imported_at, settlement')
     .eq('tenant_id', tenantId).eq('status', 'imported').in('emitente_cnpj', cnpjs)
     .order('imported_at', { ascending: false, nullsFirst: false });
   const ultima = new Map<string, any>();
@@ -717,6 +717,9 @@ async function autoLaunchTenant(admin: Admin, supabaseUrl: string, tenantId: str
     const bonificacao = !servico && isBonificacao(doc);
     if (!bonificacao) {
       if (!h) { pular('fornecedor novo'); continue; }
+      // Nota do mês: a última foi quitada pelos pagamentos do extrato — esta também precisa ser
+      // vinculada (Conferir › pagamentos do mês), senão viraria conta a pagar em dobro
+      if (h.settlement === 'monthly') { pular('nota do mês: vincular aos pagamentos'); continue; }
       if (servico && DESCONTA_NO_REPASSE.test(String(doc.emitente_nome ?? ''))) { pular('taxa já descontada no repasse'); continue; }
       if (!servico && pareceNaoVenda(doc)) { pular('remessa/devolução/outras saídas'); continue; }
       if ((h.import_type === 'purchase') === servico) { pular('tipo diferente do lançamento anterior'); continue; }
