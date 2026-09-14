@@ -13,6 +13,12 @@
 //   confirm                { ids: string[] }     admin/gerente: importa a nota (se preciso), baixa a parcela, lança juros
 //   undo                   { id }                admin/gerente: estorna a baixa feita pela confirmação
 //   save_counterpart_rule  { counterpart_doc, counterpart_label?, category, cost_center_id?, transaction_type }
+//   create_from_statement  { ids, kind: 'despesa'|'compra', dre_category_id?, merchandise_category_id?, description?,
+//                            supplier?, cost_center_id?, allow_payroll? }   admin/gerente — pagamento SEM NOTA:
+//                          despesa = conta a pagar (reference_type 'conciliacao_extrato') já baixada; compra = compra
+//                          (purchase-write) com 1 item, parcela baixada. Mesma data e conta do extrato. Pix para CPF de
+//                          funcionário é recusado (code 'folha') sem allow_payroll: a folha já entra na DRE. O undo apaga
+//                          o que foi criado e devolve a linha para pendente.
 //
 // Reaproveita a lógica que já existe chamando as outras edges COM O JWT DO USUÁRIO:
 //   fiscal-inbound (import_purchase / import_bill) e financial-write (pay_bill / upsert_bill).
@@ -64,7 +70,7 @@ async function callEdge(ctx: Ctx, fn: string, body: Record<string, unknown>): Pr
 }
 
 // ── Confirmar um vínculo ─────────────────────────────────────────────────────
-type Result = { id: string; ok: boolean; msg: string; auto_imported?: boolean };
+type Result = { id: string; ok: boolean; msg: string; auto_imported?: boolean; code?: string };
 
 async function confirmOne(ctx: Ctx, rowId: string): Promise<Result> {
   const { admin, tenantId } = ctx;
@@ -185,6 +191,129 @@ async function confirmOne(ctx: Ctx, rowId: string): Promise<Result> {
   return { id: row.id, ok: true, msg: partes.join(' · '), auto_imported: autoImported };
 }
 
+// ── Lançar a partir do extrato (pagamento sem nota) ─────────────────────────
+// Linhas que já têm destino: vínculo com nota/conta, transferência própria, repasse de cartão/iFood.
+const JA_TEM_DESTINO = ['payable', 'inbound_doc', 'internal_transfer', 'stone_deposit', 'stone_detail', 'ifood_deposit', 'card_deposit'];
+const soDigitos = (s: unknown) => String(s ?? '').replace(/\D/g, '');
+
+interface CreateOpts {
+  kind: 'despesa' | 'compra';
+  dreCategoryId: string | null;
+  mercCategoryId: string | null;
+  description: string | null;
+  supplier: string | null;
+  costCenterId: string | null;
+  allowPayroll: boolean;
+}
+
+async function createOne(ctx: Ctx, rowId: string, o: CreateOpts): Promise<Result> {
+  const { admin, tenantId } = ctx;
+  const fail = (msg: string, code?: string): Result => ({ id: rowId, ok: false, msg, ...(code ? { code } : {}) });
+  const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', rowId).eq('tenant_id', tenantId).maybeSingle();
+  if (!row) return fail('Lançamento não encontrado');
+  if (row.transaction_type !== 'debit') return fail('Só pagamentos (saídas) viram despesa ou compra');
+  if (row.reconciled || row.status !== 'pending') return fail('Este pagamento já está conciliado');
+  if (JA_TEM_DESTINO.includes(String(row.match_kind ?? ''))) {
+    return fail(['payable', 'inbound_doc'].includes(String(row.match_kind))
+      ? 'Este pagamento tem vínculo sugerido com nota/conta: confirme o vínculo em vez de lançar de novo'
+      : 'Este pagamento já tem destino (transferência entre contas ou repasse)');
+  }
+  const valor = round2(Number(row.amount));
+  if (!(valor > 0)) return fail('Valor inválido');
+  const doc = soDigitos(row.counterpart_doc);
+
+  // Pix para CPF de funcionário: o salário já entra na DRE pela folha (hr_payroll)
+  if (doc.length === 11 && !o.allowPayroll) {
+    const { data: emps } = await admin.from('hr_employees').select('name, cpf').eq('tenant_id', tenantId);
+    const func = ((emps ?? []) as Row[]).find((e) => soDigitos(e.cpf) === doc);
+    if (func) return fail('O CPF é de ' + func.name + ', funcionário cadastrado: salário já entra na DRE pela folha. Se não for salário, lance mesmo assim.', 'folha');
+  }
+
+  const paidDate = String(row.transaction_date);
+  const tipo = String(row.raw?.tipoTransacao ?? '');
+  const metodo = tipo === 'PAGAMENTO' ? 'Boleto' : tipo === 'PIX' ? 'Pix' : 'Transferência';
+  const quem = String(row.counterpart_name ?? '').trim();
+  const descricao = (o.description ?? '').trim().slice(0, 200) || quem || String(row.description ?? 'Pagamento');
+  const nota = 'Lançado pela conciliação bancária: pagamento sem nota de ' + br(paidDate) + (quem ? ' para ' + quem : '') + (doc ? ' (' + doc + ')' : '');
+  let billId: string | null = null;
+  let purchaseId: string | null = null;
+  let categoria = 'Compras';
+
+  if (o.kind === 'despesa') {
+    if (!o.dreCategoryId) return fail('Escolha a categoria da despesa');
+    const { data: cat } = await admin.from('fin_dre_categories').select('id, name, group_type').eq('id', o.dreCategoryId).eq('tenant_id', tenantId).maybeSingle();
+    if (!cat || ['revenue', 'tax', 'cost'].includes(String(cat.group_type))) return fail('Categoria da DRE inválida para despesa');
+    categoria = String(cat.name);
+    const nb = await callEdge(ctx, 'financial-write', {
+      action: 'upsert_bill', tenant_id: tenantId,
+      payload: {
+        description: descricao, supplier: quem || null, amount: valor, due_date: paidDate, status: 'pending',
+        category: categoria, dre_category_id: cat.id, cost_center_id: o.costCenterId, is_recurring: false,
+        bank_account_id: row.bank_account_id, reference_type: 'conciliacao_extrato', reference_id: row.id, notes: nota,
+      },
+    });
+    billId = nb.data?.data?.id ?? null;
+    if (!billId) return fail('Criar a conta: ' + (nb.error ?? 'falhou'));
+  } else {
+    if (o.mercCategoryId) {
+      const { data: m } = await admin.from('fin_merchandise_categories').select('id').eq('id', o.mercCategoryId).eq('tenant_id', tenantId).maybeSingle();
+      if (!m) return fail('Categoria do CMV inválida');
+    }
+    // Fornecedor: o já cadastrado com este CNPJ; senão o nome informado. Não grava CNPJ em fornecedor
+    // novo — fornecedor com CNPJ/chave Pix é a lista branca do Pix e só se cadastra pela tela própria.
+    let fornecedor = (o.supplier ?? '').trim() || quem;
+    if (doc.length === 14) {
+      const { data: sups } = await admin.from('fin_suppliers').select('name, cnpj').eq('tenant_id', tenantId).is('deleted_at', null);
+      const s = ((sups ?? []) as Row[]).find((x) => soDigitos(x.cnpj) === doc);
+      if (s?.name) fornecedor = String(s.name);
+    }
+    if (!fornecedor) fornecedor = 'Fornecedor sem nota';
+    const cp = await callEdge(ctx, 'purchase-write', {
+      action: 'create_purchase', tenant_id: tenantId,
+      payload: {
+        supplier: fornecedor, purchase_date: paidDate, due_date: paidDate, payment_status: 'pending', payment_method: metodo,
+        bank_account_id: row.bank_account_id, cost_center_id: o.costCenterId, notes: nota,
+        items: [{ description: descricao, quantity: 1, unit_price: valor, unit_label: 'un', merchandise_category_id: o.mercCategoryId }],
+      },
+    });
+    purchaseId = cp.data?.data?.id ?? null;
+    if (!purchaseId) return fail('Criar a compra: ' + (cp.error ?? 'falhou'));
+    const { data: bills } = await admin.from('fin_accounts_payable').select('id').eq('tenant_id', tenantId).eq('reference_type', 'purchase').eq('reference_id', purchaseId);
+    billId = (bills ?? []).length === 1 ? bills![0].id : null;
+    if (!billId) {
+      await callEdge(ctx, 'purchase-write', { action: 'delete_purchase', tenant_id: tenantId, payload: { id: purchaseId } });
+      return fail('A compra não gerou uma conta a pagar única; nada foi lançado');
+    }
+    // O item entra na Classificação de itens como CMV (não fica "pendente")
+    await admin.from('fin_item_classifications')
+      .update({ classe: 'cmv', merchandise_category_id: o.mercCategoryId, classified_by: ctx.userId, classified_at: new Date().toISOString(), auto_classified: false })
+      .eq('tenant_id', tenantId).eq('last_ref_id', purchaseId).is('classe', null);
+  }
+
+  const pay = await callEdge(ctx, 'financial-write', {
+    action: 'pay_bill', tenant_id: tenantId,
+    payload: { id: billId, paid_date: paidDate, paid_amount: valor, payment_method: metodo, bank_account_id: row.bank_account_id },
+  });
+  if (!pay.ok) {
+    if (purchaseId) await callEdge(ctx, 'purchase-write', { action: 'delete_purchase', tenant_id: tenantId, payload: { id: purchaseId } });
+    else await admin.from('fin_accounts_payable').delete().eq('id', billId).eq('tenant_id', tenantId);
+    return fail('Dar baixa: ' + (pay.error ?? 'falhou'));
+  }
+
+  const now = new Date().toISOString();
+  const confirmed = { bill_id: billId, juros_bill_id: null, pay_amount: valor, juros: 0, desconto: 0, auto_imported: false, created: o.kind, purchase_id: purchaseId, at: now, by: ctx.userId };
+  const { error: upErr } = await admin.from('fin_bank_statement_imports').update({
+    status: 'matched', reconciled: true, reconciled_at: now, reconciled_by: ctx.userId, matched_at: now, matched_by: ctx.userId,
+    match_kind: 'payable', match_ref_id: billId, match_confidence: 'manual', category: categoria,
+    match_detail: {
+      label: (o.kind === 'compra' ? 'Compra sem nota: ' : 'Despesa sem nota: ') + descricao, valor, created: o.kind,
+      prev_category: row.category ?? null, prev_match_kind: row.match_kind ?? null, confirmed,
+    },
+  }).eq('id', row.id);
+  if (upErr) log('ERROR', 'create', 'marcar extrato falhou', { tenantId, rowId, error: upErr.message });
+  return { id: row.id, ok: true, msg: (o.kind === 'compra' ? 'Compra' : 'Despesa') + ' de R$ ' + brl(valor) + ' lançada: "' + descricao + '"' };
+}
+
 // ── Desfazer (estorno) ───────────────────────────────────────────────────────
 async function reversePayment(ctx: Ctx, billId: string, amount: number, bankAccountId: string | null, date: string) {
   const { admin, tenantId } = ctx;
@@ -226,6 +355,23 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
     await admin.from('fin_accounts_payable').delete().eq('id', c.juros_bill_id).eq('tenant_id', tenantId);
   }
   const b = await reversePayment(ctx, c.bill_id, round2(Number(c.pay_amount)), row.bank_account_id, date);
+
+  // Lançado a partir do extrato: apaga o que foi criado e a linha volta a ser um pagamento sem destino
+  const criado = c.created === 'despesa' || c.created === 'compra' ? String(c.created) : null;
+  if (criado) {
+    if (criado === 'compra' && c.purchase_id) {
+      const del = await callEdge(ctx, 'purchase-write', { action: 'delete_purchase', tenant_id: tenantId, payload: { id: c.purchase_id } });
+      if (!del.ok) log('WARN', 'undo', 'apagar compra falhou', { tenantId, rowId, purchaseId: c.purchase_id, error: del.error });
+    } else {
+      await admin.from('fin_accounts_payable').delete().eq('id', c.bill_id).eq('tenant_id', tenantId);
+    }
+    await admin.from('fin_bank_statement_imports').update({
+      status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null,
+      match_kind: det.prev_match_kind ?? null, match_ref_id: null, match_confidence: null, match_detail: null, category: det.prev_category ?? null,
+    }).eq('id', row.id);
+    return { id: row.id, ok: true, msg: (criado === 'compra' ? 'Compra' : 'Despesa') + ' lançada pelo extrato foi desfeita: o pagamento voltou a pendente.' };
+  }
+
   if (b && Number(c.desconto) > 0) {
     await admin.from('fin_accounts_payable').update({ amount: round2(Number(b.amount) + Number(c.desconto)) }).eq('id', c.bill_id);
   }
@@ -302,6 +448,30 @@ Deno.serve(async (req: Request) => {
       const r = await undoOne(ctx, String(body.id ?? ''));
       log('INFO', 'undo', r.ok ? 'ok' : 'recusado', { tenantId, userId, id: body.id, msg: r.msg });
       return r.ok ? json({ success: true, results: [r], message: r.msg }) : errResp(r.msg);
+    }
+
+    if (action === 'create_from_statement') {
+      if (!isManager) return errResp('Apenas administradores e gerentes podem lançar pelo extrato', 403);
+      const ids = Array.isArray(body.ids) ? [...new Set((body.ids as unknown[]).map(String))].slice(0, MAX_BATCH) : [];
+      if (ids.length === 0) return errResp('Nenhum lançamento informado');
+      const kind = body.kind === 'compra' ? 'compra' : body.kind === 'despesa' ? 'despesa' : null;
+      if (!kind) return errResp('Escolha despesa ou compra');
+      const opts: CreateOpts = {
+        kind,
+        dreCategoryId: body.dre_category_id ? String(body.dre_category_id) : null,
+        mercCategoryId: body.merchandise_category_id ? String(body.merchandise_category_id) : null,
+        description: body.description ? String(body.description) : null,
+        supplier: body.supplier ? String(body.supplier) : null,
+        costCenterId: body.cost_center_id ? String(body.cost_center_id) : null,
+        allowPayroll: body.allow_payroll === true,
+      };
+      const results: Result[] = [];
+      for (const id of ids) {
+        try { results.push(await createOne(ctx, id, opts)); }
+        catch (e) { log('ERROR', 'create', 'falhou', { tenantId, id, error: String(e) }); results.push({ id, ok: false, msg: String((e as Error)?.message ?? e) }); }
+      }
+      log('INFO', 'create', 'ok', { tenantId, userId, kind, total: results.length, ok: results.filter((r) => r.ok).length });
+      return json({ success: true, results });
     }
 
     if (action === 'save_counterpart_rule') {

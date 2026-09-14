@@ -15,6 +15,8 @@ import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 import InterConfigModal from './conciliacao/InterConfigModal';
 import InterSyncPanel from './conciliacao/InterSyncPanel';
 import ComoDinheiroEntraModal from './conciliacao/ComoDinheiroEntraModal';
+import { podeLancarDoExtrato, lancarDoExtrato, useCategoriasLancamento, type LancarTipo } from './conciliacao/LancarDoExtrato';
+import CategoriaCombobox from './CategoriaCombobox';
 import type { OFXTransaction, MatchCandidate } from '@/utils/ofxParser';
 import type { StatementImport, ReconciliationRule } from '@/hooks/useConciliacao';
 
@@ -458,6 +460,12 @@ export default function ConciliacaoTab() {
   const [showInterConfig, setShowInterConfig] = useState(false);
   const [showIntegracoes, setShowIntegracoes] = useState(false);
   const [showComoEntra, setShowComoEntra] = useState(false);
+  // Pagamentos sem nota selecionados para lançar de uma vez (despesa/compra)
+  const [selLanc, setSelLanc] = useState<Set<string>>(new Set());
+  const [lancTipo, setLancTipo] = useState<LancarTipo>('despesa');
+  const [lancCat, setLancCat] = useState('');
+  const [lancando, setLancando] = useState(false);
+  const { dreOptions, mercOptions } = useCategoriasLancamento();
   const [interRefreshKey, setInterRefreshKey] = useState(0);
 
   // Período único: define o que aparece na tabela, os números e o que buscar nos bancos
@@ -833,6 +841,7 @@ export default function ConciliacaoTab() {
     ['notas_vencidas', 'Notas com parcela vencida e sem pagamento no extrato', 'red'],
     ['duplicidades', 'Possíveis pagamentos em duplicidade', 'red'],
     ['notas_canceladas_lancadas', 'Notas canceladas na SEFAZ que foram lançadas', 'red'],
+    ['notas_de_compra_do_extrato', 'Notas que podem ser de compra já lançada pelo extrato (não importe de novo)', 'red'],
     ['pagamentos_sem_nota', 'Pagamentos a empresas sem nota de entrada', 'amber'],
     ['juros_mes', 'Juros e multas pagos no mês', 'amber'],
   ];
@@ -844,6 +853,33 @@ export default function ConciliacaoTab() {
   const diferenca = saldoBanco != null && saldoErp != null ? Math.round((saldoBanco - saldoErp) * 100) / 100 : null;
 
   const trocarFiltroStatus = (s: 'all' | Situacao) => { setFilterStatus(s); setPage(1); };
+
+  // ── Lançar vários pagamentos sem nota de uma vez ─────────────────────────
+  useEffect(() => { setSelLanc(new Set()); }, [selectedAccountId, periodFrom, periodTo]);
+  const elegiveisPagina = paginated.filter(podeLancarDoExtrato);
+  const todosSelLanc = elegiveisPagina.length > 0 && elegiveisPagina.every(s => selLanc.has(s.id));
+  const totalSelLanc = imports.filter(i => selLanc.has(i.id)).reduce((s, i) => s + Number(i.amount), 0);
+  const toggleLanc = (id: string) => setSelLanc(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const lancarSelecionados = async () => {
+    if (!user?.tenantId || selLanc.size === 0) return;
+    if (lancTipo === 'despesa' && !lancCat) { showToast('Escolha a categoria da despesa', 'error'); return; }
+    const oque = lancTipo === 'compra' ? 'compra (CMV)' : 'despesa';
+    if (!window.confirm(`Lançar ${selLanc.size} pagamento(s) como ${oque} já paga, na data de cada um? A descrição de cada lançamento será o nome de quem recebeu.`)) return;
+    setLancando(true);
+    const { results, error } = await lancarDoExtrato(user.tenantId, [...selLanc], {
+      kind: lancTipo,
+      dre_category_id: lancTipo === 'despesa' ? lancCat : null,
+      merchandise_category_id: lancTipo === 'compra' ? lancCat || null : null,
+    });
+    setLancando(false);
+    const ok = results.filter(r => r.ok).length;
+    const falhas = results.filter(r => !r.ok);
+    if (error) showToast(ok > 0 ? `${ok} lançado(s) antes do erro: ${error}` : error, 'error');
+    else showToast(`${ok} pagamento(s) lançado(s) como ${oque}` + (falhas.length ? ` · ${falhas.length} não: ${falhas[0].msg}` : ''), falhas.length ? 'error' : 'success');
+    setSelLanc(new Set());
+    refresh();
+    loadAlerts();
+  };
 
   return (
     <div className="p-4 md:p-6 space-y-4">
@@ -1099,6 +1135,29 @@ export default function ConciliacaoTab() {
         )}
       </div>
 
+      {/* Lançar em lote os pagamentos sem nota selecionados */}
+      {selLanc.size > 0 && (
+        <div className="sticky top-0 z-10 bg-zinc-900 text-white rounded-xl p-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-semibold">{selLanc.size} pagamento(s) sem nota · {fmtCur(totalSelLanc)}</span>
+          <div className="flex bg-zinc-800 rounded-lg overflow-hidden">
+            {([['despesa', 'Despesa'], ['compra', 'Compra (CMV)']] as const).map(([k, label]) => (
+              <button key={k} onClick={() => { setLancTipo(k); setLancCat(''); }}
+                className={`px-3 py-1.5 font-semibold cursor-pointer ${lancTipo === k ? 'bg-violet-500 text-white' : 'text-zinc-300 hover:text-white'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <CategoriaCombobox value={lancCat} options={lancTipo === 'despesa' ? dreOptions : mercOptions} onChange={setLancCat}
+            placeholder={lancTipo === 'despesa' ? 'Categoria da despesa…' : 'Categoria do CMV…'}
+            buttonClassName="bg-white text-zinc-900 rounded-lg px-2 py-1.5 w-[220px] cursor-pointer" />
+          <button disabled={lancando || (lancTipo === 'despesa' && !lancCat)} onClick={lancarSelecionados}
+            className="px-3 py-1.5 rounded-lg bg-violet-500 font-semibold hover:bg-violet-600 disabled:opacity-50 cursor-pointer">
+            {lancando ? 'Lançando...' : 'Lançar já pago'}
+          </button>
+          <button onClick={() => setSelLanc(new Set())} className="ml-auto text-zinc-400 hover:text-white cursor-pointer">Limpar seleção</button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
         {loading ? (
@@ -1123,6 +1182,15 @@ export default function ConciliacaoTab() {
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 border-b border-zinc-200">
                 <tr>
+                  <th className="pl-4 pr-1 py-3 w-8">
+                    <input type="checkbox" checked={todosSelLanc} disabled={elegiveisPagina.length === 0}
+                      title="Selecionar os pagamentos sem nota desta página (para lançar como despesa ou compra)"
+                      onChange={() => setSelLanc(prev => {
+                        const n = new Set(prev);
+                        if (todosSelLanc) elegiveisPagina.forEach(s => n.delete(s.id)); else elegiveisPagina.forEach(s => n.add(s.id));
+                        return n;
+                      })} />
+                  </th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Data</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Descrição</th>
                   <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500">Valor</th>
@@ -1141,6 +1209,11 @@ export default function ConciliacaoTab() {
                       className={`transition-colors hover:bg-zinc-50 cursor-pointer ${sit === 'ignored' ? 'opacity-50' : ''}`}
                       onClick={() => setSelectedTransaction(s)}
                     >
+                      <td className="pl-4 pr-1 py-3" onClick={e => e.stopPropagation()}>
+                        {podeLancarDoExtrato(s) && (
+                          <input type="checkbox" checked={selLanc.has(s.id)} onChange={() => toggleLanc(s.id)} title="Selecionar para lançar como despesa ou compra" />
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-zinc-700 font-medium whitespace-nowrap text-xs">
                         {new Date(s.transaction_date + 'T00:00:00').toLocaleDateString('pt-BR')}
                       </td>

@@ -1715,6 +1715,15 @@ Edge **`ifood-financial`** (no ar) + migration `20260913140000_ifood_financial.s
 - **Um bloco "Pendências"** (vínculos exatos/fortes a confirmar + alertas de `fn_conciliacao_alertas`) e **uma linha de números**: saldo no banco (API), saldo no ERP, diferença (clica → Reconciliar saldo) e % conciliado no período. Saíram os 6 KPIs, a barra de progresso, o resumo por categoria (duplicava o filtro) e o quadro "Formatos suportados".
 - **Status unificado "Conciliado"** = `reconciled` OU `status` matched/manual (`situacao()`); antes o filtro usava `matched` e o selo/KPI usavam `reconciled`. Coluna "Tipo" removida (o sinal/cor do valor já diz).
 
+### Pagamento sem nota → despesa ou compra pelo extrato (2026-09-14)
+
+Edge `conciliacao-pagamentos › create_from_statement` (publicada, verify_jwt=true) + migration `20260914200000_lancar_pelo_extrato.sql` (aplicada) + `conciliacao/LancarDoExtrato.tsx` no detalhe do pagamento e seleção em lote na `ConciliacaoTab` (front pendente de push).
+- **Despesa** = `upsert_bill` (`reference_type='conciliacao_extrato'`, `reference_id` = linha do extrato, `dre_category_id`) + `pay_bill` na data/conta do extrato. **Compra** = `purchase-write › create_purchase` (1 item sem insumo, categoria de mercadoria, `payment_status='pending'`, vencimento = data do pagamento) + `pay_bill` na parcela única → o CMV caixa conta pela `paid_date` (`fetchComprasPeriodo`). Item sem insumo não mexe em estoque nem catálogo; o item novo entra na Classificação de itens já como CMV.
+- A linha do extrato vira `match_kind='payable'`, `match_confidence='manual'`, `match_detail.created='despesa'|'compra'` (+ `prev_category`/`prev_match_kind`). O `undo` estorna a baixa (reversePayment), **apaga** a conta (despesa) ou a compra (`delete_purchase`) e devolve a linha a pendente.
+- Travas: só débito pendente sem destino (vínculo sugerido → "confirme o vínculo"); Pix para CPF de funcionário (`hr_employees.cpf`) recusado com `code:'folha'` sem `allow_payroll`; fornecedor da compra = o cadastrado com o CNPJ, senão só o nome (sem gravar CNPJ: lista branca do Pix). Lote: a edge aceita 30 por chamada e ignora o resto — `lancarDoExtrato` fatia.
+- Alerta novo `notas_de_compra_do_extrato` (`fn_conciliacao_alertas`): nota `new` do mesmo CNPJ raiz e valor (±0,05) de uma compra lançada pelo extrato, emitida entre −15 e +5 dias do pagamento — para não importar a mesma compra 2×.
+- **PEGADINHA corrigida:** o check `fin_accounts_payable_reference_type_check` não aceitava `'conciliacao_juros'` — a conta de juros/multa da confirmação de vínculo falhava em silêncio. Em Paranaguá: 17 pagamentos com juros sem conta (R$ 166,57, 21/07–03/09) ficaram fora da DRE; o check agora aceita e os próximos entram. Os 17 antigos não foram corrigidos.
+
 ### Classificação de itens: vincular produto a insumo (2026-09-14)
 
 Migration `20260914180000_item_vinculo_insumo.sql` (aplicada) + `ItensClassificacaoTab` (front pendente de push).

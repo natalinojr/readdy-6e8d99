@@ -4,6 +4,7 @@ import { useCostCenters } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
+import LancarDoExtrato, { podeLancarDoExtrato } from './LancarDoExtrato';
 import type { StatementImport, BillMatch, ReceivableMatch, ReconciliationRule } from '@/hooks/useConciliacao';
 
 const fmtDoc = (d: string) =>
@@ -228,12 +229,14 @@ export default function TransacaoDetalheModal({
           {(transaction.match_kind === 'payable' || transaction.match_kind === 'inbound_doc') && transaction.match_detail && (() => {
             const d = transaction.match_detail as Record<string, unknown>;
             const conf = d.confirmed as Record<string, unknown> | undefined;
-            const confLabel: Record<string, string> = { exato: 'Exato', forte: 'Forte', provavel: 'Provável' };
+            const confLabel: Record<string, string> = { exato: 'Exato', forte: 'Forte', provavel: 'Provável', manual: 'Manual' };
             const desconto = Number(d.desconto ?? 0);
+            // Lançado a partir do extrato (pagamento sem nota): despesa ou compra criada aqui
+            const criado = d.created === 'despesa' || d.created === 'compra' ? String(d.created) : null;
             return (
               <div className={'border rounded-xl p-3 text-xs space-y-2 ' + (conf ? 'border-emerald-200 bg-emerald-50' : 'border-blue-200 bg-blue-50')}>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-zinc-800"><i className="ri-links-line mr-1" />{conf ? 'Pagamento conciliado' : 'Vínculo sugerido'}</span>
+                  <span className="font-semibold text-zinc-800"><i className="ri-links-line mr-1" />{criado ? `Lançado pelo extrato como ${criado === 'compra' ? 'compra (CMV)' : 'despesa'}` : conf ? 'Pagamento conciliado' : 'Vínculo sugerido'}</span>
                   <span className="px-2 py-0.5 rounded-full bg-white border border-zinc-200 text-zinc-600">{confLabel[String(transaction.match_confidence)] ?? String(transaction.match_confidence ?? '')}</span>
                 </div>
                 <p className="text-zinc-700">
@@ -241,11 +244,18 @@ export default function TransacaoDetalheModal({
                   {d.parcela ? ' · parcela ' + String(d.parcela) : ''}
                   {d.vencimento ? ' · vence ' + new Date(String(d.vencimento) + 'T00:00:00').toLocaleDateString('pt-BR') : ''}
                 </p>
-                <div className="grid grid-cols-3 gap-2">
+                {!criado && <div className="grid grid-cols-3 gap-2">
                   <div><p className="text-zinc-400">Parcela</p><p className="font-semibold text-zinc-800">{formatCurrency(Number(d.valor ?? 0))}</p></div>
                   <div><p className="text-zinc-400">Pago no banco</p><p className="font-semibold text-zinc-800">{formatCurrency(Number(transaction.amount))}</p></div>
                   <div><p className="text-zinc-400">{desconto > 0 ? 'Desconto' : 'Juros/multa'}</p><p className="font-semibold text-red-600">{formatCurrency(desconto > 0 ? desconto : Number(d.juros ?? 0))}</p></div>
-                </div>
+                </div>}
+                {criado && (
+                  <p className="text-emerald-700">
+                    {criado === 'compra'
+                      ? 'Compra já paga nesta data, no CMV. Se a nota desse pagamento chegar depois, ela aparece nos alertas da Conciliação: não importe de novo.'
+                      : 'Conta a pagar já baixada nesta data, com a categoria da DRE.'}
+                  </p>
+                )}
                 {!conf && d.auto_import === true && (
                   <p className="text-blue-700"><i className="ri-magic-line mr-1" />Esta nota ainda não foi lançada. Ao confirmar, ela é importada automaticamente como {Number(d.modelo) === 10 ? 'despesa (serviço)' : 'compra'} e a parcela recebe a baixa.</p>
                 )}
@@ -259,8 +269,13 @@ export default function TransacaoDetalheModal({
                       {vinculoBusy ? 'Confirmando...' : 'Confirmar e dar baixa'}
                     </button>
                   ) : (
-                    <button onClick={() => vinculoAction('undo')} disabled={vinculoBusy} className="px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-semibold hover:bg-amber-50 disabled:opacity-50 cursor-pointer">
-                      {vinculoBusy ? 'Desfazendo...' : 'Desfazer baixa'}
+                    <button
+                      onClick={() => {
+                        if (criado && !window.confirm(`Desfazer? A ${criado === 'compra' ? 'compra' : 'despesa'} criada a partir deste pagamento será apagada e o pagamento volta a pendente.`)) return;
+                        vinculoAction('undo');
+                      }}
+                      disabled={vinculoBusy} className="px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-semibold hover:bg-amber-50 disabled:opacity-50 cursor-pointer">
+                      {vinculoBusy ? 'Desfazendo...' : criado ? 'Desfazer lançamento' : 'Desfazer baixa'}
                     </button>
                   )}
                 </div>
@@ -276,6 +291,9 @@ export default function TransacaoDetalheModal({
                   ? 'Transferência de outra conta da própria empresa. Conta como Pix recebido (Pix vendido na maquininha), conforme Conciliação › ⚙ › Como o dinheiro entra.'
                   : 'Transferência de outra conta da própria empresa. Não entra como receita (Conciliação › ⚙ › Como o dinheiro entra).'}
             </div>
+          )}
+          {podeLancarDoExtrato(transaction) && (
+            <LancarDoExtrato transaction={transaction} onDone={() => { onChanged?.(); onClose(); }} />
           )}
           {groupRows.length > 0 && (() => {
             const num = (v: unknown) => Number(v ?? 0);
