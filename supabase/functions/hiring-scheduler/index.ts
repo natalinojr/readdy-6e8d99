@@ -31,8 +31,10 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 const TZ = 'America/Sao_Paulo';
 const MODEL = 'claude-haiku-4-5';
 const ACTIVE = ['convidado', 'negociando', 'aguardando_gestor', 'agendado'];
-const MAX_INVITES_TICK = 3;
-const MAX_INVITES_HOUR = 10;
+// Ritmo baixo de propósito: o número antigo foi BANIDO pelo WhatsApp em 2026-09-14 depois de muitos
+// contatos novos em poucos minutos. Convite é a empresa falando primeiro (o mais arriscado).
+const MAX_INVITES_TICK = 1;
+const MAX_INVITES_HOUR = 4;
 const HOUR_START = 8, HOUR_END = 20; // convites e cobranças só nesse horário (evita bloqueio e incômodo)
 const OFFER = 6;                     // horários oferecidos por mensagem
 
@@ -53,7 +55,9 @@ const evoInstance = Deno.env.get('EVOLUTION_INSTANCE') || 'assistente';
 // Devolve o id da mensagem no WhatsApp (key.id): o webhook usa para marcar entregue/lida no painel.
 async function sendText(number: string, text: string): Promise<string | null> {
   const r = await fetch(`${evoUrl}/message/sendText/${evoInstance}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', apikey: evoKey }, body: JSON.stringify({ number, text }),
+    // delay = "digitando…" antes de enviar (varia para não parecer robô).
+    method: 'POST', headers: { 'Content-Type': 'application/json', apikey: evoKey },
+    body: JSON.stringify({ number, text, delay: 2000 + Math.min(6000, text.length * 25) + Math.floor(Math.random() * 1500) }),
   });
   if (!r.ok) throw new Error(`Evolution sendText → ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const out = await r.json().catch(() => ({}));

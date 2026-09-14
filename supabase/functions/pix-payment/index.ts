@@ -787,7 +787,12 @@ Deno.serve(async (req: Request) => {
         const r = await mpFetch(token, '/terminals/v1/list?limit=50');
         if (!r.ok) return json({ error: `O Mercado Pago recusou o token (${r.status}): ${pointErr(r.body)}` }, 422);
         // deno-lint-ignore no-explicit-any
-        const list = ((r.body?.data?.terminals ?? []) as any[]).map((t) => ({ id: String(t.id), operating_mode: String(t.operating_mode ?? '') }));
+        const list = ((r.body?.data?.terminals ?? []) as any[]).map((t) => ({
+          id: String(t.id), operating_mode: String(t.operating_mode ?? ''),
+          store_id: t.store_id ? String(t.store_id) : null, pos_id: t.pos_id ? String(t.pos_id) : null,
+          external_pos_id: t.external_pos_id ? String(t.external_pos_id) : null,
+        }));
+        log('INFO', 'list_point_terminals', 'ok', { tenantId, terminals: list });
         return json({ terminals: list });
       }
 
@@ -795,8 +800,18 @@ Deno.serve(async (req: Request) => {
         const terminalId = String(body.terminal_id ?? '');
         const mode = body.mode === 'STANDALONE' ? 'STANDALONE' : 'PDV';
         if (!terminalId) return json({ error: 'Escolha a maquininha' }, 422);
-        const r = await mpFetch(token, '/terminals/v1/setup', { method: 'PATCH', body: JSON.stringify({ terminals: [{ id: terminalId, operating_mode: mode }] }) });
-        if (!r.ok) return json({ error: `O Mercado Pago recusou (${r.status}): ${pointErr(r.body)}` }, 422);
+        let r = await mpFetch(token, '/terminals/v1/setup', { method: 'PATCH', body: JSON.stringify({ terminals: [{ id: terminalId, operating_mode: mode }] }) });
+        // Alguns terminais (N950 recém-ativada, 2026-09-14) respondem 404 no endpoint novo mesmo
+        // listados, com loja e caixa — tenta o endpoint legado da API de Integração.
+        if (r.status === 404) {
+          log('WARN', 'set_point_mode', 'setup 404, tentando endpoint legado', { tenantId, terminalId });
+          r = await mpFetch(token, `/point/integration-api/devices/${encodeURIComponent(terminalId)}`, { method: 'PATCH', body: JSON.stringify({ operating_mode: mode }) });
+          if (r.ok && r.body?.operating_mode) r.body = { terminals: [{ id: terminalId, operating_mode: r.body.operating_mode }] };
+        }
+        if (!r.ok) {
+          log('WARN', 'set_point_mode', 'recusado', { tenantId, terminalId, mode, status: r.status, body: r.body });
+          return json({ error: `O Mercado Pago recusou (${r.status}): ${pointErr(r.body)}` }, 422);
+        }
         const modoFinal = r.body?.terminals?.[0]?.operating_mode ?? r.body?.data?.terminals?.[0]?.operating_mode ?? mode;
         log('INFO', 'set_point_mode', 'ok', { tenantId, terminalId, mode, by: auth.userId });
         return json({ ok: true, operating_mode: modoFinal });

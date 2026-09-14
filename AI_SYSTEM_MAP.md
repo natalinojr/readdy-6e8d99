@@ -1888,6 +1888,12 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
   com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
   causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
+- **Número do assistente BANIDO pelo WhatsApp (2026-09-14, 16:47)**: logout código 403 ("Esta conta
+  não pode usar o WhatsApp") logo depois de ~10 candidatos reais escreverem pelo link em poucos
+  minutos, com respostas automáticas via Evolution (conexão não oficial). O plano é uma linha nova,
+  "aquecida" antes, com ritmo baixo: o `hiring-scheduler` manda 1 convite por rodada e no máximo
+  4 por hora, com "digitando…" antes (`delay`). Caminho definitivo: API oficial (Cloud API) num
+  número só do recrutamento, separado do assistente pessoal.
 - **Link de candidatura = wa.me direto (2026-09-14)**. Tentamos um link curto próprio
   (`erpos.vercel.app/v/CÓDIGO` → `vercel.json` → `canal-publico?go=` → 302 para wa.me). Tecnicamente
   funciona, mas dentro do WhatsApp/Instagram só um link `wa.me` abre a conversa na hora; o curto passa
