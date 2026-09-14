@@ -18,6 +18,8 @@ interface ConfigInfo {
   terminal_id: string | null;
   token_hint: string | null;
   last_test_at: string | null;
+  has_webhook_secret?: boolean;
+  webhook_url?: string;
 }
 interface Terminal { id: string; operating_mode: string }
 
@@ -34,6 +36,7 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
   const [info, setInfo] = useState<ConfigInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
   const [ambiente, setAmbiente] = useState<'production' | 'sandbox'>('production');
   const [terminalId, setTerminalId] = useState('');
   const [terminais, setTerminais] = useState<Terminal[] | null>(null);
@@ -90,12 +93,15 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
     setErro('');
     const body: Record<string, unknown> = { action: 'save_point_config', tenant_id: tenantId, environment: ambiente, terminal_id: terminalId.trim(), is_active: ativo };
     if (token.trim()) body.access_token = token.trim();
+    if (webhookSecret.trim()) body.webhook_secret = webhookSecret.trim();
     const { data, error } = await invokeWithAuth<{ ok?: boolean; is_active: boolean }>('pix-payment', { body });
     setSaving(false);
     if (error || !data?.ok) { setErro(error?.message || 'Erro ao salvar'); return; }
     toastSuccess(data.is_active ? 'Maquininha ativada no autoatendimento' : 'Configuração salva');
     setToken('');
-    setInfo(prev => prev ? { ...prev, configured: true, is_active: data.is_active, environment: ambiente, terminal_id: terminalId.trim() } : prev);
+    const salvouSecret = Boolean(webhookSecret.trim());
+    setWebhookSecret('');
+    setInfo(prev => prev ? { ...prev, configured: true, is_active: data.is_active, environment: ambiente, terminal_id: terminalId.trim(), has_webhook_secret: prev.has_webhook_secret || salvouSecret } : prev);
     onSaved?.({ is_active: data.is_active });
   };
 
@@ -191,6 +197,25 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
                 )}
                 {modoAtual && <p className="text-[10px] text-zinc-500 mt-1">Modo atual: <strong>{modoAtual}</strong></p>}
               </div>
+
+              {info?.webhook_url && ambiente === 'production' && (
+                <div className="p-3 border border-zinc-200 rounded-xl space-y-2">
+                  <p className="text-xs font-semibold text-zinc-700">Aviso automático do Mercado Pago (webhook)</p>
+                  <p className="text-[11px] text-zinc-500">
+                    Na aplicação do Mercado Pago: <strong>Webhooks › Configurar notificações › Modo de produção</strong>, cole este endereço,
+                    marque o evento <strong>Order (Mercado Pago)</strong> e salve. Depois cole aqui a <strong>assinatura secreta</strong> que ele mostrar.
+                  </p>
+                  <div className="flex gap-2">
+                    <input readOnly value={info.webhook_url} onFocus={e => e.currentTarget.select()}
+                      className="flex-1 min-w-0 text-[11px] font-mono border border-zinc-200 rounded-lg px-2 py-1.5 bg-zinc-50 text-zinc-600" />
+                    <button type="button" onClick={() => { navigator.clipboard?.writeText(info.webhook_url ?? ''); toastSuccess('Endereço copiado'); }}
+                      className="px-3 text-[11px] font-semibold rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 cursor-pointer">Copiar</button>
+                  </div>
+                  <input type="password" value={webhookSecret} onChange={e => setWebhookSecret(e.target.value)} autoComplete="off"
+                    placeholder={info.has_webhook_secret ? 'Assinatura secreta salva (em branco mantém)' : 'Assinatura secreta do webhook'}
+                    className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                </div>
+              )}
 
               <label className="flex items-center justify-between p-3 border border-zinc-200 rounded-xl cursor-pointer">
                 <div>

@@ -262,6 +262,13 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
 
+### 2026-09-14 — Maquininha Mercado Pago Point no autoatendimento (1ª maquininha real)
+
+- **Configuração:** a aplicação do MP tem que ser da **mesma conta em que a maquininha está ativada** (Paranaguá = EP PAR MALL, app "ERPOS Point Paranagua"). Nome de aplicação no MP é **único global**. Token = Credenciais de produção (`APP_USR-`). Modo PDV só liga pela API (`PATCH /terminals/v1/setup`); a N950 não tem menu "Modo de vinculação".
+- **Pegadinhas:** o `setup` deu `404 not_found` com o terminal listado (loja + caixa ok) e passou depois de reiniciar a maquininha e salvar a config. O endpoint legado `/point/integration-api/devices` responde `401 Unauthorized use of live credentials` para app nova (não usar). `POST /v1/orders` exige `amount >= 1.00` (edge `pix-payment` recusa antes com `code: min_amount`). A order pode ficar `created` ~2 min até a maquininha pegar (`at_terminal`) — o pagamento em si leva segundos.
+- **Correções:** o polling de 2 s disparava consultas em paralelo e o `onPago` rodava 2x → "pedido não registrado" falso com o pedido já pago (guards em `TelaCartaoKiosk`, `TelaPix` e `handlePixPago`). O `cancel` só marca `cancelled` se o MP aceitar o `/cancel` (antes marcava sempre → pagamento posterior sem rastro).
+- **Webhook:** `pix-payment?webhook=point&tenant_id=<uuid>`, tópico "Order (Mercado Pago)". Não confia no corpo: acha a linha por `provider_payment_id` e roda `reconcileRow`. Assinatura HMAC com `fin_payment_provider_config.webhook_secret`, se houver. Testar com `curl` no PowerShell 5.1 exige o JSON num arquivo (`--data-binary @arquivo`) — o PowerShell remove as aspas do `-d`.
+
 ### 2026-09-12 — Loja ativa do app vale no banco (RLS multi-loja, correção de raiz)
 
 - **Sintoma:** o dono (vínculos de platform owner com `created_at = 2000-01-01`) via telas vazias na El Patron Paranaguá (Compras com 93 compras no banco). `auth_tenant_id()`/`get_user_tenant_id()` devolviam o vínculo mais recente ("Testes PDV") e `auth_role()` um vínculo qualquer, ignorando a loja escolhida no app (que só existe no `localStorage`).

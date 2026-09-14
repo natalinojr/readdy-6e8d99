@@ -127,11 +127,11 @@ type ProviderCfg = {
   client_id: string | null; client_secret: string | null; cert_pem: string | null; key_pem: string | null;
   pix_key: string | null; environment: string | null; conta_corrente: string | null;
   cert_expires_at: string | null; last_test_at: string | null; updated_at: string; token_expires_at: string | null;
-  terminal_id: string | null;
+  terminal_id: string | null; webhook_secret?: string | null;
 };
 async function loadProviderCfgs(admin: Admin, tenantId: string) {
   const { data } = await admin.from('fin_payment_provider_config')
-    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at, terminal_id')
+    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at, terminal_id, webhook_secret')
     .eq('tenant_id', tenantId).in('provider', PROVIDERS);
   const rows = (data ?? []) as ProviderCfg[];
   return {
@@ -484,6 +484,56 @@ async function loadRow(admin: Admin, body: Record<string, unknown>): Promise<Pix
   return (data as PixRow | null) ?? null;
 }
 
+// ── Webhook do Mercado Pago Point (tópico "Order (Mercado Pago)") ────────────
+// Configurado na aplicação Point da loja: POST ?webhook=point&tenant_id=<uuid>. Sem ele só o
+// polling do tablet confirmava — tablet fechado/travado = cartão cobrado sem registro.
+// O corpo nunca é confiável: só pegamos o id da order e o reconcileRow pergunta ao MP.
+async function hmacSha256Hex(secret: string, msg: string) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(msg));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function handlePointWebhook(req: Request, admin: Admin, url: URL) {
+  const tenantId = url.searchParams.get('tenant_id') ?? '';
+  const dataIdQuery = url.searchParams.get('data.id') ?? '';
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch { body = {}; }
+  const type = String(body.type ?? url.searchParams.get('type') ?? '');
+  const dataId = String((body.data as { id?: string } | undefined)?.id ?? dataIdQuery ?? '');
+  log('INFO', 'webhook_point', 'recebido', { tenantId, type, action: body.action, dataId });
+  if (!isValidUuidLoose(tenantId) || type !== 'order' || !dataId) return json({ ok: true, ignored: true });
+
+  const { point } = await loadProviderCfgs(admin, tenantId);
+  if (!point?.access_token) return json({ ok: true, ignored: 'no_config' });
+
+  // Assinatura (x-signature: ts=...,v1=...) — manifesto id:{data.id};request-id:{x-request-id};ts:{ts};
+  if (point.webhook_secret) {
+    const sig = req.headers.get('x-signature') ?? '';
+    const reqId = req.headers.get('x-request-id') ?? '';
+    const parts = Object.fromEntries(sig.split(',').map((p) => p.trim().split('=', 2) as [string, string]));
+    const rawId = dataIdQuery || dataId;
+    const idForManifest = /^[a-z0-9]+$/i.test(rawId) ? rawId.toLowerCase() : rawId;
+    const expected = await hmacSha256Hex(point.webhook_secret, `id:${idForManifest};request-id:${reqId};ts:${parts.ts ?? ''};`);
+    if (!parts.v1 || expected !== parts.v1) {
+      log('WARN', 'webhook_point', 'assinatura inválida', { tenantId, dataId });
+      return json({ ok: false, error: 'invalid_signature' }, 401);
+    }
+  }
+
+  const { data: row } = await admin.from('fin_pix_payments').select(PIX_COLS)
+    .eq('provider', 'mp_point').eq('provider_payment_id', dataId).eq('tenant_id', tenantId).maybeSingle();
+  if (!row) return json({ ok: true, ignored: 'unknown_order' });
+  const status = await reconcileRow(admin, row as PixRow);
+  if (status === 'confirmed') {
+    // Confirmado pelo webhook: o pedido nasce no tablet. Se o tablet sumiu, fica o rastro aqui.
+    const { data: fresh } = await admin.from('fin_pix_payments').select('order_id').eq('id', (row as PixRow).id).maybeSingle();
+    if (!fresh?.order_id) log('WARN', 'webhook_point', 'cartão aprovado, pedido ainda não criado pelo tablet', { tenantId, pixPaymentId: (row as PixRow).id, mpOrder: dataId });
+  }
+  return json({ ok: true, status });
+}
+const isValidUuidLoose = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -492,6 +542,9 @@ Deno.serve(async (req: Request) => {
   DB = supabase;
 
   try {
+    const url = new URL(req.url);
+    if (url.searchParams.get('webhook') === 'point') return await handlePointWebhook(req, supabase, url);
+
     const body = await req.json();
     const { action } = body;
 
@@ -790,6 +843,8 @@ Deno.serve(async (req: Request) => {
         configured: Boolean(point?.access_token), is_active: Boolean(point?.is_active),
         environment: point?.environment === 'sandbox' ? 'sandbox' : 'production', terminal_id: point?.terminal_id ?? null,
         token_hint: point?.access_token ? `…${point.access_token.slice(-6)}` : null, last_test_at: point?.last_test_at ?? null,
+        has_webhook_secret: Boolean(point?.webhook_secret),
+        webhook_url: `${Deno.env.get('SUPABASE_URL') ?? ''}/functions/v1/pix-payment?webhook=point&tenant_id=${tenantId}`,
       });
     }
 
@@ -840,6 +895,8 @@ Deno.serve(async (req: Request) => {
       const { error } = await supabase.from('fin_payment_provider_config').upsert({
         tenant_id: tenantId, provider: 'mp_point', access_token: token, terminal_id: terminalId, environment, is_active: isActive,
         account_label: environment === 'sandbox' ? 'Mercado Pago Point · TESTE' : 'Mercado Pago Point', last_test_at: now, updated_at: now,
+        // Chave secreta do webhook: em branco mantém a atual.
+        ...(typeof body.webhook_secret === 'string' && body.webhook_secret.trim() ? { webhook_secret: body.webhook_secret.trim() } : {}),
       }, { onConflict: 'tenant_id,provider' });
       if (error) throw error;
       log('INFO', 'save_point_config', 'ok', { tenantId, environment, terminalId, isActive, by: auth.userId });
