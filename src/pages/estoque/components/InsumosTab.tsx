@@ -45,8 +45,8 @@ function ThOrdenavel({
 
 export default function InsumosTab() {
   const { insumos, insumosEsgotados, marcarInsumoEsgotado, upsertInsumo, reloadInsumos, addMovimentacao, inventarioSessions } = useEstoque();
-  const { recipes, batches } = useProducao();
-  const { categories, names: categoriasDB, loading: loadingCategorias, addCategory, removeCategory } = useIngredientCategories();
+  const { recipes, batches, reload: reloadProducao } = useProducao();
+  const { categories, names: categoriasDB, loading: loadingCategorias, addCategory, removeCategory, renameCategory } = useIngredientCategories();
   const { user } = useAuth();
   const [busca, setBusca] = useState('');
   const [categoriaFiltro, setCategoriaFiltro] = useState('Todas');
@@ -713,6 +713,13 @@ export default function InsumosTab() {
           onClose={() => setCategoriasModal(false)}
           onAdd={addCategory}
           onRemove={removeCategory}
+          onRename={async (id, nome) => {
+            // O banco leva o nome novo aos insumos e às fichas de produção; recarrega os dois
+            // para as abas de filtro não mostrarem mais o nome antigo.
+            const r = await renameCategory(id, nome);
+            if (!r.error) await Promise.all([reloadInsumos(), reloadProducao()]);
+            return r;
+          }}
         />
       )}
 

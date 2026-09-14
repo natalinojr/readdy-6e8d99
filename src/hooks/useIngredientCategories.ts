@@ -119,7 +119,22 @@ export function useIngredientCategories() {
     return true;
   }, [user?.tenantId]);
 
+  // Renomear: o trigger trg_propagate_merchandise_category_rename acompanha o nome nos
+  // lugares que guardam a categoria em texto (ingredients.category etc.).
+  const renameCategory = useCallback(async (id: string, name: string): Promise<{ error: string | null }> => {
+    if (!user?.tenantId) return { error: 'Sem loja selecionada' };
+    const trimmed = name.trim();
+    if (!trimmed) return { error: 'Informe o nome da categoria' };
+    if (categories.some((c) => c.id !== id && c.name.toLowerCase() === trimmed.toLowerCase())) {
+      return { error: `Já existe uma categoria chamada "${trimmed}"` };
+    }
+    const json = await callFinancialWrite('upsert_merchandise_category', user.tenantId, { id, name: trimmed });
+    if (json?.error) return { error: String(json.error) };
+    notifyReload(CHANNEL);
+    return { error: null };
+  }, [user?.tenantId, categories]);
+
   const names = categories.map((c) => c.name);
 
-  return { categories, names, loading, addCategory, removeCategory, reload: load };
+  return { categories, names, loading, addCategory, removeCategory, renameCategory, reload: load };
 }

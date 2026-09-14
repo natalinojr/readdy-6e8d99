@@ -1715,6 +1715,10 @@ Edge **`ifood-financial`** (no ar) + migration `20260913140000_ifood_financial.s
 - **Um bloco "Pendências"** (vínculos exatos/fortes a confirmar + alertas de `fn_conciliacao_alertas`) e **uma linha de números**: saldo no banco (API), saldo no ERP, diferença (clica → Reconciliar saldo) e % conciliado no período. Saíram os 6 KPIs, a barra de progresso, o resumo por categoria (duplicava o filtro) e o quadro "Formatos suportados".
 - **Status unificado "Conciliado"** = `reconciled` OU `status` matched/manual (`situacao()`); antes o filtro usava `matched` e o selo/KPI usavam `reconciled`. Coluna "Tipo" removida (o sinal/cor do valor já diz).
 
+### Renomear categoria de insumo (2026-09-14)
+
+Estoque › Insumos › Gerenciar Categorias ganhou o lápis (renomear inline, Enter/Esc) — `CategoriasModal.onRename` → `useIngredientCategories.renameCategory` → `financial-write › upsert_merchandise_category` com `id`. A categoria mora em `fin_merchandise_categories` (id), mas o Estoque filtra por TEXTO: `ingredients.category` (acompanhado pelo trigger `trg_propagate_merchandise_category_rename`) e `production_recipes.category`, que ficava com o nome antigo — migration `20260914160000_renomear_categoria_fichas.sql` estende o trigger às fichas (casa pelo nome antigo, sem id). A aba recarrega insumos e fichas (`ProducaoContext.reload`, que também tem cópia em localStorage) depois de renomear. Nome repetido → erro (índice único `lower(name)`); para juntar duas categorias existe `merge_merchandise_category`.
+
 ### Classificação de itens: busca na categoria + CMV com categoria (2026-09-14)
 
 - `src/pages/financeiro/components/CategoriaCombobox.tsx`: seletor com busca reutilizável (sem acento, várias palavras, procura no nome e no `sub`; ↑/↓/Enter/Esc; lista em portal `position: fixed` para não ser cortada por `overflow-x-auto`). Usado em `ItensClassificacaoTab` para despesa (categoria DRE + grupo) e CMV.
