@@ -171,6 +171,62 @@ const perfilLabel: Record<string, string> = {
   cozinha: 'Operador de Cozinha',
 };
 
+// ─── Tela Sem Loja, com módulos liberados ─────────────────────────────────────
+
+interface ModulosSemLojaProps {
+  userName: string;
+  modulos: ModuloCard[];
+  onAbrir: (m: ModuloCard) => void;
+  onLogout: () => void;
+}
+
+function ModulosSemLoja({ userName, modulos, onAbrir, onLogout }: ModulosSemLojaProps) {
+  return (
+    <div
+      className="min-h-screen flex flex-col items-center justify-center px-4 relative"
+      style={{ background: 'linear-gradient(160deg, #fffbf5 0%, #fef6e8 50%, #fdf4e3 100%)' }}
+    >
+      <div className="absolute top-5 right-5">
+        <button onClick={onLogout}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs text-zinc-500 hover:text-red-500 transition-colors cursor-pointer">
+          <LogOut size={14} />
+          Sair
+        </button>
+      </div>
+
+      <div className="w-full max-w-sm text-center">
+        <div
+          className="w-16 h-16 flex items-center justify-center rounded-2xl mx-auto mb-6"
+          style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}
+        >
+          <ChefHat size={32} className="text-white" />
+        </div>
+        <h1 className="text-2xl font-black text-zinc-800 mb-1">Olá, {userName.split(' ')[0]}!</h1>
+        <p className="text-zinc-500 text-sm mb-8">Escolha o módulo para entrar.</p>
+
+        <div className="space-y-3 text-left">
+          {modulos.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => onAbrir(m)}
+              className={`w-full flex items-center gap-4 bg-white/80 border ${m.acentoBorder} rounded-2xl p-4 hover:bg-white transition-colors cursor-pointer`}
+            >
+              <div className={`w-11 h-11 flex items-center justify-center rounded-xl ${m.acentoBg} flex-shrink-0`}>
+                <i className={`${m.icon} ${m.acentoText} text-xl`} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-black text-zinc-800">{m.titulo}</p>
+                <p className="text-xs text-zinc-500 truncate">{m.descricao}</p>
+              </div>
+              <i className="ri-arrow-right-s-line text-zinc-400 text-lg" />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Tela Sem Loja ────────────────────────────────────────────────────────────
 
 interface SemLojaScreenProps {
@@ -284,7 +340,7 @@ export default function ModulosPage() {
   const { settings, loading: settingsLoading, carregar } = useSystemSettings();
   const { hasPermissao } = usePermissoes();
   const { usuarios } = useUsuarios();
-  const { hasModule } = useModuleAccess();
+  const { hasModule, loading: moduleLoading } = useModuleAccess();
   const [acessoNegadoMsg, setAcessoNegadoMsg] = useState<string | null>(null);
   const [showTotens, setShowTotens] = useState(false);
   const [hora, setHora] = useState(() =>
@@ -417,6 +473,26 @@ export default function ModulosPage() {
 
   // ── Render: sem loja ──
   if (hasNoTenants) {
+    // Liberado só para módulo (Admin Master → Módulos): entra sem código de convite.
+    // Tarefas fica de fora porque os dados dele são por loja.
+    const livres = MODULOS.filter((m) => m.modulo && m.modulo !== 'tarefas' && hasModule(m.modulo));
+    if (moduleLoading) {
+      return (
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="w-7 h-7 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      );
+    }
+    if (livres.length > 0) {
+      return (
+        <ModulosSemLoja
+          userName={noTenantUserName || 'Usuário'}
+          modulos={livres}
+          onAbrir={(m) => navigate(m.rota)}
+          onLogout={handleLogout}
+        />
+      );
+    }
     return (
       <SemLojaScreen
         userName={noTenantUserName || user?.nome || 'Usuário'}

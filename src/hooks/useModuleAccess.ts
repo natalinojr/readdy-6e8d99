@@ -29,15 +29,25 @@ export function invalidateModuleAccess() {
 }
 
 export function useModuleAccess() {
-  const { user } = useAuth();
+  const { user, hasNoTenants } = useAuth();
   const [modules, setModules] = useState<ModuloLivre[] | null>(null);
 
   useEffect(() => {
-    if (!user?.id) { setModules(null); return; }
     let alive = true;
-    load(user.id).then((m) => { if (alive) setModules(m); });
+    if (user?.id) {
+      load(user.id).then((m) => { if (alive) setModules(m); });
+    } else if (hasNoTenants) {
+      // Sem loja o AuthContext deixa user=null; o id vem da sessão (acesso só a módulo).
+      supabase.auth.getSession().then(({ data }) => {
+        const id = data.session?.user?.id;
+        if (!id) { if (alive) setModules([]); return; }
+        load(id).then((m) => { if (alive) setModules(m); });
+      });
+    } else {
+      setModules(null);
+    }
     return () => { alive = false; };
-  }, [user?.id]);
+  }, [user?.id, hasNoTenants]);
 
   const list = modules ?? [];
   return {

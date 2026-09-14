@@ -25,9 +25,11 @@ const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/autoatendimento', '
 const FULL_SCREEN_PROTECTED = ['/modulos'];
 // Terminais — full-screen com UI propria
 const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas', '/tarefas'];
+// Usuário sem loja com acesso só a módulo (user_module_access): rotas que funcionam sem tenant
+const NO_TENANT_ROUTES = ['/contratacao'];
 
 export default function AppLayout() {
-  const { isAuthenticated, needsTenantSelection, loading } = useAuth();
+  const { isAuthenticated, needsTenantSelection, loading, hasNoTenants, logout } = useAuth();
   const location = useLocation();
   const { isModoTreino } = useModoTreino();
   const { mode, setMode } = useAppMode();
@@ -68,6 +70,37 @@ export default function AppLayout() {
   // 4. Selecao de loja obrigatoria — bloqueia TUDO ate escolher
   if (needsTenantSelection) {
     return <SelecionarLojaPage />;
+  }
+
+  // 4b. Sem loja (acesso só a módulo): nada de telas de loja — só /modulos e os
+  // módulos livres, em tela cheia com uma barra mínima de voltar/sair.
+  if (hasNoTenants && !isFullScreenProtected) {
+    if (!NO_TENANT_ROUTES.some((r) => location.pathname.startsWith(r))) {
+      return <Navigate to="/modulos" replace />;
+    }
+    return (
+      <div className="flex flex-col h-screen overflow-hidden bg-white">
+        <div className="h-12 flex items-center justify-between px-4 border-b border-zinc-100 flex-shrink-0">
+          <button
+            onClick={() => navigate('/modulos')}
+            className="flex items-center gap-1.5 text-sm font-semibold text-zinc-600 hover:text-amber-600 cursor-pointer"
+          >
+            <i className="ri-arrow-left-line" /> Módulos
+          </button>
+          <button
+            onClick={() => { logout(); navigate('/login'); }}
+            className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-red-500 cursor-pointer"
+          >
+            <i className="ri-logout-box-r-line" /> Sair
+          </button>
+        </div>
+        <main className="flex-1 overflow-y-auto p-4 md:p-6">
+          <Suspense fallback={<PageLoader />}>
+            <Outlet />
+          </Suspense>
+        </main>
+      </div>
+    );
   }
 
   // 5. Full-screen protegidas (modulos) — sem sidebar
