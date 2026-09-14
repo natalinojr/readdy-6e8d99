@@ -17,6 +17,9 @@ const WEEK = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 export default function AgendaEntrevistas({ interviews, candidates, companies, mostrarEmpresa, onOpenInterview, onNew }: Props) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  // Celular: tocar no dia mostra a lista dele embaixo (no desktop o clique já abre "agendar").
+  const [diaSel, setDiaSel] = useState<string>(() => dayKey(new Date()));
+  const isDesktop = () => typeof window !== 'undefined' && window.matchMedia('(min-width: 640px)').matches;
   const byId = useMemo(() => new Map(candidates.map((c) => [c.id, c])), [candidates]);
   const nome = (iv: Interview) => byId.get(iv.candidate_id)?.full_name ?? 'Candidato removido';
 
@@ -49,9 +52,9 @@ export default function AgendaEntrevistas({ interviews, candidates, companies, m
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr,280px] gap-4">
       <div className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-100">
+        <div className="flex flex-wrap items-center gap-2 px-3 sm:px-4 py-3 border-b border-zinc-100">
           <button onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() - 1, 1))} className="w-8 h-8 rounded-lg hover:bg-zinc-100 cursor-pointer"><i className="ri-arrow-left-s-line" /></button>
-          <p className="font-black text-zinc-900 capitalize min-w-[150px] text-center">{mesLabel}</p>
+          <p className="font-black text-zinc-900 capitalize min-w-[120px] sm:min-w-[150px] text-center text-sm sm:text-base">{mesLabel}</p>
           <button onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + 1, 1))} className="w-8 h-8 rounded-lg hover:bg-zinc-100 cursor-pointer"><i className="ri-arrow-right-s-line" /></button>
           <button onClick={() => { const d = new Date(); setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); }} className="px-3 h-8 rounded-lg border border-zinc-200 text-xs font-bold text-zinc-600 cursor-pointer">Hoje</button>
           <button onClick={() => onNew(null)} className="ml-auto flex items-center gap-1.5 px-3 h-8 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold cursor-pointer">
@@ -67,11 +70,17 @@ export default function AgendaEntrevistas({ interviews, candidates, companies, m
             const list = byDay.get(k) ?? [];
             const fora = d.getMonth() !== cursor.getMonth();
             return (
-              <div key={k} onClick={() => onNew(k)}
-                className={`min-h-[92px] border-b border-r border-zinc-100 p-1 cursor-pointer hover:bg-violet-50/40 ${fora ? 'bg-zinc-50/60' : ''}`}>
-                <p className={`text-[11px] font-bold mb-0.5 w-6 h-6 flex items-center justify-center rounded-full ${
+              <div key={k} onClick={() => { if (isDesktop()) onNew(k); else setDiaSel(k); }}
+                className={`min-h-[52px] sm:min-h-[92px] border-b border-r border-zinc-100 p-1 cursor-pointer hover:bg-violet-50/40 ${fora ? 'bg-zinc-50/60' : ''} ${diaSel === k ? 'max-sm:bg-violet-50 max-sm:ring-2 max-sm:ring-inset max-sm:ring-violet-300' : ''}`}>
+                <p className={`text-[11px] font-bold mb-0.5 w-6 h-6 flex items-center justify-center rounded-full mx-auto sm:mx-0 ${
                   k === hoje ? 'bg-violet-600 text-white' : fora ? 'text-zinc-300' : 'text-zinc-600'}`}>{d.getDate()}</p>
-                <div className="space-y-0.5">
+                {/* Celular: só pontos (cor = situação); a lista do dia aparece embaixo do calendário. */}
+                {list.length > 0 && (
+                  <div className="sm:hidden flex justify-center gap-0.5 flex-wrap">
+                    {list.slice(0, 4).map((iv) => <span key={iv.id} className={`w-1.5 h-1.5 rounded-full ${iv.status === 'agendada' ? 'bg-violet-500' : iv.status === 'realizada' ? 'bg-emerald-500' : iv.status === 'faltou' ? 'bg-red-500' : 'bg-zinc-300'}`} />)}
+                  </div>
+                )}
+                <div className="hidden sm:block space-y-0.5">
                   {list.slice(0, 3).map((iv) => (
                     <button key={iv.id} onClick={(e) => { e.stopPropagation(); onOpenInterview(iv); }}
                       className={`w-full text-left truncate text-[10px] font-semibold px-1.5 py-0.5 rounded border cursor-pointer ${interviewStatusInfo(iv.status).cls}`}>
@@ -87,6 +96,33 @@ export default function AgendaEntrevistas({ interviews, candidates, companies, m
       </div>
 
       <div className="space-y-4">
+        {/* Celular: entrevistas do dia tocado no calendário. */}
+        <div className="sm:hidden rounded-2xl border border-zinc-200 bg-white">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-zinc-100">
+            <p className="flex-1 text-xs font-black uppercase tracking-wider text-zinc-600 capitalize">
+              {new Date(`${diaSel}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' })}
+            </p>
+            <button onClick={() => onNew(diaSel)} className="flex items-center gap-1 px-2.5 h-8 rounded-lg bg-violet-600 text-white text-xs font-bold cursor-pointer">
+              <i className="ri-add-line" /> Agendar neste dia
+            </button>
+          </div>
+          {(byDay.get(diaSel) ?? []).length === 0 ? <p className="px-4 py-4 text-xs text-zinc-400">Nenhuma entrevista neste dia.</p> : (
+            <ul className="divide-y divide-zinc-50">
+              {(byDay.get(diaSel) ?? []).map((iv) => (
+                <li key={iv.id}>
+                  <button onClick={() => onOpenInterview(iv)} className="w-full flex items-center gap-3 text-left px-4 py-2.5 active:bg-zinc-50 cursor-pointer">
+                    <span className="text-sm font-black text-zinc-800 w-12">{fmtTime(iv.scheduled_at)}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm font-semibold text-zinc-800 truncate">{nome(iv)}</span>
+                      {extra(iv) && <span className="block text-[11px] text-zinc-500 truncate">{extra(iv)}</span>}
+                    </span>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${interviewStatusInfo(iv.status).cls}`}>{interviewStatusInfo(iv.status).label}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         {pendentes.length > 0 && (
           <Lista titulo="Aguardando registro" cor="text-orange-600" vazia="" itens={pendentes} nome={nome} extra={extra} onOpen={onOpenInterview} />
         )}

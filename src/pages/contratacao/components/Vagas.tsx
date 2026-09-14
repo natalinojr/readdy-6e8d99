@@ -180,6 +180,12 @@ function DetalheVaga({
                     <p className="text-xs text-zinc-500 truncate">
                       {[c.desired_role, idade != null ? `${idade} anos` : null, c.neighborhood || c.city].filter(Boolean).join(' · ') || '—'}
                     </p>
+                    {/* Celular: os selos que no desktop ficam à direita. */}
+                    <div className="sm:hidden flex flex-wrap gap-1 mt-1">
+                      {dist && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${distCls(dist.km)}`}><i className="ri-car-line" /> {fmtKm(dist.km)}</span>}
+                      {stg && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${colorOf(stg.color).cls}`}>{stg.name}</span>}
+                      {dec && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${dec.cls}`}>{dec.sigla}</span>}
+                    </div>
                   </button>
                   <div className="hidden sm:flex items-center gap-1.5">
                     {dist && (

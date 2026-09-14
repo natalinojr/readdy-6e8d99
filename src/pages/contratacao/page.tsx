@@ -27,9 +27,10 @@ import AgendaEntrevistas from './components/AgendaEntrevistas';
 import RelatoriosContratacao from './components/RelatoriosContratacao';
 import Kanban from './components/Kanban';
 import ConfiguracoesContratacao from './components/ConfiguracoesContratacao';
+import LinksWhatsApp from './components/LinksWhatsApp';
 
 interface QueueItem { key: string; name: string; state: 'lendo' | 'ok' | 'erro'; msg?: string }
-type Aba = 'candidatos' | 'vagas' | 'kanban' | 'agenda' | 'relatorios' | 'config';
+type Aba = 'candidatos' | 'vagas' | 'kanban' | 'agenda' | 'relatorios' | 'links' | 'config';
 type ModalState = { interview: Interview | null; candidateId?: string | null; date?: string | null } | null;
 
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -41,6 +42,7 @@ const ABAS: { id: Aba; label: string; icon: string }[] = [
   { id: 'kanban', label: 'Kanban', icon: 'ri-layout-column-line' },
   { id: 'agenda', label: 'Agenda', icon: 'ri-calendar-2-line' },
   { id: 'relatorios', label: 'Relatórios', icon: 'ri-bar-chart-2-line' },
+  { id: 'links', label: 'Links WhatsApp', icon: 'ri-whatsapp-line' },
   { id: 'config', label: 'Configurações', icon: 'ri-settings-3-line' },
 ];
 
@@ -427,9 +429,9 @@ export default function ContratacaoPage() {
           <h1 className="text-xl font-black text-zinc-900">Contratação</h1>
           <p className="text-xs text-zinc-400">Currículos, kanban, entrevistas e relatórios por empresa</p>
         </div>
-        {aba !== 'config' && companies.length > 0 && (
+        {aba !== 'config' && aba !== 'links' && companies.length > 0 && (
           <select value={empresaFiltro} onChange={(e) => setEmpresaFiltro(e.target.value)}
-            className="h-10 px-3 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 cursor-pointer">
+            className="w-full sm:w-auto h-10 px-3 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 cursor-pointer">
             <option value="todas">Todas as empresas</option>
             {companies.map((c) => <option key={c.id} value={c.id}>{c.name}{c.is_active ? '' : ' (inativa)'}</option>)}
             <option value="sem">Sem empresa</option>
@@ -437,7 +439,7 @@ export default function ContratacaoPage() {
         )}
         {aba !== 'config' && (
           <button onClick={() => { pendingJobRef.current = aba === 'vagas' ? selectedJobId : null; fileRef.current?.click(); }}
-            className="flex items-center gap-2 px-4 h-10 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-sm font-bold cursor-pointer whitespace-nowrap">
+            className="flex flex-1 sm:flex-none items-center justify-center gap-2 px-4 h-10 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-sm font-bold cursor-pointer whitespace-nowrap">
             <i className="ri-upload-2-line" /> Adicionar currículos
           </button>
         )}
@@ -454,7 +456,7 @@ export default function ContratacaoPage() {
       <div className="flex gap-1 mb-4 border-b border-zinc-200 overflow-x-auto">
         {ABAS.map((t) => (
           <button key={t.id} onClick={() => setAba(t.id)}
-            className={`flex items-center gap-1.5 px-4 h-10 text-sm font-bold border-b-2 -mb-px cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 sm:px-4 h-10 text-[13px] sm:text-sm font-bold border-b-2 -mb-px cursor-pointer whitespace-nowrap flex-shrink-0 ${
               aba === t.id ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
             <i className={t.icon} /> {t.label}
           </button>
@@ -491,6 +493,15 @@ export default function ContratacaoPage() {
           onRemoveApplication={removeApplication}
           onOpenCandidate={setSelId}
         />
+      ) : aba === 'links' ? (
+        <LinksWhatsApp companies={companies} jobs={jobs} onOpenCandidate={async (id) => {
+          // Currículo que chegou pelo link depois do carregamento: busca antes de abrir a ficha.
+          if (!items.some((c) => c.id === id)) {
+            const { data } = await supabase.from('hiring_candidates').select('*').eq('id', id).maybeSingle();
+            if (data) setItems((prev) => [data as Candidate, ...prev]);
+          }
+          setSelId(id);
+        }} />
       ) : aba === 'agenda' ? (
         <AgendaEntrevistas interviews={ivsDaEmpresa} candidates={items} companies={companies} mostrarEmpresa={mostrarEmpresa}
           onOpenInterview={(iv) => setModal({ interview: iv })} onNew={(date) => setModal({ interview: null, date })} />
@@ -510,7 +521,8 @@ export default function ContratacaoPage() {
             <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 text-left cursor-pointer">
               <i className="ri-file-user-line text-2xl text-rose-400" />
               <span>
-                <span className="block text-sm font-semibold text-zinc-700">Arraste PDFs ou fotos de currículos aqui</span>
+                <span className="hidden sm:block text-sm font-semibold text-zinc-700">Arraste PDFs ou fotos de currículos aqui</span>
+                <span className="sm:hidden block text-sm font-semibold text-zinc-700">Toque para escolher PDF ou tirar foto</span>
                 <span className="block text-xs text-zinc-400">Vários de uma vez. PDF com texto é lido de graça; foto vai para a IA.</span>
               </span>
             </button>
@@ -559,14 +571,14 @@ export default function ContratacaoPage() {
 
           {/* Busca (+ fases e modo de visualização na aba Candidatos) */}
           <div className="flex flex-wrap items-center gap-2 mb-3">
-            <div className="relative flex-1 min-w-[200px]">
+            <div className="relative w-full sm:w-auto sm:flex-1 sm:min-w-[200px]">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
               <input value={busca} onChange={(e) => setBusca(e.target.value)}
                 placeholder="Buscar por nome, cargo, cidade, empresa, palavra do currículo…"
                 className="w-full h-10 pl-9 pr-3 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-rose-300" />
             </div>
             <select value={decisaoFiltro} onChange={(e) => setDecisaoFiltro(e.target.value)} title="Tomada de decisão"
-              className="h-10 px-3 rounded-xl border border-zinc-200 text-sm text-zinc-700 cursor-pointer">
+              className="flex-1 sm:flex-none min-w-0 h-10 px-3 rounded-xl border border-zinc-200 text-sm text-zinc-700 cursor-pointer">
               <option value="todas">Toda decisão</option>
               {DECISIONS.map((d) => <option key={d.id} value={d.id}>{d.sigla} — {d.label.replace(' à {empresa}', '')}</option>)}
               <option value="sem">Sem decisão</option>

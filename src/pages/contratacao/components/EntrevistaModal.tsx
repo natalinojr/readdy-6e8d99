@@ -173,8 +173,8 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            <div><Label>Data</Label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} /></div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="col-span-2 sm:col-span-1"><Label>Data</Label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} /></div>
             <div><Label>Hora</Label><input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} /></div>
             <div><Label>Duração</Label>
               <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className={inputCls}>
@@ -193,7 +193,7 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div><Label>Local / link</Label><input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Ex.: na loja, com o gerente" className={inputCls} /></div>
             <div><Label>Quem entrevista</Label><input value={interviewer} onChange={(e) => setInterviewer(e.target.value)} placeholder="Ex.: Natalino" className={inputCls} /></div>
           </div>

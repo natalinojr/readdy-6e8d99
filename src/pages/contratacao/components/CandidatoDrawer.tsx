@@ -109,7 +109,7 @@ export default function CandidatoDrawer({
               ))}
             </div>
             <select value={c.company_id ?? ''} onChange={(e) => onUpdate({ company_id: e.target.value || null })}
-              className="ml-auto h-9 px-3 rounded-lg border border-zinc-200 text-sm cursor-pointer max-w-[190px]" title="Empresa da vaga">
+              className="w-full sm:w-auto sm:ml-auto sm:max-w-[190px] h-9 px-3 rounded-lg border border-zinc-200 text-sm cursor-pointer" title="Empresa da vaga">
               <option value="">Sem empresa</option>
               {companies.filter((x) => x.is_active || x.id === c.company_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
             </select>

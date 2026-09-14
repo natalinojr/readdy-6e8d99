@@ -111,7 +111,7 @@ function Empresas({ companies, candidates, onReload, onRecalcCompany }: {
                 {c.lat != null ? <span className="text-emerald-600"> · <i className="ri-map-pin-2-fill" /> no mapa</span> : c.address ? <span className="text-orange-600"> · sem pin</span> : null}
               </p>
             </button>
-            <span className="text-[11px] text-zinc-400 w-20 text-right">{count(c.id)} candidato{count(c.id) === 1 ? '' : 's'}</span>
+            <span className="hidden sm:inline text-[11px] text-zinc-400 w-20 text-right">{count(c.id)} candidato{count(c.id) === 1 ? '' : 's'}</span>
             <button onClick={() => setAberta(aberta === c.id ? null : c.id)}
               className={`flex items-center gap-1 px-2.5 h-8 rounded-lg border text-xs font-bold cursor-pointer ${aberta === c.id ? 'bg-zinc-900 text-white border-zinc-900' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
               <i className={aberta === c.id ? 'ri-arrow-up-s-line' : 'ri-pencil-line'} /> {aberta === c.id ? 'Fechar' : 'Editar'}
@@ -123,7 +123,7 @@ function Empresas({ companies, candidates, onReload, onRecalcCompany }: {
             <button onClick={() => remove(c)} title="Excluir" className="w-8 h-8 rounded-lg hover:bg-red-50 text-red-500 cursor-pointer"><i className="ri-delete-bin-line" /></button>
            </div>
            {aberta === c.id && (
-             <div className="mt-2 ml-8 space-y-4 rounded-xl bg-zinc-50 border border-zinc-100 p-3">
+             <div className="mt-2 sm:ml-8 space-y-4 rounded-xl bg-zinc-50 border border-zinc-100 p-3">
                <EditarEmpresa c={c} referencia={companies.find((x) => x.id !== c.id && x.lat != null && x.lng != null) ?? null}
                  onReload={onReload} onRecalcCompany={onRecalcCompany} />
                <LocalizacaoLoja key={`${c.id}:${c.lat}:${c.lng}`} c={c}
@@ -210,7 +210,7 @@ function Fases({ stages, candidates, onReload }: { stages: Stage[]; candidates: 
                 className="w-full h-9 px-3 rounded-lg border border-zinc-200 text-sm" />
               {s.native_kind && <p className="text-[10px] text-zinc-400 mt-0.5 px-1">Nativa: {NATIVE_LABEL[s.native_kind]}</p>}
             </div>
-            <span className="text-[11px] text-zinc-400 w-20 text-right">{count(s.id)} candidato{count(s.id) === 1 ? '' : 's'}</span>
+            <span className="hidden sm:inline text-[11px] text-zinc-400 w-20 text-right">{count(s.id)} candidato{count(s.id) === 1 ? '' : 's'}</span>
             {s.native_kind ? (
               <span className="w-8 h-8 flex items-center justify-center text-zinc-300" title="Fase nativa"><i className="ri-lock-line" /></span>
             ) : (

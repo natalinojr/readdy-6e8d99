@@ -242,7 +242,7 @@ function Bar({ label, count, total, cls }: { label: string; count: number; total
   const pct = total ? (count / total) * 100 : 0;
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className="w-40 truncate text-zinc-700">{label}</span>
+      <span className="w-24 sm:w-40 truncate text-zinc-700 text-xs sm:text-sm">{label}</span>
       <div className="flex-1 h-2.5 rounded-full bg-zinc-100 overflow-hidden"><div className={`h-full ${cls}`} style={{ width: `${pct}%` }} /></div>
       <span className="w-16 text-right text-xs tabular-nums text-zinc-600"><b>{count}</b> · {Math.round(pct)}%</span>
     </div>

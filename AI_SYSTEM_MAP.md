@@ -1868,6 +1868,12 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
 - Contratação: `is_hiring_admin()` (RLS de `hiring_*` e do bucket `curriculos`) e a edge
   `hiring-cv-scan` aceitam o dono OU quem está em `user_module_access`. O banco de candidatos é
   um só: quem tem acesso vê tudo.
+- **Canais públicos do WhatsApp (2026-09-14)**: links `wa.me` com texto pronto e código `XX-XXXX`
+  (tabelas `bot_channels` / `bot_conversations` / `bot_messages`, aba Contratação › Links WhatsApp).
+  Mesmo número do assistente: o `assistente-webhook` manda toda DM de quem não é o dono para a
+  edge `canal-publico` (Haiku, sem sessão do dono, só ferramentas do canal). Regra: o que o
+  atendente público pode dizer vem SÓ do canal (`share_fields`, `extra_info`); o limite é no
+  servidor, nunca só no prompt. Detalhes em `assistente/README.md` › "Canais públicos".
 - **Loja × perfil pelo Admin Master**: `fn_admin_set_user_tenant` (upsert em `user_tenants`,
   papéis admin/manager/cashier/waiter/kitchen/delivery_manager/tasks_only) e
   `fn_admin_remove_user_tenant`. A pessoa só vê a mudança no próximo login/troca de loja

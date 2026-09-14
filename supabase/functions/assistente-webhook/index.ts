@@ -485,6 +485,58 @@ async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: Msg
   return true;
 }
 
+// ── Canais públicos (links wa.me com código; atendimento na edge canal-publico) ──
+const PUBLIC_CODE_RE = /\b([A-Z]{2,4}-[A-Z0-9]{4})\b/i; // mesmo formato do canal-publico
+
+// Dono testando um link: mensagem com o código de um canal existente, ou teste aberto (< 30 min).
+// deno-lint-ignore no-explicit-any
+async function ownerTestingPublic(admin: SupabaseClient, chatId: string, data: any): Promise<boolean> {
+  const p = parseMessage(data.message);
+  const code = String(p.text ?? '').match(PUBLIC_CODE_RE)?.[1]?.toUpperCase();
+  if (code) {
+    const { data: ch } = await admin.from('bot_channels').select('id').eq('code', code).maybeSingle();
+    if (ch) return true;
+  }
+  const { data: conv } = await admin.from('bot_conversations').select('id').eq('contact_jid', chatId).eq('is_test', true).eq('status', 'aberta')
+    .gt('last_message_at', new Date(Date.now() - 30 * 60_000).toISOString()).limit(1).maybeSingle();
+  return !!conv;
+}
+
+// Prepara a mensagem (áudio transcrito, PDF/foto em base64) e entrega ao canal-publico.
+// deno-lint-ignore no-explicit-any
+async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | null, data: any, isOwner: boolean) {
+  const p = parseMessage(data.message);
+  if (p.inner?.pollUpdateMessage || p.inner?.reactionMessage || p.inner?.protocolMessage) return;
+  let text = String(p.text ?? '').trim();
+  let file: { base64: string; mime: string; name: string | null } | null = null;
+  try {
+    if (p.kind === 'audio') {
+      const b64 = await mediaBase64(data);
+      const t = b64 ? await transcribe(b64, p.mime ?? 'audio/ogg') : '';
+      text = t ? `[Áudio] ${t}` : '';
+      if (!t) { await sendText(number, 'Não consegui ouvir o áudio 😕 Pode escrever?').catch(() => {}); return; }
+    } else if (p.kind === 'image' || p.kind === 'document') {
+      const mime = String(p.mime ?? (p.kind === 'image' ? 'image/jpeg' : '')).split(';')[0].toLowerCase();
+      const name = String(p.inner?.documentMessage?.fileName ?? '').trim() || null;
+      if (mime === 'application/pdf' || IMAGE_TYPES.includes(mime)) {
+        const b64 = await mediaBase64(data);
+        if (!b64) { await sendText(number, 'Não consegui baixar esse arquivo. Pode mandar de novo?').catch(() => {}); return; }
+        file = { base64: b64, mime, name };
+      } else {
+        file = null; // tipo que não lemos (Word etc.): o canal-publico responde pedindo PDF/foto
+        text = text || `[Arquivo${name ? ` "${name}"` : ''}]`;
+      }
+    }
+  } catch (e) {
+    log('WARN', 'canal público: preparar mídia', { error: errMsg(e) });
+  }
+  const r = await fetch(`${supabaseUrl}/functions/v1/canal-publico`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+    body: JSON.stringify({ action: 'incoming', chat_id: chatId, number, name: data.pushName ?? null, kind: p.kind, text, file, key: msgKey, is_owner: isOwner }),
+  }).catch((e) => { log('ERROR', 'canal-publico inacessível', { error: errMsg(e) }); return null; });
+  if (r && !r.ok) log('ERROR', 'canal-publico recusou', { status: r.status, body: (await r.text()).slice(0, 200) });
+}
+
 // Grupos: o assistente SÓ LÊ — guarda a mensagem em asst_group_messages e nunca
 // responde no grupo. Na primeira mensagem de um grupo busca nome e participantes;
 // a leitura só liga sozinha se o dono estiver no grupo (qualquer pessoa pode
@@ -852,14 +904,18 @@ async function handle(payload: any) {
   if (!jid || jid === 'status@broadcast') return; // status: fora
   if (jid.endsWith('@g.us')) { await handleGroup(admin, data, allowed, cfg); return; } // grupo: só lê (mídia lida + triagem de pagamento)
   const candidates = [jid, altJid, jid.replace(/@.*$/, ''), altJid.replace(/@.*$/, '')].filter(Boolean);
-  if (!candidates.some((c) => allowed.includes(c))) {
-    log('WARN', 'remetente não autorizado (ignorado)', { jid, altJid, pushName: data.pushName });
-    return;
-  }
+  const isOwner = candidates.some((c) => allowed.includes(c));
   // Responde sempre ao JID que chegou (a Evolution resolve @lid e número).
   const chatId = altJid && jid.endsWith('@lid') ? altJid : jid;
   const number = chatId.replace(/@.*$/, '');
   const msgKey: MsgKey | null = key.id ? { remoteJid: jid, fromMe: false, id: String(key.id) } : null;
+  // Canais públicos (links wa.me com código, 2026-09-14): quem não é o dono vai para o canal-publico,
+  // que decide se atende (código do link, conversa aberta ou canal padrão) ou ignora. O dono só entra
+  // lá testando: mensagem com o código de um canal, ou teste aberto há menos de 30 min.
+  if (!isOwner || await ownerTestingPublic(admin, chatId, data)) {
+    await toPublicChannel(chatId, number, msgKey, data, isOwner);
+    return;
+  }
   if (!dmEnabled) {
     // Exceção: recebimento de currículos. Só vale quando o dono AVISA antes ("vou mandar currículos"
     // abre 1 h de recebimento; "pronto" encerra) ou põe "currículo" na legenda do arquivo. Arquivo sem

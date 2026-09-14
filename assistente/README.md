@@ -623,6 +623,40 @@ Pedido do dono: "sempre que eu enviar arquivo eu falo que vou enviar e ele sobe 
   `--no-verify-jwt`; o login do dono é conferido dentro). WhatsApp DM continua desligado, então o
   canal é o Telegram.
 
+### Canais públicos — links wa.me com código (2026-09-14)
+
+Pedido do dono: "disponibilizar um número para as pessoas mandarem currículo, o assistente conversa
+pedindo o currículo e dá informações conforme a gente permitir", **sem comprar linha nova**. Usa o
+MESMO número do assistente (a conversa direta dele estava parada desde que foi para o Telegram).
+
+- **Roteador** (`assistente-webhook` › `handle`): mensagem direta de quem NÃO está em
+  `allowed_chat_ids` → `toPublicChannel` → edge **`canal-publico`** (antes era ignorada). O dono só
+  cai lá testando: mensagem com o código de um canal existente, ou teste aberto há < 30 min
+  (`ownerTestingPublic`); "#sair" encerra o teste. Grupos e o fluxo do dono não mudaram.
+- **Links:** `https://wa.me/<número>?text=<start_text>`; o texto pronto leva um código
+  `XX-XXXX` (ex.: `CV-7K2P`, regex `/\b([A-Z]{2,4}-[A-Z0-9]{4})\b/i` nas duas edges). O código
+  identifica o canal; conversa aberta continua no mesmo canal por até 7 dias sem precisar do código.
+  Sem código e sem conversa: só atende se houver canal `is_default`; senão ignora.
+- **`canal-publico`** (verify_jwt false; `incoming` com x-internal-key, `info` com JWT de quem tem
+  o módulo Contratação → número da instância via Evolution `fetchInstances`). SEM sessão do dono e
+  sem acesso ao ERPOS: arquivo (PDF/foto) vai direto para `hiring-cv-scan › intake` com a
+  empresa/vaga do canal (sem modelo de conversa); texto/áudio → debounce 3 s → **Haiku 4.5** com
+  system montado só com os campos da vaga liberados (`share_fields`) + `extra_info` + `forbidden`
+  e 3 ferramentas: `registrar_sem_curriculo` (intake com texto), `chamar_equipe` (aviso ao dono no
+  Telegram, `needs_human`) e `encerrar_conversa`. Limites: 30 respostas/dia por conversa, 3
+  currículos por conversa. Cada currículo avisa o dono no Telegram (`notify_owner`), com
+  aderência à vaga quando há vaga.
+- Tabelas: `bot_channels`, `bot_conversations`, `bot_messages` (RLS `is_hiring_admin()`);
+  `hiring_candidates.source` (`whatsapp_link` / `whatsapp_link_teste`) + `source_channel_id`;
+  telefone do WhatsApp entra no candidato quando o currículo não traz.
+  Migração: `supabase/migrations/20260914120000_bot_canais_publicos.sql`.
+- Tela: Contratação › **Links WhatsApp** (`components/LinksWhatsApp.tsx`): criar/editar link
+  (empresa, vaga, texto pronto, 1ª resposta com `{nome}/{empresa}/{vaga}`, o que pode contar,
+  proibidos, aviso, padrão, ativo), copiar link, QR Code (`react-qr-code`), conversas no estilo
+  WhatsApp com "Abrir candidato" e "Falar pelo meu WhatsApp".
+- Novo propósito (reservas, fornecedores…): valor novo em `bot_channels.purpose` + prompt/ferramentas
+  próprias no `canal-publico` (hoje só `curriculos`).
+
 ## Pendente (ordem)
 
 1. Validar no uso real o Telegram: conversa, áudio, foto e clique em botão.
