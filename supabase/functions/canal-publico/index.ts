@@ -71,6 +71,9 @@ const SHARE_LABELS: Record<string, string> = {
 type Row = Record<string, any>;
 interface Incoming {
   chat_id: string; number: string; name?: string | null;
+  // Endereço para RESPONDER (o JID de onde a mensagem veio, ex.: "...@lid"). Desde 2026-09-14, depois
+  // de um repareamento, o WhatsApp só entrega no @lid; `number` continua sendo o telefone (identidade).
+  reply_to?: string | null;
   kind: 'text' | 'audio' | 'image' | 'document' | 'video' | 'other';
   text?: string | null;
   file?: { base64: string; mime: string; name?: string | null } | null;
@@ -79,6 +82,8 @@ interface Incoming {
 }
 
 const firstName = (s: string | null | undefined) => String(s ?? '').trim().split(/\s+/)[0] ?? '';
+// Para onde responder: o JID de origem quando veio (@lid), senão o número.
+const to = (m: Incoming) => String(m.reply_to ?? '').trim() || m.number;
 
 // Texto de um .docx: word/document.xml, parágrafo → quebra de linha, tab → tab, sem tags.
 function docxText(base64: string): string {
@@ -207,7 +212,7 @@ async function intake(admin: SupabaseClient, ch: Row, conv: Row, m: Incoming, en
   if (ch.notify_owner) {
     const km = out.distance?.km != null ? ` · ${Number(out.distance.km).toFixed(1).replace('.', ',')} km` : '';
     const match = out.match?.score != null ? `\nAderência à vaga: *${out.match.score}*${out.match.resumo ? ` — ${out.match.resumo}` : ''}` : '';
-    await notifyOwner(admin, `📥 *Currículo pelo link "${ch.name}"*${conv.is_test ? ' (teste)' : ''}\n${cand.full_name ?? 'Candidato'}${cand.desired_role ? ` — ${cand.desired_role}` : ''}${km}\nWhatsApp: +${m.number}${out.duplicate ? `\n⚠️ Já existia: ${out.duplicate}` : ''}${match}`);
+    await notifyOwner(admin, `📥 *Currículo pelo link "${ch.name}"*${conv.is_test ? ' (teste)' : ''}\n${cand.full_name ?? 'Candidato'}${cand.desired_role ? ` — ${cand.desired_role}` : ''}${km}\nWhatsApp: +${m.number}${out.duplicate ? `\n⚠️ Já existia: ${out.duplicate}` : ''}${match}${out.pending_ai ? `\n⚠️ Salvo SEM leitura da IA (${String(out.ai_error ?? 'IA indisponível')}). Abra a ficha e use "Organizar com IA" quando a IA voltar.` : ''}`);
   }
   return { ok: true as const, candidate: cand, duplicate: out.duplicate ?? null };
 }
@@ -232,7 +237,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
   // Dono: só entra aqui testando (código) ou com teste em andamento. "#sair" encerra o teste.
   if (m.is_owner && conv?.is_test && /^#?\s*sair\b/i.test(text)) {
     await admin.from('bot_conversations').update({ status: 'encerrada' }).eq('id', conv.id);
-    await sendText(m.number, '🧪 Teste do link encerrado. Voltei a ser o seu assistente.').catch(() => {});
+    await sendText(to(m),'🧪 Teste do link encerrado. Voltei a ser o seu assistente.').catch(() => {});
     return;
   }
 
@@ -248,7 +253,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     // Link (novo, de outro canal ou reenviado): começa uma conversa nova.
     if (conv) await admin.from('bot_conversations').update({ status: 'encerrada' }).eq('id', conv.id);
     if (!channel.is_active) {
-      await sendText(m.number, 'Oi! Esse link de candidatura não está mais ativo. Obrigado pelo interesse! 🙏').catch(() => {});
+      await sendText(to(m),'Oi! Esse link de candidatura não está mais ativo. Obrigado pelo interesse! 🙏').catch(() => {});
       return;
     }
     const { data: nova, error } = await admin.from('bot_conversations').insert({
@@ -259,7 +264,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     await admin.from('bot_messages').insert({ conversation_id: conv.id, role: 'user', content: text || '[mensagem]' });
     const ctx = await loadContext(admin, channel);
     react(m.key ?? null, '👋');
-    await say(admin, conv, m.number, `${m.is_owner ? '🧪 *Modo teste* (manda "#sair" para voltar ao assistente)\n\n' : ''}${welcomeOf(channel, ctx, m.name ?? null)}`);
+    await say(admin, conv, to(m),`${m.is_owner ? '🧪 *Modo teste* (manda "#sair" para voltar ao assistente)\n\n' : ''}${welcomeOf(channel, ctx, m.name ?? null)}`);
     if (!m.file) return; // arquivo junto com o código: segue para o recebimento abaixo
   }
 
@@ -275,7 +280,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     conv = nova;
     channel = def;
     await admin.from('bot_messages').insert({ conversation_id: conv.id, role: 'user', content: text || `[${m.kind}]` });
-    await say(admin, conv, m.number, welcomeOf(def, await loadContext(admin, def), m.name ?? null));
+    await say(admin, conv, to(m),welcomeOf(def, await loadContext(admin, def), m.name ?? null));
     if (!m.file) return;
   }
 
@@ -285,7 +290,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
   }
   if (!channel) { await admin.from('bot_conversations').update({ status: 'encerrada' }).eq('id', conv.id); return; }
   if (!channel.is_active) {
-    await say(admin, conv, m.number, 'Esse atendimento foi encerrado. Obrigado pelo interesse! 🙏');
+    await say(admin, conv, to(m),'Esse atendimento foi encerrado. Obrigado pelo interesse! 🙏');
     await admin.from('bot_conversations').update({ status: 'encerrada' }).eq('id', conv.id);
     return;
   }
@@ -297,22 +302,22 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     await admin.from('bot_messages').insert({ conversation_id: conv.id, role: 'user', content: `[Arquivo${nome ? ` "${nome}"` : ''}]${text && !code ? ` ${text}` : ''}` });
     const isDocx = mime === DOCX_MIME || /\.docx$/i.test(nome ?? '');
     if (mime !== 'application/pdf' && !IMAGE_TYPES.includes(mime) && !isDocx) {
-      await say(admin, conv, m.number, 'Esse tipo de arquivo eu não consigo abrir 😕 Pode mandar o currículo em *PDF*, *Word (.docx)* ou uma *foto* dele?');
+      await say(admin, conv, to(m),'Esse tipo de arquivo eu não consigo abrir 😕 Pode mandar o currículo em *PDF*, *Word (.docx)* ou uma *foto* dele?');
       return;
     }
     if ((conv.candidate_ids ?? []).length >= MAX_CVS_PER_CONV) {
-      await say(admin, conv, m.number, 'Já recebi seus currículos por aqui, obrigado! Se precisar corrigir algo, a equipe te chama. 🙂');
+      await say(admin, conv, to(m),'Já recebi seus currículos por aqui, obrigado! Se precisar corrigir algo, a equipe te chama. 🙂');
       return;
     }
     react(m.key ?? null, '👀');
-    presence(m.number, 20_000);
+    presence(to(m),20_000);
     // Word: extrai o texto e manda como texto; o arquivo original vai para o bucket depois.
     let docText: string | null = null;
     if (isDocx) {
       try { docText = docxText(m.file.base64); } catch (e) { log('WARN', 'docx ilegível', { error: errMsg(e) }); }
       if (!docText || docText.length < 40) {
         react(m.key ?? null, '');
-        await say(admin, conv, m.number, 'Não consegui ler esse arquivo do Word 😕 Pode mandar o currículo em *PDF* ou uma *foto* dele?');
+        await say(admin, conv, to(m),'Não consegui ler esse arquivo do Word 😕 Pode mandar o currículo em *PDF* ou uma *foto* dele?');
         return;
       }
     }
@@ -331,21 +336,21 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     if (!r.ok) {
       log('WARN', 'currículo não salvo', { status: r.status, error: r.error });
       react(m.key ?? null, '');
-      await say(admin, conv, m.number, r.status === 422
+      await say(admin, conv, to(m),r.status === 422
         ? 'Não consegui ler esse arquivo como currículo 😕 Pode mandar em PDF, Word ou uma foto bem nítida, com boa luz?'
         : 'Tive um probleminha para salvar seu currículo. Pode mandar de novo daqui a pouco?');
       return;
     }
     react(m.key ?? null, '✅');
     const n = firstName(r.candidate.full_name);
-    await say(admin, conv, m.number, `Recebi seu currículo${n ? `, ${n}` : ''}! ✅\nNossa equipe vai analisar e, se o seu perfil combinar com a vaga, entramos em contato. Se tiver alguma dúvida, é só perguntar.`);
+    await say(admin, conv, to(m),`Recebi seu currículo${n ? `, ${n}` : ''}! ✅\nNossa equipe vai analisar e, se o seu perfil combinar com a vaga, entramos em contato. Se tiver alguma dúvida, é só perguntar.`);
     return;
   }
 
   // ── Vídeo / outros ──
   if (m.kind === 'video' || m.kind === 'other' || (m.kind === 'document' && !m.file)) {
     await admin.from('bot_messages').insert({ conversation_id: conv.id, role: 'user', content: `[${m.kind}]` });
-    await say(admin, conv, m.number, 'Esse tipo de mensagem eu não consigo abrir. Pode mandar em texto, áudio, PDF ou foto?');
+    await say(admin, conv, to(m),'Esse tipo de mensagem eu não consigo abrir. Pode mandar em texto, áudio, PDF ou foto?');
     return;
   }
   if (!text) return;
@@ -364,13 +369,13 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
   if ((hoje ?? 0) >= MAX_MODEL_CALLS_DAY) {
     if (!fresh?.needs_human) {
       await admin.from('bot_conversations').update({ needs_human: true }).eq('id', conv.id);
-      await say(admin, conv, m.number, 'Vou pedir para alguém da equipe continuar com você por aqui. Obrigado pela paciência! 🙏');
+      await say(admin, conv, to(m),'Vou pedir para alguém da equipe continuar com você por aqui. Obrigado pela paciência! 🙏');
       await notifyOwner(admin, `🙋 Conversa longa no link "${channel.name}" (+${m.number}) — o atendente parou de responder hoje.`);
     }
     return;
   }
 
-  presence(m.number, 15_000);
+  presence(to(m),15_000);
   const ctx = await loadContext(admin, channel);
   const { data: hist } = await admin.from('bot_messages').select('role, content').eq('conversation_id', conv.id).order('id', { ascending: false }).limit(24);
   // Histórico em ordem, juntando papéis repetidos (a API exige alternância começando por user).
@@ -423,7 +428,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     if (texto) reply = texto;
   }
   await admin.from('bot_conversations').update({ model_calls: Number(fresh?.model_calls ?? 0) + calls, cost_usd: Number(fresh?.cost_usd ?? 0) + cost }).eq('id', conv.id);
-  if (reply) await say(admin, conv, m.number, reply);
+  if (reply) await say(admin, conv, to(m),reply);
   if (closeAfter) await admin.from('bot_conversations').update({ status: 'encerrada' }).eq('id', conv.id);
 }
 
@@ -457,7 +462,7 @@ Deno.serve(async (req) => {
     const p = handleIncoming(admin, m).catch(async (e) => {
       const erro = errMsg(e);
       log('ERROR', 'falha no atendimento', { chat: m.chat_id, error: erro });
-      const enviou = await sendText(m.number, 'Tive um probleminha aqui. Pode mandar de novo daqui a pouco?').then(() => true).catch(() => false);
+      const enviou = await sendText(to(m),'Tive um probleminha aqui. Pode mandar de novo daqui a pouco?').then(() => true).catch(() => false);
       // WhatsApp caiu (ex.: 2026-09-14, "device_removed"): o candidato fica sem resposta. Avisa o dono
       // no Telegram, no máximo 1 vez a cada 30 min, para ele parear de novo.
       if (!enviou || /Evolution \/message/.test(erro)) {

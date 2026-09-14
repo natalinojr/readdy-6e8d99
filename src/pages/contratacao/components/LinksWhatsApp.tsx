@@ -301,6 +301,9 @@ function CanalModal({ ch, companies, jobs, onClose, onSave }: {
                 <option value="">Nenhuma (só banco de currículos)</option>
                 {vagas.map((j) => <option key={j.id} value={j.id}>{j.title}{j.status !== 'aberta' ? ` (${j.status})` : ''}</option>)}
               </select>
+              {!d.job_id && d.company_id && vagas.some((j) => j.status === 'aberta') && (
+                <p className="text-[11px] text-amber-600 mt-1">Esta loja tem vaga aberta — sem escolher, o currículo entra só no banco, sem vaga.</p>
+              )}
             </Field>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">

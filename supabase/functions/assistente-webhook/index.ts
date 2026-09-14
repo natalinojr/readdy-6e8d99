@@ -544,7 +544,7 @@ async function hiringReceipts(items: any[]) {
 // Agendamento de entrevista: texto (ou áudio transcrito) de quem não é o dono vai primeiro ao
 // hiring-scheduler; devolve true se era conversa de agendamento ou resposta de entrevistador.
 // deno-lint-ignore no-explicit-any
-async function toHiringScheduler(number: string, data: any): Promise<boolean> {
+async function toHiringScheduler(number: string, data: any, replyTo?: string): Promise<boolean> {
   const p = parseMessage(data.message);
   if (p.inner?.pollUpdateMessage || p.inner?.reactionMessage || p.inner?.protocolMessage) return false;
   let text = String(p.text ?? '').trim();
@@ -555,15 +555,45 @@ async function toHiringScheduler(number: string, data: any): Promise<boolean> {
   if (!text || text === '[Áudio]') return false; // mídia sem texto (currículo) segue para o canal público
   const r = await fetch(`${supabaseUrl}/functions/v1/hiring-scheduler`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-    body: JSON.stringify({ action: 'inbound', number, text, name: data.pushName ?? null }),
+    // reply_to = JID de origem (@lid): o scheduler responde nele e guarda na sessão (ver handle()).
+    body: JSON.stringify({ action: 'inbound', number, reply_to: replyTo || null, text, name: data.pushName ?? null }),
   });
   const out = await r.json().catch(() => ({}));
   return r.ok && out?.handled === true;
 }
 
+// ── @lid (2026-09-14) ──
+// Depois de um repareamento o WhatsApp só entrega (texto e reação) no @lid do contato, mas o evento da
+// Evolution chega aqui só com o telefone em remoteJid/remoteJidAlt e addressingMode 'lid'. O @lid real
+// fica gravado na Evolution: pega pelo findMessages (id da mensagem) e guarda em wa_lid_map.
+async function saveLid(admin: SupabaseClient, phone: string, lid: string) {
+  if (!/^\d{10,15}$/.test(phone) || !lid.endsWith('@lid')) return;
+  await admin.from('wa_lid_map').upsert({ phone, lid, updated_at: new Date().toISOString() }, { onConflict: 'phone' });
+}
+// deno-lint-ignore no-explicit-any
+async function resolveLid(admin: SupabaseClient, key: any, number: string): Promise<string | null> {
+  const direto = [key?.remoteJid, key?.remoteJidAlt, key?.senderLid].map((x) => String(x ?? '')).find((x) => x.endsWith('@lid'));
+  if (direto) { await saveLid(admin, number, direto); return direto; }
+  if (key?.addressingMode !== 'lid') return null;
+  const { data: cached } = await admin.from('wa_lid_map').select('lid').eq('phone', number).maybeSingle();
+  if (cached?.lid) return String(cached.lid);
+  if (!key?.id) return null;
+  for (let i = 0; i < 3; i++) {
+    // deno-lint-ignore no-explicit-any
+    const out: any = await evo(`/chat/findMessages/${evoInstance}`, { where: { key: { id: String(key.id) } }, limit: 1 }).catch(() => null);
+    const k = out?.messages?.records?.[0]?.key ?? null;
+    const lid = [k?.remoteJid, k?.remoteJidAlt].map((x) => String(x ?? '')).find((x) => x.endsWith('@lid'));
+    if (lid) { await saveLid(admin, number, lid); return lid; }
+    await new Promise((r) => setTimeout(r, 700)); // a Evolution pode ainda não ter gravado a mensagem
+  }
+  log('WARN', 'addressingMode lid sem @lid encontrado', { number });
+  return null;
+}
+
 // Prepara a mensagem (áudio transcrito, PDF/foto em base64) e entrega ao canal-publico.
 // deno-lint-ignore no-explicit-any
-async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | null, data: any, isOwner: boolean) {
+async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | null, data: any, isOwner: boolean, replyTo?: string) {
+  const dest = replyTo || number; // responder no JID de origem (@lid), ver handle()
   const p = parseMessage(data.message);
   if (p.inner?.pollUpdateMessage || p.inner?.reactionMessage || p.inner?.protocolMessage) return;
   let text = String(p.text ?? '').trim();
@@ -573,7 +603,7 @@ async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | 
       const b64 = await mediaBase64(data);
       const t = b64 ? await transcribe(b64, p.mime ?? 'audio/ogg') : '';
       text = t ? `[Áudio] ${t}` : '';
-      if (!t) { await sendText(number, 'Não consegui ouvir o áudio 😕 Pode escrever?').catch(() => {}); return; }
+      if (!t) { await sendText(dest, 'Não consegui ouvir o áudio 😕 Pode escrever?').catch(() => {}); return; }
     } else if (p.kind === 'image' || p.kind === 'document') {
       const mime = String(p.mime ?? (p.kind === 'image' ? 'image/jpeg' : '')).split(';')[0].toLowerCase();
       const name = String(p.inner?.documentMessage?.fileName ?? '').trim() || null;
@@ -581,7 +611,7 @@ async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | 
       const isDocx = mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(name ?? '');
       if (mime === 'application/pdf' || IMAGE_TYPES.includes(mime) || isDocx) {
         const b64 = await mediaBase64(data);
-        if (!b64) { await sendText(number, 'Não consegui baixar esse arquivo. Pode mandar de novo?').catch(() => {}); return; }
+        if (!b64) { await sendText(dest, 'Não consegui baixar esse arquivo. Pode mandar de novo?').catch(() => {}); return; }
         file = { base64: b64, mime: isDocx ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : mime, name };
       } else {
         file = null; // tipo que não lemos (.doc antigo etc.): o canal-publico responde pedindo PDF/foto/Word
@@ -593,7 +623,7 @@ async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | 
   }
   const r = await fetch(`${supabaseUrl}/functions/v1/canal-publico`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-    body: JSON.stringify({ action: 'incoming', chat_id: chatId, number, name: data.pushName ?? null, kind: p.kind, text, file, key: msgKey, is_owner: isOwner }),
+    body: JSON.stringify({ action: 'incoming', chat_id: chatId, number, reply_to: dest, name: data.pushName ?? null, kind: p.kind, text, file, key: msgKey, is_owner: isOwner }),
   }).catch((e) => { log('ERROR', 'canal-publico inacessível', { error: errMsg(e) }); return null; });
   if (r && !r.ok) log('ERROR', 'canal-publico recusou', { status: r.status, body: (await r.text()).slice(0, 200) });
 }
@@ -973,15 +1003,22 @@ async function handle(payload: any) {
   // Responde sempre ao JID que chegou (a Evolution resolve @lid e número).
   const chatId = altJid && jid.endsWith('@lid') ? altJid : jid;
   const number = chatId.replace(/@.*$/, '');
-  const msgKey: MsgKey | null = key.id ? { remoteJid: jid, fromMe: false, id: String(key.id) } : null;
+  // Para onde RESPONDER: o JID de origem quando é @lid. Em 2026-09-14, depois de um repareamento, o
+  // WhatsApp passou a entregar só no @lid (envio para o número "sumia" sem erro). `number` segue sendo
+  // o telefone (identidade: histórico, candidato, sessão de agendamento).
+  // O evento pode trazer só o telefone mesmo com addressingMode 'lid': resolveLid acha o @lid real.
+  const lidJid = await resolveLid(admin, key, number).catch((e) => { log('WARN', 'resolveLid falhou', { error: errMsg(e) }); return null; });
+  const replyTo = lidJid ?? number;
+  // Reações também só aparecem se a chave apontar para o @lid.
+  const msgKey: MsgKey | null = key.id ? { remoteJid: lidJid ?? jid, fromMe: false, id: String(key.id) } : null;
   // Canais públicos (links wa.me com código, 2026-09-14): quem não é o dono vai para o canal-publico,
   // que decide se atende (código do link, conversa aberta ou canal padrão) ou ignora. O dono só entra
   // lá testando: mensagem com o código de um canal, ou teste aberto há menos de 30 min.
   // Agendamento de entrevista (Contratação, 2026-09-14): candidato com conversa de agendamento aberta
   // ou entrevistador respondendo um pedido → hiring-scheduler. Se ele não tratar, segue o canal público.
-  if (!isOwner && await toHiringScheduler(number, data).catch((e) => { log('WARN', 'hiring-scheduler', { error: errMsg(e) }); return false; })) return;
+  if (!isOwner && await toHiringScheduler(number, data, replyTo).catch((e) => { log('WARN', 'hiring-scheduler', { error: errMsg(e) }); return false; })) return;
   if (!isOwner || await ownerTestingPublic(admin, chatId, data)) {
-    await toPublicChannel(chatId, number, msgKey, data, isOwner);
+    await toPublicChannel(chatId, number, msgKey, data, isOwner, replyTo);
     return;
   }
   if (!dmEnabled) {
@@ -999,30 +1036,30 @@ async function handle(payload: any) {
     if (p0.kind === 'text' && janela && /^(pronto|acabou|terminei|fim|encerrar|encerra|chega|s[oó] isso|era isso|finaliza[r]?)\b/i.test(txt0)) {
       await admin.from('asst_settings').delete().eq('key', 'wa_cv_intake');
       const n = Number(janela.count ?? 0);
-      await sendText(number, n ? `Fechado: ${n} currículo${n > 1 ? 's' : ''} salvo${n > 1 ? 's' : ''} em Contratação.` : 'Fechado. Não chegou nenhum currículo.').catch(() => {});
+      await sendText(replyTo, n ? `Fechado: ${n} currículo${n > 1 ? 's' : ''} salvo${n > 1 ? 's' : ''} em Contratação.` : 'Fechado. Não chegou nenhum currículo.').catch(() => {});
       if (msgKey) react(msgKey, '👍');
       return;
     }
     if (p0.kind === 'text' && falaDeCv && txt0.length < 250) {
       await admin.from('asst_settings').upsert({ key: 'wa_cv_intake', value: { until: new Date(Date.now() + 60 * 60_000).toISOString(), count: Number(janela?.count ?? 0) }, updated_at: new Date().toISOString() });
-      await sendText(number, 'Pode mandar os currículos (PDF, foto ou texto). Quando terminar, manda "pronto".').catch(() => {});
+      await sendText(replyTo, 'Pode mandar os currículos (PDF, foto ou texto). Quando terminar, manda "pronto".').catch(() => {});
       if (msgKey) react(msgKey, '👍');
       return;
     }
     if ((arquivo && (janela || falaDeCv)) || (p0.kind === 'text' && janela && txt0.length >= 250)) {
-      const res = await cvFromWhatsApp(admin, number, msgKey, data, p0);
+      const res = await cvFromWhatsApp(admin, replyTo, msgKey, data, p0);
       // Não era currículo (ex.: demanda encaminhada com a janela aberta) → vai para o Telegram
-      if (res === 'not_cv') { await relayToTelegram(admin, cfg, chatId, number, msgKey, data, p0); return; }
+      if (res === 'not_cv') { await relayToTelegram(admin, cfg, chatId, replyTo, msgKey, data, p0); return; }
       if (res === 'ok' && janela) {
         await admin.from('asst_settings').upsert({ key: 'wa_cv_intake', value: { until: new Date(Date.now() + 60 * 60_000).toISOString(), count: Number(janela.count ?? 0) + 1 }, updated_at: new Date().toISOString() });
       }
       return;
     }
     // .txt = exportação de conversa do WhatsApp → histórico de grupo (como antes)
-    if (isTxt) { await importGroupExport(admin, number, data, p0, msgKey, allowed); return; }
+    if (isTxt) { await importGroupExport(admin, replyTo, data, p0, msgKey, allowed); return; }
     // Todo o resto (texto, áudio, foto, PDF — inclusive arquivo sem aviso de currículo) vai para o
     // assistente do Telegram, que responde lá.
-    await relayToTelegram(admin, cfg, chatId, number, msgKey, data, p0);
+    await relayToTelegram(admin, cfg, chatId, replyTo, msgKey, data, p0);
     return;
   }
 

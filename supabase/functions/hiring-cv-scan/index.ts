@@ -535,8 +535,21 @@ Deno.serve(async (req: Request) => {
     if (action === 'intake') {
       if (!internal) return errResp('Só para o assistente.', 403);
       const input = inputOf(body);
-      const { out } = await extract(client, input);
-      if (out.legivel === false) return errResp(out.avisos?.[0] || 'Não parece um currículo legível.', 422);
+      // IA indisponível (sem créditos, limite, fora do ar): salva mesmo assim, sem leitura, para não perder
+      // o currículo (caso real 2026-09-14: conta da Anthropic sem créditos). A ficha fica "Leitura simples"
+      // e dá para usar "Organizar com IA" depois.
+      // deno-lint-ignore no-explicit-any
+      let out: any = null;
+      let aiError: string | null = null;
+      try {
+        ({ out } = await extract(client, input));
+      } catch (e) {
+        if (e instanceof HttpError && [402, 429, 500, 502, 503].includes(e.status)) {
+          aiError = e.message;
+          log('WARN', 'intake sem IA', { status: e.status, error: e.message });
+        } else throw e;
+      }
+      if (out && out.legivel === false) return errResp(out.avisos?.[0] || 'Não parece um currículo legível.', 422);
 
       const jobId = body.job_id ? String(body.job_id) : null;
       let companyId = body.company_id ? String(body.company_id) : null;
@@ -552,7 +565,8 @@ Deno.serve(async (req: Request) => {
 
       // Currículo repetido NÃO entra (regra do dono, 2026-09-14): mesmo telefone (últimos 11 dígitos),
       // e-mail ou nome. Confere antes de subir o arquivo. A tela também é travada por índice único.
-      const fields = candidateFields(out);
+      // deno-lint-ignore no-explicit-any
+      const fields: any = out ? candidateFields(out) : { full_name: '', phone: null, email: null, ai_processed: false };
       const fone = onlyDigits(fields.phone).slice(-11);
       const email = String(fields.email ?? '').trim().toLowerCase();
       const nomeKey = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -606,7 +620,11 @@ Deno.serve(async (req: Request) => {
 
       // deno-lint-ignore no-explicit-any
       let match: any = null;
-      if (jobId) {
+      if (jobId && aiError) {
+        // Sem IA não há análise: inscreve na vaga com o motivo (a tela mostra e deixa reanalisar).
+        await admin.from('hiring_applications').upsert({ job_id: jobId, candidate_id: cand.id, error: `IA indisponível: ${aiError}`.slice(0, 300) }, { onConflict: 'job_id,candidate_id' });
+        match = { error: aiError };
+      } else if (jobId) {
         try {
           const app = await runMatch(admin, client, cand.id, jobId);
           match = { score: app.score, fit: app.fit, resumo: app.analysis?.resumo ?? null };
@@ -619,6 +637,7 @@ Deno.serve(async (req: Request) => {
         success: true,
         candidate: { id: cand.id, full_name: cand.full_name, desired_role: cand.desired_role, age: cand.age, birth_date: cand.birth_date, city: cand.city, neighborhood: cand.neighborhood },
         duplicate, company_name: comp?.name ?? null, job_title: jobTitle, match, distance,
+        pending_ai: !!aiError, ai_error: aiError,
       });
     }
 

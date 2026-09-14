@@ -605,6 +605,29 @@ WhatsApp do assistente. Edge **`hiring-scheduler`** (x-internal-key/service role
 - Pegadinhas: `hiring_interviews.format` aceita presencial/telefone/**video** (não "online");
   enquete do WhatsApp não entrega voto (por isso respostas por número/texto).
 
+**Pix só para quem está cadastrado — pelo NOME, nunca pedindo chave (2026-09-14, regra do dono).**
+Gatilho: pedido de reembolso "Pix para o Eduardo" no grupo e o assistente pediu a chave Pix ao dono (e
+nem achou o Eduardo, que estava em `fin_pix_favorecidos` — ele procurou em hr_employees). Agora
+`preparar_pagamento` tem `favorecido` (nome): o brain resolve a chave em `fin_pix_favorecidos` (ativo,
+da loja do Inter) + `fin_suppliers.pix_key`, por nome sem acento; 1 resultado → usa a chave; vários →
+pergunta qual pelo nome (sem mostrar chave); nenhum → responde para cadastrar em Assistente › Pix
+permitidos. `chave_pix` só quando a chave veio num documento (boleto/QR/copia e cola). Prompt (regra de
+solicitação de pagamento, PAGAMENTOS PELO INTER e TRIAGEM DE GRUPO): NUNCA pedir, sugerir ou aceitar
+chave Pix digitada na conversa. A trava do inter-bank (chave precisa ser de fornecedor ou Pix
+permitido) continua valendo.
+
+**Ler grupo = ir buscar no WhatsApp (2026-09-14, pedido do dono).** Gatilho: "veja as msgs do grupo
+de hoje" respondeu "sem mensagens", mas as mensagens do grupo não estavam chegando (a conta passou a
+`addressingMode: 'lid'` depois de 2 LOGOUT/re-pareamentos em 14/09; o próprio banco da Evolution não
+tinha mensagem de grupo depois de 13/09 19:39). Agora `ler_grupo`: (1) `resgatarGrupo` busca na
+Evolution (`POST /chat/findMessages/{inst}` com `where.key.remoteJid` = grupo) o que existe lá e não
+está em `asst_group_messages`, grava (conteúdo "… (resgatada)") e manda foto/PDF para
+`assistente-webhook › reler_midia`; devolve `resgatadas_agora`. (2) Sem mensagens no período e a
+última do grupo com mais de 6 h → devolve `aviso` e o modelo NÃO pode dizer "não teve mensagens":
+diz desde quando não recebe e pede para encaminhar. Limite: a Evolution só tem o que o WhatsApp
+entregou a ela; mensagem que nunca chegou ao número não dá para puxar (o `onDemandHistSync` da
+Evolution só dispara com esse texto enviado pelo próprio celular dentro da conversa).
+
 **Nada repetido (2026-09-14, regra do dono).** Currículo repetido não entra: `hiring-cv-scan ›
 intake` confere telefone (últimos 11 dígitos), e-mail ou nome ANTES de subir o arquivo e responde
 409 `{duplicate: true}`; a tela (grava direto) é travada pelos índices únicos
@@ -700,6 +723,38 @@ MESMO número do assistente (a conversa direta dele estava parada desde que foi 
   WhatsApp com "Abrir candidato" e "Falar pelo meu WhatsApp".
 - Novo propósito (reservas, fornecedores…): valor novo em `bot_channels.purpose` + prompt/ferramentas
   próprias no `canal-publico` (hoje só `curriculos`).
+
+### Respostas no @lid — nada saía pelo WhatsApp (2026-09-14)
+
+Depois do `device_removed` e do repareamento, **todo envio para o telefone (`55...@s.whatsapp.net`)
+sumia sem erro**: a Evolution aceitava (201, status PENDING), mas nada aparecia nem no celular do
+assistente. As mensagens do dono passaram a chegar de `197701790621715@lid` (telefone só em
+`remoteJidAlt`) e o webhook respondia no telefone. Teste autorizado: `sendText` para o `@lid` →
+**chegou**. Correção: `assistente-webhook` separa identidade (`number` = telefone) de destino
+(`replyTo` = JID de origem quando `@lid`) nos envios do dono e repassa `reply_to` ao `canal-publico`,
+que responde em `to(m)`. Diagnóstico: no Postgres da Evolution, `"Message".key->>'remoteJid'` das
+recebidas (`@lid`?) × das enviadas. **Atenção — o evento NÃO traz o @lid:** no webhook, `key.remoteJid` e `key.remoteJidAlt` vêm ambos
+com o telefone e só `key.addressingMode = 'lid'` indica o caso; o @lid real fica no Postgres da
+Evolution. `resolveLid` (webhook) usa o @lid se vier no evento, senão `wa_lid_map` (telefone → @lid),
+senão `POST /chat/findMessages/{instância}` com `where.key.id` (até 3 tentativas) e grava no mapa.
+Resposta (`replyTo`) e chave das reações (`msgKey.remoteJid`) usam esse @lid; o `hiring-scheduler`
+consulta o mapa (`destFor`, telefone com e sem o 9) inclusive no 1º convite. Mapa semeado com o dono.
+**Agendamento (`hiring-scheduler`), mesmo dia:** o webhook repassa
+`reply_to`; quando o candidato responde, o `@lid` fica em `hiring_scheduling_sessions.jid` e `toCand`
+passa a enviar para ele (o 1º convite continua pelo telefone, único dado que temos); o entrevistador
+que responde tem o `@lid` guardado em `hiring_job_scheduling.interviewers[].jid`, usado por
+`toInterviewers`, e a resposta a ele vai para o `@lid`. O cron/Telegram não usa WhatsApp. O status "PENDING" do Postgres da
+Evolution não reflete entrega (fica PENDING até nas mensagens que chegam).
+
+### Currículo salvo mesmo sem IA (2026-09-14)
+
+Teste real pelo link: a conta da Anthropic ficou **sem créditos** ("credit balance is too low") e o
+`hiring-cv-scan › intake` devolvia 402 → o candidato recebia "Tive um probleminha" e o currículo se
+perdia. Agora, com a IA indisponível (402/429/5xx), o intake **salva assim mesmo**: arquivo no bucket,
+nome = nome do arquivo, `ai_processed = false` ("Leitura simples"), sem análise da vaga (a candidatura
+fica com `error = 'IA indisponível: …'`), e devolve `pending_ai` + `ai_error`. O `canal-publico`
+responde "Recebi seu currículo" normalmente e o aviso do dono no Telegram diz que foi salvo sem IA.
+Sem créditos, param também o brain (Telegram), a leitura de notinhas e a análise de vagas.
 
 ### Confirmação do currículo do WhatsApp também no Telegram (2026-09-14)
 

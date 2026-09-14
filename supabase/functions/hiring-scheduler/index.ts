@@ -11,7 +11,10 @@
 //   tick     {}                                  assistente-cron, a cada minuto: convites (8h–20h, até
 //                                                3 por rodada e 10 por hora), cobrança após 24 h sem
 //                                                resposta, lembrete na véspera (candidato + entrevistadores)
-//   inbound  { number, text, name? }             assistente-webhook, para quem NÃO é o dono. Devolve
+//   inbound  { number, reply_to?, text, name? }  assistente-webhook, para quem NÃO é o dono. Devolve
+//                                                (reply_to = JID de origem, ex. "...@lid": respostas vão
+//                                                para ele e ele fica guardado na sessão/entrevistador;
+//                                                desde 2026-09-14 o WhatsApp só entrega no @lid)
 //                                                { handled: true } se era conversa de agendamento ou
 //                                                resposta de entrevistador; senão o webhook segue para o
 //                                                canal-publico.
@@ -129,14 +132,32 @@ async function addHist(admin: SupabaseClient, sessId: string, de: string, texto:
   hist.push({ at: new Date().toISOString(), de, texto: texto.slice(0, 1000) });
   await admin.from('hiring_scheduling_sessions').update({ history: hist.slice(-80), updated_at: new Date().toISOString(), ...extra }).eq('id', sessId);
 }
+// Destino do candidato: o @lid guardado quando ele já respondeu; senão o telefone (1º convite).
+const isLid = (s: unknown) => String(s ?? '').endsWith('@lid');
+// Mapa telefone → @lid gravado pelo assistente-webhook (wa_lid_map). Celular brasileiro aparece com e
+// sem o 9 (o WhatsApp grava muitos sem): procura as duas formas.
+const sbLid = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+async function destFor(phone: string, known?: unknown): Promise<string> {
+  if (isLid(known)) return String(known);
+  const p = digits(phone);
+  if (p.length >= 12) {
+    const variantes = [p];
+    if (p.startsWith('55') && p.length === 13 && p[4] === '9') variantes.push(p.slice(0, 4) + p.slice(5));
+    if (p.startsWith('55') && p.length === 12) variantes.push(p.slice(0, 4) + '9' + p.slice(4));
+    const { data } = await sbLid.from('wa_lid_map').select('lid').in('phone', variantes).limit(1);
+    if (isLid(data?.[0]?.lid)) return String(data![0].lid);
+  }
+  return phone;
+}
 async function toCand(admin: SupabaseClient, c: Ctx, text: string, extra: Row = {}) {
-  const msgId = await sendText(c.sess.phone, text);
+  const msgId = await sendText(await destFor(c.sess.phone, c.sess.jid), text);
   await addHist(admin, c.sess.id, 'assistente', text, { last_out_at: new Date().toISOString(), last_out_msg_id: msgId, delivered_at: null, read_at: null, ...extra });
 }
 async function toInterviewers(c: Ctx, text: string) {
   for (const it of (Array.isArray(c.cfg.interviewers) ? c.cfg.interviewers : []) as Row[]) {
-    const n = phone55(it?.phone);
-    if (n.length < 12) continue;
+    // @lid guardado (resposta dele por aqui ou mapa telefone→@lid do webhook); senão o telefone.
+    if (!isLid(it?.jid) && phone55(it?.phone).length < 12) continue;
+    const n = await destFor(phone55(it?.phone), it?.jid);
     await sendText(n, text).catch((e) => log('WARN', 'aviso ao entrevistador falhou', { error: errMsg(e) }));
   }
 }
@@ -352,14 +373,33 @@ async function handleInterviewer(admin: SupabaseClient, jobIds: string[], text: 
 async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
   const num = last11(body.number);
   const text = String(body.text ?? '').trim();
+  const replyTo = isLid(body.reply_to) ? String(body.reply_to) : null;
   if (num.length < 10 || !text) return false;
   // 1) candidato com conversa de agendamento aberta
   const { data: ss } = await admin.from('hiring_scheduling_sessions').select('*').in('status', ACTIVE).like('phone', `%${num}`).order('updated_at', { ascending: false }).limit(1);
-  if (ss?.[0]) { await handleCandidate(admin, ss[0], text); return true; }
+  if (ss?.[0]) {
+    // Guarda o @lid de onde ele respondeu: daqui em diante as mensagens vão para lá.
+    if (replyTo && ss[0].jid !== replyTo) {
+      await admin.from('hiring_scheduling_sessions').update({ jid: replyTo }).eq('id', ss[0].id);
+      ss[0].jid = replyTo;
+    }
+    await handleCandidate(admin, ss[0], text);
+    return true;
+  }
   // 2) entrevistador de vaga com agendamento ligado
   const { data: cfgs } = await admin.from('hiring_job_scheduling').select('job_id, interviewers').eq('enabled', true);
-  const jobIds = ((cfgs ?? []) as Row[]).filter((c) => (Array.isArray(c.interviewers) ? c.interviewers : []).some((i: Row) => last11(i?.phone) === num)).map((c) => c.job_id);
-  if (jobIds.length) return await handleInterviewer(admin, jobIds, text, phone55(num));
+  const minhas = ((cfgs ?? []) as Row[]).filter((c) => (Array.isArray(c.interviewers) ? c.interviewers : []).some((i: Row) => last11(i?.phone) === num));
+  const jobIds = minhas.map((c) => c.job_id);
+  if (jobIds.length && replyTo) {
+    // Guarda o @lid do entrevistador na configuração da vaga (usado pelos avisos em toInterviewers).
+    for (const cfg of minhas) {
+      const lista = (cfg.interviewers as Row[]).map((i) => (last11(i?.phone) === num && i?.jid !== replyTo ? { ...i, jid: replyTo } : i));
+      if (JSON.stringify(lista) !== JSON.stringify(cfg.interviewers)) {
+        await admin.from('hiring_job_scheduling').update({ interviewers: lista }).eq('job_id', cfg.job_id);
+      }
+    }
+  }
+  if (jobIds.length) return await handleInterviewer(admin, jobIds, text, replyTo ?? phone55(num));
   return false;
 }
 
