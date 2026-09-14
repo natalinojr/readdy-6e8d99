@@ -1,16 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment, type ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { fetchComprasDRE, fetchComprasPeriodo } from '@/lib/comprasDRE';
 import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
+import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
+import { useDreGroups, STANDARD_GROUP_KEYS } from '@/hooks/useDreGroups';
+import { MonthNav, SectionHeader, NoteRow, mesExtenso } from './dreUi';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function addMonths(mes: string, n: number) {
-  const [y, m] = mes.split('-').map(Number);
-  const d = new Date(y, m - 1 + n, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
 function getMonthRange(mes: string) {
   const [y, m] = mes.split('-').map(Number);
   const start = `${mes}-01`;
@@ -235,7 +233,38 @@ function calcDRE(d: DRESnapshot, _mode: 'caixa' | 'competencia') {
   return { receitaBruta, receitaLiquida, lucroBruto, cmv, totalDespesas, resultado, margemBruta, margemLiquida };
 }
 
-// ─── Comparison Row ───────────────────────────────────────────────────────────
+// ─── Árvore de categorias ─────────────────────────────────────────────────────
+type TreeCat = DRECat & { children: TreeCat[] };
+
+function buildTree(cats: DRECat[]): TreeCat[] {
+  const map: Record<string, TreeCat> = {};
+  cats.forEach(c => { map[c.id] = { ...c, children: [] }; });
+  const roots: TreeCat[] = [];
+  cats.forEach(c => {
+    if (c.parent_id && map[c.parent_id]) map[c.parent_id].children.push(map[c.id]);
+    else roots.push(map[c.id]);
+  });
+  return roots;
+}
+
+// Linha-mãe mostra a soma da subárvore (igual ao DRETab): as linhas de 1º nível fecham o total.
+function sumTree(cat: TreeCat, d: Record<string, number>): number {
+  return (d[cat.id] ?? 0) + cat.children.reduce((s, c) => s + sumTree(c, d), 0);
+}
+
+// ─── Linha comparativa ────────────────────────────────────────────────────────
+// Diferença = competência − caixa. `inverse` = linha de custo: competência maior piora o resultado.
+function DiffCell({ caixa, comp, inverse, isMargem }: { caixa: number; comp: number; inverse?: boolean; isMargem?: boolean }) {
+  const diff = comp - caixa;
+  if (Math.abs(diff) < 0.005) return <span className="text-zinc-300 text-xs">—</span>;
+  const good = inverse ? diff < 0 : diff > 0;
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[11px] font-semibold tabular-nums whitespace-nowrap ${good ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+      {diff > 0 ? '+' : '−'}{isMargem ? `${Math.abs(diff).toFixed(1).replace('.', ',')} pp` : formatCurrency(Math.abs(diff))}
+    </span>
+  );
+}
+
 interface CompRowProps {
   label: string;
   caixaVal: number;
@@ -245,73 +274,108 @@ interface CompRowProps {
   isNeg?: boolean;
   isTotal?: boolean;
   isMargem?: boolean;
-  highlight?: boolean;
+  /** Linha só para conferência (não entra na conta). */
+  muted?: boolean;
+  depth?: number;
+  badge?: string;
 }
 
-function CompRow({ label, caixaVal, compVal, caixaBase, compBase, isNeg, isTotal, isMargem, highlight }: CompRowProps) {
-  const diff = compVal - caixaVal;
-  const diffPct = caixaVal !== 0 ? ((compVal - caixaVal) / Math.abs(caixaVal)) * 100 : null;
-  const hasDiff = Math.abs(diff) > 0.01;
-
-  const fmtVal = (v: number, neg?: boolean) =>
-    neg ? `(${formatCurrency(Math.abs(v))})` : formatCurrency(v);
-
-  const fmtMargem = (v: number) => `${v.toFixed(1)}%`;
+function CompRow({ label, caixaVal, compVal, caixaBase, compBase, isNeg, isTotal, isMargem, muted, depth = 1, badge }: CompRowProps) {
+  const fmt = (v: number) => isMargem
+    ? `${v.toFixed(1).replace('.', ',')}%`
+    : isNeg ? `(${formatCurrency(Math.abs(v))})` : formatCurrency(v);
+  const tone = (v: number) => muted ? 'text-zinc-400' : isNeg || v < 0 ? 'text-red-500' : isTotal ? 'text-zinc-900' : 'text-zinc-800';
+  const cell = `px-4 text-right tabular-nums whitespace-nowrap text-sm ${isTotal ? 'py-3 font-bold' : 'py-2 font-medium'}`;
 
   return (
-    <tr className={`${isTotal ? 'bg-zinc-50 border-t-2 border-zinc-200 font-bold' : 'hover:bg-zinc-50/50'} ${highlight ? 'bg-amber-50/30' : ''} transition-colors`}>
-      <td className={`px-5 py-2.5 text-sm ${isTotal ? 'font-bold text-zinc-900' : 'font-medium text-zinc-700'}`}>
-        {label}
+    <tr className={`transition-colors ${isTotal ? 'bg-zinc-50' : 'hover:bg-zinc-50/70'}`}>
+      <td className={`pl-5 pr-3 ${isTotal ? 'py-3' : 'py-2'}`}>
+        <div className="flex items-center gap-2 min-w-0" style={{ paddingLeft: Math.max(0, depth - 1) * 18 }}>
+          {isTotal && (
+            <span className="w-5 h-5 rounded-md bg-zinc-900 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">=</span>
+          )}
+          {depth > 1 && <span className="w-2.5 h-px bg-zinc-300 flex-shrink-0" />}
+          <span className={`truncate ${
+            isTotal ? 'text-[13px] font-bold text-zinc-900'
+              : muted ? 'text-[13px] text-zinc-400'
+              : depth <= 1 ? 'text-sm text-zinc-700'
+              : 'text-[13px] text-zinc-500'
+          }`}>
+            {label}
+          </span>
+          {badge && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap bg-zinc-100 text-zinc-500">{badge}</span>
+          )}
+        </div>
       </td>
-
-      {/* Caixa */}
-      <td className={`px-4 py-2.5 text-sm text-right ${isTotal ? 'font-bold' : ''} ${isNeg ? 'text-red-500' : 'text-zinc-800'}`}>
-        {isMargem ? fmtMargem(caixaVal) : fmtVal(caixaVal, isNeg)}
-      </td>
-      <td className="px-3 py-2.5 text-xs text-right text-zinc-400">
-        {!isMargem && pct(caixaVal, caixaBase)}
-      </td>
-
-      {/* Competência */}
-      <td className={`px-4 py-2.5 text-sm text-right ${isTotal ? 'font-bold' : ''} ${isNeg ? 'text-red-500' : 'text-zinc-800'}`}>
-        {isMargem ? fmtMargem(compVal) : fmtVal(compVal, isNeg)}
-      </td>
-      <td className="px-3 py-2.5 text-xs text-right text-zinc-400">
-        {!isMargem && pct(compVal, compBase)}
-      </td>
-
-      {/* Diferença */}
-      <td className="px-4 py-2.5 text-sm text-right">
-        {hasDiff ? (
-          <div className="flex flex-col items-end gap-0.5">
-            <span className={`font-bold text-sm ${diff > 0 ? 'text-green-600' : 'text-red-500'}`}>
-              {diff > 0 ? '+' : ''}{isMargem ? `${diff.toFixed(1)}pp` : formatCurrency(diff)}
-            </span>
-            {diffPct !== null && !isMargem && (
-              <span className={`text-xs px-1.5 py-0.5 rounded font-semibold ${diff > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-                {diff > 0 ? '+' : ''}{diffPct.toFixed(1)}%
-              </span>
-            )}
-          </div>
-        ) : (
-          <span className="text-zinc-300 text-xs">—</span>
-        )}
+      <td className={`${cell} ${tone(caixaVal)}`}>{fmt(caixaVal)}</td>
+      <td className="px-3 py-2 text-right text-xs text-zinc-400 tabular-nums">{!isMargem && pct(caixaVal, caixaBase)}</td>
+      <td className={`${cell} ${tone(compVal)}`}>{fmt(compVal)}</td>
+      <td className="px-3 py-2 text-right text-xs text-zinc-400 tabular-nums">{!isMargem && pct(compVal, compBase)}</td>
+      <td className="pl-4 pr-5 py-2 text-right">
+        {muted ? <span className="text-zinc-300 text-xs">—</span> : <DiffCell caixa={caixaVal} comp={compVal} inverse={isNeg} isMargem={isMargem} />}
       </td>
     </tr>
   );
 }
 
-function SectionHeader({ label }: { label: string }) {
+function CatTreeCompRows({ cats, depth, caixa, comp, caixaBase, compBase }: {
+  cats: TreeCat[]; depth: number;
+  caixa: Record<string, number>; comp: Record<string, number>;
+  caixaBase: number; compBase: number;
+}) {
   return (
-    <tr className="bg-zinc-900">
-      <td colSpan={6} className="px-5 py-2 text-xs font-bold text-zinc-300 uppercase tracking-widest">{label}</td>
-    </tr>
+    <>
+      {cats.map(cat => {
+        const cv = sumTree(cat, caixa);
+        const pv = sumTree(cat, comp);
+        if (cv === 0 && pv === 0) return null;
+        return (
+          <Fragment key={cat.id}>
+            <CompRow label={cat.name} caixaVal={cv} compVal={pv} caixaBase={caixaBase} compBase={compBase} isNeg depth={depth} />
+            <CatTreeCompRows cats={cat.children} depth={depth + 1} caixa={caixa} comp={comp} caixaBase={caixaBase} compBase={compBase} />
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}
+
+// Card de resumo: os dois regimes lado a lado + a diferença.
+function CompareCard({
+  label, icon, caixa, comp, inverse, sub, colorBySign,
+}: { label: string; icon: string; caixa: number; comp: number; inverse?: boolean; sub?: ReactNode; colorBySign?: boolean }) {
+  const tone = (v: number) => colorBySign ? (v >= 0 ? 'text-emerald-700' : 'text-red-600') : 'text-zinc-900';
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0">
+            <i className={`${icon} text-sm`} />
+          </span>
+          <span className="text-xs font-semibold text-zinc-500 truncate">{label}</span>
+        </div>
+        <DiffCell caixa={caixa} comp={comp} inverse={inverse} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-[11px] text-zinc-400 flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-zinc-400" />Caixa</p>
+          <p className={`text-xl font-bold tabular-nums tracking-tight ${tone(caixa)}`}>{formatCurrency(caixa)}</p>
+        </div>
+        <div>
+          <p className="text-[11px] text-zinc-400 flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" />Competência</p>
+          <p className={`text-xl font-bold tabular-nums tracking-tight ${tone(comp)}`}>{formatCurrency(comp)}</p>
+        </div>
+      </div>
+      {sub && <p className="text-xs text-zinc-400">{sub}</p>}
+    </div>
   );
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function DREComparativoTab() {
   const { user } = useAuth();
+  const { customGroups: dreGroups } = useDreGroups();
   const today = new Date();
   const [mes, setMes] = useState(
     `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
@@ -322,6 +386,9 @@ export default function DREComparativoTab() {
   const [loading, setLoading] = useState(true);
 
   const canGoNext = mes < `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+
+  // Nomes da maquininha e do banco principal (Conciliação › ⚙ › Como o dinheiro entra)
+  const { labels: flowLabels } = useMoneyFlow();
 
   const loadData = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -363,300 +430,264 @@ export default function DREComparativoTab() {
   const caixa = calcDRE(caixaData, 'caixa');
   const comp = calcDRE(compData, 'competencia');
 
-  const expenseCats = dreCats.filter(c => c.group_type === 'expense');
-  const costCats = dreCats.filter(c => c.group_type === 'cost');
+  const expenseTree = buildTree(dreCats.filter(c => c.group_type === 'expense'));
+  const costTree = buildTree(dreCats.filter(c => c.group_type === 'cost'));
+  // Grupos criados pela loja (ex.: "Despesas fixas"). Antes não tinham linha aqui, mas
+  // entravam no total e no resultado — a tabela não fechava.
+  const customKeys = [...new Set(dreCats.map(c => c.group_type))].filter(k => !STANDARD_GROUP_KEYS.includes(k));
+  const customTrees = customKeys.map(key => ({
+    key,
+    label: dreGroups.find(g => g.key === key)?.label ?? key,
+    tree: buildTree(dreCats.filter(c => c.group_type === key)),
+  }));
 
-  const diffResultado = comp.resultado - caixa.resultado;
-  const diffReceita = comp.receitaBruta - caixa.receitaBruta;
-  // Total de despesas do card = mesmo total que entra no resultado (inclui folha e taxas).
+  // Total de despesas = mesmo total que entra no resultado (inclui folha e taxas).
   const caixaDespesasTotais = caixa.totalDespesas + caixaData.custoPessoal + caixaData.taxasMaquininha;
   const compDespesasTotais = comp.totalDespesas + compData.custoPessoal + compData.taxasMaquininha;
-  const diffDespesas = compDespesasTotais - caixaDespesasTotais;
-
-  const mesLabel = new Date(mes + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const diffResultado = comp.resultado - caixa.resultado;
+  const fmtPct = (n: number) => `${n.toFixed(1).replace('.', ',')}%`;
+  const semCaixa = caixaData.despesasPorCategoria['__sem__'] ?? 0;
+  const semComp = compData.despesasPorCategoria['__sem__'] ?? 0;
+  const rowBase = { caixaBase: caixa.receitaBruta, compBase: comp.receitaBruta };
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
 
-      {/* Header */}
+      {/* ── Barra de controles ── */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg overflow-hidden">
-          <button
-            onClick={() => setMes(m => addMonths(m, -1))}
-            className="w-9 h-9 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 hover:text-zinc-800 transition-colors"
-          >
-            <i className="ri-arrow-left-s-line" />
-          </button>
-          <input
-            type="month" value={mes}
-            onChange={e => setMes(e.target.value)}
-            className="border-0 px-2 py-2 text-sm font-semibold text-zinc-800 focus:outline-none bg-transparent text-center"
-          />
-          <button
-            onClick={() => canGoNext && setMes(m => addMonths(m, 1))}
-            disabled={!canGoNext}
-            className="w-9 h-9 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 hover:text-zinc-800 transition-colors disabled:opacity-30"
-          >
-            <i className="ri-arrow-right-s-line" />
-          </button>
+        <MonthNav mes={mes} onChange={setMes} canGoNext={canGoNext} />
+        <div className="flex items-center gap-2 px-3 py-2 bg-zinc-100 rounded-xl">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-zinc-600"><span className="w-2 h-2 rounded-full bg-zinc-400" />Caixa</span>
+          <span className="text-zinc-300 text-xs">×</span>
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-zinc-600"><span className="w-2 h-2 rounded-full bg-amber-400" />Competência</span>
         </div>
-
-        <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg">
-          <i className="ri-scales-3-line text-zinc-500 text-sm" />
-          <span className="text-xs font-semibold text-zinc-600">Comparativo Caixa × Competência</span>
-        </div>
-
         <button
           onClick={loadData}
-          className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-lg text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap ml-auto"
+          className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap ml-auto shadow-sm"
         >
           <i className="ri-refresh-line text-sm" /> Atualizar
         </button>
       </div>
 
-      {/* KPI cards de diferença */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className={`rounded-2xl border p-5 ${diffReceita >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-          <div className="flex items-center gap-2 mb-2">
-            <div className={`w-8 h-8 flex items-center justify-center rounded-xl ${diffReceita >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-              <i className={`${diffReceita >= 0 ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} ${diffReceita >= 0 ? 'text-green-600' : 'text-red-600'} text-base`} />
-            </div>
-            <p className="text-xs font-semibold text-zinc-600">Diferença de Receita</p>
-          </div>
-          <p className={`text-2xl font-black ${diffReceita >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-            {diffReceita >= 0 ? '+' : ''}{formatCurrency(diffReceita)}
-          </p>
-          <p className="text-xs text-zinc-500 mt-1">
-            Competência reconhece {diffReceita >= 0 ? 'mais' : 'menos'} receita que o caixa
-          </p>
-        </div>
-
-        <div className={`rounded-2xl border p-5 ${diffDespesas <= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-          <div className="flex items-center gap-2 mb-2">
-            <div className={`w-8 h-8 flex items-center justify-center rounded-xl ${diffDespesas <= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-              <i className={`${diffDespesas <= 0 ? 'ri-arrow-down-line' : 'ri-arrow-up-line'} ${diffDespesas <= 0 ? 'text-green-600' : 'text-red-600'} text-base`} />
-            </div>
-            <p className="text-xs font-semibold text-zinc-600">Diferença de Despesas</p>
-          </div>
-          <p className={`text-2xl font-black ${diffDespesas <= 0 ? 'text-green-700' : 'text-red-700'}`}>
-            {diffDespesas >= 0 ? '+' : ''}{formatCurrency(diffDespesas)}
-          </p>
-          <p className="text-xs text-zinc-500 mt-1">
-            Competência reconhece {diffDespesas >= 0 ? 'mais' : 'menos'} despesas que o caixa
-          </p>
-        </div>
-
-        <div className={`rounded-2xl border p-5 ${diffResultado >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-          <div className="flex items-center gap-2 mb-2">
-            <div className={`w-8 h-8 flex items-center justify-center rounded-xl ${diffResultado >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-              <i className={`ri-scales-3-line ${diffResultado >= 0 ? 'text-green-600' : 'text-red-600'} text-base`} />
-            </div>
-            <p className="text-xs font-semibold text-zinc-600">Diferença no Resultado</p>
-          </div>
-          <p className={`text-2xl font-black ${diffResultado >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-            {diffResultado >= 0 ? '+' : ''}{formatCurrency(diffResultado)}
-          </p>
-          <p className="text-xs text-zinc-500 mt-1">
-            {diffResultado >= 0
-              ? 'Competência mostra resultado melhor que o caixa'
-              : 'Competência mostra resultado pior que o caixa'}
-          </p>
-        </div>
+      {/* ── Cards de resumo ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <CompareCard
+          label="Receita bruta"
+          icon="ri-money-dollar-box-line"
+          caixa={caixa.receitaBruta}
+          comp={comp.receitaBruta}
+        />
+        <CompareCard
+          label="Custos + despesas"
+          icon="ri-bill-line"
+          caixa={caixa.cmv + caixaDespesasTotais}
+          comp={comp.cmv + compDespesasTotais}
+          inverse
+          sub="CMV, pessoal, taxas e todas as categorias de despesa"
+        />
+        <CompareCard
+          label="Resultado líquido"
+          icon="ri-line-chart-line"
+          caixa={caixa.resultado}
+          comp={comp.resultado}
+          colorBySign
+          sub={<>Margem líquida: caixa <strong className="text-zinc-600">{fmtPct(caixa.margemLiquida)}</strong> · competência <strong className="text-zinc-600">{fmtPct(comp.margemLiquida)}</strong></>}
+        />
       </div>
 
-      {/* Alertas de divergência */}
+      {/* ── Por que os regimes diferem ── */}
       {(compData.receitaAReceber > 0 || compData.despesasAPagar > 0 || compData.cmvComprasPendentes > 0) && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <i className="ri-information-line text-amber-600" />
-            <p className="text-xs font-bold text-amber-800">Itens que causam divergência entre os regimes em {mesLabel}</p>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            {compData.receitaAReceber > 0 && (
-              <div className="bg-white border border-amber-100 rounded-xl p-3">
-                <p className="text-xs font-semibold text-amber-700">Receita a Receber</p>
-                <p className="text-base font-black text-amber-800 mt-0.5">{formatCurrency(compData.receitaAReceber)}</p>
-                <p className="text-xs text-amber-500 mt-0.5">Saldo em aberto — informativo, não somado na receita de nenhum dos regimes</p>
+        <div className="bg-amber-50/60 border border-amber-100 rounded-2xl p-4">
+          <p className="text-xs text-amber-800 mb-3 flex items-start gap-1.5">
+            <i className="ri-scales-3-line mt-px" />
+            <span>
+              <strong>Por que os dois regimes diferem em {mesExtenso(mes).toLowerCase()}:</strong>{' '}
+              {diffResultado >= 0
+                ? <>a competência mostra resultado <strong>{formatCurrency(diffResultado)} melhor</strong> que o caixa.</>
+                : <>a competência mostra resultado <strong>{formatCurrency(Math.abs(diffResultado))} pior</strong> que o caixa.</>}
+            </span>
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {[
+              { label: 'Saldo a receber', value: compData.receitaAReceber, hint: 'Recebíveis em aberto — informativo, não soma na receita', dot: 'bg-indigo-400' },
+              { label: 'Despesas a pagar', value: compData.despesasAPagar, hint: 'Contas do mês ainda não pagas — só na competência', dot: 'bg-orange-400' },
+              { label: 'Compras a pagar', value: compData.cmvComprasPendentes, hint: 'Compras do mês ainda não pagas — só na competência', dot: 'bg-amber-400' },
+            ].filter(s => s.value > 0).map(s => (
+              <div key={s.label} className="bg-white border border-amber-100 rounded-xl px-3 py-2.5">
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${s.dot}`} />
+                  <p className="text-xs font-semibold text-zinc-600">{s.label}</p>
+                </div>
+                <p className="text-base font-bold text-zinc-900 tabular-nums">{formatCurrency(s.value)}</p>
+                <p className="text-[11px] text-zinc-400">{s.hint}</p>
               </div>
-            )}
-            {compData.despesasAPagar > 0 && (
-              <div className="bg-white border border-red-100 rounded-xl p-3">
-                <p className="text-xs font-semibold text-red-700">Despesas a Pagar</p>
-                <p className="text-base font-black text-red-800 mt-0.5">{formatCurrency(compData.despesasAPagar)}</p>
-                <p className="text-xs text-red-400 mt-0.5">Reconhecidas na competência, não no caixa</p>
-              </div>
-            )}
-            {compData.cmvComprasPendentes > 0 && (
-              <div className="bg-white border border-orange-100 rounded-xl p-3">
-                <p className="text-xs font-semibold text-orange-700">Compras a Pagar</p>
-                <p className="text-base font-black text-orange-800 mt-0.5">{formatCurrency(compData.cmvComprasPendentes)}</p>
-                <p className="text-xs text-orange-400 mt-0.5">Compras não pagas no período (estoque, não CMV)</p>
-              </div>
-            )}
+            ))}
           </div>
         </div>
       )}
 
-      {/* Tabela comparativa */}
+      {/* ── Tabela comparativa ── */}
       <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
-        {/* Cabeçalho das colunas */}
-        <div className="grid grid-cols-[2fr_1fr_0.6fr_1fr_0.6fr_1fr] bg-zinc-950 text-white">
-          <div className="px-5 py-3 text-xs font-semibold uppercase tracking-wide">Descrição</div>
-          <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right">
-            <div className="flex items-center justify-end gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-zinc-400" />
-              Regime de Caixa
-            </div>
-          </div>
-          <div className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-right text-zinc-400">%</div>
-          <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right">
-            <div className="flex items-center justify-end gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-amber-400" />
-              Competência
-            </div>
-          </div>
-          <div className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-right text-zinc-400">%</div>
-          <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right text-zinc-300">Diferença</div>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+          <h3 className="text-sm font-bold text-zinc-800">Caixa × Competência — {mesExtenso(mes)}</h3>
+          <span className="text-[11px] text-zinc-400">Diferença = competência − caixa (verde melhora o resultado)</span>
         </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px]">
+            <thead>
+              <tr className="border-b border-zinc-200 text-zinc-400">
+                <th className="text-left pl-5 pr-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide w-[34%]">Descrição</th>
+                <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-700">
+                  <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-zinc-400" />Caixa</span>
+                </th>
+                <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide">%</th>
+                <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-700">
+                  <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" />Competência</span>
+                </th>
+                <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide">%</th>
+                <th className="text-right pl-4 pr-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide">Diferença</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100/80">
 
-        <table className="w-full">
-          <tbody className="divide-y divide-zinc-100">
+              {/* ── RECEITAS ── */}
+              <SectionHeader label="Receitas" icon="ri-arrow-down-circle-line" tone="emerald" colSpan={6} />
+              {(caixaData.receitaBalcao > 0 || compData.receitaBalcao > 0) && (
+                <CompRow label="Vendas balcão / hora" caixaVal={caixaData.receitaBalcao} compVal={compData.receitaBalcao} {...rowBase} />
+              )}
+              {(caixaData.receitaDelivery > 0 || compData.receitaDelivery > 0) && (
+                <CompRow label="Vendas delivery" caixaVal={caixaData.receitaDelivery} compVal={compData.receitaDelivery} {...rowBase} />
+              )}
+              {(caixaData.receitaMesa > 0 || compData.receitaMesa > 0) && (
+                <CompRow label="Vendas mesa" caixaVal={caixaData.receitaMesa} compVal={compData.receitaMesa} {...rowBase} />
+              )}
+              {(caixaData.receitaAutoatendimento > 0 || compData.receitaAutoatendimento > 0) && (
+                <CompRow label="Autoatendimento" caixaVal={caixaData.receitaAutoatendimento} compVal={compData.receitaAutoatendimento} {...rowBase} />
+              )}
+              {(caixaData.receitaStone > 0 || compData.receitaStone > 0) && (
+                <CompRow label={`Vendas em cartão (${flowLabels.card})`} caixaVal={caixaData.receitaStone} compVal={compData.receitaStone} {...rowBase} />
+              )}
+              {((caixaData.receitaPix ?? 0) > 0 || (compData.receitaPix ?? 0) > 0) && (
+                <CompRow label={`Pix recebido (${flowLabels.bank})`} caixaVal={caixaData.receitaPix ?? 0} compVal={compData.receitaPix ?? 0} {...rowBase} />
+              )}
+              {((caixaData.receitaIfood ?? 0) > 0 || (compData.receitaIfood ?? 0) > 0) && (
+                <CompRow label="Vendas iFood" caixaVal={caixaData.receitaIfood ?? 0} compVal={compData.receitaIfood ?? 0} {...rowBase} />
+              )}
+              {caixa.receitaBruta === 0 && comp.receitaBruta === 0 && (
+                <tr><td colSpan={6} className="px-5 py-3 text-xs text-zinc-400 text-center">Nenhuma receita registrada neste período</td></tr>
+              )}
+              <CompRow label="Receita bruta" caixaVal={caixa.receitaBruta} compVal={comp.receitaBruta} {...rowBase} isTotal />
+              {/* BUG-41: saldo a receber é informação, NÃO soma na receita bruta (a venda a prazo
+                  já está no payments/auto_sale — somar de novo era dupla contagem). */}
+              {compData.receitaAReceber > 0 && (
+                <CompRow label="A receber (saldo)" caixaVal={0} compVal={compData.receitaAReceber} {...rowBase} muted badge="Só conferência" />
+              )}
+              {/* Informativos: já fora da receita (cancelado não vira payment; o valor recebido
+                  já é líquido de desconto). Subtrair aqui era dedução dupla. */}
+              {(caixaData.cancelamentos > 0 || compData.cancelamentos > 0) && (
+                <CompRow label="Cancelamentos" caixaVal={caixaData.cancelamentos} compVal={compData.cancelamentos} {...rowBase} muted badge="Só conferência" />
+              )}
+              {(caixaData.descontos > 0 || compData.descontos > 0) && (
+                <CompRow label="Descontos concedidos" caixaVal={caixaData.descontos} compVal={compData.descontos} {...rowBase} muted badge="Só conferência" />
+              )}
+              <CompRow label="Receita líquida" caixaVal={caixa.receitaLiquida} compVal={comp.receitaLiquida} {...rowBase} isTotal />
 
-            {/* ── RECEITAS ── */}
-            <SectionHeader label="Receitas" />
-            {(caixaData.receitaBalcao > 0 || compData.receitaBalcao > 0) && (
-              <CompRow label="Vendas Balcão / Hora" caixaVal={caixaData.receitaBalcao} compVal={compData.receitaBalcao} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
-            )}
-            {(caixaData.receitaDelivery > 0 || compData.receitaDelivery > 0) && (
-              <CompRow label="Vendas Delivery" caixaVal={caixaData.receitaDelivery} compVal={compData.receitaDelivery} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
-            )}
-            {(caixaData.receitaMesa > 0 || compData.receitaMesa > 0) && (
-              <CompRow label="Vendas Mesa" caixaVal={caixaData.receitaMesa} compVal={compData.receitaMesa} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
-            )}
-            {(caixaData.receitaAutoatendimento > 0 || compData.receitaAutoatendimento > 0) && (
-              <CompRow label="Autoatendimento" caixaVal={caixaData.receitaAutoatendimento} compVal={compData.receitaAutoatendimento} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
-            )}
-            {(caixaData.receitaStone > 0 || compData.receitaStone > 0) && (
-              <CompRow label="Vendas em Cartão (Stone)" caixaVal={caixaData.receitaStone} compVal={compData.receitaStone} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
-            )}
-            {((caixaData.receitaPix ?? 0) > 0 || (compData.receitaPix ?? 0) > 0) && (
-              <CompRow label="Pix Recebido (Inter)" caixaVal={caixaData.receitaPix ?? 0} compVal={compData.receitaPix ?? 0} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
-            )}
-            {((caixaData.receitaIfood ?? 0) > 0 || (compData.receitaIfood ?? 0) > 0) && (
-              <CompRow label="Vendas iFood" caixaVal={caixaData.receitaIfood ?? 0} compVal={compData.receitaIfood ?? 0} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
-            )}
-            {/* BUG-41: saldo a receber é informação, NÃO soma na receita bruta (a venda a prazo
-                já está no payments/auto_sale — somar de novo era dupla contagem). */}
-            {compData.receitaAReceber > 0 && (
-              <CompRow label="(i) A receber (saldo — não somado na receita)" caixaVal={0} compVal={compData.receitaAReceber} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} highlight />
-            )}
-            <CompRow label="(=) RECEITA BRUTA" caixaVal={caixa.receitaBruta} compVal={comp.receitaBruta} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isTotal />
-            {/* Informativos: já fora da receita (cancelado não vira payment; o valor recebido
-                já é líquido de desconto). Subtrair aqui era dedução dupla. */}
-            <CompRow label="(i) Cancelamentos (informativo — já fora da receita)" caixaVal={caixaData.cancelamentos} compVal={compData.cancelamentos} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
-            <CompRow label="(i) Descontos (informativo — já fora da receita)" caixaVal={caixaData.descontos} compVal={compData.descontos} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} />
-            <CompRow label="(=) RECEITA LÍQUIDA" caixaVal={caixa.receitaLiquida} compVal={comp.receitaLiquida} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isTotal />
+              {/* ── CUSTOS ── */}
+              <SectionHeader label="Custos" icon="ri-shopping-cart-2-line" tone="orange" colSpan={6} />
+              <CompRow label="CMV — custo das mercadorias" caixaVal={caixa.cmv} compVal={comp.cmv} {...rowBase} isNeg />
+              <NoteRow colSpan={6}>
+                Caixa = compras <strong className="text-zinc-500">pagas</strong> no mês (inclusive de meses anteriores). Competência = compras <strong className="text-zinc-500">feitas</strong> no mês, pagas ou não.
+              </NoteRow>
+              <CatTreeCompRows cats={costTree} depth={1} caixa={caixaData.despesasPorCategoria} comp={compData.despesasPorCategoria} {...rowBase} />
+              <CompRow label="Lucro bruto" caixaVal={caixa.lucroBruto} compVal={comp.lucroBruto} {...rowBase} isTotal />
 
-            {/* ── CUSTOS ── */}
-            <SectionHeader label="Custos" />
-            <CompRow label="CMV — Custo dos Produtos Vendidos" caixaVal={caixa.cmv} compVal={comp.cmv} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
-            {/* P2: CMV por consumo é igual nos dois regimes; não há mais "CMV pendente" */}
-            {costCats.map(cat => {
-              const cv = caixaData.despesasPorCategoria[cat.id] ?? 0;
-              const pv = compData.despesasPorCategoria[cat.id] ?? 0;
-              if (cv === 0 && pv === 0) return null;
-              return <CompRow key={cat.id} label={cat.name} caixaVal={cv} compVal={pv} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />;
-            })}
-            <CompRow label="(=) LUCRO BRUTO" caixaVal={caixa.lucroBruto} compVal={comp.lucroBruto} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isTotal />
+              {/* ── DESPESAS OPERACIONAIS ── */}
+              <SectionHeader label="Despesas operacionais" icon="ri-bill-line" tone="rose" colSpan={6} />
+              {/* Folha e taxa de maquininha: existiam no DRETab e faltavam aqui — sem elas o
+                  resultado do comparativo era otimista e nunca batia com a DRE. */}
+              {(caixaData.custoPessoal > 0 || compData.custoPessoal > 0) && (
+                <CompRow label="Pessoal (folha + FGTS)" caixaVal={caixaData.custoPessoal} compVal={compData.custoPessoal} {...rowBase} isNeg />
+              )}
+              {(caixaData.taxasMaquininha > 0 || compData.taxasMaquininha > 0) && (
+                <CompRow label="Taxas de cartão / Pix / iFood" caixaVal={caixaData.taxasMaquininha} compVal={compData.taxasMaquininha} {...rowBase} isNeg />
+              )}
+              <CatTreeCompRows cats={expenseTree} depth={1} caixa={caixaData.despesasPorCategoria} comp={compData.despesasPorCategoria} {...rowBase} />
+              {(semCaixa > 0 || semComp > 0) && (
+                <CompRow label="Sem categoria (a classificar)" caixaVal={semCaixa} compVal={semComp} {...rowBase} isNeg badge="A classificar" />
+              )}
+              {compData.despesasAPagar > 0 && (
+                <CompRow label="Despesas a pagar (já inclusas acima)" caixaVal={0} compVal={compData.despesasAPagar} {...rowBase} muted badge="Só conferência" />
+              )}
 
-            {/* ── DESPESAS OPERACIONAIS ── */}
-            <SectionHeader label="Despesas Operacionais" />
-            {expenseCats.map(cat => {
-              const cv = caixaData.despesasPorCategoria[cat.id] ?? 0;
-              const pv = compData.despesasPorCategoria[cat.id] ?? 0;
-              if (cv === 0 && pv === 0) return null;
-              return <CompRow key={cat.id} label={cat.name} caixaVal={cv} compVal={pv} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />;
-            })}
-            {compData.despesasAPagar > 0 && (
-              <CompRow label="(i) Despesas a Pagar (não pagas — já inclusas nas categorias acima)" caixaVal={0} compVal={compData.despesasAPagar} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} highlight />
-            )}
-            {/* Folha e taxa de maquininha: existiam no DRETab e faltavam aqui — sem elas o
-                resultado do comparativo era otimista e nunca batia com a DRE. */}
-            {(caixaData.custoPessoal > 0 || compData.custoPessoal > 0) && (
-              <CompRow label="Custo com Pessoal (Folha + FGTS)" caixaVal={caixaData.custoPessoal} compVal={compData.custoPessoal} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
-            )}
-            {(caixaData.taxasMaquininha > 0 || compData.taxasMaquininha > 0) && (
-              <CompRow label="Taxas de Intermediação (Maquininha/PIX)" caixaVal={caixaData.taxasMaquininha} compVal={compData.taxasMaquininha} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
-            )}
-            {(caixaData.despesasPorCategoria['__sem__'] ?? 0) + (compData.despesasPorCategoria['__sem__'] ?? 0) > 0 && (
-              <CompRow label="Sem categoria DRE (a classificar)" caixaVal={caixaData.despesasPorCategoria['__sem__'] ?? 0} compVal={compData.despesasPorCategoria['__sem__'] ?? 0} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg />
-            )}
-            <CompRow label="(=) TOTAL DE DESPESAS" caixaVal={caixa.totalDespesas + caixaData.custoPessoal + caixaData.taxasMaquininha} compVal={comp.totalDespesas + compData.custoPessoal + compData.taxasMaquininha} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isNeg isTotal />
+              {/* ── GRUPOS CRIADOS PELA LOJA ── */}
+              {customTrees.map(g => {
+                const temValor = g.tree.some(c => sumTree(c, caixaData.despesasPorCategoria) !== 0 || sumTree(c, compData.despesasPorCategoria) !== 0);
+                if (!temValor) return null;
+                return (
+                  <Fragment key={g.key}>
+                    <SectionHeader label={g.label} icon="ri-folder-line" colSpan={6} />
+                    <CatTreeCompRows cats={g.tree} depth={1} caixa={caixaData.despesasPorCategoria} comp={compData.despesasPorCategoria} {...rowBase} />
+                  </Fragment>
+                );
+              })}
 
-            {/* ── RESULTADO ── */}
-            <SectionHeader label="Resultado" />
-            <CompRow label="Margem Bruta" caixaVal={caixa.margemBruta} compVal={comp.margemBruta} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isMargem />
-            <CompRow label="Margem Líquida" caixaVal={caixa.margemLiquida} compVal={comp.margemLiquida} caixaBase={caixa.receitaBruta} compBase={comp.receitaBruta} isMargem />
-          </tbody>
-        </table>
+              <CompRow label="Total de despesas (sem CMV)" caixaVal={caixaDespesasTotais} compVal={compDespesasTotais} {...rowBase} isNeg isTotal />
 
-        {/* Linha de resultado final */}
-        <div className="grid grid-cols-[2fr_1fr_0.6fr_1fr_0.6fr_1fr] bg-zinc-950 text-white border-t-2 border-zinc-700">
-          <div className="px-5 py-4 text-sm font-bold">(=) RESULTADO LÍQUIDO</div>
-          <div className={`px-4 py-4 text-base font-black text-right ${caixa.resultado >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {formatCurrency(caixa.resultado)}
-          </div>
-          <div className="px-3 py-4 text-xs text-right text-zinc-400">
-            {pct(caixa.resultado, caixa.receitaBruta)}
-          </div>
-          <div className={`px-4 py-4 text-base font-black text-right ${comp.resultado >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {formatCurrency(comp.resultado)}
-          </div>
-          <div className="px-3 py-4 text-xs text-right text-zinc-400">
-            {pct(comp.resultado, comp.receitaBruta)}
-          </div>
-          <div className={`px-4 py-4 text-sm font-black text-right ${diffResultado >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {diffResultado >= 0 ? '+' : ''}{formatCurrency(diffResultado)}
-          </div>
-        </div>
-      </div>
+              {/* ── MARGENS ── */}
+              <SectionHeader label="Margens" icon="ri-percent-line" tone="indigo" colSpan={6} />
+              <CompRow label="Margem bruta" caixaVal={caixa.margemBruta} compVal={comp.margemBruta} {...rowBase} isMargem />
+              <CompRow label="Margem líquida" caixaVal={caixa.margemLiquida} compVal={comp.margemLiquida} {...rowBase} isMargem />
 
-      {/* Legenda */}
-      <div className="bg-zinc-50 border border-zinc-100 rounded-xl p-4">
-        <p className="text-xs font-semibold text-zinc-600 mb-3">Como interpretar o comparativo</p>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="flex items-start gap-2">
-            <div className="w-3 h-3 rounded-full bg-zinc-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-zinc-700">Regime de Caixa</p>
-              <p className="text-xs text-zinc-400">Considera apenas o que foi efetivamente pago/recebido no período. Reflete o dinheiro real que entrou e saiu.</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <div className="w-3 h-3 rounded-full bg-amber-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-zinc-700">Regime de Competência</p>
-              <p className="text-xs text-zinc-400">Considera receitas e despesas pelo período em que ocorreram, independente do pagamento. Mais preciso para análise de rentabilidade.</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <div className="w-3 h-3 rounded-full bg-amber-200 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-zinc-700">Linhas destacadas</p>
-              <p className="text-xs text-zinc-400">Itens que existem apenas em um dos regimes — são a causa da divergência entre os dois resultados.</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
-              <i className="ri-arrow-right-line text-zinc-400 text-sm" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-zinc-700">Coluna Diferença</p>
-              <p className="text-xs text-zinc-400">Mostra quanto o valor de competência difere do caixa. Verde = competência é maior, vermelho = competência é menor.</p>
-            </div>
-          </div>
+              {/* ── RESULTADO ── */}
+              <tr className={comp.resultado >= 0 && caixa.resultado >= 0 ? 'bg-emerald-50' : 'bg-red-50'}>
+                <td className="pl-5 pr-3 py-4">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-6 h-6 rounded-md text-white text-xs font-bold flex items-center justify-center ${comp.resultado >= 0 && caixa.resultado >= 0 ? 'bg-emerald-600' : 'bg-red-500'}`}>=</span>
+                    <span className="text-sm font-bold text-zinc-900 uppercase tracking-wide">Resultado líquido</span>
+                  </div>
+                </td>
+                <td className={`px-4 py-4 text-lg font-bold text-right tabular-nums whitespace-nowrap ${caixa.resultado >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                  {formatCurrency(caixa.resultado)}
+                </td>
+                <td className="px-3 py-4 text-right text-xs font-semibold text-zinc-600 tabular-nums">{pct(caixa.resultado, caixa.receitaBruta)}</td>
+                <td className={`px-4 py-4 text-lg font-bold text-right tabular-nums whitespace-nowrap ${comp.resultado >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                  {formatCurrency(comp.resultado)}
+                </td>
+                <td className="px-3 py-4 text-right text-xs font-semibold text-zinc-600 tabular-nums">{pct(comp.resultado, comp.receitaBruta)}</td>
+                <td className="pl-4 pr-5 py-4 text-right">
+                  <DiffCell caixa={caixa.resultado} comp={comp.resultado} />
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
+
+      {/* ── Como interpretar ── */}
+      <details className="group bg-zinc-50 border border-zinc-200 rounded-2xl">
+        <summary className="flex items-center justify-between px-4 py-3 cursor-pointer list-none select-none">
+          <span className="text-xs font-semibold text-zinc-600 flex items-center gap-2">
+            <i className="ri-book-open-line text-zinc-400" /> Como interpretar o comparativo
+          </span>
+          <i className="ri-arrow-down-s-line text-zinc-400 transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="px-4 pb-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          {[
+            { dot: 'bg-zinc-400', label: 'Regime de caixa', desc: 'Só o que foi efetivamente pago/recebido no mês. É o dinheiro real que entrou e saiu.' },
+            { dot: 'bg-amber-400', label: 'Regime de competência', desc: 'Receitas e despesas do mês em que aconteceram, pagas ou não. Melhor para medir rentabilidade.' },
+            { dot: 'bg-zinc-200', label: 'Linhas "só conferência"', desc: 'Saldos e informativos: explicam a diferença, mas não entram na conta de nenhum regime.' },
+            { dot: 'bg-emerald-400', label: 'Coluna diferença', desc: 'Competência − caixa. Verde = a diferença melhora o resultado; vermelho = piora (em custo, competência maior é vermelho).' },
+          ].map(f => (
+            <div key={f.label} className="flex items-start gap-2">
+              <span className={`w-2.5 h-2.5 rounded-full mt-1 flex-shrink-0 ${f.dot}`} />
+              <div>
+                <p className="text-xs font-semibold text-zinc-700">{f.label}</p>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">{f.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </details>
     </div>
   );
 }

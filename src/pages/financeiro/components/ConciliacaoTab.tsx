@@ -14,6 +14,7 @@ import StoneImportPanel from './conciliacao/StoneImportPanel';
 import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 import InterConfigModal from './conciliacao/InterConfigModal';
 import InterSyncPanel from './conciliacao/InterSyncPanel';
+import ComoDinheiroEntraModal from './conciliacao/ComoDinheiroEntraModal';
 import type { OFXTransaction, MatchCandidate } from '@/utils/ofxParser';
 import type { StatementImport, ReconciliationRule } from '@/hooks/useConciliacao';
 
@@ -456,6 +457,7 @@ export default function ConciliacaoTab() {
   const [showIfoodConfig, setShowIfoodConfig] = useState(false);
   const [showInterConfig, setShowInterConfig] = useState(false);
   const [showIntegracoes, setShowIntegracoes] = useState(false);
+  const [showComoEntra, setShowComoEntra] = useState(false);
   const [interRefreshKey, setInterRefreshKey] = useState(0);
 
   // Período único: define o que aparece na tabela, os números e o que buscar nos bancos
@@ -935,6 +937,7 @@ export default function ConciliacaoTab() {
               </button>
             }
           >
+            <MenuItem icon="ri-git-merge-line" label="Como o dinheiro entra" hint="Banco principal, maquininha e iFood" onClick={() => { setMenuConfig(false); setShowComoEntra(true); }} />
             <MenuItem icon="ri-filter-3-line" label={`Regras de classificação (${rules.length})`} onClick={() => { setMenuConfig(false); setShowRules(true); }} />
             <MenuItem icon="ri-scales-3-line" label="Reconciliar saldo" disabled={!selectedAccount} onClick={() => { setMenuConfig(false); setShowSaldoModal(true); }} />
             <div className="border-t border-zinc-100 my-1" />
@@ -1343,6 +1346,14 @@ export default function ConciliacaoTab() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Papel de cada banco/maquininha (fin_revenue_settings via financial-write › set_money_flow) */}
+      {showComoEntra && (
+        <ComoDinheiroEntraModal
+          onClose={() => setShowComoEntra(false)}
+          onSaved={() => { showToast('Configuração salva.'); refresh(); loadAlerts(); }}
+        />
       )}
 
       {/* Banco Inter Config Modal */}

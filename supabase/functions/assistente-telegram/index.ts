@@ -779,6 +779,10 @@ async function tryHiringIntake(
   ];
   if (out.match?.score != null) linhas.push(`Aderência à vaga: *${out.match.score}/100* (${out.match.fit})${out.match.resumo ? `\n_${out.match.resumo}_` : ''}`);
   else if (out.match?.error) linhas.push(`Análise da vaga falhou: ${out.match.error}`);
+  if (out.distance?.km != null) {
+    const aprox = out.distance.precision === 'bairro' ? ' (endereço aproximado pelo bairro)' : out.distance.precision === 'cidade' ? ' (só pela cidade, impreciso)' : '';
+    linhas.push(`🚗 ${String(out.distance.km).replace('.', ',')} km até a loja${out.distance.minutes != null ? `, ~${out.distance.minutes} min de carro` : ''}${aprox}`);
+  }
   if (out.duplicate) linhas.push(`⚠️ Parece repetido: já existe ${out.duplicate} com o mesmo telefone/e-mail.`);
   await sendText(chatId, linhas.join('\n'));
   if (messageId) await react(chatId, messageId, '👍');

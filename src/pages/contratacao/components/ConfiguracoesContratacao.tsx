@@ -47,11 +47,6 @@ function Empresas({ companies, candidates, onReload, onRecalcCompany }: {
   const [criando, setCriando] = useState(false);
   const [aberta, setAberta] = useState<string | null>(null);
   const count = (id: string) => candidates.filter((c) => c.company_id === id).length;
-  const saveField = async (c: Company, field: 'address' | 'city' | 'description', value: string) => {
-    const v = value.trim() || null;
-    if (v === (c[field] ?? null)) return;
-    if (await run(supabase.from('hiring_companies').update({ [field]: v }).eq('id', c.id))) await onReload();
-  };
 
   // Cria a empresa já com endereço; se achar no mapa, deixa o pin sugerido e abre o painel para conferir.
   const add = async () => {
@@ -74,10 +69,6 @@ function Empresas({ companies, candidates, onReload, onRecalcCompany }: {
     await onReload();
     if (data?.id) setAberta(data.id);
     if (data?.id && geo) onRecalcCompany(data.id);
-  };
-  const rename = async (c: Company, name: string) => {
-    if (!name.trim() || name.trim() === c.name) return;
-    if (await run(supabase.from('hiring_companies').update({ name: name.trim() }).eq('id', c.id))) await onReload();
   };
   const toggle = async (c: Company) => {
     if (await run(supabase.from('hiring_companies').update({ is_active: !c.is_active }).eq('id', c.id))) await onReload();
@@ -113,42 +104,31 @@ function Empresas({ companies, candidates, onReload, onRecalcCompany }: {
           <li key={c.id} className="py-2">
            <div className="flex items-center gap-2">
             <Arrows onUp={() => move(i, -1)} onDown={() => move(i, 1)} />
-            <button onClick={() => setAberta(aberta === c.id ? null : c.id)} title="Endereço e sobre a loja (usados na análise das vagas)"
-              className={`w-8 h-8 rounded-lg cursor-pointer ${c.address ? 'text-rose-600 hover:bg-rose-50' : 'text-zinc-400 hover:bg-zinc-100'}`}>
-              <i className={aberta === c.id ? 'ri-arrow-up-s-line' : 'ri-map-pin-line'} />
+            <button onClick={() => setAberta(aberta === c.id ? null : c.id)} className="flex-1 min-w-0 text-left cursor-pointer">
+              <p className={`text-sm font-semibold truncate ${c.is_active ? 'text-zinc-900' : 'text-zinc-400 line-through'}`}>{c.name}</p>
+              <p className="text-[11px] text-zinc-500 truncate">
+                {[c.address, c.city].filter(Boolean).join(' · ') || <span className="text-orange-600">sem endereço</span>}
+                {c.lat != null ? <span className="text-emerald-600"> · <i className="ri-map-pin-2-fill" /> no mapa</span> : c.address ? <span className="text-orange-600"> · sem pin</span> : null}
+              </p>
             </button>
-            <input defaultValue={c.name} onBlur={(e) => rename(c, e.target.value)}
-              className={`flex-1 h-9 px-3 rounded-lg border border-zinc-200 text-sm ${c.is_active ? '' : 'text-zinc-400 line-through'}`} />
             <span className="text-[11px] text-zinc-400 w-20 text-right">{count(c.id)} candidato{count(c.id) === 1 ? '' : 's'}</span>
+            <button onClick={() => setAberta(aberta === c.id ? null : c.id)}
+              className={`flex items-center gap-1 px-2.5 h-8 rounded-lg border text-xs font-bold cursor-pointer ${aberta === c.id ? 'bg-zinc-900 text-white border-zinc-900' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
+              <i className={aberta === c.id ? 'ri-arrow-up-s-line' : 'ri-pencil-line'} /> {aberta === c.id ? 'Fechar' : 'Editar'}
+            </button>
             <button onClick={() => toggle(c)} title={c.is_active ? 'Desativar (some do envio e do filtro)' : 'Reativar'}
               className="w-8 h-8 rounded-lg hover:bg-zinc-100 text-zinc-500 cursor-pointer">
               <i className={c.is_active ? 'ri-eye-line' : 'ri-eye-off-line'} />
             </button>
-            <button onClick={() => remove(c)} className="w-8 h-8 rounded-lg hover:bg-red-50 text-red-500 cursor-pointer"><i className="ri-delete-bin-line" /></button>
+            <button onClick={() => remove(c)} title="Excluir" className="w-8 h-8 rounded-lg hover:bg-red-50 text-red-500 cursor-pointer"><i className="ri-delete-bin-line" /></button>
            </div>
            {aberta === c.id && (
-             <div className="mt-2 ml-8 grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-xl bg-zinc-50 border border-zinc-100 p-3">
-               <label className="sm:col-span-2 block">
-                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Endereço</span>
-                 <input defaultValue={c.address ?? ''} onBlur={(e) => saveField(c, 'address', e.target.value)} placeholder="Rua, número, bairro"
-                   className="w-full h-9 px-3 rounded-lg border border-zinc-200 text-sm mt-1 bg-white" />
-               </label>
-               <label className="block">
-                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Cidade</span>
-                 <input defaultValue={c.city ?? ''} onBlur={(e) => saveField(c, 'city', e.target.value)} placeholder="Ex.: Paranaguá - PR"
-                   className="w-full h-9 px-3 rounded-lg border border-zinc-200 text-sm mt-1 bg-white" />
-               </label>
-               <label className="sm:col-span-3 block">
-                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Sobre a loja</span>
-                 <textarea defaultValue={c.description ?? ''} onBlur={(e) => saveField(c, 'description', e.target.value)} rows={2}
-                   placeholder="Tipo de operação, público, ritmo, turnos (ex.: hamburgueria em shopping, movimento forte à noite e fim de semana)"
-                   className="w-full px-3 py-2 rounded-lg border border-zinc-200 text-sm mt-1 bg-white" />
-               </label>
-               <p className="sm:col-span-3 text-[10px] text-zinc-400">A IA usa estes dados para comparar os currículos com as vagas desta empresa (deslocamento e perfil da operação).</p>
-               <div className="sm:col-span-3">
-                 <LocalizacaoLoja c={c} referencia={companies.find((x) => x.id !== c.id && x.lat != null && x.lng != null) ?? null}
-                   onSaved={async () => { await onReload(); await onRecalcCompany(c.id); }} />
-               </div>
+             <div className="mt-2 ml-8 space-y-4 rounded-xl bg-zinc-50 border border-zinc-100 p-3">
+               <EditarEmpresa c={c} referencia={companies.find((x) => x.id !== c.id && x.lat != null && x.lng != null) ?? null}
+                 onReload={onReload} onRecalcCompany={onRecalcCompany} />
+               <LocalizacaoLoja key={`${c.id}:${c.lat}:${c.lng}`} c={c}
+                 referencia={companies.find((x) => x.id !== c.id && x.lat != null && x.lng != null) ?? null}
+                 onSaved={async () => { await onReload(); await onRecalcCompany(c.id); }} />
              </div>
            )}
           </li>
@@ -402,6 +382,86 @@ function FichaEConvite({ settings, onSaved }: { settings: Settings; onSaved: (s:
         {ok && !dirty && <span className="text-xs text-emerald-600 font-semibold"><i className="ri-check-line" /> Salvo</span>}
       </div>
     </Card>
+  );
+}
+
+// ── Dados da empresa (editar depois de criada) ──────────────────────────────
+// Salva com botão. Mudou endereço/cidade: localiza de novo no mapa; achou → move o pin e
+// recalcula a distância dos candidatos desta loja; não achou → mantém o pin e avisa.
+function EditarEmpresa({ c, referencia, onReload, onRecalcCompany }: {
+  c: Company; referencia: Company | null; onReload: () => Promise<void>; onRecalcCompany: (companyId: string) => Promise<void>;
+}) {
+  const inicial = { name: c.name, address: c.address ?? '', city: c.city ?? '', description: c.description ?? '' };
+  const [f, setF] = useState(inicial);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; texto: string } | null>(null);
+  const set = (k: keyof typeof inicial, v: string) => { setF((x) => ({ ...x, [k]: v })); setMsg(null); };
+  const dirty = JSON.stringify(f) !== JSON.stringify(inicial);
+
+  const salvar = async () => {
+    if (!f.name.trim()) { setMsg({ ok: false, texto: 'O nome não pode ficar vazio.' }); return; }
+    setSaving(true); setMsg(null);
+    const address = f.address.trim() || null;
+    const city = f.city.trim() || null;
+    const endMudou = address !== (c.address ?? null) || city !== (c.city ?? null);
+    const row: Record<string, unknown> = { name: f.name.trim(), address, city, description: f.description.trim() || null };
+    let pinNovo = false;
+    let naoAchou = false;
+    if (endMudou && address) {
+      try {
+        const g = await geocodeText([address, city].filter(Boolean).join(', '), referencia?.lat != null ? { lat: referencia.lat, lng: referencia.lng! } : null);
+        row.lat = g.lat; row.lng = g.lng; pinNovo = true;
+      } catch { naoAchou = true; }
+    }
+    const { error } = await supabase.from('hiring_companies').update(row).eq('id', c.id);
+    if (!error && pinNovo) await supabase.from('hiring_distances').delete().eq('company_id', c.id);
+    setSaving(false);
+    if (error) { setMsg({ ok: false, texto: `Não foi possível salvar: ${error.message}` }); return; }
+    await onReload();
+    setMsg({
+      ok: true,
+      texto: pinNovo ? 'Salvo. O pin foi movido para o novo endereço: confira no mapa abaixo. Recalculando as distâncias…'
+        : naoAchou ? 'Salvo, mas não achei o novo endereço no mapa: ajuste o pin abaixo.'
+        : 'Salvo.',
+    });
+    if (pinNovo) { await onRecalcCompany(c.id); setMsg({ ok: true, texto: 'Salvo. Pin movido para o novo endereço e distâncias recalculadas: confira o pin abaixo.' }); }
+  };
+
+  const inputCls = 'w-full h-9 px-3 rounded-lg border border-zinc-200 text-sm mt-1 bg-white';
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-2">Dados da empresa</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <label className="sm:col-span-3 block">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Nome</span>
+          <input value={f.name} onChange={(e) => set('name', e.target.value)} className={inputCls} />
+        </label>
+        <label className="sm:col-span-2 block">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Endereço</span>
+          <input value={f.address} onChange={(e) => set('address', e.target.value)} placeholder="Rua, número, bairro" className={inputCls} />
+        </label>
+        <label className="block">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Cidade</span>
+          <input value={f.city} onChange={(e) => set('city', e.target.value)} placeholder="Ex.: Paranaguá - PR" className={inputCls} />
+        </label>
+        <label className="sm:col-span-3 block">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Sobre a loja</span>
+          <textarea value={f.description} onChange={(e) => set('description', e.target.value)} rows={2}
+            placeholder="Tipo de operação, público, ritmo, turnos (ex.: hamburgueria em shopping, movimento forte à noite e fim de semana)"
+            className="w-full px-3 py-2 rounded-lg border border-zinc-200 text-sm mt-1 bg-white" />
+        </label>
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <p className={`flex-1 text-[11px] ${msg ? (msg.ok ? 'text-emerald-700' : 'text-red-600') : 'text-zinc-400'}`}>
+          {msg?.texto ?? 'A IA usa endereço e "sobre a loja" para comparar os currículos com as vagas desta empresa.'}
+        </p>
+        {dirty && <button onClick={() => { setF(inicial); setMsg(null); }} className="px-3 h-8 rounded-lg text-xs font-semibold text-zinc-500 hover:bg-zinc-100 cursor-pointer">Desfazer</button>}
+        <button onClick={salvar} disabled={!dirty || saving}
+          className="px-4 h-8 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-xs font-bold cursor-pointer whitespace-nowrap">
+          {saving ? 'Salvando…' : 'Salvar dados'}
+        </button>
+      </div>
+    </div>
   );
 }
 

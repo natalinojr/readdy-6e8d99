@@ -88,92 +88,90 @@ function buildTree(cats: DRECat[]): DRECat[] {
 interface CatNodeProps {
   cat: DRECat;
   depth: number;
-  allCats: DRECat[];
   onEdit: (cat: DRECat) => void;
   onDelete: (cat: DRECat) => void;
   onAddChild: (parent: DRECat) => void;
-  groups: DreGroup[];
+  /** Com busca ativa a árvore fica toda aberta, para mostrar onde o resultado está. */
+  forceOpen?: boolean;
 }
 
-function CatNode({ cat, depth, allCats, onEdit, onDelete, onAddChild, groups }: CatNodeProps) {
+function CatNode({ cat, depth, onEdit, onDelete, onAddChild, forceOpen }: CatNodeProps) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = (cat.children?.length ?? 0) > 0;
-  const indent = depth * 24;
-  const groupMeta = getGroupMeta(cat.group_type, groups);
+  const open = forceOpen || expanded;
 
   return (
     <>
-      <tr className="hover:bg-zinc-50 transition-colors group">
-        <td className="px-4 py-2.5">
-          <div className="flex items-center gap-2" style={{ paddingLeft: indent }}>
-            {hasChildren ? (
-              <button
-                onClick={() => setExpanded(e => !e)}
-                className="w-5 h-5 flex items-center justify-center rounded cursor-pointer text-zinc-400 hover:text-zinc-700 flex-shrink-0"
-              >
-                <i className={`${expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-sm`} />
-              </button>
-            ) : (
-              <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-                <div className="w-1.5 h-1.5 rounded-full bg-zinc-300" />
-              </div>
-            )}
-            <span className={`text-sm ${depth === 0 ? 'font-semibold text-zinc-800' : depth === 1 ? 'font-medium text-zinc-700' : 'text-zinc-600'}`}>
-              {cat.name}
-            </span>
-            {depth > 0 && (
-              <span className="text-xs text-zinc-400 ml-1">
-                {'└'.repeat(1)} nível {depth + 1}
-              </span>
-            )}
-          </div>
-        </td>
-        <td className="px-4 py-2.5">
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${groupMeta.bg} ${groupMeta.color}`}>
-            {groupMeta.label}
+      <div
+        className="group flex items-center gap-2 pr-3 py-2 hover:bg-zinc-50 transition-colors"
+        style={{ paddingLeft: 12 + depth * 22 }}
+      >
+        {hasChildren ? (
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="w-5 h-5 flex items-center justify-center rounded cursor-pointer text-zinc-400 hover:text-zinc-700 flex-shrink-0"
+            title={open ? 'Recolher' : 'Expandir'}
+          >
+            <i className={`${open ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-sm`} />
+          </button>
+        ) : (
+          <span className="w-5 h-5 flex items-center justify-center flex-shrink-0">
+            <span className={`w-1.5 h-1.5 rounded-full ${depth === 0 ? 'bg-zinc-400' : 'bg-zinc-300'}`} />
           </span>
-        </td>
-        <td className="px-4 py-2.5 text-xs text-zinc-400">
-          {cat.parent_id ? allCats.find(c => c.id === cat.parent_id)?.name ?? '—' : <span className="text-zinc-500 font-medium">Raiz</span>}
-        </td>
-        <td className="px-4 py-2.5">
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              onClick={() => onAddChild(cat)}
-              className="flex items-center gap-1 text-xs bg-amber-50 text-amber-700 px-2 py-1 rounded-lg cursor-pointer hover:bg-amber-100 whitespace-nowrap"
-              title="Adicionar subcategoria"
-            >
-              <i className="ri-add-line" /> Sub
-            </button>
-            <button
-              onClick={() => onEdit(cat)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 cursor-pointer"
-            >
-              <i className="ri-edit-line text-xs" />
-            </button>
-            <button
-              onClick={() => onDelete(cat)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer"
-            >
-              <i className="ri-delete-bin-line text-xs" />
-            </button>
-          </div>
-        </td>
-      </tr>
-      {expanded && hasChildren && cat.children!.map(child => (
+        )}
+        <span className={`flex-1 min-w-0 truncate text-sm ${depth === 0 ? 'font-semibold text-zinc-800' : 'text-zinc-600'}`}>
+          {cat.name}
+        </span>
+        {hasChildren && (
+          <span className="text-[10px] text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+            {cat.children!.length} sub
+          </span>
+        )}
+        <div className="flex items-center gap-0.5 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={() => onAddChild(cat)}
+            className="flex items-center gap-0.5 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 px-1.5 py-1 rounded-md cursor-pointer whitespace-nowrap"
+            title="Adicionar subcategoria"
+          >
+            <i className="ri-add-line" /> Sub
+          </button>
+          <button
+            onClick={() => onEdit(cat)}
+            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+            title="Editar"
+          >
+            <i className="ri-edit-line text-xs" />
+          </button>
+          <button
+            onClick={() => onDelete(cat)}
+            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer"
+            title="Excluir"
+          >
+            <i className="ri-delete-bin-line text-xs" />
+          </button>
+        </div>
+      </div>
+      {open && hasChildren && cat.children!.map(child => (
         <CatNode
           key={child.id}
           cat={child}
           depth={depth + 1}
-          allCats={allCats}
           onEdit={onEdit}
           onDelete={onDelete}
           onAddChild={onAddChild}
-          groups={groups}
+          forceOpen={forceOpen}
         />
       ))}
     </>
   );
+}
+
+// Como o DRE usa cada grupo — mostrado no cabeçalho do grupo para a loja saber
+// se classificar ali muda o resultado (ver GRUPOS_FORA_DA_DRE em useDreGroups).
+function papelDoGrupo(key: string) {
+  if (key === 'revenue') return { label: 'Não soma no resultado', cls: 'bg-zinc-100 text-zinc-500', title: 'Categorias de receita não são somadas pela DRE; a receita vem das fontes de Receitas › Fontes.' };
+  if (key === 'cost' || key === 'tax') return { label: 'Grupo antigo', cls: 'bg-amber-50 text-amber-700', title: 'Grupo aposentado em 2026-09-05. Custo = CMV; imposto nunca entrou no resultado. Mova as categorias para outro grupo.' };
+  return { label: 'Subtrai do resultado', cls: 'bg-rose-50 text-rose-600', title: 'Contas a pagar e itens de compra classificados aqui entram como despesa na DRE.' };
 }
 
 const emptyForm = { name: '', group_type: 'expense', parent_id: '' };
@@ -189,6 +187,7 @@ export default function CategoriasDRETab() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [filterGroup, setFilterGroup] = useState('all');
+  const [busca, setBusca] = useState('');
   // Confirmação inline de exclusão (nada de window.confirm)
   const [deleteTarget, setDeleteTarget] = useState<DRECat | null>(null);
   const [deleteUsage, setDeleteUsage] = useState<number | null>(null);
@@ -436,159 +435,207 @@ export default function CategoriasDRETab() {
     }
   };
 
+  // Busca por nome: mantém o nó que casa (com todos os filhos) ou o que tem
+  // descendente que casa (só com os filhos que casam), para a hierarquia não sumir.
+  const q = busca.trim().toLowerCase();
+  const filtrarArvore = (nodes: DRECat[]): DRECat[] => nodes.flatMap(n => {
+    if (!q) return [n];
+    const casa = n.name.toLowerCase().includes(q);
+    const filhos = filtrarArvore(n.children ?? []);
+    return casa ? [n] : filhos.length ? [{ ...n, children: filhos }] : [];
+  });
+
+  const gruposVisiveis = allGroupsToShow
+    .filter(g => filterGroup === 'all' || filterGroup === g)
+    .map(g => ({ g, nodes: filtrarArvore(groupedTree[g] ?? []) }))
+    .filter(({ nodes }) => !q || nodes.length > 0);
+
+  const novaNoGrupo = (g: string) => {
+    setEditing(null);
+    setSaveError(null);
+    setForm({ name: '', group_type: g, parent_id: '' });
+    setShowModal(true);
+  };
+
   return (
-    <div className="p-6 space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-zinc-800">Categorias do DRE</h3>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            Crie categorias e subcategorias ilimitadas para estruturar seu DRE
-          </p>
+    <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
+      {/* ── Cabeçalho ── */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3">
+          <span className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-100 text-amber-600 flex items-center justify-center">
+            <i className="ri-folder-chart-line text-lg" />
+          </span>
+          <div>
+            <h3 className="text-sm font-bold text-zinc-900">Estrutura do DRE</h3>
+            <p className="text-xs text-zinc-400">
+              {cats.length} categoria{cats.length !== 1 ? 's' : ''} em {allGroupsToShow.length} grupo{allGroupsToShow.length !== 1 ? 's' : ''} · subcategorias ilimitadas
+            </p>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setShowTemplatesModal(true)}
-            className="flex items-center gap-2 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
+            className="flex items-center gap-1.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
             title="Importar/Exportar Templates"
           >
-            <i className="ri-file-transfer-line text-amber-500" /> Templates
+            <i className="ri-file-transfer-line text-zinc-400" /> Templates
           </button>
           <button
             onClick={handleAddGroup}
-            className="flex items-center gap-2 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
+            className="flex items-center gap-1.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
           >
-            <i className="ri-add-circle-line text-amber-500" /> Novo Grupo
+            <i className="ri-add-circle-line text-zinc-400" /> Novo grupo
           </button>
           <button
             onClick={() => openNew()}
-            className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
           >
-            <i className="ri-add-line" /> Nova Categoria
+            <i className="ri-add-line" /> Nova categoria
           </button>
         </div>
       </div>
 
-      {/* Group KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {allGroupsToShow.map(g => {
-          const meta = getGroupMeta2(g);
-          const isCustom = customGroups.some(cg => cg.key === g);
-          // Grupo padrão que a loja renomeou tem linha própria, e por isso um id.
-          const temApelido = !isCustom && !!gruposComLegado.find(x => x.key === g)?.id;
-          return (
-            <div key={g} className="relative group/card">
-              <button
-                onClick={() => setFilterGroup(filterGroup === g ? 'all' : g)}
-                className={`w-full rounded-xl border p-4 text-left cursor-pointer transition-all ${filterGroup === g ? meta.bg + ' ring-2 ring-amber-400' : 'bg-white border-zinc-200 hover:border-zinc-300'}`}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <i className={`${meta.icon} ${meta.color} text-base`} />
-                  <span className={`text-xs font-semibold ${meta.color} truncate`}>{meta.label}</span>
-                </div>
-                <p className="text-xl font-bold text-zinc-800">{totalByGroup[g] ?? 0}</p>
-                <p className="text-xs text-zinc-400">categorias</p>
-              </button>
-              <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity">
-                <button
-                  onClick={() => handleEditGroup(g)}
-                  className="w-5 h-5 flex items-center justify-center rounded-full bg-zinc-100 text-zinc-500 hover:bg-zinc-200 cursor-pointer"
-                  title="Renomear grupo"
-                >
-                  <i className="ri-edit-line text-xs" />
-                </button>
-                {(isCustom || temApelido) && (
-                  <button
-                    onClick={() => handleDeleteGroup(g)}
-                    className="w-5 h-5 flex items-center justify-center rounded-full bg-red-100 text-red-500 hover:bg-red-200 cursor-pointer"
-                    title={isCustom ? 'Remover grupo' : 'Voltar ao nome padrão'}
-                  >
-                    <i className={`${isCustom ? 'ri-close-line' : 'ri-arrow-go-back-line'} text-xs`} />
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Info box */}
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-        <div className="w-7 h-7 flex items-center justify-center bg-amber-100 rounded-lg flex-shrink-0">
-          <i className="ri-information-line text-amber-600 text-sm" />
+      {/* ── Busca + filtro por grupo ── */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative w-full sm:w-64">
+          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
+          <input
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar categoria..."
+            className="w-full bg-white border border-zinc-200 rounded-xl pl-9 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+          {busca && (
+            <button onClick={() => setBusca('')} className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center text-zinc-400 hover:text-zinc-700 cursor-pointer" title="Limpar">
+              <i className="ri-close-line text-sm" />
+            </button>
+          )}
         </div>
-        <div>
-          <p className="text-xs font-semibold text-amber-800">Como funciona a hierarquia</p>
-          <p className="text-xs text-amber-700 mt-0.5">
-            Crie categorias raiz (ex: <strong>Despesas Operacionais</strong>) e adicione subcategorias ilimitadas (ex: Folha de Pagamento → Salários → Funcionário X).
-            As categorias aparecem no DRE agrupadas e as contas a pagar podem ser vinculadas a qualquer nível.
-          </p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {[{ key: 'all', label: 'Todos', count: cats.length }, ...allGroupsToShow.map(g => ({ key: g, label: getGroupMeta2(g).label || g, count: totalByGroup[g] ?? 0 }))].map(chip => (
+            <button
+              key={chip.key}
+              onClick={() => setFilterGroup(chip.key)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${
+                filterGroup === chip.key ? 'bg-zinc-900 text-white' : 'bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+              }`}
+            >
+              {chip.label}
+              <span className={`text-[10px] tabular-nums ${filterGroup === chip.key ? 'text-zinc-300' : 'text-zinc-400'}`}>{chip.count}</span>
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Tabela em árvore */}
+      {/* ── Como o DRE usa os grupos ── */}
+      <div className="flex items-start gap-2 text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5">
+        <i className="ri-information-line text-zinc-400 mt-px" />
+        <span>
+          <strong className="text-zinc-700">Despesas operacionais</strong> e os <strong className="text-zinc-700">grupos criados por você</strong> são subtraídos do resultado da DRE.
+          Contas a pagar e itens de compra podem apontar para qualquer nível; a linha-mãe soma as subcategorias.
+          Compra sem classificação vai para o CMV.
+        </span>
+      </div>
+
+      {/* ── Grupos ── */}
       {loading ? (
-        <div className="bg-white rounded-xl border border-zinc-200 p-8 text-center text-zinc-400 text-sm">
+        <div className="bg-white rounded-2xl border border-zinc-200 p-8 text-center text-zinc-400 text-sm flex items-center justify-center gap-2">
+          <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
           Carregando categorias...
         </div>
-      ) : cats.length === 0 ? (
-        <div className="bg-white rounded-xl border border-zinc-200 p-12 text-center">
+      ) : cats.length === 0 && allGroupsToShow.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-zinc-200 p-12 text-center">
           <i className="ri-folder-chart-line text-4xl text-zinc-300 block mb-3" />
           <p className="text-zinc-500 font-medium">Nenhuma categoria cadastrada</p>
           <p className="text-zinc-400 text-sm mt-1">Crie categorias para estruturar seu DRE</p>
           <button
             onClick={() => openNew()}
-            className="mt-4 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer transition-colors"
+            className="mt-4 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-sm font-semibold cursor-pointer transition-colors"
           >
             Criar primeira categoria
           </button>
         </div>
+      ) : gruposVisiveis.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-zinc-200 p-8 text-center">
+          <i className="ri-search-line text-3xl text-zinc-300 block mb-2" />
+          <p className="text-sm text-zinc-500">Nenhuma categoria encontrada para "{busca}"</p>
+        </div>
       ) : (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-zinc-50 border-b border-zinc-200">
-              <tr>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Nome</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Grupo</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Categoria Pai</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-50">
-              {allGroupsToShow.filter(g => filterGroup === 'all' || filterGroup === g).map(g => {
-                const groupNodes = groupedTree[g] ?? [];
-                if (groupNodes.length === 0) return null;
-                const meta = getGroupMeta2(g);
-                return (
-                  // Fragment PRECISA de key: dentro de .map um <> anônimo faz o React
-                  // perder a identidade das linhas ao filtrar/reordenar grupos.
-                  <Fragment key={`group-${g}`}>
-                    <tr className={`${meta.bg}`}>
-                      <td colSpan={4} className="px-4 py-2">
-                        <div className="flex items-center gap-2">
-                          <i className={`${meta.icon} ${meta.color} text-sm`} />
-                          <span className={`text-xs font-bold uppercase tracking-wider ${meta.color}`}>{meta.label}</span>
-                          <span className="text-xs text-zinc-400 ml-1">({cats.filter(c => c.group_type === g).length} categorias)</span>
-                        </div>
-                      </td>
-                    </tr>
-                    {groupNodes.map(node => (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+          {gruposVisiveis.map(({ g, nodes }) => {
+            const meta = getGroupMeta2(g);
+            const isCustom = customGroups.some(cg => cg.key === g);
+            // Grupo padrão que a loja renomeou tem linha própria, e por isso um id.
+            const temApelido = !isCustom && !!gruposComLegado.find(x => x.key === g)?.id;
+            const papel = papelDoGrupo(g);
+            const total = totalByGroup[g] ?? 0;
+            return (
+              <div key={g} className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+                <div className="group/head flex items-center gap-3 px-4 py-3 border-b border-zinc-100">
+                  <span className={`w-9 h-9 rounded-xl border flex items-center justify-center flex-shrink-0 ${meta.bg} ${meta.color}`}>
+                    <i className={`${meta.icon} text-lg`} />
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <p className="text-sm font-bold text-zinc-900 truncate">{meta.label || g}</p>
+                      {isCustom && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 whitespace-nowrap">Personalizado</span>}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[11px] text-zinc-400">{total} categoria{total !== 1 ? 's' : ''}</span>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap cursor-help ${papel.cls}`} title={papel.title}>{papel.label}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                    <button
+                      onClick={() => novaNoGrupo(g)}
+                      className="flex items-center gap-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 px-2 py-1.5 rounded-lg cursor-pointer whitespace-nowrap"
+                      title="Nova categoria neste grupo"
+                    >
+                      <i className="ri-add-line" /> Categoria
+                    </button>
+                    <button
+                      onClick={() => handleEditGroup(g)}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                      title="Renomear grupo"
+                    >
+                      <i className="ri-edit-line text-xs" />
+                    </button>
+                    {(isCustom || temApelido) && (
+                      <button
+                        onClick={() => handleDeleteGroup(g)}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer"
+                        title={isCustom ? 'Remover grupo' : 'Voltar ao nome padrão'}
+                      >
+                        <i className={`${isCustom ? 'ri-delete-bin-line' : 'ri-arrow-go-back-line'} text-xs`} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {nodes.length > 0 ? (
+                  <div className="divide-y divide-zinc-50 py-1">
+                    {nodes.map(node => (
                       <CatNode
                         key={node.id}
                         cat={node}
                         depth={0}
-                        allCats={cats}
                         onEdit={openEdit}
                         onDelete={requestDelete}
                         onAddChild={openNew}
-                        groups={gruposComLegado}
+                        forceOpen={!!q}
                       />
                     ))}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => novaNoGrupo(g)}
+                    className="w-full px-4 py-6 text-center text-xs text-zinc-400 hover:text-amber-700 hover:bg-amber-50/40 cursor-pointer transition-colors"
+                  >
+                    <i className="ri-add-circle-line mr-1" /> Nenhuma categoria — adicionar a primeira
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

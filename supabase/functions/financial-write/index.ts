@@ -1635,6 +1635,54 @@ Deno.serve(async (req) => {
         break;
       }
 
+      // ── Como o dinheiro entra (Conciliação › ⚙): papel de cada banco/maquininha ──
+      // Lido pelas funções do banco via fn_money_flow (Pix recebido, repasse da
+      // maquininha, depósitos do iFood). Campo ausente no payload = não altera.
+      case 'set_money_flow': {
+        const p = (payload ?? {}) as Record<string, unknown>;
+        const ENUMS: Record<string, string[]> = {
+          bank_provider: ['inter', 'ofx', 'outro'],
+          card_provider: ['stone', 'mercadopago', 'outra', 'nenhuma'],
+          card_pix_mode: ['transfer', 'direct', 'none'],
+        };
+        const ACCOUNTS = ['bank_account_id', 'card_deposit_account_id', 'ifood_deposit_account_id'];
+        const row: Record<string, unknown> = { tenant_id, updated_at: new Date().toISOString(), updated_by: user.id };
+        for (const [k, allowed] of Object.entries(ENUMS)) {
+          if (!(k in p)) continue;
+          const v = p[k] == null || p[k] === '' ? null : String(p[k]);
+          if (v !== null && !allowed.includes(v)) {
+            return new Response(JSON.stringify({ error: `Valor inválido para ${k}: ${v}` }), { status: 400, headers: corsHeaders });
+          }
+          row[k] = v;
+        }
+        const ids: string[] = [];
+        for (const k of ACCOUNTS) {
+          if (!(k in p)) continue;
+          const v = p[k] == null || p[k] === '' ? null : String(p[k]);
+          row[k] = v;
+          if (v) ids.push(v);
+        }
+        if (ids.length > 0) {
+          const { data: contas, error: contasErr } = await supabase.from('fin_bank_accounts')
+            .select('id').eq('tenant_id', tenant_id).in('id', [...new Set(ids)]);
+          if (contasErr) {
+            return new Response(JSON.stringify({ error: extractErrorMessage(contasErr) }), { status: 500, headers: corsHeaders });
+          }
+          const ok = new Set((contas ?? []).map((c: { id: string }) => c.id));
+          if (ids.some(id => !ok.has(id))) {
+            return new Response(JSON.stringify({ error: 'Conta bancária não encontrada nesta loja' }), { status: 400, headers: corsHeaders });
+          }
+        }
+        if ('card_deposit_match' in p) {
+          const m = p.card_deposit_match == null ? '' : String(p.card_deposit_match).trim().slice(0, 60);
+          row.card_deposit_match = m || null;
+        }
+        result = await supabase.from('fin_revenue_settings')
+          .upsert(row, { onConflict: 'tenant_id' })
+          .select().single();
+        break;
+      }
+
       default:
         return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), { status: 400, headers: corsHeaders });
     }

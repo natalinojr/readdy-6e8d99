@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useCostCenters } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
 import { invokeWithAuth } from '@/lib/supabase';
+import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import type { StatementImport, BillMatch, ReceivableMatch, ReconciliationRule } from '@/hooks/useConciliacao';
 
 const fmtDoc = (d: string) =>
@@ -49,6 +50,7 @@ export default function TransacaoDetalheModal({
 }: Props) {
   const { user } = useAuth();
   const { centers } = useCostCenters();
+  const { labels: flowLabels } = useMoneyFlow();
   const [saving, setSaving] = useState(false);
   const [billMatches, setBillMatches] = useState<BillMatch[]>([]);
   const [receivableMatches, setReceivableMatches] = useState<ReceivableMatch[]>([]);
@@ -268,7 +270,11 @@ export default function TransacaoDetalheModal({
           {transaction.match_kind === 'internal_transfer' && (
             <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 text-xs text-sky-800">
               <i className="ri-arrow-left-right-line mr-1" />
-              Transferência entre contas da própria empresa. Não entra como receita nem como despesa.
+              {transaction.transaction_type !== 'credit'
+                ? 'Transferência para outra conta da própria empresa. Não entra como despesa.'
+                : flowLabels.pixMode === 'transfer'
+                  ? 'Transferência de outra conta da própria empresa. Conta como Pix recebido (Pix vendido na maquininha), conforme Conciliação › ⚙ › Como o dinheiro entra.'
+                  : 'Transferência de outra conta da própria empresa. Não entra como receita (Conciliação › ⚙ › Como o dinheiro entra).'}
             </div>
           )}
           {groupRows.length > 0 && (() => {
@@ -282,8 +288,8 @@ export default function TransacaoDetalheModal({
             return (
               <div className="border border-green-200 rounded-xl overflow-hidden">
                 <div className="bg-green-50 px-3 py-2 flex items-center justify-between gap-2 text-xs">
-                  <span className="font-semibold text-green-800"><i className="ri-links-line mr-1" />Repasse Stone × Banco Inter</span>
-                  <span className="text-green-700 whitespace-nowrap">{vendas.length} venda(s) · no Inter {formatCurrency(dep)}</span>
+                  <span className="font-semibold text-green-800"><i className="ri-links-line mr-1" />Repasse Stone × extrato do banco</span>
+                  <span className="text-green-700 whitespace-nowrap">{vendas.length} venda(s) · no banco {formatCurrency(dep)}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 px-3 py-2 text-xs border-b border-green-100">
                   <div><p className="text-zinc-400">Bruto</p><p className="font-semibold text-zinc-800">{formatCurrency(bruto)}</p></div>

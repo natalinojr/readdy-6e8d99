@@ -2,8 +2,10 @@ import { useState, useMemo } from 'react';
 import {
   useReceitas, useInsertReceitaManual, useSaveRevenueSources,
   type ReceitasFilters, type ReceitaSource, type ReceitaItem, type RevenueSettingSource,
-  SOURCE_LABELS_R, SOURCE_COLORS_R, REVENUE_SOURCE_INFO,
+  SOURCE_LABELS_R, SOURCE_COLORS_R,
 } from '@/hooks/useReceitas';
+import { useMoneyFlow } from '@/hooks/useMoneyFlow';
+import { revenueSourceInfo, moneyFlowLabels } from '@/lib/revenueSources';
 
 // Fonte da configuração da loja → fonte da linha exibida
 const SETTING_TO_ITEM: Record<RevenueSettingSource, ReceitaSource> = { orders: 'order', stone: 'stone', pix: 'pix', ifood: 'ifood', manual: 'manual' };
@@ -248,6 +250,9 @@ function FontesReceitaModal({ current, onClose, onSaved }: {
   current: RevenueSettingSource[]; onClose: () => void; onSaved: () => void;
 }) {
   const { save, saving } = useSaveRevenueSources();
+  // Nomes com a maquininha e o banco configurados em Conciliação › ⚙ › Como o dinheiro entra
+  const { flow } = useMoneyFlow();
+  const info = revenueSourceInfo(flow);
   const [sel, setSel] = useState<RevenueSettingSource[]>(current);
   const [error, setError] = useState('');
 
@@ -276,20 +281,20 @@ function FontesReceitaModal({ current, onClose, onSaved }: {
           </button>
         </div>
         <div className="p-6 space-y-3">
-          {(Object.keys(REVENUE_SOURCE_INFO) as RevenueSettingSource[]).map(s => (
+          {(Object.keys(info) as RevenueSettingSource[]).map(s => (
             <label key={s} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
               sel.includes(s) ? 'border-green-400 bg-green-50' : 'border-zinc-200 hover:bg-zinc-50'
             }`}>
               <input type="checkbox" checked={sel.includes(s)} onChange={() => toggle(s)} className="mt-1 accent-green-600" />
               <div>
-                <p className="text-sm font-semibold text-zinc-800">{REVENUE_SOURCE_INFO[s].label}</p>
-                <p className="text-xs text-zinc-500 mt-0.5">{REVENUE_SOURCE_INFO[s].desc}</p>
+                <p className="text-sm font-semibold text-zinc-800">{info[s].label}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">{info[s].desc}</p>
               </div>
             </label>
           ))}
           {sel.includes('orders') && sel.includes('stone') && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
-              Pedidos do sistema + Stone contam a mesma venda de cartão duas vezes se o cartão também passa pelo PDV do ERP.
+              Pedidos do sistema + Vendas no cartão contam a mesma venda duas vezes se o cartão também passa pelo PDV do ERP.
             </div>
           )}
           {error && (
@@ -327,8 +332,10 @@ export default function ReceitasTab() {
   const [sortField, setSortField] = useState<'date' | 'amount' | 'category'>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  const { items, summary, loading, error, truncated, enabledSources, refresh } = useReceitas(filters);
+  const { items, summary, loading, error, truncated, enabledSources, flow, refresh } = useReceitas(filters);
   const itemSources = enabledSources.map(s => SETTING_TO_ITEM[s]);
+  const sourceInfo = useMemo(() => revenueSourceInfo(flow), [flow]);
+  const flowLbl = moneyFlowLabels(flow);
 
   const allCategories = useMemo(() => {
     const set = new Set(items.map(r => r.category));
@@ -398,7 +405,7 @@ export default function ReceitasTab() {
       <div className="flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
         <i className="ri-information-line mt-0.5" />
         <span className="flex-1">
-          <strong>Contando como recebido:</strong> {enabledSources.map(s => REVENUE_SOURCE_INFO[s].label).join(' + ')}.
+          <strong>Contando como recebido:</strong> {enabledSources.map(s => sourceInfo[s].label).join(' + ')}.
           {enabledSources.includes('orders')
             ? <> Pedidos entram na data da venda — vendas no cartão a prazo aparecem aqui antes de o dinheiro cair.</>
             : <> Pedidos lançados no sistema não entram: vale o dinheiro que entrou na conta.</>}
@@ -444,7 +451,7 @@ export default function ReceitasTab() {
         {enabledSources.includes('stone') || enabledSources.includes('pix') || enabledSources.includes('ifood') ? (
           <KpiCard
             label={[
-              enabledSources.includes('stone') ? 'Cartão Stone' : null,
+              enabledSources.includes('stone') ? `Cartão (${flowLbl.card})` : null,
               enabledSources.includes('pix') ? 'Pix' : null,
               enabledSources.includes('ifood') ? 'iFood' : null,
             ].filter(Boolean).join(' / ')}
@@ -656,7 +663,7 @@ export default function ReceitasTab() {
           </div>
           <p className="text-sm font-semibold text-zinc-700">Nenhuma receita encontrada</p>
           <p className="text-xs text-zinc-400 mt-1">
-            {hasActiveFilters ? 'Tente ajustar os filtros' : `${enabledSources.map(s => REVENUE_SOURCE_INFO[s].label).join(', ')} aparecerão aqui`}
+            {hasActiveFilters ? 'Tente ajustar os filtros' : `${enabledSources.map(s => sourceInfo[s].label).join(', ')} aparecerão aqui`}
           </p>
           <button onClick={() => setShowNovaReceita(true)}
             className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold cursor-pointer transition-colors whitespace-nowrap">
@@ -947,7 +954,7 @@ export default function ReceitasTab() {
                       <span className="text-sm font-bold text-green-700">{formatCurrency(item.amount)}</span>
                       <span className="text-xs px-2 py-0.5 rounded-full font-medium"
                         style={{ backgroundColor: SOURCE_COLORS_R[item.source] + '22', color: SOURCE_COLORS_R[item.source] }}>
-                        {item.source === 'order' ? 'Pedido' : item.source === 'stone' ? 'Stone' : item.source === 'pix' ? 'Pix' : item.source === 'ifood' ? 'iFood' : 'Manual'}
+                        {item.source === 'order' ? 'Pedido' : item.source === 'stone' ? 'Cartão' : item.source === 'pix' ? 'Pix' : item.source === 'ifood' ? 'iFood' : 'Manual'}
                       </span>
                     </div>
                   </div>

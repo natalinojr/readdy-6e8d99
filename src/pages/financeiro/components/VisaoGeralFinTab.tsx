@@ -85,7 +85,8 @@ function useReceitaVsDespesa(meses: number) {
     setLoading(true);
     try {
       // ═══ Receita: regra dos recebidos da loja (Financeiro › Receitas › Fontes) ═══
-      // pedidos → auto_sale, manual → manual, stone → stone_sale, pix → extrato do Inter
+      // pedidos → auto_sale, manual → manual, stone (cartão da maquininha) → stone_sale,
+      // pix → extrato do banco principal (Conciliação › ⚙ › Como o dinheiro entra)
       const startDateStr = new Date(new Date().setMonth(new Date().getMonth() - meses)).toISOString().split('T')[0];
       const { sources } = await fetchRevenueSources(user.tenantId);
       const origins = [

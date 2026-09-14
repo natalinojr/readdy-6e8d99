@@ -675,6 +675,7 @@ Front: `ComprasTab.tsx` tem botão de editar (lápis) na coluna Ações — chec
 - despesas `origin='auto_card_fee'` = MDR, antecipação e tarifas/chargebacks (a DRE já lê `auto_card_fee` como Taxas de Cartão).
 - bruto − taxas = líquido depositado (conferido no centavo de 01 a 09/09).
 - Desligar a opção remove esses lançamentos. **Usar só enquanto as vendas de cartão NÃO forem registradas pelo PDV do ERP**, senão a receita conta 2×.
+- **Desde 2026-09-14 o casamento lê a configuração "Como o dinheiro entra"** (`fin_revenue_settings`: conta e texto do repasse, banco principal do Pix, modo do Pix da maquininha, conta do iFood) via `fn_money_flow`; `fn_match_stone_inter` é atalho de `fn_match_card_deposits`. Detalhes em AI_SYSTEM_MAP › "Como o dinheiro entra".
 
 **Telas:** `DRETab` e `DREComparativoTab` somam `stone_sale` na receita (linha "Vendas em Cartão (Stone)"); `FluxoCaixaTab` rotula a origem; `RealizadoProjetadoTab` ignora `source='stone'` na coluna Banco (era contagem dupla com o domicílio no Inter); `TransacaoDetalheModal` mostra a composição do repasse (ação `group_detail` da edge) e o aviso de transferência entre contas; `StoneConfigModal` tem o checkbox.
 

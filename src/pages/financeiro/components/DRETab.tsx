@@ -1,24 +1,22 @@
-import { useState, useEffect, useCallback, Fragment, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { useImpressoras, PRINTER_KEY_RELATORIOS } from '@/contexts/ImpressorasContext';
 import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
 import { fetchComprasDRE, fetchComprasPeriodo } from '@/lib/comprasDRE';
 import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
+import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Cell, ReferenceLine,
 } from 'recharts';
 import { formatCurrency } from '@/lib/formatters';
 import DREDrillDownModal from './DREDrillDownModal';
+import { VarChip, SectionHeader, NoteRow, Segmented, KpiCard } from './dreUi';
 import { useDreGroups, STANDARD_GROUP_KEYS } from '@/hooks/useDreGroups';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function pct(v: number, total: number) {
   return total > 0 ? ((Math.abs(v) / total) * 100).toFixed(1) + '%' : '—';
-}
-function variacao(atual: number, anterior: number) {
-  if (anterior === 0) return null;
-  return ((atual - anterior) / Math.abs(anterior)) * 100;
 }
 function addMonths(mes: string, n: number) {
   const [y, m] = mes.split('-').map(Number);
@@ -607,24 +605,6 @@ const CustomTooltip = ({
   );
 };
 
-// Variação vs. mês anterior. `inverse` = linha de custo/despesa: subir é ruim.
-function VarChip({ atual, anterior, inverse }: { atual: number; anterior?: number; inverse?: boolean }) {
-  if (anterior === undefined || anterior === null) return <span className="text-zinc-300 text-xs">—</span>;
-  const v = variacao(atual, anterior);
-  if (v === null) return <span className="text-zinc-300 text-xs">—</span>;
-  if (Math.abs(v) < 0.05) {
-    return <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[11px] font-semibold bg-zinc-100 text-zinc-500 tabular-nums">0,0%</span>;
-  }
-  const up = v > 0;
-  const good = inverse ? !up : up;
-  return (
-    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-semibold tabular-nums ${good ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-      <i className={up ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />
-      {Math.abs(v).toFixed(1).replace('.', ',')}%
-    </span>
-  );
-}
-
 interface DRERowProps {
   label: string;
   atual: number;
@@ -708,43 +688,6 @@ function DRERow({
   );
 }
 
-const SECTION_TONES: Record<string, string> = {
-  emerald: 'bg-emerald-50 text-emerald-600',
-  orange: 'bg-orange-50 text-orange-600',
-  rose: 'bg-rose-50 text-rose-600',
-  zinc: 'bg-zinc-100 text-zinc-600',
-};
-
-function SectionHeader({ label, icon = 'ri-folder-line', tone = 'zinc' }: { label: string; icon?: string; tone?: string }) {
-  return (
-    <tr>
-      <td colSpan={5} className="px-5 pt-5 pb-2">
-        <div className="flex items-center gap-2.5">
-          <span className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${SECTION_TONES[tone] ?? SECTION_TONES.zinc}`}>
-            <i className={`${icon} text-sm`} />
-          </span>
-          <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">{label}</span>
-          <span className="flex-1 h-px bg-zinc-100" />
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-// Nota curta embaixo de uma linha (sem caixa — só texto de apoio).
-function NoteRow({ children }: { children: ReactNode }) {
-  return (
-    <tr>
-      <td colSpan={5} className="pl-10 pr-5 pb-2.5 pt-0">
-        <p className="text-[11px] leading-relaxed text-zinc-400 flex items-start gap-1.5">
-          <i className="ri-information-line mt-px flex-shrink-0" />
-          <span>{children}</span>
-        </p>
-      </td>
-    </tr>
-  );
-}
-
 function CatTreeRows({
   cats, depth, data, prevData, receitaBruta, mode, onDrillDown,
 }: {
@@ -799,69 +742,6 @@ const MODE_TOOLTIPS: Record<DREMode, string> = {
   competencia: 'Reconhece receitas pela data da venda e despesas pela data de vencimento (não pela data de pagamento)',
 };
 
-function Segmented<T extends string>({
-  value, onChange, options,
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  options: { id: T; label: string; icon: string; title?: string }[];
-}) {
-  return (
-    <div className="flex bg-zinc-100 p-1 rounded-xl">
-      {options.map(o => (
-        <button
-          key={o.id}
-          title={o.title}
-          onClick={() => onChange(o.id)}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
-            value === o.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'
-          }`}
-        >
-          <i className={`${o.icon} text-sm`} />
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function KpiCard({
-  label, icon, value, valueTone, sub, subTone, atual, anterior, inverse, highlight,
-}: {
-  label: string;
-  icon: string;
-  value: string;
-  valueTone?: string;
-  sub?: string;
-  subTone?: string;
-  atual: number;
-  anterior?: number;
-  inverse?: boolean;
-  highlight?: 'pos' | 'neg';
-}) {
-  const ring = highlight === 'pos'
-    ? 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white'
-    : highlight === 'neg'
-    ? 'border-red-200 bg-gradient-to-br from-red-50 to-white'
-    : 'border-zinc-200 bg-white';
-  return (
-    <div className={`rounded-2xl border p-4 flex flex-col gap-2 ${ring}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0">
-            <i className={`${icon} text-sm`} />
-          </span>
-          <span className="text-xs font-semibold text-zinc-500 truncate">{label}</span>
-        </div>
-        <VarChip atual={atual} anterior={anterior} inverse={inverse} />
-      </div>
-      <p className={`text-2xl font-bold tabular-nums tracking-tight ${valueTone ?? 'text-zinc-900'}`}>{value}</p>
-      {sub && <p className={`text-xs ${subTone ?? 'text-zinc-400'}`}>{sub}</p>}
-    </div>
-  );
-}
-
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function DRETab() {
   const { user } = useAuth();
@@ -900,6 +780,9 @@ export default function DRETab() {
 
   // O rótulo bonito do grupo vem do banco (fin_dre_groups). Antes vinha do
   // localStorage, então em outra máquina a DRE mostrava a chave crua.
+  // Nomes da maquininha e do banco principal (Conciliação › ⚙ › Como o dinheiro entra)
+  const { labels: flowLabels } = useMoneyFlow();
+
   const enrichedCustomGroups = customGroups.map(g => {
     const match = dreGroups.find(s => s.key === g.key);
     return match ? { key: g.key, label: match.label } : g;
@@ -1399,12 +1282,12 @@ export default function DRETab() {
                     origin="Livro-razão: fin_cash_flow → auto_sale" clickable onClick={() => setDrillDown({ type: 'receita_autoatendimento' })} />
                 )}
                 {(data.receitaStone ?? 0) > 0 && (
-                  <DRERow label="Vendas em cartão (Stone)" atual={data.receitaStone} anterior={prevData?.receitaStone} receitaBruta={receitaBruta} depth={1}
-                    origin="Livro-razão: fin_cash_flow → stone_sale (valor bruto liquidado pela Stone; as taxas estão em Taxas de Cartão)" />
+                  <DRERow label={`Vendas em cartão (${flowLabels.card})`} atual={data.receitaStone} anterior={prevData?.receitaStone} receitaBruta={receitaBruta} depth={1}
+                    origin="Livro-razão: fin_cash_flow → stone_sale (vendas em cartão liquidadas pela maquininha, valor bruto; as taxas estão em Taxas de Cartão)" />
                 )}
                 {(data.receitaPix ?? 0) > 0 && (
-                  <DRERow label="Pix recebido (Inter)" atual={data.receitaPix ?? 0} anterior={prevData?.receitaPix} receitaBruta={receitaBruta} depth={1}
-                    origin="Extrato do Banco Inter → créditos Pix (inclui o Pix da maquininha transferido da Conta Stone)" />
+                  <DRERow label={`Pix recebido (${flowLabels.bank})`} atual={data.receitaPix ?? 0} anterior={prevData?.receitaPix} receitaBruta={receitaBruta} depth={1}
+                    origin={`Extrato do ${flowLabels.bank} → créditos Pix${flowLabels.pixMode === 'transfer' ? ' (inclui o Pix da maquininha transferido da conta dela)' : ''}`} />
                 )}
                 {(data.receitaIfood ?? 0) > 0 && (
                   <DRERow label="Vendas iFood" atual={data.receitaIfood ?? 0} anterior={prevData?.receitaIfood} receitaBruta={receitaBruta} depth={1}

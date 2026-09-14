@@ -760,7 +760,8 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       if (payrollPendingMes.error) console.error('[useFinanceiro] folha pendente:', payrollPendingMes.error.message);
 
       // Regra dos recebidos da loja (Financeiro › Receitas › Fontes): pedidos
-      // (auto_sale), manuais, Stone (stone_sale) e Pix do Inter entram só se ligados.
+      // (auto_sale), manuais, cartão da maquininha (stone_sale) e Pix do banco
+      // principal (Conciliação › ⚙ › Como o dinheiro entra) entram só se ligados.
       const { sources } = await fetchRevenueSources(user.tenantId);
       const on = (s: string) => (sources as string[]).includes(s);
       const extraStart = prevMonthStartDate < thirtyDaysAgoDate ? prevMonthStartDate : thirtyDaysAgoDate;
@@ -770,7 +771,7 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
         on('ifood') ? fetchIfoodSales(user.tenantId, extraStart, monthEndDate) : Promise.resolve({ rows: [], error: null }),
       ]);
       const extraRows = [
-        ...stoneRes.rows.map(r => ({ date: r.date, amount: r.amount, label: 'Cartão (Stone)' })),
+        ...stoneRes.rows.map(r => ({ date: r.date, amount: r.amount, label: 'Cartão (maquininha)' })),
         ...pixRes.rows.map(r => ({ date: r.transaction_date, amount: r.amount, label: 'Pix recebido' })),
         ...ifoodRes.rows.map(r => ({ date: r.date, amount: r.amount, label: 'iFood' })),
       ];

@@ -543,6 +543,24 @@ balcão, **sem** `preparar_pagamento`. Pago na hora (dinheiro/cartão/Pix no cup
 com `asst_settings.group_watch.purchase_entries = false`. Primeiro caso: cupom da Condor
 (R$ 29,31, dinheiro) — o modelo perguntou as dúvidas de insumo antes de lançar.
 
+**Tudo que a tela faz, o assistente faz (2026-09-14, regra do dono).** Gatilho: ele respondeu que
+não podia "atualizar a conciliação da Stone", mas a tela tem o botão (`stone-conciliation › sync`)
+e a edge não estava no `EDGE_ALLOW`. Agora, sempre com o JWT do dono (mesma RLS/permissão da tela):
+- `erpos_executar`: `EDGE_ALLOW` cobre todas as edges que o front chama (inclui stone-conciliation,
+  inter-bank, ifood-financial, fiscal-inbound, conciliacao-pagamentos, purchase-confirm-delivery,
+  hiring-cv-scan…), com as ações documentadas no `EDGE_MAP`. Bloqueio: credenciais/autorização
+  de integração (`EDGE_ACTION_BLOCK`) e pagamento direto no inter-bank (só `preparar_pagamento`).
+- `erpos_rpc` (novo): qualquer função do banco que as telas usam (`/rest/v1/rpc`), exceto
+  `RPC_BLOCK` (acesso de pessoas a lojas, convites, tokens do quiosque, admin); `RPC_SENSITIVE`
+  (cancelar, estornar, fechar…) exige `confirmado`. `p_tenant_id` é sempre a loja resolvida.
+  Parâmetros: o modelo consulta `pg_get_function_arguments` via `consultar_banco`.
+- `erpos_tabela` (novo): gravação direta só nas tabelas que o front grava sem edge (`TABLE_ALLOW`:
+  hiring_*, ingredient_batches, ingredients/print_queue/system_settings/table_sessions update,
+  user_preferences); update/delete um registro por vez (`filtro.id`); delete, system_settings e
+  table_sessions exigem `confirmado`; chave Pix bloqueada.
+- System prompt: nunca dizer "não consigo" sem procurar nos três caminhos. Inventário de onde
+  saiu a lista: `grep invokeWithAuth|functions.invoke|.rpc(|.from().insert/update` em `src/`.
+
 **Currículos pelo WhatsApp — só recebimento (2026-09-13).** O dono recebe currículos no WhatsApp
 dele e ENCAMINHA para o número do assistente. Com `channels.whatsapp_dm = false`, a conversa
 particular continua desligada, com uma exceção no webhook — **só depois de o dono avisar**

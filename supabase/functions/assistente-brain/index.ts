@@ -322,7 +322,7 @@ TOOLS.push({
   input_schema: {
     type: 'object',
     properties: {
-      funcao: { type: 'string', description: 'Nome da Edge Function (ex.: menu-write, financial-write, purchase-write, stock-write, customer-write, reservation-write, config-write, voucher-write, production-write, table-write, user-write, delivery-write).' },
+      funcao: { type: 'string', description: 'Nome da Edge Function (ex.: menu-write, financial-write, purchase-write, stock-write, customer-write, reservation-write, config-write, voucher-write, production-write, table-write, user-write, delivery-write, order-write, stone-conciliation, inter-bank, ifood-financial, conciliacao-pagamentos, fiscal-inbound, purchase-confirm-delivery, hiring-cv-scan...).' },
       action: { type: 'string', description: 'Ação dentro da função (ex.: create_item, update_item, create_bill, pay_bill...).' },
       dados: { type: 'object', description: 'Campos da ação, exatamente como o mapa descreve (enviados como payload e também no nível de cima). Não inclua tenant_id: é preenchido pela loja.' },
       loja: { type: 'string', description: 'Nome (parcial) da loja. Padrão: loja principal.' },
@@ -330,6 +330,38 @@ TOOLS.push({
       resumo: { type: 'string', description: 'Uma linha em português do que está sendo feito (vai para a auditoria).' },
     },
     required: ['funcao', 'action', 'dados', 'resumo'],
+  },
+});
+TOOLS.push({
+  name: 'erpos_rpc',
+  description: 'Chama uma FUNÇÃO DO BANCO (RPC) que as telas do ERPOS usam, com o login do Natalino (mesmas permissões da tela). Ex.: fn_cancel_and_refund_order, fn_cancel_order_item, fn_restock_order, fn_open_cash_register, fn_close_cash_register_v2, fn_open_session, fn_close_session, fn_update_cash_register_notes, fn_cortesia_marcar_pedido, fn_update_user, fn_toggle_user_active, enqueue_print_ticket. Para saber os parâmetros: consultar_banco com select pg_get_function_arguments(p.oid) from pg_proc p where p.proname = \'<nome>\'. Se a função recebe p_tenant_id, mande a chave (o valor é preenchido pela loja). Sensíveis (cancelar, estornar, fechar, apagar...) exigem confirmado=true depois do "sim".',
+  input_schema: {
+    type: 'object',
+    properties: {
+      funcao_banco: { type: 'string', description: 'Nome da função (ex.: fn_cancel_and_refund_order).' },
+      parametros: { type: 'object', description: 'Parâmetros nomeados exatamente como na função (p_...).' },
+      loja: { type: 'string', description: 'Nome (parcial) da loja. Padrão: loja principal.' },
+      confirmado: { type: 'boolean', description: 'true = o Natalino confirmou ESTA ação nesta conversa (obrigatório nas sensíveis).' },
+      resumo: { type: 'string', description: 'Uma linha do que está sendo feito (auditoria).' },
+    },
+    required: ['funcao_banco', 'parametros', 'resumo'],
+  },
+});
+TOOLS.push({
+  name: 'erpos_tabela',
+  description: 'Grava DIRETO numa tabela, do mesmo jeito que algumas telas fazem (sem Edge Function), com o login do Natalino (RLS da tela). Só nas tabelas que as telas gravam assim: Contratação (hiring_candidates, hiring_jobs, hiring_applications, hiring_interviews, hiring_companies, hiring_stages, hiring_settings, hiring_distances), lotes de validade (ingredient_batches), insumos (ingredients: só update), fila de impressão (print_queue: update), user_preferences, system_settings (update, sensível) e table_sessions (update, sensível). update/delete: um registro por vez, com filtro.id (busque antes com consultar_banco). delete exige confirmado=true.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      tabela: { type: 'string' },
+      operacao: { type: 'string', enum: ['insert', 'update', 'upsert', 'delete'] },
+      valores: { type: 'object', description: 'Colunas a gravar (insert/update/upsert).' },
+      filtro: { type: 'object', description: 'Para update/delete: { id: "<uuid>" } (pode somar outras colunas).' },
+      loja: { type: 'string' },
+      confirmado: { type: 'boolean' },
+      resumo: { type: 'string', description: 'Uma linha do que está sendo feito (auditoria).' },
+    },
+    required: ['tabela', 'operacao', 'resumo'],
   },
 });
 // ── Contratação: currículos pelo assistente (2026-09-13) ──
@@ -447,7 +479,30 @@ async function interTenant(ctx: Ctx, loja?: string): Promise<string> {
   return String(data[0].tenant_id);
 }
 const CHAT_CHANNELS = new Set(['whatsapp', 'telegram']);
-const EDGE_ALLOW = new Set(['menu-write', 'financial-write', 'purchase-write', 'stock-write', 'customer-write', 'reservation-write', 'table-write', 'config-write', 'voucher-write', 'production-write', 'user-write', 'task-write', 'delivery-write', 'order-write', 'fiscal-write', 'implementation-write']);
+// Regra do dono (2026-09-14): TUDO que um usuário faz no ERPOS pelo navegador o assistente também
+// faz. Por isso: todas as Edge Functions que as telas chamam (não só as *-write), as funções do banco
+// (erpos_rpc) e as gravações diretas que as telas fazem (erpos_tabela) — sempre com o JWT do dono,
+// ou seja, as mesmas permissões e RLS da tela. Ficam de fora só as travas de segurança abaixo.
+const EDGE_ALLOW = new Set([
+  'menu-write', 'financial-write', 'purchase-write', 'stock-write', 'customer-write', 'reservation-write', 'table-write', 'config-write',
+  'voucher-write', 'production-write', 'user-write', 'task-write', 'delivery-write', 'order-write', 'fiscal-write', 'implementation-write',
+  'stone-conciliation', 'inter-bank', 'ifood-financial', 'fiscal-inbound', 'conciliacao-pagamentos', 'purchase-confirm-delivery',
+  'order-edit-lock', 'meta-ads-insights', 'print-queue-write', 'online-payments', 'check-session-pending', 'session-payments',
+  'export-menu-template', 'import-menu-template', 'hiring-cv-scan', 'audit-write',
+]);
+// Credenciais/autorização de integrações (Inter, Stone, iFood, Mercado Pago, fiscal) ficam com o dono na tela.
+const EDGE_ACTION_BLOCK = /(save_config|delete_config|save_pay_credentials|delete_pay_credentials|save_credentials|request_user_code|confirm_authorization|select_merchant|setup_cron)/i;
+// Funções do banco fora do alcance: acesso de pessoas a lojas, convites, tokens do quiosque, admin da plataforma.
+const RPC_BLOCK = /^(fn_admin_\w*|bootstrap\w*|fn_grant_tenant_access|fn_revoke_tenant_access|fn_create_store_invite|fn_delete_store_invite|fn_create_kiosk_token|fn_revoke_kiosk_token|fn_set_\w*secret\w*|fn_asst_\w*|fn_assistente_\w*)$/i;
+const RPC_SENSITIVE = /(cancel|refund|delete|remove|revoke|close|toggle|restock|bypass|reset|purge|estorn|update_user|open_cash|open_session|cortesia)/i;
+// Gravação direta: só as tabelas que as telas gravam sem Edge Function (levantado em 2026-09-14).
+const TABLE_ALLOW: Record<string, string[]> = {
+  hiring_candidates: ['insert', 'update', 'delete'], hiring_jobs: ['insert', 'update', 'delete'], hiring_applications: ['insert', 'update', 'upsert', 'delete'],
+  hiring_interviews: ['insert', 'update', 'delete'], hiring_companies: ['insert', 'update', 'delete'], hiring_stages: ['insert', 'update', 'delete'],
+  hiring_settings: ['upsert', 'update'], hiring_distances: ['delete'],
+  ingredient_batches: ['update'], ingredients: ['update'], print_queue: ['update'], user_preferences: ['insert', 'update', 'upsert'],
+  system_settings: ['update'], table_sessions: ['update'],
+};
 // Ações que exigem confirmação explícita na conversa (padrão de nome; o mapa também marca).
 const SENSITIVE = /(^|_)(delete|remove|pay|refund|cancel|void|close|reset|archive|purge|reverse|estorn|excluir|pagar|cancelar|fechar)(_|$)/i;
 
@@ -559,6 +614,12 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       if (/supplier|fornecedor|favorecid|allowlist/i.test(action) || /"(pix_key|chave_pix|pixkey)"/.test(dadosTxt) || (funcao === 'financial-write' && /"cnpj"/.test(dadosTxt))) {
         throw new Error('Cadastro e edição de fornecedor (inclusive CNPJ e chave Pix) não são feitos pelo assistente: é a trava de segurança do Pix. Diga ao Natalino para cadastrar ou editar o fornecedor no ERPOS (Financeiro › Compras › Fornecedores). Não ofereça fazer por ele.');
       }
+      if (EDGE_ACTION_BLOCK.test(action)) {
+        throw new Error('Credenciais e autorização de integrações (Inter, Stone, iFood, Mercado Pago, fiscal) são configuradas pelo Natalino na tela (Financeiro › Conciliação ou Configurações). Diga isso a ele.');
+      }
+      if (funcao === 'inter-bank' && /payment/i.test(action) && !/list_payments|payment_status|check_payment_scopes/i.test(action)) {
+        throw new Error('Pagamento pelo Inter é só por preparar_pagamento (botões + PIN).');
+      }
       if (SENSITIVE.test(action) && input.confirmado !== true) {
         throw new Error(`A ação "${action}" é sensível: pergunte ao Natalino se confirma (diga exatamente o que vai fazer e o valor) e só chame de novo com confirmado=true depois do "sim" dele.`);
       }
@@ -577,6 +638,72 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       });
       if (!ok) throw new Error(err ?? `${funcao}/${action} → HTTP ${res?.status}: ${JSON.stringify(b).slice(0, 400)}`);
       return JSON.stringify({ ok: true, loja: t.name, funcao, action, resultado: b }).slice(0, 6000);
+    }
+    case 'erpos_rpc': {
+      const fn = String(input.funcao_banco ?? '').trim();
+      if (!/^[a-z_][a-z0-9_]{2,80}$/i.test(fn)) throw new Error('Nome de função do banco inválido.');
+      if (RPC_BLOCK.test(fn)) throw new Error(`"${fn}" não é liberada para o assistente (acesso de pessoas, convites, quiosque e admin ficam com o Natalino na tela).`);
+      if (RPC_SENSITIVE.test(fn) && input.confirmado !== true) {
+        throw new Error(`"${fn}" é sensível: diga ao Natalino exatamente o que vai fazer e só chame de novo com confirmado=true depois do "sim" dele.`);
+      }
+      const params: Record<string, unknown> = input.parametros && typeof input.parametros === 'object' ? { ...input.parametros } : {};
+      const t = resolveTenant(ctx, input.loja);
+      // A loja vem do parâmetro loja (nunca do modelo): substitui o tenant se a função o recebe.
+      for (const k of ['p_tenant_id', 'p_tenant']) if (k in params) params[k] = t.id;
+      const token = await ownerToken(admin, ownerId);
+      const started = Date.now();
+      const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/${fn}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '' },
+        body: JSON.stringify(params), signal: AbortSignal.timeout(25_000),
+      });
+      const text = await r.text();
+      let out: unknown; try { out = JSON.parse(text); } catch { out = text.slice(0, 500); }
+      const ok = r.ok;
+      await admin.from('asst_actions').insert({
+        chat_id: ctx.chatId, tenant_id: t.id, funcao: 'rpc', action: fn, payload: { ...params, _resumo: input.resumo ?? null, _loja: t.name },
+        ok, status: r.status, result: ok ? (typeof out === 'object' ? out : { value: out }) : null,
+        error: ok ? null : JSON.stringify(out).slice(0, 500), ms: Date.now() - started,
+      });
+      if (!ok) throw new Error(`${fn} → HTTP ${r.status}: ${JSON.stringify(out).slice(0, 400)} (confira os parâmetros: select pg_get_function_arguments(p.oid) from pg_proc p where p.proname = '${fn}')`);
+      return JSON.stringify({ ok: true, loja: t.name, funcao_banco: fn, resultado: out }).slice(0, 6000);
+    }
+    case 'erpos_tabela': {
+      const tabela = String(input.tabela ?? '').trim();
+      const op = String(input.operacao ?? '').trim();
+      const ops = TABLE_ALLOW[tabela];
+      if (!ops) throw new Error(`Gravação direta em "${tabela}" não é feita pelas telas: use erpos_executar (MAPA DE AÇÕES) ou erpos_rpc. Tabelas liberadas: ${Object.keys(TABLE_ALLOW).join(', ')}.`);
+      if (!ops.includes(op)) throw new Error(`Em "${tabela}" as telas só fazem: ${ops.join(', ')}.`);
+      const valores = input.valores && typeof input.valores === 'object' ? input.valores : null;
+      const filtro: Record<string, unknown> = input.filtro && typeof input.filtro === 'object' ? input.filtro : {};
+      if (/"(pix_key|chave_pix|pixkey|pix_chave)"/i.test(JSON.stringify(valores ?? {}))) throw new Error('Chave Pix é alterada só pelo Natalino na tela.');
+      if ((op === 'update' || op === 'delete') && !filtro.id) throw new Error('update/delete precisa de filtro.id (um registro por vez): busque o id antes com consultar_banco.');
+      if ((op === 'delete' || tabela === 'system_settings' || tabela === 'table_sessions') && input.confirmado !== true) {
+        throw new Error(`Essa gravação (${op} em ${tabela}) é sensível: descreva ao Natalino o que vai mudar e só chame de novo com confirmado=true depois do "sim".`);
+      }
+      if (op !== 'delete' && !valores) throw new Error('Informe valores.');
+      const t = resolveTenant(ctx, input.loja);
+      const qs = Object.entries(filtro).map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(String(v))}`).join('&');
+      const token = await ownerToken(admin, ownerId);
+      const started = Date.now();
+      const method = op === 'insert' || op === 'upsert' ? 'POST' : op === 'update' ? 'PATCH' : 'DELETE';
+      const prefer = ['return=representation', ...(op === 'upsert' ? ['resolution=merge-duplicates'] : [])].join(',');
+      const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/${tabela}${qs ? `?${qs}` : ''}`, {
+        method,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', Prefer: prefer },
+        body: op === 'delete' ? undefined : JSON.stringify(valores), signal: AbortSignal.timeout(20_000),
+      });
+      const text = await r.text();
+      let out: unknown; try { out = JSON.parse(text); } catch { out = text.slice(0, 500); }
+      const linhas = Array.isArray(out) ? out.length : null;
+      const ok = r.ok && (op === 'insert' || op === 'upsert' || (linhas ?? 0) > 0);
+      await admin.from('asst_actions').insert({
+        chat_id: ctx.chatId, tenant_id: t.id, funcao: 'tabela', action: `${op}:${tabela}`, payload: { filtro, valores, _resumo: input.resumo ?? null, _loja: t.name },
+        ok, status: r.status, result: ok ? { linhas } : null, error: ok ? null : JSON.stringify(out).slice(0, 500), ms: Date.now() - started,
+      });
+      if (!r.ok) throw new Error(`${op} em ${tabela} → HTTP ${r.status}: ${JSON.stringify(out).slice(0, 400)}`);
+      if (!ok) throw new Error(`Nada foi alterado em ${tabela} (id não encontrado ou sem permissão para esse registro).`);
+      return JSON.stringify({ ok: true, loja: t.name, tabela, operacao: op, linhas, resultado: out }).slice(0, 6000);
     }
     case 'modo_curriculos': {
       const { data: cur } = await admin.from('asst_settings').select('value').eq('key', 'hiring_intake').maybeSingle();
@@ -1025,6 +1152,7 @@ Como agir:
 - Ao confirmar uma ação, diga o que foi feito em uma linha (ex.: "Criei a tarefa X na pasta Y, prazo sexta 9h").
 - Botões/enquete: quando a decisão dele for entre alternativas claras (2 a 12) — inclusive confirmar/cancelar uma ação sensível — use enviar_enquete em vez de listar opções numeradas ou pedir "sim"; ele responde tocando. A escolha volta como mensagem "[Botão "pergunta"] Resposta: opção" (ou [Enquete ...]): trate como a resposta dele à pergunta e siga em frente sem perguntar de novo. Endereço/onde fica → enviar_localizacao; telefone de alguém → enviar_contato (o cartão vai junto com sua resposta; não repita o número no texto).
 - AÇÕES NO ERPOS (erpos_executar): você age como o próprio Natalino, pelas mesmas Edge Functions das telas — cardápio, contas, compras, estoque, clientes, reservas, mesas, cupons, produção, configurações, usuários. Fluxo: (1) entenda o pedido e busque no banco os ids/nomes exatos que a ação precisa (item, categoria, fornecedor, conta) — nunca chute id; (2) se faltar dado essencial (preço, categoria, valor, vencimento), pergunte em uma linha; (3) execute; (4) confirme em uma linha o que ficou feito, com nome e valor. Ações que mexem em dinheiro, apagam, cancelam, estornam ou fecham (pagar conta, excluir item, cancelar reserva, fechar caixa...) exigem confirmação: descreva exatamente o que vai fazer e o valor, espere o "sim" e só então chame com confirmado=true. Criar/editar cardápio, cadastrar cliente, lançar conta a pagar e ajustar estoque podem ir direto quando o pedido dele já é claro e completo. Se a edge devolver erro, leia a mensagem, corrija os campos e tente de novo uma vez; se persistir, explique o erro em uma linha. Use o MAPA DE AÇÕES abaixo para funcao/action/campos; se a ação que ele quer não estiver no mapa, diga que essa ainda não está disponível pelo WhatsApp (não improvise chamadas). PAGAMENTOS PELO INTER: para pagar boleto ou fazer Pix use preparar_pagamento (nunca erpos_executar); ele manda os botões Pagar/Cancelar e o PIN é digitado depois, direto no canal, sem passar por você. Nunca peça, aceite ou repita PIN; se ele mandar números soltos que parecem PIN, não comente. Da foto do boleto copie a linha digitável exatamente; se a ferramenta disser que o dígito não confere, peça para ele conferir ou digitar a linha. Se houver conta a pagar correspondente (mesmo fornecedor/valor/vencimento), passe o conta_a_pagar_id. Status depois: status_pagamento. O pagamento ainda precisa da aprovação dele no app do Inter; diga isso numa frase. FORNECEDORES SÃO A TRAVA DO PIX: você NUNCA cadastra, edita, apaga ou mescla fornecedor, nem mexe em CNPJ ou chave Pix (o sistema bloqueia). NUNCA decida sozinho se uma chave Pix ou um boleto é permitido e NUNCA pesquise isso no banco antes: chame preparar_pagamento direto com a chave e o valor — é a ferramenta que confere fornecedores E a lista de Pix permitidos (fin_pix_favorecidos) e responde se aceita. Se ele disser que já cadastrou, chame preparar_pagamento de novo na hora. Se a chave do Pix for recusada PELA FERRAMENTA, diga só que por segurança o Pix vai apenas para fornecedor cadastrado (Financeiro › Compras › Fornecedores, campo Chave Pix) ou para alguém da lista de Pix permitidos (tela Assistente do ERPOS › Pix permitidos, protegida por um PIN que só ele sabe), e que é ele quem cadastra lá. Não ofereça cadastrar e não sugira contornar.
+- TUDO QUE O NATALINO FAZ NO ERPOS PELO NAVEGADOR VOCÊ TAMBÉM FAZ (regra dele). Os três caminhos da tela: erpos_executar (Edge Functions — MAPA DE AÇÕES), erpos_rpc (funções do banco: cancelar pedido, abrir/fechar caixa e sessão, usuários, impressão…) e erpos_tabela (gravações diretas: Contratação, lotes de validade, fila de impressão…). NUNCA responda "não consigo"/"não está no meu alcance" sem antes procurar nesses três (para achar a função do banco: consultar_banco em pg_proc por nome). Se procurou e de fato não existe, diga em qual tela ele faz. Exceções de segurança (essas ficam com ele na tela): fornecedor, chave Pix e Pix permitidos; credenciais de integração; acesso de pessoas às lojas, convites e tokens do quiosque.
 - Fora do ERPOS: dados_publicos (CNPJ, CEP, feriados, taxas, NCM), previsao_tempo (loja/cidade) e web_search (internet: preço de mercado, notícia, dúvida geral, endereço/telefone de terceiros). Use web_search só quando a resposta não está no sistema nem nas outras ferramentas; no máximo 3 buscas por mensagem; cite a fonte em uma palavra quando importar.
 - Se a mensagem dele não pede nada e não precisa de resposta (só "ok", "valeu", "beleza", "👍", um agradecimento, um "boa noite" final), responda EXATAMENTE NO_REPLY (nada mais): ele recebe só uma reação 👍 em vez de uma mensagem. Nunca use NO_REPLY quando houver pergunta, pedido, informação nova para guardar ou algo que mereça comentário.`;
 
@@ -1046,6 +1174,8 @@ financial-write (financeiro/RH; retorna {data})
 - bank_manual_transaction (S): bank_account_id, type 'debit'|'credit', amount, description, transaction_date?.
 - (fornecedor: BLOQUEADO para o assistente — o Natalino cadastra na tela). upsert_cost_center: id?, name. upsert_dre_category: id?, name, group_type.
 - receive_installment (S): id (recebível de cartão). insert_anticipation (S): gross_amount, fee_percent, net_amount, installment_ids[].
+- set_revenue_sources (S): sources[] ⊂ 'orders','stone' (= cartão da maquininha, nome histórico),'pix','ifood','manual' — o que conta como receita recebida (Receitas › Fontes).
+- set_money_flow (S) — "Como o dinheiro entra" (Conciliação › ⚙); campo omitido não muda; atual em fin_revenue_settings: bank_provider 'inter'|'ofx'|'outro', bank_account_id (banco principal: onde o Pix conta como receita), card_provider 'stone'|'mercadopago'|'outra'|'nenhuma', card_deposit_account_id (onde cai o repasse), card_deposit_match (texto do repasse no extrato, ex. 'stone'), card_pix_mode 'transfer' (Pix da maquininha fica na conta dela e é transferido: a transferência da própria empresa conta como Pix recebido)|'direct'|'none', ifood_deposit_account_id. Muda Receitas/DRE/Visão Geral inclusive de meses passados.
 - RH: upsert_employee: id?, name, role, salary, hire_date, status, phone?, cpf?, pix_key?. delete_employee (S): id. upsert_payroll: id?, employee_id, employee_name, reference_month, gross_salary, net_salary, status. pay_payroll (S): id, paid_date, payment_method. pay_all_payroll (S): ids[], paid_date, payment_method.
 - Orçamentos: upsert_budget: id?, titulo, fornecedor, items[{descricao,quantidade,unidade,valor_unitario}], observacoes?; update_budget_status: id, status; convert_budget_to_purchase (S): budget_id, payment_method?, payment_status?, due_date?.
 
@@ -1069,7 +1199,15 @@ order-write: create_promotion_rule: name, promo_type ('item_percent'|'item_fixed
 user-write (erros vêm com HTTP 200 {error}): create_user: nome, email?, senha (mín. 6), perfil 'admin'|'gerente'|'caixa'|'garcom'|'cozinha'|'gestor_entregas'|'tarefas', pin?(4-8 dígitos), matricula?. reset_password (S): user_id, nova_senha. set_pin: user_id, pin. delete_user (S): user_id.
 task-write (campos soltos): update_task: task_id + title?, description?, due_date?, priority?, status_category?('todo'|'in_progress'|'done'), assignee_id?, list_id?. add_comment: task_id, body. add_checklist_item: task_id, title. create_list: name, color?.
 fiscal-write: emit: source_type 'order'|'table_session', source_id, customer_cpf?. retry: document_id. cancel (S): document_id, justificativa (≥15 caracteres). run_pending.
-Não disponíveis pelo WhatsApp: criar venda/pedido (create_order), mesa do cliente, fila de impressão, configuração fiscal.`;
+stone-conciliation (conciliação Stone): sync {} = o botão "Atualizar" da tela (ontem + dias sem sucesso dos últimos 3); import {reference_date:'AAAA-MM-DD'} (o arquivo do dia D só existe a partir das 05h de D+1); import_range {date_from, date_to} (até 31 dias); get_history {}.
+inter-bank (extrato Inter): sync {days?} ou {date_from, date_to}; get_config {}; list_payments {}; payment_status {payment_id}. Pagar NUNCA por aqui: preparar_pagamento.
+ifood-financial: sync {competences?:['AAAA-MM']}; list_imports {}; request_ondemand {competence}; ondemand_status {request_id}.
+conciliacao-pagamentos: rematch {} (refaz as sugestões); alerts {}; confirm (S) {ids:[fin_bank_statement_imports.id]} (baixa a conta sugerida; importa a nota se preciso); undo (S) {id}; save_counterpart_rule {counterpart_doc, counterpart_label?, category, cost_center_id?, transaction_type 'debit'|'credit'|'both'}.
+fiscal-inbound (notas de entrada SEFAZ): sync {days?} (busca na SEFAZ e lança sozinhas as de fornecedor conhecido); fetch_xml {}; auto_launch {}. Com document_id (fiscal_inbound_documents.id): import_purchase {document_id, links?[{index, ingredient_id, units_per_package}], pago?, payment_method?, bank_account_id?, cost_center_id?, notes?}; import_bill {document_id, category, dre_category_id?, cost_center_id?}; ignore {document_id, reason?}; unignore {document_id}; manifest {document_id, tipo 1-4 (2 = ciência)}; item_links {document_id}; undo_auto_import (S) {document_id}.
+purchase-confirm-delivery (recebimento com ajuste): receipt_context {purchase_id} (insumos + sugestão por item); qualquer outra action, ex. 'confirmar' = confirma o recebimento {purchase_id, received_at?, delivery_notes?, received_items?} e lança o estoque.
+hiring-cv-scan: match {candidate_id, job_id} (analisa candidato × vaga). Também liberadas: order-edit-lock, print-queue-write, online-payments, session-payments, check-session-pending, meta-ads-insights, export-menu-template, import-menu-template, audit-write.
+Credenciais/autorização de integrações (save_config, save_pay_credentials, confirm_authorization...) ficam com o Natalino na tela. Funções do banco: erpos_rpc. Gravações diretas que as telas fazem: erpos_tabela.
+Não disponível pelo assistente: criar venda/pedido (create_order) e a mesa do cliente.`;
 
 // Mapa do banco: fica no bloco fixo (cacheado por 1 h) para o modelo ir direto
 // na tabela certa sem gastar rodadas com ver_tabelas/ver_colunas. Manter curto e

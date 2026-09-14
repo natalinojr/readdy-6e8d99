@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase, SUPABASE_URL } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { dateKeyBrasilia } from '@/lib/dateUtils';
-import { DEFAULT_REVENUE_SOURCES, fetchRevenueSources, fetchPixRecebidos, type RevenueSettingSource } from '@/lib/revenueSources';
+import {
+  DEFAULT_REVENUE_SOURCES, EMPTY_MONEY_FLOW, fetchRevenueSettings, fetchPixRecebidos, moneyFlowLabels,
+  type MoneyFlowSettings, type RevenueSettingSource,
+} from '@/lib/revenueSources';
 
 // Formato das linhas lidas nas queries paginadas (o helper é genérico, então
 // o tipo precisa ser declarado aqui em vez de inferido pelo supabase-js).
@@ -69,7 +72,7 @@ export interface ReceitasFilters {
 
 export const SOURCE_LABELS_R: Record<ReceitaSource, string> = {
   order: 'Vendas (Pedidos)',
-  stone: 'Stone (cartão)',
+  stone: 'Cartão (maquininha)',
   pix: 'Pix recebido',
   ifood: 'iFood',
   manual: 'Lançamento Manual',
@@ -103,6 +106,8 @@ export function useReceitas(filters: ReceitasFilters) {
   const [error, setError] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [enabledSources, setEnabledSources] = useState<RevenueSettingSource[]>(DEFAULT_REVENUE_SOURCES);
+  // Configuração "Como o dinheiro entra" (nomes da maquininha e do banco principal nas telas)
+  const [flow, setFlow] = useState<MoneyFlowSettings>(EMPTY_MONEY_FLOW);
 
   const fetchReceitas = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -111,7 +116,7 @@ export function useReceitas(filters: ReceitasFilters) {
     const { startDate, endDate, categories, sources, search, minAmount, maxAmount } = filters;
 
     // Quais fontes contam como recebido nesta loja (configurável na própria aba).
-    const { sources: enabled, error: cfgErr } = await fetchRevenueSources(user.tenantId);
+    const { sources: enabled, flow: cfgFlow, error: cfgErr } = await fetchRevenueSettings(user.tenantId);
     if (cfgErr) {
       console.error('[useReceitas] Falha ao ler fontes de receita:', cfgErr);
       setError(cfgErr);
@@ -121,6 +126,8 @@ export function useReceitas(filters: ReceitasFilters) {
       return;
     }
     setEnabledSources(enabled);
+    setFlow(cfgFlow);
+    const lbl = moneyFlowLabels(cfgFlow);
     const empty = Promise.resolve({ rows: [] as never[], error: null, truncated: false });
     // Fuso EXPLÍCITO de Brasília: sem o offset, 'T23:59:59' é interpretado como
     // UTC contra um timestamptz e o período fechava às 20:59 do horário local —
@@ -170,9 +177,9 @@ export function useReceitas(filters: ReceitasFilters) {
         .order('date', { ascending: false })
         .range(from, to)),
 
-      // Vendas em cartão liquidadas pela Stone (lançadas pela edge
-      // stone-conciliation com post_to_ledger ligado). Datadas pelo dia do
-      // pagamento da Stone = dinheiro que efetivamente entrou.
+      // Vendas em cartão liquidadas pela maquininha (origin stone_sale, lançadas
+      // pelo conector — hoje a edge stone-conciliation com post_to_ledger ligado).
+      // Datadas pelo dia do pagamento = dinheiro que efetivamente entrou.
       !enabled.includes('stone') ? empty : fetchAllRows<CashFlowRow>((from, to) => supabase
         .from('fin_cash_flow')
         .select('id, description, amount, date, category, origin, payment_method_id, notes, created_at')
@@ -184,7 +191,8 @@ export function useReceitas(filters: ReceitasFilters) {
         .order('date', { ascending: false })
         .range(from, to)),
 
-      // Pix que entrou no Inter (extrato), inclusive o da maquininha vindo da Conta Stone
+      // Pix que entrou no banco principal (extrato), inclusive o da maquininha
+      // transferido da conta dela, conforme "Como o dinheiro entra"
       !enabled.includes('pix')
         ? Promise.resolve({ rows: [], error: null })
         : fetchPixRecebidos(user.tenantId, startDate, endDate),
@@ -263,24 +271,24 @@ export function useReceitas(filters: ReceitasFilters) {
       });
     });
 
-    // Vendas Stone (uma linha por dia de pagamento)
+    // Vendas no cartão da maquininha (uma linha por dia de pagamento)
     (stoneRes.rows ?? []).forEach(c => {
       allItems.push({
         id: `stone_${c.id}`,
         source: 'stone',
-        description: c.description || 'Vendas em cartão (Stone)',
-        category: 'Cartão (Stone)',
+        description: c.description || `Vendas em cartão (${lbl.card})`,
+        category: `Cartão (${lbl.card})`,
         amount: Number(c.amount),
         date: c.date,
         status: 'received',
-        origin_detail: 'Conciliação Stone',
+        origin_detail: `Conciliação da maquininha (${lbl.card})`,
         reference_id: c.id,
         notes: c.notes ?? undefined,
         created_at: c.created_at,
       });
     });
 
-    // Pix recebido no Inter
+    // Pix recebido no banco principal
     pixRes.rows.forEach(p => {
       allItems.push({
         id: `pix_${p.id}`,
@@ -290,7 +298,7 @@ export function useReceitas(filters: ReceitasFilters) {
         amount: p.amount,
         date: p.transaction_date,
         status: 'received',
-        origin_detail: p.match_kind === 'internal_transfer' ? 'Transferido da Conta Stone (Pix da maquininha)' : (p.counterpart_name ?? 'Banco Inter'),
+        origin_detail: p.match_kind === 'internal_transfer' ? 'Transferido da conta da maquininha (Pix da maquininha)' : (p.counterpart_name ?? lbl.bank),
         reference_id: p.id,
         created_at: p.created_at,
       });
@@ -402,7 +410,7 @@ export function useReceitas(filters: ReceitasFilters) {
 
   useEffect(() => { fetchReceitas(); }, [fetchReceitas]);
 
-  return { items, summary, loading, error, truncated, enabledSources, refresh: fetchReceitas };
+  return { items, summary, loading, error, truncated, enabledSources, flow, refresh: fetchReceitas };
 }
 
 // ─── Hook para salvar as fontes dos recebidos da loja ────────────────────────
