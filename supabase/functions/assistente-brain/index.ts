@@ -383,7 +383,7 @@ TOOLS.push({
 });
 TOOLS.push({
   name: 'salvar_curriculo',
-  description: 'Salva UM currículo no módulo Contratação: o PDF/foto anexado NESTA mensagem, ou o texto do currículo que ele colou (campo texto). Use quando ele mandar um currículo avulso pedindo para salvar. Para vários seguidos, prefira modo_curriculos.',
+  description: 'Salva UM currículo no módulo Contratação: o PDF/foto anexado nesta mensagem OU, se esta não tiver anexo, o ÚLTIMO anexo que ele mandou (até 1 h atrás, inclusive pelo WhatsApp); ou o texto do currículo que ele colou (campo texto). REGRA: quando chegar um currículo (PDF/foto de currículo) sem instrução, SALVE NA HORA sem vaga — não pergunte antes — e depois ofereça inscrever numa vaga com inscrever_na_vaga. Para vários seguidos, prefira modo_curriculos.',
   input_schema: {
     type: 'object',
     properties: {
@@ -393,6 +393,44 @@ TOOLS.push({
     },
   },
 });
+
+TOOLS.push({
+  name: 'inscrever_na_vaga',
+  description: 'Inscreve um candidato que JÁ está no banco de currículos numa vaga aberta do módulo Contratação e roda a análise currículo × vaga (nota de aderência). Use depois de salvar_curriculo, quando ele disser a vaga. Sem candidato informado, usa o último currículo salvo.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      vaga: { type: 'string', description: 'Título (parcial) da vaga aberta.' },
+      candidato: { type: 'string', description: 'Nome (parcial) ou id do candidato. Vazio = o último currículo salvo.' },
+      empresa: { type: 'string', description: 'Empresa, se houver mais de uma vaga com o mesmo nome.' },
+    },
+    required: ['vaga'],
+  },
+});
+
+// Último anexo de cada conversa (bucket privado 'assistente-anexos', um arquivo por chat, sobrescrito).
+// Serve para ferramentas usarem o arquivo numa mensagem seguinte: o anexo só vem na mensagem em que
+// chegou, e "salva esse currículo" costuma vir depois (caso real de 2026-09-14).
+const ANEXOS_BUCKET = 'assistente-anexos';
+const anexoPath = (chatId: string) => chatId.replace(/[^a-zA-Z0-9_-]/g, '_');
+async function rememberAttachment(admin: SupabaseClient, chatId: string, att: { base64: string; media_type: string }) {
+  const bytes = Uint8Array.from(atob(att.base64.replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '')), (c) => c.charCodeAt(0));
+  const { error } = await admin.storage.from(ANEXOS_BUCKET).upload(`${anexoPath(chatId)}/ultimo`, bytes, { contentType: att.media_type || 'application/octet-stream', upsert: true });
+  if (error) throw new Error(error.message);
+}
+async function lastAttachment(admin: SupabaseClient, chatId: string, maxAgeMs = 60 * 60 * 1000): Promise<{ base64: string; media_type: string } | null> {
+  const { data: list } = await admin.storage.from(ANEXOS_BUCKET).list(anexoPath(chatId), { limit: 5 });
+  const obj = (list ?? []).find((o) => o.name === 'ultimo');
+  const quando = new Date(String(obj?.updated_at ?? obj?.created_at ?? 0)).getTime();
+  if (!obj || !quando || Date.now() - quando > maxAgeMs) return null;
+  const { data: blob } = await admin.storage.from(ANEXOS_BUCKET).download(`${anexoPath(chatId)}/ultimo`);
+  if (!blob) return null;
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  // deno-lint-ignore no-explicit-any
+  return { base64: btoa(bin), media_type: String((obj as any).metadata?.mimetype ?? blob.type ?? 'application/pdf') };
+}
 
 // Empresa/vaga do módulo Contratação pelo nome parcial (sem acento, sem caixa).
 async function hiringTarget(admin: SupabaseClient, empresa?: string, vaga?: string) {
@@ -723,12 +761,47 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
     case 'salvar_curriculo': {
       const alvo = await hiringTarget(admin, input.empresa, input.vaga);
       const texto = String(input.texto ?? '').trim();
-      if (!ctx.attachment && texto.length < 40) throw new Error('Não há PDF/foto nesta mensagem nem texto de currículo. Peça para ele mandar o arquivo.');
+      // Anexo desta mensagem; senão o último que ele mandou (até 1 h), guardado por rememberAttachment.
+      const anexo = ctx.attachment ?? (texto.length < 40 ? await lastAttachment(admin, ctx.chatId).catch(() => null) : null);
+      if (!anexo && texto.length < 40) throw new Error('Não achei o arquivo: nem nesta mensagem nem um anexo recente (última 1 h). Peça para ele mandar o currículo de novo.');
       const r = await callHiring({
         action: 'intake', company_id: alvo.company_id, job_id: alvo.job_id,
-        ...(ctx.attachment ? { file_base64: ctx.attachment.base64, media_type: ctx.attachment.media_type } : { text: texto }),
+        ...(anexo ? { file_base64: anexo.base64, media_type: anexo.media_type } : { text: texto }),
       });
       return JSON.stringify({ ok: true, ...r, empresa: r.company_name ?? alvo.company_name, vaga: r.job_title ?? alvo.job_title }).slice(0, 3000);
+    }
+    case 'inscrever_na_vaga': {
+      const alvo = await hiringTarget(admin, input.empresa, input.vaga);
+      if (!alvo.job_id) throw new Error('Diga qual vaga (título).');
+      const q = String(input.candidato ?? '').trim();
+      // deno-lint-ignore no-explicit-any
+      let cands: any[] = [];
+      if (/^[0-9a-f-]{36}$/i.test(q)) {
+        const { data } = await admin.from('hiring_candidates').select('id, full_name, company_id').eq('id', q).limit(1);
+        cands = data ?? [];
+      } else if (q) {
+        const { data } = await admin.from('hiring_candidates').select('id, full_name, company_id').ilike('full_name', `%${q}%`).order('created_at', { ascending: false }).limit(5);
+        cands = data ?? [];
+      } else {
+        const { data } = await admin.from('hiring_candidates').select('id, full_name, company_id').order('created_at', { ascending: false }).limit(1);
+        cands = data ?? [];
+      }
+      const cand = cands[0];
+      if (!cand) throw new Error(`Candidato "${q}" não encontrado no banco de currículos.`);
+      const { error: apErr } = await admin.from('hiring_applications')
+        .upsert({ job_id: alvo.job_id, candidate_id: cand.id }, { onConflict: 'job_id,candidate_id', ignoreDuplicates: true });
+      if (apErr) throw new Error(apErr.message);
+      if (!cand.company_id && alvo.company_id) await admin.from('hiring_candidates').update({ company_id: alvo.company_id }).eq('id', cand.id);
+      // deno-lint-ignore no-explicit-any
+      let analise: any = null;
+      try {
+        const r = await callHiring({ action: 'match', candidate_id: cand.id, job_id: alvo.job_id });
+        analise = { nota: r.data?.score ?? null, aderencia: r.data?.fit ?? null, resumo: r.data?.analysis?.resumo ?? null };
+      } catch (e) { analise = { erro: errMsg(e) }; }
+      return JSON.stringify({
+        ok: true, candidato: cand.full_name, vaga: alvo.job_title, empresa: alvo.company_name, analise,
+        ...(cands.length > 1 ? { atencao: `Havia outros com nome parecido: ${cands.slice(1).map((c) => c.full_name).join('; ')}. Usei o mais recente.` } : {}),
+      });
     }
     case 'preparar_pagamento': {
       if (ctx.channel !== 'telegram') throw new Error('Pagamento só pelo Telegram (botões + PIN). Peça para ele mandar por lá.');
@@ -1484,6 +1557,8 @@ Deno.serve(async (req) => {
       admin, ownerId, defaultTenant, tenants, chatId, channel, outbound: [],
       attachment: att?.base64 ? { base64: String(att.base64), media_type: String(att.media_type ?? '') } : null,
     };
+    // Guarda o anexo para ferramentas usarem nas próximas mensagens (ex.: "só salva" depois do PDF).
+    if (ctx.attachment) await rememberAttachment(admin, chatId, ctx.attachment).catch((e) => log('WARN', 'anexo não guardado', { error: errMsg(e) }));
 
     const [{ data: mem }, { data: hist }] = await Promise.all([
       admin.from('asst_memories').select('content').eq('is_active', true).order('created_at').limit(200),

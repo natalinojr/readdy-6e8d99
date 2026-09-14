@@ -241,8 +241,11 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     const { data } = await admin.from('bot_channels').select('*').eq('code', code).maybeSingle();
     channel = data;
   }
-  if (channel && (!conv || conv.channel_id !== channel.id)) {
-    // Link (novo ou de outro canal): começa uma conversa nova.
+  // Mesmo link mandado de novo (a mensagem pronta com o código, sem arquivo) numa conversa aberta:
+  // recomeça com a primeira resposta em vez de cair na conversa com a IA (teste de 2026-09-14).
+  const reinicio = !!(channel && conv && conv.channel_id === channel.id && !m.file && text.length <= 300);
+  if (channel && (!conv || conv.channel_id !== channel.id || reinicio)) {
+    // Link (novo, de outro canal ou reenviado): começa uma conversa nova.
     if (conv) await admin.from('bot_conversations').update({ status: 'encerrada' }).eq('id', conv.id);
     if (!channel.is_active) {
       await sendText(m.number, 'Oi! Esse link de candidatura não está mais ativo. Obrigado pelo interesse! 🙏').catch(() => {});

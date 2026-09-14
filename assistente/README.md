@@ -571,6 +571,30 @@ uma). A resposta sai no Telegram (`deliver`, prefixo 📲). No WhatsApp: 👀 re
 ❌ falhou (+ aviso). Exceções que continuam no WhatsApp: janela de currículos (abaixo) e `.txt` de
 exportação de conversa (histórico de grupo). Arquivo sem aviso de currículo também é repassado.
 
+**Agendamento de entrevista com o candidato (2026-09-14, Fases 1–2).** Decisões do dono: início
+automático pela etapa "Chamar p/ entrevista" (`hiring_stages.native_kind = 'agendar'`); disponibilidade
+e entrevistadores por vaga (`hiring_job_scheduling`, tela Contratação › Vagas › editar › "Entrevistas
+pelo assistente" — `AgendamentoVaga.tsx`); **sem configuração completa (janela + entrevistador com
+WhatsApp + local se presencial) nada é enviado**; entrevistadores = gestores da vaga, respondem pelo
+WhatsApp do assistente. Edge **`hiring-scheduler`** (x-internal-key/service role, `--no-verify-jwt`):
+- `tick` (assistente-cron, todo minuto): convites 8h–20h (até 3/rodada, 10/hora — risco de bloqueio do
+  número Baileys), 1 inscrição por candidato por vez; cobrança após 24 h sem resposta (1×) e depois
+  `sem_resposta` (+ aviso aos entrevistadores); lembrete na véspera (candidato + entrevistadores).
+- `inbound` (assistente-webhook, ANTES do canal-publico, só para quem não é o dono): candidato com
+  sessão ativa (`hiring_scheduling_sessions`, casado pelos últimos 11 dígitos) ou entrevistador com
+  pedido pendente → `{handled:true}`; senão o webhook segue para o `canal-publico`. Candidato: número =
+  horário oferecido; texto → Haiku SÓ classifica (escolher/propor/pergunta/recusar/cancelar/remarcar)
+  e responde com os fatos da vaga (sem ferramentas; salário/benefícios → "a equipe explica").
+  Horário pedido que está livre → reserva; fora da agenda → `aguardando_gestor` e mensagem aos
+  entrevistadores com código: `#ABCD 1` aceita (reserva forçada), `#ABCD 2` recusa (reoferece),
+  `#ABCD dd/mm hh:mm` propõe (candidato responde 1/2).
+- Banco (migration `20260914220000_hiring_agendamento_fase2.sql`): `hiring_interviews.job_id`;
+  `fn_hiring_free_slots(job, limit)` (janelas, duração+intervalo, antecedência, datas bloqueadas,
+  capacidade por horário, fuso SP); `fn_hiring_book(sessão, início, force)` atômica (lock por vaga):
+  entrevista 'agendada' + candidato em "Entrevista agendada" (+ cancela a anterior na remarcação).
+- Pegadinhas: `hiring_interviews.format` aceita presencial/telefone/**video** (não "online");
+  enquete do WhatsApp não entrega voto (por isso respostas por número/texto).
+
 **Nada repetido (2026-09-14, regra do dono).** Currículo repetido não entra: `hiring-cv-scan ›
 intake` confere telefone (últimos 11 dígitos), e-mail ou nome ANTES de subir o arquivo e responde
 409 `{duplicate: true}`; a tela (grava direto) é travada pelos índices únicos
@@ -666,6 +690,17 @@ MESMO número do assistente (a conversa direta dele estava parada desde que foi 
   WhatsApp com "Abrir candidato" e "Falar pelo meu WhatsApp".
 - Novo propósito (reservas, fornecedores…): valor novo em `bot_channels.purpose` + prompt/ferramentas
   próprias no `canal-publico` (hoje só `curriculos`).
+
+### Último anexo por conversa + inscrever na vaga (2026-09-14)
+
+Caso real: o dono mandou um PDF de currículo pelo WhatsApp sem aviso → repassado ao Telegram → o
+brain perguntou a vaga antes de salvar → no "só salva" (outra mensagem) o anexo já não existia.
+- O brain guarda o anexo de cada mensagem no bucket privado **`assistente-anexos`**
+  (`<chat>/ultimo`, sobrescrito; só service role). `salvar_curriculo` usa o anexo da mensagem ou,
+  sem ele, o último da conversa com até 1 h (`lastAttachment`).
+- Regra na ferramenta: currículo sem instrução é **salvo na hora sem vaga**; depois o assistente
+  oferece `inscrever_na_vaga` (nova: `{vaga, candidato?, empresa?}` → `hiring_applications` +
+  `hiring-cv-scan › match`; sem candidato = o último salvo).
 
 ### Queda do WhatsApp em 2026-09-14 + Word no canal público
 

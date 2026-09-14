@@ -573,6 +573,15 @@ Deno.serve(async (req) => {
   try { result.warmed = await keepWarm(admin, cfg); } catch (e) { result.warm_error = errMsg(e); log('ERROR', 'warm', { error: errMsg(e) }); }
   try { const pr = await proactive(admin, cfg, ownerChat); if (Object.keys(pr).length) result.proactive = pr; } catch (e) { result.proactive_error = errMsg(e); log('ERROR', 'proactive', { error: errMsg(e) }); }
   try { const pw = await payWatch(admin); if (pw) result.pay_watch = pw; } catch (e) { result.pay_watch_error = errMsg(e); log('ERROR', 'pay_watch', { error: errMsg(e) }); }
+  // Agendamento de entrevistas (Contratação): convites, cobrança e lembretes — regras no hiring-scheduler
+  try {
+    const r = await fetch(`${supabaseUrl}/functions/v1/hiring-scheduler`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey }, body: JSON.stringify({ action: 'tick' }),
+    });
+    const hs = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`hiring-scheduler ${r.status}: ${JSON.stringify(hs).slice(0, 200)}`);
+    if (hs.invited || hs.followups || hs.sem_resposta || hs.reminded) result.hiring = hs;
+  } catch (e) { result.hiring_error = errMsg(e); log('ERROR', 'hiring-scheduler', { error: errMsg(e) }); }
   // Fila do debounce: só serve por segundos; guarda 7 dias para diagnóstico
   await admin.from('asst_inbox').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
   await admin.from('asst_tg_updates').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());

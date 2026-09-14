@@ -509,6 +509,26 @@ async function ownerTestingPublic(admin: SupabaseClient, chatId: string, data: a
   return !!conv;
 }
 
+// Agendamento de entrevista: texto (ou áudio transcrito) de quem não é o dono vai primeiro ao
+// hiring-scheduler; devolve true se era conversa de agendamento ou resposta de entrevistador.
+// deno-lint-ignore no-explicit-any
+async function toHiringScheduler(number: string, data: any): Promise<boolean> {
+  const p = parseMessage(data.message);
+  if (p.inner?.pollUpdateMessage || p.inner?.reactionMessage || p.inner?.protocolMessage) return false;
+  let text = String(p.text ?? '').trim();
+  if (p.kind === 'audio') {
+    const b64 = await mediaBase64(data);
+    text = b64 ? `[Áudio] ${await transcribe(b64, p.mime ?? 'audio/ogg')}`.trim() : '';
+  }
+  if (!text || text === '[Áudio]') return false; // mídia sem texto (currículo) segue para o canal público
+  const r = await fetch(`${supabaseUrl}/functions/v1/hiring-scheduler`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+    body: JSON.stringify({ action: 'inbound', number, text, name: data.pushName ?? null }),
+  });
+  const out = await r.json().catch(() => ({}));
+  return r.ok && out?.handled === true;
+}
+
 // Prepara a mensagem (áudio transcrito, PDF/foto em base64) e entrega ao canal-publico.
 // deno-lint-ignore no-explicit-any
 async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | null, data: any, isOwner: boolean) {
@@ -921,6 +941,9 @@ async function handle(payload: any) {
   // Canais públicos (links wa.me com código, 2026-09-14): quem não é o dono vai para o canal-publico,
   // que decide se atende (código do link, conversa aberta ou canal padrão) ou ignora. O dono só entra
   // lá testando: mensagem com o código de um canal, ou teste aberto há menos de 30 min.
+  // Agendamento de entrevista (Contratação, 2026-09-14): candidato com conversa de agendamento aberta
+  // ou entrevistador respondendo um pedido → hiring-scheduler. Se ele não tratar, segue o canal público.
+  if (!isOwner && await toHiringScheduler(number, data).catch((e) => { log('WARN', 'hiring-scheduler', { error: errMsg(e) }); return false; })) return;
   if (!isOwner || await ownerTestingPublic(admin, chatId, data)) {
     await toPublicChannel(chatId, number, msgKey, data, isOwner);
     return;
