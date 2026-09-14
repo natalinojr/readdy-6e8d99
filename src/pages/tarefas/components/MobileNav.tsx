@@ -62,6 +62,7 @@ interface ListasSheetProps {
   onSelecionar: (id: string) => void;
   onNovaLista: () => void;
   onNovaSubpasta: (parentId: string) => void;
+  onExcluir: (no: NoPasta) => void;
   onCompartilhadas: () => void;
   onTodas: () => void;
   onStatus: () => void;
@@ -77,7 +78,7 @@ interface ListasSheetProps {
  * faz sentido agrupar aqui a versão mobile também.
  */
 export function ListasSheet({
-  arvorePastas, temPastas, selectedId, onSelecionar, onNovaLista, onNovaSubpasta,
+  arvorePastas, temPastas, selectedId, onSelecionar, onNovaLista, onNovaSubpasta, onExcluir,
   onCompartilhadas, onTodas, onStatus, onCampos, onTemplates, onClose,
 }: ListasSheetProps) {
   useVoltarFecha(true, onClose);
@@ -123,6 +124,7 @@ export function ListasSheet({
               onClose();
               onNovaSubpasta(parentId);
             }}
+            onExcluir={onExcluir}
             compacto
           />
 

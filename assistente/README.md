@@ -561,6 +561,16 @@ e a edge não estava no `EDGE_ALLOW`. Agora, sempre com o JWT do dono (mesma RLS
 - System prompt: nunca dizer "não consigo" sem procurar nos três caminhos. Inventário de onde
   saiu a lista: `grep invokeWithAuth|functions.invoke|.rpc(|.from().insert/update` em `src/`.
 
+**Demandas pelo WhatsApp → assistente do Telegram (2026-09-14).** O dono recebe demandas no
+WhatsApp e encaminha para o número do assistente. Com `channels.whatsapp_dm = false`, em vez do
+aviso "converso pelo Telegram", o webhook (`relayToTelegram`) manda tudo para o brain **no chat do
+Telegram** (`chat_id = tg:<telegram_owner_chat_id>`, mesmo histórico e ferramentas), com o prefixo
+`[Encaminhada pelo WhatsApp]` / `[Pelo WhatsApp]`: texto; áudio transcrito (Whisper); foto e PDF
+como anexo; vídeo/outros arquivos só anotados. Mensagens seguidas passam pelo `debounce` (viram
+uma). A resposta sai no Telegram (`deliver`, prefixo 📲). No WhatsApp: 👀 recebi, ✅ repassei,
+❌ falhou (+ aviso). Exceções que continuam no WhatsApp: janela de currículos (abaixo) e `.txt` de
+exportação de conversa (histórico de grupo). Arquivo sem aviso de currículo também é repassado.
+
 **Currículos pelo WhatsApp — só recebimento (2026-09-13).** O dono recebe currículos no WhatsApp
 dele e ENCAMINHA para o número do assistente. Com `channels.whatsapp_dm = false`, a conversa
 particular continua desligada, com uma exceção no webhook — **só depois de o dono avisar**

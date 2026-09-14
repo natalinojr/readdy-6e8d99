@@ -285,6 +285,29 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
       }
+      case 'delete_list': {
+        // Remove a pasta, todas as subpastas (qualquer profundidade) e as
+        // tarefas delas. Arquiva em vez de apagar, como o delete_task — e
+        // arquiva as tarefas também, senão as atribuídas a outra pessoa
+        // continuariam aparecendo pra ela (fn_get_tasks não olha a pasta).
+        const { list_id } = body;
+        if (!list_id) return json({ error: 'list_id is required' }, 400);
+        await assertListOwner(list_id);
+        const ids: string[] = [list_id];
+        let fronteira: string[] = [list_id];
+        while (fronteira.length > 0) {
+          const { data, error } = await admin.from('task_lists').select('id')
+            .in('parent_list_id', fronteira).eq('created_by', user.id).eq('is_archived', false);
+          if (error) return json({ error: errMsg(error) }, 500);
+          fronteira = (data ?? []).map((r: { id: string }) => r.id).filter((id: string) => !ids.includes(id));
+          ids.push(...fronteira);
+        }
+        const { error: tErr } = await admin.from('tasks').update({ is_archived: true }).in('list_id', ids).eq('is_archived', false);
+        if (tErr) return json({ error: errMsg(tErr) }, 500);
+        const { error: lErr } = await admin.from('task_lists').update({ is_archived: true }).in('id', ids);
+        if (lErr) return json({ error: errMsg(lErr) }, 500);
+        return json({ success: true, deleted_lists: ids.length });
+      }
 
       // ═══ Status ═══
       case 'create_status': {

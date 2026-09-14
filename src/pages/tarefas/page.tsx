@@ -18,10 +18,11 @@ import NotificacoesInbox, { calcularVencimentos } from './components/Notificacoe
 import ViewsSalvas from './components/ViewsSalvas';
 import FiltrosBar from './components/FiltrosBar';
 import ArvorePastas from './components/ArvorePastas';
+import ConfirmDialog from './components/ConfirmDialog';
 import { BottomNav, ListasSheet } from './components/MobileNav';
 import type { Filtros, GroupBy } from './lib/agrupamento';
 import { FILTROS_VAZIOS, aplicarFiltros } from './lib/agrupamento';
-import { montarArvorePastas } from './lib/pastas';
+import { montarArvorePastas, achatarArvore, type NoPasta } from './lib/pastas';
 import { useIsMobile } from './lib/mobile';
 import { atualizarBadge } from '@/lib/pwa';
 
@@ -82,6 +83,7 @@ export default function TarefasPage() {
   const [newListName, setNewListName] = useState('');
   const [newListColor, setNewListColor] = useState(CORES_LISTA[0]);
   const [newListParentId, setNewListParentId] = useState<string | null>(null);
+  const [pastaExcluindo, setPastaExcluindo] = useState<{ no: NoPasta; ids: Set<string>; descricao: string } | null>(null);
 
   const arvorePastas = useMemo(() => montarArvorePastas(lists), [lists]);
 
@@ -162,6 +164,35 @@ export default function TarefasPage() {
   const abrirNovaPasta = (parentId: string | null) => {
     setNewListParentId(parentId);
     setShowNewList(true);
+  };
+
+  // Lixeira na árvore: monta o resumo do que vai junto e pede confirmação.
+  const excluirPasta = (no: NoPasta) => {
+    const subpastas = achatarArvore(no.filhas);
+    const ids = new Set([no.id, ...subpastas.map((s) => s.id)]);
+    const qtdTarefas = tasks.filter((t) => ids.has(t.list_id)).length;
+    const detalhes = [
+      subpastas.length > 0 ? `${subpastas.length} subpasta${subpastas.length > 1 ? 's' : ''}` : null,
+      qtdTarefas > 0 ? `${qtdTarefas} tarefa${qtdTarefas > 1 ? 's' : ''}` : null,
+    ].filter(Boolean).join(' e ');
+    const descricao = detalhes
+      ? `Também serão excluídas ${detalhes} dentro dela. Isso não pode ser desfeito pela tela.`
+      : 'Isso não pode ser desfeito pela tela.';
+    setPastaExcluindo({ no, ids, descricao });
+  };
+
+  const confirmarExclusaoPasta = async () => {
+    if (!pastaExcluindo) return;
+    const { no, ids } = pastaExcluindo;
+    setPastaExcluindo(null);
+    const res = await write('delete_list', { list_id: no.id });
+    if (!res.success) {
+      toast.error('Erro ao excluir pasta', res.error);
+      return;
+    }
+    if (selectedListId && ids.has(selectedListId)) setSelectedListId(null);
+    toast.success('Pasta excluída');
+    reload();
   };
 
   const irParaPasta = (id: string) => {
@@ -322,6 +353,7 @@ export default function TarefasPage() {
             selectedId={origem === 'pasta' ? selectedList?.id ?? null : null}
             onSelecionar={irParaPasta}
             onNovaSubpasta={abrirNovaPasta}
+            onExcluir={excluirPasta}
           />
 
           {!loading && lists.length === 0 && (
@@ -475,6 +507,7 @@ export default function TarefasPage() {
           onSelecionar={irParaPasta}
           onNovaLista={() => abrirNovaPasta(null)}
           onNovaSubpasta={abrirNovaPasta}
+          onExcluir={excluirPasta}
           onCompartilhadas={() => setOrigem('compartilhadas')}
           onTodas={() => setOrigem('todas')}
           onStatus={() => setShowStatus(true)}
@@ -527,6 +560,17 @@ export default function TarefasPage() {
 
       {/* ── Modal: em qual pasta criar a tarefa (só aparece com >1 pasta e sem
           uma pasta específica selecionada — em Minhas/Compartilhadas/Todas) ── */}
+      {pastaExcluindo && (
+        <ConfirmDialog
+          titulo={`Excluir a pasta "${pastaExcluindo.no.name}"?`}
+          descricao={pastaExcluindo.descricao}
+          textoConfirmar="Excluir"
+          perigo
+          onConfirmar={confirmarExclusaoPasta}
+          onCancelar={() => setPastaExcluindo(null)}
+        />
+      )}
+
       {showEscolherPasta && (
         <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/30 p-4" onClick={() => setShowEscolherPasta(false)}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>

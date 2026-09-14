@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronDown, Plus } from 'lucide-react';
+import { ChevronRight, ChevronDown, Plus, Trash2 } from 'lucide-react';
 import type { NoPasta } from '../lib/pastas';
 
 interface ArvorePastasProps {
@@ -7,11 +7,13 @@ interface ArvorePastasProps {
   selectedId: string | null;
   onSelecionar: (id: string) => void;
   onNovaSubpasta: (parentId: string) => void;
+  /** Exclui a pasta junto com as subpastas e tarefas (quem chama confirma). */
+  onExcluir?: (no: NoPasta) => void;
   /** No celular a folha inteira é clicável e some ao selecionar — sem hover de "+". */
   compacto?: boolean;
 }
 
-export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubpasta, compacto = false }: ArvorePastasProps) {
+export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubpasta, onExcluir, compacto = false }: ArvorePastasProps) {
   const [recolhidas, setRecolhidas] = useState<Set<string>>(new Set());
 
   const alternar = (id: string) => {
@@ -60,6 +62,20 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
           >
             <Plus size={13} />
           </button>
+          {onExcluir && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onExcluir(no);
+              }}
+              className={`shrink-0 p-1.5 -ml-2 mr-2 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 ${
+                compacto ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              }`}
+              title={temFilhas ? 'Excluir pasta e subpastas' : 'Excluir pasta'}
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
         </div>
         {!recolhida && temFilhas && no.filhas.map((filha) => renderNo(filha))}
       </div>

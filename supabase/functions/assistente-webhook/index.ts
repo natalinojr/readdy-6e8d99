@@ -365,6 +365,72 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
   }
 }
 
+// Demandas pelo WhatsApp → assistente do Telegram (2026-09-14, pedido do dono: "recebo demanda pelo
+// whats, pelo menos ele pode ler tudo e mandar pro assistente do telegram"). Com a conversa do
+// WhatsApp desligada (channels.whatsapp_dm = false), o que o dono manda/encaminha para o número do
+// assistente vai para o brain NO CHAT DO TELEGRAM (mesmo histórico e ferramentas) e a resposta sai
+// lá. No WhatsApp ficam só as reações: 👀 recebi · ✅ repassei · ❌ falhou.
+async function relayToTelegram(
+  // deno-lint-ignore no-explicit-any
+  admin: SupabaseClient, cfg: Record<string, any>, waChatId: string, number: string, msgKey: MsgKey | null, data: any, p: Parsed,
+) {
+  const tg = cfg.telegram_owner_chat_id ? `tg:${cfg.telegram_owner_chat_id}` : null;
+  if (!tg) { await sendText(number, 'Não tenho o seu Telegram configurado para repassar. Fala comigo por lá.').catch(() => {}); return; }
+  if (p.inner?.pollUpdateMessage) return;
+  if (msgKey) react(msgKey, '👀');
+  let text = String(p.text ?? '').trim();
+  // deno-lint-ignore no-explicit-any
+  let attachment: any = null;
+  try {
+    if (p.kind === 'audio') {
+      const b64 = await mediaBase64(data);
+      const t = b64 ? await transcribe(b64, p.mime ?? 'audio/ogg') : '';
+      text = t ? `[Áudio] ${t}` : '[Áudio que não consegui transcrever]';
+    } else if (p.kind === 'image' || (p.kind === 'document' && (p.mime === 'application/pdf' || IMAGE_TYPES.includes(p.mime ?? '')))) {
+      const b64 = await mediaBase64(data);
+      if (!b64) throw new Error('não consegui baixar o arquivo');
+      attachment = { base64: b64, media_type: p.kind === 'image' ? (p.mime ?? 'image/jpeg') : p.mime };
+    } else if (p.kind === 'video' || p.kind === 'document' || p.kind === 'other') {
+      const nome = String(p.inner?.documentMessage?.fileName ?? '').trim();
+      text = [text, `[${p.kind === 'video' ? 'Vídeo' : `Arquivo${nome ? ` "${nome}"` : ''}`} que eu não consigo abrir]`].filter(Boolean).join('\n');
+    }
+  } catch (e) {
+    log('WARN', 'repasse ao Telegram: preparar mídia', { error: errMsg(e) });
+    text = [text, '(não consegui baixar o anexo)'].filter(Boolean).join('\n');
+  }
+  if (!text && !attachment) return;
+  // Mensagens seguidas (encaminhar várias de uma vez) viram uma só.
+  if (!attachment) {
+    const merged = await debounce(admin, waChatId, text, msgKey);
+    if (merged === null) { if (msgKey) react(msgKey, '✅'); return; }
+    text = merged.text;
+  }
+  const prefixo = p.forwarded ? '[Encaminhada pelo WhatsApp]' : '[Pelo WhatsApp]';
+  try {
+    const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({ text: `${prefixo} ${text}`.trim(), chat_id: tg, channel: 'telegram', attachment }),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok || !out?.reply) throw new Error(`brain ${r.status}: ${JSON.stringify(out).slice(0, 200)}`);
+    const reply = String(out.reply);
+    const actions = Array.isArray(out.actions) ? out.actions : [];
+    if (reply !== 'NO_REPLY' || actions.length) {
+      const d = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+        body: JSON.stringify({ action: 'deliver', chat_key: tg, text: reply === 'NO_REPLY' ? '' : `📲 ${reply}`, actions }),
+      });
+      if (!d.ok) throw new Error(`assistente-telegram ${d.status}: ${(await d.text()).slice(0, 200)}`);
+    }
+    if (msgKey) react(msgKey, '✅');
+    log('INFO', 'demanda do WhatsApp repassada ao Telegram', { kind: p.kind, forwarded: p.forwarded });
+  } catch (e) {
+    log('ERROR', 'repasse ao Telegram falhou', { error: errMsg(e) });
+    if (msgKey) react(msgKey, '❌');
+    await sendText(number, 'Não consegui repassar para o Telegram agora. Tenta de novo em instantes.').catch(() => {});
+  }
+}
+
 // Currículos pelo WhatsApp (2026-09-13): o dono recebe currículos no WhatsApp e só ENCAMINHA para
 // o número do assistente — aqui só RECEBE (hiring-cv-scan › intake) e confirma numa linha; todo o
 // resto (triagem, vaga, conversa) é no Telegram. Se o modo de currículos do Telegram estiver ligado
@@ -826,17 +892,11 @@ async function handle(payload: any) {
       }
       return;
     }
-    if (arquivo) {
-      await sendText(number, 'Recebi o arquivo. Se for currículo, me avisa antes ("vou mandar currículos") ou manda de novo com "currículo" na legenda. O resto eu vejo pelo Telegram.').catch(() => {});
-      if (msgKey) react(msgKey, '❓');
-      return;
-    }
-    // Só avisa uma vez por dia para não virar conversa
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
-    if (ui.wa_dm_notice_date !== today) {
-      await admin.from('asst_settings').upsert({ key: 'ui', value: { ...ui, wa_dm_notice_date: today }, updated_at: new Date().toISOString() });
-      await sendText(number, 'Agora eu converso pelo Telegram. Aqui no WhatsApp só acompanho os grupos.').catch(() => {});
-    }
+    // .txt = exportação de conversa do WhatsApp → histórico de grupo (como antes)
+    if (isTxt) { await importGroupExport(admin, number, data, p0, msgKey, allowed); return; }
+    // Todo o resto (texto, áudio, foto, PDF — inclusive arquivo sem aviso de currículo) vai para o
+    // assistente do Telegram, que responde lá.
+    await relayToTelegram(admin, cfg, chatId, number, msgKey, data, p0);
     return;
   }
 
