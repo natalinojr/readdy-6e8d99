@@ -14,12 +14,16 @@ interface Props {
   placeholder?: string;
   disabled?: boolean;
   buttonClassName?: string;
+  /** Ação no rodapé da lista (ex.: criar o que não existe). Recebe o texto digitado na busca. */
+  onCreate?: (texto: string) => void;
+  /** Rótulo da ação; recebe o texto digitado (pode vir vazio). */
+  createLabel?: (texto: string) => string;
 }
 
 const PANEL_W = 288;
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
-export default function CategoriaCombobox({ value, options, onChange, placeholder = 'Selecione…', disabled, buttonClassName = '' }: Props) {
+export default function CategoriaCombobox({ value, options, onChange, placeholder = 'Selecione…', disabled, buttonClassName = '', onCreate, createLabel }: Props) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [hi, setHi] = useState(0);
@@ -120,6 +124,14 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
               </li>
             ))}
           </ul>
+          {onCreate && (
+            <button type="button"
+              onMouseDown={(e) => { e.preventDefault(); const t = q.trim(); setOpen(false); onCreate(t); }}
+              className="w-full flex items-center gap-1.5 px-3 py-2 border-t border-zinc-100 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 cursor-pointer">
+              <i className="ri-add-circle-line" />
+              <span className="truncate">{createLabel ? createLabel(q.trim()) : (q.trim() ? `Criar “${q.trim()}”` : 'Criar novo')}</span>
+            </button>
+          )}
         </div>,
         document.body,
       )}

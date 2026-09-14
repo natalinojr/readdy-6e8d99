@@ -201,6 +201,9 @@ export default function InsumosTab() {
       nome: data.nome,
       unidade: data.unidade,
       categoria: data.categoria,
+      // Tipo de uso (uso final × produção): antes não era repassado — insumo novo sempre
+      // entrava como 'final' e a troca na edição nunca era salva.
+      usageType: data.usageType,
       precoUnitario: data.precoUnitario,
       priceSource: data.priceSource,
       estoqueMinimo: data.estoqueMinimo,

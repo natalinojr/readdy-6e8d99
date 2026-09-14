@@ -3,6 +3,9 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDreGroups, isGrupoDespesa } from '@/hooks/useDreGroups';
+import { useEstoque, type Insumo as InsumoEstoque } from '@/contexts/EstoqueContext';
+import { useIngredientCategories } from '@/hooks/useIngredientCategories';
+import InsumoModal from '@/pages/estoque/components/insumos/InsumoModal';
 import CategoriaCombobox from './CategoriaCombobox';
 
 // ── Classificação de itens (base de correlações) ──
@@ -75,6 +78,10 @@ export default function ItensClassificacaoTab() {
   const [busy, setBusy] = useState(false);
   // Vínculo em edição: escolhido o insumo, pergunta quantas unidades dele vêm em 1 unidade do item
   const [vinc, setVinc] = useState<{ rowId: string; ingId: string; upp: string } | null>(null);
+  // Criar insumo a partir do vínculo (mesma janela do Estoque); ao salvar, já fica escolhido
+  const [novoInsumo, setNovoInsumo] = useState<{ rowId: string; nome: string } | null>(null);
+  const { upsertInsumo, reloadInsumos } = useEstoque();
+  const { names: categoriasInsumo, addCategory } = useIngredientCategories();
 
   const carregar = useCallback(async () => {
     if (!tenantId) return;
@@ -196,6 +203,24 @@ export default function ItensClassificacaoTab() {
     await carregar();
   };
 
+  // Cria o insumo (mesmo caminho da tela de Estoque) e abre o vínculo com ele já escolhido
+  const criarInsumo = async (rowId: string, data: Omit<InsumoEstoque, 'estoqueAtual' | 'ultimaEntrada' | 'fichaTecnica' | 'esgotado'> & { id?: string }) => {
+    setBusy(true);
+    if (data.categoria && data.categoria !== 'Sem categoria' && !categoriasInsumo.includes(data.categoria)) {
+      await addCategory(data.categoria);
+    }
+    const id = await upsertInsumo({
+      nome: data.nome, unidade: data.unidade, categoria: data.categoria, usageType: data.usageType,
+      precoUnitario: data.precoUnitario, priceSource: data.priceSource, estoqueMinimo: data.estoqueMinimo,
+      purchaseUnit: data.purchaseUnit, purchaseFactor: data.purchaseFactor ?? 1, dreCategoryId: data.dreCategoryId,
+    });
+    setBusy(false);
+    if (!id) { toastErr('Não foi possível criar o insumo', 'Confira se já não existe um insumo com este nome.'); return; }
+    toastOk(`Insumo "${data.nome}" criado`, 'Agora confirme quanto dele vem em cada unidade do produto.');
+    await Promise.all([carregar(), reloadInsumos()]);
+    setVinc({ rowId, ingId: id, upp: '1' });
+  };
+
   const salvarVinculo = (r: Row) => {
     if (!vinc) return;
     const upp = Number(vinc.upp.replace(',', '.'));
@@ -271,6 +296,8 @@ export default function ItensClassificacaoTab() {
     return (
       <CategoriaCombobox value="" options={insOptions} disabled={busy} placeholder="Vincular insumo…"
         onChange={(id) => { if (id) setVinc({ rowId: r.id, ingId: id, upp: '1' }); }}
+        onCreate={(texto) => setNovoInsumo({ rowId: r.id, nome: texto || r.description })}
+        createLabel={(texto) => (texto ? `Criar insumo “${texto}”` : 'Criar novo insumo')}
         buttonClassName="text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[170px] cursor-pointer bg-zinc-50 text-zinc-500 border border-dashed border-zinc-200 hover:border-emerald-300" />
     );
   };
@@ -440,6 +467,19 @@ export default function ItensClassificacaoTab() {
         )}
       </div>
       {filtrados.length > 0 && <p className="text-[11px] text-zinc-400">{filtrados.length} de {rows.length} itens</p>}
+
+      {novoInsumo && (() => {
+        const alvo = novoInsumo;
+        return (
+          <InsumoModal
+            insumo={null}
+            nomeInicial={alvo.nome}
+            categoriasDisponiveis={categoriasInsumo}
+            onClose={() => setNovoInsumo(null)}
+            onSave={(data) => { criarInsumo(alvo.rowId, data); }}
+          />
+        );
+      })()}
     </div>
   );
 }

@@ -8,16 +8,18 @@ const UNIDADES_COMPRA_SUGERIDAS = ['kg', 'g', 'l', 'ml', 'un', 'caixa', 'fardo',
 
 interface InsumoModalProps {
   insumo?: Insumo | null;
+  /** Nome já preenchido ao CRIAR (ex.: vindo da Classificação de itens). Ignorado ao editar. */
+  nomeInicial?: string;
   categoriasDisponiveis: string[];
   dreCategories?: never[];
   onClose: () => void;
   onSave: (data: Omit<Insumo, 'estoqueAtual' | 'ultimaEntrada' | 'fichaTecnica' | 'esgotado'> & { id?: string }) => void;
 }
 
-export default function InsumoModal({ insumo, categoriasDisponiveis, onClose, onSave }: InsumoModalProps) {
+export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis, onClose, onSave }: InsumoModalProps) {
   // Busca fornecedores diretamente — garante dados frescos independente do estado do pai
   const isEdit = !!insumo;
-  const [nome, setNome] = useState(insumo?.nome ?? '');
+  const [nome, setNome] = useState(insumo?.nome ?? nomeInicial ?? '');
   const [unidade, setUnidade] = useState<UnidadeEstoque>(insumo?.unidade ?? 'kg');
   const [categoria, setCategoria] = useState(insumo?.categoria ?? '');
   const [usageType, setUsageType] = useState<'final' | 'production'>(insumo?.usageType ?? 'final');
