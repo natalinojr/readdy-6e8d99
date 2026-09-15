@@ -226,6 +226,15 @@ async function adminAction(admin: SupabaseClient, body: any) {
     }
     return json(res);
   }
+  if (body?.action === 'send_text') {
+    // Mensagem avulsa autorizada pelo dono (ex.: pedir de novo um currículo que falhou). Só texto livre:
+    // fora da janela de 24 h a Meta recusa, e o erro volta aqui.
+    const to = digits(body.to);
+    const text = String(body.text ?? '').trim();
+    if (to.length < 12 || !text) return json({ error: 'to (com DDI) e text são obrigatórios' }, 400);
+    try { return json({ ok: true, id: await waSendText(cfg, to, text) }); }
+    catch (e) { return json({ ok: false, error: errMsg(e) }, 502); }
+  }
   if (body?.action === 'scheduler_force_tick') {
     // Teste do dono: roda o agendador agora, fora do horário comercial (convites/cobranças).
     const r = await internal('hiring-scheduler', { action: 'tick', force: true });
