@@ -312,6 +312,28 @@ async function notifyOwner(admin: SupabaseClient, text: string) {
   } catch (e) { log('WARN', 'aviso ao dono falhou', { error: errMsg(e) }); }
 }
 
+// Ficha completada pela conversa → a IA refaz a nota da vaga com os dados novos (a do intake foi dada
+// antes, só com o que o currículo trazia). Roda em segundo plano (~12 s) e avisa o dono com a nota nova.
+async function rematchAndNotify(admin: SupabaseClient, ch: Row, candId: string, m: Incoming) {
+  const quem = `+${m.number}${m.name ? ` (${m.name})` : ''}`;
+  let nota = '';
+  if (ch.job_id) {
+    try {
+      const r = await fetch(`${supabaseUrl}/functions/v1/hiring-cv-scan`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+        body: JSON.stringify({ action: 'match', candidate_id: candId, job_id: ch.job_id }),
+      });
+      const out = await r.json().catch(() => ({}));
+      const score = out?.data?.score;
+      if (r.ok && score != null) {
+        nota = `\nNova aderência à vaga: *${score}*${out.data?.analysis?.resumo ? ` — ${out.data.analysis.resumo}` : ''}`;
+        log('INFO', 'nota refeita após ficha completa', { cand: candId, score });
+      } else log('WARN', 'reanálise falhou', { cand: candId, status: r.status, error: out?.error });
+    } catch (e) { log('WARN', 'reanálise falhou', { cand: candId, error: errMsg(e) }); }
+  }
+  if (ch.notify_owner) await notifyOwner(admin, `✅ Ficha completada pelo WhatsApp (link "${ch.name}") — ${quem}${nota}`);
+}
+
 async function say(admin: SupabaseClient, conv: Row, number: string, text: string) {
   await sendText(number, text);
   await admin.from('bot_messages').insert({ conversation_id: conv.id, role: 'assistant', content: text });
@@ -465,6 +487,13 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     }
     if (!r.ok) {
       log('WARN', 'currículo não salvo', { status: r.status, error: r.error });
+      // 409 = currículo repetido: ele JÁ está salvo (ex.: 2026-09-15, candidata mandou o mesmo PDF duas
+      // vezes seguidas e recebeu "tive um probleminha"). Confirma em vez de pedir de novo.
+      if (r.status === 409) {
+        react(m.key ?? null, '✅');
+        await say(admin, conv, to(m), 'Esse currículo já está com a gente ✅ Não precisa mandar de novo.');
+        return;
+      }
       react(m.key ?? null, '');
       await say(admin, conv, to(m),r.status === 422
         ? 'Não consegui ler esse arquivo como currículo 😕 Pode mandar em PDF, Word ou uma foto bem nítida, com boa luz?'
@@ -563,7 +592,10 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
             else if (r.faltas.length) out = `Gravado.${r.erro ? ` Atenção: ${r.erro}.` : ''} Ainda faltam: ${r.faltas.map((f) => `${FIELD_LABELS[f] ?? f} [${f}] — "${FIELD_ASK[f] ?? ''}"`).join('; ')}. Peça o próximo.`;
             else {
               out = 'Ficha completa. Agradeça e diga que a equipe vai analisar e entra em contato se o perfil combinar.';
-              if (channel.notify_owner) await notifyOwner(admin, `✅ Ficha completada pelo WhatsApp (link "${channel.name}") — +${m.number}${m.name ? ` (${m.name})` : ''}`);
+              // Em segundo plano: o agradecimento ao candidato não espera a IA.
+              const p = rematchAndNotify(admin, channel, id, m).catch((e) => log('WARN', 'reanálise', { error: errMsg(e) }));
+              // deno-lint-ignore no-explicit-any
+              (globalThis as any).EdgeRuntime?.waitUntil?.(p);
             }
           }
         } else if (u.name === 'chamar_equipe') {

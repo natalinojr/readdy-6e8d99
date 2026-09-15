@@ -8,8 +8,8 @@
 //     pelo WhatsApp do assistente: "1" aceita, "2" recusa, "dd/mm hh:mm" propõe outro horário.
 //
 // Ações (POST, header x-internal-key = ASSISTENTE_INTERNAL_KEY ou Bearer service role):
-//   tick     {}                                  assistente-cron, a cada minuto: convites (8h–20h, até
-//                                                3 por rodada e 10 por hora), cobrança após 24 h sem
+//   tick     {}                                  assistente-cron, a cada minuto: convites (8h–20h, ritmo
+//                                                em INVITE_LIMITS por transporte), cobrança após 24 h sem
 //                                                resposta, lembrete na véspera (candidato + entrevistadores)
 //   inbound  { number, reply_to?, text, name? }  assistente-webhook, para quem NÃO é o dono. Devolve
 //                                                (reply_to = JID de origem, ex. "...@lid": respostas vão
@@ -37,10 +37,16 @@ import { isOutsideWindow, TEMPLATES, waConfig, waSendTemplate, waSendText } from
 const TZ = 'America/Sao_Paulo';
 const MODEL = 'claude-haiku-4-5';
 const ACTIVE = ['convidado', 'negociando', 'aguardando_gestor', 'agendado'];
-// Ritmo baixo de propósito: o número antigo foi BANIDO pelo WhatsApp em 2026-09-14 depois de muitos
-// contatos novos em poucos minutos. Convite é a empresa falando primeiro (o mais arriscado).
-const MAX_INVITES_TICK = 1;
-const MAX_INVITES_HOUR = 4;
+// Ritmo dos convites (a empresa falando primeiro), por transporte:
+//  • evolution: baixo de propósito — o número antigo foi BANIDO em 2026-09-14 depois de muitos contatos
+//    novos em poucos minutos.
+//  • cloud (API oficial, desde 2026-09-15): sem o freio anti-ban; fica só uma trava contra disparo em
+//    massa por erro de configuração. O número começa com limite da Meta de 250 conversas iniciadas pela
+//    empresa por dia, e convite bloqueado pelos candidatos derruba a qualidade do número.
+const INVITE_LIMITS = {
+  evolution: { tick: 1, hour: 4 },
+  cloud: { tick: 10, hour: 100 },
+} as const;
 const HOUR_START = 8, HOUR_END = 20; // convites e cobranças só nesse horário (evita bloqueio e incômodo)
 const OFFER = 6;                     // horários oferecidos por mensagem
 
@@ -529,7 +535,8 @@ async function tick(admin: SupabaseClient, force = false) {
     // Convites
     const { data: st } = await admin.from('hiring_stages').select('id').eq('native_kind', 'agendar').maybeSingle();
     const { count: naHora } = await admin.from('hiring_scheduling_sessions').select('id', { count: 'exact', head: true }).gte('created_at', new Date(Date.now() - 3600_000).toISOString());
-    let vagas = Math.min(MAX_INVITES_TICK, MAX_INVITES_HOUR - (naHora ?? 0));
+    const lim = INVITE_LIMITS[(await waConfig(admin)).transport];
+    let vagas = Math.min(lim.tick, lim.hour - (naHora ?? 0));
     if (st?.id && vagas > 0) {
       const { data: cands } = await admin.from('hiring_candidates').select('id, full_name, phone').eq('stage_id', st.id).limit(200);
       const ids = ((cands ?? []) as Row[]).map((x) => x.id);

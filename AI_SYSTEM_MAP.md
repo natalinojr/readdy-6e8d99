@@ -1924,6 +1924,28 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
     recebe mensagem quem está na lista de destinatários do painel (senão Meta 131030).
   - Trocar para o número real: dar ao usuário do sistema `erpos-whatsapp` acesso à conta (WABA) do
     número, UPDATE em `wa_public` (phone_id + waba_id) e rodar as ações `subscribe_app` e `setup_templates`.
+  - Número real em produção desde 2026-09-15: +55 41 98411-0139 (phone_id 1296325650233875, WABA
+    1771200764189437). O número de teste era phone_id 1150549658146093 / WABA 1428578402414522.
+  - Dois números desde 2026-09-15: o da Evolution (`assistente-webhook`) fica só com grupos + dono; o
+    atendimento público (candidatura/agendamento) é só no número oficial (`whatsapp-cloud`). Com
+    `wa_public.transport = 'cloud'`, DM de desconhecido no número da Evolution é IGNORADA
+    (`publicOnEvolution`), com `return` explícito, porque o código seguinte trata a mensagem como do dono.
+    Pegadinha que motivou: `bot_conversations` é por `contact_jid` (telefone), então o mesmo candidato
+    escrevendo nos dois números caía na mesma conversa, e a resposta ia pela API oficial com destino
+    @lid (erro "destino @lid não existe na API oficial").
+  - Nota da vaga refeita quando a ficha fica completa pela conversa (2026-09-15): a nota do `intake`
+    sai logo após ler o currículo, antes do `completar_ficha`. Ao completar, `rematchAndNotify` chama
+    `hiring-cv-scan › match` (x-internal-key) em segundo plano (`EdgeRuntime.waitUntil`, ~12 s) e o
+    aviso "Ficha completada" no Telegram traz a nova nota. Só com `channel.job_id`.
+  - `fn_hiring_book` não escreve mais nada em `hiring_interviews.notes` (2026-09-15, migração
+    `20260915140000_hiring_book_sem_nota_automatica`): as considerações são do entrevistador.
+  - `canal-publico`: 409 do `hiring-cv-scan` = currículo repetido (já salvo). Responde "já está com a
+    gente ✅", não "tive um probleminha" (o candidato mandava de novo à toa).
+  - Entrevista excluída/cancelada pela tela encerra a sessão da IA (2026-09-15, migração
+    `20260915130000_hiring_sessao_encerra_com_entrevista`): trigger BEFORE DELETE / AFTER UPDATE OF status
+    em `hiring_interviews` → sessão `agendado` vira `cancelado`. Antes, a FK `interview_id` (ON DELETE
+    SET NULL) deixava a sessão "agendado" sem entrevista e o `hiring-scheduler` seguia respondendo o
+    candidato. O cancelamento feito pelo próprio scheduler grava `negociando` depois e prevalece.
   - Pegadinha da verificação do número: cada "Adicionar número" pode criar uma WABA nova (ficaram 3
     "Assistente - ERPOS"), e muitos pedidos/tentativas de código dão bloqueio temporário (136025,
     2494158). Pedir 1 código por vez; dá para pedir e verificar pelo Graph API Explorer
@@ -1932,7 +1954,10 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   não pode usar o WhatsApp") logo depois de ~10 candidatos reais escreverem pelo link em poucos
   minutos, com respostas automáticas via Evolution (conexão não oficial). O plano é uma linha nova,
   "aquecida" antes, com ritmo baixo: o `hiring-scheduler` manda 1 convite por rodada e no máximo
-  4 por hora, com "digitando…" antes (`delay`). Caminho definitivo: API oficial (Cloud API) num
+  4 por hora, com "digitando…" antes (`delay`). Desde 2026-09-15 o ritmo depende do transporte
+  (`INVITE_LIMITS`): Evolution continua 1/rodada e 4/h; API oficial 10/rodada e 100/h (só trava contra
+  disparo em massa: o número começa com 250 conversas iniciadas pela empresa por dia). O horário
+  8h–20h vale para os dois. Caminho definitivo: API oficial (Cloud API) num
   número só do recrutamento, separado do assistente pessoal.
 - **Link de candidatura = wa.me direto (2026-09-14)**. Tentamos um link curto próprio
   (`erpos.vercel.app/v/CÓDIGO` → `vercel.json` → `canal-publico?go=` → 302 para wa.me). Tecnicamente

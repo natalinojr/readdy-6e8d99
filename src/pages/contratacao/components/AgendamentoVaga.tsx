@@ -132,8 +132,9 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
         <div className="space-y-1.5">
           {s.interviewers.map((it, i) => (
             <div key={i} className="flex items-center gap-1.5">
-              <input value={it.name} onChange={(e) => setInt(i, { name: e.target.value })} placeholder="Nome" className={`${inp} flex-1`} />
-              <input value={it.phone} onChange={(e) => setInt(i, { phone: e.target.value })} placeholder="WhatsApp com DDD" inputMode="tel" className={`${inp} w-44`} />
+              {/* Sem o w-full do inp: com ele o telefone ocupava a linha toda e o nome sumia. */}
+              <input value={it.name} onChange={(e) => setInt(i, { name: e.target.value })} placeholder="Nome" className={inp.replace('w-full', 'flex-1 min-w-0')} />
+              <input value={it.phone} onChange={(e) => setInt(i, { phone: e.target.value })} placeholder="WhatsApp com DDD" inputMode="tel" className={inp.replace('w-full', 'w-40 shrink-0')} />
               <button onClick={() => set('interviewers', s.interviewers.filter((_, j) => j !== i))} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 cursor-pointer" title="Remover"><i className="ri-delete-bin-line" /></button>
             </div>
           ))}

@@ -64,6 +64,7 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
       .slice(0, 50);
   }, [candidates, busca, candidateId, descartadoId]);
 
+  const abrirConversa = cand ? whatsLink(cand.phone) : null;
   const convite = cand && whatsLink(cand.phone, inviteText(settings.invite_template, {
     nome: firstName(cand.full_name),
     empresa,
@@ -214,7 +215,15 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
             <div><Label>Quem entrevista</Label><input value={interviewer} onChange={(e) => setInterviewer(e.target.value)} placeholder="Ex.: Natalino" className={inputCls} /></div>
           </div>
 
-          {convite && status === 'agendada' && (
+          {/* Entrevista já salva: só abre a conversa (o convite já foi feito). Nova: manda o convite pronto. */}
+          {interview ? (
+            abrirConversa && (
+              <a href={abrirConversa} target="_blank" rel="noopener noreferrer"
+                className="flex items-center justify-center gap-1.5 h-9 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-bold">
+                <i className="ri-whatsapp-line text-sm" /> Abrir WhatsApp
+              </a>
+            )
+          ) : convite && status === 'agendada' && (
             <a href={convite} target="_blank" rel="noopener noreferrer"
               className="flex items-center justify-center gap-1.5 h-9 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-bold">
               <i className="ri-whatsapp-line text-sm" /> Enviar convite pelo WhatsApp

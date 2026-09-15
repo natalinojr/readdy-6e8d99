@@ -507,6 +507,14 @@ async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: Msg
 // ── Canais públicos (links wa.me com código; atendimento na edge canal-publico) ──
 const PUBLIC_CODE_RE = /\b([A-Z]{2,4}-[A-Z0-9]{4})\b/i; // mesmo formato do canal-publico
 
+// O atendimento público (candidatura + agendamento) só passa por ESTE número quando wa_public.transport
+// é 'evolution'. Desde 2026-09-15 ele roda na API oficial (whatsapp-cloud, outro número): aqui ficam só
+// os grupos e o dono. Voltar para a Evolution = UPDATE em asst_settings.wa_public, sem deploy.
+async function publicOnEvolution(admin: SupabaseClient): Promise<boolean> {
+  const { data } = await admin.from('asst_settings').select('value').eq('key', 'wa_public').maybeSingle();
+  return (data?.value as Record<string, unknown> | null)?.transport !== 'cloud';
+}
+
 // Dono testando um link: mensagem com o código de um canal existente, ou teste aberto (< 30 min).
 // deno-lint-ignore no-explicit-any
 async function ownerTestingPublic(admin: SupabaseClient, chatId: string, data: any): Promise<boolean> {
@@ -1016,8 +1024,14 @@ async function handle(payload: any) {
   // lá testando: mensagem com o código de um canal, ou teste aberto há menos de 30 min.
   // Agendamento de entrevista (Contratação, 2026-09-14): candidato com conversa de agendamento aberta
   // ou entrevistador respondendo um pedido → hiring-scheduler. Se ele não tratar, segue o canal público.
+  // Com o atendimento público na API oficial, DM de desconhecido aqui é ignorada: a resposta sairia pelo
+  // outro número (e quase sempre falharia, fora da janela de 24 h dele), e tráfego de candidato neste
+  // número foi o que o baniu em 2026-09-14. O return é obrigatório: o que vem abaixo trata a mensagem
+  // como sendo do dono.
+  const publicoAqui = await publicOnEvolution(admin).catch(() => false);
+  if (!isOwner && !publicoAqui) { log('INFO', 'DM de desconhecido ignorada (atendimento público na API oficial)', { chat: chatId }); return; }
   if (!isOwner && await toHiringScheduler(number, data, replyTo).catch((e) => { log('WARN', 'hiring-scheduler', { error: errMsg(e) }); return false; })) return;
-  if (!isOwner || await ownerTestingPublic(admin, chatId, data)) {
+  if (!isOwner || (publicoAqui && await ownerTestingPublic(admin, chatId, data))) {
     await toPublicChannel(chatId, number, msgKey, data, isOwner, replyTo);
     return;
   }
