@@ -145,6 +145,9 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
         text = text || `[Arquivo${fname ? ` "${fname}"` : ''}]`; // tipo que não lemos: o canal-publico pede PDF/foto/Word
       }
     } else if (type === 'video') kind = 'video';
+    // Reação (👍 numa mensagem), figurinha e avisos do sistema: não são conversa; ignora em silêncio
+    // (antes respondia "não consigo abrir esse tipo de mensagem" — Aline e Alexandra, 2026-09-15).
+    else if (['reaction', 'sticker', 'system', 'ephemeral', 'unsupported', 'request_welcome'].includes(type)) return;
     else { kind = 'other'; text = text || `[${type || 'mensagem'}]`; }
   } catch (e) {
     log('WARN', 'preparar mídia', { type, error: errMsg(e) });

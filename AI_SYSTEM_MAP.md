@@ -1898,6 +1898,18 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
   com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
   causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
+- **Recrutamento pelo WhatsApp: lições das 1ªs conversas reais (2026-09-15)**:
+  - O `hiring-cv-scan` só recusa (422) quando não achou nada. Currículo "desorganizado" é legível e,
+    com nome, telefone ou experiência, salva mesmo marcado como ilegível.
+  - A `whatsapp-cloud` ignora reação, figurinha e mensagem de sistema.
+  - No scheduler, a trava do dia vale: se o candidato cita outro dia ("amanhã"), ganha a data que ele
+    falou, não a opção com o mesmo horário.
+  - Lembrete da véspera: não sai para entrevista marcada há menos de 12 h.
+  - Pedido de confirmação no dia: não sai para entrevista marcada no próprio dia. A saudação vem pela
+    hora.
+  - Salário não liberado no link: a IA diz que a equipe informa e chama `chamar_equipe`.
+  - O agendamento usa `hiring_candidates.whatsapp` (quem mandou pelo link) antes do telefone do
+    currículo.
 - **Contratação: histórico do candidato (2026-09-15)**:
   - Tabela `hiring_candidate_events`, gravada por GATILHOS: `hiring_candidates_log` (criado, fase,
     decisão, loja, estrelas, dados mínimos completados, organizado pela IA), `hiring_applications_log`

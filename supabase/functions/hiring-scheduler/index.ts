@@ -320,7 +320,7 @@ Responda SÓ com JSON válido:
  "preferencia": {"data": "AAAA-MM-DD" ou null, "depois_de": "HH:MM" ou null, "antes_de": "HH:MM" ou null, "periodo": "manha" | "tarde" | "noite" | null} ou null,
  "resposta": texto curto e gentil em português para enviar (para pergunta/agradecer/outro; use só os fatos; salário, benefícios e o que não estiver nos fatos: diga que a equipe explica na entrevista)}
 - O candidato NÃO precisa responder com número. Entenda o jeito dele de falar.
-- "escolher": escolheu uma das opções oferecidas, pelo número OU pela descrição ("pode ser às 17h", "o de terça", "o primeiro", "esse das 16:30"). Se a descrição casa com uma opção, use "escolher" com o número dela.
+- "escolher": escolheu uma das opções oferecidas, pelo número OU pela descrição ("pode ser às 17h", "o de terça", "o primeiro", "esse das 16:30"). Se a descrição casa com uma opção, use "escolher" com o número dela. ATENÇÃO ao dia: se ele citar um dia ("amanhã", "quarta", "dia 17") diferente do dia da opção, NÃO é "escolher" — é "propor" com data_hora (ex.: hoje é terça e ele diz "amanhã às 15:00" → quarta 15:00, mesmo que exista "terça às 15:00" na lista). Sempre que ele citar dia e hora, preencha data_hora também.
 - "propor": quer outro dia/horário ou deu uma preferência. Com dia e hora exatos → data_hora. Preferência vaga ("segunda depois das 16h", "terça de manhã", "qualquer dia à tarde", "amanhã") → preencha "preferencia" (dia da semana = a próxima data com esse dia, contando hoje; "depois das 16h" → depois_de "16:00") e data_hora null.
 - "recusar": não quer mais participar. "cancelar"/"remarcar": sobre uma entrevista já marcada.
 - "confirmar": confirma que VAI comparecer à entrevista marcada ("confirmo", "estarei lá", "vou sim").
@@ -403,12 +403,17 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
   if (num && offered[Number(num[1]) - 1] && sess.status !== 'aguardando_gestor') { await book(admin, c, offered[Number(num[1]) - 1], false); return; }
 
   const r = await classify(c, t, offered);
-  const intencao = String(r.intencao ?? 'outro');
+  let intencao = String(r.intencao ?? 'outro'); // pode virar 'propor' na trava do dia (abaixo)
   if (sess.status === 'aguardando_gestor' && !['recusar', 'pergunta'].includes(intencao)) {
     await toCand(admin, c, 'Ainda estou confirmando com a equipe. Assim que tiver resposta eu te aviso 🙂');
     return;
   }
-  if (intencao === 'escolher' && Number(r.opcao) >= 1 && offered[Number(r.opcao) - 1]) { await book(admin, c, offered[Number(r.opcao) - 1], false); return; }
+  // Trava do "amanhã" (Bianca, 2026-09-15: "Amanhã às 15:00" virou hoje 15:00): se a IA escolheu uma
+  // opção mas o dia que ele falou (data_hora) é outro, vale o dia que ele falou.
+  const optEscolhida = intencao === 'escolher' && Number(r.opcao) >= 1 ? offered[Number(r.opcao) - 1] : undefined;
+  const diaFalado = r.data_hora && /^\d{4}-\d{2}-\d{2}/.test(String(r.data_hora)) ? String(r.data_hora).slice(0, 10) : null;
+  if (optEscolhida && diaFalado && localParts(optEscolhida).d !== diaFalado) { r.intencao = intencao = 'propor'; }
+  if (intencao === 'escolher' && optEscolhida) { await book(admin, c, optEscolhida, false); return; }
   if (intencao === 'propor' || ((intencao === 'cancelar' || intencao === 'remarcar') && sess.status === 'agendado')) {
     if (intencao !== 'propor') await cancelInterview(admin, c);
     const quer = r.data_hora && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(r.data_hora)) ? spToIso(String(r.data_hora)) : null;
@@ -645,11 +650,16 @@ async function tick(admin: SupabaseClient, force = false) {
   // Lembrete na véspera (a partir das 9h): candidato + entrevistadores
   if (hora >= 9 && hora < 21) {
     const amanha = localDate(new Date(Date.now() + 86_400_000));
-    const { data: ags } = await admin.from('hiring_scheduling_sessions').select('*, hiring_interviews!hiring_scheduling_sessions_interview_id_fkey(scheduled_at, status)')
+    const { data: ags } = await admin.from('hiring_scheduling_sessions').select('*, hiring_interviews!hiring_scheduling_sessions_interview_id_fkey(scheduled_at, status, created_at)')
       .eq('status', 'agendado').is('reminder_sent_at', null).not('interview_id', 'is', null).limit(50);
     for (const s of (ags ?? []) as Row[]) {
       const iv = s.hiring_interviews as Row | null;
       if (!iv || iv.status !== 'agendada' || localDate(new Date(iv.scheduled_at)) !== amanha) continue;
+      // Marcada há menos de 12 h: acabou de receber a confirmação — não repete (Bianca, 2026-09-15).
+      if (iv.created_at && Date.now() - Date.parse(String(iv.created_at)) < 12 * 3600_000) {
+        await admin.from('hiring_scheduling_sessions').update({ reminder_sent_at: new Date().toISOString() }).eq('id', s.id);
+        continue;
+      }
       const c = await loadCtx(admin, s);
       if (!c) continue;
       const quando = fmtSlot(iv.scheduled_at);
@@ -664,16 +674,19 @@ async function tick(admin: SupabaseClient, force = false) {
   // No dia (a partir das 8h, até 1 h antes): quem ainda não confirmou recebe o pedido de confirmação
   if (hora >= 8 && hora < 20) {
     const hoje = localDate(new Date());
-    const { data: doDia } = await admin.from('hiring_scheduling_sessions').select('*, hiring_interviews!hiring_scheduling_sessions_interview_id_fkey(scheduled_at, status)')
+    const { data: doDia } = await admin.from('hiring_scheduling_sessions').select('*, hiring_interviews!hiring_scheduling_sessions_interview_id_fkey(scheduled_at, status, created_at)')
       .eq('status', 'agendado').is('confirmed_at', null).not('interview_id', 'is', null).limit(50);
     for (const s of (doDia ?? []) as Row[]) {
       const iv = s.hiring_interviews as Row | null;
       if (!iv || iv.status !== 'agendada' || localDate(new Date(iv.scheduled_at)) !== hoje) continue;
+      // Marcada hoje mesmo: a confirmação da reserva já vale; não pede de novo minutos depois.
+      if (iv.created_at && localDate(new Date(String(iv.created_at))) === hoje) continue;
       if (new Date(iv.scheduled_at).getTime() - Date.now() < 3600_000) continue;
       if (s.confirm_requested_at && localDate(new Date(s.confirm_requested_at)) === hoje) continue; // já pediu hoje
       const c = await loadCtx(admin, s);
       if (!c) continue;
-      await toCand(admin, c, `Bom dia, ${firstName(c.cand.full_name)}! Hoje é o dia da sua entrevista: *${fmtSlot(iv.scheduled_at)}*\n${onde(c)}${mapa(c)}\n\nVocê confirma presença? Responda *sim* para confirmar ou *não* se não puder ir.`,
+      const saudacao = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
+      await toCand(admin, c, `${saudacao}, ${firstName(c.cand.full_name)}! Hoje é o dia da sua entrevista: *${fmtSlot(iv.scheduled_at)}*\n${onde(c)}${mapa(c)}\n\nVocê confirma presença? Responda *sim* para confirmar ou *não* se não puder ir.`,
         { confirm_requested_at: new Date().toISOString() },
         { name: TEMPLATES.lembrete.name, params: [firstName(c.cand.full_name), empresa(c), fmtSlot(iv.scheduled_at), onde(c)] });
       res.confirm_asked++;
