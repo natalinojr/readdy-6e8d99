@@ -8,6 +8,7 @@ import TopBar from './TopBar';
 import SelecionarLojaPage from '../../pages/selecionar-loja/page';
 import RotaProtegida from './RotaProtegida';
 import InstallPWA from './InstallPWA';
+import AssistenteChat from './AssistenteChat';
 
 // Fallback leve enquanto o chunk da página (lazy) carrega — mantém a moldura
 // (sidebar/topbar) visível em vez de piscar a tela inteira.
@@ -174,6 +175,8 @@ export default function AppLayout() {
       </div>
       {/* Convite para instalar na tela inicial (só aparece no celular) */}
       <InstallPWA />
+      {/* Chat do assistente (só o dono; na própria tela Assistente ele já está embutido) */}
+      {!location.pathname.startsWith('/assistente') && <AssistenteChat variant="floating" />}
     </div>
   );
 }

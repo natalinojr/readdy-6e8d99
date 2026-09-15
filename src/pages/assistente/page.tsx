@@ -8,6 +8,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import PixPermitidosCard from './PixPermitidosCard';
+import AssistenteChat from '@/components/feature/AssistenteChat';
 
 const OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -240,23 +241,8 @@ export default function AssistentePage() {
           </div>
 
           {/* Conversa */}
-          {tab === 'conversa' && (
-            <div className="rounded-2xl border border-zinc-200 bg-zinc-50/60 p-4 space-y-2 max-h-[65vh] overflow-y-auto">
-              {ov.messages.length === 0 && <p className="text-sm text-zinc-400 text-center py-10">Nenhuma conversa ainda.</p>}
-              {ov.messages.map((m) => (
-                <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words ${
-                    m.role === 'user' ? 'bg-violet-600 text-white rounded-br-md' : 'bg-white border border-zinc-200 text-zinc-800 rounded-bl-md'
-                  }`}>
-                    {m.content}
-                    <div className={`text-[10px] mt-1 ${m.role === 'user' ? 'text-violet-200' : 'text-zinc-400'}`}>
-                      {fmt(m.created_at)} · {CHANNEL_LABEL[m.channel] ?? m.channel}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Conversa: o chat de verdade (mesma conversa do Telegram) */}
+          {tab === 'conversa' && <AssistenteChat variant="embedded" />}
 
           {/* Lembretes */}
           {tab === 'lembretes' && (

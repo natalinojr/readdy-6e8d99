@@ -788,6 +788,27 @@ brain perguntou a vaga antes de salvar → no "só salva" (outra mensagem) o ane
   canal extrai o texto (`fflate`, `word/document.xml`) → intake como texto, e o .docx original vai
   para o bucket `curriculos`. O `.doc` antigo continua sem suporte (pede PDF/foto).
 
+### Chat no ERPOS (2026-09-15, Fase 1)
+
+Conversa com o assistente **dentro do ERPOS**, somando ao Telegram (não substitui).
+- **Mesma conversa:** a edge `assistente-app` usa o histórico do chat do Telegram do dono
+  (`asst_messages.chat_id = 'tg:<telegram_allowed_ids[0]>'`), gravando com `channel = 'app'`.
+  Começa num canal e continua no outro. Sem migration (`channel` é texto livre).
+- **Front:** `src/components/feature/AssistenteChat.tsx` — botão flutuante em todas as telas do
+  modo gestão (`AppLayout`, só o e-mail do dono; escondido em `/assistente`) e embutido na aba
+  Assistente › Conversa. Texto, foto (reduzida a 1600 px no aparelho), PDF e áudio (MediaRecorder →
+  Whisper na VPS). Enquete do brain vira botões; a cada 8 s puxa o que chegou por outro canal.
+- **Contexto de tela:** cada mensagem vai com `[Pelo ERPOS · tela: <título> — <rota> · loja aberta: X]`,
+  para "paga essa", "esse candidato" funcionarem. O balão esconde esse prefixo.
+- **Pagamento:** brain aceita `channel 'app'` em `preparar_pagamento` e nas ações (`CHAT_CHANNELS`).
+  O cartão aparece acima da caixa de texto (Pagar / Ver status / Cancelar); Pagar abre o PIN — **o
+  mesmo do Telegram** (`asst_settings.pay_pin`, hash com o id do chat do Telegram, 3 erros = 15 min),
+  conferido na edge e nunca enviado ao modelo nem ao histórico. `inter-bank › execute_payment` faz o
+  claim atômico. Pago na hora → `send_receipt` + `baixa_conciliada`; senão o `pay_watch` segue
+  (e manda os status no Telegram como mensagem nova, porque o cartão não existe lá).
+- Próximos: push dos avisos no app (Web Push já existe em `send-push`), tópicos por assunto no chat,
+  app Android com Capacitor (compartilhar do celular, biometria, notificação com botões).
+
 ## Pendente (ordem)
 
 1. Validar no uso real o Telegram: conversa, áudio, foto e clique em botão.

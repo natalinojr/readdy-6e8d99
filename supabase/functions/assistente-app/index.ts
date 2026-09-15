@@ -1,0 +1,265 @@
+// assistente-app — chat do assistente DENTRO do ERPOS (2026-09-15). Projeto PESSOAL do dono;
+// ver assistente/README.md › "Chat no ERPOS".
+//
+// Mesma conversa do Telegram: o histórico é o do chat do dono no Telegram (asst_messages.chat_id
+// = 'tg:<id>'), só muda o canal ('app'). Falou no celular pelo Telegram, continua aqui, e vice-versa.
+//
+// Ações (POST JSON, JWT do dono — e-mail + asst_settings.owner_user_id):
+//   history   { after_id?, before_id? }            → mensagens da conversa (60 por vez)
+//   send      { text?, attachment?, audio?, contexto? }
+//             attachment = { base64, media_type } (foto/PDF) · audio = { base64, media_type } (→ Whisper)
+//             contexto = { rota, titulo, loja } — a tela aberta vai junto para o assistente
+//   payments  {}                                   → pagamentos do Inter em aberto/recentes (cartões)
+//   pay       { id, op: 'ok'|'no'|'st', pin? }     → Pagar (com PIN) / Cancelar / Ver status
+//
+// O PIN é o mesmo do Telegram (asst_settings.pay_pin, hash com o id do chat do Telegram) e nunca
+// vai ao modelo nem ao histórico. Mesmo bloqueio: 3 erros → 15 minutos.
+//
+// Publicada com --no-verify-jwt: a checagem do dono é feita aqui dentro.
+// Secrets: ASSISTENTE_INTERNAL_KEY (brain/telegram), FISCAL_INTERNAL_KEY (inter-bank), WHISPER_URL, WHISPER_API_KEY.
+
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+const OWNER_EMAIL = 'natalinojr.engel@gmail.com';
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+const fail = (msg: string, status = 400) => json({ success: false, error: msg }, status);
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string, ctx?: Record<string, unknown>) {
+  const e = JSON.stringify({ ts: new Date().toISOString(), fn: 'assistente-app', level, msg, ...(ctx ?? {}) });
+  if (level === 'ERROR') console.error(e); else if (level === 'WARN') console.warn(e); else console.log(e);
+}
+
+const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const internalKey = Deno.env.get('ASSISTENTE_INTERNAL_KEY') ?? '';
+const fiscalKey = Deno.env.get('FISCAL_INTERNAL_KEY') ?? '';
+const whisperUrl = (Deno.env.get('WHISPER_URL') ?? '').replace(/\/$/, '');
+const whisperKey = Deno.env.get('WHISPER_API_KEY') ?? '';
+// Mesmo vocabulário do assistente-telegram (sem isso "Paranaguá" vira "parar na água").
+const WHISPER_PROMPT = 'Conversa com o Natalino, dono dos restaurantes El Patrón em Paranaguá (PR), lojas Vila Leste e Paranaguá. ERPOS, cardápio, fornecedor, conta a pagar, DRE, CMV, estoque, insumo, Pix, Inter, Stone, iFood, delivery, motoboy, hambúrguer, pastel.';
+const FILE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+const MAX_B64 = 14 * 1024 * 1024; // ~10 MB de arquivo
+
+const PIN_LOCK_MS = 15 * 60_000;
+const PAY_TTL_MS = 30 * 60_000;
+const PAY_OPEN = ['draft', 'awaiting_pin', 'sending', 'sent', 'pending_approval', 'approved', 'scheduled'];
+const PAY_STATUS: Record<string, string> = {
+  draft: 'aguardando você tocar em Pagar', awaiting_pin: 'esperando o PIN', sending: 'enviando ao Inter', sent: 'enviado ao Inter',
+  pending_approval: 'aguardando sua aprovação no app do Inter', approved: 'aprovado, processando', scheduled: 'agendado no Inter',
+  paid: 'pago', cancelled: 'cancelado', rejected: 'recusado pelo Inter', failed: 'não foi enviado', expired: 'expirado',
+};
+const nowIso = () => new Date().toISOString();
+const brl = (n: unknown) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+async function sha256hex(text: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+// Igual ao assistente-telegram (pinHash): o sal é o id do chat do Telegram do dono.
+const pinHash = (pin: string, tgChatId: number) => sha256hex(`erpos-pay:${tgChatId}:${pin}`);
+
+// deno-lint-ignore no-explicit-any
+async function getSetting(admin: SupabaseClient, key: string): Promise<any> {
+  const { data } = await admin.from('asst_settings').select('value').eq('key', key).maybeSingle();
+  return data?.value ?? null;
+}
+async function setSetting(admin: SupabaseClient, key: string, value: unknown) {
+  await admin.from('asst_settings').upsert({ key, value, updated_at: nowIso() });
+}
+
+// deno-lint-ignore no-explicit-any
+async function callEdge(fn: string, key: string, body: Record<string, unknown>): Promise<{ status: number; out: any }> {
+  const r = await fetch(`${supabaseUrl}/functions/v1/${fn}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': key }, body: JSON.stringify(body),
+  });
+  return { status: r.status, out: await r.json().catch(() => ({})) };
+}
+// deno-lint-ignore no-explicit-any
+async function callInter(action: string, body: Record<string, unknown>): Promise<any> {
+  const { status, out } = await callEdge('inter-bank', fiscalKey, { action, ...body });
+  if (status >= 400 || out?.success === false) throw new Error(String(out?.error ?? `inter-bank HTTP ${status}`));
+  return out;
+}
+
+async function transcribe(b64: string, mime: string): Promise<string> {
+  if (!whisperUrl || !whisperKey) throw new Error('Transcrição de áudio não configurada (WHISPER_URL).');
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const form = new FormData();
+  const ext = mime.includes('webm') ? 'webm' : mime.includes('mp4') || mime.includes('m4a') ? 'm4a' : 'ogg';
+  form.append('audio_file', new Blob([bytes], { type: mime }), `audio.${ext}`);
+  const r = await fetch(`${whisperUrl}/asr?task=transcribe&language=pt&output=json&encode=true&initial_prompt=${encodeURIComponent(WHISPER_PROMPT)}`, {
+    method: 'POST', headers: { 'X-Api-Key': whisperKey }, body: form,
+  });
+  if (!r.ok) throw new Error(`Whisper ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return String((await r.json())?.text ?? '').trim();
+}
+
+// Cartão do pagamento para a tela (chave mascarada: o cartão não precisa dela inteira).
+// deno-lint-ignore no-explicit-any
+function payCard(p: any) {
+  const key = String(p.pix_key ?? '');
+  const masked = key.length > 8 ? `${key.slice(0, 4)}…${key.slice(-4)}` : key;
+  const expired = p.status === 'draft' && Date.now() - new Date(p.created_at).getTime() > PAY_TTL_MS;
+  const status = expired ? 'expired' : String(p.status);
+  return {
+    id: p.id, kind: p.kind, amount: Number(p.amount), beneficiary_name: p.beneficiary_name ?? null,
+    pix_key: p.kind === 'pix' ? masked : null, due_date: p.due_date ?? null, description: p.description ?? null,
+    status, status_label: PAY_STATUS[status] ?? status, error: p.error ?? null,
+    created_at: p.created_at, paid_at: p.paid_at ?? null, has_bill: !!p.bill_id,
+  };
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  if (req.method !== 'POST') return fail('Method not allowed', 405);
+
+  // ── Só o dono ──
+  const authHeader = req.headers.get('Authorization') ?? '';
+  const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } }, auth: { autoRefreshToken: false, persistSession: false } });
+  const { data: { user } } = await userClient.auth.getUser();
+  if (!user) return fail('Unauthorized', 401);
+  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const { data: settings } = await admin.from('asst_settings').select('key, value').in('key', ['owner_user_id', 'telegram_allowed_ids']);
+  const cfg = Object.fromEntries((settings ?? []).map((s) => [s.key, s.value]));
+  if (user.email?.toLowerCase() !== OWNER_EMAIL || user.id !== cfg.owner_user_id) return fail('Acesso restrito ao dono', 403);
+  // Chat privado do Telegram: id do chat = id do usuário. É a chave da conversa compartilhada.
+  const tgId = Number((Array.isArray(cfg.telegram_allowed_ids) ? cfg.telegram_allowed_ids : [])[0]);
+  if (!tgId) return fail('Telegram do dono não configurado (asst_settings.telegram_allowed_ids).', 500);
+  const chatKey = `tg:${tgId}`;
+
+  // deno-lint-ignore no-explicit-any
+  let body: any = {};
+  try { body = await req.json(); } catch { return fail('JSON inválido'); }
+  const action = String(body.action ?? '');
+
+  try {
+    if (action === 'history') {
+      let q = admin.from('asst_messages').select('id, role, content, channel, created_at').eq('chat_id', chatKey);
+      if (body.after_id) q = q.gt('id', Number(body.after_id)).order('id', { ascending: true }).limit(100);
+      else {
+        if (body.before_id) q = q.lt('id', Number(body.before_id));
+        q = q.order('id', { ascending: false }).limit(60);
+      }
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      const rows = body.after_id ? (data ?? []) : (data ?? []).reverse();
+      return json({ success: true, data: { messages: rows, has_more: !body.after_id && (data ?? []).length === 60 } });
+    }
+
+    if (action === 'send') {
+      let text = String(body.text ?? '').trim().slice(0, 8000);
+      // deno-lint-ignore no-explicit-any
+      const att: any = body.attachment?.base64 ? body.attachment : null;
+      if (att) {
+        if (!FILE_TYPES.includes(String(att.media_type))) return fail('Esse tipo de arquivo eu não leio. Mande foto ou PDF.');
+        if (String(att.base64).length > MAX_B64) return fail('Arquivo grande demais (máx. ~10 MB).');
+      }
+      let transcricao: string | null = null;
+      if (body.audio?.base64) {
+        if (String(body.audio.base64).length > MAX_B64) return fail('Áudio grande demais.');
+        transcricao = await transcribe(String(body.audio.base64), String(body.audio.media_type ?? 'audio/webm'));
+        if (!transcricao) return fail('Não consegui entender o áudio. Pode repetir ou mandar em texto?');
+        text = `[Áudio] ${transcricao}${text ? `\n${text}` : ''}`;
+      }
+      if (!text && !att) return fail('Mensagem vazia.');
+      // Tela aberta no ERPOS: vai junto para o assistente entender "essa conta", "esse candidato".
+      const c = body.contexto ?? {};
+      const tela = [c.titulo ? String(c.titulo).slice(0, 80) : null, c.rota ? String(c.rota).slice(0, 200) : null].filter(Boolean).join(' — ');
+      const prefixo = tela || c.loja ? `[Pelo ERPOS${tela ? ` · tela: ${tela}` : ''}${c.loja ? ` · loja aberta: ${String(c.loja).slice(0, 60)}` : ''}]\n` : '';
+      const started = Date.now();
+      const { status, out } = await callEdge('assistente-brain', internalKey, {
+        text: `${prefixo}${text}`.trim(), chat_id: chatKey, channel: 'app',
+        ...(att ? { attachment: { base64: String(att.base64), media_type: String(att.media_type) } } : {}),
+      });
+      if (status >= 400 || !out?.reply) {
+        const e = String(out?.error ?? `HTTP ${status}`);
+        log('ERROR', 'brain', { status, error: e.slice(0, 300) });
+        if (/credit balance/i.test(e)) return fail('Os créditos da API da Anthropic acabaram. Recarregue em console.anthropic.com › Billing.', 502);
+        return fail(`Deu erro do meu lado: ${e.slice(0, 200)}`, 502);
+      }
+      log('INFO', 'respondido', { ms: Date.now() - started, tools: (out.tool_calls ?? []).map((t: { name: string }) => t.name), actions: (out.actions ?? []).map((a: { type: string }) => a.type) });
+      return json({ success: true, data: { reply: String(out.reply), actions: Array.isArray(out.actions) ? out.actions : [], tool_calls: out.tool_calls ?? [], transcricao } });
+    }
+
+    if (action === 'payments') {
+      const desde = new Date(Date.now() - 24 * 3600_000).toISOString();
+      const { data, error } = await admin.from('fin_inter_payments').select('*').eq('chat_id', chatKey)
+        .or(`status.in.(${PAY_OPEN.join(',')}),updated_at.gte.${desde}`)
+        .gte('created_at', new Date(Date.now() - 7 * 86400_000).toISOString())
+        .order('created_at', { ascending: false }).limit(20);
+      if (error) throw new Error(error.message);
+      return json({ success: true, data: { payments: (data ?? []).map(payCard) } });
+    }
+
+    if (action === 'pay') {
+      const id = String(body.id ?? '');
+      const op = String(body.op ?? '');
+      const { data: p } = await admin.from('fin_inter_payments').select('*').eq('id', id).eq('chat_id', chatKey).maybeSingle();
+      if (!p) return fail('Pagamento não encontrado.', 404);
+
+      if (op === 'no') {
+        const out = await callInter('cancel_payment', { tenant_id: p.tenant_id, payment_id: p.id });
+        await admin.from('asst_messages').insert({ channel: 'app', chat_id: chatKey, role: 'assistant', content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: cancelado pelo ERPOS] id ${p.id}` });
+        return json({ success: true, data: { payment: payCard({ ...p, ...out.payment }) } });
+      }
+      if (op === 'st') {
+        const out = await callInter('payment_status', { tenant_id: p.tenant_id, payment_id: p.id });
+        return json({ success: true, data: { payment: payCard({ ...p, ...out.payment }) } });
+      }
+      if (op !== 'ok') return fail('Opção inválida.');
+
+      if (!['draft', 'awaiting_pin'].includes(p.status)) return fail(`Esse já está: ${PAY_STATUS[p.status] ?? p.status}.`);
+      if (Date.now() - new Date(p.created_at).getTime() > PAY_TTL_MS) {
+        await admin.from('fin_inter_payments').update({ status: 'expired', updated_at: nowIso() }).eq('id', p.id).in('status', ['draft', 'awaiting_pin']);
+        return fail('Esse pedido expirou (30 minutos). Me peça de novo.');
+      }
+      // ── PIN (mesma regra do Telegram) ──
+      const pin = String(body.pin ?? '').trim();
+      const s = (await getSetting(admin, 'pay_pin')) ?? {};
+      if (!s.hash) return fail('Você ainda não tem PIN de pagamento. Crie no Telegram mandando /pin.');
+      if (s.locked_until && new Date(s.locked_until).getTime() > Date.now()) {
+        return fail(`PIN bloqueado até ${new Date(s.locked_until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })} por tentativas erradas.`, 423);
+      }
+      if (!/^\d{4,8}$/.test(pin) || (await pinHash(pin, tgId)) !== s.hash) {
+        const fails = Number(s.fails ?? 0) + 1;
+        const locked = fails >= 3 ? new Date(Date.now() + PIN_LOCK_MS).toISOString() : null;
+        await setSetting(admin, 'pay_pin', { ...s, fails: locked ? 0 : fails, locked_until: locked });
+        log('WARN', 'PIN de pagamento errado (ERPOS)', { fails, locked: !!locked });
+        return fail(locked ? 'PIN errado 3 vezes. Bloqueado por 15 minutos.' : `PIN errado (${fails}/3).`, 401);
+      }
+      if (s.fails) await setSetting(admin, 'pay_pin', { ...s, fails: 0, locked_until: null });
+
+      // execute_payment faz o claim atômico (draft/awaiting_pin → sending): dois toques não pagam 2×.
+      // deno-lint-ignore no-explicit-any
+      let pago: any = p;
+      try {
+        const out = await callInter('execute_payment', { tenant_id: p.tenant_id, payment_id: p.id });
+        pago = { ...p, ...out.payment };
+      } catch (e) {
+        const { data: cur } = await admin.from('fin_inter_payments').select('*').eq('id', p.id).maybeSingle();
+        pago = { ...(cur ?? p), error: cur?.error ?? errMsg(e) };
+        if (!cur) pago.status = 'failed';
+      }
+      // Pago na hora (raro: normalmente fica aguardando a aprovação no app do Inter e o
+      // assistente-cron › pay_watch cuida do resto): comprovante no grupo + baixa já agora.
+      if (pago.status === 'paid') {
+        await callEdge('assistente-telegram', internalKey, { action: 'send_receipt', payment_id: p.id }).catch(() => null);
+        if (pago.bill_id) await callEdge('assistente-brain', internalKey, { action: 'baixa_conciliada', payment_id: p.id }).catch(() => null);
+      }
+      await admin.from('asst_messages').insert({ channel: 'app', chat_id: chatKey, role: 'assistant', content: `[Pagamento ${pago.kind} de ${brl(pago.amount)}${pago.beneficiary_name ? ` para ${pago.beneficiary_name}` : ''}: ${PAY_STATUS[pago.status] ?? pago.status}${pago.error ? ` (${pago.error})` : ''} — pelo ERPOS] id ${p.id}` });
+      log('INFO', 'pagamento pelo ERPOS', { id: p.id, status: pago.status });
+      return json({ success: true, data: { payment: payCard(pago) } });
+    }
+
+    return fail('Ação desconhecida.');
+  } catch (e) {
+    log('ERROR', 'falha', { action, error: errMsg(e) });
+    return fail(errMsg(e), 500);
+  }
+});

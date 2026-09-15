@@ -517,7 +517,8 @@ async function interTenant(ctx: Ctx, loja?: string): Promise<string> {
   if (!data?.length) throw new Error('Nenhuma loja tem o Banco Inter conectado.');
   return String(data[0].tenant_id);
 }
-const CHAT_CHANNELS = new Set(['whatsapp', 'telegram']);
+// 'app' = chat dentro do ERPOS (assistente-app, 2026-09-15): botões e cartão de pagamento na tela.
+const CHAT_CHANNELS = new Set(['whatsapp', 'telegram', 'app']);
 // Regra do dono (2026-09-14): TUDO que um usuário faz no ERPOS pelo navegador o assistente também
 // faz. Por isso: todas as Edge Functions que as telas chamam (não só as *-write), as funções do banco
 // (erpos_rpc) e as gravações diretas que as telas fazem (erpos_tabela) — sempre com o JWT do dono,
@@ -853,7 +854,7 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       });
     }
     case 'preparar_pagamento': {
-      if (ctx.channel !== 'telegram') throw new Error('Pagamento só pelo Telegram (botões + PIN). Peça para ele mandar por lá.');
+      if (ctx.channel !== 'telegram' && ctx.channel !== 'app') throw new Error('Pagamento só pelo Telegram ou pelo chat do ERPOS (botões + PIN). Peça para ele mandar por lá.');
       const tenantId = await interTenant(ctx, input.loja);
       // Pix para pessoa/fornecedor pelo NOME (regra do dono, 2026-09-14): a chave sai do cadastro — Pix
       // permitidos (fin_pix_favorecidos) ou fornecedor com chave — e nunca da conversa.
