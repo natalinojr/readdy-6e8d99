@@ -216,6 +216,26 @@ async function toInterviewers(c: Ctx, text: string) {
   }
 }
 
+// Currículo completo novo (canal-publico › new_cv): avisa os entrevistadores da vaga. Mesmo caminho dos
+// avisos de agendamento (texto na janela de 24 h, senão o modelo aviso_equipe_entrevista).
+async function newCv(admin: SupabaseClient, candId: string, jobId: string): Promise<{ sent: number }> {
+  const [{ data: cfg }, { data: job }, { data: cand }, { data: app }] = await Promise.all([
+    admin.from('hiring_job_scheduling').select('*').eq('job_id', jobId).maybeSingle(),
+    admin.from('hiring_jobs').select('*').eq('id', jobId).maybeSingle(),
+    admin.from('hiring_candidates').select('full_name, neighborhood, city').eq('id', candId).maybeSingle(),
+    admin.from('hiring_applications').select('score').eq('job_id', jobId).eq('candidate_id', candId).maybeSingle(),
+  ]);
+  const lista = Array.isArray(cfg?.interviewers) ? cfg!.interviewers : [];
+  if (!job || !cand || !lista.length) return { sent: 0 };
+  const onde = [cand.neighborhood, cand.city].filter(Boolean).join(', ');
+  const nota = app?.score != null ? `, nota ${app.score}` : '';
+  // Uma linha só: vira a variável do modelo quando a pessoa está fora da janela.
+  const text = `novo currículo completo de ${cand.full_name ?? 'candidato'}${onde ? ` (${onde})` : ''}${nota}. Veja em Contratação no ERPOS`;
+  await toInterviewers({ cfg, job } as unknown as Ctx, text);
+  log('INFO', 'currículo novo avisado', { cand: candId, job: jobId, entrevistadores: lista.length });
+  return { sent: lista.length };
+}
+
 // ── reserva ──
 async function book(admin: SupabaseClient, c: Ctx, startsAt: string, force: boolean): Promise<boolean> {
   const { data, error } = await admin.rpc('fn_hiring_book', { p_session: c.sess.id, p_start: startsAt, p_force: force });
@@ -653,6 +673,7 @@ Deno.serve(async (req) => {
     if (body.action === 'tick') return json({ ok: true, ...(await tick(admin, body.force === true)) });
     if (body.action === 'inbound') return json({ ok: true, handled: await inbound(admin, body) });
     if (body.action === 'free_slots') return json({ ok: true, slots: await freeSlots(admin, String(body.job_id ?? ''), Number(body.limit ?? OFFER)) });
+    if (body.action === 'new_cv') return json({ ok: true, ...(await newCv(admin, String(body.candidate_id ?? ''), String(body.job_id ?? ''))) });
     return json({ error: 'ação desconhecida' }, 400);
   } catch (e) {
     log('ERROR', 'falha', { action: body?.action, error: errMsg(e) });

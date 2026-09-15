@@ -1937,6 +1937,11 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
     sai logo após ler o currículo, antes do `completar_ficha`. Ao completar, `rematchAndNotify` chama
     `hiring-cv-scan › match` (x-internal-key) em segundo plano (`EdgeRuntime.waitUntil`, ~12 s) e o
     aviso "Ficha completada" no Telegram traz a nova nota. Só com `channel.job_id`.
+  - Currículo completo novo avisa os entrevistadores da vaga (2026-09-15): `canal-publico` chama
+    `hiring-scheduler › new_cv` quando o currículo já chega completo e depois da nota refeita
+    (`rematchAndNotify`). Envio por `toInterviewers` (texto na janela de 24 h, senão o modelo
+    `aviso_equipe_entrevista`). Nunca em conversa de teste do dono. Só com `channel.job_id` e
+    entrevistadores configurados na vaga.
   - `fn_hiring_book` não escreve mais nada em `hiring_interviews.notes` (2026-09-15, migração
     `20260915140000_hiring_book_sem_nota_automatica`): as considerações são do entrevistador.
   - `canal-publico`: 409 do `hiring-cv-scan` = currículo repetido (já salvo). Responde "já está com a

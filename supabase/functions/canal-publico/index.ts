@@ -314,7 +314,18 @@ async function notifyOwner(admin: SupabaseClient, text: string) {
 
 // Ficha completada pela conversa → a IA refaz a nota da vaga com os dados novos (a do intake foi dada
 // antes, só com o que o currículo trazia). Roda em segundo plano (~12 s) e avisa o dono com a nota nova.
-async function rematchAndNotify(admin: SupabaseClient, ch: Row, candId: string, m: Incoming) {
+// Currículo completo novo → entrevistadores da vaga (hiring-scheduler › new_cv). Nunca em conversa de
+// teste do dono, para não mandar aviso falso aos gestores.
+async function avisaEntrevistadores(ch: Row, candId: string) {
+  if (!ch.job_id) return;
+  const r = await fetch(`${supabaseUrl}/functions/v1/hiring-scheduler`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+    body: JSON.stringify({ action: 'new_cv', candidate_id: candId, job_id: ch.job_id }),
+  });
+  if (!r.ok) log('WARN', 'aviso aos entrevistadores falhou', { cand: candId, status: r.status });
+}
+
+async function rematchAndNotify(admin: SupabaseClient, ch: Row, candId: string, m: Incoming, teste: boolean) {
   const quem = `+${m.number}${m.name ? ` (${m.name})` : ''}`;
   let nota = '';
   if (ch.job_id) {
@@ -332,6 +343,8 @@ async function rematchAndNotify(admin: SupabaseClient, ch: Row, candId: string, 
     } catch (e) { log('WARN', 'reanálise falhou', { cand: candId, error: errMsg(e) }); }
   }
   if (ch.notify_owner) await notifyOwner(admin, `✅ Ficha completada pelo WhatsApp (link "${ch.name}") — ${quem}${nota}`);
+  // Depois da nota refeita, para o aviso já sair com ela.
+  if (!teste) await avisaEntrevistadores(ch, candId).catch((e) => log('WARN', 'aviso aos entrevistadores', { error: errMsg(e) }));
 }
 
 async function say(admin: SupabaseClient, conv: Row, number: string, text: string) {
@@ -508,6 +521,12 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
       return;
     }
     await say(admin, conv, to(m),`Recebi seu currículo${n ? `, ${n}` : ''}! ✅\nNossa equipe vai analisar e, se o seu perfil combinar com a vaga, entramos em contato. Se tiver alguma dúvida, é só perguntar.`);
+    // Currículo já veio completo: avisa os entrevistadores agora (a nota do intake já está gravada).
+    if (!conv.is_test && r.candidate?.id) {
+      const p = avisaEntrevistadores(channel, String(r.candidate.id)).catch((e) => log('WARN', 'aviso aos entrevistadores', { error: errMsg(e) }));
+      // deno-lint-ignore no-explicit-any
+      (globalThis as any).EdgeRuntime?.waitUntil?.(p);
+    }
     return;
   }
 
@@ -593,7 +612,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
             else {
               out = 'Ficha completa. Agradeça e diga que a equipe vai analisar e entra em contato se o perfil combinar.';
               // Em segundo plano: o agradecimento ao candidato não espera a IA.
-              const p = rematchAndNotify(admin, channel, id, m).catch((e) => log('WARN', 'reanálise', { error: errMsg(e) }));
+              const p = rematchAndNotify(admin, channel, id, m, !!conv.is_test).catch((e) => log('WARN', 'reanálise', { error: errMsg(e) }));
               // deno-lint-ignore no-explicit-any
               (globalThis as any).EdgeRuntime?.waitUntil?.(p);
             }
