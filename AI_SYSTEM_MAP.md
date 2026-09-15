@@ -1986,6 +1986,16 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
     na publicação `supabase_realtime`. `contratacao/page.tsx` aplica cada evento direto no estado
     (kanban/lista/vagas/agenda); `AgendamentosPainel` recarrega em lote (300 ms). O polling (60 s / 30 s)
     ficou de reserva. `hiring_distances` ficou de fora de propósito.
+  - BUG 2026-09-15 (Luciane Paiva): o gatilho `hiring_candidates_log()` (criado direto no banco às 11h25,
+    alterado 12h21, fora do repo) fazia `mudou := mudou || 'escolaridade'` com `mudou text[]` → o
+    Postgres lê o literal como array ("malformed array literal") e CANCELA o UPDATE. Toda alteração de
+    dado da ficha falhava (completar_ficha do robô e edição pela tela). Corrigido com `array_append`
+    (migração `20260915170000_hiring_candidates_log_array_append`). Regra: em PL/pgSQL, nunca
+    `text[] || 'literal'`; usar `array_append(arr, 'x')` ou `|| 'x'::text`.
+  - `canal-publico`: cada ferramenta vai para o log (`ferramenta`, com o resultado). Gravação que falha
+    → resposta fixa "Não consegui salvar…" (o modelo dizia "anotei" mesmo com erro). Se falta dado e o
+    modelo diz que anotou sem chamar `completar_ficha`, uma chamada com `tool_choice` forçado grava a
+    partir da última mensagem e a resposta sai do que ficou gravado.
   - `fn_hiring_book` não escreve mais nada em `hiring_interviews.notes` (2026-09-15, migração
     `20260915140000_hiring_book_sem_nota_automatica`): as considerações são do entrevistador.
   - `canal-publico`: 409 do `hiring-cv-scan` = currículo repetido (já salvo). Responde "já está com a

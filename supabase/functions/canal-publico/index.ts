@@ -582,16 +582,11 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
   const system = systemOf(channel, ctx, faltas);
   let reply = '';
   let cost = 0, calls = 0, closeAfter = false;
-  for (let i = 0; i < 4; i++) {
-    const res = await client.messages.create({ model: MODEL, max_tokens: 700, system, tools: TOOLS, messages: msgs });
-    calls++;
-    cost += (res.usage.input_tokens ?? 0) * PRICE_IN + (res.usage.output_tokens ?? 0) * PRICE_OUT;
-    const texto = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('\n').trim();
-    const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
-    if (!uses.length) { reply = texto; break; }
-    msgs.push({ role: 'assistant', content: res.content });
-    const results: Anthropic.ToolResultBlockParam[] = [];
-    for (const u of uses) {
+  const usadas = new Set<string>();   // ferramentas chamadas neste turno (trava do "anotei" sem gravar)
+  const conversa = [...msgs];         // histórico antes das ferramentas (para a chamada forçada)
+  let falhas = 0;                     // gravação que deu erro: a resposta não pode dizer que anotou
+  const runTool = async (u: Anthropic.ToolUseBlock): Promise<string> => {
+      usadas.add(u.name);
       // deno-lint-ignore no-explicit-any
       const inp = (u.input ?? {}) as any;
       let out = 'ok';
@@ -627,17 +622,45 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
           closeAfter = true;
         }
       } catch (e) { out = `Erro: ${errMsg(e)}`; }
-      results.push({ type: 'tool_result', tool_use_id: u.id, content: out });
-    }
+      if (/^(Não gravou|Falhou|Erro)/.test(out)) falhas++;
+      log('INFO', 'ferramenta', { conv: conv.id, tool: u.name, out: out.slice(0, 160) });
+      return out;
+  };
+  for (let i = 0; i < 4; i++) {
+    const res = await client.messages.create({ model: MODEL, max_tokens: 700, system, tools: TOOLS, messages: msgs });
+    calls++;
+    cost += (res.usage.input_tokens ?? 0) * PRICE_IN + (res.usage.output_tokens ?? 0) * PRICE_OUT;
+    const texto = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('\n').trim();
+    const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
+    if (!uses.length) { reply = texto; break; }
+    msgs.push({ role: 'assistant', content: res.content });
+    const results: Anthropic.ToolResultBlockParam[] = [];
+    for (const u of uses) results.push({ type: 'tool_result', tool_use_id: u.id, content: await runTool(u) });
     msgs.push({ role: 'user', content: results });
     if (texto) reply = texto;
+  }
+  // Trava do "anotei" sem gravar (Luciane, 2026-09-15): faltava dado, o modelo disse que anotou/ficha
+  // completa e não chamou completar_ficha. Força a ferramenta sobre a última mensagem e a resposta
+  // passa a ser montada abaixo com o que ficou gravado de verdade.
+  if (faltas.length && !usadas.has('completar_ficha') && !usadas.has('registrar_sem_curriculo')
+    && /anot|regist|grav|salv|ficha\s+(est[aá]\s+)?complet/i.test(reply)) {
+    log('WARN', 'modelo disse que anotou sem gravar: forçando completar_ficha', { conv: conv.id });
+    const f = await client.messages.create({ model: MODEL, max_tokens: 400, system, tools: TOOLS, tool_choice: { type: 'tool', name: 'completar_ficha' }, messages: conversa });
+    calls++;
+    cost += (f.usage.input_tokens ?? 0) * PRICE_IN + (f.usage.output_tokens ?? 0) * PRICE_OUT;
+    const u = f.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
+    if (u) await runTool(u);
+    reply = '';
   }
   await admin.from('bot_conversations').update({ model_calls: Number(fresh?.model_calls ?? 0) + calls, cost_usd: Number(fresh?.cost_usd ?? 0) + cost }).eq('id', conv.id);
   // O modelo às vezes termina só com ferramenta e sem texto: o candidato ficava sem resposta
   // (Kalb, 2026-09-14, depois de gravar a cidade). Sem texto: pergunta o próximo dado ou agradece.
+  // Gravação deu erro: nunca dizer que anotou (antes o modelo às vezes dizia mesmo assim).
+  if (falhas && !closeAfter) reply = 'Não consegui salvar essa informação agora 😕 Pode me mandar de novo daqui a pouco?';
   if (!reply && !closeAfter) {
     const faltasAgora = await missingOf(admin, fichaId());
-    if (faltasAgora.length) reply = `Anotado! ✅\n\n${FIELD_ASK[faltasAgora[0]] ?? `Pode me informar: ${FIELD_LABELS[faltasAgora[0]] ?? faltasAgora[0]}?`}`;
+    const gravou = faltasAgora.join(',') !== faltas.join(',');
+    if (faltasAgora.length) reply = `${gravou ? 'Anotado! ✅\n\n' : ''}${FIELD_ASK[faltasAgora[0]] ?? `Pode me informar: ${FIELD_LABELS[faltasAgora[0]] ?? faltasAgora[0]}?`}`;
     else if (faltas.length) reply = 'Pronto, sua ficha está completa! ✅ Nossa equipe vai analisar e, se o seu perfil combinar com a vaga, entramos em contato.';
     else reply = 'Certo! Se tiver alguma dúvida sobre a vaga, é só perguntar 🙂';
     log('WARN', 'modelo sem texto: resposta padrão', { conv: conv.id, faltas: faltasAgora });
