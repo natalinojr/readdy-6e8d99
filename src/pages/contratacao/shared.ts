@@ -197,6 +197,18 @@ export interface Candidate {
   created_at: string;
 }
 
+// ── Histórico do candidato (hiring_candidate_events, gravado por gatilhos no banco) ──
+export interface CandidateEvent {
+  id: number;
+  candidate_id: string;
+  at: string;
+  kind: string; // criado | fase | decisao | loja | avaliacao | ficha | ia | vaga | entrevista | registro | anotacao
+  title: string;
+  detail: string | null;
+  actor: string | null; // e-mail de quem fez, 'assistente' (WhatsApp/IA) ou 'sistema'
+  meta: Record<string, unknown>;
+}
+
 // ── Entrevistas ─────────────────────────────────────────────────────────────
 export type InterviewStatus = 'agendada' | 'realizada' | 'faltou' | 'cancelada';
 export type InterviewFormat = 'presencial' | 'telefone' | 'video';

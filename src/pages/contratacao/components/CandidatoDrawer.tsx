@@ -1,12 +1,12 @@
 // Ficha do candidato: fase, estrelas, empresa, entrevistas, dados lidos do currículo e anotações.
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
   type Application, type Candidate, type Company, type Decision, type Interview, type Job, type Stage, BUCKET, DECISIONS, FIT, fitOf,
   type Distance, fmtKm, distCls, PRECISION_LABEL,
   fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf, decisionOf, withEmpresa, ageOf, companyName,
   type FichaCfg, fieldsOf, faltasFicha, onlyDigits,
-  type JobScheduling, faltasAgendamento, stageByKind,
+  type JobScheduling, faltasAgendamento, stageByKind, type CandidateEvent, type Settings,
 } from '../shared';
 import { avisar } from '../dialog';
 
@@ -15,6 +15,7 @@ interface Props {
   companies: Company[];
   stages: Stage[];
   ficha: FichaCfg;
+  settings: Settings; // perguntas e critérios da entrevista (para mostrar o registro)
   interviews: Interview[];
   jobs: Job[];
   applications: Application[];
@@ -32,7 +33,7 @@ interface Props {
 }
 
 export default function CandidatoDrawer({
-  c, companies, stages, ficha, interviews, jobs, applications, analyzing, onApply, onOpenJob, distances, onCalcDistances,
+  c, companies, stages, ficha, settings, interviews, jobs, applications, analyzing, onApply, onOpenJob, distances, onCalcDistances,
   onClose, onUpdate, onDelete, onOrganizar, onAgendar, onOpenInterview,
 }: Props) {
   // Distância só até a loja escolhida na ficha (regra do dono). Calcula sozinha ao abrir quando a
@@ -233,6 +234,7 @@ export default function CandidatoDrawer({
                           </p>
                         )}
                       </button>
+                      <RegistroEntrevista iv={iv} settings={settings} empresa={empresa} />
                     </li>
                   );
                 })}
@@ -242,6 +244,11 @@ export default function CandidatoDrawer({
               <i className="ri-calendar-event-line" /> Agendar entrevista
             </button>
           </Section>
+
+          {/* Histórico: tudo o que aconteceu com o candidato (gatilhos no banco) + anotações */}
+          <HistoricoCandidato c={c}
+            refreshKey={[c.stage_id, c.decision, c.rating, c.company_id, applications.length,
+              ...interviews.map((iv) => `${iv.status}|${iv.scheduled_at}|${iv.recommendation}|${Object.keys(iv.answers ?? {}).length}`)].join('~')} />
 
           {/* Contato */}
           <Section title="Contato">

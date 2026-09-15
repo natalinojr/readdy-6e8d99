@@ -1942,6 +1942,13 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
     (`rematchAndNotify`). Envio por `toInterviewers` (texto na janela de 24 h, senão o modelo
     `aviso_equipe_entrevista`). Nunca em conversa de teste do dono. Só com `channel.job_id` e
     entrevistadores configurados na vaga.
+  - Limpeza geral da Contratação em 2026-09-15 (troca de número): currículos, candidaturas, entrevistas,
+    sessões de agendamento e conversas do link apagados; cópia no esquema `backup` (tabelas
+    `*_20260915`, sem acesso por anon/authenticated). Os 34 arquivos do bucket `curriculos` foram apagados.
+  - PEGADINHA: `supabase storage rm -r ss:///BUCKET/` apaga os arquivos E O BUCKET. Recriar com a config
+    original (a de `curriculos` está em `supabase_migrations.schema_migrations`, versão 20260911194833:
+    privado, 10 MB). As policies ficam em `storage.objects` e sobrevivem. Para esvaziar sem apagar o
+    bucket, remover por prefixo (`ss:///curriculos/<pasta>`), não a raiz.
   - `fn_hiring_book` não escreve mais nada em `hiring_interviews.notes` (2026-09-15, migração
     `20260915140000_hiring_book_sem_nota_automatica`): as considerações são do entrevistador.
   - `canal-publico`: 409 do `hiring-cv-scan` = currículo repetido (já salvo). Responde "já está com a
