@@ -55,7 +55,7 @@ const evoInstance = Deno.env.get('EVOLUTION_INSTANCE') || 'assistente';
 // Envio pelo transporte configurado em asst_settings.wa_public (API oficial da Meta ou Evolution).
 // Ver _shared/wa.ts. Desde 2026-09-14 o atendimento público usa a API oficial (número da Evolution banido).
 const sbWa = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-const sendText = async (number: string, text: string) => waSendText(await waConfig(sbWa), number, text);
+const sendText = async (number: string, text: string) => waSendText(await waConfig(sbWa), number, text, { origin: 'candidatura' });
 const presence = (number: string, ms: number) => { waConfig(sbWa).then((cfg) => waTyping(cfg, number, ms)).catch(() => {}); };
 type MsgKey = WaKey;
 const react = (key: MsgKey | null, emoji: string) => { waConfig(sbWa).then((cfg) => waReact(cfg, key, emoji)).catch(() => {}); };

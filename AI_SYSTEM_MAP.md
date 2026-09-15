@@ -1968,7 +1968,17 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
     disso vai modelo: `convite_entrevista`, `lembrete_entrevista` e `aviso_equipe_entrevista`
     (TEMPLATES em wa.ts, criados pela ação admin `setup_templates`). O `sendSmart` do scheduler decide.
   - Ações admin (header `x-admin-key` = `WHATSAPP_ADMIN_KEY`): `status`, `setup_templates`,
-    `subscribe_app`.
+    `subscribe_app`, `send_text` (mensagem avulsa, origem 'manual'), `scheduler_force_tick` e
+    `scheduler_inbound` (reprocessa no agendador uma mensagem que o candidato já mandou). Só com
+    pedido do dono.
+  - **Registro único `wa_log`** (desde 2026-09-15), com o que entra e sai por `phone_key`
+    (`wa_phone_key()` = DDD+8, sem 55 e sem o 9):
+    - a `whatsapp-cloud` grava toda mensagem recebida, inclusive reação/figurinha que a IA ignora;
+    - `waSendText`/`waSendTemplate` gravam o que sai, com a `origin` (candidatura | agendamento |
+      manual);
+    - a conversa na tela de Agendamentos lê daqui, e não mais só do `history` da sessão, que continua
+      como contexto da IA;
+    - quem enviar por outro caminho precisa usar o `_shared/wa.ts` para cair no registro.
   - Token: usuário do sistema `erpos-whatsapp`, segredo `WHATSAPP_CLOUD_TOKEN`.
   - A `whatsapp-send` antiga (delivery, `META_WHATSAPP_*`) é outra coisa e não é usada.
   - Número de teste validado de ponta a ponta em 2026-09-15 (candidatura + agendamento). Com ele, só

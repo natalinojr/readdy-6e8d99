@@ -15,7 +15,7 @@
 // deno-lint-ignore-file no-explicit-any
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
-import { graph, TEMPLATES, waConfig, waSendText, waTyping, type WaConfig } from '../_shared/wa.ts';
+import { graph, TEMPLATES, waConfig, waLog, waSendText, waTyping, type WaConfig } from '../_shared/wa.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -147,14 +147,23 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
     } else if (type === 'video') kind = 'video';
     // Reação (👍 numa mensagem), figurinha e avisos do sistema: não são conversa; ignora em silêncio
     // (antes respondia "não consigo abrir esse tipo de mensagem" — Aline e Alexandra, 2026-09-15).
-    else if (['reaction', 'sticker', 'system', 'ephemeral', 'unsupported', 'request_welcome'].includes(type)) return;
+    else if (['reaction', 'sticker', 'system', 'ephemeral', 'unsupported', 'request_welcome'].includes(type)) {
+      // Não é conversa para a IA, mas fica no registro para aparecer na tela.
+      await waLog({ phone: waId, direction: 'in', origin: 'recebida', kind: type, wa_msg_id: String(m.id),
+        text: type === 'reaction' ? `[reação ${m.reaction?.emoji ?? ''}]` : type === 'sticker' ? '[figurinha]' : `[${type}]` });
+      return;
+    }
     else { kind = 'other'; text = text || `[${type || 'mensagem'}]`; }
   } catch (e) {
     log('WARN', 'preparar mídia', { type, error: errMsg(e) });
+    await waLog({ phone: waId, direction: 'in', origin: 'recebida', kind: type || 'other', wa_msg_id: String(m.id), text: `[${type || 'mensagem'} que não deu para abrir]` });
     await waSendText(cfg, waId, 'Não consegui abrir essa mensagem 😕 Pode mandar de novo?').catch(() => {});
     return;
   }
 
+  // Registro único (wa_log): toda mensagem recebida, antes de decidir quem responde.
+  await waLog({ phone: waId, direction: 'in', origin: 'recebida', kind, wa_msg_id: String(m.id),
+    text: file ? `[Arquivo${file.name ? ` "${file.name}"` : ''}]${text ? ` ${text}` : ''}` : text || `[${kind}]` });
   const isOwner = (await ownerKeys(admin)).has(foneKey(waId));
   // 1) Agendamento de entrevista: candidato com conversa aberta ou entrevistador respondendo.
   // O dono TAMBÉM passa por aqui (diferente do assistente-webhook, aqui não há assistente pessoal):
@@ -232,8 +241,17 @@ async function adminAction(admin: SupabaseClient, body: any) {
     const to = digits(body.to);
     const text = String(body.text ?? '').trim();
     if (to.length < 12 || !text) return json({ error: 'to (com DDI) e text são obrigatórios' }, 400);
-    try { return json({ ok: true, id: await waSendText(cfg, to, text) }); }
+    try { return json({ ok: true, id: await waSendText(cfg, to, text, { origin: 'manual' }) }); }
     catch (e) { return json({ ok: false, error: errMsg(e) }, 502); }
+  }
+  if (body?.action === 'scheduler_inbound') {
+    // Reprocessa no agendador uma mensagem que o candidato JÁ mandou (ex.: "Remarcar" que caiu no lugar
+    // errado antes de uma correção). Só com autorização do dono.
+    const number = digits(body.number);
+    const text = String(body.text ?? '').trim();
+    if (number.length < 12 || !text) return json({ error: 'number (com DDI) e text são obrigatórios' }, 400);
+    const r = await internal('hiring-scheduler', { action: 'inbound', number, reply_to: number, text });
+    return json({ status: r.status, ...r.out });
   }
   if (body?.action === 'scheduler_force_tick') {
     // Teste do dono: roda o agendador agora, fora do horário comercial (convites/cobranças).

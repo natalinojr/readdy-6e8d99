@@ -5,6 +5,7 @@
 // Trocar o transporte (ou o número) é mudar a linha no banco — sem deploy.
 // O assistente pessoal do dono continua no assistente-webhook (Evolution) e não usa este módulo.
 // deno-lint-ignore-file no-explicit-any
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 
 export type WaTransport = 'evolution' | 'cloud';
 export interface WaConfig { transport: WaTransport; phone_id: string | null; waba_id: string | null }
@@ -96,27 +97,58 @@ async function evo(path: string, body: unknown) {
   return r.json().catch(() => ({}));
 }
 
+// ── Registro único das mensagens (wa_log): tudo o que entra e sai, por telefone, com a origem
+// (candidatura | agendamento | manual | recebida). A tela de Agendamentos mostra a conversa daqui.
+let sbLog: any = null;
+const phoneKey = (s: unknown) => {
+  let d = digits(s);
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) d = d.slice(2);
+  if (d.length === 11 && d[2] === '9') d = d.slice(0, 2) + d.slice(3);
+  return d;
+};
+export async function waLog(row: { phone: string; direction: 'in' | 'out'; origin?: string | null; kind?: string; text?: string | null; wa_msg_id?: string | null }) {
+  try {
+    const t = String(row.phone ?? '');
+    if (t.endsWith('@lid')) return; // Evolution sem telefone: não dá para ligar ao candidato
+    const phone = digits(t.replace(/@.*$/, ''));
+    const url = Deno.env.get('SUPABASE_URL'); const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (phone.length < 10 || !url || !key) return;
+    sbLog ??= createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+    const { error } = await sbLog.from('wa_log').insert({
+      phone_key: phoneKey(phone), phone, direction: row.direction, origin: row.origin ?? null, kind: row.kind ?? 'text',
+      text: String(row.text ?? '').slice(0, 4000), wa_msg_id: row.wa_msg_id ?? null,
+    });
+    if (error) console.warn(JSON.stringify({ fn: 'wa', level: 'WARN', msg: 'wa_log', error: error.message }));
+  } catch (e) { console.warn(JSON.stringify({ fn: 'wa', level: 'WARN', msg: 'wa_log', error: String(e) })); }
+}
+
 /** Texto livre. Devolve o id da mensagem (recibos entregue/lida). */
-export async function waSendText(cfg: WaConfig, to: string, text: string, opts: { delayMs?: number } = {}): Promise<string | null> {
+export async function waSendText(cfg: WaConfig, to: string, text: string, opts: { delayMs?: number; origin?: string } = {}): Promise<string | null> {
+  let id: string | null;
   if (cfg.transport === 'cloud') {
     const out = await cloudSend(cfg, { recipient_type: 'individual', to: cloudTo(to), type: 'text', text: { body: text.slice(0, 4096), preview_url: true } });
-    return out?.messages?.[0]?.id ?? null;
+    id = out?.messages?.[0]?.id ?? null;
+  } else {
+    const out = await evo(`/message/sendText/${evoInstance}`, { number: to, text, ...(opts.delayMs ? { delay: opts.delayMs } : {}) });
+    id = out?.key?.id ?? null;
   }
-  const out = await evo(`/message/sendText/${evoInstance}`, { number: to, text, ...(opts.delayMs ? { delay: opts.delayMs } : {}) });
-  return out?.key?.id ?? null;
+  await waLog({ phone: to, direction: 'out', origin: opts.origin ?? null, kind: 'text', text, wa_msg_id: id });
+  return id;
 }
 
 // Variável de modelo: sem quebra de linha/tab e sem 4+ espaços seguidos (regra da Meta).
 const tplParam = (s: unknown) => String(s ?? '').replace(/[\r\n\t]+/g, ' · ').replace(/ {4,}/g, ' ').trim().slice(0, 1000) || '-';
 
 /** Modelo aprovado (só API oficial). */
-export async function waSendTemplate(cfg: WaConfig, to: string, name: string, params: string[], lang = 'pt_BR'): Promise<string | null> {
+export async function waSendTemplate(cfg: WaConfig, to: string, name: string, params: string[], lang = 'pt_BR', origin: string | null = null): Promise<string | null> {
   if (cfg.transport !== 'cloud') throw new WaError('modelo só existe na API oficial', 400, null);
   const out = await cloudSend(cfg, {
     recipient_type: 'individual', to: cloudTo(to), type: 'template',
     template: { name, language: { code: lang }, ...(params.length ? { components: [{ type: 'body', parameters: params.map((t) => ({ type: 'text', text: tplParam(t) })) }] } : {}) },
   });
-  return out?.messages?.[0]?.id ?? null;
+  const id = out?.messages?.[0]?.id ?? null;
+  await waLog({ phone: to, direction: 'out', origin, kind: 'template', text: `[modelo ${name}] ${params.map(tplParam).join(' | ')}`, wa_msg_id: id });
+  return id;
 }
 
 /** Reação (👀, ✅…). emoji '' tira a reação. */

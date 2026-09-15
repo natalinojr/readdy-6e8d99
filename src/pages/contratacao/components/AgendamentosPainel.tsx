@@ -15,6 +15,15 @@ interface Sess {
   history: Hist[]; attempts: number;
   hiring_interviews: { scheduled_at: string; status: string } | null;
 }
+type WaLog = { id: number; direction: 'in' | 'out'; origin: string | null; kind: string | null; text: string | null; at: string };
+// Mesma chave do banco (wa_phone_key): DDD + 8 dígitos, sem 55 e sem o 9 do celular.
+const phoneKey = (p: string) => {
+  let d = p.replace(/\D/g, '');
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) d = d.slice(2);
+  if (d.length === 11 && d[2] === '9') d = d.slice(0, 2) + d.slice(3);
+  return d;
+};
+const ORIGEM: Record<string, string> = { candidatura: 'link de candidatura', agendamento: 'agendamento', manual: 'enviada pela equipe' };
 type Filtro = 'todos' | 'espera' | 'enviados' | 'responderam' | 'gestor' | 'agendadas' | 'confirmadas' | 'encerrados';
 
 const TZ = 'America/Sao_Paulo';
@@ -63,6 +72,17 @@ export default function AgendamentosPainel({ candidates, jobs, companies, stages
   const [filtro, setFiltro] = useState<Filtro>('todos');
   const [vaga, setVaga] = useState('');
   const [aberto, setAberto] = useState<string | null>(null);
+  // Conversa COMPLETA do número (wa_log): link de candidatura + agendamento + o que a IA ignora
+  // (reação, figurinha). Antes só aparecia o histórico do agendamento (caso Andressa, 2026-09-15).
+  const [logs, setLogs] = useState<Record<string, WaLog[]>>({});
+  useEffect(() => {
+    const s = sess.find((x) => x.id === aberto);
+    if (!s?.phone) return;
+    let vivo = true;
+    supabase.from('wa_log').select('id, direction, origin, kind, text, at').eq('phone_key', phoneKey(s.phone)).order('at').order('id').limit(500)
+      .then(({ data }) => { if (vivo) setLogs((m) => ({ ...m, [s.id]: (data ?? []) as WaLog[] })); });
+    return () => { vivo = false; };
+  }, [aberto, sess]);
 
   const carregar = useCallback(async () => {
     const [{ data: s }, { data: c }, { data: a }] = await Promise.all([
@@ -211,18 +231,30 @@ export default function AgendamentosPainel({ candidates, jobs, companies, stages
                           {cand && onOpenCandidate && <button onClick={() => onOpenCandidate(cand.id)} className="ml-auto text-rose-600 font-semibold hover:underline cursor-pointer">Abrir candidato</button>}
                         </div>
                         <div className="space-y-1.5 max-h-80 overflow-y-auto">
-                          {(s.history ?? []).length === 0 && <p className="text-xs text-zinc-400">Sem mensagens registradas.</p>}
-                          {(s.history ?? []).map((h, i) => {
-                            const meu = h.de === 'assistente';
-                            return (
-                              <div key={i} className={`flex ${meu ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`max-w-[80%] rounded-xl px-2.5 py-1.5 text-xs whitespace-pre-wrap ${meu ? 'bg-emerald-100 text-emerald-950' : h.de === 'gestor' ? 'bg-amber-100 text-amber-950' : 'bg-white border border-zinc-200 text-zinc-800'}`}>
-                                  <p className="text-[9px] font-bold uppercase tracking-wider opacity-60 mb-0.5">{meu ? 'Assistente' : h.de === 'gestor' ? 'Entrevistador' : 'Candidato'} · {quando(h.at)}</p>
-                                  {h.texto}
+                          {(() => {
+                            // Com registro completo: tudo do número + respostas do entrevistador (vêm de outro número).
+                            const lg = logs[s.id];
+                            const itens: { at: string; de: string; texto: string; origem: string | null }[] = lg && lg.length
+                              ? [...lg.map((l) => ({ at: l.at, de: l.direction === 'in' ? 'candidato' : 'assistente', texto: l.text ?? '', origem: l.origin })),
+                                ...(s.history ?? []).filter((h) => h.de === 'gestor').map((h) => ({ ...h, origem: null }))]
+                                .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+                              : (s.history ?? []).map((h) => ({ ...h, origem: null }));
+                            if (!itens.length) return <p className="text-xs text-zinc-400">Sem mensagens registradas.</p>;
+                            return itens.map((h, i) => {
+                              const meu = h.de === 'assistente';
+                              const tag = h.origem ? ORIGEM[h.origem] : null;
+                              return (
+                                <div key={i} className={`flex ${meu ? 'justify-end' : 'justify-start'}`}>
+                                  <div className={`max-w-[80%] rounded-xl px-2.5 py-1.5 text-xs whitespace-pre-wrap ${meu ? (h.origem === 'candidatura' ? 'bg-sky-100 text-sky-950' : 'bg-emerald-100 text-emerald-950') : h.de === 'gestor' ? 'bg-amber-100 text-amber-950' : 'bg-white border border-zinc-200 text-zinc-800'}`}>
+                                    <p className="text-[9px] font-bold uppercase tracking-wider opacity-60 mb-0.5">
+                                      {meu ? 'Assistente' : h.de === 'gestor' ? 'Entrevistador' : 'Candidato'} · {quando(h.at)}{tag ? ` · ${tag}` : ''}
+                                    </p>
+                                    {h.texto}
+                                  </div>
                                 </div>
-                              </div>
-                            );
-                          })}
+                              );
+                            });
+                          })()}
                         </div>
                       </div>
                     )}

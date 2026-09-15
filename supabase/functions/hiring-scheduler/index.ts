@@ -64,7 +64,7 @@ const internalKey = Deno.env.get('ASSISTENTE_INTERNAL_KEY') ?? '';
 // antes de enviar (varia para não parecer robô); na API oficial o "digitando" sai ao receber.
 async function sendText(number: string, text: string): Promise<string | null> {
   const cfg = await waConfig(sbLid);
-  return await waSendText(cfg, number, text, { delayMs: 2000 + Math.min(6000, text.length * 25) + Math.floor(Math.random() * 1500) });
+  return await waSendText(cfg, number, text, { delayMs: 2000 + Math.min(6000, text.length * 25) + Math.floor(Math.random() * 1500), origin: 'agendamento' });
 }
 
 // ── janela de 24 h (API oficial) ──
@@ -77,12 +77,12 @@ async function inWindow(dest: string): Promise<boolean> {
 async function sendSmart(dest: string, text: string, tpl?: Tpl): Promise<{ id: string | null; modelo: boolean }> {
   const cfg = await waConfig(sbLid);
   if (cfg.transport === 'cloud' && tpl && !(await inWindow(dest))) {
-    return { id: await waSendTemplate(cfg, dest, tpl.name, tpl.params), modelo: true };
+    return { id: await waSendTemplate(cfg, dest, tpl.name, tpl.params, 'pt_BR', 'agendamento'), modelo: true };
   }
   try {
     return { id: await sendText(dest, text), modelo: false };
   } catch (e) {
-    if (tpl && cfg.transport === 'cloud' && isOutsideWindow(e)) return { id: await waSendTemplate(cfg, dest, tpl.name, tpl.params), modelo: true };
+    if (tpl && cfg.transport === 'cloud' && isOutsideWindow(e)) return { id: await waSendTemplate(cfg, dest, tpl.name, tpl.params, 'pt_BR', 'agendamento'), modelo: true };
     throw e;
   }
 }
