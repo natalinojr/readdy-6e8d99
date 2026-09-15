@@ -4,8 +4,9 @@
 // Leitura híbrida: PDF com texto é lido no navegador de graça (src/lib/curriculoLocal.ts);
 // foto/PDF escaneado vai direto para a IA (Edge hiring-cv-scan); nos demais a IA só
 // roda no botão "Organizar com IA". Tudo com RLS pelo e-mail do dono; o guard aqui é só UX.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
+import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { supabase } from '@/lib/supabase';
@@ -142,6 +143,32 @@ export default function ContratacaoPage() {
     window.addEventListener('focus', tick);
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
   }, [isOwner, carregar]);
+
+  // Tempo real (supabase_realtime, migração 20260915160000): etapa, nota e entrevista que o robô/IA ou
+  // outra pessoa mudam entram na hora, pela própria linha do evento. O polling acima fica de reserva.
+  useEffect(() => {
+    if (!isOwner) return;
+    const aplica = <T extends { id: string }>(set: Dispatch<SetStateAction<T[]>>, ordena?: (a: T, b: T) => number) =>
+      (p: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
+        if (p.eventType === 'DELETE') {
+          const id = (p.old as { id?: string }).id;
+          if (id) set((prev) => prev.filter((x) => x.id !== id));
+          return;
+        }
+        const row = p.new as unknown as T;
+        set((prev) => {
+          const next = prev.some((x) => x.id === row.id) ? prev.map((x) => (x.id === row.id ? { ...x, ...row } : x)) : [row, ...prev];
+          return ordena ? [...next].sort(ordena) : next;
+        });
+      };
+    const ch = supabase.channel('contratacao-tempo-real')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hiring_candidates' }, aplica(setItems))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hiring_applications' }, aplica(setApplications))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hiring_interviews' },
+        aplica(setInterviews, (a, b) => String(a.scheduled_at).localeCompare(String(b.scheduled_at))))
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [isOwner]);
 
   const novoStageId = stageByKind(stages, 'novo')?.id ?? null;
 

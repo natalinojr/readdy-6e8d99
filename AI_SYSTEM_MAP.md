@@ -1925,6 +1925,9 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   - O envio fica todo em `supabase/functions/_shared/wa.ts`. `asst_settings.wa_public` =
     {transport: 'cloud'|'evolution', phone_id, waba_id}: trocar o número ou voltar para a Evolution é
     UPDATE no banco, sem deploy.
+  - Convite que falha por MODELO ainda não aprovado (#132001/#132015) volta sozinho para a fila depois
+    de 30 min (a sessão com erro é apagada no tick). Caso Pamella, 2026-09-15: os modelos da conta nova
+    ficaram PENDING e ela não tinha escrito nas últimas 24 h.
   - Na API oficial, a empresa só manda texto livre dentro de 24 h da última mensagem da pessoa. Fora
     disso vai modelo: `convite_entrevista`, `lembrete_entrevista` e `aviso_equipe_entrevista`
     (TEMPLATES em wa.ts, criados pela ação admin `setup_templates`). O `sendSmart` do scheduler decide.
@@ -1966,6 +1969,11 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
     ([{date,start,end}], faixa numa data); horário ocupado = entrevista 'agendada' que SE SOBREPÕE a ele,
     da vaga OU da mesma loja (`company_id`). Entrevista marcada na mão pela Agenda não grava `job_id`,
     só a loja — antes não bloqueava nada, e só o minuto exato contava.
+  - Contratação em tempo real (2026-09-15, migração `20260915160000_hiring_realtime`): `hiring_candidates`,
+    `hiring_applications`, `hiring_interviews`, `hiring_scheduling_sessions` e `hiring_candidate_events`
+    na publicação `supabase_realtime`. `contratacao/page.tsx` aplica cada evento direto no estado
+    (kanban/lista/vagas/agenda); `AgendamentosPainel` recarrega em lote (300 ms). O polling (60 s / 30 s)
+    ficou de reserva. `hiring_distances` ficou de fora de propósito.
   - `fn_hiring_book` não escreve mais nada em `hiring_interviews.notes` (2026-09-15, migração
     `20260915140000_hiring_book_sem_nota_automatica`): as considerações são do entrevistador.
   - `canal-publico`: 409 do `hiring-cv-scan` = currículo repetido (já salvo). Responde "já está com a

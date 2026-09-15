@@ -78,8 +78,15 @@ export default function AgendamentosPainel({ candidates, jobs, companies, stages
 
   useEffect(() => {
     carregar();
-    const t = setInterval(carregar, 30_000); // recibos e respostas chegam o tempo todo
-    return () => clearInterval(t);
+    const t = setInterval(carregar, 30_000); // reserva; o normal é o tempo real abaixo
+    // Tempo real: recibos, respostas e agendamentos do robô entram na hora (recarrega em lote, 300 ms).
+    let espera: ReturnType<typeof setTimeout> | null = null;
+    const agenda = () => { if (espera) clearTimeout(espera); espera = setTimeout(carregar, 300); };
+    const ch = supabase.channel('contratacao-agendamentos')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hiring_scheduling_sessions' }, agenda)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hiring_interviews' }, agenda)
+      .subscribe();
+    return () => { clearInterval(t); if (espera) clearTimeout(espera); supabase.removeChannel(ch); };
   }, [carregar]);
 
   const candBy = useMemo(() => new Map(candidates.map((c) => [c.id, c])), [candidates]);

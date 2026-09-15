@@ -32,7 +32,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
-import { isOutsideWindow, TEMPLATES, waConfig, waSendTemplate, waSendText } from '../_shared/wa.ts';
+import { graph, isOutsideWindow, TEMPLATES, waConfig, waSendTemplate, waSendText } from '../_shared/wa.ts';
 
 const TZ = 'America/Sao_Paulo';
 const MODEL = 'claude-haiku-4-5';
@@ -564,10 +564,30 @@ async function tick(admin: SupabaseClient, force = false) {
         const [{ data: apps }, { data: cfgs }, { data: sess }] = await Promise.all([
           admin.from('hiring_applications').select('candidate_id, job_id, created_at').in('candidate_id', ids).order('created_at', { ascending: false }),
           admin.from('hiring_job_scheduling').select('*').eq('enabled', true),
-          admin.from('hiring_scheduling_sessions').select('candidate_id, job_id').in('candidate_id', ids),
+          admin.from('hiring_scheduling_sessions').select('id, candidate_id, job_id, status, error, updated_at').in('candidate_id', ids),
         ]);
         const cfgBy = new Map(((cfgs ?? []) as Row[]).filter((c) => configFaltas(c).length === 0).map((c) => [c.job_id, c]));
-        const feito = new Set(((sess ?? []) as Row[]).map((s) => `${s.candidate_id}|${s.job_id}`));
+        // Convite que falhou porque o MODELO ainda não estava aprovado na Meta (#132001 "does not exist",
+        // #132015 pausado) volta para a fila depois de 30 min: a sessão com erro é apagada e o convite
+        // sai de novo (caso Pamella, 2026-09-15). Outros erros continuam parados.
+        const modeloPendente = (s: Row) => s.status === 'erro' && /#13200[01]|#132015|Template name does not exist/i.test(String(s.error ?? ''))
+          && Date.now() - Date.parse(String(s.updated_at)) > 30 * 60_000;
+        const candidatosRetentar = ((sess ?? []) as Row[]).filter(modeloPendente);
+        // Só tenta de novo quando a Meta já aprovou o modelo (senão falharia de novo e sujaria o histórico).
+        let conviteAprovado = false;
+        if (candidatosRetentar.length) {
+          const wcfg = await waConfig(admin);
+          if (wcfg.transport === 'cloud' && wcfg.waba_id) {
+            const out = await graph(`${wcfg.waba_id}/message_templates?name=${TEMPLATES.convite.name}&fields=name,status,language`).catch(() => null);
+            conviteAprovado = ((out?.data ?? []) as Row[]).some((t) => t.status === 'APPROVED' && t.language === 'pt_BR');
+          }
+        }
+        const retentar = conviteAprovado ? candidatosRetentar : [];
+        if (retentar.length) {
+          await admin.from('hiring_scheduling_sessions').delete().in('id', retentar.map((s) => s.id));
+          log('INFO', 'convites de novo (modelo pendente)', { n: retentar.length });
+        }
+        const feito = new Set(((sess ?? []) as Row[]).filter((s) => !retentar.includes(s)).map((s) => `${s.candidate_id}|${s.job_id}`));
         const candBy = new Map(((cands ?? []) as Row[]).map((x) => [x.id, x]));
         const vistos = new Set<string>();
         for (const a of (apps ?? []) as Row[]) {
