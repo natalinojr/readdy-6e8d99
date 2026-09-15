@@ -25,6 +25,7 @@ import CandidatosLista from './components/CandidatosLista';
 import CandidatoDrawer from './components/CandidatoDrawer';
 import EntrevistaModal from './components/EntrevistaModal';
 import AgendaEntrevistas from './components/AgendaEntrevistas';
+import EntrevistasDoDia from './components/EntrevistasDoDia';
 import RelatoriosContratacao from './components/RelatoriosContratacao';
 import Kanban from './components/Kanban';
 import ConfiguracoesContratacao from './components/ConfiguracoesContratacao';
@@ -32,13 +33,14 @@ import LinksWhatsApp from './components/LinksWhatsApp';
 import AgendamentosPainel from './components/AgendamentosPainel';
 
 interface QueueItem { key: string; name: string; state: 'lendo' | 'ok' | 'erro'; msg?: string }
-type Aba = 'candidatos' | 'vagas' | 'kanban' | 'agenda' | 'agendamentos' | 'relatorios' | 'links' | 'config';
+type Aba = 'entrevistas' | 'candidatos' | 'vagas' | 'kanban' | 'agenda' | 'agendamentos' | 'relatorios' | 'links' | 'config';
 type ModalState = { interview: Interview | null; candidateId?: string | null; date?: string | null } | null;
 
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* sem storage */ } };
 
 const ABAS: { id: Aba; label: string; icon: string }[] = [
+  { id: 'entrevistas', label: 'Entrevistas', icon: 'ri-chat-voice-line' },
   { id: 'candidatos', label: 'Candidatos', icon: 'ri-group-line' },
   { id: 'vagas', label: 'Vagas', icon: 'ri-briefcase-4-line' },
   { id: 'kanban', label: 'Kanban', icon: 'ri-layout-column-line' },
@@ -72,7 +74,7 @@ export default function ContratacaoPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [aba, setAba] = useState<Aba>(() => (ABAS.some((a) => a.id === lsGet('contratacao_aba')) ? lsGet('contratacao_aba') as Aba : 'candidatos'));
+  const [aba, setAba] = useState<Aba>(() => (ABAS.some((a) => a.id === lsGet('contratacao_aba')) ? lsGet('contratacao_aba') as Aba : 'entrevistas'));
   const [view, setView] = useState<'cards' | 'tabela'>(() => (lsGet('contratacao_view') === 'tabela' ? 'tabela' : 'cards'));
   const [busca, setBusca] = useState('');
   const [faseFiltro, setFaseFiltro] = useState<string>('todas');
@@ -573,6 +575,10 @@ export default function ContratacaoPage() {
           }
           setSelId(id);
         }} />
+      ) : aba === 'entrevistas' ? (
+        <EntrevistasDoDia interviews={ivsDaEmpresa} candidates={items} companies={companies} stages={stages} settings={settings}
+          applications={applications} jobs={jobs} onSaved={onInterviewSaved} onOpenCandidate={setSelId}
+          onNewInterview={(date) => setModal({ interview: null, date })} />
       ) : aba === 'agenda' ? (
         <AgendaEntrevistas interviews={ivsDaEmpresa} candidates={items} companies={companies} mostrarEmpresa={mostrarEmpresa}
           onOpenInterview={(iv) => setModal({ interview: iv })} onNew={(date) => setModal({ interview: null, date })} />

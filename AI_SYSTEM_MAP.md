@@ -1898,6 +1898,16 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
   com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
   causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
+- **Contratação › aba Entrevistas (1ª aba, 2026-09-15)**:
+  - `components/EntrevistasDoDia.tsx`: escolhe o dia (setas, calendário e faixa de 7 dias com a
+    contagem) e lista quem está agendado. Ao clicar, abre o `RegistroPainel`: resumo do candidato
+    (aderência, resumo, experiências, pontos fortes/atenção e as perguntas sugeridas pela IA na
+    análise da vaga) e o formulário.
+  - Grava igual ao `EntrevistaModal`: status, respostas, notas, considerações e decisão, que também
+    vai para o candidato. A fase é opcional e passa pela trava dos dados mínimos, com "mover mesmo
+    assim".
+  - Usa os mesmos dados da Agenda (`ivsDaEmpresa`) e o `onInterviewSaved` da página. O histórico
+    sai pelos gatilhos.
 - **Recrutamento pelo WhatsApp: lições das 1ªs conversas reais (2026-09-15)**:
   - O `hiring-cv-scan` só recusa (422) quando não achou nada. Currículo "desorganizado" é legível e,
     com nome, telefone ou experiência, salva mesmo marcado como ilegível.
@@ -1992,6 +2002,9 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
     dado da ficha falhava (completar_ficha do robô e edição pela tela). Corrigido com `array_append`
     (migração `20260915170000_hiring_candidates_log_array_append`). Regra: em PL/pgSQL, nunca
     `text[] || 'literal'`; usar `array_append(arr, 'x')` ou `|| 'x'::text`.
+  - `canal-publico › birthIso` aceita data só com números ("15032002", "150302") desde 2026-09-15
+    (Alexssandro): antes recusava, o atendente pedia confirmação e seguia para a próxima pergunta sem
+    gravar. Formatos aceitos: AAAA-MM-DD, DD/MM/AAAA (/ . -), DDMMAAAA, DDMMAA; idade 14–80.
   - `canal-publico`: cada ferramenta vai para o log (`ferramenta`, com o resultado). Gravação que falha
     → resposta fixa "Não consegui salvar…" (o modelo dizia "anotei" mesmo com erro). Se falta dado e o
     modelo diz que anotou sem chamar `completar_ficha`, uma chamada com `tool_choice` forçado grava a

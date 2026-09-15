@@ -116,6 +116,9 @@ function birthIso(s: string): string | null {
   let y: number, mo: number, d: number;
   if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
   else if ((m = t.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/))) { d = +m[1]; mo = +m[2]; y = +m[3]; if (y < 100) y += y > 30 ? 1900 : 2000; }
+  // Só números, sem barra: "15032002" ou "150302" (Alexssandro, 2026-09-15: a data era recusada e o
+  // atendente seguia sem gravar).
+  else if ((m = t.match(/^(\d{2})(\d{2})(\d{4}|\d{2})$/))) { d = +m[1]; mo = +m[2]; y = +m[3]; if (y < 100) y += y > 30 ? 1900 : 2000; }
   else return null;
   const dt = new Date(Date.UTC(y, mo - 1, d));
   if (dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
