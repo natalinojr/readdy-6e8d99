@@ -1898,6 +1898,14 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
   com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
   causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
+- **App no celular (PWA): atualizar e não perder o que foi digitado (2026-09-15)**:
+  - O `TopBar` (todas as telas do `AppLayout`) tem um botão "Atualizar" (`window.location.reload()`).
+    No app instalado não existe o recarregar do navegador. Como o HTML é network-first no service
+    worker, o botão também traz a versão nova depois de um deploy.
+  - O Android costuma recarregar o PWA ao voltar de outro app. Formulário longo guarda rascunho em
+    localStorage por registro e reabre onde estava (padrão da aba Entrevistas:
+    `contratacao_rascunho_entrevista_<id>` + `contratacao_entrevistas_pos`, válido por 12 h). O
+    rascunho some ao salvar.
 - **Contratação › aba Entrevistas (1ª aba, 2026-09-15)**:
   - `components/EntrevistasDoDia.tsx`: escolhe o dia (setas, calendário e faixa de 7 dias com a
     contagem) e lista quem está agendado. Ao clicar, abre o `RegistroPainel`: resumo do candidato

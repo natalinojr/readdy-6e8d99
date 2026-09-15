@@ -29,6 +29,14 @@ const addDias = (key: string, n: number) => {
   const [y, m, d] = key.split('-').map(Number);
   return dayKey(new Date(y, m - 1, d + n));
 };
+// Rascunho no aparelho: no celular o app recarrega ao voltar de outra janela e perdia o que foi digitado.
+// Fica salvo por entrevista até "Salvar registro"; a aba também volta no mesmo dia e na mesma pessoa.
+const LS_POS = 'contratacao_entrevistas_pos';
+const lsDraftKey = (id: string) => `contratacao_rascunho_entrevista_${id}`;
+const lsLer = <T,>(k: string): T | null => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) as T : null; } catch { return null; } };
+const lsGravar = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } };
+const lsApagar = (k: string) => { try { localStorage.removeItem(k); } catch { /* sem storage */ } };
+
 const rotuloDia = (key: string) => {
   const [y, m, d] = key.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
@@ -36,8 +44,12 @@ const rotuloDia = (key: string) => {
 
 export default function EntrevistasDoDia({ interviews, candidates, companies, stages, settings, applications, jobs, onSaved, onOpenCandidate, onNewInterview }: Props) {
   const hoje = dayKey(new Date());
-  const [dia, setDia] = useState(hoje);
-  const [selId, setSelId] = useState<string | null>(null);
+  // Volta onde estava (dia e pessoa) se saiu há menos de 12 h.
+  const pos = lsLer<{ dia: string; sel: string | null; at: number }>(LS_POS);
+  const posValida = pos && Date.now() - pos.at < 12 * 3600_000 ? pos : null;
+  const [dia, setDia] = useState(posValida?.dia ?? hoje);
+  const [selId, setSelId] = useState<string | null>(posValida?.sel ?? null);
+  useEffect(() => { lsGravar(LS_POS, { dia, sel: selId, at: Date.now() }); }, [dia, selId]);
 
   const porDia = useMemo(() => {
     const m = new Map<string, Interview[]>();
@@ -54,6 +66,7 @@ export default function EntrevistasDoDia({ interviews, candidates, companies, st
 
   // Trocou o dia: abre a 1ª entrevista ainda não registrada (ou a 1ª do dia) — no computador.
   useEffect(() => {
+    if (!doDia.length) return; // ainda carregando: não apaga a pessoa que estava aberta
     if (doDia.some((iv) => iv.id === selId)) return;
     const prox = doDia.find((iv) => iv.status === 'agendada') ?? doDia[0];
     setSelId(window.matchMedia('(min-width: 1024px)').matches ? prox?.id ?? null : null);
@@ -151,12 +164,16 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
     notes: iv.notes ?? '',
     decision: (iv.recommendation ?? null) as Decision | null,
   };
-  const [status, setStatus] = useState<InterviewStatus>(inicial.status);
-  const [answers, setAnswers] = useState<Record<string, string>>(inicial.answers);
-  const [scores, setScores] = useState<Record<string, number>>(inicial.scores);
-  const [notes, setNotes] = useState(inicial.notes);
-  const [decision, setDecision] = useState<Decision | null>(inicial.decision);
-  const [novaFase, setNovaFase] = useState('');
+  type Rascunho = typeof inicial & { novaFase: string; at: number };
+  const [rasc] = useState(() => lsLer<Rascunho>(lsDraftKey(iv.id)));
+  const base = rasc ?? inicial;
+  const [status, setStatus] = useState<InterviewStatus>(base.status);
+  const [answers, setAnswers] = useState<Record<string, string>>(base.answers);
+  const [scores, setScores] = useState<Record<string, number>>(base.scores);
+  const [notes, setNotes] = useState(base.notes);
+  const [decision, setDecision] = useState<Decision | null>(base.decision);
+  const [novaFase, setNovaFase] = useState(rasc?.novaFase ?? '');
+  const [recuperado, setRecuperado] = useState(!!rasc);
   // Formulário sempre disponível; começou a preencher uma entrevista "agendada" → vira "realizada".
   const preencher = () => { if (status === 'agendada') setStatus('realizada'); };
   const comRegistro = status !== 'faltou' && status !== 'cancelada';
@@ -164,6 +181,19 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
   const [salvoEm, setSalvoEm] = useState<string | null>(null);
   const dirty = status !== iv.status || JSON.stringify(answers) !== JSON.stringify(iv.answers ?? {}) || JSON.stringify(scores) !== JSON.stringify(iv.scores ?? {})
     || notes !== (iv.notes ?? '') || decision !== (iv.recommendation ?? null) || !!novaFase;
+  // Cada alteração vai para o rascunho do aparelho (some ao salvar ou descartar).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (dirty) lsGravar(lsDraftKey(iv.id), { status, answers, scores, notes, decision, novaFase, at: Date.now() });
+      else lsApagar(lsDraftKey(iv.id));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [dirty, status, answers, scores, notes, decision, novaFase, iv.id]);
+  const descartarRascunho = () => {
+    lsApagar(lsDraftKey(iv.id));
+    setStatus(inicial.status); setAnswers(inicial.answers); setScores(inicial.scores); setNotes(inicial.notes); setDecision(inicial.decision); setNovaFase('');
+    setRecuperado(false);
+  };
 
   const empresa = c?.company_id ? companyName(companies, c.company_id) : '';
   const idade = c ? ageOf(c) : null;
@@ -216,6 +246,8 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
     }
     setSaving(false);
     setNovaFase('');
+    lsApagar(lsDraftKey(iv.id));
+    setRecuperado(false);
     setSalvoEm(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
     onSaved(data as Interview, patch && (patch.stage_id || patch.decision) ? patch : undefined);
   };
@@ -284,6 +316,13 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
 
       {/* Formulário */}
       <div className="p-4 space-y-4">
+        {recuperado && dirty && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <i className="ri-draft-line" />
+            <span className="flex-1">Rascunho recuperado: o que você tinha digitado voltou, mas ainda <b>não foi salvo</b>.</span>
+            <button onClick={descartarRascunho} className="font-bold text-amber-800 underline cursor-pointer">Descartar</button>
+          </div>
+        )}
         {status === 'agendada' && (
           <p className="text-xs text-violet-800 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
             <i className="ri-information-line" /> Pode preencher durante a conversa: ao começar, a entrevista passa para <b>Realizada</b>. Não se esqueça de clicar em <b>Salvar registro</b>.
@@ -357,7 +396,7 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
 
       <div className="sticky bottom-0 flex items-center gap-3 px-4 py-3 border-t border-zinc-100 bg-white rounded-b-2xl">
         <p className="flex-1 text-xs text-zinc-500">
-          {dirty ? <span className="text-amber-700 font-semibold"><i className="ri-edit-line" /> Alterações não salvas</span>
+          {dirty ? <span className="text-amber-700 font-semibold"><i className="ri-edit-line" /> Não salvo ainda (rascunho guardado neste aparelho)</span>
             : salvoEm ? <span className="text-emerald-700 font-semibold"><i className="ri-check-line" /> Salvo às {salvoEm}</span> : 'Tudo salvo'}
         </p>
         <button onClick={salvar} disabled={saving || !dirty}

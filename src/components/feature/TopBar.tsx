@@ -242,6 +242,17 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
           </div>
         )}
 
+        {/* Atualizar: no app instalado (PWA) não há o botão de recarregar do navegador. Recarrega a
+            página inteira — traz os dados novos e, depois de um deploy, a versão nova do sistema. */}
+        <button
+          onClick={() => window.location.reload()}
+          title="Atualizar (dados e versão nova do sistema)"
+          aria-label="Atualizar"
+          className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-600 cursor-pointer transition-colors"
+        >
+          <i className="ri-refresh-line text-lg" />
+        </button>
+
         <span className="text-sm font-semibold text-zinc-700 tabular-nums mr-2">{formattedTime}</span>
 
         <CentralNotificacoes perfil={(user?.perfil as PerfilAlvo) ?? 'caixa'} />
