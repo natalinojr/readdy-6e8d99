@@ -157,6 +157,9 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
   const [notes, setNotes] = useState(inicial.notes);
   const [decision, setDecision] = useState<Decision | null>(inicial.decision);
   const [novaFase, setNovaFase] = useState('');
+  // Formulário sempre disponível; começou a preencher uma entrevista "agendada" → vira "realizada".
+  const preencher = () => { if (status === 'agendada') setStatus('realizada'); };
+  const comRegistro = status !== 'faltou' && status !== 'cancelada';
   const [saving, setSaving] = useState(false);
   const [salvoEm, setSalvoEm] = useState<string | null>(null);
   const dirty = status !== iv.status || JSON.stringify(answers) !== JSON.stringify(iv.answers ?? {}) || JSON.stringify(scores) !== JSON.stringify(iv.scores ?? {})
@@ -281,6 +284,11 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
 
       {/* Formulário */}
       <div className="p-4 space-y-4">
+        {status === 'agendada' && (
+          <p className="text-xs text-violet-800 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
+            <i className="ri-information-line" /> Pode preencher durante a conversa: ao começar, a entrevista passa para <b>Realizada</b>. Não se esqueça de clicar em <b>Salvar registro</b>.
+          </p>
+        )}
         <div className="flex flex-wrap gap-1.5">
           {INTERVIEW_STATUS.map((s) => (
             <button key={s.id} onClick={() => setStatus(s.id)}
@@ -290,12 +298,12 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
           ))}
         </div>
 
-        {status === 'realizada' && (
+        {comRegistro && (
           <>
             {perguntas.map((q, i) => (
               <div key={q.id}>
                 <p className="text-sm font-semibold text-zinc-800 mb-1">{i + 1}. {withEmpresa(q.label, empresa)}</p>
-                <textarea value={answers[q.id] ?? ''} rows={2} onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))} className={inputCls} />
+                <textarea value={answers[q.id] ?? ''} rows={2} onChange={(e) => { preencher(); setAnswers((a) => ({ ...a, [q.id]: e.target.value })); }} className={inputCls} />
               </div>
             ))}
             {settings.criteria.length > 0 && (
@@ -305,7 +313,7 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
                   <div key={cr.id} className="flex items-center gap-2">
                     <span className="flex-1 text-sm text-zinc-700">{cr.label}</span>
                     {[1, 2, 3, 4, 5].map((n) => (
-                      <button key={n} onClick={() => setScores((s) => ({ ...s, [cr.id]: s[cr.id] === n ? 0 : n }))}
+                      <button key={n} onClick={() => { preencher(); setScores((s) => ({ ...s, [cr.id]: s[cr.id] === n ? 0 : n })); }}
                         className={`w-7 h-7 rounded-md text-xs font-bold border cursor-pointer ${(scores[cr.id] ?? 0) >= n ? 'bg-amber-400 border-amber-400 text-white' : 'bg-white border-zinc-200 text-zinc-400'}`}>{n}</button>
                     ))}
                   </div>
@@ -316,17 +324,17 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
         )}
 
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-1">{status === 'realizada' ? 'Considerações adicionais' : 'Observações'}</p>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className={inputCls}
-            placeholder={status === 'realizada' ? 'Impressão geral, postura, referências, o que mais chamou atenção…' : 'Ex.: avisou que não viria, remarcar…'} />
+          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-1">{comRegistro ? 'Considerações adicionais' : 'Observações'}</p>
+          <textarea value={notes} onChange={(e) => { if (comRegistro) preencher(); setNotes(e.target.value); }} rows={4} className={inputCls}
+            placeholder={comRegistro ? 'Impressão geral, postura, referências, o que mais chamou atenção…' : 'Ex.: avisou que não viria, remarcar…'} />
         </div>
 
-        {status === 'realizada' && (
+        {comRegistro && (
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-1">Tomada de decisão</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               {DECISIONS.map((d) => (
-                <button key={d.id} onClick={() => setDecision(decision === d.id ? null : d.id)}
+                <button key={d.id} onClick={() => { preencher(); setDecision(decision === d.id ? null : d.id); }}
                   className={`flex items-center gap-2 px-3 h-10 rounded-lg border text-left text-xs font-semibold cursor-pointer ${decision === d.id ? d.cls : 'bg-white text-zinc-700 border-zinc-200 hover:border-zinc-300'}`}>
                   <span className="font-black text-sm w-9">{d.sigla}</span>
                   <span className="leading-tight">{withEmpresa(d.label, empresa)}</span>
