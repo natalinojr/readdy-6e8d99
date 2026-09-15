@@ -1898,6 +1898,22 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
   com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
   causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
+- **Atendimento público pela API oficial (Cloud API), 2026-09-14**:
+  - O webhook da Meta chega na edge `whatsapp-cloud`, sem JWT. A confirmação usa `WHATSAPP_VERIFY_TOKEN`
+    e a assinatura, `WHATSAPP_APP_SECRET`.
+  - Ela baixa a mídia, transcreve áudio, grava `wa_last_in` (janela de 24 h) e `wa_cloud_seen`
+    (mensagem repetida). Depois manda para o `hiring-scheduler` (inbound) e, se ele não tratar, para o
+    `canal-publico` (incoming).
+  - O envio fica todo em `supabase/functions/_shared/wa.ts`. `asst_settings.wa_public` =
+    {transport: 'cloud'|'evolution', phone_id, waba_id}: trocar o número ou voltar para a Evolution é
+    UPDATE no banco, sem deploy.
+  - Na API oficial, a empresa só manda texto livre dentro de 24 h da última mensagem da pessoa. Fora
+    disso vai modelo: `convite_entrevista`, `lembrete_entrevista` e `aviso_equipe_entrevista`
+    (TEMPLATES em wa.ts, criados pela ação admin `setup_templates`). O `sendSmart` do scheduler decide.
+  - Ações admin (header `x-admin-key` = `WHATSAPP_ADMIN_KEY`): `status`, `setup_templates`,
+    `subscribe_app`.
+  - Token: usuário do sistema `erpos-whatsapp`, segredo `WHATSAPP_CLOUD_TOKEN`.
+  - A `whatsapp-send` antiga (delivery, `META_WHATSAPP_*`) é outra coisa e não é usada.
 - **Número do assistente BANIDO pelo WhatsApp (2026-09-14, 16:47)**: logout código 403 ("Esta conta
   não pode usar o WhatsApp") logo depois de ~10 candidatos reais escreverem pelo link em poucos
   minutos, com respostas automáticas via Evolution (conexão não oficial). O plano é uma linha nova,

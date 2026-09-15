@@ -16,6 +16,7 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { unzipSync, strFromU8 } from 'npm:fflate@0.8.2';
+import { waConfig, waOwnNumber, waReact, waSendText, waTyping, type WaKey } from '../_shared/wa.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -51,15 +52,13 @@ const evoUrl = (Deno.env.get('EVOLUTION_URL') ?? '').replace(/\/$/, '');
 const evoKey = Deno.env.get('EVOLUTION_API_KEY') ?? '';
 const evoInstance = Deno.env.get('EVOLUTION_INSTANCE') || 'assistente';
 
-async function evo(path: string, body: unknown) {
-  const r = await fetch(`${evoUrl}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: evoKey }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`Evolution ${path} → ${r.status}: ${(await r.text()).slice(0, 300)}`);
-  return r.json().catch(() => ({}));
-}
-const sendText = (number: string, text: string) => evo(`/message/sendText/${evoInstance}`, { number, text });
-const presence = (number: string, ms: number) => { evo(`/chat/sendPresence/${evoInstance}`, { number, presence: 'composing', delay: ms }).catch(() => {}); };
-type MsgKey = { remoteJid: string; fromMe: boolean; id: string };
-const react = (key: MsgKey | null, emoji: string) => { if (key?.id) evo(`/message/sendReaction/${evoInstance}`, { key, reaction: emoji }).catch(() => {}); };
+// Envio pelo transporte configurado em asst_settings.wa_public (API oficial da Meta ou Evolution).
+// Ver _shared/wa.ts. Desde 2026-09-14 o atendimento público usa a API oficial (número da Evolution banido).
+const sbWa = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+const sendText = async (number: string, text: string) => waSendText(await waConfig(sbWa), number, text);
+const presence = (number: string, ms: number) => { waConfig(sbWa).then((cfg) => waTyping(cfg, number, ms)).catch(() => {}); };
+type MsgKey = WaKey;
+const react = (key: MsgKey | null, emoji: string) => { waConfig(sbWa).then((cfg) => waReact(cfg, key, emoji)).catch(() => {}); };
 
 // ── Campos da vaga que o canal pode revelar ──
 const SHARE_LABELS: Record<string, string> = {
@@ -598,13 +597,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
 let cachedNumber: string | null = null;
 async function instanceNumber(): Promise<string | null> {
   if (cachedNumber) return cachedNumber;
-  const r = await fetch(`${evoUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(evoInstance)}`, { headers: { apikey: evoKey } });
-  if (!r.ok) throw new Error(`Evolution fetchInstances → ${r.status}`);
-  const out = await r.json();
-  const it = Array.isArray(out) ? out[0] : out;
-  const raw = String(it?.ownerJid ?? it?.instance?.owner ?? it?.instance?.ownerJid ?? it?.number ?? it?.owner ?? '');
-  const digits = raw.replace(/@.*$/, '').replace(/\D/g, '');
-  cachedNumber = digits.length >= 10 ? digits : null;
+  cachedNumber = await waOwnNumber(await waConfig(sbWa));
   return cachedNumber;
 }
 
@@ -640,7 +633,7 @@ Deno.serve(async (req) => {
       const enviou = await sendText(to(m),'Tive um probleminha aqui. Pode mandar de novo daqui a pouco?').then(() => true).catch(() => false);
       // WhatsApp caiu (ex.: 2026-09-14, "device_removed"): o candidato fica sem resposta. Avisa o dono
       // no Telegram, no máximo 1 vez a cada 30 min, para ele parear de novo.
-      if (!enviou || /Evolution \/message/.test(erro)) {
+      if (!enviou || /Evolution \/message|Meta \d{3}/.test(erro)) {
         const { data: last } = await admin.from('asst_settings').select('value').eq('key', 'wa_public_down_alert_at').maybeSingle();
         if (!last?.value || Date.now() - new Date(String(last.value)).getTime() > 30 * 60_000) {
           await admin.from('asst_settings').upsert({ key: 'wa_public_down_alert_at', value: new Date().toISOString() }, { onConflict: 'key' });

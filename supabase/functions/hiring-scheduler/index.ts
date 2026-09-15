@@ -23,10 +23,16 @@
 // perguntas com os fatos da vaga listados; não tem ferramenta nenhuma. Quem reserva é o código
 // (fn_hiring_book, atômica).
 //
-// Secrets: ASSISTENTE_INTERNAL_KEY, ANTHROPIC_API_KEY, EVOLUTION_URL, EVOLUTION_API_KEY, EVOLUTION_INSTANCE.
+// Envio: _shared/wa.ts, pelo transporte de asst_settings.wa_public. Desde 2026-09-14 é a API oficial
+// da Meta (whatsapp-cloud chama o inbound, com reply_to = telefone). Na API oficial, a empresa só manda
+// texto livre dentro de 24 h da última mensagem da pessoa (wa_last_in); fora disso vai MODELO aprovado:
+// convite/cobrança → convite_entrevista, véspera/dia → lembrete_entrevista, entrevistadores → aviso_equipe.
+//
+// Secrets: ASSISTENTE_INTERNAL_KEY, ANTHROPIC_API_KEY, WHATSAPP_CLOUD_TOKEN (ou EVOLUTION_* no transporte antigo).
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
+import { isOutsideWindow, TEMPLATES, waConfig, waSendTemplate, waSendText } from '../_shared/wa.ts';
 
 const TZ = 'America/Sao_Paulo';
 const MODEL = 'claude-haiku-4-5';
@@ -48,20 +54,31 @@ function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string, ctx?: Record<string,
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const internalKey = Deno.env.get('ASSISTENTE_INTERNAL_KEY') ?? '';
-const evoUrl = (Deno.env.get('EVOLUTION_URL') ?? '').replace(/\/$/, '');
-const evoKey = Deno.env.get('EVOLUTION_API_KEY') ?? '';
-const evoInstance = Deno.env.get('EVOLUTION_INSTANCE') || 'assistente';
-
-// Devolve o id da mensagem no WhatsApp (key.id): o webhook usa para marcar entregue/lida no painel.
+// Devolve o id da mensagem (recibos entregue/lida no painel). Na Evolution, delay = "digitando…"
+// antes de enviar (varia para não parecer robô); na API oficial o "digitando" sai ao receber.
 async function sendText(number: string, text: string): Promise<string | null> {
-  const r = await fetch(`${evoUrl}/message/sendText/${evoInstance}`, {
-    // delay = "digitando…" antes de enviar (varia para não parecer robô).
-    method: 'POST', headers: { 'Content-Type': 'application/json', apikey: evoKey },
-    body: JSON.stringify({ number, text, delay: 2000 + Math.min(6000, text.length * 25) + Math.floor(Math.random() * 1500) }),
-  });
-  if (!r.ok) throw new Error(`Evolution sendText → ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const out = await r.json().catch(() => ({}));
-  return out?.key?.id ? String(out.key.id) : null;
+  const cfg = await waConfig(sbLid);
+  return await waSendText(cfg, number, text, { delayMs: 2000 + Math.min(6000, text.length * 25) + Math.floor(Math.random() * 1500) });
+}
+
+// ── janela de 24 h (API oficial) ──
+type Tpl = { name: string; params: string[]; aguardaJanela?: boolean };
+async function inWindow(dest: string): Promise<boolean> {
+  const { data } = await sbLid.from('wa_last_in').select('at').eq('phone_key', foneKey(dest)).maybeSingle();
+  return !!data?.at && Date.now() - Date.parse(String(data.at)) < 23.5 * 3600_000;
+}
+// Texto livre quando pode; fora da janela (ou se a Meta recusar por isso), o modelo aprovado.
+async function sendSmart(dest: string, text: string, tpl?: Tpl): Promise<{ id: string | null; modelo: boolean }> {
+  const cfg = await waConfig(sbLid);
+  if (cfg.transport === 'cloud' && tpl && !(await inWindow(dest))) {
+    return { id: await waSendTemplate(cfg, dest, tpl.name, tpl.params), modelo: true };
+  }
+  try {
+    return { id: await sendText(dest, text), modelo: false };
+  } catch (e) {
+    if (tpl && cfg.transport === 'cloud' && isOutsideWindow(e)) return { id: await waSendTemplate(cfg, dest, tpl.name, tpl.params), modelo: true };
+    throw e;
+  }
 }
 
 // ── utilidades ──
@@ -159,6 +176,11 @@ const isLid = (s: unknown) => String(s ?? '').endsWith('@lid');
 // sem o 9 (o WhatsApp grava muitos sem): procura as duas formas.
 const sbLid = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
 async function destFor(phone: string, known?: unknown): Promise<string> {
+  // API oficial: telefone só com dígitos (o wa_id de quem já respondeu, senão o da ficha). @lid não existe lá.
+  if ((await waConfig(sbLid)).transport === 'cloud') {
+    const k = String(known ?? '');
+    return k.endsWith('@s.whatsapp.net') ? k.replace(/@.*$/, '') : digits(phone);
+  }
   if (isLid(known)) return String(known);
   const p = digits(phone);
   if (p.length >= 12) {
@@ -170,16 +192,21 @@ async function destFor(phone: string, known?: unknown): Promise<string> {
   }
   return phone;
 }
-async function toCand(admin: SupabaseClient, c: Ctx, text: string, extra: Row = {}) {
-  const msgId = await sendText(await destFor(c.sess.phone, c.sess.jid), text);
-  await addHist(admin, c.sess.id, 'assistente', text, { last_out_at: new Date().toISOString(), last_out_msg_id: msgId, delivered_at: null, read_at: null, ...extra });
+// tpl = modelo para quando a empresa fala primeiro (fora da janela de 24 h da API oficial).
+async function toCand(admin: SupabaseClient, c: Ctx, text: string, extra: Row = {}, tpl?: Tpl) {
+  const r = await sendSmart(await destFor(c.sess.phone, c.sess.jid), text, tpl);
+  const hist = r.modelo && tpl ? `[modelo ${tpl.name}] ${tpl.params.join(' | ')}` : text;
+  // Convite por modelo: os horários vão na 1ª resposta dele (ver 'aguardando_janela' em handleCandidate).
+  const pend = r.modelo && tpl?.aguardaJanela ? { pending_request: { kind: 'aguardando_janela', at: new Date().toISOString() } } : {};
+  await addHist(admin, c.sess.id, 'assistente', hist, { last_out_at: new Date().toISOString(), last_out_msg_id: r.id, delivered_at: null, read_at: null, ...extra, ...pend });
 }
 async function toInterviewers(c: Ctx, text: string) {
   for (const it of (Array.isArray(c.cfg.interviewers) ? c.cfg.interviewers : []) as Row[]) {
     // @lid guardado (resposta dele por aqui ou mapa telefone→@lid do webhook); senão o telefone.
     if (!isLid(it?.jid) && phone55(it?.phone).length < 12) continue;
     const n = await destFor(phone55(it?.phone), it?.jid);
-    await sendText(n, text).catch((e) => log('WARN', 'aviso ao entrevistador falhou', { error: errMsg(e) }));
+    await sendSmart(n, text, { name: TEMPLATES.aviso_equipe.name, params: [c.job.title, text] })
+      .catch((e) => log('WARN', 'aviso ao entrevistador falhou', { error: errMsg(e) }));
   }
 }
 
@@ -316,6 +343,16 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
   const t = text.trim();
   const pend = (sess.pending_request ?? null) as Row | null;
 
+  // 1ª resposta a um convite que saiu por MODELO (sem horários): agora, dentro da janela, manda a lista.
+  if (pend?.kind === 'aguardando_janela') {
+    await admin.from('hiring_scheduling_sessions').update({ pending_request: null }).eq('id', sess.id);
+    sess.pending_request = null;
+    if (!/\b(n[aã]o|desist|sem interesse|n[aã]o tenho interesse)\b/i.test(t)) {
+      await offerAgain(admin, c, `Que bom! 😊 Estes são os horários para a entrevista (${onde(c)}):`);
+      return;
+    }
+  }
+
   // Resposta a uma proposta da equipe ("pode ser dia X? 1 sim / 2 não")
   if (pend?.kind === 'proposta_gestor' && pend.starts_at) {
     if (/^(1|sim|pode|ok|confirm|fechado|beleza|combinado)\b/i.test(t)) { await book(admin, c, pend.starts_at, true); return; }
@@ -445,7 +482,9 @@ async function handleInterviewer(admin: SupabaseClient, jobIds: string[], text: 
 async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
   const num = last11(body.number);
   const text = String(body.text ?? '').trim();
-  const replyTo = isLid(body.reply_to) ? String(body.reply_to) : null;
+  // Evolution manda o @lid; a API oficial manda o telefone (wa_id) — guardado como "...@s.whatsapp.net".
+  const rt = String(body.reply_to ?? '');
+  const replyTo = isLid(rt) ? rt : /^\d{10,15}$/.test(rt) ? `${rt}@s.whatsapp.net` : null;
   if (num.length < 10 || !text) return false;
   // 1) candidato com conversa de agendamento aberta (compara pelo telefone com ou sem o 9)
   const key = foneKey(body.number); // do número completo (last11 corta o 55 e quebra a chave)
@@ -480,10 +519,11 @@ async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
 }
 
 // ── tick: convites, cobrança, lembretes ──
-async function tick(admin: SupabaseClient) {
+// force = ignora o horário comercial (só por pedido do dono, via whatsapp-cloud › scheduler_force_tick).
+async function tick(admin: SupabaseClient, force = false) {
   const res = { invited: 0, followups: 0, sem_resposta: 0, reminded: 0, confirm_asked: 0 };
   const hora = localHour();
-  const comercial = hora >= HOUR_START && hora < HOUR_END;
+  const comercial = force || (hora >= HOUR_START && hora < HOUR_END);
 
   if (comercial) {
     // Convites
@@ -523,7 +563,10 @@ async function tick(admin: SupabaseClient) {
           const c = await loadCtx(admin, novo);
           if (!c) continue;
           const msg = `Oi, ${firstName(cand?.full_name)}! Aqui é da ${empresa(c)} 😊\nRecebemos seu currículo para a vaga de *${c.job.title}* e queremos te conhecer.\n\nTenho estes horários para a entrevista (${onde(c)}):\n${slotsText(livres)}\n\n${COMO_RESPONDER} Se nenhum der, me diga o melhor dia e horário pra você.`;
-          try { await toCand(admin, c, msg); res.invited++; vagas--; }
+          try {
+            await toCand(admin, c, msg, {}, { name: TEMPLATES.convite.name, params: [firstName(cand?.full_name), empresa(c), c.job.title], aguardaJanela: true });
+            res.invited++; vagas--;
+          }
           catch (e) { await admin.from('hiring_scheduling_sessions').update({ status: 'erro', error: errMsg(e).slice(0, 300) }).eq('id', novo.id); }
         }
       }
@@ -539,7 +582,8 @@ async function tick(admin: SupabaseClient) {
       if (!s.followup_sent_at) {
         const livres = await freeSlots(admin, s.job_id);
         if (!livres.length) continue;
-        await toCand(admin, c, `Oi, ${firstName(c.cand.full_name)}! Ainda tem interesse na vaga de ${c.job.title}? Tenho estes horários:\n${slotsText(livres)}\n\n${COMO_RESPONDER} 🙂`, { offered: livres, followup_sent_at: new Date().toISOString(), attempts: (s.attempts ?? 1) + 1 });
+        await toCand(admin, c, `Oi, ${firstName(c.cand.full_name)}! Ainda tem interesse na vaga de ${c.job.title}? Tenho estes horários:\n${slotsText(livres)}\n\n${COMO_RESPONDER} 🙂`, { offered: livres, followup_sent_at: new Date().toISOString(), attempts: (s.attempts ?? 1) + 1 },
+          { name: TEMPLATES.convite.name, params: [firstName(c.cand.full_name), empresa(c), c.job.title], aguardaJanela: true });
         res.followups++;
       } else {
         await admin.from('hiring_scheduling_sessions').update({ status: 'sem_resposta', updated_at: new Date().toISOString() }).eq('id', s.id);
@@ -561,7 +605,8 @@ async function tick(admin: SupabaseClient) {
       if (!c) continue;
       const quando = fmtSlot(iv.scheduled_at);
       await toCand(admin, c, `Oi, ${firstName(c.cand.full_name)}! Lembrando da sua entrevista amanhã: *${quando}*\n${onde(c)}${mapa(c)}\n\nVocê confirma presença? Responda *sim* para confirmar ou *não* se não puder ir.`,
-        { reminder_sent_at: new Date().toISOString(), confirm_requested_at: new Date().toISOString() });
+        { reminder_sent_at: new Date().toISOString(), confirm_requested_at: new Date().toISOString() },
+        { name: TEMPLATES.lembrete.name, params: [firstName(c.cand.full_name), empresa(c), quando, onde(c)] });
       await toInterviewers(c, `⏰ Amanhã: entrevista com ${c.cand.full_name} (${c.job.title}) — ${quando}.`);
       res.reminded++;
     }
@@ -580,7 +625,8 @@ async function tick(admin: SupabaseClient) {
       const c = await loadCtx(admin, s);
       if (!c) continue;
       await toCand(admin, c, `Bom dia, ${firstName(c.cand.full_name)}! Hoje é o dia da sua entrevista: *${fmtSlot(iv.scheduled_at)}*\n${onde(c)}${mapa(c)}\n\nVocê confirma presença? Responda *sim* para confirmar ou *não* se não puder ir.`,
-        { confirm_requested_at: new Date().toISOString() });
+        { confirm_requested_at: new Date().toISOString() },
+        { name: TEMPLATES.lembrete.name, params: [firstName(c.cand.full_name), empresa(c), fmtSlot(iv.scheduled_at), onde(c)] });
       res.confirm_asked++;
     }
   }
@@ -592,13 +638,12 @@ Deno.serve(async (req) => {
   const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
   const ok = (internalKey.length >= 20 && req.headers.get('x-internal-key') === internalKey) || (!!serviceRoleKey && bearer === serviceRoleKey);
   if (!ok) return json({ error: 'Unauthorized' }, 401);
-  if (!evoUrl || !evoKey) return json({ error: 'EVOLUTION_URL/EVOLUTION_API_KEY não configurados' }, 503);
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   // deno-lint-ignore no-explicit-any
   let body: any;
   try { body = await req.json(); } catch { return json({ error: 'JSON inválido' }, 400); }
   try {
-    if (body.action === 'tick') return json({ ok: true, ...(await tick(admin)) });
+    if (body.action === 'tick') return json({ ok: true, ...(await tick(admin, body.force === true)) });
     if (body.action === 'inbound') return json({ ok: true, handled: await inbound(admin, body) });
     if (body.action === 'free_slots') return json({ ok: true, slots: await freeSlots(admin, String(body.job_id ?? ''), Number(body.limit ?? OFFER)) });
     return json({ error: 'ação desconhecida' }, 400);
