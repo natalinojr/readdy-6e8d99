@@ -1920,6 +1920,14 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
     `subscribe_app`.
   - Token: usuário do sistema `erpos-whatsapp`, segredo `WHATSAPP_CLOUD_TOKEN`.
   - A `whatsapp-send` antiga (delivery, `META_WHATSAPP_*`) é outra coisa e não é usada.
+  - Número de teste validado de ponta a ponta em 2026-09-15 (candidatura + agendamento). Com ele, só
+    recebe mensagem quem está na lista de destinatários do painel (senão Meta 131030).
+  - Trocar para o número real: dar ao usuário do sistema `erpos-whatsapp` acesso à conta (WABA) do
+    número, UPDATE em `wa_public` (phone_id + waba_id) e rodar as ações `subscribe_app` e `setup_templates`.
+  - Pegadinha da verificação do número: cada "Adicionar número" pode criar uma WABA nova (ficaram 3
+    "Assistente - ERPOS"), e muitos pedidos/tentativas de código dão bloqueio temporário (136025,
+    2494158). Pedir 1 código por vez; dá para pedir e verificar pelo Graph API Explorer
+    (`{phone_id}/request_code`, `verify_code`, `register` com PIN) quando a tela trava.
 - **Número do assistente BANIDO pelo WhatsApp (2026-09-14, 16:47)**: logout código 403 ("Esta conta
   não pode usar o WhatsApp") logo depois de ~10 candidatos reais escreverem pelo link em poucos
   minutos, com respostas automáticas via Evolution (conexão não oficial). O plano é uma linha nova,
