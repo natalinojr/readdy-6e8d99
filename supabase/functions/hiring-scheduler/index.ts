@@ -322,7 +322,9 @@ Responda SÓ com JSON válido:
 - O candidato NÃO precisa responder com número. Entenda o jeito dele de falar.
 - "escolher": escolheu uma das opções oferecidas, pelo número OU pela descrição ("pode ser às 17h", "o de terça", "o primeiro", "esse das 16:30"). Se a descrição casa com uma opção, use "escolher" com o número dela. ATENÇÃO ao dia: se ele citar um dia ("amanhã", "quarta", "dia 17") diferente do dia da opção, NÃO é "escolher" — é "propor" com data_hora (ex.: hoje é terça e ele diz "amanhã às 15:00" → quarta 15:00, mesmo que exista "terça às 15:00" na lista). Sempre que ele citar dia e hora, preencha data_hora também.
 - "propor": quer outro dia/horário ou deu uma preferência. Com dia e hora exatos → data_hora. Preferência vaga ("segunda depois das 16h", "terça de manhã", "qualquer dia à tarde", "amanhã") → preencha "preferencia" (dia da semana = a próxima data com esse dia, contando hoje; "depois das 16h" → depois_de "16:00") e data_hora null.
-- "recusar": não quer mais participar. "cancelar"/"remarcar": sobre uma entrevista já marcada.
+- "recusar": SÓ quando ele diz claramente que desiste da vaga ("desisto", "não tenho mais interesse", "arrumei outro emprego", "não quero mais"). Um "não" solto, "não vou conseguir", "não posso nesse horário" NÃO é recusar.
+- "cancelar"/"remarcar": sobre uma entrevista já marcada. "Não consigo ir", "não vou poder", um "não" respondendo se vem à entrevista, "remarcar", "outro dia" = "remarcar".
+- Nunca pergunte você mesmo se ele confirma presença (o sistema pede isso na hora certa). Em "resposta", só responda o que ele perguntou ou cumprimente.
 - "confirmar": confirma que VAI comparecer à entrevista marcada ("confirmo", "estarei lá", "vou sim").
 - "agradecer": só agradece ou encerra ("obrigado", "ok", "valeu", "beleza"). Não é confirmação de presença.`;
   try {
@@ -444,6 +446,15 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
     await offerAgain(admin, c, intencao === 'remarcar' ? 'Vamos remarcar! Tenho estes horários:' : 'Me diz um dia e horário que funcionem pra você, ou escolha um destes:');
     return;
   }
+  // Com entrevista marcada, "não" sem desistência clara = não pode ir nesse horário → oferece outro
+  // (Andressa, 2026-09-15: "Não" virou desistência e ela ficou sem entrevista; um minuto depois pediu "Remarcar").
+  const desisteDeVerdade = /desist|n[aã]o (tenho|quero) mais|sem interesse|outro emprego|arrumei (um )?(emprego|trabalho)|n[aã]o quero (a vaga|participar)/i.test(t);
+  if (intencao === 'recusar' && sess.status === 'agendado' && !desisteDeVerdade) {
+    await cancelInterview(admin, c);
+    await toInterviewers(c, `🔁 ${c.cand.full_name} não vai conseguir ir na entrevista de ${c.job.title}${c.sess.interview_at ? ` (${fmtSlot(c.sess.interview_at)})` : ''}; ofereci novos horários.`);
+    await offerAgain(admin, c, 'Sem problema! Vamos marcar outro horário 😊 Tenho estes:');
+    return;
+  }
   if (intencao === 'recusar') {
     if (sess.status === 'agendado') await cancelInterview(admin, c);
     await admin.from('hiring_scheduling_sessions').update({ status: 'recusou', pending_request: null, updated_at: new Date().toISOString() }).eq('id', sess.id);
@@ -530,6 +541,21 @@ async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
     }
     await handleCandidate(admin, ss[0], text);
     return true;
+  }
+  // 1b) Agendamento encerrado há pouco (desistiu, cancelado, sem resposta) e a pessoa pede para remarcar:
+  // reabre e oferece horários, em vez de cair no atendimento de currículos (Andressa, 2026-09-15).
+  if (/remarc|reagend|outro (dia|hor[aá]rio)|nova data|mudar (o )?hor[aá]rio|outra data/i.test(text)) {
+    const { data: fechadas } = await admin.from('hiring_scheduling_sessions').select('*').in('status', ['recusou', 'cancelado', 'sem_resposta'])
+      .like('phone', `%${key.slice(-8)}`).gte('updated_at', new Date(Date.now() - 7 * 86_400_000).toISOString())
+      .order('updated_at', { ascending: false }).limit(5);
+    const f = ((fechadas ?? []) as Row[]).find((s) => foneKey(s.phone) === key);
+    const c = f ? await loadCtx(admin, f) : null;
+    if (f && c) {
+      await addHist(admin, f.id, 'candidato', text, { last_in_at: new Date().toISOString(), status: 'negociando', ...(replyTo ? { jid: replyTo } : {}) });
+      await toInterviewers(c, `🔁 ${c.cand.full_name} pediu para remarcar a entrevista de ${c.job.title}; ofereci novos horários.`);
+      await offerAgain(admin, c, 'Claro! Vamos remarcar 😊 Tenho estes horários:');
+      return true;
+    }
   }
   // 2) entrevistador de vaga com agendamento ligado
   const { data: cfgs } = await admin.from('hiring_job_scheduling').select('job_id, interviewers').eq('enabled', true);

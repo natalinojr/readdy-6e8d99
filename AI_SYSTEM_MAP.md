@@ -1926,6 +1926,12 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   - Pedido de confirmação no dia: não sai para entrevista marcada no próprio dia. A saudação vem pela
     hora.
   - Salário não liberado no link: a IA diz que a equipe informa e chama `chamar_equipe`.
+  - "Não" com entrevista marcada NÃO é desistência: cancela e oferece novos horários. `recusar` só
+    com desistência explícita (regex `desisteDeVerdade`). A IA não pode pedir confirmação de presença
+    por conta própria.
+  - Sessão encerrada (recusou, cancelado, sem_resposta) nos últimos 7 dias + a pessoa pede
+    "remarcar": o inbound reabre e oferece horários (antes caía no canal-publico). Caso Andressa,
+    2026-09-15.
   - O agendamento usa `hiring_candidates.whatsapp` (quem mandou pelo link) antes do telefone do
     currículo.
 - **Contratação: histórico do candidato (2026-09-15)**:
