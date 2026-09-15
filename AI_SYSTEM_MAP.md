@@ -1898,6 +1898,18 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
   com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
   causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
+- **Contratação: histórico do candidato (2026-09-15)**:
+  - Tabela `hiring_candidate_events`, gravada por GATILHOS: `hiring_candidates_log` (criado, fase,
+    decisão, loja, estrelas, dados mínimos completados, organizado pela IA), `hiring_applications_log`
+    (vaga e aderência), `hiring_interviews_log` (agendada, remarcada, status, registro preenchido,
+    excluída) e `hiring_sessions_log` (convite da IA, marcada, desistiu, sem resposta, presença
+    confirmada).
+  - `actor` = e-mail do JWT, ou 'assistente' (service role).
+  - Pela tela só se cria/apaga `kind='anotacao'` (RLS).
+  - A ficha mostra a linha do tempo (`HistoricoCandidato`) e, em cada entrevista, o "Registro da
+    entrevista" (`RegistroEntrevista`: respostas pelas perguntas das Configurações, notas, considerações
+    e decisão).
+  - Evento novo = só mexer no gatilho, não na tela.
 - **Contratação: fase "Triagem" e atalho para a IA (2026-09-14)**:
   - Fase comum (não nativa) entre "Novo" e "Chamar p/ entrevista", para separar quem vale chamar.
   - Na ficha do candidato, o bloco "Agendamento pela IA" (`AgendamentoIA`) só aparece com vaga inscrita
@@ -1949,6 +1961,11 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
     original (a de `curriculos` está em `supabase_migrations.schema_migrations`, versão 20260911194833:
     privado, 10 MB). As policies ficam em `storage.objects` e sobrevivem. Para esvaziar sem apagar o
     bucket, remover por prefixo (`ss:///curriculos/<pasta>`), não a raiz.
+  - Horários livres da IA (`fn_hiring_free_slots`, 2026-09-15, migração
+    `20260915150000_hiring_bloqueio_por_horario`): pula `blocked_dates` (dia inteiro) e `blocked_slots`
+    ([{date,start,end}], faixa numa data); horário ocupado = entrevista 'agendada' que SE SOBREPÕE a ele,
+    da vaga OU da mesma loja (`company_id`). Entrevista marcada na mão pela Agenda não grava `job_id`,
+    só a loja — antes não bloqueava nada, e só o minuto exato contava.
   - `fn_hiring_book` não escreve mais nada em `hiring_interviews.notes` (2026-09-15, migração
     `20260915140000_hiring_book_sem_nota_automatica`): as considerações são do entrevistador.
   - `canal-publico`: 409 do `hiring-cv-scan` = currículo repetido (já salvo). Responde "já está com a

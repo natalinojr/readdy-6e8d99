@@ -420,6 +420,148 @@ export default function CandidatoDrawer({
   );
 }
 
+// Registro da entrevista (o que foi escrito no questionário), dentro do card da entrevista na ficha.
+function RegistroEntrevista({ iv, settings, empresa }: { iv: Interview; settings: Settings; empresa: string }) {
+  const [aberto, setAberto] = useState(false);
+  const answers = (iv.answers ?? {}) as Record<string, string>;
+  const respondidas = Object.keys(answers).filter((k) => String(answers[k] ?? '').trim());
+  const notas = Object.entries(iv.scores ?? {}).filter(([, v]) => typeof v === 'number' && v > 0);
+  const dec = decisionOf(iv.recommendation);
+  if (!respondidas.length && !iv.notes && !dec && !notas.length) return null;
+  // Ordem das perguntas das Configurações; respostas de perguntas apagadas vão no fim.
+  const ordem = [...settings.questions.map((q) => q.id).filter((id) => respondidas.includes(id)), ...respondidas.filter((k) => !settings.questions.some((q) => q.id === k))];
+  const labelQ = (id: string) => withEmpresa(settings.questions.find((q) => q.id === id)?.label ?? 'Pergunta removida das Configurações', empresa);
+  const labelC = (id: string) => settings.criteria.find((q) => q.id === id)?.label ?? id;
+  return (
+    <div className="mt-1 rounded-xl bg-zinc-50 border border-zinc-100">
+      <button onClick={() => setAberto((a) => !a)} className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold text-zinc-600 cursor-pointer">
+        <i className={aberto ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} /> Registro da entrevista
+        <span className="font-normal text-zinc-400">
+          {[respondidas.length ? `${respondidas.length} resposta${respondidas.length > 1 ? 's' : ''}` : null, dec?.sigla].filter(Boolean).join(' · ')}
+        </span>
+      </button>
+      {aberto && (
+        <div className="px-3 pb-3 space-y-2.5">
+          {ordem.map((id) => (
+            <div key={id}>
+              <p className="text-[11px] font-semibold text-zinc-500">{labelQ(id)}</p>
+              <p className="text-sm text-zinc-800 whitespace-pre-wrap">{answers[id]}</p>
+            </div>
+          ))}
+          {notas.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold text-zinc-500">Avaliação</p>
+              <div className="flex flex-wrap gap-1.5 mt-0.5">
+                {notas.map(([k, v]) => <span key={k} className="text-xs px-2 py-0.5 rounded-full bg-white border border-zinc-200">{labelC(k)}: <b>{v}</b>/5</span>)}
+              </div>
+            </div>
+          )}
+          {iv.notes && (
+            <div>
+              <p className="text-[11px] font-semibold text-zinc-500">Considerações adicionais</p>
+              <p className="text-sm text-zinc-800 whitespace-pre-wrap">{iv.notes}</p>
+            </div>
+          )}
+          {dec && (
+            <p className="text-xs text-zinc-700 flex items-center gap-2">
+              <span className={`font-black px-2 py-0.5 rounded border ${dec.cls}`}>{dec.sigla}</span> {withEmpresa(dec.label, empresa)}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Histórico do candidato: linha do tempo de hiring_candidate_events + anotação manual.
+const EV_STYLE: Record<string, { icon: string; cls: string }> = {
+  criado: { icon: 'ri-file-user-line', cls: 'bg-sky-100 text-sky-700' },
+  fase: { icon: 'ri-git-commit-line', cls: 'bg-indigo-100 text-indigo-700' },
+  decisao: { icon: 'ri-scales-3-line', cls: 'bg-emerald-100 text-emerald-700' },
+  loja: { icon: 'ri-store-2-line', cls: 'bg-zinc-100 text-zinc-600' },
+  avaliacao: { icon: 'ri-star-line', cls: 'bg-amber-100 text-amber-700' },
+  ficha: { icon: 'ri-checkbox-circle-line', cls: 'bg-teal-100 text-teal-700' },
+  ia: { icon: 'ri-robot-2-line', cls: 'bg-violet-100 text-violet-700' },
+  vaga: { icon: 'ri-briefcase-4-line', cls: 'bg-rose-100 text-rose-700' },
+  entrevista: { icon: 'ri-calendar-event-line', cls: 'bg-violet-100 text-violet-700' },
+  registro: { icon: 'ri-file-list-3-line', cls: 'bg-emerald-100 text-emerald-700' },
+  anotacao: { icon: 'ri-sticky-note-line', cls: 'bg-yellow-100 text-yellow-800' },
+};
+const quemFez = (a: string | null) => (!a || a === 'sistema' ? 'sistema' : a === 'assistente' ? 'assistente (WhatsApp/IA)' : a.split('@')[0]);
+const quando = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+function HistoricoCandidato({ c, refreshKey }: { c: Candidate; refreshKey: string }) {
+  const [evs, setEvs] = useState<CandidateEvent[] | null>(null);
+  const [todos, setTodos] = useState(false);
+  const [nota, setNota] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const carregar = useCallback(async () => {
+    const { data } = await supabase.from('hiring_candidate_events').select('*').eq('candidate_id', c.id)
+      .order('at', { ascending: false }).order('id', { ascending: false }).limit(300);
+    setEvs((data ?? []) as CandidateEvent[]);
+  }, [c.id]);
+  useEffect(() => { setTodos(false); setNota(''); }, [c.id]);
+  // Gatilhos gravam logo depois de cada mudança: recarrega quando a ficha muda.
+  useEffect(() => { const t = setTimeout(carregar, 400); return () => clearTimeout(t); }, [carregar, refreshKey]);
+
+  const registrar = async () => {
+    const t = nota.trim();
+    if (!t) return;
+    setSalvando(true);
+    const { data: u } = await supabase.auth.getUser();
+    const { error } = await supabase.from('hiring_candidate_events').insert({ candidate_id: c.id, kind: 'anotacao', title: 'Anotação', detail: t, actor: u.user?.email ?? null });
+    setSalvando(false);
+    if (error) { avisar(`Não foi possível registrar: ${error.message}`); return; }
+    setNota('');
+    carregar();
+  };
+  const apagar = async (ev: CandidateEvent) => {
+    const { error } = await supabase.from('hiring_candidate_events').delete().eq('id', ev.id);
+    if (error) { avisar(`Não foi possível apagar: ${error.message}`); return; }
+    carregar();
+  };
+
+  const lista = todos ? evs ?? [] : (evs ?? []).slice(0, 8);
+  return (
+    <Section title={`Histórico do candidato${evs?.length ? ` · ${evs.length}` : ''}`}>
+      <div className="flex gap-2 mb-3">
+        <input value={nota} onChange={(e) => setNota(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && registrar()}
+          placeholder="Registrar algo no histórico (ligação, referência, recado…)"
+          className="flex-1 min-w-0 h-9 px-3 rounded-lg border border-zinc-200 text-sm focus:outline-none focus:border-rose-300" />
+        <button onClick={registrar} disabled={salvando || !nota.trim()}
+          className="px-3 h-9 rounded-lg bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-white text-xs font-bold cursor-pointer whitespace-nowrap">
+          {salvando ? 'Salvando…' : 'Registrar'}
+        </button>
+      </div>
+      {evs === null ? <p className="text-xs text-zinc-400">Carregando…</p> : evs.length === 0 ? <p className="text-xs text-zinc-400">Nada registrado ainda.</p> : (
+        <ol className="relative border-l-2 border-zinc-100 ml-3 space-y-3">
+          {lista.map((ev) => {
+            const st = EV_STYLE[ev.kind] ?? EV_STYLE.loja;
+            return (
+              <li key={ev.id} className="relative pl-5 group">
+                <span className={`absolute -left-[13px] top-0 w-6 h-6 rounded-full flex items-center justify-center text-xs ${st.cls}`}><i className={st.icon} /></span>
+                <div className="flex items-start gap-2">
+                  <p className="flex-1 text-sm font-semibold text-zinc-800">{ev.title}</p>
+                  {ev.kind === 'anotacao' && (
+                    <button onClick={() => apagar(ev)} title="Apagar anotação" className="opacity-0 group-hover:opacity-100 text-zinc-400 hover:text-red-500 cursor-pointer"><i className="ri-close-line" /></button>
+                  )}
+                </div>
+                {ev.detail && <p className={`text-xs mt-0.5 whitespace-pre-wrap ${ev.kind === 'anotacao' ? 'text-zinc-800' : 'text-zinc-500'}`}>{ev.detail}</p>}
+                <p className="text-[10px] text-zinc-400 mt-0.5">{quando(ev.at)} · {quemFez(ev.actor)}</p>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {(evs?.length ?? 0) > 8 && (
+        <button onClick={() => setTodos((v) => !v)} className="mt-2 text-xs font-semibold text-sky-700 cursor-pointer">
+          {todos ? 'Mostrar só os últimos' : `Ver tudo (${evs!.length})`}
+        </button>
+      )}
+    </Section>
+  );
+}
+
 // Atalho para o agendamento pela IA: move o candidato para a fase "Chamar p/ entrevista" (native_kind
 // 'agendar'); o hiring-scheduler convida no próximo ciclo (8h–20h, até 4 por hora). Com convite já
 // enviado, mostra em que pé está a conversa.

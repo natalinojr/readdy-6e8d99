@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { type JobScheduling, type SchedulingInterviewer, type SchedulingSlot, DIAS_SEMANA, faltasAgendamento } from '../shared';
 
 const PADRAO = (jobId: string): JobScheduling => ({
-  job_id: jobId, enabled: false, slots: [], blocked_dates: [], duration_min: 30, gap_min: 0, per_slot: 1,
+  job_id: jobId, enabled: false, slots: [], blocked_dates: [], blocked_slots: [], duration_min: 30, gap_min: 0, per_slot: 1,
   min_notice_hours: 12, horizon_days: 7, format: 'presencial', location: '', interviewers: [], candidate_notes: '',
 });
 // Mesmos valores aceitos por hiring_interviews.format
@@ -21,6 +21,8 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [novaData, setNovaData] = useState('');
+  const [novaIni, setNovaIni] = useState('');
+  const [novaFim, setNovaFim] = useState('');
 
   useEffect(() => {
     let vivo = true;
@@ -37,6 +39,18 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
   const setSlot = (i: number, p: Partial<SchedulingSlot>) => set('slots', s.slots.map((x, j) => (j === i ? { ...x, ...p } : x)));
   const setInt = (i: number, p: Partial<SchedulingInterviewer>) => set('interviewers', s.interviewers.map((x, j) => (j === i ? { ...x, ...p } : x)));
   const faltas = faltasAgendamento(s);
+  // Data sem horário = dia inteiro (blocked_dates); com "das/até" = só aquela faixa (blocked_slots).
+  const faixaInvalida = !!novaIni !== !!novaFim || (!!novaIni && novaIni >= novaFim);
+  const bloquear = () => {
+    if (!novaData || faixaInvalida) return;
+    if (novaIni) {
+      if (!s.blocked_slots.some((b) => b.date === novaData && b.start === novaIni && b.end === novaFim)) {
+        set('blocked_slots', [...s.blocked_slots, { date: novaData, start: novaIni, end: novaFim }]
+          .sort((a, b) => `${a.date}${a.start}`.localeCompare(`${b.date}${b.start}`)));
+      }
+    } else if (!s.blocked_dates.includes(novaData)) set('blocked_dates', [...s.blocked_dates, novaData].sort());
+    setNovaData(''); setNovaIni(''); setNovaFim('');
+  };
 
   const salvar = async () => {
     if (s.enabled && faltas.length) { setMsg({ ok: false, text: `Para ligar falta: ${faltas.join(', ')}.` }); return; }
@@ -44,6 +58,7 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
     const row = {
       ...s,
       slots: s.slots.filter((x) => x.start && x.end && x.start < x.end),
+      blocked_slots: s.blocked_slots.filter((b) => b.date && b.start && b.end && b.start < b.end),
       interviewers: s.interviewers.filter((i) => i.name.trim() || i.phone.trim()).map((i) => ({ name: i.name.trim(), phone: normFone(i.phone) })),
       location: (s.location ?? '').trim() || null,
       candidate_notes: (s.candidate_notes ?? '').trim() || null,
@@ -101,17 +116,29 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
       </div>
 
       <div>
-        <p className={lbl}>Datas sem entrevista (feriado, folga…)</p>
+        <p className={lbl}>Datas e horários sem entrevista (feriado, folga, compromisso…)</p>
         <div className="flex flex-wrap items-center gap-1.5">
           {s.blocked_dates.map((d) => (
             <span key={d} className="inline-flex items-center gap-1 text-[11px] bg-white border border-zinc-200 rounded-full px-2 py-0.5">
-              {d.split('-').reverse().join('/')}
+              {d.split('-').reverse().join('/')} · dia todo
               <button onClick={() => set('blocked_dates', s.blocked_dates.filter((x) => x !== d))} className="text-zinc-400 hover:text-red-500 cursor-pointer"><i className="ri-close-line" /></button>
             </span>
           ))}
-          <input type="date" value={novaData} onChange={(e) => setNovaData(e.target.value)} className={`${inp} w-40`} />
-          <button disabled={!novaData} onClick={() => { if (novaData && !s.blocked_dates.includes(novaData)) set('blocked_dates', [...s.blocked_dates, novaData].sort()); setNovaData(''); }} className={addBtn}>Bloquear data</button>
+          {s.blocked_slots.map((b, i) => (
+            <span key={`${b.date}-${b.start}-${b.end}`} className="inline-flex items-center gap-1 text-[11px] bg-white border border-zinc-200 rounded-full px-2 py-0.5">
+              {b.date.split('-').reverse().join('/')} · {b.start}–{b.end}
+              <button onClick={() => set('blocked_slots', s.blocked_slots.filter((_, j) => j !== i))} className="text-zinc-400 hover:text-red-500 cursor-pointer"><i className="ri-close-line" /></button>
+            </span>
+          ))}
         </div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <input type="date" value={novaData} onChange={(e) => setNovaData(e.target.value)} aria-label="Data" className={inp.replace('w-full', 'w-40')} />
+          <input type="time" value={novaIni} onChange={(e) => setNovaIni(e.target.value)} aria-label="Das" className={inp.replace('w-full', 'w-28')} />
+          <span className="text-xs text-zinc-400">até</span>
+          <input type="time" value={novaFim} onChange={(e) => setNovaFim(e.target.value)} aria-label="Até" className={inp.replace('w-full', 'w-28')} />
+          <button disabled={!novaData || faixaInvalida} onClick={bloquear} className={addBtn}>Bloquear</button>
+        </div>
+        <p className="mt-1 text-[10px] text-zinc-400">Sem horário, bloqueia o dia inteiro.</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">

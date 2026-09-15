@@ -676,6 +676,7 @@ export default function ContratacaoPage() {
           companies={companies}
           stages={stages}
           ficha={settings}
+          settings={settings}
           interviews={interviews.filter((iv) => iv.candidate_id === sel.id)}
           jobs={jobs}
           applications={applications.filter((a) => a.candidate_id === sel.id)}

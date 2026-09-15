@@ -27,11 +27,14 @@ export type NativeKind = 'novo' | 'agendar' | 'entrevista' | 'aprovado' | 'desca
 // ── Agendamento de entrevista pelo assistente (hiring_job_scheduling, por vaga) ──
 export interface SchedulingSlot { dow: number; start: string; end: string }
 export interface SchedulingInterviewer { name: string; phone: string }
+// Faixa de horário sem entrevista numa data (o dia inteiro fica em blocked_dates).
+export interface BlockedSlot { date: string; start: string; end: string }
 export interface JobScheduling {
   job_id: string;
   enabled: boolean;
   slots: SchedulingSlot[];
   blocked_dates: string[];
+  blocked_slots: BlockedSlot[];
   duration_min: number;
   gap_min: number;
   per_slot: number;
