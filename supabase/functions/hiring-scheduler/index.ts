@@ -558,7 +558,7 @@ async function tick(admin: SupabaseClient, force = false) {
     const lim = INVITE_LIMITS[(await waConfig(admin)).transport];
     let vagas = Math.min(lim.tick, lim.hour - (naHora ?? 0));
     if (st?.id && vagas > 0) {
-      const { data: cands } = await admin.from('hiring_candidates').select('id, full_name, phone').eq('stage_id', st.id).limit(200);
+      const { data: cands } = await admin.from('hiring_candidates').select('id, full_name, phone, whatsapp').eq('stage_id', st.id).limit(200);
       const ids = ((cands ?? []) as Row[]).map((x) => x.id);
       if (ids.length) {
         const [{ data: apps }, { data: cfgs }, { data: sess }] = await Promise.all([
@@ -595,7 +595,9 @@ async function tick(admin: SupabaseClient, force = false) {
           if (vistos.has(a.candidate_id) || !cfgBy.has(a.job_id) || feito.has(`${a.candidate_id}|${a.job_id}`)) continue;
           vistos.add(a.candidate_id); // uma vaga por candidato por vez (a inscrição mais recente configurada)
           const cand = candBy.get(a.candidate_id);
-          const fone = phone55(cand?.phone);
+          // WhatsApp de quem mandou o currículo pelo link primeiro; o telefone escrito no currículo pode ser
+          // outro número, que nunca falou com o assistente (caso Pamella, 2026-09-15).
+          const fone = phone55(cand?.whatsapp || cand?.phone);
           if (fone.length < 12) {
             await admin.from('hiring_scheduling_sessions').insert({ candidate_id: a.candidate_id, job_id: a.job_id, status: 'erro', error: 'candidato sem telefone' });
             continue;

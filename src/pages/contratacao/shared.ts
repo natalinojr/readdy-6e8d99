@@ -195,6 +195,7 @@ export interface Candidate {
   raw_text: string | null;
   ai_processed: boolean;
   source?: string | null; // 'whatsapp_link' quando veio pelo link público
+  whatsapp?: string | null; // número de quem mandou o currículo pelo link (pode ser ≠ do telefone do currículo)
   extra_fields?: Record<string, string> | null; // respostas dos dados mínimos criados pelo dono
   required_waived_at?: string | null;          // "mover mesmo assim" com ficha incompleta
   created_at: string;

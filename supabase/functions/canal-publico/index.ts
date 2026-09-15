@@ -367,6 +367,8 @@ async function intake(admin: SupabaseClient, ch: Row, conv: Row, m: Incoming, en
     const { data: c } = await admin.from('hiring_candidates').select('phone').eq('id', cand.id).maybeSingle();
     await admin.from('hiring_candidates').update({
       source: conv.is_test ? 'whatsapp_link_teste' : 'whatsapp_link', source_channel_id: ch.id,
+      // WhatsApp de verdade (o do currículo pode ser outro): o agendamento pela IA usa este primeiro.
+      whatsapp: m.number,
       ...(c && !c.phone ? { phone: m.number } : {}),
     }).eq('id', cand.id);
     await admin.from('bot_conversations').update({ candidate_ids: [...(conv.candidate_ids ?? []), cand.id] }).eq('id', conv.id);

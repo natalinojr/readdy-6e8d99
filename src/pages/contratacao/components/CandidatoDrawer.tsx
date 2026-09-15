@@ -9,6 +9,7 @@ import {
   type JobScheduling, faltasAgendamento, stageByKind, type CandidateEvent, type Settings,
 } from '../shared';
 import { avisar } from '../dialog';
+import EditarCandidatoModal from './EditarCandidatoModal';
 
 interface Props {
   c: Candidate;
@@ -64,7 +65,10 @@ export default function CandidatoDrawer({
   const [verTexto, setVerTexto] = useState(false);
   useEffect(() => { setNotes(c.notes ?? ''); }, [c.id, c.notes]);
   useEffect(() => { setIaErro(null); setVerTexto(false); }, [c.id]);
-  const wa = whatsLink(c.phone);
+  // WhatsApp de quem mandou pelo link primeiro (o telefone do currículo pode ser outro número).
+  const wa = whatsLink(c.whatsapp || c.phone);
+  const [editarDados, setEditarDados] = useState(false);
+  useEffect(() => { setEditarDados(false); }, [c.id]);
 
   const organizar = async () => {
     setIaBusy(true); setIaErro(null);
@@ -97,6 +101,10 @@ export default function CandidatoDrawer({
             <p className="text-xs text-zinc-500">{[c.desired_role, idade != null ? `${idade} anos` : null, c.marital_status].filter(Boolean).join(' · ')}</p>
           </div>
           {dec && <span className={`text-xs font-black px-2.5 py-1 rounded-lg border ${dec.cls}`} title={withEmpresa(dec.label, empresa)}>{dec.sigla}</span>}
+          <button onClick={() => setEditarDados(true)} title="Editar dados do candidato"
+            className="flex items-center gap-1 px-2.5 h-8 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-xs font-bold text-zinc-700 cursor-pointer">
+            <i className="ri-pencil-line" /> <span className="hidden sm:inline">Editar dados</span>
+          </button>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-500 cursor-pointer">
             <i className="ri-close-line text-lg" />
           </button>
@@ -256,7 +264,14 @@ export default function CandidatoDrawer({
               {c.phone && (
                 <p className="flex items-center gap-2">
                   <i className="ri-phone-line text-zinc-400" /> {fmtPhone(c.phone)}
-                  {wa && <a href={wa} target="_blank" rel="noopener noreferrer" className="text-emerald-600 font-semibold text-xs ml-1"><i className="ri-whatsapp-line" /> WhatsApp</a>}
+                  {wa && !c.whatsapp && <a href={wa} target="_blank" rel="noopener noreferrer" className="text-emerald-600 font-semibold text-xs ml-1"><i className="ri-whatsapp-line" /> WhatsApp</a>}
+                </p>
+              )}
+              {c.whatsapp && (
+                <p className="flex items-center gap-2">
+                  <i className="ri-whatsapp-line text-emerald-500" /> {fmtPhone(onlyDigits(c.whatsapp).replace(/^55(?=\d{10,11}$)/, ''))}
+                  <span className="text-[11px] text-zinc-400">{onlyDigits(c.whatsapp).slice(-8) === onlyDigits(c.phone).slice(-8) ? 'WhatsApp' : 'WhatsApp (diferente do currículo)'}</span>
+                  {wa && <a href={wa} target="_blank" rel="noopener noreferrer" className="text-emerald-600 font-semibold text-xs ml-1">abrir conversa</a>}
                 </p>
               )}
               {c.email && <p className="flex items-center gap-2"><i className="ri-mail-line text-zinc-400" /> <a href={`mailto:${c.email}`} className="text-sky-700">{c.email}</a></p>}
@@ -416,6 +431,7 @@ export default function CandidatoDrawer({
           </button>
         </div>
       </aside>
+      {editarDados && <EditarCandidatoModal c={c} onClose={() => setEditarDados(false)} onSave={(patch) => onUpdate(patch)} />}
     </>
   );
 }
