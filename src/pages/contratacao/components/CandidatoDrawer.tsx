@@ -6,6 +6,7 @@ import {
   type Distance, fmtKm, distCls, PRECISION_LABEL,
   fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf, decisionOf, withEmpresa, ageOf, companyName,
   type FichaCfg, fieldsOf, faltasFicha, onlyDigits,
+  type JobScheduling, faltasAgendamento, stageByKind,
 } from '../shared';
 import { avisar } from '../dialog';
 
@@ -203,6 +204,10 @@ export default function CandidatoDrawer({
               </select>
             ) : applications.length === 0 && <p className="text-xs text-zinc-400">Nenhuma vaga aberta. Abra na aba Vagas.</p>}
           </Section>
+
+          {/* Agendamento pela IA (só com vaga que tem o agendamento ligado e completo) */}
+          <AgendamentoIA c={c} stages={stages} applications={applications} jobs={jobs}
+            onSend={(stageId) => onUpdate({ stage_id: stageId })} />
 
           {/* Entrevistas */}
           <Section title="Entrevistas">
@@ -407,6 +412,65 @@ export default function CandidatoDrawer({
     </>
   );
 }
+
+// Atalho para o agendamento pela IA: move o candidato para a fase "Chamar p/ entrevista" (native_kind
+// 'agendar'); o hiring-scheduler convida no próximo ciclo (8h–20h, até 4 por hora). Com convite já
+// enviado, mostra em que pé está a conversa.
+const SESS_LABEL: Record<string, string> = {
+  convidado: 'Convite enviado — aguardando resposta',
+  negociando: 'Conversando sobre o horário',
+  aguardando_gestor: 'Esperando o entrevistador aceitar um horário pedido',
+  agendado: 'Entrevista marcada pela IA',
+};
+function AgendamentoIA({ c, stages, applications, jobs, onSend }: {
+  c: Candidate; stages: Stage[]; applications: Application[]; jobs: Job[]; onSend: (stageId: string) => void;
+}) {
+  const [cfgs, setCfgs] = useState<JobScheduling[] | null>(null);
+  const [sess, setSess] = useState<{ status: string; job_id: string }[]>([]);
+  const jobIds = applications.map((a) => a.job_id);
+  const chave = jobIds.join(',');
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      if (!jobIds.length) { if (vivo) setCfgs([]); return; }
+      const [{ data: s }, { data: ss }] = await Promise.all([
+        supabase.from('hiring_job_scheduling').select('*').in('job_id', jobIds),
+        supabase.from('hiring_scheduling_sessions').select('status, job_id').eq('candidate_id', c.id).order('updated_at', { ascending: false }),
+      ]);
+      if (!vivo) return;
+      setCfgs((s ?? []) as JobScheduling[]);
+      setSess((ss ?? []) as { status: string; job_id: string }[]);
+    })();
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [c.id, c.stage_id, chave]);
+
+  const prontas = (cfgs ?? []).filter((x) => x.enabled && faltasAgendamento(x).length === 0);
+  const agendar = stageByKind(stages, 'agendar');
+  if (!cfgs || !prontas.length || !agendar) return null;
+  const ativa = sess.find((s) => SESS_LABEL[s.status]);
+  const naFila = !ativa && c.stage_id === agendar.id;
+  const vagas = prontas.map((p) => jobs.find((j) => j.id === p.job_id)?.title).filter(Boolean).join(', ');
+
+  return (
+    <Section title="Agendamento pela IA">
+      {ativa ? (
+        <p className="flex items-center gap-2 text-sm text-violet-800"><i className="ri-robot-2-line" /> {SESS_LABEL[ativa.status]}</p>
+      ) : naFila ? (
+        <p className="text-xs text-zinc-500"><i className="ri-time-line" /> Na fila: o convite sai no próximo ciclo do assistente (das 8h às 20h, até 4 por hora).</p>
+      ) : (
+        <>
+          <button onClick={() => onSend(agendar.id)}
+            className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-violet-300 bg-violet-50 hover:bg-violet-100 text-violet-800 text-xs font-bold cursor-pointer">
+            <i className="ri-robot-2-line" /> Enviar para o agendamento da IA
+          </button>
+          <p className="text-[11px] text-zinc-400 mt-1">O assistente chama {firstNameOf(c.full_name)} no WhatsApp com os horários livres{vagas ? ` da vaga ${vagas}` : ''} e marca a entrevista sozinho.</p>
+        </>
+      )}
+    </Section>
+  );
+}
+const firstNameOf = (s: string) => s.trim().split(/\s+/)[0] ?? s;
 
 // Campos dos dados mínimos. Escolaridade e experiências viram um item de texto livre (não apaga
 // os itens lidos do currículo: quando já existem, só mostra quantos são).

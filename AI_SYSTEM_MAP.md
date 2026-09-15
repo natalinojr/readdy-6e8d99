@@ -1898,6 +1898,12 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
   com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
   causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
+- **Contratação: fase "Triagem" e atalho para a IA (2026-09-14)**:
+  - Fase comum (não nativa) entre "Novo" e "Chamar p/ entrevista", para separar quem vale chamar.
+  - Na ficha do candidato, o bloco "Agendamento pela IA" (`AgendamentoIA`) só aparece com vaga inscrita
+    cujo `hiring_job_scheduling` está ligado e completo (`faltasAgendamento`). O botão move para a fase
+    `agendar`, que é o gatilho do convite, e passa pela trava dos dados mínimos. Com sessão ativa,
+    mostra o status dela.
 - **Atendimento público pela API oficial (Cloud API), 2026-09-14**:
   - O webhook da Meta chega na edge `whatsapp-cloud`, sem JWT. A confirmação usa `WHATSAPP_VERIFY_TOKEN`
     e a assinatura, `WHATSAPP_APP_SECRET`.
