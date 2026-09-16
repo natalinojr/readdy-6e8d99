@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cópia do layout do Capacitor (@capacitor/android › capacitor_bridge_layout_main.xml) trocando só
+  a classe do WebView pela nossa (ErposWebView), que tira o "editor em tela cheia" do teclado.
+  Mesmo nome de arquivo = este, do app, substitui o da biblioteca. Ao atualizar o Capacitor,
+  conferir se o layout original mudou.
+-->
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context="com.getcapacitor.BridgeActivity"
+    >
+
+    <app.erpos.gestao.ErposWebView
+        android:id="@+id/webview"
+        android:layout_width="fill_parent"
+        android:layout_height="fill_parent" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

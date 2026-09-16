@@ -78,6 +78,14 @@ Se algum dia precisar refazer:
 - **Teclado "cru"**: a caixa de mensagem agora declara `lang=pt-BR`, `autoCapitalize`, `autoCorrect`,
   `spellCheck` e `inputMode=text` (o WebView sem isso abre o teclado sem sugestões nem maiúscula), e
   o app usa o plugin **`@capacitor/keyboard`** (`resize: native`) para a tela subir junto com o teclado.
+- **Teclado abrindo o "editor em tela cheia"** (caixa "Mensagem — Fechar — OK" cobrindo o app, teclado
+  Samsung): é o *extract UI* do Android, ligado quando o campo não declara o contrário. App nativo
+  declara no próprio campo; no WebView foi preciso criar **`ErposWebView`** (subclasse de
+  `CapacitorWebView`) que acrescenta `IME_FLAG_NO_EXTRACT_UI | IME_FLAG_NO_FULLSCREEN` em
+  `onCreateInputConnection`, e sobrepor o layout da biblioteca com
+  `res/layout/capacitor_bridge_layout_main.xml` (mesmo nome = o do app vence). `captureInput` do
+  Capacitor **não** resolve isso (troca a conexão por uma de teclado físico).
+  Ao atualizar o Capacitor: conferir se o layout original mudou.
 - **Áudio sem resposta**: o microfone e o Whisper funcionaram, mas o modelo respondeu `NO_REPLY` (o
   modo silencioso da triagem de grupo) e o chat mostrou nada. A `assistente-app` agora troca
   `NO_REPLY` por "Ok 👍" — no chat, conversa sempre responde.

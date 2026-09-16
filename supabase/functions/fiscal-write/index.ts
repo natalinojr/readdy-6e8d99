@@ -245,17 +245,24 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
   }
 
   // Descrições com opções escolhidas (ajuda o cliente a reconhecer o item)
-  const { data: optsRaw } = await admin.from('order_item_options').select('order_item_id, option_name').in('order_item_id', items.map((i) => i.id));
+  const { data: optsRaw } = await admin.from('order_item_options').select('order_item_id, option_name, additional_price').in('order_item_id', items.map((i) => i.id));
   const optsByItem = new Map<string, string[]>();
+  // Soma dos adicionais POR UNIDADE (mesma regra do PDV/order-write: subtotal =
+  // (item_price + Σ additional_price) × quantity). Combos e itens "monte o seu"
+  // têm item_price 0 e o valor real nas escolhas — sem isso o produto ia para a
+  // SEFAZ a R$ 0,00 e o valor caía em "outras despesas" (nota série 2 nº 3, 15/09/2026).
+  const optsPriceByItem = new Map<string, number>();
   for (const o of optsRaw ?? []) {
     const arr = optsByItem.get(o.order_item_id) ?? [];
     // "Un. 1", "Un. 2" são rótulos internos de unidade do KDS, não opções do produto.
     if (o.option_name && !/^un\.?\s*\d+$/i.test(String(o.option_name).trim())) arr.push(String(o.option_name));
     optsByItem.set(o.order_item_id, arr);
+    optsPriceByItem.set(o.order_item_id, round2((optsPriceByItem.get(o.order_item_id) ?? 0) + Number(o.additional_price ?? 0)));
   }
+  const unitPrice = (i: { id: string; item_price: number | null }) => round2(Number(i.item_price ?? 0) + (optsPriceByItem.get(i.id) ?? 0));
 
   // 3. Totais e conciliação com o valor cobrado
-  const gross = items.map((i) => round2(Number(i.item_price ?? 0) * Number(i.quantity ?? 1)));
+  const gross = items.map((i) => round2(unitPrice(i) * Number(i.quantity ?? 1)));
   const grossTotal = round2(gross.reduce((s, v) => s + v, 0));
   let discount = round2(orders.reduce((s, o) => s + Number(o.discount_amount ?? 0), 0));
   let extras = round2(orders.reduce((s, o) => s + Number(o.service_fee_amount ?? 0) + Number(o.tip_amount ?? 0) + Number(o.delivery_fee ?? 0), 0));
@@ -298,7 +305,7 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
     if (opts.length > 0) nome = `${nome} (${opts.join(', ')})`;
     nome = nome.replace(/\s+/g, ' ').slice(0, 120);
     const qty = Number(it.quantity ?? 1);
-    const unit = round2(Number(it.item_price ?? 0));
+    const unit = unitPrice(it);
     const ncm = onlyDigits(m?.ncm || c?.ncm || settings.ncm_padrao).padStart(8, '0').slice(0, 8);
     const cest = onlyDigits(m?.cest || c?.cest || '');
     const cfop = Number(m?.cfop || c?.cfop || settings.cfop_padrao || 5102);

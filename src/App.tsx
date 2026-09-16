@@ -5,6 +5,7 @@ import { AppProviders } from './providers/AppProviders';
 import ToastContainer from './components/base/ToastContainer';
 import { Suspense } from 'react';
 import { useWakeLock } from './hooks/useWakeLock';
+import { reportError } from './lib/errorReporter';
 
 // ─── Fallback de crash de render ────────────────────────────────────────────
 function ErroAplicacao({ error }: { error?: Error }) {
@@ -62,6 +63,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[ErrorBoundary] Crash de render capturado:', error.message, error.stack, info.componentStack);
+    reportError(error, { fn: 'ErrorBoundary', context: { componentStack: (info.componentStack ?? '').slice(0, 1500) } });
     this.setState({ error });
   }
 

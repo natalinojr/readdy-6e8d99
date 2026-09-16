@@ -7,6 +7,11 @@ import { supabase } from './lib/supabase'
 import { registerServiceWorker } from './lib/pwa'
 import { installNumberInputFix } from './lib/numberInputFix'
 import { installShareIntake } from './lib/shareIntake'
+import { installErrorReporter } from './lib/errorReporter'
+
+// Fila de erros (dev_error_events): window.onerror + unhandledrejection → Edge client-errors.
+// Instalado ANTES dos handlers abaixo, que fazem preventDefault em casos tratados.
+installErrorReporter()
 
 // Campos numéricos: seleciona ao focar e tira o zero grudado na frente ("014")
 installNumberInputFix()

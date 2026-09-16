@@ -1,3 +1,4 @@
+import { reportEdgeFailure } from './errorReporter';
 import { createClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 
@@ -419,6 +420,8 @@ export async function invokeWithAuth<T = unknown>(
       // Nao logar como erro critico status 409 (conflict de negocio) — e esperado
       if (response.status !== 409) {
         console.error(`[invokeWithAuth] ${functionName} failed [${response.status}]:`, errMsg, 'raw:', raw ?? 'n/a');
+        // Fila de erros (dev_error_events): 5xx = erro, 4xx = aviso; 401/403 ficam de fora
+        reportEdgeFailure(functionName, response.status, errMsg, typeof options.body?.action === 'string' ? options.body.action : undefined);
       }
       return { data: null, error: new Error(errMsg) };
     }

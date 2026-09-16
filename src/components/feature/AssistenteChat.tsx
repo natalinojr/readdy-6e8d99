@@ -451,7 +451,11 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   if (user?.email?.toLowerCase() !== ASSISTENTE_OWNER_EMAIL) return null;
 
-  const pagamentosVisiveis = pays.filter((p) => !['cancelled', 'expired'].includes(p.status));
+  // Rodapé = só o que espera decisão ou está em andamento. Concluído (pago, cancelado, recusado)
+  // sai do rodapé: o resultado fica registrado na conversa. Antes, pago ficava fixo por 24 h e
+  // tomava a tela (2026-09-16).
+  const EM_ABERTO = ['draft', 'awaiting_pin', 'sending', 'sent', 'pending_approval', 'approved', 'scheduled'];
+  const pagamentosVisiveis = pays.filter((p) => EM_ABERTO.includes(p.status));
 
   const painel = (
     <div className={variant === 'floating'

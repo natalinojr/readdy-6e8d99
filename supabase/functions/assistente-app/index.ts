@@ -196,9 +196,11 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'payments') {
-      const desde = new Date(Date.now() - 24 * 3600_000).toISOString();
+      // Só os que ainda esperam decisão ou estão em andamento — o cartão no chat é para AGIR.
+      // Concluído (pago/cancelado/recusado) fica só na conversa; antes voltava por 24 h e o
+      // rodapé do chat ficava entulhado de "pago" (2026-09-16).
       const { data, error } = await admin.from('fin_inter_payments').select('*').eq('chat_id', chatKey)
-        .or(`status.in.(${PAY_OPEN.join(',')}),updated_at.gte.${desde}`)
+        .in('status', PAY_OPEN)
         .gte('created_at', new Date(Date.now() - 7 * 86400_000).toISOString())
         .order('created_at', { ascending: false }).limit(20);
       if (error) throw new Error(error.message);
