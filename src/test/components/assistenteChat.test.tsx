@@ -286,6 +286,22 @@ describe('AssistenteChat — lista de conversas', () => {
     await waitFor(() => expect(calls('seen').at(-1)?.topic).toBe('pagamentos'));
   });
 
+  it('o voltar do Android fecha a conversa e depois o painel, sem sair do app', async () => {
+    // O painel é overlay: sem empurrar histórico, o voltar nativo saía do app (2026-09-16).
+    const user = userEvent.setup();
+    add('assistant', 'Pix preparado', 'pagamentos');
+    add('assistant', 'Currículo novo', 'curriculos'); // assuntos diferentes: o badge abre a LISTA
+    renderChat('floating');
+    await user.click(await screen.findByRole('button', { name: /mensagens novas/ }));
+    await user.click(await screen.findByRole('button', { name: /Financeiro/ }));
+    expect(await screen.findByText('Pix preparado')).toBeInTheDocument();
+
+    window.history.back(); // 1º voltar: sai da conversa, fica na lista
+    expect(await screen.findByRole('button', { name: /Todas as mensagens/ })).toBeInTheDocument();
+    window.history.back(); // 2º voltar: fecha o painel
+    expect(await screen.findByRole('button', { name: /Falar com o assistente/ })).toBeInTheDocument();
+  });
+
   it('a seta volta da conversa para a lista', async () => {
     const user = userEvent.setup();
     add('assistant', 'Pix preparado', 'pagamentos');
@@ -506,6 +522,44 @@ describe('AssistenteChat — botão que leva à tela', () => {
     await entrarNaConversa(userEvent.setup());
     expect(await screen.findByText(/Toca aí no botão/)).toBeInTheDocument();
     expect(screen.queryByText(/Botão enviado/)).not.toBeInTheDocument();
+  });
+});
+
+describe('AssistenteChat — responder e copiar', () => {
+  it('botão direito abre as ações; Responder cita a mensagem e manda o trecho junto', async () => {
+    const user = userEvent.setup();
+    add('assistant', 'Setembro até agora: R$ 3.410,94.');
+    renderChat();
+    await entrarNaConversa(user);
+    const balao = await screen.findByText(/Setembro até agora/);
+    fireEvent.contextMenu(balao);
+    await user.click(await screen.findByRole('button', { name: /Responder/ }));
+
+    // A citação aparece acima da caixa e vai no texto enviado (o assistente lê igual no Telegram).
+    await user.type(screen.getByPlaceholderText('Mensagem'), 'esse valor é do mês inteiro?');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    await waitFor(() => expect(calls('send')).toHaveLength(1));
+    expect(calls('send')[0].text).toBe([
+      '[Respondendo a: "Setembro até agora: R$ 3.410,94."]',
+      'esse valor é do mês inteiro?',
+    ].join('\n'));
+  });
+
+  it('Copiar manda o texto para a área de transferência', async () => {
+    const user = userEvent.setup();
+    const escrito: string[] = [];
+    // navigator.clipboard é só-leitura no jsdom: define a propriedade em vez de atribuir.
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: (t: string) => { escrito.push(t); return Promise.resolve(); } },
+    });
+    add('assistant', 'Chave Pix: 12345');
+    renderChat();
+    await entrarNaConversa(user);
+    fireEvent.contextMenu(await screen.findByText('Chave Pix: 12345'));
+    await user.click(await screen.findByRole('button', { name: /Copiar/ }));
+    await waitFor(() => expect(escrito).toEqual(['Chave Pix: 12345']));
+    expect(await screen.findByText('Copiado')).toBeInTheDocument();
   });
 });
 

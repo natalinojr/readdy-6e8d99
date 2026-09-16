@@ -830,6 +830,14 @@ Conversa com o assistente **dentro do ERPOS**, somando ao Telegram (não substit
   **Visto por assunto:** `app_last_seen` virou `{ id, topics: { <assunto>: id } }`. Ler o Financeiro
   não pode marcar como lido um currículo que chegou antes; `id` é o piso global (o formato antigo
   continua valendo) e "Todas as mensagens" sobe o piso e limpa as marcas por assunto.
+- **Responder e copiar (2026-09-16):** toque longo (celular) ou botão direito (desktop) em
+  qualquer balão abre Responder/Copiar. Responder põe o trecho acima da caixa e manda no texto como
+  `[Respondendo a: "…"]` — sem coluna nova no banco e o assistente entende igual pelo Telegram; o
+  chat transforma isso de volta num bloquinho citado (`limparUser`).
+- **Voltar do Android (2026-09-16):** o painel empurra entrada no histórico
+  (`src/lib/voltarAndroid.ts`, herdado de Tarefas). Duas camadas: o voltar sai da conversa para a
+  lista e só depois fecha o painel — antes SAÍA DO APP. `popstate` é do window, então o helper tem
+  uma pilha e só a camada do topo reage.
 - **Badge do botão fechado (2026-09-16):** com o chat fechado o app não carregava NADA, então aviso
   de cron/conciliação só aparecia se o dono abrisse. Agora `unread` (consulta leve: conta as
   mensagens `role='assistant'` com `id >` `asst_settings.app_last_seen`, devolve contagem, assunto

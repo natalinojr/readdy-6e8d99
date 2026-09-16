@@ -1805,10 +1805,26 @@ Deno.serve(async (req) => {
       if (round === MAX_TOOL_ROUNDS) reply = textOut || 'Fiz várias consultas mas não consegui fechar a resposta. Pode repetir de forma mais simples?';
     }
 
+    // O modelo IMITA os marcadores que vê no histórico (2026-09-16): passou a escrever
+    // '[Botão enviado: "…" → /rota]' dentro da própria resposta, e o marcador de verdade era
+    // acrescentado embaixo — resultado na tela do dono: balão vazio (o chat limpa os dois) e o
+    // marcador aparecendo na barra pequena. Marcador é anotação do SISTEMA: some do texto dele.
+    reply = reply.replace(/^\s*\[(Botão|Enquete|Localização|Contato|Pedido de pagamento) enviad[oa][^\]\n]*\]\s*$/gm, '').trim();
     reply = reply.trim() || 'Não entendi. Pode repetir?';
     // NO_REPLY (resposta silenciosa): o webhook só reage 👍. Se sobrou texto junto, vale o texto.
     if (/^NO_REPLY\b/.test(reply)) reply = reply.replace(/^NO_REPLY[.!]?\s*/, '').trim() || 'NO_REPLY';
     if (reply === 'NO_REPLY' && ctx.outbound.length) reply = 'Aí vai:';
+    // Ficou só a ação (o texto era o marcador imitado): uma frase curta, senão o balão vem vazio.
+    if (reply === 'Não entendi. Pode repetir?' && ctx.outbound.length) reply = 'Toca aí.';
+    // Botão repetido: o modelo às vezes chama abrir_tela duas vezes para a mesma tela. Um botão.
+    const vistos = new Set<string>();
+    ctx.outbound = ctx.outbound.filter((a) => {
+      if (a.type !== 'abrir') return true;
+      const k = `${a.rota}|${a.label}`;
+      if (vistos.has(k)) return false;
+      vistos.add(k);
+      return true;
+    });
     // No histórico, a enquete/localização/contato fica descrita para o modelo saber o que já mandou.
     const historyContent = ctx.outbound.length
       ? `${reply}\n${ctx.outbound.map((a) => a.type === 'poll' ? `[Enquete enviada: "${a.question}" — ${a.options.join(' | ')}]` : a.type === 'location' ? `[Localização enviada: ${a.name}]` : a.type === 'payment' ? '[Pedido de pagamento enviado com botões Pagar/Cancelar]' : a.type === 'abrir' ? `[Botão enviado: "${a.label}" → ${a.rota}]` : `[Contato enviado: ${a.name} +${a.phone}]`).join('\n')}`

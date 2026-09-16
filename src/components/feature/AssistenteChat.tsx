@@ -11,6 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { SHARE_KEY, type SharePayload } from '@/lib/shareIntake';
 import { EVENTO_ASSISTENTE, getFoco, limparFocoItem, resumirFoco, setFocoItem, type PedidoAbrir } from '@/lib/assistenteFoco';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -99,16 +100,28 @@ function formatar(text: string): ReactNode[] {
   return out;
 }
 // O que o ERPOS/Telegram acrescenta à mensagem do dono não precisa aparecer no balão.
-function limparUser(content: string): { text: string; audio: boolean; arquivo: string | null } {
+function limparUser(content: string): { text: string; audio: boolean; arquivo: string | null; citado: string | null } {
   let t = content.replace(/^\[Pelo ERPOS[^\]]*\]\n?/, '');
+  // Resposta a uma mensagem: o trecho citado viaja no próprio texto (assim o assistente entende
+  // igual pelo Telegram) e aqui volta a ser um bloquinho acima do balão.
+  let citado: string | null = null;
+  const cm = t.match(/^\[Respondendo a: "([^"]*)"\]\n?/);
+  if (cm) { citado = cm[1]; t = t.slice(cm[0].length); }
   let arquivo: string | null = null;
   const fm = t.match(/^\[(Foto|PDF)\]\s*/);
   if (fm) { arquivo = fm[1]; t = t.slice(fm[0].length); }
   t = t.replace(/^\[(Foto|PDF) sem legenda\]$/, '');
   const audio = /^\[Áudio\]\s*/.test(t);
   if (audio) t = t.replace(/^\[Áudio\]\s*/, '');
-  return { text: t.replace(/^\[Pelo ERPOS[^\]]*\]\n?/, '').trim(), audio, arquivo };
+  return { text: t.replace(/^\[Pelo ERPOS[^\]]*\]\n?/, '').trim(), audio, arquivo, citado };
 }
+
+// Marcadores que o brain grava no histórico para saber o que já mandou ("[Botão enviado: …]").
+// São anotação do sistema: o balão mostra a coisa em si (o botão, o cartão), não a anotação.
+// O modelo às vezes IMITA o marcador na própria resposta (visto em 2026-09-16), então a limpeza
+// vale para o histórico e para a prévia da barra pequena.
+const MARCADORES = /\n?\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado|Botão enviado)[^\n]*\]/g;
+const semMarcadores = (t: string) => t.replace(MARCADORES, '').trim();
 
 function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: 'ok' | 'no' | 'st') => void }) {
   const aberto = ['draft', 'awaiting_pin'].includes(p.status);
@@ -262,6 +275,11 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Badge do botão fechado: mensagens que ele mandou sozinho (cron, conciliação, avisos) e que
   // você ainda não viu. Fechado o chat não carrega histórico nenhum — só este contador.
   const [naoLidas, setNaoLidas] = useState<{ count: number; topic: string | null; previa: string | null }>({ count: 0, topic: null, previa: null });
+  // Responder/copiar uma mensagem (2026-09-16): toque longo no celular, botão direito no desktop.
+  const [menuMsg, setMenuMsg] = useState<{ msg: Msg; texto: string } | null>(null);
+  const [citacao, setCitacao] = useState<{ texto: string } | null>(null);
+  const [copiado, setCopiado] = useState(false);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pinFor, setPinFor] = useState<Payment | null>(null);
   const [pin, setPin] = useState('');
   const [pinErr, setPinErr] = useState<string | null>(null);
@@ -392,6 +410,13 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     return () => clearInterval(t);
   }, [open, isOwner, vista, carregarConversas]);
 
+  // Botão "voltar" do Android (2026-09-16): com o chat aberto ele SAÍA DO APP, porque o painel é
+  // um overlay e não mexia no histórico. Duas camadas, desfeitas na ordem: primeiro a conversa
+  // volta para a lista, depois o painel fecha. No chat embutido (página Assistente) não vale — lá
+  // o voltar tem de sair da página, como em qualquer tela.
+  useVoltarFecha(variant === 'floating' && open, () => setModo('fab'), 'assistente-painel');
+  useVoltarFecha(open && vista === 'conversa', () => setVista('lista'), 'assistente-conversa');
+
   // Telas pedindo o chat: botão "perguntar ao assistente" (PerguntarAoAssistente) e atalhos.
   useEffect(() => {
     if (!isOwner) return;
@@ -443,20 +468,41 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     } catch { /* ignora */ }
   };
 
+  // Toque longo (celular) e botão direito (desktop) abrem as ações da mensagem.
+  const abrirMenu = (m: Msg, texto: string) => { if (texto.trim()) setMenuMsg({ msg: m, texto: texto.trim() }); };
+  const pressStart = (m: Msg, texto: string) => {
+    pressTimer.current = setTimeout(() => abrirMenu(m, texto), 450);
+  };
+  const pressEnd = () => { if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; } };
+
+  const copiarMsg = async (texto: string) => {
+    try {
+      await navigator.clipboard.writeText(texto);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 1500);
+    } catch { setErro('Não consegui copiar (o navegador bloqueou).'); }
+    setMenuMsg(null);
+  };
+
   const enviar = async (override?: string, audio?: { base64: string; media_type: string }) => {
     const t = (override ?? text).trim();
     if ((!t && !attach && !audio) || sending) return;
     const foco = getFoco();
+    // Responder a uma mensagem: o trecho vai no texto, então o assistente entende igual no
+    // Telegram e a citação continua no histórico (sem coluna nova no banco).
+    const cit = citacao;
+    const prefixoCit = cit ? `[Respondendo a: "${cit.texto.slice(0, 120).replace(/"/g, "'")}"]
+` : '';
     const temp: Msg = {
       id: -Date.now(), role: 'user', channel: 'app', created_at: new Date().toISOString(), temp: true,
-      content: audio ? '[Áudio] (transcrevendo…)' : `${attach ? `[${attach.media_type === 'application/pdf' ? 'PDF' : 'Foto'}] ` : ''}${t}`,
+      content: audio ? '[Áudio] (transcrevendo…)' : `${prefixoCit}${attach ? `[${attach.media_type === 'application/pdf' ? 'PDF' : 'Foto'}] ` : ''}${t}`,
     };
     setMsgs((p) => [...p, temp]); stick.current = true; toBottom();
-    const anexo = attach; setText(''); setAttach(null); setSending(true); setErro(null);
+    const anexo = attach; setText(''); setAttach(null); setCitacao(null); setSending(true); setErro(null);
     setTroca({ pergunta: t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto') });
     try {
       const out = await call<{ reply: string; actions: Array<{ type: string } & Record<string, unknown>>; transcricao?: string | null }>('send', {
-        text: t,
+        text: `${prefixoCit}${t}`,
         topic: abaRef.current || undefined,
         ...(anexo ? { attachment: { base64: anexo.base64, media_type: anexo.media_type } } : {}),
         ...(audio ? { audio } : {}),
@@ -472,7 +518,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       // atrasava a resposta em ~1 s no celular. O merge() descarta os provisórios logo depois.
       setMsgs((p) => [...p, { id: -Date.now(), role: 'assistant', channel: 'app', created_at: new Date().toISOString(), content: out.reply, temp: true }]);
       // Barra pequena: a troca (pergunta + resposta). No áudio, a pergunta vira a transcrição.
-      setTroca({ pergunta: out.transcricao || t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto'), resposta: out.reply });
+      setTroca({ pergunta: out.transcricao || t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto'), resposta: semMarcadores(out.reply) });
       stick.current = true; toBottom();
       const antes = lastId.current;
       const h = await call<{ messages: Msg[] }>('history', { after_id: antes });
@@ -485,7 +531,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       if (out.actions.some((a) => a.type === 'payment')) carregarPagamentos();
     } catch (e) {
       setMsgs((p) => p.filter((m) => m.id !== temp.id));
-      if (!override && !audio) { setText(t); setAttach(anexo); }
+      if (!override && !audio) { setText(t); setAttach(anexo); setCitacao(cit); }
       setErro(e instanceof Error ? e.message : String(e));
     } finally { setSending(false); }
   };
@@ -592,6 +638,15 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const entrada = (
     <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
       {erro && <p className="text-xs text-red-600 px-1 pb-1.5">{erro}</p>}
+      {citacao && (
+        <div className="flex items-start gap-2 mb-2 px-2 py-1.5 rounded-xl bg-violet-50 border-l-2 border-violet-400">
+          <i className="ri-reply-line text-violet-500 text-sm mt-0.5" />
+          <span className="flex-1 text-xs text-zinc-600 line-clamp-2">{citacao.texto}</span>
+          <button onClick={() => setCitacao(null)} className="text-zinc-400 hover:text-red-500 cursor-pointer" aria-label="Cancelar resposta">
+            <i className="ri-close-line" />
+          </button>
+        </div>
+      )}
       {attach && (
         <div className="flex items-center gap-2 mb-2 px-2 py-1.5 rounded-xl bg-zinc-50 border border-zinc-200">
           {attach.preview ? <img src={attach.preview} alt="" className="w-10 h-10 rounded-lg object-cover" /> : <i className="ri-file-pdf-2-line text-2xl text-red-500" />}
@@ -740,7 +795,16 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             const u = limparUser(m.content);
             return (
               <div key={m.id} className="flex justify-end">
-                <div className={`max-w-[85%] rounded-2xl rounded-br-md px-3.5 py-2 text-sm whitespace-pre-wrap break-words bg-violet-600 text-white ${m.temp ? 'opacity-70' : ''}`}>
+                <div
+                  onContextMenu={(e) => { e.preventDefault(); abrirMenu(m, u.text); }}
+                  onTouchStart={() => pressStart(m, u.text)}
+                  onTouchEnd={pressEnd}
+                  onTouchMove={pressEnd}
+                  className={`max-w-[85%] rounded-2xl rounded-br-md px-3.5 py-2 text-sm whitespace-pre-wrap break-words bg-violet-600 text-white select-none ${m.temp ? 'opacity-70' : ''}`}
+                >
+                  {u.citado && (
+                    <span className="block mb-1 pl-2 border-l-2 border-violet-300 text-[11px] text-violet-100 line-clamp-2">{u.citado}</span>
+                  )}
                   {u.arquivo && <span className="flex items-center gap-1 text-violet-100 text-xs mb-0.5"><i className={u.arquivo === 'PDF' ? 'ri-file-pdf-2-line' : 'ri-image-line'} /> {u.arquivo}</span>}
                   {u.audio && <i className="ri-mic-line mr-1 text-violet-200" />}
                   {u.text}
@@ -756,12 +820,20 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           return (
             <div key={m.id} className="flex justify-start">
               <div className="max-w-[85%]">
-                <div className="rounded-2xl rounded-bl-md px-3.5 py-2 text-sm whitespace-pre-wrap break-words bg-white border border-zinc-200 text-zinc-800">
-                  {/* Marcadores que o brain grava no histórico para saber o que já mandou; o
-                      balão mostra a coisa em si (botões, cartão), não a anotação. */}
-                  {formatar(m.content.replace(/\n?\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado|Botão enviado)[^\n]*\]/g, '').trim())}
-                  <div className="text-[10px] mt-1 text-zinc-400">{hora(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</div>
-                </div>
+                {/* Sem texto sobrando (a resposta era só a ação), o balão não aparece: antes
+                    ficava um balão vazio com a hora. O botão embaixo já diz tudo. */}
+                {semMarcadores(m.content) && (
+                  <div
+                    onContextMenu={(e) => { e.preventDefault(); abrirMenu(m, semMarcadores(m.content)); }}
+                    onTouchStart={() => pressStart(m, semMarcadores(m.content))}
+                    onTouchEnd={pressEnd}
+                    onTouchMove={pressEnd}
+                    className="rounded-2xl rounded-bl-md px-3.5 py-2 text-sm whitespace-pre-wrap break-words bg-white border border-zinc-200 text-zinc-800 select-none"
+                  >
+                    {formatar(semMarcadores(m.content))}
+                    <div className="text-[10px] mt-1 text-zinc-400">{hora(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</div>
+                  </div>
+                )}
                 {/* Botão que LEVA à tela: a resposta deixa de terminar em "vá em Financeiro › ..."
                     No flutuante recolhe para a barra, senão o painel cobriria a tela que abriu. */}
                 {(links[m.id] ?? []).map((lk, i) => (
@@ -808,6 +880,30 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       )}
 
       {vista === 'conversa' && entrada}
+
+      {/* Ações da mensagem: responder e copiar (toque longo ou botão direito) */}
+      {menuMsg && (
+        <div className="absolute inset-0 z-10 flex items-end sm:items-center justify-center bg-black/30 p-3" onClick={() => setMenuMsg(null)}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-xs rounded-2xl bg-white p-2 shadow-xl">
+            <p className="px-3 py-2 text-xs text-zinc-400 line-clamp-2">{menuMsg.texto}</p>
+            <button
+              onClick={() => { setCitacao({ texto: menuMsg.texto }); setMenuMsg(null); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer"
+            >
+              <i className="ri-reply-line text-violet-600" /> Responder
+            </button>
+            <button
+              onClick={() => copiarMsg(menuMsg.texto)}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer"
+            >
+              <i className="ri-file-copy-line text-violet-600" /> Copiar
+            </button>
+          </div>
+        </div>
+      )}
+      {copiado && (
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-3 py-1.5 rounded-full bg-zinc-900 text-white text-xs font-semibold">Copiado</div>
+      )}
 
       {/* PIN do pagamento — não passa pelo modelo nem fica no histórico */}
       {pinFor && (

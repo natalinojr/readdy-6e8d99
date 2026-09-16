@@ -253,7 +253,9 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
           <i className="ri-refresh-line text-lg" />
         </button>
 
-        <span className="text-sm font-semibold text-zinc-700 tabular-nums mr-2">{formattedTime}</span>
+        {/* Relógio só no desktop (2026-09-16): no celular a hora já está na barra do sistema, dois
+            dedos acima — repetir aqui só roubava espaço do cabeçalho. */}
+        <span className="hidden md:inline text-sm font-semibold text-zinc-700 tabular-nums mr-2">{formattedTime}</span>
 
         <CentralNotificacoes perfil={(user?.perfil as PerfilAlvo) ?? 'caixa'} />
 

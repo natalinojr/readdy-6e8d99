@@ -2281,3 +2281,32 @@ problemas que teste de componente não pegaria:
    para saber o que já mandou; o chat limpava só os marcadores antigos (enquete, localização,
    contato, pagamento) e o novo apareceu na tela do dono. Ao criar um marcador de histórico, incluir
    no `replace` do balão — a lista está em `AssistenteChat.tsx`.
+
+### O modelo imita os marcadores do histórico (2026-09-16)
+
+Depois que `abrir_tela` entrou no ar, o dono viu **balão vazio** e o texto `[Botão enviado: "…" →
+/rota]` aparecendo na barra pequena. Causa: o brain grava esse marcador no histórico para saber o
+que já mandou, e o modelo, vendo o padrão nas mensagens anteriores, passou a **escrever o marcador
+como se fosse parte da resposta**. O de verdade era acrescentado embaixo → marcador duplicado,
+botão duplicado e, quando o texto era SÓ o marcador imitado, balão vazio (o chat limpa os dois).
+
+Três defesas, todas necessárias:
+1. **Brain limpa a resposta** (`reply.replace(/^\s*\[(Botão|Enquete|…) enviad[oa]…\]$/gm, '')`) antes
+   de gravar. Regra no prompt não basta: o exemplo no histórico é mais forte que a instrução.
+2. **Brain deduplica** `outbound` do tipo `abrir` por rota+label (o modelo chama a ferramenta 2×).
+3. **Front tem uma função só** (`semMarcadores`) usada no balão E na prévia da barra, e não desenha
+   balão quando sobra texto vazio — a resposta pode ser só a ação.
+
+**Critério:** marcador interno gravado no histórico vaza por dois caminhos (o modelo copia; a tela
+esquece de limpar). Ao criar um, trate os dois.
+
+### "Voltar" do Android com overlays aninhados (2026-09-16)
+
+Com o chat aberto, o voltar nativo SAÍA DO APP: o painel é overlay e não mexia no histórico. O
+padrão já existia em Tarefas (`useVoltarFecha`, pushState + popstate) e virou
+`src/lib/voltarAndroid.ts` (Tarefas reexporta).
+
+**Pegadinha das camadas:** `popstate` é evento do window, então painel e conversa reagiam ao MESMO
+voltar e fechavam juntos. O helper agora mantém uma **pilha de camadas abertas** e só a do topo
+responde — o voltar desfaz uma por vez (conversa → painel → sai da tela). Um `history.back()` em
+teste com dois overlays abertos pega isso.
