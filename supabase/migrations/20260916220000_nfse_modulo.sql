@@ -293,3 +293,11 @@ grant execute on function public.fn_nfse_membros(uuid) to authenticated;
 -- Modelo do nome dos arquivos (PDF/XML) da nota, por empresa. Vazio = padrão do sistema.
 alter table public.nfse_empresas add column if not exists nome_arquivo_modelo text;
 grant select (nome_arquivo_modelo) on public.nfse_empresas to authenticated;
+
+-- id_dps não carrega o ambiente: a DPS nº 1 de produção tem o mesmo Id da nº 1 de testes.
+alter table public.nfse_notas drop constraint if exists nfse_notas_id_dps_key;
+alter table public.nfse_notas add constraint nfse_notas_ambiente_id_dps_key unique (ambiente, id_dps);
+
+-- Dados bancários da empresa (opcionalmente incluídos nas informações complementares da nota).
+alter table public.nfse_empresas add column if not exists dados_bancarios text;
+grant select (dados_bancarios) on public.nfse_empresas to authenticated;

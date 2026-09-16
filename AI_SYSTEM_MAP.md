@@ -2487,3 +2487,7 @@ sugestão aponta para outro débito, solta a sugestão errada e reaponta antes d
 interna `desfazer_baixa {statement_id}` (mesmo `undo` da tela, com estorno). Caso real desfeito e
 refeito: conta da Joziane agora paga em 16/09 com o débito de 16/09; o de 11/09 voltou a pendente.
 **Critério:** pagamento feito pelo sistema identifica o extrato pelo E2E, nunca por nome + valor.
+- **Confirmação no grupo (mesmo dia, pedido do dono):** quem responde os dias recebe resposta citando a
+  mensagem dele — "Anotado ✅ Marcelle e Joziane: 15/09. Obrigado!". Texto montado pelo CÓDIGO
+  (`confirmarDiasNoGrupo`, webhook) a partir das diárias GRAVADAS dos pagamentos que estavam pendentes;
+  sem registro, não confirma nada. O modelo continua sem escrever confirmação no grupo.

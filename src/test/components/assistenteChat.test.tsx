@@ -555,6 +555,16 @@ describe('AssistenteChat — botão que leva à tela', () => {
     expect(await screen.findByText('TELA CONTRATACAO')).toBeInTheDocument();
   });
 
+  it('gatilho do sistema vindo de grupo vira linha curta, não balão "meu" com ids', async () => {
+    add('user', '[Sistema] Mensagem no grupo "Financeiro loja - EP MALL", que tem freelancer aguardando os dias trabalhados.\nAguardando os dias:\n- Marcelle: pagamento_id 972b1d27-cf4d, R$ 100.00, pedido 7\n<mensagem_do_grupo grupo="Financeiro loja - EP MALL" autor="Thati" quando="16/09/2026, 13:44:54">\nReferente ao dia 15/09\n</mensagem_do_grupo>\nSiga as regras de DIAS DE FREELANCER PELO GRUPO.');
+    add('assistant', 'Registrei o dia 15/09 pra Marcelle e Joziane, R$ 100,00 cada.');
+    renderChat();
+    await entrarNaConversa(userEvent.setup());
+    expect(await screen.findByText(/Thati no grupo Financeiro loja - EP MALL: Referente ao dia 15\/09/)).toBeInTheDocument();
+    expect(screen.queryByText(/pagamento_id/)).toBeNull();
+    expect(screen.queryByText(/\[Sistema\]/)).toBeNull();
+  });
+
   it('marcador com rota de fora (//site) não vira botão', async () => {
     add('assistant', 'oi\n[Botão enviado: "Golpe" → //malicioso.com]');
     renderChat();

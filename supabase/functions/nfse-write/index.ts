@@ -133,6 +133,14 @@ const campoXml = (xml: string | null | undefined, nome: string) => {
   return m ? m[1] : null;
 };
 
+// Inscrição municipal como está no CNC: só números (a prefeitura mostra "07 03 688.681-1", o CNC guarda
+// "07036886811"; formatada, a Sefin não reconhece e devolve E0116). Sem nenhum dígito, vai como digitada.
+const inscMun = (v: string | null | undefined) => {
+  if (!v || !String(v).trim()) return null;
+  const d = soDigitos(v);
+  return (d || limpo(String(v), 15)).slice(0, 15);
+};
+
 // ─── DPS ─────────────────────────────────────────────────────────────────────
 function montarDps(emp: any, nota: any, tomador: any | null) {
   const tpInsc = '2'; // CNPJ
@@ -143,12 +151,12 @@ function montarDps(emp: any, nota: any, tomador: any | null) {
     return `<end><endNac>${tag('cMun', p.cod_municipio)}${tag('CEP', soDigitos(p.cep))}</endNac>${tag('xLgr', limpo(p.logradouro, 255))}${tag('nro', limpo(p.numero, 60))}${tag('xCpl', p.complemento ? limpo(p.complemento, 156) : null)}${tag('xBairro', limpo(p.bairro, 60))}</end>`;
   };
 
-  const prest = `<prest>${tag('CNPJ', emp.cnpj)}${tag('IM', emp.inscricao_municipal ? limpo(emp.inscricao_municipal, 15) : null)}${tag('fone', soDigitos(emp.fone).length >= 6 ? soDigitos(emp.fone) : null)}${tag('email', emp.email ? limpo(emp.email, 80) : null)}<regTrib>${tag('opSimpNac', emp.op_simp_nac)}${emp.op_simp_nac === 3 ? tag('regApTribSN', emp.reg_ap_trib_sn ?? 1) : ''}${tag('regEspTrib', emp.reg_esp_trib ?? 0)}</regTrib></prest>`;
+  const prest = `<prest>${tag('CNPJ', emp.cnpj)}${tag('IM', inscMun(emp.inscricao_municipal))}${tag('fone', soDigitos(emp.fone).length >= 6 ? soDigitos(emp.fone) : null)}${tag('email', emp.email ? limpo(emp.email, 80) : null)}<regTrib>${tag('opSimpNac', emp.op_simp_nac)}${emp.op_simp_nac === 3 ? tag('regApTribSN', emp.reg_ap_trib_sn ?? 1) : ''}${tag('regEspTrib', emp.reg_esp_trib ?? 0)}</regTrib></prest>`;
 
   let toma = '';
   if (tomador) {
     const doc = soDigitos(tomador.documento);
-    toma = `<toma>${doc.length === 14 ? tag('CNPJ', doc) : tag('CPF', doc)}${tag('IM', tomador.inscricao_municipal ? limpo(tomador.inscricao_municipal, 15) : null)}${tag('xNome', limpo(tomador.nome, 300))}${endereco(tomador)}${tag('fone', soDigitos(tomador.fone).length >= 6 ? soDigitos(tomador.fone) : null)}${tag('email', tomador.email ? limpo(tomador.email, 80) : null)}</toma>`;
+    toma = `<toma>${doc.length === 14 ? tag('CNPJ', doc) : tag('CPF', doc)}${tag('IM', inscMun(tomador.inscricao_municipal))}${tag('xNome', limpo(tomador.nome, 300))}${endereco(tomador)}${tag('fone', soDigitos(tomador.fone).length >= 6 ? soDigitos(tomador.fone) : null)}${tag('email', tomador.email ? limpo(tomador.email, 80) : null)}</toma>`;
   }
 
   const serv = `<serv><locPrest>${tag('cLocPrestacao', nota.cod_municipio_prestacao)}</locPrest><cServ>${tag('cTribNac', nota.c_trib_nac)}${tag('cTribMun', nota.c_trib_mun)}${tag('xDescServ', limpo(nota.descricao, 2000))}${tag('cNBS', nota.c_nbs)}</cServ>${nota.info_complementar ? `<infoCompl>${tag('xInfComp', limpo(nota.info_complementar, 2000))}</infoCompl>` : ''}</serv>`;
@@ -261,6 +269,7 @@ Deno.serve(async (req: Request) => {
         serie: Number(d.serie ?? 1),
         aliquota_simples: d.aliquota_simples === '' || d.aliquota_simples == null ? null : Number(d.aliquota_simples),
         nome_arquivo_modelo: texto(d.nome_arquivo_modelo)?.slice(0, 200) ?? null,
+        dados_bancarios: texto(d.dados_bancarios)?.slice(0, 500) ?? null,
         updated_at: new Date().toISOString(),
       };
       if (!cnpjValido(row.cnpj as string)) return fail('CNPJ inválido');

@@ -102,7 +102,23 @@ const ungz64 = (b64) => {
 function chamar(ambiente, metodo, caminho, corpo, tls) {
   const url = new URL(BASES[ambiente] + caminho);
   const payload = corpo ? Buffer.from(JSON.stringify(corpo), 'utf8') : null;
+  const inicio = Date.now();
   return new Promise((resolve) => {
+    let fim = false;
+    const terminar = (r) => {
+      if (fim) return;
+      fim = true;
+      clearTimeout(timer);
+      r.ms = Date.now() - inicio;
+      console.log(JSON.stringify({ metodo: metodo, caminho: caminho.replace(/\d{20,}/g, '…'), http: r.http, ms: r.ms, erro_rede: r.erro_rede }));
+      resolve(r);
+    };
+    // Timer próprio: req.setTimeout reage a qualquer timeout do socket (inclusive de camadas do runtime)
+    // e cortava a chamada em ~6 s na Vercel.
+    const timer = setTimeout(() => {
+      terminar({ http: 0, json: null, erro_rede: `Tempo esgotado (${Math.round(TIMEOUT_MS / 1000)} s) falando com a Sefin Nacional` });
+      req.destroy();
+    }, TIMEOUT_MS);
     const req = https.request(url, {
       method: metodo,
       key: tls.keyPem,
@@ -118,11 +134,11 @@ function chamar(ambiente, metodo, caminho, corpo, tls) {
         const texto = Buffer.concat(partes).toString('utf8');
         let json = null;
         try { json = texto ? JSON.parse(texto) : null; } catch { /* HTML de erro do IIS */ }
-        resolve({ http: res.statusCode, json, texto: json ? undefined : texto.slice(0, 2000) });
+        terminar({ http: res.statusCode, json, texto: json ? undefined : texto.slice(0, 2000) });
       });
+      res.on('error', (e) => terminar({ http: 0, json: null, erro_rede: `${e.code || ''} ${e.message || e}`.trim() }));
     });
-    req.setTimeout(TIMEOUT_MS, () => req.destroy(new Error('Tempo esgotado falando com a Sefin Nacional')));
-    req.on('error', (e) => resolve({ http: 0, json: null, erro_rede: String(e.message || e) }));
+    req.on('error', (e) => terminar({ http: 0, json: null, erro_rede: `${e.code || ''} ${e.message || e}`.trim() }));
     if (payload) req.write(payload);
     req.end();
   });

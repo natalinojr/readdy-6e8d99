@@ -31,9 +31,10 @@ export interface Empresa {
   cert_validade: string | null;
   cert_atualizado_em: string | null;
   nome_arquivo_modelo: string | null;
+  dados_bancarios: string | null;
 }
 // nfse_empresas não libera select(*) (ids do Vault ficam de fora): sempre listar as colunas.
-export const EMPRESA_COLS = 'id, cnpj, razao_social, nome_fantasia, inscricao_municipal, cod_municipio, municipio_nome, uf, cep, logradouro, numero, complemento, bairro, fone, email, op_simp_nac, reg_ap_trib_sn, reg_esp_trib, ambiente, serie, proximo_dps_producao, proximo_dps_testes, aliquota_simples, cert_titular, cert_documento, cert_validade, cert_atualizado_em, nome_arquivo_modelo';
+export const EMPRESA_COLS = 'id, cnpj, razao_social, nome_fantasia, inscricao_municipal, cod_municipio, municipio_nome, uf, cep, logradouro, numero, complemento, bairro, fone, email, op_simp_nac, reg_ap_trib_sn, reg_esp_trib, ambiente, serie, proximo_dps_producao, proximo_dps_testes, aliquota_simples, cert_titular, cert_documento, cert_validade, cert_atualizado_em, nome_arquivo_modelo, dados_bancarios';
 
 export interface Tomador {
   id: string;

@@ -10,13 +10,13 @@ type Form = {
   cnpj: string; razao_social: string; nome_fantasia: string; inscricao_municipal: string;
   cep: string; logradouro: string; numero: string; complemento: string; bairro: string;
   municipio_nome: string; uf: string; cod_municipio: string; fone: string; email: string;
-  op_simp_nac: number; reg_ap_trib_sn: number; reg_esp_trib: number; ambiente: number; serie: number; aliquota_simples: string; nome_arquivo_modelo: string;
+  op_simp_nac: number; reg_ap_trib_sn: number; reg_esp_trib: number; ambiente: number; serie: number; aliquota_simples: string; nome_arquivo_modelo: string; dados_bancarios: string;
 };
 
 const vazio: Form = {
   cnpj: '', razao_social: '', nome_fantasia: '', inscricao_municipal: '', cep: '', logradouro: '', numero: '', complemento: '',
   bairro: '', municipio_nome: '', uf: '', cod_municipio: '', fone: '', email: '',
-  op_simp_nac: 3, reg_ap_trib_sn: 1, reg_esp_trib: 0, ambiente: 2, serie: 1, aliquota_simples: '', nome_arquivo_modelo: NOME_ARQUIVO_PADRAO,
+  op_simp_nac: 3, reg_ap_trib_sn: 1, reg_esp_trib: 0, ambiente: 2, serie: 1, aliquota_simples: '', nome_arquivo_modelo: NOME_ARQUIVO_PADRAO, dados_bancarios: '',
 };
 
 const deEmpresa = (e: Empresa): Form => ({
@@ -26,6 +26,7 @@ const deEmpresa = (e: Empresa): Form => ({
   op_simp_nac: e.op_simp_nac, reg_ap_trib_sn: e.reg_ap_trib_sn ?? 1, reg_esp_trib: e.reg_esp_trib, ambiente: e.ambiente, serie: e.serie,
   aliquota_simples: e.aliquota_simples != null ? String(e.aliquota_simples) : '',
   nome_arquivo_modelo: e.nome_arquivo_modelo || NOME_ARQUIVO_PADRAO,
+  dados_bancarios: e.dados_bancarios ?? '',
 });
 
 function Secao({ titulo, desc, children }: { titulo: string; desc?: string; children: React.ReactNode }) {
@@ -198,6 +199,12 @@ export default function EmpresaTab({ empresa, souAdmin, onSalva }: Props) {
             <input className={inputCls} type="number" min={1} max={49999} value={f.serie} disabled={!editavel} onChange={(e) => set('serie', Number(e.target.value))} />
           </div>
         </div>
+      </Secao>
+
+      <Secao titulo="Dados bancários" desc="Texto que pode ser incluído nas informações complementares da nota, com um clique na hora de emitir.">
+        <textarea className={`${inputCls} h-24 py-2`} maxLength={500} value={f.dados_bancarios} disabled={!editavel}
+          onChange={(e) => set('dados_bancarios', e.target.value)}
+          placeholder={'ex.: Banco Inter (077) · Ag. 0001 · C/C 12345678-9 · PIX: 19.831.665/0001-75'} />
       </Secao>
 
       <Secao titulo="Nome dos arquivos" desc="Nome sugerido ao salvar o PDF (DANFSe) e ao baixar o XML de cada nota.">

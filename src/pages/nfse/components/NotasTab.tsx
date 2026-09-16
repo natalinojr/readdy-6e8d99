@@ -52,6 +52,16 @@ function EmitirModal({ empresa, tomadores, servicos, onClose, onEmitida, onTomad
   const [retido, setRetido] = useState(false);
   const [competencia, setCompetencia] = useState(hojeBR());
   const [info, setInfo] = useState('');
+  // Dados bancários salvos na empresa: liga/desliga por nota; lembra a última escolha neste navegador.
+  const temBanco = Boolean(empresa.dados_bancarios?.trim());
+  const [incluirBanco, setIncluirBanco] = useState(() => {
+    try { return localStorage.getItem('nfse:incluir-banco') !== '0'; } catch { return true; }
+  });
+  const alternarBanco = (v: boolean) => {
+    setIncluirBanco(v);
+    try { localStorage.setItem('nfse:incluir-banco', v ? '1' : '0'); } catch { /* sem storage */ }
+  };
+  const infoFinal = [info.trim(), temBanco && incluirBanco ? empresa.dados_bancarios!.trim() : ''].filter(Boolean).join(' | ');
   const [enviando, setEnviando] = useState(false);
   const [resultado, setResultado] = useState<{ status: StatusNota; erros?: ErroSefin[]; error?: string; nota_id?: string } | null>(null);
   const [novoTomador, setNovoTomador] = useState(false);
@@ -97,7 +107,7 @@ function EmitirModal({ empresa, tomadores, servicos, onClose, onEmitida, onTomad
       empresa_id: empresa.id, servico_id: servico.id, tomador_id: tomador?.id ?? null,
       c_trib_nac: servico.c_trib_nac, c_trib_mun: servico.c_trib_mun, c_nbs: servico.c_nbs,
       descricao, valor_servico: v, desconto_incondicionado: desconto ? Number(desconto) : null,
-      aliquota_iss: aliquota === '' ? null : Number(aliquota), iss_retido: retido, competencia, info_complementar: info,
+      aliquota_iss: aliquota === '' ? null : Number(aliquota), iss_retido: retido, competencia, info_complementar: infoFinal,
     });
     setEnviando(false);
     if (r.success && r.nota_id) { onEmitida(r.nota_id); return; }
@@ -201,7 +211,17 @@ function EmitirModal({ empresa, tomadores, servicos, onClose, onEmitida, onTomad
           </div>
           <div className="md:col-span-6">
             <label className={labelCls}>Informações complementares <span className="font-normal text-zinc-400">opcional</span></label>
-            <textarea className={`${inputCls} h-16 py-2`} maxLength={2000} value={info} onChange={(e) => setInfo(e.target.value)} placeholder="ex.: dados bancários, número do contrato, ART" />
+            <textarea className={`${inputCls} h-16 py-2`} maxLength={1400} value={info} onChange={(e) => setInfo(e.target.value)} placeholder="ex.: número do contrato, ART" />
+            {temBanco ? (
+              <div className="mt-2 rounded-xl border border-zinc-200 px-3 py-2">
+                <label className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer">
+                  <input type="checkbox" checked={incluirBanco} onChange={(e) => alternarBanco(e.target.checked)} /> Incluir dados bancários
+                </label>
+                {incluirBanco && <p className="text-xs text-zinc-500 mt-1 whitespace-pre-wrap">{empresa.dados_bancarios}</p>}
+              </div>
+            ) : (
+              <p className="text-[11px] text-zinc-400 mt-1">Cadastre os dados bancários na aba Empresa para incluir com um clique.</p>
+            )}
           </div>
         </div>
       )}
@@ -263,7 +283,13 @@ function NotaDetalhe({ notaId, empresa, souAdmin, onClose, onMudou }: { notaId: 
             className="px-3 h-10 rounded-xl border border-zinc-200 text-xs font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer">XML</button>
         )}
         {(nota.status === 'autorizada' || nota.status === 'cancelada') && (
-          <button onClick={() => { if (!abrirDanfse(nota, empresa)) avisar('O navegador bloqueou a janela. Libere pop-ups para este site.'); }}
+          <button onClick={() => {
+              try {
+                if (!abrirDanfse(nota, empresa)) avisar('O navegador bloqueou a janela. Libere pop-ups para este site.');
+              } catch (e) {
+                avisar(`Não foi possível gerar o DANFSe: ${(e as Error).message}`);
+              }
+            }}
             className="px-3 h-10 rounded-xl bg-zinc-900 hover:bg-zinc-700 text-white text-xs font-bold cursor-pointer">DANFSe / PDF</button>
         )}
       </>}>

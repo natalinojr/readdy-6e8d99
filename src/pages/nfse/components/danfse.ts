@@ -1,10 +1,21 @@
 // DANFSe (documento auxiliar da NFS-e) gerado pelo próprio sistema: a API oficial do DANFSe foi
 // encerrada em 01/07/2026 (NT 008/2026). Abre uma janela pronta para imprimir / salvar em PDF.
 // Os dados vêm do XML autorizado (fonte da verdade); o que faltar cai nos campos da nota.
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import QRCode from 'react-qr-code';
+import QRCodeImpl from 'qr.js/lib/QRCode';
+import ErrorCorrectLevel from 'qr.js/lib/ErrorCorrectLevel';
 import { type Empresa, type Nota, fmtBRL, fmtChave, fmtData, fmtDataHora, fmtDoc, nomeArquivoNota } from '../api';
+
+// QR Code em SVG direto do qr.js (react-dom/server + react-qr-code quebrava no bundle do navegador).
+function qrSvg(texto: string, tamanho = 96) {
+  const qr = new QRCodeImpl(-1, ErrorCorrectLevel.M);
+  qr.addData(texto);
+  qr.make();
+  const mods: boolean[][] = qr.modules;
+  const n = mods.length;
+  let d = '';
+  mods.forEach((linha, y) => linha.forEach((on, x) => { if (on) d += `M${x} ${y}h1v1h-1z`; }));
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${tamanho}" height="${tamanho}" viewBox="-2 -2 ${n + 4} ${n + 4}" shape-rendering="crispEdges"><rect x="-2" y="-2" width="${n + 4}" height="${n + 4}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
 
 const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -38,7 +49,7 @@ export function abrirDanfse(nota: Nota, empresa: Empresa) {
   const tom = nota.tomador;
   const tomEnd = [g('toma', 'xLgr'), g('toma', 'nro'), g('toma', 'xBairro')].filter(Boolean).join(', ');
   const consulta = nota.chave_acesso ? `https://www.nfse.gov.br/ConsultaPublica/?tpc=1&chave=${nota.chave_acesso}` : '';
-  const qr = consulta ? renderToStaticMarkup(createElement(QRCode, { value: consulta, size: 96 })) : '';
+  const qr = consulta ? qrSvg(consulta) : '';
   const cancelada = nota.status === 'cancelada';
   const testes = nota.ambiente === 2;
 

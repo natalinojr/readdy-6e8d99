@@ -380,9 +380,42 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
 // 15 e 16") não tem cara de pedido de pagamento e nunca chegava ao assistente. Enquanto o grupo
 // tiver diária aguardando os dias, mensagem com cara de data vai para o brain (modo
 // 'dias_freelancer'). Filtro barato antes, para não chamar o modelo a cada conversa do grupo.
+// "Anotado ✅ Marcelle e Joziane: 15/09." — só com os pagamentos que ESTAVAM pendentes e agora têm dia.
+// deno-lint-ignore no-explicit-any
+async function confirmarDiasNoGrupo(admin: SupabaseClient, g: any, respostaId: string, paymentIds: string[]) {
+  const { data } = await admin.from('hr_freelancer_shifts').select('work_date, hr_freelancers(name)')
+    .in('payment_id', paymentIds).eq('status', 'registrada');
+  if (!data?.length) return; // nada foi registrado: não confirma nada
+  const porPessoa = new Map<string, Set<string>>();
+  for (const s of data) {
+    // deno-lint-ignore no-explicit-any
+    const nome = String((s as any).hr_freelancers?.name ?? 'freelancer').split(/\s+/)[0];
+    const dia = String(s.work_date ?? '');
+    if (!dia) continue;
+    const [, mm, dd] = dia.split('-');
+    porPessoa.set(nome, (porPessoa.get(nome) ?? new Set()).add(`${dd}/${mm}`));
+  }
+  // Agrupa quem trabalhou nos mesmos dias: "Marcelle e Joziane: 15/09".
+  const grupos = new Map<string, string[]>();
+  for (const [nome, dias] of porPessoa) {
+    const k = [...dias].sort().join(', ');
+    grupos.set(k, [...(grupos.get(k) ?? []), nome]);
+  }
+  const juntar = (n: string[]) => (n.length > 1 ? `${n.slice(0, -1).join(', ')} e ${n[n.length - 1]}` : n[0]);
+  const linhas = [...grupos].map(([dias, nomes]) => `${juntar(nomes)}: ${dias}`);
+  const texto = `Anotado ✅ ${linhas.join(' · ')}. Obrigado!`;
+  try {
+    const r = await fetch(`${supabaseUrl}/functions/v1/assistente-webhook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({ action: 'group_send', group_jid: g.group_jid, quoted_message_id: respostaId, text: texto }),
+    });
+    if (!r.ok) log('WARN', 'confirmar dias no grupo', { status: r.status });
+  } catch (e) { log('WARN', 'confirmar dias no grupo', { error: errMsg(e) }); }
+}
+
 const DIA_HINT = /\b(dia|dias|ontem|hoje|anteontem|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|fim de semana|\d{1,2}\s*\/\s*\d{1,2}|\d{1,2}\s+e\s+\d{1,2})\b/i;
 // deno-lint-ignore no-explicit-any
-async function triarDiasFreelancer(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { sender: string | null; content: string; sentAt: string }): Promise<boolean> {
+async function triarDiasFreelancer(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; sentAt: string }): Promise<boolean> {
   if (!DIA_HINT.test(msg.content)) return false;
   const ownerChat = ownerChatOf(cfg);
   if (!ownerChat) return false;
@@ -416,6 +449,9 @@ async function triarDiasFreelancer(admin: SupabaseClient, cfg: Record<string, an
     const reply = String(out?.reply ?? '').trim();
     if (!reply || reply === 'NO_REPLY') return false;
     await avisarDono(admin, ownerChat, reply, Array.isArray(out?.actions) ? out.actions : []);
+    // Responde no grupo a mensagem com os dias (pedido do dono, 2026-09-16). Texto montado pelo CÓDIGO
+    // a partir do que foi GRAVADO — nunca confirma o que não registrou, e o modelo não escreve aqui.
+    if (msg.messageId) await confirmarDiasNoGrupo(admin, g, msg.messageId, pend.map((p) => String(p.payment_id)));
     log('INFO', 'dias de freelancer pelo grupo', { group: g.name });
     return true;
   } catch (e) {
@@ -790,7 +826,7 @@ async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], 
   if (messageId && !gravada?.length) return;
 
   // Resposta com os dias de um freelancer que ficou pendente? Tratada, não é pedido novo.
-  if (await triarDiasFreelancer(admin, cfg, g, { sender, content, sentAt })) return;
+  if (await triarDiasFreelancer(admin, cfg, g, { messageId, sender, content, sentAt })) return;
 
   // Pedido de pagamento? A leitura da mídia manda quando existe; senão, o texto.
   const pedido = extracted?.pagamento

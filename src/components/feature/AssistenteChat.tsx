@@ -117,6 +117,22 @@ function limparUser(content: string): { text: string; audio: boolean; arquivo: s
   return { text: t.replace(/^\[Pelo ERPOS[^\]]*\]\n?/, '').trim(), audio, arquivo, citado };
 }
 
+// "[Sistema] Mensagem no grupo … <mensagem_do_grupo grupo=… autor=…>texto</mensagem_do_grupo> …"
+// → "Thati no grupo Financeiro loja - EP MALL: Referente ao dia 15/09". Null = não é gatilho do sistema.
+function resumoSistema(content: string): string | null {
+  const t = content.replace(/^\[Pelo ERPOS[^\]]*\]\n?/, '');
+  if (!t.startsWith('[Sistema]')) return null;
+  const tag = t.match(/<mensagem_do_grupo([^>]*)>([\s\S]*?)<\/mensagem_do_grupo>/);
+  if (tag) {
+    const attr = (k: string) => tag[1].match(new RegExp(`${k}="([^"]*)"`))?.[1]?.trim() || null;
+    const autor = attr('autor');
+    const grupo = attr('grupo');
+    const texto = tag[2].replace(/\s+/g, ' ').trim().slice(0, 140);
+    return `${autor ?? 'Alguém'}${grupo ? ` no grupo ${grupo}` : ''}${texto ? `: ${texto}` : ''}`;
+  }
+  return t.split('\n')[0].replace(/^\[Sistema\]\s*/, '').slice(0, 160);
+}
+
 // Marcadores que o brain grava no histórico para saber o que já mandou ("[Botão enviado: …]").
 // São anotação do sistema: o balão mostra a coisa em si (o botão, o cartão), não a anotação.
 // O modelo às vezes IMITA o marcador na própria resposta (visto em 2026-09-16), então a limpeza
@@ -772,6 +788,17 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         {loaded && msgs.length === 0 && <p className="text-sm text-zinc-400 text-center py-10">Pode falar: texto, áudio, foto ou PDF.</p>}
         {msgs.map((m) => {
           if (m.role === 'user') {
+            // Gatilho do sistema (triagem de grupo, dias de freelancer, entrada de compra) é gravado
+            // como mensagem "do dono" para o assistente ter contexto — mas não foi você que escreveu.
+            // Vira uma linha curta com quem mandou, onde e o quê (visto no celular em 2026-09-16).
+            const sis = resumoSistema(m.content);
+            if (sis) {
+              return (
+                <p key={m.id} className="text-center text-[11px] text-zinc-500 px-6">
+                  <i className="ri-inbox-archive-line" /> {sis} · {hora(m.created_at)}
+                </p>
+              );
+            }
             const u = limparUser(m.content);
             return (
               <div key={m.id} className="flex justify-end">
