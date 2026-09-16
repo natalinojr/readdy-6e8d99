@@ -786,6 +786,9 @@ async function tryHiringIntake(
   }
   if (out.duplicate) linhas.push(`⚠️ Parece repetido: já existe ${out.duplicate} com o mesmo telefone/e-mail.`);
   await sendText(chatId, linhas.join('\n'));
+  // Também no histórico, na aba Currículos do chat do ERPOS (2026-09-16).
+  await admin.from('asst_messages').insert({ channel: 'cron', chat_id: chatKey, role: 'assistant', content: linhas.join('\n'), topic: 'curriculos' })
+    .then(({ error }) => { if (error) log('WARN', 'currículo não gravado no histórico', { error: error.message }); });
   if (messageId) await react(chatId, messageId, '👍');
   log('INFO', 'currículo salvo', { chat: chatKey, candidate: c.id ?? null, job: st.job_id ?? null, score: out.match?.score ?? null });
   return true;
@@ -957,6 +960,14 @@ async function deliver(body: any) {
   const text = String(body.text ?? '').trim();
   if (text && text !== 'NO_REPLY') await sendText(chatId, text);
   await runActions(admin, chatId, chatKey, body.actions);
+  // `save`: avisos que NÃO vieram do brain (canal público, currículo pelo WhatsApp) não entravam em
+  // asst_messages e por isso não apareciam no chat do ERPOS — a aba Currículos ficava vazia
+  // (2026-09-16). Quem vem do brain já é gravado lá e não passa por aqui.
+  if (body.save && text && text !== 'NO_REPLY') {
+    const topic = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'].includes(String(body.topic)) ? String(body.topic) : 'avisos';
+    await admin.from('asst_messages').insert({ channel: 'cron', chat_id: chatKey, role: 'assistant', content: text, topic })
+      .then(({ error }) => { if (error) log('WARN', 'aviso não gravado', { error: error.message }); });
+  }
   // deno-lint-ignore no-explicit-any
   const temPagamento = (Array.isArray(body.actions) ? body.actions : []).some((a: any) => a?.type === 'payment');
   const corpo = temPagamento ? `💸 Pagamento para aprovar${text && text !== 'NO_REPLY' ? ` — ${text}` : ''}` : (text === 'NO_REPLY' ? '' : text);

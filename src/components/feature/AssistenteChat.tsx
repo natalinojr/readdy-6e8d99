@@ -213,6 +213,20 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const open = modo !== 'fab';
   const setOpen = (v: boolean) => setModo(v ? 'full' : 'fab');
   const arrasteY = useRef(0);
+  // Abertura da conversa: sobe deslizando (translate-y) em vez de aparecer de uma vez, e já entra
+  // no fim do histórico — pedido do dono (2026-09-16).
+  const [subindo, setSubindo] = useState(false);
+  useEffect(() => {
+    if (modo !== 'full') { setSubindo(false); return; }
+    setSubindo(false); // começa embaixo…
+    const r = requestAnimationFrame(() => {
+      setSubindo(true); // …e sobe no quadro seguinte (transição CSS)
+      stick.current = true;
+      toBottom(); // abre sempre no fim da conversa
+    });
+    return () => cancelAnimationFrame(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo]);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -463,9 +477,6 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // tomava a tela (2026-09-16).
   const EM_ABERTO = ['draft', 'awaiting_pin', 'sending', 'sent', 'pending_approval', 'approved', 'scheduled'];
   const pagamentosVisiveis = pays.filter((p) => EM_ABERTO.includes(p.status));
-  // Última resposta em texto (sem as linhas de sistema): aparece na barra pequena.
-  const ultimaResposta = [...msgs].reverse().find((m) => m.role === 'assistant' && !/^\[/.test(m.content))?.content;
-
   // Caixa de digitação: a MESMA na barra pequena e na conversa inteira.
   const entrada = (
     <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
@@ -515,7 +526,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   const painel = (
     <div className={variant === 'floating'
-      ? 'fixed z-[60] inset-0 sm:inset-auto sm:bottom-5 sm:right-5 sm:w-[420px] sm:h-[min(720px,calc(100vh-40px))] flex flex-col bg-white sm:rounded-2xl sm:border sm:border-zinc-200 shadow-2xl overflow-hidden'
+      ? `fixed z-[60] inset-0 sm:inset-auto sm:bottom-5 sm:right-5 sm:w-[420px] sm:h-[min(720px,calc(100vh-40px))] flex flex-col bg-white sm:rounded-2xl sm:border sm:border-zinc-200 shadow-2xl overflow-hidden
+         transition-transform duration-200 ease-out sm:translate-y-0 ${subindo ? 'translate-y-0' : 'translate-y-full'}`
       : 'flex flex-col h-[70vh] rounded-2xl border border-zinc-200 bg-white overflow-hidden'}>
       {/* Cabeçalho */}
       <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-100 flex-shrink-0">
@@ -681,7 +693,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       <div
         className="fixed z-[60] bottom-3 left-3 right-3 sm:left-auto sm:right-5 sm:w-[420px] rounded-2xl border border-zinc-200 bg-white shadow-2xl overflow-hidden"
         onTouchStart={(e) => { arrasteY.current = e.touches[0].clientY; }}
-        onTouchMove={(e) => { if (arrasteY.current - e.touches[0].clientY > 40) setModo('full'); }}
+        onTouchMove={(e) => { if (arrasteY.current - e.touches[0].clientY > 24) setModo('full'); }}
       >
         <div className="flex items-center gap-2 px-2 pt-1.5">
           <button onClick={() => setModo('full')} className="flex-1 flex flex-col items-center cursor-pointer" aria-label="Abrir a conversa">
@@ -691,12 +703,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             <i className="ri-close-line" />
           </button>
         </div>
-        {(sending || ultimaResposta) && (
-          <button onClick={() => setModo('full')} className="block w-full text-left px-3.5 pt-1 pb-0.5 cursor-pointer" aria-label="Ver a conversa">
-            <span className="text-[11px] text-zinc-400">{sending ? 'pensando…' : 'Assistente'}</span>
-            {!sending && ultimaResposta && <span className="block text-sm text-zinc-700 line-clamp-2">{ultimaResposta}</span>}
-          </button>
-        )}
+        {sending && <p className="px-3.5 pt-1 pb-0.5 text-[11px] text-zinc-400">pensando…</p>}
         {pagamentosVisiveis.length > 0 && (
           <button onClick={() => setModo('full')} className="block w-full text-left px-3.5 py-1.5 text-xs font-bold text-violet-700 cursor-pointer" aria-label="Ver pagamentos">
             <i className="ri-money-dollar-circle-line" /> {pagamentosVisiveis.length === 1 ? '1 pagamento esperando você' : `${pagamentosVisiveis.length} pagamentos esperando você`}

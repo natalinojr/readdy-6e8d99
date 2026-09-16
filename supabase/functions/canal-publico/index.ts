@@ -310,7 +310,8 @@ async function notifyOwner(admin: SupabaseClient, text: string) {
     if (!data?.value) return;
     await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-      body: JSON.stringify({ action: 'deliver', chat_key: `tg:${data.value}`, text }),
+      // save/topic: o aviso também entra no histórico, na aba Currículos do chat do ERPOS.
+      body: JSON.stringify({ action: 'deliver', chat_key: `tg:${data.value}`, text, save: true, topic: 'curriculos' }),
     });
   } catch (e) { log('WARN', 'aviso ao dono falhou', { error: errMsg(e) }); }
 }

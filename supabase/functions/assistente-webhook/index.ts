@@ -496,7 +496,8 @@ async function cvFromWhatsApp(admin: SupabaseClient, number: string, msgKey: Msg
     if (tgId?.value) {
       await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-        body: JSON.stringify({ action: 'deliver', chat_key: `tg:${tgId.value}`, text: `📲 ${confirmacao}${fileName ? `\n_${fileName}_` : ''}\nSe quiser, me diga a vaga que eu inscrevo.` }),
+        // save/topic: entra no histórico também, na aba Currículos do chat do ERPOS.
+        body: JSON.stringify({ action: 'deliver', chat_key: `tg:${tgId.value}`, text: `📲 ${confirmacao}${fileName ? `\n_${fileName}_` : ''}\nSe quiser, me diga a vaga que eu inscrevo.`, save: true, topic: 'curriculos' }),
       });
     }
   } catch (e) { log('WARN', 'cópia da confirmação no Telegram falhou', { error: errMsg(e) }); }

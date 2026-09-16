@@ -857,8 +857,19 @@ Pedido do dono: o botão não deve mais abrir a tela inteira para uma pergunta c
 - **Botão redondo** (🤖, canto inferior) → toque abre a **barra pequena**: só a caixa de digitação
   (a MESMA do chat — anexo, microfone, enviar), a última resposta em duas linhas, "pensando…"
   enquanto responde e um aviso quando há pagamento esperando decisão.
-- **Barra → conversa inteira:** arrastar a barra para cima (>40 px), tocar na alça ou em qualquer
-  um dos avisos. Na conversa, a seta para baixo volta para a barra e o X fecha tudo.
+- **Barra → conversa inteira:** arrastar a barra para cima (>24 px), tocar na alça ou no aviso de
+  pagamento. A conversa **sobe deslizando** (`translate-y` + `transition-transform`, 200 ms) e abre
+  sempre **no fim do histórico**. Na conversa, a seta para baixo volta para a barra e o X fecha tudo.
+- A barra **não** mostra a última resposta (decisão do dono, 16/09) — só "pensando…" enquanto ele
+  responde e o aviso de pagamento esperando.
+
+### Avisos de currículo não apareciam no chat (2026-09-16)
+
+`assistente-telegram › deliver` entregava o aviso no Telegram sem gravar em `asst_messages` — então
+currículo pelo canal público e pelo WhatsApp não entrava no histórico e a aba **Currículos** ficava
+vazia. Agora quem chama passa `save: true` + `topic` (`canal-publico` e `assistente-webhook` →
+`curriculos`) e o `deliver` grava (channel `cron`). Quem vem do brain continua sendo gravado por ele,
+sem `save`, para não duplicar.
 - O histórico só carrega a partir da barra (o botão sozinho não chama o servidor).
 - Testes: "AssistenteChat — três estágios no flutuante" em `src/test/components/assistenteChat.test.tsx`.
 
