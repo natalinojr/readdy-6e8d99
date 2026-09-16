@@ -13,6 +13,9 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- Sem tela cheia forçada: o conteúdo não fica embaixo da barra de status nem dos botões
+             do Android (só vale com targetSdk 35 — ver variables.gradle). -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 
 

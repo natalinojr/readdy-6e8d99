@@ -1,7 +1,10 @@
 ext {
     minSdkVersion = 24
     compileSdkVersion = 36
-    targetSdkVersion = 36
+    // 35 de propósito: no targetSdk 36 (Android 16) a tela cheia "edge-to-edge" é obrigatória e o
+    // conteúdo fica embaixo da barra de status e dos botões. Com 35 dá para recusar
+    // (windowOptOutEdgeToEdgeEnforcement em styles.xml). compileSdk continua 36 (androidx exige).
+    targetSdkVersion = 35
     androidxActivityVersion = '1.11.0'
     androidxAppCompatVersion = '1.7.1'
     androidxCoordinatorLayoutVersion = '1.3.0'

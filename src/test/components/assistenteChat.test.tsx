@@ -268,6 +268,17 @@ describe('AssistenteChat — app Android', () => {
     expect(fs.readFile).toHaveBeenCalledWith({ path: 'file:///cache/boleto.pdf' });
   });
 
+  it('"Compartilhar" também funciona com o chat da tela Assistente (embutido)', async () => {
+    // O app abre na última tela: se foi /assistente, o chat é o embutido — era por aí que a
+    // imagem compartilhada não chegava na conversa (2026-09-15).
+    setCapacitor({
+      SendIntent: { checkSendIntentReceived: vi.fn().mockResolvedValue({ title: 'cupom.pdf', type: 'application/pdf', url: 'file%3A%2F%2F%2Fcache%2Fcupom.pdf' }) },
+      Filesystem: { readFile: vi.fn().mockResolvedValue({ data: btoa('%PDF-1.4 cupom') }) },
+    });
+    renderChat('embedded');
+    expect(await screen.findByText('cupom.pdf')).toBeInTheDocument();
+  });
+
   it('texto vindo do "Compartilhar" cai na caixa de mensagem', async () => {
     setCapacitor({ SendIntent: { checkSendIntentReceived: vi.fn().mockResolvedValue({ description: 'Pague o boleto 34191.79001', type: 'text/plain' }) } });
     renderChat('floating');

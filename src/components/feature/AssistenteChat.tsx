@@ -227,7 +227,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // chat já com o anexo ou o texto. No navegador/PWA não existe window.Capacitor e nada acontece.
   // Plugins chamados por window.Capacitor.Plugins (nada de Capacitor no bundle da web).
   useEffect(() => {
-    if (variant !== 'floating' || user?.email?.toLowerCase() !== ASSISTENTE_OWNER_EMAIL) return;
+    // Vale nas duas versões: na tela Assistente o chat já está aberto (embedded) e era por aí que
+    // o app entrava quando o compartilhamento não chegava na conversa (2026-09-15).
+    if (user?.email?.toLowerCase() !== ASSISTENTE_OWNER_EMAIL) return;
     type Shared = { title?: string; description?: string; type?: string; url?: string };
     const plugins = (window as unknown as { Capacitor?: { Plugins?: Record<string, { [k: string]: (a?: unknown) => Promise<unknown> }> } }).Capacitor?.Plugins;
     const si = plugins?.SendIntent;
