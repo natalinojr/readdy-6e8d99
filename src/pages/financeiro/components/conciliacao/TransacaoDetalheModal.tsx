@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCostCenters } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
-import LancarDoExtrato, { podeLancarDoExtrato } from './LancarDoExtrato';
+import LancarDoExtrato, { podeLancarDoExtrato, useCategoriasLancamento } from './LancarDoExtrato';
+import CategoriaCombobox, { type ComboOption } from '../CategoriaCombobox';
+import { situacaoRepasse, type RepasseStone } from './RepassesStoneModal';
 import type { StatementImport, BillMatch, ReceivableMatch, ReconciliationRule } from '@/hooks/useConciliacao';
 
 const fmtDoc = (d: string) =>
@@ -117,6 +119,33 @@ export default function TransacaoDetalheModal({
     return () => { alive = false; };
   }, [transaction?.match_group, user?.tenantId]);
 
+  // Repasse Stone ainda não conciliado: mostra a conta do dia (Stone liquidou × entrou no banco)
+  const [repasse, setRepasse] = useState<RepasseStone | null>(null);
+  useEffect(() => {
+    setRepasse(null);
+    const t = transaction as (StatementImport & { stone_installment_info?: Record<string, unknown> | null }) | null;
+    if (!t || !user?.tenantId || t.transaction_type !== 'credit' || t.match_group) return;
+    const daStone = t.source === 'stone';
+    if (!daStone && !/stone/i.test(t.description ?? '')) return;
+    const pilha = daStone
+      ? (Number(t.stone_installment_info?.advance_fee ?? 0) > 0 ? 'antecipado' : 'debito')
+      : (/antecipa/i.test(t.description ?? '') ? 'antecipado' : 'debito');
+    const dia = String(t.transaction_date).slice(0, 10);
+    let alive = true;
+    invokeWithAuth<{ rows?: RepasseStone[] }>('conciliacao-pagamentos', {
+      body: { action: 'stone_repasses', tenant_id: user.tenantId, date_from: dia, date_to: dia },
+    }).then((r) => {
+      if (!alive) return;
+      const row = (r.data?.rows ?? []).find((x) => x.pilha === pilha);
+      if (row) setRepasse({
+        ...row, vendas: Number(row.vendas), liquido_stone: Number(row.liquido_stone), depositado: Number(row.depositado),
+        creditos: Number(row.creditos), diferenca: Number(row.diferenca), dia_liquido_stone: Number(row.dia_liquido_stone),
+        dia_depositado: Number(row.dia_depositado), bruto: Number(row.bruto), taxa: Number(row.taxa), antecipacao: Number(row.antecipacao),
+      });
+    });
+    return () => { alive = false; };
+  }, [transaction, user?.tenantId]);
+
   const loadMatches = useCallback(async () => {
     if (!transaction) return;
     setLoadingMatches(true);
@@ -128,6 +157,31 @@ export default function TransacaoDetalheModal({
     setReceivableMatches(receivables);
     setLoadingMatches(false);
   }, [transaction, findBillMatches, findReceivableMatches]);
+
+  // Categoria da linha do extrato = NOME (texto). Saída: plano de contas da loja (despesas da DRE
+  // + mercadorias/CMV). Entrada: a DRE não tem grupo de receita, então vão os destinos de entrada.
+  // O valor atual entra sempre na lista, mesmo que não exista mais no plano.
+  const { dreOptions, mercOptions } = useCategoriasLancamento();
+  const categoriaOptions = useMemo<ComboOption[]>(() => {
+    const out: ComboOption[] = [{ id: '', label: 'Sem categoria', sub: null }];
+    const vistos = new Set<string>(['']);
+    const add = (label: string, sub: string | null) => {
+      const k = label.trim();
+      if (!k || vistos.has(k)) return;
+      vistos.add(k);
+      out.push({ id: k, label: k, sub });
+    };
+    if (transaction?.transaction_type === 'credit') {
+      for (const c of ['Repasse Stone', 'Repasse iFood', 'Repasse Tuna Pagamentos', 'Recebimento Stone Cartão',
+        'Transferência entre contas', 'Aporte de sócio', 'Estorno / devolução de fornecedor', 'Outras receitas']) add(c, 'Entrada');
+    } else {
+      for (const o of dreOptions) add(o.label, o.sub ?? 'Despesa');
+      for (const o of mercOptions) add(o.label, 'CMV');
+      add('Transferência entre contas', 'Sem DRE');
+    }
+    if (transaction?.category) add(transaction.category, 'Atual');
+    return out;
+  }, [dreOptions, mercOptions, transaction?.transaction_type, transaction?.category]);
 
   if (!transaction) return null;
 
@@ -153,11 +207,6 @@ export default function TransacaoDetalheModal({
     setSaving(false);
   };
 
-  const dreCategories = [
-    'Receita', 'CMV', 'Folha de Pagamento', 'Aluguel', 'Energia',
-    'Água', 'Internet/Telefone', 'Marketing', 'Manutenção', 'Impostos',
-    'Taxas Bancárias', 'Transporte', 'Material de Escritório', 'Outros',
-  ];
 
   const matchedRule = rules.find(r => {
     const desc = transaction.description?.toLowerCase() ?? '';
@@ -295,6 +344,23 @@ export default function TransacaoDetalheModal({
           {podeLancarDoExtrato(transaction) && (
             <LancarDoExtrato transaction={transaction} onDone={() => { onChanged?.(); onClose(); }} />
           )}
+          {repasse && (() => {
+            const s = situacaoRepasse(repasse);
+            const cls = s.tom === 'erro' ? 'bg-red-50 border-red-200' : s.tom === 'alerta' ? 'bg-amber-50 border-amber-200' : s.tom === 'ok' ? 'bg-emerald-50 border-emerald-200' : 'bg-zinc-50 border-zinc-200';
+            return (
+              <div className={`rounded-xl border p-3 space-y-2 ${cls}`}>
+                <p className="text-xs font-semibold text-zinc-700">
+                  Repasse Stone de {new Date(repasse.dia + 'T00:00:00').toLocaleDateString('pt-BR')} · {repasse.pilha === 'antecipado' ? 'crédito antecipado' : 'débito'} · <span>{s.label}</span>
+                </p>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div><p className="text-zinc-500">Stone liquidou</p><p className="font-bold text-zinc-800">{formatCurrency(repasse.liquido_stone)}</p><p className="text-zinc-400">{repasse.vendas} venda(s)</p></div>
+                  <div><p className="text-zinc-500">Entrou no banco</p><p className="font-bold text-zinc-800">{formatCurrency(repasse.depositado)}</p><p className="text-zinc-400">{repasse.creditos} crédito(s)</p></div>
+                  <div><p className="text-zinc-500">Diferença</p><p className={`font-bold ${s.tom === 'erro' ? 'text-red-600' : 'text-zinc-800'}`}>{formatCurrency(repasse.diferenca)}</p></div>
+                </div>
+                <p className="text-xs text-zinc-600 leading-snug">{s.explica}</p>
+              </div>
+            );
+          })()}
           {groupRows.length > 0 && (() => {
             const num = (v: unknown) => Number(v ?? 0);
             const vendas = groupRows.filter(r => r.source === 'stone');
@@ -342,14 +408,13 @@ export default function TransacaoDetalheModal({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-zinc-600 mb-1 block">Categoria DRE</label>
-                <select
+                <CategoriaCombobox
                   value={form.category}
-                  onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-                  className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-                >
-                  <option value="">Sem categoria</option>
-                  {dreCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                  options={categoriaOptions}
+                  onChange={v => setForm(f => ({ ...f, category: v }))}
+                  placeholder="Sem categoria"
+                  buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white"
+                />
               </div>
               <div>
                 <label className="text-xs font-medium text-zinc-600 mb-1 block">Centro de Custo</label>
@@ -393,14 +458,13 @@ export default function TransacaoDetalheModal({
                   placeholder="Padrão"
                   className="px-2 py-1.5 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
                 />
-                <select
+                <CategoriaCombobox
                   value={ruleForm.category}
-                  onChange={e => setRuleForm(f => ({ ...f, category: e.target.value }))}
-                  className="px-2 py-1.5 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-                >
-                  <option value="">Categoria</option>
-                  {dreCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                  options={categoriaOptions}
+                  onChange={v => setRuleForm(f => ({ ...f, category: v }))}
+                  placeholder="Categoria"
+                  buttonClassName="w-full px-2 py-1.5 border border-amber-200 rounded-lg text-xs bg-white"
+                />
                 <select
                   value={ruleForm.costCenterId}
                   onChange={e => setRuleForm(f => ({ ...f, costCenterId: e.target.value }))}

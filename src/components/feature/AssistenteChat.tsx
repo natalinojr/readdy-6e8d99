@@ -4,7 +4,7 @@
 //
 // variant 'floating': botão redondo no canto + painel (tela cheia no celular).
 // variant 'embedded': dentro da página Assistente › Conversa.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -13,7 +13,7 @@ import { SHARE_KEY, type SharePayload } from '@/lib/shareIntake';
 import { EVENTO_ASSISTENTE, getFoco, limparFocoItem, resumirFoco, setFocoItem, type PedidoAbrir } from '@/lib/assistenteFoco';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
-import AcaoEmitirNfse from '@/components/feature/assistente/AcaoEmitirNfse';
+import { ACOES, GRUPOS } from '@/components/feature/assistente/acoes';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -285,8 +285,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const abaRef = useRef('');
   // Ações rápidas (2026-09-16): roteiros fixos que rodam no sistema, sem o modelo (custo zero).
   const [menuAcoes, setMenuAcoes] = useState(false);
-  const [acao, setAcao] = useState<'nfse' | null>(null);
-  const abrirAcao = (a: 'nfse') => { setMenuAcoes(false); setAcao(a); setVista('conversa'); setModo('full'); };
+  const [acao, setAcao] = useState<string | null>(null);
+  const abrirAcao = (id: string) => { setMenuAcoes(false); setAcao(id); setVista('conversa'); setModo('full'); };
   // Lista de conversas (2026-09-16): o painel abre na LISTA de assuntos, com cara de WhatsApp —
   // última mensagem, hora e não lidas por assunto. Toca num, entra na conversa; a seta volta.
   const [vista, setVista] = useState<'lista' | 'conversa'>('lista');
@@ -655,12 +655,25 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         </div>
       )}
       {menuAcoes && (
-        <div className="mb-2 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-sm">
-          <p className="px-2 pt-1 pb-1.5 text-[11px] font-bold text-zinc-400 uppercase">Ações rápidas · sem custo de IA</p>
-          <button onClick={() => abrirAcao('nfse')} className="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-sm font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer text-left">
-            <span className="w-8 h-8 flex items-center justify-center rounded-lg bg-sky-50 text-sky-600"><i className="ri-file-text-line" /></span>
-            Emitir nota de serviço
-          </button>
+        <div className="mb-2 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-sm max-h-[50vh] overflow-y-auto">
+          <p className="px-2 pt-1 pb-1 text-[11px] font-bold text-zinc-400 uppercase">Ações rápidas · sem custo de IA</p>
+          {GRUPOS.map((g) => {
+            const doGrupo = ACOES.filter((a) => a.grupo === g);
+            if (!doGrupo.length) return null;
+            return (
+              <div key={g} className="pt-1">
+                <p className="px-2 pb-0.5 text-[11px] font-semibold text-zinc-500">{g}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5">
+                  {doGrupo.map((a) => (
+                    <button key={a.id} onClick={() => abrirAcao(a.id)} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer text-left">
+                      <span className={`w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg ${a.cor}`}><i className={a.icone} /></span>
+                      <span className="truncate">{a.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
       <div className="flex items-end gap-1.5">
@@ -907,12 +920,19 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
       {vista === 'conversa' && entrada}
 
-      {acao === 'nfse' && (
-        <AcaoEmitirNfse
-          onFechar={() => setAcao(null)}
-          onAbrirNotas={() => { setAcao(null); navigate('/notas-servico'); if (variant === 'floating') setModo('mini'); }}
-        />
-      )}
+      {acao && (() => {
+        const def = ACOES.find((a) => a.id === acao);
+        if (!def) return null;
+        const C = def.Componente;
+        return (
+          <Suspense fallback={<div className="absolute inset-0 z-20 flex items-center justify-center bg-zinc-50"><span className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" /></div>}>
+            <C
+              onFechar={() => setAcao(null)}
+              irPara={(rota) => { setAcao(null); navigate(rota); if (variant === 'floating') setModo('mini'); }}
+            />
+          </Suspense>
+        );
+      })()}
 
       {/* Ações da mensagem: responder e copiar (toque longo ou botão direito) */}
       {menuMsg && (

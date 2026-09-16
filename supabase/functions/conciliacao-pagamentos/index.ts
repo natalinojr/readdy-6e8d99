@@ -56,6 +56,7 @@ function addDays(iso: string, days: number) {
   return d.toISOString().slice(0, 10);
 }
 const br = (iso: string) => String(iso).slice(8, 10) + '/' + String(iso).slice(5, 7) + '/' + String(iso).slice(0, 4);
+const br$ = (v: unknown) => 'R$ ' + Number(v ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const brl = (n: number) => round2(n).toFixed(2).replace('.', ',');
 
 interface Ctx { admin: Admin; tenantId: string; userId: string | null; token: string; supabaseUrl: string; anonKey: string }
@@ -615,7 +616,39 @@ Deno.serve(async (req: Request) => {
     if (action === 'alerts') {
       const { data, error } = await admin.rpc('fn_conciliacao_alertas', { p_tenant: tenantId });
       if (error) return errResp('Alertas: ' + error.message, 500);
-      return json({ success: true, alerts: data });
+      // Repasses da Stone que não bateram com o banco nos últimos 120 dias (fn_stone_repasses).
+      // sem_deposito de ontem/hoje ainda pode chegar: só alerta a partir de anteontem.
+      const alerts = (data ?? {}) as Record<string, unknown>;
+      const hoje = todayBR();
+      const { data: rep, error: repErr } = await admin.rpc('fn_stone_repasses', { p_tenant: tenantId, p_from: addDays(hoje, -120), p_to: hoje });
+      if (!repErr) {
+        const pilhaNome = (p: string) => (p === 'antecipado' ? 'crédito antecipado' : 'débito');
+        const ruins = ((rep ?? []) as Array<Record<string, any>>).filter((r) =>
+          r.situacao === 'faltou' || r.situacao === 'sobrou' || (r.situacao === 'sem_deposito' && String(r.dia) < addDays(hoje, -1)));
+        alerts.repasses_stone = {
+          count: ruins.length,
+          total: Math.round(ruins.reduce((s, r) => s + Number(r.diferenca), 0) * 100) / 100,
+          itens: ruins.slice(0, 10).map((r) => ({
+            data: r.dia,
+            label: `${pilhaNome(r.pilha)}: Stone liquidou ${br$(r.liquido_stone)}, entrou ${br$(r.depositado)}`,
+            valor: Number(r.diferenca),
+          })),
+        };
+      } else {
+        log('WARN', 'alerts', 'fn_stone_repasses falhou', { tenantId, error: repErr.message });
+      }
+      return json({ success: true, alerts });
+    }
+
+    // Quadro "Repasses Stone": dia × pilha, Stone liquidou × entrou no banco (fn_stone_repasses)
+    if (action === 'stone_repasses') {
+      const iso = (v: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : null);
+      const to = iso(body.date_to) ?? todayBR();
+      const from = iso(body.date_from) ?? addDays(to, -60);
+      if (from > to) return errResp('A data inicial é depois da final');
+      const { data, error } = await admin.rpc('fn_stone_repasses', { p_tenant: tenantId, p_from: from, p_to: to });
+      if (error) return errResp('Repasses Stone: ' + error.message, 500);
+      return json({ success: true, date_from: from, date_to: to, rows: data ?? [] });
     }
 
     if (action === 'confirm') {
