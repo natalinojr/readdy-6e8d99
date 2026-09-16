@@ -806,8 +806,58 @@ Conversa com o assistente **dentro do ERPOS**, somando ao Telegram (não substit
   conferido na edge e nunca enviado ao modelo nem ao histórico. `inter-bank › execute_payment` faz o
   claim atômico. Pago na hora → `send_receipt` + `baixa_conciliada`; senão o `pay_watch` segue
   (e manda os status no Telegram como mensagem nova, porque o cartão não existe lá).
-- Próximos: push dos avisos no app (Web Push já existe em `send-push`), tópicos por assunto no chat,
-  app Android com Capacitor (compartilhar do celular, biometria, notificação com botões).
+- **Avisos no celular (Web Push, 2026-09-15):** todo aviso que o assistente manda por conta própria
+  também vira notificação do app/PWA e abre `/assistente`: `assistente-telegram › deliver` (triagem
+  de grupo, currículos, repasse do WhatsApp; "💸 Pagamento para aprovar" quando vem cartão),
+  mudança de status no `pay_watch`, e tudo que o `assistente-cron` manda (`sendTelegram` → `pushDono`).
+  Envio pelo `send-push › send` (service role, `user_ids = [owner_user_id]`); `sw.js` usa `tag` do
+  payload ('assistente' / 'assistente-pagamento'). O aparelho precisa estar inscrito: botão
+  **"Ativar avisos"** no cabeçalho do chat (some quando ativo). O Telegram continua avisando junto.
+- **Assuntos (abas, 2026-09-15):** `asst_messages.topic` ∈ geral/pagamentos/curriculos/compras/avisos
+  (migration `20260915200000_asst_messages_topic.sql`). A conversa continua UMA só (o brain vê tudo);
+  a aba só filtra. Quem decide: a aba em que o dono escreveu (`send.topic` → brain `body.topic`);
+  senão o modo automático (triagem → pagamentos, entrada de compra → compras); senão as ferramentas
+  usadas (pagamento, currículo/hiring, purchase/estoque). Linhas fora do brain: trigger
+  `trg_asst_messages_topic` (cron → avisos, "[Pagamento …" → pagamentos).
+- **App Android (Capacitor, 2026-09-15):** pasta `android-app/` (package.json próprio, fora do build
+  da Vercel; ver `android-app/README.md`). Abre https://erpos.vercel.app, então o site novo aparece
+  sem APK novo. "Compartilhar" do Android (foto/PDF/texto) → `send-intent` → o `AssistenteChat`
+  (variant floating) abre com o anexo/texto pronto (lê o arquivo com `@capacitor/filesystem`, via
+  `window.Capacitor.Plugins`, sem Capacitor no bundle da web). Microfone liberado no manifesto.
+  **Digital no lugar do PIN** (pronto): PIN guardado no Keystore protegido pela biometria depois do
+  1º pagamento com PIN digitado; o servidor continua conferindo o PIN. **Notificação nativa**: código
+  pronto (`send-push/fcm.ts`, endpoint `fcm:<token>`, `fcm_status`), falta o dono criar o projeto
+  Firebase (passo a passo em `android-app/README.md`). Play Store: conta US$ 25 + chave de assinatura.
+
+### Testes do chat / app (2026-09-15)
+
+Rodar: `npx vitest run src/test/components/assistenteChat.test.tsx src/test/edge/fcm.test.ts`
+(21 testes, ~5 s, nada toca produção).
+- `assistenteChat.test.tsx`: o `AssistenteChat` contra um **servidor falso em memória** que imita a
+  `assistente-app` (history/send/payments/pay; PIN certo = 1234) e o `send-push`. Cobre: só o dono
+  vê (e nenhuma chamada sai para os outros), login chegando depois do 1º render, histórico sem o
+  prefixo "[Pelo ERPOS…]", envio com rota/loja, erro do servidor devolvendo o texto, enquete → botões,
+  abas filtrando e marcando o assunto, Pagar/PIN errado/PIN certo/Cancelar, digital (1º uso guarda,
+  depois paga sem digitar, PIN guardado desatualizado é apagado) e "Compartilhar" (PDF e texto) com
+  `window.Capacitor.Plugins` simulado.
+- `src/test/edge/fcm.test.ts`: `send-push/fcm.ts` no Node com `Deno` falso — JWT RS256 conferido com a
+  chave pública, mensagem v1 (token, data só com strings, canal/tag Android), token OAuth reaproveitado,
+  404/UNREGISTERED = expirada, 503 não.
+- Banco (feito à mão via SQL, linhas de teste apagadas): gatilho `trg_asst_messages_topic` (cron →
+  avisos, "[Pagamento…" → pagamentos, resto → geral) e o check que recusa assunto inválido.
+- Achado pelos testes e corrigido: o chat embutido chamava a Edge uma vez mesmo para quem não é o dono.
+- Fora dos testes automáticos: o brain (escolha do assunto pelas ferramentas — custa chamada de IA),
+  a prévia do `assistente-cron` (exige a x-internal-key) e o aparelho real (Compartilhar/digital/FCM).
+- A suíte inteira (`npx vitest run`) tem 15 falhas **antigas** em `dateUtils`, `orderFlow` e
+  `mesaQRFlow` (testes que dependem da data do dia; não usam nada do chat).
+
+### Avisos proativos nunca saíam (corrigido 2026-09-15)
+
+`assistente-cron › proactive`: o `deliver(kind, text)` local escondia o `deliver(target, text)` de
+fora e chamava a si mesmo → "Maximum call stack size exceeded". Fechamento do dia (23h), contas que
+vencem amanhã (17h), estoque crítico (9h), anomalia e tarefas vencidas **nunca foram entregues**
+(o estado "já mandei hoje" era gravado antes, então não repetia no mesmo dia). Agora manda direto por
+`sendTelegram`/`sendText`.
 
 ## Pendente (ordem)
 

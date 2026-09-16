@@ -5,7 +5,7 @@
  * Usa mocks do Supabase para testar a lógica de integração
  * sem precisar de conexão real com o banco.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ─── Tipos do fluxo ───────────────────────────────────────────────────────────
 
@@ -168,7 +168,16 @@ describe("Fluxo completo de pedido", () => {
   const SESSION_ID = "session-test-456";
 
   beforeEach(() => {
+    // Relógio fixo: os relatórios filtram por created_at dentro de 2025-03-31.
+    // Sem isso, os pedidos nascem "hoje" (fora do período) e o teste quebra
+    // sozinho com o passar do tempo.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2025-03-31T12:00:00.000Z"));
     sim = new OrderFlowSimulator();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // ── Criação de pedido ──────────────────────────────────────────────────────

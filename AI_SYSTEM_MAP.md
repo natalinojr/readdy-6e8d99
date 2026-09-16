@@ -2074,3 +2074,29 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   (o `AuthContext` guarda os vínculos da sessão).
 - Layout do Admin Master segue a DRE: `Segmented` de `dreUi`, cards `rounded-2xl border-zinc-200`,
   tabelas com cabeçalho `text-[11px] uppercase text-zinc-400`.
+
+### Verificador determinístico: `scripts/check.mjs` + hooks (2026-09-15)
+
+Fase 0.1 de `ORQUESTRACAO-AGENTES.md`. Antes de qualquer agente "testador", o repo ganhou um
+portão sem IA que acusa **regressão** (não o legado):
+
+- `scripts/baseline.json` guarda a contagem de erros de TS (por arquivo+código) e a lista de
+  testes que falham. Regressão = erro de TS novo, teste que passou a falhar ou suíte que encolheu.
+  Baseline em 2026-09-15: **292 erros de TS** (legado do Readdy, não consertar) e **0 testes falhando**.
+- `npm run check` (tsc + vitest), `npm run check:build` (+ vite build), `npm run check:baseline`
+  (grava novo baseline — decisão humana, o script nunca faz sozinho).
+- Hooks em `.claude/settings.json` (compartilhado no git): a cada `Edit/Write` roda
+  `vitest related` no arquivo (~4 s); ao encerrar o turno roda o check completo (~2 min), **pulado**
+  quando nada mudou em `src/`/`supabase/` desde o último OK (stamp em `node_modules/.tmp`).
+  Exit 2 devolve o motivo ao Claude, que precisa corrigir antes de encerrar; `stop_hook_active`
+  evita loop.
+- Tempos medidos: tsc 60 s (com `--incremental` cai nas rodadas seguintes), vitest completo 66 s
+  (jsdom pesa; testes em si levam 3 s), build 34 s, 1 arquivo de teste 4 s.
+- Os 15 testes que falhavam eram testes velhos (contrato antigo de `getPeriodDates` em UTC/fim
+  exclusivo; relatórios com `created_at` = hoje fora do período fixo; participante "sem token" criado
+  com token). Reescritos para o contrato atual (Brasília, `-03:00`, fim inclusivo, "7 dias" = 7 dias
+  incluindo hoje) e sem depender do fuso da máquina.
+- **Bug real achado pelo teste velho:** `getPeriodoAnterior` formatava com `toISOString()` (UTC), então
+  `23:59:59.999-03:00` virava o dia seguinte e o "período anterior" terminava no mesmo dia em que o
+  atual começa (1 dia contado nos dois lados de toda comparação "vs período anterior"). Corrigido com
+  `dateKeyBrasilia`.

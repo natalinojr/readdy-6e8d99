@@ -131,6 +131,76 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
   );
 }
 
+// Notificação no celular (Web Push do PWA): os avisos do assistente chegam e abrem este chat.
+// Some quando já está ativa; lib/push carregada só aqui (import dinâmico).
+function BotaoNotificacao({ tenantId }: { tenantId: string | undefined }) {
+  const [estado, setEstado] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  // Dentro do app Android (Capacitor) o Web Push não existe: usa a notificação nativa (Firebase),
+  // e só quando o servidor diz que o Firebase está configurado (send-push › fcm_status).
+  type PN = { [k: string]: (a?: unknown, b?: unknown) => Promise<unknown> };
+  const pn = (window as unknown as { Capacitor?: { Plugins?: Record<string, PN> } }).Capacitor?.Plugins?.PushNotifications;
+  useEffect(() => {
+    if (!pn) {
+      import('@/lib/push').then((m) => m.estadoPush()).then(setEstado).catch(() => setEstado('nao-suportado'));
+      return;
+    }
+    (async () => {
+      try {
+        const { data } = await supabase.functions.invoke('send-push', { body: { action: 'fcm_status' } });
+        if (!(data as { configured?: boolean } | null)?.configured) { setEstado('nao-suportado'); return; }
+        // Tocar na notificação abre a tela que veio no aviso (ex.: /assistente).
+        await pn.addListener('pushNotificationActionPerformed', (ev: unknown) => {
+          const url = (ev as { notification?: { data?: { url?: string } } })?.notification?.data?.url;
+          if (url && url.startsWith('/')) window.location.assign(url);
+        });
+        const perm = (await pn.checkPermissions()) as { receive?: string };
+        let ok = false;
+        try { ok = localStorage.getItem('erpos-fcm-ok') === '1'; } catch { /* sem storage */ }
+        setEstado(perm?.receive === 'granted' && ok ? 'ativo' : perm?.receive === 'denied' ? 'negado' : 'inativo');
+      } catch { setEstado('nao-suportado'); }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (!estado || estado === 'ativo' || estado === 'nao-suportado') return null;
+  const ativar = async () => {
+    if (!tenantId) return;
+    if (pn) {
+      try {
+        const perm = (await pn.requestPermissions()) as { receive?: string };
+        if (perm?.receive !== 'granted') { setEstado('negado'); return; }
+        await pn.createChannel({ id: 'erpos', name: 'Avisos do ERPOS', importance: 5, visibility: 1 }).catch(() => {});
+        await pn.addListener('registration', async (t: unknown) => {
+          const token = String((t as { value?: string })?.value ?? '');
+          if (!token) return;
+          const { data } = await supabase.functions.invoke('send-push', {
+            body: { action: 'subscribe', active_tenant_id: tenantId, subscription: { endpoint: `fcm:${token}`, keys: { p256dh: 'fcm', auth: 'fcm' } } },
+          });
+          if ((data as { success?: boolean } | null)?.success) {
+            try { localStorage.setItem('erpos-fcm-ok', '1'); } catch { /* sem storage */ }
+            setEstado('ativo');
+          } else setMsg('Não deu para registrar o aparelho.');
+        });
+        await pn.addListener('registrationError', () => setMsg('O Firebase recusou o registro deste aparelho.'));
+        await pn.register();
+      } catch (e) { setMsg(e instanceof Error ? e.message : 'Não deu para ativar.'); }
+      return;
+    }
+    const m = await import('@/lib/push');
+    const r = await m.ativarPush(tenantId);
+    if (r.ok) setEstado('ativo'); else setMsg(r.erro ?? 'Não deu para ativar.');
+  };
+  return (
+    <button
+      onClick={ativar}
+      title={msg ?? (estado === 'negado' ? 'Notificações bloqueadas: libere nas configurações do navegador' : 'Receber os avisos do assistente no celular')}
+      className={`flex items-center gap-1 px-2.5 h-8 rounded-lg text-[11px] font-bold cursor-pointer ${msg || estado === 'negado' ? 'text-red-600 bg-red-50' : 'text-violet-700 bg-violet-50 hover:bg-violet-100'}`}
+    >
+      <i className="ri-notification-3-line" /> {estado === 'negado' ? 'Bloqueadas' : msg ? 'Tentar de novo' : 'Ativar avisos'}
+    </button>
+  );
+}
+
 export default function AssistenteChat({ variant }: { variant: 'floating' | 'embedded' }) {
   const { user } = useAuth();
   const location = useLocation();
@@ -149,6 +219,45 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [pin, setPin] = useState('');
   const [pinErr, setPinErr] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+  // Aba de assunto ('' = tudo). A conversa é uma só; a aba só filtra (asst_messages.topic).
+  const [aba, setAba] = useState('');
+  const abaRef = useRef('');
+
+  // App Android (android-app/, Capacitor): foto/PDF/texto vindos do "Compartilhar" do celular abrem o
+  // chat já com o anexo ou o texto. No navegador/PWA não existe window.Capacitor e nada acontece.
+  // Plugins chamados por window.Capacitor.Plugins (nada de Capacitor no bundle da web).
+  useEffect(() => {
+    if (variant !== 'floating' || user?.email?.toLowerCase() !== ASSISTENTE_OWNER_EMAIL) return;
+    type Shared = { title?: string; description?: string; type?: string; url?: string };
+    const plugins = (window as unknown as { Capacitor?: { Plugins?: Record<string, { [k: string]: (a?: unknown) => Promise<unknown> }> } }).Capacitor?.Plugins;
+    const si = plugins?.SendIntent;
+    const fs = plugins?.Filesystem;
+    if (!si) return;
+    const receber = async () => {
+      let r: Shared | null = null;
+      try { r = (await si.checkSendIntentReceived()) as Shared; } catch { return; }
+      if (!r || (!r.url && !r.title && !r.description)) return;
+      setOpen(true);
+      const tipo = String(r.type ?? '');
+      if (r.url && fs && (tipo.startsWith('image/') || tipo === 'application/pdf')) {
+        try {
+          const f = (await fs.readFile({ path: decodeURIComponent(r.url) })) as { data: string };
+          const bin = atob(f.data);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const nome = r.title || (tipo === 'application/pdf' ? 'documento.pdf' : 'foto.jpg');
+          escolherArquivo(new File([bytes], nome, { type: tipo }));
+        } catch { setErro('Não consegui abrir o arquivo compartilhado.'); }
+      } else {
+        const t = [r.title, r.description, r.url].filter(Boolean).join('\n').trim();
+        if (t) setText((prev) => (prev ? `${prev}\n${t}` : t));
+      }
+    };
+    receber();
+    window.addEventListener('sendIntentReceived', receber);
+    return () => window.removeEventListener('sendIntentReceived', receber);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant, user?.email]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const lastId = useRef(0);
@@ -172,22 +281,32 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   const sincronizar = useCallback(async () => {
     if (!lastId.current) return;
-    try { merge((await call<{ messages: Msg[] }>('history', { after_id: lastId.current })).messages); } catch { /* tenta no próximo ciclo */ }
+    try { merge((await call<{ messages: Msg[] }>('history', { after_id: lastId.current, topic: abaRef.current || undefined })).messages); } catch { /* tenta no próximo ciclo */ }
   }, [merge]);
 
-  // Primeira carga ao abrir
+  // Trocou de aba: recomeça a lista com o filtro novo.
   useEffect(() => {
-    if (!open || loaded) return;
+    if (abaRef.current === aba) return;
+    abaRef.current = aba;
+    lastId.current = 0;
+    setMsgs([]); setPolls({}); setLoaded(false);
+  }, [aba]);
+
+  // Primeira carga ao abrir (e a cada troca de aba)
+  const isOwner = user?.email?.toLowerCase() === ASSISTENTE_OWNER_EMAIL;
+  useEffect(() => {
+    // Sem ser o dono não chama nada (o componente já não aparece; o servidor também recusa).
+    if (!open || loaded || !isOwner) return;
     (async () => {
       try {
-        const h = await call<{ messages: Msg[]; has_more: boolean }>('history');
+        const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { topic: abaRef.current || undefined });
         setMsgs(h.messages); setHasMore(h.has_more);
         lastId.current = h.messages.length ? h.messages[h.messages.length - 1].id : 0;
         setLoaded(true); setErro(null); toBottom();
       } catch (e) { setErro(e instanceof Error ? e.message : String(e)); }
       carregarPagamentos();
     })();
-  }, [open, loaded, carregarPagamentos]);
+  }, [open, loaded, isOwner, carregarPagamentos]); // isOwner: o login pode chegar depois do 1º render
 
   // Aberto: pega o que chegou por outro canal (Telegram, avisos automáticos) e o status dos pagamentos.
   useEffect(() => {
@@ -205,7 +324,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if (!primeiro) return;
     const el = scrollRef.current; const h0 = el?.scrollHeight ?? 0;
     try {
-      const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { before_id: primeiro.id });
+      const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { before_id: primeiro.id, topic: abaRef.current || undefined });
       setMsgs((prev) => [...h.messages, ...prev]); setHasMore(h.has_more);
       requestAnimationFrame(() => { if (el) el.scrollTop = el.scrollHeight - h0; });
     } catch { /* ignora */ }
@@ -223,6 +342,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     try {
       const out = await call<{ reply: string; actions: Array<{ type: string } & Record<string, unknown>> }>('send', {
         text: t,
+        topic: abaRef.current || undefined,
         ...(anexo ? { attachment: { base64: anexo.base64, media_type: anexo.media_type } } : {}),
         ...(audio ? { audio } : {}),
         contexto: { rota: location.pathname + location.search, titulo: document.title, loja: user?.loja ?? null },
@@ -273,8 +393,53 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     } catch { setErro('Sem acesso ao microfone. Libere nas permissões do navegador.'); }
   };
 
+  // Digital no lugar do PIN (só no app Android, plugin NativeBiometric): depois do 1º pagamento com
+  // o PIN digitado, o PIN fica no Keystore do aparelho protegido pela biometria (BIOMETRY_ANY). O
+  // servidor continua conferindo o PIN — a digital só destrava o PIN guardado no próprio celular.
+  type Bio = { [k: string]: (a?: unknown) => Promise<unknown> };
+  const bio = (): Bio | undefined => (window as unknown as { Capacitor?: { Plugins?: Record<string, Bio> } }).Capacitor?.Plugins?.NativeBiometric;
+  const BIO_SERVER = 'erpos-pay-pin';
+  const [bioDisponivel, setBioDisponivel] = useState(false);
+  const [guardarBio, setGuardarBio] = useState(true);
+
+  const pagarComPin = async (p: Payment, pinValue: string, daDigital: boolean) => {
+    setPaying(true); setPinErr(null);
+    try {
+      const out = await call<{ payment: Payment }>('pay', { id: p.id, op: 'ok', pin: pinValue });
+      setPays((prev) => prev.map((x) => (x.id === p.id ? out.payment : x)));
+      setPinFor(null); setPin('');
+      if (!daDigital && bioDisponivel && guardarBio) {
+        await bio()?.setCredentials({ username: 'pin', password: pinValue, server: BIO_SERVER, accessControl: 2, title: 'Usar a digital nos pagamentos' }).catch(() => {});
+      }
+      sincronizar();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // PIN guardado não confere mais (trocado pelo /pin no Telegram): esquece e pede digitado.
+      if (daDigital && /PIN errado/i.test(msg)) await bio()?.deleteCredentials({ server: BIO_SERVER }).catch(() => {});
+      setPinErr(daDigital && /PIN errado/i.test(msg) ? 'O PIN guardado mudou. Digite o PIN novo.' : msg);
+      setPin('');
+    } finally { setPaying(false); }
+  };
+
   const acaoPagamento = async (p: Payment, op: 'ok' | 'no' | 'st') => {
-    if (op === 'ok') { setPin(''); setPinErr(null); setPinFor(p); return; }
+    if (op === 'ok') {
+      setPin(''); setPinErr(null); setPinFor(p);
+      const b = bio();
+      if (!b) return;
+      try {
+        const disp = (await b.isAvailable({ useFallback: false })) as { isAvailable?: boolean };
+        setBioDisponivel(!!disp?.isAvailable);
+        if (!disp?.isAvailable) return;
+        const salvo = (await b.isCredentialsSaved({ server: BIO_SERVER })) as { isSaved?: boolean };
+        if (!salvo?.isSaved) return;
+        const cred = (await b.getSecureCredentials({
+          server: BIO_SERVER, title: 'Confirmar pagamento', negativeButtonText: 'Digitar PIN',
+          reason: `${p.kind === 'pix' ? 'Pix' : 'Boleto'} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}`,
+        })) as { password?: string };
+        if (cred?.password) await pagarComPin(p, cred.password, true);
+      } catch { /* cancelou a digital: fica o PIN digitado */ }
+      return;
+    }
     try {
       const out = await call<{ payment: Payment }>('pay', { id: p.id, op });
       setPays((prev) => prev.map((x) => (x.id === p.id ? out.payment : x)));
@@ -284,14 +449,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   const confirmarPin = async () => {
     if (!pinFor || !/^\d{4,8}$/.test(pin) || paying) return;
-    setPaying(true); setPinErr(null);
-    try {
-      const out = await call<{ payment: Payment }>('pay', { id: pinFor.id, op: 'ok', pin });
-      setPays((prev) => prev.map((x) => (x.id === pinFor.id ? out.payment : x)));
-      setPinFor(null); setPin('');
-      sincronizar();
-    } catch (e) { setPinErr(e instanceof Error ? e.message : String(e)); setPin(''); }
-    finally { setPaying(false); }
+    await pagarComPin(pinFor, pin, false);
   };
 
   if (user?.email?.toLowerCase() !== ASSISTENTE_OWNER_EMAIL) return null;
@@ -311,11 +469,33 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           <p className="text-sm font-black text-zinc-900 leading-tight">Assistente</p>
           <p className="text-[11px] text-zinc-400 leading-tight truncate">{sending ? 'pensando…' : 'Mesma conversa do Telegram'}</p>
         </div>
+        <BotaoNotificacao tenantId={user?.tenantId} />
         {variant === 'floating' && (
           <button onClick={() => setOpen(false)} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar chat">
             <i className="ri-close-line text-xl" />
           </button>
         )}
+      </div>
+
+      {/* Assuntos: filtram a mesma conversa; escrever numa aba já marca a mensagem com o assunto */}
+      <div className="flex gap-1 px-2.5 py-1.5 border-b border-zinc-100 overflow-x-auto flex-shrink-0">
+        {[
+          { id: '', label: 'Tudo', icon: 'ri-chat-3-line' },
+          { id: 'pagamentos', label: 'Pagamentos', icon: 'ri-money-dollar-circle-line' },
+          { id: 'curriculos', label: 'Currículos', icon: 'ri-file-user-line' },
+          { id: 'compras', label: 'Compras', icon: 'ri-shopping-cart-2-line' },
+          { id: 'avisos', label: 'Avisos', icon: 'ri-notification-3-line' },
+          { id: 'geral', label: 'Geral', icon: 'ri-message-2-line' },
+        ].map((t) => (
+          <button
+            key={t.id || 'tudo'}
+            onClick={() => setAba(t.id)}
+            disabled={sending}
+            className={`flex items-center gap-1 px-2.5 h-7 rounded-lg text-xs font-bold whitespace-nowrap cursor-pointer disabled:opacity-50 ${aba === t.id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:bg-zinc-100'}`}
+          >
+            <i className={t.icon} /> {t.label}
+          </button>
+        ))}
       </div>
 
       {/* Mensagens */}
@@ -445,6 +625,12 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
               className="mt-4 w-full h-12 text-center text-xl tracking-[0.4em] rounded-xl border border-zinc-200 focus:outline-none focus:border-violet-400"
             />
             {pinErr && <p className="text-xs text-red-600 mt-2">{pinErr}</p>}
+            {bioDisponivel && (
+              <label className="flex items-center justify-center gap-2 mt-3 text-xs text-zinc-600 cursor-pointer">
+                <input type="checkbox" checked={guardarBio} onChange={(e) => setGuardarBio(e.target.checked)} className="accent-violet-600" />
+                Usar a digital nas próximas vezes
+              </label>
+            )}
             <p className="text-[11px] text-zinc-400 mt-2">Mesmo PIN do Telegram. Depois o Inter ainda pede a sua aprovação no app.</p>
             <div className="flex gap-2 mt-4">
               <button type="button" onClick={() => setPinFor(null)} disabled={paying} className="flex-1 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-600 cursor-pointer">Voltar</button>

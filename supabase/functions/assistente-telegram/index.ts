@@ -554,6 +554,7 @@ async function payWatch() {
     if (p.status === antes) { await admin.from('fin_inter_payments').update({ updated_at: nowIso() }).eq('id', p.id).eq('status', antes); continue; }
     changed++;
     await afterPayStatus(admin, Number(String(p.chat_id).slice(3)), Number(p.tg_message_id) || null, p);
+    await pushDono(admin, `${p.kind === 'pix' ? 'Pix' : 'Boleto'} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status}`, 'assistente-pagamento');
     await admin.from('asst_messages').insert({ channel: 'telegram', chat_id: p.chat_id, role: 'assistant', content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status} (atualizado automaticamente)] id ${p.id}` });
     log('INFO', 'pagamento mudou de status', { id: p.id, de: antes, para: p.status });
   }
@@ -931,6 +932,22 @@ async function handle(update: any) {
 // Entrega interna (outra Edge Function): manda um aviso ao dono no Telegram com as
 // mesmas ações do brain — inclusive o cartão de pagamento com botões Pagar/Cancelar.
 // Usada pela triagem de pedido de pagamento nos grupos do WhatsApp (assistente-webhook).
+// Notificação no celular pelo app/PWA do ERPOS (2026-09-15): todo aviso que o assistente manda por
+// conta própria também vira Web Push e abre o chat do ERPOS (/assistente). Falha no push não
+// atrapalha o Telegram. Mesmo formato do send-push/sw.js: { titulo, corpo, url, tag }.
+async function pushDono(admin: SupabaseClient, corpo: string, tag = 'assistente') {
+  try {
+    const owner = await getSetting(admin, 'owner_user_id');
+    const texto = corpo.replace(/[*_`]/g, '').replace(/\s+/g, ' ').trim();
+    if (!owner || !texto) return;
+    const r = await fetch(`${supabaseUrl}/functions/v1/send-push`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceRoleKey}` },
+      body: JSON.stringify({ action: 'send', user_ids: [String(owner)], payload: { titulo: 'Assistente', corpo: texto.slice(0, 200), url: '/assistente', tag } }),
+    });
+    if (!r.ok) log('WARN', 'push', { status: r.status, body: (await r.text()).slice(0, 200) });
+  } catch (e) { log('WARN', 'push', { error: errMsg(e) }); }
+}
+
 // deno-lint-ignore no-explicit-any
 async function deliver(body: any) {
   const chatKey = String(body.chat_key ?? '');
@@ -940,6 +957,10 @@ async function deliver(body: any) {
   const text = String(body.text ?? '').trim();
   if (text && text !== 'NO_REPLY') await sendText(chatId, text);
   await runActions(admin, chatId, chatKey, body.actions);
+  // deno-lint-ignore no-explicit-any
+  const temPagamento = (Array.isArray(body.actions) ? body.actions : []).some((a: any) => a?.type === 'payment');
+  const corpo = temPagamento ? `💸 Pagamento para aprovar${text && text !== 'NO_REPLY' ? ` — ${text}` : ''}` : (text === 'NO_REPLY' ? '' : text);
+  if (corpo) await pushDono(admin, corpo, temPagamento ? 'assistente-pagamento' : 'assistente');
   log('INFO', 'aviso entregue', { chat: chatKey, actions: (Array.isArray(body.actions) ? body.actions : []).map((a: { type: string }) => a.type) });
 }
 

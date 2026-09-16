@@ -91,6 +91,22 @@ class MesaWriteSimulator {
     return { participant, access_token: accessToken };
   }
 
+  // Insere um participante antigo (anterior à senha por token) direto no "banco"
+  addLegacyParticipant(table_session_id: string, name: string, tenant_id: string): TableSessionParticipant {
+    const participant: TableSessionParticipant = {
+      id: `part-${this.nextParticipantId++}`,
+      tenant_id,
+      table_session_id,
+      name,
+      access_token: null,
+      status: "pending",
+      amount_due: 0,
+      amount_paid: 0,
+    };
+    this.participants.set(participant.id, participant);
+    return participant;
+  }
+
   // Helpers para assertions
   getParticipantsBySession(sessionId: string): TableSessionParticipant[] {
     const sess = this.sessions.get(sessionId);
@@ -273,8 +289,8 @@ describe("Fluxo QR Mesa — create_participant", () => {
         opened_at: new Date().toISOString(),
       });
 
-      // Simula um participante antigo sem token
-      sim.createParticipant({ table_session_id: tableSession.id, name: "Antigo", tenant_id: TENANT_ID });
+      // Simula um participante antigo sem token (access_token = null)
+      sim.addLegacyParticipant(tableSession.id, "Antigo", TENANT_ID);
       const r1 = sim.createParticipant({
         table_session_id: tableSession.id,
         name: "João",

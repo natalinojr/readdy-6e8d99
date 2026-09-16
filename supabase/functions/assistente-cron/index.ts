@@ -62,7 +62,28 @@ async function sendTelegram(chatKey: string, text: string, extra: Record<string,
     if (!r.ok || out?.ok === false) throw new Error(`Telegram → ${r.status}: ${String(out?.description ?? '').slice(0, 200)}`);
     return out.result;
   };
-  try { return await send({ text: html, parse_mode: 'HTML', ...extra }); } catch { return await send({ text, ...extra }); }
+  let res;
+  try { res = await send({ text: html, parse_mode: 'HTML', ...extra }); } catch { res = await send({ text, ...extra }); }
+  await pushDono(text);
+  return res;
+}
+// Notificação no celular pelo app/PWA do ERPOS (2026-09-15): tudo que o cron manda ao dono no
+// Telegram (lembrete, resumo, pergunta de DRE, alertas) também vira Web Push e abre o chat do ERPOS.
+async function pushDono(corpo: string) {
+  try {
+    const url = Deno.env.get('SUPABASE_URL') ?? '';
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+    const texto = corpo.replace(/[*_`]/g, '').replace(/\s+/g, ' ').trim();
+    if (!url || !key || !texto) return;
+    const h = { apikey: key, Authorization: `Bearer ${key}` };
+    const st = await fetch(`${url}/rest/v1/asst_settings?key=eq.owner_user_id&select=value`, { headers: h }).then((r) => r.json()).catch(() => []);
+    const owner = Array.isArray(st) ? st[0]?.value : null;
+    if (!owner) return;
+    await fetch(`${url}/functions/v1/send-push`, {
+      method: 'POST', headers: { ...h, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'send', user_ids: [String(owner)], payload: { titulo: 'Assistente', corpo: texto.slice(0, 200), url: '/assistente', tag: 'assistente' } }),
+    });
+  } catch (e) { console.warn(JSON.stringify({ fn: 'assistente-cron', level: 'WARN', msg: 'push', error: String(e) })); }
 }
 // Entrega para qualquer destino: JID do WhatsApp ou "tg:<id>" do Telegram.
 async function deliver(target: string, text: string) {
@@ -494,7 +515,9 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
   const deliver = async (kind: string, text: string) => {
     res[kind] = dry ? text : true;
     if (dry || !ownerChat) return;
-    await deliver(ownerChat, text);
+    // Não chamar deliver() aqui: este deliver local esconde o de fora e chamava a si mesmo
+    // ("Maximum call stack size exceeded" — nenhum aviso proativo saía até 2026-09-15).
+    await (isTg(ownerChat) ? sendTelegram(ownerChat, text) : sendText(toNumber(ownerChat), text));
     await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: text });
   };
   const want = (k: string) => (only ? only === k : pro[k].enabled && !!ownerChat);

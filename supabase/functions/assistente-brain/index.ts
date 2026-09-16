@@ -1687,7 +1687,14 @@ Deno.serve(async (req) => {
     const userText = `[Agora: ${nowLocal()}]\n${text}`;
     messages.push({ role: 'user', content: fileBlock ? [fileBlock, { type: 'text', text: userText }] : userText });
 
-    await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'user', content: fileBlock ? `${fileBlock.type === 'image' ? '[Foto]' : '[PDF]'} ${text}` : text });
+    // Assunto (abas do chat do ERPOS, 2026-09-15): o que a tela mandou; senão o do modo automático;
+    // senão 'geral' e, no fim, as ferramentas usadas decidem (assuntoPorFerramentas).
+    const TOPICS = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'];
+    const topicoPedido: string | null = TOPICS.includes(body.topic) && body.topic !== 'geral' ? body.topic
+      : body.modo === 'triagem_grupo' ? 'pagamentos' : body.modo === 'entrada_compra_grupo' ? 'compras' : null;
+    const { data: userRow } = await admin.from('asst_messages')
+      .insert({ channel, chat_id: chatId, role: 'user', content: fileBlock ? `${fileBlock.type === 'image' ? '[Foto]' : '[PDF]'} ${text}` : text, topic: topicoPedido ?? 'geral' })
+      .select('id').maybeSingle();
 
     // ── Loop de ferramentas ──
     const client = new Anthropic({ apiKey });
@@ -1765,7 +1772,16 @@ Deno.serve(async (req) => {
     const historyContent = ctx.outbound.length
       ? `${reply}\n${ctx.outbound.map((a) => a.type === 'poll' ? `[Enquete enviada: "${a.question}" — ${a.options.join(' | ')}]` : a.type === 'location' ? `[Localização enviada: ${a.name}]` : a.type === 'payment' ? '[Pedido de pagamento enviado com botões Pagar/Cancelar]' : `[Contato enviado: ${a.name} +${a.phone}]`).join('\n')}`
       : reply;
-    await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'assistant', content: historyContent, tool_calls: toolCalls, usage });
+    // Assunto pelas ferramentas usadas (quando a tela/modo não disse); a pergunta ganha o mesmo assunto.
+    const nomes = new Set(toolCalls.map((t) => t.name));
+    // deno-lint-ignore no-explicit-any
+    const funcoes = toolCalls.filter((t) => t.name === 'erpos_executar').map((t) => String((t.input as any)?.funcao ?? ''));
+    const topic = topicoPedido
+      ?? (['preparar_pagamento', 'status_pagamento', 'contas_a_pagar'].some((x) => nomes.has(x)) || ctx.outbound.some((a) => a.type === 'payment') ? 'pagamentos'
+        : ['modo_curriculos', 'salvar_curriculo', 'inscrever_na_vaga'].some((x) => nomes.has(x)) || funcoes.some((f) => /hiring/i.test(f)) ? 'curriculos'
+        : funcoes.some((f) => /purchase|stock|estoque|ingredient/i.test(f)) ? 'compras' : 'geral');
+    if (!topicoPedido && topic !== 'geral' && userRow?.id) await admin.from('asst_messages').update({ topic }).eq('id', userRow.id);
+    await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'assistant', content: historyContent, tool_calls: toolCalls, usage, topic });
     log('INFO', 'reply', { chat: chatId, ms: Date.now() - started, tools: toolCalls.map((t) => t.name), actions: ctx.outbound.map((a) => a.type), usage });
     return json({ success: true, reply, actions: ctx.outbound, tool_calls: toolCalls, usage });
   } catch (e) {

@@ -1,0 +1,13 @@
+{
+  "appId": "app.erpos.gestao",
+  "appName": "ERPOS",
+  "webDir": "www",
+  "server": {
+    "url": "https://erpos.vercel.app",
+    "cleartext": false,
+    "allowNavigation": ["erpos.vercel.app", "*.supabase.co"]
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

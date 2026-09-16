@@ -155,8 +155,10 @@ export function getPeriodoAnterior(periodo: string): string {
   const diffMs = to.getTime() - from.getTime();
   const prevTo = new Date(from.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - diffMs + 1);
-  const fmt = (d: Date) => d.toISOString().split('T')[0];
-  return `custom:${fmt(prevFrom)}:${fmt(prevTo)}`;
+  // Data-calendário em BRASÍLIA (não toISOString/UTC): "23:59:59.999-03:00"
+  // em UTC já é o dia seguinte, o que fazia o período anterior terminar no
+  // mesmo dia em que o atual começa (1 dia contado duas vezes na comparação).
+  return `custom:${dateKeyBrasilia(prevFrom)}:${dateKeyBrasilia(prevTo)}`;
 }
 
 /** Label legível do período anterior (ex: "7 dias anteriores", "ontem") */

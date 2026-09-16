@@ -51,7 +51,13 @@
     "dev": "vite",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "type-check": "tsc --noEmit --project tsconfig.app.json"
+    "type-check": "tsc --noEmit --project tsconfig.app.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "check": "node scripts/check.mjs --force",
+    "check:build": "node scripts/check.mjs --force --build",
+    "check:baseline": "node scripts/check.mjs --update-baseline"
   },
   "type": "module",
   "version": "0.0.0"

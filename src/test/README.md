@@ -63,3 +63,9 @@ O arquivo `setup.ts` mocka automaticamente:
 2. Importe as funções a testar
 3. Use `describe` + `it` + `expect` (globals do Vitest)
 4. Execute `npm run test:watch` para feedback imediato
+
+## Portão de regressão (2026-09-15)
+
+`npm run check` compara tsc + vitest com `scripts/baseline.json` e falha só em regressão
+(ver `AI_SYSTEM_MAP.md` › "Verificador determinístico"). Hooks do Claude Code rodam
+`vitest related` a cada edição e o check completo ao fim do turno.

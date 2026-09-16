@@ -135,7 +135,8 @@ self.addEventListener('push', (event) => {
     badge: '/icon-192.png',
     // Agrupa por tarefa: avisos da mesma tarefa substituem o anterior em vez
     // de empilhar várias notificações iguais.
-    tag: dados.task_id ? `tarefa-${dados.task_id}` : 'erpos',
+    // `tag` explícito: avisos do assistente (chat do ERPOS) — 'assistente' / 'assistente-pagamento'.
+    tag: dados.tag || (dados.task_id ? `tarefa-${dados.task_id}` : 'erpos'),
     renotify: true,
     data: { url: dados.url || '/tarefas' },
   };

@@ -45,6 +45,9 @@ const whisperKey = Deno.env.get('WHISPER_API_KEY') ?? '';
 const WHISPER_PROMPT = 'Conversa com o Natalino, dono dos restaurantes El Patrón em Paranaguá (PR), lojas Vila Leste e Paranaguá. ERPOS, cardápio, fornecedor, conta a pagar, DRE, CMV, estoque, insumo, Pix, Inter, Stone, iFood, delivery, motoboy, hambúrguer, pastel.';
 const FILE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
 const MAX_B64 = 14 * 1024 * 1024; // ~10 MB de arquivo
+// Assuntos (abas do chat): asst_messages.topic. A conversa é uma só; a aba filtra e, ao escrever
+// numa aba, a mensagem já nasce com o assunto.
+const TOPICS = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'];
 
 const PIN_LOCK_MS = 15 * 60_000;
 const PAY_TTL_MS = 30 * 60_000;
@@ -140,7 +143,8 @@ Deno.serve(async (req) => {
 
   try {
     if (action === 'history') {
-      let q = admin.from('asst_messages').select('id, role, content, channel, created_at').eq('chat_id', chatKey);
+      let q = admin.from('asst_messages').select('id, role, content, channel, created_at, topic').eq('chat_id', chatKey);
+      if (TOPICS.includes(String(body.topic)) ) q = q.eq('topic', String(body.topic)); // aba; sem topic = tudo
       if (body.after_id) q = q.gt('id', Number(body.after_id)).order('id', { ascending: true }).limit(100);
       else {
         if (body.before_id) q = q.lt('id', Number(body.before_id));
@@ -175,6 +179,7 @@ Deno.serve(async (req) => {
       const started = Date.now();
       const { status, out } = await callEdge('assistente-brain', internalKey, {
         text: `${prefixo}${text}`.trim(), chat_id: chatKey, channel: 'app',
+        ...(TOPICS.includes(String(body.topic)) ? { topic: String(body.topic) } : {}),
         ...(att ? { attachment: { base64: String(att.base64), media_type: String(att.media_type) } } : {}),
       });
       if (status >= 400 || !out?.reply) {

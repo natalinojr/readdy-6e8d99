@@ -8,6 +8,8 @@
 //   send        (service role)  → envia para uma lista de usuários (usado pelo task-write)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { enviarPush, type Subscription } from './webpush.ts';
+// App Android (Capacitor): aparelho inscrito com endpoint "fcm:<token>" recebe pelo Firebase.
+import { enviarFcm, fcmConfig } from './fcm.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -50,6 +52,11 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     if (!vapid.publicKey) return json({ error: 'VAPID não configurado' }, 500);
     return json({ success: true, public_key: vapid.publicKey });
   }
+  // App Android: só oferece a notificação nativa quando o Firebase já está configurado
+  // (sem google-services.json no APK + FIREBASE_SERVICE_ACCOUNT aqui, o registro falharia).
+  if (action === 'fcm_status') {
+    return json({ success: true, configured: !!fcmConfig() });
+  }
 
   const authHeader = req.headers.get('Authorization') ?? '';
   const bearer = authHeader.replace(/^Bearer\s+/i, '');
@@ -78,7 +85,9 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           p256dh: s.p256dh as string,
           auth: s.auth as string,
         };
-        const r = await enviarPush(sub, texto, vapid);
+        const r = sub.endpoint.startsWith('fcm:')
+          ? await enviarFcm(sub.endpoint.slice(4), payload)
+          : await enviarPush(sub, texto, vapid);
         if (r.ok) {
           enviados++;
           await admin.from('push_subscriptions')
