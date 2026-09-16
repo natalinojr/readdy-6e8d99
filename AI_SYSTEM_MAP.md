@@ -2436,3 +2436,20 @@ aba Entrevistas vai para o dia da entrevista e abre o registro — no celular ta
   escolha (computador: abria a 1ª do dia; celular: fechava o registro). Trava `focoAplicado` até o dia
   da entrevista estar na tela. Teste `entrevistasDoDia.test.tsx` monta a aba ANTES das entrevistas
   carregarem (ordem real) — sem a trava, falha nos dois tamanhos de tela.
+
+### Pedido no grupo com vários pagamentos: um comprovante para cada (2026-09-16)
+
+Caso real (grupo "Financeiro loja - EP MALL"): uma mensagem pediu dois Pix de R$ 100 (Marcelle e
+Joziane). O assistente preparou e pagou os dois, mas só o da Marcelle teve comprovante no grupo.
+
+**Causa:** `asst_group_requests` guardava UM `payment_id` e o trinco do comprovante era do PEDIDO
+(`receipt_sent_at`). O brain só ligava pagamento a pedido com `payment_id` vazio → o 2º ficou órfão;
+e mesmo ligado, o 1º comprovante fecharia o pedido.
+
+**Solução:** o pagamento aponta para o pedido (`fin_inter_payments.group_request_id`) e o trinco é por
+pagamento (`group_receipt_sent_at` / `group_receipt_error`). `sendGroupReceipt` lê o vínculo do BANCO
+(o objeto `p` às vezes vem montado da resposta do Inter, sem a coluna) e responde à mensagem do
+pedido; o pedido só vira `pago` quando todos os pagamentos ligados a ele estão pagos. Com
+`solicitacao_grupo_id` informado, o brain liga mesmo que o pedido já tenha pagamento; sem id,
+continua adivinhando pelo valor só entre pedidos sem pagamento. `payment_id`/`receipt_sent_at` do
+pedido seguem gravados (1º pagamento) por compatibilidade; migração copiou os vínculos antigos.

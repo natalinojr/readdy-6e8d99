@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { avisar, confirmar } from '@/pages/contratacao/dialog';
 import {
-  type Empresa, type Servico, type Tomador, buscarCep, cnpjValido, cpfValido, fmtBRL, fmtCep, fmtDoc, inputCls, labelCls, nfseCall, soDigitos,
+  type Empresa, type Servico, type Tomador, buscarCep, buscarCnpj, cnpjValido, cpfValido, fmtBRL, fmtCep, fmtDoc, inputCls, labelCls, nfseCall, soDigitos,
 } from '../api';
 
 function Modal({ titulo, onClose, children, rodape }: { titulo: string; onClose: () => void; children: React.ReactNode; rodape: React.ReactNode }) {
@@ -30,12 +30,37 @@ const tomadorVazio: TomadorForm = {
   logradouro: '', numero: '', complemento: '', bairro: '',
 };
 
-export function TomadorModal({ empresa, inicial, onClose, onSalvo }: {
-  empresa: Empresa; inicial: Tomador | null; onClose: () => void; onSalvo: (t: Tomador) => void;
+export function TomadorModal({ empresa, inicial, documentoInicial, onClose, onSalvo }: {
+  empresa: Empresa; inicial: Tomador | null; documentoInicial?: string; onClose: () => void; onSalvo: (t: Tomador) => void;
 }) {
-  const [f, setF] = useState<TomadorForm>(inicial ? { ...inicial, documento: fmtDoc(inicial.documento), cep: fmtCep(inicial.cep) } : tomadorVazio);
+  const [f, setF] = useState<TomadorForm>(inicial
+    ? { ...inicial, documento: fmtDoc(inicial.documento), cep: fmtCep(inicial.cep) }
+    : { ...tomadorVazio, documento: fmtDoc(documentoInicial ?? '') });
   const [salvando, setSalvando] = useState(false);
+  const [consultaCnpj, setConsultaCnpj] = useState<string | null>(null);
   const set = <K extends keyof TomadorForm>(k: K, v: TomadorForm[K]) => setF((p) => ({ ...p, [k]: v }));
+
+  // CNPJ válido digitado → preenche com os dados públicos da Receita (só os campos vazios; não apaga o que foi digitado).
+  const consultarCnpj = async (doc: string) => {
+    const d = soDigitos(doc);
+    if (d.length !== 14 || !cnpjValido(d)) { setConsultaCnpj(null); return; }
+    setConsultaCnpj('Buscando dados do CNPJ…');
+    const r = await buscarCnpj(d);
+    if (!r) { setConsultaCnpj('Não achei os dados deste CNPJ. Preencha à mão.'); return; }
+    const vazio = (v: string | null | undefined) => !v || !String(v).trim();
+    setF((p) => ({
+      ...p,
+      nome: vazio(p.nome) ? r.nome : p.nome,
+      email: vazio(p.email) ? r.email ?? '' : p.email,
+      fone: vazio(p.fone) ? r.fone ?? '' : p.fone,
+      ...(vazio(p.cep) && r.cep ? {
+        cep: fmtCep(r.cep), logradouro: r.logradouro, numero: r.numero, complemento: r.complemento, bairro: r.bairro,
+        municipio_nome: r.municipio_nome, uf: r.uf, cod_municipio: r.cod_municipio ?? '',
+      } : {}),
+    }));
+    setConsultaCnpj('Dados preenchidos pela Receita. Confira antes de salvar.');
+  };
+  useEffect(() => { if (!inicial && documentoInicial) consultarCnpj(documentoInicial); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const aoCep = async (cep: string) => {
     set('cep', cep);
@@ -84,7 +109,10 @@ export function TomadorModal({ empresa, inicial, onClose, onSalvo }: {
       <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
         <div className="md:col-span-2">
           <label className={labelCls}>CPF ou CNPJ</label>
-          <input className={inputCls} value={f.documento} onChange={(e) => set('documento', e.target.value)} onBlur={(e) => set('documento', fmtDoc(e.target.value))} />
+          <input className={inputCls} value={f.documento}
+            onChange={(e) => { set('documento', e.target.value); if (soDigitos(e.target.value).length === 14) consultarCnpj(e.target.value); }}
+            onBlur={(e) => set('documento', fmtDoc(e.target.value))} />
+          {consultaCnpj && <p className="text-[11px] text-zinc-400 mt-0.5">{consultaCnpj}</p>}
         </div>
         <div className="md:col-span-4">
           <label className={labelCls}>Nome / razão social</label>

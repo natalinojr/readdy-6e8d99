@@ -484,10 +484,33 @@ function receiptText(p: any, loja: string | null): string {
 // deno-lint-ignore no-explicit-any
 async function sendGroupReceipt(admin: SupabaseClient, p: any): Promise<string | null> {
   if (p.status !== 'paid') return null;
-  const { data: claimed } = await admin.from('asst_group_requests').update({ receipt_sent_at: nowIso(), status: 'pago', receipt_error: null, updated_at: nowIso() })
-    .eq('payment_id', p.id).is('receipt_sent_at', null).select('id, group_jid, group_name, message_id');
-  const rq = claimed?.[0];
+  // Trinco POR PAGAMENTO (2026-09-16). Antes era por pedido (asst_group_requests.receipt_sent_at): uma
+  // mensagem com dois Pix mandava o comprovante do primeiro e fechava o pedido — o segundo nunca ia.
+  // Agora cada pagamento ligado (fin_inter_payments.group_request_id) manda o seu, respondendo à
+  // mensagem do pedido. Pagamento antigo, ligado só pelo formato velho, é achado pelo payment_id.
+  // Do banco, não do objeto: `p` às vezes vem montado da resposta do Inter, sem a coluna nova.
+  const { data: linha } = await admin.from('fin_inter_payments').select('group_request_id').eq('id', p.id).maybeSingle();
+  let reqId = linha?.group_request_id ?? null;
+  if (!reqId) {
+    const { data: antigo } = await admin.from('asst_group_requests').select('id').eq('payment_id', p.id).maybeSingle();
+    if (antigo?.id) {
+      reqId = antigo.id;
+      await admin.from('fin_inter_payments').update({ group_request_id: reqId }).eq('id', p.id).is('group_request_id', null);
+    }
+  }
+  if (!reqId) return null;
+  const { data: preso } = await admin.from('fin_inter_payments').update({ group_receipt_sent_at: nowIso(), group_receipt_error: null })
+    .eq('id', p.id).eq('group_request_id', reqId).is('group_receipt_sent_at', null).select('id');
+  if (!preso?.length) return null; // já foi (ou outro processo está mandando agora)
+  const { data: rq } = await admin.from('asst_group_requests').select('id, group_jid, group_name, message_id').eq('id', reqId).maybeSingle();
   if (!rq) return null;
+  // Pedido só vira "pago" quando TODOS os pagamentos ligados a ele estão pagos.
+  const { count: faltam } = await admin.from('fin_inter_payments').select('id', { count: 'exact', head: true })
+    .eq('group_request_id', reqId).neq('status', 'paid').not('status', 'in', '(cancelled,expired,rejected,failed)');
+  await admin.from('asst_group_requests').update({
+    ...(faltam ? {} : { status: 'pago' }),
+    receipt_sent_at: nowIso(), receipt_error: null, updated_at: nowIso(),
+  }).eq('id', reqId);
   const { data: t } = await admin.from('tenants').select('name, cnpj').eq('id', p.tenant_id).maybeSingle();
   // Imagem do comprovante (receipt.ts); se falhar, vai o texto de sempre.
   let png: Uint8Array | null = null;
@@ -515,8 +538,9 @@ async function sendGroupReceipt(admin: SupabaseClient, p: any): Promise<string |
     }
     return `📨 Comprovante enviado no grupo *${rq.group_name ?? 'do pedido'}*.`;
   } catch (e) {
-    // Solta o trinco: tocar em "Ver status" tenta de novo.
-    await admin.from('asst_group_requests').update({ receipt_sent_at: null, receipt_error: errMsg(e).slice(0, 300), updated_at: nowIso() }).eq('id', rq.id);
+    // Solta o trinco DESTE pagamento: tocar em "Ver status" (ou o pay_watch) tenta de novo.
+    await admin.from('fin_inter_payments').update({ group_receipt_sent_at: null, group_receipt_error: errMsg(e).slice(0, 300) }).eq('id', p.id);
+    await admin.from('asst_group_requests').update({ receipt_error: errMsg(e).slice(0, 300), updated_at: nowIso() }).eq('id', rq.id);
     log('ERROR', 'comprovante no grupo falhou', { group: rq.group_name, payment: p.id, error: errMsg(e) });
     return `⚠️ Não consegui mandar o comprovante no grupo *${rq.group_name ?? ''}* (${errMsg(e).slice(0, 100)}).`;
   }

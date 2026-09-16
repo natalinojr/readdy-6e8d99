@@ -69,9 +69,14 @@ function EmitirModal({ empresa, tomadores, servicos, onClose, onEmitida, onTomad
     const v = Number(valor);
     if (!(v > 0)) { avisar('Informe o valor do serviço.'); return; }
     if (!descricao.trim()) { avisar('A descrição não pode ficar vazia.'); return; }
+    // Texto digitado na busca sem escolher ninguém: nunca emitir "sem tomador" por engano.
+    if (!tomador && buscaTom.trim()) {
+      avisar('Você digitou um tomador mas não escolheu nenhum da lista. Escolha um cadastrado ou cadastre com "+ Novo". Para emitir sem tomador, apague o campo.', 'Tomador não selecionado');
+      return;
+    }
     const ok = await confirmar({
       titulo: empresa.ambiente === 1 ? 'Emitir nota fiscal?' : 'Emitir nota de teste?',
-      mensagem: `${fmtBRL(v - Number(desconto || 0))} para ${tomador ? tomador.nome : 'tomador não identificado'}.${empresa.ambiente === 1 ? ' A nota terá valor fiscal.' : ' Ambiente de testes: sem valor fiscal.'}`,
+      mensagem: `${fmtBRL(v - Number(desconto || 0))} para ${tomador ? `${tomador.nome} (${fmtDoc(tomador.documento)})` : 'SEM tomador identificado'}.${empresa.ambiente === 1 ? ' A nota terá valor fiscal.' : ' Ambiente de testes: sem valor fiscal.'}`,
       confirmarLabel: 'Emitir',
     });
     if (!ok) return;
@@ -130,6 +135,14 @@ function EmitirModal({ empresa, tomadores, servicos, onClose, onEmitida, onTomad
                   <input className={inputCls} placeholder="Buscar por nome ou CPF/CNPJ (vazio = sem tomador)" value={buscaTom} onChange={(e) => setBuscaTom(e.target.value)} />
                   <button onClick={() => setNovoTomador(true)} className="px-3 h-10 rounded-xl border border-zinc-200 text-xs font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">+ Novo</button>
                 </div>
+                {buscaTom.trim() && sugestoes.length === 0 && (
+                  <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg px-3 py-2">
+                    <p className="text-xs text-zinc-500">Nenhum tomador cadastrado com “{buscaTom.trim()}”.</p>
+                    <button onClick={() => setNovoTomador(true)} className="mt-1 text-sm font-bold text-sky-700 hover:underline cursor-pointer">
+                      + Cadastrar {[11, 14].includes(soDigitos(buscaTom).length) ? fmtDoc(soDigitos(buscaTom)) : 'novo tomador'}
+                    </button>
+                  </div>
+                )}
                 {sugestoes.length > 0 && (
                   <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg max-h-56 overflow-y-auto">
                     {sugestoes.map((t) => (
@@ -182,8 +195,10 @@ function EmitirModal({ empresa, tomadores, servicos, onClose, onEmitida, onTomad
         </div>
       )}
       {novoTomador && (
-        <TomadorModal empresa={empresa} inicial={null} onClose={() => setNovoTomador(false)}
-          onSalvo={(t) => { setNovoTomador(false); setTomadorCriado(t); onTomadorNovo(); setTomadorId(t.id); }} />
+        <TomadorModal empresa={empresa} inicial={null}
+          documentoInicial={[11, 14].includes(soDigitos(buscaTom).length) ? soDigitos(buscaTom) : undefined}
+          onClose={() => setNovoTomador(false)}
+          onSalvo={(t) => { setNovoTomador(false); setTomadorCriado(t); setBuscaTom(''); onTomadorNovo(); setTomadorId(t.id); }} />
       )}
     </Modal>
   );

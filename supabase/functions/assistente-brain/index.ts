@@ -500,7 +500,7 @@ TOOLS.push({
       descricao: { type: 'string', description: 'Descrição curta (vai no Pix e no histórico).' },
       conta_a_pagar_id: { type: 'string', description: 'uuid da conta a pagar correspondente, se houver (busque com consultar_banco/buscar_nome).' },
       loja: { type: 'string', description: 'Loja pagadora. Padrão: a loja que tem o Banco Inter conectado.' },
-      solicitacao_grupo_id: { type: 'number', description: 'id do pedido de pagamento vindo de grupo do WhatsApp (asst_group_requests.id), se souber. Sem isso, o pedido do grupo com o mesmo valor nas últimas 72 h é ligado sozinho. Pedido ligado = quando o pagamento for confirmado, o comprovante é postado no grupo automaticamente.' },
+      solicitacao_grupo_id: { type: 'number', description: 'id do pedido de pagamento vindo de grupo do WhatsApp (asst_group_requests.id), se souber. Sem isso, o pedido do grupo com o mesmo valor nas últimas 72 h é ligado sozinho. Pedido ligado = quando o pagamento for confirmado, o comprovante é postado no grupo automaticamente, respondendo à mensagem do pedido. MENSAGEM COM VÁRIOS PAGAMENTOS: chame preparar_pagamento uma vez para cada um, SEMPRE com o mesmo solicitacao_grupo_id — cada um ganha o próprio comprovante no grupo.' },
     },
     required: ['tipo'],
   },
@@ -911,19 +911,29 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       ctx.outbound.push({ type: 'payment', id: String(p.id) });
       // Liga ao pedido que veio de grupo (asst_group_requests): pago → o assistente-telegram
       // posta o comprovante no grupo. Pelo id informado ou, sem id, pelo mesmo valor em 72 h.
+      // Uma mensagem pode pedir VÁRIOS pagamentos (2026-09-16: Marcelle + Joziane numa mensagem só).
+      // Antes o pedido só aceitava um (asst_group_requests.payment_id) e o 2º Pix ficava sem comprovante.
+      // Agora o PAGAMENTO aponta para o pedido (fin_inter_payments.group_request_id): com o id
+      // informado, liga mesmo que o pedido já tenha outro pagamento; sem id, adivinha pelo valor
+      // só entre pedidos ainda sem pagamento (adivinhar num pedido já usado erraria fácil).
       let grupo: string | null = null;
       try {
-        const cols = 'id, group_name, data';
+        const cols = 'id, group_name, data, payment_id';
         const { data: reqs } = input.solicitacao_grupo_id
-          ? await ctx.admin.from('asst_group_requests').select(cols).eq('id', Number(input.solicitacao_grupo_id)).is('payment_id', null)
+          ? await ctx.admin.from('asst_group_requests').select(cols).eq('id', Number(input.solicitacao_grupo_id))
           : await ctx.admin.from('asst_group_requests').select(cols).is('payment_id', null)
             .gte('created_at', new Date(Date.now() - 72 * 3600_000).toISOString()).order('created_at', { ascending: false }).limit(20);
         // deno-lint-ignore no-explicit-any
-        const hit = input.solicitacao_grupo_id ? reqs?.[0] : (reqs ?? []).find((r: any) => Math.abs(Number(r.data?.extraido?.pagamento?.valor ?? NaN) - Number(p.amount)) < 0.01);
+        const hit: any = input.solicitacao_grupo_id ? reqs?.[0] : (reqs ?? []).find((r: any) => Math.abs(Number(r.data?.extraido?.pagamento?.valor ?? NaN) - Number(p.amount)) < 0.01);
         if (hit) {
-          const { data: ok } = await ctx.admin.from('asst_group_requests').update({ payment_id: p.id, status: 'preparado', updated_at: new Date().toISOString() })
-            .eq('id', hit.id).is('payment_id', null).select('id');
-          if (ok?.length) grupo = hit.group_name ?? 'do pedido';
+          const { data: ok } = await ctx.admin.from('fin_inter_payments').update({ group_request_id: hit.id, updated_at: new Date().toISOString() })
+            .eq('id', p.id).is('group_request_id', null).select('id');
+          if (ok?.length) {
+            grupo = hit.group_name ?? 'do pedido';
+            // Formato antigo (1º pagamento do pedido): telas e relatórios ainda leem daqui.
+            await ctx.admin.from('asst_group_requests').update({ payment_id: p.id, status: 'preparado', updated_at: new Date().toISOString() })
+              .eq('id', hit.id).is('payment_id', null);
+          }
         }
       } catch (e) { log('WARN', 'ligar pagamento ao pedido do grupo', { error: errMsg(e) }); }
       return JSON.stringify({

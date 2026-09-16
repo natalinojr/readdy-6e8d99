@@ -200,6 +200,37 @@ export async function buscarCep(cep: string): Promise<{ logradouro: string; bair
   }
 }
 
+/** Dados públicos do CNPJ (BrasilAPI, grátis, espelho da Receita). CPF não tem consulta pública. */
+export async function buscarCnpj(cnpj: string): Promise<{
+  nome: string; email: string | null; fone: string | null; cep: string | null; logradouro: string; numero: string;
+  complemento: string; bairro: string; municipio_nome: string; uf: string; cod_municipio: string | null;
+} | null> {
+  const d = soDigitos(cnpj);
+  if (!cnpjValido(d)) return null;
+  try {
+    const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${d}`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const tipo = String(j.descricao_tipo_de_logradouro ?? '').trim();
+    const lgr = String(j.logradouro ?? '').trim();
+    return {
+      nome: String(j.razao_social ?? '').trim(),
+      email: j.email ? String(j.email).toLowerCase() : null,
+      fone: j.ddd_telefone_1 ? soDigitos(j.ddd_telefone_1) : null,
+      cep: j.cep ? soDigitos(String(j.cep)) : null,
+      logradouro: tipo && lgr && !lgr.toUpperCase().startsWith(tipo.toUpperCase()) ? `${tipo} ${lgr}` : lgr,
+      numero: String(j.numero ?? '').trim(),
+      complemento: String(j.complemento ?? '').replace(/\s+/g, ' ').trim(),
+      bairro: String(j.bairro ?? '').trim(),
+      municipio_nome: String(j.municipio ?? '').trim(),
+      uf: String(j.uf ?? '').trim(),
+      cod_municipio: j.codigo_municipio_ibge ? String(j.codigo_municipio_ibge) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export const inputCls = 'w-full h-10 px-3 rounded-xl border border-zinc-200 text-sm text-zinc-800 focus:outline-none focus:border-sky-400 disabled:bg-zinc-50 disabled:text-zinc-400';
 export const labelCls = 'block text-xs font-semibold text-zinc-600 mb-1';
 
