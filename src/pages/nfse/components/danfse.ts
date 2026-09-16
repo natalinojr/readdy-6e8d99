@@ -121,7 +121,8 @@ export function abrirDanfse(nota: Nota, empresa: Empresa) {
 
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(nomeArquivoNota(empresa, nota))}</title>
 <style>
-  @page { size: A4; margin: 8mm; }
+  /* Margem fica no body (não no @page): assim sai igual com qualquer opção de margem do diálogo de impressão. */
+  @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: #fff; }
   body { font-family: Arial, "Microsoft Sans Serif", Helvetica, sans-serif; color: #000; font-size: 7.5pt; }
@@ -156,7 +157,7 @@ export function abrirDanfse(nota: Nota, empresa: Empresa) {
   .canhoto span { font-size: 8pt; }
   .dagua { position: absolute; top: 38%; left: 0; right: 0; text-align: center; font-size: 46pt; font-weight: 700; color: rgba(200,0,0,.22); transform: rotate(-22deg); pointer-events: none; }
   .noprint { text-align: center; margin: 10px; }
-  @media print { .noprint { display: none; } .doc { min-height: 0; height: 280mm; } }
+  @media print { .noprint { display: none; } body { padding: 10mm 8mm 8mm; } .doc { min-height: 0; height: 278mm; } }
 </style></head><body>
 <div class="noprint"><button onclick="window.print()" style="font-size:14px;padding:8px 18px;cursor:pointer">Imprimir / salvar em PDF</button></div>
 <div class="doc">
