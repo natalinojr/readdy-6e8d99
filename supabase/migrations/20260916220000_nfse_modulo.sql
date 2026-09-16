@@ -273,13 +273,15 @@ grant execute on function public.fn_nfse_has_module() to authenticated;
 grant execute on function public.fn_nfse_membro(uuid, boolean) to authenticated;
 
 -- Lista de membros com nome/e-mail (só para quem é membro).
-create or replace function public.fn_nfse_membros(p_empresa uuid)
- returns table (user_id uuid, papel text, nome text, email text, tem_modulo boolean)
+drop function if exists public.fn_nfse_membros(uuid);
+create function public.fn_nfse_membros(p_empresa uuid)
+ returns table (user_id uuid, papel text, nome text, email text, tem_modulo boolean, eu boolean)
  language sql stable security definer set search_path to 'public'
 as $$
   select m.user_id, m.papel, u.name, u.email,
          (lower(coalesce(u.email,'')) = 'natalinojr.engel@gmail.com'
-          or exists (select 1 from public.user_module_access a where a.user_id = m.user_id and a.module = 'nfse'))
+          or exists (select 1 from public.user_module_access a where a.user_id = m.user_id and a.module = 'nfse')),
+         m.user_id = auth.uid()
   from public.nfse_empresa_membros m
   left join public.users u on u.id = m.user_id
   where m.empresa_id = p_empresa and public.fn_nfse_membro(p_empresa)

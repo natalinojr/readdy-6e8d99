@@ -345,11 +345,11 @@ function Membros({ empresa, souAdmin }: { empresa: Empresa; souAdmin: boolean })
         {membros.map((m) => (
           <div key={m.user_id} className="flex items-center gap-3 px-3 py-2.5">
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-zinc-800 truncate">{m.nome ?? m.email}</p>
+              <p className="text-sm font-semibold text-zinc-800 truncate">{m.nome ?? m.email}{m.eu && <span className="font-normal text-zinc-400"> (você)</span>}</p>
               <p className="text-[11px] text-zinc-400 truncate">{m.email}{!m.tem_modulo && ' · sem o módulo liberado no Admin Master'}</p>
             </div>
             <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600">{m.papel === 'admin' ? 'Administrador' : 'Emissor'}</span>
-            {souAdmin && (
+            {souAdmin && !m.eu && (
               <button onClick={() => remover(m)} className="text-zinc-400 hover:text-red-600 cursor-pointer" title="Remover">
                 <i className="ri-close-line text-lg" />
               </button>

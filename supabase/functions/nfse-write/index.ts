@@ -460,6 +460,15 @@ Deno.serve(async (req: Request) => {
       const { data: u } = await admin.from('users').select('id').ilike('email', email).is('deleted_at', null).maybeSingle();
       const uid = u?.id as string | undefined;
       if (!uid) return fail('Nenhum usuário do ERPOS com este e-mail');
+      // Upsert trocaria o papel: evita o admin se rebaixar sem querer e a empresa ficar sem administrador.
+      if (uid === user.id) return fail('Você já participa desta empresa. Não é possível alterar o próprio papel.');
+      if (papel === 'emissor') {
+        const { data: atual } = await admin.from('nfse_empresa_membros').select('papel').eq('empresa_id', emp.id).eq('user_id', uid).maybeSingle();
+        if (atual?.papel === 'admin') {
+          const { count } = await admin.from('nfse_empresa_membros').select('user_id', { count: 'exact', head: true }).eq('empresa_id', emp.id).eq('papel', 'admin');
+          if ((count ?? 0) <= 1) return fail('A empresa precisa de pelo menos um administrador.');
+        }
+      }
       const { error: iErr } = await admin.from('nfse_empresa_membros').upsert({ empresa_id: emp.id, user_id: uid, papel }, { onConflict: 'empresa_id,user_id' });
       if (iErr) return fail(iErr.message, 500);
       const { data: acc } = await admin.from('user_module_access').select('module').eq('user_id', uid).eq('module', 'nfse').maybeSingle();

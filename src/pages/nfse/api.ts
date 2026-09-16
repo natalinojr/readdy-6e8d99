@@ -104,7 +104,7 @@ export interface Nota {
 }
 export const NOTA_COLS_LISTA = 'id, empresa_id, ambiente, status, serie, numero_dps, id_dps, competencia, dh_emissao, tomador_id, tomador, servico_id, c_trib_nac, c_trib_mun, c_nbs, descricao, cod_municipio_prestacao, valor_servico, desconto_incondicionado, aliquota_iss, iss_retido, info_complementar, chave_acesso, numero_nfse, dh_processamento, alertas, erros, cancelada_em, cancel_codigo, cancel_motivo, created_at';
 
-export interface Membro { user_id: string; papel: 'admin' | 'emissor'; nome: string | null; email: string | null; tem_modulo: boolean }
+export interface Membro { user_id: string; papel: 'admin' | 'emissor'; nome: string | null; email: string | null; tem_modulo: boolean; eu: boolean }
 
 export const STATUS_LABEL: Record<StatusNota, string> = {
   processando: 'Processando',
