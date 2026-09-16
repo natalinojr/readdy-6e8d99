@@ -13,6 +13,7 @@ import { SHARE_KEY, type SharePayload } from '@/lib/shareIntake';
 import { EVENTO_ASSISTENTE, getFoco, limparFocoItem, resumirFoco, setFocoItem, type PedidoAbrir } from '@/lib/assistenteFoco';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
+import AcaoEmitirNfse from '@/components/feature/assistente/AcaoEmitirNfse';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -282,6 +283,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Aba de assunto ('' = tudo). A conversa é uma só; a aba só filtra (asst_messages.topic).
   const [aba, setAba] = useState('');
   const abaRef = useRef('');
+  // Ações rápidas (2026-09-16): roteiros fixos que rodam no sistema, sem o modelo (custo zero).
+  const [menuAcoes, setMenuAcoes] = useState(false);
+  const [acao, setAcao] = useState<'nfse' | null>(null);
+  const abrirAcao = (a: 'nfse') => { setMenuAcoes(false); setAcao(a); setVista('conversa'); setModo('full'); };
   // Lista de conversas (2026-09-16): o painel abre na LISTA de assuntos, com cara de WhatsApp —
   // última mensagem, hora e não lidas por assunto. Toca num, entra na conversa; a seta volta.
   const [vista, setVista] = useState<'lista' | 'conversa'>('lista');
@@ -649,12 +654,24 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           <button onClick={() => setAttach(null)} className="text-zinc-400 hover:text-red-500 cursor-pointer" aria-label="Tirar anexo"><i className="ri-close-line" /></button>
         </div>
       )}
+      {menuAcoes && (
+        <div className="mb-2 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-sm">
+          <p className="px-2 pt-1 pb-1.5 text-[11px] font-bold text-zinc-400 uppercase">Ações rápidas · sem custo de IA</p>
+          <button onClick={() => abrirAcao('nfse')} className="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-sm font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer text-left">
+            <span className="w-8 h-8 flex items-center justify-center rounded-lg bg-sky-50 text-sky-600"><i className="ri-file-text-line" /></span>
+            Emitir nota de serviço
+          </button>
+        </div>
+      )}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => { escolherArquivo(e.target.files?.[0]); e.target.value = ''; }} />
         {/* Câmera direta (2026-09-16): `capture` abre a câmera traseira sem passar pela galeria —
             é o caminho da notinha de balcão no meio do serviço. No desktop o navegador ignora o
             capture e cai no seletor normal, então o botão não estorva. */}
         <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { escolherArquivo(e.target.files?.[0]); e.target.value = ''; }} />
+        <button onClick={() => setMenuAcoes((v) => !v)} disabled={sending || !!recording} className={`w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl disabled:opacity-40 cursor-pointer ${menuAcoes ? 'bg-violet-100 text-violet-700' : 'text-violet-600 hover:bg-violet-50'}`} aria-label="Ações rápidas">
+          <i className="ri-flashlight-line text-xl" />
+        </button>
         <button onClick={() => camRef.current?.click()} disabled={sending || !!recording} className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer" aria-label="Tirar foto da nota">
           <i className="ri-camera-line text-xl" />
         </button>
@@ -889,6 +906,13 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       )}
 
       {vista === 'conversa' && entrada}
+
+      {acao === 'nfse' && (
+        <AcaoEmitirNfse
+          onFechar={() => setAcao(null)}
+          onAbrirNotas={() => { setAcao(null); navigate('/notas-servico'); if (variant === 'floating') setModo('mini'); }}
+        />
+      )}
 
       {/* Ações da mensagem: responder e copiar (toque longo ou botão direito) */}
       {menuMsg && (
