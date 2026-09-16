@@ -595,10 +595,10 @@ const EDGE_ALLOW = new Set([
   'voucher-write', 'production-write', 'user-write', 'task-write', 'delivery-write', 'order-write', 'fiscal-write', 'implementation-write',
   'stone-conciliation', 'inter-bank', 'ifood-financial', 'fiscal-inbound', 'conciliacao-pagamentos', 'purchase-confirm-delivery',
   'order-edit-lock', 'meta-ads-insights', 'print-queue-write', 'online-payments', 'check-session-pending', 'session-payments',
-  'export-menu-template', 'import-menu-template', 'hiring-cv-scan', 'audit-write', 'meta-ads-agent',
+  'export-menu-template', 'import-menu-template', 'hiring-cv-scan', 'audit-write', 'meta-ads-agent', 'nfse-write',
 ]);
 // Credenciais/autorização de integrações (Inter, Stone, iFood, Mercado Pago, fiscal) ficam com o dono na tela.
-const EDGE_ACTION_BLOCK = /(save_config|delete_config|save_pay_credentials|delete_pay_credentials|save_credentials|request_user_code|confirm_authorization|select_merchant|setup_cron)/i;
+const EDGE_ACTION_BLOCK = /(save_config|delete_config|save_pay_credentials|delete_pay_credentials|save_credentials|request_user_code|confirm_authorization|select_merchant|setup_cron|salvar_certificado|adicionar_membro|remover_membro)/i;
 // Funções do banco fora do alcance: acesso de pessoas a lojas, convites, tokens do quiosque, admin da plataforma.
 const RPC_BLOCK = /^(fn_admin_\w*|bootstrap\w*|fn_grant_tenant_access|fn_revoke_tenant_access|fn_create_store_invite|fn_delete_store_invite|fn_create_kiosk_token|fn_revoke_kiosk_token|fn_set_\w*secret\w*|fn_asst_\w*|fn_assistente_\w*)$/i;
 const RPC_SENSITIVE = /(cancel|refund|delete|remove|revoke|close|toggle|restock|bypass|reset|purge|estorn|update_user|open_cash|open_session|cortesia)/i;
@@ -609,6 +609,7 @@ const TABLE_ALLOW: Record<string, string[]> = {
   hiring_settings: ['upsert', 'update'], hiring_distances: ['delete'],
   ingredient_batches: ['update'], ingredients: ['update'], print_queue: ['update'], user_preferences: ['insert', 'update', 'upsert'],
   system_settings: ['update'], table_sessions: ['update'],
+  nfse_tomadores: ['insert', 'update', 'delete'], nfse_servicos: ['insert', 'update', 'delete'],
 };
 // Ações que exigem confirmação explícita na conversa (padrão de nome; o mapa também marca).
 const SENSITIVE = /(^|_)(delete|remove|pay|refund|cancel|void|close|reset|archive|purge|reverse|estorn|excluir|pagar|cancelar|fechar)(_|$)/i;
@@ -659,7 +660,7 @@ async function callEdge(ctx: Ctx, funcao: string, action: string, dados: Record<
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(funcao === 'nfse-write' ? 90_000 : 25_000),
   });
   const text = await r.text();
   let out: unknown; try { out = JSON.parse(text); } catch { out = { raw: text.slice(0, 500) }; }
@@ -752,7 +753,7 @@ const TELAS_APP = new Set([
   '/dashboard', '/financeiro', '/pedidos', '/estoque', '/tarefas', '/contratacao', '/cardapio',
   '/clientes', '/relatorios', '/gestor-pedidos', '/gestor-entregas', '/mesas', '/kds', '/aprovacoes',
   '/usuarios', '/configuracoes', '/config-delivery', '/promocoes', '/vouchers', '/trafego-pago',
-  '/auditoria', '/assistente', '/perfil', '/pdv/caixa', '/pdv/garcom', '/pdv/delivery',
+  '/auditoria', '/assistente', '/perfil', '/pdv/caixa', '/pdv/garcom', '/pdv/delivery', '/notas-servico',
 ]);
 
 export type OutboundAction =
@@ -784,6 +785,9 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       }
       if (funcao === 'inter-bank' && /payment/i.test(action) && !/list_payments|payment_status|check_payment_scopes/i.test(action)) {
         throw new Error('Pagamento pelo Inter é só por preparar_pagamento (botões + PIN).');
+      }
+      if (funcao === 'nfse-write' && action === 'emitir' && input.confirmado !== true) {
+        throw new Error('Emitir NFS-e gera documento fiscal: mostre ao Natalino o resumo (empresa, tomador, serviço, valor, competência, se vai com dados bancários) e só chame de novo com confirmado=true depois do "sim" dele.');
       }
       if (SENSITIVE.test(action) && input.confirmado !== true) {
         throw new Error(`A ação "${action}" é sensível: pergunte ao Natalino se confirma (diga exatamente o que vai fazer e o valor) e só chame de novo com confirmado=true depois do "sim" dele.`);
@@ -1512,6 +1516,8 @@ conciliacao-pagamentos: rematch {} (refaz as sugestões); alerts {}; confirm (S)
 fiscal-inbound (notas de entrada SEFAZ): sync {days?} (busca na SEFAZ e lança sozinhas as de fornecedor conhecido); fetch_xml {}; auto_launch {}. Com document_id (fiscal_inbound_documents.id): import_purchase {document_id, links?[{index, ingredient_id, units_per_package}], pago?, payment_method?, bank_account_id?, cost_center_id?, notes?}; import_bill {document_id, category, dre_category_id?, cost_center_id?}; ignore {document_id, reason?}; unignore {document_id}; manifest {document_id, tipo 1-4 (2 = ciência)}; item_links {document_id}; undo_auto_import (S) {document_id}.
 purchase-confirm-delivery (recebimento com ajuste): receipt_context {purchase_id} (insumos + sugestão por item); qualquer outra action, ex. 'confirmar' = confirma o recebimento {purchase_id, received_at?, delivery_notes?, received_items?} e lança o estoque.
 meta-ads-agent (gestor de tráfego pago IA, Tráfego Pago › Agente): get_settings {} (config, permissões do token, pendências, última rodada); save_settings {settings:{enabled, mode 'sugerir'|'autonomo', autonomia_criar, objetivo 'whatsapp'|'trafego'|'vendas', daily_budget_cap, monthly_budget_cap, target_cpr?, target_roas?, max_frequency, page_id, whatsapp_number?, destination_url?, radius_km?, age_min, age_max, store_context?}}; run {} (roda o agente agora: lê Meta 7/30d + ERPOS, aplica regras e IA, gera sugestões/executa no modo autônomo); list_runs {limit?}; list_actions {status?:'sugerida'|'executada'|...}; decide (S) {action_id, decision:'aprovar'|'rejeitar'} (aprovar EXECUTA na Meta: pausar/reativar/orçamento/criar campanha).
+nfse-write (Notas de Serviço, NFS-e pelo Emissor Nacional; empresas próprias, sem loja): contexto {} → empresas [{id, nome, ambiente 'producao'|'testes', certificado_ok, tem_dados_bancarios, servicos[{id,nome,codigo,valor_padrao}], tomadores_recentes[{id,nome,documento}]}]. emitir (S) {empresa_id? (omitir se só há uma), servico_id, valor_servico, tomador_id? OU tomador_documento (CPF/CNPJ; acha ou cadastra sozinho, CNPJ com dados da Receita; CPF novo exige tomador_nome), competencia? (AAAA-MM-DD, padrão hoje, nunca futura), descricao? (padrão = a do serviço), info_complementar?, incluir_dados_bancarios? (bool), iss_retido?, desconto_incondicionado?, resposta_curta:true} → {status 'autorizada'|'rejeitada'|'erro', numero_nfse, chave_acesso, valor, tomador, erros}. reconsultar {nota_id} (status 'erro' = sem resposta; use ANTES de emitir de novo). cancelar (S) {nota_id, codigo '1' erro na emissão|'2' serviço não prestado|'9' outros, motivo ≥15 caracteres}. Notas: tabela nfse_notas (numero_nfse, status, valor_servico, tomador->>'nome', competencia, ambiente 1=produção).
+COMO EMITIR NFS-e (barato: 1 contexto + 1 emitir; cada toque de botão é uma rodada nova, então junte perguntas nos botões): 1) chame contexto uma vez; 2) valor ou tomador faltando: se faltar o TOMADOR, use enviar_enquete com até 5 tomadores_recentes (nome curto) + "Outro (vou digitar o CNPJ)"; se faltar o VALOR, peça por texto na mesma mensagem; serviço só vira botões se houver mais de um; 3) com tudo em mãos, mostre o resumo em 2–4 linhas (empresa, tomador, serviço, valor, competência = hoje salvo se ele disser outra, e AVISE se ambiente for testes) e use enviar_enquete para confirmar. Se tem_dados_bancarios: opções "Emitir com dados bancários", "Emitir sem dados bancários", "Não emitir" (já responde as duas perguntas num toque); senão: "Emitir", "Não emitir"; 4) só depois da resposta "Emitir…", chame emitir com confirmado=true, resposta_curta=true e incluir_dados_bancarios conforme o botão; 5) responda com número da NFS-e e valor (no chat do app, abrir_tela /notas-servico para o PDF). Rejeitada: explique os erros em uma linha e NÃO tente outra vez sozinho. status 'erro' ou falha/tempo esgotado na chamada: NUNCA emita de novo — use reconsultar. O PDF (DANFSe) sai na tela Notas de Serviço.
 hiring-cv-scan: match {candidate_id, job_id} (analisa candidato × vaga). Também liberadas: order-edit-lock, print-queue-write, online-payments, session-payments, check-session-pending, meta-ads-insights, export-menu-template, import-menu-template, audit-write.
 Credenciais/autorização de integrações (save_config, save_pay_credentials, confirm_authorization...) ficam com o Natalino na tela. Funções do banco: erpos_rpc. Gravações diretas que as telas fazem: erpos_tabela.
 Não disponível pelo assistente: criar venda/pedido (create_order) e a mesa do cliente.`;

@@ -6,7 +6,11 @@
 //   salvar_certificado { empresa_id, pfx_b64, senha }     admin — valida no relay e guarda no Vault
 //   testar_conexao     { empresa_id }                     consulta o convênio do município com o certificado
 //   parametros_servico { empresa_id, c_trib_nac }         alíquota/regras do município para o serviço
-//   emitir             { empresa_id, ... }                monta a DPS, assina e transmite (síncrono)
+//   contexto           { }                                resumo para o assistente: empresas, serviços e últimos tomadores
+//   emitir             { empresa_id?, ... }               monta a DPS, assina e transmite (síncrono). Atalhos p/ o assistente:
+//                      empresa_id opcional (única empresa), servico_id preenche códigos/descrição/alíquota/valor,
+//                      tomador_documento acha ou cadastra o tomador (CNPJ pela BrasilAPI), incluir_dados_bancarios,
+//                      resposta_curta (só o essencial)
 //   reconsultar        { nota_id }                        nota em erro/processando: procura a DPS na Sefin
 //   cancelar           { nota_id, codigo, motivo }        evento 101101
 //   adicionar_membro   { empresa_id, email, papel }       admin
@@ -243,7 +247,69 @@ Deno.serve(async (req: Request) => {
     return emp as any;
   };
 
+  // Sem empresa_id: vale se o usuário participa de exatamente uma empresa.
+  const empresaUnica = async () => {
+    const { data } = await admin.from('nfse_empresa_membros').select('empresa_id').eq('user_id', user.id);
+    if ((data ?? []).length !== 1) throw new HttpErr('Informe empresa_id (você participa de mais de uma empresa ou de nenhuma)', 400);
+    return data![0].empresa_id as string;
+  };
+  // Acha o tomador pelo CPF/CNPJ ou cadastra (CNPJ com os dados públicos da BrasilAPI; CPF exige nome).
+  const tomadorPorDocumento = async (empresaId: string, documento: string, nome: string | null): Promise<{ id: string; nome: string; criado: boolean } | { erro: string }> => {
+    const doc = soDigitos(documento);
+    if (doc.length === 14 ? !cnpjValido(doc) : doc.length === 11 ? !cpfValido(doc) : true) return { erro: `CPF/CNPJ inválido: ${documento}` };
+    const { data: existe } = await admin.from('nfse_tomadores').select('id, nome').eq('empresa_id', empresaId).eq('documento', doc).maybeSingle();
+    if (existe) return { id: existe.id, nome: existe.nome, criado: false };
+    const row: Record<string, unknown> = { empresa_id: empresaId, documento: doc, nome };
+    if (doc.length === 14) {
+      try {
+        const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${doc}`, { signal: AbortSignal.timeout(8000) });
+        if (r.ok) {
+          const j: any = await r.json();
+          const tipo = String(j.descricao_tipo_de_logradouro ?? '').trim();
+          const lgr = String(j.logradouro ?? '').trim();
+          Object.assign(row, {
+            nome: nome ?? texto(j.razao_social),
+            email: j.email ? String(j.email).toLowerCase() : null,
+            fone: soDigitos(j.ddd_telefone_1) || null,
+            cep: soDigitos(j.cep) || null,
+            cod_municipio: j.codigo_municipio_ibge ? String(j.codigo_municipio_ibge) : null,
+            municipio_nome: texto(j.municipio), uf: texto(j.uf),
+            logradouro: tipo && lgr && !lgr.toUpperCase().startsWith(tipo.toUpperCase()) ? `${tipo} ${lgr}` : lgr || null,
+            numero: texto(j.numero), complemento: texto(j.complemento), bairro: texto(j.bairro),
+          });
+        }
+      } catch { /* sem BrasilAPI: segue só com o que veio */ }
+    }
+    if (!row.nome) return { erro: doc.length === 11 ? 'Tomador pessoa física: informe tomador_nome' : 'Não achei os dados do CNPJ: informe tomador_nome' };
+    const { data: novo, error } = await admin.from('nfse_tomadores').insert(row).select('id, nome').single();
+    if (error) return { erro: `Não foi possível cadastrar o tomador: ${error.message}` };
+    return { id: novo.id, nome: novo.nome, criado: true };
+  };
+
   try {
+    // ── contexto ── (assistente: tudo que precisa para emitir, numa chamada só)
+    if (action === 'contexto') {
+      const { data: memb } = await admin.from('nfse_empresa_membros').select('empresa_id').eq('user_id', user.id);
+      const ids = (memb ?? []).map((m) => m.empresa_id);
+      if (!ids.length) return json({ success: true, empresas: [] });
+      const [{ data: emps }, { data: servs }, { data: toms }] = await Promise.all([
+        admin.from('nfse_empresas').select('id, razao_social, nome_fantasia, cnpj, ambiente, cert_validade, dados_bancarios').in('id', ids),
+        admin.from('nfse_servicos').select('id, empresa_id, nome, c_trib_nac, valor_padrao').in('empresa_id', ids).eq('ativo', true).order('nome'),
+        admin.from('nfse_tomadores').select('id, empresa_id, nome, documento').in('empresa_id', ids).order('updated_at', { ascending: false }).limit(30),
+      ]);
+      return json({
+        success: true,
+        empresas: (emps ?? []).map((e: any) => ({
+          id: e.id, nome: e.nome_fantasia || e.razao_social, cnpj: e.cnpj,
+          ambiente: e.ambiente === 1 ? 'producao' : 'testes',
+          certificado_ok: Boolean(e.cert_validade && new Date(e.cert_validade).getTime() > Date.now()),
+          tem_dados_bancarios: Boolean(texto(e.dados_bancarios)),
+          servicos: (servs ?? []).filter((x: any) => x.empresa_id === e.id).map((x: any) => ({ id: x.id, nome: x.nome, codigo: x.c_trib_nac, valor_padrao: x.valor_padrao })),
+          tomadores_recentes: (toms ?? []).filter((t: any) => t.empresa_id === e.id).map((t: any) => ({ id: t.id, nome: t.nome, documento: t.documento })),
+        })),
+      });
+    }
+
     // ── criar_empresa / salvar_empresa ──
     if (action === 'criar_empresa' || action === 'salvar_empresa') {
       const d = (body.dados ?? {}) as Record<string, unknown>;
@@ -333,8 +399,37 @@ Deno.serve(async (req: Request) => {
 
     // ── emitir ──
     if (action === 'emitir') {
-      const emp = await exigirMembro(body.empresa_id);
+      const emp = await exigirMembro(body.empresa_id ?? await empresaUnica());
       if (!emp.cert_pfx_secret) return fail('Cadastre o certificado A1 da empresa antes de emitir');
+
+      // Serviço cadastrado preenche o que não veio (a tela manda tudo; o assistente manda só servico_id).
+      let serv: any = null;
+      if (body.servico_id) {
+        const { data } = await admin.from('nfse_servicos').select('*').eq('id', body.servico_id).eq('empresa_id', emp.id).maybeSingle();
+        if (!data) return fail('Serviço não encontrado nesta empresa');
+        serv = data;
+      } else if (!body.c_trib_nac) {
+        const { data } = await admin.from('nfse_servicos').select('*').eq('empresa_id', emp.id).eq('ativo', true);
+        if ((data ?? []).length !== 1) return fail('Informe servico_id (a empresa tem mais de um serviço ativo ou nenhum)');
+        serv = data![0];
+      }
+      if (serv) {
+        body.servico_id = serv.id;
+        body.c_trib_nac ??= serv.c_trib_nac;
+        if (body.c_trib_mun === undefined) body.c_trib_mun = serv.c_trib_mun;
+        if (body.c_nbs === undefined) body.c_nbs = serv.c_nbs;
+        if (!texto(body.descricao)) body.descricao = serv.descricao;
+        if (body.aliquota_iss === undefined) body.aliquota_iss = serv.aliquota_iss;
+        if (body.valor_servico == null && serv.valor_padrao != null) body.valor_servico = serv.valor_padrao;
+      }
+      if (body.incluir_dados_bancarios === true && texto(emp.dados_bancarios)) {
+        body.info_complementar = [texto(body.info_complementar), texto(emp.dados_bancarios)].filter(Boolean).join(' | ');
+      }
+      if (!body.tomador_id && body.tomador_documento) {
+        const t = await tomadorPorDocumento(emp.id, String(body.tomador_documento), texto(body.tomador_nome));
+        if ('erro' in t) return fail(t.erro);
+        body.tomador_id = t.id;
+      }
 
       const valor = Number(body.valor_servico);
       if (!(valor > 0)) return fail('Informe o valor do serviço');
@@ -401,6 +496,15 @@ Deno.serve(async (req: Request) => {
       const r = await relay({ op: 'emitir', ambiente, xml, ...cert });
       const res = await aplicarRetorno(admin, nota.id, r, r.xml_assinado ? { xml_dps: r.xml_assinado } : {});
       log(res.status === 'autorizada' ? 'INFO' : 'WARN', action, `nota ${res.status}`, { nota_id: nota.id, http: r.http, erros: (res as any).erros });
+      if (body.resposta_curta === true) {
+        const r2: any = res;
+        return json({
+          success: res.status === 'autorizada', nota_id: nota.id, status: res.status,
+          numero_nfse: r2.numero_nfse ?? null, chave_acesso: r2.chave_acesso ?? null,
+          ambiente: ambiente === 1 ? 'producao' : 'testes', valor: valor - desconto,
+          tomador: tomador?.nome ?? null, erros: r2.erros ?? null,
+        });
+      }
       return json({ success: res.status === 'autorizada', nota_id: nota.id, ...res });
     }
 

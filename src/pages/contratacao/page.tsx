@@ -168,6 +168,8 @@ export default function ContratacaoPage() {
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
   }, [isOwner, carregar]);
 
+  const carregarRef = useRef(carregar);
+  useEffect(() => { carregarRef.current = carregar; }, [carregar]);
   // Tempo real (supabase_realtime, migração 20260915160000): etapa, nota e entrevista que o robô/IA ou
   // outra pessoa mudam entram na hora, pela própria linha do evento. O polling acima fica de reserva.
   useEffect(() => {
@@ -180,8 +182,14 @@ export default function ContratacaoPage() {
           return;
         }
         const row = p.new as unknown as T;
+        // O Realtime às vezes manda a linha vazia/incompleta (ex.: checagem de RLS). Entrava na lista uma
+        // "entrevista" sem id nem scheduled_at e o sort do salvar quebrava a tela ("reading 'localeCompare'",
+        // 2026-09-16). Sem id → recarrega em silêncio; linha nova só entra se vier completa.
+        if (!row || !(row as { id?: string }).id) { carregarRef.current?.(true); return; }
         set((prev) => {
-          const next = prev.some((x) => x.id === row.id) ? prev.map((x) => (x.id === row.id ? { ...x, ...row } : x)) : [row, ...prev];
+          const existe = prev.some((x) => x.id === row.id);
+          if (!existe && Object.keys(row as object).length < 5) { carregarRef.current?.(true); return prev; }
+          const next = existe ? prev.map((x) => (x.id === row.id ? { ...x, ...row } : x)) : [row, ...prev];
           return ordena ? [...next].sort(ordena) : next;
         });
       };
@@ -500,7 +508,9 @@ export default function ContratacaoPage() {
   const mostrarEmpresa = empresaFiltro === 'todas' && companies.length > 1;
 
   const onInterviewSaved = (iv: Interview, candidatePatch?: CandidatePatch) => {
-    setInterviews((prev) => [...prev.filter((x) => x.id !== iv.id), iv].sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)));
+    if (!iv?.id) { carregar(true); return; }
+    setInterviews((prev) => [...prev.filter((x) => x.id && x.id !== iv.id), iv]
+      .sort((a, b) => String(a.scheduled_at ?? '').localeCompare(String(b.scheduled_at ?? ''))));
     if (candidatePatch) {
       const { id, ...rest } = candidatePatch;
       setItems((prev) => prev.map((c) => (c.id === id ? { ...c, ...rest } : c)));

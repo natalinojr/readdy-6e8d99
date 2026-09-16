@@ -971,6 +971,33 @@ vencem amanhã (17h), estoque crítico (9h), anomalia e tarefas vencidas **nunca
 (o estado "já mandei hoje" era gravado antes, então não repetia no mesmo dia). Agora manda direto por
 `sendTelegram`/`sendText`.
 
+### Emitir NFS-e pelo assistente (2026-09-16)
+
+`erpos_executar` com `funcao: 'nfse-write'` (módulo Notas de Serviço). Pensado para gastar pouco:
+**1 `contexto` + 1 `emitir`**. A Edge faz o trabalho pesado que antes exigiria várias ferramentas:
+- `contexto` devolve empresas, serviços ativos e últimos tomadores, já resumidos.
+- `emitir` aceita `servico_id` e preenche código, descrição, alíquota e valor padrão do serviço.
+- Com `tomador_documento`, acha ou cadastra o tomador (CNPJ com os dados da BrasilAPI).
+- `empresa_id` pode ser omitido se só existe uma empresa.
+- `incluir_dados_bancarios` junta os dados bancários da empresa nas informações complementares.
+- `resposta_curta` devolve só número, status, valor e erros.
+
+Travas:
+- `emitir` sempre pede `confirmado=true`, depois do resumo e do "sim". `cancelar` já caía no `SENSITIVE`.
+- Sem resposta ou tempo esgotado: **nunca reemitir**; usar `reconsultar`.
+- O timeout do `callEdge` para `nfse-write` é de 90 s (a Sefin pode demorar).
+- Certificado e membros (`salvar_certificado`, `adicionar_membro`, `remover_membro`) ficam só na tela
+  (`EDGE_ACTION_BLOCK`).
+- `nfse_tomadores` e `nfse_servicos` estão no `TABLE_ALLOW`; `/notas-servico` está no `TELAS_APP`.
+
+O PDF (DANFSe) é gerado no navegador, então o assistente não manda o arquivo: aponta a tela.
+
+Botões (`enviar_enquete`), com perguntas juntadas porque cada toque é uma rodada nova do modelo:
+- **Tomador:** até 5 recentes + "Outro (vou digitar o CNPJ)".
+- **Confirmação:** "Emitir com dados bancários" / "Emitir sem dados bancários" / "Não emitir", que responde
+  duas perguntas num toque.
+- **Valor:** continua por texto.
+
 ## Pendente (ordem)
 
 1. Validar no uso real o Telegram: conversa, áudio, foto e clique em botão.
