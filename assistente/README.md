@@ -851,6 +851,15 @@ Rodar: `npx vitest run src/test/components/assistenteChat.test.tsx src/test/edge
 - A suíte inteira (`npx vitest run`) tem 15 falhas **antigas** em `dateUtils`, `orderFlow` e
   `mesaQRFlow` (testes que dependem da data do dia; não usam nada do chat).
 
+### Rodapé de pagamentos: só o que pede ação (2026-09-16)
+
+O cartão acima da caixa de texto é para DECIDIR. A `assistente-app › payments` devolvia também os
+concluídos das últimas 24 h e a tela só escondia cancelados/expirados — resultado: pagos ficavam
+fixos entulhando o chat. Agora, dos dois lados (Edge e front), só aparecem
+`draft | awaiting_pin | sending | sent | pending_approval | approved | scheduled`; o desfecho fica
+registrado na conversa (linha "[Pagamento … pago]"). Teste: "pagamento concluído não fica fixo no
+rodapé" em `src/test/components/assistenteChat.test.tsx`.
+
 ### Demora da resposta no chat (medido em 2026-09-16)
 
 Medição pelos logs (`msg:"respondido"` da `assistente-app` × `msg:"reply"` do brain):

@@ -2120,3 +2120,30 @@ tabela "arquivo tocado → checklist" e as decisões do dono (loja, impressora, 
   com `ValorUnitario = 0` e joga combo + taxa de entrega em `ValorOutrasDespesas` (`vOutro`). Nota
   série 2 nº 3 (15/09): `vProd` 38 em vez de 95, `vOutro` 65,50. Autorizada, mas DANFE mostra o
   produto a R$ 0,00. Item 9.8 do checklist; decisão do dono pendente.
+
+### Fila de erros `dev_error_events` + Edge `client-errors` (2026-09-16)
+
+Fase 0.2 de `ORQUESTRACAO-AGENTES.md`. Decisão: tabela própria (não Sentry) — o assistente e os
+agentes leem por SQL, sem fornecedor novo.
+
+- **Tabela** `dev_error_events` (migration `20260916000000_dev_error_events.sql`): 1 linha por
+  `fingerprint` (fonte + fn/rota + mensagem sem números/uuids + 1ª linha do stack sem querystring),
+  com `count/first_seen/last_seen`, `status` open/triaged/fixed/ignored (volta a `open` se um
+  "fixed" reaparece), `tenant_id`, `route`, `app_build` (hash do `index-XXXX.js`). RLS ligada sem
+  policy; só `service_role`. View `dev_error_summary` = abertos, mais recentes primeiro.
+- **Escrita**: RPC `fn_dev_error_report(jsonb)` (security definer, só service_role). Fontes:
+  - `front`/`edge`: Edge **`client-errors`** (pública, `--no-verify-jwt`; POST, lote ≤ 20, rate
+    limit 60/min por IP, `user_id` só de JWT válido — nunca do body). Chamada por
+    `src/lib/errorReporter.ts`: `window.onerror`, `unhandledrejection`, `ErrorBoundary`
+    (`App.tsx`) e `invokeWithAuth` quando a Edge responde 4xx/5xx (5xx = error, 4xx = warning,
+    401/403/409 ficam de fora). Lote a cada 4 s, `sendBeacon` no `pagehide`, dedup 1×/min em
+    memória, lista de ruído ignorado (ResizeObserver, refresh token, chunk velho, Script error).
+    Em `npm run dev` só loga no console (`VITE_REPORT_ERRORS=1` para enviar).
+  - `print`/`fiscal`: `fn_dev_error_collect()` no **pg_cron a cada 15 min** (`dev-error-collect`)
+    junta `print_queue.status='failed'` e `fiscal_documents.status in ('error','rejected')` dos
+    últimos 20 min.
+- Ainda não coberto: 5xx que a Edge devolve sem passar por `invokeWithAuth` (`fetch` direto),
+  erros do `assistente-*` e crons (`fn_*_sync_all`), logs do Supabase (`query_logs` é só via MCP).
+- Consumo: por enquanto só SQL (`select * from dev_error_summary`). O workflow `/auditoria-erros`
+  (Fase 1) e uma ferramenta do assistente vêm depois — regra "assistente faz tudo que a tela faz"
+  não se aplica ainda porque não existe tela.

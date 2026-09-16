@@ -193,6 +193,17 @@ describe('AssistenteChat — pagamento', () => {
     expect(calls('pay').map((c) => c.pin)).toEqual(['9999', '1234']);
   });
 
+  it('pagamento concluído não fica fixo no rodapé (só na conversa)', async () => {
+    // Antes o rodapé mantinha os pagos por 24 h e tomava a tela do chat (2026-09-16).
+    srv.pays = [
+      { ...pixEduardo(), id: 'pago1', status: 'paid', status_label: 'pago' },
+      { ...pixEduardo(), id: 'aberto1', amount: 77.5, status: 'pending_approval', status_label: 'aguardando sua aprovação no app do Inter' },
+    ];
+    renderChat();
+    expect(await screen.findByText(/77,50/)).toBeInTheDocument();
+    expect(screen.queryByText(/115,96/)).not.toBeInTheDocument();
+  });
+
   it('Cancelar cancela sem pedir PIN', async () => {
     const user = userEvent.setup();
     srv.pays = [pixEduardo()];

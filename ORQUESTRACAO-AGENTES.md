@@ -5,7 +5,7 @@ hooks em `.claude/settings.json`, 15 testes velhos reescritos, bug de `getPeriod
 **Fase 0.3 FEITA em 2026-09-15**: `TESTES-CHECKLIST.md` v1 (15 módulos, ~110 passos) revisado pelo dono.
 Ambiente: loja "Testes PDV" (tudo liberado) + usuários `qa.admin/qa.caixa/qa.garcom`
 (`scripts/seed-test-users.mjs` → `.test-users.json`, gitignored) + Modo Treino fora dela.
-Próximo: Fase 0.2 (fila de erros) e Fase 1 (subagentes + `/ciclo`). Detalhes do
+**Fase 0.2 FEITA em 2026-09-16**: `dev_error_events` + Edge `client-errors` + `errorReporter.ts` + cron `dev-error-collect` (detalhes em `AI_SYSTEM_MAP.md`). Front pendente de push. Próximo: Fase 1 (subagentes + `/ciclo` + `/auditoria-erros`). Detalhes do
 verificador em `AI_SYSTEM_MAP.md` › "Verificador determinístico".
 
 ## 1. Diagnóstico — por que hoje depende do dono
