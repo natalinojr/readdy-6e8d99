@@ -23,6 +23,9 @@ interface Props {
   onSaved: (iv: Interview, patch?: CandidatePatch) => void;
   onOpenCandidate: (candidateId: string) => void;
   onNewInterview: (date: string) => void;
+  /** Entrevista para abrir direto (link do chat/notificação): vai para o dia dela e abre o registro. */
+  focoId?: string | null;
+  onFocoUsado?: () => void;
 }
 
 const addDias = (key: string, n: number) => {
@@ -42,7 +45,7 @@ const rotuloDia = (key: string) => {
   return new Date(y, m - 1, d).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
 };
 
-export default function EntrevistasDoDia({ interviews, candidates, companies, stages, settings, applications, jobs, onSaved, onOpenCandidate, onNewInterview }: Props) {
+export default function EntrevistasDoDia({ interviews, candidates, companies, stages, settings, applications, jobs, onSaved, onOpenCandidate, onNewInterview, focoId, onFocoUsado }: Props) {
   const hoje = dayKey(new Date());
   // Volta onde estava (dia e pessoa) se saiu há menos de 12 h.
   const pos = lsLer<{ dia: string; sel: string | null; at: number }>(LS_POS);
@@ -88,6 +91,18 @@ export default function EntrevistasDoDia({ interviews, candidates, companies, st
     return () => { vivo = false; clearInterval(t); };
   }, [idsDoDia]);
   const sel = doDia.find((iv) => iv.id === selId) ?? null;
+
+  // Veio por link ("Abrir entrevista de Fulana"): vai para o dia dela e abre o registro — no celular
+  // também, onde a lista some e fica só o registro. Espera as entrevistas carregarem.
+  useEffect(() => {
+    if (!focoId) return;
+    const iv = interviews.find((x) => x.id === focoId);
+    if (!iv) return;
+    setDia(dayKey(new Date(iv.scheduled_at)));
+    setSelId(iv.id);
+    onFocoUsado?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focoId, interviews]);
 
   // Trocou o dia: abre a 1ª entrevista ainda não registrada (ou a 1ª do dia) — no computador.
   useEffect(() => {

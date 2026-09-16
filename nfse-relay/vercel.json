@@ -1,0 +1,4 @@
+{
+  "regions": ["gru1"],
+  "functions": { "api/sefin.js": { "maxDuration": 60 } }
+}

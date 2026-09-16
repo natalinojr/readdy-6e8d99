@@ -123,6 +123,19 @@ function limparUser(content: string): { text: string; audio: boolean; arquivo: s
 // vale para o histórico e para a prévia da barra pequena.
 const MARCADORES = /\n?\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado|Botão enviado)[^\n]*\]/g;
 const semMarcadores = (t: string) => t.replace(MARCADORES, '').trim();
+// O marcador de botão também É o botão (2026-09-16). Antes o botão só existia na resposta da hora
+// (vinha nas `actions` do send) e sumia ao recarregar; avisos que chegam sozinhos (contratação, cron)
+// nem passam pelo send — só pelo histórico. Lendo o marcador, o botão aparece em qualquer mensagem.
+// Só rota interna: começa com "/", sem "//" nem espaço (é navigate(), não link de fora).
+const MARCADOR_BOTAO = /\[Botão enviado: "([^"\n]{1,80})" → (\/[^\s\]]*)\]/g;
+function botoesDoTexto(t: string): Abrir[] {
+  const out: Abrir[] = [];
+  for (const m of t.matchAll(MARCADOR_BOTAO)) {
+    if (m[2].startsWith('//')) continue;
+    out.push({ type: 'abrir', label: m[1], rota: m[2].slice(0, 300) });
+  }
+  return out;
+}
 
 // Posição do botão redondo (2026-09-16): arrasta para onde quiser e ele fica lá — antes era fixo no
 // canto e "voltava para baixo" toda vez. Guardada como FRAÇÃO da tela (centro do botão), para
@@ -802,7 +815,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                 )}
                 {/* Botão que LEVA à tela: a resposta deixa de terminar em "vá em Financeiro › ..."
                     No flutuante recolhe para a barra, senão o painel cobriria a tela que abriu. */}
-                {(links[m.id] ?? []).map((lk, i) => (
+                {[...(links[m.id] ?? []), ...botoesDoTexto(m.content)]
+                  .filter((lk, i, todos) => todos.findIndex((x) => x.rota === lk.rota) === i)
+                  .map((lk, i) => (
                   <button
                     key={`lk${i}`}
                     onClick={() => { navigate(lk.rota); if (variant === 'floating') setModo('mini'); }}

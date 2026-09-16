@@ -973,7 +973,14 @@ async function deliver(body: any) {
   // (2026-09-16). Quem vem do brain já é gravado lá e não passa por aqui.
   if (body.save && text && text !== 'NO_REPLY') {
     const topic = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'].includes(String(body.topic)) ? String(body.topic) : 'avisos';
-    await admin.from('asst_messages').insert({ channel: 'cron', chat_id: chatKey, role: 'assistant', content: text, topic })
+    // Botão "abrir a tela" junto do aviso (ex.: "Abrir entrevista da Fulana"): mesmo marcador que o
+    // brain grava, e o chat do ERPOS transforma o marcador em botão (2026-09-16).
+    // deno-lint-ignore no-explicit-any
+    const botoes = (Array.isArray(body.actions) ? body.actions : []).filter((a: any) => a?.type === 'abrir' && /^\/(?!\/)\S*$/.test(String(a.rota ?? '')))
+      // deno-lint-ignore no-explicit-any
+      .map((a: any) => `[Botão enviado: "${String(a.label ?? 'Abrir').replace(/["\n]/g, '').slice(0, 60)}" → ${String(a.rota).slice(0, 300)}]`);
+    const content = botoes.length ? `${text}\n${botoes.join('\n')}` : text;
+    await admin.from('asst_messages').insert({ channel: 'cron', chat_id: chatKey, role: 'assistant', content, topic })
       .then(({ error }) => { if (error) log('WARN', 'aviso não gravado', { error: error.message }); });
   }
   // deno-lint-ignore no-explicit-any

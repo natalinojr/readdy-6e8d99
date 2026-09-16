@@ -5,7 +5,7 @@
 // foto/PDF escaneado vai direto para a IA (Edge hiring-cv-scan); nos demais a IA só
 // roda no botão "Organizar com IA". Tudo com RLS pelo e-mail do dono; o guard aqui é só UX.
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
@@ -86,6 +86,27 @@ export default function ContratacaoPage() {
   const [modal, setModal] = useState<ModalState>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Link que abre um lugar certo (2026-09-16): botão "Abrir entrevista de Fulana" do chat do assistente
+  // e toque na notificação. ?aba=<aba>, ?entrevista=<id> (abre o registro dela na aba Entrevistas),
+  // ?candidato=<id> (abre a ficha). O parâmetro é consumido: recarregar não reabre o mesmo lugar.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [focoEntrevista, setFocoEntrevista] = useState<string | null>(null);
+  useEffect(() => {
+    const a = searchParams.get('aba');
+    const ent = searchParams.get('entrevista');
+    const cand = searchParams.get('candidato');
+    if (!a && !ent && !cand) return;
+    if (a && ABAS.some((x) => x.id === a)) setAba(a as Aba);
+    if (ent) {
+      setFocoEntrevista(ent);
+      // Com filtro de outra empresa a entrevista não apareceria na lista.
+      setEmpresaFiltro('todas');
+    }
+    // Em Agendamentos o candidato só dá contexto; abrir a ficha por cima esconderia o pedido.
+    if (cand && a !== 'agendamentos') setSelId(cand);
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => { lsSet('contratacao_view', view); }, [view]);
   useEffect(() => { lsSet('contratacao_aba', aba); }, [aba]);
@@ -582,7 +603,8 @@ export default function ContratacaoPage() {
       ) : aba === 'entrevistas' ? (
         <EntrevistasDoDia interviews={ivsDaEmpresa} candidates={items} companies={companies} stages={stages} settings={settings}
           applications={applications} jobs={jobs} onSaved={onInterviewSaved} onOpenCandidate={setSelId}
-          onNewInterview={(date) => setModal({ interview: null, date })} />
+          onNewInterview={(date) => setModal({ interview: null, date })}
+          focoId={focoEntrevista} onFocoUsado={() => setFocoEntrevista(null)} />
       ) : aba === 'agenda' ? (
         <AgendaEntrevistas interviews={ivsDaEmpresa} candidates={items} companies={companies} mostrarEmpresa={mostrarEmpresa}
           onOpenInterview={(iv) => setModal({ interview: iv })} onNew={(date) => setModal({ interview: null, date })} />

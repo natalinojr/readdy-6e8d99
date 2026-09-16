@@ -2395,3 +2395,21 @@ veio `advance_fee = 0`, então a separação antecipado × débito não fecha ne
   `hiring_scheduling_sessions.confirmed_at`, não na entrevista. A aba busca as sessões do dia aberto
   (e de minuto em minuto) e mostra "Confirmou" (verde) ou "Aguardando" (pedido enviado sem resposta)
   ao lado do nome, só enquanto a entrevista está `agendada`.
+
+### Aviso de contratação com botão "Abrir entrevista de Fulana" (2026-09-16)
+
+Pedido do dono: quando alguém confirma presença, o aviso no chat traz um botão que leva à entrevista
+dela. Três ligações que não existiam:
+
+1. **`hiring-scheduler › destinoDoAviso`** escolhe o destino: com entrevista → `/contratacao?aba=
+   entrevistas&entrevista=<id>` (id relido do banco — depois do `book` o contexto em memória tem o
+   anterior); pedido de horário → `?aba=agendamentos`; sem entrevista → ficha (`?candidato=<id>`).
+   Vai como action `abrir` no `deliver` e como `url` do push.
+2. **`assistente-telegram › deliver`** com `save` grava o marcador `[Botão enviado: "…" → /rota]`
+   junto do aviso (Telegram já transformava a action em botão de link).
+3. **O chat desenha botão a partir do marcador do histórico** (`botoesDoTexto`). Antes o botão só
+   existia nas `actions` da resposta da hora e sumia ao recarregar; aviso que chega sozinho nunca
+   passa pelo `send`. Rota só interna (começa com `/`, sem `//`).
+
+A Contratação lê `?aba`, `?entrevista`, `?candidato` (consome o parâmetro; recarregar não reabre) e a
+aba Entrevistas vai para o dia da entrevista e abre o registro — no celular também.

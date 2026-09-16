@@ -1,0 +1,11 @@
+{
+  "name": "erpos-nfse-relay",
+  "private": true,
+  "description": "Assina e envia DPS/eventos para a Sefin Nacional (NFS-e). Chamado só pela Edge nfse-write.",
+  "engines": { "node": "22.x" },
+  "dependencies": {
+    "@xmldom/xmldom": "0.9.12",
+    "node-forge": "1.4.0",
+    "xml-crypto": "6.1.2"
+  }
+}

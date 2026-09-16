@@ -221,29 +221,48 @@ async function toCand(admin: SupabaseClient, c: Ctx, text: string, extra: Row = 
 // lembrete da véspera — nada disso entrava na conversa do dono, e a aba Currículos do chat do ERPOS
 // ficava vazia. Mesmo caminho do canal-publico › notifyOwner: assistente-telegram › deliver com
 // save/topic grava na aba Currículos, manda no Telegram e dispara o push do app.
-async function notifyOwner(text: string) {
+async function notifyOwner(text: string, actions: Row[] = []) {
   try {
     const admin = sbLid;
     const { data } = await admin.from('asst_settings').select('value').eq('key', 'telegram_owner_chat_id').maybeSingle();
     if (!data?.value || internalKey.length < 20) return;
     const r = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-      body: JSON.stringify({ action: 'deliver', chat_key: `tg:${String(data.value).replace(/"/g, '')}`, text, save: true, topic: 'curriculos' }),
+      body: JSON.stringify({ action: 'deliver', chat_key: `tg:${String(data.value).replace(/"/g, '')}`, text, save: true, topic: 'curriculos', actions }),
     });
     if (!r.ok) log('WARN', 'aviso ao dono recusado', { status: r.status });
   } catch (e) { log('WARN', 'aviso ao dono falhou', { error: errMsg(e) }); }
 }
 
 // Push para usuários do ERPOS (send-push › send, service role). Sem tenant: vale para quem não tem loja.
-async function pushUsuarios(userIds: string[], titulo: string, corpo: string) {
+async function pushUsuarios(userIds: string[], titulo: string, corpo: string, url?: string) {
   if (!userIds.length || !serviceRoleKey) return;
   try {
     const r = await fetch(`${supabaseUrl}/functions/v1/send-push`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceRoleKey}` },
-      body: JSON.stringify({ action: 'send', user_ids: userIds, payload: { title: titulo, body: corpo.slice(0, 180), url: '/contratacao?tab=agendamentos', tag: 'contratacao' } }),
+      body: JSON.stringify({ action: 'send', user_ids: userIds, payload: { title: titulo, body: corpo.slice(0, 180), url: url ?? '/contratacao?aba=agendamentos', tag: 'contratacao' } }),
     });
     if (!r.ok) log('WARN', 'push aos entrevistadores recusado', { status: r.status });
   } catch (e) { log('WARN', 'push aos entrevistadores falhou', { error: errMsg(e) }); }
+}
+
+// Para onde o aviso leva (2026-09-16, pedido do dono): "Fulana confirmou presença" chega no chat com
+// um botão que abre a entrevista dela na aba Entrevistas. O interview_id vem do BANCO: depois de
+// agendar (book) o contexto em memória ainda tem o id anterior. Sem entrevista (cancelou, desistiu,
+// não respondeu), abre a ficha; pedido de horário abre Agendamentos, onde se responde.
+async function destinoDoAviso(c: Ctx, text: string): Promise<{ rota: string; label: string } | null> {
+  const nome = firstName(c.cand?.full_name) || 'candidato';
+  if (text.includes('\n\nResponda aqui:') && c.cand?.id) {
+    return { rota: `/contratacao?aba=agendamentos&candidato=${c.cand.id}`, label: `Responder pedido de ${nome}` };
+  }
+  let interviewId = c.sess?.interview_id ?? null;
+  if (c.sess?.id) {
+    const { data } = await sbLid.from('hiring_scheduling_sessions').select('interview_id').eq('id', c.sess.id).maybeSingle();
+    interviewId = data?.interview_id ?? null;
+  }
+  if (interviewId) return { rota: `/contratacao?aba=entrevistas&entrevista=${interviewId}`, label: `Abrir entrevista de ${nome}` };
+  if (c.cand?.id) return { rota: `/contratacao?aba=candidatos&candidato=${c.cand.id}`, label: `Abrir ficha de ${nome}` };
+  return null;
 }
 
 async function toInterviewers(c: Ctx, text: string, opts: { semChatDoDono?: boolean } = {}) {
@@ -255,11 +274,15 @@ async function toInterviewers(c: Ctx, text: string, opts: { semChatDoDono?: bool
     const [semCodigo] = text.split('\n\nResponda aqui:');
     const pedeResposta = semCodigo !== text;
     const corpo = pedeResposta ? `${semCodigo}\n\nResponda em Contratação › Agendamentos.` : semCodigo;
-    await pushUsuarios(usuarios, `Contratação · ${c.job?.title ?? 'vaga'}`, corpo);
-    // O dono, se marcado, também recebe na conversa do assistente (aba Currículos).
+    const destino = await destinoDoAviso(c, text);
+    // Tocar na notificação também leva direto à entrevista/ficha.
+    await pushUsuarios(usuarios, `Contratação · ${c.job?.title ?? 'vaga'}`, corpo, destino?.rota);
+    // O dono, se marcado, também recebe na conversa do assistente (aba Currículos), com o botão.
     const { data: dono } = await sbLid.from('asst_settings').select('value').eq('key', 'owner_user_id').maybeSingle();
     const donoId = String(dono?.value ?? '').replace(/"/g, '');
-    if (!opts.semChatDoDono && donoId && usuarios.includes(donoId)) await notifyOwner(corpo);
+    if (!opts.semChatDoDono && donoId && usuarios.includes(donoId)) {
+      await notifyOwner(corpo, destino ? [{ type: 'abrir', rota: destino.rota, label: destino.label }] : []);
+    }
   }
   // ── WhatsApp (formato antigo)
   for (const it of lista.filter((i) => !ehUsuario(i))) {

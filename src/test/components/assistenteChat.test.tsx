@@ -537,6 +537,32 @@ describe('AssistenteChat — botão que leva à tela', () => {
     expect(await screen.findByText('TELA FINANCEIRO')).toBeInTheDocument();
   });
 
+  it('aviso que chega pelo histórico (contratação) traz o botão e ele leva à entrevista', async () => {
+    // Avisos do hiring-scheduler não passam pelo send: só entram no histórico. O botão tem de vir do
+    // marcador, e continuar lá depois de recarregar (antes sumia).
+    const user = userEvent.setup();
+    add('assistant', '✅ Ana confirmou presença na entrevista (Atendente).\n[Botão enviado: "Abrir entrevista de Ana" → /contratacao?aba=entrevistas&entrevista=iv-1]', 'curriculos', 'cron');
+    render(
+      <MemoryRouter initialEntries={['/financeiro']}>
+        <AssistenteChat variant="embedded" />
+        <Routes><Route path="/contratacao" element={<p>TELA CONTRATACAO</p>} /></Routes>
+      </MemoryRouter>,
+    );
+    await entrarNaConversa(user, 'Currículos');
+    expect(await screen.findByText(/Ana confirmou presença/)).toBeInTheDocument();
+    expect(screen.queryByText(/Botão enviado/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: /Abrir entrevista de Ana/ }));
+    expect(await screen.findByText('TELA CONTRATACAO')).toBeInTheDocument();
+  });
+
+  it('marcador com rota de fora (//site) não vira botão', async () => {
+    add('assistant', 'oi\n[Botão enviado: "Golpe" → //malicioso.com]');
+    renderChat();
+    await entrarNaConversa(userEvent.setup());
+    expect(await screen.findByText('oi')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Golpe/ })).toBeNull();
+  });
+
   it('o marcador do histórico não aparece no balão (só o botão)', async () => {
     // O brain grava '[Botão enviado: "…" → /rota]' na mensagem para saber o que já mandou.
     // Isso é anotação interna: apareceu na tela do dono em 2026-09-16.
