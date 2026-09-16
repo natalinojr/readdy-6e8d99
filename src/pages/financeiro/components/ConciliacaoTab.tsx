@@ -462,7 +462,7 @@ export default function ConciliacaoTab() {
   const [showInterConfig, setShowInterConfig] = useState(false);
   const [showIntegracoes, setShowIntegracoes] = useState(false);
   const [showComoEntra, setShowComoEntra] = useState(false);
-  const [showRepassesStone, setShowRepassesStone] = useState(false);
+  const [showRepassesStone, setShowRepassesStone] = useState<false | 'repasses' | 'taxas'>(false);
   const { flow: moneyFlow } = useMoneyFlow();
   const usaStone = moneyFlow.card_provider === 'stone';
   // Pagamentos sem nota selecionados para lançar de uma vez (despesa/compra)
@@ -883,6 +883,7 @@ export default function ConciliacaoTab() {
     ['pagamentos_sem_nota', 'Pagamentos a empresas sem nota de entrada', 'amber'],
     ['juros_mes', 'Juros e multas pagos no mês', 'amber'],
     ['repasses_stone', 'Repasses da Stone que não bateram com o banco', 'red'],
+    ['taxas_maquininha', 'Taxas da maquininha cobradas acima do contrato', 'red'],
   ];
   const alertasAtivos = alertas ? ALERTAS_DEF.filter(([k]) => Number(alertas[k]?.count ?? 0) > 0) : [];
   const temPendencias = vinculosPendentes.length > 0 || alertasAtivos.length > 0;
@@ -959,14 +960,16 @@ export default function ConciliacaoTab() {
 
           {usaStone && (
             <button
-              onClick={() => setShowRepassesStone(true)}
-              title="Quanto a Stone liquidou × quanto entrou no banco, por dia"
+              onClick={() => setShowRepassesStone('repasses')}
+              title="Quanto a Stone liquidou × quanto entrou no banco, e as taxas cobradas × contratadas"
               className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-700 rounded-lg text-sm font-semibold hover:bg-zinc-50 transition-colors cursor-pointer whitespace-nowrap"
             >
               <i className="ri-bank-card-line text-amber-500" />
               Repasses Stone
-              {Number(alertas?.repasses_stone?.count ?? 0) > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[10px] leading-none">{alertas!.repasses_stone!.count}</span>
+              {Number(alertas?.repasses_stone?.count ?? 0) + Number(alertas?.taxas_maquininha?.count ?? 0) > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[10px] leading-none">
+                  {Number(alertas?.repasses_stone?.count ?? 0) + Number(alertas?.taxas_maquininha?.count ?? 0)}
+                </span>
               )}
             </button>
           )}
@@ -1070,9 +1073,9 @@ export default function ConciliacaoTab() {
                   <i className="ri-arrow-down-s-line text-zinc-400 group-open:rotate-180 transition-transform" />
                 </summary>
                 <div className="mt-2 ml-5 space-y-1">
-                  {k === 'repasses_stone' && (
-                    <button onClick={() => setShowRepassesStone(true)} className="text-xs font-semibold text-amber-600 hover:text-amber-700 cursor-pointer">
-                      Ver repasses dia a dia →
+                  {(k === 'repasses_stone' || k === 'taxas_maquininha') && (
+                    <button onClick={() => setShowRepassesStone(k === 'taxas_maquininha' ? 'taxas' : 'repasses')} className="text-xs font-semibold text-amber-600 hover:text-amber-700 cursor-pointer">
+                      {k === 'taxas_maquininha' ? 'Ver taxas cobradas × contratadas →' : 'Ver repasses dia a dia →'}
                     </button>
                   )}
                   {a.itens.map((it, i) => (
@@ -1499,6 +1502,7 @@ export default function ConciliacaoTab() {
         <RepassesStoneModal
           dateFrom={periodoValido ? periodFrom : shiftISO(hojeBR(), -30)}
           dateTo={periodoValido ? periodTo : hojeBR()}
+          abaInicial={showRepassesStone}
           onClose={() => setShowRepassesStone(false)}
         />
       )}

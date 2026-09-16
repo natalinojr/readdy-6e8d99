@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
+import { PRODUTOS_CARTAO, type ProdutoCartao } from './TaxasContratadas';
 
 // Repasses da Stone dia a dia: quanto a Stone liquidou × quanto entrou no banco, separado em
 // débito e crédito antecipado (edge conciliacao-pagamentos › stone_repasses → fn_stone_repasses).
@@ -76,10 +77,11 @@ type Filtro = 'problemas' | 'todos' | 'ok' | 'sem_dado';
 interface Props {
   dateFrom: string;
   dateTo: string;
+  abaInicial?: 'repasses' | 'taxas';
   onClose: () => void;
 }
 
-export default function RepassesStoneModal({ dateFrom, dateTo, onClose }: Props) {
+export default function RepassesStoneModal({ dateFrom, dateTo, abaInicial = 'repasses', onClose }: Props) {
   const { user } = useAuth();
   const [from, setFrom] = useState(dateFrom);
   const [to, setTo] = useState(dateTo);
@@ -87,6 +89,7 @@ export default function RepassesStoneModal({ dateFrom, dateTo, onClose }: Props)
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<Filtro>('problemas');
+  const [aba, setAba] = useState<'repasses' | 'taxas'>(abaInicial);
 
   useEffect(() => {
     if (!user?.tenantId || !from || !to || from > to) return;
@@ -145,13 +148,27 @@ export default function RepassesStoneModal({ dateFrom, dateTo, onClose }: Props)
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-zinc-100">
           <div className="min-w-0">
             <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2"><i className="ri-bank-card-line text-amber-500" /> Repasses da Stone</h3>
-            <p className="text-xs text-zinc-500">Quanto a Stone liquidou × quanto entrou no banco, por dia, separado em débito e crédito antecipado.</p>
+            <p className="text-xs text-zinc-500">
+              {aba === 'repasses'
+                ? 'Quanto a Stone liquidou × quanto entrou no banco, por dia, separado em débito e crédito antecipado.'
+                : 'Taxa que a Stone cobrou em cada venda × taxa contratada.'}
+            </p>
+            <div className="flex gap-1 mt-2">
+              {(['repasses', 'taxas'] as const).map((a) => (
+                <button key={a} onClick={() => setAba(a)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer ${aba === a ? 'bg-amber-100 text-amber-800' : 'text-zinc-500 hover:bg-zinc-100'}`}>
+                  {a === 'repasses' ? 'Repasses' : 'Taxas'}
+                </button>
+              ))}
+            </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer flex-shrink-0">
             <i className="ri-close-line text-zinc-500" />
           </button>
         </div>
 
+        {aba === 'taxas' && <TaxasView from={from} to={to} setFrom={setFrom} setTo={setTo} />}
+        {aba === 'repasses' && (<>
         <div className="px-5 py-3 border-b border-zinc-100 space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1.5">
@@ -238,7 +255,224 @@ export default function RepassesStoneModal({ dateFrom, dateTo, onClose }: Props)
             </table>
           )}
         </div>
+        </>)}
       </div>
     </div>
+  );
+}
+
+// ── Aba Taxas: cobrado × contratado (conciliacao-pagamentos › card_fee_check → fn_card_fee_check) ──
+
+interface TaxaLinha {
+  dia: string;
+  pilha: 'antecipado' | 'debito';
+  taxa_cobrada_pct: number;
+  produto: ProdutoCartao | null;
+  bandeira: string | null;
+  taxa_contratada_pct: number | null;
+  antecipacao_contratada_pct: number | null;
+  vendas: number;
+  bruto: number;
+  mdr_cobrado: number;
+  mdr_esperado: number | null;
+  dif_mdr: number | null;
+  antecipacao_cobrada: number;
+  antecipacao_esperada: number;
+  dif_antecipacao: number;
+  situacao: 'ok' | 'acima' | 'abaixo' | 'sem_contrato';
+}
+
+const pct = (v: number | null | undefined) =>
+  v === null || v === undefined ? '—' : `${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })}%`;
+
+const SITUACAO_TAXA: Record<TaxaLinha['situacao'], { label: string; cls: string }> = {
+  ok: { label: 'Conforme contrato', cls: TOM_CLS.ok },
+  acima: { label: 'Cobrou a mais', cls: TOM_CLS.erro },
+  abaixo: { label: 'Cobrou a menos', cls: TOM_CLS.info },
+  sem_contrato: { label: 'Sem taxa contratada', cls: TOM_CLS.alerta },
+};
+
+function TaxasView({ from, to, setFrom, setTo }: { from: string; to: string; setFrom: (v: string) => void; setTo: (v: string) => void }) {
+  const { user } = useAuth();
+  const [rows, setRows] = useState<TaxaLinha[]>([]);
+  const [hasContract, setHasContract] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user?.tenantId || !from || !to || from > to) return;
+    let vivo = true;
+    setLoading(true); setErro(null);
+    invokeWithAuth<{ error?: string; has_contract?: boolean; rows?: Array<Record<string, unknown>> }>('conciliacao-pagamentos', {
+      body: { action: 'card_fee_check', tenant_id: user.tenantId, date_from: from, date_to: to },
+    }).then((r) => {
+      if (!vivo) return;
+      const e = r.data?.error ?? r.error?.message;
+      if (e) setErro(e);
+      setHasContract(Boolean(r.data?.has_contract));
+      const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+      setRows((r.data?.rows ?? []).map((x) => ({
+        dia: String(x.dia), pilha: x.pilha as TaxaLinha['pilha'], taxa_cobrada_pct: Number(x.taxa_cobrada_pct),
+        produto: (x.produto as ProdutoCartao | null) ?? null, bandeira: (x.bandeira as string | null) ?? null,
+        taxa_contratada_pct: n(x.taxa_contratada_pct), antecipacao_contratada_pct: n(x.antecipacao_contratada_pct),
+        vendas: Number(x.vendas), bruto: Number(x.bruto), mdr_cobrado: Number(x.mdr_cobrado),
+        mdr_esperado: n(x.mdr_esperado), dif_mdr: n(x.dif_mdr), antecipacao_cobrada: Number(x.antecipacao_cobrada),
+        antecipacao_esperada: Number(x.antecipacao_esperada), dif_antecipacao: Number(x.dif_antecipacao),
+        situacao: x.situacao as TaxaLinha['situacao'],
+      })));
+      setLoading(false);
+    });
+    return () => { vivo = false; };
+  }, [user?.tenantId, from, to]);
+
+  // Agrupa o período por taxa cobrada × taxa contratada casada
+  const grupos = useMemo(() => {
+    const m = new Map<string, TaxaLinha & { dias: Set<string>; dif_total: number }>();
+    for (const r of rows) {
+      const k = [r.pilha, r.taxa_cobrada_pct, r.produto, r.bandeira, r.taxa_contratada_pct, r.situacao].join('|');
+      const dif = Number(r.dif_mdr ?? 0) + Number(r.dif_antecipacao ?? 0);
+      const g = m.get(k);
+      if (!g) { m.set(k, { ...r, dias: new Set([r.dia]), dif_total: dif }); continue; }
+      g.vendas += r.vendas; g.bruto += r.bruto; g.mdr_cobrado += r.mdr_cobrado;
+      g.antecipacao_cobrada += r.antecipacao_cobrada; g.antecipacao_esperada += r.antecipacao_esperada;
+      g.dif_total += dif; g.dias.add(r.dia);
+    }
+    const ordem = { acima: 0, sem_contrato: 1, abaixo: 2, ok: 3 } as const;
+    return [...m.values()].map((g) => ({ ...g, key: [g.pilha, g.taxa_cobrada_pct, g.produto, g.bandeira, g.taxa_contratada_pct, g.situacao].join('|') }))
+      .sort((a, b) => ordem[a.situacao] - ordem[b.situacao] || b.bruto - a.bruto);
+  }, [rows]);
+
+  const soma = (f: (r: TaxaLinha) => boolean, campo: (r: TaxaLinha) => number) => rows.filter(f).reduce((a, r) => a + campo(r), 0);
+  const aMais = soma((r) => r.situacao === 'acima', (r) => Number(r.dif_mdr ?? 0) + Number(r.dif_antecipacao ?? 0));
+  const brutoOk = soma((r) => r.situacao === 'ok' || r.situacao === 'abaixo', (r) => r.bruto);
+  const brutoSem = soma((r) => r.situacao === 'sem_contrato', (r) => r.bruto);
+  const custoTotal = soma(() => true, (r) => r.mdr_cobrado + r.antecipacao_cobrada);
+  const brutoTotal = soma(() => true, (r) => r.bruto);
+  const diasAcima = rows.filter((r) => r.situacao === 'acima');
+
+  return (
+    <>
+      <div className="px-5 py-3 border-b border-zinc-100 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1.5">
+            <i className="ri-calendar-line text-zinc-400 text-sm" />
+            <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)}
+              className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
+            <span className="text-zinc-300 text-xs">até</span>
+            <input type="date" value={to} min={from || undefined} max={hojeBR()} onChange={(e) => setTo(e.target.value)}
+              className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
+          </div>
+          {loading && <div className="w-4 h-4 border-2 border-amber-200 border-t-amber-500 rounded-full animate-spin" />}
+          {brutoTotal > 0 && (
+            <span className="text-xs text-zinc-500">
+              Custo total com a Stone: <strong className="text-zinc-800">{formatCurrency(custoTotal)}</strong> ({pct((100 * custoTotal) / brutoTotal)} do bruto)
+            </span>
+          )}
+        </div>
+
+        {hasContract === false && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <i className="ri-information-line mr-1" />
+            Nenhuma taxa contratada cadastrada. Cadastre em <strong>Configurações › Como o dinheiro entra › Taxas contratadas</strong>.
+            Enquanto isso, a tabela mostra só as taxas que a Stone cobrou.
+          </div>
+        )}
+
+        {hasContract && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+              <p className="text-xs text-red-700 font-semibold">Cobrado a mais</p>
+              <p className="text-lg font-bold text-red-700">{formatCurrency(aMais)}</p>
+              <p className="text-xs text-red-600/80">{diasAcima.reduce((a, r) => a + r.vendas, 0)} venda(s) acima do contrato</p>
+            </div>
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+              <p className="text-xs text-emerald-700 font-semibold">Conforme contrato</p>
+              <p className="text-lg font-bold text-emerald-700">{formatCurrency(brutoOk)}</p>
+              <p className="text-xs text-emerald-600/80">em vendas (valor bruto)</p>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-xs text-amber-700 font-semibold">Sem taxa contratada</p>
+              <p className="text-lg font-bold text-amber-700">{formatCurrency(brutoSem)}</p>
+              <p className="text-xs text-amber-600/80">vendas antes da vigência ou produto não cadastrado</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-auto">
+        {erro && <p className="px-5 py-3 text-sm text-red-600">Não foi possível carregar: {erro}</p>}
+        {!loading && !erro && grupos.length === 0 && <p className="px-5 py-10 text-center text-sm text-zinc-500">Nenhuma venda da Stone no período.</p>}
+        {grupos.length > 0 && (
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-zinc-50 text-zinc-500 border-b border-zinc-100">
+              <tr>
+                <th className="text-left font-semibold px-3 py-2">Tipo</th>
+                <th className="text-right font-semibold px-3 py-2">Taxa cobrada</th>
+                {hasContract && <th className="text-left font-semibold px-3 py-2">Contrato</th>}
+                <th className="text-right font-semibold px-3 py-2">Vendas</th>
+                <th className="text-right font-semibold px-3 py-2 hidden md:table-cell">Bruto</th>
+                <th className="text-right font-semibold px-3 py-2">Taxa (R$)</th>
+                <th className="text-right font-semibold px-3 py-2 hidden md:table-cell">Antecipação (R$)</th>
+                {hasContract && <th className="text-right font-semibold px-3 py-2">Diferença</th>}
+                {hasContract && <th className="text-left font-semibold px-3 py-2">Situação</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {grupos.map((g) => (
+                <tr key={g.key} className="align-top hover:bg-zinc-50/60">
+                  <td className="px-3 py-2 whitespace-nowrap text-zinc-700">{g.pilha === 'antecipado' ? 'Crédito antecipado' : 'Sem antecipação'}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-zinc-800">{pct(g.taxa_cobrada_pct)}</td>
+                  {hasContract && (
+                    <td className="px-3 py-2 text-zinc-600">
+                      {g.produto ? (
+                        <>
+                          {PRODUTOS_CARTAO[g.produto]}{g.bandeira ? ` · ${g.bandeira}` : ''} · <strong>{pct(g.taxa_contratada_pct)}</strong>
+                          {g.antecipacao_contratada_pct !== null && g.pilha === 'antecipado' && (
+                            <span className="text-zinc-400"> · antecip. {pct(g.antecipacao_contratada_pct)} a.m.</span>
+                          )}
+                        </>
+                      ) : <span className="text-zinc-400">—</span>}
+                    </td>
+                  )}
+                  <td className="px-3 py-2 text-right text-zinc-600 whitespace-nowrap">{g.vendas}<span className="text-zinc-400"> · {g.dias.size} dia(s)</span></td>
+                  <td className="px-3 py-2 text-right text-zinc-600 hidden md:table-cell">{formatCurrency(g.bruto)}</td>
+                  <td className="px-3 py-2 text-right text-zinc-800 whitespace-nowrap">{formatCurrency(g.mdr_cobrado)}</td>
+                  <td className="px-3 py-2 text-right text-zinc-800 whitespace-nowrap hidden md:table-cell">{g.antecipacao_cobrada ? formatCurrency(g.antecipacao_cobrada) : '—'}</td>
+                  {hasContract && (
+                    <td className={`px-3 py-2 text-right font-bold whitespace-nowrap ${g.situacao === 'acima' ? 'text-red-600' : 'text-zinc-400'}`}>
+                      {g.situacao === 'sem_contrato' ? '—' : formatCurrency(g.dif_total)}
+                    </td>
+                  )}
+                  {hasContract && (
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className={`inline-block px-2 py-0.5 rounded-full border text-[11px] font-semibold ${SITUACAO_TAXA[g.situacao].cls}`}>{SITUACAO_TAXA[g.situacao].label}</span>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {diasAcima.length > 0 && (
+          <div className="px-5 py-3 border-t border-zinc-100">
+            <p className="text-xs font-semibold text-zinc-700 mb-1">Dias com cobrança acima do contrato</p>
+            <div className="space-y-1">
+              {diasAcima.map((r) => (
+                <div key={r.dia + r.pilha + r.taxa_cobrada_pct} className="flex justify-between gap-2 text-xs text-zinc-600">
+                  <span>
+                    {fmtData(r.dia)} · {r.vendas} venda(s) a {pct(r.taxa_cobrada_pct)} (contrato {pct(r.taxa_contratada_pct)})
+                    {Number(r.dif_antecipacao) > 0.005 && (
+                      <> · antecipação cobrada {formatCurrency(r.antecipacao_cobrada)}, esperada {formatCurrency(r.antecipacao_esperada)}</>
+                    )}
+                  </span>
+                  <span className="font-semibold text-red-600 whitespace-nowrap">{formatCurrency(Number(r.dif_mdr ?? 0) + Number(r.dif_antecipacao ?? 0))}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   );
 }

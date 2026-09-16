@@ -2527,3 +2527,7 @@ Limitações conhecidas:
 - **Lembrete:** não há ação de criar para o front (`asst_reminders` é só service role).
 - **Registrar produção:** só escolhe a ficha e abre a tela.
 - **Nova ação:** acrescentar no `index.tsx` seguindo o `kit.tsx`.
+
+### Taxas contratadas da maquininha (2026-09-16)
+
+Cadastro em `fin_card_fee_contracts` (editor em Como o dinheiro entra, só Stone; edge `conciliacao-pagamentos` card_fees_list / card_fees_save — substitui a tabela inteira). A conferência `fn_card_fee_check` não sabe bandeira nem débito/crédito (o arquivo da Stone não traz): cada venda casa com a taxa contratada MAIS PRÓXIMA entre as possíveis (parcelada → crédito 2–6/7–12x; com antecipação → crédito à vista; sem antecipação → débito ou crédito à vista), vigente na data da captura. Antecipação medida nos dados: % a.m. sobre (bruto − MDR), pró-rata 30 dias até captura + 30×parcela empurrado para dia útil (sábado +2, domingo +1); feriados não estão no calendário, folga de +5 dias e R$ 0,02 por venda. Resultado na aba Taxas do `RepassesStoneModal` e no alerta `taxas_maquininha`. Limite: se a Stone cobrar uma taxa errada que por acaso é igual a outra taxa contratada possível (ex.: débito cobrado como crédito), não é detectado.
