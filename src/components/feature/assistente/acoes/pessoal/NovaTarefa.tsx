@@ -3,11 +3,11 @@
 // › create_task. A tarefa nasce com você como responsável (igual à ferramenta criar_tarefa do
 // assistente), para aparecer em "Minhas tarefas". Data sem hora = T12:00:00Z, como o TaskDrawer.
 import { useEffect, useState } from 'react';
-import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { TaskList, TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { montarArvorePastas, achatarArvore } from '@/pages/tarefas/lib/pastas';
-import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Campo, EscolhaData, Fim, dataBR, type AcaoProps } from '../kit';
+import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Campo, EscolhaData, Fim, dataBR, invokeUmaVez, type AcaoProps } from '../kit';
 
 type Passo = 'carregando' | 'sem_pasta' | 'titulo' | 'duplicada' | 'quando' | 'hora' | 'hora_campo' | 'pasta' | 'confirmar' | 'gravando' | 'fim';
 
@@ -107,7 +107,7 @@ export default function NovaTarefa({ onFechar, irPara }: AcaoProps) {
     r.eu('Criar');
     setPasso('gravando');
     const due_date = data ? (hora ? `${data}T${hora}:00-03:00` : `${data}T12:00:00Z`) : null;
-    const { data: resp, error } = await invokeWithAuth<{ success?: boolean; id?: string; error?: string }>('task-write', {
+    const { data: resp, error } = await invokeUmaVez<{ success?: boolean; id?: string; error?: string }>('task-write', {
       body: {
         action: 'create_task',
         active_tenant_id: tenantId,

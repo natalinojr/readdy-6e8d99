@@ -5,6 +5,7 @@ import {
   BANK_PROVIDERS, CARD_PROVIDERS, CARD_PIX_MODES,
   type BankProvider, type CardProvider, type CardPixMode, type MoneyFlowSettings,
 } from '@/lib/revenueSources';
+import { TaxasContratadasEditor, useTaxasContratadas } from './TaxasContratadas';
 
 // "Como o dinheiro entra": o papel de cada banco/maquininha da loja. Trocar de
 // maquininha ou de banco é mudar aqui (se o conector da empresa existir). As
@@ -23,6 +24,7 @@ export default function ComoDinheiroEntraModal({ onClose, onSaved }: Props) {
   const [form, setForm] = useState<MoneyFlowSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const taxas = useTaxasContratadas(form?.card_provider);
 
   useEffect(() => {
     if (!loading && !form) {
@@ -62,8 +64,10 @@ export default function ComoDinheiroEntraModal({ onClose, onSaved }: Props) {
       card_deposit_match: temMaquininha ? form.card_deposit_match : null,
       card_pix_mode: temMaquininha ? form.card_pix_mode : 'none',
     });
+    if (err) { setSaving(false); setError(err); return; }
+    const errTaxas = form.card_provider === 'stone' ? await taxas.save() : null;
     setSaving(false);
-    if (err) { setError(err); return; }
+    if (errTaxas) { setError('Configuração salva, mas as taxas não: ' + errTaxas); return; }
     onSaved();
     onClose();
   };
@@ -77,7 +81,7 @@ export default function ComoDinheiroEntraModal({ onClose, onSaved }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl w-full max-w-xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 flex-shrink-0">
           <div>
             <h3 className="font-bold text-zinc-900">Como o dinheiro entra</h3>
@@ -151,6 +155,9 @@ export default function ComoDinheiroEntraModal({ onClose, onSaved }: Props) {
                       ))}
                     </div>
                   </div>
+                  {form.card_provider === 'stone' && (
+                    <TaxasContratadasEditor fees={taxas.fees} loaded={taxas.loaded} onChange={taxas.setFees} />
+                  )}
                 </div>
               )}
             </section>

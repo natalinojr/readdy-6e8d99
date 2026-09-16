@@ -3,11 +3,11 @@
 // aqui com o dia em Brasília. Leitura por RPC fn_get_tasks; concluir pela Edge task-write ›
 // update_task { status_category: 'done' } — o mesmo payload da visão "Minhas" (sem pasta única).
 import { useEffect, useState } from 'react';
-import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
-import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Fim, dataBR, horaBR, type AcaoProps } from '../kit';
+import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Fim, dataBR, horaBR, invokeUmaVez, type AcaoProps } from '../kit';
 
 type Passo = 'carregando' | 'lista' | 'confirmar' | 'gravando' | 'fim';
 
@@ -59,7 +59,7 @@ export default function TarefasHoje({ onFechar, irPara }: AcaoProps) {
     const t = alvo;
     r.eu('Sim');
     setPasso('gravando');
-    const { data, error } = await invokeWithAuth<{ success?: boolean; error?: string; next_occurrence_id?: string | null }>('task-write', {
+    const { data, error } = await invokeUmaVez<{ success?: boolean; error?: string; next_occurrence_id?: string | null }>('task-write', {
       body: { action: 'update_task', active_tenant_id: tenantId, task_id: t.id, status_category: 'done' },
     });
     if (error || !data?.success) {

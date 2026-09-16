@@ -15,6 +15,8 @@ import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 import InterConfigModal from './conciliacao/InterConfigModal';
 import InterSyncPanel from './conciliacao/InterSyncPanel';
 import ComoDinheiroEntraModal from './conciliacao/ComoDinheiroEntraModal';
+import RepassesStoneModal from './conciliacao/RepassesStoneModal';
+import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { podeLancarDoExtrato, lancarDoExtrato, useCategoriasLancamento, type LancarTipo } from './conciliacao/LancarDoExtrato';
 import CategoriaCombobox from './CategoriaCombobox';
 import type { OFXTransaction, MatchCandidate } from '@/utils/ofxParser';
@@ -460,6 +462,9 @@ export default function ConciliacaoTab() {
   const [showInterConfig, setShowInterConfig] = useState(false);
   const [showIntegracoes, setShowIntegracoes] = useState(false);
   const [showComoEntra, setShowComoEntra] = useState(false);
+  const [showRepassesStone, setShowRepassesStone] = useState(false);
+  const { flow: moneyFlow } = useMoneyFlow();
+  const usaStone = moneyFlow.card_provider === 'stone';
   // Pagamentos sem nota selecionados para lançar de uma vez (despesa/compra)
   const [selLanc, setSelLanc] = useState<Set<string>>(new Set());
   const [lancTipo, setLancTipo] = useState<LancarTipo>('despesa');
@@ -877,6 +882,7 @@ export default function ConciliacaoTab() {
     ['notas_de_compra_do_extrato', 'Notas que podem ser de compra já lançada pelo extrato (não importe de novo)', 'red'],
     ['pagamentos_sem_nota', 'Pagamentos a empresas sem nota de entrada', 'amber'],
     ['juros_mes', 'Juros e multas pagos no mês', 'amber'],
+    ['repasses_stone', 'Repasses da Stone que não bateram com o banco', 'red'],
   ];
   const alertasAtivos = alertas ? ALERTAS_DEF.filter(([k]) => Number(alertas[k]?.count ?? 0) > 0) : [];
   const temPendencias = vinculosPendentes.length > 0 || alertasAtivos.length > 0;
@@ -949,6 +955,20 @@ export default function ConciliacaoTab() {
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
+          )}
+
+          {usaStone && (
+            <button
+              onClick={() => setShowRepassesStone(true)}
+              title="Quanto a Stone liquidou × quanto entrou no banco, por dia"
+              className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-700 rounded-lg text-sm font-semibold hover:bg-zinc-50 transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <i className="ri-bank-card-line text-amber-500" />
+              Repasses Stone
+              {Number(alertas?.repasses_stone?.count ?? 0) > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[10px] leading-none">{alertas!.repasses_stone!.count}</span>
+              )}
+            </button>
           )}
 
           <input ref={fileRef} type="file" accept=".ofx,.csv,.txt" className="hidden" onChange={handleFileChange} />
@@ -1050,6 +1070,11 @@ export default function ConciliacaoTab() {
                   <i className="ri-arrow-down-s-line text-zinc-400 group-open:rotate-180 transition-transform" />
                 </summary>
                 <div className="mt-2 ml-5 space-y-1">
+                  {k === 'repasses_stone' && (
+                    <button onClick={() => setShowRepassesStone(true)} className="text-xs font-semibold text-amber-600 hover:text-amber-700 cursor-pointer">
+                      Ver repasses dia a dia →
+                    </button>
+                  )}
                   {a.itens.map((it, i) => (
                     <div key={i} className="flex justify-between gap-2 text-xs text-zinc-600">
                       <span className="truncate">{it.data ? new Date(String(it.data).slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR') + ' · ' : ''}{it.label}</span>
@@ -1467,6 +1492,14 @@ export default function ConciliacaoTab() {
         <InterConfigModal
           onClose={() => setShowInterConfig(false)}
           onSaved={() => { setInterRefreshKey((k) => k + 1); refresh(); refetchAccounts(); }}
+        />
+      )}
+
+      {showRepassesStone && (
+        <RepassesStoneModal
+          dateFrom={periodoValido ? periodFrom : shiftISO(hojeBR(), -30)}
+          dateTo={periodoValido ? periodTo : hojeBR()}
+          onClose={() => setShowRepassesStone(false)}
         />
       )}
 

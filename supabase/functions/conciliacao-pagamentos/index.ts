@@ -637,7 +637,85 @@ Deno.serve(async (req: Request) => {
       } else {
         log('WARN', 'alerts', 'fn_stone_repasses falhou', { tenantId, error: repErr.message });
       }
+      // Taxas da maquininha acima do contrato (fn_card_fee_check), só se houver contrato cadastrado
+      const { count: nContratos } = await admin.from('fin_card_fee_contracts').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId);
+      if (Number(nContratos ?? 0) > 0) {
+        const { data: tx, error: txErr } = await admin.rpc('fn_card_fee_check', { p_tenant: tenantId, p_from: addDays(hoje, -120), p_to: hoje });
+        if (!txErr) {
+          const acima = ((tx ?? []) as Array<Record<string, any>>).filter((r) => r.situacao === 'acima');
+          const dif = (r: Record<string, any>) => Number(r.dif_mdr ?? 0) + Number(r.dif_antecipacao ?? 0);
+          alerts.taxas_maquininha = {
+            count: acima.length,
+            total: Math.round(acima.reduce((a, r) => a + dif(r), 0) * 100) / 100,
+            itens: acima.slice(0, 10).map((r) => ({
+              data: r.dia,
+              label: `${r.vendas} venda(s) a ${String(r.taxa_cobrada_pct).replace('.', ',')}% (contrato ${String(r.taxa_contratada_pct).replace('.', ',')}%)`,
+              valor: Math.round(dif(r) * 100) / 100,
+            })),
+          };
+        } else {
+          log('WARN', 'alerts', 'fn_card_fee_check falhou', { tenantId, error: txErr.message });
+        }
+      }
       return json({ success: true, alerts });
+    }
+
+    // Taxas contratadas da maquininha (fin_card_fee_contracts)
+    if (action === 'card_fees_list') {
+      const { data, error } = await admin.from('fin_card_fee_contracts')
+        .select('id, provider, produto, bandeira, mdr_pct, antecipacao_pct_mes, vigente_desde')
+        .eq('tenant_id', tenantId).eq('provider', String(body.provider ?? 'stone'))
+        .order('vigente_desde', { ascending: false }).order('produto').order('mdr_pct');
+      if (error) return errResp('Taxas: ' + error.message, 500);
+      return json({ success: true, fees: data ?? [] });
+    }
+
+    // Substitui a tabela inteira da maquininha (o que não vier some)
+    if (action === 'card_fees_save') {
+      if (!isManager) return errResp('Apenas administradores e gerentes podem alterar as taxas', 403);
+      const provider = String(body.provider ?? 'stone');
+      const PRODUTOS = ['debito', 'credito_vista', 'credito_2_6', 'credito_7_12'];
+      const lista = Array.isArray(body.fees) ? (body.fees as Array<Record<string, unknown>>).slice(0, 200) : null;
+      if (!lista) return errResp('Envie a lista de taxas');
+      const pct = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number(String(v).replace(',', '.')));
+      const linhas: Row[] = [];
+      for (const [i, f] of lista.entries()) {
+        const produto = String(f.produto ?? '');
+        const mdr = pct(f.mdr_pct);
+        const antec = pct(f.antecipacao_pct_mes);
+        const desde = String(f.vigente_desde ?? '');
+        const n = i + 1;
+        if (!PRODUTOS.includes(produto)) return errResp(`Linha ${n}: produto inválido`);
+        if (mdr === null || !Number.isFinite(mdr) || mdr < 0 || mdr >= 100) return errResp(`Linha ${n}: taxa inválida`);
+        if (antec !== null && (!Number.isFinite(antec) || antec < 0 || antec >= 100)) return errResp(`Linha ${n}: antecipação inválida`);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(desde)) return errResp(`Linha ${n}: informe a data "vale a partir de"`);
+        const bandeira = String(f.bandeira ?? '').trim();
+        linhas.push({
+          tenant_id: tenantId, provider, produto, bandeira: bandeira || null, mdr_pct: mdr,
+          antecipacao_pct_mes: produto === 'debito' ? null : antec, vigente_desde: desde, created_by: userId,
+        });
+      }
+      const { error: delErr } = await admin.from('fin_card_fee_contracts').delete().eq('tenant_id', tenantId).eq('provider', provider);
+      if (delErr) return errResp('Taxas: ' + delErr.message, 500);
+      if (linhas.length > 0) {
+        const { error: insErr } = await admin.from('fin_card_fee_contracts').insert(linhas);
+        if (insErr) return errResp('Taxas: ' + insErr.message, 500);
+      }
+      return json({ success: true, saved: linhas.length });
+    }
+
+    // Conferência: taxa cobrada × contratada por dia, pilha e taxa (fn_card_fee_check)
+    if (action === 'card_fee_check') {
+      const iso = (v: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : null);
+      const to = iso(body.date_to) ?? todayBR();
+      const from = iso(body.date_from) ?? addDays(to, -60);
+      if (from > to) return errResp('A data inicial é depois da final');
+      const [{ data, error }, { count }] = await Promise.all([
+        admin.rpc('fn_card_fee_check', { p_tenant: tenantId, p_from: from, p_to: to }),
+        admin.from('fin_card_fee_contracts').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId),
+      ]);
+      if (error) return errResp('Taxas: ' + error.message, 500);
+      return json({ success: true, date_from: from, date_to: to, has_contract: Number(count ?? 0) > 0, rows: data ?? [] });
     }
 
     // Quadro "Repasses Stone": dia × pilha, Stone liquidou × entrou no banco (fn_stone_repasses)

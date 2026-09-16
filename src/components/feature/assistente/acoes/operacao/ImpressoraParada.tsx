@@ -138,7 +138,7 @@ export default function ImpressoraParada({ onFechar, irPara }: AcaoProps) {
   useEffect(() => {
     if (iniciou.current) return;
     iniciou.current = true;
-    bot(`Loja: *${user?.loja || 'loja ativa'}*`);
+    bot(`*Loja: ${user?.loja || 'loja ativa'}*`);
     carregar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

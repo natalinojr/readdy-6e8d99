@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Fim, brl, dataBR, horaBR, type AcaoProps } from '../kit';
+import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Fim, brl, dataBR, horaBR, invokeUmaVez, type AcaoProps } from '../kit';
 
 type Acao = {
   id: string; kind: string; level: string | null; target_name: string | null; params: Record<string, unknown>;
@@ -95,7 +95,7 @@ export default function AprovarSugestoesTrafego({ onFechar, irPara }: AcaoProps)
   const decidir = async () => {
     const a = sel!;
     setPasso('gravando');
-    const { data, error } = await invokeWithAuth<{ success: boolean; status?: string; error?: string | null }>('meta-ads-agent', {
+    const { data, error } = await invokeUmaVez<{ success: boolean; status?: string; error?: string | null }>('meta-ads-agent', {
       body: { action: 'decide', tenant_id: tenantId, action_id: a.id, decision: decisao },
     });
     if (!error && data?.status === 'falhou') {

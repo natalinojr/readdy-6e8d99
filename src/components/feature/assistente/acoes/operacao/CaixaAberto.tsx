@@ -22,7 +22,7 @@ export default function CaixaAberto({ onFechar, irPara }: AcaoProps) {
   useEffect(() => {
     if (iniciou.current) return;
     iniciou.current = true;
-    bot(`Loja: *${user?.loja || 'loja ativa'}*`);
+    bot(`*Loja: ${user?.loja || 'loja ativa'}*`);
     if (!user?.tenantId) { bot('Nenhuma loja ativa.'); setPasso('fim'); return; }
     (async () => {
       // relê do banco (outro PC pode ter aberto/fechado o caixa)
@@ -38,7 +38,9 @@ export default function CaixaAberto({ onFechar, irPara }: AcaoProps) {
     respondeu.current = true;
     (async () => {
       if (!caixa) {
-        bot(sessao ? `Sessão ${sessao.numero} aberta, mas *nenhum caixa aberto*.` : '*Nenhum caixa aberto* nesta loja agora.');
+        bot(sessao
+          ? `*Nenhum caixa aberto*\nA sessão ${sessao.numero} está aberta, mas sem caixa.`
+          : '*Nenhum caixa aberto*\nNão há sessão nem caixa aberto nesta loja agora.');
         setPasso('fim');
         return;
       }
@@ -83,18 +85,18 @@ export default function CaixaAberto({ onFechar, irPara }: AcaoProps) {
         : caixa.abertaEm;
 
       const linhas: string[] = [
-        `*Caixa aberto*${sessao ? ` · sessão ${sessao.numero}` : ''}`,
+        `*Caixa aberto${sessao ? ` · sessão ${sessao.numero}` : ''}*`,
         `Abriu: ${operador} · ${abertoEm}`,
         `Abertura: ${brl(abertura)}`,
         '',
-        `*Entradas por forma* (${brl(totalEntradas)})`,
+        `*Entradas por forma: ${brl(totalEntradas)}*`,
         ...(porForma.size
           ? [...porForma.entries()].sort((a, b) => b[1] - a[1]).map(([n, v]) => `${n}: ${brl(v)}`)
           : ['Nenhum pagamento ainda.']),
         '',
-        `*Sangrias* ${sangrias.length ? `(${brl(somaSang)})` : ''}`,
+        `*Sangrias: ${brl(somaSang)}*`,
         ...(sangrias.length ? sangrias.map((m) => `${horaBR(m.created_at)} · ${brl(Number(m.amount))}${m.reason ? ` · ${m.reason}` : ''}`) : ['Nenhuma.']),
-        `*Suprimentos* ${suprimentos.length ? `(${brl(somaSup)})` : ''}`,
+        `*Suprimentos: ${brl(somaSup)}*`,
         ...(suprimentos.length ? suprimentos.map((m) => `${horaBR(m.created_at)} · ${brl(Number(m.amount))}${m.reason ? ` · ${m.reason}` : ''}`) : ['Nenhum.']),
         '',
         `*Dinheiro esperado na gaveta: ${brl(esperado)}*`,

@@ -3,12 +3,13 @@
 // lista fn_get_customers_list → voucher-write issue_voucher com link de ativação → wa.me com a mensagem.
 // Validade: fim do dia no fuso local (T23:59:59), como a tela (AI_SYSTEM_MAP 2026-07-03).
 import { useEffect, useState } from 'react';
-import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import type { Voucher } from '@/types/vouchers';
 import {
   Roteiro, useRoteiro, Opcao, OpcaoNeutra, Campo, Fim, brl, dataBR, hojeISO, somaDias, lerNumero, type AcaoProps,
+  invokeUmaVez,
 } from '../kit';
 
 interface Cliente { id: string; nome: string; celular: string; totalVisitas: number }
@@ -142,7 +143,7 @@ export default function EnviarVoucher({ onFechar, irPara }: AcaoProps) {
       payload.discount_value = valor;
     }
     try {
-      const { data, error } = await invokeWithAuth('voucher-write', { body: payload });
+      const { data, error } = await invokeUmaVez('voucher-write', { body: payload });
       if (error) throw error;
       const v = (data as { data?: Voucher; error?: string })?.data;
       if (!v) throw new Error((data as { error?: string })?.error ?? 'Falha ao criar voucher');

@@ -9,6 +9,7 @@
 // - Ação que mexe em dinheiro, estoque, cardápio ou pessoas: termine num resumo + botão de confirmar.
 // - Nada vai para o histórico do assistente.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, ensureFreshSession } from '@/lib/supabase';
 
 export interface AcaoProps {
   onFechar: () => void;
@@ -172,4 +173,30 @@ export function Fim({ onFechar, acoes }: { onFechar: () => void; acoes?: { label
       <OpcaoNeutra onClick={onFechar}>Fechar</OpcaoNeutra>
     </>
   );
+}
+
+// ── Gravação única ───────────────────────────────────────────────────────────
+// O invokeWithAuth (src/lib/supabase.ts) REPETE o POST em erro de rede/timeout: numa despesa,
+// voucher ou tarefa isso gravaria em dobro. Nas ações rápidas, toda GRAVAÇÃO usa esta chamada:
+// mesmo formato de retorno do invokeWithAuth ({ data, error }), uma tentativa só.
+export async function invokeUmaVez<T = unknown>(funcao: string, options: { body?: Record<string, unknown> } = {}): Promise<{ data: T | null; error: Error | null }> {
+  const sessao = await ensureFreshSession();
+  if (!sessao?.access_token) return { data: null, error: new Error('Sessão expirada. Entre de novo no ERPOS.') };
+  let res: Response;
+  try {
+    res = await fetch(`${SUPABASE_URL}/functions/v1/${funcao}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessao.access_token}`, apikey: SUPABASE_ANON_KEY },
+      body: JSON.stringify(options.body ?? {}),
+    });
+  } catch {
+    return { data: null, error: new Error('Sem conexão. Confira na tela se gravou antes de tentar de novo.') };
+  }
+  const json = (await res.json().catch(() => null)) as (T & { error?: unknown }) | null;
+  if (!res.ok) {
+    const e = json?.error;
+    const msg = typeof e === 'string' ? e : e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : `Erro ${res.status}`;
+    return { data: json, error: new Error(msg) };
+  }
+  return { data: json, error: null };
 }

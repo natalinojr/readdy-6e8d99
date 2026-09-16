@@ -58,7 +58,7 @@ export default function PedidosAtrasados({ onFechar, irPara }: AcaoProps) {
     if (iniciou.current) return;
     iniciou.current = true;
     (async () => {
-      bot(`Loja: *${user?.loja || 'loja ativa'}*`);
+      bot(`*Loja: ${user?.loja || 'loja ativa'}*`);
       if (!user?.tenantId) { bot('Nenhuma loja ativa.'); setPasso('fim'); return; }
       await reloadOrders().catch(() => { /* usa a lista que já está na memória */ });
       setPasso('fim');

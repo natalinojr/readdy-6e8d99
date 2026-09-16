@@ -35,7 +35,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
   useEffect(() => {
     if (iniciou.current) return;
     iniciou.current = true;
-    bot(`Loja: *${user?.loja || 'loja ativa'}*\nVendas de qual dia?`);
+    bot(`*Loja: ${user?.loja || 'loja ativa'}*\nVendas de qual dia?`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

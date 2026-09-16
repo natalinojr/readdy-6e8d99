@@ -47,7 +47,7 @@ export default function PausarDelivery({ onFechar, irPara }: AcaoProps) {
   useEffect(() => {
     if (!iniciou.current) {
       iniciou.current = true;
-      bot(`Loja: *${user?.loja || 'loja ativa'}*`);
+      bot(`*Loja: ${user?.loja || 'loja ativa'}*`);
       if (!user?.tenantId) { bot('Nenhuma loja ativa.'); setPasso('fim'); return; }
     }
     const t = vigiar(); // o hook já carrega ao montar

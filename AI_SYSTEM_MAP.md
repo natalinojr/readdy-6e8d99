@@ -2491,3 +2491,39 @@ refeito: conta da Joziane agora paga em 16/09 com o débito de 16/09; o de 11/09
   mensagem dele — "Anotado ✅ Marcelle e Joziane: 15/09. Obrigado!". Texto montado pelo CÓDIGO
   (`confirmarDiasNoGrupo`, webhook) a partir das diárias GRAVADAS dos pagamentos que estavam pendentes;
   sem registro, não confirma nada. O modelo continua sem escrever confirmação no grupo.
+
+### Repasses Stone: líquido exato e quadro de diferenças (2026-09-16)
+A regra de casamento que está no ar é `fn_match_card_deposits` (a `fn_match_stone_inter` só a chama).
+Ela somava `amount` (líquido já arredondado venda a venda) e dias com 100+ vendas estouravam a
+tolerância por centavos. Agora soma `raw->>'net'` (todas as casas decimais da Stone) e arredonda uma vez;
+tolerância = R$ 0,01 por crédito do banco (mín. R$ 0,02). `fn_stone_repasses(tenant, de, até)` devolve
+dia × pilha (débito/antecipado) com Stone liquidou × entrou no banco × diferença e `situacao`
+(ok, dia_fecha, faltou, sobrou, sem_deposito, sem_venda, sem_extrato). Usada pela action `stone_repasses`
+e pelo bloco `repasses_stone` dos alertas (`conciliacao-pagamentos`), pelo `RepassesStoneModal` e pela
+caixa "Repasse Stone do dia" no `TransacaoDetalheModal`. Regra de leitura: só `faltou`/`sobrou`/
+`sem_deposito` antigo são diferença real; `dia_fecha` = Stone não informou a antecipação.
+
+### Ações rápidas do chat do assistente (2026-09-16)
+
+Botão ⚡ na caixa do chat (`AssistenteChat.tsx`) → menu por área. São **roteiros fixos sem IA** (custo
+zero): balões e botões que chamam direto o backend das telas. Código em
+`src/components/feature/assistente/acoes/`:
+- `kit.tsx`: Roteiro, Opcao, Campo, EscolhaData, formatação e `invokeUmaVez`.
+- `index.tsx`: registro com `grupo` / `label` / `icone` e o componente carregado sob demanda.
+- Uma pasta por área: financeiro, operacao, estoque, marketing, pessoas, pessoal, atalhos. A NFS-e
+  fica em `assistente/AcaoEmitirNfse.tsx`.
+
+Regras:
+- **Loja:** sempre a loja ATIVA. As leituras diretas vão com o header `x-tenant-id`, então outra loja
+  volta vazia.
+- **Gravação:** sempre por `invokeUmaVez` (ou `gravarNaEdge` do estoque). O `invokeWithAuth` repete o POST
+  em erro de rede e duplicaria despesa, voucher, perda ou tarefa.
+- **Confirmação:** tudo que grava termina em resumo + confirmar.
+- **Caminho:** reaproveitar o caminho da tela. Não criar endpoint novo para ação rápida.
+
+Limitações conhecidas:
+- **Aprovações:** ficaram de fora. O contexto guarda só na memória do aparelho.
+- **Promoções:** só lista. Há suspeita de que a tela nem salva: a action usada não existe no `menu-write`.
+- **Lembrete:** não há ação de criar para o front (`asst_reminders` é só service role).
+- **Registrar produção:** só escolhe a ficha e abre a tela.
+- **Nova ação:** acrescentar no `index.tsx` seguindo o `kit.tsx`.

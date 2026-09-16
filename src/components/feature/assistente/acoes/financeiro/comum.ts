@@ -3,7 +3,8 @@
 // - escrita/leitura via Edge financial-write ({ action, tenant_id, payload }), como useFinanceiro.invokeFinancial;
 // - classificação DRE igual ao DreClassificacaoSelect/pay_bill: categorias de despesa da loja
 //   + grupos sem categoria raiz (escolher o grupo reaproveita/cria a categoria raiz com o nome dele).
-import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
+import { invokeUmaVez } from '../kit';
 import { resolverGrupos, isGrupoDespesa, type DreGroup } from '@/hooks/useDreGroups';
 
 /** Mesmas formas de pagamento do modal de baixa de Contas a Pagar. */
@@ -11,7 +12,7 @@ export const FORMAS_PAGAMENTO = ['PIX', 'Dinheiro', 'Boleto', 'Transferência', 
 
 /** Chamada à Edge financial-write. Erro de HTTP ou `{ error }` no corpo vira `error`. */
 export async function finWrite<T = unknown>(action: string, tenantId: string, payload: Record<string, unknown>): Promise<{ data: T | null; error: string | null }> {
-  const { data, error } = await invokeWithAuth<{ data?: T; error?: string }>('financial-write', {
+  const { data, error } = await invokeUmaVez<{ data?: T; error?: string }>('financial-write', {
     body: { action, tenant_id: tenantId, payload },
   });
   if (error) return { data: null, error: error.message || 'Falha na chamada' };

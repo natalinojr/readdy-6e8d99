@@ -21,7 +21,7 @@ interface ItemMenu {
   delivery_config: unknown;
 }
 
-const semAcento = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const semAcento = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
 export default function PausarItem({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
@@ -38,7 +38,7 @@ export default function PausarItem({ onFechar, irPara }: AcaoProps) {
     if (iniciou.current) return;
     iniciou.current = true;
     (async () => {
-      bot(`Loja: *${user?.loja || 'loja ativa'}*`);
+      bot(`*Loja: ${user?.loja || 'loja ativa'}*`);
       if (!user?.tenantId) { bot('Nenhuma loja ativa.'); setPasso('fim'); return; }
       const { data, error } = await supabase.rpc('fn_get_full_menu', { p_tenant_id: user.tenantId });
       if (error || !data) { bot(`Não consegui abrir o cardápio: ${error?.message ?? 'resposta vazia'}`); setPasso('fim'); return; }
