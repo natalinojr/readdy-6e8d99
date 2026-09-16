@@ -43,6 +43,25 @@ function isTouchDevice() {
 }
 
 /**
+ * CELULAR usa sempre o teclado NATIVO (decisão do dono, 2026-09-16): o QWERTY virtual foi feito
+ * para tela grande de toque (totem, PDV, tablet), onde não há teclado físico. No celular ele
+ * substituía o teclado do sistema em TODAS as telas (login, chat, PDV…) — sem sugestões, sem voz,
+ * sem emoji, com a barra "Fechar/OK" cobrindo a tela. Só o delivery escapava (rotaUsaTecladoNativo).
+ * Regra: lado menor da tela < 600 px = celular; dentro do app Android (Capacitor) também.
+ */
+function ehCelular(): boolean {
+  const larg = window.screen?.width ?? window.innerWidth;
+  const alt = window.screen?.height ?? window.innerHeight;
+  const noApp = !!(window as unknown as { Capacitor?: unknown }).Capacitor;
+  return noApp || Math.min(larg, alt) < 600;
+}
+
+/** Teclado virtual: só em tela de toque grande (totem/PDV/tablet), nunca no celular. */
+function usaTecladoVirtual(): boolean {
+  return isTouchDevice() && !ehCelular();
+}
+
+/**
  * Telas do CLIENTE (delivery / mesa-qr / mesa / pedido) usam o teclado NATIVO do
  * celular — é mais familiar e o nativo já cuida da visibilidade do campo (com a meta
  * `interactive-widget` + a barra-espelho do MobileKeyboardAssist). O teclado virtual
@@ -85,7 +104,7 @@ export function VirtualKeyboardProvider({ children }: { children: ReactNode }) {
     el: HTMLInputElement | HTMLTextAreaElement,
     opts?: { mode?: KeyboardMode; label?: string; maxLength?: number; onEnter?: () => void }
   ) => {
-    if (!isTouchDevice()) return;
+    if (!usaTecladoVirtual()) return; // celular: sempre o teclado nativo
     if (rotaUsaTecladoNativo()) return; // telas do cliente usam o teclado nativo
 
     // Impede teclado nativo: marca como readOnly enquanto teclado virtual está ativo
@@ -128,7 +147,7 @@ export function VirtualKeyboardProvider({ children }: { children: ReactNode }) {
 
   // Listener global para interceptar toque em inputs e abrir teclado virtual
   useEffect(() => {
-    if (!isTouchDevice()) return;
+    if (!usaTecladoVirtual()) return; // celular: deixa o toque abrir o teclado nativo
 
     const handleTouchStart = (e: TouchEvent) => {
       const target = e.target as HTMLElement;

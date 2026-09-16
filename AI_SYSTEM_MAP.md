@@ -262,6 +262,13 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
 
+### 2026-09-16 — Teclado virtual do ERPOS engolia o teclado nativo no celular
+
+- **Sintoma (dono):** em QUALQUER campo do sistema no celular (login, chat do assistente, PDV), o teclado do Android não aparecia; no lugar vinha um QWERTY com barra "Mensagem — ✕ Fechar — OK". Só as telas do cliente (delivery, mesa-qr) tinham o teclado normal. Acontecia no Chrome **e** no app Android.
+- **Causa:** é o **nosso** teclado virtual (`src/components/feature/VirtualKeyboard.tsx` + `src/contexts/VirtualKeyboardContext.tsx`), feito para totem/PDV/tablet sem teclado físico. O listener global de `touchstart` abria ele em **qualquer aparelho de toque** (`isTouchDevice()`), marcando o campo como `readOnly` + `inputmode="none"` para impedir o teclado do sistema. Celular é aparelho de toque → pegava o sistema inteiro; `rotaUsaTecladoNativo()` só livrava as rotas do cliente.
+- **Correção:** `usaTecladoVirtual()` = toque **e** menor lado da tela ≥ 600 px **e** fora do app Capacitor. Celular usa sempre o nativo; totem/PDV/tablet seguem com o virtual. Teste: `src/test/components/virtualKeyboard.test.tsx` (celular, tablet, app, desktop, rota de cliente).
+- **Lição (custou várias rodadas):** o comportamento tinha cara de plataforma e foram investigados em vão o WebView do Capacitor (subclasse `ErposWebView` com `IME_FLAG_NO_EXTRACT_UI`, `windowSoftInputMode=adjustResize`, `targetSdk 35`), `<textarea>` × `<input>` e até configuração do aparelho. **Antes de caçar bug de plataforma, procurar se o próprio sistema implementa aquela função** — aqui bastava um grep por "!@#" (tecla do layout) para achar em 1 minuto. As mudanças nativas ficaram (são corretas), mas não eram a causa.
+
 ### 2026-09-14 — Maquininha Mercado Pago Point no autoatendimento (1ª maquininha real)
 
 - **Configuração:** a aplicação do MP tem que ser da **mesma conta em que a maquininha está ativada** (Paranaguá = EP PAR MALL, app "ERPOS Point Paranagua"). Nome de aplicação no MP é **único global**. Token = Credenciais de produção (`APP_USR-`). Modo PDV só liga pela API (`PATCH /terminals/v1/setup`); a N950 não tem menu "Modo de vinculação".
