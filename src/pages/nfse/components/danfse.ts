@@ -138,7 +138,9 @@ export function abrirDanfse(nota: Nota, empresa: Empresa) {
   .c b { display: block; font-size: 6.5pt; font-weight: 700; line-height: 1.15; }
   .c span { display: block; font-size: 8pt; line-height: 1.2; white-space: pre-wrap; word-break: break-word; }
   .sec { background: #eee; margin-left: -8px; padding-left: 8px; }
-  .sec h2 { margin: 0; font-size: 8pt; font-weight: 700; text-transform: uppercase; white-space: nowrap; }
+  /* Título da seção cabe na 1ª coluna: fonte menor e quebra de linha se precisar (nowrap invadia a coluna ao lado). */
+  .sec h2 { margin: 0; font-size: 7.5pt; font-weight: 700; text-transform: uppercase; line-height: 1.15; overflow-wrap: anywhere; }
+  .sec { overflow: hidden; }
   .corta span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .w2 { grid-column: span 2; } .w3 { grid-column: span 3; } .w4 { grid-column: span 4; }
   .bl { border-top: 1px solid #000; }
