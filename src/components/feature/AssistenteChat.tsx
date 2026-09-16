@@ -137,13 +137,13 @@ function resumoSistema(content: string): string | null {
 // São anotação do sistema: o balão mostra a coisa em si (o botão, o cartão), não a anotação.
 // O modelo às vezes IMITA o marcador na própria resposta (visto em 2026-09-16), então a limpeza
 // vale para o histórico e para a prévia da barra pequena.
-const MARCADORES = /\n?\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado|Botão enviado)[^\n]*\]/g;
+const MARCADORES = /\n?\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado|Botão enviado|Botão:)[^\n]*\]/g;
 const semMarcadores = (t: string) => t.replace(MARCADORES, '').trim();
 // O marcador de botão também É o botão (2026-09-16). Antes o botão só existia na resposta da hora
 // (vinha nas `actions` do send) e sumia ao recarregar; avisos que chegam sozinhos (contratação, cron)
 // nem passam pelo send — só pelo histórico. Lendo o marcador, o botão aparece em qualquer mensagem.
 // Só rota interna: começa com "/", sem "//" nem espaço (é navigate(), não link de fora).
-const MARCADOR_BOTAO = /\[Botão enviado: "([^"\n]{1,80})" → (\/[^\s\]]*)\]/g;
+const MARCADOR_BOTAO = /\[Botão(?: enviado)?: "([^"\n]{1,80})" → (\/[^\s\]]*)\]/g;
 function botoesDoTexto(t: string): Abrir[] {
   const out: Abrir[] = [];
   for (const m of t.matchAll(MARCADOR_BOTAO)) {

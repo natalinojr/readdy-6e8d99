@@ -7,6 +7,7 @@
 //   testar_conexao     { empresa_id }                     consulta o convênio do município com o certificado
 //   parametros_servico { empresa_id, c_trib_nac }         alíquota/regras do município para o serviço
 //   contexto           { }                                resumo para o assistente: empresas, serviços e últimos tomadores
+//   tomador_previa     { empresa_id?, documento }         já cadastrado? senão, nome/cidade pela BrasilAPI (não grava)
 //   emitir             { empresa_id?, ... }               monta a DPS, assina e transmite (síncrono). Atalhos p/ o assistente:
 //                      empresa_id opcional (única empresa), servico_id preenche códigos/descrição/alíquota/valor,
 //                      tomador_documento acha ou cadastra o tomador (CNPJ pela BrasilAPI), incluir_dados_bancarios,
@@ -253,6 +254,28 @@ Deno.serve(async (req: Request) => {
     if ((data ?? []).length !== 1) throw new HttpErr('Informe empresa_id (você participa de mais de uma empresa ou de nenhuma)', 400);
     return data![0].empresa_id as string;
   };
+  // Dados públicos do CNPJ (BrasilAPI). null se não achar.
+  const dadosCnpj = async (doc: string): Promise<Record<string, string | null> | null> => {
+    try {
+      const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${doc}`, { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) return null;
+      const j: any = await r.json();
+      const tipo = String(j.descricao_tipo_de_logradouro ?? '').trim();
+      const lgr = String(j.logradouro ?? '').trim();
+      return {
+        nome: texto(j.razao_social),
+        email: j.email ? String(j.email).toLowerCase() : null,
+        fone: soDigitos(j.ddd_telefone_1) || null,
+        cep: soDigitos(j.cep) || null,
+        cod_municipio: j.codigo_municipio_ibge ? String(j.codigo_municipio_ibge) : null,
+        municipio_nome: texto(j.municipio), uf: texto(j.uf),
+        logradouro: tipo && lgr && !lgr.toUpperCase().startsWith(tipo.toUpperCase()) ? `${tipo} ${lgr}` : lgr || null,
+        numero: texto(j.numero), complemento: texto(j.complemento), bairro: texto(j.bairro),
+      };
+    } catch {
+      return null;
+    }
+  };
   // Acha o tomador pelo CPF/CNPJ ou cadastra (CNPJ com os dados públicos da BrasilAPI; CPF exige nome).
   const tomadorPorDocumento = async (empresaId: string, documento: string, nome: string | null): Promise<{ id: string; nome: string; criado: boolean } | { erro: string }> => {
     const doc = soDigitos(documento);
@@ -261,24 +284,8 @@ Deno.serve(async (req: Request) => {
     if (existe) return { id: existe.id, nome: existe.nome, criado: false };
     const row: Record<string, unknown> = { empresa_id: empresaId, documento: doc, nome };
     if (doc.length === 14) {
-      try {
-        const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${doc}`, { signal: AbortSignal.timeout(8000) });
-        if (r.ok) {
-          const j: any = await r.json();
-          const tipo = String(j.descricao_tipo_de_logradouro ?? '').trim();
-          const lgr = String(j.logradouro ?? '').trim();
-          Object.assign(row, {
-            nome: nome ?? texto(j.razao_social),
-            email: j.email ? String(j.email).toLowerCase() : null,
-            fone: soDigitos(j.ddd_telefone_1) || null,
-            cep: soDigitos(j.cep) || null,
-            cod_municipio: j.codigo_municipio_ibge ? String(j.codigo_municipio_ibge) : null,
-            municipio_nome: texto(j.municipio), uf: texto(j.uf),
-            logradouro: tipo && lgr && !lgr.toUpperCase().startsWith(tipo.toUpperCase()) ? `${tipo} ${lgr}` : lgr || null,
-            numero: texto(j.numero), complemento: texto(j.complemento), bairro: texto(j.bairro),
-          });
-        }
-      } catch { /* sem BrasilAPI: segue só com o que veio */ }
+      const r = await dadosCnpj(doc);
+      if (r) Object.assign(row, { ...r, nome: nome ?? r.nome });
     }
     if (!row.nome) return { erro: doc.length === 11 ? 'Tomador pessoa física: informe tomador_nome' : 'Não achei os dados do CNPJ: informe tomador_nome' };
     const { data: novo, error } = await admin.from('nfse_tomadores').insert(row).select('id, nome').single();
@@ -308,6 +315,19 @@ Deno.serve(async (req: Request) => {
           tomadores_recentes: (toms ?? []).filter((t: any) => t.empresa_id === e.id).map((t: any) => ({ id: t.id, nome: t.nome, documento: t.documento })),
         })),
       });
+    }
+
+    // ── tomador_previa ── (assistente mostra o nome no resumo antes de emitir; não grava nada)
+    if (action === 'tomador_previa') {
+      const emp = await exigirMembro(body.empresa_id ?? await empresaUnica());
+      const doc = soDigitos(body.documento);
+      if (doc.length === 14 ? !cnpjValido(doc) : doc.length === 11 ? !cpfValido(doc) : true) return fail(`CPF/CNPJ inválido: ${body.documento}`);
+      const { data: t } = await admin.from('nfse_tomadores').select('id, nome, municipio_nome, uf').eq('empresa_id', emp.id).eq('documento', doc).maybeSingle();
+      if (t) return json({ success: true, cadastrado: true, tomador_id: t.id, nome: t.nome, cidade: t.municipio_nome ? `${t.municipio_nome}/${t.uf ?? ''}` : null });
+      if (doc.length === 11) return json({ success: true, cadastrado: false, nome: null, aviso: 'CPF: peça o nome (tomador_nome)' });
+      const r = await dadosCnpj(doc);
+      if (!r?.nome) return json({ success: true, cadastrado: false, nome: null, aviso: 'CNPJ não encontrado na Receita: peça o nome (tomador_nome)' });
+      return json({ success: true, cadastrado: false, nome: r.nome, cidade: r.municipio_nome ? `${r.municipio_nome}/${r.uf ?? ''}` : null });
     }
 
     // ── criar_empresa / salvar_empresa ──
