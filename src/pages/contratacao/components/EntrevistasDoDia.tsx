@@ -2,7 +2,7 @@
 // clicar numa pessoa, preenche o registro ali mesmo — questionário, notas por critério, considerações,
 // tomada de decisão (vai também para o candidato) e a fase. Mesmas tabelas da ficha e da Agenda
 // (hiring_interviews / hiring_candidates); o histórico do candidato é gravado pelos gatilhos do banco.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
   type Application, type Candidate, type Company, type Decision, type Interview, type InterviewStatus, type Job, type Settings, type Stage,
@@ -94,10 +94,13 @@ export default function EntrevistasDoDia({ interviews, candidates, companies, st
 
   // Veio por link ("Abrir entrevista de Fulana"): vai para o dia dela e abre o registro — no celular
   // também, onde a lista some e fica só o registro. Espera as entrevistas carregarem.
+  // Entrevista escolhida pelo link, até a regra "trocou o dia" abaixo enxergá-la no dia certo.
+  const focoAplicado = useRef<string | null>(null);
   useEffect(() => {
     if (!focoId) return;
     const iv = interviews.find((x) => x.id === focoId);
     if (!iv) return;
+    focoAplicado.current = iv.id;
     setDia(dayKey(new Date(iv.scheduled_at)));
     setSelId(iv.id);
     onFocoUsado?.();
@@ -106,6 +109,13 @@ export default function EntrevistasDoDia({ interviews, candidates, companies, st
 
   // Trocou o dia: abre a 1ª entrevista ainda não registrada (ou a 1ª do dia) — no computador.
   useEffect(() => {
+    // Veio por link: NÃO escolhe outra pessoa. Este efeito roda na mesma passada do de cima, ainda com
+    // o dia e a seleção antigos, e sobrescrevia a entrevista do link — o botão "Abrir entrevista de
+    // Fulana" caía só na aba (visto em 2026-09-16). Solta a trava quando o dia dela já está na tela.
+    if (focoAplicado.current) {
+      if (doDia.some((iv) => iv.id === focoAplicado.current)) focoAplicado.current = null;
+      return;
+    }
     if (!doDia.length) return; // ainda carregando: não apaga a pessoa que estava aberta
     if (doDia.some((iv) => iv.id === selId)) return;
     const prox = doDia.find((iv) => iv.status === 'agendada') ?? doDia[0];

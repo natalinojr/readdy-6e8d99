@@ -2431,3 +2431,8 @@ dela. Três ligações que não existiam:
 
 A Contratação lê `?aba`, `?entrevista`, `?candidato` (consome o parâmetro; recarregar não reabre) e a
 aba Entrevistas vai para o dia da entrevista e abre o registro — no celular também.
+- **Correção (mesmo dia):** o botão caía só na aba. Na aba Entrevistas, a regra "trocou o dia → abre a 1ª
+  do dia" rodava na MESMA passada do efeito do link, ainda com dia/seleção antigos, e sobrescrevia a
+  escolha (computador: abria a 1ª do dia; celular: fechava o registro). Trava `focoAplicado` até o dia
+  da entrevista estar na tela. Teste `entrevistasDoDia.test.tsx` monta a aba ANTES das entrevistas
+  carregarem (ordem real) — sem a trava, falha nos dois tamanhos de tela.
