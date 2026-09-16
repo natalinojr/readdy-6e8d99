@@ -190,8 +190,11 @@ async function morningBrief(admin: SupabaseClient, cfg: Record<string, any>, own
 async function keepWarm(admin: SupabaseClient, cfg: Record<string, any>) {
   const now = localHHMM();
   if (now < '07:00' || now > '23:00') return false;
+  // Canais de conversa do dono. Era só 'whatsapp' (de quando o WhatsApp era o canal principal),
+  // então o aquecimento nunca rodava e o cache de 1 h vencia — a 1ª mensagem depois de uma pausa
+  // pagava a remontagem inteira do prefixo (mais lenta e mais cara). Corrigido em 2026-09-16.
   const { data: lastUser } = await admin.from('asst_messages').select('created_at')
-    .eq('role', 'user').eq('channel', 'whatsapp').order('created_at', { ascending: false }).limit(1).maybeSingle();
+    .eq('role', 'user').in('channel', ['whatsapp', 'telegram', 'app']).order('created_at', { ascending: false }).limit(1).maybeSingle();
   if (!lastUser || Date.now() - Date.parse(lastUser.created_at) > 4 * 3600_000) return false;
   const { data: lastAny } = await admin.from('asst_messages').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle();
   const lastUse = Math.max(lastAny ? Date.parse(lastAny.created_at) : 0, cfg.last_warm_at ? Date.parse(String(cfg.last_warm_at)) : 0);

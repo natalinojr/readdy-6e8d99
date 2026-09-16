@@ -2100,3 +2100,23 @@ portão sem IA que acusa **regressão** (não o legado):
   `23:59:59.999-03:00` virava o dia seguinte e o "período anterior" terminava no mesmo dia em que o
   atual começa (1 dia contado nos dois lados de toda comparação "vs período anterior"). Corrigido com
   `dateKeyBrasilia`.
+
+### Checklists de teste por módulo + usuários de teste (2026-09-15)
+
+Fase 0.3 de `ORQUESTRACAO-AGENTES.md`. `TESTES-CHECKLIST.md` = 15 módulos em "Ação → Esperado",
+tabela "arquivo tocado → checklist" e as decisões do dono (loja, impressora, fixtures).
+
+- **Loja de testes = "Testes PDV"** (`db3ca014-6c03-4c2e-97b9-9542cf825da2`): o dono liberou qualquer
+  operação nela. Lojas reais: só leitura; se inevitável, Modo Treino.
+- **Usuários de teste** `qa.admin@erpos-teste.com` (admin), `qa.caixa@…` (cashier, crachá 9002),
+  `qa.garcom@…` (waiter, 9003), crachá do admin 9001. Criados por `scripts/seed-test-users.mjs`
+  (auth admin API + `public.users.pin_hash` = sha256(pin + user.id), a mesma fórmula do `login-pin`;
+  `user_tenants` só na loja de testes). Credenciais em `.test-users.json` (gitignored). Rodar de novo
+  rotaciona senha e PIN. A chave service_role vem de `npx supabase projects api-keys` e não fica em
+  arquivo nenhum do repo.
+- **Fiscal em produção**: a loja Vila Leste já emite NFC-e em **produção** (tpAmb=1, série 2) desde
+  15/09/2026 — a memória "falta virar pra produção" está desatualizada. Homologação foi na série 1.
+- **Bug fiscal encontrado** (não corrigido): pedido delivery com combo → `fiscal-write` manda o combo
+  com `ValorUnitario = 0` e joga combo + taxa de entrega em `ValorOutrasDespesas` (`vOutro`). Nota
+  série 2 nº 3 (15/09): `vProd` 38 em vez de 95, `vOutro` 65,50. Autorizada, mas DANFE mostra o
+  produto a R$ 0,00. Item 9.8 do checklist; decisão do dono pendente.

@@ -340,6 +340,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         ...(audio ? { audio } : {}),
         contexto: { rota: location.pathname + location.search, titulo: document.title, loja: user?.loja ?? null },
       });
+      // Mostra a resposta na hora: esperar a ida extra ao servidor (history) para acertar os ids
+      // atrasava a resposta em ~1 s no celular. O merge() descarta os provisórios logo depois.
+      setMsgs((p) => [...p, { id: -Date.now(), role: 'assistant', channel: 'app', created_at: new Date().toISOString(), content: out.reply, temp: true }]);
+      stick.current = true; toBottom();
       const antes = lastId.current;
       const h = await call<{ messages: Msg[] }>('history', { after_id: antes });
       merge(h.messages);

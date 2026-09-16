@@ -15,3 +15,6 @@ out/
 
 # Config local do Codex — contém token de acesso pessoal
 .codex/
+
+# credenciais dos usuários de teste (gerado por scripts/seed-test-users.mjs)
+.test-users.json

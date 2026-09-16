@@ -851,6 +851,27 @@ Rodar: `npx vitest run src/test/components/assistenteChat.test.tsx src/test/edge
 - A suíte inteira (`npx vitest run`) tem 15 falhas **antigas** em `dateUtils`, `orderFlow` e
   `mesaQRFlow` (testes que dependem da data do dia; não usam nada do chat).
 
+### Demora da resposta no chat (medido em 2026-09-16)
+
+Medição pelos logs (`msg:"respondido"` da `assistente-app` × `msg:"reply"` do brain):
+- Pergunta simples: brain **1,9–5,6 s**; total da Edge **4,3–8,0 s** → ~2,3 s de volta (auth do dono +
+  cold start + ida ao brain). O front ainda somava **mais uma ida** ao servidor (`history`) antes de
+  mostrar a resposta.
+- Com ferramentas pesadas (varredura de banco) o brain vai a **45–69 s** — aí é a tarefa, não o chat.
+
+O que foi feito:
+1. **Cache de 1 h nunca era aquecido.** `assistente-cron › keepWarm` exigia que a última mensagem do
+   dono fosse do canal **whatsapp** (regra da época em que o WhatsApp era o canal principal); com
+   Telegram/app o tick sempre registrava `warmed: false` e o cache vencia — a mensagem seguinte
+   pagava a remontagem inteira do prefixo (`cache_read: 0`, `cache_write: 31753` em 16/09 00h). Agora
+   vale para `whatsapp | telegram | app`.
+2. **Resposta aparece na hora** no chat: o balão entra assim que a Edge responde; a sincronização de
+   ids (`history`) acontece depois, em segundo plano.
+
+Ainda em aberto (se continuar lento): resposta em streaming (palavra a palavra) — mudança grande, o
+brain hoje devolve tudo pronto; e `asst_settings.effort` = 'low' para respostas simples (hoje sem
+registro = 'medium').
+
 ### Avisos proativos nunca saíam (corrigido 2026-09-15)
 
 `assistente-cron › proactive`: o `deliver(kind, text)` local escondia o `deliver(target, text)` de

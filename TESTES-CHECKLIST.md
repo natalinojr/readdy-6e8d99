@@ -1,15 +1,20 @@
 # Checklists de teste por módulo — ERPOS V2
 
-Estado: **RASCUNHO 2026-09-15, gerado a partir do código e do mapa. Aguardando revisão do dono.**
-Itens marcados com ❓ são dúvidas que só o dono responde. Itens marcados com 🚫 não
-podem ser testados por agente (dinheiro real, hardware, terceiros) — só o dono.
+Estado: **v1 — revisado pelo dono em 2026-09-15** (respostas na seção "Decisões do dono", no fim).
+Itens marcados com 🚫 não podem ser testados por agente (dinheiro real, hardware em uso,
+terceiros sem API) — só o dono. Itens ❓ ainda dependem de resposta.
 
 ## Como usar (agentes e pessoas)
 
 - Cada passo é **Ação → Esperado**. Se o "Esperado" não acontecer, é falha; não há "quase".
-- **Ambiente**: produção com **Modo Treino ligado** (pedidos `is_training = true` não emitem
-  NFC-e, não entram em relatório nem DRE). Loja de teste: ❓ qual? (sugestão: criar
-  "Loja Teste" no Admin Master só para isso, com cardápio pequeno e impressora nenhuma).
+- **Ambiente**: produção, loja **"Testes PDV"** (`tenant_id db3ca014-6c03-4c2e-97b9-9542cf825da2`,
+  slug `testes-pdv-1777515908321`). O dono autorizou fazer **qualquer coisa** nela. Fora dela,
+  só leitura. Em lojas reais, se for inevitável, **Modo Treino ligado** (pedidos
+  `is_training = true` não emitem NFC-e, não entram em relatório nem DRE).
+- **Usuários de teste** (loja Testes PDV): admin, caixa e garçom com e-mail, senha, crachá e PIN
+  em `.test-users.json` (gitignored). Recriar/rotacionar: `scripts/seed-test-users.mjs`
+  (precisa de `SUPABASE_SERVICE_ROLE_KEY` no ambiente; a chave sai de
+  `npx supabase projects api-keys --project-ref mdghhjemzdmeuqpzuyzx`). Crachás 9001/9002/9003.
 - **Evidência** = `read_page` do estado final, ou screenshot, ou `SELECT` na tabela citada.
   "Cliquei e não deu erro" não é evidência.
 - **Invariantes globais** (valem em todo checklist):
@@ -24,7 +29,9 @@ podem ser testados por agente (dinheiro real, hardware, terceiros) — só o don
 
 ## 1. Login, loja e perfis
 
-Pré: usuário admin multi-loja (❓ qual e-mail de teste?), usuário de um perfil restrito (garçom).
+Pré: `qa.admin` (admin), `qa.caixa` (caixa) e `qa.garcom` (garçom) de `.test-users.json`.
+Para 1.3 (multi-loja) use o dono (`natalinojr.engel@gmail.com`) 🚫 — só ele tem várias lojas;
+ou vincule `qa.admin` a uma segunda loja de teste pelo Admin Master antes.
 
 | # | Ação | Esperado |
 |---|---|---|
@@ -84,12 +91,16 @@ Pré: bairro com taxa cadastrada em `/config-delivery`; loja com slug.
 | 4.5 | Pedido delivery pelo PDV Caixa (fluxo 08-29) | `origin=cashier`, `destination=delivery`, taxa e telefone gravados |
 | 4.6 | Gestor de entregas: atribuir motoboy e enviar sinal | Motoboy abre `/motoboy/<id>` e vê endereço/rota; `motoboy-signal` OK |
 | 4.7 | Motoboy marca "entregue" | `orders.status=delivered`; some da lista `/entregas/<slug>` |
-| 4.8 | Pedido iFood/repasse ❓ como simular? | Repasse cai no Inter sem virar receita (regra iFood) |
+| 4.8 | Pedido iFood 🚫 (sem API integrada; não há como simular) | Só o repasse é testável, via 8.3: cai no Inter sem virar receita (regra iFood) |
 | 4.9 | Pedido novo com tela `/gestor-pedidos` aberta | Aparece **sem F5** (orders-ping broadcast) |
 
 ## 5. KDS e impressão
 
-Pré: 1 estação de cozinha; impressora de teste ❓ (existe alguma virtual/emulador? ou só `printer-ping` real?).
+Pré: 1 estação de cozinha. Impressora: a **real da El Patron Paranaguá** (autorizado pelo dono).
+Regras: cadastrar o IP dela na loja Testes PDV só durante o teste e **remover ao final**; rodar
+**fora do horário de operação** (antes das 11h ou depois das 23h de Brasília); no máximo 3
+impressões por rodada; `printer-ping` à vontade. 5.6 (impressora fora) = simular com IP inválido
+na loja de teste, nunca desligar a real.
 
 | # | Ação | Esperado |
 |---|---|---|
@@ -109,13 +120,18 @@ Pré: 1 estação de cozinha; impressora de teste ❓ (existe alguma virtual/emu
 | 6.1 | Criar categoria + item com preço e foto | Aparece no PDV e no delivery público na hora |
 | 6.2 | Item com grupo de opcionais (mín 1, máx 2) | PDV e QR obrigam 1 e impedem 3 |
 | 6.3 | Desativar item | Some do PDV/delivery; pedidos antigos continuam mostrando o nome |
-| 6.4 | Ficha técnica: item usa 0,150 kg de insumo | Venda baixa 0,150 do estoque (ver 7.4); porcentagem de perda ❓ regra (bug "10%" da auditoria 07-11) |
+| 6.4 | Ficha técnica: item usa 0,150 kg de insumo | Venda baixa 0,150 do estoque (ver 7.4). Contexto: só ~10% dos itens (22/226, auditoria 07-11) têm ficha técnica, então 90% das vendas não baixam estoque — não é regra, é cobertura baixa; o teste garante que **quem tem ficha** baixa certo |
 | 6.5 | Exportar e reimportar template | Mesmo cardápio, sem duplicar itens |
 | 6.6 | Campos fiscais (NCM/CFOP) na categoria e no item | Item herda da categoria quando vazio |
 
 ## 7. Estoque e compras
 
-Pré: insumo "Carne" 10 kg; fornecedor com CNPJ; uma NFC-e de teste (QR) ❓ qual usar?
+Pré: insumo "Carne" 10 kg; fornecedor com CNPJ. NFC-e de teste para 7.5 (nota real, emitida pelo
+próprio ERPOS em produção — VL Gastronomia, série 2 nº 3, 15/09/2026, R$ 103,50, Pix):
+- chave `41260958193623000108650020000000031033481719`
+- QR: `http://www.fazenda.pr.gov.br/nfce/qrcode?p=41260958193623000108650020000000031033481719|2|1|2|97a2b36be1b262a5aaaff59a2249f189afba45bf`
+- esperado na leitura: 2 itens ("Burritos Duo Mex" 1 UN R$ 0,00 e "Nachos Chilli con Carne" 1 UN R$ 38,00),
+  total R$ 103,50 (R$ 65,50 em "outras despesas" — ver 9.8), fornecedor CNPJ 58.193.623/0001-08.
 
 | # | Ação | Esperado |
 |---|---|---|
@@ -132,7 +148,8 @@ Pré: insumo "Carne" 10 kg; fornecedor com CNPJ; uma NFC-e de teste (QR) ❓ qua
 
 ## 8. Financeiro
 
-Pré: conta a pagar sem categoria DRE; extrato Inter de ontem ❓ (real ou fixture?).
+Pré: conta a pagar sem categoria DRE; extratos Inter/Stone **reais de ontem** (autorizado pelo dono;
+só leitura e conciliação — nunca pagar nada).
 
 | # | Ação | Esperado |
 |---|---|---|
@@ -149,7 +166,9 @@ Pré: conta a pagar sem categoria DRE; extrato Inter de ontem ❓ (real ou fixtu
 
 ## 9. Fiscal (NFC-e)
 
-Pré: `fiscal_settings` em **homologação**.
+Pré: **atenção — a loja Vila Leste já emite em PRODUÇÃO** (tpAmb=1, série 2, desde 15/09/2026;
+a homologação foi na série 1). Testes de emissão só na loja Testes PDV com `fiscal_settings` em
+**homologação** (série própria); nunca emitir teste em loja real.
 
 | # | Ação | Esperado |
 |---|---|---|
@@ -160,6 +179,7 @@ Pré: `fiscal_settings` em **homologação**.
 | 9.5 | Cancelar nota em < 30 min | `cancel` autorizado; pedido mantém histórico |
 | 9.6 | Provider fora | `retry` reemite depois; pedido não trava |
 | 9.7 | Virar para produção 🚫 | Só o dono |
+| 9.8 | Pedido delivery com **combo** + taxa de entrega (caso real: nota série 2 nº 3, Vila Leste, 15/09) | ❓ **BUG ABERTO**: o combo foi para a SEFAZ com `vUnCom = 0,00` e o valor dele (R$ 57) somado à taxa (R$ 8,50) entrou em `vOutro = 65,50`; `vProd` da nota ficou 38 em vez de 95. A nota foi autorizada, mas o DANFE mostra o produto a R$ 0,00. Esperado: combo com preço próprio em `vProd`; taxa de entrega em `vFrete` ou `vOutro` separada. Decisão do dono pendente |
 
 ## 10. Tarefas (+ PWA)
 
@@ -255,13 +275,18 @@ Pré: chat do dono no Telegram; PIN.
 | `src/pages/clientes`, `promocoes`, `vouchers`, `voucher-*` | 15 |
 | `src/lib/supabase.ts`, `AppProviders`, `router/config.tsx` | 1 + smoke de todos (abrir cada rota sem erro) |
 
-## Perguntas em aberto para o dono (❓)
+## Decisões do dono (2026-09-15)
 
-1. Qual loja usar para testes? Criar "Loja Teste" ou usar uma real em Modo Treino?
-2. Usuários de teste por perfil (admin multi-loja, caixa, garçom) — e-mails/PINs ficam onde? (sugestão: `asst_settings` ou um `.env.test` fora do git)
-3. Impressora: existe emulador TCP para testar 5.4–5.6, ou só a real?
-4. NFC-e de teste para 7.5 (chave/QR de uma nota real pequena).
-5. Extrato Inter/Stone: usar fixture (arquivo salvo) ou o real de ontem?
-6. Regra de perda na ficha técnica (6.4): o que é "10%" na auditoria de estoque?
-7. Como simular iFood (4.8) sem pedido real?
-8. Há passos que faltam ou estão errados? Marque direto no arquivo.
+1. **Loja de testes**: "Testes PDV" — pode fazer o que quiser nela.
+2. **Usuários de teste**: criados pelo Claude (`scripts/seed-test-users.mjs` → `.test-users.json`).
+3. **Impressora**: a real da loja de Paranaguá (com as regras da seção 5).
+4. **NFC-e de teste**: a nota série 2 nº 3 de 15/09/2026 (dados na seção 7).
+5. **Extratos Inter/Stone**: reais, do dia anterior.
+6. **"10%" da ficha técnica**: era cobertura (22/226 itens com ficha), não regra — 6.4 reescrito.
+7. **iFood**: sem API integrada, não há como simular — 4.8 marcado 🚫.
+
+## Ainda em aberto (❓)
+
+- 9.8: como o combo e a taxa de entrega devem ir na NFC-e (bug real encontrado ao montar este arquivo).
+- 13.4: checklist das 4 cópias do mapa de papéis ao criar papel novo (ver memória de perfis).
+- Passos faltando ou errados: marcar direto no arquivo.
