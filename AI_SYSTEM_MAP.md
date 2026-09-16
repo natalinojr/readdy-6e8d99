@@ -2180,3 +2180,30 @@ agentes leem por SQL, sem fornecedor novo.
   — para testar o guard, escreva os casos em arquivo (`node teste.mjs`), não na linha de comando.
 - Workflow scripts são JS puro com `return` no topo: para checar sintaxe, embrulhar o corpo em
   `new Function(... "return (async()=>{"+s+"})()")` (o `node --check` reclama do `return`).
+
+### TDZ em componente: `const` usado antes da declaração dentro de callback (2026-09-16)
+
+`/financeiro` quebrava em produção com `ReferenceError: Cannot access 'Ie' before initialization`
+(ErrorBoundary "Algo deu errado"). Causa: em `ContasPagarTab.tsx`, `selectedTotal` era calculado no
+corpo do componente com `Array.from(selectedIds).reduce(...)` e o callback chamava `saldoRestante`,
+uma `const` arrow declarada ~100 linhas **abaixo**, no mesmo escopo. Correção: mover
+`const saldoRestante` para antes do primeiro uso (`handleBulkPay` / `selectedTotal`).
+
+Critérios que ficam:
+
+- **O TypeScript não pega isso.** `TS2448` só vale para referência direta; dentro de uma arrow o
+  compilador aceita. O que pega é o ESLint `no-use-before-define` com `variables: true` — rodável
+  avulso (`new ESLint({ overrideConfigFile: true, overrideConfig: [...] })`) sem mexer no config do
+  projeto. Varredura de 2026-09-16: 113 ocorrências no `src/`, **todas as outras inofensivas**
+  (`const` de escopo de módulo, ou referência dentro de handler/efeito que só roda após o render).
+  O perigoso é só o que é **avaliado durante o render**.
+- **Por que escapou de todo teste:** o callback do `reduce` só roda com array não-vazio. Com
+  `selectedIds` vazio (carga normal) e com a loja de QA **sem nenhuma conta a pagar**, o caminho
+  nunca era exercitado. Bug "dependente de dados" que parece dependente de tenant.
+- **Como diagnosticar rápido:** o stack minificado é inútil, mas `dev_error_events` guarda o stack
+  com o chunk e o offset (`page-XXX.js:22:2401`). O `.map` **não é servido** pela Vercel; baixar o
+  `.js` de produção e fatiar a linha pelo offset (`fs.readFileSync(...).split('\n')[21].slice(2200,2700)`)
+  mostra o trecho minificado, e uma string literal dali (`"conta(s) não foram pagas"`) leva ao
+  arquivo-fonte por `grep`.
+- Para exercitar Contas a Pagar na loja `Testes PDV` existem 2 contas `QA TDZ ...` em
+  `fin_accounts_payable` (uma com pagamento parcial, para cobrir `saldoRestante`).

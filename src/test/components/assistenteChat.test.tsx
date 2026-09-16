@@ -54,7 +54,9 @@ function fakeServer(fn: string, opts: { body: Body }) {
       add('user', `[Pelo ERPOS · tela: Teste — /x]\n${b.text}`, topic);
       add('assistant', `Resposta para: ${b.text}`, topic);
       const actions = srv.nextActions; srv.nextActions = [];
-      return Promise.resolve(ok({ reply: 'ok', actions, tool_calls: [], transcricao: null }));
+      // Mesmo texto que vai para o histórico: a barra pequena mostra `reply`, a conversa mostra a
+      // mensagem gravada — os dois têm de bater.
+      return Promise.resolve(ok({ reply: `Resposta para: ${b.text}`, actions, tool_calls: [], transcricao: null }));
     }
     case 'payments': return Promise.resolve(ok({ payments: srv.pays.map((p) => ({ ...p })) }));
     case 'pay': {
@@ -197,7 +199,7 @@ describe('AssistenteChat — três estágios no flutuante', () => {
     await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
     await user.type(await screen.findByPlaceholderText('Mensagem'), 'quanto vendi hoje?');
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
-    expect(await screen.findByText(/quanto vendi hoje\?/)).toBeInTheDocument();
+    expect(await screen.findByText('Você: quanto vendi hoje?')).toBeInTheDocument();
     expect(await screen.findByText('Resposta para: quanto vendi hoje?')).toBeInTheDocument();
     expect(ehConversaInteira()).toBe(false); // continua na barra, sem cobrir a tela
   });

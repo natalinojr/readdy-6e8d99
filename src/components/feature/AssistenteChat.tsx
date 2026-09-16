@@ -359,7 +359,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     const anexo = attach; setText(''); setAttach(null); setSending(true); setErro(null);
     setTroca({ pergunta: t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto') });
     try {
-      const out = await call<{ reply: string; actions: Array<{ type: string } & Record<string, unknown>> }>('send', {
+      const out = await call<{ reply: string; actions: Array<{ type: string } & Record<string, unknown>>; transcricao?: string | null }>('send', {
         text: t,
         topic: abaRef.current || undefined,
         ...(anexo ? { attachment: { base64: anexo.base64, media_type: anexo.media_type } } : {}),
@@ -369,6 +369,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       // Mostra a resposta na hora: esperar a ida extra ao servidor (history) para acertar os ids
       // atrasava a resposta em ~1 s no celular. O merge() descarta os provisórios logo depois.
       setMsgs((p) => [...p, { id: -Date.now(), role: 'assistant', channel: 'app', created_at: new Date().toISOString(), content: out.reply, temp: true }]);
+      // Barra pequena: a troca (pergunta + resposta). No áudio, a pergunta vira a transcrição.
+      setTroca({ pergunta: out.transcricao || t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto'), resposta: out.reply });
       stick.current = true; toBottom();
       const antes = lastId.current;
       const h = await call<{ messages: Msg[] }>('history', { after_id: antes });
@@ -708,7 +710,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             <i className="ri-close-line" />
           </button>
         </div>
-        {sending && <p className="px-3.5 pt-1 pb-0.5 text-[11px] text-zinc-400">pensando…</p>}
+        {(troca || sending) && (
+          <button onClick={() => setModo('full')} className="block w-full text-left px-3.5 pt-1 pb-1 cursor-pointer" aria-label="Ver a conversa">
+            {troca && <span className="block text-[12px] text-zinc-500 truncate">Você: {troca.pergunta}</span>}
+            {sending
+              ? <span className="block text-[11px] text-zinc-400">pensando…</span>
+              : troca?.resposta && <span className="block text-sm text-zinc-800 line-clamp-3 whitespace-pre-wrap">{troca.resposta}</span>}
+          </button>
+        )}
         {pagamentosVisiveis.length > 0 && (
           <button onClick={() => setModo('full')} className="block w-full text-left px-3.5 py-1.5 text-xs font-bold text-violet-700 cursor-pointer" aria-label="Ver pagamentos">
             <i className="ri-money-dollar-circle-line" /> {pagamentosVisiveis.length === 1 ? '1 pagamento esperando você' : `${pagamentosVisiveis.length} pagamentos esperando você`}

@@ -154,6 +154,11 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
   const clearSelection = () => setSelectedIds(new Set());
 
+  // Saldo ainda devido de uma conta: com pagamento parcial, `amount` deixa de ser
+  // o que falta pagar — o que falta é o total menos o que já foi pago.
+  const saldoRestante = (b: BillPayable) =>
+    Math.max(0, Number(b.amount ?? 0) - Number(b.paid_amount ?? 0));
+
   const handleBulkPay = async () => {
     if (selectedIds.size === 0) return;
     setBulkPaying(true);
@@ -278,11 +283,6 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     setFilterDateFrom(''); setFilterDateTo('');
     setSearch(''); setFilterRecurring('all'); setPage(1);
   };
-
-  // Saldo ainda devido de uma conta: com pagamento parcial, `amount` deixa de ser
-  // o que falta pagar — o que falta é o total menos o que já foi pago.
-  const saldoRestante = (b: BillPayable) =>
-    Math.max(0, Number(b.amount ?? 0) - Number(b.paid_amount ?? 0));
 
   // KPIs do mês selecionado
   const totalPendente = billsDoMes.filter(b => b.status !== 'paid').reduce((s, b) => s + saldoRestante(b), 0);

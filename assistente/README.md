@@ -867,8 +867,9 @@ Pedido do dono: o botão não deve mais abrir a tela inteira para uma pergunta c
 - **Barra → conversa inteira:** arrastar a barra para cima (>24 px), tocar na alça ou no aviso de
   pagamento. A conversa **sobe deslizando** (`translate-y` + `transition-transform`, 200 ms) e abre
   sempre **no fim do histórico**. Na conversa, a seta para baixo volta para a barra e o X fecha tudo.
-- A barra **não** mostra a última resposta (decisão do dono, 16/09) — só "pensando…" enquanto ele
-  responde e o aviso de pagamento esperando.
+- A barra **não** mostra conversa antiga. Depois que você envia, ela mostra **a troca**: "Você: …"
+  e a resposta (ou "pensando…" enquanto ele responde) — no áudio, a pergunta vira a transcrição.
+  A troca some ao fechar (voltar ao botão). Também aparece ali o aviso de pagamento esperando.
 
 ### Avisos de currículo não apareciam no chat (2026-09-16)
 
