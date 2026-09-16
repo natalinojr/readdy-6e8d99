@@ -1,5 +1,5 @@
 /**
- * Módulos que não dependem de loja (Tarefas, Contratação): o acesso é por USUÁRIO,
+ * Módulos que não dependem de loja (Tarefas, Contratação, Notas de Serviço): o acesso é por USUÁRIO,
  * liberado no Admin Master (tabela user_module_access, RPC fn_my_modules).
  * O dono sempre tem todos; o papel "tarefas" sempre tem Tarefas.
  */
@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
-export type ModuloLivre = 'tarefas' | 'contratacao';
+export type ModuloLivre = 'tarefas' | 'contratacao' | 'nfse';
 
 let cache: { userId: string; promise: Promise<ModuloLivre[]> } | null = null;
 

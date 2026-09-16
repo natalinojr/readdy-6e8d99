@@ -11,6 +11,7 @@ export type AppMode =
   | 'gestor_delivery'
   | 'tarefas'
   | 'contratacao'
+  | 'nfse'
   | 'assistente';
 
 interface AppModeContextValue {

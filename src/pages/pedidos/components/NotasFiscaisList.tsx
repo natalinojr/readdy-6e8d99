@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
-import { STATUS_LABEL, STATUS_CLASS, formatChave, formatCpfCnpj, formatBRL, cancelMinutesLeft, CANCEL_WINDOW_MIN, NFSE_EMISSOR_NACIONAL_URL, type FiscalDocumentRow, type FiscalDocStatus } from '@/lib/fiscal';
+import { STATUS_LABEL, STATUS_CLASS, formatChave, formatCpfCnpj, formatBRL, cancelMinutesLeft, CANCEL_WINDOW_MIN, type FiscalDocumentRow, type FiscalDocStatus } from '@/lib/fiscal';
 import { buildZip, downloadBlob } from '@/lib/zipStore';
 
 const LIST_COLS = 'id, tenant_id, model, status, source_type, source_id, order_ids, order_number, environment, total_amount, customer_cpf, customer_name, serie, numero, chave, protocolo, sefaz_status_code, sefaz_message, qr_code, url_chave, error_message, attempts, emitted_at, cancelled_at, cancel_reason, printed_at, created_at, updated_at';
@@ -27,7 +27,6 @@ export default function NotasFiscaisList() {
   const [statusFiltro, setStatusFiltro] = useState<'all' | FiscalDocStatus>('all');
   const [busca, setBusca] = useState('');
   const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [nfseNacional, setNfseNacional] = useState(false);
   const [busy, setBusy] = useState<string | null>(null); // id ou ação em andamento
   const [cancelDoc, setCancelDoc] = useState<FiscalDocumentRow | null>(null);
   const [justificativa, setJustificativa] = useState('');
@@ -44,11 +43,10 @@ export default function NotasFiscaisList() {
     const { start, end } = monthRange(mes);
     const [{ data }, { data: fs }] = await Promise.all([
       supabase.from('fiscal_documents').select(LIST_COLS).eq('tenant_id', user.tenantId).gte('created_at', start).lt('created_at', end).order('created_at', { ascending: false }).limit(2000),
-      supabase.from('fiscal_settings').select('enabled, nfse_emissor_nacional').eq('tenant_id', user.tenantId).maybeSingle(),
+      supabase.from('fiscal_settings').select('enabled').eq('tenant_id', user.tenantId).maybeSingle(),
     ]);
     setDocs((data ?? []) as unknown as FiscalDocumentRow[]);
     setEnabled(fs ? Boolean(fs.enabled) : null);
-    setNfseNacional(Boolean(fs?.nfse_emissor_nacional));
     setLoading(false);
   }, [user?.tenantId, mes]);
 
@@ -196,20 +194,6 @@ export default function NotasFiscaisList() {
             <p className="text-xs text-zinc-500 mt-0.5">Cadastre o token do Brasil NFe e a tributação padrão para começar a emitir NFC-e.</p>
           </div>
           <button onClick={() => navigate('/configuracoes?tab=fiscal')} className="text-xs font-semibold text-zinc-700 border border-zinc-300 rounded-lg px-3 py-1.5 hover:bg-zinc-100 cursor-pointer whitespace-nowrap">Configurar</button>
-        </div>
-      )}
-
-      {nfseNacional && (
-        <div className="flex flex-wrap items-center gap-3 bg-white border border-zinc-100 rounded-xl p-4">
-          <i className="ri-government-line text-zinc-500 text-lg" />
-          <div className="flex-1 min-w-[200px]">
-            <p className="text-sm font-semibold text-zinc-700">NFS-e de serviços</p>
-            <p className="text-xs text-zinc-500 mt-0.5">Emitida no Emissor Nacional gratuito do governo (entre com gov.br ou certificado). Essas notas não aparecem nesta lista.</p>
-          </div>
-          <a href={NFSE_EMISSOR_NACIONAL_URL} target="_blank" rel="noopener noreferrer"
-            className="text-xs font-semibold text-zinc-700 border border-zinc-300 rounded-lg px-3 py-1.5 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
-            <i className="ri-external-link-line mr-1" />Emitir NFS-e (gov.br)
-          </a>
         </div>
       )}
 

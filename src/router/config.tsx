@@ -48,6 +48,7 @@ const TrafegoPagoPage = lazy(() => import('@/pages/trafego-pago/page'));
 const TarefasPage = lazy(() => import('@/pages/tarefas/page'));
 const PrivacidadePage = lazy(() => import('@/pages/privacidade/page'));
 const ContratacaoPage = lazy(() => import('@/pages/contratacao/page'));
+const NfsePage = lazy(() => import('@/pages/nfse/page'));
 const AssistentePage = lazy(() => import('@/pages/assistente/page'));
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
@@ -111,6 +112,7 @@ const routes: RouteObject[] = [
       { path: 'imprimir-qrcodes', element: <ImprimirQRCodesPage /> },
       { path: 'admin-master', element: <AdminMasterPage /> },
       { path: 'contratacao', element: <ContratacaoPage /> },
+      { path: 'notas-servico', element: <NfsePage /> },
       { path: 'assistente', element: <AssistentePage /> },
       { path: '*', element: <PaginaEmConstrucao /> },
     ],

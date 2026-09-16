@@ -2331,13 +2331,31 @@ currículo novo pelo link não repete (`{ dono: false }`) porque o canal-publico
 detalhe. O gatilho `fn_asst_messages_topic` só reclassifica `topic = 'geral'`, então o assunto
 explícito é respeitado.
 
-### NFS-e pelo Emissor Nacional gratuito (2026-09-16)
+### Módulo Notas de Serviço — NFS-e pela API do Emissor Nacional (2026-09-16)
 
-O ERPOS **não emite NFS-e**. A loja que quer emitir nota de serviço de graça marca
-`fiscal_settings.nfse_emissor_nacional` (Configurações › Fiscal, gravado por `fiscal-write/save_settings`);
-com isso Pedidos › Notas Fiscais mostra o atalho para `NFSE_EMISSOR_NACIONAL_URL` (`src/lib/fiscal.ts`).
-É independente da NFC-e (não precisa de token do Brasil NFe). Integração pela API da Sefin Nacional
-(mTLS com certificado A1) seria o passo seguinte se quiserem emitir de dentro do ERPOS.
+Rota `/notas-servico` (`src/pages/nfse/`), módulo **sem loja**: acesso por pessoa (`user_module_access.module = 'nfse'`,
+Admin Master › Módulos) e por empresa emitente (`nfse_empresa_membros`, papel admin/emissor). Nada a ver com PDV/NFC-e.
+
+- **Tabelas:** `nfse_empresas`, `nfse_empresa_membros`, `nfse_tomadores`, `nfse_servicos`, `nfse_notas` (migração
+  `20260916220000_nfse_modulo.sql`). Tomadores/serviços gravados direto pelo front (RLS `fn_nfse_membro`); empresa,
+  membros e notas só pela Edge. `nfse_empresas` não libera `select *` (ids do Vault): usar `EMPRESA_COLS`.
+- **Certificado A1:** `.pfx` + senha no **Vault** (`fn_nfse_cert_set/get`, só service_role). Numeração da DPS por
+  ambiente em `fn_nfse_reservar_dps` (atômica; número queimado em rejeição é permitido).
+- **Fluxo:** tela → Edge `nfse-write` (auth, regras, monta o XML da DPS v1.01, grava) → **relay Node no Vercel**
+  (`nfse-relay/api/sefin.js`, projeto Vercel separado `erpos-nfse-relay`, região gru1, deploy por CLI dentro da pasta)
+  → Sefin Nacional (mTLS). Segredo compartilhado: `NFSE_RELAY_KEY` (secret do Supabase + env do Vercel) e `NFSE_RELAY_URL`.
+- **Pegadinha:** Edge Function (Deno/rustls) NÃO fala com a Sefin: HTTP/2 é recusado e com HTTP/1.1 a conexão é resetada
+  (renegociação TLS do IIS). Node/OpenSSL funciona. Por isso o relay.
+- **Assinatura aceita:** XMLDSig C14N 1.0 inclusivo, RSA-SHA1/SHA1, transforms enveloped+c14n, `<Signature>` irmã de
+  `infDPS`/`infPedReg`. Envio: `{dpsXmlGZipB64}` em `POST /nfse`; cancelamento `{pedidoRegistroEventoXmlGZipB64}` em
+  `POST /nfse/{chave}/eventos` (Id `PRE{chave}101101`). Homologação: `https://sefin.producaorestrita.nfse.gov.br/API/SefinNacional`.
+- **XSD:** os patterns do governo usam `^...$`; validador libxml trata como literal (falso erro na `serie`). Para validar
+  localmente, tirar `^`/`$` de uma cópia dos XSD. DPS gerada e evento validados contra o XSD v1.01 em 09-16.
+- **DANFSe:** a API oficial acabou em 01/07/2026 (NT 008/2026); o PDF é gerado no navegador (`components/danfse.ts`, imprimir/salvar).
+- **Nunca reenviar emissão automaticamente:** o front chama a Edge sem retry (`nfseCall`); nota sem resposta fica `erro`
+  e o botão "Consultar de novo" procura a DPS (`GET /dps/{id}`) antes de qualquer reemissão.
+- O atalho para o site do governo (coluna `fiscal_settings.nfse_emissor_nacional`) foi abandonado; a coluna pode ser
+  removida depois que o front sem ela estiver publicado.
 
 ### Contratação: entrevistador pode ser usuário do ERPOS (2026-09-16)
 

@@ -36,6 +36,13 @@ export const MODULOS_LIVRES = [
     tone: 'bg-rose-50 text-rose-600',
     desc: 'Currículos, vagas e entrevistas. Quem tem acesso vê o banco de candidatos inteiro.',
   },
+  {
+    id: 'nfse',
+    label: 'Notas de Serviço',
+    icon: 'ri-file-text-line',
+    tone: 'bg-sky-50 text-sky-600',
+    desc: 'Emissão de NFS-e. Cada pessoa só vê as empresas em que foi incluída.',
+  },
 ] as const;
 
 export const isOwnerUser = (u: AdminUser) => u.email.toLowerCase() === ADMIN_MASTER_EMAIL;

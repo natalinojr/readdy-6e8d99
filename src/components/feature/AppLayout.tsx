@@ -27,7 +27,7 @@ const FULL_SCREEN_PROTECTED = ['/modulos'];
 // Terminais — full-screen com UI propria
 const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas', '/tarefas'];
 // Usuário sem loja com acesso só a módulo (user_module_access): rotas que funcionam sem tenant
-const NO_TENANT_ROUTES = ['/contratacao'];
+const NO_TENANT_ROUTES = ['/contratacao', '/notas-servico'];
 
 export default function AppLayout() {
   const { isAuthenticated, needsTenantSelection, loading, hasNoTenants, logout } = useAuth();

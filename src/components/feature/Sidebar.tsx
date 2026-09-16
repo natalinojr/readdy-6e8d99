@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ShoppingCart, Coffee, Tablet, Monitor, UtensilsCrossed,
   LayoutGrid, Package, BarChart3, Users, Settings, LogOut, ChefHat,
   Shield, Heart, HelpCircle, ClipboardList, Bell, Truck, ArrowLeft, DollarSign,
-  Tag, Gift, ShieldCheck, Megaphone, UserSearch, Bot,
+  Tag, Gift, ShieldCheck, Megaphone, UserSearch, Bot, FileText,
 } from 'lucide-react';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { useAuth } from '../../contexts/AuthContext';
@@ -80,6 +80,7 @@ const navSections: NavSection[] = [
     items: [
       { label: 'Admin Master', icon: ShieldCheck, path: '/admin-master', adminMasterOnly: true },
       { label: 'Contratação',  icon: UserSearch,  path: '/contratacao',  modulo: 'contratacao' },
+      { label: 'Notas de Serviço', icon: FileText, path: '/notas-servico', modulo: 'nfse' },
       { label: 'Assistente',   icon: Bot,         path: '/assistente',   adminMasterOnly: true },
     ],
   },
