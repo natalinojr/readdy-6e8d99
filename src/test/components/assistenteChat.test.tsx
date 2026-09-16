@@ -191,6 +191,17 @@ describe('AssistenteChat — três estágios no flutuante', () => {
     expect(screen.getByPlaceholderText('Mensagem')).toBeInTheDocument(); // continua dando para digitar
   });
 
+  it('na barra pequena, depois de enviar aparecem a pergunta e a resposta', async () => {
+    const user = userEvent.setup();
+    renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await user.type(await screen.findByPlaceholderText('Mensagem'), 'quanto vendi hoje?');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    expect(await screen.findByText(/quanto vendi hoje\?/)).toBeInTheDocument();
+    expect(await screen.findByText('Resposta para: quanto vendi hoje?')).toBeInTheDocument();
+    expect(ehConversaInteira()).toBe(false); // continua na barra, sem cobrir a tela
+  });
+
   it('a barra avisa quando há pagamento esperando', async () => {
     const user = userEvent.setup();
     srv.pays = [pixEduardo()];
@@ -207,7 +218,7 @@ describe('AssistenteChat — assuntos', () => {
     add('assistant', 'Pix preparado', 'pagamentos');
     renderChat();
     expect(await screen.findByText('Aviso de estoque')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Pagamentos' }));
+    await user.click(screen.getByRole('button', { name: 'Financeiro' }));
     expect(await screen.findByText('Pix preparado')).toBeInTheDocument();
     expect(screen.queryByText('Aviso de estoque')).not.toBeInTheDocument();
     expect(calls('history').at(-1)?.topic).toBe('pagamentos');

@@ -813,6 +813,13 @@ Conversa com o assistente **dentro do ERPOS**, somando ao Telegram (não substit
   Envio pelo `send-push › send` (service role, `user_ids = [owner_user_id]`); `sw.js` usa `tag` do
   payload ('assistente' / 'assistente-pagamento'). O aparelho precisa estar inscrito: botão
   **"Ativar avisos"** no cabeçalho do chat (some quando ativo). O Telegram continua avisando junto.
+- **Abas por ÁREA (2026-09-16):** cada aba junta TUDO da sua área, não só um tipo de mensagem.
+  **Financeiro** (`pagamentos`) = pagamento, conta a pagar, boleto/Pix, extrato, conciliação, DRE,
+  nota fiscal, caixa e fechamento. **Currículos** = currículo, candidato, vaga, entrevista.
+  **Compras e estoque** = compra, insumo, fornecedor, cupom, inventário. **Avisos** = o que não é de
+  nenhuma área (tarefa, alerta geral). Quem decide: o brain pelas ferramentas/edges usadas e, quando
+  ele não diz nada, o gatilho `trg_asst_messages_topic` pelo texto (migration
+  `20260916010000_asst_messages_topic_por_area.sql`, que também reclassificou o histórico).
 - **Assuntos (abas, 2026-09-15):** `asst_messages.topic` ∈ geral/pagamentos/curriculos/compras/avisos
   (migration `20260915200000_asst_messages_topic.sql`). A conversa continua UMA só (o brain vê tudo);
   a aba só filtra. Quem decide: a aba em que o dono escreveu (`send.topic` → brain `body.topic`);

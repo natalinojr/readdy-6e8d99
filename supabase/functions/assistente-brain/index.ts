@@ -1776,10 +1776,14 @@ Deno.serve(async (req) => {
     const nomes = new Set(toolCalls.map((t) => t.name));
     // deno-lint-ignore no-explicit-any
     const funcoes = toolCalls.filter((t) => t.name === 'erpos_executar').map((t) => String((t.input as any)?.funcao ?? ''));
+    // Abas por ÁREA (dono, 2026-09-16): Financeiro junta pagamento, conta, conciliação, extrato e
+    // nota; Currículos junta tudo de contratação. O resto o gatilho do banco classifica pelo texto.
     const topic = topicoPedido
-      ?? (['preparar_pagamento', 'status_pagamento', 'contas_a_pagar'].some((x) => nomes.has(x)) || ctx.outbound.some((a) => a.type === 'payment') ? 'pagamentos'
-        : ['modo_curriculos', 'salvar_curriculo', 'inscrever_na_vaga'].some((x) => nomes.has(x)) || funcoes.some((f) => /hiring/i.test(f)) ? 'curriculos'
-        : funcoes.some((f) => /purchase|stock|estoque|ingredient/i.test(f)) ? 'compras' : 'geral');
+      ?? (['modo_curriculos', 'salvar_curriculo', 'inscrever_na_vaga'].some((x) => nomes.has(x)) || funcoes.some((f) => /hiring/i.test(f)) ? 'curriculos'
+        : ['preparar_pagamento', 'status_pagamento', 'contas_a_pagar', 'caixa_atual'].some((x) => nomes.has(x))
+          || ctx.outbound.some((a) => a.type === 'payment')
+          || funcoes.some((f) => /inter|concilia|fiscal|stone|ifood|payment|bill|financ/i.test(f)) ? 'pagamentos'
+        : nomes.has('estoque_critico') || funcoes.some((f) => /purchase|stock|estoque|ingredient/i.test(f)) ? 'compras' : 'geral');
     if (!topicoPedido && topic !== 'geral' && userRow?.id) await admin.from('asst_messages').update({ topic }).eq('id', userRow.id);
     await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'assistant', content: historyContent, tool_calls: toolCalls, usage, topic });
     log('INFO', 'reply', { chat: chatId, ms: Date.now() - started, tools: toolCalls.map((t) => t.name), actions: ctx.outbound.map((a) => a.type), usage });

@@ -216,6 +216,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Abertura da conversa: sobe deslizando (translate-y) em vez de aparecer de uma vez, e já entra
   // no fim do histórico — pedido do dono (2026-09-16).
   const [subindo, setSubindo] = useState(false);
+  // Barra pequena: depois de enviar, mostra a pergunta e a resposta ali mesmo (dono, 2026-09-16).
+  // Some ao fechar (volta ao botão); na conversa inteira não é usada.
+  const [troca, setTroca] = useState<{ pergunta: string; resposta?: string } | null>(null);
+  useEffect(() => { if (modo === 'fab') setTroca(null); }, [modo]);
   useEffect(() => {
     if (modo !== 'full') { setSubindo(false); return; }
     setSubindo(false); // começa embaixo…
@@ -353,6 +357,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     };
     setMsgs((p) => [...p, temp]); stick.current = true; toBottom();
     const anexo = attach; setText(''); setAttach(null); setSending(true); setErro(null);
+    setTroca({ pergunta: t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto') });
     try {
       const out = await call<{ reply: string; actions: Array<{ type: string } & Record<string, unknown>> }>('send', {
         text: t,
@@ -555,9 +560,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       <div className="flex gap-1 px-2.5 py-1.5 border-b border-zinc-100 overflow-x-auto flex-shrink-0">
         {[
           { id: '', label: 'Tudo', icon: 'ri-chat-3-line' },
-          { id: 'pagamentos', label: 'Pagamentos', icon: 'ri-money-dollar-circle-line' },
+          { id: 'pagamentos', label: 'Financeiro', icon: 'ri-money-dollar-circle-line' },
           { id: 'curriculos', label: 'Currículos', icon: 'ri-file-user-line' },
-          { id: 'compras', label: 'Compras', icon: 'ri-shopping-cart-2-line' },
+          { id: 'compras', label: 'Compras e estoque', icon: 'ri-shopping-cart-2-line' },
           { id: 'avisos', label: 'Avisos', icon: 'ri-notification-3-line' },
           { id: 'geral', label: 'Geral', icon: 'ri-message-2-line' },
         ].map((t) => (
