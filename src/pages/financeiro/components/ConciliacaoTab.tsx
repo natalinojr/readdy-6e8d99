@@ -497,6 +497,39 @@ export default function ConciliacaoTab() {
     }
   }, [bankAccounts, selectedAccountId]);
 
+  // "De" salvo na conta (financial-write): abre na conciliação mais antiga e só muda pelo usuário.
+  // periodFromSalvo = último valor lido/gravado, para não regravar o que acabou de ser lido.
+  const periodFromSalvo = useRef<{ accountId: string; from: string } | null>(null);
+  useEffect(() => {
+    if (!user?.tenantId || !selectedAccountId) return;
+    let cancel = false;
+    periodFromSalvo.current = null;
+    (async () => {
+      const r = await invokeWithAuth<{ data?: { date_from: string | null } }>('financial-write', {
+        body: { action: 'get_reconciliation_period', tenant_id: user.tenantId, payload: { bank_account_id: selectedAccountId } },
+      });
+      if (cancel) return;
+      const from = r.data?.data?.date_from || shiftISO(hojeBR(), -30);
+      periodFromSalvo.current = { accountId: selectedAccountId, from };
+      setPeriodFrom(from);
+      setPage(1);
+    })();
+    return () => { cancel = true; };
+  }, [user?.tenantId, selectedAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const salvo = periodFromSalvo.current;
+    if (!user?.tenantId || !salvo || salvo.accountId !== selectedAccountId) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(periodFrom) || periodFrom === salvo.from) return;
+    const t = setTimeout(async () => {
+      const r = await invokeWithAuth('financial-write', {
+        body: { action: 'set_reconciliation_period', tenant_id: user.tenantId, payload: { bank_account_id: selectedAccountId, date_from: periodFrom } },
+      });
+      if (!r.error) periodFromSalvo.current = { accountId: selectedAccountId, from: periodFrom };
+    }, 800);
+    return () => clearTimeout(t);
+  }, [periodFrom, selectedAccountId, user?.tenantId]);
+
   // Hook de conciliação
   const {
     imports,
@@ -526,7 +559,7 @@ export default function ConciliacaoTab() {
   // Extratos dos bancos integrados (Inter, Stone e iFood): o cron diário das 07h já busca;
   // aqui buscamos de novo ao abrir a tela e pelo menu "Importar".
   const [bankSync, setBankSync] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
-  const runBankSync = useCallback(async (range?: { from: string; to: string }) => {
+  const runBankSync = useCallback(async (range?: { from: string; to: string }, stoneSince?: string) => {
     if (!user?.tenantId) return;
     setBankSync({ running: true, msg: null, error: false });
     type SyncResp = { success?: boolean; not_configured?: boolean; skipped?: boolean; error?: string; inserted?: number };
@@ -571,7 +604,7 @@ export default function ConciliacaoTab() {
       }),
       range
         ? stoneRange()
-        : invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId } }),
+        : invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
     ]);
     // Depois do Inter: os depósitos do iFood casam com o extrato que acabou de chegar.
     const ifood = await invokeWithAuth<SyncResp>('ifood-financial', {
@@ -939,8 +972,8 @@ export default function ConciliacaoTab() {
             <MenuItem
               icon="ri-refresh-line"
               label="Atualizar bancos agora"
-              hint="Inter, Stone e iFood, desde a última busca"
-              onClick={() => { setMenuImportar(false); runBankSync(); }}
+              hint={periodoValido ? `Inter, Stone e iFood: só o que falta desde ${fmtDataBR(periodFrom)}` : 'Inter, Stone e iFood: só o que falta'}
+              onClick={() => { setMenuImportar(false); runBankSync(undefined, periodoValido ? periodFrom : undefined); }}
             />
             <MenuItem
               icon="ri-calendar-line"

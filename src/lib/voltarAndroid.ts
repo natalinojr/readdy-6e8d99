@@ -17,6 +17,22 @@ import { useEffect, useRef } from 'react';
 /** Camadas abertas, da mais externa para a mais interna. */
 const pilha: symbol[] = [];
 
+// SEGUNDA PEGADINHA (2026-09-16): fechar uma camada PELA TELA (seta ←, X) chama history.back() para
+// limpar a entrada que ela empurrou — e esse back dispara um popstate de verdade. A camada de baixo,
+// agora no topo, achava que era o voltar do usuário e fechava também: tocar na seta da conversa
+// fechava o chat inteiro. Esses "voltar de limpeza" são contados aqui e engolidos por um ouvinte
+// único, registrado ao carregar o módulo — antes de qualquer camada, então roda primeiro.
+let limpezasPendentes = 0;
+const IGNORAR = '__erposVoltarDeLimpeza';
+if (typeof window !== 'undefined') {
+  window.addEventListener('popstate', (e) => {
+    if (limpezasPendentes > 0) {
+      limpezasPendentes--;
+      (e as unknown as Record<string, boolean>)[IGNORAR] = true;
+    }
+  });
+}
+
 /**
  * Faz o botão "voltar" fechar um overlay em vez de sair da tela (ou do app).
  *
@@ -40,7 +56,9 @@ export function useVoltarFecha(aberto: boolean, aoFechar: () => void, chave = 'o
     window.history.pushState({ erposOverlay: chave }, '');
     let fechadoPeloVoltar = false;
 
-    const aoVoltar = () => {
+    const aoVoltar = (e: PopStateEvent) => {
+      // Voltar disparado pela limpeza de outra camada (fechada pela tela): não é do usuário.
+      if ((e as unknown as Record<string, boolean>)[IGNORAR]) return;
       // Só a camada de cima responde a este voltar; as de baixo esperam o próximo.
       if (pilha[pilha.length - 1] !== meuId) return;
       pilha.pop();
@@ -55,6 +73,7 @@ export function useVoltarFecha(aberto: boolean, aoFechar: () => void, chave = 'o
       if (i >= 0) pilha.splice(i, 1);
       // Fechou pela UI (X, backdrop): desfaz a entrada que empurramos.
       if (!fechadoPeloVoltar && window.history.state?.erposOverlay === chave) {
+        limpezasPendentes++;
         window.history.back();
       }
     };

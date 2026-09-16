@@ -12,6 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { SHARE_KEY, type SharePayload } from '@/lib/shareIntake';
 import { EVENTO_ASSISTENTE, getFoco, limparFocoItem, resumirFoco, setFocoItem, type PedidoAbrir } from '@/lib/assistenteFoco';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
+import BotaoAvisos from '@/components/feature/BotaoAvisos';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -163,73 +164,6 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
 
 // Notificação no celular (Web Push do PWA): os avisos do assistente chegam e abrem este chat.
 // Some quando já está ativa; lib/push carregada só aqui (import dinâmico).
-function BotaoNotificacao({ tenantId }: { tenantId: string | undefined }) {
-  const [estado, setEstado] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-  // Dentro do app Android (Capacitor) o Web Push não existe: usa a notificação nativa (Firebase),
-  // e só quando o servidor diz que o Firebase está configurado (send-push › fcm_status).
-  type PN = { [k: string]: (a?: unknown, b?: unknown) => Promise<unknown> };
-  const pn = (window as unknown as { Capacitor?: { Plugins?: Record<string, PN> } }).Capacitor?.Plugins?.PushNotifications;
-  useEffect(() => {
-    if (!pn) {
-      import('@/lib/push').then((m) => m.estadoPush()).then(setEstado).catch(() => setEstado('nao-suportado'));
-      return;
-    }
-    (async () => {
-      try {
-        const { data } = await supabase.functions.invoke('send-push', { body: { action: 'fcm_status' } });
-        if (!(data as { configured?: boolean } | null)?.configured) { setEstado('nao-suportado'); return; }
-        // Tocar na notificação abre a tela que veio no aviso (ex.: /assistente).
-        await pn.addListener('pushNotificationActionPerformed', (ev: unknown) => {
-          const url = (ev as { notification?: { data?: { url?: string } } })?.notification?.data?.url;
-          if (url && url.startsWith('/')) window.location.assign(url);
-        });
-        const perm = (await pn.checkPermissions()) as { receive?: string };
-        let ok = false;
-        try { ok = localStorage.getItem('erpos-fcm-ok') === '1'; } catch { /* sem storage */ }
-        setEstado(perm?.receive === 'granted' && ok ? 'ativo' : perm?.receive === 'denied' ? 'negado' : 'inativo');
-      } catch { setEstado('nao-suportado'); }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  if (!estado || estado === 'ativo' || estado === 'nao-suportado') return null;
-  const ativar = async () => {
-    if (!tenantId) return;
-    if (pn) {
-      try {
-        const perm = (await pn.requestPermissions()) as { receive?: string };
-        if (perm?.receive !== 'granted') { setEstado('negado'); return; }
-        await pn.createChannel({ id: 'erpos', name: 'Avisos do ERPOS', importance: 5, visibility: 1 }).catch(() => {});
-        await pn.addListener('registration', async (t: unknown) => {
-          const token = String((t as { value?: string })?.value ?? '');
-          if (!token) return;
-          const { data } = await supabase.functions.invoke('send-push', {
-            body: { action: 'subscribe', active_tenant_id: tenantId, subscription: { endpoint: `fcm:${token}`, keys: { p256dh: 'fcm', auth: 'fcm' } } },
-          });
-          if ((data as { success?: boolean } | null)?.success) {
-            try { localStorage.setItem('erpos-fcm-ok', '1'); } catch { /* sem storage */ }
-            setEstado('ativo');
-          } else setMsg('Não deu para registrar o aparelho.');
-        });
-        await pn.addListener('registrationError', () => setMsg('O Firebase recusou o registro deste aparelho.'));
-        await pn.register();
-      } catch (e) { setMsg(e instanceof Error ? e.message : 'Não deu para ativar.'); }
-      return;
-    }
-    const m = await import('@/lib/push');
-    const r = await m.ativarPush(tenantId);
-    if (r.ok) setEstado('ativo'); else setMsg(r.erro ?? 'Não deu para ativar.');
-  };
-  return (
-    <button
-      onClick={ativar}
-      title={msg ?? (estado === 'negado' ? 'Notificações bloqueadas: libere nas configurações do navegador' : 'Receber os avisos do assistente no celular')}
-      className={`flex items-center gap-1 px-2.5 h-8 rounded-lg text-[11px] font-bold cursor-pointer ${msg || estado === 'negado' ? 'text-red-600 bg-red-50' : 'text-violet-700 bg-violet-50 hover:bg-violet-100'}`}
-    >
-      <i className="ri-notification-3-line" /> {estado === 'negado' ? 'Bloqueadas' : msg ? 'Tentar de novo' : 'Ativar avisos'}
-    </button>
-  );
-}
 
 export default function AssistenteChat({ variant }: { variant: 'floating' | 'embedded' }) {
   const { user } = useAuth();
@@ -765,7 +699,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           <p className="text-sm font-black text-zinc-900 leading-tight">{vista === 'conversa' ? rotuloAssunto(aba) : 'Assistente'}</p>
           <p className="text-[11px] text-zinc-400 leading-tight truncate">{sending ? 'pensando…' : 'Mesma conversa do Telegram'}</p>
         </div>
-        <BotaoNotificacao tenantId={user?.tenantId} />
+        <BotaoAvisos tenantId={user?.tenantId} />
         {variant === 'floating' && (
           <>
             <button onClick={() => setModo('mini')} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Recolher a conversa">

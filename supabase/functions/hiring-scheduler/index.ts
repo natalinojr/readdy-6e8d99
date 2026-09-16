@@ -131,12 +131,22 @@ function parseDataBR(text: string): string | null {
 type Row = Record<string, any>;
 interface Ctx { sess: Row; job: Row; cfg: Row; cand: Row; company: Row | null }
 
+// Entrevistador da vaga (hiring_job_scheduling.interviewers), desde 2026-09-16 de dois tipos:
+//   whatsapp — { name, phone, jid? } (formato antigo, sem "kind"): avisado e responde pelo WhatsApp;
+//   usuario  — { name, user_id }: pessoa do ERPOS com acesso ao módulo (fn_hiring_team), avisada no
+//              app (push; o dono também no chat do assistente) e responde pedidos pela tela.
+const ehUsuario = (i: Row) => i?.kind === 'usuario';
+const UUID = /^[0-9a-f-]{36}$/i;
+const entrevistadorValido = (i: Row) => ehUsuario(i)
+  ? UUID.test(String(i?.user_id ?? ''))
+  : !!String(i?.name ?? '').trim() && digits(i?.phone).length >= 10;
+
 function configFaltas(cfg: Row | null): string[] {
   if (!cfg?.enabled) return ['agendamento desligado'];
   const f: string[] = [];
   const slots = (Array.isArray(cfg.slots) ? cfg.slots : []).filter((s: Row) => /^\d{2}:\d{2}$/.test(s?.start) && /^\d{2}:\d{2}$/.test(s?.end) && s.start < s.end);
   if (!slots.length) f.push('horários');
-  if (!(Array.isArray(cfg.interviewers) ? cfg.interviewers : []).some((i: Row) => String(i?.name ?? '').trim() && digits(i?.phone).length >= 10)) f.push('entrevistador com WhatsApp');
+  if (!(Array.isArray(cfg.interviewers) ? cfg.interviewers : []).some(entrevistadorValido)) f.push('entrevistador');
   if (cfg.format === 'presencial' && !String(cfg.location ?? '').trim()) f.push('local');
   return f;
 }
@@ -206,8 +216,53 @@ async function toCand(admin: SupabaseClient, c: Ctx, text: string, extra: Row = 
   const pend = r.modelo && tpl?.aguardaJanela ? { pending_request: { kind: 'aguardando_janela', at: new Date().toISOString() } } : {};
   await addHist(admin, c.sess.id, 'assistente', hist, { last_out_at: new Date().toISOString(), last_out_msg_id: r.id, delivered_at: null, read_at: null, ...extra, ...pend });
 }
-async function toInterviewers(c: Ctx, text: string) {
-  for (const it of (Array.isArray(c.cfg.interviewers) ? c.cfg.interviewers : []) as Row[]) {
+// Dono no chat do assistente (2026-09-16). Até aqui TODO aviso de contratação ia só por WhatsApp aos
+// entrevistadores da vaga: confirmação de presença, entrevista marcada, cancelamento, desistência,
+// lembrete da véspera — nada disso entrava na conversa do dono, e a aba Currículos do chat do ERPOS
+// ficava vazia. Mesmo caminho do canal-publico › notifyOwner: assistente-telegram › deliver com
+// save/topic grava na aba Currículos, manda no Telegram e dispara o push do app.
+async function notifyOwner(text: string) {
+  try {
+    const admin = sbLid;
+    const { data } = await admin.from('asst_settings').select('value').eq('key', 'telegram_owner_chat_id').maybeSingle();
+    if (!data?.value || internalKey.length < 20) return;
+    const r = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({ action: 'deliver', chat_key: `tg:${String(data.value).replace(/"/g, '')}`, text, save: true, topic: 'curriculos' }),
+    });
+    if (!r.ok) log('WARN', 'aviso ao dono recusado', { status: r.status });
+  } catch (e) { log('WARN', 'aviso ao dono falhou', { error: errMsg(e) }); }
+}
+
+// Push para usuários do ERPOS (send-push › send, service role). Sem tenant: vale para quem não tem loja.
+async function pushUsuarios(userIds: string[], titulo: string, corpo: string) {
+  if (!userIds.length || !serviceRoleKey) return;
+  try {
+    const r = await fetch(`${supabaseUrl}/functions/v1/send-push`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceRoleKey}` },
+      body: JSON.stringify({ action: 'send', user_ids: userIds, payload: { title: titulo, body: corpo.slice(0, 180), url: '/contratacao?tab=agendamentos', tag: 'contratacao' } }),
+    });
+    if (!r.ok) log('WARN', 'push aos entrevistadores recusado', { status: r.status });
+  } catch (e) { log('WARN', 'push aos entrevistadores falhou', { error: errMsg(e) }); }
+}
+
+async function toInterviewers(c: Ctx, text: string, opts: { semChatDoDono?: boolean } = {}) {
+  const lista = (Array.isArray(c.cfg.interviewers) ? c.cfg.interviewers : []) as Row[];
+  // ── Usuários do ERPOS: notificação no app. A resposta por código (#ABC 1) só existe no WhatsApp;
+  //    quem é usuário responde pela tela (Contratação › Agendamentos).
+  const usuarios = [...new Set(lista.filter(ehUsuario).map((i) => String(i.user_id)).filter((id) => UUID.test(id)))];
+  if (usuarios.length) {
+    const [semCodigo] = text.split('\n\nResponda aqui:');
+    const pedeResposta = semCodigo !== text;
+    const corpo = pedeResposta ? `${semCodigo}\n\nResponda em Contratação › Agendamentos.` : semCodigo;
+    await pushUsuarios(usuarios, `Contratação · ${c.job?.title ?? 'vaga'}`, corpo);
+    // O dono, se marcado, também recebe na conversa do assistente (aba Currículos).
+    const { data: dono } = await sbLid.from('asst_settings').select('value').eq('key', 'owner_user_id').maybeSingle();
+    const donoId = String(dono?.value ?? '').replace(/"/g, '');
+    if (!opts.semChatDoDono && donoId && usuarios.includes(donoId)) await notifyOwner(corpo);
+  }
+  // ── WhatsApp (formato antigo)
+  for (const it of lista.filter((i) => !ehUsuario(i))) {
     // @lid guardado (resposta dele por aqui ou mapa telefone→@lid do webhook); senão o telefone.
     if (!isLid(it?.jid) && phone55(it?.phone).length < 12) continue;
     const n = await destFor(phone55(it?.phone), it?.jid);
@@ -225,13 +280,14 @@ async function newCv(admin: SupabaseClient, candId: string, jobId: string): Prom
     admin.from('hiring_candidates').select('full_name, neighborhood, city').eq('id', candId).maybeSingle(),
     admin.from('hiring_applications').select('score').eq('job_id', jobId).eq('candidate_id', candId).maybeSingle(),
   ]);
-  const lista = Array.isArray(cfg?.interviewers) ? cfg!.interviewers : [];
-  if (!job || !cand || !lista.length) return { sent: 0 };
+  const lista = (Array.isArray(cfg?.interviewers) ? cfg!.interviewers : []) as Row[];
+  if (!job || !cand || !lista.some(entrevistadorValido)) return { sent: 0 };
   const onde = [cand.neighborhood, cand.city].filter(Boolean).join(', ');
   const nota = app?.score != null ? `, nota ${app.score}` : '';
   // Uma linha só: vira a variável do modelo quando a pessoa está fora da janela.
   const text = `novo currículo completo de ${cand.full_name ?? 'candidato'}${onde ? ` (${onde})` : ''}${nota}. Veja em Contratação no ERPOS`;
-  await toInterviewers({ cfg, job } as unknown as Ctx, text);
+  // Dono já recebe pelo canal-publico o aviso mais completo ("📥 Currículo pelo link"): não repete.
+  await toInterviewers({ cfg, job } as unknown as Ctx, text, { semChatDoDono: true });
   log('INFO', 'currículo novo avisado', { cand: candId, job: jobId, entrevistadores: lista.length });
   return { sent: lista.length };
 }
@@ -491,34 +547,45 @@ async function handleInterviewer(admin: SupabaseClient, jobIds: string[], text: 
     await sendText(number, `Tenho ${pendentes.length} pedidos esperando. Responda começando pelo código:\n${lista.join('\n')}\nEx.: #${pendentes[0].code} 1`);
     return true;
   }
-  const c = await loadCtx(admin, sess);
-  if (!c) return true;
   const resto = codeM ? t.replace(codeM[0], '').trim() : t;
-  const pr = (sess.pending_request ?? {}) as Row;
   const data = parseDataBR(resto);
-  if (data) {
-    await admin.from('hiring_scheduling_sessions').update({ status: 'negociando', pending_request: { kind: 'proposta_gestor', starts_at: data, at: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', sess.id);
-    c.sess.status = 'negociando';
-    await toCand(admin, c, `A equipe sugeriu *${fmtSlot(data)}* (${onde(c)}). Pode ser?\n1) Sim\n2) Não`);
-    await addHist(admin, sess.id, 'gestor', t);
-    await sendText(number, `Ok! Perguntei ao ${firstName(c.cand.full_name)} se ${fmtSlot(data)} serve.`);
+  const op: Decisao | null = data ? 'propor'
+    : /^(1|sim|aceito|aceita|pode|ok|confirm)/i.test(resto) ? 'aceitar'
+    : /^(2|n[aã]o|recus)/i.test(resto) ? 'recusar' : null;
+  if (!op) {
+    const { data: cd } = await admin.from('hiring_candidates').select('full_name').eq('id', sess.candidate_id).maybeSingle();
+    await sendText(number, `Não entendi. Para o pedido de ${cd?.full_name ?? 'candidato'}: #${sess.code} 1 (aceitar), #${sess.code} 2 (recusar) ou #${sess.code} dd/mm hh:mm (propor).`);
     return true;
   }
-  if (/^(1|sim|aceito|aceita|pode|ok|confirm)/i.test(resto)) {
-    if (!pr.starts_at) { await sendText(number, `O pedido de ${c.cand.full_name} não tem data e hora exatas. Mande: #${sess.code} dd/mm hh:mm`); return true; }
-    await addHist(admin, sess.id, 'gestor', t);
-    const ok = await book(admin, c, pr.starts_at, true);
-    await sendText(number, ok ? `Confirmado ✅ ${c.cand.full_name} — ${fmtSlot(pr.starts_at)}.` : 'Não consegui reservar; o candidato recebeu outras opções.');
-    return true;
-  }
-  if (/^(2|n[aã]o|recus)/i.test(resto)) {
-    await addHist(admin, sess.id, 'gestor', t);
-    await offerAgain(admin, c, 'Esse horário não vai ser possível 😕 Temos estes:');
-    await sendText(number, `Ok, avisei ${c.cand.full_name} e ofereci os horários da agenda.`);
-    return true;
-  }
-  await sendText(number, `Não entendi. Para o pedido de ${c.cand.full_name}: #${sess.code} 1 (aceitar), #${sess.code} 2 (recusar) ou #${sess.code} dd/mm hh:mm (propor).`);
+  const r = await decidirPedido(admin, sess, op, data, t);
+  await sendText(number, op === 'aceitar' && r.semData ? `${r.msg} Mande: #${sess.code} dd/mm hh:mm` : r.msg);
   return true;
+}
+
+// Decisão do entrevistador sobre um pedido de horário fora da agenda. Uma função só para as duas
+// portas: resposta por código no WhatsApp (handleInterviewer) e botões na tela (ação `decide`).
+type Decisao = 'aceitar' | 'recusar' | 'propor';
+async function decidirPedido(admin: SupabaseClient, sess: Row, op: Decisao, propostaIso: string | null, registro: string): Promise<{ ok: boolean; msg: string; semData?: boolean }> {
+  const c = await loadCtx(admin, sess);
+  if (!c) return { ok: false, msg: 'Vaga ou candidato não encontrado.' };
+  const pr = (sess.pending_request ?? {}) as Row;
+  if (op === 'propor') {
+    if (!propostaIso) return { ok: false, msg: 'Informe a data e hora que quer propor.' };
+    await admin.from('hiring_scheduling_sessions').update({ status: 'negociando', pending_request: { kind: 'proposta_gestor', starts_at: propostaIso, at: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', sess.id);
+    c.sess.status = 'negociando';
+    await toCand(admin, c, `A equipe sugeriu *${fmtSlot(propostaIso)}* (${onde(c)}). Pode ser?\n1) Sim\n2) Não`);
+    await addHist(admin, sess.id, 'gestor', registro);
+    return { ok: true, msg: `Ok! Perguntei ao ${firstName(c.cand.full_name)} se ${fmtSlot(propostaIso)} serve.` };
+  }
+  if (op === 'aceitar') {
+    if (!pr.starts_at) return { ok: false, semData: true, msg: `O pedido de ${c.cand.full_name} não tem data e hora exatas: proponha um horário.` };
+    await addHist(admin, sess.id, 'gestor', registro);
+    const ok = await book(admin, c, pr.starts_at, true);
+    return { ok, msg: ok ? `Confirmado ✅ ${c.cand.full_name} — ${fmtSlot(pr.starts_at)}.` : 'Não consegui reservar; o candidato recebeu outras opções.' };
+  }
+  await addHist(admin, sess.id, 'gestor', registro);
+  await offerAgain(admin, c, 'Esse horário não vai ser possível 😕 Temos estes:');
+  return { ok: true, msg: `Ok, avisei ${c.cand.full_name} e ofereci os horários da agenda.` };
 }
 
 async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
@@ -721,15 +788,53 @@ async function tick(admin: SupabaseClient, force = false) {
   return res;
 }
 
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
+
+// ── Tela (usuário logado): responder pedido de horário (2026-09-16) ──
+// Entrevistador que é usuário do ERPOS não responde por código no WhatsApp; responde por aqui.
+// Quem pode: quem tem acesso ao módulo (is_hiring_admin — mesma regra do RLS das tabelas hiring_*).
+async function decideDaTela(req: Request, admin: SupabaseClient, body: Row): Promise<Response> {
+  const resp = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+  const userClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '', {
+    global: { headers: { Authorization: req.headers.get('authorization') ?? '' } }, auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const { data: { user } } = await userClient.auth.getUser();
+  if (!user) return resp({ success: false, error: 'Faça login de novo.' }, 401);
+  const { data: pode } = await userClient.rpc('is_hiring_admin');
+  if (pode !== true) return resp({ success: false, error: 'Sem acesso ao módulo Contratação.' }, 403);
+
+  const op = String(body.op ?? '') as Decisao;
+  if (!['aceitar', 'recusar', 'propor'].includes(op)) return resp({ success: false, error: 'Decisão inválida.' }, 400);
+  const { data: sess } = await admin.from('hiring_scheduling_sessions').select('*').eq('id', String(body.session_id ?? '')).maybeSingle();
+  if (!sess) return resp({ success: false, error: 'Pedido não encontrado.' }, 404);
+  // Outro entrevistador pode ter respondido antes (WhatsApp ou tela): não decide duas vezes.
+  if (sess.status !== 'aguardando_gestor') return resp({ success: false, error: 'Esse pedido já foi respondido.' }, 409);
+  const proposta = op === 'propor' && body.starts_at ? spToIso(String(body.starts_at)) : null;
+  if (op === 'propor' && (!proposta || Number.isNaN(Date.parse(proposta)))) return resp({ success: false, error: 'Data e hora inválidas.' }, 400);
+
+  const quem = user.email ?? 'tela';
+  const r = await decidirPedido(admin, sess as Row, op, proposta, `[pela tela, ${quem}] ${op}${proposta ? ` ${fmtSlot(proposta)}` : ''}`);
+  log('INFO', 'pedido decidido pela tela', { sess: sess.id, op, por: quem, ok: r.ok });
+  return resp({ success: r.ok, message: r.msg, ...(r.ok ? {} : { error: r.msg }) }, r.ok ? 200 : 400);
+}
+
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
   const ok = (internalKey.length >= 20 && req.headers.get('x-internal-key') === internalKey) || (!!serviceRoleKey && bearer === serviceRoleKey);
-  if (!ok) return json({ error: 'Unauthorized' }, 401);
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   // deno-lint-ignore no-explicit-any
   let body: any;
   try { body = await req.json(); } catch { return json({ error: 'JSON inválido' }, 400); }
+  // A única ação aberta ao usuário logado; todo o resto continua só com chave interna.
+  if (body?.action === 'decide') {
+    try { return await decideDaTela(req, admin, body); } catch (e) {
+      log('ERROR', 'decide', { error: errMsg(e) });
+      return new Response(JSON.stringify({ success: false, error: errMsg(e) }), { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } });
+    }
+  }
+  if (!ok) return json({ error: 'Unauthorized' }, 401);
   try {
     if (body.action === 'tick') return json({ ok: true, ...(await tick(admin, body.force === true)) });
     if (body.action === 'inbound') return json({ ok: true, handled: await inbound(admin, body) });

@@ -838,6 +838,10 @@ Conversa com o assistente **dentro do ERPOS**, somando ao Telegram (não substit
   (`src/lib/voltarAndroid.ts`, herdado de Tarefas). Duas camadas: o voltar sai da conversa para a
   lista e só depois fecha o painel — antes SAÍA DO APP. `popstate` é do window, então o helper tem
   uma pilha e só a camada do topo reage.
+- **Avisos de contratação no chat (2026-09-16):** o `hiring-scheduler` avisava só os entrevistadores
+  por WhatsApp. Agora todo aviso (entrevista marcada, presença confirmada, cancelamento, desistência,
+  lembrete da véspera, sem resposta) também vai para o dono pela aba **Currículos**, via
+  `assistente-telegram › deliver` (`save`/`topic`).
 - **Badge do botão fechado (2026-09-16):** com o chat fechado o app não carregava NADA, então aviso
   de cron/conciliação só aparecia se o dono abrisse. Agora `unread` (consulta leve: conta as
   mensagens `role='assistant'` com `id >` `asst_settings.app_last_seen`, devolve contagem, assunto

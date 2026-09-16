@@ -9,6 +9,7 @@ import { Navigate } from 'react-router-dom';
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
+import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { supabase } from '@/lib/supabase';
 import { readCurriculoPdf } from '@/lib/curriculoLocal';
 import {
@@ -502,6 +503,9 @@ export default function ContratacaoPage() {
           <h1 className="text-xl font-black text-zinc-900">Contratação</h1>
           <p className="text-xs text-zinc-400">Currículos, kanban, entrevistas e relatórios por empresa</p>
         </div>
+        {/* Entrevistador que é usuário do ERPOS recebe os avisos da vaga como notificação: sem
+            aparelho inscrito não chega nada. Some quando já está ativo. */}
+        <BotaoAvisos tenantId={user?.tenantId} titulo="Receber no celular os avisos de entrevista (agendada, confirmada, cancelada…)" />
         {aba !== 'config' && aba !== 'links' && companies.length > 0 && (
           <select value={empresaFiltro} onChange={(e) => setEmpresaFiltro(e.target.value)}
             className="w-full sm:w-auto h-10 px-3 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 cursor-pointer">

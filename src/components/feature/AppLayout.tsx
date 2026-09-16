@@ -104,9 +104,16 @@ export default function AppLayout() {
     );
   }
 
-  // 5. Full-screen protegidas (modulos) — sem sidebar
+  // 5. Full-screen protegidas (modulos) — sem sidebar. O chat do assistente entra aqui também
+  // (pedido do dono, 2026-09-16): /modulos é a primeira tela depois do login. Para quem não é o
+  // dono o AssistenteChat não renderiza nada.
   if (isFullScreenProtected) {
-    return <Outlet />;
+    return (
+      <>
+        <Outlet />
+        <AssistenteChat variant="floating" />
+      </>
+    );
   }
 
   // Terminais (PDV/KDS/Gestor) — full screen sem barra extra

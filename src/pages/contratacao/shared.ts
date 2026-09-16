@@ -26,7 +26,17 @@ export type NativeKind = 'novo' | 'agendar' | 'entrevista' | 'aprovado' | 'desca
 
 // ── Agendamento de entrevista pelo assistente (hiring_job_scheduling, por vaga) ──
 export interface SchedulingSlot { dow: number; start: string; end: string }
-export interface SchedulingInterviewer { name: string; phone: string }
+// Entrevistador da vaga (2026-09-16): pelo WhatsApp de alguém OU um usuário do ERPOS com acesso ao
+// módulo. Sem `kind` = whatsapp (formato antigo). Usuário é avisado no app e responde pela tela.
+export type SchedulingInterviewer =
+  | { kind?: 'whatsapp'; name: string; phone: string; jid?: string }
+  | { kind: 'usuario'; name: string; user_id: string };
+/** Pessoa que pode ser marcada como entrevistadora (RPC fn_hiring_team — ponto único de escopo). */
+export interface MembroEquipe { user_id: string; name: string; email: string; has_push: boolean }
+export const ehUsuario = (i: SchedulingInterviewer): i is Extract<SchedulingInterviewer, { kind: 'usuario' }> => i.kind === 'usuario';
+export const entrevistadorValido = (i: SchedulingInterviewer) => ehUsuario(i)
+  ? !!i.user_id
+  : !!i.name.trim() && i.phone.replace(/\D/g, '').length >= 10;
 // Faixa de horário sem entrevista numa data (o dia inteiro fica em blocked_dates).
 export interface BlockedSlot { date: string; start: string; end: string }
 export interface JobScheduling {
@@ -51,7 +61,7 @@ export function faltasAgendamento(s: Pick<JobScheduling, 'slots' | 'interviewers
   const f: string[] = [];
   const slotsOk = s.slots.filter((x) => /^\d{2}:\d{2}$/.test(x.start) && /^\d{2}:\d{2}$/.test(x.end) && x.start < x.end);
   if (slotsOk.length === 0) f.push('pelo menos um dia e horário disponível');
-  if (!s.interviewers.some((i) => i.name.trim() && i.phone.replace(/\D/g, '').length >= 10)) f.push('pelo menos um entrevistador com nome e WhatsApp');
+  if (!s.interviewers.some(entrevistadorValido)) f.push('pelo menos um entrevistador (WhatsApp ou usuário do ERPOS)');
   if (s.format === 'presencial' && !(s.location ?? '').trim()) f.push('o local da entrevista');
   return f;
 }

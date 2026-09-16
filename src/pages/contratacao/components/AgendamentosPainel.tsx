@@ -30,6 +30,66 @@ const TZ = 'America/Sao_Paulo';
 const quando = (s: string | null | undefined) => (s ? new Date(s).toLocaleString('pt-BR', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 const quandoLongo = (s: string) => new Date(s).toLocaleString('pt-BR', { timeZone: TZ, weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
+// Responder pela tela o pedido de horário fora da agenda (2026-09-16). Antes só dava pelo WhatsApp
+// ("#ABC 1"), e o entrevistador que é usuário do ERPOS não tinha como decidir — a vaga travava em
+// "Aguardando entrevistador". Mesma decisão do WhatsApp: hiring-scheduler › decide › decidirPedido.
+function DecidirPedido({ sess, onFeito }: { sess: Sess; onFeito: () => void }) {
+  const [propondo, setPropondo] = useState(false);
+  const [quandoProp, setQuandoProp] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; texto: string } | null>(null);
+  const temData = !!sess.pending_request?.starts_at;
+
+  const decidir = async (op: 'aceitar' | 'recusar' | 'propor') => {
+    setEnviando(true); setMsg(null);
+    const { data, error } = await supabase.functions.invoke('hiring-scheduler', {
+      body: { action: 'decide', session_id: sess.id, op, ...(op === 'propor' ? { starts_at: quandoProp } : {}) },
+    });
+    let texto = (data as { message?: string; error?: string } | null)?.message ?? (data as { error?: string } | null)?.error;
+    if (error) {
+      const ctx = (error as { context?: Response }).context;
+      try { texto = String((await ctx?.json())?.error ?? error.message); } catch { texto = error.message; }
+    }
+    const ok = !error && !!(data as { success?: boolean } | null)?.success;
+    setEnviando(false);
+    setMsg({ ok, texto: texto ?? (ok ? 'Feito.' : 'Não deu certo.') });
+    if (ok) { setPropondo(false); onFeito(); }
+  };
+
+  return (
+    <div className="my-2 p-2.5 rounded-xl border border-amber-200 bg-amber-50">
+      <p className="text-xs font-bold text-amber-900">
+        Pediu {sess.pending_request?.starts_at ? quandoLongo(sess.pending_request.starts_at) : `"${sess.pending_request?.texto ?? ''}"`} — o que responder?
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5 mt-2">
+        <button onClick={() => decidir('aceitar')} disabled={enviando || !temData} title={temData ? '' : 'O candidato não disse data e hora exatas: proponha um horário'}
+          className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-40 cursor-pointer">
+          <i className="ri-check-line" /> Aceitar
+        </button>
+        <button onClick={() => decidir('recusar')} disabled={enviando}
+          className="h-8 px-3 rounded-lg border border-zinc-300 bg-white text-zinc-700 text-xs font-bold disabled:opacity-40 cursor-pointer">
+          <i className="ri-close-line" /> Recusar e oferecer a agenda
+        </button>
+        <button onClick={() => setPropondo((v) => !v)} disabled={enviando}
+          className="h-8 px-3 rounded-lg border border-amber-300 bg-white text-amber-800 text-xs font-bold disabled:opacity-40 cursor-pointer">
+          <i className="ri-calendar-event-line" /> Propor outro horário
+        </button>
+      </div>
+      {propondo && (
+        <div className="flex items-center gap-1.5 mt-2">
+          <input type="datetime-local" value={quandoProp} onChange={(e) => setQuandoProp(e.target.value)}
+            className="h-8 px-2 rounded-lg border border-zinc-200 text-sm bg-white" />
+          <button onClick={() => decidir('propor')} disabled={enviando || !quandoProp}
+            className="h-8 px-3 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold disabled:opacity-40 cursor-pointer">
+            Enviar ao candidato
+          </button>
+        </div>
+      )}
+      {msg && <p className={`mt-1.5 text-[11px] ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.texto}</p>}
+    </div>
+  );
+}
+
 // Status principal (uma etiqueta) de uma conversa
 function statusDe(s: Sess): { label: string; cls: string; grupo: Filtro } {
   const iv = s.hiring_interviews?.status === 'agendada' ? s.hiring_interviews : null;
@@ -224,6 +284,7 @@ export default function AgendamentosPainel({ candidates, jobs, companies, stages
                     </button>
                     {open && (
                       <div className="px-3 pb-3 bg-zinc-50/60">
+                        {s.status === 'aguardando_gestor' && <DecidirPedido sess={s} onFeito={carregar} />}
                         <div className="flex flex-wrap items-center gap-2 py-2 text-[11px] text-zinc-500">
                           <span><i className="ri-whatsapp-line" /> {s.phone ?? 'sem telefone'}</span>
                           <span>· {s.attempts} tentativa(s)</span>

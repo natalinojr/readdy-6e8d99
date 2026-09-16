@@ -5,7 +5,7 @@
 // da vaga: recebem os agendamentos e respondem quando o candidato pede um horário diferente.
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { type JobScheduling, type SchedulingInterviewer, type SchedulingSlot, DIAS_SEMANA, faltasAgendamento } from '../shared';
+import { type JobScheduling, type MembroEquipe, type SchedulingInterviewer, type SchedulingSlot, DIAS_SEMANA, ehUsuario, faltasAgendamento } from '../shared';
 
 const PADRAO = (jobId: string): JobScheduling => ({
   job_id: jobId, enabled: false, slots: [], blocked_dates: [], blocked_slots: [], duration_min: 30, gap_min: 0, per_slot: 1,
@@ -23,6 +23,15 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
   const [novaData, setNovaData] = useState('');
   const [novaIni, setNovaIni] = useState('');
   const [novaFim, setNovaFim] = useState('');
+  // Quem pode ser entrevistador-usuário. Vem do banco (fn_hiring_team), NUNCA montado aqui: quando o
+  // módulo for vendido e houver organização, é a função que passa a filtrar — esta tela não muda.
+  const [equipe, setEquipe] = useState<MembroEquipe[]>([]);
+
+  useEffect(() => {
+    let vivo = true;
+    supabase.rpc('fn_hiring_team').then(({ data }) => { if (vivo) setEquipe((data ?? []) as MembroEquipe[]); });
+    return () => { vivo = false; };
+  }, []);
 
   useEffect(() => {
     let vivo = true;
@@ -37,7 +46,7 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
   if (!s) return <p className="text-xs text-zinc-400">Carregando agendamento…</p>;
   const set = <K extends keyof JobScheduling>(k: K, v: JobScheduling[K]) => setS((x) => (x ? { ...x, [k]: v } : x));
   const setSlot = (i: number, p: Partial<SchedulingSlot>) => set('slots', s.slots.map((x, j) => (j === i ? { ...x, ...p } : x)));
-  const setInt = (i: number, p: Partial<SchedulingInterviewer>) => set('interviewers', s.interviewers.map((x, j) => (j === i ? { ...x, ...p } : x)));
+  const setInt = (i: number, novo: SchedulingInterviewer) => set('interviewers', s.interviewers.map((x, j) => (j === i ? novo : x)));
   const faltas = faltasAgendamento(s);
   // Data sem horário = dia inteiro (blocked_dates); com "das/até" = só aquela faixa (blocked_slots).
   const faixaInvalida = !!novaIni !== !!novaFim || (!!novaIni && novaIni >= novaFim);
@@ -59,7 +68,12 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
       ...s,
       slots: s.slots.filter((x) => x.start && x.end && x.start < x.end),
       blocked_slots: s.blocked_slots.filter((b) => b.date && b.start && b.end && b.start < b.end),
-      interviewers: s.interviewers.filter((i) => i.name.trim() || i.phone.trim()).map((i) => ({ name: i.name.trim(), phone: normFone(i.phone) })),
+      // Usuário sem pessoa escolhida e WhatsApp em branco saem; o jid (@lid) aprendido pelo WhatsApp fica.
+      interviewers: s.interviewers
+        .filter((i) => (ehUsuario(i) ? !!i.user_id : !!(i.name.trim() || i.phone.trim())))
+        .map((i): SchedulingInterviewer => (ehUsuario(i)
+          ? { kind: 'usuario', user_id: i.user_id, name: i.name }
+          : { kind: 'whatsapp', name: i.name.trim(), phone: normFone(i.phone), ...(i.jid ? { jid: i.jid } : {}) })),
       location: (s.location ?? '').trim() || null,
       candidate_notes: (s.candidate_notes ?? '').trim() || null,
       updated_at: new Date().toISOString(),
@@ -157,15 +171,61 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
       <div>
         <p className={lbl}>Entrevistadores (gestores da vaga) — recebem os agendamentos e decidem os pedidos fora do horário</p>
         <div className="space-y-1.5">
-          {s.interviewers.map((it, i) => (
-            <div key={i} className="flex items-center gap-1.5">
-              {/* Sem o w-full do inp: com ele o telefone ocupava a linha toda e o nome sumia. */}
-              <input value={it.name} onChange={(e) => setInt(i, { name: e.target.value })} placeholder="Nome" className={inp.replace('w-full', 'flex-1 min-w-0')} />
-              <input value={it.phone} onChange={(e) => setInt(i, { phone: e.target.value })} placeholder="WhatsApp com DDD" inputMode="tel" className={inp.replace('w-full', 'w-40 shrink-0')} />
+          {s.interviewers.map((it, i) => {
+            const remover = (
               <button onClick={() => set('interviewers', s.interviewers.filter((_, j) => j !== i))} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 cursor-pointer" title="Remover"><i className="ri-delete-bin-line" /></button>
-            </div>
-          ))}
-          <button onClick={() => set('interviewers', [...s.interviewers, { name: '', phone: '' }])} className={addBtn}><i className="ri-add-line" /> Adicionar entrevistador</button>
+            );
+            if (ehUsuario(it)) {
+              const membro = equipe.find((m) => m.user_id === it.user_id);
+              // Quem já está marcado em outra linha não aparece de novo.
+              const livres = equipe.filter((m) => m.user_id === it.user_id || !s.interviewers.some((x) => ehUsuario(x) && x.user_id === m.user_id));
+              return (
+                <div key={i}>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-8 h-8 shrink-0 flex items-center justify-center rounded-lg bg-violet-50 text-violet-600" title="Usuário do ERPOS: avisado no app"><i className="ri-user-3-line" /></span>
+                    <select
+                      value={it.user_id}
+                      onChange={(e) => {
+                        const m = equipe.find((x) => x.user_id === e.target.value);
+                        setInt(i, { kind: 'usuario', user_id: e.target.value, name: m?.name ?? '' });
+                      }}
+                      className={inp.replace('w-full', 'flex-1 min-w-0')}
+                    >
+                      <option value="">Escolha quem tem acesso à Contratação…</option>
+                      {livres.map((m) => <option key={m.user_id} value={m.user_id}>{m.name}{m.email && m.email !== m.name ? ` · ${m.email}` : ''}</option>)}
+                    </select>
+                    {remover}
+                  </div>
+                  {/* Sem aparelho inscrito a notificação não chega: melhor dizer agora do que no dia. */}
+                  {membro && !membro.has_push && (
+                    <p className="ml-10 mt-0.5 text-[11px] text-amber-700">
+                      {membro.name} ainda não ativou os avisos em nenhum aparelho — peça para abrir Contratação e tocar em "Ativar avisos".
+                    </p>
+                  )}
+                </div>
+              );
+            }
+            return (
+              <div key={i} className="flex items-center gap-1.5">
+                <span className="w-8 h-8 shrink-0 flex items-center justify-center rounded-lg bg-emerald-50 text-emerald-600" title="Avisado pelo WhatsApp"><i className="ri-whatsapp-line" /></span>
+                {/* Sem o w-full do inp: com ele o telefone ocupava a linha toda e o nome sumia. */}
+                <input value={it.name} onChange={(e) => setInt(i, { ...it, name: e.target.value })} placeholder="Nome" className={inp.replace('w-full', 'flex-1 min-w-0')} />
+                <input value={it.phone} onChange={(e) => setInt(i, { ...it, phone: e.target.value })} placeholder="WhatsApp com DDD" inputMode="tel" className={inp.replace('w-full', 'w-40 shrink-0')} />
+                {remover}
+              </div>
+            );
+          })}
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <button onClick={() => set('interviewers', [...s.interviewers, { kind: 'whatsapp', name: '', phone: '' }])} className={addBtn}><i className="ri-whatsapp-line" /> Adicionar pelo WhatsApp</button>
+            <button
+              onClick={() => set('interviewers', [...s.interviewers, { kind: 'usuario', user_id: '', name: '' }])}
+              disabled={!equipe.length}
+              title={equipe.length ? 'Pessoa do ERPOS com acesso à Contratação: recebe no app e responde pela tela' : 'Ninguém com acesso ao módulo Contratação'}
+              className={addBtn}
+            >
+              <i className="ri-user-add-line" /> Adicionar usuário do ERPOS
+            </button>
+          </div>
         </div>
       </div>
 

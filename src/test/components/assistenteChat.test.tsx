@@ -302,6 +302,29 @@ describe('AssistenteChat — lista de conversas', () => {
     expect(await screen.findByRole('button', { name: /Falar com o assistente/ })).toBeInTheDocument();
   });
 
+  it('a seta ← da conversa volta para a lista SEM fechar o chat (flutuante)', async () => {
+    // Bug visto no celular (2026-09-16): fechar a conversa pela seta limpava o histórico com
+    // history.back(), e esse voltar de limpeza era tomado pelo painel como voltar do usuário.
+    const user = userEvent.setup();
+    add('assistant', 'Pix preparado', 'pagamentos');
+    add('assistant', 'Currículo novo', 'curriculos');
+    renderChat('floating');
+    await user.click(await screen.findByRole('button', { name: /mensagens novas/ }));
+    await user.click(await screen.findByRole('button', { name: /Financeiro/ }));
+    expect(await screen.findByText('Pix preparado')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Voltar para as conversas' }));
+    expect(await screen.findByRole('button', { name: /Todas as mensagens/ })).toBeInTheDocument();
+    // Dá tempo do popstate de limpeza chegar: o painel tem de continuar aberto.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByRole('button', { name: /Todas as mensagens/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Falar com o assistente/ })).toBeNull();
+
+    // E o voltar do Android, depois disso, fecha o painel (a limpeza não "comeu" um voltar a mais).
+    window.history.back();
+    expect(await screen.findByRole('button', { name: /Falar com o assistente/ })).toBeInTheDocument();
+  });
+
   it('a seta volta da conversa para a lista', async () => {
     const user = userEvent.setup();
     add('assistant', 'Pix preparado', 'pagamentos');

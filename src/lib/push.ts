@@ -43,7 +43,8 @@ function base64UrlParaBytes(base64Url: string): Uint8Array {
   return bytes;
 }
 
-export async function ativarPush(tenantId: string): Promise<{ ok: boolean; erro?: string }> {
+// tenantId nulo: usuário sem loja (só módulo liberado, ex.: Contratação) — o send-push aceita.
+export async function ativarPush(tenantId: string | null | undefined): Promise<{ ok: boolean; erro?: string }> {
   if (!pushSuportado()) {
     return {
       ok: false,
@@ -73,7 +74,7 @@ export async function ativarPush(tenantId: string): Promise<{ ok: boolean; erro?
   }));
 
   const { data, error } = await invokeWithAuth<{ success?: boolean; error?: string }>('send-push', {
-    body: { action: 'subscribe', active_tenant_id: tenantId, subscription: sub.toJSON() },
+    body: { action: 'subscribe', active_tenant_id: tenantId ?? undefined, subscription: sub.toJSON() },
   });
   if (error || !data?.success) {
     return { ok: false, erro: data?.error ?? error?.message ?? 'Falha ao registrar o aparelho.' };

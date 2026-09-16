@@ -2310,3 +2310,63 @@ padrão já existia em Tarefas (`useVoltarFecha`, pushState + popstate) e virou
 voltar e fechavam juntos. O helper agora mantém uma **pilha de camadas abertas** e só a do topo
 responde — o voltar desfaz uma por vez (conversa → painel → sai da tela). Um `history.back()` em
 teste com dois overlays abertos pega isso.
+
+### Contratação não avisava o dono no chat (2026-09-16)
+
+Dono: "hoje teve confirmação de entrevista e não recebi comunicado". Rastreado no banco: a
+confirmação existia (`hiring_candidate_events` "Presença confirmada pelo WhatsApp", sessão com
+`confirmed_at`), mas nenhuma linha em `asst_messages` desde a véspera — nem as entrevistas marcadas
+pela IA, nem a desistência.
+
+**Causa de desenho:** no `hiring-scheduler`, TODO aviso (agendada, confirmada, cancelada, remarcar,
+desistiu, não respondeu, lembrete da véspera) sai por `toInterviewers` = WhatsApp para os
+entrevistadores da vaga (`hiring_job_scheduling.interviewers`). Nada passava pelo assistente, então
+a aba Currículos do chat ficava vazia. O `canal-publico` já tinha `notifyOwner`; o agendador não.
+
+**Solução:** `toInterviewers` também chama `notifyOwner` → `assistente-telegram › deliver` com
+`save: true, topic: 'curriculos'` (grava na aba, manda no Telegram, dispara o push). Como todo
+evento passa por esse funil, um ponto cobre todos. Exceções: as instruções de resposta por código
+("Responda aqui: #ABC 1") são cortadas para o dono (só servem no WhatsApp do entrevistador), e o
+currículo novo pelo link não repete (`{ dono: false }`) porque o canal-publico já avisa com mais
+detalhe. O gatilho `fn_asst_messages_topic` só reclassifica `topic = 'geral'`, então o assunto
+explícito é respeitado.
+
+### NFS-e pelo Emissor Nacional gratuito (2026-09-16)
+
+O ERPOS **não emite NFS-e**. A loja que quer emitir nota de serviço de graça marca
+`fiscal_settings.nfse_emissor_nacional` (Configurações › Fiscal, gravado por `fiscal-write/save_settings`);
+com isso Pedidos › Notas Fiscais mostra o atalho para `NFSE_EMISSOR_NACIONAL_URL` (`src/lib/fiscal.ts`).
+É independente da NFC-e (não precisa de token do Brasil NFe). Integração pela API da Sefin Nacional
+(mTLS com certificado A1) seria o passo seguinte se quiserem emitir de dentro do ERPOS.
+
+### Contratação: entrevistador pode ser usuário do ERPOS (2026-09-16)
+
+Pedido do dono: no entrevistador da vaga, escolher entre **WhatsApp de alguém** ou **usuário com
+acesso ao módulo Contratação** — pensando em vender o módulo, quando os usuários vão ser segregados.
+
+- **Formato** (`hiring_job_scheduling.interviewers`, jsonb, sem coluna nova): `{kind:'whatsapp', name,
+  phone, jid?}` (sem `kind` = whatsapp, formato antigo) ou `{kind:'usuario', name, user_id}`.
+- **⚠️ Ponto único de escopo: `fn_hiring_team()`.** As tabelas `hiring_*` NÃO têm dono (nem loja nem
+  cliente): hoje quem tem acesso ao módulo vê tudo. A lista de quem pode ser entrevistador vem só
+  dessa função (`user_module_access.module='contratacao'` + dono). Quando existir organização, é
+  ela que filtra — a tela (`AgendamentoVaga`) e a Edge não montam a lista. Vender o módulo exige
+  também pôr a organização nas próprias tabelas `hiring_*` e no `is_hiring_admin()`.
+- **Aviso** (`hiring-scheduler › toInterviewers`): WhatsApp como antes; usuário recebe **push**
+  (`send-push › send`) e, se for o dono, também o chat do assistente (aba Currículos). A migração pôs o
+  dono como usuário nas vagas já configuradas, para não perder o aviso no chat.
+- **Responder pela tela:** pedido fora da agenda só se respondia por código no WhatsApp (`#ABC 1`);
+  entrevistador-usuário travaria a vaga. Nova ação `decide` (JWT do usuário + `is_hiring_admin`), com
+  a lógica extraída para `decidirPedido` — usada pelo WhatsApp e pela tela, sem duplicar. Recusa se o
+  pedido já foi respondido (409). Botões em Contratação › Agendamentos.
+- **Push sem loja:** `push_subscriptions.tenant_id` virou nulável e `send-push › subscribe` aceita quem
+  só tem módulo liberado. Antes: "sem loja vinculada" → o pai do dono (só Contratação, 0 lojas) nunca
+  recebia nada. Botão "Ativar avisos" virou `BotaoAvisos` e foi para o cabeçalho da Contratação.
+- De quebra: salvar a vaga pela tela descartava o `jid` (@lid) aprendido do WhatsApp; agora preserva.
+
+### "Voltar" com camadas: a limpeza não pode ser tomada como voltar (2026-09-16)
+
+Fechar uma camada PELA TELA (seta ←) chama `history.back()` para limpar a entrada empurrada. Esse back
+dispara `popstate` de verdade, e a camada de baixo — agora no topo — fechava junto: a seta da conversa
+fechava o chat inteiro. `voltarAndroid.ts` conta essas limpezas e um ouvinte único (registrado ao
+carregar o módulo, antes das camadas) marca o evento para ser ignorado. Teste prova: sem a correção
+falha, com ela passa.

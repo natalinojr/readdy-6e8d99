@@ -134,10 +134,18 @@ Deno.serve({ verify_jwt: false }, async (req) => {
   // Confirma a loja pela membership — nunca confia no corpo da requisição
   const { data: tenantRows } = await admin
     .from('user_tenants').select('tenant_id').eq('user_id', user.id);
-  if (!tenantRows?.length) return json({ error: 'sem loja vinculada' }, 403);
-  const pedido = body.active_tenant_id as string | undefined;
-  const tenantId = tenantRows.find((r: { tenant_id: string }) => r.tenant_id === pedido)?.tenant_id
-    ?? tenantRows[0].tenant_id;
+  // Sem loja: quem só tem acesso a um módulo sem loja (Contratação, Tarefas pelo Admin Master)
+  // também recebe aviso — a assinatura fica com tenant_id nulo (2026-09-16). Antes respondia
+  // "sem loja vinculada" e o entrevistador que não trabalha em loja nunca era avisado.
+  let tenantId: string | null = null;
+  if (tenantRows?.length) {
+    const pedido = body.active_tenant_id as string | undefined;
+    tenantId = tenantRows.find((r: { tenant_id: string }) => r.tenant_id === pedido)?.tenant_id
+      ?? tenantRows[0].tenant_id;
+  } else {
+    const { data: modulos } = await admin.from('user_module_access').select('module').eq('user_id', user.id).limit(1);
+    if (!modulos?.length) return json({ error: 'sem loja nem módulo liberado' }, 403);
+  }
 
   switch (action) {
     case 'subscribe': {

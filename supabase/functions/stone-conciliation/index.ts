@@ -16,7 +16,7 @@
 //   import        { reference_date }                          um dia (AAAA-MM-DD)
 //   import_range  { date_from, date_to }                      até 31 dias
 //   get_history   {}
-//   sync          {}                                          ontem + dias sem sucesso dos últimos 3 (ao abrir a Conciliação)
+//   sync          { date_from? }                              dias sem sucesso desde date_from (padrão: últimos 3) até ontem
 //   sync_all      {}                                          (interno) o mesmo para todas as lojas — cron diário 07h15 (stone-sync)
 //
 // Autenticação: JWT do usuário (membership em user_tenants) OU header x-internal-key = FISCAL_INTERNAL_KEY.
@@ -595,9 +595,15 @@ Deno.serve(async (req: Request) => {
     if (action === 'sync') {
       if (!cfg || !cfg.api_key_b64 || !cfg.bank_account_id) return json({ success: false, not_configured: true });
       if (!cfg.is_active || cfg.auto_sync === false) return json({ success: true, skipped: true });
-      const r = await syncStoneTenant(admin, cfg);
-      // O Inter pode ter chegado depois da Stone (ou vice-versa): recasa os últimos 20 dias.
-      const { error: siErr } = await admin.rpc('fn_match_stone_inter', { p_tenant: tenantId, p_from: addDays(todayBR(), -20), p_to: todayBR() });
+      // date_from (botão "Atualizar bancos"): busca só os dias sem importação com sucesso desde
+      // essa data — dia já importado não é baixado de novo. Sem date_from: últimos 3 dias.
+      const since = isoDate(String(body.date_from ?? '')) ? String(body.date_from) : null;
+      const lookback = since ? Math.min(Math.max(daysBetween(since, addDays(todayBR(), -1)) + 1, 1), 366) : 3;
+      const r = await syncStoneTenant(admin, cfg, lookback);
+      // O Inter pode ter chegado depois da Stone (ou vice-versa): recasa os últimos 20 dias
+      // (ou desde date_from, se for mais antigo).
+      const matchFrom = since && since < addDays(todayBR(), -20) ? since : addDays(todayBR(), -20);
+      const { error: siErr } = await admin.rpc('fn_match_stone_inter', { p_tenant: tenantId, p_from: matchFrom, p_to: todayBR() });
       if (siErr) log('WARN', 'sync', 'fn_match_stone_inter falhou', { tenantId, error: siErr.message });
       return json({ success: !r.error, ...r });
     }

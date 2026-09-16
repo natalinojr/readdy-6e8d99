@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { FileCheck2, Save, Wifi, ShieldCheck, Printer } from 'lucide-react';
+import { FileCheck2, Save, Wifi, ShieldCheck, Printer, Landmark, ExternalLink } from 'lucide-react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
-import { CSOSN_OPTIONS, CST_ICMS_OPTIONS, CFOP_OPTIONS, NCM_SUGESTOES, type FiscalSettingsRow } from '@/lib/fiscal';
+import { CSOSN_OPTIONS, CST_ICMS_OPTIONS, CFOP_OPTIONS, NCM_SUGESTOES, NFSE_EMISSOR_NACIONAL_URL, type FiscalSettingsRow } from '@/lib/fiscal';
 
 const estadosBR = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 
@@ -17,10 +17,11 @@ const EMPTY: Form = {
   natureza_operacao: 'VENDA DE MERCADORIA', ncm_padrao: '21069090', cfop_padrao: 5102, csosn_padrao: '102', cst_icms_padrao: '00', icms_aliquota_padrao: null,
   origem_padrao: 0, pis_cst_padrao: '49', cofins_cst_padrao: '49', cod_tributacao_padrao: '', serie: null,
   print_danfe: true, danfe_printer_id: '', emit_on_delivery: true, emit_on_counter: true, emit_on_table_close: true,
+  nfse_emissor_nacional: false,
 };
 
 // Colunas lidas pelo front (o token nunca é selecionável pelo navegador).
-const SELECT_COLS = 'tenant_id, enabled, provider, environment, razao_social, inscricao_estadual, crt, endereco_logradouro, endereco_numero, endereco_bairro, endereco_municipio, endereco_uf, endereco_cep, codigo_municipio_ibge, natureza_operacao, ncm_padrao, cfop_padrao, csosn_padrao, cst_icms_padrao, icms_aliquota_padrao, origem_padrao, pis_cst_padrao, cofins_cst_padrao, cod_tributacao_padrao, serie, print_danfe, danfe_printer_id, emit_on_delivery, emit_on_counter, emit_on_table_close';
+const SELECT_COLS = 'tenant_id, enabled, provider, environment, razao_social, inscricao_estadual, crt, endereco_logradouro, endereco_numero, endereco_bairro, endereco_municipio, endereco_uf, endereco_cep, codigo_municipio_ibge, natureza_operacao, ncm_padrao, cfop_padrao, csosn_padrao, cst_icms_padrao, icms_aliquota_padrao, origem_padrao, pis_cst_padrao, cofins_cst_padrao, cod_tributacao_padrao, serie, print_danfe, danfe_printer_id, emit_on_delivery, emit_on_counter, emit_on_table_close, nfse_emissor_nacional';
 
 const inputCls = 'w-full text-sm border border-zinc-200 rounded-lg px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400';
 const labelCls = 'block text-xs font-semibold text-zinc-600 mb-1.5';
@@ -39,11 +40,11 @@ function Section({ title, icon, children, desc }: { title: string; icon: React.R
   );
 }
 
-function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
+function Toggle({ checked, onChange, label, hint, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string; disabled?: boolean }) {
   return (
     <label className="flex items-start gap-3 cursor-pointer select-none">
-      <button type="button" onClick={() => onChange(!checked)}
-        className={`mt-0.5 w-10 h-6 rounded-full transition-colors relative flex-shrink-0 ${checked ? 'bg-emerald-500' : 'bg-zinc-300'}`}>
+      <button type="button" onClick={() => onChange(!checked)} disabled={disabled}
+        className={`mt-0.5 disabled:opacity-50 w-10 h-6 rounded-full transition-colors relative flex-shrink-0 ${checked ? 'bg-emerald-500' : 'bg-zinc-300'}`}>
         <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${checked ? 'left-[18px]' : 'left-0.5'}`} />
       </button>
       <span>
@@ -306,6 +307,25 @@ export default function FiscalTab() {
               {impressoras.map(i => <option key={i.id} value={i.id}>{i.nome} ({i.ip})</option>)}
             </select>
           </div>
+        </div>
+      </Section>
+
+      <Section title="NFS-e de serviços (Emissor Nacional gratuito)" icon={<Landmark size={14} />}
+        desc="Para notas de serviço, a loja pode usar o emissor gratuito do governo (nfse.gov.br), sem provedor pago. A emissão é feita no site do governo; o ERPOS deixa o atalho à mão.">
+        <div className="space-y-4">
+          <Toggle checked={form.nfse_emissor_nacional} onChange={v => set('nfse_emissor_nacional', v)} disabled={!podeEditar}
+            label="Esta loja emite NFS-e pelo Emissor Nacional"
+            hint="Mostra o botão “Emitir NFS-e (gov.br)” em Pedidos › Notas Fiscais." />
+          <ul className="text-xs text-zinc-500 space-y-1 list-disc pl-5">
+            <li>Entrada com a conta gov.br (nível prata ou ouro) ou certificado digital da empresa.</li>
+            <li>O município da loja precisa ter aderido à NFS-e Nacional; MEI já emite por lá obrigatoriamente.</li>
+            <li>No primeiro acesso, habilite o CNPJ no emissor e cadastre os serviços que costuma prestar.</li>
+            <li>É independente da NFC-e acima: não precisa de token do Brasil NFe.</li>
+          </ul>
+          <a href={NFSE_EMISSOR_NACIONAL_URL} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg border border-zinc-200 text-zinc-700 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
+            <ExternalLink size={14} /> Abrir o Emissor Nacional
+          </a>
         </div>
       </Section>
 

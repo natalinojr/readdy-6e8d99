@@ -686,7 +686,7 @@ Deno.serve({ verify_jwt: false } as any, async (req: Request) => {
     if (action === 'save_settings') {
       if (!isManager) return errResp('Apenas administradores e gerentes podem alterar a configuração fiscal', 403);
       const s = (body.settings ?? {}) as Record<string, unknown>;
-      const allowed = ['enabled', 'environment', 'razao_social', 'inscricao_estadual', 'crt', 'endereco_logradouro', 'endereco_numero', 'endereco_bairro', 'endereco_municipio', 'endereco_uf', 'endereco_cep', 'codigo_municipio_ibge', 'natureza_operacao', 'ncm_padrao', 'cfop_padrao', 'csosn_padrao', 'cst_icms_padrao', 'icms_aliquota_padrao', 'origem_padrao', 'pis_cst_padrao', 'cofins_cst_padrao', 'cod_tributacao_padrao', 'serie', 'print_danfe', 'danfe_printer_id', 'emit_on_delivery', 'emit_on_counter', 'emit_on_table_close'];
+      const allowed = ['enabled', 'environment', 'razao_social', 'inscricao_estadual', 'crt', 'endereco_logradouro', 'endereco_numero', 'endereco_bairro', 'endereco_municipio', 'endereco_uf', 'endereco_cep', 'codigo_municipio_ibge', 'natureza_operacao', 'ncm_padrao', 'cfop_padrao', 'csosn_padrao', 'cst_icms_padrao', 'icms_aliquota_padrao', 'origem_padrao', 'pis_cst_padrao', 'cofins_cst_padrao', 'cod_tributacao_padrao', 'serie', 'print_danfe', 'danfe_printer_id', 'emit_on_delivery', 'emit_on_counter', 'emit_on_table_close', 'nfse_emissor_nacional'];
       const row: Record<string, unknown> = { tenant_id: tenantId, updated_at: new Date().toISOString() };
       for (const k of allowed) if (s[k] !== undefined) row[k] = s[k] === '' ? null : s[k];
       if (typeof s.provider_token === 'string' && s.provider_token.trim()) row.provider_token = s.provider_token.trim();

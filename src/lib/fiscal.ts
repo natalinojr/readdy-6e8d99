@@ -50,6 +50,7 @@ export interface FiscalSettingsRow {
   emit_on_delivery: boolean;
   emit_on_counter: boolean;
   emit_on_table_close: boolean;
+  nfse_emissor_nacional: boolean;
 }
 
 export type FiscalDocStatus = 'pending' | 'processing' | 'authorized' | 'rejected' | 'cancelled' | 'error' | 'skipped';
@@ -196,3 +197,6 @@ export function cancelMinutesLeft(emittedAt: string | null, now: number = Date.n
   const left = (new Date(emittedAt).getTime() + CANCEL_WINDOW_MIN * 60_000 - now) / 60_000;
   return left <= 0 ? 0 : Math.ceil(left);
 }
+
+// Emissor Nacional de NFS-e (gratuito, do governo). O ERPOS não emite NFS-e: só leva a loja ao site.
+export const NFSE_EMISSOR_NACIONAL_URL = 'https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2femissornacional';

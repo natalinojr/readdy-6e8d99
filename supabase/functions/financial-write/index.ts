@@ -123,6 +123,52 @@ Deno.serve(async (req) => {
         break;
       }
 
+      // Período da Conciliação salvo na conta: "De" só muda pelo usuário, ou recua sozinho
+      // quando aparece conciliação mais antiga que a conhecida quando ele foi gravado.
+      case 'get_reconciliation_period': {
+        const accountId = String(payload?.bank_account_id ?? '');
+        if (!accountId) return new Response(JSON.stringify({ error: 'bank_account_id obrigatório' }), { status: 400, headers: corsHeaders });
+        const { data: acc, error: accErr } = await supabase.from('fin_bank_accounts')
+          .select('id, reconciliation_from, reconciliation_earliest').eq('id', accountId).eq('tenant_id', tenant_id).maybeSingle();
+        if (accErr || !acc) return new Response(JSON.stringify({ error: accErr ? extractErrorMessage(accErr) : 'Conta não encontrada' }), { status: 404, headers: corsHeaders });
+        const { data: oldest } = await supabase.from('fin_bank_statement_imports')
+          .select('transaction_date').eq('tenant_id', tenant_id).eq('bank_account_id', accountId)
+          .or('status.eq.matched,reconciled.eq.true')
+          .order('transaction_date', { ascending: true }).limit(1).maybeSingle();
+        const earliest: string | null = oldest?.transaction_date ?? null;
+        let from: string | null = acc.reconciliation_from ?? null;
+        let known: string | null = acc.reconciliation_earliest ?? null;
+        let changed = false;
+        if (!from) {
+          // Primeira vez: conciliação mais antiga; conta sem conciliação fica sem data salva (tela usa 30 dias)
+          if (earliest) { from = earliest; known = earliest; changed = true; }
+        } else if (earliest && (!known || earliest < known)) {
+          if (earliest < from) from = earliest;
+          known = earliest; changed = true;
+        }
+        if (changed) {
+          await supabase.from('fin_bank_accounts').update({ reconciliation_from: from, reconciliation_earliest: known })
+            .eq('id', accountId).eq('tenant_id', tenant_id);
+        }
+        return new Response(JSON.stringify({ data: { date_from: from, earliest } }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      case 'set_reconciliation_period': {
+        const accountId = String(payload?.bank_account_id ?? '');
+        const dateFrom = String(payload?.date_from ?? '');
+        if (!accountId || !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
+          return new Response(JSON.stringify({ error: 'bank_account_id e date_from (AAAA-MM-DD) obrigatórios' }), { status: 400, headers: corsHeaders });
+        }
+        const { data: oldest } = await supabase.from('fin_bank_statement_imports')
+          .select('transaction_date').eq('tenant_id', tenant_id).eq('bank_account_id', accountId)
+          .or('status.eq.matched,reconciled.eq.true')
+          .order('transaction_date', { ascending: true }).limit(1).maybeSingle();
+        result = await supabase.from('fin_bank_accounts')
+          .update({ reconciliation_from: dateFrom, reconciliation_earliest: oldest?.transaction_date ?? null })
+          .eq('id', accountId).eq('tenant_id', tenant_id).select('id, reconciliation_from').single();
+        break;
+      }
+
       // ── Income Routing ──────────────────────────────────────────────────
       case 'list_income_routing': {
         const { data, error } = await supabase
