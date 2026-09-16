@@ -86,6 +86,12 @@ Se algum dia precisar refazer:
   `res/layout/capacitor_bridge_layout_main.xml` (mesmo nome = o do app vence). `captureInput` do
   Capacitor **não** resolve isso (troca a conexão por uma de teclado físico).
   Ao atualizar o Capacitor: conferir se o layout original mudou.
+  **Só as marcas não bastaram** (16/09, Galaxy S24): a Activity não declarava nada sobre o teclado,
+  então o Android concluía que não havia espaço e abria o editor em tela cheia assim mesmo. Foi
+  somado `android:windowSoftInputMode="adjustResize"` no manifesto **e** o mesmo em código
+  (`MainActivity.onCreate`), porque alguns aparelhos ignoram só o manifesto.
+  Conferir a versão instalada: Configurações › Apps › ERPOS › versão (`versionName` em
+  `app/build.gradle`, subir a cada APK).
 - **Áudio sem resposta**: o microfone e o Whisper funcionaram, mas o modelo respondeu `NO_REPLY` (o
   modo silencioso da triagem de grupo) e o chat mostrou nada. A `assistente-app` agora troca
   `NO_REPLY` por "Ok 👍" — no chat, conversa sempre responde.

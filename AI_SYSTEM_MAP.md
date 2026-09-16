@@ -2147,3 +2147,29 @@ agentes leem por SQL, sem fornecedor novo.
 - Consumo: por enquanto só SQL (`select * from dev_error_summary`). O workflow `/auditoria-erros`
   (Fase 1) e uma ferramenta do assistente vêm depois — regra "assistente faz tudo que a tela faz"
   não se aplica ainda porque não existe tela.
+
+### Fase 1 da orquestração: subagentes, workflows e trava de git (2026-09-16)
+
+- **Subagentes** em `.claude/agents/` (carregados quando a sessão do Claude Code inicia — criar/editar
+  exige reiniciar a sessão para o tipo aparecer no Agent tool): `triador` (só leitura + SQL SELECT,
+  Sonnet → ticket padrão), `executor` (edita o working tree, roda `check.mjs`, nunca commit/push/
+  deploy/migração aplicada), `testador` (Sonnet; `TESTES-CHECKLIST.md` no preview `dev` com
+  `.test-users.json`, evidência por `read_page`/SELECT), `revisor` (Opus; diff adversarial com a lista
+  de onde o ERPOS costuma quebrar). Cada um tem formato de saída fixo.
+- **Workflows salvos** em `.claude/workflows/` (rodam como `/ciclo` e `/auditoria-erros`; só o dono
+  dispara — o Workflow tool exige opt-in):
+  - `/ciclo <pedido|uuid de dev_error_events>`: Triagem → Execução → portão `check.mjs` (se reprova,
+    volta direto ao Executor) → Testador ‖ Revisor → até 2 voltas → relatório. **Entrega = diff no
+    working tree + relatório; commit/push é do dono.** Migração/deploy ficam como pendência.
+  - `/auditoria-erros [horas]`: SELECT em `dev_error_summary` → 1 Triador por erro (máx. 15) → grava
+    `status` (`triaged`/`ignored`) e `ticket` em `dev_error_events` → relatório priorizado com
+    "para corrigir: /ciclo <id>". Única escrita: essas duas colunas.
+- **Trava determinística** `scripts/guard-git.mjs` (hook `PreToolUse` › Bash em `.claude/settings.json`,
+  vale para o Claude principal e todo subagente): bloqueia push para main/master, push sem branch
+  explícito, `--force`, `reset --hard`, `checkout -- .`/`restore .`, `clean -f`, `branch -D` e
+  `supabase db reset/push`. Libera `git push origin claude/<branch>`. Exit 2 devolve o motivo.
+  **Pegadinha:** o hook vê o comando inteiro, inclusive strings; corpo de heredoc é ignorado (senão
+  documentar a trava era bloqueado), mas um literal proibido em `echo "..."`/argumento ainda bloqueia
+  — para testar o guard, escreva os casos em arquivo (`node teste.mjs`), não na linha de comando.
+- Workflow scripts são JS puro com `return` no topo: para checar sintaxe, embrulhar o corpo em
+  `new Function(... "return (async()=>{"+s+"})()")` (o `node --check` reclama do `return`).
