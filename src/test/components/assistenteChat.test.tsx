@@ -155,7 +155,7 @@ describe('AssistenteChat — conversa', () => {
     expect(screen.queryByText(/Pelo ERPOS/)).not.toBeInTheDocument();
     // *negrito* do modelo vira <b>, e o canal de origem aparece
     expect(screen.getByText('R$ 3.210,00').tagName).toBe('B');
-    expect(screen.getByText(/· Telegram/)).toBeInTheDocument(); // "Mesma conversa do Telegram" do cabeçalho não conta
+    expect(screen.getByText(/· Telegram/)).toBeInTheDocument();
   });
 
   it('envia a mensagem com a tela e a loja abertas e mostra a resposta', async () => {
@@ -201,7 +201,7 @@ describe('AssistenteChat — conversa', () => {
 describe('AssistenteChat — três estágios no flutuante', () => {
   // Pedido do dono (2026-09-16): o botão abre só uma barra para digitar; a conversa inteira
   // aparece ao arrastar para cima. Antes o botão abria a tela toda.
-  const ehConversaInteira = () => screen.queryByText('Mesma conversa do Telegram') !== null;
+  const ehConversaInteira = () => screen.queryByRole('button', { name: 'Recolher a conversa' }) !== null;
 
   it('o botão abre a barra pequena (com campo), não a conversa inteira', async () => {
     const user = userEvent.setup();
@@ -673,7 +673,7 @@ describe('AssistenteChat — badge do botão fechado', () => {
     expect(calls('history')).toHaveLength(0);
 
     await user.click(screen.getByRole('button', { name: 'Assistente: 2 mensagens novas' }));
-    expect(await screen.findByText('Mesma conversa do Telegram')).toBeInTheDocument(); // conversa inteira, para ler
+    expect(await screen.findByRole('button', { name: 'Recolher a conversa' })).toBeInTheDocument(); // conversa inteira, para ler
     await waitFor(() => expect(calls('history')[0]?.topic).toBe('pagamentos')); // já na aba do assunto
     await waitFor(() => expect(calls('seen').length).toBeGreaterThan(0)); // visto: some o badge
   });
@@ -684,6 +684,6 @@ describe('AssistenteChat — badge do botão fechado', () => {
     await waitFor(() => expect(calls('unread').length).toBe(1));
     await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
     expect(await screen.findByPlaceholderText('Mensagem')).toBeInTheDocument();
-    expect(screen.queryByText('Mesma conversa do Telegram')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Recolher a conversa' })).toBeNull();
   });
 });

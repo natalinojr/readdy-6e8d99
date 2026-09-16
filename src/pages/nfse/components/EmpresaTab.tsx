@@ -66,7 +66,6 @@ export default function EmpresaTab({ empresa, souAdmin, onSalva }: Props) {
     if (!cnpjValido(cnpj)) { avisar('CNPJ inválido.'); return; }
     if (!f.razao_social.trim()) { avisar('Informe a razão social.'); return; }
     if (!/^\d{7}$/.test(f.cod_municipio)) { avisar('Preencha o CEP para identificarmos o município (código IBGE).'); return; }
-    if (f.op_simp_nac === 3 && f.aliquota_simples === '') { avisar('Informe a alíquota efetiva do Simples Nacional (aparece no rodapé da nota).'); return; }
     if (empresa && f.ambiente === 1 && empresa.ambiente === 2) {
       const ok = await confirmar({
         titulo: 'Passar para produção?',
@@ -173,10 +172,10 @@ export default function EmpresaTab({ empresa, souAdmin, onSalva }: Props) {
                 </select>
               </div>
               <div className="md:col-span-2">
-                <label className={labelCls}>Alíquota efetiva do Simples (%)</label>
+                <label className={labelCls}>Alíquota do Simples (%) <span className="font-normal text-zinc-400">opcional</span></label>
                 <input className={inputCls} type="number" step="0.01" min={0} max={99} value={f.aliquota_simples} disabled={!editavel}
-                  onChange={(e) => set('aliquota_simples', e.target.value)} placeholder="ex.: 6,00" />
-                <p className="text-[11px] text-zinc-400 mt-0.5">Informativo, sai na nota. O contador informa.</p>
+                  onChange={(e) => set('aliquota_simples', e.target.value)} placeholder="em branco = não informar" />
+                <p className="text-[11px] text-zinc-400 mt-0.5">Só informativo (total aproximado de tributos). Pode deixar em branco.</p>
               </div>
             </>
           )}

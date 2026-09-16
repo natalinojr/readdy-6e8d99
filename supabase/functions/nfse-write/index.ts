@@ -154,9 +154,13 @@ function montarDps(emp: any, nota: any, tomador: any | null) {
   const serv = `<serv><locPrest>${tag('cLocPrestacao', nota.cod_municipio_prestacao)}</locPrest><cServ>${tag('cTribNac', nota.c_trib_nac)}${tag('cTribMun', nota.c_trib_mun)}${tag('xDescServ', limpo(nota.descricao, 2000))}${tag('cNBS', nota.c_nbs)}</cServ>${nota.info_complementar ? `<infoCompl>${tag('xInfComp', limpo(nota.info_complementar, 2000))}</infoCompl>` : ''}</serv>`;
 
   const desconto = Number(nota.desconto_incondicionado ?? 0);
+  // Totais aproximados (Lei 12.741). Regras E0710–E0713: indTotTrib só para MEI; pTotTribSN só para ME/EPP;
+  // ME/EPP sem alíquota informada e Não Optante vão com pTotTrib zerado (o DANFSe mostra "-").
+  const zerado = '<totTrib><pTotTrib><pTotTribFed>0.00</pTotTribFed><pTotTribEst>0.00</pTotTribEst><pTotTribMun>0.00</pTotTribMun></pTotTrib></totTrib>';
   let totTrib: string;
-  if (emp.op_simp_nac === 3) totTrib = `<totTrib>${tag('pTotTribSN', dec(Number(emp.aliquota_simples)))}</totTrib>`;
-  else totTrib = '<totTrib><indTotTrib>0</indTotTrib></totTrib>';
+  if (emp.op_simp_nac === 2) totTrib = '<totTrib><indTotTrib>0</indTotTrib></totTrib>';
+  else if (emp.op_simp_nac === 3 && emp.aliquota_simples != null) totTrib = `<totTrib>${tag('pTotTribSN', dec(Number(emp.aliquota_simples)))}</totTrib>`;
+  else totTrib = zerado;
   const valores = `<valores><vServPrest>${tag('vServ', dec(Number(nota.valor_servico)))}</vServPrest>${desconto > 0 ? `<vDescCondIncond>${tag('vDescIncond', dec(desconto))}</vDescCondIncond>` : ''}<trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>${nota.iss_retido ? 2 : 1}</tpRetISSQN>${nota.aliquota_iss != null ? tag('pAliq', dec(Number(nota.aliquota_iss))) : ''}</tribMun>${totTrib}</trib></valores>`;
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NS}" versao="1.01"><infDPS Id="${idDps}">${tag('tpAmb', nota.ambiente)}${tag('dhEmi', dataHoraBR(new Date(nota.dh_emissao)))}${tag('verAplic', VER_APLIC)}${tag('serie', emp.serie)}${tag('nDPS', nota.numero_dps)}${tag('dCompet', nota.competencia)}<tpEmit>1</tpEmit>${tag('cLocEmi', emp.cod_municipio)}${prest}${toma}${serv}${valores}</infDPS></DPS>`;
@@ -321,7 +325,6 @@ Deno.serve(async (req: Request) => {
     if (action === 'emitir') {
       const emp = await exigirMembro(body.empresa_id);
       if (!emp.cert_pfx_secret) return fail('Cadastre o certificado A1 da empresa antes de emitir');
-      if (emp.op_simp_nac === 3 && emp.aliquota_simples == null) return fail('Informe a alíquota efetiva do Simples Nacional na configuração da empresa');
 
       const valor = Number(body.valor_servico);
       if (!(valor > 0)) return fail('Informe o valor do serviço');

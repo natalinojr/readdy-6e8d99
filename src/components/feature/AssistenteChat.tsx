@@ -742,7 +742,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         )}
         <div className="flex-1 min-w-0">
           <p className="text-sm font-black text-zinc-900 leading-tight">{vista === 'conversa' ? rotuloAssunto(aba) : 'Assistente'}</p>
-          <p className="text-[11px] text-zinc-400 leading-tight truncate">{sending ? 'pensando…' : 'Mesma conversa do Telegram'}</p>
+          {/* Subtítulo só enquanto responde: "Mesma conversa do Telegram" saiu a pedido do dono (2026-09-16). */}
+          {sending && <p className="text-[11px] text-zinc-400 leading-tight truncate">pensando…</p>}
         </div>
         <BotaoAvisos tenantId={user?.tenantId} />
         {variant === 'floating' && (
