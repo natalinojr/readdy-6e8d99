@@ -5,7 +5,7 @@ import {
   Megaphone, RefreshCw, Link2Off, AlertTriangle, Loader2,
   TrendingUp, Eye, MousePointerClick, Target, Wallet,
   Users, Percent, DollarSign, Gauge, BarChart3, Layers,
-  ShoppingCart, Banknote, Store, Share2, Copy, Check, Trash2, X, Lock,
+  ShoppingCart, Banknote, Store, Share2, Copy, Check, Trash2, X, Lock, Bot,
 } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Area, Line, BarChart, Bar,
@@ -18,6 +18,7 @@ import {
   type DeviceRow, type RegionRow, type FrequencyRow, type AssetsBreakdown, type Recomendacao,
 } from './shared';
 import { ContaStrip, ConjuntosTable, AreaEntregaCard } from './components/ContaEConjuntos';
+import { AgenteTab } from './components/Agente';
 import { PreviaModal, RankingsInline, RetencaoVideoCard, PecasCriativasCard } from './components/Criativos';
 import { AparelhoRegiaoCards, FrequenciaCard, PublicosCard, RecomendacoesCard, montarAvisos } from './components/Quebras';
 
@@ -319,6 +320,8 @@ export default function TrafegoPagoPage() {
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [campanhaSel, setCampanhaSel] = useState<string | null>(null);
+  // Aba: painel (relatório) × agente (gestor de tráfego IA). O link público só tem o painel.
+  const [aba, setAba] = useState<'painel' | 'agente'>(() => (window.location.hash === '#agente' ? 'agente' : 'painel'));
 
   // ── Status da conexão ──
   const loadStatus = useCallback(async () => {
@@ -946,8 +949,23 @@ export default function TrafegoPagoPage() {
               {connection.connected_by_name && (
                 <span className="text-zinc-400">· por {connection.connected_by_name}</span>
               )}
+              <div className="ml-auto inline-flex rounded-xl border border-zinc-200 bg-white p-0.5">
+                <button onClick={() => { setAba('painel'); window.location.hash = ''; }}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg cursor-pointer ${aba === 'painel' ? 'bg-amber-500 text-white' : 'text-zinc-500 hover:bg-zinc-50'}`}>
+                  Painel
+                </button>
+                <button onClick={() => { setAba('agente'); window.location.hash = 'agente'; }}
+                  className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg cursor-pointer ${aba === 'agente' ? 'bg-violet-600 text-white' : 'text-zinc-500 hover:bg-zinc-50'}`}>
+                  <Bot size={13} /> Agente IA
+                </button>
+              </div>
             </div>
           )}
+
+          {!publico && aba === 'agente' ? (
+            <AgenteTab tenantId={tenantId} isAdmin={user?.perfil === 'admin'} />
+          ) : (
+          <>
 
           {insightsError && (
             <div className="mb-5 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-600">
@@ -1584,6 +1602,8 @@ export default function TrafegoPagoPage() {
                 </ChartCard>
               )}
             </div>
+          )}
+          </>
           )}
         </>
       )}

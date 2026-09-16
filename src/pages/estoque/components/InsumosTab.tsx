@@ -15,6 +15,23 @@ import MiniPriceHistory from './insumos/MiniPriceHistory';
 import { statusEstoque, barColor, barWidth, diasParaRuptura, exportarInsumosCSV } from './insumos/InsumosUtils';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
 import ItensIndisponiveisPanel from './ItensIndisponiveisPanel';
+import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
+import { useFocoTela } from '@/lib/assistenteFoco';
+
+// Um insumo em uma linha, para o assistente saber de qual o dono está falando (2026-09-16).
+function focoDoInsumo(i: Insumo, esgotado: boolean) {
+  return {
+    tipo: 'insumo',
+    id: i.id,
+    titulo: `Insumo: ${i.nome} — ${i.estoqueAtual} ${i.unidade} em estoque (mínimo ${i.estoqueMinimo}), ${esgotado ? 'esgotado' : statusEstoque(i).label.toLowerCase()}`,
+    dados: {
+      nome: i.nome, categoria: i.categoria, unidade: i.unidade, estoque: i.estoqueAtual, minimo: i.estoqueMinimo,
+      preco_unitario: i.precoUnitario, fornecedor: i.fornecedor ?? null, ultima_entrada: i.ultimaEntrada,
+      ultima_compra: i.lastPurchasePrice ?? null, esgotado,
+    },
+  };
+}
+
 
 type SortKey = 'nome' | 'categoria' | 'preco' | 'estoque' | 'valor' | 'status';
 
@@ -145,7 +162,7 @@ export default function InsumosTab() {
   // Ordenacao ao clicar no cabecalho de uma coluna
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo: 2, Ok: 3 };
+const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo: 2, Ok: 3 };
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -185,6 +202,21 @@ export default function InsumosTab() {
   const criticosResumo = insumos.filter((i) => i.estoqueAtual <= i.estoqueMinimo * 0.5).length;
   const valorTotalEstoque = insumos.reduce((s, i) => s + i.estoqueAtual * i.precoUnitario, 0);
   const fmtValor = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+  // O assistente sabe o que a tela mostra (2026-09-16): filtros, alertas e os insumos visíveis.
+  // Assim "esse aqui tá caro?" e "o que falta comprar?" têm a que se referir.
+  useFocoTela(() => ({
+    tipo: 'tela_insumos',
+    titulo: 'Estoque › Insumos',
+    dados: {
+      filtros: { busca: busca || null, categoria: categoriaFiltro, status: filtroStatus },
+      total_cadastrados: insumos.length,
+      apos_filtros: insumosVisiveis.length,
+      abaixo_do_minimo: alertas, esgotados: qtdEsgotados, criticos: criticosResumo,
+      valor_total_estoque: valorTotalEstoque,
+      visiveis: insumosVisiveis.slice(0, 20).map((i) => ({ id: i.id, nome: i.nome, estoque: i.estoqueAtual, unidade: i.unidade, minimo: i.estoqueMinimo, preco: i.precoUnitario })),
+    },
+  }), [busca, categoriaFiltro, filtroStatus, insumos.length, insumosVisiveis, alertas, qtdEsgotados, criticosResumo, valorTotalEstoque]);
 
   const insumosRuptura = useMemo(() => insumos
     .map((i) => ({ insumo: i, dias: diasParaRuptura(i) }))
@@ -526,6 +558,7 @@ export default function InsumosTab() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
+                            <PerguntarAoAssistente foco={focoDoInsumo(insumo, esgotado)} texto="Sobre esse insumo: " />
                             <button onClick={() => setHistoricoModal(insumo)} title="Histórico de compras" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors"><History size={12} /></button>
                             <button onClick={() => setEntradaRapida(insumo)} title="Entrada rápida" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-green-50 text-zinc-400 hover:text-green-600 cursor-pointer transition-colors"><i className="ri-add-circle-line text-sm" /></button>
                             {!esgotado && (

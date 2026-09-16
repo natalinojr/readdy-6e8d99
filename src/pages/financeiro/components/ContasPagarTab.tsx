@@ -9,6 +9,8 @@ import AgingContasPagar from '@/pages/financeiro/components/AgingContasPagar';
 import ContasPagarDREModal from '@/pages/financeiro/components/ContasPagarDREModal';
 import ContasPagarDetalheModal from '@/pages/financeiro/components/ContasPagarDetalheModal';
 import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
+import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
+import { useFocoTela } from '@/lib/assistenteFoco';
 
 interface Props {
   onNavigateToCompras?: (purchaseId?: string) => void;
@@ -33,6 +35,21 @@ type SortField = 'description' | 'due_date' | 'amount' | 'status';
 type SortDir = 'asc' | 'desc';
 
 interface DRECat { id: string; name: string; group_type: string; parent_id: string | null; }
+
+// Uma conta descrita numa linha, para o assistente saber de qual o dono está falando.
+function focoDaConta(b: BillPayable) {
+  const vence = b.due_date ? new Date(b.due_date + 'T00:00:00').toLocaleDateString('pt-BR') : 'sem vencimento';
+  return {
+    tipo: 'conta_a_pagar',
+    id: b.id,
+    titulo: `Conta a pagar: ${b.description}${b.supplier ? ` (${b.supplier})` : ''} — ${formatCurrency(b.amount)}, vence ${vence}, ${STATUS_LABEL[b.status].toLowerCase()}`,
+    dados: {
+      descricao: b.description, fornecedor: b.supplier, categoria: b.category, valor: b.amount,
+      pago: Number(b.paid_amount ?? 0), vencimento: b.due_date, status: b.status,
+      recorrente: !!b.is_recurring, origem: b.reference_type ?? null, origem_id: b.reference_id ?? null,
+    },
+  };
+}
 
 function exportCSV(bills: BillPayable[]) {
   const headers = ['Descrição', 'Fornecedor', 'Categoria', 'Vencimento', 'Valor', 'Status', 'Despesa Fixa', 'Observações'];
@@ -289,6 +306,22 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const totalVencido = billsDoMes.filter(b => b.status === 'overdue').reduce((s, b) => s + saldoRestante(b), 0);
   const totalPago = billsDoMes.reduce((s, b) => s + Number(b.paid_amount ?? 0), 0);
   const totalRecorrentes = billsDoMes.filter(b => b.is_recurring).length;
+
+  // O assistente passa a saber o que está na tela (2026-09-16): mês, filtros, totais e as contas
+  // visíveis. Sem isso "paga essa" e "por que tem tanta conta esse mês?" não tinham a que se
+  // referir. Só as 10 da página, resumidas — contexto é ajuda, não despejo do banco.
+  useFocoTela(() => ({
+    tipo: 'tela_contas_a_pagar',
+    titulo: `Contas a pagar — ${MESES_NOMES[mesSelecionado]}/${anoSelecionado}`,
+    dados: {
+      mes: `${MESES_NOMES[mesSelecionado]}/${anoSelecionado}`,
+      filtros: { status: filterStatus, categoria: filterCategory, busca: search || null, recorrencia: filterRecurring, aging: agingBucket },
+      total_no_mes: billsDoMes.length,
+      apos_filtros: filtered.length,
+      pendente: totalPendente, vencido: totalVencido, pago: totalPago,
+      visiveis: paginated.map(b => ({ id: b.id, descricao: b.description, fornecedor: b.supplier, valor: b.amount, falta: saldoRestante(b), vence: b.due_date, status: b.status })),
+    },
+  }), [mesSelecionado, anoSelecionado, filterStatus, filterCategory, search, filterRecurring, agingBucket, billsDoMes.length, filtered.length, totalPendente, totalVencido, totalPago, paginated]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -881,6 +914,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                             <i className="ri-check-line" /> Pagar
                           </button>
                         )}
+                        <PerguntarAoAssistente foco={focoDaConta(b)} texto="Sobre essa conta: " />
                         <button
                           onClick={(e) => { e.stopPropagation(); remove(b.id); }}
                           className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer"
@@ -971,6 +1005,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                             <i className="ri-check-line" /> Pagar
                           </button>
                         )}
+                        <PerguntarAoAssistente foco={focoDaConta(b)} texto="Sobre essa conta: " />
                         <button
                           onClick={(e) => { e.stopPropagation(); remove(b.id); }}
                           className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer"

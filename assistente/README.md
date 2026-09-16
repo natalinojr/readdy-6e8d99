@@ -800,6 +800,29 @@ Conversa com o assistente **dentro do ERPOS**, somando ao Telegram (não substit
   Whisper na VPS). Enquete do brain vira botões; a cada 8 s puxa o que chegou por outro canal.
 - **Contexto de tela:** cada mensagem vai com `[Pelo ERPOS · tela: <título> — <rota> · loja aberta: X]`,
   para "paga essa", "esse candidato" funcionarem. O balão esconde esse prefixo.
+- **Contexto do REGISTRO (2026-09-16):** a rota sozinha não dizia o que estava na tela. Agora vão
+  junto dois níveis a mais (`src/lib/assistenteFoco.ts`, store em módulo + evento no `window`):
+  `Na tela` (o que a tela mostra: mês, filtros, totais, as linhas visíveis — registrado com o hook
+  `useFocoTela`) e `Ele apontou` (o registro marcado no botão `PerguntarAoAssistente`, que vale para
+  UMA mensagem e some depois). Telas já instrumentadas: Financeiro › Contas a Pagar, Estoque ›
+  Insumos e Contratação › Candidatos. Para instrumentar outra: `useFocoTela(() => ({...}), [deps])`
+  no componente e `<PerguntarAoAssistente foco={...} texto="Sobre isso: " />` na linha. Mantenha
+  `dados` pequeno (vai para o modelo e custa token); `resumirFoco` corta em 700 caracteres.
+- **Botão que leva à tela (2026-09-16):** ferramenta `abrir_tela` no brain → action
+  `{ type: 'abrir', rota, label }`. No chat do ERPOS vira botão que chama `navigate()` (e recolhe o
+  painel para a barra); no Telegram, um botão de URL com `APP_URL` (secret; padrão
+  https://erpos.vercel.app). A rota é validada contra `TELAS_APP` no brain — lista fechada que
+  espelha o `src/router`; rota de fora ou com `//` é recusada. Depois de ler um cupom pelo chat do
+  ERPOS ele oferece `/financeiro?tab=compras`.
+- **Câmera direta (2026-09-16):** botão de câmera na caixa de texto (`capture="environment"`) para a
+  notinha de balcão sem passar pela galeria. No desktop o navegador ignora o `capture`.
+- **Badge do botão fechado (2026-09-16):** com o chat fechado o app não carregava NADA, então aviso
+  de cron/conciliação só aparecia se o dono abrisse. Agora `unread` (consulta leve: conta as
+  mensagens `role='assistant'` com `id >` `asst_settings.app_last_seen`, devolve contagem, assunto
+  quando é um só, e uma prévia) roda de 45 em 45 s enquanto fechado; o botão mostra o número. Clique
+  com novidade abre a CONVERSA já na aba do assunto; sem novidade, a barra pequena de sempre. Ao
+  abrir, `seen { id }` grava o último id visto (nunca anda para trás — a aba filtrada mandaria um id
+  menor).
 - **Pagamento:** brain aceita `channel 'app'` em `preparar_pagamento` e nas ações (`CHAT_CHANNELS`).
   O cartão aparece acima da caixa de texto (Pagar / Ver status / Cancelar); Pagar abre o PIN — **o
   mesmo do Telegram** (`asst_settings.pay_pin`, hash com o id do chat do Telegram, 3 erros = 15 min),
@@ -839,14 +862,17 @@ Conversa com o assistente **dentro do ERPOS**, somando ao Telegram (não substit
 ### Testes do chat / app (2026-09-15)
 
 Rodar: `npx vitest run src/test/components/assistenteChat.test.tsx src/test/edge/fcm.test.ts`
-(21 testes, ~5 s, nada toca produção).
+(~35 testes, ~10 s, nada toca produção).
 - `assistenteChat.test.tsx`: o `AssistenteChat` contra um **servidor falso em memória** que imita a
   `assistente-app` (history/send/payments/pay; PIN certo = 1234) e o `send-push`. Cobre: só o dono
   vê (e nenhuma chamada sai para os outros), login chegando depois do 1º render, histórico sem o
   prefixo "[Pelo ERPOS…]", envio com rota/loja, erro do servidor devolvendo o texto, enquete → botões,
   abas filtrando e marcando o assunto, Pagar/PIN errado/PIN certo/Cancelar, digital (1º uso guarda,
   depois paga sem digitar, PIN guardado desatualizado é apagado) e "Compartilhar" (PDF e texto) com
-  `window.Capacitor.Plugins` simulado.
+  `window.Capacitor.Plugins` simulado. Desde 2026-09-16 também: contexto de tela/registro indo junto
+  (e o registro apontado NÃO grudando na mensagem seguinte), botão `abrir` navegando de verdade
+  (`MemoryRouter` com rota de destino) e o badge do botão fechado (conta sem carregar histórico,
+  abre na aba do assunto e marca `seen`).
 - `src/test/edge/fcm.test.ts`: `send-push/fcm.ts` no Node com `Deno` falso — JWT RS256 conferido com a
   chave pública, mensagem v1 (token, data só com strings, canal/tag Android), token OAuth reaproveitado,
   404/UNREGISTERED = expirada, 503 não.

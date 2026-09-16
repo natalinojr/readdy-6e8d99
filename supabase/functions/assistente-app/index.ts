@@ -8,9 +8,12 @@
 //   history   { after_id?, before_id? }            → mensagens da conversa (60 por vez)
 //   send      { text?, attachment?, audio?, contexto? }
 //             attachment = { base64, media_type } (foto/PDF) · audio = { base64, media_type } (→ Whisper)
-//             contexto = { rota, titulo, loja } — a tela aberta vai junto para o assistente
+//             contexto = { rota, titulo, loja, tela?, item? } — a tela aberta vai junto para o
+//             assistente; tela/item = o que está visível e o registro apontado (assistenteFoco.ts)
 //   payments  {}                                   → pagamentos do Inter em aberto/recentes (cartões)
 //   pay       { id, op: 'ok'|'no'|'st', pin? }     → Pagar (com PIN) / Cancelar / Ver status
+//   unread    {}                                   → quantas mensagens ele mandou e você não viu
+//   seen      { id }                               → marca visto até esse id (asst_settings.app_last_seen)
 //
 // O PIN é o mesmo do Telegram (asst_settings.pay_pin, hash com o id do chat do Telegram) e nunca
 // vai ao modelo nem ao histórico. Mesmo bloqueio: 3 erros → 15 minutos.
@@ -173,9 +176,22 @@ Deno.serve(async (req) => {
       }
       if (!text && !att) return fail('Mensagem vazia.');
       // Tela aberta no ERPOS: vai junto para o assistente entender "essa conta", "esse candidato".
+      // Desde 2026-09-16 vem em três níveis (src/lib/assistenteFoco.ts): a rota, o que a tela
+      // mostra (filtros, totais) e o registro que o dono apontou pelo botão "perguntar sobre".
       const c = body.contexto ?? {};
       const tela = [c.titulo ? String(c.titulo).slice(0, 80) : null, c.rota ? String(c.rota).slice(0, 200) : null].filter(Boolean).join(' — ');
-      const prefixo = tela || c.loja ? `[Pelo ERPOS${tela ? ` · tela: ${tela}` : ''}${c.loja ? ` · loja aberta: ${String(c.loja).slice(0, 60)}` : ''}]\n` : '';
+      const linhaFoco = (rotulo: string, f: unknown): string => {
+        // deno-lint-ignore no-explicit-any
+        const x: any = f;
+        if (!x || typeof x !== 'object' || !x.titulo) return '';
+        const partes = [String(x.titulo).slice(0, 200)];
+        if (x.id) partes.push(`id ${String(x.id).slice(0, 60)}`);
+        if (x.dados) partes.push(String(x.dados).slice(0, 700));
+        return `\n${rotulo}: ${partes.join(' · ')}`;
+      };
+      const prefixo = tela || c.loja
+        ? `[Pelo ERPOS${tela ? ` · tela: ${tela}` : ''}${c.loja ? ` · loja aberta: ${String(c.loja).slice(0, 60)}` : ''}${linhaFoco('Na tela', c.tela)}${linhaFoco('Ele apontou', c.item)}]\n`
+        : '';
       const started = Date.now();
       const { status, out } = await callEdge('assistente-brain', internalKey, {
         text: `${prefixo}${text}`.trim(), chat_id: chatKey, channel: 'app',
@@ -193,6 +209,38 @@ Deno.serve(async (req) => {
       // resposta" (aconteceu com um áudio em 2026-09-15): aqui a conversa sempre responde algo.
       const reply = String(out.reply) === 'NO_REPLY' ? 'Ok 👍' : String(out.reply);
       return json({ success: true, data: { reply, actions: Array.isArray(out.actions) ? out.actions : [], tool_calls: out.tool_calls ?? [], transcricao } });
+    }
+
+    // ── Badge do botão fechado (2026-09-16) ──
+    // Consulta leve: o app chama de 45 em 45 s com o chat FECHADO, então não devolve mensagem
+    // nenhuma — só quantas ele mandou depois da última que o dono viu, o assunto e uma prévia.
+    // Conta só role='assistant': o que ele fala sozinho (cron, conciliação, avisos) é a novidade;
+    // o que o próprio dono escreveu no Telegram, não.
+    if (action === 'unread') {
+      const visto = Number((await getSetting(admin, 'app_last_seen'))?.id ?? 0);
+      const { data, error } = await admin.from('asst_messages').select('id, content, topic')
+        .eq('chat_id', chatKey).eq('role', 'assistant').gt('id', visto)
+        .order('id', { ascending: false }).limit(20);
+      if (error) throw new Error(error.message);
+      const rows = data ?? [];
+      const topics = [...new Set(rows.map((r) => String(r.topic ?? 'geral')))];
+      const ultima = rows[0];
+      return json({ success: true, data: {
+        count: rows.length,
+        last_id: ultima ? Number(ultima.id) : visto,
+        // Assunto só quando é um só: com mensagens de assuntos diferentes o chat abre em "Tudo".
+        topic: topics.length === 1 && TOPICS.includes(topics[0]) ? topics[0] : null,
+        previa: ultima ? String(ultima.content).replace(/^\[[^\]]*\]\s*/, '').slice(0, 140) : null,
+      } });
+    }
+
+    if (action === 'seen') {
+      const id = Number(body.id ?? 0);
+      if (!id) return fail('id obrigatório.');
+      const atual = Number((await getSetting(admin, 'app_last_seen'))?.id ?? 0);
+      // Nunca anda para trás: o chat abre filtrado por assunto e mandaria um id menor.
+      if (id > atual) await setSetting(admin, 'app_last_seen', { id, at: nowIso() });
+      return json({ success: true, data: { last_seen_id: Math.max(id, atual) } });
     }
 
     if (action === 'payments') {

@@ -41,6 +41,8 @@ const internalKey = Deno.env.get('ASSISTENTE_INTERNAL_KEY') ?? '';
 const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? '';
 const whisperUrl = (Deno.env.get('WHISPER_URL') ?? '').replace(/\/$/, '');
 const whisperKey = Deno.env.get('WHISPER_API_KEY') ?? '';
+// Endereço do ERPOS para os botões "abrir a tela" virarem link no Telegram (secret APP_URL).
+const APP_URL = (Deno.env.get('APP_URL') ?? 'https://erpos.vercel.app').replace(/\/$/, '');
 const API = `https://api.telegram.org/bot${botToken}`;
 // Vocabulário para o Whisper (initial_prompt): sem isso "Paranaguá" virou "parar na água" (2026-09-12).
 const WHISPER_PROMPT = 'Conversa com o Natalino, dono dos restaurantes El Patrón em Paranaguá (PR), lojas Vila Leste e Paranaguá. ERPOS, cardápio, fornecedor, conta a pagar, DRE, CMV, estoque, insumo, Pix, Inter, Stone, iFood, delivery, motoboy, hambúrguer, pastel.';
@@ -136,12 +138,18 @@ async function runActions(admin: SupabaseClient, chatId: number, chatKey: string
           reply_markup: { inline_keyboard: payKb(p.id) },
         });
         await admin.from('fin_inter_payments').update({ tg_message_id: m.message_id, chat_id: chatKey }).eq('id', p.id);
+      } else if (a.type === 'abrir') {
+        // Botão "abrir a tela" (2026-09-16): dentro do ERPOS ele navega na hora; aqui vira link.
+        await tg('sendMessage', {
+          chat_id: chatId, text: toHtml(`👉 ${String(a.label)}`), parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [[{ text: String(a.label).slice(0, 60), url: `${APP_URL}${String(a.rota)}` }]] },
+        });
       } else if (a.type === 'contact') {
         await tg('sendContact', { chat_id: chatId, phone_number: `+${a.phone}`, first_name: a.name, vcard: a.org ? `BEGIN:VCARD\nVERSION:3.0\nFN:${a.name}\nORG:${a.org}\nTEL:+${a.phone}\nEND:VCARD` : undefined });
       }
     } catch (e) {
       log('WARN', 'ação falhou', { type: a?.type, error: errMsg(e) });
-      await sendText(chatId, `Não consegui enviar ${a?.type === 'poll' ? 'os botões' : a?.type === 'location' ? 'a localização' : 'o contato'} (${errMsg(e).slice(0, 120)}).`).catch(() => {});
+      await sendText(chatId, `Não consegui enviar ${a?.type === 'poll' ? 'os botões' : a?.type === 'location' ? 'a localização' : a?.type === 'abrir' ? 'o link da tela' : 'o contato'} (${errMsg(e).slice(0, 120)}).`).catch(() => {});
     }
   }
 }

@@ -6,15 +6,19 @@
 // variant 'embedded': dentro da página Assistente › Conversa.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { SHARE_KEY, type SharePayload } from '@/lib/shareIntake';
+import { EVENTO_ASSISTENTE, getFoco, limparFocoItem, resumirFoco, setFocoItem, type PedidoAbrir } from '@/lib/assistenteFoco';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
 interface Msg { id: number; role: 'user' | 'assistant'; content: string; channel: string; created_at: string; temp?: boolean }
 interface Poll { type: 'poll'; question: string; options: string[] }
+// Resposta com botão que LEVA à tela (ferramenta abrir_tela do assistente-brain). Só rota interna
+// do ERPOS: o botão chama navigate(), não abre nada de fora.
+interface Abrir { type: 'abrir'; rota: string; label: string }
 interface Payment {
   id: string; kind: 'pix' | 'boleto'; amount: number; beneficiary_name: string | null; pix_key: string | null;
   due_date: string | null; description: string | null; status: string; status_label: string; error: string | null; created_at: string;
@@ -205,6 +209,7 @@ function BotaoNotificacao({ tenantId }: { tenantId: string | undefined }) {
 export default function AssistenteChat({ variant }: { variant: 'floating' | 'embedded' }) {
   const { user } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   // Três estágios no modo flutuante (pedido do dono, 2026-09-16): botão redondo → barra pequena
   // (digitar rápido, sem cobrir a tela) → conversa inteira. Arrastar a barra para cima abre a
   // conversa. `open` = carrega histórico e fica sincronizando (vale para barra e conversa).
@@ -240,7 +245,11 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState<MediaRecorder | null>(null);
   const [polls, setPolls] = useState<Record<number, Poll[]>>({});
+  const [links, setLinks] = useState<Record<number, Abrir[]>>({});
   const [pays, setPays] = useState<Payment[]>([]);
+  // Badge do botão fechado: mensagens que ele mandou sozinho (cron, conciliação, avisos) e que
+  // você ainda não viu. Fechado o chat não carrega histórico nenhum — só este contador.
+  const [naoLidas, setNaoLidas] = useState<{ count: number; topic: string | null; previa: string | null }>({ count: 0, topic: null, previa: null });
   const [pinFor, setPinFor] = useState<Payment | null>(null);
   const [pin, setPin] = useState('');
   const [pinErr, setPinErr] = useState<string | null>(null);
@@ -278,6 +287,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   }, [user?.email]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const camRef = useRef<HTMLInputElement>(null);
   const lastId = useRef(0);
   const stick = useRef(true);
 
@@ -307,11 +317,50 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if (abaRef.current === aba) return;
     abaRef.current = aba;
     lastId.current = 0;
-    setMsgs([]); setPolls({}); setLoaded(false);
+    setMsgs([]); setPolls({}); setLinks({}); setLoaded(false);
   }, [aba]);
 
-  // Primeira carga ao abrir (e a cada troca de aba)
   const isOwner = user?.email?.toLowerCase() === ASSISTENTE_OWNER_EMAIL;
+
+  // ── Badge do botão fechado (2026-09-16) ──
+  // O assistente fala sozinho: cron das 7h, conciliação, conta vencendo, currículo novo. Com o
+  // chat fechado nada disso chegava até você abrir. 'unread' é uma consulta leve (só conta), roda
+  // de 45 em 45 s e não carrega mensagem nenhuma. Ver 'seen' no assistente-app.
+  const verificarNaoLidas = useCallback(async () => {
+    try {
+      const u = await call<{ count: number; topic: string | null; previa: string | null }>('unread');
+      setNaoLidas({ count: u.count ?? 0, topic: u.topic ?? null, previa: u.previa ?? null });
+    } catch { /* contador é extra: nunca atrapalha o chat */ }
+  }, []);
+
+  useEffect(() => {
+    if (!isOwner || open) return;
+    verificarNaoLidas();
+    const t = setInterval(() => { if (!document.hidden) verificarNaoLidas(); }, 45000);
+    return () => clearInterval(t);
+  }, [isOwner, open, verificarNaoLidas]);
+
+  // Abriu: o que estava esperando deixa de ser novidade.
+  useEffect(() => {
+    if (!open || !isOwner || !lastId.current) return;
+    setNaoLidas({ count: 0, topic: null, previa: null });
+    call('seen', { id: lastId.current }).catch(() => { /* marca de novo no próximo ciclo */ });
+  }, [open, isOwner, msgs.length]);
+
+  // Telas pedindo o chat: botão "perguntar ao assistente" (PerguntarAoAssistente) e atalhos.
+  useEffect(() => {
+    if (!isOwner) return;
+    const abrir = (e: Event) => {
+      const p = (e as CustomEvent<PedidoAbrir>).detail;
+      setFocoItem(p?.item ?? null);
+      if (variant === 'floating') setModo(p?.conversa ? 'full' : 'mini');
+      if (p?.texto) setText(p.texto);
+    };
+    window.addEventListener(EVENTO_ASSISTENTE, abrir);
+    return () => window.removeEventListener(EVENTO_ASSISTENTE, abrir);
+  }, [isOwner, variant]);
+
+  // Primeira carga ao abrir (e a cada troca de aba)
   useEffect(() => {
     // Sem ser o dono não chama nada (o componente já não aparece; o servidor também recusa).
     if (!open || loaded || !isOwner) return;
@@ -351,6 +400,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const enviar = async (override?: string, audio?: { base64: string; media_type: string }) => {
     const t = (override ?? text).trim();
     if ((!t && !attach && !audio) || sending) return;
+    const foco = getFoco();
     const temp: Msg = {
       id: -Date.now(), role: 'user', channel: 'app', created_at: new Date().toISOString(), temp: true,
       content: audio ? '[Áudio] (transcrevendo…)' : `${attach ? `[${attach.media_type === 'application/pdf' ? 'PDF' : 'Foto'}] ` : ''}${t}`,
@@ -364,8 +414,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         topic: abaRef.current || undefined,
         ...(anexo ? { attachment: { base64: anexo.base64, media_type: anexo.media_type } } : {}),
         ...(audio ? { audio } : {}),
-        contexto: { rota: location.pathname + location.search, titulo: document.title, loja: user?.loja ?? null },
+        // A tela vai junto em três níveis: a rota, o que a tela mostra (filtros, totais) e o
+        // registro que você apontou pelo botão "perguntar ao assistente" (ver assistenteFoco).
+        contexto: {
+          rota: location.pathname + location.search, titulo: document.title, loja: user?.loja ?? null,
+          tela: resumirFoco(foco.tela), item: resumirFoco(foco.item),
+        },
       });
+      limparFocoItem(); // o item apontado vale para UMA mensagem
       // Mostra a resposta na hora: esperar a ida extra ao servidor (history) para acertar os ids
       // atrasava a resposta em ~1 s no celular. O merge() descarta os provisórios logo depois.
       setMsgs((p) => [...p, { id: -Date.now(), role: 'assistant', channel: 'app', created_at: new Date().toISOString(), content: out.reply, temp: true }]);
@@ -378,6 +434,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       const ultimaResp = [...h.messages].reverse().find((m) => m.role === 'assistant');
       const enquetes = out.actions.filter((a) => a.type === 'poll') as unknown as Poll[];
       if (ultimaResp && enquetes.length) setPolls((p) => ({ ...p, [ultimaResp.id]: enquetes }));
+      const aberturas = out.actions.filter((a) => a.type === 'abrir') as unknown as Abrir[];
+      if (ultimaResp && aberturas.length) setLinks((p) => ({ ...p, [ultimaResp.id]: aberturas }));
       if (out.actions.some((a) => a.type === 'payment')) carregarPagamentos();
     } catch (e) {
       setMsgs((p) => p.filter((m) => m.id !== temp.id));
@@ -497,6 +555,13 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       )}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => { escolherArquivo(e.target.files?.[0]); e.target.value = ''; }} />
+        {/* Câmera direta (2026-09-16): `capture` abre a câmera traseira sem passar pela galeria —
+            é o caminho da notinha de balcão no meio do serviço. No desktop o navegador ignora o
+            capture e cai no seletor normal, então o botão não estorva. */}
+        <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { escolherArquivo(e.target.files?.[0]); e.target.value = ''; }} />
+        <button onClick={() => camRef.current?.click()} disabled={sending || !!recording} className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer" aria-label="Tirar foto da nota">
+          <i className="ri-camera-line text-xl" />
+        </button>
         <button onClick={() => fileRef.current?.click()} disabled={sending || !!recording} className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer" aria-label="Anexar foto ou PDF">
           <i className="ri-attachment-2 text-xl" />
         </button>
@@ -615,6 +680,17 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                   {formatar(m.content.replace(/\n\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado)[^\n]*\]/g, ''))}
                   <div className="text-[10px] mt-1 text-zinc-400">{hora(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</div>
                 </div>
+                {/* Botão que LEVA à tela: a resposta deixa de terminar em "vá em Financeiro › ..."
+                    No flutuante recolhe para a barra, senão o painel cobriria a tela que abriu. */}
+                {(links[m.id] ?? []).map((lk, i) => (
+                  <button
+                    key={`lk${i}`}
+                    onClick={() => { navigate(lk.rota); if (variant === 'floating') setModo('mini'); }}
+                    className="mt-1.5 flex items-center gap-1.5 px-3 py-2 rounded-xl border border-violet-200 bg-white text-sm text-violet-700 font-semibold hover:bg-violet-50 cursor-pointer"
+                  >
+                    <i className="ri-arrow-right-up-line" /> {lk.label}
+                  </button>
+                ))}
                 {(polls[m.id] ?? []).map((pl, i) => (
                   <div key={i} className="mt-1.5 space-y-1.5">
                     <p className="text-xs font-bold text-zinc-600">{pl.question}</p>
@@ -728,14 +804,26 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     );
   }
 
+  // Botão fechado. Com mensagem nova ele abre a CONVERSA (você vai ler) e já na aba do assunto;
+  // sem novidade abre a barra pequena (você vai escrever), que é o de sempre.
+  const temNovidade = naoLidas.count > 0;
   return (
     <button
-      onClick={() => setModo('mini')}
+      onClick={() => {
+        if (temNovidade && naoLidas.topic) setAba(naoLidas.topic);
+        setModo(temNovidade ? 'full' : 'mini');
+      }}
       className="fixed z-[55] bottom-5 right-5 w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center cursor-pointer"
-      aria-label="Falar com o assistente"
+      aria-label={temNovidade ? `Assistente: ${naoLidas.count} ${naoLidas.count === 1 ? 'mensagem nova' : 'mensagens novas'}` : 'Falar com o assistente'}
+      title={naoLidas.previa ?? undefined}
     >
       <i className="ri-robot-2-line text-2xl" />
-      {pagamentosVisiveis.some((p) => p.status === 'draft') && <span className="absolute top-1 right-1 w-3 h-3 rounded-full bg-red-500 border-2 border-white" />}
+      {temNovidade && (
+        <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-xs font-black border-2 border-white">
+          {naoLidas.count > 9 ? '9+' : naoLidas.count}
+        </span>
+      )}
+      {!temNovidade && pagamentosVisiveis.some((p) => p.status === 'draft') && <span className="absolute top-1 right-1 w-3 h-3 rounded-full bg-red-500 border-2 border-white" />}
     </button>
   );
 }

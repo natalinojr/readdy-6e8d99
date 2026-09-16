@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-internal-key',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
@@ -488,8 +488,13 @@ Deno.serve(async (req: Request) => {
     } else {
       tenantId = body.tenant_id || body.active_tenant_id
       if (!tenantId) return json({ ok: false, error: 'tenant_id é obrigatório' }, 400)
-      const auth = await requireMember(req, admin, String(tenantId))
-      if (auth.error) return auth.error
+      // (3) x-internal-key: chamada de outra Edge Function (meta-ads-agent, 2026-09-16) — sem sessão.
+      const internalKey = Deno.env.get('FISCAL_INTERNAL_KEY') ?? ''
+      const internal = internalKey.length >= 20 && (req.headers.get('x-internal-key') ?? '') === internalKey
+      if (!internal) {
+        const auth = await requireMember(req, admin, String(tenantId))
+        if (auth.error) return auth.error
+      }
     }
 
     // Busca o token + conta de anúncios da loja (token nunca sai daqui)

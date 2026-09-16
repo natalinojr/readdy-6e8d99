@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 const h = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -20,6 +20,7 @@ vi.mock('@/lib/supabase', () => ({
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => h.auth }));
 
 import AssistenteChat from '@/components/feature/AssistenteChat';
+import { getFoco, perguntarAoAssistente, setFocoTela } from '@/lib/assistenteFoco';
 
 // ── Servidor falso ──────────────────────────────────────────────────────────
 type Msg = { id: number; role: 'user' | 'assistant'; content: string; channel: string; created_at: string; topic: string };
@@ -30,6 +31,7 @@ const srv = {
   pin: '1234',
   nextActions: [] as unknown[],
   seq: 100,
+  visto: 0, // asst_settings.app_last_seen: até onde o dono já leu (badge do botão fechado)
 };
 const add = (role: Msg['role'], content: string, topic = 'geral', channel = 'app') => {
   srv.msgs.push({ id: ++srv.seq, role, content, channel, created_at: new Date().toISOString(), topic });
@@ -58,6 +60,20 @@ function fakeServer(fn: string, opts: { body: Body }) {
       // mensagem gravada — os dois têm de bater.
       return Promise.resolve(ok({ reply: `Resposta para: ${b.text}`, actions, tool_calls: [], transcricao: null }));
     }
+    case 'unread': {
+      const novas = srv.msgs.filter((m) => m.role === 'assistant' && m.id > srv.visto);
+      const topics = [...new Set(novas.map((m) => m.topic))];
+      return Promise.resolve(ok({
+        count: novas.length,
+        last_id: novas.length ? novas[novas.length - 1].id : srv.visto,
+        topic: topics.length === 1 ? topics[0] : null,
+        previa: novas.length ? novas[novas.length - 1].content.slice(0, 140) : null,
+      }));
+    }
+    case 'seen': {
+      srv.visto = Math.max(srv.visto, Number(b.id));
+      return Promise.resolve(ok({ last_seen_id: srv.visto }));
+    }
     case 'payments': return Promise.resolve(ok({ payments: srv.pays.map((p) => ({ ...p })) }));
     case 'pay': {
       const p = srv.pays.find((x) => x.id === b.id);
@@ -83,7 +99,8 @@ const renderChat = (variant: 'embedded' | 'floating' = 'embedded') =>
 const setCapacitor = (plugins: Record<string, unknown>) => { (window as unknown as { Capacitor?: unknown }).Capacitor = { Plugins: plugins }; };
 
 beforeEach(() => {
-  srv.msgs = []; srv.pays = []; srv.nextActions = []; srv.seq = 100;
+  setFocoTela(null);
+  srv.msgs = []; srv.pays = []; srv.nextActions = []; srv.seq = 100; srv.visto = 0;
   h.auth.user = OWNER;
   h.invoke.mockReset();
   h.invoke.mockImplementation(fakeServer);
@@ -364,5 +381,94 @@ describe('AssistenteChat — app Android', () => {
     renderChat('floating');
     expect(await screen.findByRole('button', { name: 'Falar com o assistente' })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Mensagem')).not.toBeInTheDocument();
+  });
+});
+
+describe('AssistenteChat — contexto da tela e do registro apontado', () => {
+  it('manda junto o que a tela mostra e o registro que o dono apontou', async () => {
+    const user = userEvent.setup();
+    setFocoTela({ tipo: 'tela_contas_a_pagar', titulo: 'Contas a pagar — Setembro/2026', dados: { pendente: 4320, apos_filtros: 3 } });
+    renderChat();
+    await screen.findByText(/Pode falar/);
+    // O botão de uma linha da tabela: o item vai junto e o texto sugerido cai na caixa.
+    perguntarAoAssistente(
+      { tipo: 'conta_a_pagar', id: 'b-1', titulo: 'Conta a pagar: Ambev — R$ 2.800,00, vence 17/09', dados: { fornecedor: 'Ambev' } },
+      'Sobre essa conta: ',
+    );
+    await waitFor(() => expect(screen.getByPlaceholderText('Mensagem')).toHaveValue('Sobre essa conta: '));
+    await user.type(screen.getByPlaceholderText('Mensagem'), 'dá para adiar?');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+
+    const ctx = calls('send')[0].contexto as { tela: { titulo: string; dados: string }; item: { id: string; titulo: string } };
+    expect(ctx.tela).toMatchObject({ titulo: 'Contas a pagar — Setembro/2026' });
+    expect(ctx.tela.dados).toContain('4320');
+    expect(ctx.item).toMatchObject({ id: 'b-1', titulo: expect.stringContaining('Ambev') });
+  });
+
+  it('o registro apontado vale para UMA mensagem, não gruda na seguinte', async () => {
+    const user = userEvent.setup();
+    renderChat();
+    await screen.findByText(/Pode falar/);
+    perguntarAoAssistente({ tipo: 'conta_a_pagar', id: 'b-1', titulo: 'Conta da Ambev' });
+    await user.type(screen.getByPlaceholderText('Mensagem'), 'quanto é?');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    await waitFor(() => expect(calls('send').length).toBe(1));
+
+    await user.type(screen.getByPlaceholderText('Mensagem'), 'e o faturamento de ontem?');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    await waitFor(() => expect(calls('send').length).toBe(2));
+    expect((calls('send')[0].contexto as { item: unknown }).item).toMatchObject({ id: 'b-1' });
+    expect((calls('send')[1].contexto as { item: unknown }).item).toBeNull();
+  });
+
+  it('a tela some do contexto quando o chat é desmontado junto com ela', async () => {
+    setFocoTela({ tipo: 'tela_x', titulo: 'Tela X' });
+    expect(getFoco().tela).not.toBeNull();
+    setFocoTela(null);
+    expect(getFoco().tela).toBeNull();
+  });
+});
+
+describe('AssistenteChat — botão que leva à tela', () => {
+  it('a resposta traz o botão e o toque navega no app', async () => {
+    const user = userEvent.setup();
+    srv.nextActions = [{ type: 'abrir', rota: '/financeiro?tab=compras', label: 'Abrir a compra da Ambev' }];
+    render(
+      <MemoryRouter initialEntries={['/financeiro?tab=contas']}>
+        <AssistenteChat variant="embedded" />
+        <Routes><Route path="/financeiro" element={<p>TELA FINANCEIRO</p>} /></Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText(/Pode falar/);
+    await user.type(screen.getByPlaceholderText('Mensagem'), 'lança essa nota');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    await user.click(await screen.findByRole('button', { name: 'Abrir a compra da Ambev' }));
+    expect(await screen.findByText('TELA FINANCEIRO')).toBeInTheDocument();
+  });
+});
+
+describe('AssistenteChat — badge do botão fechado', () => {
+  it('conta o que ele falou sozinho e abre a conversa no assunto', async () => {
+    const user = userEvent.setup();
+    add('assistant', 'Stone e Inter com R$ 340 de diferença ontem', 'pagamentos', 'cron');
+    add('assistant', 'A conta da Ambev vence amanhã', 'pagamentos', 'cron');
+    renderChat('floating');
+    // Fechado o chat NÃO carrega histórico: só o contador.
+    expect(await screen.findByRole('button', { name: 'Assistente: 2 mensagens novas' })).toBeInTheDocument();
+    expect(calls('history')).toHaveLength(0);
+
+    await user.click(screen.getByRole('button', { name: 'Assistente: 2 mensagens novas' }));
+    expect(await screen.findByText('Mesma conversa do Telegram')).toBeInTheDocument(); // conversa inteira, para ler
+    await waitFor(() => expect(calls('history')[0]?.topic).toBe('pagamentos')); // já na aba do assunto
+    await waitFor(() => expect(calls('seen').length).toBeGreaterThan(0)); // visto: some o badge
+  });
+
+  it('sem novidade o botão só abre a barra pequena', async () => {
+    const user = userEvent.setup();
+    renderChat('floating');
+    await waitFor(() => expect(calls('unread').length).toBe(1));
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    expect(await screen.findByPlaceholderText('Mensagem')).toBeInTheDocument();
+    expect(screen.queryByText('Mesma conversa do Telegram')).toBeNull();
   });
 });

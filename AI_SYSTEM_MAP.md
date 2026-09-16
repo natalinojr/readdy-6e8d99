@@ -2207,3 +2207,28 @@ Critérios que ficam:
   arquivo-fonte por `grep`.
 - Para exercitar Contas a Pagar na loja `Testes PDV` existem 2 contas `QA TDZ ...` em
   `fin_accounts_payable` (uma com pagamento parcial, para cobrir `saldoRestante`).
+
+### Chat do assistente: contexto da tela, botão que navega e badge (2026-09-16)
+
+Cinco frentes para o chat dentro do ERPOS deixar de ser "o Telegram numa janela" (detalhe em
+`assistente/README.md › Chat no ERPOS`):
+
+1. **Contexto do registro** — `src/lib/assistenteFoco.ts`: store em módulo (não é Context; o chat é
+   um só e não precisa re-renderizar a árvore) com dois níveis. `useFocoTela(() => ({...}), [deps])`
+   registra o que a tela mostra e limpa no unmount; `perguntarAoAssistente(item, texto)` marca o
+   registro apontado e dispara o evento `erpos-assistente-abrir`. O item vale para **uma** mensagem
+   (`limparFocoItem` depois do envio) — senão "e essa?" continuaria grudado na conta de ontem.
+2. **Botão na linha** — `PerguntarAoAssistente` (só renderiza para o e-mail do dono, igual ao chat).
+   Instrumentadas: Contas a Pagar, Insumos, Candidatos.
+3. **`abrir_tela` no brain** → action `{ type: 'abrir', rota, label }`. Rota validada contra
+   `TELAS_APP` (lista fechada espelhando `src/router`): sem isso o modelo inventa caminho e o botão
+   cai em "página em construção". Nada de `//` ou `http` — é `navigate()`, não link externo. No
+   Telegram vira botão de URL com `APP_URL`.
+4. **Câmera direta** no chat (`capture="environment"`) para a notinha de balcão.
+5. **Badge do botão fechado** — `unread`/`seen` na `assistente-app`, com o "já vi até aqui" em
+   `asst_settings.app_last_seen`. Conta só `role='assistant'`: novidade é o que ELE falou sozinho.
+   `seen` nunca anda para trás, porque a conversa aberta numa aba manda um id menor.
+
+Pegadinha herdada: com o chat fechado o componente não chamava nada (`if (!open) return` na carga e
+no polling), então qualquer aviso proativo dependia de o dono abrir. O `unread` é o único que roda
+fechado, e é só contagem — nenhuma mensagem trafega.

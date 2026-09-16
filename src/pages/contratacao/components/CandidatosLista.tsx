@@ -1,5 +1,6 @@
 // Lista de candidatos em cards ou em tabela (visão do todo, ordenável).
 import { useMemo, useState } from 'react';
+import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
 import {
   type Candidate, type Company, type Interview, type Stage, colorOf, stageOf, fmtMonths, fmtDate, fmtDateTime, companyName, avgScore,
   ageOf, decisionOf, withEmpresa, DECISIONS, type Distance, fmtKm, distCls,
@@ -93,6 +94,7 @@ function Tabela({ items, companies, stages, proximaEntrevista, ultimaAvaliacao, 
             <Th k="nota">Nota</Th>
             <Th k="entrevista">Entrevista</Th>
             <Th k="recebido">Recebido</Th>
+            <th className="px-3 py-2" aria-label="Assistente" />
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
@@ -139,6 +141,20 @@ function Tabela({ items, companies, stages, proximaEntrevista, ultimaAvaliacao, 
                 </td>
                 <td className="px-3 py-2 text-xs text-violet-700 whitespace-nowrap">{ent ? fmtDateTime(ent.scheduled_at) : <span className="text-zinc-300">—</span>}</td>
                 <td className="px-3 py-2 text-xs text-zinc-500 whitespace-nowrap">{fmtDate(c.created_at)}</td>
+                <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                  <PerguntarAoAssistente
+                    foco={{
+                      tipo: 'candidato', id: c.id,
+                      titulo: `Candidato: ${c.full_name}${st ? ` — etapa ${st.name}` : ''}${c.company_id ? ` (${companyName(companies, c.company_id)})` : ''}`,
+                      dados: {
+                        nome: c.full_name, idade: ageOf(c), bairro: c.neighborhood, cidade: c.city,
+                        vagas: vagasDe(c), etapa: st?.name ?? null, decisao: c.decision ?? null,
+                        experiencia_meses: c.total_experience_months ?? null, nota: media, recebido: c.created_at,
+                      },
+                    }}
+                    texto="Sobre esse candidato: "
+                  />
+                </td>
               </tr>
             );
           })}
