@@ -3,7 +3,7 @@
 // Cobre: histórico, envio com contexto de tela, botões de enquete, abas por assunto, pagamento
 // com PIN, digital (NativeBiometric) e "Compartilhar" do Android (SendIntent + Filesystem).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -152,6 +152,51 @@ describe('AssistenteChat — conversa', () => {
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
     await user.click(await screen.findByRole('button', { name: 'Vila Leste' }));
     await waitFor(() => expect(calls('send').at(-1)?.text).toBe('[Botão "Qual loja?"] Resposta: Vila Leste'));
+  });
+});
+
+describe('AssistenteChat — três estágios no flutuante', () => {
+  // Pedido do dono (2026-09-16): o botão abre só uma barra para digitar; a conversa inteira
+  // aparece ao arrastar para cima. Antes o botão abria a tela toda.
+  const ehConversaInteira = () => screen.queryByText('Mesma conversa do Telegram') !== null;
+
+  it('o botão abre a barra pequena (com campo), não a conversa inteira', async () => {
+    const user = userEvent.setup();
+    renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    expect(await screen.findByPlaceholderText('Mensagem')).toBeInTheDocument();
+    expect(ehConversaInteira()).toBe(false);
+  });
+
+  it('arrastar a barra para cima abre a conversa inteira', async () => {
+    const user = userEvent.setup();
+    add('assistant', 'Tudo certo por aqui');
+    renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    const barra = (await screen.findByPlaceholderText('Mensagem')).closest('div.fixed') as HTMLElement;
+    fireEvent.touchStart(barra, { touches: [{ clientY: 600 }] });
+    fireEvent.touchMove(barra, { touches: [{ clientY: 500 }] });
+    await waitFor(() => expect(ehConversaInteira()).toBe(true));
+    expect(await screen.findByText('Tudo certo por aqui')).toBeInTheDocument();
+  });
+
+  it('tocar na alça também abre, e recolher volta para a barra', async () => {
+    const user = userEvent.setup();
+    renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await user.click(await screen.findByRole('button', { name: 'Abrir a conversa' }));
+    await waitFor(() => expect(ehConversaInteira()).toBe(true));
+    await user.click(screen.getByRole('button', { name: 'Recolher a conversa' }));
+    await waitFor(() => expect(ehConversaInteira()).toBe(false));
+    expect(screen.getByPlaceholderText('Mensagem')).toBeInTheDocument(); // continua dando para digitar
+  });
+
+  it('a barra avisa quando há pagamento esperando', async () => {
+    const user = userEvent.setup();
+    srv.pays = [pixEduardo()];
+    renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    expect(await screen.findByText('1 pagamento esperando você')).toBeInTheDocument();
   });
 });
 

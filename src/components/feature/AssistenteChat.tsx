@@ -205,7 +205,14 @@ function BotaoNotificacao({ tenantId }: { tenantId: string | undefined }) {
 export default function AssistenteChat({ variant }: { variant: 'floating' | 'embedded' }) {
   const { user } = useAuth();
   const location = useLocation();
-  const [open, setOpen] = useState(variant === 'embedded');
+  // Três estágios no modo flutuante (pedido do dono, 2026-09-16): botão redondo → barra pequena
+  // (digitar rápido, sem cobrir a tela) → conversa inteira. Arrastar a barra para cima abre a
+  // conversa. `open` = carrega histórico e fica sincronizando (vale para barra e conversa).
+  type Modo = 'fab' | 'mini' | 'full';
+  const [modo, setModo] = useState<Modo>(variant === 'embedded' ? 'full' : 'fab');
+  const open = modo !== 'fab';
+  const setOpen = (v: boolean) => setModo(v ? 'full' : 'fab');
+  const arrasteY = useRef(0);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -456,6 +463,55 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // tomava a tela (2026-09-16).
   const EM_ABERTO = ['draft', 'awaiting_pin', 'sending', 'sent', 'pending_approval', 'approved', 'scheduled'];
   const pagamentosVisiveis = pays.filter((p) => EM_ABERTO.includes(p.status));
+  // Última resposta em texto (sem as linhas de sistema): aparece na barra pequena.
+  const ultimaResposta = [...msgs].reverse().find((m) => m.role === 'assistant' && !/^\[/.test(m.content))?.content;
+
+  // Caixa de digitação: a MESMA na barra pequena e na conversa inteira.
+  const entrada = (
+    <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
+      {erro && <p className="text-xs text-red-600 px-1 pb-1.5">{erro}</p>}
+      {attach && (
+        <div className="flex items-center gap-2 mb-2 px-2 py-1.5 rounded-xl bg-zinc-50 border border-zinc-200">
+          {attach.preview ? <img src={attach.preview} alt="" className="w-10 h-10 rounded-lg object-cover" /> : <i className="ri-file-pdf-2-line text-2xl text-red-500" />}
+          <span className="flex-1 text-xs text-zinc-600 truncate">{attach.name}</span>
+          <button onClick={() => setAttach(null)} className="text-zinc-400 hover:text-red-500 cursor-pointer" aria-label="Tirar anexo"><i className="ri-close-line" /></button>
+        </div>
+      )}
+      <div className="flex items-end gap-1.5">
+        <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => { escolherArquivo(e.target.files?.[0]); e.target.value = ''; }} />
+        <button onClick={() => fileRef.current?.click()} disabled={sending || !!recording} className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer" aria-label="Anexar foto ou PDF">
+          <i className="ri-attachment-2 text-xl" />
+        </button>
+        {/* Campo de UMA linha, igual aos do delivery: em <textarea> o Android abre o "editor em
+            tela cheia" do teclado quando o espaço é apertado (16/09/2026). Enter envia. */}
+        <input
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); enviar(); } }}
+          placeholder={recording ? 'Gravando… toque no microfone para enviar' : 'Mensagem'}
+          disabled={!!recording}
+          lang="pt-BR"
+          inputMode="text"
+          enterKeyHint="send"
+          autoCapitalize="sentences"
+          autoCorrect="on"
+          autoComplete="off"
+          spellCheck
+          className="flex-1 min-w-0 px-3 py-2.5 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-violet-400"
+        />
+        {text.trim() || attach ? (
+          <button onClick={() => enviar()} disabled={sending} className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-40 cursor-pointer" aria-label="Enviar">
+            <i className="ri-send-plane-2-fill" />
+          </button>
+        ) : (
+          <button onClick={gravar} disabled={sending} className={`w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl text-white disabled:opacity-40 cursor-pointer ${recording ? 'bg-red-500 animate-pulse' : 'bg-violet-600 hover:bg-violet-500'}`} aria-label={recording ? 'Parar e enviar áudio' : 'Gravar áudio'}>
+            <i className={recording ? 'ri-stop-fill' : 'ri-mic-fill'} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
 
   const painel = (
     <div className={variant === 'floating'
@@ -472,9 +528,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         </div>
         <BotaoNotificacao tenantId={user?.tenantId} />
         {variant === 'floating' && (
-          <button onClick={() => setOpen(false)} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar chat">
-            <i className="ri-close-line text-xl" />
-          </button>
+          <>
+            <button onClick={() => setModo('mini')} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Recolher a conversa">
+              <i className="ri-arrow-down-s-line text-xl" />
+            </button>
+            <button onClick={() => setModo('fab')} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar chat">
+              <i className="ri-close-line text-xl" />
+            </button>
+          </>
         )}
       </div>
 
@@ -568,51 +629,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         </div>
       )}
 
-      {/* Entrada */}
-      <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
-        {erro && <p className="text-xs text-red-600 px-1 pb-1.5">{erro}</p>}
-        {attach && (
-          <div className="flex items-center gap-2 mb-2 px-2 py-1.5 rounded-xl bg-zinc-50 border border-zinc-200">
-            {attach.preview ? <img src={attach.preview} alt="" className="w-10 h-10 rounded-lg object-cover" /> : <i className="ri-file-pdf-2-line text-2xl text-red-500" />}
-            <span className="flex-1 text-xs text-zinc-600 truncate">{attach.name}</span>
-            <button onClick={() => setAttach(null)} className="text-zinc-400 hover:text-red-500 cursor-pointer" aria-label="Tirar anexo"><i className="ri-close-line" /></button>
-          </div>
-        )}
-        <div className="flex items-end gap-1.5">
-          <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => { escolherArquivo(e.target.files?.[0]); e.target.value = ''; }} />
-          <button onClick={() => fileRef.current?.click()} disabled={sending || !!recording} className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer" aria-label="Anexar foto ou PDF">
-            <i className="ri-attachment-2 text-xl" />
-          </button>
-          {/* Campo de UMA linha, igual aos do delivery (que o dono aponta como o teclado certo):
-              em <textarea> o Android abre o "editor em tela cheia" do teclado quando o espaço é
-              apertado, e nenhuma marca do WebView evitou isso (16/09/2026). Enter envia. */}
-          <input
-            type="text"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); enviar(); } }}
-            placeholder={recording ? 'Gravando… toque no microfone para enviar' : 'Mensagem'}
-            disabled={!!recording}
-            lang="pt-BR"
-            inputMode="text"
-            enterKeyHint="send"
-            autoCapitalize="sentences"
-            autoCorrect="on"
-            autoComplete="off"
-            spellCheck
-            className="flex-1 min-w-0 px-3 py-2.5 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-violet-400"
-          />
-          {text.trim() || attach ? (
-            <button onClick={() => enviar()} disabled={sending} className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-40 cursor-pointer" aria-label="Enviar">
-              <i className="ri-send-plane-2-fill" />
-            </button>
-          ) : (
-            <button onClick={gravar} disabled={sending} className={`w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl text-white disabled:opacity-40 cursor-pointer ${recording ? 'bg-red-500 animate-pulse' : 'bg-violet-600 hover:bg-violet-500'}`} aria-label={recording ? 'Parar e enviar áudio' : 'Gravar áudio'}>
-              <i className={recording ? 'ri-stop-fill' : 'ri-mic-fill'} />
-            </button>
-          )}
-        </div>
-      </div>
+      {entrada}
 
       {/* PIN do pagamento — não passa pelo modelo nem fica no histórico */}
       {pinFor && (
@@ -656,11 +673,43 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   );
 
   if (variant === 'embedded') return <div className="relative">{painel}</div>;
-  return open ? (
-    <div className="relative">{painel}</div>
-  ) : (
+  if (modo === 'full') return <div className="relative">{painel}</div>;
+
+  // Barra pequena: digitar sem cobrir a tela. Arrastar para cima (ou tocar na alça) abre a conversa.
+  if (modo === 'mini') {
+    return (
+      <div
+        className="fixed z-[60] bottom-3 left-3 right-3 sm:left-auto sm:right-5 sm:w-[420px] rounded-2xl border border-zinc-200 bg-white shadow-2xl overflow-hidden"
+        onTouchStart={(e) => { arrasteY.current = e.touches[0].clientY; }}
+        onTouchMove={(e) => { if (arrasteY.current - e.touches[0].clientY > 40) setModo('full'); }}
+      >
+        <div className="flex items-center gap-2 px-2 pt-1.5">
+          <button onClick={() => setModo('full')} className="flex-1 flex flex-col items-center cursor-pointer" aria-label="Abrir a conversa">
+            <span className="w-10 h-1 rounded-full bg-zinc-300" />
+          </button>
+          <button onClick={() => setModo('fab')} className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar chat">
+            <i className="ri-close-line" />
+          </button>
+        </div>
+        {(sending || ultimaResposta) && (
+          <button onClick={() => setModo('full')} className="block w-full text-left px-3.5 pt-1 pb-0.5 cursor-pointer" aria-label="Ver a conversa">
+            <span className="text-[11px] text-zinc-400">{sending ? 'pensando…' : 'Assistente'}</span>
+            {!sending && ultimaResposta && <span className="block text-sm text-zinc-700 line-clamp-2">{ultimaResposta}</span>}
+          </button>
+        )}
+        {pagamentosVisiveis.length > 0 && (
+          <button onClick={() => setModo('full')} className="block w-full text-left px-3.5 py-1.5 text-xs font-bold text-violet-700 cursor-pointer" aria-label="Ver pagamentos">
+            <i className="ri-money-dollar-circle-line" /> {pagamentosVisiveis.length === 1 ? '1 pagamento esperando você' : `${pagamentosVisiveis.length} pagamentos esperando você`}
+          </button>
+        )}
+        {entrada}
+      </div>
+    );
+  }
+
+  return (
     <button
-      onClick={() => setOpen(true)}
+      onClick={() => setModo('mini')}
       className="fixed z-[55] bottom-5 right-5 w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center cursor-pointer"
       aria-label="Falar com o assistente"
     >

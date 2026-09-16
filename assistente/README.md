@@ -851,6 +851,17 @@ Rodar: `npx vitest run src/test/components/assistenteChat.test.tsx src/test/edge
 - A suíte inteira (`npx vitest run`) tem 15 falhas **antigas** em `dateUtils`, `orderFlow` e
   `mesaQRFlow` (testes que dependem da data do dia; não usam nada do chat).
 
+### Chat flutuante em 3 estágios (2026-09-16)
+
+Pedido do dono: o botão não deve mais abrir a tela inteira para uma pergunta curta.
+- **Botão redondo** (🤖, canto inferior) → toque abre a **barra pequena**: só a caixa de digitação
+  (a MESMA do chat — anexo, microfone, enviar), a última resposta em duas linhas, "pensando…"
+  enquanto responde e um aviso quando há pagamento esperando decisão.
+- **Barra → conversa inteira:** arrastar a barra para cima (>40 px), tocar na alça ou em qualquer
+  um dos avisos. Na conversa, a seta para baixo volta para a barra e o X fecha tudo.
+- O histórico só carrega a partir da barra (o botão sozinho não chama o servidor).
+- Testes: "AssistenteChat — três estágios no flutuante" em `src/test/components/assistenteChat.test.tsx`.
+
 ### Rodapé de pagamentos: só o que pede ação (2026-09-16)
 
 O cartão acima da caixa de texto é para DECIDIR. A `assistente-app › payments` devolvia também os
