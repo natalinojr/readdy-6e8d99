@@ -19,6 +19,18 @@ interface Poll { type: 'poll'; question: string; options: string[] }
 // Resposta com botão que LEVA à tela (ferramenta abrir_tela do assistente-brain). Só rota interna
 // do ERPOS: o botão chama navigate(), não abre nada de fora.
 interface Abrir { type: 'abrir'; rota: string; label: string }
+interface TopicoResumo { topic: string; unread: number; last: { role: string; content: string; created_at: string } | null }
+
+// Os assuntos, na ordem em que aparecem na lista de conversas. 'geral' primeiro: é a conversa do
+// dia a dia. O id vazio não entra aqui — "Todas as mensagens" é uma linha à parte.
+const ASSUNTOS = [
+  { id: 'geral', label: 'Geral', icon: 'ri-message-2-line', cor: 'bg-zinc-100 text-zinc-600' },
+  { id: 'pagamentos', label: 'Financeiro', icon: 'ri-money-dollar-circle-line', cor: 'bg-emerald-50 text-emerald-600' },
+  { id: 'compras', label: 'Compras e estoque', icon: 'ri-shopping-cart-2-line', cor: 'bg-amber-50 text-amber-600' },
+  { id: 'curriculos', label: 'Currículos', icon: 'ri-file-user-line', cor: 'bg-rose-50 text-rose-600' },
+  { id: 'avisos', label: 'Avisos', icon: 'ri-notification-3-line', cor: 'bg-sky-50 text-sky-600' },
+];
+const rotuloAssunto = (id: string) => ASSUNTOS.find((a) => a.id === id)?.label ?? 'Todas as mensagens';
 interface Payment {
   id: string; kind: 'pix' | 'boleto'; amount: number; beneficiary_name: string | null; pix_key: string | null;
   due_date: string | null; description: string | null; status: string; status_label: string; error: string | null; created_at: string;
@@ -257,6 +269,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Aba de assunto ('' = tudo). A conversa é uma só; a aba só filtra (asst_messages.topic).
   const [aba, setAba] = useState('');
   const abaRef = useRef('');
+  // Lista de conversas (2026-09-16): o painel abre na LISTA de assuntos, com cara de WhatsApp —
+  // última mensagem, hora e não lidas por assunto. Toca num, entra na conversa; a seta volta.
+  const [vista, setVista] = useState<'lista' | 'conversa'>('lista');
+  const [conversas, setConversas] = useState<TopicoResumo[]>([]);
 
   // "Compartilhar" do Android: quem recebe é o src/lib/shareIntake, no início do app (main.tsx) —
   // o app abre na última rota usada, às vezes sem chat nenhum na tela, e o conteúdo se perdia
@@ -271,6 +287,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       let p: SharePayload;
       try { p = JSON.parse(cru) as SharePayload; } catch { return; }
       setOpen(true);
+      setVista('conversa'); // compartilhou algo: é para mandar, não para escolher assunto
       if (p.kind === 'texto') { setText((prev) => (prev ? `${prev}\n${p.texto}` : p.texto)); return; }
       try {
         const bin = atob(p.base64);
@@ -307,6 +324,16 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     try { setPays((await call<{ payments: Payment[] }>('payments')).payments); } catch { /* cartões são extra */ }
   }, []);
 
+  const carregarConversas = useCallback(async () => {
+    try { setConversas((await call<{ topics: TopicoResumo[] }>('topics')).topics); } catch { /* lista é extra: a conversa continua */ }
+  }, []);
+
+  // Entra num assunto (ou em "Todas as mensagens", com id vazio).
+  const abrirConversa = useCallback((topic: string) => {
+    setAba(topic);
+    setVista('conversa');
+  }, []);
+
   const sincronizar = useCallback(async () => {
     if (!lastId.current) return;
     try { merge((await call<{ messages: Msg[] }>('history', { after_id: lastId.current, topic: abaRef.current || undefined })).messages); } catch { /* tenta no próximo ciclo */ }
@@ -340,12 +367,30 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     return () => clearInterval(t);
   }, [isOwner, open, verificarNaoLidas]);
 
-  // Abriu: o que estava esperando deixa de ser novidade.
+  // Leu uma conversa: só ELA deixa de ser novidade (igual ao WhatsApp). Ficar na lista não marca
+  // nada — o servidor guarda o "visto" por assunto (assistente-app › seen).
   useEffect(() => {
-    if (!open || !isOwner || !lastId.current) return;
-    setNaoLidas({ count: 0, topic: null, previa: null });
-    call('seen', { id: lastId.current }).catch(() => { /* marca de novo no próximo ciclo */ });
-  }, [open, isOwner, msgs.length]);
+    if (!open || !isOwner || vista !== 'conversa' || !lastId.current) return;
+    const topic = abaRef.current;
+    setNaoLidas((n) => (topic && n.topic && n.topic !== topic ? n : { count: 0, topic: null, previa: null }));
+    setConversas((prev) => prev.map((c) => (!topic || c.topic === topic ? { ...c, unread: 0 } : c)));
+    call('seen', { id: lastId.current, ...(topic ? { topic } : {}) }).catch(() => { /* marca de novo no próximo ciclo */ });
+  }, [open, isOwner, vista, msgs.length]);
+
+  // Pagamentos esperando decisão aparecem na lista, na conversa e na barra pequena: a carga é
+  // do painel aberto, não da conversa.
+  useEffect(() => {
+    if (!open || !isOwner) return;
+    carregarPagamentos();
+  }, [open, isOwner, carregarPagamentos]);
+
+  // Lista aberta: carrega os assuntos e vai atualizando (o assistente fala sozinho).
+  useEffect(() => {
+    if (!open || !isOwner || vista !== 'lista') return;
+    carregarConversas();
+    const t = setInterval(() => { if (!document.hidden) carregarConversas(); }, 15000);
+    return () => clearInterval(t);
+  }, [open, isOwner, vista, carregarConversas]);
 
   // Telas pedindo o chat: botão "perguntar ao assistente" (PerguntarAoAssistente) e atalhos.
   useEffect(() => {
@@ -353,6 +398,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     const abrir = (e: Event) => {
       const p = (e as CustomEvent<PedidoAbrir>).detail;
       setFocoItem(p?.item ?? null);
+      // Veio de uma tela: é para falar, não para escolher assunto — cai direto na conversa.
+      setVista('conversa');
       if (variant === 'floating') setModo(p?.conversa ? 'full' : 'mini');
       if (p?.texto) setText(p.texto);
     };
@@ -363,7 +410,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Primeira carga ao abrir (e a cada troca de aba)
   useEffect(() => {
     // Sem ser o dono não chama nada (o componente já não aparece; o servidor também recusa).
-    if (!open || loaded || !isOwner) return;
+    if (!open || loaded || !isOwner || vista !== 'conversa') return;
     (async () => {
       try {
         const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { topic: abaRef.current || undefined });
@@ -371,9 +418,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         lastId.current = h.messages.length ? h.messages[h.messages.length - 1].id : 0;
         setLoaded(true); setErro(null); toBottom();
       } catch (e) { setErro(e instanceof Error ? e.message : String(e)); }
-      carregarPagamentos();
     })();
-  }, [open, loaded, isOwner, carregarPagamentos]); // isOwner: o login pode chegar depois do 1º render
+  }, [open, loaded, isOwner, vista, carregarPagamentos]); // isOwner: o login pode chegar depois do 1º render
 
   // Aberto: pega o que chegou por outro canal (Telegram, avisos automáticos) e o status dos pagamentos.
   useEffect(() => {
@@ -596,6 +642,54 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     </div>
   );
 
+  // Lista de conversas: uma linha por assunto, com a última mensagem e as não lidas. A conversa
+  // continua sendo UMA só no banco — a linha é um filtro por `asst_messages.topic`.
+  const listaConversas = (
+    <div className="flex-1 overflow-y-auto bg-white">
+      <button
+        onClick={() => abrirConversa('')}
+        className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left"
+      >
+        <span className="w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full bg-violet-50 text-violet-600 border border-violet-100">
+          <i className="ri-chat-3-line text-xl" />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="block text-sm font-black text-zinc-900">Todas as mensagens</span>
+          <span className="block text-xs text-zinc-400 truncate">A conversa inteira, sem separar por assunto</span>
+        </span>
+      </button>
+      {ASSUNTOS.map((a) => {
+        const c = conversas.find((x) => x.topic === a.id);
+        const previa = c?.last ? `${c.last.role === 'user' ? 'Você: ' : ''}${c.last.content}` : 'Nada por aqui ainda';
+        return (
+          <button
+            key={a.id}
+            onClick={() => abrirConversa(a.id)}
+            className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left"
+          >
+            <span className={`w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full ${a.cor}`}>
+              <i className={`${a.icon} text-xl`} />
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="flex items-baseline gap-2">
+                <span className="flex-1 text-sm font-bold text-zinc-900 truncate">{a.label}</span>
+                {c?.last && <span className={`text-[11px] flex-shrink-0 ${c.unread ? 'text-violet-600 font-bold' : 'text-zinc-400'}`}>{hora(c.last.created_at)}</span>}
+              </span>
+              <span className="flex items-center gap-2">
+                <span className={`flex-1 text-xs truncate ${c?.unread ? 'text-zinc-700 font-semibold' : 'text-zinc-400'}`}>{previa}</span>
+                {!!c?.unread && (
+                  <span className="flex-shrink-0 min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-violet-600 text-white text-[11px] font-black">
+                    {c.unread > 99 ? '99+' : c.unread}
+                  </span>
+                )}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
   const painel = (
     <div className={variant === 'floating'
       ? `fixed z-[60] inset-0 sm:inset-auto sm:bottom-5 sm:right-5 sm:w-[420px] sm:h-[min(720px,calc(100vh-40px))] flex flex-col bg-white sm:rounded-2xl sm:border sm:border-zinc-200 shadow-2xl overflow-hidden
@@ -603,11 +697,17 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       : 'flex flex-col h-[70vh] rounded-2xl border border-zinc-200 bg-white overflow-hidden'}>
       {/* Cabeçalho */}
       <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-100 flex-shrink-0">
-        <div className="w-8 h-8 flex items-center justify-center rounded-xl bg-violet-50 border border-violet-200">
-          <i className="ri-robot-2-line text-violet-600" />
-        </div>
+        {vista === 'conversa' ? (
+          <button onClick={() => setVista('lista')} className="w-8 h-8 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 cursor-pointer" aria-label="Voltar para as conversas">
+            <i className="ri-arrow-left-line text-xl" />
+          </button>
+        ) : (
+          <div className="w-8 h-8 flex items-center justify-center rounded-xl bg-violet-50 border border-violet-200">
+            <i className="ri-robot-2-line text-violet-600" />
+          </div>
+        )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-black text-zinc-900 leading-tight">Assistente</p>
+          <p className="text-sm font-black text-zinc-900 leading-tight">{vista === 'conversa' ? rotuloAssunto(aba) : 'Assistente'}</p>
           <p className="text-[11px] text-zinc-400 leading-tight truncate">{sending ? 'pensando…' : 'Mesma conversa do Telegram'}</p>
         </div>
         <BotaoNotificacao tenantId={user?.tenantId} />
@@ -623,28 +723,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         )}
       </div>
 
-      {/* Assuntos: filtram a mesma conversa; escrever numa aba já marca a mensagem com o assunto */}
-      <div className="flex gap-1 px-2.5 py-1.5 border-b border-zinc-100 overflow-x-auto flex-shrink-0">
-        {[
-          { id: '', label: 'Tudo', icon: 'ri-chat-3-line' },
-          { id: 'pagamentos', label: 'Financeiro', icon: 'ri-money-dollar-circle-line' },
-          { id: 'curriculos', label: 'Currículos', icon: 'ri-file-user-line' },
-          { id: 'compras', label: 'Compras e estoque', icon: 'ri-shopping-cart-2-line' },
-          { id: 'avisos', label: 'Avisos', icon: 'ri-notification-3-line' },
-          { id: 'geral', label: 'Geral', icon: 'ri-message-2-line' },
-        ].map((t) => (
-          <button
-            key={t.id || 'tudo'}
-            onClick={() => setAba(t.id)}
-            disabled={sending}
-            className={`flex items-center gap-1 px-2.5 h-7 rounded-lg text-xs font-bold whitespace-nowrap cursor-pointer disabled:opacity-50 ${aba === t.id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:bg-zinc-100'}`}
-          >
-            <i className={t.icon} /> {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Mensagens */}
+      {/* Lista de conversas ou a conversa aberta */}
+      {vista === 'lista' ? listaConversas : (
       <div
         ref={scrollRef}
         onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
@@ -716,6 +796,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           </div>
         )}
       </div>
+      )}
 
       {/* Pagamentos esperando decisão */}
       {pagamentosVisiveis.length > 0 && (
@@ -724,7 +805,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         </div>
       )}
 
-      {entrada}
+      {vista === 'conversa' && entrada}
 
       {/* PIN do pagamento — não passa pelo modelo nem fica no histórico */}
       {pinFor && (
@@ -810,7 +891,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   return (
     <button
       onClick={() => {
-        if (temNovidade && naoLidas.topic) setAba(naoLidas.topic);
+        if (temNovidade && naoLidas.topic) { setAba(naoLidas.topic); setVista('conversa'); }
+        else if (temNovidade) setVista('lista'); // veio de assuntos diferentes: escolha na lista
         setModo(temNovidade ? 'full' : 'mini');
       }}
       className="fixed z-[55] bottom-5 right-5 w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center cursor-pointer"

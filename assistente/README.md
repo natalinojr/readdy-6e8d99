@@ -816,6 +816,17 @@ Conversa com o assistente **dentro do ERPOS**, somando ao Telegram (não substit
   ERPOS ele oferece `/financeiro?tab=compras`.
 - **Câmera direta (2026-09-16):** botão de câmera na caixa de texto (`capture="environment"`) para a
   notinha de balcão sem passar pela galeria. No desktop o navegador ignora o `capture`.
+- **Lista de conversas (2026-09-16):** as abas viraram uma LISTA estilo WhatsApp — o painel abre
+  nela (assunto, última mensagem, hora, não lidas), toca e entra na conversa, a seta volta. A
+  conversa continua UMA no banco: cada linha é um filtro por `asst_messages.topic`, e "Todas as
+  mensagens" é a conversa inteira. Action `topics` na `assistente-app` (uma consulta por assunto
+  para a última mensagem + uma para as não lidas). Caminhos que já sabem do que se trata pulam a
+  lista e caem direto na conversa: botão `PerguntarAoAssistente`, "Compartilhar" do Android e o
+  clique no badge quando a novidade é de um assunto só. A caixa de digitação não aparece na lista —
+  para falar rápido existe a barra pequena do botão flutuante.
+  **Visto por assunto:** `app_last_seen` virou `{ id, topics: { <assunto>: id } }`. Ler o Financeiro
+  não pode marcar como lido um currículo que chegou antes; `id` é o piso global (o formato antigo
+  continua valendo) e "Todas as mensagens" sobe o piso e limpa as marcas por assunto.
 - **Badge do botão fechado (2026-09-16):** com o chat fechado o app não carregava NADA, então aviso
   de cron/conciliação só aparecia se o dono abrisse. Agora `unread` (consulta leve: conta as
   mensagens `role='assistant'` com `id >` `asst_settings.app_last_seen`, devolve contagem, assunto

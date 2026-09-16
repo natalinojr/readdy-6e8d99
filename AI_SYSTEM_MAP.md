@@ -237,6 +237,7 @@ Slugs importantes:
 - Estoque/producao: `stock-write`, `production-write`.
 - Impressao: `printer-ping`, `printer-raw`, `print-queue-write`, `print-queue-agent`.
 - Auditoria/notificacoes: `audit-write`, `weekly-divergence-alert`.
+- Trafego pago (Meta Ads): `meta-connect` (OAuth/conta/links publicos/previa), `meta-ads-insights` (leitura; aceita `x-internal-key`), `meta-ads-agent` (gestor de trafego IA: regras + Claude; cron `meta-agent-daily` 08h30 BRT; tabelas `meta_agent_settings/runs/actions`).
 
 ## Alertas e cuidado
 
@@ -261,6 +262,10 @@ Quando o usuario pedir "muda X":
 ## Historico de solucoes e criterios
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
+
+### 2026-09-16 — Tráfego Pago › Agente: gestor de tráfego pago com IA (regras de mercado + Claude + escrita na Meta)
+
+Pedido: "um agente gestor de tráfego que faça campanha/anúncio por conta própria, avalie tudo e acompanhe". **Arquitetura:** Edge `meta-ads-agent` (verify_jwt=false; membro da loja por JWT, admin para `save_settings`/`decide`, `x-internal-key` para cron/assistente) + migration `20260916150000_meta_ads_agent.sql` (`meta_agent_settings` 1/loja, `meta_agent_runs`, `meta_agent_actions`; RLS select por membership, escrita só service_role; `fn_meta_agent_run_all()` + `cron.job` `meta-agent-daily` às 11h30 UTC) + aba **Agente IA** em `/trafego-pago` (`components/Agente.tsx`, toggle Painel × Agente ao lado do "Conectado", `#agente` na URL). **Fluxo de uma rodada** (`runForTenant`): expira sugestões > 3 dias → lê `meta-ads-insights` em `last_7d` e `last_30d` (chamada interna com `x-internal-key`, por isso a insights passou a aceitar o header) + contexto do ERPOS (`erposContext`: loja/slug/cidade, `delivery_config.whatsapp_loja` e `store_location`, `app_public_url` → link `/{slug}-delivery`, pedidos de delivery 30d por hora/dia/plataforma, mais vendidos via `order_items`, itens em destaque com `photo_url`) + ações dos últimos 14 dias (cooldown) → **regras determinísticas** (`rules()`): conta desativada/token vencendo; teto mensal (pausa campanhas, trava dura que entra mesmo se a IA descartar) e teto diário (alerta); stop-loss por anúncio (gasto ≥ max(R$30, 3× meta) sem resultado, ou CPR > 2× meta com gasto ≥ 2× meta), CTR no link < 0,8% após 2.000 impressões se houver outro anúncio ativo; fadiga por frequência > `max_frequency` → `rotate_creative`; escalar +20% (limite de mercado para não reiniciar aprendizado) com ≥ 5 resultados e CPR ≤ 0,7× meta ou ROAS ≥ alvo, respeitando o teto diário e 72h de cooldown; desescalar −20% com gasto ≥ R$100 abaixo da meta; **nunca mexe em conjunto em fase de aprendizado** (`learning.status = LEARNING`); sem campanha ativa → `create_campaign` (só se página + pin + WhatsApp/link existirem). Meta de custo por resultado padrão = 30% do ticket médio do delivery (regra prática do setor: custo por pedido R$ 5-20). → **IA** (`claude-opus-5`, structured output `json_schema`, ~35k tokens de entrada, ~50 s, ≈ R$ 1,30/rodada): revisa as candidatas, acrescenta o que os números mostram, escreve o anúncio de `create_campaign` (texto ≤ 125, título ≤ 40, foto do cardápio) e o resumo + nota de saúde 0-100. → **guardrails pós-modelo**: só ids que existem nos dados, orçamento clamp ±20% e ≤ teto, `create_campaign` só se a regra "sem campanha ativa" disparou. → **modo**: `sugerir` grava tudo como `sugerida`; `autonomo` executa pause/resume/set_budget na hora e `create_campaign` só com `autonomia_criar`. **Execução na Meta** (`executeAction`): `POST /{id}` status/daily_budget (centavos); `createCampaign` = campanha (`OUTCOME_ENGAGEMENT` p/ WhatsApp, `OUTCOME_TRAFFIC` p/ link; vendas cai em tráfego enquanto não há pixel) → conjunto (`custom_locations` lat/lng/raio km, 18+, Facebook+Instagram feed/story/reels, `CONVERSATIONS`+`destination_type WHATSAPP`+`promoted_object{page_id, whatsapp_phone_number}` ou `LANDING_PAGE_VIEWS`) → criativo (`object_story_spec.link_data` com `picture` = `photo_url` do item, CTA `WHATSAPP_MESSAGE`/`ORDER_NOW`, `page_welcome_message` com ice breakers; link do delivery com `utm_source=meta` para o ERPOS reconhecer a origem) → anúncio; tudo criado PAUSED e ativado do anúncio pra campanha. Erro em qualquer passo devolve `step` + ids já criados. **Pegadinhas:** (1) structured output da API **não aceita `minimum/maximum` em integer** nem vale a pena `enum` com `null` — clamp e validação ficam no código; (2) o token atual da loja vem da configuração de Login para Empresas só com `ads_read`: `get_settings` devolve `capabilities` (`/me/permissions` + `/me/accounts`) e a aba lista o que falta — para criar anúncio é preciso adicionar `ads_management`, `pages_show_list`, `pages_manage_ads` na configuração do app Meta e **reconectar**; (3) `whatsapp_phone_number` precisa ser um número vinculado à Página (WABA), senão a Meta recusa o conjunto; (4) o pin `store_location` é o da loja no ERPOS — na conta compartilhada Vila Leste/El Patrón a IA apontou que os anúncios (Paranaguá) estão a 17-21 km do pin (Pontal): conferir o pin antes de ligar `autonomia_criar`. Assistente: `meta-ads-agent` no `EDGE_ALLOW` + linha no `EDGE_MAP` (`decide` é sensível). Primeira rodada real em 2026-09-16 na loja do El Patrón: saúde 32/100, 3 sugestões (pausar Topo/Meio, trocar criativo do burrito), diagnóstico correto de segmentação fora da área de entrega.
 
 ### 2026-09-16 — Teclado virtual do ERPOS engolia o teclado nativo no celular
 
@@ -2232,3 +2237,18 @@ Cinco frentes para o chat dentro do ERPOS deixar de ser "o Telegram numa janela"
 Pegadinha herdada: com o chat fechado o componente não chamava nada (`if (!open) return` na carga e
 no polling), então qualquer aviso proativo dependia de o dono abrir. O `unread` é o único que roda
 fechado, e é só contagem — nenhuma mensagem trafega.
+
+### Chat: abas viraram lista de conversas (2026-09-16)
+
+Pedido do dono: "os temas têm que aparecer como conversas tipo WhatsApp". A barra de abas saiu; o
+painel abre numa lista (ícone, assunto, última mensagem, hora, badge de não lidas) e a conversa é
+uma tela de dentro, com seta de voltar. Nada mudou no banco — cada linha continua sendo um filtro
+por `asst_messages.topic` sobre a MESMA conversa (a do Telegram).
+
+Duas decisões que valem para o futuro chat entre pessoas (a lista já nasce no formato certo):
+- **"Visto" por assunto.** Um marcador global marcava como lido o que você não abriu: entrar no
+  Financeiro apagava o aviso de currículo que chegou antes. `asst_settings.app_last_seen` virou
+  `{ id, topics: { <assunto>: id } }` — `id` é o piso (formato antigo continua válido), cada
+  assunto anda sozinho, e ler "Todas as mensagens" sobe o piso e limpa as marcas.
+- **Quem já sabe do que se trata não passa pela lista.** Botão das telas, "Compartilhar" do Android
+  e badge de assunto único entram direto na conversa; a lista é só para escolher.

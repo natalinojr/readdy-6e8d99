@@ -13,7 +13,9 @@
 //   payments  {}                                   → pagamentos do Inter em aberto/recentes (cartões)
 //   pay       { id, op: 'ok'|'no'|'st', pin? }     → Pagar (com PIN) / Cancelar / Ver status
 //   unread    {}                                   → quantas mensagens ele mandou e você não viu
-//   seen      { id }                               → marca visto até esse id (asst_settings.app_last_seen)
+//   topics    {}                                   → lista de conversas: por assunto, a última
+//                                                    mensagem, a hora e as não lidas
+//   seen      { id, topic? }                       → marca visto até esse id (no assunto, ou geral)
 //
 // O PIN é o mesmo do Telegram (asst_settings.pay_pin, hash com o id do chat do Telegram) e nunca
 // vai ao modelo nem ao histórico. Mesmo bloqueio: 3 erros → 15 minutos.
@@ -78,6 +80,23 @@ async function getSetting(admin: SupabaseClient, key: string): Promise<any> {
 async function setSetting(admin: SupabaseClient, key: string, value: unknown) {
   await admin.from('asst_settings').upsert({ key, value, updated_at: nowIso() });
 }
+
+// "Já vi até aqui" do chat do ERPOS (asst_settings.app_last_seen). Com a lista de conversas o
+// marcador virou POR ASSUNTO (2026-09-16): abrir Financeiro não pode marcar como lido um aviso de
+// currículo que chegou antes. `id` continua sendo o piso global — é o que existia antes, e o que
+// vale para assunto sem marca própria.
+// deno-lint-ignore no-explicit-any
+function vistosDe(v: any): (topic: string) => number {
+  const base = Number(v?.id ?? 0);
+  const t = (v?.topics ?? {}) as Record<string, number>;
+  return (topic: string) => Math.max(base, Number(t[topic] ?? 0));
+}
+// deno-lint-ignore no-explicit-any
+const pisoDosVistos = (v: any): number => {
+  const base = Number(v?.id ?? 0);
+  const t = Object.values((v?.topics ?? {}) as Record<string, number>).map(Number);
+  return t.length ? Math.min(base, ...t) : base;
+};
 
 // deno-lint-ignore no-explicit-any
 async function callEdge(fn: string, key: string, body: Record<string, unknown>): Promise<{ status: number; out: any }> {
@@ -217,30 +236,77 @@ Deno.serve(async (req) => {
     // Conta só role='assistant': o que ele fala sozinho (cron, conciliação, avisos) é a novidade;
     // o que o próprio dono escreveu no Telegram, não.
     if (action === 'unread') {
-      const visto = Number((await getSetting(admin, 'app_last_seen'))?.id ?? 0);
+      const marca = await getSetting(admin, 'app_last_seen');
+      const visto = vistosDe(marca);
       const { data, error } = await admin.from('asst_messages').select('id, content, topic')
-        .eq('chat_id', chatKey).eq('role', 'assistant').gt('id', visto)
-        .order('id', { ascending: false }).limit(20);
+        .eq('chat_id', chatKey).eq('role', 'assistant').gt('id', pisoDosVistos(marca))
+        .order('id', { ascending: false }).limit(60);
       if (error) throw new Error(error.message);
-      const rows = data ?? [];
+      // O piso é o menor dos assuntos: filtra aqui o que já foi lido no assunto de cada uma.
+      const rows = (data ?? []).filter((r) => Number(r.id) > visto(String(r.topic ?? 'geral')));
       const topics = [...new Set(rows.map((r) => String(r.topic ?? 'geral')))];
       const ultima = rows[0];
       return json({ success: true, data: {
         count: rows.length,
-        last_id: ultima ? Number(ultima.id) : visto,
+        last_id: ultima ? Number(ultima.id) : pisoDosVistos(marca),
         // Assunto só quando é um só: com mensagens de assuntos diferentes o chat abre em "Tudo".
         topic: topics.length === 1 && TOPICS.includes(topics[0]) ? topics[0] : null,
         previa: ultima ? String(ultima.content).replace(/^\[[^\]]*\]\s*/, '').slice(0, 140) : null,
       } });
     }
 
+    // ── Lista de conversas (2026-09-16) ──
+    // A conversa continua UMA só; a lista é a mesma ideia das abas, com cara de WhatsApp: por
+    // assunto, a última mensagem, a hora e quantas ele mandou que você ainda não viu.
+    if (action === 'topics') {
+      const marca = await getSetting(admin, 'app_last_seen');
+      const visto = vistosDe(marca);
+      const ultimas = await Promise.all(TOPICS.map(async (t) => {
+        const { data } = await admin.from('asst_messages').select('id, role, content, created_at, topic')
+          .eq('chat_id', chatKey).eq('topic', t).order('id', { ascending: false }).limit(1);
+        return (data ?? [])[0] ?? null;
+      }));
+      // Não lidas por assunto: uma consulta só, teto de 200 (acima disso o número já não ajuda).
+      const { data: novas } = await admin.from('asst_messages').select('id, topic')
+        .eq('chat_id', chatKey).eq('role', 'assistant').gt('id', pisoDosVistos(marca)).limit(200);
+      const porTopico = new Map<string, number>();
+      for (const n of novas ?? []) {
+        const t = String(n.topic ?? 'geral');
+        if (Number(n.id) <= visto(t)) continue;
+        porTopico.set(t, (porTopico.get(t) ?? 0) + 1);
+      }
+      return json({ success: true, data: {
+        topics: TOPICS.map((t, i) => ({
+          topic: t,
+          unread: porTopico.get(t) ?? 0,
+          last: ultimas[i] ? {
+            role: ultimas[i].role,
+            // Prévia sem os marcadores internos ("[Pelo ERPOS…]", "[Áudio]", "[Pagamento…]").
+            content: String(ultimas[i].content).replace(/^\[[^\]]*\]\s*/, '').slice(0, 120),
+            created_at: ultimas[i].created_at,
+          } : null,
+        })),
+      } });
+    }
+
     if (action === 'seen') {
       const id = Number(body.id ?? 0);
       if (!id) return fail('id obrigatório.');
-      const atual = Number((await getSetting(admin, 'app_last_seen'))?.id ?? 0);
-      // Nunca anda para trás: o chat abre filtrado por assunto e mandaria um id menor.
-      if (id > atual) await setSetting(admin, 'app_last_seen', { id, at: nowIso() });
-      return json({ success: true, data: { last_seen_id: Math.max(id, atual) } });
+      const marca = (await getSetting(admin, 'app_last_seen')) ?? {};
+      const topic = TOPICS.includes(String(body.topic)) ? String(body.topic) : null;
+      const topics: Record<string, number> = { ...((marca.topics ?? {}) as Record<string, number>) };
+      let base = Number(marca.id ?? 0);
+      if (topic) {
+        // Leu UM assunto: só ele anda. Assim abrir Financeiro não apaga o aviso de currículo.
+        topics[topic] = Math.max(Number(topics[topic] ?? 0), id);
+      } else if (id > base) {
+        // Leu a conversa inteira ("Todas as mensagens"): o piso global sobe e as marcas por
+        // assunto viram redundantes.
+        base = id;
+        for (const t of Object.keys(topics)) if (topics[t] <= base) delete topics[t];
+      }
+      await setSetting(admin, 'app_last_seen', { id: base, topics, at: nowIso() });
+      return json({ success: true, data: { last_seen_id: base, topics } });
     }
 
     if (action === 'payments') {

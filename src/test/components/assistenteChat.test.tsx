@@ -70,6 +70,20 @@ function fakeServer(fn: string, opts: { body: Body }) {
         previa: novas.length ? novas[novas.length - 1].content.slice(0, 140) : null,
       }));
     }
+    case 'topics': {
+      const TOP = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'];
+      return Promise.resolve(ok({
+        topics: TOP.map((t) => {
+          const doTopico = srv.msgs.filter((m) => m.topic === t);
+          const last = doTopico[doTopico.length - 1] ?? null;
+          return {
+            topic: t,
+            unread: doTopico.filter((m) => m.role === 'assistant' && m.id > srv.visto).length,
+            last: last ? { role: last.role, content: last.content.replace(/^\[[^\]]*\]\s*/, '').slice(0, 120), created_at: last.created_at } : null,
+          };
+        }),
+      }));
+    }
     case 'seen': {
       srv.visto = Math.max(srv.visto, Number(b.id));
       return Promise.resolve(ok({ last_seen_id: srv.visto }));
@@ -96,6 +110,11 @@ const pixEduardo = (): Pay => ({
 });
 const renderChat = (variant: 'embedded' | 'floating' = 'embedded') =>
   render(<MemoryRouter initialEntries={['/financeiro?tab=contas']}><AssistenteChat variant={variant} /></MemoryRouter>);
+// Desde 2026-09-16 o painel abre na LISTA de conversas (estilo WhatsApp). Quem quer testar a
+// conversa entra por uma linha da lista — "Todas as mensagens" é a conversa inteira, sem filtro.
+const entrarNaConversa = async (user: ReturnType<typeof userEvent.setup>, assunto = 'Todas as mensagens') => {
+  await user.click(await screen.findByRole('button', { name: new RegExp(assunto) }));
+};
 const setCapacitor = (plugins: Record<string, unknown>) => { (window as unknown as { Capacitor?: unknown }).Capacitor = { Plugins: plugins }; };
 
 beforeEach(() => {
@@ -123,6 +142,7 @@ describe('AssistenteChat — conversa', () => {
     expect(h.invoke).not.toHaveBeenCalled();
     h.auth.user = OWNER;
     rerender(<MemoryRouter initialEntries={['/financeiro?tab=contas']}><AssistenteChat variant="embedded" /></MemoryRouter>);
+    await entrarNaConversa(userEvent.setup());
     expect(await screen.findByText('Oi, Natalino')).toBeInTheDocument();
   });
 
@@ -130,6 +150,7 @@ describe('AssistenteChat — conversa', () => {
     add('user', '[Pelo ERPOS · tela: Contas — /financeiro]\nquanto vendi hoje?');
     add('assistant', 'Hoje: *R$ 3.210,00* em 84 pedidos.', 'geral', 'telegram');
     renderChat();
+    await entrarNaConversa(userEvent.setup());
     expect(await screen.findByText('quanto vendi hoje?')).toBeInTheDocument();
     expect(screen.queryByText(/Pelo ERPOS/)).not.toBeInTheDocument();
     // *negrito* do modelo vira <b>, e o canal de origem aparece
@@ -140,6 +161,7 @@ describe('AssistenteChat — conversa', () => {
   it('envia a mensagem com a tela e a loja abertas e mostra a resposta', async () => {
     const user = userEvent.setup();
     renderChat();
+    await entrarNaConversa(user);
     await screen.findByText(/Pode falar/);
     await user.type(screen.getByPlaceholderText('Mensagem'), 'paga essa conta');
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
@@ -155,6 +177,7 @@ describe('AssistenteChat — conversa', () => {
     h.invoke.mockImplementation((fn: string, o: { body: Body }) =>
       o.body.action === 'send' ? Promise.resolve(erro('Os créditos da API da Anthropic acabaram.')) : fakeServer(fn, o));
     renderChat();
+    await entrarNaConversa(user);
     await screen.findByText(/Pode falar/);
     await user.type(screen.getByPlaceholderText('Mensagem'), 'oi');
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
@@ -166,6 +189,7 @@ describe('AssistenteChat — conversa', () => {
     const user = userEvent.setup();
     srv.nextActions = [{ type: 'poll', question: 'Qual loja?', options: ['Paranaguá', 'Vila Leste'] }];
     renderChat();
+    await entrarNaConversa(user);
     await screen.findByText(/Pode falar/);
     await user.type(screen.getByPlaceholderText('Mensagem'), 'vendas');
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
@@ -230,14 +254,27 @@ describe('AssistenteChat — três estágios no flutuante', () => {
   });
 });
 
-describe('AssistenteChat — assuntos', () => {
-  it('a aba filtra o histórico e a mensagem escrita nela nasce com o assunto', async () => {
+describe('AssistenteChat — lista de conversas', () => {
+  // 2026-09-16: as abas viraram lista estilo WhatsApp. A conversa continua UMA no banco; cada
+  // linha filtra por `asst_messages.topic`.
+  it('a lista mostra a última mensagem e as não lidas de cada assunto', async () => {
+    add('assistant', 'Aviso de estoque', 'avisos');
+    add('assistant', 'Pix preparado', 'pagamentos');
+    renderChat();
+    const financeiro = await screen.findByRole('button', { name: /Financeiro/ });
+    expect(within(financeiro).getByText('Pix preparado')).toBeInTheDocument();
+    expect(within(financeiro).getByText('1')).toBeInTheDocument(); // não lida
+    expect(within(await screen.findByRole('button', { name: /Avisos/ })).getByText('Aviso de estoque')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Geral/ })).toHaveTextContent('Nada por aqui ainda');
+    expect(calls('history')).toHaveLength(0); // a lista não carrega conversa nenhuma
+  });
+
+  it('entrar num assunto filtra o histórico, e a mensagem escrita ali nasce com o assunto', async () => {
     const user = userEvent.setup();
     add('assistant', 'Aviso de estoque', 'avisos');
     add('assistant', 'Pix preparado', 'pagamentos');
     renderChat();
-    expect(await screen.findByText('Aviso de estoque')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Financeiro' }));
+    await entrarNaConversa(user, 'Financeiro');
     expect(await screen.findByText('Pix preparado')).toBeInTheDocument();
     expect(screen.queryByText('Aviso de estoque')).not.toBeInTheDocument();
     expect(calls('history').at(-1)?.topic).toBe('pagamentos');
@@ -245,6 +282,18 @@ describe('AssistenteChat — assuntos', () => {
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
     await screen.findByText('Resposta para: status do pix');
     expect(calls('send').at(-1)?.topic).toBe('pagamentos');
+    // Ler o Financeiro marca SÓ o Financeiro como visto (o aviso de estoque continua novo).
+    await waitFor(() => expect(calls('seen').at(-1)?.topic).toBe('pagamentos'));
+  });
+
+  it('a seta volta da conversa para a lista', async () => {
+    const user = userEvent.setup();
+    add('assistant', 'Pix preparado', 'pagamentos');
+    renderChat();
+    await entrarNaConversa(user, 'Financeiro');
+    expect(await screen.findByText('Pix preparado')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Voltar para as conversas' }));
+    expect(await screen.findByRole('button', { name: /Todas as mensagens/ })).toBeInTheDocument();
   });
 });
 
@@ -370,7 +419,7 @@ describe('AssistenteChat — app Android', () => {
 
   it('chat já aberto: o aviso do shareIntake traz o conteúdo na hora', async () => {
     renderChat('embedded');
-    await screen.findByText(/Pode falar/);
+    await screen.findByRole('button', { name: /Todas as mensagens/ });
     compartilhar({ kind: 'texto', texto: 'segue o cupom' });
     window.dispatchEvent(new Event('erpos-share'));
     await waitFor(() => expect(screen.getByPlaceholderText('Mensagem')).toHaveValue('segue o cupom'));
@@ -389,6 +438,7 @@ describe('AssistenteChat — contexto da tela e do registro apontado', () => {
     const user = userEvent.setup();
     setFocoTela({ tipo: 'tela_contas_a_pagar', titulo: 'Contas a pagar — Setembro/2026', dados: { pendente: 4320, apos_filtros: 3 } });
     renderChat();
+    await entrarNaConversa(user);
     await screen.findByText(/Pode falar/);
     // O botão de uma linha da tabela: o item vai junto e o texto sugerido cai na caixa.
     perguntarAoAssistente(
@@ -408,6 +458,7 @@ describe('AssistenteChat — contexto da tela e do registro apontado', () => {
   it('o registro apontado vale para UMA mensagem, não gruda na seguinte', async () => {
     const user = userEvent.setup();
     renderChat();
+    await entrarNaConversa(user);
     await screen.findByText(/Pode falar/);
     perguntarAoAssistente({ tipo: 'conta_a_pagar', id: 'b-1', titulo: 'Conta da Ambev' });
     await user.type(screen.getByPlaceholderText('Mensagem'), 'quanto é?');
@@ -439,6 +490,7 @@ describe('AssistenteChat — botão que leva à tela', () => {
         <Routes><Route path="/financeiro" element={<p>TELA FINANCEIRO</p>} /></Routes>
       </MemoryRouter>,
     );
+    await entrarNaConversa(user);
     await screen.findByText(/Pode falar/);
     await user.type(screen.getByPlaceholderText('Mensagem'), 'lança essa nota');
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
