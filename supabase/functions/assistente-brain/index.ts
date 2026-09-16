@@ -1711,7 +1711,12 @@ Deno.serve(async (req) => {
 - Antes de lançar, confira se a compra já existe (mesmo fornecedor e número do cupom, ou mesmo valor e data): se existir, não lance de novo — só avise.
 - Dúvida de insumo (dois candidatos, unidade estranha) → lance mesmo assim com os que casaram e pergunte o resto com botões; item sem insumo vai sem ingredient_id.
 - Responda ao Natalino em até 5 linhas: grupo, quem postou, fornecedor, total, forma de pagamento, itens casados/pendentes e se o estoque entrou.`;
+    // Chat DENTRO do ERPOS: a regra do botão fica AQUI, no fim do prompt, e não no bloco estável.
+    // Lá ela ficou enterrada entre dezenas de regras e o modelo seguiu mandando "vá na aba DRE do
+    // Financeiro" por escrito, com a ferramenta disponível (visto em produção em 2026-09-16).
+    const NO_ERPOS = `Esta conversa está acontecendo DENTRO do ERPOS, na tela. Regra: toda vez que a sua resposta citar uma tela do sistema ("vá em", "fica na aba", "está em Financeiro › X"), chame abrir_tela e deixe o botão levar — caminho escrito é o que você faria no Telegram, aqui é um toque. Vale também logo depois de criar ou mudar algo que ele vai querer conferir. Um botão por resposta, dois no máximo.`;
     const systemDynamic = `Lojas do Natalino no ERPOS: ${lojas}.\n\nO que você já sabe (memórias):\n${memorias}`
+      + (channel === 'app' ? `\n\n${NO_ERPOS}` : '')
       + (body.modo === 'triagem_grupo' ? `\n\n${TRIAGEM_GRUPO}` : '')
       + (body.modo === 'entrada_compra_grupo' ? `\n\n${ENTRADA_COMPRA_GRUPO}` : '');
 

@@ -2252,3 +2252,16 @@ Duas decisões que valem para o futuro chat entre pessoas (a lista já nasce no 
   assunto anda sozinho, e ler "Todas as mensagens" sobe o piso e limpa as marcas.
 - **Quem já sabe do que se trata não passa pela lista.** Botão das telas, "Compartilhar" do Android
   e badge de assunto único entram direto na conversa; a lista é só para escolher.
+
+### Instrução nova no prompt do assistente: bloco estável × dinâmico (2026-09-16)
+
+`abrir_tela` foi publicada com a regra ("terminou em 'vá na tela tal'? use a ferramenta") dentro do
+`SYSTEM_STABLE`. Em produção, 3 minutos depois do deploy, o modelo respondeu **"o CMV fica na aba
+DRE do Financeiro"** em texto, com a ferramenta disponível e sem chamá-la. O bloco estável tem
+dezenas de regras e é cacheado por 1 h; uma linha nova ali compete com tudo o que veio antes.
+
+**Critério:** regra que depende de CANAL ou de MODO vai no `systemDynamic`, no fim do prompt e
+condicionada (`channel === 'app' ? …`). O estável fica para o que vale sempre. Barato de verificar
+depois: `select content from asst_messages where role='assistant'` — o `historyContent` registra
+`[Botão enviado: "…" → /rota]` quando a ferramenta rodou, então dá para saber se o modelo usou a
+ferramenta sem depender do relato de quem estava na tela.
