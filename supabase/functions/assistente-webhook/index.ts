@@ -332,7 +332,7 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
   const prompt = [
     tipo === 'compra'
       ? `[Sistema] Cupom/nota de compra postado no grupo "${attr(String(g.name ?? ''))}" sem pedido de pagamento (entrada de compra automática).`
-      : `[Sistema] Mensagem no grupo "${attr(String(g.name ?? ''))}" que parece pedido de pagamento (triagem automática).`,
+      : `[Sistema] Mensagem no grupo "${attr(String(g.name ?? ''))}" que parece pedido de pagamento (triagem automática). solicitacao_grupo_id = ${req.id}`,
     `<mensagem_do_grupo grupo="${attr(String(g.name ?? ''))}" autor="${attr(msg.sender ?? 'desconhecido')}" quando="${quando}">`,
     limpo,
     '</mensagem_do_grupo>',
@@ -352,6 +352,16 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
       return;
     }
     await avisarDono(admin, ownerChat, reply, actions);
+    // TODOS os pagamentos da mensagem apontam para o pedido (2026-09-16). Antes só o 1º era ligado
+    // (payment_id abaixo) e o 2º Pix da mesma mensagem ficava sem comprovante no grupo.
+    const ids = actions.filter((a) => a?.type === 'payment' && a?.id).map((a) => String(a.id));
+    if (ids.length) {
+      await admin.from('fin_inter_payments').update({ group_request_id: req.id }).in('id', ids).is('group_request_id', null)
+        .then(({ error: e }) => { if (e) log('WARN', 'ligar pagamentos ao pedido', { error: e.message }); });
+      // Diárias de freelancer registradas antes do vínculo acima: ficam sabendo de qual pedido vieram.
+      await admin.from('hr_freelancer_shifts').update({ group_request_id: req.id }).in('payment_id', ids).is('group_request_id', null)
+        .then(({ error: e }) => { if (e) log('WARN', 'ligar diárias ao pedido', { error: e.message }); });
+    }
     await admin.from('asst_group_requests').update({
       status: pagamento ? 'preparado' : 'incompleto', payment_id: pagamento ? String(pagamento.id) : null,
       reply: reply.slice(0, 2000), notified_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -362,6 +372,55 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
     log('ERROR', 'triagem de pagamento falhou', { group: g.name, error: errMsg(e) });
     // O dono precisa saber que chegou um pedido mesmo quando a triagem quebra.
     await avisarDono(admin, ownerChat, `Chegou um pedido de pagamento no grupo *${g.name}*${msg.sender ? ` (${msg.sender})` : ''} e eu não consegui preparar: ${errMsg(e).slice(0, 160)}. Dá uma olhada lá.`, []).catch(() => {});
+  }
+}
+
+// ── Dias de freelancer pelo grupo (2026-09-16) ──
+// Pagamento de freelancer sem os dias → o assistente perguntou no grupo. A resposta ("trabalhou dia
+// 15 e 16") não tem cara de pedido de pagamento e nunca chegava ao assistente. Enquanto o grupo
+// tiver diária aguardando os dias, mensagem com cara de data vai para o brain (modo
+// 'dias_freelancer'). Filtro barato antes, para não chamar o modelo a cada conversa do grupo.
+const DIA_HINT = /\b(dia|dias|ontem|hoje|anteontem|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|fim de semana|\d{1,2}\s*\/\s*\d{1,2}|\d{1,2}\s+e\s+\d{1,2})\b/i;
+// deno-lint-ignore no-explicit-any
+async function triarDiasFreelancer(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { sender: string | null; content: string; sentAt: string }): Promise<boolean> {
+  if (!DIA_HINT.test(msg.content)) return false;
+  const ownerChat = ownerChatOf(cfg);
+  if (!ownerChat) return false;
+  const desde = new Date(Date.now() - 14 * 86400_000).toISOString();
+  const { data: reqs } = await admin.from('asst_group_requests').select('id').eq('group_jid', g.group_jid).gte('created_at', desde);
+  const reqIds = (reqs ?? []).map((r) => r.id);
+  if (!reqIds.length) return false;
+  const { data: pend } = await admin.from('hr_freelancer_shifts')
+    .select('payment_id, amount, group_request_id, hr_freelancers(name)')
+    .in('group_request_id', reqIds).eq('status', 'aguardando_dias').limit(20);
+  if (!pend?.length) return false;
+
+  const limpo = msg.content.replace(/<\/?mensagem_do_grupo[^>]*>/gi, '').slice(0, 1500);
+  const attr = (v: string) => v.replace(/["<>]/g, ' ').slice(0, 80);
+  const quando = new Date(msg.sentAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const lista = pend.map((p) => {
+    // deno-lint-ignore no-explicit-any
+    const nome = (p as any).hr_freelancers?.name ?? 'freelancer';
+    return `- ${nome}: pagamento_id ${p.payment_id}, R$ ${Number(p.amount).toFixed(2)}, pedido ${p.group_request_id}`;
+  }).join('\n');
+  const prompt = [
+    `[Sistema] Mensagem no grupo "${attr(String(g.name ?? ''))}", que tem freelancer aguardando os dias trabalhados.`,
+    `Aguardando os dias:\n${lista}`,
+    `<mensagem_do_grupo grupo="${attr(String(g.name ?? ''))}" autor="${attr(msg.sender ?? 'desconhecido')}" quando="${quando}">`,
+    limpo,
+    '</mensagem_do_grupo>',
+    'Siga as regras de DIAS DE FREELANCER PELO GRUPO.',
+  ].join('\n');
+  try {
+    const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: 'dias_freelancer' });
+    const reply = String(out?.reply ?? '').trim();
+    if (!reply || reply === 'NO_REPLY') return false;
+    await avisarDono(admin, ownerChat, reply, Array.isArray(out?.actions) ? out.actions : []);
+    log('INFO', 'dias de freelancer pelo grupo', { group: g.name });
+    return true;
+  } catch (e) {
+    log('WARN', 'dias de freelancer pelo grupo falhou', { group: g.name, error: errMsg(e) });
+    return false;
   }
 }
 
@@ -729,6 +788,9 @@ async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], 
   }
   // Mensagem repetida (webhook reenviado): já foi tratada, não triar de novo.
   if (messageId && !gravada?.length) return;
+
+  // Resposta com os dias de um freelancer que ficou pendente? Tratada, não é pedido novo.
+  if (await triarDiasFreelancer(admin, cfg, g, { sender, content, sentAt })) return;
 
   // Pedido de pagamento? A leitura da mídia manda quando existe; senão, o texto.
   const pedido = extracted?.pagamento
@@ -1141,9 +1203,10 @@ Deno.serve(async (req) => {
   let payload: unknown;
   try { payload = await req.json(); } catch { return json({ error: 'JSON inválido' }, 400); }
 
-  // Comprovante de pagamento no grupo (chamado pelo assistente-telegram quando o Inter
-  // confirma um pagamento ligado a um pedido de grupo). É a ÚNICA escrita em grupo: texto
-  // montado pelo código (não pelo modelo), só em grupo acompanhado, respondendo o pedido.
+  // Escrita em grupo, sempre respondendo a mensagem de um pedido e só em grupo acompanhado. Dois
+  // usos: comprovante de pagamento (assistente-telegram, texto montado pelo código) e, desde
+  // 2026-09-16, a pergunta dos dias trabalhados de freelancer (brain › responder_no_grupo, que só
+  // aceita pedido com diária aguardando os dias e pergunta uma vez por pedido).
   // deno-lint-ignore no-explicit-any
   const gs = payload as any;
   if (gs?.action === 'group_send') {

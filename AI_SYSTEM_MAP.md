@@ -2453,3 +2453,37 @@ pedido; o pedido só vira `pago` quando todos os pagamentos ligados a ele estão
 `solicitacao_grupo_id` informado, o brain liga mesmo que o pedido já tenha pagamento; sem id,
 continua adivinhando pelo valor só entre pedidos sem pagamento. `payment_id`/`receipt_sent_at` do
 pedido seguem gravados (1º pagamento) por compatibilidade; migração copiou os vínculos antigos.
+
+### Freelancers e diárias (2026-09-16)
+
+Pedido do dono: freela pago pelo grupo tem de virar despesa e o sistema tem de saber QUAIS DIAS cada
+um trabalhou; sem os dias na mensagem, o assistente pergunta no grupo. Decisões: cadastro SEPARADO
+(`hr_freelancers`), paga na hora e pergunta depois, uma linha por DIA (`hr_freelancer_shifts`),
+categoria RH existente.
+
+- **Opção A (o dono escolheu depois de ver o conflito):** UMA conta a pagar por Pix
+  (`reference_type='freelancer'`, RH, EM ABERTO — baixa pela conciliação) + diárias por dia. Uma conta
+  por dia não casaria com o débito único do Pix (a baixa casa 1 débito ↔ 1 conta de mesmo valor). No
+  DRE o gasto sai no dia do pagamento; custo por dia trabalhado sai das diárias.
+- **Lógica só no banco:** `fn_freelancer_registrar_pagamento(payment, dias[], funcao)` (idempotente; acha
+  o freelancer pela chave Pix/nome, cria a conta, divide o valor pelos dias — centavos no último),
+  `fn_freelancer_informar_dias`, `fn_freelancer_salvar`. Leitura por RLS `auth_is_member_of`; escrita
+  só pelas funções. Tela: Financeiro › Freelancers.
+- **Assistente:** ferramentas `registrar_freelancer`, `informar_dias_freelancer`, `responder_no_grupo`
+  (único texto do modelo que vai ao grupo: só pedido com diária aguardando os dias, uma vez por pedido).
+  Webhook: triagem manda `solicitacao_grupo_id`; liga TODOS os pagamentos da mensagem ao pedido (antes
+  só o 1º — o 2º ficava sem comprovante); mensagem com cara de data num grupo com diária pendente vai
+  para o brain em modo `dias_freelancer`.
+
+### Baixa pela conciliação casava com o débito ERRADO (2026-09-16)
+
+`brain › baixa_conciliada` aceitava qualquer débito de mesmo valor que a conciliação sugerisse para a
+conta — e a sugestão é por NOME + VALOR. Freela recebe o mesmo valor em dias diferentes: a conta da
+Joziane (Pix de 16/09) foi quitada com o Pix de 11/09, que era OUTRO pagamento (nunca registrado).
+
+**Correção:** o débito é achado pelo **E2E do Pix** (`fin_inter_payments.response.transacaoPix.endToEnd`
+= `raw.detalhes.endToEndId` do extrato); sem E2E, só débito a partir do dia do pagamento. Se a
+sugestão aponta para outro débito, solta a sugestão errada e reaponta antes de confirmar. Nova ação
+interna `desfazer_baixa {statement_id}` (mesmo `undo` da tela, com estorno). Caso real desfeito e
+refeito: conta da Joziane agora paga em 16/09 com o débito de 16/09; o de 11/09 voltou a pendente.
+**Critério:** pagamento feito pelo sistema identifica o extrato pelo E2E, nunca por nome + valor.

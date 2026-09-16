@@ -20,6 +20,7 @@ import ReceitasTab from './components/ReceitasTab';
 import NotasEntradaTab from './components/NotasEntradaTab';
 import ItensClassificacaoTab from './components/ItensClassificacaoTab';
 import IfoodTab from './components/IfoodTab';
+import FreelancersTab from './components/FreelancersTab';
 
 const TABS = [
   { id: 'visao', label: 'Visão Geral', icon: 'ri-dashboard-line' },
@@ -35,6 +36,7 @@ const TABS = [
   { id: 'itens', label: 'Classificação de Itens', icon: 'ri-price-tag-3-line' },
   { id: 'rh', label: 'RH / Folha', icon: 'ri-team-line' },
   { id: 'rh-relatorio', label: 'Relatório RH', icon: 'ri-bar-chart-grouped-line' },
+  { id: 'freelancers', label: 'Freelancers', icon: 'ri-user-star-line' },
   { id: 'centros', label: 'Centro de Custos', icon: 'ri-pie-chart-line' },
   { id: 'dre', label: 'DRE', icon: 'ri-file-chart-line' },
   { id: 'contas-vencidas', label: 'Contas Vencidas', icon: 'ri-alarm-warning-line' },
@@ -140,6 +142,7 @@ export default function FinanceiroPage() {
         {activeTab === 'compras' && <ComprasTab highlightId={highlightPurchaseId} onHighlightConsumed={handleClearHighlight} />}
         {activeTab === 'rh' && <RHTab />}
         {activeTab === 'rh-relatorio' && <RHRelatorioTab />}
+        {activeTab === 'freelancers' && <FreelancersTab />}
         {activeTab === 'centros' && <CentroCustosTab />}
         {activeTab === 'dre' && <DREContainer />}
         {activeTab === 'contas-vencidas' && <ContasVencidasPanel />}

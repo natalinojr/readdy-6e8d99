@@ -4,7 +4,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import QRCode from 'react-qr-code';
-import { type Empresa, type Nota, fmtBRL, fmtChave, fmtData, fmtDataHora, fmtDoc } from '../api';
+import { type Empresa, type Nota, fmtBRL, fmtChave, fmtData, fmtDataHora, fmtDoc, nomeArquivoNota } from '../api';
 
 const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -44,7 +44,7 @@ export function abrirDanfse(nota: Nota, empresa: Empresa) {
 
   const linha = (rotulo: string, valor: unknown) => `<div class="c"><span>${esc(rotulo)}</span><b>${esc(valor || '—')}</b></div>`;
 
-  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>DANFSe ${esc(numero)}</title>
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(nomeArquivoNota(empresa, nota))}</title>
 <style>
   @page { size: A4; margin: 10mm; }
   * { box-sizing: border-box; }

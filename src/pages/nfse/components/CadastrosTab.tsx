@@ -111,7 +111,7 @@ export function TomadorModal({ empresa, inicial, documentoInicial, onClose, onSa
           <label className={labelCls}>CPF ou CNPJ</label>
           <input className={inputCls} value={f.documento}
             onChange={(e) => { set('documento', e.target.value); if (soDigitos(e.target.value).length === 14) consultarCnpj(e.target.value); }}
-            onBlur={(e) => set('documento', fmtDoc(e.target.value))} />
+            onBlur={(e) => { set('documento', fmtDoc(e.target.value)); if (!f.nome.trim()) consultarCnpj(e.target.value); }} />
           {consultaCnpj && <p className="text-[11px] text-zinc-400 mt-0.5">{consultaCnpj}</p>}
         </div>
         <div className="md:col-span-4">

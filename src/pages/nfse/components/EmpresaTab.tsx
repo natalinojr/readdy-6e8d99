@@ -3,20 +3,20 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { avisar, confirmar } from '@/pages/contratacao/dialog';
 import {
-  type Empresa, type Membro, buscarCep, cnpjValido, fmtCep, fmtData, fmtDoc, inputCls, labelCls, lerArquivoBase64, nfseCall, soDigitos,
+  type Empresa, type Membro, NOME_ARQUIVO_CAMPOS, NOME_ARQUIVO_PADRAO, nomeArquivoNota, buscarCep, cnpjValido, fmtCep, fmtData, fmtDoc, inputCls, labelCls, lerArquivoBase64, nfseCall, soDigitos,
 } from '../api';
 
 type Form = {
   cnpj: string; razao_social: string; nome_fantasia: string; inscricao_municipal: string;
   cep: string; logradouro: string; numero: string; complemento: string; bairro: string;
   municipio_nome: string; uf: string; cod_municipio: string; fone: string; email: string;
-  op_simp_nac: number; reg_ap_trib_sn: number; reg_esp_trib: number; ambiente: number; serie: number; aliquota_simples: string;
+  op_simp_nac: number; reg_ap_trib_sn: number; reg_esp_trib: number; ambiente: number; serie: number; aliquota_simples: string; nome_arquivo_modelo: string;
 };
 
 const vazio: Form = {
   cnpj: '', razao_social: '', nome_fantasia: '', inscricao_municipal: '', cep: '', logradouro: '', numero: '', complemento: '',
   bairro: '', municipio_nome: '', uf: '', cod_municipio: '', fone: '', email: '',
-  op_simp_nac: 3, reg_ap_trib_sn: 1, reg_esp_trib: 0, ambiente: 2, serie: 1, aliquota_simples: '',
+  op_simp_nac: 3, reg_ap_trib_sn: 1, reg_esp_trib: 0, ambiente: 2, serie: 1, aliquota_simples: '', nome_arquivo_modelo: NOME_ARQUIVO_PADRAO,
 };
 
 const deEmpresa = (e: Empresa): Form => ({
@@ -25,6 +25,7 @@ const deEmpresa = (e: Empresa): Form => ({
   municipio_nome: e.municipio_nome ?? '', uf: e.uf ?? '', cod_municipio: e.cod_municipio, fone: e.fone ?? '', email: e.email ?? '',
   op_simp_nac: e.op_simp_nac, reg_ap_trib_sn: e.reg_ap_trib_sn ?? 1, reg_esp_trib: e.reg_esp_trib, ambiente: e.ambiente, serie: e.serie,
   aliquota_simples: e.aliquota_simples != null ? String(e.aliquota_simples) : '',
+  nome_arquivo_modelo: e.nome_arquivo_modelo || NOME_ARQUIVO_PADRAO,
 });
 
 function Secao({ titulo, desc, children }: { titulo: string; desc?: string; children: React.ReactNode }) {
@@ -197,6 +198,33 @@ export default function EmpresaTab({ empresa, souAdmin, onSalva }: Props) {
             <input className={inputCls} type="number" min={1} max={49999} value={f.serie} disabled={!editavel} onChange={(e) => set('serie', Number(e.target.value))} />
           </div>
         </div>
+      </Secao>
+
+      <Secao titulo="Nome dos arquivos" desc="Nome sugerido ao salvar o PDF (DANFSe) e ao baixar o XML de cada nota.">
+        <label className={labelCls}>Modelo</label>
+        <input className={inputCls} value={f.nome_arquivo_modelo} disabled={!editavel} maxLength={200}
+          onChange={(e) => set('nome_arquivo_modelo', e.target.value)} />
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {NOME_ARQUIVO_CAMPOS.map((c) => (
+            <button key={c.campo} type="button" disabled={!editavel} title={c.desc}
+              onClick={() => set('nome_arquivo_modelo', `${f.nome_arquivo_modelo}${f.nome_arquivo_modelo.endsWith(' ') || !f.nome_arquivo_modelo ? '' : ' '}${c.campo}`)}
+              className="px-2 h-7 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-[11px] font-mono text-zinc-700 cursor-pointer disabled:cursor-default">
+              {c.campo}
+            </button>
+          ))}
+          {f.nome_arquivo_modelo !== NOME_ARQUIVO_PADRAO && editavel && (
+            <button type="button" onClick={() => set('nome_arquivo_modelo', NOME_ARQUIVO_PADRAO)} className="px-2 h-7 text-[11px] font-bold text-sky-700 hover:underline cursor-pointer">
+              voltar ao padrão
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-zinc-500 mt-3">
+          Exemplo: <b className="text-zinc-800">{nomeArquivoNota(
+            { razao_social: f.razao_social || 'IDEAR PROJETOS COMPLEMENTARES LTDA', nome_fantasia: f.nome_fantasia || null, nome_arquivo_modelo: f.nome_arquivo_modelo },
+            { numero_nfse: '36', numero_dps: 36, tomador: { nome: 'GDS 16 EMPREENDIMENTOS IMOBILIARIOS LTDA', documento: '53729270000102' },
+              valor_servico: 12000, desconto_incondicionado: null, dh_processamento: '2026-09-01T18:38:46Z', dh_emissao: '2026-09-01T18:38:46Z', competencia: '2026-09-01' },
+          )}.pdf</b>
+        </p>
       </Secao>
 
       <Secao titulo="Ambiente">

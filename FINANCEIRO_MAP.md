@@ -728,3 +728,12 @@ Front: `ComprasTab.tsx` tem botão de editar (lápis) na coluna Ações — chec
 - **Fix (`purchase-write` › `applyIngredientConversions`, create e update):** item com insumo e SEM `units_per_package`/`pack_count`/`purchase_factor` explícitos → mesma unidade = 1; kg↔g e L↔ml = 1000; senão a embalagem do insumo (`purchase_unit` igual + `purchase_factor` ≠ 1). Não resolveu → entra 1:1 e a resposta traz `avisos_conversao` (o assistente pergunta). Recalcula `cost_per_base_unit`.
 - **Pegadinha do cadastro:** `stock-write upsert_ingredient` **ignora `current_stock` em edição** — saldo só muda por movimentação (`add_stock_movement`). Trocar a unidade de um insumo com saldo não converte o saldo.
 - Regra de cadastro: `unit` = unidade de uso na ficha técnica (g/ml/kg/un); `purchase_unit` + `purchase_factor` = embalagem (pacote 170 g → `g`, `un`, 170).
+
+
+## 9n. Freelancers e diárias + baixa pelo E2E (2026-09-16)
+
+- `hr_freelancers` / `hr_freelancer_shifts`: diária por dia trabalhado; pagamento de freela = UMA
+  `fin_accounts_payable` (`reference_type='freelancer'`, categoria RH, em aberto) quitada pela
+  conciliação. Entra em Despesas/DRE como qualquer conta paga (por `paid_date`). Aba Freelancers.
+- `baixa_conciliada` (assistente-brain) identifica o débito do extrato pelo E2E do Pix. Antes casava
+  por nome + valor e podia quitar a conta com um Pix antigo da mesma pessoa. Detalhes no AI_SYSTEM_MAP.

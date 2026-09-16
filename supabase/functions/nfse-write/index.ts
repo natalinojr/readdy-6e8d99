@@ -260,6 +260,7 @@ Deno.serve(async (req: Request) => {
         ambiente: Number(d.ambiente ?? 2) === 1 ? 1 : 2,
         serie: Number(d.serie ?? 1),
         aliquota_simples: d.aliquota_simples === '' || d.aliquota_simples == null ? null : Number(d.aliquota_simples),
+        nome_arquivo_modelo: texto(d.nome_arquivo_modelo)?.slice(0, 200) ?? null,
         updated_at: new Date().toISOString(),
       };
       if (!cnpjValido(row.cnpj as string)) return fail('CNPJ inválido');

@@ -30,9 +30,10 @@ export interface Empresa {
   cert_documento: string | null;
   cert_validade: string | null;
   cert_atualizado_em: string | null;
+  nome_arquivo_modelo: string | null;
 }
 // nfse_empresas não libera select(*) (ids do Vault ficam de fora): sempre listar as colunas.
-export const EMPRESA_COLS = 'id, cnpj, razao_social, nome_fantasia, inscricao_municipal, cod_municipio, municipio_nome, uf, cep, logradouro, numero, complemento, bairro, fone, email, op_simp_nac, reg_ap_trib_sn, reg_esp_trib, ambiente, serie, proximo_dps_producao, proximo_dps_testes, aliquota_simples, cert_titular, cert_documento, cert_validade, cert_atualizado_em';
+export const EMPRESA_COLS = 'id, cnpj, razao_social, nome_fantasia, inscricao_municipal, cod_municipio, municipio_nome, uf, cep, logradouro, numero, complemento, bairro, fone, email, op_simp_nac, reg_ap_trib_sn, reg_esp_trib, ambiente, serie, proximo_dps_producao, proximo_dps_testes, aliquota_simples, cert_titular, cert_documento, cert_validade, cert_atualizado_em, nome_arquivo_modelo';
 
 export interface Tomador {
   id: string;
@@ -198,6 +199,46 @@ export async function buscarCep(cep: string): Promise<{ logradouro: string; bair
   } catch {
     return null;
   }
+}
+
+// ─── Nome dos arquivos (PDF/XML) ─────────────────────────────────────────────
+export const NOME_ARQUIVO_PADRAO = 'NF {numero} {emitente}_{tomador}_{valor} {data}';
+export const NOME_ARQUIVO_CAMPOS: { campo: string; desc: string }[] = [
+  { campo: '{numero}', desc: 'número da NFS-e' },
+  { campo: '{emitente}', desc: 'primeira palavra da empresa (nome fantasia ou razão social)' },
+  { campo: '{emitente_completo}', desc: 'razão social inteira' },
+  { campo: '{tomador}', desc: 'nome do tomador' },
+  { campo: '{cnpj_tomador}', desc: 'CPF/CNPJ do tomador, só números' },
+  { campo: '{valor}', desc: 'valor líquido, ex.: 12.000,00' },
+  { campo: '{data}', desc: 'data de emissão, ex.: 01.09.26' },
+  { campo: '{competencia}', desc: 'data da competência, ex.: 01.09.26' },
+];
+
+type DadosNome = Pick<Nota, 'numero_nfse' | 'numero_dps' | 'tomador' | 'valor_servico' | 'desconto_incondicionado' | 'dh_processamento' | 'dh_emissao' | 'competencia'>;
+
+/** Monta o nome do arquivo (sem extensão) pelo modelo da empresa. Remove caracteres proibidos no Windows. */
+export function nomeArquivoNota(empresa: Pick<Empresa, 'razao_social' | 'nome_fantasia' | 'nome_arquivo_modelo'>, nota: DadosNome) {
+  const ddmmaa = (iso: string | null | undefined) => {
+    if (!iso) return '';
+    const d = iso.length === 10 ? new Date(`${iso}T12:00:00`) : new Date(iso);
+    const p = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: '2-digit' }).formatToParts(d);
+    const v = (t: string) => p.find((x) => x.type === t)?.value ?? '';
+    return `${v('day')}.${v('month')}.${v('year')}`;
+  };
+  const base = (empresa.nome_fantasia || empresa.razao_social || '').trim();
+  const valores: Record<string, string> = {
+    '{numero}': nota.numero_nfse ?? `DPS${nota.numero_dps}`,
+    '{emitente}': base.split(/\s+/)[0] ?? '',
+    '{emitente_completo}': empresa.razao_social ?? '',
+    '{tomador}': nota.tomador?.nome ?? 'SEM TOMADOR',
+    '{cnpj_tomador}': soDigitos(nota.tomador?.documento),
+    '{valor}': (Number(nota.valor_servico) - Number(nota.desconto_incondicionado ?? 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    '{data}': ddmmaa(nota.dh_processamento ?? nota.dh_emissao),
+    '{competencia}': ddmmaa(nota.competencia),
+  };
+  const modelo = empresa.nome_arquivo_modelo?.trim() || NOME_ARQUIVO_PADRAO;
+  const nome = modelo.replace(/\{[a-z_]+\}/g, (m) => valores[m] ?? m);
+  return nome.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 180) || 'NFS-e';
 }
 
 /** Dados públicos do CNPJ (BrasilAPI, grátis, espelho da Receita). CPF não tem consulta pública. */

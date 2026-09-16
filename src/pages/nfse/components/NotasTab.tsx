@@ -4,13 +4,23 @@ import { supabase } from '@/lib/supabase';
 import { avisar, confirmar } from '@/pages/contratacao/dialog';
 import {
   type Empresa, type ErroSefin, type Nota, type Servico, type StatusNota, type Tomador,
-  STATUS_CLASS, STATUS_LABEL, baixarTexto, fmtBRL, fmtChave, fmtData, fmtDataHora, fmtDoc, inputCls, labelCls, nfseCall, soDigitos,
+  STATUS_CLASS, STATUS_LABEL, baixarTexto, nomeArquivoNota, fmtBRL, fmtChave, fmtData, fmtDataHora, fmtDoc, inputCls, labelCls, nfseCall, soDigitos,
 } from '../api';
 import { Modal, TomadorModal } from './CadastrosTab';
 import { abrirDanfse } from './danfse';
 
 const mesAtual = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 7);
 const hojeBR = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+
+// Rejeições comuns com o que o usuário precisa fazer (a mensagem da Sefin é técnica).
+const DICAS: Record<string, string> = {
+  E0116: 'Preencha a Inscrição Municipal da empresa na aba Empresa (está no alvará ou com o contador) e emita de novo.',
+  E0160: 'A situação no Simples Nacional da aba Empresa não bate com a Receita. Confira com o contador.',
+  E0712: 'Empresa ME/EPP: confira a situação no Simples na aba Empresa.',
+  E0310: 'O código de tributação nacional do serviço não existe. Corrija na aba Serviços.',
+  E0314: 'O código municipal do serviço não é aceito pela prefeitura. Deixe em branco na aba Serviços.',
+  E0008: 'Relógio: tente emitir de novo em 1 minuto.',
+};
 
 function ListaErros({ erros }: { erros: ErroSefin[] | null | undefined }) {
   if (!erros?.length) return null;
@@ -19,6 +29,7 @@ function ListaErros({ erros }: { erros: ErroSefin[] | null | undefined }) {
       {erros.map((e, i) => (
         <li key={i} className="text-xs text-red-700">
           {e.codigo && <b className="mr-1">{e.codigo}</b>}{e.descricao}{e.complemento ? ` — ${e.complemento}` : ''}
+          {e.codigo && DICAS[e.codigo] && <span className="block mt-0.5 font-semibold text-red-800">👉 {DICAS[e.codigo]}</span>}
         </li>
       ))}
     </ul>
@@ -248,7 +259,7 @@ function NotaDetalhe({ notaId, empresa, souAdmin, onClose, onMudou }: { notaId: 
     <Modal titulo={nota.numero_nfse ? `NFS-e nº ${nota.numero_nfse}` : `DPS nº ${nota.numero_dps}`} onClose={onClose}
       rodape={<>
         {nota.xml_nfse && (
-          <button onClick={() => baixarTexto(`NFSe-${nota.chave_acesso ?? nota.id_dps}.xml`, nota.xml_nfse!)}
+          <button onClick={() => baixarTexto(`${nomeArquivoNota(empresa, nota)}.xml`, nota.xml_nfse!)}
             className="px-3 h-10 rounded-xl border border-zinc-200 text-xs font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer">XML</button>
         )}
         {(nota.status === 'autorizada' || nota.status === 'cancelada') && (

@@ -289,3 +289,7 @@ as $$
 $$;
 revoke all on function public.fn_nfse_membros(uuid) from public, anon;
 grant execute on function public.fn_nfse_membros(uuid) to authenticated;
+
+-- Modelo do nome dos arquivos (PDF/XML) da nota, por empresa. Vazio = padrão do sistema.
+alter table public.nfse_empresas add column if not exists nome_arquivo_modelo text;
+grant select (nome_arquivo_modelo) on public.nfse_empresas to authenticated;
