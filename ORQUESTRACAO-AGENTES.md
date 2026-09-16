@@ -2,7 +2,9 @@
 
 Data: 2026-09-15. Estado: **Fase 0.1 FEITA em 2026-09-15** (`scripts/check.mjs`, `scripts/baseline.json`,
 hooks em `.claude/settings.json`, 15 testes velhos reescritos, bug de `getPeriodoAnterior` corrigido).
-Próximo: Fase 0.3 (checklists por módulo, exige o dono) e Fase 0.2 (fila de erros). Detalhes do
+**Fase 0.3 em revisão**: `TESTES-CHECKLIST.md` rascunhado em 2026-09-15 (15 módulos, ~110 passos,
+8 perguntas ❓ para o dono); vira "FEITA" quando o dono revisar. Descoberta: o **Modo Treino**
+(`is_training`) é o ambiente seguro para rodar checklists em produção. Próximo: Fase 0.2 (fila de erros). Detalhes do
 verificador em `AI_SYSTEM_MAP.md` › "Verificador determinístico".
 
 ## 1. Diagnóstico — por que hoje depende do dono

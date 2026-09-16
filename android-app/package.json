@@ -11,6 +11,7 @@
     "@capacitor/android": "8.5.2",
     "@capacitor/core": "8.5.2",
     "@capacitor/filesystem": "8.1.3",
+    "@capacitor/keyboard": "8.0.5",
     "@capacitor/push-notifications": "8.1.2",
     "@capgo/capacitor-native-biometric": "8.6.10",
     "send-intent": "7.0.0"

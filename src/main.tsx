@@ -6,9 +6,14 @@ import App from './App.tsx'
 import { supabase } from './lib/supabase'
 import { registerServiceWorker } from './lib/pwa'
 import { installNumberInputFix } from './lib/numberInputFix'
+import { installShareIntake } from './lib/shareIntake'
 
 // Campos numéricos: seleciona ao focar e tira o zero grudado na frente ("014")
 installNumberInputFix()
+
+// App Android: "Compartilhar" (foto/PDF/texto) → chat do assistente. Tem que ser aqui, antes de
+// qualquer tela: o app abre na última rota usada (às vezes /modulos, sem chat) e o conteúdo se perdia.
+installShareIntake()
 
 // ── Rede de segurança: captura erros de refresh token do Supabase que
 //    escapem do try-catch interno. Ao invés de redirecionar bruscamente,

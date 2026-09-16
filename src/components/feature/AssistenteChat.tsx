@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { SHARE_KEY, type SharePayload } from '@/lib/shareIntake';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -223,43 +224,33 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [aba, setAba] = useState('');
   const abaRef = useRef('');
 
-  // App Android (android-app/, Capacitor): foto/PDF/texto vindos do "Compartilhar" do celular abrem o
-  // chat já com o anexo ou o texto. No navegador/PWA não existe window.Capacitor e nada acontece.
-  // Plugins chamados por window.Capacitor.Plugins (nada de Capacitor no bundle da web).
+  // "Compartilhar" do Android: quem recebe é o src/lib/shareIntake, no início do app (main.tsx) —
+  // o app abre na última rota usada, às vezes sem chat nenhum na tela, e o conteúdo se perdia
+  // (2026-09-15). Ele guarda no sessionStorage e manda para /assistente; aqui só consumimos.
   useEffect(() => {
-    // Vale nas duas versões: na tela Assistente o chat já está aberto (embedded) e era por aí que
-    // o app entrava quando o compartilhamento não chegava na conversa (2026-09-15).
     if (user?.email?.toLowerCase() !== ASSISTENTE_OWNER_EMAIL) return;
-    type Shared = { title?: string; description?: string; type?: string; url?: string };
-    const plugins = (window as unknown as { Capacitor?: { Plugins?: Record<string, { [k: string]: (a?: unknown) => Promise<unknown> }> } }).Capacitor?.Plugins;
-    const si = plugins?.SendIntent;
-    const fs = plugins?.Filesystem;
-    if (!si) return;
-    const receber = async () => {
-      let r: Shared | null = null;
-      try { r = (await si.checkSendIntentReceived()) as Shared; } catch { return; }
-      if (!r || (!r.url && !r.title && !r.description)) return;
+    const consumir = () => {
+      let cru: string | null = null;
+      try { cru = sessionStorage.getItem(SHARE_KEY); } catch { return; }
+      if (!cru) return;
+      try { sessionStorage.removeItem(SHARE_KEY); } catch { /* sem storage */ }
+      let p: SharePayload;
+      try { p = JSON.parse(cru) as SharePayload; } catch { return; }
       setOpen(true);
-      const tipo = String(r.type ?? '');
-      if (r.url && fs && (tipo.startsWith('image/') || tipo === 'application/pdf')) {
-        try {
-          const f = (await fs.readFile({ path: decodeURIComponent(r.url) })) as { data: string };
-          const bin = atob(f.data);
-          const bytes = new Uint8Array(bin.length);
-          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-          const nome = r.title || (tipo === 'application/pdf' ? 'documento.pdf' : 'foto.jpg');
-          escolherArquivo(new File([bytes], nome, { type: tipo }));
-        } catch { setErro('Não consegui abrir o arquivo compartilhado.'); }
-      } else {
-        const t = [r.title, r.description, r.url].filter(Boolean).join('\n').trim();
-        if (t) setText((prev) => (prev ? `${prev}\n${t}` : t));
-      }
+      if (p.kind === 'texto') { setText((prev) => (prev ? `${prev}\n${p.texto}` : p.texto)); return; }
+      try {
+        const bin = atob(p.base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        escolherArquivo(new File([bytes], p.nome, { type: p.media_type }));
+      } catch { setErro('Não consegui abrir o arquivo compartilhado.'); }
     };
-    receber();
-    window.addEventListener('sendIntentReceived', receber);
-    return () => window.removeEventListener('sendIntentReceived', receber);
+    consumir();
+    // App já aberto na tela do assistente: o shareIntake avisa por evento.
+    window.addEventListener('erpos-share', consumir);
+    return () => window.removeEventListener('erpos-share', consumir);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variant, user?.email]);
+  }, [user?.email]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const lastId = useRef(0);
@@ -591,6 +582,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             rows={1}
             placeholder={recording ? 'Gravando… toque no microfone para enviar' : 'Mensagem'}
             disabled={!!recording}
+            // Teclado do celular como em qualquer app de conversa: maiúscula no começo da frase,
+            // correção e sugestões em português (sem isso o WebView abre o teclado "cru").
+            lang="pt-BR"
+            inputMode="text"
+            enterKeyHint="enter"
+            autoCapitalize="sentences"
+            autoCorrect="on"
+            spellCheck
             className="flex-1 min-w-0 max-h-32 resize-none px-3 py-2.5 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-violet-400 [field-sizing:content]"
           />
           {text.trim() || attach ? (

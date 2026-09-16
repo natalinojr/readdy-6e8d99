@@ -189,7 +189,10 @@ Deno.serve(async (req) => {
         return fail(`Deu erro do meu lado: ${e.slice(0, 200)}`, 502);
       }
       log('INFO', 'respondido', { ms: Date.now() - started, tools: (out.tool_calls ?? []).map((t: { name: string }) => t.name), actions: (out.actions ?? []).map((a: { type: string }) => a.type) });
-      return json({ success: true, data: { reply: String(out.reply), actions: Array.isArray(out.actions) ? out.actions : [], tool_calls: out.tool_calls ?? [], transcricao } });
+      // NO_REPLY é o modo silencioso da triagem de grupo. No chat ele aparecia como "nenhuma
+      // resposta" (aconteceu com um áudio em 2026-09-15): aqui a conversa sempre responde algo.
+      const reply = String(out.reply) === 'NO_REPLY' ? 'Ok 👍' : String(out.reply);
+      return json({ success: true, data: { reply, actions: Array.isArray(out.actions) ? out.actions : [], tool_calls: out.tool_calls ?? [], transcricao } });
     }
 
     if (action === 'payments') {

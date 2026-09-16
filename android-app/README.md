@@ -69,9 +69,18 @@ Se algum dia precisar refazer:
 - **Microfone não gravava**: `RECORD_AUDIO` é permissão "perigosa" — no manifesto não basta. A
   `MainActivity` agora pede a permissão no `onCreate` e libera o pedido do WebView
   (`onPermissionRequest`) quando o app já tem a permissão.
-- **Compartilhar não chegava na conversa**: o app abre na última tela; em `/assistente` o chat é o
-  embutido e o `send-intent` só era tratado no chat flutuante. Agora vale nos dois (teste em
-  `src/test/components/assistenteChat.test.tsx`).
+- **Compartilhar não chegava na conversa** (2 rodadas): o app abre na ÚLTIMA rota usada — muitas
+  vezes `/modulos`, onde o `AssistenteChat` nem é montado —, então tratar o `send-intent` dentro do
+  chat nunca ia funcionar. Agora quem recebe é **`src/lib/shareIntake.ts`**, chamado no `main.tsx`
+  antes de qualquer tela: guarda o conteúdo em `sessionStorage` (`erpos_share_intent`) e manda o app
+  para `/assistente`; o chat consome ao montar (ou pelo evento `erpos-share`, se já estiver aberto).
+  Testes: `src/test/lib/shareIntake.test.ts` e `src/test/components/assistenteChat.test.tsx`.
+- **Teclado "cru"**: a caixa de mensagem agora declara `lang=pt-BR`, `autoCapitalize`, `autoCorrect`,
+  `spellCheck` e `inputMode=text` (o WebView sem isso abre o teclado sem sugestões nem maiúscula), e
+  o app usa o plugin **`@capacitor/keyboard`** (`resize: native`) para a tela subir junto com o teclado.
+- **Áudio sem resposta**: o microfone e o Whisper funcionaram, mas o modelo respondeu `NO_REPLY` (o
+  modo silencioso da triagem de grupo) e o chat mostrou nada. A `assistente-app` agora troca
+  `NO_REPLY` por "Ok 👍" — no chat, conversa sempre responde.
 
 ## Pendente
 

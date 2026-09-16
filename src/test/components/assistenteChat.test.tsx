@@ -256,37 +256,42 @@ describe('AssistenteChat — app Android', () => {
     expect(screen.getByPlaceholderText('PIN')).toBeInTheDocument();
   });
 
-  it('PDF vindo do "Compartilhar" abre o chat com o anexo pronto', async () => {
-    setCapacitor({
-      SendIntent: { checkSendIntentReceived: vi.fn().mockResolvedValue({ title: 'boleto-sacolao.pdf', type: 'application/pdf', url: 'file%3A%2F%2F%2Fcache%2Fboleto.pdf' }) },
-      Filesystem: { readFile: vi.fn().mockResolvedValue({ data: btoa('%PDF-1.4 teste') }) },
-    });
+  // Quem recebe o "Compartilhar" do Android é o src/lib/shareIntake (no início do app, ver
+  // src/test/lib/shareIntake.test.ts). Aqui testamos o outro lado: o chat consumindo o que ficou
+  // guardado. Antes o tratamento era dentro do chat e o conteúdo se perdia quando o app abria
+  // numa tela sem chat (2026-09-15).
+  const compartilhar = (p: Record<string, unknown>) => sessionStorage.setItem('erpos_share_intent', JSON.stringify(p));
+
+  it('PDF compartilhado abre o chat com o anexo pronto e é consumido uma vez só', async () => {
+    compartilhar({ kind: 'arquivo', nome: 'boleto-sacolao.pdf', media_type: 'application/pdf', base64: btoa('%PDF-1.4 teste') });
     renderChat('floating');
     expect(await screen.findByText('boleto-sacolao.pdf')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Enviar' })).toBeInTheDocument();
-    const fs = (window as unknown as { Capacitor: { Plugins: { Filesystem: { readFile: ReturnType<typeof vi.fn> } } } }).Capacitor.Plugins.Filesystem;
-    expect(fs.readFile).toHaveBeenCalledWith({ path: 'file:///cache/boleto.pdf' });
+    expect(sessionStorage.getItem('erpos_share_intent')).toBeNull();
   });
 
-  it('"Compartilhar" também funciona com o chat da tela Assistente (embutido)', async () => {
-    // O app abre na última tela: se foi /assistente, o chat é o embutido — era por aí que a
-    // imagem compartilhada não chegava na conversa (2026-09-15).
-    setCapacitor({
-      SendIntent: { checkSendIntentReceived: vi.fn().mockResolvedValue({ title: 'cupom.pdf', type: 'application/pdf', url: 'file%3A%2F%2F%2Fcache%2Fcupom.pdf' }) },
-      Filesystem: { readFile: vi.fn().mockResolvedValue({ data: btoa('%PDF-1.4 cupom') }) },
-    });
+  it('funciona também com o chat da tela Assistente (embutido)', async () => {
+    compartilhar({ kind: 'arquivo', nome: 'cupom.pdf', media_type: 'application/pdf', base64: btoa('%PDF-1.4 cupom') });
     renderChat('embedded');
     expect(await screen.findByText('cupom.pdf')).toBeInTheDocument();
   });
 
-  it('texto vindo do "Compartilhar" cai na caixa de mensagem', async () => {
-    setCapacitor({ SendIntent: { checkSendIntentReceived: vi.fn().mockResolvedValue({ description: 'Pague o boleto 34191.79001', type: 'text/plain' }) } });
+  it('texto compartilhado cai na caixa de mensagem', async () => {
+    compartilhar({ kind: 'texto', texto: 'Pague o boleto 34191.79001' });
     renderChat('floating');
     await waitFor(() => expect(screen.getByPlaceholderText('Mensagem')).toHaveValue('Pague o boleto 34191.79001'));
   });
 
+  it('chat já aberto: o aviso do shareIntake traz o conteúdo na hora', async () => {
+    renderChat('embedded');
+    await screen.findByText(/Pode falar/);
+    compartilhar({ kind: 'texto', texto: 'segue o cupom' });
+    window.dispatchEvent(new Event('erpos-share'));
+    await waitFor(() => expect(screen.getByPlaceholderText('Mensagem')).toHaveValue('segue o cupom'));
+  });
+
   it('sem nada compartilhado, o chat flutuante fica fechado', async () => {
-    setCapacitor({ SendIntent: { checkSendIntentReceived: vi.fn().mockResolvedValue({}) } });
+    sessionStorage.clear();
     renderChat('floating');
     expect(await screen.findByRole('button', { name: 'Falar com o assistente' })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Mensagem')).not.toBeInTheDocument();
