@@ -583,22 +583,24 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           <button onClick={() => fileRef.current?.click()} disabled={sending || !!recording} className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer" aria-label="Anexar foto ou PDF">
             <i className="ri-attachment-2 text-xl" />
           </button>
-          <textarea
+          {/* Campo de UMA linha, igual aos do delivery (que o dono aponta como o teclado certo):
+              em <textarea> o Android abre o "editor em tela cheia" do teclado quando o espaço é
+              apertado, e nenhuma marca do WebView evitou isso (16/09/2026). Enter envia. */}
+          <input
+            type="text"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(min-width: 640px)').matches) { e.preventDefault(); enviar(); } }}
-            rows={1}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); enviar(); } }}
             placeholder={recording ? 'Gravando… toque no microfone para enviar' : 'Mensagem'}
             disabled={!!recording}
-            // Teclado do celular como em qualquer app de conversa: maiúscula no começo da frase,
-            // correção e sugestões em português (sem isso o WebView abre o teclado "cru").
             lang="pt-BR"
             inputMode="text"
-            enterKeyHint="enter"
+            enterKeyHint="send"
             autoCapitalize="sentences"
             autoCorrect="on"
+            autoComplete="off"
             spellCheck
-            className="flex-1 min-w-0 max-h-32 resize-none px-3 py-2.5 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-violet-400 [field-sizing:content]"
+            className="flex-1 min-w-0 px-3 py-2.5 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-violet-400"
           />
           {text.trim() || attach ? (
             <button onClick={() => enviar()} disabled={sending} className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-40 cursor-pointer" aria-label="Enviar">
