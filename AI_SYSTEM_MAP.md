@@ -2370,3 +2370,14 @@ dispara `popstate` de verdade, e a camada de baixo — agora no topo — fechava
 fechava o chat inteiro. `voltarAndroid.ts` conta essas limpezas e um ouvinte único (registrado ao
 carregar o módulo, antes das camadas) marca o evento para ser ignorado. Teste prova: sem a correção
 falha, com ela passa.
+
+### Conciliação: período salvo por conta e "Atualizar bancos" só o que falta (2026-09-16)
+O "De" da aba Conciliação era sempre hoje − 30. Agora fica em `fin_bank_accounts.reconciliation_from`
+(actions `get_reconciliation_period` / `set_reconciliation_period` da `financial-write`). Na primeira
+leitura vale a conciliação mais antiga da conta; depois só muda pelo usuário — exceto se surgir
+conciliação mais antiga que `reconciliation_earliest` (a conhecida quando o "De" foi gravado), aí recua.
+"Atualizar bancos agora" busca só o que falta: Inter desde `last_sync_at`, iFood pelas competências
+padrão e Stone com `sync { date_from }` = dias sem `fin_stone_imports` com sucesso desde o "De"
+(dia já importado não é baixado de novo). "Buscar o período filtrado" continua reimportando tudo.
+Pegadinha da conciliação Stone×Inter: o arquivo v2 da Stone não traz bandeira/tipo e em maio/2026
+veio `advance_fee = 0`, então a separação antecipado × débito não fecha nesses dias (o total do dia fecha).
