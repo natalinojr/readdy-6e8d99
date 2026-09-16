@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import VisaoGeralFinTab from './components/VisaoGeralFinTab';
 import FluxoCaixaTab from './components/FluxoCaixaTab';
@@ -46,9 +46,23 @@ const TABS = [
 export default function FinanceiroPage() {
   const { user } = useAuth();
   const location = useLocation();
-  const initialTab = (location.state as { activeTab?: string } | null)?.activeTab ?? 'visao';
-  const [activeTab, setActiveTab] = useState(initialTab);
+  // Aba na URL (?tab=dre), como no Estoque e nas Configurações. Antes era só useState com
+  // location.state: quem chegava por link — inclusive o botão "Abrir DRE" do assistente
+  // (2026-09-16) — caía sempre na Visão Geral, e navegar já estando em /financeiro não fazia nada.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const daUrl = searchParams.get('tab');
+  const doState = (location.state as { activeTab?: string } | null)?.activeTab;
+  const valida = (t: string | null | undefined) => (t && (TABS.some((x) => x.id === t) || t === 'previsao') ? t : null);
+  const activeTab = valida(daUrl) ?? valida(doState) ?? 'visao';
+  const setActiveTab = (t: string) => setSearchParams({ tab: t }, { replace: true });
   const [highlightPurchaseId, setHighlightPurchaseId] = useState<string | undefined>();
+
+  // Chegou por location.state (telas antigas que navegam assim): passa para a URL uma vez, senão
+  // trocar de aba depois voltaria para a do state.
+  useEffect(() => {
+    if (!daUrl && valida(doState)) setSearchParams({ tab: String(doState) }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleNavigateToCompras = (purchaseId?: string) => {
     setHighlightPurchaseId(purchaseId);

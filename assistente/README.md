@@ -813,7 +813,10 @@ Conversa com o assistente **dentro do ERPOS**, somando ao Telegram (não substit
   painel para a barra); no Telegram, um botão de URL com `APP_URL` (secret; padrão
   https://erpos.vercel.app). A rota é validada contra `TELAS_APP` no brain — lista fechada que
   espelha o `src/router`; rota de fora ou com `//` é recusada. Depois de ler um cupom pelo chat do
-  ERPOS ele oferece `/financeiro?tab=compras`.
+  ERPOS ele oferece `/financeiro?tab=compras`. A regra de USAR o botão fica no prompt dinâmico
+  (`channel === 'app'`), não no bloco estável — lá ela ficou enterrada e o modelo continuou
+  mandando o caminho por escrito. Os ids das abas vão na descrição da ferramenta e são os ids, não
+  os rótulos (Contas a Pagar = `pagar`).
 - **Câmera direta (2026-09-16):** botão de câmera na caixa de texto (`capture="environment"`) para a
   notinha de balcão sem passar pela galeria. No desktop o navegador ignora o `capture`.
 - **Lista de conversas (2026-09-16):** as abas viraram uma LISTA estilo WhatsApp — o painel abre

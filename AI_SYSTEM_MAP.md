@@ -2265,3 +2265,19 @@ condicionada (`channel === 'app' ? …`). O estável fica para o que vale sempre
 depois: `select content from asst_messages where role='assistant'` — o `historyContent` registra
 `[Botão enviado: "…" → /rota]` quando a ferramenta rodou, então dá para saber se o modelo usou a
 ferramenta sem depender do relato de quem estava na tela.
+
+### Botão do assistente: dois defeitos que só aparecem em produção (2026-09-16)
+
+O botão `abrir_tela` passou a sair (ver a nota sobre prompt estável × dinâmico) e trouxe dois
+problemas que teste de componente não pegaria:
+
+1. **Aba do Financeiro não estava na URL.** `FinanceiroPage` guardava a aba em `useState` com
+   `location.state`; `/financeiro?tab=dre` caía na Visão Geral, e clicar no botão já estando em
+   `/financeiro` não fazia nada (mesma rota, estado não muda). Passou a ler/escrever `?tab=`, como
+   Estoque e Configurações já faziam. O id antigo `previsao` continua aceito. **Critério:** tela com
+   abas guarda a aba na URL — senão nenhum link (assistente, WhatsApp, favorito) chega na aba certa.
+   O id da aba também não é o rótulo: Contas a Pagar é `pagar`, não `contas`.
+2. **Marcador interno vazando no balão.** O brain grava `[Botão enviado: "…" → /rota]` no histórico
+   para saber o que já mandou; o chat limpava só os marcadores antigos (enquete, localização,
+   contato, pagamento) e o novo apareceu na tela do dono. Ao criar um marcador de histórico, incluir
+   no `replace` do balão — a lista está em `AssistenteChat.tsx`.

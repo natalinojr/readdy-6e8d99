@@ -260,7 +260,7 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object',
       properties: {
-        rota: { type: 'string', description: 'Caminho interno do ERPOS, começando com /. Com filtro quando ajudar. Telas: /dashboard, /financeiro (?tab=contas|receitas|compras|dre|fluxo|bancos), /pedidos, /estoque, /tarefas, /contratacao, /cardapio, /clientes, /relatorios, /gestor-pedidos, /gestor-entregas, /mesas, /usuarios, /configuracoes, /assistente. Nunca endereço de fora.' },
+        rota: { type: 'string', description: 'Caminho interno do ERPOS, começando com /. Telas: /dashboard, /pedidos, /tarefas, /contratacao, /cardapio, /clientes, /relatorios, /gestor-pedidos, /gestor-entregas, /mesas, /usuarios, /configuracoes, /assistente, /pdv/caixa. Com aba quando ajudar (o nome da aba é o id, não o rótulo): /financeiro?tab= visao|receitas|ifood|despesas|fluxo|pagar (Contas a Pagar)|receber|orcamentos|compras|notas-entrada|itens|rh|rh-relatorio|centros|dre|contas-vencidas|bancos|conciliacao|implantacao · /estoque?tab= insumos|movimentacoes|teorico|inventario|cmv|producao|consumo|fornecedores|validade. Nunca endereço de fora.' },
         texto: { type: 'string', description: 'O que escrever no botão, curto e concreto: "Abrir a compra da Ambev", "Ver as contas de amanhã".' },
       },
       required: ['rota', 'texto'],

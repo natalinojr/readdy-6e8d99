@@ -497,6 +497,16 @@ describe('AssistenteChat — botão que leva à tela', () => {
     await user.click(await screen.findByRole('button', { name: 'Abrir a compra da Ambev' }));
     expect(await screen.findByText('TELA FINANCEIRO')).toBeInTheDocument();
   });
+
+  it('o marcador do histórico não aparece no balão (só o botão)', async () => {
+    // O brain grava '[Botão enviado: "…" → /rota]' na mensagem para saber o que já mandou.
+    // Isso é anotação interna: apareceu na tela do dono em 2026-09-16.
+    add('assistant', 'Toca aí no botão que já cai direto na aba certa.\n[Botão enviado: "Abrir DRE" → /financeiro?tab=dre]');
+    renderChat();
+    await entrarNaConversa(userEvent.setup());
+    expect(await screen.findByText(/Toca aí no botão/)).toBeInTheDocument();
+    expect(screen.queryByText(/Botão enviado/)).not.toBeInTheDocument();
+  });
 });
 
 describe('AssistenteChat — badge do botão fechado', () => {

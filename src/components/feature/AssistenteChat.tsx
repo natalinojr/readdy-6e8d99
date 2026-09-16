@@ -757,7 +757,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             <div key={m.id} className="flex justify-start">
               <div className="max-w-[85%]">
                 <div className="rounded-2xl rounded-bl-md px-3.5 py-2 text-sm whitespace-pre-wrap break-words bg-white border border-zinc-200 text-zinc-800">
-                  {formatar(m.content.replace(/\n\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado)[^\n]*\]/g, ''))}
+                  {/* Marcadores que o brain grava no histórico para saber o que já mandou; o
+                      balão mostra a coisa em si (botões, cartão), não a anotação. */}
+                  {formatar(m.content.replace(/\n?\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado|Botão enviado)[^\n]*\]/g, '').trim())}
                   <div className="text-[10px] mt-1 text-zinc-400">{hora(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</div>
                 </div>
                 {/* Botão que LEVA à tela: a resposta deixa de terminar em "vá em Financeiro › ..."
