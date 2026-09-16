@@ -548,6 +548,56 @@ describe('AssistenteChat — botão que leva à tela', () => {
   });
 });
 
+// jsdom não tem PointerEvent: sem isto o fireEvent.pointer* sai sem clientX/clientY.
+if (typeof window !== 'undefined' && !('PointerEvent' in window)) {
+  class PointerEventTeste extends MouseEvent {
+    pointerId: number;
+    constructor(tipo: string, init: PointerEventInit = {}) { super(tipo, init); this.pointerId = init.pointerId ?? 0; }
+  }
+  (window as unknown as { PointerEvent: unknown }).PointerEvent = PointerEventTeste;
+}
+
+describe('AssistenteChat — botão redondo arrastável', () => {
+  // Pedido do dono (2026-09-16): era fixo no canto e "voltava para baixo" a cada vez que abria.
+  const arrastar = (el: HTMLElement, de: [number, number], para: [number, number]) => {
+    fireEvent.pointerDown(el, { clientX: de[0], clientY: de[1], pointerId: 1 });
+    fireEvent.pointerMove(el, { clientX: para[0], clientY: para[1], pointerId: 1 });
+    fireEvent.pointerUp(el, { clientX: para[0], clientY: para[1], pointerId: 1 });
+    fireEvent.click(el); // o navegador dispara o click depois de soltar
+  };
+  beforeEach(() => { try { localStorage.clear(); } catch { /* sem storage */ } });
+
+  it('arrastar move o botão, não abre o chat e a posição fica depois de abrir e fechar', async () => {
+    const user = userEvent.setup();
+    renderChat('floating');
+    const fab = await screen.findByRole('button', { name: 'Falar com o assistente' });
+    arrastar(fab, [990, 740], [200, 300]);
+
+    // Soltar não abriu nada e o botão foi para onde o dedo parou (centro - 28 px).
+    expect(screen.queryByPlaceholderText('Mensagem')).toBeNull();
+    expect(fab.style.left).toBe('172px');
+    expect(fab.style.top).toBe('272px');
+    expect(JSON.parse(localStorage.getItem('erpos-assistente-fab') ?? 'null')).toMatchObject({ fx: 200 / window.innerWidth });
+
+    // Abre (toque parado) e fecha: volta no MESMO lugar, não no canto.
+    await user.click(fab);
+    await user.click(await screen.findByRole('button', { name: 'Fechar chat' }));
+    const deNovo = await screen.findByRole('button', { name: 'Falar com o assistente' });
+    expect(deNovo.style.left).toBe('172px');
+    expect(deNovo.style.top).toBe('272px');
+  });
+
+  it('toque com um tremidinho (menos de 8 px) ainda abre o chat', async () => {
+    renderChat('floating');
+    const fab = await screen.findByRole('button', { name: 'Falar com o assistente' });
+    fireEvent.pointerDown(fab, { clientX: 500, clientY: 500, pointerId: 1 });
+    fireEvent.pointerMove(fab, { clientX: 503, clientY: 502, pointerId: 1 });
+    fireEvent.pointerUp(fab, { clientX: 503, clientY: 502, pointerId: 1 });
+    fireEvent.click(fab);
+    expect(await screen.findByPlaceholderText('Mensagem')).toBeInTheDocument();
+  });
+});
+
 describe('AssistenteChat — responder e copiar', () => {
   it('botão direito abre as ações; Responder cita a mensagem e manda o trecho junto', async () => {
     const user = userEvent.setup();

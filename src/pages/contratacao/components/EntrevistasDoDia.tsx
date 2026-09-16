@@ -62,6 +62,31 @@ export default function EntrevistasDoDia({ interviews, candidates, companies, st
   }, [interviews]);
   const doDia = porDia.get(dia) ?? [];
   const candOf = (id: string) => candidates.find((c) => c.id === id) ?? null;
+
+  // Presença confirmada pelo WhatsApp (2026-09-16, pedido do dono): o assistente pede a confirmação
+  // na véspera/manhã e grava em hiring_scheduling_sessions — a entrevista em si não sabe. Busca só as
+  // do dia aberto e atualiza de minuto em minuto, porque a resposta chega enquanto a tela está aberta.
+  const [presenca, setPresenca] = useState<Record<string, { confirmada: boolean; pedida: boolean }>>({});
+  const idsDoDia = doDia.map((iv) => iv.id).join(',');
+  useEffect(() => {
+    if (!idsDoDia) return;
+    let vivo = true;
+    const carregar = () => {
+      supabase.from('hiring_scheduling_sessions').select('interview_id, confirmed_at, confirm_requested_at')
+        .in('interview_id', idsDoDia.split(','))
+        .then(({ data }) => {
+          if (!vivo || !data) return;
+          const m: Record<string, { confirmada: boolean; pedida: boolean }> = {};
+          for (const s of data as Array<{ interview_id: string; confirmed_at: string | null; confirm_requested_at: string | null }>) {
+            m[s.interview_id] = { confirmada: !!s.confirmed_at, pedida: !!s.confirm_requested_at };
+          }
+          setPresenca(m);
+        });
+    };
+    carregar();
+    const t = setInterval(() => { if (!document.hidden) carregar(); }, 60000);
+    return () => { vivo = false; clearInterval(t); };
+  }, [idsDoDia]);
   const sel = doDia.find((iv) => iv.id === selId) ?? null;
 
   // Trocou o dia: abre a 1ª entrevista ainda não registrada (ou a 1ª do dia) — no computador.
@@ -124,7 +149,20 @@ export default function EntrevistasDoDia({ interviews, candidates, companies, st
                       className={`w-full text-left px-4 py-3 flex items-center gap-3 cursor-pointer ${iv.id === selId ? 'bg-violet-50' : 'hover:bg-zinc-50'} ${iv.status === 'cancelada' ? 'opacity-50' : ''}`}>
                       <span className="w-12 text-sm font-black text-zinc-900">{fmtTime(iv.scheduled_at)}</span>
                       <span className="flex-1 min-w-0">
-                        <span className="block text-sm font-semibold text-zinc-800 truncate">{c?.full_name ?? 'Candidato removido'}</span>
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-sm font-semibold text-zinc-800 truncate">{c?.full_name ?? 'Candidato removido'}</span>
+                          {/* Só enquanto a entrevista não aconteceu: depois o que importa é o registro. */}
+                          {iv.status === 'agendada' && presenca[iv.id]?.confirmada && (
+                            <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200" title="Confirmou presença pelo WhatsApp">
+                              <i className="ri-checkbox-circle-fill" /> Confirmou
+                            </span>
+                          )}
+                          {iv.status === 'agendada' && presenca[iv.id]?.pedida && !presenca[iv.id]?.confirmada && (
+                            <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200" title="O assistente pediu a confirmação e ainda não teve resposta">
+                              <i className="ri-time-line" /> Aguardando
+                            </span>
+                          )}
+                        </span>
                         <span className="block text-[11px] text-zinc-500 truncate">
                           {[c ? (ageOf(c) != null ? `${ageOf(c)} anos` : null) : null, c?.neighborhood || c?.city, preenchida ? 'registro preenchido' : null].filter(Boolean).join(' · ')}
                         </span>

@@ -124,6 +124,26 @@ function limparUser(content: string): { text: string; audio: boolean; arquivo: s
 const MARCADORES = /\n?\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado|Botão enviado)[^\n]*\]/g;
 const semMarcadores = (t: string) => t.replace(MARCADORES, '').trim();
 
+// Posição do botão redondo (2026-09-16): arrasta para onde quiser e ele fica lá — antes era fixo no
+// canto e "voltava para baixo" toda vez. Guardada como FRAÇÃO da tela (centro do botão), para
+// sobreviver a girar o celular e a janela de tamanhos diferentes. É conveniência deste aparelho:
+// fica no localStorage, e sem storage o botão só volta ao canto.
+const FAB_KEY = 'erpos-assistente-fab';
+const FAB_R = 28; // metade dos 56 px do botão
+const FAB_MARGEM = 8;
+type PosFab = { fx: number; fy: number };
+function lerPosFab(): PosFab | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(FAB_KEY) ?? 'null') as PosFab | null;
+    return v && Number.isFinite(v.fx) && Number.isFinite(v.fy) ? v : null;
+  } catch { return null; }
+}
+// Centro em px, sempre inteiro dentro da tela (a tela pode ter encolhido desde que foi salvo).
+function centroFab(x: number, y: number) {
+  const w = window.innerWidth, h = window.innerHeight, min = FAB_R + FAB_MARGEM;
+  return { x: Math.min(Math.max(x, min), w - min), y: Math.min(Math.max(y, min), h - min) };
+}
+
 function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: 'ok' | 'no' | 'st') => void }) {
   const aberto = ['draft', 'awaiting_pin'].includes(p.status);
   const andamento = ['sending', 'sent', 'pending_approval', 'approved', 'scheduled'].includes(p.status);
@@ -177,6 +197,18 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const open = modo !== 'fab';
   const setOpen = (v: boolean) => setModo(v ? 'full' : 'fab');
   const arrasteY = useRef(0);
+  // Arrastar o botão redondo: só vira arrasto depois de 8 px, senão um toque tremido não abriria.
+  const [posFab, setPosFab] = useState<PosFab | null>(() => lerPosFab());
+  const [arrastandoFab, setArrastandoFab] = useState<{ x: number; y: number } | null>(null);
+  const arrastoFab = useRef<{ x0: number; y0: number; moveu: boolean } | null>(null);
+  const ignorarCliqueFab = useRef(false);
+  const [, setTamanhoTela] = useState(0);
+  useEffect(() => {
+    // Girou o celular / redimensionou: recalcula para o botão não sair da tela.
+    const r = () => setTamanhoTela((n) => n + 1);
+    window.addEventListener('resize', r);
+    return () => window.removeEventListener('resize', r);
+  }, []);
   // Abertura da conversa: sobe deslizando (translate-y) em vez de aparecer de uma vez, e já entra
   // no fim do histórico — pedido do dono (2026-09-16).
   const [subindo, setSubindo] = useState(false);
@@ -920,14 +952,45 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Botão fechado. Com mensagem nova ele abre a CONVERSA (você vai ler) e já na aba do assunto;
   // sem novidade abre a barra pequena (você vai escrever), que é o de sempre.
   const temNovidade = naoLidas.count > 0;
+  // Onde desenhar: durante o arrasto segue o dedo; depois, a posição salva; sem nada, o canto.
+  const centro = arrastandoFab
+    ? centroFab(arrastandoFab.x, arrastandoFab.y)
+    : posFab ? centroFab(posFab.fx * window.innerWidth, posFab.fy * window.innerHeight) : null;
   return (
     <button
+      onPointerDown={(e) => {
+        arrastoFab.current = { x0: e.clientX, y0: e.clientY, moveu: false };
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* sem captura: segue igual */ }
+      }}
+      onPointerMove={(e) => {
+        const a = arrastoFab.current;
+        // Coordenada inválida (alguns navegadores/eventos sintéticos) nunca vira arrasto.
+        if (!a || !Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return;
+        if (!a.moveu && Math.hypot(e.clientX - a.x0, e.clientY - a.y0) < 8) return;
+        a.moveu = true;
+        setArrastandoFab({ x: e.clientX, y: e.clientY });
+      }}
+      onPointerUp={(e) => {
+        const a = arrastoFab.current;
+        arrastoFab.current = null;
+        if (!a?.moveu) return;
+        const c = centroFab(e.clientX, e.clientY);
+        const nova = { fx: c.x / window.innerWidth, fy: c.y / window.innerHeight };
+        setPosFab(nova);
+        setArrastandoFab(null);
+        try { localStorage.setItem(FAB_KEY, JSON.stringify(nova)); } catch { /* sem storage */ }
+        // O navegador ainda dispara o click depois de soltar: esse não abre o chat.
+        ignorarCliqueFab.current = true;
+      }}
+      onPointerCancel={() => { arrastoFab.current = null; setArrastandoFab(null); }}
       onClick={() => {
+        if (ignorarCliqueFab.current) { ignorarCliqueFab.current = false; return; }
         if (temNovidade && naoLidas.topic) { setAba(naoLidas.topic); setVista('conversa'); }
         else if (temNovidade) setVista('lista'); // veio de assuntos diferentes: escolha na lista
         setModo(temNovidade ? 'full' : 'mini');
       }}
-      className="fixed z-[55] bottom-5 right-5 w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center cursor-pointer"
+      style={centro ? { left: centro.x - FAB_R, top: centro.y - FAB_R, touchAction: 'none' } : { touchAction: 'none' }}
+      className={`fixed z-[55] ${centro ? '' : 'bottom-5 right-5'} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${arrastandoFab ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
       aria-label={temNovidade ? `Assistente: ${naoLidas.count} ${naoLidas.count === 1 ? 'mensagem nova' : 'mensagens novas'}` : 'Falar com o assistente'}
       title={naoLidas.previa ?? undefined}
     >

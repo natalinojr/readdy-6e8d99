@@ -2381,3 +2381,17 @@ padrão e Stone com `sync { date_from }` = dias sem `fin_stone_imports` com suce
 (dia já importado não é baixado de novo). "Buscar o período filtrado" continua reimportando tudo.
 Pegadinha da conciliação Stone×Inter: o arquivo v2 da Stone não traz bandeira/tipo e em maio/2026
 veio `advance_fee = 0`, então a separação antecipado × débito não fecha nesses dias (o total do dia fecha).
+
+### Chat: botão redondo arrastável + presença confirmada na aba Entrevistas (2026-09-16)
+
+- **Botão do assistente arrastável.** Era fixo em `bottom-5 right-5`, por isso "voltava para baixo"
+  toda vez. Agora arrasta (pointer events, `touch-action: none`) e a posição fica em
+  `localStorage['erpos-assistente-fab']` como FRAÇÃO da tela (sobrevive a girar o celular), sempre
+  presa dentro da tela. Só vira arrasto depois de 8 px (toque tremido continua abrindo) e o click
+  que o navegador dispara ao soltar é ignorado. A barra pequena de digitar continua embaixo, perto do
+  teclado. Teste: jsdom não tem `PointerEvent` — o teste define um, senão o evento sai sem
+  `clientX` (o código também ignora coordenada inválida).
+- **Entrevistas › "Confirmou".** A confirmação de presença fica em
+  `hiring_scheduling_sessions.confirmed_at`, não na entrevista. A aba busca as sessões do dia aberto
+  (e de minuto em minuto) e mostra "Confirmou" (verde) ou "Aguardando" (pedido enviado sem resposta)
+  ao lado do nome, só enquanto a entrevista está `agendada`.
