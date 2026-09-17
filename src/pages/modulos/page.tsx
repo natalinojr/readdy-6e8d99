@@ -579,8 +579,11 @@ export default function ModulosPage() {
           <p className="text-zinc-400 text-[11px] capitalize mt-0.5">{data}</p>
         </div>
 
-        <div className="flex items-center gap-2 ml-auto">
-          <div className="flex items-center gap-1.5 px-3 py-2 bg-white/70 rounded-xl border border-zinc-200 lg:hidden flex-shrink-0 backdrop-blur-sm">
+        {/* No celular a linha não cabia e cortava o usuário e o Sair (2026-09-16). Lá ficam só totens,
+            Admin Master e usuário: relógio (hora na barra do sistema), tela cheia (sem sentido no app) e
+            trocar loja (a etiqueta da loja logo abaixo já troca) aparecem a partir de sm. */}
+        <div className="flex items-center gap-2 ml-auto min-w-0">
+          <div className="hidden sm:flex lg:hidden items-center gap-1.5 px-3 py-2 bg-white/70 rounded-xl border border-zinc-200 flex-shrink-0 backdrop-blur-sm">
             <i className="ri-time-line text-amber-500 text-xs" />
             <span className="text-zinc-800 font-bold text-sm tabular-nums">{hora}</span>
           </div>
@@ -588,7 +591,7 @@ export default function ModulosPage() {
           {/* Maximizar tela */}
           <button
             onClick={toggleFullscreen}
-            className="flex items-center justify-center w-9 h-9 bg-white/70 hover:bg-zinc-100 border border-zinc-200 rounded-xl text-zinc-500 hover:text-zinc-700 transition-all cursor-pointer flex-shrink-0 backdrop-blur-sm"
+            className="hidden sm:flex items-center justify-center w-9 h-9 bg-white/70 hover:bg-zinc-100 border border-zinc-200 rounded-xl text-zinc-500 hover:text-zinc-700 transition-all cursor-pointer flex-shrink-0 backdrop-blur-sm"
             title={isFullscreen ? 'Restaurar tela' : 'Maximizar tela'}
           >
             <div className="w-4 h-4 flex items-center justify-center">
@@ -600,7 +603,7 @@ export default function ModulosPage() {
           {canSwitchTenant && (
             <button
               onClick={handleTrocarLoja}
-              className="flex items-center gap-1.5 px-3 py-2 bg-white/70 hover:bg-amber-50 border border-zinc-200 hover:border-amber-300 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex-shrink-0 backdrop-blur-sm group"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 bg-white/70 hover:bg-amber-50 border border-zinc-200 hover:border-amber-300 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex-shrink-0 backdrop-blur-sm group"
               title="Trocar de loja"
             >
               <div className="w-4 h-4 flex items-center justify-center text-zinc-400 group-hover:text-amber-500 transition-colors">

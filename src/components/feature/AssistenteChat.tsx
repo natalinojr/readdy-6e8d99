@@ -23,6 +23,12 @@ interface Poll { type: 'poll'; question: string; options: string[] }
 // do ERPOS: o botão chama navigate(), não abre nada de fora.
 interface Abrir { type: 'abrir'; rota: string; label: string }
 interface TopicoResumo { topic: string; unread: number; last: { role: string; content: string; created_at: string } | null }
+// Grupo do WhatsApp como conversa (2026-09-17): tudo que veio daquele grupo (pedido, cupom, resposta).
+interface GrupoResumo { group_jid: string; name: string; unread: number; last: { role: string; content: string; created_at: string } | null }
+// A conversa aberta é '' (todas), um assunto ('pagamentos'...) ou 'grupo:<jid>'. Vira o filtro da Edge.
+const PREFIXO_GRUPO = 'grupo:';
+const filtroConversa = (aba: string): Record<string, string> =>
+  aba.startsWith(PREFIXO_GRUPO) ? { group_jid: aba.slice(PREFIXO_GRUPO.length) } : aba ? { topic: aba } : {};
 
 // Os assuntos, na ordem em que aparecem na lista de conversas. 'geral' primeiro: é a conversa do
 // dia a dia. O id vazio não entra aqui — "Todas as mensagens" é uma linha à parte.
@@ -226,7 +232,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [modo, setModo] = useState<Modo>(variant === 'embedded' ? 'full' : 'fab');
   const open = modo !== 'fab';
   const setOpen = (v: boolean) => setModo(v ? 'full' : 'fab');
-  const arrasteY = useRef(0);
+  // null = este toque não conta como "puxar para abrir" (começou numa lista que rola, campo, botão).
+  const arrasteY = useRef<number | null>(null);
   // Arrastar o botão redondo: só vira arrasto depois de 8 px, senão um toque tremido não abriria.
   const [posFab, setPosFab] = useState<PosFab | null>(() => lerPosFab());
   const [arrastandoFab, setArrastandoFab] = useState<{ x: number; y: number } | null>(null);
@@ -291,6 +298,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // última mensagem, hora e não lidas por assunto. Toca num, entra na conversa; a seta volta.
   const [vista, setVista] = useState<'lista' | 'conversa'>('lista');
   const [conversas, setConversas] = useState<TopicoResumo[]>([]);
+  const [grupos, setGrupos] = useState<GrupoResumo[]>([]);
 
   // "Compartilhar" do Android: quem recebe é o src/lib/shareIntake, no início do app (main.tsx) —
   // o app abre na última rota usada, às vezes sem chat nenhum na tela, e o conteúdo se perdia
@@ -343,7 +351,11 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   }, []);
 
   const carregarConversas = useCallback(async () => {
-    try { setConversas((await call<{ topics: TopicoResumo[] }>('topics')).topics); } catch { /* lista é extra: a conversa continua */ }
+    try {
+      const r = await call<{ topics: TopicoResumo[]; groups?: GrupoResumo[] }>('topics');
+      setConversas(r.topics);
+      setGrupos(r.groups ?? []);
+    } catch { /* lista é extra: a conversa continua */ }
   }, []);
 
   // Entra num assunto (ou em "Todas as mensagens", com id vazio).
@@ -354,7 +366,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   const sincronizar = useCallback(async () => {
     if (!lastId.current) return;
-    try { merge((await call<{ messages: Msg[] }>('history', { after_id: lastId.current, topic: abaRef.current || undefined })).messages); } catch { /* tenta no próximo ciclo */ }
+    try { merge((await call<{ messages: Msg[] }>('history', { after_id: lastId.current, ...filtroConversa(abaRef.current) })).messages); } catch { /* tenta no próximo ciclo */ }
   }, [merge]);
 
   // Trocou de aba: recomeça a lista com o filtro novo.
@@ -391,8 +403,13 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if (!open || !isOwner || vista !== 'conversa' || !lastId.current) return;
     const topic = abaRef.current;
     setNaoLidas((n) => (topic && n.topic && n.topic !== topic ? n : { count: 0, topic: null, previa: null }));
-    setConversas((prev) => prev.map((c) => (!topic || c.topic === topic ? { ...c, unread: 0 } : c)));
-    call('seen', { id: lastId.current, ...(topic ? { topic } : {}) }).catch(() => { /* marca de novo no próximo ciclo */ });
+    const grupoAberto = topic.startsWith(PREFIXO_GRUPO) ? topic.slice(PREFIXO_GRUPO.length) : null;
+    if (grupoAberto) setGrupos((prev) => prev.map((g) => (g.group_jid === grupoAberto ? { ...g, unread: 0 } : g)));
+    else {
+      setConversas((prev) => prev.map((c) => (!topic || c.topic === topic ? { ...c, unread: 0 } : c)));
+      if (!topic) setGrupos((prev) => prev.map((g) => ({ ...g, unread: 0 })));
+    }
+    call('seen', { id: lastId.current, ...filtroConversa(topic) }).catch(() => { /* marca de novo no próximo ciclo */ });
   }, [open, isOwner, vista, msgs.length]);
 
   // Pagamentos esperando decisão aparecem na lista, na conversa e na barra pequena: a carga é
@@ -438,7 +455,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if (!open || loaded || !isOwner || vista !== 'conversa') return;
     (async () => {
       try {
-        const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { topic: abaRef.current || undefined });
+        const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { ...filtroConversa(abaRef.current) });
         setMsgs(h.messages); setHasMore(h.has_more);
         lastId.current = h.messages.length ? h.messages[h.messages.length - 1].id : 0;
         setLoaded(true); setErro(null); toBottom();
@@ -462,7 +479,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if (!primeiro) return;
     const el = scrollRef.current; const h0 = el?.scrollHeight ?? 0;
     try {
-      const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { before_id: primeiro.id, topic: abaRef.current || undefined });
+      const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { before_id: primeiro.id, ...filtroConversa(abaRef.current) });
       setMsgs((prev) => [...h.messages, ...prev]); setHasMore(h.has_more);
       requestAnimationFrame(() => { if (el) el.scrollTop = el.scrollHeight - h0; });
     } catch { /* ignora */ }
@@ -503,7 +520,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     try {
       const out = await call<{ reply: string; actions: Array<{ type: string } & Record<string, unknown>>; transcricao?: string | null }>('send', {
         text: `${prefixoCit}${t}`,
-        topic: abaRef.current || undefined,
+        topic: abaRef.current && !abaRef.current.startsWith(PREFIXO_GRUPO) ? abaRef.current : undefined,
         ...(anexo ? { attachment: { base64: anexo.base64, media_type: anexo.media_type } } : {}),
         ...(audio ? { audio } : {}),
         // A tela vai junto em três níveis: a rota, o que a tela mostra (filtros, totais) e o
@@ -635,27 +652,11 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const EM_ABERTO = ['draft', 'awaiting_pin', 'sending', 'sent', 'pending_approval', 'approved', 'scheduled'];
   const pagamentosVisiveis = pays.filter((p) => EM_ABERTO.includes(p.status));
   // Caixa de digitação: a MESMA na barra pequena e na conversa inteira.
-  const entrada = (
-    <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
-      {erro && <p className="text-xs text-red-600 px-1 pb-1.5">{erro}</p>}
-      {citacao && (
-        <div className="flex items-start gap-2 mb-2 px-2 py-1.5 rounded-xl bg-violet-50 border-l-2 border-violet-400">
-          <i className="ri-reply-line text-violet-500 text-sm mt-0.5" />
-          <span className="flex-1 text-xs text-zinc-600 line-clamp-2">{citacao.texto}</span>
-          <button onClick={() => setCitacao(null)} className="text-zinc-400 hover:text-red-500 cursor-pointer" aria-label="Cancelar resposta">
-            <i className="ri-close-line" />
-          </button>
-        </div>
-      )}
-      {attach && (
-        <div className="flex items-center gap-2 mb-2 px-2 py-1.5 rounded-xl bg-zinc-50 border border-zinc-200">
-          {attach.preview ? <img src={attach.preview} alt="" className="w-10 h-10 rounded-lg object-cover" /> : <i className="ri-file-pdf-2-line text-2xl text-red-500" />}
-          <span className="flex-1 text-xs text-zinc-600 truncate">{attach.name}</span>
-          <button onClick={() => setAttach(null)} className="text-zinc-400 hover:text-red-500 cursor-pointer" aria-label="Tirar anexo"><i className="ri-close-line" /></button>
-        </div>
-      )}
-      {menuAcoes && (
-        <div className="mb-2 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-sm max-h-[50vh] overflow-y-auto">
+  // Ações rápidas: o menu e o botão ⚡ ficam fora da caixa de digitação para aparecer também na LISTA
+  // de conversas (tela toda), onde a caixa não é mostrada (pedido do dono, 2026-09-16). O painel é
+  // data-sem-arrasto: rolar a lista dele não conta como "puxar para abrir a conversa".
+  const menuAcoesPainel = (
+        <div data-sem-arrasto className="mb-2 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-sm max-h-[50vh] overflow-y-auto">
           <p className="px-2 pt-1 pb-1 text-[11px] font-bold text-zinc-400 uppercase">Ações rápidas · sem custo de IA</p>
           {GRUPOS.map((g) => {
             const doGrupo = ACOES.filter((a) => a.grupo === g);
@@ -675,16 +676,39 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             );
           })}
         </div>
+  );
+  const botaoAcoes = (
+        <button onClick={() => setMenuAcoes((v) => !v)} disabled={sending || !!recording} className={`w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl disabled:opacity-40 cursor-pointer ${menuAcoes ? 'bg-violet-100 text-violet-700' : 'text-violet-600 hover:bg-violet-50'}`} aria-label="Ações rápidas">
+          <i className="ri-flashlight-line text-xl" />
+        </button>
+  );
+  const entrada = (
+    <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
+      {erro && <p className="text-xs text-red-600 px-1 pb-1.5">{erro}</p>}
+      {citacao && (
+        <div className="flex items-start gap-2 mb-2 px-2 py-1.5 rounded-xl bg-violet-50 border-l-2 border-violet-400">
+          <i className="ri-reply-line text-violet-500 text-sm mt-0.5" />
+          <span className="flex-1 text-xs text-zinc-600 line-clamp-2">{citacao.texto}</span>
+          <button onClick={() => setCitacao(null)} className="text-zinc-400 hover:text-red-500 cursor-pointer" aria-label="Cancelar resposta">
+            <i className="ri-close-line" />
+          </button>
+        </div>
       )}
+      {attach && (
+        <div className="flex items-center gap-2 mb-2 px-2 py-1.5 rounded-xl bg-zinc-50 border border-zinc-200">
+          {attach.preview ? <img src={attach.preview} alt="" className="w-10 h-10 rounded-lg object-cover" /> : <i className="ri-file-pdf-2-line text-2xl text-red-500" />}
+          <span className="flex-1 text-xs text-zinc-600 truncate">{attach.name}</span>
+          <button onClick={() => setAttach(null)} className="text-zinc-400 hover:text-red-500 cursor-pointer" aria-label="Tirar anexo"><i className="ri-close-line" /></button>
+        </div>
+      )}
+      {menuAcoes && menuAcoesPainel}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => { escolherArquivo(e.target.files?.[0]); e.target.value = ''; }} />
         {/* Câmera direta (2026-09-16): `capture` abre a câmera traseira sem passar pela galeria —
             é o caminho da notinha de balcão no meio do serviço. No desktop o navegador ignora o
             capture e cai no seletor normal, então o botão não estorva. */}
         <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { escolherArquivo(e.target.files?.[0]); e.target.value = ''; }} />
-        <button onClick={() => setMenuAcoes((v) => !v)} disabled={sending || !!recording} className={`w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl disabled:opacity-40 cursor-pointer ${menuAcoes ? 'bg-violet-100 text-violet-700' : 'text-violet-600 hover:bg-violet-50'}`} aria-label="Ações rápidas">
-          <i className="ri-flashlight-line text-xl" />
-        </button>
+        {botaoAcoes}
         <button onClick={() => camRef.current?.click()} disabled={sending || !!recording} className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer" aria-label="Tirar foto da nota">
           <i className="ri-camera-line text-xl" />
         </button>
@@ -724,6 +748,35 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   // Lista de conversas: uma linha por assunto, com a última mensagem e as não lidas. A conversa
   // continua sendo UMA só no banco — a linha é um filtro por `asst_messages.topic`.
+  // Uma linha da lista, igual para assunto e grupo: ícone, nome, hora, prévia e o NÚMERO de não lidas
+  // (a bolinha roxa, como no WhatsApp/Telegram).
+  const linhaConversa = (o: { chave: string; icone: string; cor: string; titulo: string; unread: number; last: TopicoResumo['last']; abrir: () => void }) => {
+    const previa = o.last
+      ? (resumoSistema(o.last.content) ?? `${o.last.role === 'user' ? 'Você: ' : ''}${semMarcadores(o.last.content)}`)
+      : 'Nada por aqui ainda';
+    return (
+      <button key={o.chave} onClick={o.abrir} className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left">
+        <span className={`w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full ${o.cor}`}>
+          <i className={`${o.icone} text-xl`} />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="flex items-baseline gap-2">
+            <span className="flex-1 text-sm font-bold text-zinc-900 truncate">{o.titulo}</span>
+            {o.last && <span className={`text-[11px] flex-shrink-0 ${o.unread ? 'text-violet-600 font-bold' : 'text-zinc-400'}`}>{hora(o.last.created_at)}</span>}
+          </span>
+          <span className="flex items-center gap-2">
+            <span className={`flex-1 text-xs truncate ${o.unread ? 'text-zinc-700 font-semibold' : 'text-zinc-400'}`}>{previa}</span>
+            {o.unread > 0 && (
+              <span className="flex-shrink-0 min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-violet-600 text-white text-[11px] font-black" aria-label={`${o.unread} não lida(s)`}>
+                {o.unread > 99 ? '99+' : o.unread}
+              </span>
+            )}
+          </span>
+        </span>
+      </button>
+    );
+  };
+
   const listaConversas = (
     <div className="flex-1 overflow-y-auto bg-white">
       <button
@@ -740,33 +793,16 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       </button>
       {ASSUNTOS.map((a) => {
         const c = conversas.find((x) => x.topic === a.id);
-        const previa = c?.last ? `${c.last.role === 'user' ? 'Você: ' : ''}${c.last.content}` : 'Nada por aqui ainda';
-        return (
-          <button
-            key={a.id}
-            onClick={() => abrirConversa(a.id)}
-            className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left"
-          >
-            <span className={`w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full ${a.cor}`}>
-              <i className={`${a.icon} text-xl`} />
-            </span>
-            <span className="flex-1 min-w-0">
-              <span className="flex items-baseline gap-2">
-                <span className="flex-1 text-sm font-bold text-zinc-900 truncate">{a.label}</span>
-                {c?.last && <span className={`text-[11px] flex-shrink-0 ${c.unread ? 'text-violet-600 font-bold' : 'text-zinc-400'}`}>{hora(c.last.created_at)}</span>}
-              </span>
-              <span className="flex items-center gap-2">
-                <span className={`flex-1 text-xs truncate ${c?.unread ? 'text-zinc-700 font-semibold' : 'text-zinc-400'}`}>{previa}</span>
-                {!!c?.unread && (
-                  <span className="flex-shrink-0 min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-violet-600 text-white text-[11px] font-black">
-                    {c.unread > 99 ? '99+' : c.unread}
-                  </span>
-                )}
-              </span>
-            </span>
-          </button>
-        );
+        return linhaConversa({ chave: a.id, icone: a.icon, cor: a.cor, titulo: a.label, unread: c?.unread ?? 0, last: c?.last ?? null, abrir: () => abrirConversa(a.id) });
       })}
+      {/* Grupos do WhatsApp (2026-09-17): cada grupo é uma conversa, com tudo que veio dele. */}
+      {grupos.length > 0 && (
+        <p className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Grupos do WhatsApp</p>
+      )}
+      {grupos.map((g) => linhaConversa({
+        chave: `${PREFIXO_GRUPO}${g.group_jid}`, icone: 'ri-whatsapp-line', cor: 'bg-emerald-50 text-emerald-600', titulo: g.name,
+        unread: g.unread, last: g.last, abrir: () => abrirConversa(`${PREFIXO_GRUPO}${g.group_jid}`),
+      }))}
     </div>
   );
 
@@ -787,7 +823,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-black text-zinc-900 leading-tight">{vista === 'conversa' ? rotuloAssunto(aba) : 'Assistente'}</p>
+          <p className="text-sm font-black text-zinc-900 leading-tight">{vista === 'conversa' ? (aba.startsWith(PREFIXO_GRUPO) ? (grupos.find((g) => `${PREFIXO_GRUPO}${g.group_jid}` === aba)?.name ?? 'Grupo do WhatsApp') : rotuloAssunto(aba)) : 'Assistente'}</p>
           {/* Subtítulo só enquanto responde: "Mesma conversa do Telegram" saiu a pedido do dono (2026-09-16). */}
           {sending && <p className="text-[11px] text-zinc-400 leading-tight truncate">pensando…</p>}
         </div>
@@ -919,6 +955,16 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       )}
 
       {vista === 'conversa' && entrada}
+      {/* Na lista não há caixa de digitação, mas as ações rápidas continuam à mão (pedido do dono). */}
+      {vista === 'lista' && (
+        <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
+          {menuAcoes && menuAcoesPainel}
+          <div className="flex items-center gap-2">
+            {botaoAcoes}
+            <button onClick={() => setMenuAcoes((v) => !v)} className="text-sm font-semibold text-violet-700 cursor-pointer">Ações rápidas</button>
+          </div>
+        </div>
+      )}
 
       {acao && (() => {
         const def = ACOES.find((a) => a.id === acao);
@@ -1007,8 +1053,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     return (
       <div
         className="fixed z-[60] bottom-3 left-3 right-3 sm:left-auto sm:right-5 sm:w-[420px] rounded-2xl border border-zinc-200 bg-white shadow-2xl overflow-hidden"
-        onTouchStart={(e) => { arrasteY.current = e.touches[0].clientY; }}
-        onTouchMove={(e) => { if (arrasteY.current - e.touches[0].clientY > 24) setModo('full'); }}
+        // Puxar para cima abre a conversa — mas só quando o toque começa FORA de área rolável ou de
+        // controle. Rolar o menu de ações rápidas abria o chat na tela toda (visto em 2026-09-16).
+        onTouchStart={(e) => {
+          const alvo = e.target as HTMLElement;
+          arrasteY.current = alvo.closest('[data-sem-arrasto], input, textarea, select') ? null : e.touches[0].clientY;
+        }}
+        onTouchMove={(e) => { if (arrasteY.current != null && arrasteY.current - e.touches[0].clientY > 24) { arrasteY.current = null; setModo('full'); } }}
+        onTouchEnd={() => { arrasteY.current = null; }}
       >
         <div className="flex items-center gap-2 px-2 pt-1.5">
           <button onClick={() => setModo('full')} className="flex-1 flex flex-col items-center cursor-pointer" aria-label="Abrir a conversa">

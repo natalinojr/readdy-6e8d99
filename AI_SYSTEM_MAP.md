@@ -2531,3 +2531,33 @@ Limitações conhecidas:
 ### Taxas contratadas da maquininha (2026-09-16)
 
 Cadastro em `fin_card_fee_contracts` (editor em Como o dinheiro entra, só Stone; edge `conciliacao-pagamentos` card_fees_list / card_fees_save — substitui a tabela inteira). A conferência `fn_card_fee_check` não sabe bandeira nem débito/crédito (o arquivo da Stone não traz): cada venda casa com a taxa contratada MAIS PRÓXIMA entre as possíveis (parcelada → crédito 2–6/7–12x; com antecipação → crédito à vista; sem antecipação → débito ou crédito à vista), vigente na data da captura. Antecipação medida nos dados: % a.m. sobre (bruto − MDR), pró-rata 30 dias até captura + 30×parcela empurrado para dia útil (sábado +2, domingo +1); feriados não estão no calendário, folga de +5 dias e R$ 0,02 por venda. Resultado na aba Taxas do `RepassesStoneModal` e no alerta `taxas_maquininha`. Limite: se a Stone cobrar uma taxa errada que por acaso é igual a outra taxa contratada possível (ex.: débito cobrado como crédito), não é detectado.
+
+### App Android: voltar saía do app + ações rápidas no chat (2026-09-16)
+
+- **Voltar saía do app sempre.** O app não tem o plugin `@capacitor/app`, que é quem liga o voltar do
+  Android ao histórico do site; sem ele o Android fecha a Activity. `MainActivity` agora registra um
+  `OnBackPressedCallback`: `webView.canGoBack()` → `goBack()` (o site recebe `popstate` e o
+  `voltarAndroid.ts` fecha chat/modais); senão `moveTaskToBack(true)` (vai para segundo plano, não
+  fecha). **Mudança nativa = APK novo** (`npm run apk`; no bash o script não acha `gradlew.bat` — rodar
+  `.\gradlew.bat assembleDebug` pelo PowerShell com `JAVA_HOME` = jbr do Android Studio).
+- **Chat, ações rápidas:** o menu ⚡ vivia dentro da caixa de digitação, escondida na lista de
+  conversas → sumia na tela toda. Virou `menuAcoesPainel`/`botaoAcoes`, também no rodapé da lista.
+- **Rolar o menu abria o chat na tela toda:** o gesto "puxar para cima" da barra pequena valia em
+  qualquer ponto. Agora só conta se o toque começa fora de `[data-sem-arrasto]`, campo ou select.
+- **Aviso de itens a classificar (2026-09-16):** `assistente-cron` › proativo `item_classify` (08-21h,
+  a cada 30 min) avisa itens de `fin_item_classifications` com `classe` null que chegaram desde o
+  último aviso (marca d'água por loja em `proactive_state.item_classify`). Sai pelo
+  `assistente-telegram` `deliver` com `save: true, topic: 'pagamentos'` + ação `abrir`
+  → aba Financeiro do chat com botão "Classificar itens" (`/financeiro?tab=itens`), link no Telegram e push.
+
+### Chat: cada grupo do WhatsApp é uma conversa (2026-09-17)
+
+Dono: "no grupo do financeiro teve atividade, mas só o Telegram viu". A resposta ESTAVA na conversa do
+sistema, mas na aba do ASSUNTO (cupom → "Compras e estoque"); quem procura pelo grupo não acha.
+`asst_messages.group_jid` (migration `20260917000000_asst_messages_grupo`, com backfill pelo
+`grupo="…"` do gatilho) é gravado pelo brain quando o webhook manda `group_jid` (triagem, entrada de
+compra, dias de freelancer). `assistente-app`: `history`/`seen` aceitam `group_jid`; `topics` devolve
+`groups` (última mensagem + não lidas). "Visto" do grupo = chave `g:<jid>` em `app_last_seen.topics`;
+mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a conversa aberta é
+`''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
+de não lidas (`linhaConversa`).

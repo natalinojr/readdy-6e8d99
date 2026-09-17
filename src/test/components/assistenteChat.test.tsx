@@ -23,7 +23,7 @@ import AssistenteChat from '@/components/feature/AssistenteChat';
 import { getFoco, perguntarAoAssistente, setFocoTela } from '@/lib/assistenteFoco';
 
 // ── Servidor falso ──────────────────────────────────────────────────────────
-type Msg = { id: number; role: 'user' | 'assistant'; content: string; channel: string; created_at: string; topic: string };
+type Msg = { id: number; role: 'user' | 'assistant'; content: string; channel: string; created_at: string; topic: string; group_jid?: string | null };
 type Pay = { id: string; kind: 'pix' | 'boleto'; amount: number; beneficiary_name: string | null; pix_key: string | null; due_date: string | null; description: string | null; status: string; status_label: string; error: string | null; created_at: string };
 const srv = {
   msgs: [] as Msg[],
@@ -46,7 +46,7 @@ function fakeServer(fn: string, opts: { body: Body }) {
   if (fn === 'send-push') return Promise.resolve({ data: { success: true, configured: false }, error: null });
   switch (b.action) {
     case 'history': {
-      let rows = srv.msgs.filter((m) => !b.topic || m.topic === b.topic);
+      let rows = srv.msgs.filter((m) => (b.group_jid ? m.group_jid === b.group_jid : !b.topic || m.topic === b.topic));
       if (b.after_id) rows = rows.filter((m) => m.id > Number(b.after_id));
       else if (b.before_id) rows = rows.filter((m) => m.id < Number(b.before_id));
       return Promise.resolve(ok({ messages: rows.map((m) => ({ ...m })), has_more: false }));
@@ -72,7 +72,17 @@ function fakeServer(fn: string, opts: { body: Body }) {
     }
     case 'topics': {
       const TOP = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'];
+      const jids = [...new Set(srv.msgs.filter((m) => m.group_jid).map((m) => String(m.group_jid)))];
       return Promise.resolve(ok({
+        groups: jids.map((jid) => {
+          const doGrupo = srv.msgs.filter((m) => m.group_jid === jid);
+          const last = doGrupo[doGrupo.length - 1];
+          return {
+            group_jid: jid, name: 'Financeiro loja - EP MALL',
+            unread: doGrupo.filter((m) => m.role === 'assistant' && m.id > srv.visto).length,
+            last: { role: last.role, content: last.content, created_at: last.created_at },
+          };
+        }),
         topics: TOP.map((t) => {
           const doTopico = srv.msgs.filter((m) => m.topic === t);
           const last = doTopico[doTopico.length - 1] ?? null;
@@ -323,6 +333,27 @@ describe('AssistenteChat — lista de conversas', () => {
     // E o voltar do Android, depois disso, fecha o painel (a limpeza não "comeu" um voltar a mais).
     window.history.back();
     expect(await screen.findByRole('button', { name: /Falar com o assistente/ })).toBeInTheDocument();
+  });
+
+  it('grupo do WhatsApp aparece como conversa, com o número de não lidas, e abre só o que veio dele', async () => {
+    // Pedido do dono (2026-09-17): a atividade do grupo do financeiro ia para a aba do assunto
+    // ("Compras e estoque") e ele não achava. Agora o grupo é uma conversa própria.
+    const user = userEvent.setup();
+    const jid = '120363421353535472@g.us';
+    srv.msgs.push({ id: ++srv.seq, role: 'user', content: '[Sistema] Cupom/nota de compra postado no grupo.\n<mensagem_do_grupo grupo="Financeiro loja - EP MALL" autor="El Patrón" quando="16/09">[Foto] cupom do Condor</mensagem_do_grupo>', channel: 'telegram', created_at: new Date().toISOString(), topic: 'compras', group_jid: jid });
+    srv.msgs.push({ id: ++srv.seq, role: 'assistant', content: 'Cupom do Condor, R$ 66,69: compra lançada.', channel: 'telegram', created_at: new Date().toISOString(), topic: 'compras', group_jid: jid });
+    add('assistant', 'Aviso que não é do grupo', 'avisos');
+    renderChat();
+
+    const linha = await screen.findByRole('button', { name: /Financeiro loja - EP MALL/ });
+    expect(within(linha).getByLabelText('1 não lida(s)')).toBeInTheDocument();
+    expect(within(linha).getByText(/compra lançada/)).toBeInTheDocument();
+
+    await user.click(linha);
+    expect(await screen.findByText(/Cupom do Condor, R\$ 66,69/)).toBeInTheDocument();
+    expect(screen.queryByText('Aviso que não é do grupo')).toBeNull();
+    expect(calls('history').at(-1)).toMatchObject({ group_jid: jid });
+    await waitFor(() => expect(calls('seen').at(-1)).toMatchObject({ group_jid: jid }));
   });
 
   it('a seta volta da conversa para a lista', async () => {

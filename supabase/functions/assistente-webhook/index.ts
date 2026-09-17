@@ -341,7 +341,7 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
   ].filter(Boolean).join('\n');
 
   try {
-    const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: tipo === 'compra' ? 'entrada_compra_grupo' : 'triagem_grupo' });
+    const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: tipo === 'compra' ? 'entrada_compra_grupo' : 'triagem_grupo', group_jid: g.group_jid });
     const reply = String(out?.reply ?? '').trim();
     // deno-lint-ignore no-explicit-any
     const actions: any[] = Array.isArray(out?.actions) ? out.actions : [];
@@ -445,7 +445,7 @@ async function triarDiasFreelancer(admin: SupabaseClient, cfg: Record<string, an
     'Siga as regras de DIAS DE FREELANCER PELO GRUPO.',
   ].join('\n');
   try {
-    const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: 'dias_freelancer' });
+    const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: 'dias_freelancer', group_jid: g.group_jid });
     const reply = String(out?.reply ?? '').trim();
     if (!reply || reply === 'NO_REPLY') return false;
     await avisarDono(admin, ownerChat, reply, Array.isArray(out?.actions) ? out.actions : []);

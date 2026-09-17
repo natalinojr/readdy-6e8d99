@@ -15,7 +15,8 @@
 //   unread    {}                                   → quantas mensagens ele mandou e você não viu
 //   topics    {}                                   → lista de conversas: por assunto, a última
 //                                                    mensagem, a hora e as não lidas
-//   seen      { id, topic? }                       → marca visto até esse id (no assunto, ou geral)
+//   seen      { id, topic?, group_jid? }           → marca visto até esse id (no assunto, no grupo, ou geral)
+//   history/topics aceitam group_jid: conversa de um GRUPO do WhatsApp (asst_messages.group_jid)
 //
 // O PIN é o mesmo do Telegram (asst_settings.pay_pin, hash com o id do chat do Telegram) e nunca
 // vai ao modelo nem ao histórico. Mesmo bloqueio: 3 erros → 15 minutos.
@@ -91,6 +92,13 @@ function vistosDe(v: any): (topic: string) => number {
   const t = (v?.topics ?? {}) as Record<string, number>;
   return (topic: string) => Math.max(base, Number(t[topic] ?? 0));
 }
+// Conversa por GRUPO do WhatsApp (2026-09-17): a mensagem de um grupo conta como lida se foi vista no
+// assunto dela OU na conversa do grupo (chave 'g:<jid>' em app_last_seen.topics).
+const GRUPO_JID = /^[\w.-]+@g\.us$/;
+const chaveGrupo = (jid: string) => `g:${jid}`;
+// deno-lint-ignore no-explicit-any
+const vistoDaMsg = (visto: (k: string) => number, r: any): number =>
+  Math.max(visto(String(r.topic ?? 'geral')), r.group_jid ? visto(chaveGrupo(String(r.group_jid))) : 0);
 // deno-lint-ignore no-explicit-any
 const pisoDosVistos = (v: any): number => {
   const base = Number(v?.id ?? 0);
@@ -165,8 +173,9 @@ Deno.serve(async (req) => {
 
   try {
     if (action === 'history') {
-      let q = admin.from('asst_messages').select('id, role, content, channel, created_at, topic').eq('chat_id', chatKey);
-      if (TOPICS.includes(String(body.topic)) ) q = q.eq('topic', String(body.topic)); // aba; sem topic = tudo
+      let q = admin.from('asst_messages').select('id, role, content, channel, created_at, topic, group_jid').eq('chat_id', chatKey);
+      if (GRUPO_JID.test(String(body.group_jid ?? ''))) q = q.eq('group_jid', String(body.group_jid)); // conversa do grupo
+      else if (TOPICS.includes(String(body.topic)) ) q = q.eq('topic', String(body.topic)); // aba; sem topic = tudo
       if (body.after_id) q = q.gt('id', Number(body.after_id)).order('id', { ascending: true }).limit(100);
       else {
         if (body.before_id) q = q.lt('id', Number(body.before_id));
@@ -238,12 +247,12 @@ Deno.serve(async (req) => {
     if (action === 'unread') {
       const marca = await getSetting(admin, 'app_last_seen');
       const visto = vistosDe(marca);
-      const { data, error } = await admin.from('asst_messages').select('id, content, topic')
+      const { data, error } = await admin.from('asst_messages').select('id, content, topic, group_jid')
         .eq('chat_id', chatKey).eq('role', 'assistant').gt('id', pisoDosVistos(marca))
         .order('id', { ascending: false }).limit(60);
       if (error) throw new Error(error.message);
-      // O piso é o menor dos assuntos: filtra aqui o que já foi lido no assunto de cada uma.
-      const rows = (data ?? []).filter((r) => Number(r.id) > visto(String(r.topic ?? 'geral')));
+      // O piso é o menor dos assuntos: filtra aqui o que já foi lido no assunto (ou no grupo) de cada uma.
+      const rows = (data ?? []).filter((r) => Number(r.id) > vistoDaMsg(visto, r));
       const topics = [...new Set(rows.map((r) => String(r.topic ?? 'geral')))];
       const ultima = rows[0];
       return json({ success: true, data: {
@@ -267,15 +276,34 @@ Deno.serve(async (req) => {
         return (data ?? [])[0] ?? null;
       }));
       // Não lidas por assunto: uma consulta só, teto de 200 (acima disso o número já não ajuda).
-      const { data: novas } = await admin.from('asst_messages').select('id, topic')
+      const { data: novas } = await admin.from('asst_messages').select('id, topic, group_jid')
         .eq('chat_id', chatKey).eq('role', 'assistant').gt('id', pisoDosVistos(marca)).limit(200);
       const porTopico = new Map<string, number>();
+      const porGrupo = new Map<string, number>();
       for (const n of novas ?? []) {
+        if (Number(n.id) <= vistoDaMsg(visto, n)) continue;
         const t = String(n.topic ?? 'geral');
-        if (Number(n.id) <= visto(t)) continue;
         porTopico.set(t, (porTopico.get(t) ?? 0) + 1);
+        if (n.group_jid) porGrupo.set(String(n.group_jid), (porGrupo.get(String(n.group_jid)) ?? 0) + 1);
       }
+      // Conversas de grupo: cada grupo do WhatsApp com mensagem na conversa (2026-09-17).
+      const { data: recentes } = await admin.from('asst_messages').select('group_jid')
+        .eq('chat_id', chatKey).not('group_jid', 'is', null).order('id', { ascending: false }).limit(300);
+      const jids = [...new Set((recentes ?? []).map((r) => String(r.group_jid)))].slice(0, 20);
+      const { data: nomes } = jids.length ? await admin.from('asst_groups').select('group_jid, name').in('group_jid', jids) : { data: [] };
+      const grupos = await Promise.all(jids.map(async (jid) => {
+        const { data: ult } = await admin.from('asst_messages').select('role, content, created_at')
+          .eq('chat_id', chatKey).eq('group_jid', jid).order('id', { ascending: false }).limit(1);
+        const u = (ult ?? [])[0];
+        return {
+          group_jid: jid,
+          name: (nomes ?? []).find((n) => n.group_jid === jid)?.name ?? 'Grupo do WhatsApp',
+          unread: porGrupo.get(jid) ?? 0,
+          last: u ? { role: u.role, content: String(u.content).replace(/^\[[^\]]*\]\s*/, '').slice(0, 120), created_at: u.created_at } : null,
+        };
+      }));
       return json({ success: true, data: {
+        groups: grupos,
         topics: TOPICS.map((t, i) => ({
           topic: t,
           unread: porTopico.get(t) ?? 0,
@@ -293,7 +321,8 @@ Deno.serve(async (req) => {
       const id = Number(body.id ?? 0);
       if (!id) return fail('id obrigatório.');
       const marca = (await getSetting(admin, 'app_last_seen')) ?? {};
-      const topic = TOPICS.includes(String(body.topic)) ? String(body.topic) : null;
+      const grupo = GRUPO_JID.test(String(body.group_jid ?? '')) ? chaveGrupo(String(body.group_jid)) : null;
+      const topic = grupo ?? (TOPICS.includes(String(body.topic)) ? String(body.topic) : null);
       const topics: Record<string, number> = { ...((marca.topics ?? {}) as Record<string, number>) };
       let base = Number(marca.id ?? 0);
       if (topic) {

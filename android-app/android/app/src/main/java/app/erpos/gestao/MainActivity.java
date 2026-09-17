@@ -23,6 +23,22 @@ public class MainActivity extends BridgeActivity {
         // Tela encolhe quando o teclado abre (também no AndroidManifest). Sem isso o Android acha
         // que falta espaço e o teclado abre o "editor em tela cheia" por cima do app.
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        // Botão VOLTAR do Android (2026-09-16). Sem o plugin @capacitor/app ninguém ligava o voltar ao
+        // histórico do site: o Android fechava a Activity e o app SAÍA a cada toque, mesmo com telas
+        // para voltar. Agora: dá para voltar no site → volta uma etapa (e o site recebe o popstate,
+        // que fecha chat/modais abertos — src/lib/voltarAndroid.ts); não dá → só manda o app para
+        // segundo plano, sem fechar (reabrir continua de onde estava).
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                android.webkit.WebView wv = bridge != null ? bridge.getWebView() : null;
+                if (wv != null && wv.canGoBack()) {
+                    wv.goBack();
+                } else {
+                    moveTaskToBack(true);
+                }
+            }
+        });
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, PEDIDO_MICROFONE);
         }

@@ -1899,8 +1899,11 @@ Deno.serve(async (req) => {
     const TOPICS = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'];
     const topicoPedido: string | null = TOPICS.includes(body.topic) && body.topic !== 'geral' ? body.topic
       : body.modo === 'triagem_grupo' || body.modo === 'dias_freelancer' ? 'pagamentos' : body.modo === 'entrada_compra_grupo' ? 'compras' : null;
+    // De qual grupo do WhatsApp veio o gatilho (triagem, entrada de compra, dias de freelancer): o chat do
+    // ERPOS mostra cada grupo como uma conversa própria (2026-09-17).
+    const grupoJid = /^[\w.-]+@g\.us$/.test(String(body.group_jid ?? '')) ? String(body.group_jid) : null;
     const { data: userRow } = await admin.from('asst_messages')
-      .insert({ channel, chat_id: chatId, role: 'user', content: fileBlock ? `${fileBlock.type === 'image' ? '[Foto]' : '[PDF]'} ${text}` : text, topic: topicoPedido ?? 'geral' })
+      .insert({ channel, chat_id: chatId, role: 'user', content: fileBlock ? `${fileBlock.type === 'image' ? '[Foto]' : '[PDF]'} ${text}` : text, topic: topicoPedido ?? 'geral', group_jid: grupoJid })
       .select('id').maybeSingle();
 
     // ── Loop de ferramentas ──
@@ -2016,7 +2019,7 @@ Deno.serve(async (req) => {
           || funcoes.some((f) => /inter|concilia|fiscal|stone|ifood|payment|bill|financ/i.test(f)) ? 'pagamentos'
         : nomes.has('estoque_critico') || funcoes.some((f) => /purchase|stock|estoque|ingredient/i.test(f)) ? 'compras' : 'geral');
     if (!topicoPedido && topic !== 'geral' && userRow?.id) await admin.from('asst_messages').update({ topic }).eq('id', userRow.id);
-    await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'assistant', content: historyContent, tool_calls: toolCalls, usage, topic });
+    await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'assistant', content: historyContent, tool_calls: toolCalls, usage, topic, group_jid: grupoJid });
     log('INFO', 'reply', { chat: chatId, ms: Date.now() - started, tools: toolCalls.map((t) => t.name), actions: ctx.outbound.map((a) => a.type), usage });
     return json({ success: true, reply, actions: ctx.outbound, tool_calls: toolCalls, usage });
   } catch (e) {
