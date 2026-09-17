@@ -21,7 +21,9 @@ export interface RepasseStone {
   diferenca: number;
   dia_liquido_stone: number;
   dia_depositado: number;
-  situacao: 'ok' | 'dia_fecha' | 'faltou' | 'sobrou' | 'sem_deposito' | 'sem_venda' | 'sem_extrato';
+  situacao: 'ok' | 'dia_fecha' | 'atrasado' | 'faltou' | 'sobrou' | 'sem_deposito' | 'sem_venda' | 'sem_extrato';
+  /** situacao 'atrasado': o outro dia do par (o banco creditou parte do repasse em outra data) */
+  par_dia?: string | null;
 }
 
 const fmtData = (iso: string) => new Date(iso.slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR');
@@ -39,6 +41,20 @@ export function situacaoRepasse(r: RepasseStone): { label: string; explica: stri
         explica: `Separando débito e antecipado não fecha, mas o dia inteiro fecha (Stone ${formatCurrency(r.dia_liquido_stone)} × banco ${formatCurrency(r.dia_depositado)}). A Stone não informou a antecipação nas vendas desse dia.`,
         tom: 'info',
       };
+    case 'atrasado': {
+      const par = r.par_dia ? fmtData(r.par_dia) : 'outro dia';
+      return r.diferenca < 0
+        ? {
+          label: 'Bateu (crédito atrasado)',
+          explica: `Faltaram ${formatCurrency(-r.diferenca)} neste dia, que o banco creditou em ${par}. Somando os dois dias, bate.`,
+          tom: 'ok',
+        }
+        : {
+          label: 'Bateu (crédito atrasado)',
+          explica: `Os ${formatCurrency(r.diferenca)} a mais neste dia são do repasse de ${par}, creditado com atraso. Somando os dois dias, bate.`,
+          tom: 'ok',
+        };
+    }
     case 'faltou':
       return {
         label: 'Faltou no banco',
@@ -243,11 +259,13 @@ export default function RepassesStoneModal({ dateFrom, dateTo, abaInicial = 'rep
                     <td className="px-3 py-2 text-right font-semibold text-zinc-800 whitespace-nowrap">{r.vendas ? formatCurrency(r.liquido_stone) : '—'}</td>
                     <td className="px-3 py-2 text-right font-semibold text-zinc-800 whitespace-nowrap">{r.creditos ? formatCurrency(r.depositado) : '—'}</td>
                     <td className={`px-3 py-2 text-right font-bold whitespace-nowrap ${s.tom === 'erro' ? 'text-red-600' : s.tom === 'alerta' ? 'text-amber-600' : 'text-zinc-400'}`}>
-                      {s.tom === 'ok' || r.situacao === 'dia_fecha' || r.situacao === 'sem_extrato' ? '—' : formatCurrency(r.diferenca)}
+                      {r.situacao === 'atrasado'
+                        ? <span className="text-zinc-500 font-semibold">{formatCurrency(r.diferenca)}</span>
+                        : s.tom === 'ok' || r.situacao === 'dia_fecha' || r.situacao === 'sem_extrato' ? '—' : formatCurrency(r.diferenca)}
                     </td>
                     <td className="px-3 py-2 min-w-[12rem]">
                       <span className={`inline-block px-2 py-0.5 rounded-full border text-[11px] font-semibold ${TOM_CLS[s.tom]}`}>{s.label}</span>
-                      {s.tom !== 'ok' && <p className="text-[11px] text-zinc-500 mt-1 leading-snug">{s.explica}</p>}
+                      {(s.tom !== 'ok' || r.situacao === 'atrasado') && <p className="text-[11px] text-zinc-500 mt-1 leading-snug">{s.explica}</p>}
                     </td>
                   </tr>
                 ))}

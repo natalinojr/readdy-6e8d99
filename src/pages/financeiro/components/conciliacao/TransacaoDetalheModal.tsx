@@ -375,6 +375,16 @@ export default function TransacaoDetalheModal({
                   <span className="font-semibold text-green-800"><i className="ri-links-line mr-1" />Repasse Stone × extrato do banco</span>
                   <span className="text-green-700 whitespace-nowrap">{vendas.length} venda(s) · no banco {formatCurrency(dep)}</span>
                 </div>
+                {transaction.match_group?.includes('+') && (() => {
+                  const [d1, d2] = (transaction.match_group.split(':')[1] ?? '').split('+');
+                  const br = (iso?: string) => (iso ? new Date(iso + 'T00:00:00').toLocaleDateString('pt-BR') : '?');
+                  return (
+                    <p className="px-3 py-2 text-xs text-green-800 bg-green-50/60 border-b border-green-100">
+                      <i className="ri-time-line mr-1" />
+                      Crédito atrasado: parte do repasse de {br(d1)} foi creditada pelo banco em {br(d2)}. Os dois dias foram conferidos juntos.
+                    </p>
+                  );
+                })()}
                 <div className="grid grid-cols-3 gap-2 px-3 py-2 text-xs border-b border-green-100">
                   <div><p className="text-zinc-400">Bruto</p><p className="font-semibold text-zinc-800">{formatCurrency(bruto)}</p></div>
                   <div><p className="text-zinc-400">Taxas</p><p className="font-semibold text-red-600">{formatCurrency(taxa)}</p></div>

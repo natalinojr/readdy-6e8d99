@@ -14,6 +14,7 @@ import { EVENTO_ASSISTENTE, getFoco, limparFocoItem, resumirFoco, setFocoItem, t
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { ACOES, GRUPOS } from '@/components/feature/assistente/acoes';
+import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -920,6 +921,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                     <i className="ri-arrow-right-up-line" /> {lk.label}
                   </button>
                 ))}
+                {/* Aviso de itens a classificar (assistente-cron › item_classify): classifica aqui mesmo. */}
+                {m.content.includes('→ /financeiro?tab=itens]') && <ItensClassificarCard call={call} />}
                 {(polls[m.id] ?? []).map((pl, i) => (
                   <div key={i} className="mt-1.5 space-y-1.5">
                     <p className="text-xs font-bold text-zinc-600">{pl.question}</p>

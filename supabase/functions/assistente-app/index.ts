@@ -16,6 +16,10 @@
 //   topics    {}                                   → lista de conversas: por assunto, a última
 //                                                    mensagem, a hora e as não lidas
 //   seen      { id, topic?, group_jid? }           → marca visto até esse id (no assunto, no grupo, ou geral)
+//   items_pending {}                               → itens de fornecedor sem classificação CMV × despesa
+//                                                    (lojas onde o dono é admin/gerente) + categorias
+//   item_classify { tenant_id, ids, classe, dre_category_id?, merchandise_category_id? }
+//                                                  → classifica pelo chat (fn_item_classify com o JWT do dono)
 //   history/topics aceitam group_jid: conversa de um GRUPO do WhatsApp (asst_messages.group_jid)
 //
 // O PIN é o mesmo do Telegram (asst_settings.pay_pin, hash com o id do chat do Telegram) e nunca
@@ -408,6 +412,52 @@ Deno.serve(async (req) => {
       await admin.from('asst_messages').insert({ channel: 'app', chat_id: chatKey, role: 'assistant', content: `[Pagamento ${pago.kind} de ${brl(pago.amount)}${pago.beneficiary_name ? ` para ${pago.beneficiary_name}` : ''}: ${PAY_STATUS[pago.status] ?? pago.status}${pago.error ? ` (${pago.error})` : ''} — pelo ERPOS] id ${p.id}` });
       log('INFO', 'pagamento pelo ERPOS', { id: p.id, status: pago.status });
       return json({ success: true, data: { payment: payCard(pago) } });
+    }
+
+    // Classificação de itens (CMV × despesa) direto no chat (2026-09-16): o aviso do assistente-cron
+    // traz um cartão com os pendentes. Mesma regra da tela Financeiro › Classificação de Itens.
+    if (action === 'items_pending') {
+      const { data: lojas, error: lErr } = await admin.from('user_tenants').select('tenant_id, role, tenants(name)')
+        .eq('user_id', user.id).in('role', ['admin', 'manager']);
+      if (lErr) throw new Error(lErr.message);
+      // deno-lint-ignore no-explicit-any
+      const ids = ((lojas ?? []) as any[]).map((l) => String(l.tenant_id));
+      if (!ids.length) return json({ success: true, data: { tenants: [] } });
+      const [itens, cats, mercs] = await Promise.all([
+        admin.from('fin_item_classifications')
+          .select('id, tenant_id, description, supplier_name, unit_label, last_unit_price, suggested_classe, suggested_dre_category_id, suggestion_reason, merchandise_category_id, created_at')
+          .in('tenant_id', ids).is('classe', null).order('created_at', { ascending: false }).limit(300),
+        admin.from('fin_dre_categories').select('id, tenant_id, name, group_type').in('tenant_id', ids)
+          .is('deleted_at', null).eq('is_active', true).not('group_type', 'in', '(revenue,tax,cost)').order('name'),
+        admin.from('fin_merchandise_categories').select('id, tenant_id, name').in('tenant_id', ids).eq('is_active', true).order('name'),
+      ]);
+      if (itens.error) throw new Error(itens.error.message);
+      // deno-lint-ignore no-explicit-any
+      const tenants = ((lojas ?? []) as any[]).map((l) => {
+        const tid = String(l.tenant_id);
+        return {
+          id: tid, name: String(l.tenants?.name ?? tid),
+          items: (itens.data ?? []).filter((i) => i.tenant_id === tid),
+          dre_categories: (cats.data ?? []).filter((c) => c.tenant_id === tid).map((c) => ({ id: c.id, name: c.name, group_type: c.group_type })),
+          merchandise_categories: (mercs.data ?? []).filter((m) => m.tenant_id === tid).map((m) => ({ id: m.id, name: m.name })),
+        };
+      }).filter((t) => t.items.length).sort((a, b) => a.name.localeCompare(b.name));
+      return json({ success: true, data: { tenants } });
+    }
+
+    if (action === 'item_classify') {
+      const classe = String(body.classe ?? '');
+      const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 200) : [];
+      if (!body.tenant_id || !ids.length || !['cmv', 'despesa'].includes(classe)) return fail('Dados incompletos para classificar.');
+      // Com o JWT do dono: fn_item_classify confere admin/gerente da loja e reaplica nas compras lançadas.
+      const { data, error } = await userClient.rpc('fn_item_classify', {
+        p_tenant: String(body.tenant_id), p_ids: ids, p_classe: classe,
+        p_dre_category_id: body.dre_category_id ? String(body.dre_category_id) : null,
+        p_merchandise_category_id: classe === 'cmv' && body.merchandise_category_id ? String(body.merchandise_category_id) : null,
+      });
+      if (error) return fail(error.message);
+      log('INFO', 'item classificado pelo chat', { tenant: body.tenant_id, n: ids.length, classe });
+      return json({ success: true, data });
     }
 
     return fail('Ação desconhecida.');

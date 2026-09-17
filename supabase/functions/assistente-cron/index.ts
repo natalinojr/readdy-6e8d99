@@ -229,7 +229,7 @@ const PRO_DEFAULTS: Record<string, any> = {
   dre_classify: { enabled: true, from: '08:00', to: '21:00', every_min: 2, per_run: 1, max_open: 1 },
   // item de fornecedor NOVO sem classificação CMV × despesa → aviso na aba Financeiro do chat
   // com botão que abre Financeiro › Classificação de Itens (só o que chegou desde o último aviso)
-  item_classify: { enabled: true, from: '08:00', to: '21:00', every_min: 30 },
+  item_classify: { enabled: true, from: '07:00', to: '23:00', every_min: 30 },
 };
 let pgc: ReturnType<typeof postgres> | null = null;
 const db = () => (pgc ??= postgres(Deno.env.get('SUPABASE_DB_URL') ?? '', { max: 1, prepare: false, idle_timeout: 20 }));
@@ -428,7 +428,7 @@ async function itemClassifyText(tenants: Array<{ id: string; name: string }>, st
   }
   if (!parts.length) return { text: null, newState: next };
   return {
-    text: `🏷️ *Itens novos para classificar* (CMV × despesa)\n\n${parts.join('\n\n')}\n\nSem classificar, ${novosTotal > 1 ? 'eles entram' : 'ele entra'} no CMV e a DRE pode sair errada.`,
+    text: `🏷️ *Itens novos para classificar* (CMV × despesa)\n\n${parts.join('\n\n')}\n\nSem classificar, ${novosTotal > 1 ? 'eles entram' : 'ele entra'} no CMV e a DRE pode sair errada. Dá para classificar aqui mesmo.`,
     newState: next,
   };
 }

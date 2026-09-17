@@ -2548,7 +2548,10 @@ Cadastro em `fin_card_fee_contracts` (editor em Como o dinheiro entra, só Stone
   a cada 30 min) avisa itens de `fin_item_classifications` com `classe` null que chegaram desde o
   último aviso (marca d'água por loja em `proactive_state.item_classify`). Sai pelo
   `assistente-telegram` `deliver` com `save: true, topic: 'pagamentos'` + ação `abrir`
-  → aba Financeiro do chat com botão "Classificar itens" (`/financeiro?tab=itens`), link no Telegram e push.
+  → aba Financeiro do chat com botão "Classificar itens" (`/financeiro?tab=itens`), link no Telegram e push. Janela 07-23h.
+  Mensagem com esse marcador ganha o cartão `ItensClassificarCard` ("Classificar aqui"): carrega os
+  pendentes AO ABRIR (`assistente-app` › `items_pending`, lojas admin/gerente) e classifica CMV/Despesa
+  por `item_classify` → `fn_item_classify` com o JWT do dono (userClient). Vínculo com insumo só pela tela.
 
 ### Chat: cada grupo do WhatsApp é uma conversa (2026-09-17)
 
@@ -2561,3 +2564,7 @@ compra, dias de freelancer). `assistente-app`: `history`/`seen` aceitam `group_j
 mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a conversa aberta é
 `''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
 de não lidas (`linhaConversa`).
+
+### Repasse Stone creditado em duas datas (2026-09-16)
+
+O banco às vezes credita parte do repasse de um dia (ex.: uma venda de débito) em outra data. `fn_match_card_deposits` tem uma 2ª passada: mesma pilha, dia D que não fechou por falta + dia E entre D+1 e D+5 que não fechou por sobra, com o arquivo da Stone de E já importado; se juntos fecham na tolerância, concilia os dois com `match_group = 'stone:D+E:normal|antecipado'` (o match_group é só um rótulo — `group_detail` busca por igualdade). `fn_stone_repasses` marca os dois dias como `atrasado` e devolve `par_dia`. Sem o arquivo da Stone de E não há como saber a sobra de E, então o par só fecha no dia seguinte ao crédito atrasado.
