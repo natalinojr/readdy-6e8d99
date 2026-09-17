@@ -434,6 +434,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // o voltar tem de sair da página, como em qualquer tela.
   useVoltarFecha(variant === 'floating' && open, () => setModo('fab'), 'assistente-painel');
   useVoltarFecha(open && vista === 'conversa', () => setVista('lista'), 'assistente-conversa');
+  // Ações rápidas em tela cheia são mais uma camada: o voltar fecha só elas.
+  useVoltarFecha(open && menuAcoes && (modo === 'full' || variant === 'embedded'), () => setMenuAcoes(false), 'assistente-acoes');
 
   // Telas pedindo o chat: botão "perguntar ao assistente" (PerguntarAoAssistente) e atalhos.
   useEffect(() => {
@@ -656,27 +658,51 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Ações rápidas: o menu e o botão ⚡ ficam fora da caixa de digitação para aparecer também na LISTA
   // de conversas (tela toda), onde a caixa não é mostrada (pedido do dono, 2026-09-16). O painel é
   // data-sem-arrasto: rolar a lista dele não conta como "puxar para abrir a conversa".
+  // Lista de ações: compacta no cartão da barra pequena, grande quando o chat está na tela toda.
+  const listaAcoes = (grande: boolean) => GRUPOS.map((g) => {
+    const doGrupo = ACOES.filter((a) => a.grupo === g);
+    if (!doGrupo.length) return null;
+    return (
+      <div key={g} className={grande ? 'pt-3' : 'pt-1'}>
+        <p className={grande ? 'px-1 pb-1.5 text-xs font-bold uppercase tracking-wide text-zinc-400' : 'px-2 pb-0.5 text-[11px] font-semibold text-zinc-500'}>{g}</p>
+        <div className={grande ? 'grid grid-cols-2 sm:grid-cols-3 gap-2' : 'grid grid-cols-1 sm:grid-cols-2 gap-0.5'}>
+          {doGrupo.map((a) => (
+            <button key={a.id} onClick={() => abrirAcao(a.id)}
+              className={grande
+                ? 'flex flex-col items-start gap-2 p-3 rounded-2xl border border-zinc-200 bg-white text-sm font-semibold text-zinc-800 hover:bg-zinc-50 cursor-pointer text-left'
+                : 'w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer text-left'}>
+              <span className={`${grande ? 'w-10 h-10 text-lg' : 'w-7 h-7'} flex-shrink-0 flex items-center justify-center rounded-xl ${a.cor}`}><i className={a.icone} /></span>
+              <span className={grande ? 'leading-tight' : 'truncate'}>{a.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  });
   const menuAcoesPainel = (
         <div data-sem-arrasto className="mb-2 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-sm max-h-[50vh] overflow-y-auto">
           <p className="px-2 pt-1 pb-1 text-[11px] font-bold text-zinc-400 uppercase">Ações rápidas · sem custo de IA</p>
-          {GRUPOS.map((g) => {
-            const doGrupo = ACOES.filter((a) => a.grupo === g);
-            if (!doGrupo.length) return null;
-            return (
-              <div key={g} className="pt-1">
-                <p className="px-2 pb-0.5 text-[11px] font-semibold text-zinc-500">{g}</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5">
-                  {doGrupo.map((a) => (
-                    <button key={a.id} onClick={() => abrirAcao(a.id)} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer text-left">
-                      <span className={`w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg ${a.cor}`}><i className={a.icone} /></span>
-                      <span className="truncate">{a.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+          {listaAcoes(false)}
         </div>
+  );
+  // Tela toda (pedido do dono, 2026-09-17): as ações ocupam o painel inteiro, não um cartão sobre a caixa.
+  const acoesTelaCheia = modo === 'full' || variant === 'embedded';
+  const menuAcoesTelaCheia = (
+    <div data-sem-arrasto className="absolute inset-0 z-10 flex flex-col bg-zinc-50">
+      <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-100 bg-white flex-shrink-0">
+        <div className="w-8 h-8 flex items-center justify-center rounded-xl bg-violet-50 border border-violet-200">
+          <i className="ri-flashlight-line text-violet-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-black text-zinc-900 leading-tight">Ações rápidas</p>
+          <p className="text-[11px] text-zinc-400 leading-tight">Sem custo de IA</p>
+        </div>
+        <button onClick={() => setMenuAcoes(false)} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar ações rápidas">
+          <i className="ri-close-line text-xl" />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-3 pb-4">{listaAcoes(true)}</div>
+    </div>
   );
   const botaoAcoes = (
         <button onClick={() => setMenuAcoes((v) => !v)} disabled={sending || !!recording} className={`w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl disabled:opacity-40 cursor-pointer ${menuAcoes ? 'bg-violet-100 text-violet-700' : 'text-violet-600 hover:bg-violet-50'}`} aria-label="Ações rápidas">
@@ -702,7 +728,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           <button onClick={() => setAttach(null)} className="text-zinc-400 hover:text-red-500 cursor-pointer" aria-label="Tirar anexo"><i className="ri-close-line" /></button>
         </div>
       )}
-      {menuAcoes && menuAcoesPainel}
+      {menuAcoes && !acoesTelaCheia && menuAcoesPainel}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => { escolherArquivo(e.target.files?.[0]); e.target.value = ''; }} />
         {/* Câmera direta (2026-09-16): `capture` abre a câmera traseira sem passar pela galeria —
@@ -961,7 +987,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       {/* Na lista não há caixa de digitação, mas as ações rápidas continuam à mão (pedido do dono). */}
       {vista === 'lista' && (
         <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
-          {menuAcoes && menuAcoesPainel}
+          {menuAcoes && !acoesTelaCheia && menuAcoesPainel}
           <div className="flex items-center gap-2">
             {botaoAcoes}
             <button onClick={() => setMenuAcoes((v) => !v)} className="text-sm font-semibold text-violet-700 cursor-pointer">Ações rápidas</button>
@@ -1006,6 +1032,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       {copiado && (
         <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-3 py-1.5 rounded-full bg-zinc-900 text-white text-xs font-semibold">Copiado</div>
       )}
+
+      {menuAcoes && acoesTelaCheia && menuAcoesTelaCheia}
 
       {/* PIN do pagamento — não passa pelo modelo nem fica no histórico */}
       {pinFor && (

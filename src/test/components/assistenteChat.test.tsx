@@ -665,6 +665,28 @@ describe('AssistenteChat — botão redondo arrastável', () => {
   });
 });
 
+describe('AssistenteChat — ações rápidas', () => {
+  it('com o chat na tela toda, o ⚡ abre as ações ocupando o painel e o X fecha', async () => {
+    const user = userEvent.setup();
+    renderChat();
+    await entrarNaConversa(user);
+    await user.click(await screen.findByRole('button', { name: 'Ações rápidas' }));
+    expect(await screen.findByRole('button', { name: 'Fechar ações rápidas' })).toBeInTheDocument();
+    expect(screen.getByText('Sem custo de IA')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Fechar ações rápidas' }));
+    expect(screen.queryByRole('button', { name: 'Fechar ações rápidas' })).toBeNull();
+  });
+
+  it('na barra pequena continua o cartão compacto (sem ocupar a tela)', async () => {
+    const user = userEvent.setup();
+    renderChat('floating');
+    await user.click(await screen.findByRole('button', { name: 'Falar com o assistente' }));
+    await user.click(await screen.findByRole('button', { name: 'Ações rápidas' }));
+    expect(await screen.findByText(/Ações rápidas · sem custo de IA/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Fechar ações rápidas' })).toBeNull();
+  });
+});
+
 describe('AssistenteChat — responder e copiar', () => {
   it('botão direito abre as ações; Responder cita a mensagem e manda o trecho junto', async () => {
     const user = userEvent.setup();
