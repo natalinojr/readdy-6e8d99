@@ -665,6 +665,48 @@ describe('AssistenteChat — botão redondo arrastável', () => {
   });
 });
 
+describe('AssistenteChat — abre na última mensagem', () => {
+  // Pedido do dono (2026-09-17): ao entrar numa conversa a janela nunca estava na última mensagem.
+  // jsdom não calcula layout: simulamos a altura do conteúdo e guardamos o scrollTop.
+  const posicao = new WeakMap<Element, number>();
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get() { return 5000; } });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get() { return 400; } });
+    Object.defineProperty(HTMLElement.prototype, 'scrollTop', {
+      configurable: true,
+      get() { return posicao.get(this) ?? 0; },
+      set(v: number) { posicao.set(this, v); },
+    });
+  });
+  afterEach(() => {
+    // Tira a simulação: os outros testes voltam ao comportamento do jsdom.
+    for (const p of ['scrollHeight', 'clientHeight', 'scrollTop']) delete (HTMLElement.prototype as unknown as Record<string, unknown>)[p];
+  });
+
+  it('entrar numa conversa com mensagens rola até o fim', async () => {
+    for (let i = 0; i < 30; i++) add('assistant', `Mensagem ${i}`);
+    renderChat();
+    await entrarNaConversa(userEvent.setup());
+    const ultima = await screen.findByText('Mensagem 29');
+    const area = ultima.closest('.overflow-y-auto') as HTMLElement;
+    await waitFor(() => expect(area.scrollTop).toBe(5000));
+  });
+
+  it('voltar para a lista e entrar em outra conversa também abre no fim', async () => {
+    const user = userEvent.setup();
+    for (let i = 0; i < 10; i++) add('assistant', `Aviso ${i}`, 'avisos');
+    for (let i = 0; i < 10; i++) add('assistant', `Pix ${i}`, 'pagamentos');
+    renderChat();
+    await entrarNaConversa(user, 'Avisos');
+    await screen.findByText('Aviso 9');
+    await user.click(screen.getByRole('button', { name: 'Voltar para as conversas' }));
+    await entrarNaConversa(user, 'Financeiro');
+    const ultima = await screen.findByText('Pix 9');
+    const area = ultima.closest('.overflow-y-auto') as HTMLElement;
+    await waitFor(() => expect(area.scrollTop).toBe(5000));
+  });
+});
+
 describe('AssistenteChat — ações rápidas', () => {
   it('com o chat na tela toda, o ⚡ abre as ações ocupando o painel e o X fecha', async () => {
     const user = userEvent.setup();

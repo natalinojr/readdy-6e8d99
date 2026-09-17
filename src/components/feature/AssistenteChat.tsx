@@ -4,7 +4,7 @@
 //
 // variant 'floating': botão redondo no canto + painel (tela cheia no celular).
 // variant 'embedded': dentro da página Assistente › Conversa.
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -336,6 +336,13 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const stick = useRef(true);
 
   const toBottom = () => requestAnimationFrame(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; });
+  // Abrir uma conversa SEMPRE mostra a última mensagem (pedido do dono, 2026-09-17). O toBottom() logo
+  // depois de carregar rodava antes de a tela desenhar as mensagens (rolava o fim de uma lista vazia),
+  // e botões/cartões que crescem depois empurravam o fim para baixo. Agora: 1) ao entrar, marca que
+  // falta ir ao fim; 2) depois que as mensagens estão NA TELA (layout effect), rola; 3) enquanto você
+  // não rolar para cima, o que crescer depois continua grudado no fim (ResizeObserver).
+  const fimPendente = useRef(true);
+  const conteudoRef = useRef<HTMLDivElement>(null);
 
   const merge = useCallback((novas: Msg[]) => {
     if (!novas.length) return;
@@ -361,9 +368,36 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   // Entra num assunto (ou em "Todas as mensagens", com id vazio).
   const abrirConversa = useCallback((topic: string) => {
+    fimPendente.current = true; stick.current = true;
     setAba(topic);
     setVista('conversa');
   }, []);
+
+  // Depois que a conversa está desenhada: vai ao fim ao entrar, ao trocar de conversa ou de tamanho
+  // (barra pequena ↔ tela toda). Layout effect roda antes da pintura, então não pisca no topo.
+  const chaveTela = useRef('');
+  useLayoutEffect(() => {
+    if (vista !== 'conversa' || !loaded) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const chave = `${modo}|${aba}`;
+    if (fimPendente.current || chaveTela.current !== chave) {
+      el.scrollTop = el.scrollHeight;
+      stick.current = true;
+      fimPendente.current = false;
+    }
+    chaveTela.current = chave;
+  }, [vista, loaded, msgs, modo, aba]);
+
+  // O que cresce depois (botões, cartões, texto longo) continua no fim — enquanto você não rolou para cima.
+  useEffect(() => {
+    const alvo = conteudoRef.current;
+    const el = scrollRef.current;
+    if (!alvo || !el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => { if (stick.current) el.scrollTop = el.scrollHeight; });
+    ro.observe(alvo);
+    return () => ro.disconnect();
+  }, [vista, loaded, modo]);
 
   const sincronizar = useCallback(async () => {
     if (!lastId.current) return;
@@ -461,7 +495,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { ...filtroConversa(abaRef.current) });
         setMsgs(h.messages); setHasMore(h.has_more);
         lastId.current = h.messages.length ? h.messages[h.messages.length - 1].id : 0;
-        setLoaded(true); setErro(null); toBottom();
+        fimPendente.current = true; stick.current = true;
+        setLoaded(true); setErro(null);
       } catch (e) { setErro(e instanceof Error ? e.message : String(e)); }
     })();
   }, [open, loaded, isOwner, vista, carregarPagamentos]); // isOwner: o login pode chegar depois do 1º render
@@ -872,8 +907,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       <div
         ref={scrollRef}
         onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
-        className="flex-1 overflow-y-auto px-3 py-3 space-y-2 bg-zinc-50/60"
+        className="flex-1 overflow-y-auto px-3 py-3 bg-zinc-50/60"
       >
+        <div ref={conteudoRef} className="space-y-2">
         {!loaded && !erro && <div className="mx-auto my-16 w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />}
         {hasMore && (
           <button onClick={maisAntigas} className="block mx-auto text-xs text-violet-600 font-semibold py-1 cursor-pointer">Carregar mensagens anteriores</button>
@@ -973,6 +1009,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             </div>
           </div>
         )}
+        </div>
       </div>
       )}
 
