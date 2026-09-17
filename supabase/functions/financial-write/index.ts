@@ -1219,6 +1219,43 @@ Deno.serve(async (req) => {
           rows.push(...(data ?? []));
           if ((data ?? []).length < Math.min(PAGE_SI, MAX_SI - from)) break;
         }
+
+        // Pagamento baixado numa conta a pagar: a classificação (DRE / compra e centro de custo)
+        // está na conta, não na linha do extrato. Anexa em `classificacao` para a tela mostrar.
+        type SiRow = { match_kind?: string | null; match_ref_id?: string | null; reconciled?: boolean; match_detail?: { confirmed?: { bill_id?: string } } | null; classificacao?: unknown };
+        const billDe = (r: SiRow) => r.match_detail?.confirmed?.bill_id
+          ?? (r.match_kind === 'payable' && r.reconciled ? r.match_ref_id ?? null : null);
+        const billIds = [...new Set((rows as SiRow[]).map(billDe).filter((x): x is string => Boolean(x)))];
+        if (billIds.length > 0) {
+          const bills: Array<{ id: string; category: string | null; reference_type: string | null; dre_category_id: string | null; cost_center_id: string | null }> = [];
+          for (let i = 0; i < billIds.length; i += 200) {
+            const { data: b } = await supabase.from('fin_accounts_payable')
+              .select('id, category, reference_type, dre_category_id, cost_center_id')
+              .eq('tenant_id', tenant_id).in('id', billIds.slice(i, i + 200));
+            bills.push(...(b ?? []));
+          }
+          const dreIds = [...new Set(bills.map((b) => b.dre_category_id).filter(Boolean))] as string[];
+          const ccIds = [...new Set(bills.map((b) => b.cost_center_id).filter(Boolean))] as string[];
+          const [{ data: dres }, { data: ccs }] = await Promise.all([
+            dreIds.length ? supabase.from('fin_dre_categories').select('id, name').in('id', dreIds) : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
+            ccIds.length ? supabase.from('fin_cost_centers').select('id, name').in('id', ccIds) : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
+          ]);
+          const dreNome = new Map((dres ?? []).map((d) => [d.id, d.name]));
+          const ccNome = new Map((ccs ?? []).map((c) => [c.id, c.name]));
+          const porId = new Map(bills.map((b) => [b.id, b]));
+          for (const r of rows as SiRow[]) {
+            const id = billDe(r);
+            const b = id ? porId.get(id) : null;
+            if (!b) continue;
+            const compra = b.reference_type === 'purchase';
+            r.classificacao = {
+              bill_id: b.id,
+              tipo: compra ? 'compra' : 'despesa',
+              categoria: compra ? 'Compra (CMV)' : (b.dre_category_id ? dreNome.get(b.dre_category_id) ?? null : null) ?? b.category ?? null,
+              centro_custo: b.cost_center_id ? ccNome.get(b.cost_center_id) ?? null : null,
+            };
+          }
+        }
         return new Response(JSON.stringify({ data: rows, limit: MAX_SI }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 

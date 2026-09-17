@@ -857,7 +857,7 @@ export default function ConciliacaoTab() {
     }
     if (filterStatus !== 'all') result = result.filter(s => situacao(s) === filterStatus);
     if (filterType !== 'all') result = result.filter(s => s.transaction_type === filterType);
-    if (filterCategory !== 'all') result = result.filter(s => s.category === filterCategory);
+    if (filterCategory !== 'all') result = result.filter(s => (s.classificacao?.categoria ?? s.category) === filterCategory);
     return result;
   }, [imports, search, filterStatus, filterType, filterCategory]);
 
@@ -867,7 +867,7 @@ export default function ConciliacaoTab() {
   // Categorias únicas para filtro
   const uniqueCategories = useMemo(() => {
     const cats = new Set<string>();
-    imports.forEach(i => { if (i.category) cats.add(i.category); });
+    imports.forEach(i => { const c = i.classificacao?.categoria ?? i.category; if (c) cats.add(c); });
     return Array.from(cats).sort();
   }, [imports]);
 
@@ -1296,7 +1296,12 @@ export default function ConciliacaoTab() {
                         {s.transaction_type === 'debit' ? '−' : '+'}{fmtCur(Number(s.amount))}
                       </td>
                       <td className="px-4 py-3">
-                        {s.category ? (
+                        {s.classificacao?.categoria ? (
+                          <span title={`Classificado na ${s.classificacao.tipo === 'compra' ? 'compra' : 'conta a pagar'} que recebeu a baixa`}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700">
+                            {s.classificacao.categoria}
+                          </span>
+                        ) : s.category ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
                             {s.category}
                           </span>

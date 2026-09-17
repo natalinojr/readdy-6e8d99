@@ -405,6 +405,27 @@ export default function TransacaoDetalheModal({
                 className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
               />
             </div>
+            {transaction.classificacao ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-zinc-600 mb-1 block">Categoria DRE</label>
+                  <div className="w-full px-3 py-2 border border-emerald-200 bg-emerald-50 rounded-lg text-sm text-emerald-800 font-semibold flex items-center gap-1.5">
+                    <i className="ri-checkbox-circle-line" />
+                    {transaction.classificacao.categoria ?? 'Sem categoria na conta'}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-zinc-600 mb-1 block">Centro de Custo</label>
+                  <div className="w-full px-3 py-2 border border-zinc-200 bg-zinc-50 rounded-lg text-sm text-zinc-700">
+                    {transaction.classificacao.centro_custo ?? 'Nenhum'}
+                  </div>
+                </div>
+                <p className="col-span-2 text-xs text-zinc-500 -mt-1">
+                  Classificado na {transaction.classificacao.tipo === 'compra' ? 'compra' : 'conta a pagar'} que recebeu a baixa.
+                  Para mudar, edite em Financeiro › {transaction.classificacao.tipo === 'compra' ? 'Compras' : 'Contas a pagar'}.
+                </p>
+              </div>
+            ) : (
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-zinc-600 mb-1 block">Categoria DRE</label>
@@ -428,6 +449,7 @@ export default function TransacaoDetalheModal({
                 </select>
               </div>
             </div>
+            )}
             <div>
               <label className="text-xs font-medium text-zinc-600 mb-1 block">Observações internas</label>
               <textarea
@@ -492,7 +514,7 @@ export default function TransacaoDetalheModal({
             </div>
           )}
 
-          {transaction.counterpart_doc && transaction.match_kind !== 'internal_transfer' && (
+          {transaction.counterpart_doc && transaction.match_kind !== 'internal_transfer' && !transaction.classificacao && (
             <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer bg-zinc-50 border border-zinc-200 rounded-lg p-2.5">
               <input type="checkbox" checked={lembrarContraparte} onChange={e => setLembrarContraparte(e.target.checked)} className="mt-0.5" />
               <span>

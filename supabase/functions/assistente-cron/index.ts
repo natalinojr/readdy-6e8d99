@@ -227,6 +227,9 @@ const PRO_DEFAULTS: Record<string, any> = {
   // conta a pagar sem classificação DRE → pergunta em texto, UMA por vez (a resposta é
   // gravada pelo webhook, sem modelo, e ele já pede a próxima)
   dre_classify: { enabled: true, from: '08:00', to: '21:00', every_min: 2, per_run: 1, max_open: 1 },
+  // item de fornecedor NOVO sem classificação CMV × despesa → aviso na aba Financeiro do chat
+  // com botão que abre Financeiro › Classificação de Itens (só o que chegou desde o último aviso)
+  item_classify: { enabled: true, from: '08:00', to: '21:00', every_min: 30 },
 };
 let pgc: ReturnType<typeof postgres> | null = null;
 const db = () => (pgc ??= postgres(Deno.env.get('SUPABASE_DB_URL') ?? '', { max: 1, prepare: false, idle_timeout: 20 }));
@@ -396,6 +399,40 @@ async function tasksOverdueText(ownerId: string): Promise<string | null> {
   return `📋 *Tarefas vencidas (${rows.length}${rows.length === 12 ? '+' : ''})*\n${rows.map((r) => `• ${r.title} (${r.due_date}${r.list ? `, ${r.list}` : ''})`).join('\n')}\nMe diga "concluí X" ou "adia X pra sexta" que eu ajusto.`;
 }
 
+// Itens de fornecedor que chegaram sem classificação CMV × despesa (2026-09-16, pedido do dono:
+// "avisar no grupo financeiro, com botão pra classificar"). Marca d'água = created_at do último
+// item avisado (estado por loja), então cada item entra num aviso só; o total pendente vai junto.
+// O primeiro aviso (sem estado) cobre o que já está pendente.
+// deno-lint-ignore no-explicit-any
+async function itemClassifyText(tenants: Array<{ id: string; name: string }>, state: any): Promise<{ text: string | null; newState: Record<string, string> }> {
+  const prev: Record<string, string> = state.item_classify ?? {};
+  const next: Record<string, string> = { ...prev };
+  const parts: string[] = [];
+  let novosTotal = 0;
+  for (const t of tenants) {
+    const desde = prev[t.id] ?? '1970-01-01T00:00:00Z';
+    const rows = await db()<Array<{ description: string; supplier_name: string | null; created_at: string }>>`
+      select description, supplier_name, created_at::text from fin_item_classifications
+      where tenant_id = ${t.id} and classe is null and created_at > ${desde}::timestamptz
+      order by created_at`;
+    if (!rows.length) continue;
+    next[t.id] = rows[rows.length - 1].created_at;
+    novosTotal += rows.length;
+    const [{ n }] = await db()<Array<{ n: number }>>`
+      select count(*)::int n from fin_item_classifications where tenant_id = ${t.id} and classe is null`;
+    const l = [`*${t.name}* — ${rows.length} novo(s)`];
+    l.push(...rows.slice(0, 10).map((r) => `• ${r.description}${r.supplier_name ? ` (${r.supplier_name})` : ''}`));
+    if (rows.length > 10) l.push(`… e mais ${rows.length - 10}`);
+    if (n > rows.length) l.push(`Pendentes no total: ${n}`);
+    parts.push(l.join('\n'));
+  }
+  if (!parts.length) return { text: null, newState: next };
+  return {
+    text: `🏷️ *Itens novos para classificar* (CMV × despesa)\n\n${parts.join('\n\n')}\n\nSem classificar, ${novosTotal > 1 ? 'eles entram' : 'ele entra'} no CMV e a DRE pode sair errada.`,
+    newState: next,
+  };
+}
+
 // Conta a pagar sem classificação DRE (o pay_bill não dá baixa sem ela): uma enquete
 // por conta, com as categorias de despesa da loja + os grupos (quase nenhuma loja tem
 // categorias). O voto é gravado pelo assistente-webhook (asst_polls.kind =
@@ -555,6 +592,31 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     if (!dry) { state.tasks_date = today; await saveState(); }
     const t = await tasksOverdueText(String(cfg.owner_user_id ?? ''));
     if (t) await deliver('tasks_overdue', t); else res.tasks_overdue = 'nenhuma vencida';
+  }
+  if (want('item_classify')) {
+    const c = pro.item_classify;
+    const last = state.item_checked_at ? Date.parse(state.item_checked_at) : 0;
+    if (dry || (now >= c.from && now <= c.to && Date.now() - last >= Number(c.every_min) * 60_000)) {
+      const { text, newState } = await itemClassifyText(tenants, state);
+      if (!dry) { state.item_checked_at = new Date().toISOString(); state.item_classify = newState; await saveState(); }
+      const botao = { type: 'abrir', label: 'Classificar itens', rota: '/financeiro?tab=itens' };
+      if (!text) res.item_classify = 'nada novo';
+      else if (dry) res.item_classify = `${text}\n[Botão: "${botao.label}" → ${botao.rota}]`;
+      else if (ownerChat && isTg(ownerChat)) {
+        // Pelo assistente-telegram: botão de link no Telegram + marcador de botão no chat do ERPOS
+        // (aba Financeiro) + push — o mesmo caminho dos avisos da Contratação.
+        const r = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+          body: JSON.stringify({ action: 'deliver', chat_key: ownerChat, text, save: true, topic: 'pagamentos', actions: [botao] }),
+        });
+        if (!r.ok) throw new Error(`assistente-telegram ${r.status}: ${(await r.text()).slice(0, 200)}`);
+        res.item_classify = true;
+      } else if (ownerChat) {
+        await sendText(toNumber(ownerChat), text);
+        await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: `${text}\n[Botão enviado: "${botao.label}" → ${botao.rota}]`, topic: 'pagamentos' });
+        res.item_classify = true;
+      }
+    }
   }
   if (want('dre_classify')) {
     const c = pro.dre_classify;

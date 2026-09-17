@@ -49,6 +49,8 @@ export interface StatementImport {
   match_ref_id?: string | null;
   match_confidence?: 'exato' | 'forte' | 'provavel' | null;
   match_detail?: Record<string, unknown> | null;
+  /** Pagamento baixado numa conta a pagar: a classificação vem da conta (anexada por list_statement_imports) */
+  classificacao?: { bill_id: string; tipo: 'compra' | 'despesa'; categoria: string | null; centro_custo: string | null } | null;
   reconciled: boolean;
   reconciled_at?: string;
   created_at: string;
