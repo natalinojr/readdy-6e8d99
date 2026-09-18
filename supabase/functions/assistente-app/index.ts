@@ -188,14 +188,14 @@ async function syncPendenciaContagem(admin: SupabaseClient, tenantId: string, ki
       p_titulo: `${n} ${n === 1 ? 'item sem classificação' : 'itens sem classificação'} (CMV × despesa)`,
       p_detalhe: 'Enquanto não forem classificados, entram no CMV e a DRE sai errada.',
       p_payload: { total: n }, p_rota: '/financeiro?tab=itens',
-      p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
+      p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
     }
     : {
       p_tenant: tenantId, p_kind: kind, p_ref: 'pendentes',
       p_titulo: `${n} ${n === 1 ? 'conta sem categoria' : 'contas sem categoria'} na DRE`,
       p_detalhe: 'Conta sem categoria não recebe baixa pelo assistente e fica de fora da DRE.',
       p_payload: { total: n }, p_rota: '/financeiro?tab=pagar',
-      p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
+      p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
     });
 }
 
@@ -594,6 +594,7 @@ Deno.serve(async (req) => {
     if (action === 'pedido_origem') {
       const { data: pend } = await admin.from('pendencias').select('kind, ref, tenant_id').eq('id', String(body.id ?? '')).maybeSingle();
       if (!pend || pend.kind !== 'pagamento_grupo') return fail('Pendência não encontrada.', 404);
+      if (!(await ehGestor(admin, user.id, String(pend.tenant_id)))) return fail('Sem acesso a essa loja.', 403);
       const { data: rq } = await admin.from('asst_group_requests').select('id, group_jid').eq('id', Number(pend.ref)).maybeSingle();
       if (!rq) return fail('Pedido do grupo não encontrado.', 404);
       const { data: m } = await admin.from('asst_messages').select('id').eq('chat_id', chatKey).eq('role', 'user')

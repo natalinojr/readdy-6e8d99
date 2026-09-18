@@ -96,7 +96,7 @@ function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Ca
 
 // tenantId/abertoInicial: usado pela caixa de pendências do chat (2026-09-18) — só a loja da
 // pendência e já aberto. Na mensagem do aviso segue como antes (todas as lojas, atrás do botão).
-export default function ItensClassificarCard({ call, tenantId, abertoInicial = false, onFeito }: { call: Call; tenantId?: string; abertoInicial?: boolean; onFeito?: () => void }) {
+export default function ItensClassificarCard({ call, tenantId, abertoInicial = false, onFeito, onTudo }: { call: Call; tenantId?: string; abertoInicial?: boolean; onFeito?: () => void; onTudo?: () => void }) {
   const [lojas, setLojas] = useState<Loja[] | null>(null);
   const [aberto, setAberto] = useState(abertoInicial);
   const [loading, setLoading] = useState(false);
@@ -107,6 +107,9 @@ export default function ItensClassificarCard({ call, tenantId, abertoInicial = f
     setLoading(true); setErro(null);
     try {
       const todas = (await call<{ tenants: Loja[] }>('items_pending')).tenants;
+      // items_pending só traz lojas onde você é admin/gerente: loja que não veio não é "nada
+      // pendente", é sem permissão (senão a pendência mostraria tudo certo com itens em aberto).
+      if (tenantId && !todas.some((l) => l.id === tenantId)) throw new Error('Você precisa ser admin ou gerente dessa loja para classificar os itens. Abra a tela com a loja certa.');
       setLojas(tenantId ? todas.filter((l) => l.id === tenantId) : todas);
     }
     catch (e) { setErro(e instanceof Error ? e.message : 'Não foi possível carregar os itens'); }
@@ -118,7 +121,11 @@ export default function ItensClassificarCard({ call, tenantId, abertoInicial = f
   const feito = (lojaId: string, itemId: string) => {
     setFeitos((n) => n + 1);
     onFeito?.();
-    setLojas((ls) => (ls ?? []).map((l) => (l.id === lojaId ? { ...l, items: l.items.filter((i) => i.id !== itemId) } : l)).filter((l) => l.items.length));
+    setLojas((ls) => {
+      const resto = (ls ?? []).map((l) => (l.id === lojaId ? { ...l, items: l.items.filter((i) => i.id !== itemId) } : l)).filter((l) => l.items.length);
+      if (!resto.length) setTimeout(() => onTudo?.(), 0); // zerou: a pendência some da caixa já
+      return resto;
+    });
   };
 
   if (!aberto) {

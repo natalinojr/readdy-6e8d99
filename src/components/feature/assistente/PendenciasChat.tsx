@@ -215,7 +215,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                   <ContasDreInline call={call} tenantId={p.tenantId} onFeito={() => onMudou?.()} onTudo={() => { setExpandida(null); recarregar(); onMudou?.(); }} />
                 )}
                 {expandida === p.id && p.kind === 'item_sem_classe' && (
-                  <ItensClassificarCard call={call} tenantId={p.tenantId} abertoInicial onFeito={() => onMudou?.()} />
+                  <ItensClassificarCard call={call} tenantId={p.tenantId} abertoInicial onFeito={() => onMudou?.()} onTudo={() => { setExpandida(null); recarregar(); onMudou?.(); }} />
                 )}
                 {expandida === p.id && p.kind === 'tarefa_vencida' && (
                   <TarefasInline tenantId={p.tenantId} meuId={meuId} onAbrir={(id) => onAbrirTarefa(p.tenantId, id)} />
