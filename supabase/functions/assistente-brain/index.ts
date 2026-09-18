@@ -988,7 +988,9 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
         descricao: input.descricao, bill_id: input.conta_a_pagar_id, requested_by: ctx.ownerId, channel: 'telegram', chat_id: ctx.chatId,
       });
       const p = out.payment;
-      ctx.outbound.push({ type: 'payment', id: String(p.id) });
+      // Mesmo boleto pedido duas vezes (2026-09-18: fatura Claro virou 2 cartões): o inter-bank
+      // devolve o rascunho que já existe (ja_existia) e aqui não sai um segundo cartão igual.
+      if (!ctx.outbound.some((o) => o.type === 'payment' && o.id === String(p.id))) ctx.outbound.push({ type: 'payment', id: String(p.id) });
       // Liga ao pedido que veio de grupo (asst_group_requests): pago → o assistente-telegram
       // posta o comprovante no grupo. Pelo id informado ou, sem id, pelo mesmo valor em 72 h.
       // Uma mensagem pode pedir VÁRIOS pagamentos (2026-09-16: Marcelle + Joziane numa mensagem só).
@@ -1018,6 +1020,7 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       } catch (e) { log('WARN', 'ligar pagamento ao pedido do grupo', { error: errMsg(e) }); }
       return JSON.stringify({
         ok: true,
+        ...(p.ja_existia ? { ja_existia: 'Esse boleto JÁ estava preparado (o mesmo pedido, não um novo): não prepare de novo e não diga que são dois pagamentos.' } : {}),
         ...(grupo ? { comprovante_no_grupo: `Ligado ao pedido do grupo "${grupo}": quando o Inter confirmar, o comprovante vai sozinho no grupo. Pode avisar isso em meia frase.` } : {}),
         pagamento: { id: p.id, tipo: p.kind, valor: Number(p.amount), valor_do_boleto: p.face_value, vencimento: p.due_date, beneficiario: p.beneficiary_name, saldo_inter: p.saldo_inter },
         instrucao: 'O resumo com os botões Pagar/Cancelar será enviado logo abaixo. Diga só uma frase curta (ex.: se o vencimento já passou ou o saldo não cobre). Não repita os dados e não peça PIN.',

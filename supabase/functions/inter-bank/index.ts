@@ -573,6 +573,14 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
     if (!valor || valor <= 0) throw new Error('Esse código não traz o valor: informe quanto pagar.');
     const { data: dup } = await admin.from('fin_inter_payments').select('id, status').eq('tenant_id', tenantId).eq('barcode', dec.barcode).in('status', PAY_LIVE).limit(1);
     if (dup?.length) throw new Error('Esse boleto já foi enviado para pagamento pelo assistente.');
+    // Rascunho aberto do mesmo boleto (2026-09-18): devolve o que já existe em vez de criar outro —
+    // dois cartões "Pagar" para a mesma conta é pagar em dobro com um toque a mais. Rascunho velho
+    // (passou do prazo) é expirado para abrir lugar ao novo.
+    const { data: abertos } = await admin.from('fin_inter_payments').select('*').eq('tenant_id', tenantId).eq('barcode', dec.barcode).in('status', PAY_OPEN);
+    for (const a of abertos ?? []) {
+      if (Date.now() - new Date(a.created_at).getTime() <= DRAFT_TTL_MS) return { ...a, ja_existia: true, saldo_inter: cfg.last_balance == null ? null : Number(cfg.last_balance) };
+      await admin.from('fin_inter_payments').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', a.id).in('status', PAY_OPEN);
+    }
     Object.assign(row, {
       amount: valor, face_value: dec.valor, barcode: dec.barcode, digitavel: dec.digitavel, due_date: dec.vencimento, bank_code: dec.banco, boleto_kind: dec.kind,
       beneficiary_name: bill?.supplier ?? null,
@@ -599,6 +607,12 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
   }
   await checkLimits(admin, cfg, tenantId, Number(row.amount));
   const { data: ins, error } = await admin.from('fin_inter_payments').insert(row).select('*').single();
+  if (error?.code === '23505' && row.barcode) {
+    // Corrida: outra chamada criou o rascunho deste boleto no mesmo instante (índice
+    // fin_inter_payments_boleto_aberto_uq) — devolve o dela.
+    const { data: outro } = await admin.from('fin_inter_payments').select('*').eq('tenant_id', tenantId).eq('barcode', String(row.barcode)).in('status', PAY_OPEN).maybeSingle();
+    if (outro) return { ...outro, ja_existia: true, saldo_inter: cfg.last_balance == null ? null : Number(cfg.last_balance) };
+  }
   if (error || !ins) throw new Error(`Gravar pedido: ${error?.message ?? 'sem retorno'}`);
   return { ...ins, saldo_inter: cfg.last_balance == null ? null : Number(cfg.last_balance) };
 }
