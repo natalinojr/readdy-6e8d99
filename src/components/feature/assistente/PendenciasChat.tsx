@@ -1,6 +1,7 @@
 // Caixa de pendências dentro do chat do assistente (2026-09-18). Antes morava no sino, e o
 // "Resolver" levava para a página de configuração do assistente — não fazia sentido (dono):
-// quem resolve é o chat, com botão. Aqui aparecem as pendências de TODAS as lojas do dono
+// quem resolve é o chat, com botão. Abre pelo botão ao lado das ações rápidas e ocupa o painel
+// inteiro, como elas (a faixa fixa no topo tomava espaço da conversa). Aqui aparecem as pendências de TODAS as lojas do dono
 // (a RLS de `pendencias` já filtra por user_tenants), com a ação certa em cada uma:
 //   pagamento pedido no grupo → Pagar (prepara de novo se venceu e já pede o PIN)
 //   o resto                   → Abrir (troca de loja se precisar e vai à tela que resolve)
@@ -42,25 +43,25 @@ const quando = (iso: string) => {
 };
 
 interface Props {
-  aberta: boolean;
-  onAlternar: () => void;
+  onFechar: () => void;
   /** Muda quando algo lá fora pode ter fechado uma pendência (pagamento feito, cancelado). */
   versao: number;
-  onContagem?: (n: number) => void;
+  /** Algo mudou aqui (ciente, descarte, pagamento): o botão do chat reconta. */
+  onMudou?: () => void;
   onPagar: (p: PendenciaChat) => Promise<void>;
   onAbrir: (p: PendenciaChat) => void;
   onPedir: (texto: string) => void;
 }
 
-export default function PendenciasChat({ aberta, onAlternar, versao, onContagem, onPagar, onAbrir, onPedir }: Props) {
-  const [lista, setLista] = useState<PendenciaChat[]>([]);
+export default function PendenciasChat({ onFechar, versao, onMudou, onPagar, onAbrir, onPedir }: Props) {
+  const [lista, setLista] = useState<PendenciaChat[] | null>(null);
   const [ocupada, setOcupada] = useState<string | null>(null);
   const [erros, setErros] = useState<Record<string, string>>({});
   const [motivoDe, setMotivoDe] = useState<string | null>(null);
   const [motivo, setMotivo] = useState('');
 
   const recarregar = useCallback(async () => {
-    try { setLista(await carregarPendenciasChat()); } catch { /* a caixa é extra: o chat segue */ }
+    try { setLista(await carregarPendenciasChat()); } catch { setLista((l) => l ?? []); }
   }, []);
 
   useEffect(() => {
@@ -69,42 +70,49 @@ export default function PendenciasChat({ aberta, onAlternar, versao, onContagem,
     return () => clearInterval(t);
   }, [recarregar, versao]);
 
-  const novas = lista.filter((p) => p.status === 'aberta').length;
-  useEffect(() => { onContagem?.(novas); }, [novas, onContagem]);
-
-  if (!lista.length) return null;
-
   const marcar = async (p: PendenciaChat, acao: 'vista' | 'descartada', m?: string) => {
     setOcupada(p.id);
     const { error } = await supabase.rpc('fn_pendencia_marcar', { p_id: p.id, p_acao: acao, p_motivo: m ?? null });
     if (error) setErros((e) => ({ ...e, [p.id]: error.message }));
-    else { setMotivoDe(null); setMotivo(''); await recarregar(); }
+    else { setMotivoDe(null); setMotivo(''); await recarregar(); onMudou?.(); }
     setOcupada(null);
   };
 
   const pagar = async (p: PendenciaChat) => {
     setOcupada(p.id);
     setErros((e) => { const n = { ...e }; delete n[p.id]; return n; });
-    try { await onPagar(p); await recarregar(); }
+    try { await onPagar(p); await recarregar(); onMudou?.(); }
     catch (e) { setErros((x) => ({ ...x, [p.id]: e instanceof Error ? e.message : String(e) })); }
     finally { setOcupada(null); }
   };
 
-  const urgentes = lista.filter((p) => p.urgencia === 'alta').length;
+  const itens = lista ?? [];
+  const urgentes = itens.filter((p) => p.urgencia === 'alta').length;
 
   return (
-    <div className={`border-b border-zinc-100 bg-indigo-50/60 flex-shrink-0 flex flex-col ${aberta ? 'max-h-[55%]' : ''}`} data-sem-arrasto>
-      <button onClick={onAlternar} className="flex items-center gap-2 px-4 py-2 text-left cursor-pointer flex-shrink-0" aria-expanded={aberta}>
-        <i className="ri-inbox-archive-line text-indigo-600" />
-        <span className="flex-1 text-xs font-bold text-indigo-800">
-          {lista.length === 1 ? '1 pendência' : `${lista.length} pendências`}
-          {urgentes > 0 && <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px]">{urgentes} urgente{urgentes > 1 ? 's' : ''}</span>}
-        </span>
-        <i className={`ri-arrow-${aberta ? 'up' : 'down'}-s-line text-indigo-500`} />
-      </button>
-      {aberta && (
-        <div className="overflow-y-auto px-3 pb-3 space-y-2">
-          {lista.map((p) => {
+    <div data-sem-arrasto className="absolute inset-0 z-10 flex flex-col bg-zinc-50">
+      <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-100 bg-white flex-shrink-0">
+        <div className="w-8 h-8 flex items-center justify-center rounded-xl bg-indigo-50 border border-indigo-200">
+          <i className="ri-inbox-archive-line text-indigo-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-black text-zinc-900 leading-tight">Pendências</p>
+          <p className="text-[11px] text-zinc-400 leading-tight">
+            {lista === null ? 'carregando…' : itens.length === 1 ? '1 esperando você' : `${itens.length} esperando você`}
+            {urgentes > 0 ? ` · ${urgentes} urgente${urgentes > 1 ? 's' : ''}` : ''}
+          </p>
+        </div>
+        <button onClick={onFechar} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar pendências">
+          <i className="ri-close-line text-xl" />
+        </button>
+      </div>
+      {lista === null ? (
+        <div className="mx-auto my-16 w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+      ) : !itens.length ? (
+        <p className="text-sm text-zinc-400 text-center py-16"><i className="ri-check-double-line text-2xl block mb-1 text-emerald-500" />Nada pendente.</p>
+      ) : (
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+          {itens.map((p) => {
             const cfg = kindConfig(p.kind);
             const ehPagamento = p.kind === 'pagamento_grupo';
             const busy = ocupada === p.id;
