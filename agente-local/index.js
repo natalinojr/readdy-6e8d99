@@ -455,8 +455,11 @@ function formatTicket(body, impressora) {
     const nome = item.nome || 'Item';
     const qtdStr = String(qtd).padStart(2, ' ');
 
+    const isProducao = !(estacao && (estacao.toUpperCase().includes('COMPROVANTE') || estacao.toUpperCase().includes('RETIRADA')));
+
     out += ALIGN_LEFT;
-    out += BOLD_ON + utf8ToCp860(`${qtdStr}x ${nome}`) + BOLD_OFF + LINE_FEED;
+    // Producao: nome em altura dupla (mesmo layout da edge).
+    out += BOLD_ON + (isProducao ? DOUBLE_HEIGHT : '') + utf8ToCp860(`${qtdStr}x ${nome}`) + NORMAL + BOLD_OFF + LINE_FEED;
 
     if (item.opcoes && item.opcoes.length > 0) {
       item.opcoes.forEach((opt) => {
@@ -470,7 +473,13 @@ function formatTicket(body, impressora) {
     // Observacoes do item em NEGRITO + caixa alta (mesmo destaque da edge).
     if (item.observacoes && item.observacoes.length > 0) {
       item.observacoes.forEach((obs) => {
-        out += BOLD_ON + utf8ToCp860(`   ** ${String(obs).toUpperCase()}`) + BOLD_OFF + LINE_FEED;
+        const txt = String(obs).toUpperCase();
+        if (isProducao) {
+          // Fundo preto (impressao reversa) + altura dupla (mesmo layout da edge).
+          out += '   ' + REVERSE_ON + BOLD_ON + DOUBLE_HEIGHT + utf8ToCp860(` ${txt} `) + NORMAL + BOLD_OFF + REVERSE_OFF + LINE_FEED;
+        } else {
+          out += BOLD_ON + utf8ToCp860(`   ** ${txt}`) + BOLD_OFF + LINE_FEED;
+        }
       });
     }
 
@@ -505,7 +514,7 @@ function formatTicket(body, impressora) {
       out += utf8ToCp860(sep) + LINE_FEED;
     } else {
       out += BOLD_ON + utf8ToCp860('OBS:') + BOLD_OFF + LINE_FEED;
-      out += utf8ToCp860(observacao_geral) + LINE_FEED;
+      out += REVERSE_ON + BOLD_ON + DOUBLE_HEIGHT + utf8ToCp860(` ${observacao_geral} `) + NORMAL + BOLD_OFF + REVERSE_OFF + LINE_FEED;
       out += utf8ToCp860(sep) + LINE_FEED;
     }
   }

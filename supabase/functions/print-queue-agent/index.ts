@@ -27,6 +27,8 @@ const DOUBLE_WIDTH_HEIGHT = ESC + "!\x30";
 const NORMAL = ESC + "!\x00";
 const UNDERLINE_ON = ESC + "-\x01";
 const UNDERLINE_OFF = ESC + "-\x00";
+const REVERSE_ON = GS + "B\x01"; // texto branco em fundo preto
+const REVERSE_OFF = GS + "B\x00";
 const CP860 = ESC + "\x74\x03";
 
 // ============================================
@@ -228,6 +230,10 @@ function formatTicket(
     para_viagem,
   } = payload;
 
+  // Comprovante/retirada vai pro cliente; o destaque de itens/obs e so pra producao.
+  const estacaoUpperAll = (estacao as string || "").toUpperCase();
+  const isProducao = !(estacaoUpperAll.includes("COMPROVANTE") || estacaoUpperAll.includes("RETIRADA"));
+
   const origemDisplay = ORIGEM_PT[(origem as string || "").toLowerCase()] || origem || "";
 
   const width = papel === "58mm" ? 32 : 48;
@@ -326,7 +332,8 @@ function formatTicket(
     const qtdStr = String(qtd).padStart(2, " ");
 
     out += ALIGN_LEFT;
-    out += BOLD_ON + toCp860(`${qtdStr}x ${nome}`) + BOLD_OFF + LINE_FEED;
+    // Producao: nome em altura dupla (mesma largura, nao quebra mais linhas).
+    out += BOLD_ON + (isProducao ? DOUBLE_HEIGHT : "") + toCp860(`${qtdStr}x ${nome}`) + NORMAL + BOLD_OFF + LINE_FEED;
 
     const opcoes = item.opcoes as Array<string | { nome: string; obrigatorio?: boolean }> | undefined;
     if (opcoes && opcoes.length > 0) {
@@ -343,7 +350,13 @@ function formatTicket(
     const observacoes = item.observacoes as string[] | undefined;
     if (observacoes && observacoes.length > 0) {
       observacoes.forEach((obs) => {
-        out += BOLD_ON + toCp860(`   ** ${String(obs).toUpperCase()}`) + BOLD_OFF + LINE_FEED;
+        const txt = String(obs).toUpperCase();
+        if (isProducao) {
+          // Fundo preto (impressao reversa) + altura dupla pra nao passar batido.
+          out += "   " + REVERSE_ON + BOLD_ON + DOUBLE_HEIGHT + toCp860(` ${txt} `) + NORMAL + BOLD_OFF + REVERSE_OFF + LINE_FEED;
+        } else {
+          out += BOLD_ON + toCp860(`   ** ${txt}`) + BOLD_OFF + LINE_FEED;
+        }
       });
     }
 
@@ -383,7 +396,7 @@ function formatTicket(
       out += toCp860(sep) + LINE_FEED;
     } else {
       out += BOLD_ON + toCp860("OBS:") + BOLD_OFF + LINE_FEED;
-      out += toCp860(observacao_geral as string) + LINE_FEED;
+      out += REVERSE_ON + BOLD_ON + DOUBLE_HEIGHT + toCp860(` ${observacao_geral as string} `) + NORMAL + BOLD_OFF + REVERSE_OFF + LINE_FEED;
       out += toCp860(sep) + LINE_FEED;
     }
   }

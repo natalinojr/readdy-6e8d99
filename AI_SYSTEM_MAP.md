@@ -2572,6 +2572,17 @@ mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a co
 `''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
 de não lidas (`linhaConversa`).
 
+### Chat: abrir a conversa na última mensagem (2026-09-18)
+
+Rolar para o fim uma vez ao abrir não basta: DEPOIS a área das mensagens ENCOLHE (os cartões de
+pagamento em aberto chegam atrasados e ocupam o espaço de baixo, e o teclado do celular diminui a tela),
+e o navegador mantém o `scrollTop` — as últimas mensagens somem por baixo. `AssistenteChat.tsx` observa
+com `ResizeObserver` o conteúdo (`conteudoRef`) E a própria área rolável, mais o `visualViewport`, e
+volta ao fim enquanto `stick` (você não rolou para cima). Medido em Chrome headless com a área
+encolhendo 250 px: sem observar a área faltavam 155 px; com, 0. Pegadinha de teste: a aba do navegador
+embutido fica `hidden` (sem rAF, o ResizeObserver não dispara) — medir com
+`chrome.exe --headless=new --window-size=375,812 --virtual-time-budget=25000 --dump-dom`.
+
 ### Repasse Stone creditado em duas datas (2026-09-16)
 
 O banco às vezes credita parte do repasse de um dia (ex.: uma venda de débito) em outra data. `fn_match_card_deposits` tem uma 2ª passada: mesma pilha, dia D que não fechou por falta + dia E entre D+1 e D+5 que não fechou por sobra, com o arquivo da Stone de E já importado; se juntos fecham na tolerância, concilia os dois com `match_group = 'stone:D+E:normal|antecipado'` (o match_group é só um rótulo — `group_detail` busca por igualdade). `fn_stone_repasses` marca os dois dias como `atrasado` e devolve `par_dia`. Sem o arquivo da Stone de E não há como saber a sobra de E, então o par só fecha no dia seguinte ao crédito atrasado.
@@ -2600,3 +2611,7 @@ Agentes (auditor, carga, testadores, revisores, executores) testaram produção 
 - Restauração (`scripts/restore-from-backup.mjs`) é **dry-run por padrão** (só gera `.sql`) e **recusa escrever no project-ref de produção mesmo com `--apply` e confirmação** — sem flag de escape. A loja "Testes PDV" mora no mesmo projeto de produção, então testar restore de verdade exige um projeto Supabase novo, nunca essa loja.
 - `tsconfig.app.json` só inclui `"src"` — módulos em `scripts/**` nunca são checados pelo `tsc` do projeto. Teste que precisa importar um `.mjs` de fora de `src/` usa `pathToFileURL(...).href` + `import(/* @vite-ignore */ ...)` em vez de import estático (mesmo padrão de `src/test/edge/fiscalValores.test.ts`) — evita `TS7016` sem precisar manter `.d.mts` ao lado.
 - Validado de ponta a ponta contra produção (só leitura): 184/184 tabelas, 7,0 MB, ~27 min (dominado pelo overhead de spawnar `npx supabase` por tabela, não pelo volume de dados). Agendamento (`scripts/backup/registrar-agendamento.ps1`, 03:30 Brasília) é script entregável — **o dono roda, o agente nunca executa**. Detalhes: `specs/2026-09-backup-diario/`.
+
+### 2026-09-18 — Ticket de produção: itens maiores e obs em fundo preto
+- Edge `print-queue-agent` v43 (no ar) + `agente-local/index.js` (fallback): em ticket de produção (estação que não é COMPROVANTE/RETIRADA), nome do item sai em **altura dupla** (`ESC ! 0x10`, mesma largura → não quebra mais linhas) e as observações do item e a OBS geral saem em **impressão reversa** (`GS B 1`, branco no fundo preto) + negrito + altura dupla. Comprovante/retirada ficou como antes.
+- Gestor de Pedidos (kanban): itens do card num bloco `bg-sky-50`, nome/quantidade em `text-sm`; obs do item e obs geral em bloco âmbar `text-xs` negrito.

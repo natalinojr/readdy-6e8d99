@@ -205,10 +205,12 @@ function dbItemToKDS(oi: DBOrderItem, stationMap: StationMap): KDSItem {
 
   // Filtra observações internas (ex: "Pagamento na entrega: X") — essas são metadados
   // extraídos no nível do pedido (paymentMethodName) e não devem aparecer como obs de item
+  // trim: o PDV grava `notes` com o texto cru (ex.: espaço no fim) e a tabela de
+  // obs com o texto limpo — sem normalizar, a mesma obs aparecia duas vezes.
   const rawObsTexts = obs
-    .map((o) => o.text)
+    .map((o) => o.text?.trim())
     .filter((t): t is string => !!t && !/^Pagamento na entrega:/i.test(t));
-  const notesText = oi.notes ?? '';
+  const notesText = (oi.notes ?? '').trim();
   if (notesText && !rawObsTexts.includes(notesText) && !/^Pagamento na entrega:/i.test(notesText)) {
     rawObsTexts.push(notesText);
   }

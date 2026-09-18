@@ -394,9 +394,17 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     const alvo = conteudoRef.current;
     const el = scrollRef.current;
     if (!alvo || !el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => { if (stick.current) el.scrollTop = el.scrollHeight; });
+    const aoFim = () => { if (stick.current) el.scrollTop = el.scrollHeight; };
+    const ro = new ResizeObserver(aoFim);
     ro.observe(alvo);
-    return () => ro.disconnect();
+    // A JANELA das mensagens também encolhe depois de abrir: os cartões de pagamento em aberto chegam
+    // e ocupam o espaço de baixo, e no celular o teclado encolhe a tela. O navegador mantém a rolagem
+    // e as últimas mensagens somem por baixo (o "não deu certo" de 2026-09-18). Observar só o conteúdo
+    // não pegava isso: observa a área rolável e a tela visível também.
+    ro.observe(el);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', aoFim);
+    return () => { ro.disconnect(); vv?.removeEventListener('resize', aoFim); };
   }, [vista, loaded, modo]);
 
   const sincronizar = useCallback(async () => {
