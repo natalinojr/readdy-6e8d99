@@ -178,7 +178,8 @@ async function enqueueTicket(
       p_station_key: stationKey,
       p_station_label: stationLabel,
       p_content_type: 'ticket_json',
-      p_payload: payload as unknown as Record<string, unknown>,
+      // force = reimpressão manual: a edge imprime "*** REIMPRESSÃO ***" no topo.
+      p_payload: (force ? { ...payload, reimpressao: true } : payload) as unknown as Record<string, unknown>,
       p_paper_style: '80mm',
       p_force: force,
     });

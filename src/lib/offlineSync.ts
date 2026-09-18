@@ -16,6 +16,7 @@ import {
   type OfflineOrder,
 } from './offlineDB';
 import { invokeWithAuth } from './supabase';
+import { buildOfflineCreateOrderBody } from './offlineOrderBody';
 
 const MAX_RETRIES = 5;
 
@@ -44,32 +45,13 @@ async function syncSingleOrder(order: OfflineOrder): Promise<SyncResult> {
 
   try {
     // ── 1. Criar pedido no servidor ──────────────────────────────────────
-    // O campo 'local_id' é enviado como idempotency key.
-    // O backend deve ignorar pedidos com o mesmo local_id já processado.
+    // client_request_id é a idempotency key: o backend devolve o pedido já criado com o mesmo id.
     const { data, error } = await invokeWithAuth<{
       data?: { id?: string; number?: string };
       error?: string;
     }>('order-write', {
-      body: {
-        action: 'create_order',
-        // Idempotency key — previne duplicação se a rede cair após o servidor processar (BUG-06)
-        client_request_id: order.localId,
-        session_id: order.session_id,
-        tenant_id: order.tenant_id,
-        origin: order.origin,
-        destination: order.destination,
-        destination_name: order.destination_name,
-        destination_phone: order.destination_phone,
-        delivery_address: order.delivery_address,
-        delivery_fee: order.delivery_fee,
-        items: order.items,
-        discount_amount: order.discount_amount,
-        service_fee_amount: order.service_fee_amount,
-        subtotal: order.subtotal,
-        total_amount: order.total_amount,
-        cash_register_id: order.cash_register_id,
-        is_training: order.is_training,
-      },
+      // Payload original completo + mesmo client_request_id da tentativa online (idempotente, BUG-06)
+      body: buildOfflineCreateOrderBody(order),
     });
 
     if (error) {

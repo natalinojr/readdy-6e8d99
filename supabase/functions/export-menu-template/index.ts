@@ -1,6 +1,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0";
+import { authenticate, isManagerRole, tenantRole } from "../_shared/tenant-auth.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -27,6 +28,21 @@ serve(async (req) => {
     }
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+    // Autorização (2026-09-17): exporta cardápio + custos — só admin/gerente da loja.
+    const caller = await authenticate(req, supabase);
+    if (!caller) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (!caller.isServiceRole) {
+      const role = await tenantRole(supabase, caller.userId!, String(tenant_id));
+      if (!role || !isManagerRole(role)) {
+        return new Response(
+          JSON.stringify({ error: role ? "Apenas administrador ou gerente da loja pode exportar o cardápio" : "Usuário não pertence a esta loja" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     const { data: stations } = await supabase
       .from("kitchen_stations")

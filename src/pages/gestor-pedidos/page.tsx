@@ -12,6 +12,9 @@ import GestorMesasView from './components/GestorMesasView';
 import ObsGateModal, { type ObsGateTipo } from '@/components/feature/ObsGateModal';
 import EntregaGateModal from '@/components/feature/EntregaGateModal';
 import CancelOrderModal from './components/CancelOrderModal';
+import CancelamentoModal from '@/components/feature/CancelamentoModal';
+import { supabase } from '@/lib/supabase';
+import type { PagamentoPedido } from '@/types/pdv';
 import PedidoDetailModal from './components/PedidoDetailModal';
 import HistoricoDrawer from './components/HistoricoDrawer';
 
@@ -99,7 +102,7 @@ function destinoToast(pedido: KDSPedido): string {
 export default function GestorPedidosPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, markOutForDeliveryRemote, reloadOrders, pedidosSalvando } = useKDS();
+  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, markOutForDeliveryRemote, reloadOrders, pedidosSalvando, fetchSessionOrdersFull } = useKDS();
   const { estado, sessao, loadingSession } = useSessao();
   const { user } = useAuth();
   const { hasPermissao } = usePermissoes();
@@ -117,6 +120,21 @@ export default function GestorPedidosPage() {
   const [toasts, setToasts] = useState<ToastNovo[]>([]);
   const [showStats, setShowStats] = useState(false);
   const [showHistorico, setShowHistorico] = useState(false);
+  // ECONOMIA 09-17: HistoricoDrawer precisa da sessão inteira (não só do quadro
+  // ativo/recente que `pedidos` carrega agora) — busca avulsa só quando abre.
+  const [historicoPedidos, setHistoricoPedidos] = useState<KDSPedido[]>([]);
+  const [historicoCarregando, setHistoricoCarregando] = useState(false);
+  // ECONOMIA 09-17: aba "Entregues" do Gestor também precisa da sessão inteira
+  // (não só os entregues das últimas 2h que `pedidos` carrega continuamente).
+  // Busca sob demanda ao entrar na aba, depois atualiza por evento realtime
+  // (proxy: novo id entregue aparecendo no `pedidos` contínuo) com debounce,
+  // ou a cada 60s como rede de segurança — nunca a cada evento cru.
+  const [entreguesSessao, setEntreguesSessao] = useState<KDSPedido[]>([]);
+  const [entreguesCarregouUmaVez, setEntreguesCarregouUmaVez] = useState(false);
+  const [faturamentoInfo, setFaturamentoInfo] = useState<{ faturamento: number; ticketMedio: number; pedidosCount: number }>({ faturamento: 0, ticketMedio: 0, pedidosCount: 0 });
+  const faturamentoPedidosCount = faturamentoInfo.pedidosCount;
+  const entreguesDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevLiveEntregueIdsRef = useRef<Set<string>>(new Set());
   const [prontoAlertDismissedAt, setProntoAlertDismissedAt] = useState<number>(0);
   const [refreshing, setRefreshing] = useState(false);
   const [pedidosSalvandoDismissedAt, setPedidosSalvandoDismissedAt] = useState<number>(0);
@@ -205,11 +223,43 @@ export default function GestorPedidosPage() {
     pedido.itens.filter((i) => i.observacoes && i.observacoes.length > 0);
 
   // ─── Cancelar Pedido ───
+  // Pedido com pagamento válido não cancela pelo order-write (409 order_paid_use_refund):
+  // abre o mesmo fluxo de cancelamento com estorno da tela Pedidos (fn_cancel_and_refund_order).
+  const [estornoModal, setEstornoModal] = useState<{ pedido: KDSPedido; pagamentos: PagamentoPedido[] } | null>(null);
+  const abrirCancelamentoComEstorno = useCallback(async (pedido: KDSPedido) => {
+    const avisoPedidos = () => toastErrorGestor('Pedido pago', 'Pedido pago: cancele com estorno em Pedidos.');
+    if (!user?.tenantId) { avisoPedidos(); return; }
+    const { data, error } = await supabase
+      .from('payments')
+      .select('id, amount, change_amount, is_refunded, operator_name, payment_methods ( name, type )')
+      .eq('tenant_id', user.tenantId)
+      .eq('order_id', pedido.id)
+      .eq('is_refunded', false);
+    if (error || !data || data.length === 0) { avisoPedidos(); return; }
+    const pagamentos: PagamentoPedido[] = (data as unknown as Array<{
+      id: string; amount: number; change_amount: number | null; is_refunded: boolean; operator_name: string | null;
+      payment_methods: { name: string | null; type: string | null } | { name: string | null; type: string | null }[] | null;
+    }>).map((p) => {
+      const pm = Array.isArray(p.payment_methods) ? p.payment_methods[0] : p.payment_methods;
+      return {
+        id: p.id,
+        amount: Number(p.amount ?? 0),
+        change_amount: Number(p.change_amount ?? 0),
+        is_refunded: p.is_refunded,
+        payment_method_name: pm?.name ?? null,
+        payment_method_type: pm?.type ?? null,
+        operator_name: p.operator_name,
+      } as PagamentoPedido;
+    });
+    setEstornoModal({ pedido, pagamentos });
+  }, [user?.tenantId, toastErrorGestor]);
+
   const handleCancelarPedido = useCallback((pedidoId: string) => {
     const pedido = pedidos.find((p) => p.id === pedidoId);
     if (!pedido) return;
+    if (pedido.isPaid) { void abrirCancelamentoComEstorno(pedido); return; }
     setCancelModal({ pedido });
-  }, [pedidos]);
+  }, [pedidos, abrirCancelamentoComEstorno]);
 
   const executarCancelamento = useCallback(async (reason: string, autorizadoPor?: string) => {
     if (!cancelModal) return;
@@ -220,7 +270,14 @@ export default function GestorPedidosPage() {
     const result = await cancelOrderRemote(cancelModal.pedido.id, motivoFinal);
     setCancelLoading(false);
     if (result.ok) setCancelModal(null);
-  }, [cancelModal, cancelOrderRemote]);
+    else if (result.code === 'order_paid_use_refund') {
+      const pedido = cancelModal.pedido;
+      setCancelModal(null);
+      toastErrorGestor('Pedido com pagamento', 'Este pedido tem pagamento registrado: cancele com estorno.');
+      void abrirCancelamentoComEstorno(pedido);
+    }
+    else toastErrorGestor('Não foi possível cancelar', result.error ?? 'Tente novamente.');
+  }, [cancelModal, cancelOrderRemote, toastErrorGestor, abrirCancelamentoComEstorno]);
 
   // ─── Iniciar Preparo ───
   const handleIniciarPreparo = useCallback((pedidoId: string) => {
@@ -522,10 +579,19 @@ export default function GestorPedidosPage() {
     preparo:   pedidosComStatus.filter((p) => p.status === 'preparo' && !p.isCancelled).length,
     pronto:    pedidosComStatus.filter((p) => p.status === 'pronto' && !p.isCancelled).length,
     em_rota:   pedidosComStatus.filter((p) => p.status === 'em_rota' && !p.isCancelled).length,
-    entregue:  pedidosComStatus.filter((p) => p.status === 'entregue' && !p.isCancelled).length,
+    // ECONOMIA 09-17: `pedidosComStatus` só tem entregues das últimas 2h (fn_get_kds_orders
+    // com p_only_active=true). Assim que a sessão inteira foi buscada (1x ao abrir a aba
+    // "Entregues"), o contador passa a refletir a sessão toda; antes disso é aproximado
+    // pelas últimas 2h (não há agregado leve só de "entregues" — fn_get_session_revenue
+    // conta 'delivered' com total_amount>0 e sem treino, semântica diferente).
+    // Sem a lista carregada, usa o maior entre as últimas 2h e a contagem agregada da sessão
+    // (fn_get_session_revenue) para o contador não aparecer menor que o real.
+    entregue:  entreguesCarregouUmaVez
+      ? entreguesSessao.length
+      : Math.max(pedidosComStatus.filter((p) => p.status === 'entregue' && !p.isCancelled).length, faturamentoPedidosCount),
     cancelado: pedidosComStatus.filter((p) => p.isCancelled).length,
     total:     pedidosComStatus.filter((p) => !p.isCancelled).length,
-  }), [pedidosComStatus]);
+  }), [pedidosComStatus, entreguesCarregouUmaVez, entreguesSessao, faturamentoPedidosCount]);
 
   const contadoresOrigem = useMemo(() => {
     const base = pedidosComStatus.filter((p) => !p.isCancelled);
@@ -573,12 +639,94 @@ export default function GestorPedidosPage() {
     return pedidosComStatus.filter((p) => p.criadoEm >= umaHoraAtras && !p.isCancelled).length;
   }, [pedidosComStatus]);
 
-  const { faturamento, ticketMedio } = useMemo(() => {
-    const entregues = pedidosComStatus.filter((p) => p.status === 'entregue' && !p.isCancelled && p.totalAmount > 0);
-    const fat = entregues.reduce((acc, p) => acc + p.totalAmount, 0);
-    const ticket = entregues.length > 0 ? fat / entregues.length : 0;
-    return { faturamento: fat, ticketMedio: ticket };
-  }, [pedidosComStatus]);
+  // ECONOMIA 09-17: fn_get_kds_orders agora só traz pedidos ativos/recentes
+  // (p_only_active=true), então o faturamento da sessão inteira não pode mais
+  // vir do array `pedidos` local — usa o agregado leve fn_get_session_revenue
+  // (1 linha, sem baixar os pedidos de novo). Debounce simples porque `pedidos`
+  // muda a cada evento do KDS.
+  const faturamentoDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!user?.tenantId || !sessao?.id) return;
+    if (faturamentoDebounceRef.current) clearTimeout(faturamentoDebounceRef.current);
+    faturamentoDebounceRef.current = setTimeout(async () => {
+      const { data, error } = await supabase.rpc('fn_get_session_revenue', {
+        p_tenant_id: user.tenantId,
+        p_session_id: sessao.id,
+      });
+      if (error) { console.warn('[GestorPedidos] fn_get_session_revenue error:', error.message); return; }
+      const row = Array.isArray(data) ? data[0] : data;
+      const fat = Number(row?.faturamento ?? 0);
+      const count = Number(row?.pedidos_count ?? 0);
+      setFaturamentoInfo({ faturamento: fat, ticketMedio: count > 0 ? fat / count : 0, pedidosCount: count });
+    }, 1500);
+    return () => {
+      if (faturamentoDebounceRef.current) clearTimeout(faturamentoDebounceRef.current);
+    };
+  }, [user?.tenantId, sessao?.id, pedidos]);
+  const { faturamento, ticketMedio } = faturamentoInfo;
+
+  useEffect(() => {
+    if (!showHistorico || !sessao?.id) return;
+    let cancelado = false;
+    setHistoricoCarregando(true);
+    fetchSessionOrdersFull(sessao.id).then((orders) => {
+      if (cancelado) return;
+      setHistoricoPedidos(orders.map((p) => ({ ...p, status: derivePedidoStatus(p) })));
+    }).finally(() => { if (!cancelado) setHistoricoCarregando(false); });
+    return () => { cancelado = true; };
+  }, [showHistorico, sessao?.id, fetchSessionOrdersFull]);
+
+  // Troca de sessão (nova sessão aberta no PDV): descarta cache da aba
+  // "Entregues" da sessão anterior para não misturar dados de sessões.
+  useEffect(() => {
+    setEntreguesSessao([]);
+    setEntreguesCarregouUmaVez(false);
+    prevLiveEntregueIdsRef.current = new Set();
+  }, [sessao?.id]);
+
+  // ECONOMIA 09-17: aba "Entregues" — busca sob demanda a sessão inteira.
+  const fetchEntreguesSessao = useCallback(async () => {
+    if (!sessao?.id) return;
+    const orders = await fetchSessionOrdersFull(sessao.id);
+    setEntreguesSessao(
+      orders
+        .map((p) => ({ ...p, status: derivePedidoStatus(p) }))
+        .filter((p) => p.status === 'entregue' && !p.isCancelled),
+    );
+    setEntreguesCarregouUmaVez(true);
+  }, [sessao?.id, fetchSessionOrdersFull]);
+
+  // Ao entrar na aba "Entregues": 1 fetch imediato + rede de segurança a cada 60s.
+  // Ao sair, o cleanup derruba o interval (para de atualizar).
+  useEffect(() => {
+    if (filtroStatus !== 'entregue' || !sessao?.id) return;
+    prevLiveEntregueIdsRef.current = new Set(
+      pedidosComStatus.filter((p) => p.status === 'entregue' && !p.isCancelled).map((p) => p.id),
+    );
+    void fetchEntreguesSessao();
+    const interval = setInterval(() => { void fetchEntreguesSessao(); }, 60000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtroStatus, sessao?.id, fetchEntreguesSessao]);
+
+  // Enquanto a aba "Entregues" está aberta: se o `pedidos` contínuo (que já
+  // reflete o realtime) mostrar um id novo marcado como entregue, refaz a
+  // busca completa com debounce curto — não a cada evento cru.
+  useEffect(() => {
+    if (filtroStatus !== 'entregue' || !sessao?.id) return;
+    const liveEntregueIds = new Set(
+      pedidosComStatus.filter((p) => p.status === 'entregue' && !p.isCancelled).map((p) => p.id),
+    );
+    const temNovo = [...liveEntregueIds].some((id) => !prevLiveEntregueIdsRef.current.has(id));
+    prevLiveEntregueIdsRef.current = liveEntregueIds;
+    if (temNovo) {
+      if (entreguesDebounceRef.current) clearTimeout(entreguesDebounceRef.current);
+      entreguesDebounceRef.current = setTimeout(() => { void fetchEntreguesSessao(); }, 3000);
+    }
+    return () => {
+      if (entreguesDebounceRef.current) clearTimeout(entreguesDebounceRef.current);
+    };
+  }, [pedidosComStatus, filtroStatus, sessao?.id, fetchEntreguesSessao]);
 
   // Detalhes do pedido — sempre sincronizado com o estado atual
   const detailPedido = useMemo(
@@ -593,6 +741,13 @@ export default function GestorPedidosPage() {
       result = pedidosComStatus.filter((p) => p.isCancelled);
     } else if (filtroStatus === 'todos') {
       result = pedidosComStatus.filter((p) => !p.isCancelled);
+    } else if (filtroStatus === 'entregue') {
+      // ECONOMIA 09-17: mostra a sessão inteira de entregues (busca sob demanda),
+      // não só as últimas 2h de `pedidosComStatus`. Antes do primeiro fetch da
+      // aba, cai no que já está carregado (últimas 2h) para não ficar vazio.
+      result = entreguesCarregouUmaVez
+        ? entreguesSessao
+        : pedidosComStatus.filter((p) => !p.isCancelled && p.status === 'entregue');
     } else {
       result = pedidosComStatus.filter((p) => !p.isCancelled && p.status === filtroStatus);
     }
@@ -631,7 +786,7 @@ export default function GestorPedidosPage() {
     }
 
     return result;
-  }, [pedidosComStatus, filtroStatus, filtroOrigem, filtroEstacao, filtroPagamento, busca]);
+  }, [pedidosComStatus, filtroStatus, filtroOrigem, filtroEstacao, filtroPagamento, busca, entreguesSessao, entreguesCarregouUmaVez]);
 
   const FILTROS: { key: FiltroStatus; label: string; count?: number; urgent?: boolean; danger?: boolean }[] = [
     { key: 'todos',     label: 'Ativos',      count: contadores.total },
@@ -717,6 +872,16 @@ export default function GestorPedidosPage() {
           onCancel={() => setCancelModal(null)}
         />
       )}
+      {estornoModal && (
+        <CancelamentoModal
+          tipo="pedido"
+          orderId={estornoModal.pedido.id}
+          orderNumber={estornoModal.pedido.numero}
+          pagamentos={estornoModal.pagamentos}
+          onConcluido={() => { void reloadOrders(); }}
+          onFechar={() => setEstornoModal(null)}
+        />
+      )}
       {detailPedido && (
         <PedidoDetailModal
           pedido={detailPedido}
@@ -727,7 +892,7 @@ export default function GestorPedidosPage() {
       )}
       {showHistorico && (
         <HistoricoDrawer
-          pedidos={pedidosComStatus}
+          pedidos={historicoCarregando && historicoPedidos.length === 0 ? pedidosComStatus : historicoPedidos}
           onClose={() => setShowHistorico(false)}
           onOpenDetail={(id) => {
             setShowHistorico(false);

@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
+import { deductStockForOrderItem } from "../_shared/stock.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -22,44 +23,6 @@ const ORIGIN_MAP: Record<string, string> = {
 };
 const STATUS_TO_DB: Record<string, string> = { novo: "new", preparo: "preparing", pronto: "ready", entregue: "delivered" };
 const STATUS_RANK: Record<string, number> = { new: 0, preparing: 1, ready: 2, delivered: 3 };
-
-const MASSA_UNITS = new Set(["kg", "g"]);
-const VOLUME_UNITS = new Set(["l", "ml"]);
-const UNIDADE_UNITS = new Set(["un", "unit", "units"]);
-
-function normalizeUnitStr(u: string): string {
-  const t = (u ?? "").toLowerCase().trim();
-  if (t === "l") return "l";
-  if (t === "grama" || t === "gramas" || t === "gram") return "g";
-  if (t === "kilograma" || t === "kilogram" || t === "kilo") return "kg";
-  if (t === "litro" || t === "litros" || t === "lt") return "l";
-  if (t === "mililitro" || t === "mililitros") return "ml";
-  if (t === "unidade" || t === "unidades") return "un";
-  return t;
-}
-
-function convertUnitQty(qty: number, from: string, to: string): number {
-  const f = normalizeUnitStr(from);
-  const t = normalizeUnitStr(to);
-  if (f === t) return qty;
-  const isMassa = MASSA_UNITS.has(f) && MASSA_UNITS.has(t);
-  const isVolume = VOLUME_UNITS.has(f) && VOLUME_UNITS.has(t);
-  const isUnidade = UNIDADE_UNITS.has(f) && UNIDADE_UNITS.has(t);
-  if (!isMassa && !isVolume && !isUnidade) return qty;
-  if (isMassa) {
-    let base = qty;
-    if (f === "g") base = qty / 1000;
-    if (t === "g") return base * 1000;
-    return base;
-  }
-  if (isVolume) {
-    let base = qty;
-    if (f === "ml") base = qty / 1000;
-    if (t === "ml") return base * 1000;
-    return base;
-  }
-  return qty;
-}
 
 function calcLoyaltyTier(points: number): string {
   if (points >= 2000) return "vip";
@@ -105,6 +68,12 @@ function todayBrasiliaStr(): string {
   const now = new Date();
   const br = new Date(now.getTime() - 3 * 60 * 60 * 1000);
   return br.toISOString().split("T")[0];
+}
+
+// Soma dias a uma data "AAAA-MM-DD" (já em Brasília) sem passar por fuso.
+function addDaysDateStr(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
 
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts: number, actionName: string, ctx?: Record<string, unknown>): Promise<T> {
@@ -185,107 +154,6 @@ function applyPromotions(rules: PromotionRuleRow[], orderItems: OrderItemInput[]
   return results;
 }
 
-type IngRow = { ingredient_id: string; quantity: number; unit: string; ingredients: { unit: string } | null };
-type IngPriceRow = { ingredient_id: string; quantity: number; unit: string; stock_unit: string; unit_price: number };
-type OrderItemOption = { option_id?: string | null; option_name?: string; group_name?: string; additional_price?: number };
-
-async function buildOptionDeductions(admin: ReturnType<typeof createClient>, tenantId: string, options: OrderItemOption[], baseQty: number): Promise<Array<{ ingredient_id: string; quantity: number; unit: string }>> {
-  const deductions: Array<{ ingredient_id: string; quantity: number; unit: string }> = [];
-  if (!options || options.length === 0) return deductions;
-  const validOptionIds = options.map((o) => o.option_id).filter((id): id is string => !!id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
-  if (validOptionIds.length === 0) return deductions;
-  const { data: optRows } = await admin.from("options").select("id, ingredient_id, production_recipe_id, consumption_quantity, consumption_unit").in("id", validOptionIds).eq("tenant_id", tenantId).not("ingredient_id", "is", null);
-  const ingredientIds = [...new Set((optRows ?? []).map((r: Record<string, unknown>) => r.ingredient_id).filter((id): id is string => !!id))];
-  let unitMap = new Map<string, string>();
-  if (ingredientIds.length > 0) {
-    const { data: ingRows } = await admin.from("ingredients").select("id, unit").in("id", ingredientIds).eq("tenant_id", tenantId);
-    unitMap = new Map((ingRows ?? []).map((i: Record<string, unknown>) => [i.id as string, i.unit as string]));
-  }
-  for (const row of (optRows ?? []) as Array<{ id: string; ingredient_id: string | null; production_recipe_id: string | null; consumption_quantity: number | null; consumption_unit: string | null; }>) {
-    let ingredientId = row.ingredient_id;
-    let consumptionQty = Number(row.consumption_quantity ?? 1);
-    let stockUnit = row.consumption_unit && String(row.consumption_unit).trim() !== "" ? String(row.consumption_unit).trim() : (unitMap.get(row.ingredient_id ?? "") ?? "unit");
-    if (!ingredientId && row.production_recipe_id) {
-      const { data: recipeRow } = await admin.from("production_recipes").select("output_ingredient_id, output_quantity, unit").eq("id", row.production_recipe_id).eq("tenant_id", tenantId).maybeSingle();
-      if (recipeRow?.output_ingredient_id) { ingredientId = recipeRow.output_ingredient_id as string; consumptionQty = Number(row.consumption_quantity ?? (recipeRow.output_quantity as number) ?? 1); stockUnit = (recipeRow.unit as string) ?? "unit"; }
-    }
-    if (!ingredientId) continue;
-    deductions.push({ ingredient_id: ingredientId, quantity: consumptionQty * baseQty, unit: stockUnit });
-  }
-  return deductions;
-}
-
-async function buildDeductions(admin: ReturnType<typeof createClient>, tenantId: string, itemId: string | null, comboId: string | null, baseQty: number, options?: OrderItemOption[]): Promise<Array<{ ingredient_id: string; quantity: number; unit: string; unit_price: number }>> {
-  const deductionMap = new Map<string, { quantity: number; unit: string; unit_price: number }>();
-  const ingredientIds = new Set<string>();
-
-  function addDeduction(ingredientId: string, qty: number, unit: string, price: number) {
-    ingredientIds.add(ingredientId);
-    const existing = deductionMap.get(ingredientId);
-    if (existing) {
-      existing.quantity += qty;
-    } else {
-      deductionMap.set(ingredientId, { quantity: qty, unit, unit_price: price });
-    }
-  }
-
-  if (itemId) {
-    const { data: ingredients } = await admin.from("item_ingredients").select("ingredient_id, quantity, unit, ingredients!inner(unit, unit_price)").eq("item_id", itemId).eq("tenant_id", tenantId);
-    for (const ing of (ingredients ?? []) as Array<{ ingredient_id: string; quantity: number | null; unit: string | null; ingredients: { unit: string | null; unit_price: number | null } | null }>) {
-      const fichaQty = Number(ing.quantity ?? 0) * baseQty;
-      const fichaUnit = ing.unit ?? "unit";
-      const stockUnit = ing.ingredients?.unit ?? "unit";
-      const price = Number(ing.ingredients?.unit_price ?? 0);
-      addDeduction(ing.ingredient_id, convertUnitQty(fichaQty, fichaUnit, stockUnit), stockUnit, price);
-    }
-  }
-
-  if (comboId) {
-    const { data: comboIngredients } = await admin.from("combo_ingredients").select("ingredient_id, quantity, unit, ingredients!inner(unit, unit_price)").eq("combo_id", comboId).eq("tenant_id", tenantId).is("deleted_at", null);
-    for (const ing of (comboIngredients ?? []) as Array<{ ingredient_id: string; quantity: number | null; unit: string | null; ingredients: { unit: string | null; unit_price: number | null } | null }>) {
-      const fichaQty = Number(ing.quantity ?? 0) * baseQty;
-      const fichaUnit = ing.unit ?? "unit";
-      const stockUnit = ing.ingredients?.unit ?? "unit";
-      const price = Number(ing.ingredients?.unit_price ?? 0);
-      addDeduction(ing.ingredient_id, convertUnitQty(fichaQty, fichaUnit, stockUnit), stockUnit, price);
-    }
-
-    const { data: comboItems } = await admin.from("combo_items").select("item_id, quantity").eq("combo_id", comboId).eq("tenant_id", tenantId).is("deleted_at", null);
-    for (const ci of (comboItems ?? [])) {
-      if (!ci.item_id) continue;
-      const { data: ingredients } = await admin.from("item_ingredients").select("ingredient_id, quantity, unit, ingredients!inner(unit, unit_price)").eq("item_id", ci.item_id).eq("tenant_id", tenantId);
-      for (const ing of (ingredients ?? []) as Array<{ ingredient_id: string; quantity: number | null; unit: string | null; ingredients: { unit: string | null; unit_price: number | null } | null }>) {
-        const fichaQty = Number(ing.quantity ?? 0) * (ci.quantity ?? 1) * baseQty;
-        const fichaUnit = ing.unit ?? "unit";
-        const stockUnit = ing.ingredients?.unit ?? "unit";
-        const price = Number(ing.ingredients?.unit_price ?? 0);
-        addDeduction(ing.ingredient_id, convertUnitQty(fichaQty, fichaUnit, stockUnit), stockUnit, price);
-      }
-    }
-  }
-
-  if (options && options.length > 0) {
-    const optionDeductions = await buildOptionDeductions(admin, tenantId, options, baseQty);
-    for (const od of optionDeductions) {
-      ingredientIds.add(od.ingredient_id);
-    }
-    if (ingredientIds.size > 0) {
-      const { data: ingPriceRows } = await admin.from("ingredients").select("id, unit_price").in("id", Array.from(ingredientIds)).eq("tenant_id", tenantId);
-      const priceMap = new Map<string, number>((ingPriceRows ?? []).map((r: Record<string, unknown>) => [r.id as string, Number(r.unit_price ?? 0)]));
-      for (const od of optionDeductions) {
-        const price = priceMap.get(od.ingredient_id) ?? 0;
-        addDeduction(od.ingredient_id, od.quantity, od.unit, price);
-      }
-    }
-  }
-
-  const result: Array<{ ingredient_id: string; quantity: number; unit: string; unit_price: number }> = [];
-  for (const [id, d] of deductionMap.entries()) {
-    result.push({ ingredient_id: id, quantity: d.quantity, unit: d.unit, unit_price: d.unit_price });
-  }
-  return result;
-}
-
 async function resolveEmptyOptionNames(admin: ReturnType<typeof createClient>, tenantId: string, items: Array<Record<string, unknown>>): Promise<Array<Record<string, unknown>>> {
   const allOptionIds = new Set<string>();
   for (const item of items) { for (const o of (item.options ?? []) as Array<Record<string, unknown>>) { if (isValidUuid(o.option_id) && (!o.option_name || String(o.option_name).trim() === "")) { allOptionIds.add(o.option_id as string); } } }
@@ -299,43 +167,6 @@ async function resolveEmptyOptionNames(admin: ReturnType<typeof createClient>, t
     if (resolved) nameMap.set(row.id, resolved);
   }
   return items.map((item) => ({ ...item, options: (item.options ?? []).map((o: Record<string, unknown>) => ({ ...o, option_name: (o.option_name && String(o.option_name).trim() !== "") ? o.option_name : (nameMap.get(o.option_id as string) ?? o.option_name ?? ""), })), }));
-}
-
-async function deductStockForOrderItem(admin: ReturnType<typeof createClient>, tenantId: string, orderId: string, orderItemId: string, operatorId: string): Promise<void> {
-  const { data: orderItem } = await admin.from("order_items").select("item_id, combo_id, quantity").eq("id", orderItemId).maybeSingle();
-  if (!orderItem) return;
-  const qty = orderItem.quantity ?? 1;
-  const { data: optionRows } = await admin.from("order_item_options").select("option_id, option_name, group_name, additional_price").eq("order_item_id", orderItemId);
-  const options: OrderItemOption[] = (optionRows ?? []).map((row) => ({ option_id: row.option_id as string | null, option_name: (row.option_name as string) ?? "", group_name: (row.group_name as string) ?? "", additional_price: (row.additional_price as number) ?? 0 }));
-  const deductions = await buildDeductions(admin, tenantId, orderItem.item_id as string | null, orderItem.combo_id as string | null, qty, options);
-
-  let totalCost = 0;
-  for (const d of deductions) {
-    totalCost += d.quantity * d.unit_price;
-  }
-  const unitCost = qty > 0 ? Math.round((totalCost / qty) * 10000) / 10000 : 0;
-
-  if (unitCost > 0) {
-    try {
-      await admin.from("order_items").update({ unit_cost: unitCost }).eq("id", orderItemId);
-      log("INFO", "deductStockForOrderItem", "unit_cost snapshot gravado", { order_item_id: orderItemId, unit_cost: unitCost });
-    } catch (costErr) {
-      log("WARN", "deductStockForOrderItem", "Falha ao gravar unit_cost (non-blocking)", { error: String(costErr), order_item_id: orderItemId });
-    }
-  }
-
-  if (deductions.length === 0) return;
-  const allMoves: Array<Record<string, unknown>> = [];
-  const deltaMap = new Map<string, number>();
-  for (const d of deductions) {
-    const { data: existingMoves } = await admin.from("stock_movements").select("id").eq("order_id", orderId).eq("ingredient_id", d.ingredient_id).eq("type", "theoretical_out").ilike("reason", `%:${orderItemId}`).limit(1);
-    if (existingMoves && existingMoves.length > 0) { continue; }
-    allMoves.push({ tenant_id: tenantId, ingredient_id: d.ingredient_id, type: "theoretical_out", quantity: d.quantity, signed_quantity: -d.quantity, unit: d.unit, reason: `item_sale:${orderItem.item_id ?? orderItem.combo_id}:${orderItemId}`, order_id: orderId, operator_id: operatorId });
-    deltaMap.set(d.ingredient_id, (deltaMap.get(d.ingredient_id) ?? 0) - d.quantity);
-  }
-  if (allMoves.length === 0) return;
-  await admin.from("stock_movements").insert(allMoves);
-  for (const [ingredientId, delta] of deltaMap.entries()) { await admin.rpc("fn_update_ingredient_stock", { p_ingredient_id: ingredientId, p_tenant_id: tenantId, p_delta: delta }); }
 }
 
 async function restockForOrderItem(admin: ReturnType<typeof createClient>, tenantId: string, orderId: string, orderItemId: string, operatorId: string): Promise<void> {
@@ -359,16 +190,21 @@ async function restockForOrderItem(admin: ReturnType<typeof createClient>, tenan
     const outQty = Number(out.quantity ?? 0);
     const outUnit = (out.unit as string) ?? "unit";
 
-    const { data: alreadyRestocked } = await admin
+    // Chave do "já estornado" = pedido + insumo + ITEM (reason termina em :<order_item_id>).
+    // Estornos antigos sem o sufixo do item (formato legado) continuam bloqueando, como antes.
+    const { data: restockedRows } = await admin
       .from("stock_movements")
-      .select("id")
+      .select("id, reason")
       .eq("order_id", orderId)
       .eq("ingredient_id", ingredientId)
       .eq("type", "in")
-      .ilike("reason", "Estorno%")
-      .limit(1);
+      .ilike("reason", "Estorno%");
+    const alreadyRestocked = (restockedRows ?? []).filter((r: { reason: string | null }) => {
+      const reason = String(r.reason ?? "");
+      return reason.endsWith(`:${orderItemId}`) || !reason.includes(":");
+    });
 
-    if (alreadyRestocked && alreadyRestocked.length > 0) {
+    if (alreadyRestocked.length > 0) {
       log("INFO", "restockForOrderItem", "Ingrediente ja restockado — ignorado", { order_id: orderId, ingredient_id: ingredientId });
       continue;
     }
@@ -380,7 +216,7 @@ async function restockForOrderItem(admin: ReturnType<typeof createClient>, tenan
       quantity: outQty,
       signed_quantity: outQty,
       unit: outUnit,
-      reason: `Estorno pedido #${orderId.slice(0, 8)}`,
+      reason: `Estorno pedido #${orderId.slice(0, 8)}:${orderItemId}`,
       order_id: orderId,
       operator_id: operatorId,
     });
@@ -411,7 +247,7 @@ async function triggerFiscalEmit(admin: ReturnType<typeof createClient>, supabas
     const internalKey = Deno.env.get("FISCAL_INTERNAL_KEY") ?? "";
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     if (!internalKey) { log("WARN", "fiscal", "FISCAL_INTERNAL_KEY ausente — NFC-e não disparada", { orderId }); return; }
-    const p = fetch(`${supabaseUrl}/functions/v1/fiscal-write`, {
+    const p = fetch(`${supabaseUrl}/functions/v1/fiscal-write?forceFunctionRegion=sa-east-1`, { // SEFAZ/Brasil NFe: roda no Brasil mesmo se a order-write rodar em us-west-1
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}`, apikey: anonKey, "x-internal-key": internalKey },
       body: JSON.stringify(group ? { action: "emit", tenant_id: tenantId, source_type: "payment_group", source_id: group.id, group_size: group.size, trigger: "record_payment" } : { action: "emit", tenant_id: tenantId, source_type: "order", source_id: orderId, trigger: "record_payment" }),
@@ -421,6 +257,26 @@ async function triggerFiscalEmit(admin: ReturnType<typeof createClient>, supabas
     const rt = (globalThis as any).EdgeRuntime;
     if (rt && typeof rt.waitUntil === "function") rt.waitUntil(p); else await p;
   } catch (e) { log("WARN", "fiscal", "triggerFiscalEmit erro", { orderId, error: String(e) }); }
+}
+
+// Mantém a isolate viva até a promessa terminar (baixa de estoque etc.) sem segurar a resposta.
+function runInBackground(p: Promise<unknown>): void {
+  // deno-lint-ignore no-explicit-any
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt && typeof rt.waitUntil === "function") rt.waitUntil(p);
+}
+
+// Pedido e item precisam ser da loja validada (membership) — sem isso um membro de uma loja
+// alterava pedidos de outra só mandando o order_id/order_item_id. null = ok; Response = recusa.
+async function assertOrderInTenant(admin: ReturnType<typeof createClient>, tenantId: string, orderId: string, orderItemId?: string | null): Promise<Response | null> {
+  const notFound = () => new Response(JSON.stringify({ error: "Pedido nao encontrado nesta loja", code: "order_not_in_tenant" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  const { data: o } = await admin.from("orders").select("id").eq("id", orderId).eq("tenant_id", tenantId).maybeSingle();
+  if (!o) return notFound();
+  if (orderItemId) {
+    const { data: it } = await admin.from("order_items").select("id").eq("id", orderItemId).eq("tenant_id", tenantId).maybeSingle();
+    if (!it) return notFound();
+  }
+  return null;
 }
 
 const isValidUuid = (v: unknown): boolean => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
@@ -486,11 +342,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (isKDSAction && requestedTenantId) {
       const { data: tenantCheck, error: tenantCheckErr } = await admin.from("user_tenants").select("tenant_id").eq("user_id", jwtUserId).eq("tenant_id", requestedTenantId).maybeSingle();
       if (tenantCheckErr) { return new Response(JSON.stringify({ error: "Tenant validation failed" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
-      if (!tenantCheck) {
-        const { data: tenantExists } = await admin.from("tenants").select("id").eq("id", requestedTenantId).maybeSingle();
-        if (!tenantExists) { return new Response(JSON.stringify({ error: "Invalid tenant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
-        tenantId = requestedTenantId;
-      } else { tenantId = tenantCheck.tenant_id; }
+      // Só membro da loja. (Antes aceitava qualquer tenant existente — brecha entre lojas;
+      // conferido 2026-09-17: nenhum operador de KDS sem vínculo nos últimos 30 dias.)
+      if (!tenantCheck) { return new Response(JSON.stringify({ error: "User does not belong to the requested tenant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      tenantId = tenantCheck.tenant_id;
     } else {
       const { data: tenantRows, error: tenantErr } = await admin.from("user_tenants").select("tenant_id").eq("user_id", jwtUserId);
       if (tenantErr) { return new Response(JSON.stringify({ error: `Tenant lookup failed: ${tenantErr.message}` }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -670,8 +525,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "close_cash_register") {
       const { cash_register_id, closing_value, closing_notes } = body;
       if (!cash_register_id) return new Response(JSON.stringify({ error: "cash_register_id is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      const { data: crCheck } = await admin.from("cash_registers").select("id, tenant_id, opening_value").eq("id", cash_register_id).eq("tenant_id", tenantId).maybeSingle();
+      const { data: crCheck } = await admin.from("cash_registers").select("id, tenant_id, opening_value, status, closing_value_expected, closing_difference").eq("id", cash_register_id).eq("tenant_id", tenantId).maybeSingle();
       if (!crCheck) { return new Response(JSON.stringify({ error: "cash_register_id invalido para este tenant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      // Já fechado (reenvio/duplo clique): devolve o fechamento existente sem sobrescrever.
+      if (crCheck.status !== "open") { return new Response(JSON.stringify({ ok: true, already_closed: true, closing_expected: Number(crCheck.closing_value_expected ?? 0), closing_difference: Number(crCheck.closing_difference ?? 0) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       let closingExpected: number = Number(crCheck.opening_value ?? 0);
       try {
         const { data: movements } = await admin.from("cash_movements").select("type, amount").eq("cash_register_id", cash_register_id);
@@ -690,8 +547,13 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const closingDiff = Math.round((closingActual - closingExpected) * 100) / 100;
       const updatePayload: Record<string, unknown> = { status: "closed", closing_value_actual: closingActual, closing_value_expected: Math.round(closingExpected * 100) / 100, closing_difference: closingDiff, closed_at: new Date().toISOString() };
       if (closing_notes != null && typeof closing_notes === "string" && closing_notes.trim().length > 0) { updatePayload.closing_notes = closing_notes.trim(); }
-      const { error } = await admin.from("cash_registers").update(updatePayload).eq("id", cash_register_id).eq("tenant_id", tenantId);
+      const { data: closedRows, error } = await admin.from("cash_registers").update(updatePayload).eq("id", cash_register_id).eq("tenant_id", tenantId).eq("status", "open").select("id");
       if (error) throw error;
+      if (!closedRows || closedRows.length === 0) {
+        // Outra requisição fechou entre a leitura e o update: responde o fechamento que ficou gravado.
+        const { data: crClosed } = await admin.from("cash_registers").select("closing_value_expected, closing_difference").eq("id", cash_register_id).eq("tenant_id", tenantId).maybeSingle();
+        return new Response(JSON.stringify({ ok: true, already_closed: true, closing_expected: Number(crClosed?.closing_value_expected ?? 0), closing_difference: Number(crClosed?.closing_difference ?? 0) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       return new Response(JSON.stringify({ ok: true, closing_expected: closingExpected, closing_difference: closingDiff }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -735,7 +597,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       else if (sessionRow.tenant_id !== tenantId) { return new Response(JSON.stringify({ error: "session_id nao pertence ao tenant informado" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       else if (sessionRow.status !== "open") { log("WARN", "create_order", "Pedido rejeitado: sessao do caixa fechada", { session_id, status: sessionRow.status }); return new Response(JSON.stringify({ error: "Sessao do caixa esta fechada. Nao e possivel criar pedidos.", code: "session_closed" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       const effectiveClientRequestId: string | null = isValidUuid(client_request_id) ? client_request_id : null;
-      if (effectiveClientRequestId) { const { data: existingOrder } = await admin.from("orders").select("id, number").eq("client_request_id", effectiveClientRequestId).maybeSingle(); if (existingOrder?.id) { log("INFO", "create_order", "Pedido idempotente", { client_request_id: effectiveClientRequestId, existing_order_id: existingOrder.id }); return new Response(JSON.stringify({ data: { id: existingOrder.id, number: existingOrder.number }, idempotent: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } }
+      if (effectiveClientRequestId) { const { data: existingOrder } = await admin.from("orders").select("id, number, status").eq("client_request_id", effectiveClientRequestId).maybeSingle(); if (existingOrder?.id && existingOrder.status === "cancelled") { log("WARN", "create_order", "Retry idempotente encontrou pedido CANCELADO", { client_request_id: effectiveClientRequestId, existing_order_id: existingOrder.id }); return new Response(JSON.stringify({ error: `Pedido ${existingOrder.number ?? ""} foi cancelado (falha ao gravar itens). Lance o pedido novamente.`, code: "order_cancelled", order_id: existingOrder.id }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } if (existingOrder?.id) { log("INFO", "create_order", "Pedido idempotente", { client_request_id: effectiveClientRequestId, existing_order_id: existingOrder.id }); return new Response(JSON.stringify({ data: { id: existingOrder.id, number: existingOrder.number }, idempotent: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } }
       await ensureUserExists(effectiveUserId);
       // Normaliza o telefone para dígitos: todas as buscas (histórico do cliente no delivery,
       // rate-limit, motoboy) comparam sem máscara. Gravar formatado some do histórico.
@@ -813,7 +675,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           log("ERROR", "create_order", "Falha ao marcar cortesia como paga (non-blocking)", { error: String(cortesiaErr), order_id: orderId });
         }
       }
-      if (orderResult?.duplicate === true) { log("INFO", "create_order", "Pedido duplicado detectado pela RPC", { order_id: orderId, client_request_id: effectiveClientRequestId, tenant_id: tenantId }); const { data: dupOrder } = await admin.from("orders").select("number").eq("id", orderId).maybeSingle(); return new Response(JSON.stringify({ data: { id: orderId, number: dupOrder?.number ?? `P${Date.now()}` }, idempotent: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      if (orderResult?.duplicate === true) { log("INFO", "create_order", "Pedido duplicado detectado pela RPC", { order_id: orderId, client_request_id: effectiveClientRequestId, tenant_id: tenantId }); const { data: dupOrder } = await admin.from("orders").select("number, status").eq("id", orderId).maybeSingle(); if (dupOrder?.status === "cancelled") { return new Response(JSON.stringify({ error: `Pedido ${dupOrder.number ?? ""} foi cancelado (falha ao gravar itens). Lance o pedido novamente.`, code: "order_cancelled", order_id: orderId }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } return new Response(JSON.stringify({ data: { id: orderId, number: dupOrder?.number ?? `P${Date.now()}` }, idempotent: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       const itemsWithResolvedNames2 = await resolveEmptyOptionNames(admin, tenantId, items);
       const resolvedItems: Array<Record<string, unknown>> = [];
       for (const item of itemsWithResolvedNames2) { let resolvedItemId: string | null = null; if (isValidUuid(item.item_id)) resolvedItemId = item.item_id; else if (item.item_id && item.item_id !== "null" && item.item_id !== null) { const { data: foundItem } = await admin.from("menu_items").select("id").eq("tenant_id", tenantId).ilike("name", item.item_name).maybeSingle(); if (foundItem?.id) resolvedItemId = foundItem.id; } const resolvedStationId = isValidUuid(item.station_id) ? item.station_id : null; const rawObservations = (item.observations ?? []).filter((o: Record<string, unknown>) => o.text && String(o.text).trim() !== ""); const notesText = item.notes ? String(item.notes).trim() : ""; const seenTexts = new Set<string>(rawObservations.map((o: Record<string, unknown>) => String(o.text).trim())); const normalizedObservations: Array<Record<string, unknown>> = [...rawObservations]; if (notesText && !seenTexts.has(notesText)) { normalizedObservations.push({ text: notesText, is_checked: false }); } resolvedItems.push({ item_id: resolvedItemId, combo_id: isValidUuid(item.combo_id) ? item.combo_id : null, item_name: item.item_name, item_price: item.item_price, quantity: item.quantity ?? 1, station_id: resolvedStationId, skip_kds: item.skip_kds ?? false, notes: item.notes ?? null, options: (item.options ?? []).map((o: Record<string, unknown>) => ({ option_id: isValidUuid(o.option_id) ? o.option_id : null, option_name: o.option_name ?? "", group_name: o.group_name ?? "", additional_price: o.additional_price ?? 0 })), observations: normalizedObservations }); }
@@ -878,6 +740,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!order_item_id || !order_id) return new Response(JSON.stringify({ error: "order_item_id e order_id sao obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       const { data: orderCheck } = await admin.from("orders").select("id").eq("id", order_id).eq("tenant_id", tenantId).maybeSingle();
       if (!orderCheck) return new Response(JSON.stringify({ error: "order_id invalido para este tenant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const comboItemDeny = await assertOrderInTenant(admin, tenantId, order_id, order_item_id);
+      if (comboItemDeny) return comboItemDeny;
       try { await deductStockForOrderItem(admin, tenantId, order_id, order_item_id, effectiveUserId); return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       catch (err) { return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
     }
@@ -885,6 +749,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "update_order_item_part_status") {
       const { order_item_part_id, order_item_id, order_id, new_status } = body;
       if (!order_item_part_id || !order_item_id || !order_id || !new_status) { return new Response(JSON.stringify({ error: "order_item_part_id, order_item_id, order_id e new_status sao obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      const tenantDeny = await assertOrderInTenant(admin, tenantId, order_id, order_item_id);
+      if (tenantDeny) return tenantDeny;
       const lockResponse = await checkOrderLock(admin, order_id, jwtUserId);
       if (lockResponse) return lockResponse;
       const now = new Date().toISOString(); const dbStatus = STATUS_TO_DB[new_status] ?? new_status; const updates: Record<string, unknown> = { status: dbStatus, updated_at: now };
@@ -906,6 +772,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "update_order_item_status") {
       const { order_item_id, order_id, status } = body;
       if (!order_item_id || !order_id || !status) return new Response(JSON.stringify({ error: "order_item_id, order_id and status are required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const tenantDeny = await assertOrderInTenant(admin, tenantId, order_id, order_item_id);
+      if (tenantDeny) return tenantDeny;
       const lockResponse = await checkOrderLock(admin, order_id, jwtUserId);
       if (lockResponse) return lockResponse;
       const dbStatus = STATUS_TO_DB[status] ?? status; const now = new Date().toISOString();
@@ -916,7 +784,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (dbStatus === "delivered") { timestamps.delivered_at = now; timestamps.delivered_by_user_id = effectiveUserId; if (!currentItem?.ready_at) { timestamps.ready_at = now; } if (!currentItem?.started_preparing_at) { timestamps.started_preparing_at = currentItem?.entered_kds_at ?? now; } }
       const { error: itemErr } = await admin.from("order_items").update({ status: dbStatus, operator_id: effectiveUserId, ...timestamps }).eq("id", order_item_id);
       if (itemErr) throw itemErr;
-      if (dbStatus === "ready" || dbStatus === "delivered") { deductStockForOrderItem(admin, tenantId, order_id, order_item_id, effectiveUserId).catch(() => {}); }
+      if (dbStatus === "ready" || dbStatus === "delivered") { runInBackground(deductStockForOrderItem(admin, tenantId, order_id, order_item_id, effectiveUserId).catch((e) => log("WARN", "stock", "baixa de estoque falhou", { order_id, order_item_id, error: String(e) }))); }
       try {
         const { data: existingUnits } = await admin.from("order_item_units").select("id, status").eq("order_item_id", order_item_id); const newRank = STATUS_RANK[dbStatus] ?? 0; const unitUpdate: Record<string, unknown> = { status: dbStatus };
         if (dbStatus === "preparing") unitUpdate.started_preparing_at = now; if (dbStatus === "ready") unitUpdate.ready_at = now; if (dbStatus === "delivered") { unitUpdate.delivered_at = now; unitUpdate.delivered_by_user_id = effectiveUserId; }
@@ -931,6 +799,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "update_unit_status") {
       const { order_item_id, order_id, unit_number, status } = body;
       if (!order_item_id || !order_id || unit_number == null || !status) return new Response(JSON.stringify({ error: "order_item_id, order_id, unit_number and status are required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const tenantDeny = await assertOrderInTenant(admin, tenantId, order_id, order_item_id);
+      if (tenantDeny) return tenantDeny;
       const lockResponse = await checkOrderLock(admin, order_id, jwtUserId);
       if (lockResponse) return lockResponse;
       const dbStatus = STATUS_TO_DB[status] ?? status; const now = new Date().toISOString();
@@ -940,8 +810,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (unitRow?.id) { const currentRank = STATUS_RANK[unitRow.status] ?? 0; const newRank2 = STATUS_RANK[dbStatus] ?? 0; if (newRank2 > currentRank) { const { error: unitUpdateErr } = await admin.from("order_item_units").update(unitUpdate).eq("id", unitRow.id); if (unitUpdateErr) throw unitUpdateErr; } }
       else { const { data: itemRow } = await admin.from("order_items").select("tenant_id, station_id").eq("id", order_item_id).maybeSingle(); await admin.from("order_item_units").insert({ order_item_id, tenant_id: itemRow?.tenant_id ?? tenantId, unit_number, station_id: itemRow?.station_id ?? null, operator_id: effectiveUserId, entered_kds_at: now, ...unitUpdate }); }
       const { data: allUnits } = await admin.from("order_item_units").select("status").eq("order_item_id", order_item_id); const { data: itemData } = await admin.from("order_items").select("quantity, status, skip_kds").eq("id", order_item_id).maybeSingle(); const itemQty = itemData?.quantity ?? 1; const allUnitsDelivered = allUnits && allUnits.length >= itemQty && allUnits.every((u: { status: string }) => u.status === "delivered"); const allUnitsReady = allUnits && allUnits.length >= itemQty && allUnits.every((u: { status: string }) => u.status === "ready" || u.status === "delivered"); let newItemStatus2 = itemData?.status ?? "new";
-      if (allUnitsDelivered) { newItemStatus2 = "delivered"; deductStockForOrderItem(admin, tenantId, order_id, order_item_id, effectiveUserId).catch(() => {}); }
-      else if (allUnitsReady && newItemStatus2 !== "ready" && newItemStatus2 !== "delivered") { newItemStatus2 = "ready"; deductStockForOrderItem(admin, tenantId, order_id, order_item_id, effectiveUserId).catch(() => {}); }
+      if (allUnitsDelivered) { newItemStatus2 = "delivered"; runInBackground(deductStockForOrderItem(admin, tenantId, order_id, order_item_id, effectiveUserId).catch((e) => log("WARN", "stock", "baixa de estoque falhou", { order_id, order_item_id, error: String(e) }))); }
+      else if (allUnitsReady && newItemStatus2 !== "ready" && newItemStatus2 !== "delivered") { newItemStatus2 = "ready"; runInBackground(deductStockForOrderItem(admin, tenantId, order_id, order_item_id, effectiveUserId).catch((e) => log("WARN", "stock", "baixa de estoque falhou", { order_id, order_item_id, error: String(e) }))); }
       else if (allUnits && allUnits.length > 0) { const unitStatuses = allUnits.map((u: { status: string }) => u.status); if (unitStatuses.every((s: string) => s === "ready" || s === "delivered")) newItemStatus2 = "ready"; else if (unitStatuses.some((s: string) => s === "preparing" || s === "ready")) newItemStatus2 = "preparing"; else newItemStatus2 = "new"; }
       else if (dbStatus === "preparing" && newItemStatus2 === "new") newItemStatus2 = "preparing";
       if (newItemStatus2 !== itemData?.status) { const itemTimestamps: Record<string, string> = {}; if (newItemStatus2 === "preparing") itemTimestamps.started_preparing_at = now; if (newItemStatus2 === "ready") itemTimestamps.ready_at = now; if (newItemStatus2 === "delivered") { itemTimestamps.delivered_at = now; itemTimestamps.delivered_by_user_id = effectiveUserId; } await admin.from("order_items").update({ status: newItemStatus2, operator_id: effectiveUserId, ...itemTimestamps }).eq("id", order_item_id); }
@@ -956,6 +826,18 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!order_id) return new Response(JSON.stringify({ error: "order_id is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       const { data: orderCheck } = await admin.from("orders").select("id, tenant_id").eq("id", order_id).eq("tenant_id", tenantId).maybeSingle();
       if (!orderCheck) { return new Response(JSON.stringify({ error: "order_id invalido para este tenant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      // Pedido com pagamento válido só cancela pelo fluxo de estorno (este mesmo action com reason_type +
+      // refund_amount + refund_method, ou fn_cancel_and_refund_order). Sem isso o pedido sumia do relatório
+      // e da cozinha e o dinheiro ficava no caixa (totem cancelava pedido já pago).
+      const withRefund = !!(reason_type && refund_amount != null && refund_method);
+      if (!withRefund) {
+        const { data: validPays, error: validPaysErr } = await admin.from("payments").select("id").eq("order_id", order_id).eq("tenant_id", tenantId).eq("is_refunded", false).limit(1);
+        if (validPaysErr) throw validPaysErr;
+        if ((validPays ?? []).length > 0) {
+          log("WARN", "cancel_order", "Cancelamento recusado: pedido tem pagamento", { order_id, tenant_id: tenantId });
+          return new Response(JSON.stringify({ error: "Pedido já pago: use o cancelamento com estorno.", code: "order_paid_use_refund" }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+      }
       const { error } = await admin.from("orders").update({ status: "cancelled", cancel_reason: reason ?? notes ?? null, cancelled_by: effectiveUserId, cancelled_at: now }).eq("id", order_id).eq("tenant_id", tenantId);
       if (error) throw error;
       await admin.from("order_items").update({ status: "cancelled" }).eq("order_id", order_id).in("status", ["new", "preparing", "ready"]);
@@ -974,7 +856,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (refund.status === "processed" || refund.status === "rejected") return new Response(JSON.stringify({ error: `Refund already ${refund.status}` }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       if (!approve) { const { error: rejectErr } = await admin.from("refunds").update({ status: "rejected", approved_by: effectiveUserId, approved_at: now, notes: rejection_reason ?? null }).eq("id", refund_id).eq("tenant_id", tenantId); if (rejectErr) throw rejectErr; return new Response(JSON.stringify({ ok: true, status: "rejected" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       const { error: approveErr } = await admin.from("refunds").update({ status: "processed", approved_by: effectiveUserId, approved_at: now, processed_at: now }).eq("id", refund_id).eq("tenant_id", tenantId); if (approveErr) throw approveErr;
-      if (refund.payment_id) await admin.from("payments").update({ is_refunded: true }).eq("id", refund.payment_id).catch(() => {});
+      if (refund.payment_id) { const { error: refundPayErr } = await admin.from("payments").update({ is_refunded: true }).eq("id", refund.payment_id).eq("tenant_id", tenantId); if (refundPayErr) log("ERROR", "process_refund", "Falha ao marcar pagamento como estornado", { refund_id, payment_id: refund.payment_id, error: refundPayErr.message }); }
       try { await admin.from("fin_cash_flow").insert({ tenant_id: tenantId, type: "expense", amount: refund.refund_amount, description: `Estorno pedido #${refund.order_id.slice(0, 8)} (${refund.refund_method})`, category: "Estornos", origin: "manual", reference_id: refund_id, date: todayBrasiliaStr() }); } catch { /* non-blocking */ }
       try { await admin.from("audit_log").insert({ tenant_id: tenantId, user_id: effectiveUserId, action_type: "refund_processed", entity_type: "refund", entity_id: refund_id, details: { order_id: refund.order_id, refund_amount: refund.refund_amount, refund_method: refund.refund_method, approved_by: effectiveUserId } }); } catch { /* non-blocking */ }
       return new Response(JSON.stringify({ ok: true, status: "processed" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -983,27 +865,54 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "record_payment") {
       const { order_id, cash_register_id, payment_method_id, amount, change_amount, operator_name, paid_by_pdv, payment_group_id, group_size } = body;
       if (!payment_method_id) { return new Response(JSON.stringify({ data: null, skipped: true, reason: "missing_payment_method_id" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
-      let orderTotalAmount = 0;
-      if (order_id) { const { data: orderCheck } = await admin.from("orders").select("id, tenant_id, status, total_amount").eq("id", order_id).maybeSingle(); if (orderCheck) { const orderTenantId3 = orderCheck.tenant_id as string; const { data: paymentTenantMembership } = await admin.from("user_tenants").select("tenant_id").eq("user_id", jwtUserId).eq("tenant_id", orderTenantId3).maybeSingle(); if (!paymentTenantMembership) { return new Response(JSON.stringify({ error: "Acesso negado a este pedido" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } if (orderCheck.status === "cancelled") { return new Response(JSON.stringify({ error: "Nao e possivel registrar pagamento em pedido cancelado", skipped: true }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } orderTotalAmount = Number(orderCheck.total_amount ?? 0); } }
+      let orderTotalAmount = 0; let orderIsTraining = false; let orderTotalMatched = false;
+      if (order_id) { const { data: orderCheck } = await admin.from("orders").select("id, tenant_id, status, total_amount, is_training").eq("id", order_id).maybeSingle(); if (orderCheck) { const orderTenantId3 = orderCheck.tenant_id as string; const { data: paymentTenantMembership } = await admin.from("user_tenants").select("tenant_id").eq("user_id", jwtUserId).eq("tenant_id", orderTenantId3).maybeSingle(); if (!paymentTenantMembership || orderTenantId3 !== tenantId) { return new Response(JSON.stringify({ error: "Acesso negado a este pedido" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } if (orderCheck.status === "cancelled") { return new Response(JSON.stringify({ error: "Nao e possivel registrar pagamento em pedido cancelado", skipped: true }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } orderTotalAmount = Number(orderCheck.total_amount ?? 0); orderIsTraining = orderCheck.is_training === true; orderTotalMatched = true; } }
+      // Pedido já quitado não recebe outro pagamento (P2108260015 foi pago 2×: caixa e receita inflados).
+      // amount do front já é líquido (dinheiro manda amount=restante e o troco em change_amount), então só
+      // "já coberto" é recusado. Excesso sobre o restante é aceito com aviso: é dinheiro que entrou de verdade
+      // (cartão digitado acima, divisão do garçom concentrada na 1ª rodada, arredondamento do rateio de grupo).
+      if (order_id && orderTotalMatched) {
+        const { data: prevPays, error: prevErr } = await admin.from("payments").select("id, amount").eq("order_id", order_id).eq("tenant_id", tenantId).eq("is_refunded", false);
+        if (prevErr) throw prevErr;
+        const prevCount = (prevPays ?? []).length;
+        const prevTotal = (prevPays ?? []).reduce((s: number, p: { amount: number }) => s + Number(p.amount ?? 0), 0);
+        const alreadyPaid = orderTotalAmount > 0 ? prevTotal >= orderTotalAmount - 0.01 : prevCount > 0;
+        if (alreadyPaid) {
+          log("WARN", "record_payment", "Pagamento recusado: pedido ja quitado", { order_id, tenant_id: tenantId, order_total: orderTotalAmount, paid: prevTotal, payments: prevCount, amount, change_amount, paid_by_pdv });
+          return new Response(JSON.stringify({ error: "Este pedido já está pago. Nenhum pagamento foi registrado.", code: "order_already_paid", paid_amount: Math.round(prevTotal * 100) / 100, total_amount: orderTotalAmount }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        const remaining = orderTotalAmount - prevTotal;
+        if (orderTotalAmount > 0 && Number(amount ?? 0) > remaining + 0.01) log("WARN", "record_payment", "Pagamento acima do restante do pedido (aceito)", { order_id, order_total: orderTotalAmount, paid: prevTotal, remaining, amount, change_amount, paid_by_pdv, payment_group_id });
+      }
       const paymentTenantId = tenantId; let effectiveCashRegisterId = cash_register_id ?? null;
+      // Caixa do body só vale se for desta loja e estiver aberto; senão cai no caixa aberto da sessão do pedido.
+      if (effectiveCashRegisterId) { const { data: crBody } = await admin.from("cash_registers").select("id").eq("id", effectiveCashRegisterId).eq("tenant_id", paymentTenantId).eq("status", "open").maybeSingle(); if (!crBody?.id) { log("WARN", "record_payment", "cash_register_id do body fechado ou de outra loja — usando caixa aberto da sessao", { order_id, cash_register_id: effectiveCashRegisterId, tenant_id: paymentTenantId }); effectiveCashRegisterId = null; } }
       if (!effectiveCashRegisterId && order_id) { try { const { data: orderRow } = await admin.from("orders").select("session_id").eq("id", order_id).maybeSingle(); if (orderRow?.session_id) { const { data: crRow } = await admin.from("cash_registers").select("id").eq("session_id", orderRow.session_id).eq("status", "open").order("opened_at", { ascending: false }).limit(1).maybeSingle(); effectiveCashRegisterId = crRow?.id ?? null; } } catch { /* non-blocking */ } }
       const { data: paymentId, error: payErr } = await admin.rpc("fn_record_payment_bypass", { p_order_id: order_id, p_tenant_id: paymentTenantId, p_cash_register_id: effectiveCashRegisterId, p_payment_method_id: payment_method_id, p_amount: amount, p_change_amount: change_amount ?? 0, p_operator_name: operator_name ?? null, p_origin_type: paid_by_pdv ?? null, p_payment_group_id: payment_group_id ?? null });
       if (payErr) throw payErr;
       if (!paymentId) { log("ERROR", "record_payment", "Pagamento NAO persistido", { order_id, tenant_id: paymentTenantId, cash_register_id: effectiveCashRegisterId }); return new Response(JSON.stringify({ error: "Nao foi possivel registrar o pagamento. Caixa nao encontrado — abra o caixa antes de finalizar vendas.", code: "no_cash_register" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       let becamePaid = false;
-      if (order_id) { try { const { data: allPayments } = await admin.from("payments").select("amount").eq("order_id", order_id).eq("is_refunded", false); const totalPaid = (allPayments ?? []).reduce((sum: number, p: { amount: number }) => sum + Number(p.amount), 0); if (orderTotalAmount > 0 && totalPaid >= orderTotalAmount) { const paidAt = new Date().toISOString(); const orderUpdate: Record<string, unknown> = { is_paid: true, paid_at: paidAt, updated_at: paidAt }; if (paid_by_pdv) orderUpdate.paid_by_pdv = paid_by_pdv; await admin.from("orders").update(orderUpdate).eq("id", order_id); becamePaid = true; } else if (orderTotalAmount === 0) { const paidAt = new Date().toISOString(); const orderUpdate: Record<string, unknown> = { is_paid: true, paid_at: paidAt, updated_at: paidAt }; if (paid_by_pdv) orderUpdate.paid_by_pdv = paid_by_pdv; await admin.from("orders").update(orderUpdate).eq("id", order_id); } } catch { /* non-blocking */ } }
+      // crossedToPaid: ESTE pagamento é o que quitou o pedido (antes dele faltava). Fidelidade/visita
+      // contam só aqui — pedido com 2 formas de pagamento contava 2×. Baseado nos pagamentos (não no
+      // is_paid) porque o pedido do kiosk com Pix já nasce is_paid=true.
+      let crossedToPaid = false;
+      if (order_id) { try { const { data: allPayments } = await admin.from("payments").select("id, amount").eq("order_id", order_id).eq("is_refunded", false); const totalPaid = (allPayments ?? []).reduce((sum: number, p: { amount: number }) => sum + Number(p.amount), 0); const prevPaid = (allPayments ?? []).filter((p: { id: string }) => String(p.id) !== String(paymentId)).reduce((sum: number, p: { amount: number }) => sum + Number(p.amount), 0); crossedToPaid = orderTotalAmount > 0 ? (totalPaid >= orderTotalAmount && prevPaid < orderTotalAmount) : (allPayments ?? []).length === 1; if (orderTotalAmount > 0 && totalPaid >= orderTotalAmount) { const paidAt = new Date().toISOString(); const orderUpdate: Record<string, unknown> = { is_paid: true, paid_at: paidAt, updated_at: paidAt }; if (paid_by_pdv) orderUpdate.paid_by_pdv = paid_by_pdv; await admin.from("orders").update(orderUpdate).eq("id", order_id); becamePaid = true; } else if (orderTotalAmount === 0) { const paidAt = new Date().toISOString(); const orderUpdate: Record<string, unknown> = { is_paid: true, paid_at: paidAt, updated_at: paidAt }; if (paid_by_pdv) orderUpdate.paid_by_pdv = paid_by_pdv; await admin.from("orders").update(orderUpdate).eq("id", order_id); } } catch { /* non-blocking */ } }
       // NFC-e automática. A fiscal-write decide: balcão/delivery/QR universal = nota por pedido; mesa numerada = pulada aqui (nota sai no fechamento da sessão).
       if (becamePaid && order_id) { try { const { data: oFis } = await admin.from("orders").select("table_session_id, is_training").eq("id", order_id).maybeSingle(); if (oFis && !oFis.is_training) await triggerFiscalEmit(admin, supabaseUrl, serviceRoleKey, paymentTenantId, order_id, payment_group_id ? { id: String(payment_group_id), size: Number(group_size ?? 0) || 0 } : null); } catch { /* non-blocking */ } }
-      try { const { data: orderData } = await admin.from("orders").select("customer_id, total_amount, number").eq("id", order_id).maybeSingle(); if (orderData?.customer_id) { const customerId = orderData.customer_id as string; const orderAmount = Number(orderData.total_amount ?? 0); const { data: customerData } = await admin.from("customers").select("total_spent, visit_count, loyalty_points").eq("id", customerId).maybeSingle(); const prevSpent = Number(customerData?.total_spent ?? 0); const prevVisits = Number(customerData?.visit_count ?? 0); const prevPoints = Number(customerData?.loyalty_points ?? 0); const newSpent = prevSpent + orderAmount; const newVisits = prevVisits + 1; const newAvgTicket = newVisits > 0 ? newSpent / newVisits : orderAmount; const pointsEarned = Math.floor(orderAmount); const newPoints = prevPoints + pointsEarned; const newTier = calcLoyaltyTier(newPoints); await admin.from("customers").update({ total_spent: newSpent, visit_count: newVisits, average_ticket: newAvgTicket, last_visit_at: new Date().toISOString(), loyalty_points: newPoints, loyalty_tier: newTier }).eq("id", customerId); if (pointsEarned > 0) await admin.from("loyalty_transactions").insert({ tenant_id: paymentTenantId, customer_id: customerId, transaction_type: "earned", points: pointsEarned, balance_after: newPoints, order_id, notes: `Compra #${orderData.number ?? order_id.slice(0, 8)}`, created_by: effectiveUserId }).catch(() => {}); } } catch { /* non-blocking */ }
-      try { const { data: orderDiscounts } = await admin.from("order_discounts").select("promotion_id").eq("order_id", order_id).not("promotion_id", "is", null); if (orderDiscounts && orderDiscounts.length > 0) { const seen = new Set<string>(); for (const d of orderDiscounts) { const promoId = d.promotion_id as string; if (!seen.has(promoId)) { seen.add(promoId); await admin.rpc("fn_increment_promotion_uses", { p_promotion_id: promoId, p_order_id: order_id }).catch(() => {}); } } } } catch { /* non-blocking */ }
-      try { const { data: orderData2 } = await admin.from("orders").select("number").eq("id", order_id).maybeSingle(); const { data: pmData } = await admin.from("payment_methods").select("days_to_receive, name, type, fee_percentage").eq("id", payment_method_id).maybeSingle(); const daysToReceive = Number(pmData?.days_to_receive ?? 0); const todayBR = todayBrasiliaStr(); const orderNumber2 = orderData2?.number ?? order_id.slice(0, 8); const paymentDesc = `Venda ${orderNumber2} (${pmData?.name ?? "Pagamento"})`; const paymentAmount = (amount != null && amount > 0) ? amount : (orderTotalAmount > 0 ? orderTotalAmount : 0); if (daysToReceive === 0) { const paymentIdStr = paymentId ? String(paymentId) : null; if (paymentIdStr) { const { data: existingFlow } = await admin.from("fin_cash_flow").select("id").eq("tenant_id", paymentTenantId).eq("reference_id", paymentIdStr).eq("origin", "auto_sale").maybeSingle(); if (!existingFlow) { await admin.from("fin_cash_flow").insert({ tenant_id: paymentTenantId, type: "income", amount: paymentAmount, description: paymentDesc, category: "Vendas", origin: "auto_sale", reference_id: paymentIdStr, date: todayBR }); } const { data: routing } = await admin.from("fin_income_routing").select("bank_account_id").eq("tenant_id", paymentTenantId).eq("source_type", "payment_method").eq("source_id", payment_method_id).eq("is_active", true).maybeSingle(); if (routing?.bank_account_id) { await admin.rpc("fn_bank_credit", { p_bank_account_id: routing.bank_account_id, p_amount: paymentAmount, p_description: paymentDesc, p_reference_type: "sale", p_reference_id: order_id, p_transaction_date: todayBR }).catch(() => {}); } const feePercent = Number(pmData?.fee_percentage ?? 0); if (feePercent > 0) { const feeAmount = Math.round((paymentAmount * feePercent / 100) * 100) / 100; if (feeAmount > 0) { const feeDesc = `Taxa maquininha — ${pmData?.name ?? "Cartao"} (${feePercent}%) — Venda ${orderNumber2}`; const { data: existingFee } = await admin.from("fin_cash_flow").select("id").eq("tenant_id", paymentTenantId).eq("reference_id", paymentIdStr).eq("origin", "auto_card_fee").maybeSingle(); if (!existingFee) { await admin.from("fin_cash_flow").insert({ tenant_id: paymentTenantId, type: "expense", amount: feeAmount, description: feeDesc, category: "Taxas de Cartao", origin: "auto_card_fee", reference_id: paymentIdStr, date: todayBR }); } } } } else { await admin.from("fin_cash_flow").insert({ tenant_id: paymentTenantId, type: "income", amount: paymentAmount, description: `${paymentDesc} (sem ref)`, category: "Vendas", origin: "auto_sale", reference_id: null, date: todayBR }); } } else { const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + daysToReceive); const dueDateStr = dueDate.toISOString().split("T")[0]; const { error: installErr } = await admin.from("fin_receivable_installments").insert({ tenant_id: paymentTenantId, order_id, installment_number: 1, total_installments: 1, amount: paymentAmount, due_date: dueDateStr, status: "pending", payment_method_name: pmData?.name ?? null, order_number: orderNumber2 }); if (installErr) { await admin.from("fin_cash_flow").insert({ tenant_id: paymentTenantId, type: "income", amount: paymentAmount, description: `${paymentDesc} — fallback`, category: "Vendas", origin: "auto_sale", reference_id: String(paymentId ?? order_id), date: todayBR }); } } } catch { try { await admin.from("fin_cash_flow").insert({ tenant_id: tenantId, type: "income", amount: paymentAmount || amount, description: `Venda #${order_id.slice(0, 8)}`, category: "Vendas", origin: "auto_sale", reference_id: String(paymentId ?? order_id), date: todayBrasiliaStr() }); } catch { /* ignore */ } }
+      // Modo Treino: só a linha em payments (para o pedido fechar). Sem fidelidade, promoção, caixa/DRE, crédito bancário, taxa ou recebível.
+      if (orderIsTraining) { log("INFO", "record_payment", "Pedido de treino — efeitos financeiros e fidelidade pulados", { order_id, payment_id: paymentId }); return new Response(JSON.stringify({ data: { id: paymentId }, training: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      if (crossedToPaid) try { const { data: orderData } = await admin.from("orders").select("customer_id, total_amount, number").eq("id", order_id).maybeSingle(); if (orderData?.customer_id) { const customerId = orderData.customer_id as string; const orderAmount = Number(orderData.total_amount ?? 0); const { data: customerData } = await admin.from("customers").select("total_spent, visit_count, loyalty_points").eq("id", customerId).maybeSingle(); const prevSpent = Number(customerData?.total_spent ?? 0); const prevVisits = Number(customerData?.visit_count ?? 0); const prevPoints = Number(customerData?.loyalty_points ?? 0); const newSpent = prevSpent + orderAmount; const newVisits = prevVisits + 1; const newAvgTicket = newVisits > 0 ? newSpent / newVisits : orderAmount; const pointsEarned = Math.floor(orderAmount); const newPoints = prevPoints + pointsEarned; const newTier = calcLoyaltyTier(newPoints); await admin.from("customers").update({ total_spent: newSpent, visit_count: newVisits, average_ticket: newAvgTicket, last_visit_at: new Date().toISOString(), loyalty_points: newPoints, loyalty_tier: newTier }).eq("id", customerId); if (pointsEarned > 0) { const loyRow = { tenant_id: paymentTenantId, customer_id: customerId, transaction_type: "earned", points: pointsEarned, balance_after: newPoints, order_id, notes: `Compra #${orderData.number ?? order_id.slice(0, 8)}`, created_by: effectiveUserId }; let { error: loyErr } = await admin.from("loyalty_transactions").insert(loyRow); if (loyErr?.code === "23503") ({ error: loyErr } = await admin.from("loyalty_transactions").insert({ ...loyRow, created_by: null })); if (loyErr) log("WARN", "record_payment", "Extrato de pontos nao gravado", { order_id, customer_id: customerId, error: loyErr.message }); } } } catch { /* non-blocking */ }
+      try { const { data: orderDiscounts } = await admin.from("order_discounts").select("promotion_id").eq("order_id", order_id).not("promotion_id", "is", null); if (orderDiscounts && orderDiscounts.length > 0) { const seen = new Set<string>(); for (const d of orderDiscounts) { const promoId = d.promotion_id as string; if (!seen.has(promoId)) { seen.add(promoId); const { error: promoErr } = await admin.rpc("fn_increment_promotion_uses", { p_promotion_id: promoId, p_order_id: order_id }); if (promoErr) log("WARN", "record_payment", "fn_increment_promotion_uses falhou", { order_id, promotion_id: promoId, error: promoErr.message }); } } } } catch { /* non-blocking */ }
+      // Declarado FORA do try: o fallback do catch usa o valor (antes dava ReferenceError engolido e a receita sumia).
+      const paymentAmount = (amount != null && amount > 0) ? amount : (orderTotalAmount > 0 ? orderTotalAmount : 0);
+      try { const { data: orderData2 } = await admin.from("orders").select("number").eq("id", order_id).maybeSingle(); const { data: pmData } = await admin.from("payment_methods").select("days_to_receive, name, type, fee_percentage").eq("id", payment_method_id).maybeSingle(); const daysToReceive = Number(pmData?.days_to_receive ?? 0); const todayBR = todayBrasiliaStr(); const orderNumber2 = orderData2?.number ?? String(order_id ?? "").slice(0, 8); const paymentDesc = `Venda ${orderNumber2} (${pmData?.name ?? "Pagamento"})`; if (daysToReceive === 0) { const paymentIdStr = paymentId ? String(paymentId) : null; if (paymentIdStr) { const { data: existingFlow } = await admin.from("fin_cash_flow").select("id").eq("tenant_id", paymentTenantId).eq("reference_id", paymentIdStr).eq("origin", "auto_sale").maybeSingle(); if (!existingFlow) { await admin.from("fin_cash_flow").insert({ tenant_id: paymentTenantId, type: "income", amount: paymentAmount, description: paymentDesc, category: "Vendas", origin: "auto_sale", reference_id: paymentIdStr, date: todayBR }); } const { data: routing } = await admin.from("fin_income_routing").select("bank_account_id").eq("tenant_id", paymentTenantId).eq("source_type", "payment_method").eq("source_id", payment_method_id).eq("is_active", true).maybeSingle(); if (routing?.bank_account_id) { const { error: bankErr } = await admin.rpc("fn_bank_credit", { p_bank_account_id: routing.bank_account_id, p_amount: paymentAmount, p_description: paymentDesc, p_reference_type: "sale", p_reference_id: order_id, p_transaction_date: todayBR }); if (bankErr) log("WARN", "record_payment", "fn_bank_credit falhou", { order_id, payment_id: paymentIdStr, error: bankErr.message }); } const feePercent = Number(pmData?.fee_percentage ?? 0); if (feePercent > 0) { const feeAmount = Math.round((paymentAmount * feePercent / 100) * 100) / 100; if (feeAmount > 0) { const feeDesc = `Taxa maquininha — ${pmData?.name ?? "Cartao"} (${feePercent}%) — Venda ${orderNumber2}`; const { data: existingFee } = await admin.from("fin_cash_flow").select("id").eq("tenant_id", paymentTenantId).eq("reference_id", paymentIdStr).eq("origin", "auto_card_fee").maybeSingle(); if (!existingFee) { await admin.from("fin_cash_flow").insert({ tenant_id: paymentTenantId, type: "expense", amount: feeAmount, description: feeDesc, category: "Taxas de Cartao", origin: "auto_card_fee", reference_id: paymentIdStr, date: todayBR }); } } } } else { await admin.from("fin_cash_flow").insert({ tenant_id: paymentTenantId, type: "income", amount: paymentAmount, description: `${paymentDesc} (sem ref)`, category: "Vendas", origin: "auto_sale", reference_id: null, date: todayBR }); } } else { const dueDateStr = addDaysDateStr(todayBR, daysToReceive); const { error: installErr } = await admin.from("fin_receivable_installments").insert({ tenant_id: paymentTenantId, order_id, installment_number: 1, total_installments: 1, amount: paymentAmount, due_date: dueDateStr, status: "pending", payment_method_name: pmData?.name ?? null, order_number: orderNumber2 }); if (installErr) { await admin.from("fin_cash_flow").insert({ tenant_id: paymentTenantId, type: "income", amount: paymentAmount, description: `${paymentDesc} — fallback`, category: "Vendas", origin: "auto_sale", reference_id: String(paymentId ?? order_id), date: todayBR }); } } } catch { try { await admin.from("fin_cash_flow").insert({ tenant_id: tenantId, type: "income", amount: paymentAmount || amount, description: `Venda #${String(order_id ?? "").slice(0, 8)}`, category: "Vendas", origin: "auto_sale", reference_id: String(paymentId ?? order_id), date: todayBrasiliaStr() }); } catch { /* ignore */ } }
       return new Response(JSON.stringify({ data: { id: paymentId } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "toggle_obs_check") {
       const { order_item_id, observation_text, observation_index, checked, checked_by_name } = body;
       if (!order_item_id || observation_text == null || observation_index == null) { return new Response(JSON.stringify({ error: "order_item_id, observation_text e observation_index sao obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
-      const { data: itemCheck } = await admin.from("order_items").select("id, tenant_id").eq("id", order_item_id).maybeSingle();
+      const { data: itemCheck } = await admin.from("order_items").select("id, tenant_id").eq("id", order_item_id).eq("tenant_id", tenantId).maybeSingle();
       if (!itemCheck) { return new Response(JSON.stringify({ error: "order_item_id nao encontrado" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       if (checked) { const { error: upsertErr } = await admin.from("order_item_observation_checks").upsert({ tenant_id: tenantId, order_item_id, observation_text, observation_index: Number(observation_index), checked_at: new Date().toISOString(), checked_by_user_id: effectiveUserId, checked_by_name: checked_by_name ?? null }, { onConflict: "order_item_id,observation_index" }); if (upsertErr) throw upsertErr; }
       else { const { error: delErr } = await admin.from("order_item_observation_checks").delete().eq("order_item_id", order_item_id).eq("observation_index", Number(observation_index)); if (delErr) throw delErr; }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
 import type { TableReservation, ReservationStatus } from '@/types/reservations';
 import NovaReservaModal from './NovaReservaModal';
 
@@ -47,6 +48,7 @@ interface ReservationWithTable extends TableReservation {
 
 export default function ReservasTab() {
   const { user } = useAuth();
+  const { error: toastError } = useToast();
   const [reservations, setReservations] = useState<ReservationWithTable[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
@@ -83,9 +85,11 @@ export default function ReservasTab() {
   async function handleAction(reservationId: string, action: string, extra?: Record<string, unknown>) {
     setActionLoading(reservationId + action);
     try {
-      await invokeWithAuth('reservation-write', {
+      const { error } = await invokeWithAuth('reservation-write', {
         body: { action, reservation_id: reservationId, active_tenant_id: user?.tenantId, ...extra },
       });
+      // 422/409 (transição inválida, conflito de mesa etc.) voltam como error — antes eram engolidos.
+      if (error) toastError(error.message || 'Não foi possível atualizar a reserva.');
       await loadReservations();
     } finally {
       setActionLoading(null);

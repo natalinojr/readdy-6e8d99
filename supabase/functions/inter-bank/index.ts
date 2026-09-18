@@ -548,9 +548,16 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
   // deno-lint-ignore no-explicit-any
   let bill: any = null;
   if (body.bill_id) {
-    const { data } = await admin.from('fin_accounts_payable').select('id, tenant_id, description, supplier, amount, paid_amount, due_date, status').eq('id', String(body.bill_id)).maybeSingle();
+    const { data } = await admin.from('fin_accounts_payable').select('id, tenant_id, description, supplier, amount, paid_amount, due_date, status').eq('id', String(body.bill_id)).eq('tenant_id', tenantId).maybeSingle();
     if (!data) throw new Error('Conta a pagar não encontrada.');
     if (data.status === 'paid') throw new Error('Essa conta já está paga no ERPOS.');
+    // Um pagamento em andamento por conta: pedido aberto (não expirado) ou já enviado
+    // e ainda não finalizado. 'paid' é final (conta parcial pode receber outro).
+    const { data: ativos } = await admin.from('fin_inter_payments').select('id, status, created_at')
+      .eq('tenant_id', tenantId).eq('bill_id', data.id)
+      .in('status', [...PAY_OPEN, ...PAY_LIVE.filter((s) => s !== 'paid')]);
+    const emAndamento = (ativos ?? []).find((x) => !PAY_OPEN.includes(x.status) || Date.now() - new Date(x.created_at).getTime() <= DRAFT_TTL_MS);
+    if (emAndamento) throw new Error(`Já existe um pagamento em andamento para essa conta (situação "${emAndamento.status}"). Conclua ou cancele esse antes de pedir outro.`);
     bill = data;
   }
   const row: Record<string, unknown> = {
@@ -573,7 +580,7 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
     if (k.kind === 'desconhecida') throw new Error('Chave Pix não reconhecida (use CNPJ, CPF, e-mail, telefone com +55 ou chave aleatória).');
     const valor = round2(Number(body.valor ?? 0));
     if (!(valor > 0)) throw new Error('Informe o valor do Pix.');
-    const { data: sups } = await admin.from('fin_suppliers').select('id, tenant_id, name, legal_name, cnpj, pix_key, is_active').or('pix_key.not.is.null,cnpj.not.is.null').limit(5000);
+    const { data: sups } = await admin.from('fin_suppliers').select('id, tenant_id, name, legal_name, cnpj, pix_key, is_active').eq('tenant_id', tenantId).or('pix_key.not.is.null,cnpj.not.is.null').limit(5000);
     const sup = (sups ?? []).find((x) => x.is_active !== false && (
       (x.pix_key && normPixKey(String(x.pix_key)).key === k.key) || (k.kind === 'cnpj' && onlyDigits(x.cnpj) === k.key)
     ));

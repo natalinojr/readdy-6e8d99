@@ -1,5 +1,6 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
+import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/stock.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -195,8 +196,10 @@ function voucherApplicable(v: Record<string, any>, orderAmt: number): number {
 }
 
 const RATE_LIMIT_WINDOW_MIN = 10;
-const MAX_ORDERS_PER_PHONE = 3;
-const MAX_ORDERS_PER_IP = 15;
+const MAX_ORDERS_PER_PHONE = 5;
+// Sem limite por IP: o antigo era um Map em memória, por isolate — com várias instâncias da
+// Edge ele não segurava nada (e dava falsa sensação de proteção). Removido no go-live (09-17).
+// A trava real é a do telefone (MAX_ORDERS_PER_PHONE), contada em `orders` no banco.
 
 async function notifyDeliveryOrderCreated(payload: {
   tenant_id: string;
@@ -232,14 +235,6 @@ async function notifyDeliveryOrderCreated(payload: {
   } catch (err) {
     console.warn("[delivery-write] whatsapp-send unavailable:", err instanceof Error ? err.message : String(err));
   }
-}
-
-function extractClientIp(req: Request): string {
-  const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
-  const realIp = req.headers.get("x-real-ip");
-  if (realIp) return realIp.trim();
-  return "unknown";
 }
 
 // ── Saídas do pedido de delivery: tickets (cozinha/bar), comprovante e WhatsApp ──
@@ -286,53 +281,62 @@ async function emitDeliveryOutputs(admin: any, ctx: DeliveryOutputCtx) {
         });
       }
 
-      const itensCozinha = serverItems.filter((it: Record<string, unknown>) => !it.skip_kds);
+      // Itens de preparo agrupam pela station_id (fallback "cozinha-padrao"); itens "sem
+      // preparo" (skip_kds: bebidas, sobremesas prontas) pela station_id real (fallback "bar").
+      // Cozinha + bar da MESMA estação viram UM ticket só — igual src/lib/printOrderQueue.ts.
+      // Antes eram 2 enqueue_print_ticket com a mesma (order_id, station_key) e a dedup da RPC
+      // descartava o 2º: a bebida sumia do ticket (simulação de pico, 2026-09-17).
       const stationGroups = new Map<string, Array<Record<string, unknown>>>();
-      for (const item of itensCozinha) {
-        const key = (item.station_id as string) || "cozinha-padrao";
-        if (!stationGroups.has(key)) stationGroups.set(key, []);
-        stationGroups.get(key)!.push(item);
-      }
-
-      for (const [stationKey, stationItems] of stationGroups.entries()) {
-        try {
-          await admin.rpc("enqueue_print_ticket", {
-            p_tenant_id: tenant_id, p_order_id: orderId, p_order_number: orderNumber,
-            p_station_key: stationKey, p_station_label: stationKey,
-            p_content_type: "ticket_json",
-            p_payload: {
-              numero: ticketNum, destino: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
-              origem: isRetirada ? "retirada" : "delivery",
-              impressora_id: stationKey,
-              itens: buildTicketItems(stationItems),
-              data_hora: dataHora,
-            },
-            p_paper_style: "80mm",
-          });
-        } catch { /* non-blocking */ }
-      }
-
-      // Itens "sem preparo" (skip_kds: bebidas, sobremesas prontas) -> ticket de BAR,
-      // agrupado pela station_id real (fallback "bar"). Espelha o printOrderQueue das
-      // outras origens; antes o delivery NAO imprimia esses itens (so no comprovante).
-      const itensBar = serverItems.filter((it: Record<string, unknown>) => it.skip_kds);
       const barGroups = new Map<string, Array<Record<string, unknown>>>();
-      for (const item of itensBar) {
-        const key = (item.station_id as string) || "bar";
-        if (!barGroups.has(key)) barGroups.set(key, []);
-        barGroups.get(key)!.push(item);
+      for (const item of serverItems) {
+        if (item.skip_kds) {
+          const key = (item.station_id as string) || "bar";
+          if (!barGroups.has(key)) barGroups.set(key, []);
+          barGroups.get(key)!.push(item);
+        } else {
+          const key = (item.station_id as string) || "cozinha-padrao";
+          if (!stationGroups.has(key)) stationGroups.set(key, []);
+          stationGroups.get(key)!.push(item);
+        }
       }
-      for (const [stationKey, stationItems] of barGroups.entries()) {
+      const allStationKeys = new Set<string>([...stationGroups.keys(), ...barGroups.keys()]);
+
+      // Nome da estação (kitchen_stations.name) para o rótulo/cabeçalho do ticket — como
+      // o printOrderQueue das outras origens faz; antes ia o UUID da estação.
+      const stationNames = new Map<string, string>();
+      const stationIds = [...allStationKeys].filter((k) => k !== "cozinha-padrao" && k !== "bar");
+      if (stationIds.length > 0) {
+        try {
+          const { data: ksRows } = await admin
+            .from("kitchen_stations")
+            .select("id, name")
+            .eq("tenant_id", tenant_id)
+            .in("id", stationIds);
+          for (const ks of (ksRows || []) as Array<{ id: string; name: string | null }>) {
+            if (ks.id && ks.name) stationNames.set(ks.id, ks.name);
+          }
+        } catch { /* sem nome: cai no rótulo genérico */ }
+      }
+
+      for (const stationKey of allStationKeys) {
+        const kitchenItems = stationGroups.get(stationKey) ?? [];
+        const barItems = barGroups.get(stationKey) ?? [];
+        const hasBar = barItems.length > 0;
+        const hasKitchen = kitchenItems.length > 0;
+        const estacaoNome = stationNames.get(stationKey) || "";
+        // Rótulo: nome da estação quando existe; senão "Bar" (só bar) ou "Cozinha".
+        const label = estacaoNome || (hasBar && !hasKitchen ? "Bar" : "Cozinha");
         try {
           await admin.rpc("enqueue_print_ticket", {
             p_tenant_id: tenant_id, p_order_id: orderId, p_order_number: orderNumber,
-            p_station_key: stationKey, p_station_label: "Bar",
+            p_station_key: stationKey, p_station_label: label,
             p_content_type: "ticket_json",
             p_payload: {
               numero: ticketNum, destino: customer_name + " - " + (isRetirada ? "Retirada" : customer_address),
               origem: isRetirada ? "retirada" : "delivery",
+              ...(estacaoNome ? { estacao: estacaoNome } : {}),
               impressora_id: stationKey,
-              itens: buildTicketItems(stationItems),
+              itens: buildTicketItems([...kitchenItems, ...barItems]),
               data_hora: dataHora,
             },
             p_paper_style: "80mm",
@@ -412,14 +416,16 @@ async function releaseHeldOrder(admin: any, tenant_id: string, order_id: string,
   const { data: o } = await admin.from("orders")
     .select("id, number, status, is_draft, origin_type, destination_name, destination_phone, delivery_address, delivery_platform, delivery_fee, subtotal, discount_amount, total_amount, notes, delivery_distance_km, delivery_sla_min")
     .eq("id", order_id).eq("tenant_id", tenant_id).maybeSingle();
-  if (!o) return { error: "Pedido nao encontrado", code: 404 };
-  if (o.origin_type !== "delivery") return { error: "Nao e pedido de delivery", code: 400 };
+  if (!o) return { error: "Pedido não encontrado", code: 404 };
+  if (o.origin_type !== "delivery") return { error: "Não é pedido de delivery", code: 400 };
   if (o.status !== "draft" && !o.is_draft) return { already: true };
 
   const upd: Record<string, unknown> = { status: "new", is_draft: false, updated_at: new Date().toISOString() };
   if (newNotes != null) upd.notes = newNotes;
   const { error: upErr } = await admin.from("orders").update(upd).eq("id", order_id);
   if (upErr) throw upErr;
+  // Saiu do rascunho = pedido real: itens sem preparo (skip_kds) baixam o estoque agora.
+  runStockInBackground(deductStockForSkipKdsItems(admin, tenant_id, order_id).catch((e) => console.warn("[delivery-write] baixa de estoque falhou", order_id, String(e))));
 
   const { data: items } = await admin.from("order_items").select("id, item_name, item_price, quantity, notes, skip_kds, station_id, status").eq("order_id", order_id).neq("status", "cancelled");
   const itemIds = ((items ?? []) as Record<string, unknown>[]).map((it) => it.id as string);
@@ -459,7 +465,6 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const keyToUse = serviceRoleKey && serviceRoleKey.length >= 40 ? serviceRoleKey : anonKey;
   const admin = createClient(supabaseUrl, keyToUse, { auth: { autoRefreshToken: false, persistSession: false } });
-  const clientIp = extractClientIp(req);
 
   try {
     const body = await req.json();
@@ -477,17 +482,17 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         if (bySlug && bySlug.length > 0) {
           const match = bySlug[0];
           if (match.is_active !== false) { tenantId = match.id; }
-          else return new Response(JSON.stringify({ _v: "v14", error: "store_inactive", message: "Esta loja esta temporariamente indisponivel." }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          else return new Response(JSON.stringify({ _v: "v14", error: "store_inactive", message: "Esta loja está temporariamente indisponível." }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
       }
-      if (!tenantId) return new Response(JSON.stringify({ _v: "v14", error: "delivery_not_configured", message: "Delivery nao configurado." }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      if (!tenantId) return new Response(JSON.stringify({ _v: "v14", error: "delivery_not_configured", message: "Delivery não configurado." }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-      const [settingsResult, nbRows, tenantResult, catResult, itemResult, ogResult, optResult, obsResult, estoqueResult, opcoesEstoqueResult, partesResult, highlightsResult, promotionsResult] = await Promise.all([
+      const [settingsResult, nbRows, tenantResult, catResult, itemResult, ogResult, optResult, obsResult, estoqueResult, opcoesEstoqueResult, partesResult, highlightsResult, promotionsResult, deletedCatsResult] = await Promise.all([
         admin.from("system_settings").select("delivery_city, delivery_config").eq("tenant_id", tenantId).maybeSingle(),
         admin.rpc("fn_delivery_get_config", { p_tenant_id: tenantId }),
         admin.from("tenants").select("id, name").eq("id", tenantId).maybeSingle(),
-        admin.from("menu_categories").select("id, name, station_id").eq("tenant_id", tenantId).eq("is_active", true).order("sort_order", { ascending: true }),
-        admin.from("menu_items").select("id, name, description, price, photo_url, category_id, sla_minutes, is_active, skip_kds, delivery_config").eq("tenant_id", tenantId).eq("is_active", true),
+        admin.from("menu_categories").select("id, name, station_id").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true }),
+        admin.from("menu_items").select("id, name, description, price, photo_url, category_id, sla_minutes, is_active, skip_kds, delivery_config").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null),
         admin.from("option_groups").select("id, name, item_id, is_required, min_selections, max_selections").eq("tenant_id", tenantId).is("deleted_at", null),
         admin.from("options").select("id, group_id, name, additional_price, is_active").eq("tenant_id", tenantId).eq("is_active", true).order("sort_order", { ascending: true }),
         admin.from("item_preset_observations").select("id, item_id, text").eq("tenant_id", tenantId).is("deleted_at", null),
@@ -497,7 +502,11 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         // Destaques do DELIVERY: canal 'ambos' ou 'delivery' (exclui os 'só casa').
         admin.from("menu_highlights").select("id, item_id, custom_price, custom_description, sort_order").eq("tenant_id", tenantId).eq("is_active", true).neq("channel", "casa").order("sort_order", { ascending: true }),
         admin.from("item_promotions").select("id, item_id, promotional_price, days_of_week, is_recurring, specific_date, is_active").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null),
+        // Categorias APAGADAS (soft delete): seus itens somem do cardapio (mesma regra do fn_get_full_menu).
+        admin.from("menu_categories").select("id").eq("tenant_id", tenantId).not("deleted_at", "is", null),
       ]);
+      if (deletedCatsResult.error) throw deletedCatsResult.error;
+      const deletedCatIds = new Set(((deletedCatsResult.data ?? []) as Array<{ id: string }>).map((c) => c.id));
 
       const settingsData = settingsResult.data;
       if (settingsResult.error) throw settingsResult.error;
@@ -514,6 +523,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       for (const cat of (catResult.data ?? []) as Array<{ id: string; station_id: string | null }>) { if (cat.station_id) catStationMap.set(cat.id, cat.station_id); }
       const filteredItems = ((itemResult.data ?? []) as Array<Record<string, unknown>>).filter((item: Record<string, unknown>) => {
         const dc = item.delivery_config as Record<string, unknown> | null;
+        if (item.category_id && deletedCatIds.has(item.category_id as string)) return false;
         return !dc || typeof dc !== "object" || dc.ativo !== false;
       });
       const itemsMap = new Map<string, Record<string, unknown>>();
@@ -620,10 +630,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       // auth_tenant_id() (ultima membership criada) e quebra para donos multi-loja.
       const authHeader = req.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      if (!token) return jsonErr("Nao autenticado", 401);
+      if (!token) return jsonErr("Não autenticado", 401);
 
       const { data: userData, error: userErr } = await admin.auth.getUser(token);
-      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+      if (userErr || !userData?.user) return jsonErr("Sessão inválida", 401);
       const userId = userData.user.id;
 
       const { tenant_id, delivery_city, delivery_config } = body;
@@ -638,7 +648,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         .maybeSingle();
       if (memErr) throw memErr;
       if (!membership || membership.role !== "admin") {
-        return jsonErr("Sem permissao de admin para esta loja.", 403);
+        return jsonErr("Sem permissão de admin para esta loja.", 403);
       }
 
       // Merge: preserva chaves de runtime que esta tela nao conhece (delivery_manual_open,
@@ -669,9 +679,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "get_delivery_settings") {
       const authHeader = req.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      if (!token) return jsonErr("Nao autenticado", 401);
+      if (!token) return jsonErr("Não autenticado", 401);
       const { data: userData, error: userErr } = await admin.auth.getUser(token);
-      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+      if (userErr || !userData?.user) return jsonErr("Sessão inválida", 401);
       const { tenant_id } = body;
       if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
       const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
@@ -692,14 +702,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "list_drivers" || action === "set_driver_active" || action === "delete_driver") {
       const authHeader = req.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      if (!token) return jsonErr("Nao autenticado", 401);
+      if (!token) return jsonErr("Não autenticado", 401);
       const { data: userData, error: userErr } = await admin.auth.getUser(token);
-      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+      if (userErr || !userData?.user) return jsonErr("Sessão inválida", 401);
 
       const { tenant_id } = body;
       if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
       const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
-      if (!membership || membership.role !== "admin") return jsonErr("Sem permissao de admin para esta loja.", 403);
+      if (!membership || membership.role !== "admin") return jsonErr("Sem permissão de admin para esta loja.", 403);
 
       if (action === "list_drivers") {
         const { data: drivers } = await admin.from("delivery_drivers")
@@ -728,9 +738,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "list_delivery_orders" || action === "list_delivery_board" || action === "get_delivery_order" || action === "add_delivery_note" || action === "set_motoboy_status" || action === "clear_motoboy_driver") {
       const authHeader = req.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      if (!token) return jsonErr("Nao autenticado", 401);
+      if (!token) return jsonErr("Não autenticado", 401);
       const { data: userData, error: userErr } = await admin.auth.getUser(token);
-      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+      if (userErr || !userData?.user) return jsonErr("Sessão inválida", 401);
       const { tenant_id } = body;
       if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
       const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
@@ -817,7 +827,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         const { data: o } = await admin.from("orders")
           .select("id, number, destination_name, destination_phone, delivery_address, delivery_platform, total_amount, delivery_fee, status, is_paid, notes, motoboy_status, motoboy_note, motoboy_problems, delivery_notes, motoboy_driver_id, motoboy_updated_at, out_for_delivery_at, delivery_sla_min, motoboy_timeline, delivery_lat, delivery_lng, created_at")
           .eq("id", orderId).eq("tenant_id", tenant_id).maybeSingle();
-        if (!o) return jsonErr("Pedido nao encontrado nesta loja.", 404);
+        if (!o) return jsonErr("Pedido não encontrado nesta loja.", 404);
         const { data: items } = await admin.from("order_items")
           .select("item_name, quantity, item_price, skip_kds, started_preparing_at, ready_at").eq("order_id", orderId);
         // Fases da COZINHA (agregado dos itens que vao pra cozinha) — mesmo criterio do motoboy-signal.
@@ -867,7 +877,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         if (!text) return jsonErr("texto obrigatorio", 400);
         const autor = String(body.autor ?? "").slice(0, 120) || null;
         const { data: cur } = await admin.from("orders").select("delivery_notes").eq("id", orderId).eq("tenant_id", tenant_id).maybeSingle();
-        if (!cur) return jsonErr("Pedido nao encontrado nesta loja.", 404);
+        if (!cur) return jsonErr("Pedido não encontrado nesta loja.", 404);
         const notes = Array.isArray(cur.delivery_notes) ? (cur.delivery_notes as unknown[]) : [];
         const nowIso = new Date().toISOString();
         const novo = [...notes, { at: nowIso, kind, text, autor }];
@@ -878,7 +888,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       // Confere que o pedido e desta loja (clear/set).
       const { data: ord } = await admin.from("orders").select("id, motoboy_timeline, motoboy_status, motoboy_problems").eq("id", orderId).eq("tenant_id", tenant_id).maybeSingle();
-      if (!ord) return jsonErr("Pedido nao encontrado nesta loja.", 404);
+      if (!ord) return jsonErr("Pedido não encontrado nesta loja.", 404);
 
       if (action === "clear_motoboy_driver") {
         // Libera o pedido do entregador atual E volta UMA fase de entrega, para o
@@ -950,9 +960,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       // Autoriza qualquer MEMBRO da loja (operador de caixa nao precisa ser admin).
       const authHeader = req.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      if (!token) return jsonErr("Nao autenticado", 401);
+      if (!token) return jsonErr("Não autenticado", 401);
       const { data: userData, error: userErr } = await admin.auth.getUser(token);
-      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+      if (userErr || !userData?.user) return jsonErr("Sessão inválida", 401);
 
       const { tenant_id } = body;
       if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
@@ -973,7 +983,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         const within = isWithinSchedule(schedule, now);
 
         if (op === "open") {
-          if (!hasSession) return jsonErr("Abra uma sessao de caixa antes de abrir o delivery.", 409);
+          if (!hasSession) return jsonErr("Abra uma sessão de caixa antes de abrir o delivery.", 409);
           pausedUntil = null;
           manualOpen = !within; // dentro do horario a agenda ja cobre; fora, liga o override
         } else if (op === "close") {
@@ -1177,9 +1187,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "pdv_delivery_bootstrap" || action === "search_customers" || action === "quote_delivery_fee") {
       const authHeader = req.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      if (!token) return jsonErr("Nao autenticado", 401);
+      if (!token) return jsonErr("Não autenticado", 401);
       const { data: userData, error: userErr } = await admin.auth.getUser(token);
-      if (userErr || !userData?.user) return jsonErr("Sessao invalida", 401);
+      if (userErr || !userData?.user) return jsonErr("Sessão inválida", 401);
       const { tenant_id } = body;
       if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
       const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
@@ -1369,8 +1379,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const phoneDigits = String(order_phone ?? "").replace(/\D/g, "");
       const tokenOk = !!order_token && String(o?.client_request_id ?? "") === String(order_token);
       const phoneOk = phoneDigits.length >= 10 && String(o?.destination_phone ?? "").replace(/\D/g, "") === phoneDigits;
-      if (!o || !(tokenOk || phoneOk) || o.origin_type !== "delivery") return jsonErr("Pedido nao encontrado", 403);
-      if (o.status !== "draft" && !o.is_draft) return jsonErr("Este pedido ja foi enviado para a cozinha", 409);
+      if (!o || !(tokenOk || phoneOk) || o.origin_type !== "delivery") return jsonErr("Pedido não encontrado", 403);
+      if (o.status !== "draft" && !o.is_draft) return jsonErr("Este pedido já foi enviado para a cozinha", 409);
       const isRetirada = o.delivery_platform === "retirada";
       const isDinheiro = /dinheiro/i.test(label);
       const troco = isDinheiro && cash_amount != null && Number(cash_amount) > 0 ? Number(cash_amount) : null;
@@ -1439,10 +1449,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         .maybeSingle();
 
       if (tenantCheckErr || !tenantCheck) {
-        return jsonErr("Estabelecimento nao encontrado.", 404);
+        return jsonErr("Estabelecimento não encontrado.", 404);
       }
       if (tenantCheck.is_active === false) {
-        return jsonErr("Este estabelecimento nao esta aceitando pedidos no momento.", 403);
+        return jsonErr("Este estabelecimento não está aceitando pedidos no momento.", 403);
       }
 
       const cleanPhone = String(customer_phone || "").replace(/\D/g, "");
@@ -1453,26 +1463,12 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           .from("orders")
           .select("id", { count: "exact", head: true })
           .eq("tenant_id", tenant_id)
+          .eq("origin_type", "delivery")
+          .eq("destination_type", "delivery")
           .eq("destination_phone", cleanPhone)
           .gte("created_at", windowStart);
 
         if (!phoneCountErr && phoneCount !== null && phoneCount >= MAX_ORDERS_PER_PHONE) {
-          return new Response(JSON.stringify({
-            _v: "v14",
-            error: "rate_limited",
-            message: "Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.",
-          }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json", "Retry-After": String(RATE_LIMIT_WINDOW_MIN * 60) } });
-        }
-      }
-
-      if (clientIp && clientIp !== "unknown") {
-        const { count: ipCount, error: ipCountErr } = await admin
-          .from("orders")
-          .select("id", { count: "exact", head: true })
-          .eq("tenant_id", tenant_id)
-          .gte("created_at", windowStart);
-
-        if (!ipCountErr && ipCount !== null && ipCount >= MAX_ORDERS_PER_IP) {
           return new Response(JSON.stringify({
             _v: "v14",
             error: "rate_limited",
@@ -1487,7 +1483,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           : null;
 
       if (!effectiveClientRequestId) {
-        return jsonErr("Requisicao invalida - client_request_id ausente", 400);
+        return jsonErr("Requisição inválida - client_request_id ausente", 400);
       }
 
       const itemIds: string[] = [];
@@ -1508,7 +1504,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       const [menuItemsRes, combosRes, optionsRes, neighRes, settingsRes] = await Promise.all([
         itemIds.length > 0
-          ? admin.from("menu_items").select("id, name, price, is_active, delivery_config").eq("tenant_id", tenant_id).in("id", itemIds)
+          ? admin.from("menu_items").select("id, name, price, is_active, delivery_config, deleted_at, category_id").eq("tenant_id", tenant_id).in("id", itemIds)
           : Promise.resolve({ data: [], error: null }) as { data: Array<Record<string, unknown>>; error: unknown },
         comboIds.length > 0
           ? admin.from("combos").select("id, name, price, is_active").eq("tenant_id", tenant_id).in("id", comboIds)
@@ -1527,12 +1523,21 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (optionsRes.error) throw optionsRes.error;
       if (neighRes.error) throw neighRes.error;
 
+      // Item apagado (deleted_at) ou de categoria apagada = indisponivel (regra do fn_get_full_menu).
+      const orderCatIds = [...new Set((menuItemsRes.data as Array<Record<string, unknown>>).map((mi) => mi.category_id).filter(Boolean).map(String))];
+      const { data: deletedOrderCats, error: deletedOrderCatsErr } = orderCatIds.length > 0
+        ? await admin.from("menu_categories").select("id").eq("tenant_id", tenant_id).in("id", orderCatIds).not("deleted_at", "is", null)
+        : { data: [], error: null };
+      if (deletedOrderCatsErr) throw deletedOrderCatsErr;
+      const deletedOrderCatIds = new Set(((deletedOrderCats ?? []) as Array<{ id: string }>).map((c) => String(c.id)));
+
       const itemPriceMap = new Map<string, number>();
       const itemNameMap = new Map<string, string>();
       for (const mi of menuItemsRes.data) {
         const dc = mi.delivery_config as Record<string, unknown> | null;
         const deliveryBlocked = dc && typeof dc === "object" && dc.ativo === false;
-        if (mi.is_active && !deliveryBlocked) {
+        const apagado = mi.deleted_at != null || (mi.category_id != null && deletedOrderCatIds.has(String(mi.category_id)));
+        if (mi.is_active && !deliveryBlocked && !apagado) {
           // Usa o preço de delivery (delivery_config.preco) quando configurado (> 0).
           const precoDelivery = dc && typeof dc === "object" ? Number(dc.preco ?? 0) : 0;
           itemPriceMap.set(mi.id as string, precoDelivery > 0 ? precoDelivery : Number(mi.price ?? 0));
@@ -1573,7 +1578,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           const cid = rawComboId.trim();
           const cp = comboPriceMap.get(cid);
           if (cp === undefined) {
-            return jsonErr("Combo indisponivel: " + (item.item_name || cid), 400);
+            return jsonErr("Combo indisponível: " + (item.item_name || cid), 400);
           }
           realItemPrice = cp;
           realItemName = comboNameMap.get(cid) || realItemName;
@@ -1581,12 +1586,12 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           const iid = rawItemId.trim();
           const ip = itemPriceMap.get(iid);
           if (ip === undefined) {
-            return jsonErr("Item indisponivel: " + (item.item_name || iid), 400);
+            return jsonErr("Item indisponível: " + (item.item_name || iid), 400);
           }
           realItemPrice = ip;
           realItemName = itemNameMap.get(iid) || realItemName;
         } else {
-          return jsonErr("Item invalido (sem identificacao)", 400);
+          return jsonErr("Item inválido (sem identificação)", 400);
         }
 
         let optionsTotal = 0;
@@ -1594,18 +1599,18 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         const rawOpts = Array.isArray(item.options) ? item.options : [];
 
         for (const opt of rawOpts) {
-          let realOptPrice = 0;
           const oid = opt.option_id;
-          if (oid && typeof oid === "string" && oid.trim()) {
-            const op = optionPriceMap.get(oid.trim());
-            if (op !== undefined) {
-              realOptPrice = op;
-            }
+          // Opção sem id, de outra loja ou inativa: recusa o pedido. Antes virava preço 0
+          // mantendo o nome enviado pelo cliente (adicional de graça / nome forjado).
+          const op = (oid && typeof oid === "string" && oid.trim()) ? optionPriceMap.get(oid.trim()) : undefined;
+          if (op === undefined) {
+            return jsonErr("Opção indisponível: " + ((opt.option_name as string) || "?") + " (" + realItemName + "). Remova o item do carrinho e adicione novamente.", 400);
           }
+          const realOptPrice = op;
           optionsTotal += realOptPrice;
           serverOpts.push({
             option_id: oid ?? null,
-            option_name: (opt.option_name as string) ?? "",
+            option_name: optionNameMap.get((oid as string).trim()) || ((opt.option_name as string) ?? ""),
             group_name: (opt.group_name as string) ?? "",
             additional_price: realOptPrice,
           });
@@ -1666,17 +1671,22 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           return new Response(JSON.stringify({
             _v: "v14",
             error: "fora_area",
-            message: "Endereco fora da area de entrega desta loja.",
+            message: "Endereço fora da área de entrega desta loja.",
           }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
         serverDeliveryFee = quote.taxa;
         routeTempoMax = quote.tempoMax;
-      } else if (neighborhood_id && neighRes.data) {
-        // Fluxo legado por bairro (loja sem config de distancia, ou pedido sem pin)
-        const nb = neighRes.data as Record<string, unknown>;
-        if (nb.is_active !== false) {
-          serverDeliveryFee = Number(nb.delivery_fee ?? 0);
+      } else if (hasDistanceConfig) {
+        // Loja no modo distancia (mesma decisao da tela: store_location + faixas): entrega sem pin
+        // nao tem como checar area nem calcular taxa — recusa em vez de sair com taxa R$ 0.
+        return jsonErr("Informe o endereço de entrega (marque o local no mapa).", 400);
+      } else {
+        // Modo bairro: exige bairro existente e ativo da loja (taxa dele).
+        const nb = neighRes.data as Record<string, unknown> | null;
+        if (!neighborhood_id || !nb || nb.is_active === false) {
+          return jsonErr("Informe o endereço/bairro de entrega.", 400);
         }
+        serverDeliveryFee = Number(nb.delivery_fee ?? 0);
       }
 
       // Voucher (opcional): valida server-side e calcula o desconto sobre o subtotal.
@@ -1712,7 +1722,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           // O nome vem do cliente — o sistema NUNCA inventa um nome. Sem nome, recusa
           // (o app já exige o nome antes de chegar aqui).
           if (!customer_name || !String(customer_name).trim()) {
-            return jsonErr("Nome do cliente e obrigatorio.", 400);
+            return jsonErr("Nome do cliente é obrigatório.", 400);
           }
           const { data: newCustomer } = await admin.from("customers").insert({
             tenant_id, name: String(customer_name).trim(), phone: cleanPhone,
@@ -1731,9 +1741,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const gateState = computeDeliveryOpen(dcRowForGate?.delivery_config as Record<string, any> | null, !!caixaSession, new Date());
       if (!gateState.open) {
         const gateMsg = gateState.reason === "sem_sessao" ? "Estabelecimento fechado."
-          : gateState.reason === "pausado" ? "O delivery esta pausado no momento. Tente novamente mais tarde."
-          : gateState.reason === "fora_horario" ? "O delivery esta fora do horario de funcionamento."
-          : "O delivery esta fechado no momento.";
+          : gateState.reason === "pausado" ? "O delivery está pausado no momento. Tente novamente mais tarde."
+          : gateState.reason === "fora_horario" ? "O delivery está fora do horário de funcionamento."
+          : "O delivery está fechado no momento.";
         return new Response(JSON.stringify({ _v: "v14", error: gateMsg }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       const sessionId = caixaSession!.id;
@@ -1790,7 +1800,19 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const isDuplicate = Array.isArray(order) ? order[0]?.duplicate : order?.duplicate;
 
       if (isDuplicate) {
-        const { data: existingOrder } = await admin.from("orders").select("id, number, total_amount, delivery_fee").eq("id", orderId).single();
+        const { data: existingOrder } = await admin.from("orders").select("id, number, status, total_amount, delivery_fee").eq("id", orderId).eq("tenant_id", tenant_id).maybeSingle();
+        // Retry do mesmo envio: só confirma se o pedido original está válido (não cancelado e com
+        // itens). A 1ª requisição pode ainda estar gravando os itens — espera um pouco antes de negar.
+        let existingItems = 0;
+        for (let tentativa = 0; existingOrder && existingOrder.status !== "cancelled" && tentativa < 4; tentativa++) {
+          const { count } = await admin.from("order_items").select("id", { count: "exact", head: true }).eq("order_id", orderId).eq("tenant_id", tenant_id);
+          existingItems = count ?? 0;
+          if (existingItems > 0) break;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        if (!existingOrder || existingOrder.status === "cancelled" || existingItems === 0) {
+          return jsonErr("Não foi possível registrar este pedido. Revise o carrinho e envie novamente.", 409);
+        }
         return new Response(JSON.stringify({
           _v: "v14",
           data: {
@@ -1826,13 +1848,39 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         } catch { /* nao bloqueia o pedido */ }
       }
 
+      // Pedido que não pode seguir (itens/voucher falharam): cancela para não ficar um pedido
+      // "fantasma" sem itens, e responde erro (o retry com o mesmo client_request_id também nega).
+      const cancelarPedidoCriado = async (motivo: string) => {
+        try {
+          await admin.from("order_items").update({ status: "cancelled" }).eq("order_id", orderId).eq("tenant_id", tenant_id);
+          await admin.from("orders").update({ status: "cancelled" }).eq("id", orderId).eq("tenant_id", tenant_id);
+        } catch (e) {
+          console.error("[delivery-write] falha ao cancelar pedido", orderId, e);
+        }
+        console.error("[delivery-write] pedido", orderId, "cancelado:", motivo);
+      };
+
       const { error: itemsErr } = await admin.rpc("fn_create_order_items_bypass", {
         p_order_id: orderId, p_tenant_id: tenant_id, p_items: serverItems,
       });
-      if (itemsErr) throw itemsErr;
+      // A RPC só lança se NENHUM item entrar; falha parcial vira WARNING. Confere a contagem.
+      let itensGravados = -1;
+      if (!itemsErr) {
+        const { count, error: cntErr } = await admin.from("order_items").select("id", { count: "exact", head: true }).eq("order_id", orderId).eq("tenant_id", tenant_id);
+        itensGravados = cntErr ? -1 : (count ?? 0);
+      }
+      if (itemsErr || itensGravados !== serverItems.length) {
+        await cancelarPedidoCriado(itemsErr
+          ? "itens: " + String((itemsErr as Record<string, unknown>).message ?? itemsErr)
+          : `itens gravados ${itensGravados} de ${serverItems.length}`);
+        return jsonErr("Não foi possível registrar os itens do pedido. Tente novamente.", 500);
+      }
 
       // Resgate do voucher (baixa de saldo + transação) — só após o pedido existir.
+      // Condicional (otimista): só baixa se o voucher ainda está como foi validado. Se outro
+      // pedido usou antes (0 linhas), cancela este pedido — o desconto não pode sair sem baixa.
       if (voucherRow && voucherDiscount > 0) {
+        let resgatou = false;
         try {
           const isSaldo = voucherRow.voucher_type === "gift_card" || voucherRow.voucher_type === "cashback";
           const vMaxUses = Math.max(1, Number(voucherRow.max_uses ?? 1));
@@ -1844,12 +1892,23 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           const newStatus = isSaldo
             ? (newBalance <= 0 ? "depleted" : "active")
             : (vNewUseCount >= vMaxUses ? "depleted" : "active");
-          await admin.from("vouchers").update({ current_balance: newBalance, status: newStatus, use_count: vNewUseCount }).eq("id", voucherRow.id);
-          await admin.from("voucher_transactions").insert({
-            tenant_id, voucher_id: voucherRow.id, order_id: orderId,
-            transaction_type: "redeemed", amount: voucherDiscount, balance_after: newBalance, processed_by: null,
-          });
-        } catch (_e) { /* nao bloqueia o pedido se o resgate falhar */ }
+          let upd = admin.from("vouchers").update({ current_balance: newBalance, status: newStatus, use_count: vNewUseCount })
+            .eq("id", voucherRow.id).eq("tenant_id", tenant_id).eq("status", "active");
+          upd = voucherRow.use_count == null ? upd.is("use_count", null) : upd.eq("use_count", voucherRow.use_count);
+          upd = voucherRow.current_balance == null ? upd.is("current_balance", null) : upd.eq("current_balance", voucherRow.current_balance);
+          const { data: baixados, error: vErr } = await upd.select("id");
+          resgatou = !vErr && Array.isArray(baixados) && baixados.length > 0;
+          if (resgatou) {
+            await admin.from("voucher_transactions").insert({
+              tenant_id, voucher_id: voucherRow.id, order_id: orderId,
+              transaction_type: "redeemed", amount: voucherDiscount, balance_after: newBalance, processed_by: null,
+            });
+          }
+        } catch (_e) { resgatou = false; }
+        if (!resgatou) {
+          await cancelarPedidoCriado("voucher " + vCode + " indisponivel no resgate");
+          return jsonErr("O cupom " + vCode + " não está mais disponível. Remova o cupom e envie o pedido novamente.", 409);
+        }
       }
 
       const outputCtx: DeliveryOutputCtx = {
@@ -1864,6 +1923,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         // até o online-payments liquidar o Pix e chamar `release_held_order`.
       } else {
         await emitDeliveryOutputs(admin, outputCtx);
+        // Itens sem preparo (skip_kds) não passam pelo KDS: baixa o estoque agora (Pix pelo app baixa no release).
+        runStockInBackground(deductStockForSkipKdsItems(admin, tenant_id, orderId).catch((e) => console.warn("[delivery-write] baixa de estoque falhou", orderId, String(e))));
       }
 
       return new Response(JSON.stringify({

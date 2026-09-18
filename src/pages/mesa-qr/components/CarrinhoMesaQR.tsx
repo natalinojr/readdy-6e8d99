@@ -1,3 +1,5 @@
+import { formatCurrency } from '@/lib/formatters';
+
 interface CartItem {
   cartId: string;
   itemId: string;
@@ -103,7 +105,7 @@ export default function CarrinhoMesaQR(props: Props) {
                               {item.opcoes.map(function (op, idx) {
                                 return (
                                   <span key={idx} className="text-[10px] text-zinc-500 bg-zinc-50 px-2 py-0.5 rounded-md border border-zinc-100">
-                                    {op.opcaoNome}{op.precoAdicional > 0 ? ' +R$' + op.precoAdicional.toFixed(2) : ''}
+                                    {op.opcaoNome}{op.precoAdicional > 0 ? ' +' + formatCurrency(op.precoAdicional) : ''}
                                   </span>
                                 );
                               })}
@@ -144,7 +146,7 @@ export default function CarrinhoMesaQR(props: Props) {
 
                       <div className="flex items-center justify-between mt-3">
                         <span className="text-xs font-bold text-amber-600">
-                          R$ {item.precoTotal.toFixed(2)}
+                          {formatCurrency(item.precoTotal)}
                         </span>
                         <div className="flex items-center gap-2">
                           <button
@@ -168,7 +170,7 @@ export default function CarrinhoMesaQR(props: Props) {
                       <div className="mt-2 pt-2 border-t border-zinc-50 flex items-center justify-between">
                         <span className="text-xs text-zinc-500">Subtotal</span>
                         <span className="text-xs font-bold text-zinc-800">
-                          R$ {(item.precoTotal * item.quantidade).toFixed(2)}
+                          {formatCurrency(item.precoTotal * item.quantidade)}
                         </span>
                       </div>
                     </div>
@@ -187,7 +189,7 @@ export default function CarrinhoMesaQR(props: Props) {
             <div className="flex items-center justify-between pt-1">
               <span className="text-base font-bold text-zinc-800">Total</span>
               <span className="text-base font-bold text-amber-600">
-                R$ {total.toFixed(2)}
+                {formatCurrency(total)}
               </span>
             </div>
           </div>

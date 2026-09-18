@@ -106,7 +106,7 @@ export default function IdentificacaoDelivery(props: Props) {
               value={phone}
               onChange={function (e) { handleChange(e.target.value); }}
               onKeyDown={function (e) { if (e.key === 'Enter') handleSubmit(); }}
-              placeholder="(11) 99999-9999"
+              placeholder="(41) 99999-9999"
               maxLength={15}
               className="w-full px-3.5 py-2.5 text-sm border-[1.5px] border-zinc-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
             />

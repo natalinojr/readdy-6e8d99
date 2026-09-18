@@ -76,6 +76,10 @@ export interface OfflineOrder {
   total_amount: number;
   cash_register_id: string | null;
   is_training: boolean;
+  /** Idempotency key da tentativa online (mesmo UUID) — o reenvio não duplica o pedido */
+  client_request_id?: string | null;
+  /** Payload original completo de create_order (notes, customer_*, table_*, delivery_*, pix...) */
+  create_payload?: Record<string, unknown>;
 
   // Pagamentos para registrar após sync do pedido
   payments: Array<{

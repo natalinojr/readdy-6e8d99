@@ -3,13 +3,14 @@ import { invokeWithAuth, supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib
 import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
+import { validarPinGerente, MAX_TENTATIVAS_PIN_GERENTE } from '@/lib/kioskManagerPin';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 interface OrderSummary {
   id: string;
-  numero: number;
+  number: string | number | null;
   status: string;
   total_amount: number;
   destination_name: string | null;
@@ -33,6 +34,9 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
   const { user } = useAuth();
   const { sessao } = useSessao();
   const { kioskSession } = useKioskAuth();
+  // AuthUser não tem matrícula hoje (sempre undefined) — então o totem sempre cai no
+  // fluxo matrícula + PIN de gerente. Mantido o caminho antigo caso o campo volte.
+  const matriculaUsuario = (user as { matricula?: string } | null)?.matricula;
 
   const [step, setStep] = useState<'pin' | 'info'>('pin');
   const [pin, setPin] = useState('');
@@ -40,6 +44,11 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
   const [loading, setLoading] = useState(false);
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  // Modo totem: primeiro a matrícula do gerente, depois o PIN
+  const [campo, setCampo] = useState<'matricula' | 'pin'>(matriculaUsuario ? 'pin' : 'matricula');
+  const [matricula, setMatricula] = useState('');
+  const [tentativas, setTentativas] = useState(0);
+  const bloqueado = tentativas >= MAX_TENTATIVAS_PIN_GERENTE;
 
   const tenantId = kioskSession?.tenantId ?? user?.tenantId;
   const sessionId = sessao?.id ?? kioskSession?.sessionId;
@@ -85,32 +94,64 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
   }, [kioskSession?.accessToken]);
 
   const handleValidarPin = useCallback(async () => {
-    if (!pin.trim()) { setPinErro('Digite o PIN'); return; }
-
-    // Modo kiosk: sem matrícula de usuário normal — aceita PIN de 4+ dígitos
-    if (!user?.matricula) {
-      if (pin.length >= 4) { setStep('info'); return; }
-      setPinErro('PIN inválido');
+    // Modo totem (sem usuário com matrícula): exige matrícula + PIN de um gerente/admin
+    // DESTA loja, validados no servidor (login-pin verify_only — o mesmo do
+    // AutorizacaoGerenteModal). Sem validação possível, não abre.
+    if (!matriculaUsuario) {
+      if (bloqueado) return;
+      if (campo === 'matricula') {
+        if (!matricula.trim()) { setPinErro('Digite a matrícula'); return; }
+        setCampo('pin');
+        setPinErro('');
+        return;
+      }
+      setLoading(true);
+      try {
+        const r = await validarPinGerente(kioskInvoke, { matricula, pin, tenantId });
+        if (!r.ok) {
+          if (r.contaTentativa) { setTentativas((t) => t + 1); setPin(''); }
+          setPinErro(r.erro);
+          return;
+        }
+        setStep('info');
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
+    if (bloqueado) return;
+    if (!pin.trim()) { setPinErro('Digite o PIN'); return; }
+
+    // Mesmo critério do modo totem: PIN válido + gerente/admin DESTA loja (login-pin
+    // verify_only). Antes exigia data.user, que o login-pin nunca devolve.
     setLoading(true);
     try {
-      const { data, error } = await kioskInvoke('login-pin', {
-        badge_number: user.matricula,
-        pin,
-      });
-      if (error || !(data as Record<string, unknown>)?.user) {
-        setPinErro('PIN incorreto');
+      const r = await validarPinGerente(kioskInvoke, { matricula: matriculaUsuario, pin, tenantId });
+      if (!r.ok) {
+        if (r.contaTentativa) { setTentativas((t) => t + 1); setPin(''); }
+        setPinErro(r.erro);
         return;
       }
       setStep('info');
-    } catch {
-      setPinErro('Erro ao validar PIN');
     } finally {
       setLoading(false);
     }
-  }, [pin, user, kioskInvoke]);
+  }, [pin, matriculaUsuario, kioskInvoke, campo, matricula, tenantId, bloqueado]);
+
+  const digitar = (d: string) => {
+    setPinErro('');
+    if (campo === 'matricula') setMatricula((m) => (m.length < 8 ? m + d : m));
+    else setPin((p) => (p.length < 8 ? p + d : p));
+  };
+
+  // Apagar com o PIN vazio volta para a matrícula (modo totem)
+  const apagar = () => {
+    setPinErro('');
+    if (campo === 'matricula') { setMatricula((m) => m.slice(0, -1)); return; }
+    if (!pin && !matriculaUsuario) { setCampo('matricula'); return; }
+    setPin((p) => p.slice(0, -1));
+  };
 
   // Carrega pedidos da sessão ao entrar na tela de info
   useEffect(() => {
@@ -165,13 +206,26 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
               <i className="ri-lock-password-line text-3xl text-amber-400" />
             </div>
             <div className="text-center">
-              <p className="text-white font-bold text-lg">Digite seu PIN</p>
-              <p className="text-zinc-500 text-sm mt-1">Apenas operadores autorizados podem acessar</p>
+              <p className="text-white font-bold text-lg">
+                {campo === 'matricula' ? 'Matrícula do gerente' : 'Digite seu PIN'}
+              </p>
+              <p className="text-zinc-500 text-sm mt-1">
+                {!matriculaUsuario
+                  ? 'Apenas gerente ou administrador da loja'
+                  : 'Apenas operadores autorizados podem acessar'}
+              </p>
             </div>
 
             {/* Teclado numérico */}
             <div className="w-full max-w-xs">
               {/* Display */}
+              {campo === 'matricula' ? (
+                <div className="flex justify-center mb-5">
+                  <div className="min-w-[10rem] h-12 px-4 flex items-center justify-center rounded-xl border-2 border-zinc-700 bg-zinc-800 text-2xl font-black text-amber-400 tabular-nums">
+                    {matricula || <span className="text-zinc-700">—</span>}
+                  </div>
+                </div>
+              ) : (
               <div className="flex justify-center gap-3 mb-5">
                 {[0, 1, 2, 3].map((i) => (
                   <div
@@ -186,33 +240,34 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
                   </div>
                 ))}
               </div>
+              )}
 
               {/* Teclado */}
               <div className="grid grid-cols-3 gap-3">
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
                   <button
                     key={n}
-                    onClick={() => { if (pin.length < 8) { setPin((p) => p + n); setPinErro(''); } }}
+                    onClick={() => digitar(String(n))}
                     className="h-14 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 text-white text-xl font-bold rounded-2xl cursor-pointer active:scale-95 transition-all"
                   >
                     {n}
                   </button>
                 ))}
                 <button
-                  onClick={() => setPin((p) => p.slice(0, -1))}
+                  onClick={apagar}
                   className="h-14 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-2xl cursor-pointer active:scale-95 transition-all"
                 >
                   <i className="ri-delete-back-2-line text-xl" />
                 </button>
                 <button
-                  onClick={() => { if (pin.length < 8) { setPin((p) => p + '0'); setPinErro(''); } }}
+                  onClick={() => digitar('0')}
                   className="h-14 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 text-white text-xl font-bold rounded-2xl cursor-pointer active:scale-95 transition-all"
                 >
                   0
                 </button>
                 <button
                   onClick={handleValidarPin}
-                  disabled={loading || pin.length < 4}
+                  disabled={loading || bloqueado || (campo === 'matricula' ? matricula.length === 0 : pin.length < 4)}
                   className="h-14 flex items-center justify-center bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-zinc-950 rounded-2xl cursor-pointer active:scale-95 transition-all"
                 >
                   {loading
@@ -223,6 +278,9 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
 
               {pinErro && (
                 <p className="text-red-400 text-sm font-semibold text-center mt-3">{pinErro}</p>
+              )}
+              {bloqueado && (
+                <p className="text-red-400 text-xs text-center mt-2">Muitas tentativas. Feche e tente novamente mais tarde.</p>
               )}
             </div>
           </div>
@@ -291,7 +349,7 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
                     return (
                       <div key={o.id} className="flex items-center justify-between bg-zinc-800 rounded-xl px-4 py-3">
                         <div className="flex items-center gap-3">
-                          <span className="text-white font-black text-sm">#{String(o.numero).padStart(4, '0')}</span>
+                          <span className="text-white font-black text-sm">#{String(o.number ?? '').padStart(4, '0')}</span>
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusCfg.color}`}>
                             {statusCfg.label}
                           </span>

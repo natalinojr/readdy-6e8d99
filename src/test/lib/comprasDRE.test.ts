@@ -42,6 +42,21 @@ describe('splitComprasDRE', () => {
     expect(r.total).toBe(180);
   });
 
+  it('usa o valor recebido quando o recebimento ajustou o item', () => {
+    const r = splitComprasDRE(
+      [
+        item({ purchase_id: 'p1', total_price: 100, received_total_price: 60, freight_allocated: 10 }),
+        item({ purchase_id: 'p1', total_price: 50, received_total_price: null, dre_category_id: 'cat-limpeza' }),
+        item({ purchase_id: 'p1', total_price: 40, received_total_price: 0 }),
+      ],
+      [{ id: 'p1', total_amount: 120 }],
+      DESPESAS,
+    );
+    expect(r.cmv).toBe(70);
+    expect(r.despesasPorCategoria['cat-limpeza']).toBe(50);
+    expect(r.total).toBe(120);
+  });
+
   it('nunca conta o mesmo real duas vezes (invariante do P23)', () => {
     const items: ItemRow[] = [
       item({ purchase_id: 'p1', total_price: 500, dre_category_id: 'cat-limpeza' }),

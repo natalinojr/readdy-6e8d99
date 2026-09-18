@@ -1,13 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import CpfCnpjInput from '@/components/base/CpfCnpjInput';
 import { usePaymentMethods } from '@/hooks/usePaymentMethods';
-import { invokeWithAuth, supabase } from '@/lib/supabase';
+import { invokeWithAuth, supabase, type EdgeHttpError } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useKDS } from '@/contexts/KDSContext';
 import { usePedidosAgrupados } from '@/hooks/usePedidosAgrupados';
 import type { DestinoInfo } from '@/contexts/PDVContext';
 import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
+import { indicesPagamentosFaltantes } from '@/lib/pagamentosPendentes';
 import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
 import CortesiaDetalhesModal from '@/pages/pdv/caixa/components/CortesiaDetalhesModal';
 
@@ -368,6 +369,9 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     if (restanteCheck > 0.01) return;
 
     setConfirmando(true);
+    // Vira true ao começar a gravar pagamentos: daí em diante uma falha pode ter gravado
+    // parte (ou a resposta pode só ter se perdido) — o operador não deve cobrar de novo às cegas.
+    let gravandoPagamentos = false;
     try {
       // Gera um payment_group_id único se houver mais de um pedido sendo pago junto
       const todosPedidosVinculados = [...pedidosRelacionadosFiltrados, ...outrosPedidosAbertos]
@@ -439,17 +443,42 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         pagamentosFinais.map((pag) => Number((pag.valor * (pedido.total / totalEfetivo)).toFixed(2))),
       );
 
+      // Reenvio após falha parcial: formas já gravadas numa tentativa anterior (mesma forma,
+      // mesmo valor ±0,01, últimos 30 min) não são gravadas de novo. Se a leitura falhar,
+      // grava tudo (comportamento anterior).
+      const faltantesDoPedido = async (pedidoId: string, valores: number[]): Promise<Set<number>> => {
+        const todos = new Set(valores.map((_, j) => j));
+        try {
+          const { data, error } = await supabase
+            .from('payments')
+            .select('payment_method_id, amount, created_at')
+            .eq('tenant_id', user?.tenantId)
+            .eq('order_id', pedidoId)
+            .eq('is_refunded', false);
+          if (error || !data) return todos;
+          const planejados = pagamentosFinais.map((pag, j) => ({ formaId: pag.formaId, valor: valores[j] }));
+          return new Set(indicesPagamentosFaltantes(planejados, data));
+        } catch {
+          return todos;
+        }
+      };
+
       // Registra pagamento do pedido principal
+      gravandoPagamentos = true;
+      const valoresPrincipal = pagamentosFinais.map((pag, j) =>
+        Number((pag.valor - valoresVinculados.reduce((s, valores) => s + valores[j], 0)).toFixed(2)),
+      );
+      const faltantesPrincipal = await faltantesDoPedido(orderId, valoresPrincipal);
       for (let j = 0; j < pagamentosFinais.length; j++) {
+        if (!faltantesPrincipal.has(j)) continue;
         const pag = pagamentosFinais[j];
-        const somaVinculados = valoresVinculados.reduce((s, valores) => s + valores[j], 0);
         const { error: payErr } = await invokeWithAuth('order-write', {
           body: {
             action: 'record_payment',
             order_id: orderId,
             tenant_id: user?.tenantId,
             payment_method_id: pag.formaId,
-            amount: Number((pag.valor - somaVinculados).toFixed(2)),
+            amount: valoresPrincipal[j],
             change_amount: pag.troco ?? 0,
             operator_name: user?.nome ?? null,
             paid_by_pdv: paidByPdv,
@@ -458,6 +487,9 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
           },
         });
         if (payErr) {
+          // Reenvio após falha parcial em grupo: o principal já foi quitado na 1ª tentativa
+          // (409 order_already_paid, nada gravado) → conta como sucesso e segue para os vinculados.
+          if ((payErr as EdgeHttpError).code === 'order_already_paid') break;
           throw payErr;
         }
       }
@@ -467,7 +499,9 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         const vinculadoErrors: string[] = [];
         for (let i = 0; i < todosPedidosVinculados.length; i++) {
           const pedido = todosPedidosVinculados[i];
+          const faltantesVinculado = await faltantesDoPedido(pedido.id, valoresVinculados[i]);
           for (let j = 0; j < pagamentosFinais.length; j++) {
+            if (!faltantesVinculado.has(j)) continue;
             const pag = pagamentosFinais[j];
             const { error: payErr } = await invokeWithAuth('order-write', {
               body: {
@@ -484,7 +518,9 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
               },
             });
             if (payErr) {
-              vinculadoErrors.push(typeof payErr === 'string' ? payErr : JSON.stringify(payErr));
+              // Vinculado já quitado numa tentativa anterior: sucesso deste pedido, próximo.
+              if ((payErr as EdgeHttpError).code === 'order_already_paid') break;
+              vinculadoErrors.push(payErr instanceof Error ? payErr.message : String(payErr));
             }
           }
         }
@@ -507,7 +543,11 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
       onSuccess(orderId, pagamentosFinais[0]?.formaId ?? '');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      toastError('Erro ao registrar pagamento', msg);
+      if (gravandoPagamentos) {
+        toastError('Pagamento não confirmou', `Não confirmou; confira em Pedidos antes de cobrar de novo. (${msg})`);
+      } else {
+        toastError('Erro ao registrar pagamento', msg);
+      }
     } finally {
       setConfirmando(false);
     }
@@ -1094,7 +1134,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                     step="0.01"
                     value={valorInput}
                     onChange={(e) => setValorInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddPagamento()}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && valorInput && restante > 0) handleAddPagamento(); }}
                     placeholder={restante.toFixed(2).replace('.', ',')}
                     className="w-full pl-10 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-200"
                   />

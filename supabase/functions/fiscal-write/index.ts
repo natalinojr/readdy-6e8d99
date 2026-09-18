@@ -19,6 +19,7 @@
 // (balcão, delivery, QR universal, mesa numerada). Sessão de mesa só por emissão manual.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { calcularValores } from './valores.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -247,10 +248,11 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
   // Descrições com opções escolhidas (ajuda o cliente a reconhecer o item)
   const { data: optsRaw } = await admin.from('order_item_options').select('order_item_id, option_name, additional_price').in('order_item_id', items.map((i) => i.id));
   const optsByItem = new Map<string, string[]>();
-  // Soma dos adicionais POR UNIDADE (mesma regra do PDV/order-write: subtotal =
-  // (item_price + Σ additional_price) × quantity). Combos e itens "monte o seu"
-  // têm item_price 0 e o valor real nas escolhas — sem isso o produto ia para a
-  // SEFAZ a R$ 0,00 e o valor caía em "outras despesas" (nota série 2 nº 3, 15/09/2026).
+  // Soma dos adicionais POR UNIDADE. Se ela entra ou não no preço depende do canal
+  // (delivery grava item_price sem opcionais; os demais já com) — decidido em
+  // calcularValores() conferindo com orders.subtotal. Sem isso o combo do delivery ia
+  // a R$ 0,00 com o valor em "outras despesas" (nota série 2 nº 3, 15/09/2026) e o
+  // totem ia com opcional em dobro compensado por desconto (nota série 2 nº 4, 17/09/2026).
   const optsPriceByItem = new Map<string, number>();
   for (const o of optsRaw ?? []) {
     const arr = optsByItem.get(o.order_item_id) ?? [];
@@ -259,40 +261,12 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
     optsByItem.set(o.order_item_id, arr);
     optsPriceByItem.set(o.order_item_id, round2((optsPriceByItem.get(o.order_item_id) ?? 0) + Number(o.additional_price ?? 0)));
   }
-  const unitPrice = (i: { id: string; item_price: number | null }) => round2(Number(i.item_price ?? 0) + (optsPriceByItem.get(i.id) ?? 0));
-
-  // 3. Totais e conciliação com o valor cobrado
-  const gross = items.map((i) => round2(unitPrice(i) * Number(i.quantity ?? 1)));
-  const grossTotal = round2(gross.reduce((s, v) => s + v, 0));
-  let discount = round2(orders.reduce((s, o) => s + Number(o.discount_amount ?? 0), 0));
-  let extras = round2(orders.reduce((s, o) => s + Number(o.service_fee_amount ?? 0) + Number(o.tip_amount ?? 0) + Number(o.delivery_fee ?? 0), 0));
-  // A nota tem que fechar exatamente no valor pago: qualquer diferença de arredondamento
-  // ou de regra (cupom, cortesia parcial) entra como desconto (ou "outras despesas").
-  const diff = round2(grossTotal - discount + extras - expectedTotal);
-  if (Math.abs(diff) >= 0.01) {
-    if (diff > 0) discount = round2(discount + diff);
-    else extras = round2(extras - diff);
-  }
+  // 3. Totais e conciliação com o valor cobrado (valores.ts)
+  const { unit: unitByIdx, gross, grossTotal, discount, extras, discPerItem } = calcularValores(
+    orders,
+    items.map((i) => ({ id: i.id, order_id: i.order_id, item_price: i.item_price, quantity: i.quantity, opcionais: optsPriceByItem.get(i.id) ?? 0 })),
+  );
   if (discount >= grossTotal) return { note: null, skipReason: 'Desconto igual ou maior que os itens — venda sem valor fiscal' };
-
-  // Desconto rateado proporcionalmente; o último item absorve o arredondamento.
-  const discPerItem: number[] = [];
-  let distributed = 0;
-  for (let i = 0; i < items.length; i++) {
-    let d = i === items.length - 1 ? round2(discount - distributed) : round2(discount * (gross[i] / grossTotal));
-    if (d > gross[i]) d = gross[i];
-    if (d < 0) d = 0;
-    discPerItem.push(d);
-    distributed = round2(distributed + d);
-  }
-  // Se o último não coube inteiro, redistribui o resto nos anteriores.
-  let rest = round2(discount - distributed);
-  for (let i = 0; rest > 0 && i < items.length; i++) {
-    const room = round2(gross[i] - discPerItem[i]);
-    const add = Math.min(room, rest);
-    discPerItem[i] = round2(discPerItem[i] + add);
-    rest = round2(rest - add);
-  }
 
   const useCodTrib = (m: any, c: any) => m?.cod_tributacao || c?.cod_tributacao || settings.cod_tributacao_padrao || null;
   const isSimples = settings.crt === 1 || settings.crt === 4;
@@ -305,7 +279,7 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
     if (opts.length > 0) nome = `${nome} (${opts.join(', ')})`;
     nome = nome.replace(/\s+/g, ' ').slice(0, 120);
     const qty = Number(it.quantity ?? 1);
-    const unit = unitPrice(it);
+    const unit = unitByIdx[idx];
     const ncm = onlyDigits(m?.ncm || c?.ncm || settings.ncm_padrao).padStart(8, '0').slice(0, 8);
     const cest = onlyDigits(m?.cest || c?.cest || '');
     const cfop = Number(m?.cfop || c?.cfop || settings.cfop_padrao || 5102);
@@ -463,7 +437,7 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
     tipo: 'danfe_nfce',
     pedido: orderNumber,
     itens: items.map((it, idx) => ({
-      nome: String(produtos[idx].NmProduto), quantidade: Number(it.quantity ?? 1), unitario: round2(Number(it.item_price ?? 0)), total: gross[idx],
+      nome: String(produtos[idx].NmProduto), quantidade: Number(it.quantity ?? 1), unitario: unitByIdx[idx], total: gross[idx],
     })),
     subtotal: grossTotal,
     desconto: discount,

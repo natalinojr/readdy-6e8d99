@@ -42,10 +42,14 @@ interface PagamentoKioskProps {
   formaPagamentoNome?: string;
   orderNumber?: number;
   alertaParcial?: string;
-  onEntrarPagamento: (paidPixPaymentId?: string) => Promise<string | null>;
+  // formaBalcaoNome: forma escolhida para pagar no balcão (vai gravada no pedido).
+  onEntrarPagamento: (paidPixPaymentId?: string, formaBalcaoNome?: string) => Promise<string | null>;
   // Grava o pagamento no caixa SEM voltar o tablet pro início (quem encerra é onConcluir).
   onRegistrarPagamento: (paymentMethodId: string, orderId: string) => Promise<void>;
   onConcluir: (paymentMethodId?: string, orderId?: string) => Promise<void>;
+  /** Avisa o pai se há cobrança em andamento (Pix/cartão na maquininha, registrando, confirmado ou
+   *  erro pós-pagamento) — nesses casos o totem NÃO pode voltar sozinho por inatividade. */
+  onCobrancaEmAndamento?: (emAndamento: boolean) => void;
 }
 
 // ── Tela de Confirmação ────────────────────────────────────────────────────
@@ -500,6 +504,7 @@ export default function PagamentoKiosk({
   onEntrarPagamento,
   onRegistrarPagamento,
   onConcluir,
+  onCobrancaEmAndamento,
 }: PagamentoKioskProps) {
   const { user } = useAuth();
   const { kioskSession } = useKioskAuth();
@@ -580,13 +585,14 @@ export default function PagamentoKiosk({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handlePagarNaEntregaEscolhido = async () => {
+  // formaNome só vale como texto: esta função também é usada direto em botões (recebe o evento).
+  const handlePagarNaEntregaEscolhido = async (formaNome?: unknown) => {
     if (pagarEntregaRef.current) return;
     pagarEntregaRef.current = true;
     setModoEscolhido('entrega');
     setProcessandoPedido(true);
     try {
-      await onEntrarPagamento();
+      await onEntrarPagamento(undefined, typeof formaNome === 'string' ? formaNome : undefined);
       setConfirmado(true);
     } finally {
       pagarEntregaRef.current = false;
@@ -598,7 +604,7 @@ export default function PagamentoKiosk({
   // integrada), então o pedido vai em aberto e o operador dá baixa no balcão.
   const handlePagarNoBalcao = async (method: PaymentMethod) => {
     setBalcaoFormaNome(method.name);
-    await handlePagarNaEntregaEscolhido();
+    await handlePagarNaEntregaEscolhido(method.name);
   };
 
   const pagosTratadosRef = useRef<Set<string>>(new Set());
@@ -632,6 +638,15 @@ export default function PagamentoKiosk({
       setAguardando(false);
     }
   }, [onEntrarPagamento, onRegistrarPagamento, paymentMethods]);
+
+  const cobrancaEmAndamento =
+    forma?.type === 'pix' ||
+    (cartaoNaMaquininha && (forma?.type === 'credit_card' || forma?.type === 'debit_card')) ||
+    aguardando || processandoPedido || confirmado || !!pagamentoError;
+  const onCobrancaRef = useRef(onCobrancaEmAndamento);
+  onCobrancaRef.current = onCobrancaEmAndamento;
+  useEffect(() => { onCobrancaRef.current?.(cobrancaEmAndamento); }, [cobrancaEmAndamento]);
+  useEffect(() => () => { onCobrancaRef.current?.(false); }, []);
 
   // Helpers de identificador
   const isComanda = modoIdentificacao === 'comanda' || modoIdentificacao === 'senha_balcao';

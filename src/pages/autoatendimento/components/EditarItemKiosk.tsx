@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { X, Check, Minus, Plus } from 'lucide-react';
 import type { ItemPedidoCliente, ItemCardapioPublico } from '@/types/mesaCliente';
 import ItemImage from '@/components/base/ItemImage';
+import { toggleOpcaoGrupo, primeiroGrupoFaltando, mensagemGrupoFaltando, mensagemMaximoAtingido } from '@/lib/optionGroupSelection';
 
 interface Props {
   itemCarrinho: ItemPedidoCliente;
@@ -164,16 +165,18 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
     });
   }, [itemCarrinho.observacao, itemCardapio?.observacoesPadrao?.join('|')]);
 
-  const [erro, setErro] = useState('');
+  // Aviso de máximo atingido (some no próximo toque) e "Escolha: grupo", que é
+  // recalculado a cada seleção e some sozinho quando o mínimo é atingido.
+  const [avisoMax, setAvisoMax] = useState('');
+  const [tentouSalvar, setTentouSalvar] = useState(false);
+  const grupoFaltando = primeiroGrupoFaltando(itemCardapio?.opcoes, selecionadas);
+  const erro = avisoMax || (tentouSalvar && grupoFaltando ? mensagemGrupoFaltando(grupoFaltando) : '');
 
-  const toggleOpcao = (grupo: string, opcao: { id?: string; nome: string; precoAdicional: number; grupoNome: string }, obrigatorio: boolean) => {
-    setErro('');
-    setSelecionadas((prev) => {
-      const atual = prev[grupo] ?? [];
-      if (obrigatorio) return { ...prev, [grupo]: [opcao] };
-      if (atual.some((o) => o.nome === opcao.nome)) return { ...prev, [grupo]: atual.filter((o) => o.nome !== opcao.nome) };
-      return { ...prev, [grupo]: [...atual, opcao] };
-    });
+  type GrupoKiosk = NonNullable<ItemCardapioPublico['opcoes']>[number];
+  const toggleOpcao = (grupo: GrupoKiosk, opcao: { id?: string; nome: string; precoAdicional: number; grupoNome: string }) => {
+    const r = toggleOpcaoGrupo(selecionadas[grupo.grupo] ?? [], opcao, grupo);
+    setAvisoMax(r.bloqueado ? mensagemMaximoAtingido(grupo) : '');
+    if (!r.bloqueado) setSelecionadas((prev) => ({ ...prev, [grupo.grupo]: r.selecao }));
   };
 
   const totalOpcoes = useMemo(() => {
@@ -193,11 +196,10 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
   };
 
   const handleSalvar = () => {
-    if (modoCompleto && itemCardapio?.opcoes) {
-      const obrigatorios = itemCardapio.opcoes.filter((g) => g.obrigatorio);
-      for (const g of obrigatorios) {
-        if (!selecionadas[g.grupo]?.length) { setErro(`Escolha: ${g.grupo}`); return; }
-      }
+    if (modoCompleto && grupoFaltando) {
+      setAvisoMax('');
+      setTentouSalvar(true);
+      return;
     }
 
     const todasOpcoes = Object.values(selecionadas).flat();
@@ -230,7 +232,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
             </button>
           </div>
 
-          <div className="p-8 flex flex-col gap-6 overflow-y-auto flex-1">
+          <div className="p-8 [@media(max-height:820px)]:p-4 flex flex-col gap-6 overflow-y-auto flex-1 min-h-0">
             {/* Quantidade */}
             <div>
               <p className="text-sm font-bold text-zinc-500 uppercase tracking-widest mb-4">Quantidade</p>
@@ -276,10 +278,10 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
 
   // ── Modo completo: com grupos de opções e observações pré-configuradas ────
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6">
-      <div className="bg-zinc-900 rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6 [@media(max-height:820px)]:p-3">
+      <div className="bg-zinc-900 rounded-3xl w-full max-w-4xl max-h-[90vh] [@media(max-height:820px)]:max-h-[96vh] overflow-hidden flex flex-col">
         {/* Header com imagem */}
-        <div className="relative h-72 flex-shrink-0">
+        <div className="relative h-72 [@media(max-height:820px)]:h-32 flex-shrink-0">
           <ItemImage src={itemCardapio!.foto} alt={itemCardapio!.nome} className="w-full h-full" imgClassName="object-contain" />
           <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/40 to-transparent" />
           <button onClick={onFechar}
@@ -287,12 +289,12 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
             <X size={28} className="text-white" />
           </button>
           <div className="absolute bottom-4 left-6">
-            <h2 className="text-4xl font-black text-white">{itemCardapio!.nome}</h2>
+            <h2 className="text-4xl [@media(max-height:820px)]:text-2xl font-black text-white">{itemCardapio!.nome}</h2>
             <p className="text-zinc-400 text-lg">{itemCardapio!.descricao}</p>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-8 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto p-8 [@media(max-height:820px)]:p-4 pb-10 space-y-6">
           {/* Opções */}
           {itemCardapio!.opcoes?.map((grupo) => (
             <div key={grupo.grupo}>
@@ -308,7 +310,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
                   const opTrack = { id: opcao.id, nome: opcao.nome, precoAdicional: opcao.precoAdicional, grupoNome: grupo.grupo, obrigatorio: grupo.obrigatorio };
                   return (
                     <button key={opcao.nome}
-                      onClick={() => toggleOpcao(grupo.grupo, opTrack, grupo.obrigatorio)}
+                      onClick={() => toggleOpcao(grupo, opTrack)}
                       className={`flex items-center justify-between px-5 py-6 rounded-2xl border-2 transition-all cursor-pointer ${sel ? 'border-amber-500 bg-amber-500/10' : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'}`}
                     >
                       <div className="flex items-center gap-3">
@@ -360,10 +362,10 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
           </div>
         </div>
 
-        {erro && <p className="px-8 text-lg text-red-400 font-semibold">{erro}</p>}
+        {erro && <p className="px-8 pt-2 text-lg text-red-400 font-semibold flex-shrink-0">{erro}</p>}
 
         {/* Footer: quantidade + salvar */}
-        <div className="p-8 border-t border-zinc-800 flex items-center gap-4">
+        <div className="p-8 [@media(max-height:820px)]:p-3 border-t border-zinc-800 flex items-center gap-4 flex-shrink-0">
           <div className="flex items-center gap-4 bg-zinc-800 rounded-2xl px-4 py-3">
             <button onClick={() => setQtd((q) => Math.max(1, q - 1))}
               className="w-14 h-14 flex items-center justify-center rounded-xl bg-zinc-700 hover:bg-zinc-600 cursor-pointer transition-colors">

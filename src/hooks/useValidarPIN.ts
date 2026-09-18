@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 export type ValidarPINResult =
   | { ok: true }
@@ -7,10 +8,14 @@ export type ValidarPINResult =
 
 /**
  * Hook para validar o PIN de um usuário via edge function login-pin.
- * Usado em modais de autorização (desconto, cancelamento) sem criar nova sessão.
+ * Usado em modais de autorização (desconto, cancelamento) sem criar nova sessão:
+ * verify_only (não gera magic link) + tenant_id da loja ativa (exige vínculo nela).
+ * O papel do autorizador já vem filtrado pela lista da tela.
  */
 export function useValidarPIN() {
   const [verificando, setVerificando] = useState(false);
+  const { user } = useAuth();
+  const tenantId = user?.tenantId ?? null;
 
   const validarPIN = useCallback(
     async (matricula: string, pin: string): Promise<ValidarPINResult> => {
@@ -20,10 +25,17 @@ export function useValidarPIN() {
       setVerificando(true);
       try {
         const { data, error } = await invokeWithAuth<{
-          hashed_token?: string;
+          name?: string | null;
+          role?: string | null;
+          tenant_id?: string | null;
           error?: string;
         }>('login-pin', {
-          body: { badge_number: matricula.trim(), pin: pin.trim() },
+          body: {
+            badge_number: matricula.trim(),
+            pin: pin.trim(),
+            verify_only: true,
+            ...(tenantId ? { tenant_id: tenantId } : {}),
+          },
         });
 
         if (error) {
@@ -33,7 +45,7 @@ export function useValidarPIN() {
           return { ok: false, message: msg };
         }
 
-        if (data?.hashed_token) {
+        if (data && !data.error) {
           return { ok: true };
         }
 
@@ -44,7 +56,7 @@ export function useValidarPIN() {
         setVerificando(false);
       }
     },
-    [],
+    [tenantId],
   );
 
   return { validarPIN, verificando };

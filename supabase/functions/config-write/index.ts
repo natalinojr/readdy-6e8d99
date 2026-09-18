@@ -1,4 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
+import { authenticate, isManagerRole, tenantRole } from '../_shared/tenant-auth.ts'
+
+// Ações só de leitura: qualquer membro da loja pode chamar.
+const CONFIG_READ_ACTIONS = new Set(['list_ingredient_categories', 'get_kitchen_stations', 'get_permissions'])
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,6 +25,34 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
+
+    // ── Autorização (2026-09-17): antes aceitava qualquer tenant_id sem login ──
+    // Leitura: basta ser membro da loja (inclui totem/tablet, que chama get_permissions).
+    // Escrita de configuração/permissões/loja: admin ou gerente da loja.
+    const caller = await authenticate(req, supabaseAdmin)
+    if (!caller) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401,
+      })
+    }
+    if (!caller.isServiceRole) {
+      if (!tId) {
+        return new Response(JSON.stringify({ success: false, error: 'tenant_id é obrigatório' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+        })
+      }
+      const role = await tenantRole(supabaseAdmin, caller.userId!, String(tId))
+      if (!role) {
+        return new Response(JSON.stringify({ success: false, error: 'Usuário não pertence a esta loja' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
+        })
+      }
+      if (!CONFIG_READ_ACTIONS.has(action) && !isManagerRole(role)) {
+        return new Response(JSON.stringify({ success: false, error: 'Apenas administrador ou gerente da loja pode alterar configurações' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
+        })
+      }
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // INGREDIENT CATEGORIES
@@ -680,6 +712,8 @@ Deno.serve(async (req) => {
         delivery_payment_methods: 'delivery_payment_methods',
         self_service_payment_methods: 'self_service_payment_methods',
         delivery_print_enabled: 'delivery_print_enabled',
+        bloquear_item_sem_insumo: 'bloquear_item_sem_insumo',
+        bloquear_item_sem_insumo_reserva: 'bloquear_item_sem_insumo_reserva',
       }
 
       for (const [key, dbField] of Object.entries(fieldMap)) {

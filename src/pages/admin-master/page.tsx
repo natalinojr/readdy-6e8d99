@@ -13,7 +13,7 @@ import {
 } from './modals';
 import {
   UserAccessModal, ModulosTab, RoleSelect, Avatar, ROLE_LABEL, MODULOS_LIVRES, isOwnerUser,
-  setUserTenant, removeUserTenant,
+  setUserTenant, removeUserTenant, setTenantBackup,
 } from './acessos';
 
 type Tab = 'lojas' | 'usuarios' | 'modulos' | 'convites';
@@ -183,6 +183,28 @@ function LojaDetalhe({
               <p className="text-sm font-bold text-zinc-800 tabular-nums">{v}</p>
             </div>
           ))}
+        </div>
+        <div className="bg-white rounded-xl border border-zinc-200 p-3">
+          <div className="flex items-center gap-2.5">
+            <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0">
+              <i className="ri-hard-drive-2-line text-sm" />
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-zinc-700">Backup diário</p>
+              <p className="text-[10px] text-zinc-400 leading-tight">
+                Inclui os dados desta loja no backup automático de madrugada (salvo no PC do dono).
+              </p>
+            </div>
+            {busy === 'backup' && <div className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />}
+            <button
+              disabled={busy !== null}
+              onClick={() => run('backup', async () => { await setTenantBackup(tenant.id, !tenant.backup_enabled); })}
+              className={`relative w-10 rounded-full transition-colors cursor-pointer disabled:opacity-40 flex-shrink-0 ${tenant.backup_enabled ? 'bg-emerald-500' : 'bg-zinc-300'}`}
+              style={{ height: '22px' }}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${tenant.backup_enabled ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
         </div>
         <div className="bg-white rounded-xl border border-zinc-200 p-3 space-y-1.5">
           <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 px-1 pb-1">Manutenção</p>

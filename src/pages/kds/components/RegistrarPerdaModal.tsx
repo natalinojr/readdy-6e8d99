@@ -6,6 +6,7 @@ import type { Insumo } from '../../../contexts/EstoqueContext';
 import ItemImage from '../../../components/base/ItemImage';
 import { supabase } from '@/lib/supabase';
 import { convertUnit } from '@/lib/unitConversion';
+import { useToast } from '@/contexts/ToastContext';
 
 type Tipo = 'item' | 'insumo' | null;
 type ModoItem = 'inteiro' | 'parcial';
@@ -27,6 +28,8 @@ export default function RegistrarPerdaModal({ operador, onClose }: Props) {
   const [tipo, setTipo] = useState<Tipo>(null);
   const [motivo, setMotivo] = useState('');
   const [confirmado, setConfirmado] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const { error: toastError } = useToast();
 
   // --- Fluxo: Item do Cardápio ---
   const [buscaItem, setBuscaItem] = useState('');
@@ -185,9 +188,17 @@ export default function RegistrarPerdaModal({ operador, onClose }: Props) {
     return false;
   };
 
-  const handleConfirmar = () => {
-    if (itensPerda.length === 0) return;
-    registrarPerda(itensPerda, motivo, operador);
+  const handleConfirmar = async () => {
+    if (itensPerda.length === 0 || salvando) return;
+    setSalvando(true);
+    try {
+      await registrarPerda(itensPerda, motivo, operador);
+    } catch (e) {
+      toastError('Perda não registrada', e instanceof Error ? e.message : String(e));
+      setSalvando(false);
+      return;
+    }
+    setSalvando(false);
     setConfirmado(true);
     setTimeout(() => onClose(), 2200);
   };
@@ -676,11 +687,11 @@ export default function RegistrarPerdaModal({ operador, onClose }: Props) {
           ) : (
             <button
               onClick={handleConfirmar}
-              disabled={!podeAvancar() || itensPerda.length === 0}
+              disabled={!podeAvancar() || itensPerda.length === 0 || salvando}
               className="px-5 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center gap-2"
             >
-              <i className="ri-alert-line" />
-              Registrar Perda
+              <i className={salvando ? 'ri-loader-4-line animate-spin' : 'ri-alert-line'} />
+              {salvando ? 'Registrando...' : 'Registrar Perda'}
             </button>
           )}
         </div>

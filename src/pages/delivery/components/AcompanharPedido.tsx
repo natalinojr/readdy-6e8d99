@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { formatCurrency } from '@/lib/formatters';
 import TrocarPagamentoDelivery, { type MetodoAlternativo } from './TrocarPagamentoDelivery';
 
 type OrderStatusData = {
@@ -374,7 +375,7 @@ export default function AcompanharPedido(props: Props) {
                     <span className="text-xs text-zinc-700 break-words">{item.item_name}</span>
                   </div>
                   <span className="text-xs font-bold text-zinc-800 shrink-0 ml-3">
-                    R$ {(item.item_price * item.quantity).toFixed(2)}
+                    {formatCurrency((item.item_price * item.quantity))}
                   </span>
                 </div>
                 {/* Adicionais/opções: o que compõe o valor do item. O valor exibido no
@@ -389,7 +390,7 @@ export default function AcompanharPedido(props: Props) {
                           </span>
                           {op.additional_price > 0 ? (
                             <span className="text-[11px] font-medium text-zinc-500 shrink-0">
-                              R$ {op.additional_price.toFixed(2)}
+                              {formatCurrency(op.additional_price)}
                             </span>
                           ) : null}
                         </div>
@@ -407,18 +408,21 @@ export default function AcompanharPedido(props: Props) {
       <div className="bg-white rounded-2xl border border-zinc-100 p-4 space-y-2 mb-6">
         <div className="flex items-center justify-between text-xs">
           <span className="text-zinc-500">Subtotal</span>
-          <span className="font-bold text-zinc-800">R$ {(orderData.subtotal || 0).toFixed(2)}</span>
+          <span className="font-bold text-zinc-800">{formatCurrency((orderData.subtotal || 0))}</span>
         </div>
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-zinc-500">Taxa de entrega</span>
-          <span className="font-bold text-zinc-800">
-            {orderData.delivery_fee > 0 ? 'R$ ' + orderData.delivery_fee.toFixed(2) : 'Grátis'}
-          </span>
-        </div>
+        {/* Retirada não tem entrega: não exibe "Taxa de entrega: Grátis" */}
+        {!isRetirada ? (
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-zinc-500">Taxa de entrega</span>
+            <span className="font-bold text-zinc-800">
+              {orderData.delivery_fee > 0 ? formatCurrency(orderData.delivery_fee) : 'Grátis'}
+            </span>
+          </div>
+        ) : null}
         <div className="h-px bg-zinc-100" />
         <div className="flex items-center justify-between">
           <span className="text-sm font-bold text-zinc-800">Total</span>
-          <span className="text-sm font-bold text-amber-600">R$ {orderData.total_amount.toFixed(2)}</span>
+          <span className="text-sm font-bold text-amber-600">{formatCurrency(orderData.total_amount)}</span>
         </div>
       </div>
 

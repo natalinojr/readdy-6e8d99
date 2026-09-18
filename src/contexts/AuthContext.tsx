@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, safeRefreshSession, safeSignOut } from '@/lib/supabase';
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, safeRefreshSession, safeSignOut, refreshSessionWithReason, isLogoutIntencional, clearLogoutIntencional } from '@/lib/supabase';
 import { ensureFreshSession } from '@/lib/supabase';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -39,7 +39,8 @@ export interface DynamicUserRecord {
 interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
-  login: (identifier: string, senha: string) => Promise<boolean>;
+  /** onError: recebe mensagem para exibir quando não é credencial errada (ex.: 429 do login-pin). */
+  login: (identifier: string, senha: string, onError?: (msg: string) => void) => Promise<boolean>;
   logout: () => void;
   isAuthenticated: boolean;
   isFirstSetup: boolean;
@@ -334,15 +335,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       //   → processar TOKEN_REFRESHED causaria loop: refresh → event → handleSession → RPCs → refresh...
       if (_event === 'INITIAL_SESSION' || _event === 'TOKEN_REFRESHED') return;
 
-      // Se a sessão foi revogada (ban/pausa via admin), força logout local imediato
+      // Se a sessão foi revogada (ban/pausa via admin) ou o supabase-js emitiu
+      // SIGNED_OUT por conta própria, decide se é logout de verdade.
       if (_event === 'SIGNED_OUT' || !session) {
-        setUser(null);
-        setAvailableTenants([]);
-        setNeedsTenantSelection(false);
-        setHasNoTenants(false);
-        authUserIdRef.current = null;
-        localStorage.removeItem(SELECTED_TENANT_KEY);
-        setLoading(false);
+        const dropSession = () => {
+          setUser(null);
+          setAvailableTenants([]);
+          setNeedsTenantSelection(false);
+          setHasNoTenants(false);
+          authUserIdRef.current = null;
+          localStorage.removeItem(SELECTED_TENANT_KEY);
+          setLoading(false);
+        };
+
+        // Logout explícito (botão Sair, ou safeSignOut chamado por um caller que já
+        // confirmou token inválido) — não precisa confirmar nada, derruba direto.
+        if (isLogoutIntencional()) {
+          clearLogoutIntencional();
+          dropSession();
+          return;
+        }
+
+        // SIGNED_OUT "surpresa": o auto-refresh interno do supabase-js só emite este
+        // evento quando classifica o erro como não-transitório, mas por segurança
+        // confirmamos com o servidor antes de derrubar a UI — se getSession() ainda
+        // enxergar uma sessão válida (ou a checagem falhar por rede), ignora o evento
+        // em vez de deslogar por engano.
+        supabase.auth.getSession()
+          .then(({ data }) => {
+            if (data?.session) {
+              console.warn('[AuthContext] SIGNED_OUT ignorado: getSession ainda encontrou sessão válida');
+              return;
+            }
+            dropSession();
+          })
+          .catch(() => {
+            console.warn('[AuthContext] SIGNED_OUT ignorado: falha de rede ao confirmar — mantendo sessão local');
+          });
         return;
       }
 
@@ -391,17 +420,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (secondsUntilExpiry < 300) {
           // Token prestes a expirar — faz refresh real
-          const refreshedSession = await safeRefreshSession();
+          const { session: refreshedSession, reason } = await refreshSessionWithReason();
           if (!refreshedSession) {
-            // Sessão rejeitada pelo servidor (ban, pausa, revogação, token inválido)
-            console.warn('[AuthContext] forceSessionCheck: refresh falhou — token inválido ou revogado');
-            await safeSignOut();
-            setUser(null);
-            setAvailableTenants([]);
-            setNeedsTenantSelection(false);
-            setHasNoTenants(false);
-            authUserIdRef.current = null;
-            localStorage.removeItem(SELECTED_TENANT_KEY);
+            if (reason === 'invalid') {
+              // Sessão rejeitada pelo servidor (ban, pausa, revogação, token inválido)
+              console.warn('[AuthContext] forceSessionCheck: refresh falhou — token inválido ou revogado');
+              await safeSignOut();
+              setUser(null);
+              setAvailableTenants([]);
+              setNeedsTenantSelection(false);
+              setHasNoTenants(false);
+              authUserIdRef.current = null;
+              localStorage.removeItem(SELECTED_TENANT_KEY);
+            } else {
+              // Falha transitória (rede/timeout) — mantém a sessão local, tenta de novo no próximo ciclo.
+              console.warn('[AuthContext] forceSessionCheck: refresh falhou por erro transitório — sessão mantida');
+            }
           }
         }
       } catch {
@@ -436,16 +470,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (secondsUntilExpiry < 120 && secondsUntilExpiry > 0) {
           lastRefreshAttempt = now;
           console.log('[AuthContext] Usuário ativo — refresh preventivo do token (expira em', secondsUntilExpiry, 's)');
-          const refreshedSession = await safeRefreshSession();
+          const { session: refreshedSession, reason } = await refreshSessionWithReason();
           if (!refreshedSession) {
-            console.warn('[AuthContext] Refresh preventivo falhou: token inválido ou revogado');
-            await safeSignOut();
-            setUser(null);
-            setAvailableTenants([]);
-            setNeedsTenantSelection(false);
-            setHasNoTenants(false);
-            authUserIdRef.current = null;
-            localStorage.removeItem(SELECTED_TENANT_KEY);
+            if (reason === 'invalid') {
+              console.warn('[AuthContext] Refresh preventivo falhou: token inválido ou revogado');
+              await safeSignOut();
+              setUser(null);
+              setAvailableTenants([]);
+              setNeedsTenantSelection(false);
+              setHasNoTenants(false);
+              authUserIdRef.current = null;
+              localStorage.removeItem(SELECTED_TENANT_KEY);
+            } else {
+              console.warn('[AuthContext] Refresh preventivo falhou por erro transitório — sessão mantida');
+            }
           }
         }
       } catch {
@@ -475,7 +513,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ─── Login ─────────────────────────────────────────────────────────────────
 
-  const login = async (identifier: string, senha: string): Promise<boolean> => {
+  const login = async (identifier: string, senha: string, onError?: (msg: string) => void): Promise<boolean> => {
     const trimmedId = identifier.trim();
     const trimmedSenha = senha.trim();
     const isBadge = /^\d+$/.test(trimmedId) && trimmedId.length <= 8;
@@ -496,6 +534,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
           console.error('[Auth] login-pin error:', errBody.error);
+          if (res.status === 429) onError?.(errBody.error ?? 'Muitas tentativas. Aguarde 15 minutos.');
           return false;
         }
 

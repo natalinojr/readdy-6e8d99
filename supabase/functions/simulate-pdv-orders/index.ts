@@ -68,6 +68,16 @@ interface TestScenario {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
+  // Desativada para uso externo (2026-09-17): criava pedidos na matriz El Patron sem autenticação.
+  // Nenhuma tela usa. Só a própria service role passa (candidata a ser apagada).
+  const bearer = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
+  const srk = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  if (!srk || bearer !== srk) {
+    return new Response(JSON.stringify({ error: 'Forbidden: simulate-pdv-orders desativada' }), {
+      status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const serviceKey  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
   const admin = createClient(supabaseUrl, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });

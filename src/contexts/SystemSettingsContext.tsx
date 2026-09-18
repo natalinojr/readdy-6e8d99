@@ -98,6 +98,10 @@ export interface SystemSettings {
   print_kitchen_copy_enabled: boolean;
   printers_config: PrinterConfig | null;
   pager_count: number;
+  /** Esconde do cardápio (tablet, QR, delivery, caixa) item cuja ficha técnica não tem insumo suficiente. */
+  bloquear_item_sem_insumo: boolean;
+  /** Só importa com bloquear_item_sem_insumo ligado: conta também o consumo de pedidos ainda não prontos. */
+  bloquear_item_sem_insumo_reserva: boolean;
   motoboy_alertas: MotoboyAlertas;
   whatsapp_msgs: Record<string, string[]>;  // mensagens pro cliente por fase (status)
   updated_at?: string;
@@ -161,6 +165,8 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   print_kitchen_copy_enabled: true,
   printers_config: null,
   pager_count: 50,
+  bloquear_item_sem_insumo: false,
+  bloquear_item_sem_insumo_reserva: false,
   motoboy_alertas: { categorias: [], itens: [] },
   whatsapp_msgs: {},
 };
@@ -237,6 +243,8 @@ function parseRow(data: Record<string, unknown>): SystemSettings {
     print_kitchen_copy_enabled: (data.print_kitchen_copy_enabled as boolean) ?? DEFAULT_SETTINGS.print_kitchen_copy_enabled,
     printers_config: (data.printers_config as PrinterConfig) ?? null,
     pager_count: Number(data.pager_count ?? DEFAULT_SETTINGS.pager_count),
+    bloquear_item_sem_insumo: (data.bloquear_item_sem_insumo as boolean) ?? DEFAULT_SETTINGS.bloquear_item_sem_insumo,
+    bloquear_item_sem_insumo_reserva: (data.bloquear_item_sem_insumo_reserva as boolean) ?? DEFAULT_SETTINGS.bloquear_item_sem_insumo_reserva,
     pdv_config: data.pdv_config
       ? { ...DEFAULT_PDV_CONFIG, ...(data.pdv_config as Partial<PdvConfig>) }
       : DEFAULT_PDV_CONFIG,

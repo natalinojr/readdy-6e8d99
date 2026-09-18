@@ -1,10 +1,11 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrdersPing } from '@/hooks/useOrdersPing';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
+import { createCoalescedRunner, syncBackoffMs } from '@/lib/coalescedRunner';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade, KDSPagamento, KDSSubParte } from '../types/kds';
 import type { CarrinhoItem, DestinoInfo } from './PDVContext';
 
@@ -690,7 +691,7 @@ interface KDSContextValue {
   /** Atualiza status de uma parte de produção (multi-estação) — persiste no banco e recalcula status do item */
   updatePartStatusRemote: (orderItemPartId: string, orderItemId: string, orderId: string, newStatus: KDSItemStatus) => Promise<void>;
   /** Cancela um pedido no backend — motivo opcional */
-  cancelOrderRemote: (orderId: string, reason?: string) => Promise<{ ok: boolean; error?: string }>;
+  cancelOrderRemote: (orderId: string, reason?: string) => Promise<{ ok: boolean; error?: string; code?: string }>;
   /** BUG-38: Marca pedido de delivery como "Em Rota" com retry + queue (padrao BUG-35) */
   markOutForDeliveryRemote: (orderId: string) => Promise<void>;
   /**
@@ -711,6 +712,19 @@ interface KDSContextValue {
   pendingStatusCount: number;
   /** BUG-35: Força retentativa imediata de todos os itens na fila pendente */
   flushPendingStatusQueue: () => Promise<void>;
+  /** Momento (ms) da última recarga bem-sucedida dos pedidos; null = ainda não sincronizou */
+  lastSyncAt: number | null;
+  /** Mensagem do último erro de recarga (null quando a última recarga deu certo) */
+  syncError: string | null;
+  /** Falhas seguidas de recarga (0 = sincronizado) */
+  syncErrorCount: number;
+  /**
+   * ECONOMIA 09-17: busca sob demanda TODOS os pedidos de uma sessão (sem o
+   * filtro p_only_active do loadOrders contínuo) — usado por telas de
+   * histórico dentro do Gestor (ex.: HistoricoDrawer) que precisam da sessão
+   * inteira, sem pagar o custo desse payload completo a cada evento realtime.
+   */
+  fetchSessionOrdersFull: (sessionId: string) => Promise<KDSPedido[]>;
 }
 
 const KDSContext = createContext<KDSContextValue | null>(null);
@@ -727,6 +741,18 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   const consecutiveErrorsRef = useRef(0);
   const MAX_CONSECUTIVE_ERRORS = 5;
   const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Estado de sincronização exposto para a tela ("sem sincronizar desde X")
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncErrorCount, setSyncErrorCount] = useState(0);
+  const lastErrorAtRef = useRef(0);
+  // Backoff do caminho de eventos quando as recargas falham em sequência
+  const backoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Sequência por chamada: resposta mais velha que a última aplicada é descartada.
+  // Troca de loja/sessão invalida as respostas em voo (appliedSeq = ++seq).
+  const loadSeqRef = useRef(0);
+  const appliedSeqRef = useRef(0);
+  const invalidateInFlightLoads = () => { appliedSeqRef.current = ++loadSeqRef.current; };
   const stationMapRef = useRef<StationMap>(new Map());
   const stationsLoadedRef = useRef(false);
 
@@ -929,25 +955,38 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     // BUG FIX: removida verificação prevSessionId !== undefined que impedia
     // limpeza na primeira sessão — pedidos antigos de sessão=null ficavam presos
     if (prevSessionId !== newSessionId) {
+      invalidateInFlightLoads();
       setPedidos([]);
       loadOrders();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessao?.id, loadingSession]);
 
-  const loadOrders = useCallback(async (currentStationMap?: StationMap) => {
+  const fetchOrdersOnce = useCallback(async (currentStationMap?: StationMap) => {
     if (!user?.tenantId) { setLoading(false); return; }
     // Bloqueia se sessão ainda não foi resolvida pelo SessaoContext
     if (sessaoIdRef.current === undefined) { setLoading(false); return; }
+    const seq = ++loadSeqRef.current;
     try {
       const currentSessionId = sessaoIdRef.current ?? null;
+      // ECONOMIA 09-17: KDS/gestor só precisam de pedidos abertos + entregues
+      // recentes (quadro do dia), não a sessão inteira (payload ~3,6 KB/pedido,
+      // maior consumidor de egress do plano Free). Migration 20260917220000.
       const { data, error } = await supabase.rpc('fn_get_kds_orders', {
         p_tenant_id: user.tenantId,
         p_session_id: currentSessionId,
+        p_only_active: true,
       });
+      // Resposta velha (loja/sessão trocou ou recarga mais nova já aplicada): descarta
+      if (seq <= appliedSeqRef.current) return;
       if (error) throw error;
+      appliedSeqRef.current = seq;
 
       consecutiveErrorsRef.current = 0;
+      lastErrorAtRef.current = 0;
+      setLastSyncAt(Date.now());
+      setSyncError(null);
+      setSyncErrorCount(0);
 
       const mapToUse = currentStationMap ?? stationMapRef.current;
       const orders: KDSPedido[] = (data as DBOrder[] ?? []).map(
@@ -1169,8 +1208,12 @@ export function KDSProvider({ children }: { children: ReactNode }) {
         setPedidosSalvando((prev) => prev.filter((p) => !idsParaRemover.includes(p.id)));
       }
     } catch (e) {
+      if (seq <= appliedSeqRef.current) return;
       consecutiveErrorsRef.current += 1;
+      lastErrorAtRef.current = Date.now();
       const errorMessage = (e as Error)?.message ?? String(e);
+      setSyncError(errorMessage);
+      setSyncErrorCount(consecutiveErrorsRef.current);
       const isNetworkError =
         errorMessage.toLowerCase().includes('failed to fetch') ||
         errorMessage.toLowerCase().includes('network') ||
@@ -1188,12 +1231,49 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     }
   }, [user?.tenantId]);
 
+  // Coalesce: no máximo 1 recarga em voo + 1 pendente (rajada de eventos = 1 recarga extra).
+  const fetchOrdersRef = useRef(fetchOrdersOnce);
+  fetchOrdersRef.current = fetchOrdersOnce;
+  const loadOrders = useMemo(
+    () => createCoalescedRunner<StationMap>(() => fetchOrdersRef.current),
+    [],
+  );
+  const reloadOrders = useCallback(() => loadOrders(), [loadOrders]);
+
+  // ECONOMIA 09-17: fetch avulso (sem tocar no estado `pedidos`) para telas de
+  // histórico que precisam da sessão inteira (ex.: HistoricoDrawer do Gestor).
+  const fetchSessionOrdersFull = useCallback(async (sessionId: string): Promise<KDSPedido[]> => {
+    if (!user?.tenantId || !sessionId) return [];
+    const { data, error } = await supabase.rpc('fn_get_kds_orders', {
+      p_tenant_id: user.tenantId,
+      p_session_id: sessionId,
+      p_only_active: false,
+    });
+    if (error) {
+      console.warn('[KDSContext] fetchSessionOrdersFull error:', error.message);
+      return [];
+    }
+    return (data as DBOrder[] ?? []).map((o) => dbOrderToKDS(o, stationMapRef.current));
+  }, [user?.tenantId]);
+
+  // Recarga com backoff (30s → 5 min) após MAX_CONSECUTIVE_ERRORS falhas seguidas.
+  // Nunca desliga: só espaça as tentativas disparadas por eventos.
+  const scheduleBackoffReload = useCallback(() => {
+    if (backoffTimerRef.current) return;
+    const delay = syncBackoffMs(consecutiveErrorsRef.current - MAX_CONSECUTIVE_ERRORS);
+    const wait = Math.max(0, lastErrorAtRef.current + delay - Date.now());
+    backoffTimerRef.current = setTimeout(() => {
+      backoffTimerRef.current = null;
+      loadOrders();
+    }, wait);
+  }, [loadOrders]);
+
   // BUG 2.6 FIX: Leading + trailing debounce.
   // Executa imediatamente na primeira chamada e reagenda se novos eventos chegam
   // durante o cooldown, garantindo que o último update também seja processado.
   // ── EDIT LOCK FIX: Agora aceita o payload do Realtime para aplicar mudanças
   // de is_editing instantaneamente no estado local de TODOS os dispositivos.
-  const realtimeLeadingFiredRef = useRef(false);
+  const realtimeBurstStartRef = useRef(0);
   // Pula o 1o SUBSCRIBED (mount já fez o load); recargas só em RECONEXÕES seguintes.
   const kdsSubscribedOnceRef = useRef(false);
 
@@ -1207,7 +1287,6 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   }
 
   const handleRealtimeChange = useCallback((payload?: RealtimePayload) => {
-    if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_ERRORS) return;
 
     // ── EDIT LOCK FIX: Aplicar mudanças de is_editing instantaneamente ──
     // Quando a edge function order-edit-lock atualiza is_editing no banco,
@@ -1257,22 +1336,24 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // ── Debounce do RPC completo (fallback para consistência) ──
-    // Leading edge: executa imediatamente se não há debounce ativo
-    if (!realtimeLeadingFiredRef.current) {
-      realtimeLeadingFiredRef.current = true;
-      loadOrders();
+    // Recargas falhando em sequência: espaça com backoff em vez de martelar o servidor
+    if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_ERRORS) {
+      scheduleBackoffReload();
+      return;
     }
 
-    // Trailing edge: reagenda com debounce reduzido para capturar o último evento
-    if (realtimeDebounceRef.current) {
-      clearTimeout(realtimeDebounceRef.current);
-    }
+    // ── Debounce do RPC completo (fallback para consistência) ──
+    // Trailing de 250ms (teto de 1s numa rajada contínua): o ping (orders-ping) e o
+    // postgres_changes da MESMA mudança chegam separados por alguns ms e viram 1 recarga.
+    const now = Date.now();
+    if (!realtimeDebounceRef.current) realtimeBurstStartRef.current = now;
+    if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
+    const wait = Math.max(0, Math.min(250, realtimeBurstStartRef.current + 1000 - now));
     realtimeDebounceRef.current = setTimeout(() => {
-      realtimeLeadingFiredRef.current = false;
+      realtimeDebounceRef.current = null;
       loadOrders();
-    }, 40);
-  }, [loadOrders]);
+    }, wait);
+  }, [loadOrders, scheduleBackoffReload]);
 
   // ── Ping instantâneo via trigger no banco (canal público orders-ping) ─────
   // Caminho principal de "pedido novo apareceu": não passa por RLS por linha
@@ -1286,6 +1367,11 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     const tenantId = user.tenantId;
 
     consecutiveErrorsRef.current = 0;
+    lastErrorAtRef.current = 0;
+    invalidateInFlightLoads();
+    setLastSyncAt(null);
+    setSyncError(null);
+    setSyncErrorCount(0);
     stationsLoadedRef.current = false;
     // Reseta sessão como "não resolvida" ao trocar de tenant
     sessaoIdRef.current = undefined;
@@ -1336,7 +1422,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
             // RECONEXÃO: o Realtime não tem replay — recarrega 1x p/ cobrir o buraco
             // (eventos perdidos durante a queda da internet). Substitui o poll de 30s.
             console.info('[KDSContext] Realtime reconectado — re-sincronizando pedidos');
-            if (consecutiveErrorsRef.current < MAX_CONSECUTIVE_ERRORS) loadOrders();
+            loadOrders();
           }
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.warn('[KDSContext] Realtime channel error, status:', status);
@@ -1449,10 +1535,9 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     // Backstop bem longo (5 min): o tempo real vem do Realtime e a re-sincronização
     // acontece no reconnect (acima) e ao voltar pra aba (abaixo). Esse intervalo é só
     // uma última rede de segurança — antes era 30s (pesava muito na quota do servidor).
+    // Sempre tenta (mesmo após falhas seguidas) — é a rede de segurança.
     const pollInterval = setInterval(() => {
-      if (consecutiveErrorsRef.current < MAX_CONSECUTIVE_ERRORS) {
-        loadOrders();
-      }
+      loadOrders();
     }, 5 * 60 * 1000);
 
     // Recarrega ao voltar para a aba, mas com debounce de 2s para evitar
@@ -1462,9 +1547,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       if (document.visibilityState === 'visible') {
         if (visibilityDebounce) clearTimeout(visibilityDebounce);
         visibilityDebounce = setTimeout(() => {
-          if (consecutiveErrorsRef.current < MAX_CONSECUTIVE_ERRORS) {
-            loadOrders();
-          }
+          loadOrders();
         }, 2000);
       }
     };
@@ -1481,6 +1564,11 @@ export function KDSProvider({ children }: { children: ReactNode }) {
       if (visibilityDebounce) clearTimeout(visibilityDebounce);
       if (realtimeDebounceRef.current) {
         clearTimeout(realtimeDebounceRef.current);
+        realtimeDebounceRef.current = null;
+      }
+      if (backoffTimerRef.current) {
+        clearTimeout(backoffTimerRef.current);
+        backoffTimerRef.current = null;
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1860,7 +1948,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     }
   }, [user?.tenantId]);
 
-  const cancelOrderRemote = useCallback(async (orderId: string, reason?: string): Promise<{ ok: boolean; error?: string }> => {
+  const cancelOrderRemote = useCallback(async (orderId: string, reason?: string): Promise<{ ok: boolean; error?: string; code?: string }> => {
     const resolvedTenantId = user?.tenantId ?? tenantIdRef.current;
     if (!resolvedTenantId) {
       return { ok: false, error: 'Tenant não identificado' };
@@ -1875,7 +1963,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     });
     if (error) {
       console.error('[KDSContext] cancelOrderRemote error:', error.message);
-      return { ok: false, error: error.message };
+      return { ok: false, error: error.message, code: (error as { code?: string }).code };
     }
     // Atualiza estado local imediatamente (Realtime reconfirma depois)
     // Mantém o status atual do pedido — não força 'entregue' em cancelados
@@ -2032,7 +2120,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   }, [user?.tenantId]);
 
   return (
-    <KDSContext.Provider value={{ pedidos, loading, addPedido, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, markOutForDeliveryRemote, toggleObsChecadaRemote, startOrderEditRemote, finishOrderEditRemote, reloadOrders: loadOrders, stationMap, pedidosSalvando, pendingStatusCount, flushPendingStatusQueue }}>
+    <KDSContext.Provider value={{ pedidos, loading, addPedido, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, markOutForDeliveryRemote, toggleObsChecadaRemote, startOrderEditRemote, finishOrderEditRemote, reloadOrders, stationMap, pedidosSalvando, pendingStatusCount, flushPendingStatusQueue, lastSyncAt, syncError, syncErrorCount, fetchSessionOrdersFull }}>
       {children}
     </KDSContext.Provider>
   );

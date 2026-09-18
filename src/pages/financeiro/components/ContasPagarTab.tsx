@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { BillPayable, BillStatus } from '@/types/financeiro';
 import { formatCurrency } from '@/lib/formatters';
+import { todayBrasilia } from '@/lib/dateUtils';
 import AgingContasPagar from '@/pages/financeiro/components/AgingContasPagar';
 import ContasPagarDREModal from '@/pages/financeiro/components/ContasPagarDREModal';
 import ContasPagarDetalheModal from '@/pages/financeiro/components/ContasPagarDetalheModal';
@@ -154,6 +155,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const [bulkPaying, setBulkPaying] = useState(false);
   const [bulkPayError, setBulkPayError] = useState<string | null>(null);
   const [payError, setPayError] = useState<string | null>(null);
+  const [paying, setPaying] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -177,7 +180,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     Math.max(0, Number(b.amount ?? 0) - Number(b.paid_amount ?? 0));
 
   const handleBulkPay = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0 || bulkPaying) return;
     setBulkPaying(true);
     setBulkPayError(null);
     // Data LOCAL (não toISOString, que é UTC e vira o dia seguinte após as 21h)
@@ -209,7 +212,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     const b = billsDoMes.find((x) => x.id === id);
     return sum + (b ? saldoRestante(b) : 0);
   }, 0);
-  const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_amount: '', payment_method: 'Dinheiro' });
+  // Data em Brasília: toISOString é UTC e vira o dia seguinte depois das 21h
+  const [payForm, setPayForm] = useState({ paid_date: todayBrasilia(), paid_amount: '', payment_method: 'Dinheiro' });
 
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -349,8 +353,9 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!payModal) return;
+    if (!payModal || paying) return;
     setPayError(null);
+    setPaying(true);
     try {
       await pay(payModal.id, payForm.paid_date, Number(payForm.paid_amount), payForm.payment_method,
         precisaClassificarDRE(payModal) ? dreToPayload(payDre) : undefined);
@@ -359,6 +364,17 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       // `pay` agora lança: recusa do backend (valor acima do saldo, conta já
       // quitada) precisa aparecer, não fechar o modal fingindo sucesso.
       setPayError(err instanceof Error ? err.message : 'Erro ao registrar o pagamento');
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const handleRemove = async (id: string) => {
+    setRemoveError(null);
+    try {
+      await remove(id);
+    } catch (err) {
+      setRemoveError(err instanceof Error ? err.message : 'Erro ao excluir a conta');
     }
   };
 
@@ -703,6 +719,13 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
         </div>
       )}
 
+      {removeError && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2">
+          <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-red-700 flex-1">{removeError}</p>
+          <button type="button" onClick={() => setRemoveError(null)} className="text-red-400 hover:text-red-600 cursor-pointer"><i className="ri-close-line" /></button>
+        </div>
+      )}
       {bulkPayError && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2">
           <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />
@@ -916,7 +939,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                         )}
                         <PerguntarAoAssistente foco={focoDaConta(b)} texto="Sobre essa conta: " />
                         <button
-                          onClick={(e) => { e.stopPropagation(); remove(b.id); }}
+                          onClick={(e) => { e.stopPropagation(); handleRemove(b.id); }}
                           className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer"
                         >
                           <i className="ri-delete-bin-line text-xs" />
@@ -1007,7 +1030,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                         )}
                         <PerguntarAoAssistente foco={focoDaConta(b)} texto="Sobre essa conta: " />
                         <button
-                          onClick={(e) => { e.stopPropagation(); remove(b.id); }}
+                          onClick={(e) => { e.stopPropagation(); handleRemove(b.id); }}
                           className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer"
                         >
                           <i className="ri-delete-bin-line text-xs" />
@@ -1281,8 +1304,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setPayModal(null)}
                   className="flex-1 py-2.5 border border-zinc-200 rounded-lg text-sm font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">Cancelar</button>
-                <button type="submit"
-                  className="flex-1 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold cursor-pointer transition-colors whitespace-nowrap">Confirmar</button>
+                <button type="submit" disabled={paying}
+                  className="flex-1 py-2.5 bg-green-500 hover:bg-green-600 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold cursor-pointer transition-colors whitespace-nowrap">{paying ? 'Salvando...' : 'Confirmar'}</button>
               </div>
             </form>
           </div>

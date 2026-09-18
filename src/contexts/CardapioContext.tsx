@@ -1049,7 +1049,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
           observacoesPadrao,
           stationId: cat?.estacaoId ?? null,
           opcoes: item.gruposOpcoes.map(g => ({
-            grupo: g.nome, obrigatorio: g.obrigatorio,
+            grupo: g.nome, obrigatorio: g.obrigatorio, minSelecao: g.minSelecao, maxSelecao: g.maxSelecao,
             itens: g.opcoes.filter(o => o.ativo).map(o => ({ id: o.id, nome: o.nome, precoAdicional: o.precoAdicional })),
           })),
         };

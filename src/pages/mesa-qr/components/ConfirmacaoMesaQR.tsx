@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { formatCurrency } from '@/lib/formatters';
 
 interface CartItem {
   cartId: string;
@@ -149,12 +150,17 @@ export default function ConfirmacaoMesaQR(props: Props) {
                               {ci.opcoes.map(function (o) { return o.opcaoNome; }).join(', ')}
                             </p>
                           ) : null}
+                          {ci.observacoes && ci.observacoes.length > 0 ? (
+                            <p className="text-xs text-zinc-500 mt-0.5 truncate">
+                              {ci.observacoes.join(', ')}
+                            </p>
+                          ) : null}
                           {ci.observacaoLivre ? (
                             <p className="text-xs text-zinc-400 mt-0.5 truncate">"{ci.observacaoLivre}"</p>
                           ) : null}
                         </div>
                         <p className="text-sm font-bold text-amber-600 whitespace-nowrap">
-                          R$ {(ci.precoTotal * ci.quantidade).toFixed(2)}
+                          {formatCurrency(ci.precoTotal * ci.quantidade)}
                         </p>
                       </div>
                     </div>
@@ -164,7 +170,7 @@ export default function ConfirmacaoMesaQR(props: Props) {
               {/* Total */}
               <div className="flex items-center justify-between px-4 py-3 bg-zinc-50/80 border-t border-zinc-100">
                 <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Total</p>
-                <p className="text-base font-black text-amber-600">R$ {totalPedido.toFixed(2)}</p>
+                <p className="text-base font-black text-amber-600">{formatCurrency(totalPedido)}</p>
               </div>
             </div>
           </div>

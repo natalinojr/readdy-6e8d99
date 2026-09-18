@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 import { loadCart, saveCart } from '@/lib/cartStorage';
 import { trackPixel } from '@/lib/metaPixel';
+import { formatPhoneBR, readSavedDeliveryPhone, saveDeliveryPhone, clearSavedDeliveryPhone } from '@/lib/deliveryPhone';
 
 // Origem do pedido (campanha): lê utm_source da URL na 1ª visita e persiste na sessão,
 // pois o cliente navega vários passos antes de fechar o pedido (a query pode se perder).
@@ -408,7 +409,11 @@ async function fetchDeliveryConfig(
       body: JSON.stringify(payload),
     });
     const data = await res.json();
-    if (data.error) throw new Error(data.message || data.error);
+    if (data.error) {
+      // Códigos crus da edge (ex.: 'delivery_not_configured' sem message) não aparecem para o cliente.
+      if (data.error === 'delivery_not_configured') throw new Error('Delivery indisponível no momento.');
+      throw new Error(data.message || data.error);
+    }
 
     // Logo da loja (tenants.logo_url) — a edge function não retorna; busca direto
     // via select anônimo (mesma permissão do resolveTenantIdBySlug). Falhou = sem logo,
@@ -768,9 +773,9 @@ export function useDeliveryData(storeSlug?: string) {
 
         if (cancelled) return;
 
-        const savedPhone = localStorage.getItem('delivery_phone');
+        const savedPhone = configResult ? readSavedDeliveryPhone(localStorage, configResult.tenant.id) : null;
         if (savedPhone && configResult) {
-          setPhone(savedPhone);
+          setPhone(formatPhoneBR(savedPhone));
 
           // Busca cliente automaticamente — se já tem cadastro, pula direto pro cardápio ou endereço
           try {
@@ -790,7 +795,7 @@ export function useDeliveryData(storeSlug?: string) {
               setCustomerName(c.name);
               if (c.birth_date) setDataNascimento(String(c.birth_date).slice(0, 10));
               if (c.gender) setGenero(c.gender);
-              setPhone(c.phone);
+              setPhone(formatPhoneBR(c.phone));
 
               const addresses = lookupData.addresses || [];
               setSavedAddresses(addresses);
@@ -818,7 +823,7 @@ export function useDeliveryData(storeSlug?: string) {
                 }
               }
 
-              localStorage.setItem('delivery_phone', c.phone);
+              saveDeliveryPhone(localStorage, configResult.tenant.id, c.phone);
 
               // Pix pelo app em andamento (voltou do banco / recarregou): reabre a tela do pedido
               try {
@@ -911,7 +916,7 @@ export function useDeliveryData(storeSlug?: string) {
           setCustomerName(c.name);
           if (c.birth_date) setDataNascimento(String(c.birth_date).slice(0, 10));
           if (c.gender) setGenero(c.gender);
-          setPhone(c.phone);
+          setPhone(formatPhoneBR(c.phone));
 
           // Carrega endereços salvos
           const addresses: SavedAddress[] = data.addresses || [];
@@ -941,7 +946,7 @@ export function useDeliveryData(storeSlug?: string) {
             }
           }
 
-          localStorage.setItem('delivery_phone', c.phone);
+          saveDeliveryPhone(localStorage, tenant.id, c.phone);
           if (!retiradaAtivo) {
             setStep('cardapio');
           } else {
@@ -1015,7 +1020,7 @@ export function useDeliveryData(storeSlug?: string) {
         const c: DeliveryCustomer = data.customer;
         setCustomer(c);
         setCustomerName(c.name);
-        setPhone(c.phone);
+        setPhone(formatPhoneBR(c.phone));
         if (c.neighborhood_id) setSelectedNeighborhoodId(c.neighborhood_id);
         if (c.street) setStreet(c.street);
         if (c.number) setAddressNumber(c.number);
@@ -1029,7 +1034,7 @@ export function useDeliveryData(storeSlug?: string) {
           setSelectedAddressId(addresses[addresses.length - 1].id);
         }
 
-        localStorage.setItem('delivery_phone', c.phone);
+        saveDeliveryPhone(localStorage, tenant.id, c.phone);
         setStep('cardapio');
       })
       .catch(function () {
@@ -1296,7 +1301,7 @@ export function useDeliveryData(storeSlug?: string) {
               const c: DeliveryCustomer = data.customer;
               setCustomer(c);
               setCustomerName(c.name);
-              localStorage.setItem('delivery_phone', c.phone);
+              saveDeliveryPhone(localStorage, tenant.id, c.phone);
             }
             setStep('cardapio');
           })
@@ -1391,17 +1396,19 @@ export function useDeliveryData(storeSlug?: string) {
 
   // ── Confirmar pedido ─────────────────────────────────────────────────────────
 
-  function handleConfirmarPedido(paymentMethod?: string, cashAmount?: string) {
-    if (!tenant) { setErrorMsg('Erro ao carregar a loja. Recarregue a página.'); return; }
-    if (!customer) { setErrorMsg('Não identificamos seu cadastro. Toque em "Trocar" e confirme seu telefone novamente.'); return; }
-    if (cart.length === 0) return;
+  // Resolve true quando o pedido foi criado (a tela fecha o modal de pagamento);
+  // false em erro — o modal fica aberto com a forma escolhida.
+  function handleConfirmarPedido(paymentMethod?: string, cashAmount?: string): Promise<boolean> {
+    if (!tenant) { setErrorMsg('Erro ao carregar a loja. Recarregue a página.'); return Promise.resolve(false); }
+    if (!customer) { setErrorMsg('Não identificamos seu cadastro. Toque em "Trocar" e confirme seu telefone novamente.'); return Promise.resolve(false); }
+    if (cart.length === 0) return Promise.resolve(false);
 
     // Modo distância: bloqueia se fora da área de entrega (sem pin ou além da última faixa)
     if (foraDeArea) {
       setErrorMsg(addressLat == null
         ? 'Marque sua localização no mapa para calcular a entrega.'
         : 'Endereço fora da área de entrega desta loja.');
-      return;
+      return Promise.resolve(false);
     }
 
     setEnviando(true);
@@ -1471,14 +1478,37 @@ export function useDeliveryData(storeSlug?: string) {
       };
     });
 
-    const clientRequestId = crypto.randomUUID();
+    // Idempotência: a mesma tentativa de pedido (carrinho + endereço + pagamento + troco)
+    // reenviada após erro de rede/5xx reusa o client_request_id — o servidor devolve o
+    // pedido já criado em vez de duplicar. Descartado após sucesso ou recusa 4xx.
+    const requestKey = 'delivery_order_req_' + tenant.id;
+    const requestSignature = JSON.stringify([
+      customer.id, itemsPayload, endereco, bairroName, selectedNeighborhoodId, modoEntrega,
+      effectiveDeliveryFee, methodName, cashAmountNum, voucherCodigo || '', cpfNota.replace(/\D/g, ''),
+      addressLat, addressLng,
+    ]);
+    let clientRequestId = '';
+    try {
+      const saved = JSON.parse(localStorage.getItem(requestKey) || 'null');
+      if (saved && saved.sig === requestSignature && typeof saved.id === 'string') clientRequestId = saved.id;
+    } catch { /* ignora */ }
+    if (!clientRequestId) {
+      clientRequestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+          const r = Math.random() * 16 | 0;
+          return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+        });
+      try { localStorage.setItem(requestKey, JSON.stringify({ id: clientRequestId, sig: requestSignature })); } catch { /* ignora */ }
+    }
+    const clearRequestId = function () { try { localStorage.removeItem(requestKey); } catch { /* ignora */ } };
     try {
       const soDig = cpfNota.replace(/\D/g, '');
       if (soDig) localStorage.setItem('erpos_delivery_cpf_nota', soDig);
       else localStorage.removeItem('erpos_delivery_cpf_nota');
     } catch { /* sem storage */ }
 
-    fetch(url, {
+    return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1510,13 +1540,27 @@ export function useDeliveryData(storeSlug?: string) {
         order_source: getOrderSource(),
       }),
     })
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
-        if (data.error) {
-          setErrorMsg(data.message || data.error);
+      .then(function (res) {
+        return res.json()
+          .catch(function () { return { error: 'invalid_response' }; })
+          .then(function (data) { return { status: res.status, data: data || {} }; });
+      })
+      .then(function (r) {
+        const data = r.data;
+        if (data.error || r.status >= 400) {
+          if (r.status < 500) {
+            // Recusa definitiva (4xx ou erro de negócio com 200: fechado, fora da área, item
+            // indisponível…): a próxima tentativa é outro pedido.
+            clearRequestId();
+            setErrorMsg(data.message || data.error || 'Não foi possível enviar o pedido.');
+          } else {
+            // 5xx: o pedido pode ter sido criado — mantém o id para o retry não duplicar.
+            setErrorMsg(data.message || 'Erro de conexão. Tente novamente.');
+          }
           setEnviando(false);
-          return;
+          return false;
         }
+        clearRequestId();
         const totalConfirmado = data.data?.total || total;
         setNumeroPedido(data.data?.number || '');
         setOrderTotal(totalConfirmado);
@@ -1538,10 +1582,13 @@ export function useDeliveryData(storeSlug?: string) {
         setShowCart(false);
         setEnviando(false);
         setStep('confirmacao');
+        return true;
       })
       .catch(function () {
+        // Erro de rede: mantém o client_request_id (o pedido pode ter chegado ao servidor).
         setEnviando(false);
         setErrorMsg('Erro de conexão. Tente novamente.');
+        return false;
       });
   }
 
@@ -1666,7 +1713,7 @@ export function useDeliveryData(storeSlug?: string) {
   // (ou o mesmo cliente com outro número) entrar do zero.
   function handleSair() {
     try {
-      localStorage.removeItem('delivery_phone');
+      clearSavedDeliveryPhone(localStorage, tenant?.id);
       localStorage.removeItem(PIN_STORAGE_KEY);
     } catch { /* armazenamento indisponível — ignora */ }
 

@@ -270,7 +270,11 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
       p_closing_value: valorFechamento ?? 0,
       p_closing_notes: closingNotes ?? null,
     });
-    if (error) console.error('[SessaoContext] fn_close_cash_register error:', error);
+    if (error) {
+      // Não finge que fechou: mantém o caixa aberto na tela e propaga o erro para a UI
+      console.error('[SessaoContext] fn_close_cash_register error:', error);
+      throw new Error(error.message || 'Não foi possível fechar o caixa');
+    }
     // Se skipLocalUpdate=true, não altera o estado local — o polling/realtime
     // vai detectar a mudança no banco e atualizar. Isso evita que modais de
     // fechamento (ex: justificativa de diferença) sejam desmontados abruptamente.

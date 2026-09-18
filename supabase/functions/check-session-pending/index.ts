@@ -21,10 +21,45 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
+
+    // Autenticação: exige JWT de usuário que seja membro da loja (tenant_id do body).
+    // A função roda com service role e fecha mesas — não pode aceitar tenant/sessão de qualquer um.
+    const authHeader = req.headers.get('Authorization') ?? '';
+    if (!authHeader.toLowerCase().startsWith('bearer ')) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data: { user: authUser }, error: authErr } = await userClient.auth.getUser();
+    if (authErr || !authUser) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
+
+    const { data: membership } = await supabase
+      .from('user_tenants')
+      .select('tenant_id')
+      .eq('user_id', authUser.id)
+      .eq('tenant_id', tenant_id)
+      .maybeSingle();
+    if (!membership) {
+      return new Response(
+        JSON.stringify({ error: 'Acesso negado a esta loja' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // 1. Busca pedidos da sessão (não cancelados). Rascunho fica de fora: é carrinho
     //    não enviado ou pedido de delivery "segurado" esperando o Pix pelo app — não
@@ -126,8 +161,11 @@ Deno.serve(async (req) => {
 
     const mesasAbertas = sessoesAbertas?.length ?? 0;
 
-    // 7. Auto-correção: sessões zumbi (mesas abertas sem pedidos ou abertas há mais de 6h)
+    // 7. Auto-correção: sessões zumbi (mesas abertas sem pedidos, ou abertas há mais de 6h
+    //    com tudo pago). Mesa com pedido NÃO PAGO nunca é fechada sozinha — só reportada
+    //    (mesasComPedidoNaoPago) e continua contando em mesasAbertas.
     const sessoesZumbi: string[] = [];
+    const mesasComPedidoNaoPago: { table_session_id: string; table_id: string | null; cliente: string | null; pedidos_nao_pagos: number }[] = [];
     if (sessoesAbertas && sessoesAbertas.length > 0) {
       for (const sess of sessoesAbertas) {
         const { count: pedidosNaSessao } = await supabase
@@ -136,6 +174,28 @@ Deno.serve(async (req) => {
           .eq('table_session_id', sess.id)
           .eq('tenant_id', tenant_id)
           .neq('status', 'cancelled');
+
+        const { count: naoPagosNaSessao, error: errNaoPagos } = await supabase
+          .from('orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('table_session_id', sess.id)
+          .eq('tenant_id', tenant_id)
+          .neq('status', 'cancelled')
+          .neq('status', 'draft')
+          .eq('is_draft', false)
+          .eq('is_paid', false);
+
+        // Na dúvida (erro na consulta), trata como se tivesse pedido não pago: não fecha.
+        const temNaoPago = !!errNaoPagos || (naoPagosNaSessao ?? 0) > 0;
+        if (temNaoPago) {
+          mesasComPedidoNaoPago.push({
+            table_session_id: sess.id,
+            table_id: (sess.table_id as string | null) ?? null,
+            cliente: (sess.customer_name as string | null) ?? null,
+            pedidos_nao_pagos: naoPagosNaSessao ?? 0,
+          });
+          continue;
+        }
 
         const abertoHa = Date.now() - new Date(sess.opened_at).getTime();
         const horasAberta = abertoHa / (1000 * 60 * 60);
@@ -162,6 +222,7 @@ Deno.serve(async (req) => {
         mesasAbertas: Math.max(0, mesasAbertasReal),
         totalPedidos: listaPedidos.length,
         sessoesZumbiCorrigidas: sessoesZumbi.length,
+        mesasComPedidoNaoPago,
         debug: {
           orderIds,
           orderIdsComItensNaoEntregues,

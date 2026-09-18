@@ -411,7 +411,7 @@ async function createBillsForPurchase(
     if (parentErr) throw parentErr;
     for (let i = 1; i < numParcelas; i++) {
       const inst = customInstallments[i];
-      await supabase.from('fin_accounts_payable').insert({
+      const { error: instErr } = await supabase.from('fin_accounts_payable').insert({
         tenant_id, supplier: purchase.supplier,
         description: `Compra - ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''} (${i + 1}/${numParcelas})`,
         category: 'Compras', cost_center_id: purchaseData.cost_center_id || null,
@@ -420,6 +420,7 @@ async function createBillsForPurchase(
         installments: numParcelas, installment_number: i + 1, parent_id: parentBill.id,
         notes: purchaseData.notes || null, reference_id: purchase.id, reference_type: 'purchase',
       });
+      if (instErr) throw instErr;
     }
   } else if (isLegacyInstallment) {
     const numParcelas = Number(installmentCount);
@@ -439,7 +440,7 @@ async function createBillsForPurchase(
     for (let i = 2; i <= numParcelas; i++) {
       const dueDate = new Date(baseDate);
       dueDate.setDate(dueDate.getDate() + intervalDays * (i - 1));
-      await supabase.from('fin_accounts_payable').insert({
+      const { error: instErr } = await supabase.from('fin_accounts_payable').insert({
         tenant_id, supplier: purchase.supplier,
         description: `Compra - ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''} (${i}/${numParcelas})`,
         category: 'Compras', cost_center_id: purchaseData.cost_center_id || null,
@@ -449,12 +450,13 @@ async function createBillsForPurchase(
         installments: numParcelas, installment_number: i, parent_id: parentBill.id,
         notes: purchaseData.notes || null, reference_id: purchase.id, reference_type: 'purchase',
       });
+      if (instErr) throw instErr;
     }
   } else if (purchaseData.payment_status !== 'paid') {
     const defaultDueDate = purchaseData.due_date ?? (() => {
       const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0];
     })();
-    await supabase.from('fin_accounts_payable').insert({
+    const { error: billErr } = await supabase.from('fin_accounts_payable').insert({
       tenant_id, supplier: purchase.supplier,
       description: `Compra - ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`,
       category: 'Compras', cost_center_id: purchaseData.cost_center_id || null,
@@ -462,13 +464,15 @@ async function createBillsForPurchase(
       due_date: defaultDueDate, status: 'pending', is_recurring: false,
       notes: purchaseData.notes || null, reference_id: purchase.id, reference_type: 'purchase',
     });
+    if (billErr) throw billErr;
   } else if (purchaseData.payment_status === 'paid') {
-    await supabase.from('fin_cash_flow').insert({
+    const { error: cfErr } = await supabase.from('fin_cash_flow').insert({
       tenant_id, type: 'expense', amount: purchaseData.total_amount,
       description: `Compra - ${purchase.supplier}`, category: 'Compras',
       cost_center_id: purchaseData.cost_center_id || null, origin: 'auto_purchase',
       reference_id: purchase.id, date: purchaseData.purchase_date,
     });
+    if (cfErr) throw cfErr;
     if (purchaseData.bank_account_id) {
       await supabase.rpc('fn_bank_debit', {
         p_bank_account_id: purchaseData.bank_account_id, p_amount: purchaseData.total_amount,
@@ -679,22 +683,33 @@ Deno.serve(async (req) => {
 
         if (purchaseError) throw purchaseError;
 
-        if (computedItems.length > 0) {
-          const itemsToInsert = computedItems.map((it) => ({ ...it, purchase_id: purchase.id }));
-          const { error: itemsError } = await supabase.from('fin_purchase_items').insert(itemsToInsert);
-          if (itemsError) throw itemsError;
+        // Criação "tudo ou nada" (2026-09-17): se itens ou contas a pagar falharem, apaga o que já
+        // foi gravado desta compra (não sobra compra sem itens ou sem conta a pagar) e devolve 500.
+        try {
+          if (computedItems.length > 0) {
+            const itemsToInsert = computedItems.map((it) => ({ ...it, purchase_id: purchase.id }));
+            const { error: itemsError } = await supabase.from('fin_purchase_items').insert(itemsToInsert);
+            if (itemsError) throw itemsError;
 
-          await applyStockAndPricing(supabase, tenant_id, purchase, computedItems, user, supplierRecord?.id ?? null);
-          await upsertCatalogPresentations(supabase, tenant_id, purchase, computedItems, supplierRecord?.id ?? null);
+            await applyStockAndPricing(supabase, tenant_id, purchase, computedItems, user, supplierRecord?.id ?? null);
+            await upsertCatalogPresentations(supabase, tenant_id, purchase, computedItems, supplierRecord?.id ?? null);
+          }
+
+          await createBillsForPurchase(supabase, tenant_id, purchase, purchaseData, {
+            hasCustomInstallments,
+            customInstallments: Array.isArray(custom_installments) ? custom_installments : [],
+            isLegacyInstallment,
+            installmentCount: installment_count,
+            installmentIntervalDays: installment_interval_days,
+          });
+        } catch (createErr) {
+          console.error('[purchase-write] create_purchase falhou, desfazendo a compra:', createErr);
+          await supabase.from('fin_accounts_payable').delete().eq('reference_id', purchase.id).eq('tenant_id', tenant_id);
+          await supabase.from('fin_cash_flow').delete().eq('reference_id', purchase.id).eq('tenant_id', tenant_id).eq('origin', 'auto_purchase');
+          await supabase.from('fin_purchase_items').delete().eq('purchase_id', purchase.id).eq('tenant_id', tenant_id);
+          await supabase.from('fin_purchases').delete().eq('id', purchase.id).eq('tenant_id', tenant_id);
+          throw createErr;
         }
-
-        await createBillsForPurchase(supabase, tenant_id, purchase, purchaseData, {
-          hasCustomInstallments,
-          customInstallments: Array.isArray(custom_installments) ? custom_installments : [],
-          isLegacyInstallment,
-          installmentCount: installment_count,
-          installmentIntervalDays: installment_interval_days,
-        });
 
         result = { data: purchase, ...(avisosConversao.length ? { avisos_conversao: avisosConversao } : {}) };
         break;
@@ -831,11 +846,14 @@ Deno.serve(async (req) => {
         // que faz o mesmo com ajuste de quantidades). Compra antiga que já teve a
         // entrada na criação (stock_applied_at preenchido) não repete.
         const stockNow = !purchase.stock_applied_at;
-        if (stockNow) await applyStockEntry(supabase, tenant_id, purchase, (purchase.items ?? []) as Array<Record<string, unknown>>, user);
-        await supabase.from('fin_purchases').update({
+        // Trava atômica ANTES do estoque: de duas confirmações simultâneas, só uma passa.
+        const { data: locked, error: lockErr } = await supabase.from('fin_purchases').update({
           delivery_confirmed_at: confirmedAt, delivery_notes: delivery_notes || null,
           ...(stockNow ? { stock_applied_at: confirmedAt } : {}),
-        }).eq('id', purchase_id).eq('tenant_id', tenant_id);
+        }).eq('id', purchase_id).eq('tenant_id', tenant_id).is('delivery_confirmed_at', null).select('id');
+        if (lockErr) throw lockErr;
+        if (!locked || locked.length === 0) return new Response(JSON.stringify({ error: 'Recebimento já confirmado' }), { status: 409, headers: corsHeaders });
+        if (stockNow) await applyStockEntry(supabase, tenant_id, purchase, (purchase.items ?? []) as Array<Record<string, unknown>>, user);
 
         await supabase.from('fin_accounts_payable').update({ delivery_confirmed: true, delivery_confirmed_at: confirmedAt })
           .eq('reference_id', purchase_id).eq('tenant_id', tenant_id).neq('status', 'paid');
@@ -857,6 +875,17 @@ Deno.serve(async (req) => {
 
         if (fetchErr) return new Response(JSON.stringify({ error: fetchErr.message }), { status: 500, headers: corsHeaders });
         if (!purchase) return new Response(JSON.stringify({ error: 'Compra não encontrada' }), { status: 404, headers: corsHeaders });
+
+        // Conta já paga (total ou parcial) não pode sumir junto com a compra: estorne o pagamento antes.
+        const { data: billsDel, error: billsDelErr } = await supabase
+          .from('fin_accounts_payable').select('status, paid_amount')
+          .eq('reference_id', id).eq('tenant_id', tenant_id);
+        if (billsDelErr) return new Response(JSON.stringify({ error: billsDelErr.message }), { status: 500, headers: corsHeaders });
+        if ((billsDel ?? []).some((b: Record<string, unknown>) => b.status === 'paid' || Number(b.paid_amount ?? 0) > 0)) {
+          return new Response(JSON.stringify({
+            error: 'Esta compra tem conta a pagar já paga (total ou parcial). Estorne o pagamento antes de excluir.',
+          }), { status: 409, headers: corsHeaders });
+        }
 
         const purchaseItems = (purchase.items ?? []) as Array<Record<string, unknown>>;
         // Só estorna se o estoque chegou a entrar (recebimento confirmado, ou compra antiga)

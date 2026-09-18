@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { formatCurrency } from '@/lib/formatters';
 import SeletorDataNascimento from '@/components/base/SeletorDataNascimento';
 import type { SavedAddress } from '../useDeliveryData';
 
@@ -301,7 +302,7 @@ export default function EnderecoDelivery(props: Props) {
               <p className="text-[10px] text-amber-600 mt-1 font-medium">
                 {(() => {
                   const nb = neighborhoods.find(function (n) { return n.id === bairroId; });
-                  return nb ? 'Taxa de entrega: ' + (nb.delivery_fee > 0 ? 'R$ ' + nb.delivery_fee.toFixed(2) : 'Grátis') : '';
+                  return nb ? 'Taxa de entrega: ' + (nb.delivery_fee > 0 ? formatCurrency(nb.delivery_fee) : 'Grátis') : '';
                 })()}
               </p>
             ) : (
@@ -318,7 +319,7 @@ export default function EnderecoDelivery(props: Props) {
                 type="text"
                 value={rua}
                 onChange={function (e) { onRuaChange(e.target.value); }}
-                placeholder="Ex: Av. Paulista"
+                placeholder="Ex: Rua das Flores"
                 className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
                   (!rua.trim() ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')
                 }
@@ -548,7 +549,7 @@ export default function EnderecoDelivery(props: Props) {
                             </p>
                             <p className="text-[11px] font-medium text-amber-600">
                               {addr.neighborhood_delivery_fee > 0
-                                ? 'Taxa de entrega: R$ ' + addr.neighborhood_delivery_fee.toFixed(2)
+                                ? 'Taxa de entrega: ' + formatCurrency(addr.neighborhood_delivery_fee)
                                 : 'Entrega grátis'}
                             </p>
                           </div>
@@ -708,7 +709,7 @@ export default function EnderecoDelivery(props: Props) {
                 <p className="text-[10px] text-amber-600 mt-1 font-medium">
                   {(() => {
                     const nb = neighborhoods.find(function (n) { return n.id === formBairroId; });
-                    return nb ? 'Taxa de entrega: ' + (nb.delivery_fee > 0 ? 'R$ ' + nb.delivery_fee.toFixed(2) : 'Grátis') : '';
+                    return nb ? 'Taxa de entrega: ' + (nb.delivery_fee > 0 ? formatCurrency(nb.delivery_fee) : 'Grátis') : '';
                   })()}
                 </p>
               ) : (
@@ -731,7 +732,7 @@ export default function EnderecoDelivery(props: Props) {
                       setFormErrors(function (prev) { return { ...prev, rua: false }; });
                     }
                   }}
-                  placeholder="Ex: Av. Paulista"
+                  placeholder="Ex: Rua das Flores"
                   className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
                     (formErrors.rua ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')
                   }

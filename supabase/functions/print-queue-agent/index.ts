@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.47.0";
+import { utf8ToCp860Bytes, RETRY_DELAYS_MS, retryEligibleFilter, retryGiveUp, fallbackPrinterId } from "./regras.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -48,32 +49,6 @@ function bytesToBase64(bytes: Uint8Array): string {
     chunks.push(String.fromCharCode(...Array.from(bytes.subarray(i, end))));
   }
   return btoa(chunks.join(""));
-}
-
-function utf8ToCp860Bytes(str: string): Uint8Array {
-  const map: Record<string, number> = {
-    "\u00E1": 0xA0, "\u00C1": 0x86, "\u00E0": 0x85, "\u00C0": 0x91,
-    "\u00E2": 0x83, "\u00C2": 0x8F, "\u00E3": 0x84, "\u00C3": 0x8E,
-    "\u00E7": 0x87, "\u00C7": 0x80,
-    "\u00E9": 0x82, "\u00C9": 0x90, "\u00E8": 0x8A, "\u00C8": 0x92,
-    "\u00EA": 0x88, "\u00CA": 0x89,
-    "\u00ED": 0xA1, "\u00CD": 0x8B, "\u00EC": 0x8D, "\u00CC": 0x98,
-    "\u00F3": 0xA2, "\u00D3": 0x9F, "\u00F2": 0x95, "\u00D2": 0xA9,
-    "\u00F4": 0x93, "\u00D4": 0x8C, "\u00F5": 0x94, "\u00D5": 0x99,
-    "\u00FA": 0xA3, "\u00DA": 0x96, "\u00F9": 0x97, "\u00D9": 0x9D,
-    "\u00FC": 0x81, "\u00DC": 0x9A,
-    "\u00F1": 0xA4, "\u00D1": 0xA5,
-    "\u00AA": 0xA6, "\u00BA": 0xA7,
-    "\u00BF": 0xA8, "\u00A1": 0xAD,
-    "\u00B0": 0xF8,
-  };
-  const out = new Uint8Array(str.length);
-  for (let i = 0; i < str.length; i++) {
-    const ch = str[i];
-    const code = map[ch];
-    out[i] = code !== undefined ? code : (ch.charCodeAt(0) & 0xFF);
-  }
-  return out;
 }
 
 function toCp860(str: string): string {
@@ -261,6 +236,14 @@ function formatTicket(
 
   let out = INIT;
   out += CP860;
+
+  // Reimpressão manual (enqueue com p_force; o front marca payload.reimpressao).
+  // Evita a cozinha preparar de novo um pedido que já saiu.
+  if (payload.reimpressao === true) {
+    out += ALIGN_CENTER;
+    out += BOLD_ON + DOUBLE_HEIGHT + toCp860("*** REIMPRESSÃO ***") + NORMAL + BOLD_OFF + LINE_FEED;
+    out += LINE_FEED;
+  }
 
   // ========================================================
   // CABEÇALHO — Estação (pequeno, secundário)
@@ -480,30 +463,38 @@ serve(async (req) => {
       // de RECLAIM_STALE_MS sem atualizacao. Como o select de "pending" abaixo roda
       // na mesma chamada, o ticket recuperado ja sai impresso neste mesmo poll.
       // Incrementamos retry_count para que um ticket "veneno" (que sempre derruba o
-      // agente) nao fique em loop infinito — apos 5 reclaims ele para de ser pego.
+      // agente) nao fique em loop infinito — pela mesma regra do backoff, depois de
+      // RETRY_MIN_ATTEMPTS tentativas e RETRY_WINDOW_MS de vida ele vira 'failed'.
       const RECLAIM_STALE_MS = 2 * 60 * 1000; // 2 min
-      const staleThreshold = new Date(Date.now() - RECLAIM_STALE_MS).toISOString();
+      const pollNowMs = Date.now();
+      const staleThreshold = new Date(pollNowMs - RECLAIM_STALE_MS).toISOString();
       const { data: stuck } = await supabaseAdmin
         .from("print_queue")
-        .select("id, retry_count")
+        .select("id, retry_count, created_at")
         .eq("tenant_id", tenant_id)
         .eq("status", "printing")
-        .lt("retry_count", 5)
         .lt("updated_at", staleThreshold);
 
       if (stuck && stuck.length > 0) {
-        console.log(`[print-queue-agent] reclaim: ${stuck.length} ticket(s) travado(s) em printing -> pending`);
-        const nowIso = new Date().toISOString();
-        for (const s of stuck as Array<{ id: string; retry_count: number | null }>) {
+        console.log(`[print-queue-agent] reclaim: ${stuck.length} ticket(s) travado(s) em printing`);
+        // updated_at recuado pelo maior atraso: o ticket recuperado ja passa no filtro
+        // de backoff e sai impresso neste mesmo poll (ja esperou 2 min travado).
+        const reclaimUpdatedAt = new Date(pollNowMs - RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1]).toISOString();
+        for (const s of stuck as Array<{ id: string; retry_count: number | null; created_at: string | null }>) {
+          const nextRetry = (s.retry_count ?? 0) + 1;
+          const giveUp = retryGiveUp(nextRetry, s.created_at, pollNowMs);
           await supabaseAdmin
             .from("print_queue")
             .update({
-              status: "pending",
-              retry_count: (s.retry_count ?? 0) + 1,
-              last_error: "Reclaim: agente caiu/desconectou antes de confirmar a impressao",
-              updated_at: nowIso,
+              status: giveUp ? "failed" : "pending",
+              retry_count: nextRetry,
+              last_error: giveUp
+                ? "Reclaim: agente caiu antes de confirmar varias vezes; desistindo apos 15 min"
+                : "Reclaim: agente caiu/desconectou antes de confirmar a impressao",
+              updated_at: giveUp ? new Date(pollNowMs).toISOString() : reclaimUpdatedAt,
             })
-            .eq("id", s.id);
+            .eq("id", s.id)
+            .eq("status", "printing");
         }
       }
 
@@ -512,7 +503,7 @@ serve(async (req) => {
         .select("*")
         .eq("tenant_id", tenant_id)
         .eq("status", "pending")
-        .lt("retry_count", 5)
+        .or(retryEligibleFilter(Date.now()))
         .order("created_at", { ascending: true })
         .limit(limit);
 
@@ -580,6 +571,15 @@ serve(async (req) => {
           printerId = directId; // ja e um id de impressora valido
         } else {
           printerId = mapaEstacoes[stationKey] || mapaEstacoes[directId] || defaultPrinterId;
+          if (!printerById[printerId]) {
+            // Estacao sem mapeamento (ou mapeada para impressora apagada): antes
+            // saia "sem IP" e falhava. Aplica a regra de fallbackPrinterId.
+            const fb = fallbackPrinterId(stationKey, mapaEstacoes, printersList, printerById);
+            if (fb) {
+              console.log(`[print-queue-agent] station_key=${stationKey || "?"} sem impressora mapeada -> fallback ${fb}`);
+              printerId = fb;
+            }
+          }
         }
         const resolved = printerById[printerId] || ({} as { ip?: string; porta?: number; papel?: string; nome?: string });
         const papelTicket: "80mm" | "58mm" = resolved.papel === "58mm" ? "58mm" : "80mm";
@@ -677,14 +677,15 @@ serve(async (req) => {
       if (status === "failed") {
         const { data: current } = await supabaseAdmin
           .from("print_queue")
-          .select("retry_count")
+          .select("retry_count, created_at")
           .eq("id", queue_id)
           .single();
 
         const nextRetry = (current?.retry_count ?? 0) + 1;
         updates.retry_count = nextRetry;
         if (errMsg) updates.last_error = errMsg;
-        updates.status = nextRetry >= 5 ? "failed" : "pending";
+        // updated_at (= agora) e o marco do backoff; ver RETRY_DELAYS_MS.
+        updates.status = retryGiveUp(nextRetry, current?.created_at as string | undefined, Date.now()) ? "failed" : "pending";
       }
 
       const { error: confirmErr } = await supabaseAdmin

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { formatCurrency } from '@/lib/formatters';
 import type { FocusEvent } from 'react';
 import MapaPin from '@/components/feature/MapaPin';
 import SeletorDataNascimento from '@/components/base/SeletorDataNascimento';
@@ -376,7 +377,7 @@ export default function EnderecoPinDelivery(props: Props) {
                   </div>
                 </div>
                 <span className="text-base font-black text-amber-600">
-                  {deliveryQuote.taxa > 0 ? 'R$ ' + deliveryQuote.taxa.toFixed(2) : 'Grátis'}
+                  {deliveryQuote.taxa > 0 ? formatCurrency(deliveryQuote.taxa) : 'Grátis'}
                 </span>
               </div>
             </div>

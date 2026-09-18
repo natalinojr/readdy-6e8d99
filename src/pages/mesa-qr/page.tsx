@@ -7,6 +7,7 @@ import MeusPedidosModalQR from './components/MeusPedidosModalQR';
 import PagarContaModalQR from './components/PagarContaModalQR';
 import EditarItemMesaQRModal from './components/EditarItemMesaQRModal';
 import { useRef } from 'react';
+import { formatCurrency } from '@/lib/formatters';
 
 export default function MesaQRPage() {
   const data = useMesaQRData();
@@ -290,7 +291,7 @@ export default function MesaQRPage() {
                 <span className="text-sm font-bold">Ver pedido</span>
               </div>
               <span className="text-sm font-bold">
-                R$ {totalValor.toFixed(2)}
+                {formatCurrency(totalValor)}
               </span>
             </button>
           </div>

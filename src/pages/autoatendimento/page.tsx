@@ -21,6 +21,7 @@ import IdentificacaoKiosk from './components/IdentificacaoKiosk';
 import FormaPagamentoKiosk from './components/FormaPagamentoKiosk';
 import KioskConfigModal from './components/KioskConfigModal';
 import PINGate, { isPINAtivo } from './components/PINGate';
+import { validarPinGerente, MAX_TENTATIVAS_PIN_GERENTE } from '../../lib/kioskManagerPin';
 import { type ItemPedidoCliente } from '../../types/mesaCliente';
 import type { DestinoInfo } from '../../contexts/PDVContext';
 
@@ -116,6 +117,13 @@ function AutoatendimentoPageInner() {
   const [showLogoutPin, setShowLogoutPin] = useState(false);
   const [logoutPin, setLogoutPin] = useState('');
   const [logoutErro, setLogoutErro] = useState('');
+  // Sair do totem exige matrícula + PIN de gerente/admin da loja (AuthUser não tem matrícula)
+  const [logoutCampo, setLogoutCampo] = useState<'matricula' | 'pin'>('matricula');
+  const [logoutMatricula, setLogoutMatricula] = useState('');
+  const [logoutTentativas, setLogoutTentativas] = useState(0);
+  const [logoutLoading, setLogoutLoading] = useState(false);
+  const logoutBloqueado = logoutTentativas >= MAX_TENTATIVAS_PIN_GERENTE;
+  const logoutDisplay = logoutCampo === 'matricula' ? logoutMatricula : logoutPin;
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [destino, setDestino] = useState<Destino>(null);
   const [carrinho, setCarrinho] = useState<ItemPedidoCliente[]>([]);
@@ -123,6 +131,10 @@ function AutoatendimentoPageInner() {
   const [identifSenha, setIdentifSenha] = useState('');
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
   const [pendingOrderNumber, setPendingOrderNumber] = useState<number | null>(null);
+  // Pedido pendente já pago (Pix confirmado ou pagamento gravado): não pode mais ser cancelado no totem.
+  const [pedidoPago, setPedidoPago] = useState(false);
+  const pedidoPagoRef = useRef(false);
+  const marcarPedidoPago = useCallback((pago: boolean) => { pedidoPagoRef.current = pago; setPedidoPago(pago); }, []);
   // Forma de pagamento escolhida pelo cliente (modo entrega)
   const [formaPagamentoId, setFormaPagamentoId] = useState<string | null>(null);
   const [formaPagamentoNome, setFormaPagamentoNome] = useState<string | null>(null);
@@ -339,7 +351,7 @@ function AutoatendimentoPageInner() {
   const criacaoEmAndamentoRef = useRef<Promise<string | null> | null>(null);
 
   // Cria o pedido no banco e retorna o ID e número
-  const criarPedidoBanco = useCallback(async (paidPixPaymentId?: string): Promise<{ id: string; numero: number } | null> => {
+  const criarPedidoBanco = useCallback(async (paidPixPaymentId?: string, formaBalcaoNome?: string): Promise<{ id: string; numero: number } | null> => {
     let { tenantId, sessionId } = getTenantAndSession();
 
     console.log('[Autoatendimento] criarPedidoBanco iniciando:', {
@@ -391,9 +403,19 @@ function AutoatendimentoPageInner() {
       destinoInfo = { tipo: 'hora' };
     }
 
-    const notaPagamento = pagarNaEntrega && formaPagamentoNome
-      ? `Pagamento na entrega: ${formaPagamentoNome}`
-      : null;
+    // Forma a pagar no balcão: a do modo "entrega" (tela própria) ou a escolhida no
+    // PagamentoKiosk (cartão/dinheiro sem maquininha integrada). Pix pago não entra aqui.
+    const formaAPagar = typeof paidPixPaymentId === 'string'
+      ? null
+      : (formaBalcaoNome || (pagarNaEntrega ? formaPagamentoNome : null));
+    // "Pagamento na entrega: X" é o marcador que o KDS/Gestor já leem (KDSContext › paymentMethodName).
+    const notaPagamento = formaAPagar ? `Pagamento na entrega: ${formaAPagar}` : null;
+    const paraViagem = destino === 'viagem';
+    // Observação geral do pedido (orders.notes).
+    const notasPedido = [
+      ...(paraViagem ? ['[VIAGEM]'] : []),
+      ...(formaAPagar ? [`Pagar no balcão: ${formaAPagar}`] : []),
+    ].join(' · ') || null;
 
     const itensPayload = carrinho.map((item, idx) => ({
       item_id: item.itemId && /^[0-9a-f-]{36}$/i.test(item.itemId) ? item.itemId : null,
@@ -412,6 +434,8 @@ function AutoatendimentoPageInner() {
       })),
       observations: [
         ...(item.observacao ? [{ text: item.observacao }] : []),
+        // Em todos os itens: no KDS cada estação só vê os próprios itens.
+        ...(paraViagem ? [{ text: '[VIAGEM]' }] : []),
         ...(idx === 0 && notaPagamento ? [{ text: notaPagamento }] : []),
       ],
     }));
@@ -457,10 +481,11 @@ function AutoatendimentoPageInner() {
           subtotal,
           total_amount: subtotal,
           is_training: user?.modoTreino ?? false,
+          notes: notasPedido,
           // Pix já pago: o pedido nasce pago em vez de ficar "em aberto" até o record_payment.
           ...(typeof paidPixPaymentId === 'string' ? { paid_pix_payment_id: paidPixPaymentId } : {}),
         },
-        { externalToken: kioskToken, paraViagem: destino === 'viagem' },
+        { externalToken: kioskToken, paraViagem },
       );
 
       const orderNumber = parseInt(result.number.replace(/\D/g, '').slice(-4), 10) || 0;
@@ -478,11 +503,11 @@ function AutoatendimentoPageInner() {
       console.error('[Autoatendimento] Exceção ao criar pedido após retries:', e);
       return null;
     }
-  }, [carrinho, identifNome, identifSenha, modoIdentificacao, pagarNaEntrega, formaPagamentoNome, getTenantAndSession, submitOrder, user?.modoTreino, kioskSession?.accessToken]);
+  }, [carrinho, identifNome, identifSenha, modoIdentificacao, pagarNaEntrega, formaPagamentoNome, destino, getTenantAndSession, submitOrder, user?.modoTreino, kioskSession?.accessToken]);
 
 
   // paidPixPaymentId só vale como texto: esta função também é usada direto em botões (recebe o evento).
-  const handleAvancarPagamento = useCallback(async (paidPixPaymentId?: unknown): Promise<string | null> => {
+  const handleAvancarPagamento = useCallback(async (paidPixPaymentId?: unknown, formaBalcaoNome?: unknown): Promise<string | null> => {
     // Padrão ref+state duplo:
     // - criarPedidoRef bloqueia no mesmo tick (state não atualiza rápido o suficiente)
     // - pendingOrderId bloqueia chamadas subsequentes após o primeiro ciclo
@@ -497,11 +522,15 @@ function AutoatendimentoPageInner() {
     criarPedidoRef.current = true;
     const criacao = (async (): Promise<string | null> => {
       console.log('[Autoatendimento] handleAvancarPagamento: chamando criarPedidoBanco...');
-      const result = await criarPedidoBanco(typeof paidPixPaymentId === 'string' ? paidPixPaymentId : undefined);
+      const result = await criarPedidoBanco(
+        typeof paidPixPaymentId === 'string' ? paidPixPaymentId : undefined,
+        typeof formaBalcaoNome === 'string' ? formaBalcaoNome : undefined,
+      );
       console.log('[Autoatendimento] handleAvancarPagamento: pedido criado =', result);
       if (result) {
         setPendingOrderId(result.id);
         setPendingOrderNumber(result.numero);
+        if (typeof paidPixPaymentId === 'string') marcarPedidoPago(true);
 
         // Impressão é gerenciada pelo useOrderSubmit via fila centralizada
         return result.id;
@@ -516,7 +545,7 @@ function AutoatendimentoPageInner() {
       criarPedidoRef.current = false;
       criacaoEmAndamentoRef.current = null;
     }
-  }, [criarPedidoBanco, pendingOrderId]);
+  }, [criarPedidoBanco, pendingOrderId, marcarPedidoPago]);
 
   // Grava o pagamento do pedido no caixa aberto, SEM voltar o tablet pro início — o Pix
   // confirmado precisa mostrar a tela "Pedido confirmado" depois de gravar. Lança erro se falhar.
@@ -559,6 +588,7 @@ function AutoatendimentoPageInner() {
           console.error('[Autoatendimento] record_payment error:', payErr);
           throw new Error(typeof payErr === 'string' ? payErr : 'Falha ao registrar pagamento no caixa');
         } else {
+          marcarPedidoPago(true);
           // O builder do Supabase não tem .catch (só .then): .catch aqui lançava erro DEPOIS do pagamento gravado.
           supabase.rpc('fn_update_paid_by_pdv', { p_order_id: effectiveOrderId, p_paid_by_pdv: 'self_service' }).then(() => {}, () => {});
         }
@@ -586,7 +616,7 @@ function AutoatendimentoPageInner() {
       } catch { /* non-fatal */ }
       throw new Error('Não é possível registrar o pagamento sem um caixa (gaveta) aberto. Solicite ao operador que abra o caixa no PDV.');
     }
-  }, [caixa, getTenantAndSession, carrinho, kioskInvoke]);
+  }, [caixa, getTenantAndSession, carrinho, kioskInvoke, marcarPedidoPago]);
 
   // orderId explícito: quem acabou de criar o pedido ainda vê pendingOrderId antigo (null)
   // nesta callback — sem ele o pagamento era pulado em silêncio.
@@ -701,6 +731,7 @@ function AutoatendimentoPageInner() {
     setIdentifSenha('');
     setPendingOrderId(null);
     setPendingOrderNumber(null);
+    marcarPedidoPago(false);
     setFormaPagamentoId(null);
     setFormaPagamentoNome(null);
     setAlertaParcialKiosk(null);
@@ -712,7 +743,9 @@ function AutoatendimentoPageInner() {
   ]);
 
   const handleCancelar = useCallback(async () => {
-    if (pendingOrderId) {
+    // Pedido já pago não é cancelado aqui (o dinheiro ficaria sem pedido): só volta à tela inicial;
+    // o pedido segue para a cozinha e o estorno é com o caixa. O servidor também recusa (order_paid_use_refund).
+    if (pendingOrderId && !pedidoPagoRef.current) {
       const { tenantId } = getTenantAndSession();
       if (tenantId) {
         try {
@@ -731,11 +764,51 @@ function AutoatendimentoPageInner() {
     setIdentifSenha('');
     setPendingOrderId(null);
     setPendingOrderNumber(null);
+    marcarPedidoPago(false);
     setFormaPagamentoId(null);
     setFormaPagamentoNome(null);
     setAlertaParcialKiosk(null);
     setEtapa('welcome');
-  }, [pendingOrderId, getTenantAndSession, kioskInvoke]);
+  }, [pendingOrderId, getTenantAndSession, kioskInvoke, marcarPedidoPago]);
+
+  // ── Inatividade: cliente largou o totem no meio do pedido ──────────────────
+  // 90s sem toque → aviso "Ainda está aí?" com contagem de 15s → limpa o carrinho e
+  // volta à tela inicial. Não roda na tela inicial nem com o modal de configuração aberto.
+  // Na etapa de pagamento o prazo é maior (3 min) e NUNCA roda com cobrança em andamento
+  // (Pix gerado, cartão na maquininha, registrando/confirmado) nem com pedido já criado.
+  const INATIVIDADE_MS = etapa === 'pagamento' ? 180_000 : 90_000;
+  const AVISO_SEGUNDOS = 15;
+  const ultimaAtividadeRef = useRef(Date.now());
+  const [avisoInatividade, setAvisoInatividade] = useState<number | null>(null);
+  const [cobrancaEmAndamento, setCobrancaEmAndamento] = useState(false);
+  const monitorarInatividade = etapa !== 'welcome' && !showConfigModal
+    && !(etapa === 'pagamento' && (cobrancaEmAndamento || !!pendingOrderId));
+  const handleCancelarRef = useRef(handleCancelar);
+  handleCancelarRef.current = handleCancelar;
+
+  useEffect(() => {
+    ultimaAtividadeRef.current = Date.now();
+    setAvisoInatividade(null);
+    if (!monitorarInatividade) return;
+    const marcar = () => { ultimaAtividadeRef.current = Date.now(); };
+    const eventos = ['pointerdown', 'touchstart', 'keydown', 'wheel'] as const;
+    eventos.forEach((ev) => window.addEventListener(ev, marcar, { capture: true, passive: true }));
+    const interval = setInterval(() => {
+      const parado = Date.now() - ultimaAtividadeRef.current;
+      if (parado < INATIVIDADE_MS) { setAvisoInatividade(null); return; }
+      const restante = AVISO_SEGUNDOS - Math.floor((parado - INATIVIDADE_MS) / 1000);
+      if (restante <= 0) {
+        setAvisoInatividade(null);
+        handleCancelarRef.current();
+        return;
+      }
+      setAvisoInatividade(restante);
+    }, 1000);
+    return () => {
+      eventos.forEach((ev) => window.removeEventListener(ev, marcar, { capture: true }));
+      clearInterval(interval);
+    };
+  }, [monitorarInatividade, etapa, INATIVIDADE_MS]);
 
   const marcarTotemOffline = useCallback(async () => {
     const userId = kioskSession?.kioskUserId ?? user?.id;
@@ -747,29 +820,66 @@ function AutoatendimentoPageInner() {
     }
   }, [kioskSession?.kioskUserId, user?.id]);
 
+  const digitarLogout = (d: string) => {
+    setLogoutErro('');
+    if (logoutCampo === 'matricula') setLogoutMatricula((m) => (m.length < 8 ? m + d : m));
+    else setLogoutPin((p) => (p.length < 8 ? p + d : p));
+  };
+  // Apagar com o PIN vazio volta para a matrícula
+  const apagarLogout = () => {
+    setLogoutErro('');
+    if (logoutCampo === 'matricula') { setLogoutMatricula((m) => m.slice(0, -1)); return; }
+    if (!logoutPin) { setLogoutCampo('matricula'); return; }
+    setLogoutPin((p) => p.slice(0, -1));
+  };
+  const limparLogout = () => {
+    setLogoutErro('');
+    if (logoutCampo === 'matricula') setLogoutMatricula('');
+    else setLogoutPin('');
+  };
+  // Fechar não zera as tentativas: o bloqueio só sai recarregando a página
+  const fecharLogout = () => {
+    setShowLogoutPin(false);
+    setLogoutPin('');
+    setLogoutMatricula('');
+    setLogoutCampo('matricula');
+    setLogoutErro(logoutBloqueado ? 'Muitas tentativas. Tente novamente mais tarde.' : '');
+  };
+
   const handleLogoutComPin = useCallback(async () => {
-    if (!logoutPin.trim()) { setLogoutErro('Digite o PIN'); return; }
-    if (!user?.matricula) {
-      await marcarTotemOffline();
-      logout();
-      navigate('/login');
+    if (logoutBloqueado) { setLogoutErro('Muitas tentativas. Tente novamente mais tarde.'); return; }
+    if (logoutCampo === 'matricula') {
+      if (!logoutMatricula.trim()) { setLogoutErro('Digite a matrícula'); return; }
+      setLogoutCampo('pin');
+      setLogoutErro('');
       return;
     }
+    if (!logoutPin.trim()) { setLogoutErro('Digite o PIN'); return; }
+    setLogoutLoading(true);
     try {
-      const { data, error } = await invokeWithAuth('login-pin', {
-        body: { badge_number: user.matricula, pin: logoutPin },
+      const r = await validarPinGerente(kioskInvoke, {
+        matricula: logoutMatricula,
+        pin: logoutPin,
+        tenantId: kioskSession?.tenantId ?? user?.tenantId,
       });
-      if (error || !(data as Record<string, unknown>)?.user) {
-        setLogoutErro('PIN incorreto');
+      if (!r.ok) {
+        if (r.contaTentativa) {
+          const n = logoutTentativas + 1;
+          setLogoutTentativas(n);
+          setLogoutPin('');
+          setLogoutErro(n >= MAX_TENTATIVAS_PIN_GERENTE ? 'Muitas tentativas. Tente novamente mais tarde.' : r.erro);
+        } else {
+          setLogoutErro(r.erro);
+        }
         return;
       }
       await marcarTotemOffline();
       logout();
       navigate('/login');
-    } catch {
-      setLogoutErro('Erro ao validar PIN');
+    } finally {
+      setLogoutLoading(false);
     }
-  }, [logoutPin, user, logout, navigate, marcarTotemOffline]);
+  }, [logoutBloqueado, logoutCampo, logoutMatricula, logoutPin, logoutTentativas, kioskInvoke, kioskSession?.tenantId, user?.tenantId, logout, navigate, marcarTotemOffline]);
 
   if (estado === 'sem_sessao') {
     return (
@@ -813,48 +923,50 @@ function AutoatendimentoPageInner() {
           </button>
         ) : (
           <div className="mt-8 flex flex-col items-center gap-4 w-full max-w-xs">
-            <p className="text-zinc-400 text-sm font-semibold">Digite seu PIN para sair</p>
+            <p className="text-zinc-400 text-sm font-semibold">{logoutCampo === 'matricula' ? 'Matrícula do gerente para sair' : 'PIN do gerente para sair'}</p>
             {/* Display do PIN */}
             <div className="flex gap-3 justify-center">
-              {Array.from({ length: Math.max(4, logoutPin.length) }).map((_, i) => (
+              {Array.from({ length: Math.max(4, logoutDisplay.length) }).map((_, i) => (
                 <div key={i} className={`w-10 h-10 rounded-xl border-2 flex items-center justify-center text-xl font-black transition-all ${
-                  i < logoutPin.length ? 'border-amber-500 bg-amber-500/10 text-amber-400' : 'border-zinc-700 bg-zinc-800 text-zinc-600'
+                  i < logoutDisplay.length ? 'border-amber-500 bg-amber-500/10 text-amber-400' : 'border-zinc-700 bg-zinc-800 text-zinc-600'
                 }`}>
-                  {i < logoutPin.length ? '●' : '○'}
+                  {i < logoutDisplay.length ? (logoutCampo === 'matricula' ? logoutDisplay[i] : '●') : '○'}
                 </div>
               ))}
             </div>
-            {logoutErro && <p className="text-red-400 text-sm font-semibold">{logoutErro}</p>}
+            {/* Travado: a mensagem fica enquanto o bloqueio durar (digitar não a apaga) */}
+            {(logoutBloqueado || logoutErro) && <p className="text-red-400 text-sm font-semibold">{logoutBloqueado ? 'Muitas tentativas. Tente novamente mais tarde.' : logoutErro}</p>}
             {/* Teclado numérico */}
             <div className="grid grid-cols-3 gap-2 w-full">
               {['1','2','3','4','5','6','7','8','9'].map((n) => (
-                <button key={n} onClick={() => { if (logoutPin.length < 8) { setLogoutPin(p => p + n); setLogoutErro(''); } }}
+                <button key={n} onClick={() => digitarLogout(n)}
                   className="h-14 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-white text-xl font-bold rounded-xl cursor-pointer transition-colors">
                   {n}
                 </button>
               ))}
-              <button onClick={() => { setLogoutPin(''); setLogoutErro(''); }}
+              <button onClick={limparLogout}
                 className="h-14 flex items-center justify-center bg-zinc-800 hover:bg-red-900/40 text-zinc-500 hover:text-red-400 text-sm font-bold rounded-xl cursor-pointer transition-colors">
                 <i className="ri-delete-bin-line text-lg" />
               </button>
-              <button onClick={() => { if (logoutPin.length < 8) { setLogoutPin(p => p + '0'); setLogoutErro(''); } }}
+              <button onClick={() => digitarLogout('0')}
                 className="h-14 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-white text-xl font-bold rounded-xl cursor-pointer transition-colors">
                 0
               </button>
-              <button onClick={() => { setLogoutPin(p => p.slice(0, -1)); setLogoutErro(''); }}
+              <button onClick={apagarLogout}
                 className="h-14 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-sm font-bold rounded-xl cursor-pointer transition-colors">
                 <i className="ri-delete-back-2-line text-lg" />
               </button>
             </div>
             <div className="flex gap-3 w-full">
               <button
-                onClick={() => { setShowLogoutPin(false); setLogoutPin(''); setLogoutErro(''); }}
+                onClick={fecharLogout}
                 className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 font-semibold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleLogoutComPin}
+                disabled={logoutLoading || logoutBloqueado}
                 className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
               >
                 Confirmar
@@ -901,48 +1013,49 @@ function AutoatendimentoPageInner() {
           </button>
         ) : (
           <div className="fixed bottom-5 left-5 z-[100] flex flex-col items-center gap-3 w-72 bg-zinc-900 border border-zinc-700 rounded-2xl p-4 shadow-2xl">
-            <p className="text-zinc-300 text-sm font-semibold self-start">Digite seu PIN para sair</p>
+            <p className="text-zinc-300 text-sm font-semibold self-start">{logoutCampo === 'matricula' ? 'Matrícula do gerente para sair' : 'PIN do gerente para sair'}</p>
             {/* Display do PIN */}
             <div className="flex gap-2 justify-center w-full">
-              {Array.from({ length: Math.max(4, logoutPin.length) }).map((_, i) => (
+              {Array.from({ length: Math.max(4, logoutDisplay.length) }).map((_, i) => (
                 <div key={i} className={`flex-1 h-10 rounded-xl border-2 flex items-center justify-center text-lg font-black transition-all ${
-                  i < logoutPin.length ? 'border-amber-500 bg-amber-500/10 text-amber-400' : 'border-zinc-700 bg-zinc-800 text-zinc-600'
+                  i < logoutDisplay.length ? 'border-amber-500 bg-amber-500/10 text-amber-400' : 'border-zinc-700 bg-zinc-800 text-zinc-600'
                 }`}>
-                  {i < logoutPin.length ? '●' : '○'}
+                  {i < logoutDisplay.length ? (logoutCampo === 'matricula' ? logoutDisplay[i] : '●') : '○'}
                 </div>
               ))}
             </div>
-            {logoutErro && <p className="text-red-400 text-xs font-semibold self-start">{logoutErro}</p>}
+            {(logoutBloqueado || logoutErro) && <p className="text-red-400 text-xs font-semibold self-start">{logoutBloqueado ? 'Muitas tentativas. Tente novamente mais tarde.' : logoutErro}</p>}
             {/* Teclado numérico */}
             <div className="grid grid-cols-3 gap-1.5 w-full">
               {['1','2','3','4','5','6','7','8','9'].map((n) => (
-                <button key={n} onClick={() => { if (logoutPin.length < 8) { setLogoutPin(p => p + n); setLogoutErro(''); } }}
+                <button key={n} onClick={() => digitarLogout(n)}
                   className="h-12 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-white text-lg font-bold rounded-xl cursor-pointer transition-colors">
                   {n}
                 </button>
               ))}
-              <button onClick={() => { setLogoutPin(''); setLogoutErro(''); }}
+              <button onClick={limparLogout}
                 className="h-12 flex items-center justify-center bg-zinc-800 hover:bg-red-900/40 text-zinc-500 hover:text-red-400 rounded-xl cursor-pointer transition-colors">
                 <i className="ri-delete-bin-line text-base" />
               </button>
-              <button onClick={() => { if (logoutPin.length < 8) { setLogoutPin(p => p + '0'); setLogoutErro(''); } }}
+              <button onClick={() => digitarLogout('0')}
                 className="h-12 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-white text-lg font-bold rounded-xl cursor-pointer transition-colors">
                 0
               </button>
-              <button onClick={() => { setLogoutPin(p => p.slice(0, -1)); setLogoutErro(''); }}
+              <button onClick={apagarLogout}
                 className="h-12 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-xl cursor-pointer transition-colors">
                 <i className="ri-delete-back-2-line text-base" />
               </button>
             </div>
             <div className="flex gap-2 w-full">
               <button
-                onClick={() => { setShowLogoutPin(false); setLogoutPin(''); setLogoutErro(''); }}
+                onClick={fecharLogout}
                 className="flex-1 py-2.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-400 text-xs font-semibold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleLogoutComPin}
+                disabled={logoutLoading || logoutBloqueado}
                 className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
               >
                 Confirmar
@@ -960,15 +1073,15 @@ function AutoatendimentoPageInner() {
   return (
     <div className="fixed inset-0 bg-zinc-950 flex flex-col overflow-hidden">
       {etapa !== 'welcome' && etapa !== 'destino' && (
-        <div className="flex items-center justify-between px-6 py-3 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between gap-3 px-4 lg:px-6 py-3 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
             <div className="w-8 h-8 flex items-center justify-center bg-amber-500 rounded-xl">
               <span className="text-base">🍔</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-white font-black text-base">ERPOS V2 — Autoatendimento</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="hidden xl:inline text-white font-black text-base whitespace-nowrap">ERPOS V2 — Autoatendimento</span>
               {destino && (
-                <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                <span className={`text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap ${
                   destino === 'aqui' ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-700 text-zinc-300'
                 }`}>
                   <i className={`mr-1 ${destino === 'aqui' ? 'ri-store-2-line' : 'ri-shopping-bag-3-line'}`} />
@@ -978,7 +1091,9 @@ function AutoatendimentoPageInner() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Indicadores de etapa: só em telas largas; em tablet (768–1024px) mostram apenas o número
+              da etapa atual para os botões (engrenagem, tela cheia, Cancelar) nunca saírem da tela. */}
+          <div className="hidden lg:flex items-center gap-2 min-w-0">
             {etapasVisiveis.map((e, i) => (
               <div key={e} className="flex items-center gap-2">
                 <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${
@@ -989,14 +1104,19 @@ function AutoatendimentoPageInner() {
                     : 'bg-zinc-800 text-zinc-500'
                 }`}>
                   <span>{i + 1}</span>
-                  <span>{ETAPAS_LABEL[e]}</span>
+                  <span className={etapa === e ? '' : 'hidden xl:inline'}>{ETAPAS_LABEL[e]}</span>
                 </div>
                 {i < etapasVisiveis.length - 1 && <div className="w-4 h-0.5 bg-zinc-700" />}
               </div>
             ))}
           </div>
+          {etapaIndex >= 0 && (
+            <span className="lg:hidden flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-500 text-zinc-950 whitespace-nowrap">
+              {etapaIndex + 1}/{etapasVisiveis.length} {ETAPAS_LABEL[etapa as typeof etapasVisiveis[number]]}
+            </span>
+          )}
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={() => setShowConfigModal(true)}
               title="Configurações do totem"
@@ -1023,17 +1143,43 @@ function AutoatendimentoPageInner() {
                 </span>
               </div>
             )}
-            <button
-              onClick={handleCancelar}
-              className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
-            >
-              Cancelar
-            </button>
+            {pedidoPago ? (
+              <span className="px-4 py-1.5 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold rounded-xl whitespace-nowrap">
+                Pedido pago — procure o caixa
+              </span>
+            ) : (
+              <button
+                onClick={handleCancelar}
+                className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
+              >
+                Cancelar
+              </button>
+            )}
           </div>
         </div>
       )}
 
       {showConfigModal && <KioskConfigModal onClose={() => setShowConfigModal(false)} />}
+
+      {avisoInatividade !== null && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 p-6"
+          onPointerDown={() => { ultimaAtividadeRef.current = Date.now(); setAvisoInatividade(null); }}
+        >
+          <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-8 max-w-md w-full text-center">
+            <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center bg-amber-500/15 rounded-2xl">
+              <i className="ri-time-line text-4xl text-amber-400" />
+            </div>
+            <h2 className="text-3xl font-black text-white mb-2">Ainda está aí?</h2>
+            <p className="text-zinc-400 text-lg mb-6">
+              Seu pedido será cancelado em <span className="text-amber-400 font-black">{avisoInatividade}s</span>
+            </p>
+            <button className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xl rounded-2xl cursor-pointer">
+              Continuar pedido
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-hidden">
         {etapa === 'destino' && (
@@ -1089,6 +1235,7 @@ function AutoatendimentoPageInner() {
             onEntrarPagamento={handleAvancarPagamento}
             onRegistrarPagamento={registrarPagamento}
             onConcluir={handleConcluir}
+            onCobrancaEmAndamento={setCobrancaEmAndamento}
           />
         )}
       </div>

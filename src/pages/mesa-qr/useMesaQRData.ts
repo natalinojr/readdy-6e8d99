@@ -579,8 +579,29 @@ export function useMesaQRData() {
       };
     });
 
+    // Idempotência: o mesmo carrinho reenviado (retry após falha de rede, recarga da página)
+    // reusa o client_request_id — o servidor devolve o pedido já criado em vez de duplicar.
+    const requestKey = 'mesa_order_req_' + (qrToken || 'default');
+    const cartSignature = JSON.stringify([participant.id, itemsPayload]);
+    let clientRequestId = '';
+    try {
+      const saved = JSON.parse(localStorage.getItem(requestKey) || 'null');
+      if (saved && saved.sig === cartSignature && typeof saved.id === 'string') clientRequestId = saved.id;
+    } catch { /* ignora */ }
+    if (!clientRequestId) {
+      clientRequestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+          const r = Math.random() * 16 | 0;
+          return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+        });
+      try { localStorage.setItem(requestKey, JSON.stringify({ id: clientRequestId, sig: cartSignature })); } catch { /* ignora */ }
+    }
+    const clearRequestId = function () { try { localStorage.removeItem(requestKey); } catch { /* ignora */ } };
+
     const payload = {
       action: 'create_mesa_order',
+      client_request_id: clientRequestId,
       tenant_id: table.tenant_id,
       table_session_id: queueMode ? null : tableSessionId,
       session_id: caixaSessionId,    // sessions.id real (sessão de caixa)
@@ -599,6 +620,9 @@ export function useMesaQRData() {
       body: JSON.stringify(payload),
     })
       .then(function (res) {
+        // Resposta definitiva do servidor (sucesso ou recusa 4xx): a próxima tentativa é um
+        // envio novo. Falha de rede / 5xx mantém o id para o retry não duplicar o pedido.
+        if (res.status < 500) clearRequestId();
         return res.json();
       })
       .then(function (data) {
@@ -659,7 +683,7 @@ export function useMesaQRData() {
             printItems,
             printDestino,
             undefined,
-            subtotal,
+            typeof data.data?.total_amount === 'number' ? data.data.total_amount : subtotal,
             false,
             participant.access_token,
           ).catch(function (e: unknown) {

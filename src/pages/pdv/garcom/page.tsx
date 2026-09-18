@@ -6,7 +6,9 @@ import type { CarrinhoItem, DestinoInfo, OpcaoSelecionada } from '../../../conte
 import { useKDS } from '../../../contexts/KDSContext';
 import { useMesas } from '../../../contexts/MesasContext';
 import { useAuth } from '../../../contexts/AuthContext';
-import { invokeWithAuth, supabase } from '@/lib/supabase';
+import { invokeWithAuth, supabase, type EdgeHttpError } from '@/lib/supabase';
+import { distribuirPagamentoRodadas, type RodadaSaldo } from '@/lib/distribuirPagamentoRodadas';
+import { useToast } from '@/contexts/ToastContext';
 import { useOrderSubmit, PartialOrderError } from '@/hooks/useOrderSubmit';
 import type { Mesa } from '@/types/pdv';
 import type { Rodada, PedidoAvulso, Chamado } from './types';
@@ -110,7 +112,7 @@ function carregarRascunhos(): Record<string, CarrinhoItem[]> {
 // ── componente principal ──────────────────────────────────────────────────────
 
 export default function GarcomPage() {
-  const { estado, sessao, gerarProximoNumeroPedido } = useSessao();
+  const { estado, sessao } = useSessao();
 
   // Loading state para evitar flash de "sem sessão" durante a verificação
   const [isVerificandoSessao, setIsVerificandoSessao] = useState(true);
@@ -122,6 +124,12 @@ export default function GarcomPage() {
   }, []);
 
   const { user } = useAuth();
+  const { error: toastError } = useToast();
+  // record_payment não é idempotente: em falha NÃO repetir sozinho — o servidor pode ter gravado.
+  const avisarPagamentoNaoConfirmado = useCallback((detalhe: unknown) => {
+    const msg = detalhe instanceof Error ? detalhe.message : String(detalhe ?? '');
+    toastError('Pagamento não confirmou', `Não confirmou; confira em Pedidos antes de cobrar de novo.${msg ? ` (${msg})` : ''}`);
+  }, [toastError]);
   const navigate = useNavigate();
   const { setMode } = useAppMode();
   const { reloadOrders, pedidos } = useKDS();
@@ -306,7 +314,8 @@ export default function GarcomPage() {
   ): Promise<{ numero: string; orderId: string | null } | null> => {
     if (!sessao || !user) return null;
 
-    const numero = await gerarProximoNumeroPedido();
+    // Número vem do servidor (order-write). Não chamar fn_next_tenant_order_number aqui:
+    // ela CONSOME um número e a edge consome outro (buracos na numeração).
 
     const itensPayload = cart.map((ci) => ({
       item_id: ci.itemId || null,
@@ -356,17 +365,17 @@ export default function GarcomPage() {
       });
 
       setTimeout(() => reloadOrders(), 300);
-      return { numero, orderId: result.id };
+      return { numero: result.number, orderId: result.id };
     } catch (err) {
       if (err instanceof PartialOrderError) {
         setAlertaParcial({ orderId: err.orderId, orderNumber: err.orderNumber });
         setTimeout(() => reloadOrders(), 300);
-        return { numero, orderId: err.orderId };
+        return { numero: err.orderNumber, orderId: err.orderId };
       }
       console.error('[GarcomPage] saveOrderToDb falhou:', err);
       return null;
     }
-  }, [sessao, user, gerarProximoNumeroPedido, reloadOrders, submitOrder]);
+  }, [sessao, user, reloadOrders, submitOrder]);
 
   const handleSelectMesa = (mesa: Mesa) => {
     setMesaSelecionada(mesa);
@@ -512,8 +521,93 @@ export default function GarcomPage() {
     }
   };
 
-  const handlePagarConta = async (mesaId: string, rodadaIds: string[], formaPagamentoId?: string, valorParcial?: number) => {
-    if (submittingPaymentRef.current) return;
+  /**
+   * Divisão de conta: grava o valor de uma pessoa nas rodadas ainda não cobertas
+   * (distribuirPagamentoRodadas), uma chamada record_payment por parcela. Lê sempre o error:
+   * order_already_paid → a rodada é pulada e o valor redistribuído; outro erro → toast e ok=false.
+   * `quitadas` = orderIds cujo saldo ficou zerado (para marcar a rodada como paga localmente).
+   */
+  const pagarValorDivididoRodadas = async (
+    pedidos: { orderId: string; totalLocal: number }[],
+    formaPagamentoId: string,
+    valor: number,
+    cashRegisterId: string | null,
+    troco = 0,
+  ): Promise<{ ok: boolean; quitadas: Set<string> }> => {
+    const quitadas = new Set<string>();
+    if (pedidos.length === 0) return { ok: false, quitadas };
+    const saldos: RodadaSaldo[] = pedidos.map((p) => ({ orderId: p.orderId, restante: p.totalLocal }));
+    try {
+      const ids = pedidos.map((p) => p.orderId);
+      const [ordRes, payRes] = await Promise.all([
+        supabase.from('orders').select('id, total_amount').eq('tenant_id', user?.tenantId ?? '').in('id', ids),
+        supabase.from('payments').select('order_id, amount').eq('tenant_id', user?.tenantId ?? '').in('order_id', ids).eq('is_refunded', false),
+      ]);
+      if (!ordRes.error && !payRes.error) {
+        const totais = new Map((ordRes.data ?? []).map((o: { id: string; total_amount: number | null }) => [o.id, Number(o.total_amount ?? 0)]));
+        const pagos = new Map<string, number>();
+        for (const p of (payRes.data ?? []) as { order_id: string; amount: number | null }[]) {
+          pagos.set(p.order_id, (pagos.get(p.order_id) ?? 0) + Number(p.amount ?? 0));
+        }
+        for (const s of saldos) {
+          const total = totais.has(s.orderId) ? totais.get(s.orderId)! : s.restante;
+          s.restante = Math.max(0, total - (pagos.get(s.orderId) ?? 0));
+        }
+      }
+    } catch (e) {
+      console.warn('[GarcomPage] saldo das rodadas indisponível, usando total local:', e);
+    }
+
+    let falta = Math.round(valor * 100) / 100;
+    let gravado = 0;
+    for (let guard = 0; falta > 0.005 && guard < pedidos.length * 3 + 3; guard++) {
+      const plano = distribuirPagamentoRodadas(falta, saldos, troco);
+      if (plano.length === 0) break;
+      const parcela = plano[0];
+      const ehUltima = plano.length === 1;
+      const { error: payErr } = await invokeWithAuth('order-write', {
+        body: {
+          action: 'record_payment',
+          order_id: parcela.orderId,
+          tenant_id: user?.tenantId,
+          cash_register_id: cashRegisterId,
+          payment_method_id: formaPagamentoId,
+          amount: parcela.amount,
+          change_amount: ehUltima ? parcela.change : 0,
+          operator_name: user?.nome ?? null,
+          paid_by_pdv: 'waiter',
+        },
+      });
+      const saldo = saldos.find((s) => s.orderId === parcela.orderId)!;
+      if (payErr) {
+        if ((payErr as EdgeHttpError).code === 'order_already_paid') {
+          saldo.restante = 0;
+          saldo.bloqueada = true;
+          quitadas.add(parcela.orderId);
+          continue;
+        }
+        console.error('[GarcomPage] record_payment divisão error:', payErr);
+        const parcial = gravado > 0 ? ` Já gravado ${gravado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} desta pessoa.` : '';
+        avisarPagamentoNaoConfirmado(`${payErr.message}.${parcial}`);
+        return { ok: false, quitadas };
+      }
+      gravado = Math.round((gravado + parcela.amount) * 100) / 100;
+      falta = Math.round((falta - parcela.amount) * 100) / 100;
+      saldo.restante = Math.max(0, saldo.restante - parcela.amount);
+      if (saldo.restante <= 0.01) quitadas.add(parcela.orderId);
+      void Promise.resolve(supabase.rpc('fn_update_paid_by_pdv', { p_order_id: parcela.orderId, p_paid_by_pdv: 'waiter' })).catch(() => {});
+    }
+    if (falta > 0.005) {
+      avisarPagamentoNaoConfirmado(gravado > 0
+        ? `Só parte do valor foi gravada (${gravado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}): a conta já está coberta.`
+        : 'A conta desta mesa já está paga; nada foi gravado.');
+      return { ok: false, quitadas };
+    }
+    return { ok: true, quitadas };
+  };
+
+  const handlePagarConta = async (mesaId: string, rodadaIds: string[], formaPagamentoId?: string, valorParcial?: number): Promise<boolean> => {
+    if (submittingPaymentRef.current) return false;
     submittingPaymentRef.current = true;
 
     try {
@@ -541,35 +635,35 @@ export default function GarcomPage() {
       // Quando valorParcial está definido (pagamento por divisão/conta dividida),
       // registra o pagamento apenas UMA VEZ no primeiro pedido disponível.
       // Isso evita que o valor parcial seja multiplicado pelo número de pedidos da mesa.
+      const falhas = new Set<string>();
       if (valorParcial !== undefined && rodadasAPagar.length > 0) {
-        const primeiraRodada = rodadasAPagar[0];
-        if (primeiraRodada.orderId && formaPagamentoId) {
-          try {
-            await invokeWithAuth('order-write', {
-              body: {
-                action: 'record_payment',
-                order_id: primeiraRodada.orderId,
-                tenant_id: user?.tenantId,
-                cash_register_id: cashRegisterId,
-                payment_method_id: formaPagamentoId,
-                amount: valorParcial,
-                change_amount: 0,
-                operator_name: user?.nome ?? null,
-                paid_by_pdv: 'waiter',
-              },
-            });
-            void Promise.resolve(supabase.rpc('fn_update_paid_by_pdv', { p_order_id: primeiraRodada.orderId, p_paid_by_pdv: 'waiter' })).catch(() => {});
-          } catch (e) {
-            console.error('[GarcomPage] record_payment divisão error:', e);
-          }
+        if (!formaPagamentoId) return false;
+        // Divisão: só marca como pagas as rodadas que ficaram quitadas; em erro a pessoa não fica paga.
+        const res = await pagarValorDivididoRodadas(
+          rodadasAPagar.map((r) => ({ orderId: r.orderId!, totalLocal: r.total ?? 0 })),
+          formaPagamentoId,
+          valorParcial,
+          cashRegisterId,
+        );
+        const idsQuitadas = rodadasAPagar.filter((r) => r.orderId && res.quitadas.has(r.orderId)).map((r) => r.id);
+        if (idsQuitadas.length > 0) {
+          setRodadasPagasPorMesa((prev) => ({
+            ...prev,
+            [mesaId]: new Set([...(prev[mesaId] ?? new Set()), ...idsQuitadas]),
+          }));
         }
+        return res.ok;
       } else {
         // Pagamento integral: registra em cada pedido selecionado
+        if (valorParcial !== undefined) {
+          avisarPagamentoNaoConfirmado('Nenhum pedido desta mesa encontrado para receber o pagamento.');
+          return false;
+        }
         for (const rodada of rodadasAPagar) {
           if (!rodada.orderId || !formaPagamentoId) continue;
           try {
             const amount = rodada.total ?? 0;
-            await invokeWithAuth('order-write', {
+            const { error: payErr } = await invokeWithAuth('order-write', {
               body: {
                 action: 'record_payment',
                 order_id: rodada.orderId,
@@ -582,20 +676,25 @@ export default function GarcomPage() {
                 paid_by_pdv: 'waiter',
               },
             });
+            // order_already_paid: nada gravado, mas a rodada já está quitada → segue como paga.
+            if (payErr && (payErr as EdgeHttpError).code !== 'order_already_paid') throw payErr;
             // Salva PDV que confirmou pagamento
-            if (rodada.orderId) {
+            if (rodada.orderId && !payErr) {
               void Promise.resolve(supabase.rpc('fn_update_paid_by_pdv', { p_order_id: rodada.orderId, p_paid_by_pdv: 'waiter' })).catch(() => {});
             }
           } catch (e) {
             console.error('[GarcomPage] record_payment error:', e);
+            avisarPagamentoNaoConfirmado(e);
+            falhas.add(rodada.id);
           }
         }
       }
 
       setRodadasPagasPorMesa((prev) => ({
         ...prev,
-        [mesaId]: new Set([...(prev[mesaId] ?? new Set()), ...rodadaIds]),
+        [mesaId]: new Set([...(prev[mesaId] ?? new Set()), ...rodadaIds.filter((id) => !falhas.has(id))]),
       }));
+      return falhas.size === 0;
     } finally {
       submittingPaymentRef.current = false;
     }
@@ -1025,7 +1124,7 @@ export default function GarcomPage() {
             onVoltar={handleVoltarAvulso}
             onFecharConta={handleFecharContaAvulso}
             onPagarConta={async (ids, formaPagId, valorParcial) => {
-              if (submittingPaymentRef.current) return;
+              if (submittingPaymentRef.current) return false;
               submittingPaymentRef.current = true;
               try {
                 // Para pedidos avulsos, pega os orderIds das rodadas
@@ -1054,16 +1153,25 @@ export default function GarcomPage() {
                   cashRegisterId = crRow?.id ?? null;
                 }
 
-                // Quando valorParcial está definido (pagamento por divisão),
-                // registra apenas UMA VEZ no primeiro pedido para evitar duplicação
-                const orderIdsParaPagar = valorParcial !== undefined
-                  ? orderIdsAvulso.slice(0, 1)
-                  : orderIdsAvulso;
+                // Divisão: distribui o valor entre os pedidos ainda não cobertos.
+                if (valorParcial !== undefined) {
+                  const res = await pagarValorDivididoRodadas(
+                    orderIdsAvulso.map((orderId) => ({ orderId, totalLocal: rodadasAvulsoAtual.find((r) => r.orderId === orderId)?.total ?? 0 })),
+                    formaPagId,
+                    valorParcial,
+                    cashRegisterId,
+                  );
+                  const idsQuitadas = rodadasAvulsoAtual.filter((r) => r.orderId && res.quitadas.has(r.orderId)).map((r) => r.id);
+                  if (idsQuitadas.length > 0) setRodadasPagasAvulso((prev) => new Set([...prev, ...idsQuitadas]));
+                  if (!res.ok && orderIdsAvulso.length === 0) avisarPagamentoNaoConfirmado('Nenhum pedido encontrado para receber o pagamento.');
+                  setTimeout(() => reloadOrders(), 500);
+                  return res.ok;
+                }
 
-                for (const orderId of orderIdsParaPagar) {
+                for (const orderId of orderIdsAvulso) {
                   const rodada = rodadasAvulsoAtual.find((r) => r.orderId === orderId);
-                  const amount = valorParcial ?? rodada?.total ?? 0;
-                  await invokeWithAuth('order-write', {
+                  const amount = rodada?.total ?? 0;
+                  const { error: payErr } = await invokeWithAuth('order-write', {
                     body: {
                       action: 'record_payment',
                       order_id: orderId,
@@ -1076,15 +1184,19 @@ export default function GarcomPage() {
                       paid_by_pdv: 'waiter',
                     },
                   });
-                  void Promise.resolve(supabase.rpc('fn_update_paid_by_pdv', { p_order_id: orderId, p_paid_by_pdv: 'waiter' })).catch(() => {});
+                  if (payErr && (payErr as EdgeHttpError).code !== 'order_already_paid') throw payErr;
+                  if (!payErr) void Promise.resolve(supabase.rpc('fn_update_paid_by_pdv', { p_order_id: orderId, p_paid_by_pdv: 'waiter' })).catch(() => {});
                 }
 
                 // Atualiza estado local das rodadas pagas do avulso
                 setRodadasPagasAvulso((prev) => new Set([...prev, ...ids]));
                 // Recarrega os pedidos do KDS para refletir isPaid = true
                 setTimeout(() => reloadOrders(), 500);
+                return true;
               } catch (e) {
                 console.error('[GarcomPage] record_payment avulso error:', e);
+                avisarPagamentoNaoConfirmado(e);
+                return false;
               } finally {
                 submittingPaymentRef.current = false;
               }

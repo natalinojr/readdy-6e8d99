@@ -47,6 +47,8 @@ const CFG_DEFAULTS: ConfigOperacao = {
   visaoCozinha: 'ambos',
   timerVerdeMax: 45,
   timerAmbarMax: 90,
+  bloquearItemSemInsumo: false,
+  bloquearItemSemInsumoReserva: false,
 };
 
 interface ToggleProps { checked: boolean; onChange: (v: boolean) => void; }
@@ -158,6 +160,8 @@ export default function OperacaoTab() {
       deliveryIdentificacaoObrigatoria: settings.delivery_require_id ?? prev.deliveryIdentificacaoObrigatoria,
       deliveryTipoAtendimento: (settings.delivery_type as ConfigOperacao['deliveryTipoAtendimento']) ?? prev.deliveryTipoAtendimento,
       deliveryTempoEstimado: settings.delivery_eta_minutes ?? prev.deliveryTempoEstimado,
+      bloquearItemSemInsumo: settings.bloquear_item_sem_insumo ?? prev.bloquearItemSemInsumo,
+      bloquearItemSemInsumoReserva: settings.bloquear_item_sem_insumo_reserva ?? prev.bloquearItemSemInsumoReserva,
     }));
     setPixCfg((prev) => ({
       ...prev,
@@ -217,6 +221,8 @@ export default function OperacaoTab() {
       delivery_require_id: (cfg as Record<string, unknown>).deliveryIdentificacaoObrigatoria as boolean ?? true,
       delivery_type: (cfg as Record<string, unknown>).deliveryTipoAtendimento as string ?? 'ambos',
       delivery_eta_minutes: (cfg as Record<string, unknown>).deliveryTempoEstimado as number ?? 45,
+      bloquear_item_sem_insumo: cfg.bloquearItemSemInsumo,
+      bloquear_item_sem_insumo_reserva: cfg.bloquearItemSemInsumoReserva,
       delivery_commission_rates: deliveryCommissionRates,
       delivery_payment_methods: deliveryPaymentMethods,
       self_service_payment_methods: kioskPaymentMethods,
@@ -596,6 +602,22 @@ export default function OperacaoTab() {
               <span className="text-xs text-zinc-500">min</span>
             </div>
           </div>
+          <div className="border-t border-zinc-50 pt-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-zinc-700">Bloquear item sem insumo no cardápio</p>
+              <p className="text-xs text-zinc-400 max-w-sm">Esconde do cardápio (tablet, QR, delivery e caixa) itens cuja ficha técnica não tem insumo suficiente. Deixe desligado se o estoque ainda não está confiável.</p>
+            </div>
+            <Toggle checked={cfg.bloquearItemSemInsumo} onChange={(v) => set('bloquearItemSemInsumo', v)} />
+          </div>
+          {cfg.bloquearItemSemInsumo && (
+            <div className="flex items-center justify-between pl-4 border-l-2 border-amber-200">
+              <div>
+                <p className="text-sm font-semibold text-zinc-700">Contar pedidos em aberto como reserva</p>
+                <p className="text-xs text-zinc-400 max-w-sm">Considera o insumo dos pedidos ainda não prontos. Se a cozinha não avançar os pedidos, itens podem sair do cardápio.</p>
+              </div>
+              <Toggle checked={cfg.bloquearItemSemInsumoReserva} onChange={(v) => set('bloquearItemSemInsumoReserva', v)} />
+            </div>
+          )}
         </div>
       </SectionCard>
 

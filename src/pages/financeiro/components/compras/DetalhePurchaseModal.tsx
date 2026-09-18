@@ -210,6 +210,8 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
       if (!res.ok || result.error) {
         setDeliveryError(result.error || 'Erro ao confirmar recebimento');
       } else {
+        // Recebimento gravado, mas as contas a pagar não puderam ser ajustadas (ex.: novo total menor que o já pago)
+        if (result.data?.aviso) window.alert(`Recebimento confirmado.\n\n${result.data.aviso}`);
         setShowDeliveryForm(false);
         onDeliveryConfirmed?.();
         onClose();

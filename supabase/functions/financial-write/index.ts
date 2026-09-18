@@ -452,7 +452,10 @@ Deno.serve(async (req) => {
         // Tolerância de meio centavo evita que arredondamento deixe a conta eternamente 'partial'
         const isSettled = newPaidTotal >= billAmount - 0.005;
 
-        result = await supabase
+        // Trava otimista (go-live 09-17): o update só pega se a conta ainda está no
+        // estado que lemos (mesmo paid_amount, não quitada). Um duplo POST/duplo clique
+        // fazia as duas chamadas passarem na leitura e lançarem caixa + banco 2×.
+        let payUpd = supabase
           .from('fin_accounts_payable')
           .update({
             status: isSettled ? 'paid' : 'partial',
@@ -463,13 +466,23 @@ Deno.serve(async (req) => {
           })
           .eq('id', id)
           .eq('tenant_id', tenant_id)
-          .select()
-          .single();
+          .neq('status', 'paid');
+        payUpd = billRec.paid_amount == null
+          ? payUpd.is('paid_amount', null)
+          : payUpd.eq('paid_amount', billRec.paid_amount as number);
+        const payRes = await payUpd.select();
 
-        if (result?.error) {
-          console.error('[pay_bill] Supabase error:', JSON.stringify(result.error));
-          return new Response(JSON.stringify({ error: extractErrorMessage(result.error) }), { status: 500, headers: corsHeaders });
+        if (payRes.error) {
+          console.error('[pay_bill] Supabase error:', JSON.stringify(payRes.error));
+          return new Response(JSON.stringify({ error: extractErrorMessage(payRes.error) }), { status: 500, headers: corsHeaders });
         }
+        if (!payRes.data || payRes.data.length === 0) {
+          return new Response(JSON.stringify({
+            error: 'Conta já foi baixada/alterada, atualize a tela',
+            code: 'bill_changed',
+          }), { status: 409, headers: corsHeaders });
+        }
+        result = { data: payRes.data[0], error: null };
 
         // P3: origin='auto_bill_payment' (não 'manual'). Com 'manual', a conta paga era
         // contada 2x em Despesas (fin_accounts_payable pago + fin_cash_flow manual).
@@ -556,7 +569,18 @@ Deno.serve(async (req) => {
       }
 
       case 'delete_bill': {
-        result = await supabase.from('fin_accounts_payable').delete().eq('id', payload.id).eq('tenant_id', tenant_id);
+        // Conta paga/parcial já lançou caixa e banco; apagar deixaria esses lançamentos
+        // órfãos. Não existe ação de estornar baixa, então recusa (go-live 09-17).
+        const { data: toDelete } = await supabase.from('fin_accounts_payable')
+          .select('id, status, paid_amount').eq('id', payload.id).eq('tenant_id', tenant_id).maybeSingle();
+        if (toDelete && (['paid', 'partial'].includes(String(toDelete.status)) || Number(toDelete.paid_amount ?? 0) > 0)) {
+          return new Response(JSON.stringify({
+            error: 'Esta conta já tem pagamento lançado (caixa/banco). Estorne a baixa antes de excluir.',
+            code: 'bill_has_payment',
+          }), { status: 409, headers: corsHeaders });
+        }
+        result = await supabase.from('fin_accounts_payable').delete().eq('id', payload.id).eq('tenant_id', tenant_id)
+          .not('status', 'in', '(paid,partial)');
         break;
       }
 

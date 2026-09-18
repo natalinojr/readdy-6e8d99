@@ -78,12 +78,44 @@ async function callEdge(ctx: Ctx, fn: string, body: Record<string, unknown>): Pr
 // ── Confirmar um vínculo ─────────────────────────────────────────────────────
 type Result = { id: string; ok: boolean; msg: string; auto_imported?: boolean; code?: string };
 
+// Trava atômica na linha do extrato (go-live 09-17): dois cliques/duas abas confirmavam
+// ou lançavam a mesma linha 2× (despesa e débito duplicados). A linha é "reservada" com um
+// update condicional (reconciled=false → true); quem não pegar a linha recebe code 409.
+// Se o lançamento falhar, a reserva é desfeita e a linha volta a pendente.
+async function withRowClaim(ctx: Ctx, rowId: string, fn: () => Promise<Result>): Promise<Result> {
+  const { admin, tenantId } = ctx;
+  const { data: claimed, error } = await admin.from('fin_bank_statement_imports')
+    .update({ reconciled: true, reconciled_at: new Date().toISOString() })
+    .eq('id', rowId).eq('tenant_id', tenantId).eq('reconciled', false).eq('status', 'pending')
+    .select('id');
+  if (error) return { id: rowId, ok: false, msg: 'Reservar o lançamento: ' + error.message };
+  if (!claimed || claimed.length === 0) {
+    return { id: rowId, ok: false, msg: 'Este pagamento já está sendo conciliado ou já foi conciliado: atualize a tela', code: '409' };
+  }
+  const release = () => admin.from('fin_bank_statement_imports')
+    .update({ reconciled: false, reconciled_at: null })
+    .eq('id', rowId).eq('tenant_id', tenantId).eq('status', 'pending');
+  try {
+    const r = await fn();
+    if (!r.ok) await release();
+    return r;
+  } catch (e) {
+    await release();
+    throw e;
+  }
+}
+
 async function confirmOne(ctx: Ctx, rowId: string): Promise<Result> {
   const { admin, tenantId } = ctx;
-  const fail = (msg: string): Result => ({ id: rowId, ok: false, msg });
   const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', rowId).eq('tenant_id', tenantId).maybeSingle();
-  if (!row) return fail('Lançamento não encontrado');
-  if (row.reconciled || row.status !== 'pending') return fail('Este pagamento já está conciliado');
+  if (!row) return { id: rowId, ok: false, msg: 'Lançamento não encontrado' };
+  if (row.reconciled || row.status !== 'pending') return { id: rowId, ok: false, msg: 'Este pagamento já está conciliado' };
+  return withRowClaim(ctx, rowId, () => confirmOneClaimed(ctx, rowId, row));
+}
+
+async function confirmOneClaimed(ctx: Ctx, rowId: string, row: Row): Promise<Result> {
+  const { admin, tenantId } = ctx;
+  const fail = (msg: string): Result => ({ id: rowId, ok: false, msg });
   if (row.transaction_type !== 'debit' || !['payable', 'inbound_doc'].includes(String(row.match_kind))) return fail('Este lançamento não tem vínculo sugerido');
 
   const det = (row.match_detail ?? {}) as Row;
@@ -214,11 +246,16 @@ interface CreateOpts {
 
 async function createOne(ctx: Ctx, rowId: string, o: CreateOpts): Promise<Result> {
   const { admin, tenantId } = ctx;
-  const fail = (msg: string, code?: string): Result => ({ id: rowId, ok: false, msg, ...(code ? { code } : {}) });
   const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', rowId).eq('tenant_id', tenantId).maybeSingle();
-  if (!row) return fail('Lançamento não encontrado');
-  if (row.transaction_type !== 'debit') return fail('Só pagamentos (saídas) viram despesa ou compra');
-  if (row.reconciled || row.status !== 'pending') return fail('Este pagamento já está conciliado');
+  if (!row) return { id: rowId, ok: false, msg: 'Lançamento não encontrado' };
+  if (row.transaction_type !== 'debit') return { id: rowId, ok: false, msg: 'Só pagamentos (saídas) viram despesa ou compra' };
+  if (row.reconciled || row.status !== 'pending') return { id: rowId, ok: false, msg: 'Este pagamento já está conciliado' };
+  return withRowClaim(ctx, rowId, () => createOneClaimed(ctx, rowId, o, row));
+}
+
+async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row): Promise<Result> {
+  const { admin, tenantId } = ctx;
+  const fail = (msg: string, code?: string): Result => ({ id: rowId, ok: false, msg, ...(code ? { code } : {}) });
   if (JA_TEM_DESTINO.includes(String(row.match_kind ?? ''))) {
     return fail(['payable', 'inbound_doc'].includes(String(row.match_kind))
       ? 'Este pagamento tem vínculo sugerido com nota/conta: confirme o vínculo em vez de lançar de novo'

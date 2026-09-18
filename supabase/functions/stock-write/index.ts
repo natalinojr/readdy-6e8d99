@@ -106,7 +106,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     if (requestedTenantId) {
       const match = tenantRows.find((r: { tenant_id: string }) => r.tenant_id === requestedTenantId);
       if (!match) {
-        tenantId = tenantRows[0].tenant_id;
+        // Antes gravava em silêncio na primeira loja do usuário (loja errada). Agora recusa.
+        return new Response(JSON.stringify({ error: 'User does not belong to the requested tenant' }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       } else {
         tenantId = match.tenant_id;
       }

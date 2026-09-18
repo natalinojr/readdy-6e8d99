@@ -1,9 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.47.0";
+import { authenticate, tenantRole } from "../_shared/tenant-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 interface PrintQueuePayload {
@@ -22,7 +23,7 @@ interface PrintQueuePayload {
   paper_style?: string;
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
@@ -61,6 +62,24 @@ serve(async (req) => {
         },
       }
     );
+
+    // Autorização (2026-09-17): antes enfileirava impressão em qualquer loja sem login.
+    const caller = await authenticate(req, supabaseAdmin);
+    if (!caller) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+    if (!caller.isServiceRole) {
+      const role = await tenantRole(supabaseAdmin, caller.userId!, String(body.tenant_id));
+      if (!role) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Usuario nao pertence a esta loja" }),
+          { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } }
+        );
+      }
+    }
 
     console.log(`[print-queue-write] INSERT tenant=${body.tenant_id} order=${body.order_number} station=${body.station_key}`);
 

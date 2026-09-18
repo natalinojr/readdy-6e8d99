@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { formatCurrency } from '@/lib/formatters';
 
 type OrderSummary = {
   id: string;
@@ -175,9 +176,9 @@ export default function HistoricoPedidos(props: Props) {
                 <p className="text-[10px] text-zinc-400 mt-1">{formatDate(order.created_at)}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm font-bold text-amber-600">R$ {order.total_amount.toFixed(2)}</p>
+                <p className="text-sm font-bold text-amber-600">Total {formatCurrency(order.total_amount)}</p>
                 {order.delivery_fee > 0 ? (
-                  <p className="text-[10px] text-zinc-400">+ taxa R$ {order.delivery_fee.toFixed(2)}</p>
+                  <p className="text-[10px] text-zinc-400">inclui taxa {formatCurrency(order.delivery_fee)}</p>
                 ) : null}
               </div>
             </div>

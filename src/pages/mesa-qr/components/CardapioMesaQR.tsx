@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { formatCurrency } from '@/lib/formatters';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
@@ -614,11 +615,11 @@ export default function CardapioMesaQR(props: Props) {
             <div className="flex items-baseline gap-1.5">
               {promoAtiva ? (
                 <>
-                  <span className="text-[11px] text-zinc-300 line-through">R$ {item.price.toFixed(2)}</span>
-                  <span className="text-sm font-bold text-red-500">R$ {precoFinal.toFixed(2)}</span>
+                  <span className="text-[11px] text-zinc-300 line-through">{formatCurrency(item.price)}</span>
+                  <span className="text-sm font-bold text-red-500">{formatCurrency(precoFinal)}</span>
                 </>
               ) : (
-                <span className="text-sm font-bold text-amber-600">R$ {item.price.toFixed(2)}</span>
+                <span className="text-sm font-bold text-amber-600">{formatCurrency(item.price)}</span>
               )}
             </div>
           </div>
@@ -732,12 +733,12 @@ export default function CardapioMesaQR(props: Props) {
                 <h3 className="text-base font-bold text-zinc-800 break-words">{itemSelecionado.name}</h3>
                 {getPrecoEfetivo(itemSelecionado) < itemSelecionado.price ? (
                   <p className="text-xs text-zinc-500 mt-0.5">
-                    <span className="line-through text-zinc-300">R$ {itemSelecionado.price.toFixed(2)}</span>
+                    <span className="line-through text-zinc-300">{formatCurrency(itemSelecionado.price)}</span>
                     {' '}
-                    <span className="text-red-500 font-bold">R$ {getPrecoEfetivo(itemSelecionado).toFixed(2)}</span>
+                    <span className="text-red-500 font-bold">{formatCurrency(getPrecoEfetivo(itemSelecionado))}</span>
                   </p>
                 ) : (
-                  <p className="text-xs text-zinc-500 mt-0.5">R$ {itemSelecionado.price.toFixed(2)}</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">{formatCurrency(itemSelecionado.price)}</p>
                 )}
               </div>
               <button
@@ -895,7 +896,7 @@ export default function CardapioMesaQR(props: Props) {
                                   </span>
                                 ) : op.additional_price > 0 ? (
                                   <span className="text-xs font-bold text-amber-600">
-                                    + R$ {op.additional_price.toFixed(2)}
+                                    + {formatCurrency(op.additional_price)}
                                   </span>
                                 ) : null}
                               </label>
@@ -967,7 +968,7 @@ export default function CardapioMesaQR(props: Props) {
                   }</span>
                 </div>
                 <span className="text-sm font-bold">
-                  R$ {calcularPrecoTotal().toFixed(2)}
+                  {formatCurrency(calcularPrecoTotal())}
                 </span>
               </button>
             </div>

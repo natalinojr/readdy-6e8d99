@@ -4,6 +4,8 @@ Leia `AI_SYSTEM_MAP.md` antes de alterações estruturais (índice de rotas, tel
 
 Para trabalho no **módulo financeiro/estoque**, leia também `BRIEFING-EP-PARANAGUA.md` (contexto de negócio, números de baseline e KPIs vindos da auditoria da loja El Patrón Paranaguá) e `DIRETRIZES-ANALISE-IA.md` (como a análise de dados deve pensar: triangulação, hierarquia de fontes, contrato de saída).
 
+Para o fluxo **SDD** (specs, gates de qualidade, branches, restrições), consulte o [`AGENTS.md`](./AGENTS.md) — é o contrato de referência para esse fluxo e não deve ser duplicado aqui.
+
 ## Fatos do projeto (duráveis)
 
 - **Readdy.ai está PAUSADO** (desde 2026-06-14). Todo trabalho é feito aqui (Claude) ou no Codex; nosso código + push para `origin/main` é a **fonte de verdade**. Não há mais regeneração do Readdy a temer.

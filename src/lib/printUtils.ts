@@ -179,6 +179,8 @@ export interface TicketPayload {
   total?: number;
   /** Indica que o pedido é para viagem/retirada */
   para_viagem?: boolean;
+  /** Reimpressão manual (enqueue com p_force): cabeçalho "*** REIMPRESSÃO ***" */
+  reimpressao?: boolean;
 }
 
 /**

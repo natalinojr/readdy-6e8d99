@@ -124,6 +124,7 @@ async function enqueueDeliveryReceipt(pedido: KDSPedido, tenantId: string): Prom
         hour: '2-digit', minute: '2-digit', second: '2-digit',
       }),
       observacao_geral: obsGeralParts.join('\n'),
+      reimpressao: true, // edge imprime "*** REIMPRESSÃO ***" no topo
     },
     p_paper_style: '80mm',
     p_force: true, // reimpressão manual: pula a dedup da print_queue

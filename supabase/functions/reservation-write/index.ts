@@ -20,7 +20,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
   const authHeader = req.headers.get('Authorization') ?? '';
 
-  const effectiveServiceKey = serviceRoleKey.length > 100 ? serviceRoleKey : anonKey;
+  const effectiveServiceKey = serviceRoleKey.length >= 40 ? serviceRoleKey : anonKey;
   const admin = createClient(supabaseUrl, effectiveServiceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
@@ -180,30 +180,59 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const resolvedTableId = seatTableId ?? reservation.table_id ?? null;
       let tableSessionId: string | null = session_id ?? null;
 
-      // Se não foi passada uma session_id existente, cria uma nova table_session
+      // Se não foi passada uma session_id existente, abre (ou reaproveita) a table_session.
+      // fn_open_table_session é idempotente: se a mesa já tem sessão 'open', devolve a
+      // existente (o insert direto batia no índice único → 500). Também marca a mesa
+      // como 'occupied' (filtrando tenant).
       if (!tableSessionId && resolvedTableId) {
-        const { data: sessionData, error: sessionErr } = await admin
-          .from('table_sessions')
-          .insert({
-            tenant_id: tenantId,
-            table_id: resolvedTableId,
-            customer_name: reservation.customer_name,
-            status: 'open',
-            opened_at: new Date().toISOString(),
-          })
+        const { data: mesa, error: mesaErr } = await admin
+          .from('tables')
           .select('id')
+          .eq('id', resolvedTableId)
+          .eq('tenant_id', tenantId)
           .maybeSingle();
+        if (mesaErr) throw mesaErr;
+        if (!mesa) return json({ error: 'Table not found' }, 404);
+
+        // table_sessions.session_id é NOT NULL: vincula à sessão de caixa aberta da loja.
+        const { data: caixa, error: caixaErr } = await admin
+          .from('sessions')
+          .select('id')
+          .eq('tenant_id', tenantId)
+          .eq('status', 'open')
+          .order('is_training', { ascending: true }) // caixa real antes do de treino
+          .order('opened_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (caixaErr) throw caixaErr;
+        if (!caixa) return json({ error: 'Abra o caixa antes de sentar a reserva' }, 422);
+
+        // Mesa já ocupada por outro cliente: não mistura a reserva na conta de outra pessoa.
+        const { data: aberta, error: abertaErr } = await admin
+          .from('table_sessions')
+          .select('id, customer_name')
+          .eq('tenant_id', tenantId)
+          .eq('table_id', resolvedTableId)
+          .eq('status', 'open')
+          .order('opened_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (abertaErr) throw abertaErr;
+        const nomeAberta = (aberta?.customer_name ?? '').trim().toLowerCase();
+        const nomeReserva = (reservation.customer_name ?? '').trim().toLowerCase();
+        if (aberta && nomeAberta && nomeAberta !== nomeReserva) {
+          return json({ error: 'Mesa ocupada por outro cliente', table_session_id: aberta.id }, 409);
+        }
+
+        const { data: sessionData, error: sessionErr } = await admin.rpc('fn_open_table_session', {
+          p_tenant_id: tenantId,
+          p_table_id: resolvedTableId,
+          p_session_id: caixa.id,
+          p_customer_name: reservation.customer_name ?? null,
+        });
 
         if (sessionErr) throw sessionErr;
-        tableSessionId = sessionData?.id ?? null;
-
-        // Atualiza status da mesa para 'occupied'
-        if (resolvedTableId) {
-          await admin
-            .from('tables')
-            .update({ status: 'occupied' })
-            .eq('id', resolvedTableId);
-        }
+        tableSessionId = (sessionData as { id?: string } | null)?.id ?? null;
       }
 
       const { data, error } = await admin

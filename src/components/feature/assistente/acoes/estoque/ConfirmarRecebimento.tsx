@@ -135,12 +135,16 @@ export default function ConfirmarRecebimento({ onFechar, irPara }: AcaoProps) {
           : (Number(it.units_per_package ?? 1) || 1),
       };
     });
-    const { erro } = await gravarNaEdge('purchase-confirm-delivery', {
+    const { data: resp, erro } = await gravarNaEdge<{ data?: { aviso?: string } }>('purchase-confirm-delivery', {
       tenant_id: user!.tenantId,
       payload: { purchase_id: c.id, delivery_notes: '', received_at: recebidoEm, received_items },
     });
     if (erro) r.bot(`Não confirmou: ${erro}\nConfira em Financeiro › Compras antes de tentar de novo.`);
-    else { setOk(true); r.bot(`Recebimento confirmado: ${c.supplier}. O estoque foi atualizado.`); }
+    else {
+      setOk(true);
+      const aviso = resp?.data?.aviso;
+      r.bot(`Recebimento confirmado: ${c.supplier}. O estoque foi atualizado.${aviso ? `\n\nAtenção: ${aviso}` : ''}`);
+    }
     setPasso('fim');
   };
 

@@ -26,6 +26,10 @@ export interface ItemCardapioPublico {
   opcoes?: {
     grupo: string;
     obrigatorio: boolean;
+    /** min_selections do grupo (padrão 0) */
+    minSelecao?: number;
+    /** max_selections do grupo (padrão 1) */
+    maxSelecao?: number;
     itens: { id?: string; nome: string; precoAdicional: number }[];
   }[];
 }

@@ -179,7 +179,14 @@ export default function FechamentoCaixaModal({ caixaId, historico, onClose }: Pr
      - Se tiver diferença → vai pra tela de justificativa
      - Se não tiver diferença → vai direto pra concluído */
   const handleConfirmarEFechar = async () => {
-    await executarFechamento('', true);
+    setErro('');
+    try {
+      await executarFechamento('', true);
+    } catch (e) {
+      // RPC falhou: o caixa continua aberto; fica na confirmação mostrando o erro
+      setErro(`Caixa NÃO foi fechado: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
 
     // Lê o resultado real do RPC para garantir que usamos os mesmos valores
     const diffRpc = diferencaRpcRef.current;
@@ -505,6 +512,7 @@ export default function FechamentoCaixaModal({ caixaId, historico, onClose }: Pr
                 )}
               </button>
             </div>
+            {erro && <p className="text-xs text-red-500 font-semibold">{erro}</p>}
           </div>
         </div>
       </div>

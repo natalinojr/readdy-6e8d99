@@ -84,7 +84,8 @@ export default function AutorizacaoGerenteModal({
       });
 
       if (fnError || !data || data.error) {
-        throw new Error(data?.error ?? 'Credenciais inválidas.');
+        // fnError.message traz o erro da edge (ex.: 429 "Muitas tentativas...", "Matrícula ou PIN incorretos")
+        throw new Error(data?.error ?? fnError?.message ?? 'Credenciais inválidas.');
       }
 
       // Verificar tenant correto

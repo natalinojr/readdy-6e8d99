@@ -26,7 +26,8 @@ interface Props {
   /** Estado de pagamento salvo anteriormente — permite retomar de onde parou */
   pagamentoSalvo?: DivisaoPagamentoState | null;
   onClose: () => void;
-  onPagarCliente: (clienteId: string, formaPagId: string, valor: number, nomeCliente: string) => Promise<void>;
+  /** false = pagamento não confirmado: a pessoa não é marcada como paga. */
+  onPagarCliente: (clienteId: string, formaPagId: string, valor: number, nomeCliente: string) => Promise<boolean | void>;
   /** Chamado sempre que o estado de pagamento muda, para persistir externamente */
   onEstadoChange?: (estado: DivisaoPagamentoState) => void;
 }
@@ -125,7 +126,8 @@ export default function PagarDivisaoModal({
     submittingRef.current = true;
     setPagando(cliente.id);
     try {
-      await onPagarCliente(cliente.id, formaPagId, divisao.totalPorCliente[cliente.id] ?? 0, cliente.nome);
+      const ok = await onPagarCliente(cliente.id, formaPagId, divisao.totalPorCliente[cliente.id] ?? 0, cliente.nome);
+      if (ok === false) return;
       const novosPagos = new Set([...pagos, cliente.id]);
       setPagos(novosPagos);
       // Avança para o próximo cliente não pago

@@ -37,16 +37,16 @@ export default function CarrinhoKiosk({
 
   return (
     <>
-      <div className="flex h-full">
+      <div className="flex flex-col lg:flex-row h-full">
         {/* Lista de itens */}
-        <div className="flex-1 overflow-y-auto p-8 pb-32">
-          <div className="flex items-center gap-4 mb-8">
+        <div className="flex-1 min-h-0 min-w-0 overflow-y-auto p-4 md:p-8 lg:pb-32">
+          <div className="flex items-center gap-4 mb-6 md:mb-8 flex-wrap">
             <button onClick={onVoltar}
               className="w-16 h-16 flex items-center justify-center bg-zinc-800 rounded-2xl cursor-pointer hover:bg-zinc-700 transition-colors">
               <ChevronLeft size={28} className="text-white" />
             </button>
-            <h2 className="text-5xl font-black text-white">Seu Pedido</h2>
-            <span className="text-zinc-500 text-2xl font-semibold">({carrinho.length} {carrinho.length === 1 ? 'item' : 'itens'})</span>
+            <h2 className="text-3xl md:text-5xl font-black text-white">Seu Pedido</h2>
+            <span className="text-zinc-500 text-xl md:text-2xl font-semibold">({carrinho.length} {carrinho.length === 1 ? 'item' : 'itens'})</span>
           </div>
 
           {carrinho.length === 0 ? (
@@ -61,31 +61,31 @@ export default function CarrinhoKiosk({
           ) : (
             <div className="space-y-4 max-w-2xl mx-auto">
               {carrinho.map((item, idx) => (
-                <div key={idx} className="bg-zinc-800 rounded-3xl p-6">
+                <div key={idx} className="bg-zinc-800 rounded-3xl p-4 md:p-6">
                   <div className="flex items-start gap-4">
                     <div className="flex-1 min-w-0">
                       {item.categoria && (
                         <p className="text-zinc-500 text-base font-semibold uppercase tracking-wider mb-1">{item.categoria}</p>
                       )}
-                      <p className="text-white font-bold text-2xl">{item.nome}</p>
+                      <p className="text-white font-bold text-xl md:text-2xl break-words">{item.nome}</p>
                       {item.opcoesSelecionadas.length > 0 && (
-                        <p className="text-zinc-500 text-lg mt-1">{item.opcoesSelecionadas.map((o) => o.nome).join(', ')}</p>
+                        <p className="text-zinc-500 text-lg mt-1 break-words">{item.opcoesSelecionadas.map((o) => o.nome).join(', ')}</p>
                       )}
                       {item.observacao && (
-                        <p className="text-amber-400 text-lg mt-1 italic">
+                        <p className="text-amber-400 text-lg mt-1 italic break-words">
                           <i className="ri-edit-line mr-1" />
                           {item.observacao}
                         </p>
                       )}
                     </div>
                     <div className="text-right flex-shrink-0">
-                      <p className="text-amber-400 font-black text-3xl">{fmt(item.preco * item.quantidade)}</p>
-                      <p className="text-zinc-600 text-base">{fmt(item.preco)} / un.</p>
+                      <p className="text-amber-400 font-black text-2xl md:text-3xl whitespace-nowrap">{fmt(item.preco * item.quantidade)}</p>
+                      <p className="text-zinc-600 text-base whitespace-nowrap">{fmt(item.preco)} / un.</p>
                     </div>
                   </div>
 
                   {/* Controles */}
-                  <div className="flex items-center gap-3 mt-4 pt-4 border-t border-zinc-700">
+                  <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-zinc-700">
                     {/* Quantidade */}
                     <div className="flex items-center gap-2">
                       <button onClick={() => onAlterarQtd(idx, -1)}
@@ -103,7 +103,7 @@ export default function CarrinhoKiosk({
 
                     {/* Editar */}
                     <button onClick={() => setEditandoIndex(idx)}
-                      className="flex items-center gap-2 px-6 py-4 bg-zinc-700 hover:bg-amber-500/20 text-zinc-400 hover:text-amber-400 rounded-xl cursor-pointer transition-colors whitespace-nowrap text-lg font-semibold">
+                      className="flex items-center gap-2 px-4 md:px-6 py-4 bg-zinc-700 hover:bg-amber-500/20 text-zinc-400 hover:text-amber-400 rounded-xl cursor-pointer transition-colors whitespace-nowrap text-lg font-semibold">
                       <Pencil size={18} />
                       Editar
                     </button>
@@ -121,24 +121,24 @@ export default function CarrinhoKiosk({
         </div>
 
         {/* Painel lateral resumo */}
-        <div className="w-104 flex-shrink-0 bg-zinc-900 flex flex-col p-8 border-l border-zinc-800">
-          <h3 className="text-3xl font-black text-white mb-6">Resumo</h3>
+        <div className="w-full lg:w-[26rem] flex-shrink-0 bg-zinc-900 flex flex-col p-4 md:p-6 lg:p-8 border-t lg:border-t-0 lg:border-l border-zinc-800">
+          <h3 className="hidden lg:block text-3xl font-black text-white mb-6">Resumo</h3>
 
-          <div className="flex-1 space-y-3 overflow-y-auto">
+          <div className="hidden lg:block flex-1 min-h-0 space-y-3 overflow-y-auto">
             {carrinho.map((item, idx) => (
               <div key={idx} className="flex justify-between text-lg">
-                <span className="text-zinc-400 truncate pr-2">{item.quantidade}x {item.categoria ? `[${item.categoria}] ` : ''}{item.nome}</span>
+                <span className="text-zinc-400 truncate pr-2 min-w-0">{item.quantidade}x {item.categoria ? `[${item.categoria}] ` : ''}{item.nome}</span>
                 <span className="text-zinc-300 font-semibold whitespace-nowrap">{fmt(item.preco * item.quantidade)}</span>
               </div>
             ))}
           </div>
 
-          <div className="border-t border-zinc-800 mt-6 pt-6 space-y-3">
+          <div className="lg:border-t border-zinc-800 lg:mt-6 lg:pt-6 space-y-2 lg:space-y-3">
             <div className="flex justify-between">
               <span className="text-zinc-400">Subtotal</span>
               <span className="text-white font-semibold">{fmt(subtotal)}</span>
             </div>
-            <div className="flex justify-between text-4xl font-black">
+            <div className="flex justify-between text-3xl lg:text-4xl font-black">
               <span className="text-white">Total</span>
               <span className="text-amber-400">{fmt(total)}</span>
             </div>
@@ -147,9 +147,9 @@ export default function CarrinhoKiosk({
           <button
             onClick={onPagar}
             disabled={carrinho.length === 0}
-            className="mt-8 flex items-center justify-between bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 px-10 py-7 rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
+            className="mt-4 lg:mt-8 flex items-center justify-between bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 px-6 lg:px-10 py-5 lg:py-7 rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
           >
-            <span className="text-3xl font-black">Finalizar pedido</span>
+            <span className="text-2xl lg:text-3xl font-black">Finalizar pedido</span>
             <div className="w-12 h-12 flex items-center justify-center bg-zinc-950/10 rounded-xl">
               <ChevronRight size={24} />
             </div>

@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { authenticate, isPlatformOwner, roleRank, userMemberships } from '../_shared/tenant-auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -18,21 +19,6 @@ function ok(data: unknown) {
 }
 function errResp(message: string) {
   return new Response(JSON.stringify({ error: message }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-}
-
-async function verifyJWT(req: Request): Promise<boolean> {
-  try {
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) return false;
-    const token = authHeader.replace('Bearer ', '').trim();
-    if (!token) return false;
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-    const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      headers: { Authorization: `Bearer ${token}`, apikey: supabaseAnonKey },
-    });
-    return res.ok;
-  } catch { return false; }
 }
 
 /**
@@ -61,17 +47,61 @@ async function gerarProximaMatricula(db: ReturnType<typeof createClient>): Promi
 Deno.serve({ verify_jwt: false }, async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
-  const isAuthenticated = await verifyJWT(req);
-  if (!isAuthenticated) return errResp('Unauthorized');
-
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
     const effectiveKey = serviceRoleKey.length >= 40 ? serviceRoleKey : anonKey;
     const db = createClient(supabaseUrl, effectiveKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+    // Autorização (2026-09-17): antes só validava o JWT — qualquer logado trocava senha/PIN ou
+    // apagava QUALQUER usuário (inclusive o dono). Erros seguem o contrato HTTP 200 { error }.
+    const caller = await authenticate(req, db);
+    if (!caller) return errResp('Unauthorized');
+
     const body = await req.json();
     const { action } = body;
+
+    const TARGET_ACTIONS = new Set(['delete_user', 'reset_password', 'set_pin', 'clear_pin', 'ensure_user_exists']);
+    const SELF_ALLOWED = new Set(['reset_password', 'set_pin', 'clear_pin', 'ensure_user_exists']);
+
+    if (!caller.isServiceRole) {
+      const callerId = caller.userId!;
+      const callerIsOwner = await isPlatformOwner(db, callerId);
+      const callerTenants = await userMemberships(db, callerId);
+
+      if (action === 'create_user') {
+        const { tenant_id, perfil } = body;
+        if (!tenant_id) return errResp('tenant_id obrigatório');
+        const callerRank = callerIsOwner ? 3 : roleRank(callerTenants.get(String(tenant_id)));
+        if (callerRank < 2) return errResp('Apenas administrador ou gerente desta loja pode criar usuários');
+        const newRole = ({ admin: 'admin', gerente: 'manager' } as Record<string, string>)[String(perfil)] ?? 'staff';
+        // Gerente só cria papéis abaixo do seu; admin cria qualquer um.
+        if (callerRank < 3 && roleRank(newRole) >= callerRank) {
+          return errResp('Sem permissão para criar usuário com este perfil');
+        }
+      } else if (TARGET_ACTIONS.has(action)) {
+        const targetId = body.user_id ? String(body.user_id) : '';
+        if (!targetId) return errResp('user_id obrigatório');
+        const isSelf = targetId === callerId;
+        if (!(isSelf && SELF_ALLOWED.has(action))) {
+          if (await isPlatformOwner(db, targetId)) {
+            return errResp('Sem permissão: este usuário só pode ser alterado por ele mesmo');
+          }
+          if (!callerIsOwner) {
+            // Senha/PIN/exclusão valem para TODAS as lojas do alvo: o chamador precisa ser
+            // admin (ou gerente, com alvo abaixo de gerente) em cada loja onde o alvo tem vínculo.
+            const targetTenants = await userMemberships(db, targetId);
+            if (targetTenants.size === 0) return errResp('Sem permissão para alterar este usuário');
+            for (const [tid, targetRole] of targetTenants) {
+              const callerRank = roleRank(callerTenants.get(tid));
+              const allowed = callerRank >= 3 || (callerRank === 2 && roleRank(targetRole) < 2);
+              if (!allowed) return errResp('Sem permissão para alterar este usuário');
+            }
+          }
+        }
+      }
+    }
 
     // ─── create_user ──────────────────────────────────────────────────────────
     if (action === 'create_user') {

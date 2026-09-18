@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { formatCurrency } from '@/lib/formatters';
 import CpfCnpjInput from '@/components/base/CpfCnpjInput';
 import { isValidCpfCnpj } from '@/lib/cpfCnpj';
 import { useDeliveryData, getOrderSource } from './useDeliveryData';
@@ -616,7 +617,7 @@ export default function DeliveryPage() {
                   Continuar pedido
                 </span>
                 <span className="flex items-center gap-1 text-sm">
-                  R$ {subtotalPreview.toFixed(2)}
+                  {formatCurrency(subtotalPreview)}
                   <i className="ri-arrow-right-line text-base" />
                 </span>
               </button>
@@ -674,7 +675,7 @@ export default function DeliveryPage() {
             <span className="flex items-center gap-2 min-w-0">
               <i className="ri-qr-code-line text-base shrink-0" />
               <span className="text-xs font-semibold truncate">
-                Pedido #{data.pixOnline.number.slice(-4)} aguardando o Pix — R$ {data.pixOnline.total.toFixed(2)}
+                Pedido #{data.pixOnline.number.slice(-4)} aguardando o Pix — {formatCurrency(data.pixOnline.total)}
               </span>
             </span>
             <span className="shrink-0 text-[11px] font-black bg-white/20 px-2.5 py-1 rounded-full whitespace-nowrap">Pagar agora →</span>
@@ -880,7 +881,7 @@ export default function DeliveryPage() {
                                   <p className="text-[10px] text-zinc-500 truncate">{line}</p>
                                   <p className="text-[10px] text-zinc-400">
                                     {addr.neighborhood_name || 'Sem bairro'}
-                                    {addr.neighborhood_delivery_fee > 0 ? ' • R$ ' + addr.neighborhood_delivery_fee.toFixed(2) : ' • Grátis'}
+                                    {addr.neighborhood_delivery_fee > 0 ? ' • ' + formatCurrency(addr.neighborhood_delivery_fee) : ' • Grátis'}
                                   </p>
                                 </div>
                               </div>
@@ -920,8 +921,8 @@ export default function DeliveryPage() {
                 {modoEntrega === 'retirada'
                   ? 'Sem taxa'
                   : (distanceMode
-                      ? (deliveryQuote ? (deliveryQuote.taxa > 0 ? 'R$ ' + deliveryQuote.taxa.toFixed(2) : 'Grátis') : 'A calcular')
-                      : (deliveryFee > 0 ? 'R$ ' + deliveryFee.toFixed(2) : 'Grátis'))}
+                      ? (deliveryQuote ? (deliveryQuote.taxa > 0 ? formatCurrency(deliveryQuote.taxa) : 'Grátis') : 'A calcular')
+                      : (deliveryFee > 0 ? formatCurrency(deliveryFee) : 'Grátis'))}
               </div>
               <div className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[11px] font-semibold text-zinc-500 border-l border-zinc-100 min-w-0">
                 {modoEntrega === 'retirada' ? (
@@ -1078,9 +1079,9 @@ export default function DeliveryPage() {
                             <p className="text-[10px] text-zinc-400 mt-1">{timeStr}</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-sm font-bold text-amber-600">R$ {order.total_amount.toFixed(2)}</p>
+                            <p className="text-sm font-bold text-amber-600">Total {formatCurrency(order.total_amount)}</p>
                             {order.delivery_fee > 0 ? (
-                              <p className="text-[10px] text-zinc-400">+ taxa R$ {order.delivery_fee.toFixed(2)}</p>
+                              <p className="text-[10px] text-zinc-400">inclui taxa {formatCurrency(order.delivery_fee)}</p>
                             ) : null}
                           </div>
                         </div>
@@ -1204,14 +1205,14 @@ export default function DeliveryPage() {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-zinc-500">Subtotal ({totalItens} {totalItens === 1 ? 'item' : 'itens'})</span>
-                  <span className="text-zinc-800 font-bold">R$ {subtotalFooter.toFixed(2)}</span>
+                  <span className="text-zinc-800 font-bold">{formatCurrency(subtotalFooter)}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-zinc-500">
                     {modoEntrega === 'retirada' ? 'Retirada na loja' : 'Taxa de entrega'}
                   </span>
                   <span className={modoEntrega === 'retirada' || deliveryFee === 0 ? 'text-green-600 font-bold' : 'text-zinc-800 font-bold'}>
-                    {modoEntrega === 'retirada' ? 'Grátis' : (deliveryFee > 0 ? 'R$ ' + deliveryFee.toFixed(2) : 'Grátis')}
+                    {modoEntrega === 'retirada' ? 'Grátis' : (deliveryFee > 0 ? formatCurrency(deliveryFee) : 'Grátis')}
                   </span>
                 </div>
                 {modoEntrega !== 'retirada' && bairroAtual && deliveryFee > 0 ? (
@@ -1236,7 +1237,7 @@ export default function DeliveryPage() {
                     <span className="text-green-600 flex items-center gap-1">
                       <i className="ri-coupon-3-line text-[11px]" />Cupom {data.voucherCodigo}
                     </span>
-                    <span className="text-green-600 font-bold">- R$ {voucherDescFooter.toFixed(2)}</span>
+                    <span className="text-green-600 font-bold">- {formatCurrency(voucherDescFooter)}</span>
                   </div>
                 ) : null}
 
@@ -1279,7 +1280,7 @@ export default function DeliveryPage() {
                 <div className="h-px bg-zinc-100" />
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-bold text-zinc-800">Total</span>
-                  <span className="text-sm font-bold text-amber-600">R$ {totalFooter.toFixed(2)}</span>
+                  <span className="text-sm font-bold text-amber-600">{formatCurrency(totalFooter)}</span>
                 </div>
               </div>
 
@@ -1326,7 +1327,7 @@ export default function DeliveryPage() {
                 ) : (
                   <>
                     <i className="ri-check-line" />
-                    Confirmar pedido — R$ {totalFooter.toFixed(2)}
+                    Confirmar pedido — {formatCurrency(totalFooter)}
                   </>
                 )}
               </button>
@@ -1359,7 +1360,7 @@ export default function DeliveryPage() {
               </div>
               {/* Só o valor dos produtos — a taxa de entrega entra ao abrir o pedido */}
               <span className="text-sm font-bold">
-                R$ {totalItensProdutos.toFixed(2)}
+                {formatCurrency(totalItensProdutos)}
               </span>
             </button>
           </div>
@@ -1571,24 +1572,24 @@ export default function DeliveryPage() {
                         <div className="mt-3 pt-3 border-t border-amber-200/60">
                           <div className="flex items-center justify-between">
                             <span className="text-xs text-zinc-600 font-medium">Total do pedido</span>
-                            <span className="text-xs font-bold text-zinc-800">R$ {totalModal.toFixed(2)}</span>
+                            <span className="text-xs font-bold text-zinc-800">{formatCurrency(totalModal)}</span>
                           </div>
                           <div className="flex items-center justify-between mt-1.5">
                             <span className="text-xs text-zinc-600 font-medium">Valor entregue</span>
-                            <span className="text-xs font-bold text-zinc-800">R$ {valorNum.toFixed(2)}</span>
+                            <span className="text-xs font-bold text-zinc-800">{formatCurrency(valorNum)}</span>
                           </div>
                           <div className="flex items-center justify-between mt-2 pt-2 border-t border-amber-200/60">
                             <span className="text-sm font-bold text-green-700 flex items-center gap-1">
                               <i className="ri-arrow-go-back-line text-sm" />
                               Troco
                             </span>
-                            <span className="text-sm font-black text-green-700">R$ {troco.toFixed(2)}</span>
+                            <span className="text-sm font-black text-green-700">{formatCurrency(troco)}</span>
                           </div>
                           <p className="text-[10px] text-green-600/70 mt-1.5">
                             {modoEntrega === 'retirada'
                               ? 'Apresente o valor na retirada e receba o troco de '
                               : 'O motoboy já levará o troco de '}
-                            <strong>R$ {troco.toFixed(2)}</strong>
+                            <strong>{formatCurrency(troco)}</strong>
                           </p>
                         </div>
                       );
@@ -1606,6 +1607,13 @@ export default function DeliveryPage() {
                   />
                 </div>
 
+                {error ? (
+                  <div className="mb-3 flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2.5">
+                    <i className="ri-error-warning-line text-red-500 text-sm mt-0.5" />
+                    <p className="text-xs font-bold text-red-700">{error}</p>
+                  </div>
+                ) : null}
+
                 <button
                   type="button"
                   disabled={!metodoPagamento || enviando || (metodoPagamento === 'dinheiro' && (valorDinheiro === '' || !!erroValorDinheiro)) || cpfNotaInvalido}
@@ -1615,8 +1623,10 @@ export default function DeliveryPage() {
                         const valorNum = parseFloat(valorDinheiro) || 0;
                         if (valorNum < totalModal) return;
                       }
-                      setShowPagamentoModal(false);
-                      handleConfirmarPedido(metodoPagamento, valorDinheiro);
+                      // Só fecha após o pedido ser criado: em erro o modal fica com a forma escolhida.
+                      handleConfirmarPedido(metodoPagamento, valorDinheiro).then(function (ok) {
+                        if (ok) setShowPagamentoModal(false);
+                      });
                     }
                   }}
                   className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-40 disabled:hover:from-amber-500 disabled:hover:to-orange-500 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
@@ -1629,7 +1639,7 @@ export default function DeliveryPage() {
                   ) : (
                     <>
                       <i className="ri-check-line" />
-                      Confirmar pedido — R$ {totalModal.toFixed(2)}
+                      Confirmar pedido — {formatCurrency(totalModal)}
                     </>
                   )}
                 </button>

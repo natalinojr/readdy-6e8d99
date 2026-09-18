@@ -141,6 +141,10 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Flag: ja inicializou do banco ou localStorage
   const initializedRef = useRef(false);
+  // Dirty flag: só há o que salvar quando o USUÁRIO alterou algo (nunca no carregamento).
+  // Sem isso o auto-save regravava printers_config a cada carga (403 no totem/caixa).
+  const dirtyRef = useRef(false);
+  const podeSalvarConfig = user?.perfil === 'admin' || user?.perfil === 'gerente';
 
   // ── Reseta estado quando troca de tenant ──
   useEffect(() => {
@@ -151,6 +155,7 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
       setMapaEstacoes({});
       setPrintTemplates({});
       initializedRef.current = false;
+      dirtyRef.current = false;
       lastDbConfigRef.current = '';
     }
   }, [tenantId]);
@@ -261,6 +266,8 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     // So dispara auto-save apos a inicializacao inicial (evita salvar estado vazio no primeiro render)
     if (!initializedRef.current) return;
+    // Só salva alteração feita pelo usuário, e só se o papel pode gravar configurações
+    if (!dirtyRef.current || !podeSalvarConfig) return;
     if (!tenantId) return;
     // Nao salva enquanto as settings em memoria forem de outra loja
     if (settings.tenant_id !== tenantId) return;
@@ -272,6 +279,7 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
     }
     autoSaveTimerRef.current = setTimeout(() => {
       console.log('[ImpressorasContext] Auto-save disparado (debounce 2s) para tenant:', tenantId);
+      dirtyRef.current = false;
       salvar({
         printers_config: { impressoras, mapaEstacoes, printTemplates },
       }).then(() => {
@@ -299,7 +307,7 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
         clearTimeout(autoSaveTimerRef.current);
       }
     };
-  }, [impressoras, mapaEstacoes, printTemplates, salvar, tenantId, settings.tenant_id]);
+  }, [impressoras, mapaEstacoes, printTemplates, salvar, tenantId, settings.tenant_id, podeSalvarConfig]);
 
   const getImpressoraParaEstacao = useCallback(
     (estacao: string): Impressora | undefined => {
@@ -370,14 +378,17 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
   );
 
   const addImpressora = useCallback((data: Omit<Impressora, 'id'>) => {
+    dirtyRef.current = true;
     setImpressoras((prev) => [...prev, { ...data, id: `imp-${Date.now()}`, paperStyle: data.paperStyle ?? '80mm' }]);
   }, []);
 
   const updateImpressora = useCallback((id: string, data: Partial<Omit<Impressora, 'id'>>) => {
+    dirtyRef.current = true;
     setImpressoras((prev) => prev.map((i) => (i.id === id ? { ...i, ...data } : i)));
   }, []);
 
   const removeImpressora = useCallback((id: string) => {
+    dirtyRef.current = true;
     setImpressoras((prev) => prev.filter((i) => i.id !== id));
     setMapaEstacoes((prev) => {
       const next = { ...prev };
@@ -387,14 +398,17 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const setImpressoraEstacao = useCallback((estacao: string, impressoraId: string) => {
+    dirtyRef.current = true;
     setMapaEstacoes((prev) => ({ ...prev, [estacao]: impressoraId }));
   }, []);
 
   const clearImpressoraEstacao = useCallback((estacao: string) => {
+    dirtyRef.current = true;
     setMapaEstacoes((prev) => { const next = { ...prev }; delete next[estacao]; return next; });
   }, []);
 
   const updatePrintTemplate = useCallback((stationKey: string, data: Partial<PrintTemplate>) => {
+    dirtyRef.current = true;
     setPrintTemplates((prev) => ({
       ...prev,
       [stationKey]: { ...(prev[stationKey] ?? getDefaultTemplate(stationKey)), ...data, stationKey },
@@ -402,6 +416,7 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const resetPrintTemplate = useCallback((stationKey: string) => {
+    dirtyRef.current = true;
     setPrintTemplates((prev) => { const next = { ...prev }; delete next[stationKey]; return next; });
   }, []);
 

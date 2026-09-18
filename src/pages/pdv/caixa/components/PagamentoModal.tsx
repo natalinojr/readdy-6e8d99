@@ -160,7 +160,9 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const totalEfetivo = etapa === 'pagar' ? totalSelecionado : total;
 
   // Total com desconto de voucher + desconto manual aplicados
-  const desconto = voucherAplicado?.applicable_amount ?? 0;
+  // Voucher limitado ao que sobra depois do desconto manual (senão o desconto total passa
+  // do valor do pedido e o order-write recusa por inconsistência financeira)
+  const desconto = Math.min(voucherAplicado?.applicable_amount ?? 0, Math.max(0, totalEfetivo - descontoManual));
   const totalComDesconto = Math.max(0, totalEfetivo - desconto - descontoManual);
 
   // Base do desconto manual: valor efetivo já menos o voucher (não deixa passar do total)
@@ -177,6 +179,18 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     setDescontoPendente(valor);
     setShowDescontoAuth(true);
   }
+
+  // Desconto manual mudou depois do voucher: o valor aplicável do voucher (e o pedido mínimo)
+  // foram validados sobre outro total — limpa para o operador aplicar de novo.
+  const descontoManualAnteriorRef = useRef(descontoManual);
+  useEffect(() => {
+    if (descontoManualAnteriorRef.current === descontoManual) return;
+    descontoManualAnteriorRef.current = descontoManual;
+    if (voucherAplicado) {
+      setVoucherAplicado(null);
+      setVoucherError('O desconto mudou — aplique o voucher novamente');
+    }
+  }, [descontoManual, voucherAplicado]);
 
   function handleRemoverDesconto() {
     setDescontoManual(0);
@@ -267,7 +281,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
           action: 'validate_voucher',
           active_tenant_id: user?.tenantId,
           code: voucherCode.trim().toUpperCase(),
-          order_amount: totalEfetivo,
+          order_amount: Math.max(0, totalEfetivo - descontoManual),
         },
       });
       if (fnErr) throw fnErr;
@@ -387,8 +401,28 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     const incluirCarrinho = pedidosExistentesSelecionados.some((p) => p.isCarrinho);
 
     try {
+      // Voucher entra como DESCONTO no pedido do carrinho (mesmo critério do delivery-write:
+      // discount_amount/total_amount do pedido já reduzidos), para o pedido fechar como pago.
+      // Pagamento de pedidos já lançados (mesa/vínculo) não tem como receber esse desconto
+      // por aqui — bloqueia em vez de gravar o pedido com total cheio e pagamento a menos.
+      const vaiCriarPedidoCarrinho = (incluirCarrinho || pedidosExistentes.length === 0) && carrinhoSnapshot.length > 0;
+      if (voucherAplicado && (pedidosExistentes.length > 0 || !vaiCriarPedidoCarrinho)) {
+        toastError('Voucher não aplicável aqui', 'O voucher só pode ser usado numa venda nova do carrinho, sem pedidos já lançados junto. Remova o voucher para continuar.');
+        return;
+      }
+
       let numeroPedidoLocal = 0;
       let orderIdLocal = '';
+      // Venda zerada (voucher/desconto cobre 100%) sem nenhum pagamento lançado: registra um
+      // pagamento de R$ 0 numa forma existente para o order-write marcar o pedido como pago
+      // (ramo total_amount === 0 → is_paid). Sem isso o pedido fica em aberto e trava a sessão.
+      const formaZero = formasPagamento.find((f) => f.ativo && f.tipo === 'cash') ?? formasPagamento.find((f) => f.ativo);
+      const vendaZerada = vaiCriarPedidoCarrinho && pedidosExistentes.length === 0
+        && totalComDesconto < 0.005 && pagamentos.length === 0;
+      if (vendaZerada && !formaZero) {
+        toastError('Sem forma de pagamento', 'Cadastre/ative uma forma de pagamento para registrar venda de valor zero.');
+        return;
+      }
 
       // Gera um payment_group_id único se houver mais de um pedido sendo pago junto
       const totalPedidosPagando = pedidosExistentes.length + (incluirCarrinho ? 1 : 0);
@@ -465,7 +499,9 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       // 2. Cria o pedido do carrinho se estiver selecionado
       if (effectiveIncluirCarrinho && carrinhoSnapshot.length > 0) {
         const result = await finalizarPedido(
-          pagamentosCarrinho,
+          vendaZerada && formaZero
+            ? [{ formaId: formaZero.id, formaNome: formaZero.nome, valor: 0 }]
+            : pagamentosCarrinho,
           {
             customerCpf: customerCpf || undefined,
             customerEmail: customerEmail || undefined,
@@ -475,8 +511,20 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             paymentGroupSize: paymentGroupId ? totalPedidosPagando : null,
           },
           undefined,
-          descontoManual > 0 ? { amount: descontoManual, authorizedBy: descontoAutorizadoPor } : undefined,
+          (descontoManual > 0 || desconto > 0)
+            ? {
+                amount: descontoManual + desconto,
+                authorizedBy: [
+                  descontoManual > 0 ? descontoAutorizadoPor : null,
+                  voucherAplicado ? `voucher ${voucherAplicado.voucher.code} (${formatPrice(desconto)})` : null,
+                ].filter(Boolean).join(' + ') || null,
+              }
+            : undefined,
         );
+        if (result.auditoriaDescontoFalhou) {
+          toastWarning('Registro do desconto falhou', `Pedido #${result.number} gravado com o desconto, mas o registro de auditoria do desconto não foi salvo.`);
+        }
+        if (result.pagamentoPendente) toastWarning('Pagamento não confirmado', result.pagamentoPendente);
         const numeroStr = result.number;
         const seq = parseInt(numeroStr.replace(/\D/g, '').slice(-4)) || 1;
         numeroPedidoLocal = seq;
@@ -497,16 +545,30 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       );
 
       // Resgatar voucher se aplicado
-      if (voucherAplicado) {
-        await invokeWithAuth('voucher-write', {
-          body: {
-            action: 'redeem_voucher',
-            active_tenant_id: user?.tenantId,
-            code: voucherAplicado.voucher.code,
-            amount: voucherAplicado.applicable_amount,
-            order_id: null,
-          },
-        });
+      // Resgata sempre que o pedido existe de fato (UUID): o desconto já foi gravado no
+      // create_order, então não resgatar permitiria reusar o voucher.
+      const orderIdValido = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderIdLocal);
+      if (voucherAplicado && orderIdValido) {
+        let erroResgate: string | null = null;
+        try {
+          const { data: redeemData, error: redeemErr } = await invokeWithAuth<{ error?: string }>('voucher-write', {
+            body: {
+              action: 'redeem_voucher',
+              active_tenant_id: user?.tenantId,
+              code: voucherAplicado.voucher.code,
+              amount: desconto,
+              order_id: orderIdLocal,
+              order_amount: Math.max(0, totalEfetivo - descontoManual),
+            },
+          });
+          if (redeemErr) erroResgate = redeemErr.message ?? String(redeemErr);
+          else if (redeemData?.error) erroResgate = redeemData.error;
+        } catch (e) {
+          erroResgate = e instanceof Error ? e.message : String(e);
+        }
+        if (erroResgate) {
+          toastError('Voucher não foi baixado', `Pedido #${numeroPedidoLocal} com desconto, mas o resgate do voucher ${voucherAplicado.voucher.code} falhou: ${erroResgate}. Baixe o voucher manualmente.`);
+        }
       }
 
       if (!sessao) {
@@ -1045,7 +1107,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                         {voucherAplicado.voucher.voucher_type === 'gift_card' ? 'Gift Card' :
                          voucherAplicado.voucher.voucher_type === 'discount' ? 'Desconto' :
                          voucherAplicado.voucher.voucher_type === 'cashback' ? 'Cashback' : 'Item Grátis'}
-                        {' · '}Desconto: <strong>{formatPrice(voucherAplicado.applicable_amount)}</strong>
+                        {' · '}Desconto: <strong>{formatPrice(desconto)}</strong>
                       </p>
                     </div>
                     <button

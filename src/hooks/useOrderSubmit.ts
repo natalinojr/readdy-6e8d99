@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { invokeWithAuth } from '@/lib/supabase';
+import { invokeWithAuth, type EdgeHttpError } from '@/lib/supabase';
 import {
   saveOfflineOrder,
   generateLocalOrderId,
@@ -163,7 +163,13 @@ async function retryAsync<T>(
       // Após esgotar tentativas, propaga para o chamador exibir alerta diferenciado
       const isPartialError = err instanceof PartialOrderError;
 
+      // 409/422 = decisão definitiva do servidor (pedido cancelado, itens não gravados):
+      // repetir com o mesmo client_request_id só devolveria o mesmo erro.
+      const httpStatus = (err as { status?: number } | null)?.status;
+      const isDefinitiveHttp = !isPartialError && (httpStatus === 409 || httpStatus === 422);
+
       const isValidationError = !isPartialError && (
+        isDefinitiveHttp ||
         errMsg.includes('400') || errMsg.includes('401') || errMsg.includes('403')
         || errMsg.toLowerCase().includes('required')
         || errMsg.toLowerCase().includes('invalid')
@@ -413,9 +419,25 @@ export function useOrderSubmit() {
             });
 
             if (error) {
+              // Pedido auto-cancelado pelo servidor (itens não gravaram) ou retry que achou
+              // o pedido cancelado: falha definitiva, sem retry — o operador lança de novo.
+              // Não é PartialOrderError: o pedido não existe mais para receber itens.
+              const status = (error as EdgeHttpError).status;
+              const code = (error as EdgeHttpError).code;
+              if (status === 409 && code === 'order_cancelled') {
+                const e = new Error(error.message || 'O pedido foi cancelado no servidor (falha ao gravar itens). Lance o pedido novamente.') as EdgeHttpError;
+                e.status = 409; e.code = code;
+                throw e;
+              }
+              if (status === 422) {
+                const e = new Error(`Pedido NÃO registrado: ${error.message || 'falha ao gravar itens'}. Lance o pedido novamente.`) as EdgeHttpError;
+                e.status = 422;
+                throw e;
+              }
               throw error;
             }
 
+            // Resposta 2xx com erro no corpo (HTTP 207 legado): pedido existe com itens faltando.
             const isPartial = data?.error && (
               data.error.includes('falha ao inserir itens') ||
               data.error.includes('cancelled') ||
@@ -656,6 +678,11 @@ async function saveOrderOffline(
     total_amount: payload.total_amount,
     cash_register_id: payload.cash_register_id ?? null,
     is_training: payload.is_training,
+    // Mesmo client_request_id da tentativa online: se o servidor já gravou (resposta perdida),
+    // o sync recebe o pedido existente em vez de criar um duplicado.
+    client_request_id: payload.client_request_id ?? localId,
+    // Payload completo: nenhum campo do create_order se perde no caminho offline.
+    create_payload: JSON.parse(JSON.stringify(payload)) as Record<string, unknown>,
 
     payments,
   };

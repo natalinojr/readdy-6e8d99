@@ -16,6 +16,16 @@ const corsHeaders = {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
+  // Desativada para uso externo (2026-09-17): criava pedidos na matriz El Patron sem autenticação.
+  // Nenhuma tela usa. Só a própria service role passa (candidata a ser apagada).
+  const bearer = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
+  const srk = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  if (!srk || bearer !== srk) {
+    return new Response(JSON.stringify({ error: 'Forbidden: simulate-orders desativada' }), {
+      status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   try {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,

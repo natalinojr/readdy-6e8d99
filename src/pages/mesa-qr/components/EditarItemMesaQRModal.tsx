@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { formatCurrency } from '@/lib/formatters';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 
@@ -352,12 +353,12 @@ export default function EditarItemMesaQRModal(props: Props) {
             <h3 className="text-base font-bold text-zinc-800 truncate mt-1">{itemOriginal.name}</h3>
             {getPrecoEfetivo() < itemOriginal.price ? (
               <p className="text-xs text-zinc-500 mt-0.5">
-                <span className="line-through text-zinc-300">R$ {itemOriginal.price.toFixed(2)}</span>
+                <span className="line-through text-zinc-300">{formatCurrency(itemOriginal.price)}</span>
                 {' '}
-                <span className="text-red-500 font-bold">R$ {getPrecoEfetivo().toFixed(2)}</span>
+                <span className="text-red-500 font-bold">{formatCurrency(getPrecoEfetivo())}</span>
               </p>
             ) : (
-              <p className="text-xs text-zinc-500 mt-0.5">R$ {itemOriginal.price.toFixed(2)}</p>
+              <p className="text-xs text-zinc-500 mt-0.5">{formatCurrency(itemOriginal.price)}</p>
             )}
           </div>
           <button
@@ -506,7 +507,7 @@ export default function EditarItemMesaQRModal(props: Props) {
                               </span>
                             ) : op.additional_price > 0 ? (
                               <span className="text-xs font-bold text-amber-600">
-                                + R$ {op.additional_price.toFixed(2)}
+                                + {formatCurrency(op.additional_price)}
                               </span>
                             ) : null}
                           </label>
@@ -577,7 +578,7 @@ export default function EditarItemMesaQRModal(props: Props) {
             className="flex-[2] flex items-center justify-center gap-2 bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-5 py-3.5 rounded-xl cursor-pointer transition-all text-sm font-bold whitespace-nowrap"
           >
             <i className="ri-save-line" />
-            Salvar • R$ {calcularPrecoTotal().toFixed(2)}
+            Salvar • {formatCurrency(calcularPrecoTotal())}
           </button>
         </div>
       </div>

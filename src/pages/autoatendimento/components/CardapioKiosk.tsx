@@ -5,6 +5,7 @@ import { useCardapio } from '../../../contexts/CardapioContext';
 import { useEstoque } from '../../../contexts/EstoqueContext';
 import ItemImage from '../../../components/base/ItemImage';
 import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
+import { toggleOpcaoGrupo, primeiroGrupoFaltando, mensagemGrupoFaltando, mensagemMaximoAtingido } from '@/lib/optionGroupSelection';
 
 // ── Teclado virtual para observações ──────────────────────────────────────────
 const LETRAS_KB = [
@@ -136,7 +137,11 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
   const [selecionadas, setSelecionadas] = useState<Record<string, OpcaoTrackKiosk[]>>({});
   const [obsLivre, setObsLivre] = useState('');
   const [obsTags, setObsTags] = useState<string[]>([]);
-  const [erro, setErro] = useState('');
+  // "Escolha: grupo" é recalculado a cada seleção e some quando o mínimo é atingido.
+  const [avisoMax, setAvisoMax] = useState('');
+  const [tentouAdicionar, setTentouAdicionar] = useState(false);
+  const grupoFaltando = primeiroGrupoFaltando(item.opcoes, selecionadas);
+  const erro = avisoMax || (tentouAdicionar && grupoFaltando ? mensagemGrupoFaltando(grupoFaltando) : '');
   const [mostrarScrollHint, setMostrarScrollHint] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -152,13 +157,10 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
     return () => el.removeEventListener('scroll', onScroll);
   }, [item]);
 
-  const toggleOpcao = (grupo: string, opcao: OpcaoTrackKiosk, obrigatorio: boolean) => {
-    setSelecionadas((prev) => {
-      const atual = prev[grupo] ?? [];
-      if (obrigatorio) return { ...prev, [grupo]: [opcao] };
-      if (atual.some((o) => o.nome === opcao.nome)) return { ...prev, [grupo]: atual.filter((o) => o.nome !== opcao.nome) };
-      return { ...prev, [grupo]: [...atual, opcao] };
-    });
+  const toggleOpcao = (grupo: NonNullable<ItemCardapioPublico['opcoes']>[number], opcao: OpcaoTrackKiosk) => {
+    const r = toggleOpcaoGrupo(selecionadas[grupo.grupo] ?? [], opcao, grupo);
+    setAvisoMax(r.bloqueado ? mensagemMaximoAtingido(grupo) : '');
+    if (!r.bloqueado) setSelecionadas((prev) => ({ ...prev, [grupo.grupo]: r.selecao }));
   };
 
   const totalOpcoes = Object.values(selecionadas).flat().reduce((sum, o) => sum + o.precoAdicional, 0);
@@ -166,10 +168,7 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
   const total = (item.preco + totalOpcoes) * qtd;
 
   const handleAdicionar = () => {
-    const obrigatorios = item.opcoes?.filter((g) => g.obrigatorio) ?? [];
-    for (const g of obrigatorios) {
-      if (!selecionadas[g.grupo]?.length) { setErro(`Escolha: ${g.grupo}`); return; }
-    }
+    if (grupoFaltando) { setAvisoMax(''); setTentouAdicionar(true); return; }
     // Combina observações pré-configuradas + texto livre
     const obsCompleta = [
       ...obsTags,
@@ -180,8 +179,8 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
-      <div className="bg-zinc-900 rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 [@media(max-height:820px)]:p-3">
+      <div className="bg-zinc-900 rounded-3xl w-full max-w-4xl max-h-[90vh] [@media(max-height:820px)]:max-h-[96vh] overflow-hidden flex flex-col">
         <style>{`
           .no-scrollbar::-webkit-scrollbar {
             display: none;
@@ -192,7 +191,7 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
           }
         `}</style>
 
-          <div className="relative h-56 flex-shrink-0">
+          <div className="relative h-56 [@media(max-height:820px)]:h-32 flex-shrink-0">
             <ItemImage src={item.foto} alt={item.nome} className="w-full h-full" imgClassName="object-contain" />
             <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/40 to-transparent" />
             <button onClick={onClose} className="absolute top-3 right-3 w-12 h-12 flex items-center justify-center bg-zinc-800/90 rounded-xl cursor-pointer hover:bg-zinc-700 transition-colors">
@@ -213,7 +212,7 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
             </div>
           </div>
 
-          <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-5 relative no-scrollbar">
+          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-6 [@media(max-height:820px)]:p-4 pb-8 space-y-5 relative no-scrollbar">
             {item.opcoes?.map((grupo) => (
               <div key={grupo.grupo}>
                 <div className="flex items-center gap-2 mb-2">
@@ -225,7 +224,7 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
                     const sel = selecionadas[grupo.grupo]?.some((o) => o.nome === opcao.nome);
                     const opTrack: OpcaoTrackKiosk = { id: opcao.id, nome: opcao.nome, precoAdicional: opcao.precoAdicional, grupoNome: grupo.grupo, obrigatorio: grupo.obrigatorio };
                     return (
-                      <button key={opcao.nome} onClick={() => toggleOpcao(grupo.grupo, opTrack, grupo.obrigatorio)}
+                      <button key={opcao.nome} onClick={() => toggleOpcao(grupo, opTrack)}
                         className={`flex items-center justify-between px-4 py-4 rounded-xl border-2 transition-all cursor-pointer ${sel ? 'border-amber-500 bg-amber-500/10' : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'}`}
                       >
                         <div className="flex items-center gap-3">
@@ -300,9 +299,9 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
             )}
           </div>
 
-          {erro && <p className="px-6 text-base text-red-400 font-semibold">{erro}</p>}
+          {erro && <p className="px-6 pt-2 text-base text-red-400 font-semibold flex-shrink-0">{erro}</p>}
 
-          <div className="p-6 border-t border-zinc-800 flex items-center gap-4">
+          <div className="p-6 [@media(max-height:820px)]:p-3 border-t border-zinc-800 flex items-center gap-4 flex-shrink-0">
             <div className="flex items-center gap-4 bg-zinc-800 rounded-2xl px-4 py-3">
               <button onClick={() => setQtd((q) => Math.max(1, q - 1))} className="w-12 h-12 flex items-center justify-center rounded-xl bg-zinc-700 hover:bg-zinc-600 cursor-pointer transition-colors">
                 <Minus size={18} className="text-white" />
@@ -554,10 +553,17 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
                   onDiminuir(item.id);
                 };
                 return (
-                  <button
+                  // div role=button: o card contém os botões +/− (button dentro de button é HTML inválido)
+                  <div
                     key={item.id}
-                    onClick={handleClick}
-                    disabled={esgotado}
+                    role="button"
+                    tabIndex={esgotado ? -1 : 0}
+                    aria-disabled={esgotado}
+                    onClick={() => { if (!esgotado) handleClick(); }}
+                    onKeyDown={(e) => {
+                      if (esgotado || e.target !== e.currentTarget) return;
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); }
+                    }}
                     className={`flex items-center gap-4 bg-zinc-800 rounded-2xl p-3 text-left transition-all ${esgotado ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-zinc-750 active:scale-[0.99]'}`}
                   >
                     {/* Imagem */}
@@ -626,7 +632,7 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
                         </button>
                       </div>
                     )}
-                  </button>
+                  </div>
                 );
               })}
             </div>

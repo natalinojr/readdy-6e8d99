@@ -12,6 +12,44 @@ if (!supabaseUrl || !supabaseAnonKey) {
 /** URL publica do projeto Supabase — use este export em vez de import.meta.env direto */
 export const SUPABASE_URL = supabaseUrl;
 
+/**
+ * Edge Functions na mesma região do banco (2026-09-17, go-live Paranaguá).
+ * Sem isso a Edge roda em sa-east-1 (perto do cliente) e cada consulta ao banco
+ * (us-west-1) paga ~150 ms de ida e volta: create_order fazia ~20 e levava 4–8 s.
+ * Só as funções que conversam quase só com o banco; as que falam com serviços
+ * brasileiros (SEFAZ, Inter, Stone, Pix) continuam no padrão.
+ * Vale para qualquer fetch do app (supabase.functions.invoke e fetch direto).
+ */
+const EDGE_REGION = 'us-west-1';
+const EDGES_NA_REGIAO_DO_BANCO = new Set([
+  'order-write', 'mesa-write', 'delivery-write', 'table-write', 'session-payments',
+  'kiosk-auth', 'login-pin', 'verify-manager-credentials', 'menu-write', 'stock-write',
+  'voucher-write', 'voucher-claim', 'check-session-pending', 'order-edit-lock',
+  'print-queue-write', 'customer-write', 'config-write', 'reservation-write',
+  'production-write', 'user-write', 'audit-write', 'task-write', 'motoboy-signal',
+]);
+
+export function withEdgeRegion(url: string): string {
+  const prefix = `${supabaseUrl}/functions/v1/`;
+  if (!url.startsWith(prefix) || url.includes('forceFunctionRegion=')) return url;
+  const name = url.slice(prefix.length).split(/[/?#]/)[0];
+  if (!EDGES_NA_REGIAO_DO_BANCO.has(name)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}forceFunctionRegion=${EDGE_REGION}`;
+}
+
+if (typeof window !== 'undefined' && typeof window.fetch === 'function' && !(window.fetch as { __edgeRegion?: boolean }).__edgeRegion) {
+  const originalFetch = window.fetch.bind(window);
+  const patched: typeof fetch = (input, init) => {
+    try {
+      if (typeof input === 'string') return originalFetch(withEdgeRegion(input), init);
+      if (input instanceof URL) return originalFetch(withEdgeRegion(input.href), init);
+    } catch { /* segue sem região */ }
+    return originalFetch(input, init);
+  };
+  (patched as { __edgeRegion?: boolean }).__edgeRegion = true;
+  window.fetch = patched;
+}
+
 /** Anon key publica do projeto Supabase — use este export em vez de import.meta.env direto */
 export const SUPABASE_ANON_KEY = supabaseAnonKey;
 
@@ -51,7 +89,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
  * NOTE: 'jwt expired' sozinho pode ser do access token (que o refresh corrige),
  *       então só consideramos revogado se vier junto com outras palavras-chave.
  */
-function isRefreshTokenInvalidError(message: string): boolean {
+export function isRefreshTokenInvalidError(message: string): boolean {
   const lower = message.toLowerCase();
   return (
     lower.includes('invalid refresh token') ||
@@ -65,12 +103,32 @@ function isRefreshTokenInvalidError(message: string): boolean {
 }
 
 /**
+ * Marca que o próximo SIGNED_OUT emitido pelo supabase-js veio de um logout
+ * EXPLÍCITO (botão Sair / safeSignOut), e não de uma falha de refresh dentro
+ * da própria lib. Quem escuta onAuthStateChange usa isso para não confundir
+ * "usuário saiu de propósito" com "a rede caiu por um instante".
+ */
+let logoutIntencional = false;
+export function isLogoutIntencional(): boolean {
+  return logoutIntencional;
+}
+/** Consome a flag (uso único) — chamar depois de tratar o SIGNED_OUT correspondente. */
+export function clearLogoutIntencional(): void {
+  logoutIntencional = false;
+}
+
+/**
  * SignOut seguro que nunca lança exceção e limpa o localStorage manualmente se necessário.
  */
 export async function safeSignOut(): Promise<void> {
+  logoutIntencional = true;
   try {
-    await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut();
+    // Com erro de rede/servidor o supabase-js NÃO emite SIGNED_OUT: a flag ficaria pendurada e
+    // o próximo SIGNED_OUT "surpresa" seria tratado como intencional, pulando a checagem.
+    if (error) logoutIntencional = false;
   } catch {
+    logoutIntencional = false;
     // Se signOut falhar, limpa manualmente as chaves que o supabase-js usa
   }
   try {
@@ -83,79 +141,103 @@ export async function safeSignOut(): Promise<void> {
   } catch { /* silencioso */ }
 }
 
+/** Motivo de uma tentativa de refresh sem sessão de volta. */
+export type RefreshReason = 'ok' | 'invalid' | 'transient';
+
+export function isTransientRefreshError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('fetch') ||
+    lower.includes('network') ||
+    lower.includes('timeout') ||
+    lower.includes('abort') ||
+    lower.includes('econnrefused') ||
+    lower.includes('econnreset') ||
+    lower.includes('socket') ||
+    lower.includes('unreachable')
+  );
+}
+
 /**
- * Wrapper seguro para refreshSession. Se o refresh token for inválido
- * (revogado, expirado, ou não encontrado no servidor), limpa a sessão local
- * e retorna null sem propagar o erro.
- * Se for outro erro (rede, timeout), retorna null SEM limpar a sessão local.
- * Agora com retry automático para erros transitórios de rede.
+ * Faz refreshSession() distinguindo POR QUE não voltou sessão:
+ * - 'invalid'   → refresh token realmente revogado/expirado/já usado — sessão local é limpa
+ *                 (safeSignOut) e quem chamou deve mandar o usuário para o login.
+ * - 'transient' → só falha claramente de rede/timeout/5xx/429 (ver classifyRefreshError).
+ *                 A sessão local NÃO é tocada: o token de acesso atual pode ainda estar
+ *                 válido por mais alguns minutos. Erro desconhecido do Auth é 'invalid'.
+ * - 'ok'        → refresh funcionou, `session` vem preenchida.
+ * Tem retry automático (2 tentativas) só para os casos claramente transitórios.
  */
-export async function safeRefreshSession(): Promise<Session | null> {
+/**
+ * Classifica a falha de refresh. Fail-safe: só é "transient" o que é claramente rede/servidor
+ * (sem resposta, timeout, 5xx, 429). Qualquer outra recusa do Auth (usuário desativado, banido,
+ * invalid_grant, mensagem nova) é "invalid" — senão um usuário revogado ficaria "logado" para sempre.
+ */
+export function classifyRefreshError(err: unknown): Exclude<RefreshReason, 'ok'> {
+  const e = err as { message?: string; name?: string; status?: number } | null;
+  const msg = e?.message ?? String(err ?? '');
+  if (isRefreshTokenInvalidError(msg)) return 'invalid';
+  if (e?.name === 'AuthRetryableFetchError') return 'transient';
+  const status = typeof e?.status === 'number' ? e.status : undefined;
+  if (status !== undefined && (status === 0 || status === 429 || status >= 500)) return 'transient';
+  if (isTransientRefreshError(msg)) return 'transient';
+  return 'invalid';
+}
+
+export async function refreshSessionWithReason(): Promise<{ session: Session | null; reason: RefreshReason }> {
   const MAX_REFRESH_RETRIES = 2;
 
   for (let attempt = 0; attempt < MAX_REFRESH_RETRIES; attempt++) {
     try {
       const { data, error } = await supabase.auth.refreshSession();
       if (error) {
-        if (isRefreshTokenInvalidError(error.message)) {
-          console.warn('[safeRefreshSession] Refresh token inválido/revogado — limpando sessão local');
+        if (classifyRefreshError(error) === 'invalid') {
+          console.warn('[refreshSessionWithReason] Refresh recusado pelo Auth — limpando sessão local:', error.message);
           await safeSignOut();
-          return null;
+          return { session: null, reason: 'invalid' };
         }
-        // Erro de rede ou servidor — retry se ainda tiver tentativas
-        const lower = error.message.toLowerCase();
-        const isTransient =
-          lower.includes('fetch') ||
-          lower.includes('network') ||
-          lower.includes('timeout') ||
-          lower.includes('abort') ||
-          lower.includes('econnrefused') ||
-          lower.includes('econnreset') ||
-          lower.includes('socket') ||
-          lower.includes('unreachable');
-
+        const isTransient = true;
         if (isTransient && attempt < MAX_REFRESH_RETRIES - 1) {
           const delay = (attempt + 1) * 2000;
-          console.warn(`[safeRefreshSession] Erro transitório no refresh (tentativa ${attempt + 1}/${MAX_REFRESH_RETRIES}), retry em ${delay}ms:`, error.message);
+          console.warn(`[refreshSessionWithReason] Erro transitório no refresh (tentativa ${attempt + 1}/${MAX_REFRESH_RETRIES}), retry em ${delay}ms:`, error.message);
           await new Promise((r) => setTimeout(r, delay));
           continue;
         }
-
-        console.warn('[safeRefreshSession] refreshSession falhou:', error.message);
-        return null;
+        console.warn('[refreshSessionWithReason] Falha de rede/servidor no refresh — sessão local mantida:', error.message);
+        return { session: null, reason: 'transient' };
       }
-      return data?.session ?? null;
+      return { session: data?.session ?? null, reason: 'ok' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (isRefreshTokenInvalidError(msg)) {
-        console.warn('[safeRefreshSession] Exceção de refresh token inválido — limpando sessão local');
+      if (classifyRefreshError(e) === 'invalid') {
+        console.warn('[refreshSessionWithReason] Exceção de refresh recusado — limpando sessão local:', msg);
         await safeSignOut();
-        return null;
+        return { session: null, reason: 'invalid' };
       }
-      const lower = msg.toLowerCase();
-      const isTransient =
-        lower.includes('fetch') ||
-        lower.includes('network') ||
-        lower.includes('timeout') ||
-        lower.includes('abort') ||
-        lower.includes('econnrefused') ||
-        lower.includes('econnreset') ||
-        lower.includes('socket') ||
-        lower.includes('unreachable');
-
+      const isTransient = true;
       if (isTransient && attempt < MAX_REFRESH_RETRIES - 1) {
         const delay = (attempt + 1) * 2000;
-        console.warn(`[safeRefreshSession] Exceção transitória (tentativa ${attempt + 1}/${MAX_REFRESH_RETRIES}), retry em ${delay}ms:`, msg);
+        console.warn(`[refreshSessionWithReason] Exceção transitória (tentativa ${attempt + 1}/${MAX_REFRESH_RETRIES}), retry em ${delay}ms:`, msg);
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
-
-      console.warn('[safeRefreshSession] Exceção inesperada:', msg);
-      return null;
+      console.warn('[refreshSessionWithReason] Falha de rede/servidor no refresh — sessão local mantida:', msg);
+      return { session: null, reason: 'transient' };
     }
   }
 
-  return null;
+  return { session: null, reason: 'transient' };
+}
+
+/**
+ * Wrapper seguro para refreshSession, mantido para os chamadores que só
+ * precisam saber se deu certo (session) ou não (null) e não decidem nada
+ * a partir do motivo. Quem precisa diferenciar "token morto" de "rede
+ * caiu" usa `refreshSessionWithReason()`.
+ */
+export async function safeRefreshSession(): Promise<Session | null> {
+  const { session } = await refreshSessionWithReason();
+  return session;
 }
 
 /**
@@ -307,6 +389,21 @@ async function resolveAccessToken(externalToken?: string): Promise<{
   };
 }
 
+/** Erro HTTP de Edge Function: carrega o status para o chamador decidir se retenta. */
+export type EdgeHttpError = Error & { status?: number; code?: string };
+
+/**
+ * Ações que não podem ser reenviadas automaticamente após erro de rede/timeout
+ * (sem chave de idempotência no servidor). create_order fica de fora: é idempotente
+ * por client_request_id.
+ */
+export const NON_IDEMPOTENT_ACTIONS = new Set([
+  'record_payment',
+  'close_cash_register',
+  'add_cash_movement',
+  'register_partial_refund',
+]);
+
 /**
  * Invoca uma Edge Function garantindo que o JWT mais recente da sessao
  * seja enviado no header Authorization. Se receber 401 (token rejeitado pelo
@@ -334,6 +431,8 @@ export async function invokeWithAuth<T = unknown>(
 
   const MAX_RETRIES = 2;
   const TIMEOUT_MS = 60000;
+  const bodyAction = typeof options.body?.action === 'string' ? options.body.action : '';
+  const isNonIdempotentBody = NON_IDEMPOTENT_ACTIONS.has(bodyAction);
 
   async function attemptFetch(isRetry: boolean): Promise<{ data: T | null; error: Error | null }> {
     const controller = new AbortController();
@@ -347,8 +446,10 @@ export async function invokeWithAuth<T = unknown>(
       clearTimeout(timeoutId);
       const netMsg = netErr instanceof Error ? netErr.message : String(netErr);
 
-      // Se for erro de rede (Failed to fetch, timeout, etc.) e ainda tem retries, tenta novamente
-      if (!isRetry && (netMsg.includes('Failed to fetch') || netMsg.includes('fetch') || netMsg.includes('network') || netMsg.includes('abort') || netMsg.includes('timeout'))) {
+      // Se for erro de rede (Failed to fetch, timeout, etc.) e ainda tem retries, tenta novamente.
+      // Ações de dinheiro/caixa NÃO são idempotentes: o servidor pode ter gravado e só a
+      // resposta se perdeu — reenviar duplicaria pagamento/sangria/fechamento.
+      if (!isRetry && !isNonIdempotentBody && (netMsg.includes('Failed to fetch') || netMsg.includes('fetch') || netMsg.includes('network') || netMsg.includes('abort') || netMsg.includes('timeout'))) {
         console.warn(`[invokeWithAuth] ${functionName} — erro de rede (tentando retry em 3s):`, netMsg);
         await new Promise((r) => setTimeout(r, 3000));
         return attemptFetch(true);
@@ -364,14 +465,18 @@ export async function invokeWithAuth<T = unknown>(
     }
 
     // Se recebeu 401, pode ser token revogado no servidor. Forca refresh, espera e retenta.
-    if (response.status === 401) {
+    // login-pin é pública (verify_jwt=false): 401 ali é PIN errado, não token — sem refresh/retry
+    // (o retry contava a falha duas vezes no limite de tentativas do servidor).
+    if (response.status === 401 && functionName !== 'login-pin') {
       console.warn(`[invokeWithAuth] ${functionName} returned 401 — forcing token refresh and retry`);
 
-      const refreshedSession = await safeRefreshSession();
+      const { session: refreshedSession, reason: refreshReason } = await refreshSessionWithReason();
       if (!refreshedSession?.access_token) {
         return {
           data: null,
-          error: new Error('Sessao expirada ou revogada. Por favor, faca login novamente.'),
+          error: refreshReason === 'transient'
+            ? new Error('Sem conexão com o servidor. Tente de novo.')
+            : new Error('Sessao expirada ou revogada. Por favor, faca login novamente.'),
         };
       }
       accessToken = refreshedSession.access_token;
@@ -397,10 +502,12 @@ export async function invokeWithAuth<T = unknown>(
     if (!response.ok) {
       let errMsg = `HTTP ${response.status}`;
       let raw: unknown;
+      let errCode: string | undefined;
       try {
         const contentType = response.headers.get('content-type') ?? '';
         if (contentType.includes('application/json')) {
           const errBody = await response.json();
+          if (typeof errBody?.code === 'string') errCode = errBody.code;
           // Edge Functions retornam { error: string } ou { error: { message: string } }
           const extracted =
             errBody?.error ?? errBody?.message ?? errBody ?? errMsg;
@@ -423,7 +530,10 @@ export async function invokeWithAuth<T = unknown>(
         // Fila de erros (dev_error_events): 5xx = erro, 4xx = aviso; 401/403 ficam de fora
         reportEdgeFailure(functionName, response.status, errMsg, typeof options.body?.action === 'string' ? options.body.action : undefined);
       }
-      return { data: null, error: new Error(errMsg) };
+      const httpErr = new Error(errMsg) as EdgeHttpError;
+      httpErr.status = response.status;
+      if (errCode) httpErr.code = errCode;
+      return { data: null, error: httpErr };
     }
 
     try {

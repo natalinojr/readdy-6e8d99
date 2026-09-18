@@ -123,6 +123,11 @@ export interface FinalizarResult {
   number: string;
   printEnqueued?: boolean;
   isOffline?: boolean;
+  /** Pedido criado, mas o pagamento (ou o desconto) não foi confirmado no servidor — cobrar em Pedidos */
+  pagamentoPendente?: string;
+  /** apply_discount falhou. O total reduzido já foi gravado pelo create_order;
+   *  só o registro em order_discounts/auditoria ficou faltando. */
+  auditoriaDescontoFalhou?: boolean;
 }
 
 interface PDVContextData {
@@ -190,7 +195,7 @@ let cartCounter = 0;
 
 function PDVProviderInner({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const { sessao, caixa, gerarProximoNumeroPedido } = useSessao();
+  const { sessao, caixa } = useSessao();
   const { reloadOrders } = useKDS();
   const { settings: sysSettings } = useSystemSettings();
   const { submitOrder } = useOrderSubmit();
@@ -393,10 +398,8 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
         });
       }
 
-      const extraObs = !obsPedidoAdded && obsPedido
-        ? [{ text: `[PEDIDO] ${obsPedido}` }]
-        : [];
-      if (!obsPedidoAdded && obsPedido) obsPedidoAdded = true;
+      // A flag já foi ligada ao montar obsPedidoExtra — reusar (antes a obs. geral se perdia)
+      const extraObs = obsPedidoExtra;
 
       return [{
         item_id: ci.itemId || null,
@@ -428,13 +431,14 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       throw new Error('Sessao de autenticacao expirada. Por favor, faca login novamente.');
     }
 
-    // Gera número local APENAS para fallback de UI imediata (não é mais usado como retorno)
-    const numeroLocal = await gerarProximoNumeroPedido();
-    setUltimoNumeroPedido(numeroLocal);
+    // Número do pedido vem do servidor (order-write). Não chamar fn_next_tenant_order_number
+    // aqui: ela CONSOME um número e a edge consome outro (cada venda gastava 2 — buracos).
     setNumeroPedidoSeq((s) => s + 1);
 
     if (!sessao || !user) {
       clearCart();
+      const numeroLocal = `P${Date.now()}`;
+      setUltimoNumeroPedido(numeroLocal);
       return { orderId: 'local', number: numeroLocal };
     }
 
@@ -532,6 +536,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
 
     const orderId: string = orderResult.id;
     const isOffline = orderResult.isOffline ?? false;
+    setUltimoNumeroPedido(String(orderResult.number));
     const cashRegisterId: string | null = caixa?.id ?? null;
 
     clearCart();
@@ -547,6 +552,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       return { orderId, number: orderResult.number, printEnqueued: orderResult.printEnqueued };
     }
 
+    let descontoFalhou = false;
     if (orderId && actualDesconto > 0) {
       try {
         const { error: discErr } = await invokeWithAuth('order-write', {
@@ -570,11 +576,15 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
               : `Desconto autorizado no PDV Caixa${extraDiscount?.authorizedBy ? ` (${extraDiscount.authorizedBy})` : ''}`,
           },
         });
-        if (discErr) console.warn('[PDVContext] apply_discount error (non-blocking):', discErr);
+        if (discErr) { descontoFalhou = true; console.warn('[PDVContext] apply_discount error (non-blocking):', discErr); }
       } catch (e) {
+        descontoFalhou = true;
         console.warn('[PDVContext] apply_discount exception (non-blocking):', e);
       }
     }
+
+    const msgPendente = `Pedido #${orderResult.number} criado, mas pagamento não confirmado — cobre em Pedidos`;
+    let pagamentoPendente: string | undefined;
 
     // Cortesia: pedido já marcado como pago na edge function — não registrar pagamento
     if (!cortesiaAtiva && orderId && pagamentos.length > 0) {
@@ -599,7 +609,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
             },
           });
           if (payErr) {
-            paymentErrors.push(typeof payErr === 'string' ? payErr : JSON.stringify(payErr));
+            paymentErrors.push(payErr instanceof Error ? payErr.message : String(payErr));
           } else {
             paymentRegistered = true;
           }
@@ -608,7 +618,14 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
         }
       }
       if (paymentErrors.length > 0 && !paymentRegistered) {
-        throw new Error(`Falha ao registrar pagamento: ${paymentErrors.join('; ')}`);
+        // O pedido já existe e o carrinho já foi limpo: a mensagem tem que dizer isso
+        console.warn('[PDVContext] record_payment falhou em todas as formas:', paymentErrors);
+        setTimeout(() => reloadOrders(), 500);
+        throw new Error(`${msgPendente}. Detalhe: ${paymentErrors.join('; ')}`);
+      }
+      if (paymentErrors.length > 0) {
+        console.warn('[PDVContext] record_payment falhou em parte das formas:', paymentErrors);
+        pagamentoPendente = `${msgPendente} (${paymentErrors.length} forma(s) de pagamento falharam)`;
       }
       if (paymentRegistered) {
         try {
@@ -623,9 +640,9 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       setTimeout(() => reloadOrders(), 500);
     }
 
-    return { orderId, number: orderResult.number, printEnqueued: orderResult.printEnqueued };
+    return { orderId, number: orderResult.number, printEnqueued: orderResult.printEnqueued, pagamentoPendente, auditoriaDescontoFalhou: descontoFalhou || undefined };
   }, [
-    gerarProximoNumeroPedido, sessao, user, caixa,
+    sessao, user, caixa,
     carrinho, destino, valorDesconto, valorTaxaServico,
     subtotal, total, clearCart, reloadOrders, submitOrder,
     refreshPendingCount, buildItemsPayload, mesas,
@@ -639,13 +656,14 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       throw new Error('Sessao de autenticacao expirada. Por favor, faca login novamente.');
     }
 
-    // Gera número local APENAS para fallback de UI imediata
-    const numeroLocal = await gerarProximoNumeroPedido();
-    setUltimoNumeroPedido(numeroLocal);
+    // Número do pedido vem do servidor (order-write). Não chamar fn_next_tenant_order_number
+    // aqui: ela CONSOME um número e a edge consome outro (cada venda gastava 2 — buracos).
     setNumeroPedidoSeq((s) => s + 1);
 
     if (!sessao || !user) {
       clearCart();
+      const numeroLocal = `P${Date.now()}`;
+      setUltimoNumeroPedido(numeroLocal);
       return { orderId: 'local', number: numeroLocal };
     }
 
@@ -698,10 +716,8 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
         });
       }
 
-      const extraObs = !obsPedidoAdded && obsPedido
-        ? [{ text: `[PEDIDO] ${obsPedido}` }]
-        : [];
-      if (!obsPedidoAdded && obsPedido) obsPedidoAdded = true;
+      // A flag já foi ligada ao montar obsPedidoExtra — reusar (antes a obs. geral se perdia)
+      const extraObs = obsPedidoExtra;
 
       return [{
         item_id: ci.itemId || null,
@@ -769,6 +785,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
 
     const orderId: string = orderResult.id;
     const isOffline = orderResult.isOffline ?? false;
+    setUltimoNumeroPedido(String(orderResult.number));
 
     clearCart();
 
@@ -809,7 +826,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
 
     return { orderId, number: orderResult.number, printEnqueued: orderResult.printEnqueued };
   }, [
-    gerarProximoNumeroPedido, sessao, user, caixa,
+    sessao, user, caixa,
     carrinho, destino, valorDesconto, valorTaxaServico,
     subtotal, total, clearCart, reloadOrders, submitOrder,
     refreshPendingCount, mesas,

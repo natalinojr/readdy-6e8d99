@@ -35,7 +35,8 @@ interface Props {
   onEnviar: (nomeResponsavel: string) => void | Promise<void>;
   onVoltar: () => void;
   onFecharConta?: () => void;
-  onPagarConta?: (rodadasIds: string[], formaPagamentoId: string, valorParcial?: number) => void;
+  /** Retorna false quando o pagamento não foi confirmado (a pessoa da divisão não deve ficar paga). */
+  onPagarConta?: (rodadasIds: string[], formaPagamentoId: string, valorParcial?: number) => Promise<boolean | void> | boolean | void;
   mesaNome: string;
   mesaOcupada?: boolean;
   mesaPaga?: boolean;
@@ -1012,7 +1013,8 @@ export default function PedidoView({
             // Passa valorParcial para que o backend registre apenas o valor desta pessoa,
             // evitando marcar is_paid=true quando só parte da conta foi paga.
             const idsRodadas = rodadasParaConta.map((r) => r.id);
-            await onPagarConta(idsRodadas, formaPagId, valor);
+            const ok = await onPagarConta(idsRodadas, formaPagId, valor);
+            if (ok === false) return false;
             // Persiste o estado de pagamento deste cliente
             onAtualizarDivisaoPag?.({
               clientes: {

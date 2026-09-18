@@ -75,21 +75,28 @@ export default function Login() {
     setLoginsRecentes(getLoginsRecentes());
   }, []);
 
-  if (isAuthenticated) { navigate(destinoAposLogin, { replace: true }); return null; }
+  // navigate() durante o render dispara o aviso do React "Cannot update a component
+  // while rendering a different component" — precisa rodar depois do render, em efeito.
+  useEffect(() => {
+    if (isAuthenticated) navigate(destinoAposLogin, { replace: true });
+  }, [isAuthenticated, destinoAposLogin, navigate]);
+
+  if (isAuthenticated) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!identifier.trim() || !senha.trim()) { setError('Preencha todos os campos.'); return; }
     setLoading(true);
-    const result = await login(identifier, senha);
+    let erroServidor = '';
+    const result = await login(identifier, senha, (msg) => { erroServidor = msg; });
     setLoading(false);
     if (result) {
       salvarLoginRecente(identifier.trim(), mode);
       if (destinoAposLogin === '/modulos') setAppMode('modulos');
       navigate(destinoAposLogin, { replace: true });
     } else {
-      setError('Credenciais inválidas. Verifique e tente novamente.');
+      setError(erroServidor || 'Credenciais inválidas. Verifique e tente novamente.');
     }
   };
 

@@ -58,6 +58,8 @@ function chunk<T>(arr: T[], size: number): T[][] {
 export interface ItemRow {
   purchase_id: string;
   total_price: number | string | null;
+  /** Valor efetivamente recebido (confirmação do recebimento). Quando existe, vale no lugar de total_price. */
+  received_total_price?: number | string | null;
   freight_allocated: number | string | null;
   dre_category_id: string | null;
 }
@@ -80,7 +82,7 @@ export async function fetchComprasDRE(
     const { rows, truncated: t, error } = await fetchAllRows<ItemRow>((from, to) =>
       supabase
         .from('fin_purchase_items')
-        .select('purchase_id, total_price, freight_allocated, dre_category_id')
+        .select('purchase_id, total_price, received_total_price, freight_allocated, dre_category_id')
         .eq('tenant_id', tenantId)
         .in('purchase_id', part)
         .range(from, to),
@@ -124,7 +126,9 @@ export function splitComprasDRE(
   const comItens = new Set<string>();
   for (const it of items) {
     comItens.add(it.purchase_id);
-    const valor = (Number(it.total_price ?? 0) + Number(it.freight_allocated ?? 0)) * (pesoDe.get(it.purchase_id) ?? 1);
+    // Recebimento ajustou o item (veio menos/mais): vale o recebido, que é o que foi comprado de fato
+    const linha = it.received_total_price != null ? it.received_total_price : it.total_price;
+    const valor = (Number(linha ?? 0) +Number(it.freight_allocated ?? 0)) * (pesoDe.get(it.purchase_id) ?? 1);
     out.total += valor;
     const cat = it.dre_category_id;
     if (cat && despesaIds.has(cat)) {

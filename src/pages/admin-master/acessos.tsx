@@ -57,6 +57,8 @@ export const removeUserTenant = (userId: string, tenantId: string) =>
   rpc('fn_admin_remove_user_tenant', { p_user_id: userId, p_tenant_id: tenantId });
 export const setModuleAccess = (userId: string, module: string, enabled: boolean) =>
   rpc('fn_admin_set_module_access', { p_user_id: userId, p_module: module, p_enabled: enabled });
+export const setTenantBackup = (tenantId: string, enabled: boolean) =>
+  rpc('fn_admin_set_tenant_backup', { p_tenant_id: tenantId, p_enabled: enabled });
 
 // ─── Controles ────────────────────────────────────────────────────────────────
 

@@ -474,11 +474,44 @@ interface ImportCtx {
   userToken: string | null;
 }
 
+// Trava contra lançamento em dobro (cron 07h + "Buscar notas" + clique na tela ao mesmo tempo).
+// O CHECK de status só aceita new/imported/ignored, então a trava usa imported_at enquanto a nota
+// ainda não está 'imported': um UPDATE condicional atômico marca imported_at; quem não conseguir a
+// linha pula. Trava esquecida (edge morreu no meio) expira depois de IMPORT_LOCK_TTL_MS.
+const IMPORT_LOCK_TTL_MS = 10 * 60_000;
+const LOCKED_MSG = 'Esta nota já está sendo lançada (outra busca/usuário). Atualize a tela em instantes.';
+
 // deno-lint-ignore no-explicit-any
 async function importDocument(ctx: ImportCtx, doc: any, action: 'import_purchase' | 'import_bill', body: Record<string, any>): Promise<ImportResult> {
+  const { admin } = ctx;
+  if (doc.status === 'imported') return { ok: false, error: 'Esta nota já foi lançada', status: 400 };
+  const lockAt = new Date().toISOString();
+  const staleBefore = new Date(Date.now() - IMPORT_LOCK_TTL_MS).toISOString();
+  const { data: lock, error: lockErr } = await admin.from('fiscal_inbound_documents')
+    .update({ imported_at: lockAt })
+    .eq('id', doc.id).eq('tenant_id', ctx.tenantId).neq('status', 'imported')
+    .or(`imported_at.is.null,imported_at.lt.${staleBefore}`)
+    .select('id').maybeSingle();
+  if (lockErr) return { ok: false, error: `Não foi possível travar a nota: ${lockErr.message}`, status: 500 };
+  if (!lock) return { ok: false, error: LOCKED_MSG, status: 409 };
+  let r: ImportResult;
+  try {
+    r = await importDocumentLocked(ctx, doc, action, body);
+  } catch (e) {
+    r = { ok: false, error: (e as Error)?.message ?? String(e), status: 500 };
+  }
+  if (!r.ok) {
+    // Libera a trava (só se ainda é a nossa e a nota não chegou a 'imported')
+    await admin.from('fiscal_inbound_documents').update({ imported_at: null })
+      .eq('id', doc.id).neq('status', 'imported').eq('imported_at', lockAt);
+  }
+  return r;
+}
+
+// deno-lint-ignore no-explicit-any
+async function importDocumentLocked(ctx: ImportCtx, doc: any, action: 'import_purchase' | 'import_bill', body: Record<string, any>): Promise<ImportResult> {
   const { admin, supabaseUrl, tenantId, userId } = ctx;
   const fail = (error: string, status = 400): ImportResult => ({ ok: false, error, status });
-  if (doc.status === 'imported') return fail('Esta nota já foi lançada');
   if (Number(doc.sefaz_status) === 2) return fail('A nota foi CANCELADA pelo fornecedor na SEFAZ — não lance');
   if (action === 'import_purchase' && Number(doc.modelo) === 10) return fail('NFS-e é serviço, não mercadoria: lance como despesa');
   const parcelas = normalizeParcelas(doc, body.parcelas);
@@ -752,6 +785,8 @@ async function autoLaunchTenant(admin: Admin, supabaseUrl: string, tenantId: str
       if (bonificacao) stats.bonificacoes++;
       else if (h.import_type === 'purchase') stats.compras++;
       else stats.despesas++;
+    } else if (r.status === 409 && r.error === LOCKED_MSG) {
+      pular('já sendo lançada por outra busca');
     } else {
       stats.erros++;
       await admin.from('fiscal_inbound_documents').update({ error_message: `Lançamento automático: ${r.error}`.slice(0, 500), updated_at: now }).eq('id', doc.id);

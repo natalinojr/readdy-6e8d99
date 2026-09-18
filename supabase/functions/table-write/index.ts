@@ -13,7 +13,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
   const authHeader = req.headers.get('Authorization') ?? '';
 
-  const effectiveServiceKey = serviceRoleKey.length > 100 ? serviceRoleKey : anonKey;
+  const effectiveServiceKey = serviceRoleKey.length >= 40 ? serviceRoleKey : anonKey;
   const admin = createClient(supabaseUrl, effectiveServiceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });

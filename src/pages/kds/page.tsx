@@ -61,7 +61,7 @@ export default function KDSPage() {
   const { estado, sessao, estacoesAbertas, fecharEstacao, loadingSession } = useSessao();
   const { user } = useAuth();
   const { marcarInsumoEsgotado, insumosEsgotados, insumos } = useEstoque();
-  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, toggleObsChecadaRemote, pedidosSalvando, pendingStatusCount, flushPendingStatusQueue } = useKDS();
+  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, toggleObsChecadaRemote, pedidosSalvando, pendingStatusCount, flushPendingStatusQueue, lastSyncAt, syncErrorCount, reloadOrders } = useKDS();
   const { itensAtivos, estacoes } = useCardapio();
   const { settings: sysSettings } = useSystemSettings();
 
@@ -724,6 +724,24 @@ export default function KDSPage() {
           </div>
           <button onClick={() => setLockAlert(null)} className="text-white/70 hover:text-white cursor-pointer">
             <i className="ri-close-line text-sm" />
+          </button>
+        </div>
+      )}
+
+      {/* Selo de sincronização: recargas de pedidos falhando em sequência */}
+      {syncErrorCount >= 2 && (
+        <div className="flex items-center justify-between px-4 py-1 flex-shrink-0 bg-red-600/90">
+          <span className="text-white text-xs font-semibold flex items-center gap-2">
+            <i className="ri-refresh-line text-sm" />
+            {lastSyncAt
+              ? `Sem sincronizar desde ${new Date(lastSyncAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })} — tentando novamente`
+              : 'Sem sincronizar com o servidor — tentando novamente'}
+          </span>
+          <button
+            onClick={() => { reloadOrders(); }}
+            className="px-3 py-0.5 bg-white/20 hover:bg-white/30 text-white text-xs font-bold rounded-md cursor-pointer whitespace-nowrap transition-colors"
+          >
+            Tentar agora
           </button>
         </div>
       )}

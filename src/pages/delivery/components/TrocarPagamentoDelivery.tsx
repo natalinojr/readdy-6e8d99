@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { formatCurrency } from '@/lib/formatters';
 
 // ── "Pagar de outra forma" para um pedido segurado (Pix pelo app) ────────────
 // Usado na tela do pedido (abaixo do painel do Pix) e no acompanhamento. O cliente
@@ -29,7 +30,7 @@ export default function TrocarPagamentoDelivery(props: Props) {
   async function confirmar() {
     if (!metodo) return;
     if (metodo === 'dinheiro' && valorDinheiro !== '' && (parseFloat(valorDinheiro) || 0) < orderTotal) {
-      setErro('O valor em dinheiro precisa cobrir o total de R$ ' + orderTotal.toFixed(2));
+      setErro('O valor em dinheiro precisa cobrir o total de ' + formatCurrency(orderTotal));
       return;
     }
     setSalvando(true);

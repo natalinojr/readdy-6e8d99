@@ -20,6 +20,10 @@ export interface ConfigOperacao {
   visaoCozinha: VisaoCozinha;
   timerVerdeMax: number;
   timerAmbarMax: number;
+  /** Esconde do cardápio (tablet, QR, delivery, caixa) item cuja ficha técnica não tem insumo suficiente. */
+  bloquearItemSemInsumo: boolean;
+  /** Só importa com bloquearItemSemInsumo ligado: conta também o consumo de pedidos ainda não prontos. */
+  bloquearItemSemInsumoReserva: boolean;
 }
 
 export type PDVTerminalId = 'caixa' | 'garcom' | 'kds' | 'autoatendimento' | 'mesa_qr' | 'delivery';

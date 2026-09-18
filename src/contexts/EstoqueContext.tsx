@@ -587,7 +587,9 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
   }, [user, insumos, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes]);
 
   const registrarPerda = useCallback(async (itensPerda: PerdaItem[], motivo: string, _operador: string) => {
-    if (!user?.tenantId) return;
+    if (!user?.tenantId) throw new Error('Loja não identificada. Entre novamente.');
+    let gravados = 0;
+    let falha: string | null = null;
     for (const item of itensPerda) {
       const insumo = insumos.find((i) => i.id === item.insumoId);
       const insumoUnit = insumo?.unidade ?? item.unidade;
@@ -599,22 +601,32 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
           finalQty = converted;
         }
       }
-      await invokeWithAuth('stock-write', {
+      // type 'perda' → stock-write grava como 'loss' (antes ia manual_out e só virava perda se o motivo tivesse "perda")
+      const { data, error } = await invokeWithAuth<{ error?: string }>('stock-write', {
         body: {
           action: 'add_stock_movement',
           tenant_id: user.tenantId,
           ingredient_id: item.insumoId,
-          type: 'manual_out',
+          type: 'perda',
           quantity: finalQty,
           unit: FRONT_UNIT_MAP[insumoUnit] ?? 'unit',
           reason: motivo,
         },
       });
+      const errMsg = error?.message ?? (typeof data?.error === 'string' ? data.error : null);
+      if (errMsg) { falha = `${item.insumoNome}: ${errMsg}`; break; }
+      gravados++;
     }
-    // Notificar outras abas e recarregar
-    broadcastStockUpdate();
+    // Notificar outras abas e recarregar (mesmo em falha parcial, para a tela refletir o que gravou)
+    if (gravados > 0) broadcastStockUpdate();
     await loadInsumos();
     await loadMovimentacoes();
+    if (falha) {
+      console.error('[EstoqueContext] registrarPerda error:', falha);
+      throw new Error(gravados > 0
+        ? `Gravou ${gravados} de ${itensPerda.length} insumo(s); falhou em ${falha}. Confira em Estoque › Movimentações antes de repetir.`
+        : `Não foi possível registrar a perda (${falha}).`);
+    }
 
     const nomes = itensPerda.map((i) => `${i.insumoNome} (${i.quantidade} ${i.unidade})`).join(', ');
     registrarEvento({

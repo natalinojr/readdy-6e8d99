@@ -1049,8 +1049,9 @@ export default function CaixaTab() {
                     .reduce((s, f) => s + f.total, 0);
                   const retiradas = sessao.movimentos.total_retiradas ?? 0;
                   const adicoes = sessao.movimentos.total_adicoes ?? 0;
-                  const troco = sessao.total_troco ?? 0;
-                  const expected = openingValue + cashPayments - retiradas + adicoes - troco;
+                  // Mesma fórmula do fn_close_cash_register_v2: fundo + dinheiro (payments.amount,
+                  // que já é líquido do troco) + suprimentos - sangrias. NÃO subtrair o troco de novo.
+                  const expected = openingValue + cashPayments - retiradas + adicoes;
                   if (isOpen) {
                     return fmt(expected);
                   }
@@ -1060,7 +1061,7 @@ export default function CaixaTab() {
                 })(),
                 icon: sessao.status === 'open' ? 'ri-calculator-line' : 'ri-checkbox-circle-line',
                 color: sessao.status === 'open' ? 'bg-amber-50 text-amber-600' : 'bg-zinc-100 text-zinc-400',
-                sub: sessao.status === 'open' ? 'Dinheiro + Fundo - Sangrias + Suprimentos - Troco' : undefined,
+                sub: sessao.status === 'open' ? 'Dinheiro (já sem troco) + Fundo - Sangrias + Suprimentos' : undefined,
                 subColor: 'text-zinc-400',
               },
               {

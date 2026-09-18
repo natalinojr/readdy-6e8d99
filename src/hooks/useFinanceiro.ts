@@ -334,8 +334,10 @@ export function useBillsPayable() {
   };
 
   const remove = async (id: string) => {
-    await invokeFinancial('delete_bill', user!.tenantId, { id });
-    fetchBills();
+    // Lança em caso de erro (ex.: 409 conta já paga — excluir não estorna caixa/banco).
+    const result = await invokeFinancial('delete_bill', user!.tenantId, { id });
+    await fetchBills();
+    if (result?.error) throw new Error(String(result.error));
   };
 
   return { bills, loading, upsert, pay, remove, refresh: fetchBills };

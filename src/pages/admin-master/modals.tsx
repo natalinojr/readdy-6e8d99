@@ -35,6 +35,7 @@ export interface TenantInfo {
   itens_cardapio: number;
   usuarios: number;
   faturamento: number;
+  backup_enabled: boolean;
 }
 
 export type StoreAction = 'clear_orders' | 'clear_stock' | 'reset' | 'delete';
