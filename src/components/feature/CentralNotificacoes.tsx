@@ -327,8 +327,8 @@ export default function CentralNotificacoes({ perfil }: Props) {
 
       {/* Painel */}
       {aberto && (
-        <div className="absolute right-0 top-full mt-2 w-96 bg-white border border-zinc-200 rounded-2xl z-50 flex flex-col overflow-hidden"
-          style={{ maxHeight: '560px', boxShadow: '0 8px 32px rgba(0,0,0,0.10)' }}>
+        <div className="fixed left-2 right-2 top-[60px] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96 bg-white border border-zinc-200 rounded-2xl z-50 flex flex-col overflow-hidden"
+          style={{ maxHeight: 'min(560px, calc(100dvh - 76px))', boxShadow: '0 8px 32px rgba(0,0,0,0.10)' }}>
 
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3.5 border-b border-zinc-100 flex-shrink-0">
