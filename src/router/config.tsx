@@ -46,6 +46,7 @@ const AdminMasterPage = lazy(() => import('@/pages/admin-master/page'));
 const SelecionarLojaPage = lazy(() => import('@/pages/selecionar-loja/page'));
 const TrafegoPagoPage = lazy(() => import('@/pages/trafego-pago/page'));
 const TarefasPage = lazy(() => import('@/pages/tarefas/page'));
+const PendenciasPage = lazy(() => import('@/pages/pendencias/page'));
 const PrivacidadePage = lazy(() => import('@/pages/privacidade/page'));
 const ContratacaoPage = lazy(() => import('@/pages/contratacao/page'));
 const NfsePage = lazy(() => import('@/pages/nfse/page'));
@@ -97,6 +98,9 @@ const routes: RouteObject[] = [
       { path: 'trafego-pago', element: <TrafegoPagoPage /> },
       { path: 'notas-fiscais', element: <Navigate to="/pedidos?tab=notas" replace /> },
       { path: 'tarefas', element: <TarefasPage /> },
+      // Tarefa é o que VOCÊ decide fazer; pendência é o que o sistema detectou e ainda
+      // espera ação. Ficam lado a lado, em listas separadas, de propósito.
+      { path: 'pendencias', element: <PendenciasPage /> },
       { path: 'estoque', element: <EstoquePage /> },
       { path: 'aprovacoes', element: <AprovacoesPage /> },
       { path: 'configuracoes', element: <ConfiguracoesPage /> },

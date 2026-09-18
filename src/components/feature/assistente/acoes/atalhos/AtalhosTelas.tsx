@@ -39,6 +39,7 @@ const GRUPOS_ATALHOS: { titulo: string; itens: Atalho[] }[] = [
     itens: [
       { label: 'Tráfego pago', rota: '/trafego-pago' },
       { label: 'Tarefas', rota: '/tarefas' },
+      { label: 'Pendências', rota: '/pendencias' },
       { label: 'Contratação', rota: '/contratacao' },
     ],
   },

@@ -2615,3 +2615,50 @@ Agentes (auditor, carga, testadores, revisores, executores) testaram produção 
 ### 2026-09-18 — Ticket de produção: itens maiores e obs em fundo preto
 - Edge `print-queue-agent` v43 (no ar) + `agente-local/index.js` (fallback): em ticket de produção (estação que não é COMPROVANTE/RETIRADA), nome do item sai em **altura dupla** (`ESC ! 0x10`, mesma largura → não quebra mais linhas) e as observações do item e a OBS geral saem em **impressão reversa** (`GS B 1`, branco no fundo preto) + negrito + altura dupla. Comprovante/retirada ficou como antes.
 - Gestor de Pedidos (kanban): itens do card num bloco `bg-sky-50`, nome/quantidade em `text-sm`; obs do item e obs geral em bloco âmbar `text-xs` negrito.
+
+### Caixa de pendências: o que o sistema detecta não pode morar numa mensagem (2026-09-18)
+
+Dono: "foi solicitado um pagamento às 21h e eu não fiz. E agora? Não era pra sumir essa solicitação".
+E, no mesmo dia: "tem um monte de msg pra atualizar itens, está exagerado".
+
+Os dois são o MESMO defeito com sinais trocados: pendência era tratada como **mensagem**, não como
+registro com estado. Sendo mensagem, só há dois comportamentos possíveis — bombardear ou sumir — e o
+sistema fazia os dois. Sumiam: o rascunho do Inter expira em 30 min (`inter-bank › DRAFT_TTL_MS`) e o
+cartão do Telegram ficava mudo, sem nada em lugar nenhum; e a marca d'água do `item_classify`
+(`assistente-cron › itemClassifyText`) avançava no ENVIO, então item não classificado nunca mais era
+cobrado. Bombardeava: `dre_classify` com `every_min: 2` das 08:00 às 21:00, até ~390 disparos/dia.
+Sintoma disfarçado do mesmo problema: `NotificacoesContext` nascia com 4 notificações de demonstração
+(`gerarMock`) que chegavam a qualquer loja em produção.
+
+Solução: tabela `pendencias` (migration `20260918120000_pendencias`), uma linha por
+`(tenant_id, kind, ref)`, com ciclo de vida `aberta → vista | resolvida | descartada`. Nada sai por
+tempo, só por decisão. `fn_pendencia_upsert` é idempotente e **não ressuscita**: `where x.status in
+('aberta','vista')` no `on conflict`, então o cron pode rodar mil vezes sem reabrir o que já foi
+tratado, e "vista" (o check permanente do dono) nunca regride. `fn_pendencia_marcar` (SECURITY
+DEFINER, a única escrita liberada para `authenticated`) confere `user_tenants` antes de mexer.
+
+Critérios que valem para a próxima pendência que for criada:
+
+- **One-shot × agregada.** Pedido de pagamento é one-shot: `ref` = id do pedido, `p_reabrir` false.
+  "47 itens sem classificação" é agregada: `ref` fixo (`'pendentes'`), contagem no título,
+  `p_reabrir` true — fecha quando zera, volta quando aparece item novo. Uma linha por item seria o
+  mesmo barulho com outra roupa.
+- **`acao_requerida` decide o botão.** false = aviso ("Ciente", check permanente). true = exige ação,
+  e aí NÃO existe "Ciente": ela fecha sozinha na tela certa, ou o dono usa "Não vou fazer", que grava
+  o motivo. Dar check permanente a algo acionável recria o buraco — silenciar sem fazer.
+- **Descartada é intocável.** Nem produtor nem trigger reabrem: ali o dono já decidiu.
+- **Expirar/falhar não fecha.** `trg_pendencia_pagamento_grupo` só fecha com TODOS os pagamentos do
+  pedido em `paid`/`cancelled`. `expired` e `failed` mantêm a pendência aberta — é o ponto inteiro.
+- **Cuidado com `revoke ... from public`**: leva junto o `service_role` (ele não é superusuário). Sem
+  o `grant execute ... to service_role` explícito, os produtores falham CALADOS nas Edge Functions.
+  Este bug foi pego só porque a migration foi rodada num Postgres local antes de ir para produção.
+
+Barulho depois: `dre_classify` 2 min → 120 min (responder ainda puxa a próxima na hora, pelo
+`{ run: 'dre_classify' }` do webhook — engajar puxa a fila, silêncio não é insistido); `item_classify`
+30 min → 1 digest/dia; regra nova `pendencias` sincroniza a caixa em silêncio (fora do `want()`, que
+exige canal do dono — gravar no banco não depende de ter Telegram). De ~420 disparos/dia para ~2.
+
+O que NÃO foi para a caixa, de propósito: `NotificacoesContext` (barramento do turno — chamado de
+garçom, SLA, pedido pronto; some ao recarregar e está certo assim) e `AprovacoesContext` (desconto no
+PDV é um aperto de mão ao vivo, com callbacks em memória; pedido de 3 dias atrás não significa nada).
+Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — problema real, mas outro.

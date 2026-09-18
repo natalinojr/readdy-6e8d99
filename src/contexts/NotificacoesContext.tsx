@@ -86,60 +86,6 @@ export const TIPO_CONFIG: Record<TipoNotificacao, {
   alerta_auditoria:   { icone: 'ri-shield-keyhole-line',     cor: 'red',    corBg: 'bg-red-100',    corTexto: 'text-red-700',    label: 'Auditoria' },
 };
 
-function gerarMock(): Notificacao[] {
-  const now = Date.now();
-  return [
-    {
-      id: 'n-demo-1',
-      tipo: 'pedido_pronto',
-      titulo: 'Pedido #0042 pronto',
-      mensagem: 'Mesa 7 — Prato Principal, Salada Caesar prontos para entrega.',
-      timestamp: now - 2 * 60 * 1000,
-      lida: false,
-      urgente: false,
-      perfisAlvo: ['garcom', 'caixa'],
-      icone: 'ri-check-double-line',
-      cor: 'green',
-    },
-    {
-      id: 'n-demo-2',
-      tipo: 'sla_ultrapassado',
-      titulo: 'SLA ultrapassado — Mesa 3',
-      mensagem: 'Pedido #0039 ultrapassou o tempo limite. Ação necessária.',
-      timestamp: now - 7 * 60 * 1000,
-      lida: false,
-      urgente: true,
-      perfisAlvo: ['gerente', 'caixa'],
-      icone: 'ri-alarm-warning-line',
-      cor: 'red',
-    },
-    {
-      id: 'n-demo-3',
-      tipo: 'estoque_minimo',
-      titulo: 'Estoque mínimo: Cheddar',
-      mensagem: 'Cheddar fatiado atingiu nível mínimo (0.4 kg restante).',
-      timestamp: now - 15 * 60 * 1000,
-      lida: true,
-      urgente: false,
-      perfisAlvo: ['admin', 'gerente'],
-      icone: 'ri-archive-line',
-      cor: 'yellow',
-    },
-    {
-      id: 'n-demo-4',
-      tipo: 'chamado_garcom',
-      titulo: 'Chamado — Mesa 12',
-      mensagem: 'Cliente solicitou atendimento.',
-      timestamp: now - 25 * 60 * 1000,
-      lida: true,
-      urgente: false,
-      perfisAlvo: ['garcom', 'caixa'],
-      icone: 'ri-hand-heart-line',
-      cor: 'amber',
-    },
-  ];
-}
-
 type BeepConfig = { freq: number; dur: number; vol: number; delay: number; wave: 'sine' | 'square' | 'sawtooth' | 'triangle' };
 
 function beepNotif(tipo: TipoNotificacao) {
@@ -179,7 +125,11 @@ function beepNotif(tipo: TipoNotificacao) {
 }
 
 export function NotificacoesProvider({ children }: { children: React.ReactNode }) {
-  const [notificacoes, setNotificacoes] = useState<Notificacao[]>(gerarMock);
+  // Começa vazio: a lista é alimentada por dispararNotificacao durante o turno. Até
+  // 2026-09-18 havia 4 notificações de demonstração aqui ("Pedido #0042 pronto"), que
+  // chegavam a QUALQUER loja em produção e tiravam a credibilidade do sino — justamente
+  // a superfície onde a caixa de pendências passa a aparecer.
+  const [notificacoes, setNotificacoes] = useState<Notificacao[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const lastPlayRef = useRef<Record<string, number>>({});
 

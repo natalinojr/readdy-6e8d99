@@ -19,6 +19,7 @@
 //   ── Pagamentos (2026-09-12) — só o assistente (x-internal-key), depois do botão Pagar + PIN no Telegram:
 //   prepare_payment  { tipo: 'boleto'|'pix', linha?, chave?, valor?, descricao?, bill_id?, requested_by?, channel?, chat_id? }
 //                    valida (DV do boleto, fornecedor do Pix, limites) e grava fin_inter_payments em 'draft'
+//   reprepare_payment { payment_id }  remonta um pedido expirado/falhado como pedido NOVO (revalida tudo)
 //   execute_payment  { payment_id }   envia ao Inter (x-id-idempotente = idempotency_key da linha)
 //   cancel_payment   { payment_id }   rascunho → cancelado; boleto agendado/aguardando → DELETE no Inter
 //   payment_status   { payment_id }   (interno ou admin/gerente) atualiza o status no Inter
@@ -601,6 +602,42 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
   return { ...ins, saldo_inter: cfg.last_balance == null ? null : Number(cfg.last_balance) };
 }
 
+// Prepara DE NOVO um pedido que expirou/falhou (2026-09-18). O rascunho vale 30 minutos
+// de propósito — um toque no dia seguinte não pode disparar um Pix velho —, mas antes o
+// dono tinha de remontar o pedido na mão a partir de uma mensagem perdida no grupo.
+// Aqui o pedido é remontado a partir da linha antiga e passa por TODA a validação de
+// novo (DV do boleto, fornecedor/Pix permitido, limites, duplicidade): é um pedido novo,
+// não uma ressurreição do antigo. O vínculo com o pedido do grupo vai junto, para o
+// comprovante voltar ao grupo certo e a pendência fechar sozinha.
+async function reparePayment(admin: Admin, tenantId: string, id: string) {
+  const velho = await getPayment(admin, tenantId, id);
+  if (PAY_OPEN.includes(velho.status) || PAY_LIVE.includes(velho.status)) {
+    throw new Error(`Esse pedido ainda está "${velho.status}" — não precisa preparar de novo.`);
+  }
+  // decodeBoleto só lê linha digitável (47 dígitos, ou 48 de convênio) — o barcode de 44 não
+  // serve como entrada. Todo boleto preparado aqui guardou o digitável; sem ele, não dá.
+  if (velho.kind === 'boleto' && !velho.digitavel) {
+    throw new Error('Esse pedido não guardou a linha digitável: mande o boleto de novo.');
+  }
+  const novo = await preparePayment(admin, tenantId, {
+    tipo: velho.kind,
+    linha: velho.digitavel ?? undefined,
+    chave: velho.pix_key ?? undefined,
+    valor: velho.amount,
+    descricao: velho.description ?? undefined,
+    bill_id: velho.bill_id ?? undefined,
+    requested_by: velho.requested_by ?? undefined,
+    channel: velho.channel ?? 'assistente',
+    chat_id: velho.chat_id ?? undefined,
+  });
+  if (velho.group_request_id) {
+    const { data } = await admin.from('fin_inter_payments')
+      .update({ group_request_id: velho.group_request_id }).eq('id', novo.id).select('group_request_id').maybeSingle();
+    if (data) novo.group_request_id = data.group_request_id;
+  }
+  return novo;
+}
+
 async function getPayment(admin: Admin, tenantId: string, id: string) {
   const { data: p } = await admin.from('fin_inter_payments').select('*').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
   if (!p) throw new Error('Pagamento não encontrado.');
@@ -883,6 +920,7 @@ Deno.serve(async (req: Request) => {
     };
     try {
       if (action === 'prepare_payment') return json({ success: true, payment: await preparePayment(admin, tenantId, body) });
+      if (action === 'reprepare_payment') return json({ success: true, payment: await reparePayment(admin, tenantId, String(body.payment_id ?? '')) });
       if (action === 'execute_payment') {
         const payment = await executePayment(admin, tenantId, String(body.payment_id ?? ''));
         await syncAfterPayment(payment);
