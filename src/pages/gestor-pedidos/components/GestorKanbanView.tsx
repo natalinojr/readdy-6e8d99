@@ -699,9 +699,9 @@ function GestorCard({
                 </div>
               </div>
               {pedido.notes && (
-                <div className="flex items-start gap-1.5 mt-1">
-                  <i className="ri-sticky-note-line text-zinc-300 text-xs mt-0.5 flex-shrink-0" />
-                  <p className="text-[10px] text-zinc-500 italic">{pedido.notes}</p>
+                <div className="flex items-start gap-1.5 mt-1.5 bg-amber-100 border border-amber-300 rounded-lg px-2 py-1.5">
+                  <i className="ri-sticky-note-fill text-amber-600 text-sm flex-shrink-0" />
+                  <p className="text-xs font-semibold text-amber-900 leading-snug">{pedido.notes}</p>
                 </div>
               )}
               {/* SLA por distância: horário limite de preparo e de entrega */}
@@ -811,7 +811,7 @@ function GestorCard({
           <div className="border-t border-zinc-50" />
 
           {/* Itens */}
-          <div className="space-y-2">
+          <div className="space-y-2 bg-sky-50 border border-sky-200 rounded-lg p-2">
             {pedido.itens.map((item) => {
               const isDimmed = filtroEstacao && filtroEstacao !== 'todas' && item.estacao !== filtroEstacao;
               const isSkip = item.semPreparo || item.skip_kds;
@@ -822,20 +822,20 @@ function GestorCard({
                   <div className="flex items-start gap-1.5">
                     {/* Status bullet */}
                     {!isSkip && (
-                      <span className={`mt-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-full border flex-shrink-0 ${itemCfg.pill}`}>
+                      <span className={`mt-1 w-3.5 h-3.5 flex items-center justify-center rounded-full border flex-shrink-0 ${itemCfg.pill}`}>
                         <i className={`${itemCfg.icon} text-[8px]`} />
                       </span>
                     )}
                     {isSkip && (
-                      <span className="mt-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-full bg-zinc-100 border border-zinc-200 flex-shrink-0">
+                      <span className="mt-1 w-3.5 h-3.5 flex items-center justify-center rounded-full bg-zinc-100 border border-zinc-200 flex-shrink-0">
                         <i className="ri-subtract-line text-[8px] text-zinc-400" />
                       </span>
                     )}
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1 flex-wrap">
-                        <span className="text-[10px] font-black text-zinc-500 flex-shrink-0">{item.quantidade}x</span>
-                        <span className={`text-xs font-semibold flex-1 min-w-0 break-words ${isSkip ? 'text-zinc-400' : 'text-zinc-800'}`}>
+                        <span className="text-sm font-black text-sky-700 flex-shrink-0">{item.quantidade}x</span>
+                        <span className={`text-sm font-bold leading-snug flex-1 min-w-0 break-words ${isSkip ? 'text-zinc-400' : 'text-zinc-800'}`}>
                           {item.nome}
                         </span>
                         {item.status === 'entregue' && (
@@ -893,8 +893,8 @@ function GestorCard({
                       {item.observacoes && item.observacoes.length > 0 && (
                         <div className="mt-1 space-y-0.5">
                           {item.observacoes.map((obs, i) => (
-                            <div key={i} className="flex items-start gap-1 text-[9px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-1 rounded-lg">
-                              <i className="ri-alert-fill text-amber-500 text-[9px] flex-shrink-0 mt-0.5" />
+                            <div key={i} className="flex items-start gap-1 text-xs font-bold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-1 rounded-lg">
+                              <i className="ri-alert-fill text-amber-600 text-xs flex-shrink-0 mt-0.5" />
                               <span>{obs}</span>
                             </div>
                           ))}
