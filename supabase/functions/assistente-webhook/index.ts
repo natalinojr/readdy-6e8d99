@@ -301,6 +301,68 @@ async function avisarDono(admin: SupabaseClient, ownerChat: string, reply: strin
   await runActions(admin, number, ownerChat, actions);
 }
 
+// ── Caixa de pendências (2026-09-18) ────────────────────────────────────────
+// O rascunho do Inter expira em 30 min (segurança: um toque no dia seguinte não pode
+// disparar um Pix velho), e o cartão do Telegram rola para cima. Antes disso, um pedido
+// não atendido não deixava rastro em lugar nenhum — caso real: pedido às 21h, ninguém
+// pagou, e no dia seguinte não havia onde ver que existia. Agora toda triagem abre uma
+// linha em `pendencias`, que só sai de lá por ação do dono ou pelo pagamento concluído.
+//
+// asst_groups não tem tenant_id (o grupo é do WhatsApp, não da loja), então a loja vem
+// do pagamento preparado; sem pagamento (triagem incompleta ou que quebrou) cai na loja
+// padrão do assistente.
+// deno-lint-ignore no-explicit-any
+async function pendenciaTenant(admin: SupabaseClient, cfg: Record<string, any>, paymentIds: string[]): Promise<string | null> {
+  if (paymentIds.length) {
+    const { data } = await admin.from('fin_inter_payments').select('tenant_id').in('id', paymentIds).limit(1);
+    if (data?.length) return String(data[0].tenant_id);
+  }
+  // Loja do Inter ANTES da loja padrão do assistente: é para lá que o pagamento iria
+  // (assistente-brain › interTenant faz a mesma escolha). Com a ordem invertida, um pedido
+  // que a triagem não conseguiu preparar caía na caixa de uma loja e o mesmo pedido, se
+  // preparado, na de outra — visto em produção: grupo "EP MALL", pagamento em Paranaguá.
+  const { data: inter } = await admin.from('fin_inter_config').select('tenant_id').eq('is_active', true).limit(1);
+  if (inter?.length) return String(inter[0].tenant_id);
+  const padrao = String(cfg.default_tenant_id ?? '');
+  if (padrao) return padrao;
+  const watched = Array.isArray(cfg.watched_tenant_ids) ? cfg.watched_tenant_ids.map(String) : [];
+  return watched.length ? watched[0] : null;
+}
+
+// null/'' viram 0 no Number(), e "R$ 0,00" no título seria pior que não mostrar valor nenhum.
+const brlPend = (n: unknown) => {
+  if (n === null || n === undefined || n === '') return null;
+  const v = Number(n);
+  return Number.isFinite(v) && v > 0 ? v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : null;
+};
+
+// Nunca deixa a triagem cair por causa da pendência: o pedido do grupo é o que importa.
+// deno-lint-ignore no-explicit-any
+async function abrirPendenciaPagamento(
+  admin: SupabaseClient, cfg: Record<string, any>, reqId: number, g: any,
+  msg: { sender: string | null; extracted: any }, detalhe: string | null, paymentIds: string[],
+) {
+  try {
+    const tenant = await pendenciaTenant(admin, cfg, paymentIds);
+    if (!tenant) { log('WARN', 'pendência sem loja para atribuir', { pedido: reqId }); return; }
+    const valor = brlPend(msg.extracted?.pagamento?.valor);
+    const quem = msg.sender ? ` (${msg.sender})` : '';
+    const { error } = await admin.rpc('fn_pendencia_upsert', {
+      p_tenant: tenant,
+      p_kind: 'pagamento_grupo',
+      p_ref: String(reqId),
+      p_titulo: `Pagamento pedido no grupo ${g.name ?? 'sem nome'}${quem}${valor ? ` — ${valor}` : ''}`,
+      p_detalhe: detalhe ? detalhe.slice(0, 500) : null,
+      p_payload: { group_jid: g.group_jid, group_name: g.name, sender: msg.sender, pagamentos: paymentIds, extraido: msg.extracted?.pagamento ?? null },
+      p_rota: '/assistente',
+      p_urgencia: 'alta',
+      p_acao_requerida: true,
+      p_origem: 'triagem_grupo',
+    });
+    if (error) log('WARN', 'abrir pendência de pagamento', { pedido: reqId, error: error.message });
+  } catch (e) { log('WARN', 'abrir pendência de pagamento', { pedido: reqId, error: errMsg(e) }); }
+}
+
 // Triagem: mensagem de grupo que parece pedido de pagamento → brain (modo
 // 'triagem_grupo') → pagamento preparado + aviso ao dono. Uma linha por mensagem em
 // asst_group_requests (message_id único), então reenvio do webhook não prepara 2×.
@@ -366,10 +428,22 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
       status: pagamento ? 'preparado' : 'incompleto', payment_id: pagamento ? String(pagamento.id) : null,
       reply: reply.slice(0, 2000), notified_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq('id', req.id);
+    // Pedido de pagamento entra na caixa de pendências, preparado ou não: o cartão do
+    // Telegram expira em 30 min, a pendência não. Fecha sozinha quando o Inter confirmar
+    // (trigger trg_pendencia_pagamento_grupo). Compra lançada não gera pendência: já acabou.
+    if (tipo === 'pagamento') {
+      await abrirPendenciaPagamento(admin, cfg, req.id, g, msg,
+        pagamento ? reply : `Não consegui preparar sozinho: ${reply}`, ids);
+    }
     log('INFO', 'triagem de pagamento', { group: g.name, sender: msg.sender, preparado: !!pagamento });
   } catch (e) {
     await admin.from('asst_group_requests').update({ status: 'erro', error: errMsg(e).slice(0, 500), updated_at: new Date().toISOString() }).eq('id', req.id);
     log('ERROR', 'triagem de pagamento falhou', { group: g.name, error: errMsg(e) });
+    // Triagem quebrada é justamente quando a pendência mais importa: não há cartão no
+    // Telegram para tocar, então a caixa é o único lugar onde o pedido sobrevive.
+    if (tipo === 'pagamento') {
+      await abrirPendenciaPagamento(admin, cfg, req.id, g, msg, `A triagem falhou: ${errMsg(e).slice(0, 300)}`, []);
+    }
     // O dono precisa saber que chegou um pedido mesmo quando a triagem quebra.
     await avisarDono(admin, ownerChat, `Chegou um pedido de pagamento no grupo *${g.name}*${msg.sender ? ` (${msg.sender})` : ''} e eu não consegui preparar: ${errMsg(e).slice(0, 160)}. Dá uma olhada lá.`, []).catch(() => {});
   }
