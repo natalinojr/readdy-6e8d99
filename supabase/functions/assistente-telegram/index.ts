@@ -534,6 +534,15 @@ async function sendGroupReceipt(admin: SupabaseClient, p: any): Promise<string |
     });
     if (!r.ok) throw new Error(`webhook ${r.status}: ${(await r.text()).slice(0, 200)}`);
     log('INFO', 'comprovante enviado no grupo', { group: rq.group_name, payment: p.id, imagem: !!png });
+    // 👍 na mensagem do pedido quando ele fica TODO pago (dono, 2026-09-18). Pedido com dois Pix
+    // só ganha o joinha no último — antes disso ainda falta pagar. Falhar aqui não desfaz nada.
+    if (!faltam && rq.message_id) {
+      await fetch(`${supabaseUrl}/functions/v1/assistente-webhook`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+        body: JSON.stringify({ action: 'group_react', group_jid: rq.group_jid, message_id: rq.message_id, emoji: '👍' }),
+      }).then(async (r) => { if (!r.ok) log('WARN', 'joinha no pedido do grupo', { status: r.status, body: (await r.text()).slice(0, 200) }); })
+        .catch((e) => log('WARN', 'joinha no pedido do grupo', { error: errMsg(e) }));
+    }
     // Cópia da imagem para o dono no Telegram.
     if (png && /^tg:-?\d+$/.test(String(p.chat_id ?? ''))) {
       const fd = new FormData();

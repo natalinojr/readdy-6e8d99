@@ -1346,6 +1346,25 @@ Deno.serve(async (req) => {
     return json({ ok: true });
   }
 
+  // 👍 na mensagem que pediu o pagamento, quando o pedido fica todo pago (2026-09-18, pedido do
+  // dono). Mesma regra do group_send: só grupo acompanhado. Em grupo a chave precisa do autor.
+  if (gs?.action === 'group_react') {
+    const jid = String(gs.group_jid ?? '');
+    const id = String(gs.message_id ?? '');
+    if (!/@g\.us$/.test(jid) || !id) return json({ error: 'group_jid/message_id inválidos' }, 400);
+    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const { data: g } = await admin.from('asst_groups').select('is_enabled').eq('group_jid', jid).maybeSingle();
+    if (!g?.is_enabled) return json({ error: 'grupo não acompanhado' }, 403);
+    const { data: orig } = await admin.from('asst_group_messages').select('sender_jid').eq('message_id', id).maybeSingle();
+    try {
+      await evo(`/message/sendReaction/${evoInstance}`, {
+        key: { remoteJid: jid, fromMe: false, id, ...(orig?.sender_jid ? { participant: orig.sender_jid } : {}) },
+        reaction: String(gs.emoji ?? '👍').slice(0, 8),
+      });
+    } catch (e) { return json({ error: errMsg(e) }, 502); }
+    return json({ ok: true });
+  }
+
   // Manutenção: relê a foto/PDF de uma mensagem de grupo já gravada (a imagem não
   // fica salva; a Evolution devolve pelo message_id). Só atualiza content/extracted,
   // não refaz a triagem de pagamento.
