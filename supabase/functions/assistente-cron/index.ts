@@ -90,6 +90,47 @@ async function deliver(target: string, text: string) {
   if (isTg(target)) return sendTelegram(target, text);
   return sendText(toNumber(target), text);
 }
+// Pagamento preparado e não concluído em 15 min vira pendência (dono, 2026-09-18) — qualquer origem:
+// pedido dele, boleto do dia, reembolso. Pedido de grupo tem a pendência própria (pagamento_grupo)
+// desde a triagem, então fica de fora. Substituído ("preparar de novo") não conta: vale o novo, e a
+// pendência (que nasce no original) fecha pelo trigger quando o substituto for pago ou cancelado.
+const PARADO_MS = 15 * 60_000;
+// A regra vale do dia em que nasceu em diante: pedido velho expirado antes dela já foi resolvido por
+// outro caminho (visto: Pix do Sacolão de 12/09) e viraria ruído na caixa.
+const PARADO_DESDE = Date.parse('2026-09-18T15:00:00Z');
+const PAY_LABEL: Record<string, string> = {
+  draft: 'não foi tocado em Pagar', awaiting_pin: 'esperando o PIN', expired: 'expirou sem pagar', failed: 'não foi enviado ao Inter',
+  rejected: 'recusado pelo Inter', pending_approval: 'aguardando sua aprovação no app do Inter',
+};
+async function pagamentosParados(admin: SupabaseClient): Promise<number> {
+  const { data } = await admin.from('fin_inter_payments')
+    .select('id, tenant_id, kind, amount, beneficiary_name, description, status, bill_id, created_at')
+    .in('status', Object.keys(PAY_LABEL)).is('replaced_by', null).is('group_request_id', null)
+    .lt('created_at', new Date(Date.now() - PARADO_MS).toISOString())
+    .gte('created_at', new Date(Math.max(Date.now() - 7 * 86400000, PARADO_DESDE)).toISOString()).limit(50);
+  let n = 0;
+  for (const p of data ?? []) {
+    // Já existe pendência deste pagamento (ou de um que ele substituiu)? Não mexe.
+    const { data: tem } = await admin.from('pendencias').select('id').eq('kind', 'pagamento_pendente').eq('ref', String(p.id)).limit(1);
+    if (tem?.length) continue;
+    const { data: antes } = await admin.from('fin_inter_payments').select('id').eq('replaced_by', p.id).neq('id', p.id);
+    if (antes?.length) {
+      const { data: velha } = await admin.from('pendencias').select('id').eq('kind', 'pagamento_pendente').in('ref', antes.map((a) => String(a.id))).limit(1);
+      if (velha?.length) continue;
+    }
+    const quem = p.beneficiary_name || p.description || '';
+    const { error } = await admin.rpc('fn_pendencia_upsert', {
+      p_tenant: p.tenant_id, p_kind: 'pagamento_pendente', p_ref: String(p.id),
+      p_titulo: `${p.kind === 'pix' ? 'Pix' : 'Boleto'} de ${brl(p.amount)}${quem ? ` para ${quem}` : ''} — não pago`,
+      p_detalhe: `Preparado em ${new Date(p.created_at).toLocaleString('pt-BR', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} e ${PAY_LABEL[p.status] ?? p.status}.`,
+      p_payload: { payment_id: p.id, bill_id: p.bill_id }, p_rota: null,
+      p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'cron',
+    });
+    if (error) log('WARN', 'pendência de pagamento parado', { payment: p.id, error: error.message }); else n++;
+  }
+  return n;
+}
+
 // "HH:MM" local de SP e AAAA-MM-DD local
 const localHHMM = () => new Date().toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false });
 const localDate = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
@@ -224,6 +265,9 @@ async function keepWarm(admin: SupabaseClient, cfg: Record<string, any>) {
 const PRO_DEFAULTS: Record<string, any> = {
   closing: { enabled: true, time: '23:00' },            // fechamento do dia por loja
   due_tomorrow: { enabled: true, time: '17:00' },       // contas que vencem amanhã (+ fim de semana na sexta)
+  // Contas que vencem HOJE (dono, 2026-09-18): com boleto guardado → pagamento preparado para
+  // aprovar na conversa Financeiro; sem boleto → avisa que falta o boleto.
+  due_today: { enabled: true, time: '08:00' },
   anomaly: { enabled: true, from: '11:30', to: '22:30', every_min: 30, drop_pct: 30, spike_pct: 50, min_base: 300 },
   stock: { enabled: true, time: '09:00' },              // estoque crítico: só o que MUDOU
   tasks_overdue: { enabled: true, time: '18:00' },      // tarefas vencidas do dono
@@ -346,6 +390,51 @@ async function anomalyTexts(tenants: Array<{ id: string; name: string }>, pro: a
     else if (d >= Number(pro.spike_pct)) out.push({ tenant: t.id, text: `📈 *${t.name}*: até ${hhmm} já vendeu ${brl(hoje)}, ${d}% acima da média das últimas ${semanas} semanas neste dia (${brl(base)}).` });
   }
   return out;
+}
+
+// Contas que vencem HOJE: prepara o pagamento das que têm boleto guardado (fin_accounts_payable.
+// boleto_*, gravado pelo brain › guardar_boleto) e lista as que não têm. Não prepara de novo se a
+// conta já tem pagamento em aberto ou pago. Pagamento só sai com o PIN e a aprovação no app do Inter.
+async function dueTodayRun(tenants: Array<{ id: string; name: string }>, today: string, tgChat: string, ownerId: string) {
+  const ids = tenants.map((t) => t.id);
+  const contas = await db()<Array<{ id: string; tenant_id: string; nome: string; aberto: number; parcial: boolean; linha: string | null }>>`
+    select a.id, a.tenant_id, coalesce(nullif(a.supplier, ''), a.description) nome,
+           (a.amount - coalesce(a.paid_amount, 0))::float aberto, coalesce(a.paid_amount, 0) > 0 parcial,
+           coalesce(a.boleto_digitavel, a.boleto_barcode) linha
+      from fin_accounts_payable a
+     where a.tenant_id = any(${ids}::uuid[]) and a.status not in ('paid', 'cancelled') and a.due_date = ${today}::date
+       and not exists (select 1 from fin_inter_payments p where p.bill_id = a.id and p.replaced_by is null
+                        and p.status not in ('cancelled', 'expired', 'failed', 'rejected'))
+     order by a.amount desc`;
+  if (!contas.length) return null;
+  const byT = new Map(tenants.map((t) => [t.id, t.name]));
+  const loja = (id: string) => (tenants.length > 1 ? ` · ${byT.get(id) ?? ''}` : '');
+  const pagamentos: string[] = [];
+  const comBoleto: string[] = [];
+  const semBoleto: string[] = [];
+  for (const c of contas) {
+    if (!c.linha) { semBoleto.push(`• ${c.nome} — ${brl(c.aberto)}${loja(c.tenant_id)}`); continue; }
+    // Já teve pagamento parcial: o boleto cobraria o valor cheio. Não prepara sozinho — confira.
+    if (c.parcial) { semBoleto.push(`• ${c.nome} — ${brl(c.aberto)} em aberto${loja(c.tenant_id)} (já tem pagamento parcial: o boleto cobra o valor cheio, confira antes)`); continue; }
+    try {
+      const r = await fetch(`${supabaseUrl}/functions/v1/inter-bank`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
+        body: JSON.stringify({ action: 'prepare_payment', tenant_id: c.tenant_id, tipo: 'boleto', linha: c.linha, bill_id: c.id,
+          descricao: c.nome, requested_by: ownerId || undefined, channel: 'telegram', chat_id: tgChat }),
+      });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok || !out?.payment?.id) throw new Error(String(out?.error ?? r.status));
+      pagamentos.push(String(out.payment.id));
+      comBoleto.push(`• ${c.nome} — ${brl(c.aberto)}${loja(c.tenant_id)}`);
+    } catch (e) {
+      semBoleto.push(`• ${c.nome} — ${brl(c.aberto)}${loja(c.tenant_id)} (boleto guardado, mas não consegui preparar: ${errMsg(e).slice(0, 80)})`);
+    }
+  }
+  const total = contas.reduce((a, b) => a + Number(b.aberto), 0);
+  const lines = [`💸 *Vencem hoje (${dmy(today)})*: ${contas.length} conta(s), ${brl(total)}`];
+  if (comBoleto.length) lines.push('', '✅ *Com boleto* — pagamento preparado, é só tocar em Pagar:', ...comBoleto);
+  if (semBoleto.length) lines.push('', '⚠️ *Sem boleto* — mande o boleto no WhatsApp do assistente ou pague por fora:', ...semBoleto);
+  return { text: lines.join('\n'), pagamentos };
 }
 
 // Contas que vencem amanhã (na sexta: sáb+dom+seg), atrasadas e saldo sincronizado dos bancos.
@@ -734,6 +823,26 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     const t = await dueTomorrowText(tenants, today);
     if (t) await deliver('due_tomorrow', t); else res.due_tomorrow = 'nada vencendo';
   }
+  // Vence hoje → conversa Financeiro com os cartões de pagamento (precisa do Telegram do dono: o
+  // pagamento é aprovado pelo botão + PIN, no Telegram ou no chat do ERPOS).
+  if (want('due_today') && (dry || (inWindow(pro.due_today.time, now) && state.due_today_date !== today))) {
+    const tg = cfg.telegram_owner_chat_id ? `tg:${cfg.telegram_owner_chat_id}` : null;
+    if (!tg) res.due_today = 'sem Telegram do dono';
+    else if (dry) res.due_today = 'prévia desligada (prepararia pagamentos de verdade)';
+    else {
+      state.due_today_date = today; await saveState();
+      const r = await dueTodayRun(tenants, today, tg, String(cfg.owner_user_id ?? ''));
+      if (!r) res.due_today = 'nada vencendo hoje';
+      else {
+        const d = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+          body: JSON.stringify({ action: 'deliver', chat_key: tg, text: r.text, save: true, topic: 'pagamentos', actions: r.pagamentos.map((id) => ({ type: 'payment', id })) }),
+        });
+        if (!d.ok) throw new Error(`assistente-telegram ${d.status}: ${(await d.text()).slice(0, 200)}`);
+        res.due_today = { contas: r.text.split('\n').filter((l) => l.startsWith('•')).length, preparados: r.pagamentos.length };
+      }
+    }
+  }
   if (want('stock') && (dry || (inWindow(pro.stock.time, now) && state.stock_date !== today))) {
     const { text, newState } = await stockText(tenants, state);
     if (!dry) { state.stock_date = today; state.stock = newState; await saveState(); }
@@ -835,6 +944,7 @@ Deno.serve(async (req) => {
   try { result.warmed = await keepWarm(admin, cfg); } catch (e) { result.warm_error = errMsg(e); log('ERROR', 'warm', { error: errMsg(e) }); }
   try { const pr = await proactive(admin, cfg, ownerChat); if (Object.keys(pr).length) result.proactive = pr; } catch (e) { result.proactive_error = errMsg(e); log('ERROR', 'proactive', { error: errMsg(e) }); }
   try { const pw = await payWatch(admin); if (pw) result.pay_watch = pw; } catch (e) { result.pay_watch_error = errMsg(e); log('ERROR', 'pay_watch', { error: errMsg(e) }); }
+  try { const pp = await pagamentosParados(admin); if (pp) result.pagamentos_parados = pp; } catch (e) { result.pagamentos_parados_error = errMsg(e); log('ERROR', 'pagamentos_parados', { error: errMsg(e) }); }
   // Agendamento de entrevistas (Contratação): convites, cobrança e lembretes — regras no hiring-scheduler
   try {
     const r = await fetch(`${supabaseUrl}/functions/v1/hiring-scheduler`, {

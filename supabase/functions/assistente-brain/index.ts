@@ -521,6 +521,7 @@ TOOLS.push({
       vencimento: { type: 'string', description: 'AAAA-MM-DD, se o código não trouxer.' },
       descricao: { type: 'string', description: 'Descrição curta da conta (ex.: "Molho cheddar DLR NF 41489").' },
       loja: { type: 'string', description: 'Loja da conta. Padrão: a loja do Banco Inter.' },
+      conta_a_pagar_id: { type: 'string', description: 'Só quando a ferramenta devolveu várias contas possíveis e ele escolheu uma: o id dela.' },
     },
     required: ['linha_digitavel'],
   },
@@ -1036,15 +1037,39 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
       const { data: ja } = await ctx.admin.from('fin_accounts_payable').select('id, description').eq('tenant_id', tenantId).eq('boleto_digitavel', digitavel).limit(1);
       let conta: { id: string; description: string } | null = ja?.[0] ?? null;
       let acao = conta ? 'já estava guardado' : '';
+      if (!conta && input.conta_a_pagar_id) {
+        // Ele escolheu entre as possíveis: grava nessa (se ainda estiver em aberto e sem boleto).
+        const { data: escolhida, error } = await ctx.admin.from('fin_accounts_payable').update(campos)
+          .eq('id', String(input.conta_a_pagar_id)).eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)').is('boleto_digitavel', null)
+          .select('id, description').maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!escolhida) throw new Error('Essa conta não está mais em aberto ou já tem boleto.');
+        conta = escolhida; acao = 'guardado na conta que você escolheu';
+      }
       if (!conta) {
         // Conta em aberto, sem boleto, do mesmo valor. Com vencimento, o mesmo dia desempata; sem
         // bater o dia, fica a de vencimento mais próximo (a nota costuma entrar antes do boleto).
         const { data: cands } = await ctx.admin.from('fin_accounts_payable').select('id, description, supplier, due_date')
           .eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)').is('boleto_digitavel', null)
           .gte('amount', valor - 0.01).lte('amount', valor + 0.01).order('due_date').limit(10);
-        const lista = (cands ?? []) as Array<{ id: string; description: string; supplier: string | null; due_date: string }>;
-        const alvo = (venc && lista.find((c) => c.due_date === venc))
-          ?? (venc ? [...lista].sort((a, b) => Math.abs(Date.parse(a.due_date) - Date.parse(venc)) - Math.abs(Date.parse(b.due_date) - Date.parse(venc)))[0] : lista[0]);
+        // Fornecedor compatível: se os dois nomes existem, precisam dividir uma palavra que importa
+        // (sem "ltda", "me", "comercio"...). Valor igual de fornecedor diferente não é a mesma conta.
+        const palavras = (x: unknown) => new Set(String(x ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+          .split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !['ltda', 'eireli', 'comercio', 'distribuidora', 'alimentos', 'industria', 'servicos'].includes(w)));
+        const pq = palavras(quem);
+        const compat = (c: { supplier: string | null; description: string }) => {
+          if (!pq.size) return true;
+          const pc = palavras(`${c.supplier ?? ''} ${c.description ?? ''}`);
+          return !pc.size || [...pq].some((w) => pc.has(w));
+        };
+        const lista = ((cands ?? []) as Array<{ id: string; description: string; supplier: string | null; due_date: string }>).filter(compat);
+        const mesmoDia = venc ? lista.filter((c) => c.due_date === venc) : [];
+        const alvo = lista.length === 1 ? lista[0] : mesmoDia.length === 1 ? mesmoDia[0] : null;
+        if (!alvo && lista.length > 1) {
+          // Ambíguo: não chuta (gravar na conta errada deixaria a certa sem boleto). Pergunta.
+          return JSON.stringify({ ok: false, ambiguo: lista.map((c) => ({ id: c.id, conta: c.supplier || c.description, vencimento: c.due_date })),
+            instrucao: 'Há mais de uma conta em aberto com esse valor e fornecedor. NÃO responda NO_REPLY: pergunte em UMA linha qual é (fornecedor + vencimento de cada) e, quando ele disser, chame guardar_boleto de novo com conta_a_pagar_id = id da conta escolhida.' });
+        }
         if (alvo) {
           const { error } = await ctx.admin.from('fin_accounts_payable').update(campos).eq('id', alvo.id).eq('tenant_id', tenantId).is('boleto_digitavel', null);
           if (error) throw new Error(error.message);

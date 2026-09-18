@@ -22,7 +22,7 @@
 //                                                  → classifica pelo chat (fn_item_classify com o JWT do dono)
 //   history/topics aceitam group_jid: conversa de um GRUPO do WhatsApp (asst_messages.group_jid)
 //   Caixa de pendências no chat (2026-09-18):
-//   pendencia_pagar { id }                         → prepara de novo o pedido do grupo e devolve os cartões
+//   pendencia_pagar { id }                         → prepara de novo o pedido do grupo (ou o pagamento parado) e devolve os cartões
 //   contas_sem_dre { tenant_id }                   → contas sem categoria DRE + categorias da loja
 //   conta_dre     { tenant_id, bill_id, dre_category_id } → classifica a conta (só se ainda estiver sem)
 //   pedido_origem { id }                           → mensagem (asst_messages.id) que gerou o pedido do grupo
@@ -467,12 +467,28 @@ Deno.serve(async (req) => {
     // rascunho ainda válido e pagamento em andamento voltam como estão.
     if (action === 'pendencia_pagar') {
       const { data: pend } = await admin.from('pendencias').select('id, tenant_id, kind, ref, status').eq('id', String(body.id ?? '')).maybeSingle();
-      if (!pend || pend.kind !== 'pagamento_grupo') return fail('Pendência de pagamento não encontrada.', 404);
+      if (!pend || !['pagamento_grupo', 'pagamento_pendente'].includes(pend.kind)) return fail('Pendência de pagamento não encontrada.', 404);
       if (!['aberta', 'vista'].includes(pend.status)) return fail('Essa pendência já foi fechada.');
-      const { data: lista } = await admin.from('fin_inter_payments').select('*')
-        .eq('tenant_id', pend.tenant_id).eq('group_request_id', Number(pend.ref)).order('created_at');
+      if (!(await ehGestor(admin, user.id, String(pend.tenant_id)))) return fail('Sem acesso a essa loja.', 403);
       // deno-lint-ignore no-explicit-any
-      const todos: any[] = lista ?? [];
+      let todos: any[] = [];
+      if (pend.kind === 'pagamento_grupo') {
+        const { data: lista } = await admin.from('fin_inter_payments').select('*')
+          .eq('tenant_id', pend.tenant_id).eq('group_request_id', Number(pend.ref)).order('created_at');
+        todos = lista ?? [];
+      } else {
+        // Pagamento parado (2026-09-18): a pendência aponta o pedido original; segue a cadeia do
+        // "preparar de novo" (replaced_by) até o mais novo.
+        let id: string | null = String(pend.ref);
+        const vistos = new Set<string>();
+        while (id && !vistos.has(id)) {
+          vistos.add(id);
+          const { data: p } = await admin.from('fin_inter_payments').select('*').eq('id', id).eq('tenant_id', pend.tenant_id).maybeSingle();
+          if (!p) break;
+          todos = [p];
+          id = p.replaced_by && p.replaced_by !== p.id ? String(p.replaced_by) : null;
+        }
+      }
       // Preparado de novo antes: o antigo aponta para o substituto (replaced_by) e sai da conta —
       // só as "pontas" valem. replaced_by = o próprio id é um preparo interrompido: o antigo vale.
       const pontas = todos.filter((p) => !p.replaced_by || p.replaced_by === p.id);

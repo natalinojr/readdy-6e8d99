@@ -161,7 +161,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
           {itens.map((p) => {
             const cfg = kindConfig(p.kind);
-            const ehPagamento = p.kind === 'pagamento_grupo';
+            const ehPagamento = p.kind === 'pagamento_grupo' || p.kind === 'pagamento_pendente';
             const busy = ocupada === p.id;
             return (
               <div key={p.id} className={`rounded-2xl border bg-white px-3.5 py-3 text-sm ${p.urgencia === 'alta' ? 'border-red-200' : 'border-indigo-100'}`}>
@@ -204,12 +204,14 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                   <div className="grid grid-cols-2 gap-2 mt-2.5">
                     {ehPagamento && (
                       <>
-                        <button onClick={() => pagar(p)} disabled={busy} className={`${PRINCIPAL} col-span-2`}>
+                        <button onClick={() => pagar(p)} disabled={busy} className={p.kind === 'pagamento_grupo' ? `${PRINCIPAL} col-span-2` : PRINCIPAL}>
                           {busy ? 'Preparando…' : <><i className="ri-check-line" /> Pagar</>}
                         </button>
-                        <button onClick={() => verMensagem(p)} disabled={busy} className={SECUNDARIO}>
-                          <i className="ri-chat-quote-line" /> Ver a mensagem
-                        </button>
+                        {p.kind === 'pagamento_grupo' && (
+                          <button onClick={() => verMensagem(p)} disabled={busy} className={SECUNDARIO}>
+                            <i className="ri-chat-quote-line" /> Ver a mensagem
+                          </button>
+                        )}
                       </>
                     )}
                     {RESOLVE_AQUI[p.kind] && (
