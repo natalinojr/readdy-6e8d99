@@ -64,6 +64,7 @@ export default function AssistentePage() {
   const [saving, setSaving] = useState(false);
 
   const [novaMemoria, setNovaMemoria] = useState('');
+  const [buscandoGrupos, setBuscandoGrupos] = useState(false);
   const [qr, setQr] = useState<{ open: boolean; img: string | null; loading: boolean; error: string | null }>({ open: false, img: null, loading: false, error: null });
 
   const flash = (tipo: 'ok' | 'erro', msg: string) => { setToast({ tipo, msg }); setTimeout(() => setToast(null), 3500); };
@@ -84,6 +85,27 @@ export default function AssistentePage() {
   }, []);
 
   useEffect(() => { if (isOwner) carregar(); }, [isOwner, carregar]);
+
+  // Grupos do WhatsApp: busca na Evolution os grupos em que o número do assistente está.
+  // Roda sozinho ao abrir a tela (em silêncio) e pelo botão "Buscar grupos" (com aviso).
+  const buscarGrupos = useCallback(async (avisar: boolean) => {
+    setBuscandoGrupos(true);
+    try {
+      const r = await call<{ total: number; novos: string[] }>('sync_groups');
+      if (avisar) {
+        flash('ok', r.novos.length
+          ? `${r.novos.length === 1 ? 'Grupo novo' : 'Grupos novos'}: ${r.novos.join(', ')}. Ligue a leitura no botão ao lado.`
+          : `Nenhum grupo novo (o número está em ${r.total} ${r.total === 1 ? 'grupo' : 'grupos'}).`);
+      }
+      if (r.novos.length || avisar) await carregar();
+    } catch (e) {
+      if (avisar) flash('erro', e instanceof Error ? e.message : String(e));
+    } finally {
+      setBuscandoGrupos(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [carregar]);
+  useEffect(() => { if (isOwner) buscarGrupos(false); }, [isOwner, buscarGrupos]);
 
   // Enquanto o QR está aberto, confere a conexão a cada 4 s e fecha sozinho quando parear.
   useEffect(() => {
@@ -381,12 +403,41 @@ export default function AssistentePage() {
               </div>
 
               <div className="rounded-2xl border border-zinc-200 bg-white p-4">
-                <p className="text-sm font-bold text-zinc-800">Grupos do WhatsApp (só leitura)</p>
-                <p className="text-xs text-zinc-400 mb-3">
-                  O assistente guarda as mensagens dos grupos ligados (por 90 dias) e nunca escreve neles. Pergunte no privado: "resume o grupo da gerência de hoje".
-                  Grupo novo só liga sozinho se você também estiver nele.
-                </p>
-                {(ov.groups ?? []).length === 0 && <p className="text-sm text-zinc-400">Nenhum grupo ainda. Adicione o número do assistente num grupo em que você esteja.</p>}
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold text-zinc-800">Grupos do WhatsApp (só leitura)</p>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      O assistente guarda as mensagens dos grupos <b>ligados</b> e nunca escreve neles (só o comprovante de pagamento pedido no grupo). Grupo desligado: nada é guardado.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => buscarGrupos(true)}
+                    disabled={buscandoGrupos}
+                    className="flex-shrink-0 flex items-center gap-1.5 px-3 h-9 rounded-xl border border-violet-200 text-violet-700 text-sm font-bold hover:bg-violet-50 cursor-pointer disabled:opacity-50"
+                  >
+                    <i className={`ri-refresh-line ${buscandoGrupos ? 'animate-spin' : ''}`} /> {buscandoGrupos ? 'Buscando…' : 'Buscar grupos'}
+                  </button>
+                </div>
+                <details className="mt-3 mb-3 rounded-xl bg-violet-50/60 border border-violet-100 px-3 py-2 text-xs text-zinc-600">
+                  <summary className="font-semibold text-violet-800 cursor-pointer">Como liberar um grupo novo</summary>
+                  <ol className="list-decimal pl-4 mt-2 space-y-1.5">
+                    <li>
+                      No celular, adicione ao grupo o número do assistente que está <b>conectado aqui embaixo, no card WhatsApp</b>
+                      {ov.whatsapp.state === 'open' ? '' : ' (hoje ele aparece desconectado: conecte pelo QR Code primeiro)'}.
+                      O número da API oficial (canais públicos) não entra em grupos.
+                    </li>
+                    <li>Volte aqui e toque em <b>Buscar grupos</b>. O grupo aparece na lista, <b>desligado</b>.</li>
+                    <li>Ligue o botão ao lado do nome do grupo. A partir daí o assistente lê tudo que chegar: texto, áudio (transcrito), foto e PDF.</li>
+                    <li>Teste no Telegram: <i>"o que falaram no grupo X hoje?"</i>.</li>
+                  </ol>
+                  <p className="mt-2">
+                    <b>Mensagens de antes:</b> o assistente só vê o que chega depois de ligado. Para ele conhecer o passado, no celular abra o grupo › ⋮ › Mais › <b>Exportar conversa</b> › <b>Sem mídia</b> e mande o arquivo <b>.txt</b> para o assistente <b>pelo WhatsApp</b>, com o nome do grupo na legenda.
+                  </p>
+                  <p className="mt-1.5">
+                    Por segurança, qualquer pessoa pode pôr o número do assistente num grupo, mas grupo novo só liga sozinho se você também estiver nele. Para parar de ler, é só desligar o botão.
+                  </p>
+                </details>
+                {(ov.groups ?? []).length === 0 && <p className="text-sm text-zinc-400">Nenhum grupo ainda. Siga o passo a passo acima.</p>}
                 <ul className="space-y-1.5">
                   {(ov.groups ?? []).map((g) => (
                     <li key={g.group_jid} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-zinc-100">

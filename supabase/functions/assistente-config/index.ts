@@ -10,6 +10,8 @@
 //   cancel_reminder     { id }            (só lembrete ainda não enviado)
 //   whatsapp_connect    {}                QR Code de pareamento da instância na Evolution
 //   whatsapp_state      {}                estado da conexão (open | connecting | close)
+//   sync_groups         {}                busca na Evolution os grupos do número; os novos entram desligados
+//   toggle_group        { group_jid, enabled }  liga/desliga a leitura do grupo
 //   ── Pix permitidos (lista branca do Pix pelo assistente) — PIN PRÓPRIO, criado pelo dono ──
 //   pix_allow_status    {}                          { has_pin, locked_until }
 //   pix_allow_set_pin   { new_pin }                 SÓ cria (1ª vez); 6–8 dígitos. Não há troca pela tela (decisão do
@@ -282,6 +284,30 @@ Deno.serve(async (req) => {
         if (error) throw new Error(error.message);
         if (!data?.length) return fail('Grupo não encontrado.');
         return ok();
+      }
+
+      // Grupos em que o número do assistente está, direto da Evolution (2026-09-18): grupo novo
+      // aparece na tela sem precisar esperar a primeira mensagem. Entra DESLIGADO — quem liga
+      // é o dono, no botão do grupo. Grupo que já existia só tem o nome atualizado.
+      case 'sync_groups': {
+        const all = await evoGet(`/group/fetchAllGroups/${evoInstance}?getParticipants=false`);
+        // deno-lint-ignore no-explicit-any
+        const lista = (Array.isArray(all) ? all : []).filter((x: any) => String(x?.id ?? '').endsWith('@g.us'))
+          // deno-lint-ignore no-explicit-any
+          .map((x: any) => ({ group_jid: String(x.id), name: String(x.subject ?? x.id) }));
+        const { data: exist } = await admin.from('asst_groups').select('group_jid, name');
+        const conhecidos = new Map((exist ?? []).map((g) => [String(g.group_jid), String(g.name ?? '')]));
+        const novos = lista.filter((g) => !conhecidos.has(g.group_jid));
+        const now = new Date().toISOString();
+        if (novos.length) {
+          const { error } = await admin.from('asst_groups')
+            .upsert(novos.map((g) => ({ ...g, is_enabled: false })), { onConflict: 'group_jid', ignoreDuplicates: true });
+          if (error) throw new Error(error.message);
+        }
+        for (const g of lista.filter((x) => conhecidos.has(x.group_jid) && conhecidos.get(x.group_jid) !== x.name)) {
+          await admin.from('asst_groups').update({ name: g.name, updated_at: now }).eq('group_jid', g.group_jid);
+        }
+        return ok({ total: lista.length, novos: novos.map((g) => g.name) });
       }
 
       case 'pix_allow_status': {
