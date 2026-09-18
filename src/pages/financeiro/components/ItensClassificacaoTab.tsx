@@ -20,9 +20,9 @@ import CategoriaCombobox from './CategoriaCombobox';
 // Vínculo com insumo do estoque (fn_item_link_ingredient): o item vira CMV na categoria do insumo
 // e, com CNPJ + código do produto, fica memorizado para as próximas notas e recebimentos
 // (fiscal_inbound_item_links). O estoque só entra no recebimento — compras antigas não mudam.
-// Notas de serviço (NFS-e) também entram aqui desde 2026-09-18 (is_service): sempre despesa, sem
-// insumo. Classificar grava a categoria nas contas a pagar das notas desse serviço, e nota nova
-// dele já vira conta com a categoria.
+// Notas de serviço (NFS-e) também entram aqui desde 2026-09-18 (is_service), sem insumo. Despesa
+// grava a categoria nas contas a pagar das notas desse serviço e nota nova já vira conta com ela.
+// CMV = fornecedor de produto que emite nota de serviço: as próximas notas entram como COMPRA.
 
 interface Row {
   id: string;
@@ -176,12 +176,13 @@ export default function ItensClassificacaoTab() {
     });
     setBusy(false);
     if (error) { toastErr('Não foi possível classificar', error.message); return false; }
-    const r = (data ?? {}) as { itens?: number; lancamentos_atualizados?: number; contas_atualizadas?: number };
+    const r = (data ?? {}) as { itens?: number; lancamentos_atualizados?: number; contas_atualizadas?: number; notas_como_despesa?: number };
     const contas = r.contas_atualizadas ?? 0;
     const compras = (r.lancamentos_atualizados ?? 0) - contas;
     toastOk(`${r.itens ?? ids.length} item(ns) ${classe ? 'classificado(s)' : 'voltaram a pendente'}`, [
       compras > 0 ? `${compras} lançamento(s) de compra corrigido(s) na DRE.` : '',
       contas > 0 ? `${contas} conta(s) a pagar receberam a categoria.` : '',
+      r.notas_como_despesa ? `As próximas notas entram como compra. ${r.notas_como_despesa} nota(s) já lançada(s) como despesa continuam como estão.` : '',
     ].filter(Boolean).join(' '));
     return true;
   };
@@ -260,7 +261,7 @@ export default function ItensClassificacaoTab() {
   const selecionados = rows.filter((r) => sel.has(r.id));
 
   const celulaInsumo = (r: Row) => {
-    if (r.is_service) return <span className="text-[11px] text-zinc-400">serviço — não entra no estoque</span>;
+    if (r.is_service) return <span className="text-[11px] text-zinc-400">nota de serviço: sem vínculo com o estoque</span>;
     const ing = r.ingredient_id ? insMap.get(r.ingredient_id) : undefined;
     if (!podeClassificar) {
       return ing ? <span className="inline-flex items-center gap-1"><i className="ri-links-line text-emerald-600" />{ing.name}</span> : <span className="text-zinc-300">—</span>;
@@ -320,7 +321,7 @@ export default function ItensClassificacaoTab() {
         <p className="text-xs text-zinc-500 mt-0.5 max-w-3xl">
           Cada produto de cada fornecedor tem uma classificação: <b>CMV</b> com a categoria de mercadoria (a mesma dos insumos: Proteínas, Bebidas, Embalagens…) ou <b>despesa</b> com categoria da DRE (limpeza, papelaria, manutenção…).
           É ela que separa, numa mesma nota, a bebida do produto de limpeza. Toda nota de entrada (produto e serviço) e toda compra lançada entram aqui sozinhas; item novo fica pendente.
-          <b> Serviço</b> (sistema, contador, marketing, locação…) é sempre despesa: a categoria vai para as contas a pagar das notas dele, e as próximas já chegam classificadas.
+          <b> Nota de serviço</b> (NFS-e): despesa para serviço de verdade (sistema, contador, marketing, locação), e a categoria vai para as contas a pagar das notas dele. Se o fornecedor entrega <b>produto</b> mas emite nota de serviço, marque <b>CMV</b>: as próximas notas dele entram como compra.
           <b> Ligado a insumo</b> = o produto dá entrada no estoque daquele insumo; é sempre CMV, na categoria do insumo. Ao classificar ou vincular, as compras já lançadas desse item são corrigidas na DRE.
         </p>
       </div>
@@ -441,21 +442,20 @@ export default function ItensClassificacaoTab() {
                             </span>
                           ) : podeClassificar ? (
                             <>
-                              {r.is_service ? (
-                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500" title="Nota de serviço: sempre despesa">SERVIÇO</span>
-                              ) : (
+                              {r.is_service && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700" title="Veio de nota de serviço (NFS-e). Despesa: serviço de verdade. CMV: fornecedor de produto que emite nota de serviço — as notas dele entram como compra.">NFS-e</span>
+                              )}
                               <CategoriaCombobox value={r.classe === 'cmv' ? r.merchandise_category_id ?? '' : ''} disabled={busy}
                                 options={mercOptions} placeholder={r.classe === 'cmv' ? 'CMV · sem categoria' : 'CMV…'}
                                 onChange={(id) => { if (id) aplicar([r.id], 'cmv', null, id); }}
                                 buttonClassName={`text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[170px] cursor-pointer ${r.classe === 'cmv' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600'}`} />
-                              )}
                               <CategoriaCombobox value={r.classe === 'despesa' ? r.dre_category_id ?? '' : ''} disabled={busy}
                                 options={catOptions} placeholder="Despesa…"
                                 onChange={(id) => { if (id) aplicar([r.id], 'despesa', id); }}
                                 buttonClassName={`text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[190px] cursor-pointer ${r.classe === 'despesa' ? 'bg-violet-500 text-white' : 'bg-zinc-100 text-zinc-600'}`} />
                             </>
                           ) : (
-                            <span className="text-xs text-zinc-600">{r.is_service ? 'Serviço · ' : ''}{r.classe === 'cmv' ? `CMV${catCmv ? ` · ${catCmv}` : ''}` : r.classe === 'despesa' ? catNome(r.dre_category_id) ?? 'Despesa' : 'Pendente'}</span>
+                            <span className="text-xs text-zinc-600">{r.is_service ? 'NFS-e · ' : ''}{r.classe === 'cmv' ? `CMV${catCmv ? ` · ${catCmv}` : ''}` : r.classe === 'despesa' ? catNome(r.dre_category_id) ?? 'Despesa' : 'Pendente'}</span>
                           )}
                           {r.auto_classified && !r.ingredient_id && (
                             <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700" title={r.suggestion_reason ?? ''}>automático</span>

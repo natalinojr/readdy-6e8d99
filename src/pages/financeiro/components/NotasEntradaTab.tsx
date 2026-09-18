@@ -397,6 +397,12 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
   // 'bonus' = bonificação: compra com itens a R$ 0, só para dar entrada no estoque
   const [tipo, setTipo] = useState<'purchase' | 'bill' | 'bonus'>(servico ? 'bill' : bonificacao ? 'bonus' : 'purchase');
   const comEstoque = tipo === 'purchase' || tipo === 'bonus';
+  // NFS-e de fornecedor de PRODUTO (2026-09-18): se o serviço está como CMV na Classificação de
+  // itens, a nota já abre como compra. O usuário pode trocar; a escolha dele prevalece.
+  useEffect(() => {
+    if (!servico) return;
+    supabase.rpc('fn_item_doc_classe', { p_doc: doc.id }).then(({ data }) => { if (data === 'cmv') setTipo('purchase'); });
+  }, [servico, doc.id]);
   const semBoleto = (doc.parcelas ?? []).length === 0;
   const pagoNaHora = semBoleto && (doc.pagamento ?? []).some((p) => PAGO_NA_HORA.has(p.forma));
   const [pago, setPago] = useState<boolean>(pagoNaHora);
@@ -479,6 +485,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
       const rm = await callConc(tenantId, {
         action: 'link_monthly', document_id: doc.id, ids: [...selPagtos],
         cost_center_id: centro || null,
+        tipo, // usarMensal já exclui bonificação
         dre_category_id: tipo === 'bill' ? (dre || null) : null,
         category: tipo === 'bill' ? (dres.find((d) => d.id === dre)?.name ?? 'Outros') : undefined,
         links: comEstoque && vinculosCarregados
@@ -493,6 +500,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
     const r = await call<{ parcelas?: number; supplier?: string }>({
       action: tipo === 'bill' ? 'import_bill' : 'import_purchase',
       document_id: doc.id,
+      tipo_escolhido: true,
       parcelas,
       bonus: tipo === 'bonus',
       pago: tipo === 'purchase' && pago,
@@ -728,8 +736,8 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
 
           )}
 
-          {/* Tipo de lançamento */}
-          {!servico && (
+          {/* Tipo de lançamento (NFS-e também: fornecedor de produto que emite nota de serviço) */}
+          {(
           <div>
             <p className="text-xs font-bold text-zinc-700 mb-2">Como lançar</p>
             <div className={`grid grid-cols-1 gap-2 ${bonificacao ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
@@ -743,12 +751,16 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
               <button onClick={() => setTipo('purchase')}
                 className={`text-left p-3 rounded-xl border cursor-pointer ${tipo === 'purchase' ? 'border-amber-400 bg-amber-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
                 <p className="text-sm font-bold text-zinc-800"><i className="ri-shopping-cart-2-line mr-1" />Compra de mercadoria</p>
-                <p className="text-[11px] text-zinc-500 mt-0.5">Insumos, bebidas, embalagens de revenda. Entra em Compras e no CMV da DRE.</p>
+                <p className="text-[11px] text-zinc-500 mt-0.5">{servico
+                  ? 'Fornecedor que entrega produto mas emite nota de serviço. Entra em Compras e no CMV da DRE.'
+                  : 'Insumos, bebidas, embalagens de revenda. Entra em Compras e no CMV da DRE.'}</p>
               </button>
               <button onClick={() => setTipo('bill')}
                 className={`text-left p-3 rounded-xl border cursor-pointer ${tipo === 'bill' ? 'border-amber-400 bg-amber-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
                 <p className="text-sm font-bold text-zinc-800"><i className="ri-bill-line mr-1" />Despesa</p>
-                <p className="text-[11px] text-zinc-500 mt-0.5">Equipamento, material de limpeza, uso e consumo. Entra na DRE pela categoria.</p>
+                <p className="text-[11px] text-zinc-500 mt-0.5">{servico
+                  ? 'Serviço de verdade: sistema, contador, marketing, locação. Entra na DRE pela categoria.'
+                  : 'Equipamento, material de limpeza, uso e consumo. Entra na DRE pela categoria.'}</p>
               </button>
             </div>
           </div>

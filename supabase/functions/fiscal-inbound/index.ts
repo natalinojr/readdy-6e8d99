@@ -513,7 +513,21 @@ async function importDocumentLocked(ctx: ImportCtx, doc: any, action: 'import_pu
   const { admin, supabaseUrl, tenantId, userId } = ctx;
   const fail = (error: string, status = 400): ImportResult => ({ ok: false, error, status });
   if (Number(doc.sefaz_status) === 2) return fail('A nota foi CANCELADA pelo fornecedor na SEFAZ — não lance');
-  if (action === 'import_purchase' && Number(doc.modelo) === 10) return fail('NFS-e é serviço, não mercadoria: lance como despesa');
+  // NFS-e de fornecedor de produto (2026-09-18): se o serviço está classificado como CMV na
+  // Classificação de itens, a nota entra como COMPRA. Vale para todo caminho que pede despesa
+  // (lançamento automático, conciliação, nota do mês) — menos quando o usuário escolheu na tela
+  // (tipo_escolhido), que prevalece.
+  if (Number(doc.modelo) === 10 && body.tipo_escolhido !== true) {
+    const { data: classe } = await admin.rpc('fn_item_doc_classe', { p_doc: doc.id });
+    if (action === 'import_bill' && classe === 'cmv') {
+      action = 'import_purchase';
+      body = { ...body, bonus: false, pago: false, links: undefined };
+    } else if (action === 'import_purchase' && classe === 'despesa') {
+      // a categoria vem do item (trigger fn_item_bill_sync na conta a pagar)
+      action = 'import_bill';
+      body = { ...body, category: body.category ?? 'Serviços de terceiros' };
+    }
+  }
   const parcelas = normalizeParcelas(doc, body.parcelas);
   const soma = round2(parcelas.reduce((s, p) => s + p.valor, 0));
   const supplier = await upsertSupplier(admin, tenantId, doc);
@@ -755,7 +769,10 @@ async function autoLaunchTenant(admin: Admin, supabaseUrl: string, tenantId: str
       if (h.settlement === 'monthly') { pular('nota do mês: vincular aos pagamentos'); continue; }
       if (servico && DESCONTA_NO_REPASSE.test(String(doc.emitente_nome ?? ''))) { pular('taxa já descontada no repasse'); continue; }
       if (!servico && pareceNaoVenda(doc)) { pular('remessa/devolução/outras saídas'); continue; }
-      if ((h.import_type === 'purchase') === servico) { pular('tipo diferente do lançamento anterior'); continue; }
+      // NF-e segue sendo só compra. NFS-e segue o último lançamento do fornecedor (despesa ou,
+      // se ele vende produto com nota de serviço, compra); a classificação do item, se houver,
+      // decide dentro do importDocument.
+      if (!servico && h.import_type !== 'purchase') { pular('tipo diferente do lançamento anterior'); continue; }
       const max = teto.get(k) ?? 0;
       if (max > 0 && Number(doc.valor_total ?? 0) > max * 3) { pular('valor fora do normal do fornecedor'); continue; }
     }

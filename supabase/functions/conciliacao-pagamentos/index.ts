@@ -13,7 +13,7 @@
 //   confirm                { ids: string[] }     admin/gerente: importa a nota (se preciso), baixa a parcela, lança juros
 //   undo                   { id }                admin/gerente: estorna a baixa feita pela confirmação
 //   monthly_candidates     { document_id }       pagamentos do extrato do fornecedor perto da emissão + combinação sugerida
-//   link_monthly           { document_id, ids, cost_center_id?, links?, dre_category_id?, category?, saldo_vencimento? }
+//   link_monthly           { document_id, ids, tipo?, cost_center_id?, links?, dre_category_id?, category?, saldo_vencimento? }
 //                          admin/gerente — NOTA DO MÊS: 1 nota cobre vários pagamentos já feitos; lança na data de
 //                          emissão com 1 parcela por pagamento, cada uma baixada; saldo que faltar fica a pagar
 //   unlink_monthly         { document_id }       desfaz tudo (estorna as baixas, apaga a compra, nota volta a conferir)
@@ -443,10 +443,14 @@ async function linkMonthly(ctx: Ctx, doc: Row, ids: string[], body: Row): Promis
   else if (saldo > 0) parcelas[parcelas.length - 1].valor = round2(parcelas[parcelas.length - 1].valor + saldo); // 1 centavo de arredondamento
 
   const nota = 'Nota do mês: quitada por ' + rows.length + ' pagamento(s) do extrato (' + br(rows[0].data) + ' a ' + br(rows[rows.length - 1].data) + ')';
-  const imp = await callEdge(ctx, 'fiscal-inbound', servico
-    ? { action: 'import_bill', tenant_id: tenantId, document_id: doc.id, parcelas, notes: nota,
+  // tipo escolhido na tela (NFS-e de fornecedor de produto pode ser compra); sem ele, NFS-e = despesa
+  // e a Classificação de itens decide dentro do fiscal-inbound.
+  const escolhido = body.tipo === 'purchase' || body.tipo === 'bill';
+  const comoDespesa = escolhido ? body.tipo === 'bill' : servico;
+  const imp = await callEdge(ctx, 'fiscal-inbound', comoDespesa
+    ? { action: 'import_bill', tenant_id: tenantId, document_id: doc.id, parcelas, notes: nota, tipo_escolhido: escolhido,
         category: body.category ?? 'Serviços de terceiros', dre_category_id: body.dre_category_id ?? null, cost_center_id: body.cost_center_id ?? null }
-    : { action: 'import_purchase', tenant_id: tenantId, document_id: doc.id, parcelas, notes: nota,
+    : { action: 'import_purchase', tenant_id: tenantId, document_id: doc.id, parcelas, notes: nota, tipo_escolhido: escolhido,
         cost_center_id: body.cost_center_id ?? null, links: body.links });
   if (!imp.ok) return { ok: false, msg: 'Lançar a nota: ' + (imp.error ?? 'falhou') };
 
@@ -487,7 +491,7 @@ async function linkMonthly(ctx: Ctx, doc: Row, ids: string[], body: Row): Promis
   await admin.from('fiscal_inbound_documents').update({
     settlement: 'monthly', settlement_statement_ids: rows.map((r) => r.id), updated_at: new Date().toISOString(),
   }).eq('id', doc.id);
-  return { ok: true, msg: (servico ? 'Despesa' : 'Compra') + ' lançada em ' + br(String(doc.emitted_at).slice(0, 10)) + ' e quitada por ' + rows.length + ' pagamento(s)' + (saldo >= 0.02 ? ' · saldo de R$ ' + brl(saldo) + ' em Contas a Pagar' : '') };
+  return { ok: true, msg: (comoDespesa ? 'Despesa' : 'Compra') + ' lançada em ' + br(String(doc.emitted_at).slice(0, 10)) + ' e quitada por ' + rows.length + ' pagamento(s)' + (saldo >= 0.02 ? ' · saldo de R$ ' + brl(saldo) + ' em Contas a Pagar' : '') };
 }
 
 async function unlinkMonthly(ctx: Ctx, doc: Row, silencioso = false): Promise<{ ok: boolean; msg: string }> {

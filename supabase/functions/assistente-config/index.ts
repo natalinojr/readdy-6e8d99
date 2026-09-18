@@ -292,9 +292,24 @@ Deno.serve(async (req) => {
       case 'sync_groups': {
         const all = await evoGet(`/group/fetchAllGroups/${evoInstance}?getParticipants=false`);
         // deno-lint-ignore no-explicit-any
-        const lista = (Array.isArray(all) ? all : []).filter((x: any) => String(x?.id ?? '').endsWith('@g.us'))
+        const brutos = (Array.isArray(all) ? all : []).filter((x: any) => String(x?.id ?? '').endsWith('@g.us'));
+        // Comunidade do WhatsApp = grupo "pai" (sem conversa) + grupo de avisos, com o MESMO nome.
+        // O pai sai da lista; o de avisos ganha o sufixo para não parecer duplicado.
+        // deno-lint-ignore no-explicit-any
+        const pais = new Set(brutos.filter((x: any) => x.isCommunity === true).map((x: any) => String(x.id)));
+        const lista = brutos
           // deno-lint-ignore no-explicit-any
-          .map((x: any) => ({ group_jid: String(x.id), name: String(x.subject ?? x.id) }));
+          .filter((x: any) => !pais.has(String(x.id)))
+          // deno-lint-ignore no-explicit-any
+          .map((x: any) => ({
+            group_jid: String(x.id),
+            name: `${String(x.subject ?? x.id)}${x.isCommunityAnnounce === true ? ' (avisos da comunidade)' : ''}`,
+          }));
+        // Pai de comunidade que já tinha entrado na lista (desligado e sem mensagem): sai
+        for (const jid of pais) {
+          const { count } = await admin.from('asst_group_messages').select('id', { count: 'exact', head: true }).eq('group_jid', jid);
+          if (!count) await admin.from('asst_groups').delete().eq('group_jid', jid).eq('is_enabled', false);
+        }
         const { data: exist } = await admin.from('asst_groups').select('group_jid, name');
         const conhecidos = new Map((exist ?? []).map((g) => [String(g.group_jid), String(g.name ?? '')]));
         const novos = lista.filter((g) => !conhecidos.has(g.group_jid));
