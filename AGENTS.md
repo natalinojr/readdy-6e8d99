@@ -13,6 +13,7 @@ Regras de trabalho neste repositorio:
 
 > A partir daqui: contrato SDD (Spec-Driven Development). Gerado/atualizado por `/sdd-init`.
 > Referência do contrato: `skills/using-sdd/references/agents-md-contract.md` (no plugin sdd-workflow).
+> Quando usar: só usar o contrato para tarefas mais complexas e usar junto com a skill do orquestrador, para tarefas que durem mais tempo e que julgue ser necessário o orquestrador. E me pergunte se é pra usar
 > As regras acima (seção original deste arquivo) continuam valendo e têm prioridade em caso de conflito.
 
 ## Stack
