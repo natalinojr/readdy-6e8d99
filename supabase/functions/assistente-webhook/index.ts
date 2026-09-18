@@ -317,12 +317,16 @@ async function pendenciaTenant(admin: SupabaseClient, cfg: Record<string, any>, 
     const { data } = await admin.from('fin_inter_payments').select('tenant_id').in('id', paymentIds).limit(1);
     if (data?.length) return String(data[0].tenant_id);
   }
+  // Loja do Inter ANTES da loja padrão do assistente: é para lá que o pagamento iria
+  // (assistente-brain › interTenant faz a mesma escolha). Com a ordem invertida, um pedido
+  // que a triagem não conseguiu preparar caía na caixa de uma loja e o mesmo pedido, se
+  // preparado, na de outra — visto em produção: grupo "EP MALL", pagamento em Paranaguá.
+  const { data: inter } = await admin.from('fin_inter_config').select('tenant_id').eq('is_active', true).limit(1);
+  if (inter?.length) return String(inter[0].tenant_id);
   const padrao = String(cfg.default_tenant_id ?? '');
   if (padrao) return padrao;
   const watched = Array.isArray(cfg.watched_tenant_ids) ? cfg.watched_tenant_ids.map(String) : [];
-  if (watched.length) return watched[0];
-  const { data } = await admin.from('fin_inter_config').select('tenant_id').eq('is_active', true).limit(1);
-  return data?.length ? String(data[0].tenant_id) : null;
+  return watched.length ? watched[0] : null;
 }
 
 // null/'' viram 0 no Number(), e "R$ 0,00" no título seria pior que não mostrar valor nenhum.

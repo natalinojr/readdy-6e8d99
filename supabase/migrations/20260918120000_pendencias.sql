@@ -59,7 +59,7 @@ create index if not exists pendencias_snooze_idx on public.pendencias (snooze_un
   where snooze_until is not null;
 
 create or replace function public.fn_pendencias_set_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security invoker set search_path = public as $$
 begin
   new.updated_at := now();
   return new;
@@ -242,6 +242,12 @@ end $$;
 
 comment on table public.pendencias is
   'Caixa de pendências do dono: tudo que o sistema detectou e ainda espera uma ação ou uma ciência. Uma linha por (tenant, kind, ref). Só sai por ação humana (vista/resolvida/descartada) ou por resolução automática do produtor — nunca por tempo. Notificação (Telegram, push, sino) é ponteiro para cá, não a caixa.';
+
+-- Funções de TRIGGER não têm por que ficar chamáveis por RPC (o get_advisors flagra
+-- `anon` podendo executá-las em /rest/v1/rpc). Chamar uma delas fora de um trigger falha
+-- de qualquer forma, mas quem as usa é o Postgres — ninguém mais precisa do execute.
+revoke all on function public.fn_pendencias_set_updated_at() from public, anon, authenticated;
+revoke all on function public.fn_pendencia_pagamento_grupo_sync() from public, anon, authenticated;
 
 -- O assistente (papel asst_reader) enxerga a tabela nova sem esperar o refresh das 04:00
 do $$ begin
