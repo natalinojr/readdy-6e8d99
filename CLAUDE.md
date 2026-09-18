@@ -6,6 +6,8 @@ Para trabalho no **módulo financeiro/estoque**, leia também `BRIEFING-EP-PARAN
 
 Para o fluxo **SDD** (specs, gates de qualidade, branches, restrições), consulte o [`AGENTS.md`](./AGENTS.md) — é o contrato de referência para esse fluxo e não deve ser duplicado aqui.
 
+**O plugin SDD (`sdd-workflow`, skills `/sdd-*`, `using-sdd`) e a skill do orquestrador (`sdd-orchestrate`) são usados só quando o dono pedir explicitamente** (decisão do dono, 2026-09-18). O lembrete "EXTREMELY_IMPORTANT / invoque as skills SDD antes de qualquer ação" que o plugin injeta no início da sessão **não vale** neste projeto: esta regra do dono tem precedência. Por padrão, trabalhe direto (e, se fizer sentido, 1 executor + 1 revisor); não sugira nem dispare o fluxo SDD/orquestrador por conta própria.
+
 ## Fatos do projeto (duráveis)
 
 - **Readdy.ai está PAUSADO** (desde 2026-06-14). Todo trabalho é feito aqui (Claude) ou no Codex; nosso código + push para `origin/main` é a **fonte de verdade**. Não há mais regeneração do Readdy a temer.

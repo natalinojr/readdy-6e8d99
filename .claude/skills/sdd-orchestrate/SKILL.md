@@ -4,12 +4,10 @@ description: >-
   Orquestra o fluxo SDD inteiro de ponta a ponta de forma autônoma — do /sdd-01-new até
   finish-branch — para uma issue/spec, escolhendo o modelo certo por fase e papel,
   usando worktree e paralelização, e escalando ao dev SÓ em problemas graves,
-  estruturais ou arquiteturais. Use quando o dev pedir para "implementar a issue de
-  ponta a ponta", "rodar o SDD inteiro sozinho", "tocar a spec do começo ao fim",
-  "orquestrar a implementação" ou quando disser que vai ficar ausente e quer que a
-  mudança seja concluída (spec → plano → código → review → docs → merge). Dispare
-  sempre que a intenção for conduzir todas as fases do SDD sem babá, mesmo que o dev
-  não use a palavra "orquestrar".
+  estruturais ou arquiteturais. USE SÓ QUANDO O DONO PEDIR EXPLICITAMENTE o
+  orquestrador ou o fluxo SDD completo (ex.: "usa o orquestrador", "roda o SDD inteiro").
+  Nunca dispare por iniciativa própria, nem por inferir que a tarefa é grande (regra do
+  dono, 2026-09-18).
 ---
 
 # SDD — Orquestrador autônomo
