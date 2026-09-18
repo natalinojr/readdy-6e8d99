@@ -19,6 +19,7 @@
 //   ── Pagamentos (2026-09-12) — só o assistente (x-internal-key), depois do botão Pagar + PIN no Telegram:
 //   prepare_payment  { tipo: 'boleto'|'pix', linha?, chave?, valor?, descricao?, bill_id?, requested_by?, channel?, chat_id? }
 //                    valida (DV do boleto, fornecedor do Pix, limites) e grava fin_inter_payments em 'draft'
+//   decode_boleto    { linha }        só decodifica e confere os DVs (valor, vencimento, digitável) — nada é gravado
 //   reprepare_payment { payment_id }  remonta um pedido expirado/falhado como pedido NOVO (revalida tudo)
 //   execute_payment  { payment_id }   envia ao Inter (x-id-idempotente = idempotency_key da linha)
 //   cancel_payment   { payment_id }   rascunho → cancelado; boleto agendado/aguardando → DELETE no Inter
@@ -901,7 +902,7 @@ Deno.serve(async (req: Request) => {
     const isManager = internal || role === 'admin' || role === 'manager';
 
     // ── Pagamentos ──
-    const PAY_INTERNAL_ONLY = ['prepare_payment', 'execute_payment', 'cancel_payment'];
+    const PAY_INTERNAL_ONLY = ['prepare_payment', 'execute_payment', 'cancel_payment', 'decode_boleto'];
     if (PAY_INTERNAL_ONLY.includes(action) && !internal) return errResp('Pagamento pelo Inter só pelo assistente, com botão e PIN.', 403);
     if (['payment_status', 'list_payments', 'check_payment_scopes'].includes(action) && !isManager) return errResp('Apenas admin/gerente', 403);
     // Diagnóstico (interno): pede UM escopo por vez e diz quais a integração do Inter aceita.
@@ -937,6 +938,9 @@ Deno.serve(async (req: Request) => {
       } catch (e) { log('WARN', action, 'sync pós-pagamento', { tenantId, error: String((e as Error)?.message ?? e) }); }
     };
     try {
+      // Só lê o boleto (DVs, valor, vencimento) — o assistente guarda na conta a pagar sem preparar
+      // pagamento (2026-09-18). Mesma decodificação do prepare_payment.
+      if (action === 'decode_boleto') return json({ success: true, boleto: decodeBoleto(String(body.linha ?? '')) });
       if (action === 'prepare_payment') return json({ success: true, payment: await preparePayment(admin, tenantId, body) });
       if (action === 'reprepare_payment') return json({ success: true, payment: await reparePayment(admin, tenantId, String(body.payment_id ?? '')) });
       if (action === 'execute_payment') {

@@ -15,6 +15,7 @@ Para o fluxo **SDD** (specs, gates de qualidade, branches, restrições), consul
 - **Sonnet 5**: padrão para subagentes — pesquisa no código (Explore), executor de ticket claro, revisor, testador.
 - **Opus 5**: só onde errar custa caro — desenho de solução com dinheiro/fiscal/segurança/multi-loja, revisão de risco alto, depuração difícil.
 - Ao disparar subagente, passar `model` explicitamente; não herdar o modelo da sessão por padrão.
+- **Fable 5.1: só quando o dono trocar o modelo da sessão ele mesmo.** Nunca escolher `fable` para subagente nem sugerir a troca.
 - Vale também para a IA dentro do produto (assistente-brain, leitura de notas, etc.): o modelo mais barato que faz a tarefa bem (ex.: leitura de notinha foi de Sonnet para Haiku). Trocar modelo de produção só medindo antes/depois.
 
 ## Fatos do projeto (duráveis)
