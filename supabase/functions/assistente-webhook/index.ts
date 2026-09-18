@@ -345,6 +345,22 @@ async function abrirPendenciaPagamento(
   try {
     const tenant = await pendenciaTenant(admin, cfg, paymentIds);
     if (!tenant) { log('WARN', 'pendência sem loja para atribuir', { pedido: reqId }); return; }
+    // Sem pagamento preparado nem sempre é "falta fazer" (dono, 2026-09-18). Não vira pendência:
+    //  - o que a leitura diz que NÃO é pedido (cupom pago em dinheiro, comprovante);
+    //  - o que já tem conta a pagar em aberto com o mesmo valor (nota de recebimento de mercadoria
+    //    com fatura para daqui a 15 dias): quem cobra é Contas a pagar, pelo vencimento.
+    if (!paymentIds.length) {
+      const pg = msg.extracted?.pagamento ?? null;
+      if (pg && pg.e_solicitacao === false) { log('INFO', 'pendência não aberta: não era pedido', { pedido: reqId }); return; }
+      const valor = Number(pg?.valor ?? 0);
+      if (valor > 0) {
+        let q = admin.from('fin_accounts_payable').select('id').eq('tenant_id', tenant)
+          .not('status', 'in', '(paid,cancelled)').gte('amount', valor - 0.01).lte('amount', valor + 0.01);
+        if (/^\d{4}-\d{2}-\d{2}/.test(String(pg?.vencimento ?? ''))) q = q.eq('due_date', String(pg.vencimento).slice(0, 10));
+        const { data: conta } = await q.limit(1);
+        if (conta?.length) { log('INFO', 'pendência não aberta: conta a pagar já lançada', { pedido: reqId, conta: conta[0].id }); return; }
+      }
+    }
     const valor = brlPend(msg.extracted?.pagamento?.valor);
     const quem = msg.sender ? ` (${msg.sender})` : '';
     const { error } = await admin.rpc('fn_pendencia_upsert', {
