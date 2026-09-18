@@ -483,13 +483,21 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
         select count(*)::int n from ingredients
          where tenant_id = ${t.id} and deleted_at is null and min_stock > 0 and current_stock <= min_stock`;
       if (est.n > 0) {
+        // Aviso, não tarefa (dono, 2026-09-18): botões Abrir e OK. OK marca "vista" e tira da lista;
+        // se MAIS insumos ficarem críticos depois disso, o aviso volta (compara com a contagem do
+        // tick anterior, guardada em payload.total). Normalizou → fecha; voltou → reabre.
+        const { data: antes } = await admin.from('pendencias').select('id, status, payload')
+          .eq('tenant_id', t.id).eq('kind', 'estoque_critico').eq('ref', 'pendentes').maybeSingle();
         await admin.rpc('fn_pendencia_upsert', {
           p_tenant: t.id, p_kind: 'estoque_critico', p_ref: 'pendentes',
           p_titulo: `${est.n} ${est.n === 1 ? 'insumo' : 'insumos'} no estoque crítico`,
           p_detalhe: 'Estão no mínimo ou abaixo dele.',
           p_payload: { total: est.n }, p_rota: '/estoque',
-          p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: true,
+          p_urgencia: 'normal', p_acao_requerida: false, p_origem: 'cron', p_reabrir: true,
         });
+        if (antes?.status === 'vista' && est.n > Number(antes.payload?.total ?? 0)) {
+          await admin.from('pendencias').update({ status: 'aberta', vista_em: null }).eq('id', antes.id).eq('status', 'vista');
+        }
       } else {
         await admin.rpc('fn_pendencia_resolver_ref', {
           p_tenant: t.id, p_kind: 'estoque_critico', p_ref: 'pendentes', p_motivo: 'estoque normalizado',

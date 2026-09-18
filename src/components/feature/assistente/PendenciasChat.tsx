@@ -8,7 +8,7 @@
 //   conta sem DRE / itens     → Classificar aqui (um por um, no próprio cartão) ou Abrir na tela
 //   tarefas vencidas          → Ver tarefas (lista aqui; tocar abre a tarefa no módulo)
 //   o resto                   → Abrir (troca de loja se precisar e vai à tela que resolve)
-//   aviso informativo         → Ciente (check permanente)
+//   aviso informativo         → OK (estoque crítico: sai da lista; volta se piorar)
 //   exige ação                → Não vou fazer (com motivo) — nunca some por tempo.
 // Resolver no celular sem abrir tabela grande foi o pedido do dono (2026-09-18); a tela continua
 // a um toque para quem está no computador.
@@ -41,7 +41,11 @@ export async function carregarPendenciasChat(): Promise<PendenciaChat[]> {
       id: r.id, tenantId: r.tenant_id, loja, kind: r.kind, titulo: r.titulo, detalhe: r.detalhe,
       rota: r.rota, urgencia: r.urgencia, acaoRequerida: r.acao_requerida, status: r.status, criadaEm: r.criada_em,
     } as PendenciaChat;
-  }).sort((a, b) => (PESO[a.urgencia] - PESO[b.urgencia]) || (b.criadaEm < a.criadaEm ? -1 : 1));
+  })
+    // Aviso (estoque crítico…) com OK dado sai da lista; volta sozinho se piorar (assistente-cron).
+    // O que exige ação continua listado mesmo visto: só sai resolvendo ou com "Não vou fazer".
+    .filter((p) => p.acaoRequerida || p.status !== 'vista')
+    .sort((a, b) => (PESO[a.urgencia] - PESO[b.urgencia]) || (b.criadaEm < a.criadaEm ? -1 : 1));
 }
 
 const quando = (iso: string) => {
@@ -199,7 +203,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                       </button>
                     )}
                     {!p.acaoRequerida ? (
-                      <button onClick={() => marcar(p, 'vista')} disabled={busy} className={NEUTRO}>Ciente</button>
+                      <button onClick={() => marcar(p, 'vista')} disabled={busy} className={NEUTRO}><i className="ri-check-line" /> OK</button>
                     ) : (
                       <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className={NEUTRO}>Não vou fazer</button>
                     )}
