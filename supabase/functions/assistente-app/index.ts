@@ -516,7 +516,7 @@ Deno.serve(async (req) => {
       if (!ids.length) return json({ success: true, data: { tenants: [] } });
       const [itens, cats, mercs] = await Promise.all([
         admin.from('fin_item_classifications')
-          .select('id, tenant_id, description, supplier_name, unit_label, last_unit_price, suggested_classe, suggested_dre_category_id, suggestion_reason, merchandise_category_id, created_at')
+          .select('id, tenant_id, description, supplier_name, unit_label, last_unit_price, suggested_classe, suggested_dre_category_id, suggestion_reason, merchandise_category_id, is_service, created_at')
           .in('tenant_id', ids).is('classe', null).order('created_at', { ascending: false }).limit(300),
         admin.from('fin_dre_categories').select('id, tenant_id, name, group_type').in('tenant_id', ids)
           .is('deleted_at', null).eq('is_active', true).not('group_type', 'in', '(revenue,tax,cost)').order('name'),

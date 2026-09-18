@@ -11,6 +11,7 @@ interface Item {
   id: string; description: string; supplier_name: string | null; unit_label: string | null;
   last_unit_price: number | null; suggested_classe: 'cmv' | 'despesa' | null;
   suggested_dre_category_id: string | null; suggestion_reason: string | null; merchandise_category_id: string | null;
+  is_service?: boolean; // nota de serviço (NFS-e): sempre despesa
 }
 interface Loja {
   id: string; name: string; items: Item[];
@@ -23,7 +24,7 @@ const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', curren
 const GRUPO: Record<string, string> = { expense: 'Despesas', personnel: 'Pessoal', admin: 'Administrativo', financial: 'Financeiro', other: 'Outros' };
 
 function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Call; onFeito: (id: string) => void }) {
-  const [modo, setModo] = useState<'cmv' | 'despesa' | null>(null);
+  const [modo, setModo] = useState<'cmv' | 'despesa' | null>(item.is_service ? 'despesa' : null);
   const [cat, setCat] = useState(item.suggested_dre_category_id ?? '');
   const [merc, setMerc] = useState(item.merchandise_category_id ?? '');
   const [busy, setBusy] = useState(false);
@@ -53,7 +54,7 @@ function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Ca
         {[item.supplier_name, item.last_unit_price != null ? `${brl(Number(item.last_unit_price))}${item.unit_label ? `/${item.unit_label === 'unit' ? 'un' : item.unit_label}` : ''}` : null].filter(Boolean).join(' · ')}
       </p>
       {item.suggested_classe && (
-        <p className="text-[11px] text-amber-700">Sugestão: {item.suggested_classe === 'cmv' ? 'CMV' : 'Despesa'}{item.suggestion_reason ? ` (${item.suggestion_reason})` : ''}</p>
+        <p className="text-[11px] text-amber-700">{item.is_service ? 'Serviço · ' : ''}Sugestão: {item.suggested_classe === 'cmv' ? 'CMV' : 'Despesa'}{item.suggestion_reason ? ` (${item.suggestion_reason})` : ''}</p>
       )}
       {!modo && (
         <div className="flex gap-2 mt-2">
@@ -84,7 +85,7 @@ function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Ca
             <p className="text-xs text-zinc-500">Esta loja ainda não tem categorias de despesa. Crie pela tela.</p>
           )}
           <div className="flex gap-2">
-            <button disabled={busy} onClick={() => setModo(null)} className="h-9 px-3 rounded-lg border border-zinc-200 text-sm text-zinc-600 cursor-pointer">Voltar</button>
+            {!item.is_service && <button disabled={busy} onClick={() => setModo(null)} className="h-9 px-3 rounded-lg border border-zinc-200 text-sm text-zinc-600 cursor-pointer">Voltar</button>}
             <button disabled={busy || !cat} onClick={() => salvar('despesa')} className="flex-1 h-9 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold cursor-pointer disabled:opacity-50">{busy ? 'Salvando…' : 'Salvar como despesa'}</button>
           </div>
         </div>

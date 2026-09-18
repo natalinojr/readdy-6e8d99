@@ -20,6 +20,9 @@ import CategoriaCombobox from './CategoriaCombobox';
 // Vínculo com insumo do estoque (fn_item_link_ingredient): o item vira CMV na categoria do insumo
 // e, com CNPJ + código do produto, fica memorizado para as próximas notas e recebimentos
 // (fiscal_inbound_item_links). O estoque só entra no recebimento — compras antigas não mudam.
+// Notas de serviço (NFS-e) também entram aqui desde 2026-09-18 (is_service): sempre despesa, sem
+// insumo. Classificar grava a categoria nas contas a pagar das notas desse serviço, e nota nova
+// dele já vira conta com a categoria.
 
 interface Row {
   id: string;
@@ -42,11 +45,12 @@ interface Row {
   last_unit_price: number | null;
   last_seen_at: string | null;
   last_source: string | null;
+  is_service: boolean;
 }
 interface Cat { id: string; name: string; group_type: string }
 interface Merc { id: string; name: string }
 interface Insumo { id: string; name: string; unit: string; merchandise_category_id: string | null; category: string | null }
-type Filtro = 'pendentes' | 'estoque' | 'cmv' | 'cmv_sem' | 'despesa' | 'todos';
+type Filtro = 'pendentes' | 'estoque' | 'cmv' | 'cmv_sem' | 'despesa' | 'servicos' | 'todos';
 
 const brl = (n: number | null | undefined) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n ?? 0));
 const dataBR = (s: string | null | undefined) => (s ? new Date(s).toLocaleDateString('pt-BR') : '—');
@@ -141,6 +145,7 @@ export default function ItensClassificacaoTab() {
     cmv: rows.filter((r) => r.classe === 'cmv').length,
     cmvSem: rows.filter((r) => r.classe === 'cmv' && !cmvCat(r)).length,
     despesa: rows.filter((r) => r.classe === 'despesa').length,
+    servicos: rows.filter((r) => r.is_service).length,
   }), [rows, cmvCat]);
 
   const fornecedores = useMemo(() => [...new Set(rows.map((r) => r.supplier_name ?? '').filter(Boolean))].sort(), [rows]);
@@ -153,6 +158,7 @@ export default function ItensClassificacaoTab() {
       if (filtro === 'cmv' && r.classe !== 'cmv') return false;
       if (filtro === 'cmv_sem' && (r.classe !== 'cmv' || cmvCat(r))) return false;
       if (filtro === 'despesa' && r.classe !== 'despesa') return false;
+      if (filtro === 'servicos' && !r.is_service) return false;
       if (fornecedor && r.supplier_name !== fornecedor) return false;
       if (!q) return true;
       const ingNome = r.ingredient_id ? insMap.get(r.ingredient_id)?.name : null;
@@ -170,9 +176,13 @@ export default function ItensClassificacaoTab() {
     });
     setBusy(false);
     if (error) { toastErr('Não foi possível classificar', error.message); return false; }
-    const r = (data ?? {}) as { itens?: number; lancamentos_atualizados?: number };
-    toastOk(`${r.itens ?? ids.length} item(ns) ${classe ? 'classificado(s)' : 'voltaram a pendente'}`,
-      r.lancamentos_atualizados ? `${r.lancamentos_atualizados} lançamento(s) de compra corrigido(s) na DRE` : '');
+    const r = (data ?? {}) as { itens?: number; lancamentos_atualizados?: number; contas_atualizadas?: number };
+    const contas = r.contas_atualizadas ?? 0;
+    const compras = (r.lancamentos_atualizados ?? 0) - contas;
+    toastOk(`${r.itens ?? ids.length} item(ns) ${classe ? 'classificado(s)' : 'voltaram a pendente'}`, [
+      compras > 0 ? `${compras} lançamento(s) de compra corrigido(s) na DRE.` : '',
+      contas > 0 ? `${contas} conta(s) a pagar receberam a categoria.` : '',
+    ].filter(Boolean).join(' '));
     return true;
   };
 
@@ -250,6 +260,7 @@ export default function ItensClassificacaoTab() {
   const selecionados = rows.filter((r) => sel.has(r.id));
 
   const celulaInsumo = (r: Row) => {
+    if (r.is_service) return <span className="text-[11px] text-zinc-400">serviço — não entra no estoque</span>;
     const ing = r.ingredient_id ? insMap.get(r.ingredient_id) : undefined;
     if (!podeClassificar) {
       return ing ? <span className="inline-flex items-center gap-1"><i className="ri-links-line text-emerald-600" />{ing.name}</span> : <span className="text-zinc-300">—</span>;
@@ -308,7 +319,8 @@ export default function ItensClassificacaoTab() {
         <h2 className="text-sm font-bold text-zinc-800">Classificação de itens</h2>
         <p className="text-xs text-zinc-500 mt-0.5 max-w-3xl">
           Cada produto de cada fornecedor tem uma classificação: <b>CMV</b> com a categoria de mercadoria (a mesma dos insumos: Proteínas, Bebidas, Embalagens…) ou <b>despesa</b> com categoria da DRE (limpeza, papelaria, manutenção…).
-          É ela que separa, numa mesma nota, a bebida do produto de limpeza. Toda nota de entrada e toda compra lançada entram aqui sozinhas; item novo fica pendente.
+          É ela que separa, numa mesma nota, a bebida do produto de limpeza. Toda nota de entrada (produto e serviço) e toda compra lançada entram aqui sozinhas; item novo fica pendente.
+          <b> Serviço</b> (sistema, contador, marketing, locação…) é sempre despesa: a categoria vai para as contas a pagar das notas dele, e as próximas já chegam classificadas.
           <b> Ligado a insumo</b> = o produto dá entrada no estoque daquele insumo; é sempre CMV, na categoria do insumo. Ao classificar ou vincular, as compras já lançadas desse item são corrigidas na DRE.
         </p>
       </div>
@@ -330,10 +342,10 @@ export default function ItensClassificacaoTab() {
       </div>
 
       <div className="bg-white rounded-xl border border-zinc-100 p-3 flex flex-wrap items-center gap-2">
-        {([['pendentes', 'Pendentes'], ['cmv', 'CMV'], ['cmv_sem', 'CMV sem categoria'], ['estoque', 'Ligados ao estoque'], ['despesa', 'Despesa'], ['todos', 'Todos']] as const).map(([id, label]) => (
+        {([['pendentes', 'Pendentes'], ['cmv', 'CMV'], ['cmv_sem', 'CMV sem categoria'], ['estoque', 'Ligados ao estoque'], ['despesa', 'Despesa'], ['servicos', 'Serviços'], ['todos', 'Todos']] as const).map(([id, label]) => (
           <button key={id} onClick={() => setFiltro(id)}
             className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${filtro === id ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-            {label}{id === 'cmv_sem' && resumo.cmvSem > 0 ? ` (${resumo.cmvSem})` : ''}
+            {label}{id === 'cmv_sem' && resumo.cmvSem > 0 ? ` (${resumo.cmvSem})` : ''}{id === 'servicos' && resumo.servicos > 0 ? ` (${resumo.servicos})` : ''}
           </button>
         ))}
         <select value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}
@@ -429,17 +441,21 @@ export default function ItensClassificacaoTab() {
                             </span>
                           ) : podeClassificar ? (
                             <>
+                              {r.is_service ? (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500" title="Nota de serviço: sempre despesa">SERVIÇO</span>
+                              ) : (
                               <CategoriaCombobox value={r.classe === 'cmv' ? r.merchandise_category_id ?? '' : ''} disabled={busy}
                                 options={mercOptions} placeholder={r.classe === 'cmv' ? 'CMV · sem categoria' : 'CMV…'}
                                 onChange={(id) => { if (id) aplicar([r.id], 'cmv', null, id); }}
                                 buttonClassName={`text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[170px] cursor-pointer ${r.classe === 'cmv' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600'}`} />
+                              )}
                               <CategoriaCombobox value={r.classe === 'despesa' ? r.dre_category_id ?? '' : ''} disabled={busy}
                                 options={catOptions} placeholder="Despesa…"
                                 onChange={(id) => { if (id) aplicar([r.id], 'despesa', id); }}
                                 buttonClassName={`text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[190px] cursor-pointer ${r.classe === 'despesa' ? 'bg-violet-500 text-white' : 'bg-zinc-100 text-zinc-600'}`} />
                             </>
                           ) : (
-                            <span className="text-xs text-zinc-600">{r.classe === 'cmv' ? `CMV${catCmv ? ` · ${catCmv}` : ''}` : r.classe === 'despesa' ? catNome(r.dre_category_id) ?? 'Despesa' : 'Pendente'}</span>
+                            <span className="text-xs text-zinc-600">{r.is_service ? 'Serviço · ' : ''}{r.classe === 'cmv' ? `CMV${catCmv ? ` · ${catCmv}` : ''}` : r.classe === 'despesa' ? catNome(r.dre_category_id) ?? 'Despesa' : 'Pendente'}</span>
                           )}
                           {r.auto_classified && !r.ingredient_id && (
                             <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700" title={r.suggestion_reason ?? ''}>automático</span>

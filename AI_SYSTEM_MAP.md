@@ -1865,6 +1865,14 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   ("Limpeza", "Papelaria"). (4) os triggers nunca derrubam a sync de notas nem o lançamento
   (erro vira `raise warning`). (5) `fn_item_classify` checa `user_tenants.role` admin/manager
   por `p_tenant`, não `auth_tenant_id()` (multi-loja).
+- **Serviços também (2026-09-18, decisão do dono: "classificação toda na aba"):** itens de NFS-e
+  (modelo 10, não ignorada) entram com `is_service = true` — sempre despesa, sem insumo; chave =
+  fornecedor + código do serviço (cTribNac). `fn_item_classify` grava a categoria nas contas a
+  pagar das notas lançadas como despesa (`reference_type = 'nfe_entrada'`, item principal = maior
+  valor, `fn_item_doc_principal`), e recusa CMV para serviço. Trigger `fn_item_bill_sync` em
+  `fin_accounts_payable`: conta nova de nota nasce com a categoria do item; conta classificada por
+  fora (chat/enquete/Contas a pagar) ensina o item pendente. Migration
+  `20260918150000_item_classificacao_servicos.sql`.
 
 ### Conversão de unidade na compra + deploy de edges com verify_jwt diferente (2026-09-13)
 
