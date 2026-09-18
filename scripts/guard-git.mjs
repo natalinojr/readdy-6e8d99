@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * guard-git.mjs — hook PreToolUse (Bash) do Claude Code. Bloqueia, para qualquer agente:
- *   - git push para main/master (push = deploy em produção pelo Vercel)
  *   - git push --force / -f para qualquer branch
+ * (commit e push em main são PERMITIDOS desde 2026-09-18, por decisão do dono; cada push é deploy.)
  *   - git reset --hard, git checkout -- ., git clean -f, git branch -D (perda de trabalho do dono/Codex)
  *   - supabase db reset / db push (banco de produção)
  * Exit 2 = bloqueado (o motivo vai no stderr para o Claude). Exit 0 = segue.
@@ -20,10 +20,7 @@ if (!cmd) process.exit(0);
 const semHeredoc = cmd.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, " <<HEREDOC ");
 const norm = semHeredoc.replace(/\s+/g, " ").trim();
 const rules = [
-  { re: /\bgit\s+push\b(?![^&;|]*\bclaude\/)[^&;|]*\b(main|master)\b/, why: "git push para main/master publica em produção (Vercel). Só o dono faz esse push." },
   { re: /\bgit\s+push\b[^&;|]*(\s--force\b|\s-f\b|\s--force-with-lease\b)/, why: "git push --force é proibido para agentes." },
-  { re: /\bgit\s+push\s*$/, re2: null, why: "git push sem destino explícito pode ir para main. Use: git push origin claude/<branch>." },
-  { re: /\bgit\s+push\s+origin\s*$/, why: "git push origin sem branch pode ir para main. Use: git push origin claude/<branch>." },
   { re: /\bgit\s+reset\s+--hard\b/, why: "git reset --hard apaga trabalho não commitado do dono/Codex." },
   { re: /\bgit\s+checkout\s+--\s+\.|\bgit\s+restore\s+(--staged\s+)?\.(\s|$)/, why: "descartar TODAS as mudanças do working tree apaga trabalho que não é seu." },
   { re: /\bgit\s+clean\s+-[a-zA-Z]*f/, why: "git clean -f apaga arquivos não rastreados de outros." },

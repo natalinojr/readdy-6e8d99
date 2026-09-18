@@ -48,12 +48,12 @@ Regras de trabalho neste repositorio:
 
 - **Branch base:** `main`
 - **Convenção:** `claude/{slug}` (ex.: `claude/delivery-pix-message`, `claude/relatorios-mobile-sobreposicao`) — sem `{ISSUE-KEY}` porque não há issue tracker. Codex usa a mesma pasta/repo; não presumir dono de uma branch pelo nome.
-- **Plataforma de MR/PR:** GitHub (`origin` = repo do projeto). Abrir PR é permitido; **merge/push em `main` é sempre do dono** (cada push nessa branch dispara deploy em produção via Vercel).
+- **Plataforma de MR/PR:** GitHub (`origin` = repo do projeto). Abrir PR é permitido; **commit, merge e push em `main` são permitidos aos agentes** desde 2026-09-18 (cada push nessa branch dispara deploy em produção via Vercel — só depois de verificar).
 - **Título MR/PR:** `{slug}` (sem prefixo de issue)
 
 ### Fechamento padrão do SDD neste projeto
 
-**Entrega pronta no WORKING TREE, sem commit/merge/push.** Commit e push são sempre do dono (ele faz pelo GitHub Desktop). `scripts/guard-git.mjs` (hook `PreToolUse`) bloqueia, para qualquer agente: `git push` em `main`/`master`, `git push --force`, `git push` sem destino explícito, `git reset --hard`, `git checkout -- .` / `git restore .`, `git clean -f`, `git branch -D`, `supabase db reset`/`db push`. Não há issue para "fechar" — o fluxo `/sdd-08-docs` + `finish-branch` deve terminar oferecendo o diff pronto, sem tentar commitar/mergear sozinho.
+**Entrega verificada termina em commit + push em `main`** (regra do dono desde 2026-09-18; antes era só working tree). Quem commita é a sessão principal, ao fechar a entrega: só os arquivos que mexeu (`git add <caminhos>`), depois do gate verde; avisar o dono o que subiu. `scripts/guard-git.mjs` (hook `PreToolUse`) continua bloqueando, para qualquer agente: `git push --force`, `git reset --hard`, `git checkout -- .` / `git restore .`, `git clean -f`, `git branch -D`, `supabase db reset`/`db push`. Não há issue para "fechar".
 
 ## Integrações externas
 
@@ -76,7 +76,7 @@ Regras de trabalho neste repositorio:
 - **Pedido de treino** (Modo Treino) nunca emite NFC-e e nunca entra em relatório/CMV/caixa real.
 - **Função `SECURITY DEFINER` nova** precisa `REVOKE ALL ... FROM PUBLIC, anon` explícito na própria migration.
 - **Tabela nova** precisa `GRANT` ao `service_role` (senão Edge Function que escreve direto dá 42501/500 — pegadinha já documentada).
-- **Nunca commitar nem fazer push** (ver "Fechamento padrão" acima); nunca rodar `scripts/check.mjs --update-baseline` sem decisão explícita do dono; nunca escrever em loja real durante teste — usar só a loja "Testes PDV" (`db3ca014-6c03-4c2e-97b9-9542cf825da2`) com os usuários `qa.admin` / `qa.caixa` / `qa.garcom`.
+- Commit/push só depois de verificar e só com os próprios arquivos (ver "Fechamento padrão" acima); nunca rodar `scripts/check.mjs --update-baseline` sem decisão explícita do dono; nunca escrever em loja real durante teste — usar só a loja "Testes PDV" (`db3ca014-6c03-4c2e-97b9-9542cf825da2`) com os usuários `qa.admin` / `qa.caixa` / `qa.garcom`.
 - Não reverter alterações existentes de Codex/dono sem pedido explícito (regra original deste arquivo).
 - Não editar `CLAUDE.md` além de manter a referência a este arquivo (ver seção "Colaboração" do `CLAUDE.md`); os "Fatos do projeto (duráveis)" lá são autoritativos e não devem ser duplicados/contraditados aqui.
 

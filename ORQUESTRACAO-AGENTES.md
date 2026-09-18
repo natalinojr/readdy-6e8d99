@@ -46,7 +46,7 @@ Contrato de pronto (Definition of Done) que o orquestrador impõe, sem IA:
 3. `vite build` passa.
 4. Checklist do módulo afetado (ver §3.3) executado no preview e evidenciado (screenshot/read_page).
 5. Revisor sem achado P0/P1 aberto.
-6. **Nenhum push em `main`**; entrega é branch + PR. O dono faz o merge (isso é o deploy).
+6. **Push em `main` liberado desde 2026-09-18** (decisão do dono): a sessão principal commita e sobe depois da verificação. Subagentes não commitam.
 
 ## 3. Fase 0 — fundação (1 a 2 dias, sem agentes novos)
 
@@ -145,7 +145,7 @@ Quatro caminhos, do mais barato ao mais integrado:
 4. **B** opcional para experimentar; não vale montar um segundo bot só para isso.
 
 ### Riscos gerais (valem para tudo acima)
-- **Produção**: push em `main` publica. Nenhum agente autônomo pode fazê-lo. Ponto.
+- **Produção**: push em `main` publica. Desde 2026-09-18 a sessão principal pode fazê-lo, depois de verificar; subagentes não.
 - **Custo**: um ciclo completo (4 agentes + 2 voltas) custa na faixa de US$ 1–5 com Opus;
   medir nos primeiros 10 jobs e gravar em `asst_dev_jobs.usage`.
 - **Injeção de prompt**: erros e mensagens que os agentes leem (stack traces, currículos,

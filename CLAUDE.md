@@ -18,7 +18,7 @@ Para o fluxo **SDD** (specs, gates de qualidade, branches, restrições), consul
 ## Colaboração
 
 - Projeto compartilhado com **Codex** e com o **usuário**. Não reverta alterações que você não fez sem autorização clara; trate mudanças novas como trabalho do usuário/Codex.
-- **Commit/push só quando o usuário pedir** (cada push publica em produção).
+- **Commit e push em `main` são permitidos** (decisão do dono em 2026-09-18). Cada push publica em produção, então: só commitar depois de verificar (build ok, contagem de erros TS sem aumentar), adicionar só os arquivos que você mexeu (`git add <caminhos>`, nunca `git add -A` com trabalho alheio no working tree) e avisar no fim o que subiu. `push --force`, `reset --hard`, `clean -f` e `branch -D` continuam bloqueados por `scripts/guard-git.mjs`.
 - Ferramentas instaladas em modo portátil ficam em `.tools/` (ex.: GitHub CLI). `.tools/`, `.vercel/`, `.npm-cache/` estão no `.gitignore`.
 
 ## Soluções e critérios acumulados
