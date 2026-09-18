@@ -504,6 +504,27 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
         });
       }
 
+      // Contas atrasadas (dono, 2026-09-18): uma pendência por loja, com quantas e quanto. Fecha
+      // sozinha quando todas forem pagas; volta quando outra atrasar. "Hoje" é o de Brasília.
+      const [atr] = await db()<Array<{ n: number; total: number }>>`
+        select count(*)::int n, coalesce(sum(amount - coalesce(paid_amount, 0)), 0)::float total
+          from fin_accounts_payable
+         where tenant_id = ${t.id} and status not in ('paid', 'cancelled')
+           and due_date < (now() at time zone 'America/Sao_Paulo')::date`;
+      if (atr.n > 0) {
+        await admin.rpc('fn_pendencia_upsert', {
+          p_tenant: t.id, p_kind: 'conta_atrasada', p_ref: 'pendentes',
+          p_titulo: `${atr.n} ${atr.n === 1 ? 'conta atrasada' : 'contas atrasadas'} — ${brl(atr.total)}`,
+          p_detalhe: 'Venceram e não foram pagas (ou a baixa não foi dada).',
+          p_payload: { total: atr.n, valor: atr.total }, p_rota: '/financeiro?tab=pagar',
+          p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'cron', p_reabrir: true,
+        });
+      } else {
+        await admin.rpc('fn_pendencia_resolver_ref', {
+          p_tenant: t.id, p_kind: 'conta_atrasada', p_ref: 'pendentes', p_motivo: 'nenhuma conta atrasada',
+        });
+      }
+
       if (ownerId) {
         const [tar] = await db()<Array<{ n: number }>>`
           select count(*)::int n from tasks
@@ -794,6 +815,17 @@ Deno.serve(async (req) => {
       const c = { ...PRO_DEFAULTS.dre_classify, ...(cfg.proactive?.dre_classify ?? {}) };
       if (!c.enabled) return json({ ok: true, skipped: 'desligado' });
       return json({ ok: true, dre_classify: await dreClassify(admin, await getTenants(admin, cfg), c, ownerChat, false) });
+    } catch (e) { return json({ error: errMsg(e) }, 500); }
+  }
+
+  // Sincroniza a caixa de pendências na hora (manutenção / depois de mudar uma regra), sem esperar
+  // os 30 min da regra 'pendencias'.
+  if (body.run === 'pendencias') {
+    try {
+      const tenants = await getTenants(admin, cfg);
+      await syncPendenciasClassificacao(admin, tenants);
+      await syncPendenciasOperacao(admin, tenants, String(cfg.owner_user_id ?? ''));
+      return json({ ok: true, pendencias: tenants.length });
     } catch (e) { return json({ error: errMsg(e) }, 500); }
   }
 

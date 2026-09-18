@@ -237,6 +237,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                 {expandida === p.id && p.kind === 'item_sem_classe' && (
                   <ItensClassificarCard call={call} tenantId={p.tenantId} abertoInicial onFeito={() => onMudou?.()} onTudo={() => { setExpandida(null); recarregar(); onMudou?.(); }} />
                 )}
+                {expandida === p.id && p.kind === 'conta_atrasada' && <ContasAtrasadasInline tenantId={p.tenantId} />}
                 {expandida === p.id && p.kind === 'tarefa_vencida' && (
                   <TarefasPendencia tenantId={p.tenantId} meuId={meuId} onAbrir={(id) => onAbrirTarefa(p.tenantId, id)} />
                 )}
@@ -260,6 +261,7 @@ const RESOLVE_AQUI: Record<string, { label: string; icone: string }> = {
   conta_sem_dre: { label: 'Classificar aqui', icone: 'ri-pie-chart-line' },
   item_sem_classe: { label: 'Classificar aqui', icone: 'ri-price-tag-3-line' },
   tarefa_vencida: { label: 'Ver tarefas', icone: 'ri-task-line' },
+  conta_atrasada: { label: 'Ver contas', icone: 'ri-file-list-3-line' },
 };
 
 const brl = (n: number) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -330,3 +332,40 @@ function ContasDreInline({ call, tenantId, onFeito, onTudo }: { call: Call; tena
   );
 }
 const GRUPO_DRE: Record<string, string> = { cost: 'Custos', expense: 'Despesas' };
+
+interface ContaAtrasada { id: string; description: string; supplier: string | null; amount: number; paid_amount: number | null; due_date: string }
+
+// Contas atrasadas da loja, mais antiga primeiro, com quantos dias de atraso. Leitura direta: a RLS
+// de fin_accounts_payable libera SELECT a membro da loja (20260912070000_fin_select_membership).
+function ContasAtrasadasInline({ tenantId }: { tenantId: string }) {
+  const [contas, setContas] = useState<ContaAtrasada[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  useEffect(() => {
+    const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    supabase.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date')
+      .eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)').lt('due_date', hoje)
+      .order('due_date', { ascending: true }).limit(100)
+      .then(({ data: d, error }) => { if (error) setErro(error.message); setContas((d as ContaAtrasada[]) ?? []); });
+  }, [tenantId]);
+  if (contas === null) return <p className="mt-2.5 text-xs text-zinc-500">Carregando contas…</p>;
+  const agora = Date.now();
+  return (
+    <div className="mt-2.5 space-y-1.5">
+      {erro && <p className="text-xs text-red-600">{erro}</p>}
+      {!contas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> Nenhuma conta atrasada.</p>}
+      {contas.map((c) => {
+        const dias = Math.max(1, Math.floor((agora - new Date(`${c.due_date}T12:00:00-03:00`).getTime()) / 86400000));
+        return (
+          <div key={c.id} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5">
+            <p className="text-sm font-semibold text-zinc-800 break-words">{c.supplier || c.description}</p>
+            {c.supplier && c.description && c.description !== c.supplier && <p className="text-xs text-zinc-500 break-words">{c.description}</p>}
+            <p className="text-[11px] mt-0.5">
+              <span className="font-bold text-zinc-800">{brl(Number(c.amount) - Number(c.paid_amount ?? 0))}</span>
+              <span className="text-red-600"> · venceu {data(c.due_date)} · {dias} dia{dias > 1 ? 's' : ''}</span>
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
