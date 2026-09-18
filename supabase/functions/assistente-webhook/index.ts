@@ -345,6 +345,17 @@ async function abrirPendenciaPagamento(
   try {
     const tenant = await pendenciaTenant(admin, cfg, paymentIds);
     if (!tenant) { log('WARN', 'pendência sem loja para atribuir', { pedido: reqId }); return; }
+    // Mesma cobrança em duas mensagens (2026-09-18: foto do boleto + "a fatura da claro 👆"): o
+    // inter-bank devolve o rascunho que já existe, ligado ao pedido da 1ª mensagem. Esse pedido já
+    // tem a pendência dele — uma segunda seria dois botões "Pagar" para a mesma conta.
+    if (paymentIds.length) {
+      const { data: donos } = await admin.from('fin_inter_payments').select('id, group_request_id').in('id', paymentIds);
+      const deOutro = (donos ?? []).filter((x) => x.group_request_id != null && Number(x.group_request_id) !== reqId);
+      if (deOutro.length === paymentIds.length) {
+        log('INFO', 'pendência não aberta: mesmo pagamento de outro pedido', { pedido: reqId, de: deOutro[0].group_request_id });
+        return;
+      }
+    }
     // Sem pagamento preparado nem sempre é "falta fazer" (dono, 2026-09-18). Não vira pendência:
     //  - o que a leitura diz que NÃO é pedido (cupom pago em dinheiro, comprovante);
     //  - o que já tem conta a pagar em aberto com o mesmo valor (nota de recebimento de mercadoria
@@ -429,10 +440,17 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
       log('INFO', 'triagem: não era pedido de pagamento', { group: g.name });
       return;
     }
-    await avisarDono(admin, ownerChat, reply, actions);
     // TODOS os pagamentos da mensagem apontam para o pedido (2026-09-16). Antes só o 1º era ligado
     // (payment_id abaixo) e o 2º Pix da mesma mensagem ficava sem comprovante no grupo.
     const ids = actions.filter((a) => a?.type === 'payment' && a?.id).map((a) => String(a.id));
+    // Pagamento que já é de OUTRO pedido (mesma cobrança em duas mensagens): o cartão dele já foi
+    // enviado com o pedido original — não manda um segundo "Pagar" para a mesma conta.
+    let jaDeOutro = new Set<string>();
+    if (ids.length) {
+      const { data: donos } = await admin.from('fin_inter_payments').select('id, group_request_id').in('id', ids);
+      jaDeOutro = new Set((donos ?? []).filter((x) => x.group_request_id != null && Number(x.group_request_id) !== req.id).map((x) => String(x.id)));
+    }
+    await avisarDono(admin, ownerChat, reply, actions.filter((a) => !(a?.type === 'payment' && jaDeOutro.has(String(a.id)))));
     if (ids.length) {
       await admin.from('fin_inter_payments').update({ group_request_id: req.id }).in('id', ids).is('group_request_id', null)
         .then(({ error: e }) => { if (e) log('WARN', 'ligar pagamentos ao pedido', { error: e.message }); });
