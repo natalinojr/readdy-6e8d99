@@ -174,39 +174,34 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                     <button type="button" onClick={() => { setMotivoDe(null); setMotivo(''); }} className="px-2 h-9 rounded-xl text-zinc-400 cursor-pointer" aria-label="Cancelar"><i className="ri-close-line" /></button>
                   </form>
                 ) : (
-                  <div className="flex flex-wrap gap-2 mt-2.5">
+                  // Três botões não cabem numa linha do celular (o texto quebrava e vazava, 2026-09-18):
+                  // com três, a ação principal ocupa a linha de cima e as outras duas dividem a de baixo.
+                  <div className="grid grid-cols-2 gap-2 mt-2.5">
                     {ehPagamento && (
                       <>
-                        <button onClick={() => pagar(p)} disabled={busy} className="flex-1 h-9 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold disabled:opacity-50 cursor-pointer">
+                        <button onClick={() => pagar(p)} disabled={busy} className={`${PRINCIPAL} col-span-2`}>
                           {busy ? 'Preparando…' : <><i className="ri-check-line" /> Pagar</>}
                         </button>
-                        <button onClick={() => verMensagem(p)} disabled={busy} className="px-3 h-9 rounded-xl border border-violet-200 text-violet-700 text-sm font-bold hover:bg-violet-50 disabled:opacity-50 cursor-pointer">
+                        <button onClick={() => verMensagem(p)} disabled={busy} className={SECUNDARIO}>
                           <i className="ri-chat-quote-line" /> Ver a mensagem
                         </button>
                       </>
                     )}
                     {RESOLVE_AQUI[p.kind] && (
                       <button onClick={() => setExpandida((x) => (x === p.id ? null : p.id))}
-                        className={`flex-1 h-9 rounded-xl text-sm font-bold cursor-pointer ${expandida === p.id ? 'bg-violet-100 text-violet-700' : 'bg-violet-600 hover:bg-violet-500 text-white'}`}>
+                        className={expandida === p.id ? `${SECUNDARIO} col-span-2 bg-violet-100` : `${PRINCIPAL} col-span-2`}>
                         <i className={RESOLVE_AQUI[p.kind].icone} /> {expandida === p.id ? 'Fechar' : RESOLVE_AQUI[p.kind].label}
                       </button>
                     )}
                     {!ehPagamento && p.rota && (
-                      <button onClick={() => onAbrir(p)}
-                        className={RESOLVE_AQUI[p.kind]
-                          ? 'px-3 h-9 rounded-xl border border-violet-200 text-violet-700 text-sm font-bold hover:bg-violet-50 cursor-pointer'
-                          : 'flex-1 h-9 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold cursor-pointer'}>
+                      <button onClick={() => onAbrir(p)} className={RESOLVE_AQUI[p.kind] ? SECUNDARIO : PRINCIPAL}>
                         <i className="ri-arrow-right-up-line" /> {RESOLVE_AQUI[p.kind] ? 'Abrir na tela' : 'Abrir'}
                       </button>
                     )}
                     {!p.acaoRequerida ? (
-                      <button onClick={() => marcar(p, 'vista')} disabled={busy} className="px-3 h-9 rounded-xl border border-zinc-200 text-zinc-600 text-sm font-bold hover:bg-zinc-50 disabled:opacity-50 cursor-pointer">
-                        Ciente
-                      </button>
+                      <button onClick={() => marcar(p, 'vista')} disabled={busy} className={NEUTRO}>Ciente</button>
                     ) : (
-                      <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className="px-3 h-9 rounded-xl border border-zinc-200 text-zinc-500 text-sm font-bold hover:bg-zinc-50 disabled:opacity-50 cursor-pointer">
-                        Não vou fazer
-                      </button>
+                      <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className={NEUTRO}>Não vou fazer</button>
                     )}
                   </div>
                 )}
@@ -228,6 +223,11 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     </div>
   );
 }
+
+const BOTAO = 'h-10 px-2 flex items-center justify-center gap-1.5 rounded-xl text-sm font-bold whitespace-nowrap disabled:opacity-50 cursor-pointer';
+const PRINCIPAL = `${BOTAO} bg-violet-600 hover:bg-violet-500 text-white`;
+const SECUNDARIO = `${BOTAO} border border-violet-200 text-violet-700 hover:bg-violet-50`;
+const NEUTRO = `${BOTAO} border border-zinc-200 text-zinc-500 hover:bg-zinc-50`;
 
 // Tipos que dá para resolver no próprio cartão.
 const RESOLVE_AQUI: Record<string, { label: string; icone: string }> = {
