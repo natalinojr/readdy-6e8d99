@@ -665,6 +665,23 @@ describe('AssistenteChat — botão redondo arrastável', () => {
   });
 });
 
+describe('AssistenteChat — status do pagamento na conversa Financeiro', () => {
+  // Dono, 2026-09-18: o "pago" era uma linha cinza pequena e passava batido.
+  it('pago vira cartão verde "Pagamento realizado"; recusado mostra o motivo', async () => {
+    add('assistant', '[Pagamento boleto de R$ 114,41: ✅ pago (atualizado automaticamente)] id 18614760-8cc2', 'pagamentos', 'telegram');
+    add('assistant', '[Pagamento pix de R$ 40,00 para Joziane: recusado pelo Inter (saldo insuficiente) — pelo ERPOS] id abc', 'pagamentos');
+    renderChat();
+    await entrarNaConversa(userEvent.setup(), 'Financeiro');
+    const titulo = await screen.findByText('Pagamento realizado');
+    expect(titulo.closest('.border-emerald-300')).not.toBeNull();
+    expect(screen.getByText('R$ 114,41').tagName).toBe('B');
+    expect(screen.getByText('Recusado pelo Inter')).toBeInTheDocument();
+    expect(screen.getByText('saldo insuficiente')).toBeInTheDocument();
+    // o id técnico e o "(atualizado automaticamente)" não aparecem
+    expect(screen.queryByText(/18614760|atualizado automaticamente/)).not.toBeInTheDocument();
+  });
+});
+
 describe('AssistenteChat — abre na última mensagem', () => {
   // Pedido do dono (2026-09-17): ao entrar numa conversa a janela nunca estava na última mensagem.
   // jsdom não calcula layout: simulamos a altura do conteúdo e guardamos o scrollTop.

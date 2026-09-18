@@ -1108,6 +1108,36 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
               </div>
             );
           }
+          // Mudança de status de pagamento vira cartão de destaque (dono, 2026-09-18: "pago" numa
+          // linha cinza passava batido). Formato: "[Pagamento boleto de R$ 1,00 para X: pago (…)] id …"
+          const pg = m.content.match(/^\[Pagamento (pix|boleto) de ([^\]:]+?)(?: para ([^\]:]+))?: ([^\]]+)\]/i);
+          if (pg) {
+            const bruto = pg[4].replace(/\s*\(atualizado automaticamente\)/i, '').replace(/\s*—\s*pelo ERPOS\s*$/i, '').trim();
+            const motivo = bruto.match(/\((.+)\)\s*$/)?.[1] ?? null;
+            const st = bruto.replace(/\s*\(.+\)\s*$/, '').replace(/^cancelado pelo ERPOS$/i, 'cancelado').trim();
+            const pago = /^✅?\s*pago$/i.test(st);
+            const ruim = /recusad|não foi enviado|falh|expirad/i.test(st);
+            const neutro = /cancelad/i.test(st);
+            const cor = pago ? 'border-emerald-300 bg-emerald-50' : ruim ? 'border-red-200 bg-red-50' : neutro ? 'border-zinc-200 bg-zinc-50' : 'border-amber-200 bg-amber-50';
+            const icone = pago ? 'ri-checkbox-circle-fill text-emerald-600' : ruim ? 'ri-error-warning-fill text-red-500' : neutro ? 'ri-close-circle-line text-zinc-400' : 'ri-time-line text-amber-600';
+            return (
+              <div key={m.id} data-msg-id={m.id} className="flex justify-center">
+                <div className={`w-full max-w-[92%] flex items-start gap-2.5 rounded-2xl border px-3.5 py-2.5 ${cor}`}>
+                  <i className={`${icone} text-xl leading-none mt-0.5`} />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-black ${pago ? 'text-emerald-800' : ruim ? 'text-red-700' : 'text-zinc-800'}`}>
+                      {pago ? 'Pagamento realizado' : st.charAt(0).toUpperCase() + st.slice(1)}
+                    </p>
+                    <p className="text-xs text-zinc-700 break-words">
+                      {pg[1].toLowerCase() === 'pix' ? 'Pix' : 'Boleto'} de <b>{pg[2].trim()}</b>{pg[3] ? ` para ${pg[3].trim()}` : ''}
+                    </p>
+                    {motivo && <p className="text-[11px] text-zinc-500 mt-0.5 break-words">{motivo}</p>}
+                    <p className="text-[10px] text-zinc-400 mt-0.5">{hora(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</p>
+                  </div>
+                </div>
+              </div>
+            );
+          }
           const sistema = /^\[(Pagamento|PIN|Leitura)/.test(m.content);
           if (sistema) {
             return <p key={m.id} data-msg-id={m.id} className="text-center text-[11px] text-zinc-400 px-6">{m.content.replace(/^\[|\]\s*id\s+\S+$/g, '').replace(/\]$/, '')} · {hora(m.created_at)}</p>;
