@@ -414,6 +414,50 @@ Deno.serve(async (req) => {
       return json({ success: true, data: { payment: payCard(pago) } });
     }
 
+    // Pendência "pagamento pedido no grupo" → cartões de pagamento prontos para o PIN (2026-09-18).
+    // A caixa de pendências mora no chat: o botão Pagar da pendência cai aqui. Rascunho vencido
+    // (30 min) ou falhado vira pedido NOVO pelo inter-bank › reprepare_payment (revalida tudo);
+    // rascunho ainda válido e pagamento em andamento voltam como estão.
+    if (action === 'pendencia_pagar') {
+      const { data: pend } = await admin.from('pendencias').select('id, tenant_id, kind, ref, status').eq('id', String(body.id ?? '')).maybeSingle();
+      if (!pend || pend.kind !== 'pagamento_grupo') return fail('Pendência de pagamento não encontrada.', 404);
+      if (!['aberta', 'vista'].includes(pend.status)) return fail('Essa pendência já foi fechada.');
+      const { data: lista } = await admin.from('fin_inter_payments').select('*')
+        .eq('tenant_id', pend.tenant_id).eq('group_request_id', Number(pend.ref)).order('created_at');
+      // deno-lint-ignore no-explicit-any
+      const todos: any[] = lista ?? [];
+      // Preparado de novo antes: o antigo aponta para o substituto (replaced_by) e sai da conta —
+      // só as "pontas" valem. replaced_by = o próprio id é um preparo interrompido: o antigo vale.
+      const pontas = todos.filter((p) => !p.replaced_by || p.replaced_by === p.id);
+      // deno-lint-ignore no-explicit-any
+      const cards: any[] = [];
+      const erros: string[] = [];
+      for (const p of pontas) {
+        if (['paid', 'cancelled'].includes(p.status)) continue;
+        let atual = p;
+        const vencido = ['draft', 'awaiting_pin'].includes(p.status) && Date.now() - new Date(p.created_at).getTime() > PAY_TTL_MS;
+        if (vencido) {
+          await admin.from('fin_inter_payments').update({ status: 'expired', updated_at: nowIso() }).eq('id', p.id).in('status', ['draft', 'awaiting_pin']);
+          atual = { ...p, status: 'expired' };
+        }
+        if (['expired', 'failed', 'rejected'].includes(atual.status)) {
+          try {
+            const out = await callInter('reprepare_payment', { tenant_id: p.tenant_id, payment_id: p.id });
+            atual = out.payment;
+            await admin.from('fin_inter_payments').update({ chat_id: chatKey }).eq('id', atual.id);
+          } catch (e) { erros.push(`${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${errMsg(e)}`); continue; }
+        } else if (p.chat_id !== chatKey) {
+          await admin.from('fin_inter_payments').update({ chat_id: chatKey }).eq('id', p.id);
+        }
+        cards.push(payCard(atual));
+      }
+      if (!cards.length) {
+        return fail(erros.length ? `Não consegui preparar: ${erros.join(' · ')}` : 'Esse pedido não tem pagamento preparado (o assistente não leu valor/chave). Peça pelo chat.');
+      }
+      log('INFO', 'pendência → pagamentos', { pendencia: pend.id, cards: cards.length, erros: erros.length });
+      return json({ success: true, data: { payments: cards, erros } });
+    }
+
     // Classificação de itens (CMV × despesa) direto no chat (2026-09-16): o aviso do assistente-cron
     // traz um cartão com os pendentes. Mesma regra da tela Financeiro › Classificação de Itens.
     if (action === 'items_pending') {

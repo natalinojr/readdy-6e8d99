@@ -619,17 +619,35 @@ async function reparePayment(admin: Admin, tenantId: string, id: string) {
   if (velho.kind === 'boleto' && !velho.digitavel) {
     throw new Error('Esse pedido não guardou a linha digitável: mande o boleto de novo.');
   }
-  const novo = await preparePayment(admin, tenantId, {
-    tipo: velho.kind,
-    linha: velho.digitavel ?? undefined,
-    chave: velho.pix_key ?? undefined,
-    valor: velho.amount,
-    descricao: velho.description ?? undefined,
-    bill_id: velho.bill_id ?? undefined,
-    requested_by: velho.requested_by ?? undefined,
-    channel: velho.channel ?? 'assistente',
-    chat_id: velho.chat_id ?? undefined,
-  });
+  // Trava contra DOIS substitutos (toque duplo, chat + Telegram, dois aparelhos): marca o antigo
+  // antes de preparar, com UPDATE condicional. Só um ganha; quem perde recebe o mesmo substituto.
+  // Enquanto prepara, replaced_by = o próprio id.
+  const { data: claim } = await admin.from('fin_inter_payments').update({ replaced_by: velho.id })
+    .eq('id', velho.id).eq('tenant_id', tenantId).is('replaced_by', null).select('id').maybeSingle();
+  if (!claim) {
+    const { data: cur } = await admin.from('fin_inter_payments').select('replaced_by').eq('id', velho.id).maybeSingle();
+    if (cur?.replaced_by && cur.replaced_by !== velho.id) return await getPayment(admin, tenantId, cur.replaced_by);
+    throw new Error('Esse pedido já está sendo preparado de novo. Aguarde um instante.');
+  }
+  // deno-lint-ignore no-explicit-any
+  let novo: any;
+  try {
+    novo = await preparePayment(admin, tenantId, {
+      tipo: velho.kind,
+      linha: velho.digitavel ?? undefined,
+      chave: velho.pix_key ?? undefined,
+      valor: velho.amount,
+      descricao: velho.description ?? undefined,
+      bill_id: velho.bill_id ?? undefined,
+      requested_by: velho.requested_by ?? undefined,
+      channel: velho.channel ?? 'assistente',
+      chat_id: velho.chat_id ?? undefined,
+    });
+  } catch (e) {
+    await admin.from('fin_inter_payments').update({ replaced_by: null }).eq('id', velho.id).eq('replaced_by', velho.id);
+    throw e;
+  }
+  await admin.from('fin_inter_payments').update({ replaced_by: novo.id }).eq('id', velho.id);
   if (velho.group_request_id) {
     const { data } = await admin.from('fin_inter_payments')
       .update({ group_request_id: velho.group_request_id }).eq('id', novo.id).select('group_request_id').maybeSingle();

@@ -15,6 +15,7 @@ import { useVoltarFecha } from '@/lib/voltarAndroid';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { ACOES, GRUPOS } from '@/components/feature/assistente/acoes';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
+import PendenciasChat, { type PendenciaChat } from '@/components/feature/assistente/PendenciasChat';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -223,7 +224,7 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
 // Some quando já está ativa; lib/push carregada só aqui (import dinâmico).
 
 export default function AssistenteChat({ variant }: { variant: 'floating' | 'embedded' }) {
-  const { user } = useAuth();
+  const { user, selectTenant } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   // Três estágios no modo flutuante (pedido do dono, 2026-09-16): botão redondo → barra pequena
@@ -300,6 +301,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [vista, setVista] = useState<'lista' | 'conversa'>('lista');
   const [conversas, setConversas] = useState<TopicoResumo[]>([]);
   const [grupos, setGrupos] = useState<GrupoResumo[]>([]);
+  // Caixa de pendências no chat (2026-09-18): saiu do sino. Aberta na lista de conversas,
+  // recolhida dentro de uma conversa (para não tomar a tela). `pendVersao` recarrega a caixa
+  // depois de um pagamento (o trigger fecha a pendência sozinho quando o Inter confirma).
+  const [pendAberta, setPendAberta] = useState(true);
+  const [pendVersao, setPendVersao] = useState(0);
+  const [pendNovas, setPendNovas] = useState(0);
+  // Entrar numa conversa recolhe; voltar à lista não reabre (você pode ter fechado de propósito).
+  useEffect(() => { if (vista === 'conversa') setPendAberta(false); }, [vista]);
 
   // "Compartilhar" do Android: quem recebe é o src/lib/shareIntake, no início do app (main.tsx) —
   // o app abre na última rota usada, às vezes sem chat nenhum na tela, e o conteúdo se perdia
@@ -431,6 +440,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       const u = await call<{ count: number; topic: string | null; previa: string | null }>('unread');
       setNaoLidas({ count: u.count ?? 0, topic: u.topic ?? null, previa: u.previa ?? null });
     } catch { /* contador é extra: nunca atrapalha o chat */ }
+    try {
+      const { count } = await supabase.from('pendencias').select('id', { count: 'exact', head: true }).eq('status', 'aberta');
+      setPendNovas(count ?? 0);
+    } catch { /* idem */ }
   }, []);
 
   useEffect(() => {
@@ -646,6 +659,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       const out = await call<{ payment: Payment }>('pay', { id: p.id, op: 'ok', pin: pinValue });
       setPays((prev) => prev.map((x) => (x.id === p.id ? out.payment : x)));
       setPinFor(null); setPin('');
+      setPendVersao((v) => v + 1);
       if (!daDigital && bioDisponivel && guardarBio) {
         await bio()?.setCredentials({ username: 'pin', password: pinValue, server: BIO_SERVER, accessControl: 2, title: 'Usar a digital nos pagamentos' }).catch(() => {});
       }
@@ -681,8 +695,32 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     try {
       const out = await call<{ payment: Payment }>('pay', { id: p.id, op });
       setPays((prev) => prev.map((x) => (x.id === p.id ? out.payment : x)));
-      if (op === 'no') sincronizar();
+      if (op === 'no') { sincronizar(); setPendVersao((v) => v + 1); }
     } catch (e) { setErro(e instanceof Error ? e.message : String(e)); }
+  };
+
+  // Pagar pela pendência: o assistente-app prepara de novo o que venceu e devolve os cartões.
+  // Um só em aberto → já pede o PIN; vários → ficam no rodapé, cada um com o seu Pagar.
+  const pagarPendencia = async (pd: PendenciaChat) => {
+    const out = await call<{ payments: Payment[]; erros: string[] }>('pendencia_pagar', { id: pd.id });
+    setPays((prev) => [...out.payments, ...prev.filter((x) => !out.payments.some((n) => n.id === x.id))]);
+    if (out.erros?.length) setErro(`Alguns não deu para preparar: ${out.erros.join(' · ')}`);
+    const prontos = out.payments.filter((p) => ['draft', 'awaiting_pin'].includes(p.status));
+    if (prontos.length === 1) await acaoPagamento(prontos[0], 'ok');
+  };
+
+  // Abrir a tela que resolve. Pendência de outra loja: troca de loja antes (o chat vê todas).
+  const abrirPendencia = async (pd: PendenciaChat) => {
+    if (!pd.rota) return;
+    if (pd.tenantId !== user?.tenantId) await selectTenant(pd.tenantId);
+    navigate(pd.rota);
+    if (variant === 'floating') setModo('mini');
+  };
+
+  // Sem pagamento preparado: o texto vai para a caixa de digitação e você completa.
+  const pedirPendencia = (texto: string) => {
+    abrirConversa('pagamentos');
+    setText(texto);
   };
 
   const confirmarPin = async () => {
@@ -909,6 +947,16 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           </>
         )}
       </div>
+
+      <PendenciasChat
+        aberta={pendAberta}
+        onAlternar={() => setPendAberta((v) => !v)}
+        versao={pendVersao}
+        onContagem={setPendNovas}
+        onPagar={pagarPendencia}
+        onAbrir={abrirPendencia}
+        onPedir={pedirPendencia}
+      />
 
       {/* Lista de conversas ou a conversa aberta */}
       {vista === 'lista' ? listaConversas : (
@@ -1154,6 +1202,11 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
               : troca?.resposta && <span className="block text-sm text-zinc-800 line-clamp-3 whitespace-pre-wrap">{troca.resposta}</span>}
           </button>
         )}
+        {pendNovas > 0 && (
+          <button onClick={() => { setVista('lista'); setPendAberta(true); setModo('full'); }} className="block w-full text-left px-3.5 py-1.5 text-xs font-bold text-indigo-700 cursor-pointer" aria-label="Ver pendências">
+            <i className="ri-inbox-archive-line" /> {pendNovas === 1 ? '1 pendência esperando você' : `${pendNovas} pendências esperando você`}
+          </button>
+        )}
         {pagamentosVisiveis.length > 0 && (
           <button onClick={() => setModo('full')} className="block w-full text-left px-3.5 py-1.5 text-xs font-bold text-violet-700 cursor-pointer" aria-label="Ver pagamentos">
             <i className="ri-money-dollar-circle-line" /> {pagamentosVisiveis.length === 1 ? '1 pagamento esperando você' : `${pagamentosVisiveis.length} pagamentos esperando você`}
@@ -1202,7 +1255,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         if (ignorarCliqueFab.current) { ignorarCliqueFab.current = false; return; }
         if (temNovidade && naoLidas.topic) { setAba(naoLidas.topic); setVista('conversa'); }
         else if (temNovidade) setVista('lista'); // veio de assuntos diferentes: escolha na lista
-        setModo(temNovidade ? 'full' : 'mini');
+        // Pendência esperando: abre na lista, com a caixa aberta no topo.
+        const irPendencias = !temNovidade && pendNovas > 0;
+        if (irPendencias) { setVista('lista'); setPendAberta(true); }
+        setModo(temNovidade || irPendencias ? 'full' : 'mini');
       }}
       style={centro ? { left: centro.x - FAB_R, top: centro.y - FAB_R, touchAction: 'none' } : { touchAction: 'none' }}
       className={`fixed z-[55] ${centro ? '' : 'bottom-5 right-5'} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${arrastandoFab ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
@@ -1215,7 +1271,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           {naoLidas.count > 9 ? '9+' : naoLidas.count}
         </span>
       )}
-      {!temNovidade && pagamentosVisiveis.some((p) => p.status === 'draft') && <span className="absolute top-1 right-1 w-3 h-3 rounded-full bg-red-500 border-2 border-white" />}
+      {!temNovidade && (pendNovas > 0 || pagamentosVisiveis.some((p) => p.status === 'draft')) && <span className="absolute top-1 right-1 w-3 h-3 rounded-full bg-red-500 border-2 border-white" />}
     </button>
   );
 }

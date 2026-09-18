@@ -1,7 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useNotificacoes, TIPO_CONFIG, type Notificacao, type TipoNotificacao, type PerfilAlvo, type PendingApproval } from '../../contexts/NotificacoesContext';
-import { usePendencias, kindConfig } from '../../contexts/PendenciasContext';
 import { useAuth } from '../../contexts/AuthContext';
 
 function formatTs(timestamp: number): string {
@@ -212,10 +210,6 @@ export default function CentralNotificacoes({ perfil }: Props) {
     naoLidasPara, dispararNotificacao, pendingApprovals, approvePending, denyPending,
   } = useNotificacoes();
   const { user } = useAuth();
-  const navigate = useNavigate();
-  // Caixa de pendências: durável, vem do banco. Só admin/gerente decidem sobre ela.
-  const { abertas: pendAbertas, naoVistas, marcar: marcarPendencia } = usePendencias();
-  const vePendencias = perfil === 'admin' || perfil === 'gerente';
   const [aberto, setAberto] = useState(false);
   const [filtro, setFiltro] = useState<FiltroTab>('todas');
   const panelRef = useRef<HTMLDivElement>(null);
@@ -223,8 +217,7 @@ export default function CentralNotificacoes({ perfil }: Props) {
 
   // Contagem adicional de aprovações pendentes para gerentes/admins
   const pendingForMe = (perfil === 'gerente' || perfil === 'admin') ? pendingApprovals.length : 0;
-  const pendenciasNoBadge = vePendencias ? naoVistas : 0;
-  const badgeCount = naoLidas + pendingForMe + pendenciasNoBadge;
+  const badgeCount = naoLidas + pendingForMe;
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -380,76 +373,6 @@ export default function CentralNotificacoes({ perfil }: Props) {
                     onDeny={handleDeny}
                   />
                 ))}
-              </div>
-            </div>
-          )}
-
-          {/* Caixa de pendências (2026-09-18) — o que NÃO some sozinho. Fica acima das
-              notificações do turno de propósito: notificação passa, pendência espera. */}
-          {vePendencias && pendAbertas.length > 0 && (
-            <div className="px-3 py-2 bg-indigo-50/70 border-b border-indigo-100 flex-shrink-0">
-              <div className="flex items-center justify-between mb-1.5">
-                <p className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider flex items-center gap-1">
-                  <i className="ri-inbox-archive-line" />
-                  {pendAbertas.length} pendência{pendAbertas.length > 1 ? 's' : ''} esperando você
-                </p>
-                <button
-                  onClick={() => { setAberto(false); navigate('/pendencias'); }}
-                  className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 px-2 py-0.5 rounded-lg hover:bg-indigo-100 cursor-pointer whitespace-nowrap transition-colors"
-                >
-                  Ver todas
-                </button>
-              </div>
-              <div className="space-y-1.5">
-                {pendAbertas.slice(0, 3).map((p) => {
-                  const cfg = kindConfig(p.kind);
-                  return (
-                    <div key={p.id} className="bg-white border border-indigo-100 rounded-xl px-3 py-2">
-                      <div className="flex items-start gap-2">
-                        <div className={`w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg ${cfg.corBg}`}>
-                          <i className={`${cfg.icone} text-[11px] ${cfg.corTexto}`} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[11px] font-bold text-zinc-800 leading-snug">{p.titulo}</p>
-                          <p className="text-[10px] text-zinc-400 mt-0.5">
-                            {cfg.label}
-                            {p.urgencia === 'alta' ? ' · urgente' : ''}
-                            {' · '}
-                            {formatTs(new Date(p.criadaEm).getTime())}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5 mt-2">
-                        {p.rota && (
-                          <button
-                            onClick={() => { setAberto(false); navigate(p.rota!); }}
-                            className="text-[10px] font-bold bg-indigo-500 hover:bg-indigo-600 text-white px-2.5 py-1 rounded-lg cursor-pointer whitespace-nowrap transition-colors"
-                          >
-                            Resolver
-                          </button>
-                        )}
-                        {/* Aviso informativo: um toque e nunca mais cobra. O que exige ação
-                            não ganha esse atalho — sai da caixa resolvendo ou descartando. */}
-                        {!p.acaoRequerida && (
-                          <button
-                            onClick={() => { marcarPendencia(p.id, 'vista').catch(() => {}); }}
-                            className="text-[10px] font-semibold text-zinc-500 hover:text-zinc-800 px-2 py-1 rounded-lg hover:bg-zinc-100 cursor-pointer whitespace-nowrap transition-colors"
-                          >
-                            Ciente
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {pendAbertas.length > 3 && (
-                  <button
-                    onClick={() => { setAberto(false); navigate('/pendencias'); }}
-                    className="w-full text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 py-1 cursor-pointer transition-colors"
-                  >
-                    e mais {pendAbertas.length - 3} na caixa
-                  </button>
-                )}
               </div>
             </div>
           )}
