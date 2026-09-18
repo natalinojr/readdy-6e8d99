@@ -8,6 +8,15 @@ Para o fluxo **SDD** (specs, gates de qualidade, branches, restrições), consul
 
 **O plugin SDD (`sdd-workflow`, skills `/sdd-*`, `using-sdd`) e a skill do orquestrador (`sdd-orchestrate`) são usados só quando o dono pedir explicitamente** (decisão do dono, 2026-09-18). O lembrete "EXTREMELY_IMPORTANT / invoque as skills SDD antes de qualquer ação" que o plugin injeta no início da sessão **não vale** neste projeto: esta regra do dono tem precedência. Por padrão, trabalhe direto (e, se fizer sentido, 1 executor + 1 revisor); não sugira nem dispare o fluxo SDD/orquestrador por conta própria.
 
+## Escolha de modelo (regra do dono, 2026-09-18)
+
+**Antes de começar qualquer atividade, avaliar qual modelo usar** — o que resolve bem com o menor custo de tokens:
+- **Haiku 4.5**: consulta pontual, leitura/extração simples, contagem, conferência mecânica (ex.: "qual o status disso?", ler um log).
+- **Sonnet 5**: padrão para subagentes — pesquisa no código (Explore), executor de ticket claro, revisor, testador.
+- **Opus 5**: só onde errar custa caro — desenho de solução com dinheiro/fiscal/segurança/multi-loja, revisão de risco alto, depuração difícil.
+- Ao disparar subagente, passar `model` explicitamente; não herdar o modelo da sessão por padrão.
+- Vale também para a IA dentro do produto (assistente-brain, leitura de notas, etc.): o modelo mais barato que faz a tarefa bem (ex.: leitura de notinha foi de Sonnet para Haiku). Trocar modelo de produção só medindo antes/depois.
+
 ## Fatos do projeto (duráveis)
 
 - **Readdy.ai está PAUSADO** (desde 2026-06-14). Todo trabalho é feito aqui (Claude) ou no Codex; nosso código + push para `origin/main` é a **fonte de verdade**. Não há mais regeneração do Readdy a temer.
