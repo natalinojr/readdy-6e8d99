@@ -774,8 +774,25 @@ async function refreshPayment(admin: Admin, tenantId: string, id: string) {
       if (!r.ok) throw new Error(providerError(r, 'Status do Pix'));
       data = r.data; raw = r.data?.transacaoPix?.status ?? r.data?.status ?? r.data?.tipoRetorno;
     } else {
+      // A consulta com dataFim 90 dias no FUTURO voltava 400 ("não respeita o schema") — o 1º boleto
+      // (Claro, 2026-09-18) foi aprovado no app e o ERPOS nunca soube. Agora a janela termina hoje
+      // (horário de Brasília) e tenta variações até uma ser aceita; a última falha vai para o log.
       const from = addDays(String(p.sent_at ?? p.created_at).slice(0, 10), -1);
-      const r = await interFetch(creds, client, `/banking/v2/pagamento?dataInicio=${from}&dataFim=${addDays(todayBR(), 90)}`, { token });
+      const hoje = todayBR();
+      const code = encodeURIComponent(p.inter_code);
+      const tentativas = [
+        `/banking/v2/pagamento?codigoTransacao=${code}&dataInicio=${from}&dataFim=${hoje}`,
+        `/banking/v2/pagamento?dataInicio=${from}&dataFim=${hoje}`,
+        `/banking/v2/pagamento?dataInicio=${from}&dataFim=${hoje}&filtrarDataPor=INCLUSAO`,
+        `/banking/v2/pagamento?dataInicio=${from}&dataFim=${addDays(hoje, 30)}&filtrarDataPor=VENCIMENTO`,
+      ];
+      // deno-lint-ignore no-explicit-any
+      let r: any = null;
+      for (const url of tentativas) {
+        r = await interFetch(creds, client, url, { token });
+        if (r.ok) break;
+        log('WARN', 'payment_status', 'consulta de boleto recusada', { url, status: r.status, body: JSON.stringify(r.data ?? null).slice(0, 300) });
+      }
       if (!r.ok) throw new Error(providerError(r, 'Status do pagamento'));
       // deno-lint-ignore no-explicit-any
       const list: any[] = Array.isArray(r.data) ? r.data : (r.data?.pagamentos ?? r.data?.content ?? r.data?.itens ?? []);
