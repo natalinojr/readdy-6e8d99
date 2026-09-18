@@ -805,6 +805,9 @@ async function refreshPayment(admin: Admin, tenantId: string, id: string) {
     const { data: upd } = await admin.from('fin_inter_payments').update({
       status, inter_status: raw ? String(raw) : p.inter_status, response: data ?? p.response, updated_at: now,
       paid_at: status === 'paid' ? (p.paid_at ?? now) : p.paid_at,
+      // Boleto de convênio chega sem recebedor (o código não diz quem é): o Inter devolve o nome.
+      // deno-lint-ignore no-explicit-any
+      beneficiary_name: p.beneficiary_name ?? ((data as any)?.nomeBeneficiario ? String((data as any).nomeBeneficiario) : null),
     }).eq('id', id).select('*').single();
     return upd;
   } finally { try { client?.close?.(); } catch { /* noop */ } }

@@ -154,8 +154,32 @@ function payCard(p: any) {
     pix_key: p.kind === 'pix' ? masked : null, due_date: p.due_date ?? null, description: p.description ?? null,
     status, status_label: PAY_STATUS[status] ?? status, error: p.error ?? null,
     created_at: p.created_at, paid_at: p.paid_at ?? null, has_bill: !!p.bill_id,
+    recebido: null as boolean | null, recebido_em: null as string | null,
   };
 }
+
+// Mercadoria já chegou? (dono, 2026-09-18: "informar se o produto já foi recebido"). Pagamento →
+// conta a pagar (reference_type 'purchase') → compra.delivery_confirmed_at. Sem compra ligada
+// (Pix avulso, serviço) fica null e o cartão não diz nada.
+// deno-lint-ignore no-explicit-any
+async function payCards(admin: SupabaseClient, rows: any[]) {
+  const cards = rows.map(payCard);
+  const billIds = [...new Set(rows.map((r) => r.bill_id).filter(Boolean).map(String))];
+  if (!billIds.length) return cards;
+  const { data: bills } = await admin.from('fin_accounts_payable').select('id, reference_type, reference_id').in('id', billIds);
+  const compraDaConta = new Map((bills ?? []).filter((b) => b.reference_type === 'purchase' && b.reference_id).map((b) => [String(b.id), String(b.reference_id)]));
+  const compraIds = [...new Set(compraDaConta.values())];
+  if (!compraIds.length) return cards;
+  const { data: compras } = await admin.from('fin_purchases').select('id, delivery_confirmed_at').in('id', compraIds);
+  const recebida = new Map((compras ?? []).map((c) => [String(c.id), (c.delivery_confirmed_at as string | null) ?? null]));
+  return cards.map((c, i) => {
+    const compra = rows[i].bill_id ? compraDaConta.get(String(rows[i].bill_id)) : undefined;
+    if (!compra || !recebida.has(compra)) return c;
+    const em = recebida.get(compra) ?? null;
+    return { ...c, recebido: !!em, recebido_em: em };
+  });
+}
+const payCard1 = async (admin: SupabaseClient, row: unknown) => (await payCards(admin, [row]))[0];
 
 // Admin/gerente da loja (mesma régua do items_pending): o dono resolve pendência de qualquer loja dele.
 async function ehGestor(admin: SupabaseClient, userId: string, tenantId: string): Promise<boolean> {
@@ -398,7 +422,7 @@ Deno.serve(async (req) => {
         .gte('created_at', new Date(Date.now() - 7 * 86400_000).toISOString())
         .order('created_at', { ascending: false }).limit(20);
       if (error) throw new Error(error.message);
-      return json({ success: true, data: { payments: (data ?? []).map(payCard) } });
+      return json({ success: true, data: { payments: await payCards(admin, data ?? []) } });
     }
 
     if (action === 'pay') {
@@ -410,11 +434,11 @@ Deno.serve(async (req) => {
       if (op === 'no') {
         const out = await callInter('cancel_payment', { tenant_id: p.tenant_id, payment_id: p.id });
         await admin.from('asst_messages').insert({ channel: 'app', chat_id: chatKey, role: 'assistant', content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: cancelado pelo ERPOS] id ${p.id}` });
-        return json({ success: true, data: { payment: payCard({ ...p, ...out.payment }) } });
+        return json({ success: true, data: { payment: await payCard1(admin, { ...p, ...out.payment }) } });
       }
       if (op === 'st') {
         const out = await callInter('payment_status', { tenant_id: p.tenant_id, payment_id: p.id });
-        return json({ success: true, data: { payment: payCard({ ...p, ...out.payment }) } });
+        return json({ success: true, data: { payment: await payCard1(admin, { ...p, ...out.payment }) } });
       }
       if (op !== 'ok') return fail('Opção inválida.');
 
@@ -458,7 +482,7 @@ Deno.serve(async (req) => {
       }
       await admin.from('asst_messages').insert({ channel: 'app', chat_id: chatKey, role: 'assistant', content: `[Pagamento ${pago.kind} de ${brl(pago.amount)}${pago.beneficiary_name ? ` para ${pago.beneficiary_name}` : ''}: ${PAY_STATUS[pago.status] ?? pago.status}${pago.error ? ` (${pago.error})` : ''} — pelo ERPOS] id ${p.id}` });
       log('INFO', 'pagamento pelo ERPOS', { id: p.id, status: pago.status });
-      return json({ success: true, data: { payment: payCard(pago) } });
+      return json({ success: true, data: { payment: await payCard1(admin, pago) } });
     }
 
     // Pendência "pagamento pedido no grupo" → cartões de pagamento prontos para o PIN (2026-09-18).
@@ -512,7 +536,7 @@ Deno.serve(async (req) => {
         } else if (p.chat_id !== chatKey) {
           await admin.from('fin_inter_payments').update({ chat_id: chatKey }).eq('id', p.id);
         }
-        cards.push(payCard(atual));
+        cards.push(await payCard1(admin, atual));
       }
       if (!cards.length) {
         return fail(erros.length ? `Não consegui preparar: ${erros.join(' · ')}` : 'Esse pedido não tem pagamento preparado (o assistente não leu valor/chave). Peça pelo chat.');

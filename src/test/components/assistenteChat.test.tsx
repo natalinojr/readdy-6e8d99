@@ -398,6 +398,18 @@ describe('AssistenteChat — pagamento', () => {
     expect(screen.queryByText(/115,96/)).not.toBeInTheDocument();
   });
 
+  it('cartão destaca para quem vai e diz se a mercadoria já chegou', async () => {
+    // Dono, 2026-09-18: conferir o destinatário e se o produto já foi recebido antes de pagar.
+    srv.pays = [
+      { ...pixEduardo(), id: 'c1', beneficiary_name: 'Sacolão Paranaguá', recebido: true, recebido_em: '2026-09-18T17:34:13Z' } as Pay,
+      { ...pixEduardo(), id: 'c2', amount: 80, beneficiary_name: 'Frig. Silva', recebido: false } as Pay,
+    ];
+    renderChat();
+    expect((await screen.findByText('Sacolão Paranaguá')).tagName).toBe('B');
+    expect(screen.getByText(/Mercadoria recebida em 18\/09/)).toBeInTheDocument();
+    expect(screen.getByText(/Mercadoria ainda NÃO recebida/)).toBeInTheDocument();
+  });
+
   it('Cancelar cancela sem pedir PIN', async () => {
     const user = userEvent.setup();
     srv.pays = [pixEduardo()];

@@ -46,6 +46,8 @@ const rotuloAssunto = (id: string) => ASSUNTOS.find((a) => a.id === id)?.label ?
 interface Payment {
   id: string; kind: 'pix' | 'boleto'; amount: number; beneficiary_name: string | null; pix_key: string | null;
   due_date: string | null; description: string | null; status: string; status_label: string; error: string | null; created_at: string;
+  /** Pagamento de compra lançada: a mercadoria já chegou? null/ausente = não se aplica. */
+  recebido?: boolean | null; recebido_em?: string | null;
 }
 interface Attach { base64: string; media_type: string; name: string; preview: string | null }
 
@@ -200,8 +202,23 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
         <i className={`${p.kind === 'pix' ? 'ri-qr-code-line' : 'ri-barcode-line'} text-violet-600 mt-0.5`} />
         <div className="flex-1 min-w-0">
           <p className="font-bold text-zinc-900">{p.kind === 'pix' ? 'Pix' : 'Boleto'} de {brl(p.amount)}</p>
-          {p.beneficiary_name && <p className="text-xs text-zinc-600 truncate">Para: {p.beneficiary_name}{p.pix_key ? ` · ${p.pix_key}` : ''}</p>}
+          {/* Para quem vai em destaque (dono, 2026-09-18): é o que se confere antes de tocar em Pagar. */}
+          {p.beneficiary_name && (
+            <p className="text-sm text-zinc-800 break-words mt-0.5">
+              Para <b className="font-black text-violet-800">{p.beneficiary_name}</b>
+              {p.pix_key && <span className="block text-[11px] text-zinc-500">Chave {p.pix_key}</span>}
+            </p>
+          )}
           {p.due_date && <p className="text-xs text-zinc-500">Vence {p.due_date.slice(0, 10).split('-').reverse().join('/')}</p>}
+          {/* Mercadoria já chegou? Só quando o pagamento é de uma compra lançada (null = não se aplica). */}
+          {p.recebido != null && (
+            <p className={`text-xs font-semibold mt-0.5 ${p.recebido ? 'text-emerald-700' : 'text-amber-700'}`}>
+              <i className={p.recebido ? 'ri-checkbox-circle-line' : 'ri-truck-line'} />{' '}
+              {p.recebido
+                ? `Mercadoria recebida${p.recebido_em ? ` em ${new Date(p.recebido_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}` : ''}`
+                : 'Mercadoria ainda NÃO recebida'}
+            </p>
+          )}
           {p.description && <p className="text-xs text-zinc-500 truncate">{p.description}</p>}
           <p className="text-[11px] font-semibold text-zinc-500 mt-1">{p.status_label}{p.error ? ` — ${p.error}` : ''}</p>
           {p.status === 'pending_approval' && <p className="text-[11px] text-amber-700">Abra o app do Inter › Aprovações para liberar.</p>}
@@ -1129,7 +1146,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                       {pago ? 'Pagamento realizado' : st.charAt(0).toUpperCase() + st.slice(1)}
                     </p>
                     <p className="text-xs text-zinc-700 break-words">
-                      {pg[1].toLowerCase() === 'pix' ? 'Pix' : 'Boleto'} de <b>{pg[2].trim()}</b>{pg[3] ? ` para ${pg[3].trim()}` : ''}
+                      {pg[1].toLowerCase() === 'pix' ? 'Pix' : 'Boleto'} de <b>{pg[2].trim()}</b>
+                      {pg[3] && <> para <b className="font-black">{pg[3].trim()}</b></>}
                     </p>
                     {motivo && <p className="text-[11px] text-zinc-500 mt-0.5 break-words">{motivo}</p>}
                     <p className="text-[10px] text-zinc-400 mt-0.5">{hora(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</p>

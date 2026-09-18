@@ -2095,6 +2095,12 @@ Deno.serve(async (req) => {
       vistos.add(k);
       return true;
     });
+    // Pagamento preparado NÃO é pagamento feito (dono, 2026-09-18: "Pix do Sacolão preparado… o
+    // comprovante cai no grupo depois que você aprovar" foi lido como já programado, e o rascunho
+    // venceu sem ninguém tocar em Pagar). A frase é do sistema, não do modelo, para não depender dele.
+    if (ctx.outbound.some((a) => a.type === 'payment')) {
+      reply = `${reply}\n\n👉 *Ainda não foi pago:* toque em *Pagar* no cartão abaixo para enviar ao Inter (se passar, fica em Pendências).`;
+    }
     // No histórico, a enquete/localização/contato fica descrita para o modelo saber o que já mandou.
     const historyContent = ctx.outbound.length
       ? `${reply}\n${ctx.outbound.map((a) => a.type === 'poll' ? `[Enquete enviada: "${a.question}" — ${a.options.join(' | ')}]` : a.type === 'location' ? `[Localização enviada: ${a.name}]` : a.type === 'payment' ? '[Pedido de pagamento enviado com botões Pagar/Cancelar]' : a.type === 'abrir' ? `[Botão enviado: "${a.label}" → ${a.rota}]` : `[Contato enviado: ${a.name} +${a.phone}]`).join('\n')}`
