@@ -24,6 +24,7 @@
 //   Caixa de pendências no chat (2026-09-18):
 //   pendencia_pagar { id }                         → prepara de novo o pedido do grupo (ou o pagamento parado) e devolve os cartões
 //   contas_sem_dre { tenant_id }                   → contas sem categoria DRE + categorias da loja
+//   pendencias_pagamento_info { ids }              → por pendência de pagamento: para quem vai e se a mercadoria já chegou
 //   conta_dre     { tenant_id, bill_id, dre_category_id } → classifica a conta (só se ainda estiver sem)
 //   pedido_origem { id }                           → mensagem (asst_messages.id) que gerou o pedido do grupo
 //
@@ -594,6 +595,66 @@ Deno.serve(async (req) => {
 
     // ── Caixa de pendências no chat (2026-09-18): resolver ali mesmo ──────────────────────────
     // Contas sem categoria na DRE: mesmo filtro do assistente-cron (conta_sem_dre) e da enquete.
+    // Cartão da pendência de pagamento (dono, 2026-09-18): em destaque PARA QUEM vai e se a mercadoria
+    // já foi recebida. Destinatário: o do pagamento preparado; sem pagamento, o que a leitura da foto
+    // extraiu. Recebimento: compra ligada ao pagamento (conta → compra); sem ela, compra da loja com o
+    // mesmo valor (±R$ 0,01), fornecedor parecido e data perto do pedido. Sem compra achada: null.
+    if (action === 'pendencias_pagamento_info') {
+      const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 100);
+      if (!ids.length) return json({ success: true, data: { info: {} } });
+      const { data: pends } = await admin.from('pendencias').select('id, tenant_id, kind, ref, payload, criada_em')
+        .in('id', ids).in('kind', ['pagamento_grupo', 'pagamento_pendente']);
+      const gestor = new Map<string, boolean>();
+      // deno-lint-ignore no-explicit-any
+      const info: Record<string, any> = {};
+      const norm = (t: unknown) => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').trim();
+      const palavra = (t: unknown) => norm(t).split(/\s+/).find((w) => w.length >= 4 && !['ltda', 'comercio', 'distribuidora', 'alimentos'].includes(w)) ?? null;
+      for (const pd of pends ?? []) {
+        const tid = String(pd.tenant_id);
+        if (!gestor.has(tid)) gestor.set(tid, await ehGestor(admin, user.id, tid));
+        if (!gestor.get(tid)) continue;
+        // deno-lint-ignore no-explicit-any
+        const pl = (pd.payload ?? {}) as any;
+        const ext = pl.extraido ?? {};
+        const payIds: string[] = pd.kind === 'pagamento_pendente' ? [String(pd.ref)] : (Array.isArray(pl.pagamentos) ? pl.pagamentos.map(String) : []);
+        // deno-lint-ignore no-explicit-any
+        let pays: any[] = [];
+        if (payIds.length) {
+          const { data } = await admin.from('fin_inter_payments').select('id, kind, amount, beneficiary_name, bill_id, description').in('id', payIds);
+          pays = data ?? [];
+        }
+        const para = pays.map((x) => x.beneficiary_name).filter(Boolean)[0] ?? ext.beneficiario ?? null;
+        const valor = Number(pays[0]?.amount ?? ext.valor ?? 0) || null;
+        // Compra: pela conta do pagamento; senão por valor + fornecedor + data
+        let compra: { id: string; delivery_confirmed_at: string | null; supplier: string | null } | null = null;
+        const billId = pays.map((x) => x.bill_id).filter(Boolean)[0];
+        if (billId) {
+          const { data: b } = await admin.from('fin_accounts_payable').select('reference_type, reference_id').eq('id', billId).maybeSingle();
+          if (b?.reference_type === 'purchase' && b.reference_id) {
+            const { data: c } = await admin.from('fin_purchases').select('id, delivery_confirmed_at, supplier').eq('id', b.reference_id).maybeSingle();
+            compra = c ?? null;
+          }
+        }
+        if (!compra && valor) {
+          const base = new Date(pd.criada_em).getTime();
+          const { data: cs } = await admin.from('fin_purchases').select('id, delivery_confirmed_at, supplier, purchase_date')
+            .eq('tenant_id', tid).gte('total_amount', valor - 0.01).lte('total_amount', valor + 0.01)
+            .gte('purchase_date', new Date(base - 20 * 86400_000).toISOString().slice(0, 10))
+            .lte('purchase_date', new Date(base + 5 * 86400_000).toISOString().slice(0, 10)).limit(5);
+          const w = palavra(para);
+          const achadas = (cs ?? []).filter((c) => !w || norm(c.supplier).includes(w));
+          if (achadas.length === 1) compra = achadas[0];
+        }
+        info[pd.id] = {
+          para, valor, tipo: pays[0]?.kind ?? ext.tipo ?? null,
+          compra_lancada: !!compra,
+          recebido: compra ? !!compra.delivery_confirmed_at : null,
+          recebido_em: compra?.delivery_confirmed_at ?? null,
+        };
+      }
+      return json({ success: true, data: { info } });
+    }
+
     if (action === 'contas_sem_dre') {
       const tenantId = String(body.tenant_id ?? '');
       if (!(await ehGestor(admin, user.id, tenantId))) return fail('Sem acesso a essa loja.', 403);

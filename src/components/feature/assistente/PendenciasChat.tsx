@@ -88,10 +88,17 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
   const [motivo, setMotivo] = useState('');
 
   const [nTarefas, setNTarefas] = useState(0);
+  // Pendência de pagamento: para quem vai e se a mercadoria já chegou (assistente-app, dono 2026-09-18)
+  const [infoPag, setInfoPag] = useState<Record<string, InfoPagamento>>({});
   const recarregar = useCallback(async () => {
-    try { setLista(await carregarPendenciasChat()); } catch { setLista((l) => l ?? []); }
+    try {
+      const l = await carregarPendenciasChat();
+      setLista(l);
+      const ids = l.filter((p) => p.kind === 'pagamento_grupo' || p.kind === 'pagamento_pendente').map((p) => p.id);
+      if (ids.length) call<{ info: Record<string, InfoPagamento> }>('pendencias_pagamento_info', { ids }).then((r) => setInfoPag(r.info ?? {})).catch(() => {});
+    } catch { setLista((l) => l ?? []); }
     try { setNTarefas((await minhasTarefasPendentes(meuId)).length); } catch { /* aba some */ }
-  }, [meuId]);
+  }, [meuId, call]);
 
   useEffect(() => {
     recarregar();
@@ -205,6 +212,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                       {p.loja ? ' · ' : ''}{cfg.label} · {quando(p.criadaEm)}
                       {p.status === 'vista' ? ' · vista' : ''}
                     </p>
+                    {ehPagamento && infoPag[p.id] && <LinhaPagamento info={infoPag[p.id]} />}
                     {p.detalhe && <p className="text-xs text-zinc-500 mt-1 line-clamp-3 whitespace-pre-wrap">{p.detalhe}</p>}
                   </div>
                 </div>
@@ -277,6 +285,30 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+interface InfoPagamento {
+  para: string | null; valor: number | null; tipo: string | null;
+  compra_lancada: boolean; recebido: boolean | null; recebido_em: string | null;
+}
+
+// Para quem vai (em destaque) e se a mercadoria já chegou — o que se confere antes de pagar.
+function LinhaPagamento({ info }: { info: InfoPagamento }) {
+  return (
+    <div className="mt-2 rounded-xl bg-violet-50 border border-violet-100 px-3 py-2">
+      <p className="text-sm text-zinc-800 break-words">
+        {info.tipo === 'boleto' ? 'Boleto' : info.tipo === 'pix' ? 'Pix' : 'Pagar'}
+        {info.valor ? <> de <b>{brl(info.valor)}</b></> : null} para{' '}
+        <b className="font-black text-violet-800">{info.para || 'destinatário não identificado'}</b>
+      </p>
+      <p className={`text-xs font-semibold mt-0.5 ${info.recebido ? 'text-emerald-700' : info.recebido === false ? 'text-amber-700' : 'text-zinc-500'}`}>
+        <i className={info.recebido ? 'ri-checkbox-circle-line' : info.recebido === false ? 'ri-truck-line' : 'ri-question-line'} />{' '}
+        {info.recebido
+          ? `Mercadoria recebida${info.recebido_em ? ` em ${new Date(info.recebido_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}` : ''}`
+          : info.recebido === false ? 'Mercadoria ainda NÃO recebida' : 'Compra não lançada no ERPOS (recebimento não confirmado)'}
+      </p>
     </div>
   );
 }
