@@ -74,6 +74,9 @@ interface Props {
 export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou, onPagar, onAbrir, onPedir, onVerMensagem, onAbrirTarefa }: Props) {
   // Cartão aberto para resolver ali mesmo (classificar, ver tarefas). Um por vez.
   const [expandida, setExpandida] = useState<string | null>(null);
+  // Filtro por loja (dono atende mais de uma, 2026-09-18). '' = todas. Lembrado neste aparelho.
+  const [loja, setLoja] = useState<string>(() => { try { return localStorage.getItem(FILTRO_KEY) ?? ''; } catch { return ''; } });
+  const escolherLoja = (id: string) => { setLoja(id); try { localStorage.setItem(FILTRO_KEY, id); } catch { /* sem storage */ } };
   const [lista, setLista] = useState<PendenciaChat[] | null>(null);
   const [ocupada, setOcupada] = useState<string | null>(null);
   const [erros, setErros] = useState<Record<string, string>>({});
@@ -113,7 +116,11 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     finally { setOcupada(null); }
   };
 
-  const itens = lista ?? [];
+  const todas = lista ?? [];
+  const lojas = [...new Map(todas.map((p) => [p.tenantId, p.loja || 'Loja'])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  // Loja escolhida que sumiu da lista (tudo resolvido lá): volta para Todas em vez de mostrar vazio.
+  const filtro = lojas.some(([id]) => id === loja) ? loja : '';
+  const itens = filtro ? todas.filter((p) => p.tenantId === filtro) : todas;
   const urgentes = itens.filter((p) => p.urgencia === 'alta').length;
 
   return (
@@ -133,6 +140,19 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
           <i className="ri-close-line text-xl" />
         </button>
       </div>
+      {lojas.length > 1 && (
+        <div className="flex gap-1.5 px-3 py-2 border-b border-zinc-100 bg-white overflow-x-auto flex-shrink-0">
+          {[['', 'Todas'] as [string, string], ...lojas].map(([id, nome]) => {
+            const n = id ? todas.filter((p) => p.tenantId === id).length : todas.length;
+            return (
+              <button key={id || 'todas'} onClick={() => escolherLoja(id)}
+                className={`flex-shrink-0 h-8 px-3 rounded-full text-xs font-bold whitespace-nowrap cursor-pointer ${filtro === id ? 'bg-violet-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
+                {nome} · {n}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {lista === null ? (
         <div className="mx-auto my-16 w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
       ) : !itens.length ? (
@@ -229,6 +249,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
   );
 }
 
+const FILTRO_KEY = 'erpos.pendencias.loja';
 const BOTAO = 'h-10 px-2 flex items-center justify-center gap-1.5 rounded-xl text-sm font-bold whitespace-nowrap disabled:opacity-50 cursor-pointer';
 const PRINCIPAL = `${BOTAO} bg-violet-600 hover:bg-violet-500 text-white`;
 const SECUNDARIO = `${BOTAO} border border-violet-200 text-violet-700 hover:bg-violet-50`;
