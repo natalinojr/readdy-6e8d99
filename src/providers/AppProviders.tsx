@@ -6,6 +6,7 @@ import { AuthProvider } from '@/contexts/AuthContext';
 import { SystemSettingsProvider } from '@/contexts/SystemSettingsContext';
 import { SessaoProvider } from '@/contexts/SessaoContext';
 import { NotificacoesProvider } from '@/contexts/NotificacoesContext';
+import { PendenciasProvider } from '@/contexts/PendenciasContext';
 import { AuditoriaProvider } from '@/contexts/AuditoriaContext';
 import { CardapioProvider } from '@/contexts/CardapioContext';
 import { EstoqueProvider } from '@/contexts/EstoqueContext';
@@ -58,10 +59,15 @@ const CoreProviders = composeProviders(
 /**
  * SessionProviders — depend on Auth being available.
  * Sessao must come before Auditoria and Notificacoes.
+ *
+ * Notificacoes e Pendencias são coisas diferentes de propósito: Notificacoes é o
+ * barramento de eventos do turno (some ao recarregar, e tudo bem); Pendencias é a caixa
+ * gravada no banco, que só sai por ação de alguém.
  */
 const SessionProviders = composeProviders(
   SessaoProvider,
   NotificacoesProvider,
+  PendenciasProvider,
   AuditoriaProvider,
 );
 

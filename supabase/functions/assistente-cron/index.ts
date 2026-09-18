@@ -167,6 +167,9 @@ async function morningBrief(admin: SupabaseClient, cfg: Record<string, any>, own
       chat_id: ownerChat,
       channel: 'cron',
       text: '[Mensagem automática das 7h30, não foi o Natalino que escreveu] Monte o resumo da manhã dele: '
+        // A caixa vem primeiro no resumo: é o único lugar onde o que ficou por fazer sobrevive
+        // à noite. Uma linha só; o detalhe ele vê em /pendencias.
+        + 'comece pelas pendências em aberto (tabela pendencias, status aberta, da loja dele) — quantas são e o que é dinheiro, em UMA linha, dizendo que a lista está em Pendências; '
         + 'tarefas de hoje e atrasadas, lembretes de hoje, contas a pagar vencendo nos próximos 3 dias (e atrasadas) '
         + 'e previsão do tempo de hoje para a loja principal (previsao_tempo: uma linha, destaque chuva no horário de movimento). '
         + 'Estoque crítico só se algo novo (o cron já avisa o que muda). Comece com "Bom dia". Curto, só o que pede atenção; se não houver nada num item, pule.',
@@ -225,11 +228,21 @@ const PRO_DEFAULTS: Record<string, any> = {
   stock: { enabled: true, time: '09:00' },              // estoque crítico: só o que MUDOU
   tasks_overdue: { enabled: true, time: '18:00' },      // tarefas vencidas do dono
   // conta a pagar sem classificação DRE → pergunta em texto, UMA por vez (a resposta é
-  // gravada pelo webhook, sem modelo, e ele já pede a próxima)
-  dre_classify: { enabled: true, from: '08:00', to: '21:00', every_min: 2, per_run: 1, max_open: 1 },
-  // item de fornecedor NOVO sem classificação CMV × despesa → aviso na aba Financeiro do chat
-  // com botão que abre Financeiro › Classificação de Itens (só o que chegou desde o último aviso)
-  item_classify: { enabled: true, from: '07:00', to: '23:00', every_min: 30 },
+  // gravada pelo webhook, sem modelo, e ele já pede a próxima).
+  // every_min era 2 (2026-09-18): com a janela de 13 h isso dava até ~390 disparos por dia,
+  // o dia inteiro de metralhadora. Agora a fila mora na caixa de pendências e a pergunta
+  // espontânea sai de 2 em 2 horas; QUANDO o dono responde, o webhook chama
+  // { run: 'dre_classify' } na hora e as próximas vêm em sequência — engajar puxa a fila,
+  // silêncio não é insistido.
+  dre_classify: { enabled: true, from: '08:00', to: '21:00', every_min: 120, per_run: 1, max_open: 1 },
+  // item de fornecedor sem classificação CMV × despesa. Era um aviso a cada 30 min
+  // (até 32 por dia) e nenhum lugar onde a pendência ficasse. Agora o aviso sai UMA vez
+  // por dia e quem segura a cobrança é a caixa (regra `pendencias` abaixo).
+  item_classify: { enabled: true, time: '09:30' },
+  // Sincronização SILENCIOSA da caixa de pendências (2026-09-18). Não manda mensagem
+  // nenhuma: só mantém as linhas agregadas em dia. Fica fora das regras de aviso de
+  // propósito — desligar um aviso não pode fazer a pendência sumir de vista.
+  pendencias: { enabled: true, sync_min: 30 },
 };
 let pgc: ReturnType<typeof postgres> | null = null;
 const db = () => (pgc ??= postgres(Deno.env.get('SUPABASE_DB_URL') ?? '', { max: 1, prepare: false, idle_timeout: 20 }));
@@ -399,6 +412,115 @@ async function tasksOverdueText(ownerId: string): Promise<string | null> {
   return `📋 *Tarefas vencidas (${rows.length}${rows.length === 12 ? '+' : ''})*\n${rows.map((r) => `• ${r.title} (${r.due_date}${r.list ? `, ${r.list}` : ''})`).join('\n')}\nMe diga "concluí X" ou "adia X pra sexta" que eu ajusto.`;
 }
 
+// ── Caixa de pendências (2026-09-18) ────────────────────────────────────────
+// Ver supabase/migrations/20260918120000_pendencias.sql. Estas duas são pendências
+// AGREGADAS: uma linha por loja com a contagem ("47 itens sem classificação"), e não uma
+// por item — 47 cartões na caixa seriam o mesmo barulho com outra roupa. Por isso o ref é
+// fixo e o upsert vai com p_reabrir: a linha fecha quando a conta zera e volta quando
+// aparece item novo. Descartada, não volta: ali o dono já disse que não quer ser cobrado.
+//
+// É isto que conserta o vazamento antigo: a marca d'água do aviso andava no ENVIO, então
+// item não classificado nunca mais era cobrado. Agora quem garante a cobrança é a caixa, e
+// a marca d'água volta a ser só o que ela diz ser — "o que chegou desde o último aviso".
+async function syncPendenciasClassificacao(admin: SupabaseClient, tenants: Array<{ id: string; name: string }>) {
+  for (const t of tenants) {
+    try {
+      const [itens] = await db()<Array<{ n: number }>>`
+        select count(*)::int n from fin_item_classifications where tenant_id = ${t.id} and classe is null`;
+      if (itens.n > 0) {
+        await admin.rpc('fn_pendencia_upsert', {
+          p_tenant: t.id, p_kind: 'item_sem_classe', p_ref: 'pendentes',
+          p_titulo: `${itens.n} ${itens.n === 1 ? 'item sem classificação' : 'itens sem classificação'} (CMV × despesa)`,
+          p_detalhe: 'Enquanto não forem classificados, entram no CMV e a DRE sai errada.',
+          p_payload: { total: itens.n }, p_rota: '/financeiro?tab=itens',
+          p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: true,
+        });
+      } else {
+        await admin.rpc('fn_pendencia_resolver_ref', {
+          p_tenant: t.id, p_kind: 'item_sem_classe', p_ref: 'pendentes', p_motivo: 'tudo classificado',
+        });
+      }
+
+      // Mesmo filtro do dreClassify, menos a exclusão por asst_polls: a caixa mostra tudo
+      // que falta classificar, não só o que ainda não foi perguntado no Telegram.
+      const [contas] = await db()<Array<{ n: number }>>`
+        select count(*)::int n from fin_accounts_payable a
+         where a.tenant_id = ${t.id} and a.dre_category_id is null and a.status <> 'cancelled'
+           and coalesce(a.reference_type, '') not in ('purchase', 'hr_payroll')`;
+      if (contas.n > 0) {
+        await admin.rpc('fn_pendencia_upsert', {
+          p_tenant: t.id, p_kind: 'conta_sem_dre', p_ref: 'pendentes',
+          p_titulo: `${contas.n} ${contas.n === 1 ? 'conta sem categoria' : 'contas sem categoria'} na DRE`,
+          p_detalhe: 'Conta sem categoria não recebe baixa pelo assistente e fica de fora da DRE.',
+          p_payload: { total: contas.n }, p_rota: '/financeiro?tab=pagar',
+          p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: true,
+        });
+      } else {
+        await admin.rpc('fn_pendencia_resolver_ref', {
+          p_tenant: t.id, p_kind: 'conta_sem_dre', p_ref: 'pendentes', p_motivo: 'tudo classificado',
+        });
+      }
+    } catch (e) {
+      log('WARN', 'sincronizar pendências de classificação', { loja: t.name, error: errMsg(e) });
+    }
+  }
+}
+
+// Estoque crítico e tarefas vencidas também viram linha na caixa (2026-09-18) — não porque
+// os avisos estavam errados, mas porque a caixa só serve se for O lugar de olhar. Se metade
+// do que espera o dono estivesse aqui e a outra metade espalhada em mensagens, ele teria de
+// conferir dois lugares e voltaria a confiar na memória.
+//
+// Ambas são AGREGADAS e com acao_requerida = true, ou seja, sem o botão "Ciente". É de
+// propósito: um alerta recorrente silenciado para sempre por um toque é o mesmo buraco de
+// antes com outro nome. Elas fecham sozinhas quando a condição passa, e quem quiser calar
+// de vez usa "Não vou fazer", que grava o motivo.
+async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id: string; name: string }>, ownerId: string) {
+  for (const t of tenants) {
+    try {
+      // Mesmo critério do aviso de estoque: abaixo ou igual ao mínimo, ignorando excluídos.
+      const [est] = await db()<Array<{ n: number }>>`
+        select count(*)::int n from ingredients
+         where tenant_id = ${t.id} and deleted_at is null and min_stock > 0 and current_stock <= min_stock`;
+      if (est.n > 0) {
+        await admin.rpc('fn_pendencia_upsert', {
+          p_tenant: t.id, p_kind: 'estoque_critico', p_ref: 'pendentes',
+          p_titulo: `${est.n} ${est.n === 1 ? 'insumo' : 'insumos'} no estoque crítico`,
+          p_detalhe: 'Estão no mínimo ou abaixo dele.',
+          p_payload: { total: est.n }, p_rota: '/estoque',
+          p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: true,
+        });
+      } else {
+        await admin.rpc('fn_pendencia_resolver_ref', {
+          p_tenant: t.id, p_kind: 'estoque_critico', p_ref: 'pendentes', p_motivo: 'estoque normalizado',
+        });
+      }
+
+      if (ownerId) {
+        const [tar] = await db()<Array<{ n: number }>>`
+          select count(*)::int n from tasks
+           where tenant_id = ${t.id} and (created_by = ${ownerId} or assignee_id = ${ownerId})
+             and completed_at is null and is_archived = false and due_date < now()`;
+        if (tar.n > 0) {
+          await admin.rpc('fn_pendencia_upsert', {
+            p_tenant: t.id, p_kind: 'tarefa_vencida', p_ref: 'pendentes',
+            p_titulo: `${tar.n} ${tar.n === 1 ? 'tarefa vencida' : 'tarefas vencidas'}`,
+            p_detalhe: 'Passaram do prazo e ainda não foram concluídas.',
+            p_payload: { total: tar.n }, p_rota: '/tarefas',
+            p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: true,
+          });
+        } else {
+          await admin.rpc('fn_pendencia_resolver_ref', {
+            p_tenant: t.id, p_kind: 'tarefa_vencida', p_ref: 'pendentes', p_motivo: 'nada vencido',
+          });
+        }
+      }
+    } catch (e) {
+      log('WARN', 'sincronizar pendências de operação', { loja: t.name, error: errMsg(e) });
+    }
+  }
+}
+
 // Itens de fornecedor que chegaram sem classificação CMV × despesa (2026-09-16, pedido do dono:
 // "avisar no grupo financeiro, com botão pra classificar"). Marca d'água = created_at do último
 // item avisado (estado por loja), então cada item entra num aviso só; o total pendente vai junto.
@@ -428,7 +550,7 @@ async function itemClassifyText(tenants: Array<{ id: string; name: string }>, st
   }
   if (!parts.length) return { text: null, newState: next };
   return {
-    text: `🏷️ *Itens novos para classificar* (CMV × despesa)\n\n${parts.join('\n\n')}\n\nSem classificar, ${novosTotal > 1 ? 'eles entram' : 'ele entra'} no CMV e a DRE pode sair errada. Dá para classificar aqui mesmo.`,
+    text: `🏷️ *Itens novos para classificar* (CMV × despesa)\n\n${parts.join('\n\n')}\n\nSem classificar, ${novosTotal > 1 ? 'eles entram' : 'ele entra'} no CMV e a DRE pode sair errada. Ficam na sua caixa de pendências até serem classificados — este aviso sai uma vez por dia.`,
     newState: next,
   };
 }
@@ -593,12 +715,24 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     const t = await tasksOverdueText(String(cfg.owner_user_id ?? ''));
     if (t) await deliver('tasks_overdue', t); else res.tasks_overdue = 'nenhuma vencida';
   }
+  // Caixa em dia primeiro (silencioso, 2 contagens por loja): é ela que garante que nada se
+  // perde — os avisos abaixo são só ponteiros para cá. Fora do want() de propósito:
+  // sincronizar grava no banco e não manda mensagem, então não pode depender de haver canal
+  // do dono configurado.
+  if (only ? only === 'pendencias' : pro.pendencias.enabled) {
+    const lastSync = state.pend_synced_at ? Date.parse(state.pend_synced_at) : 0;
+    if (dry || Date.now() - lastSync >= Number(pro.pendencias.sync_min ?? 30) * 60_000) {
+      if (!dry) { state.pend_synced_at = new Date().toISOString(); await saveState(); }
+      await syncPendenciasClassificacao(admin, tenants);
+      await syncPendenciasOperacao(admin, tenants, String(cfg.owner_user_id ?? ''));
+      if (dry) res.pendencias = 'caixa sincronizada';
+    }
+  }
   if (want('item_classify')) {
     const c = pro.item_classify;
-    const last = state.item_checked_at ? Date.parse(state.item_checked_at) : 0;
-    if (dry || (now >= c.from && now <= c.to && Date.now() - last >= Number(c.every_min) * 60_000)) {
+    if (dry || (inWindow(c.time, now) && state.item_date !== today)) {
       const { text, newState } = await itemClassifyText(tenants, state);
-      if (!dry) { state.item_checked_at = new Date().toISOString(); state.item_classify = newState; await saveState(); }
+      if (!dry) { state.item_date = today; state.item_classify = newState; await saveState(); }
       const botao = { type: 'abrir', label: 'Classificar itens', rota: '/financeiro?tab=itens' };
       if (!text) res.item_classify = 'nada novo';
       else if (dry) res.item_classify = `${text}\n[Botão: "${botao.label}" → ${botao.rota}]`;

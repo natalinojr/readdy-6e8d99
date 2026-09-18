@@ -393,7 +393,8 @@ async function tryDreAnswerTg(admin: SupabaseClient, chatId: number, text: strin
 }
 
 // ── Pagamentos pelo Banco Inter (2026-09-12) ──
-// Botões: p|ok|<id> pagar · p|no|<id> cancelar · p|st|<id> ver status. "Pagar" põe o pedido em
+// Botões: p|ok|<id> pagar · p|no|<id> cancelar · p|st|<id> ver status · p|re|<id> preparar de novo
+// (expirado/falhado; 2026-09-18). "Pagar" põe o pedido em
 // awaiting_pin; o PRÓXIMO texto só com números (4–8) em até 5 min é o PIN: apagado do chat, conferido
 // contra asst_settings.pay_pin (sha256), e aí inter-bank › execute_payment envia ao Inter.
 // 3 PINs errados seguidos = bloqueio de 15 min. /pin cria ou troca o PIN (pede o atual antes).
@@ -409,6 +410,8 @@ const PAY_STATUS: Record<string, string> = {
   paid: '✅ pago', cancelled: '✖️ cancelado', rejected: '❌ recusado pelo Inter', failed: '❌ não foi enviado', expired: 'expirado',
 };
 const PAY_DONE = ['paid', 'cancelled', 'rejected', 'failed', 'expired'];
+// Terminou sem pagar e sem ser decisão do dono: dá para remontar o pedido (p|re).
+const PAY_RETRY = ['expired', 'failed', 'rejected'];
 async function sha256hex(text: string): Promise<string> {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -447,6 +450,9 @@ function payText(p: any, extra = ''): string {
   return lines.join('\n') + (extra ? `\n\n${extra}` : '');
 }
 const payKb = (id: string): Btn[][] => [[{ text: '✅ Pagar', callback_data: `p|ok|${id}` }, { text: '✖️ Cancelar', callback_data: `p|no|${id}` }]];
+// Rascunho expirado: em vez de "me peça de novo" (que obrigava a achar a mensagem original
+// no grupo), um toque remonta o pedido — revalidando tudo, como pedido novo.
+const reKb = (id: string): Btn[][] => [[{ text: '🔁 Preparar de novo', callback_data: `p|re|${id}` }]];
 const statusKb = (id: string): Btn[][] => [[{ text: '🔄 Ver status', callback_data: `p|st|${id}` }, { text: '✖️ Cancelar', callback_data: `p|no|${id}` }]];
 // deno-lint-ignore no-explicit-any
 async function editPay(chatId: number, mid: number | null, p: any, extra: string, kb?: Btn[][]) {
@@ -566,7 +572,10 @@ async function settleBill(p: any): Promise<string | null> {
 // deno-lint-ignore no-explicit-any
 async function afterPayStatus(admin: SupabaseClient, chatId: number, mid: number | null, p: any) {
   const extras = [await sendGroupReceipt(admin, p), await settleBill(p)].filter(Boolean);
-  await editPay(chatId, mid, p, statusLine(p) + (extras.length ? `\n${extras.join('\n')}` : ''), PAY_DONE.includes(p.status) ? undefined : statusKb(p.id));
+  // Acabou mal (expirou, falhou, o Inter recusou): oferece remontar em vez de deixar o cartão
+  // mudo. Cancelado não entra — cancelar foi decisão do dono.
+  const kb = !PAY_DONE.includes(p.status) ? statusKb(p.id) : (PAY_RETRY.includes(p.status) ? reKb(p.id) : undefined);
+  await editPay(chatId, mid, p, statusLine(p) + (extras.length ? `\n${extras.join('\n')}` : ''), kb);
 }
 async function payWatch() {
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
@@ -651,13 +660,36 @@ async function handlePayClick(admin: SupabaseClient, cq: any) {
     await afterPayStatus(admin, chatId, mid, p);
     return;
   }
+  // Preparar de novo (2026-09-18): pedido expirado/falhado vira um pedido NOVO, com toda a
+  // validação refeita no inter-bank. O cartão antigo fica como histórico e o novo chega com
+  // os botões de sempre; o vínculo com o pedido do grupo (e com a pendência) vai junto.
+  if (op === 're') {
+    // deno-lint-ignore no-explicit-any
+    let novo: any;
+    try {
+      const out = await callInter('reprepare_payment', { tenant_id: p.tenant_id, payment_id: p.id });
+      novo = out.payment;
+    } catch (e) {
+      await ack('Não deu para preparar');
+      await sendText(chatId, `Não consegui preparar de novo: ${errMsg(e)}`).catch(() => {});
+      return;
+    }
+    await ack('Preparado');
+    await editPay(chatId, mid, p, '🔁 Preparado de novo — use o cartão abaixo.');
+    const m = await tg('sendMessage', {
+      chat_id: chatId, text: toHtml(payText(novo, 'Tocar em *Pagar* pede seu PIN. Depois o Inter ainda pede a sua aprovação no app.')),
+      parse_mode: 'HTML', reply_markup: { inline_keyboard: payKb(novo.id) },
+    });
+    await admin.from('fin_inter_payments').update({ tg_message_id: m.message_id, chat_id: `tg:${chatId}` }).eq('id', novo.id);
+    return;
+  }
   if (op === 'ok') {
     if (p.status !== 'draft') { await ack(`Esse já está: ${PAY_STATUS[p.status] ?? p.status}`); return; }
     if (Date.now() - new Date(p.created_at).getTime() > PAY_TTL_MS) {
       await admin.from('fin_inter_payments').update({ status: 'expired', updated_at: nowIso() }).eq('id', p.id).eq('status', 'draft');
       p.status = 'expired';
       await ack('Expirou');
-      await editPay(chatId, mid, p, 'Pedido expirado (30 minutos). Me peça de novo.');
+      await editPay(chatId, mid, p, 'Pedido expirado (30 minutos). Toque em *Preparar de novo* — o pedido continua na sua caixa de pendências.', reKb(p.id));
       return;
     }
     const pin = await getSetting(admin, 'pay_pin');
