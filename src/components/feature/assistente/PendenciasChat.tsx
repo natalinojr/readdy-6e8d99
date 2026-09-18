@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
+import TarefasPendencia from '@/components/feature/assistente/TarefasPendencia';
 
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
 
@@ -217,7 +218,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                   <ItensClassificarCard call={call} tenantId={p.tenantId} abertoInicial onFeito={() => onMudou?.()} onTudo={() => { setExpandida(null); recarregar(); onMudou?.(); }} />
                 )}
                 {expandida === p.id && p.kind === 'tarefa_vencida' && (
-                  <TarefasInline tenantId={p.tenantId} meuId={meuId} onAbrir={(id) => onAbrirTarefa(p.tenantId, id)} />
+                  <TarefasPendencia tenantId={p.tenantId} meuId={meuId} onAbrir={(id) => onAbrirTarefa(p.tenantId, id)} />
                 )}
               </div>
             );
@@ -308,45 +309,3 @@ function ContasDreInline({ call, tenantId, onFeito, onTudo }: { call: Call; tena
   );
 }
 const GRUPO_DRE: Record<string, string> = { cost: 'Custos', expense: 'Despesas' };
-
-interface TarefaVencida { id: string; title: string; due_date: string | null; assignee_name: string | null; list_name: string | null; completed_at: string | null; assignee_id: string | null; created_by: string | null }
-
-// Tarefas vencidas da loja (as minhas: criei ou sou o responsável — a mesma conta do cron). Tocar
-// abre a PRÓPRIA tarefa no módulo (/tarefas?task=), com ler, editar, comentar e mudar status.
-function TarefasInline({ tenantId, meuId, onAbrir }: { tenantId: string; meuId: string | null; onAbrir: (id: string) => void }) {
-  const [tarefas, setTarefas] = useState<TarefaVencida[] | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-
-  useEffect(() => {
-    supabase.rpc('fn_get_tasks', { p_tenant_id: tenantId }).then(({ data, error }) => {
-      if (error) { setErro(error.message); setTarefas([]); return; }
-      const agora = Date.now();
-      const vencidas = ((data ?? []) as TarefaVencida[])
-        .filter((t) => !t.completed_at && t.due_date && new Date(t.due_date).getTime() < agora)
-        .filter((t) => !meuId || t.assignee_id === meuId || t.created_by === meuId)
-        .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
-      setTarefas(vencidas);
-    });
-  }, [tenantId, meuId]);
-
-  if (tarefas === null) return <p className="mt-2.5 text-xs text-zinc-500">Carregando tarefas…</p>;
-  return (
-    <div className="mt-2.5 space-y-1.5">
-      {erro && <p className="text-xs text-red-600">{erro}</p>}
-      {!tarefas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> Nenhuma tarefa vencida.</p>}
-      {tarefas.map((t) => (
-        <button key={t.id} onClick={() => onAbrir(t.id)}
-          className="w-full flex items-center gap-2.5 rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-white px-3 py-2.5 text-left cursor-pointer">
-          <i className="ri-checkbox-blank-circle-line text-amber-500" />
-          <span className="flex-1 min-w-0">
-            <span className="block text-sm font-semibold text-zinc-800 truncate">{t.title}</span>
-            <span className="block text-[11px] text-red-600">
-              venceu {data(t.due_date)}{t.assignee_name ? ` · ${t.assignee_name}` : ''}{t.list_name ? ` · ${t.list_name}` : ''}
-            </span>
-          </span>
-          <i className="ri-arrow-right-s-line text-zinc-400" />
-        </button>
-      ))}
-    </div>
-  );
-}
