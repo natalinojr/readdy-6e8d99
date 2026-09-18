@@ -21,6 +21,11 @@
 //   item_classify { tenant_id, ids, classe, dre_category_id?, merchandise_category_id? }
 //                                                  → classifica pelo chat (fn_item_classify com o JWT do dono)
 //   history/topics aceitam group_jid: conversa de um GRUPO do WhatsApp (asst_messages.group_jid)
+//   Caixa de pendências no chat (2026-09-18):
+//   pendencia_pagar { id }                         → prepara de novo o pedido do grupo e devolve os cartões
+//   contas_sem_dre { tenant_id }                   → contas sem categoria DRE + categorias da loja
+//   conta_dre     { tenant_id, bill_id, dre_category_id } → classifica a conta (só se ainda estiver sem)
+//   pedido_origem { id }                           → mensagem (asst_messages.id) que gerou o pedido do grupo
 //
 // O PIN é o mesmo do Telegram (asst_settings.pay_pin, hash com o id do chat do Telegram) e nunca
 // vai ao modelo nem ao histórico. Mesmo bloqueio: 3 erros → 15 minutos.
@@ -150,6 +155,48 @@ function payCard(p: any) {
     status, status_label: PAY_STATUS[status] ?? status, error: p.error ?? null,
     created_at: p.created_at, paid_at: p.paid_at ?? null, has_bill: !!p.bill_id,
   };
+}
+
+// Admin/gerente da loja (mesma régua do items_pending): o dono resolve pendência de qualquer loja dele.
+async function ehGestor(admin: SupabaseClient, userId: string, tenantId: string): Promise<boolean> {
+  if (!tenantId) return false;
+  const { data } = await admin.from('user_tenants').select('tenant_id').eq('user_id', userId).eq('tenant_id', tenantId)
+    .in('role', ['admin', 'manager']).maybeSingle();
+  return !!data;
+}
+
+// Classificou pelo chat: a pendência agregada da loja recontada na hora (o cron faria no próximo
+// tick). Mesmos textos do assistente-cron › syncPendenciasClassificacao.
+async function syncPendenciaContagem(admin: SupabaseClient, tenantId: string, kind: 'item_sem_classe' | 'conta_sem_dre') {
+  let n = 0;
+  if (kind === 'item_sem_classe') {
+    const { count } = await admin.from('fin_item_classifications').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId).is('classe', null);
+    n = count ?? 0;
+  } else {
+    const { data } = await admin.from('fin_accounts_payable').select('reference_type')
+      .eq('tenant_id', tenantId).is('dre_category_id', null).neq('status', 'cancelled').limit(1000);
+    n = (data ?? []).filter((c) => !['purchase', 'hr_payroll'].includes(String(c.reference_type ?? ''))).length;
+  }
+  if (n === 0) {
+    await admin.rpc('fn_pendencia_resolver_ref', { p_tenant: tenantId, p_kind: kind, p_ref: 'pendentes', p_motivo: 'tudo classificado' });
+    return;
+  }
+  await admin.rpc('fn_pendencia_upsert', kind === 'item_sem_classe'
+    ? {
+      p_tenant: tenantId, p_kind: kind, p_ref: 'pendentes',
+      p_titulo: `${n} ${n === 1 ? 'item sem classificação' : 'itens sem classificação'} (CMV × despesa)`,
+      p_detalhe: 'Enquanto não forem classificados, entram no CMV e a DRE sai errada.',
+      p_payload: { total: n }, p_rota: '/financeiro?tab=itens',
+      p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
+    }
+    : {
+      p_tenant: tenantId, p_kind: kind, p_ref: 'pendentes',
+      p_titulo: `${n} ${n === 1 ? 'conta sem categoria' : 'contas sem categoria'} na DRE`,
+      p_detalhe: 'Conta sem categoria não recebe baixa pelo assistente e fica de fora da DRE.',
+      p_payload: { total: n }, p_rota: '/financeiro?tab=pagar',
+      p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
+    });
 }
 
 Deno.serve(async (req) => {
@@ -501,7 +548,57 @@ Deno.serve(async (req) => {
       });
       if (error) return fail(error.message);
       log('INFO', 'item classificado pelo chat', { tenant: body.tenant_id, n: ids.length, classe });
+      await syncPendenciaContagem(admin, String(body.tenant_id), 'item_sem_classe').catch(() => null);
       return json({ success: true, data });
+    }
+
+    // ── Caixa de pendências no chat (2026-09-18): resolver ali mesmo ──────────────────────────
+    // Contas sem categoria na DRE: mesmo filtro do assistente-cron (conta_sem_dre) e da enquete.
+    if (action === 'contas_sem_dre') {
+      const tenantId = String(body.tenant_id ?? '');
+      if (!(await ehGestor(admin, user.id, tenantId))) return fail('Sem acesso a essa loja.', 403);
+      const [contas, cats] = await Promise.all([
+        admin.from('fin_accounts_payable')
+          .select('id, description, amount, due_date, supplier, category, reference_type')
+          .eq('tenant_id', tenantId).is('dre_category_id', null).neq('status', 'cancelled')
+          .order('due_date', { ascending: true }).limit(100),
+        // Receita e imposto a DRE não subtrai como despesa (mesma recusa do pay_bill).
+        admin.from('fin_dre_categories').select('id, name, group_type').eq('tenant_id', tenantId)
+          .is('deleted_at', null).eq('is_active', true).not('group_type', 'in', '(revenue,tax)').order('name'),
+      ]);
+      if (contas.error) throw new Error(contas.error.message);
+      const lista = (contas.data ?? []).filter((c) => !['purchase', 'hr_payroll'].includes(String(c.reference_type ?? '')));
+      return json({ success: true, data: { contas: lista, categorias: cats.data ?? [] } });
+    }
+
+    if (action === 'conta_dre') {
+      const tenantId = String(body.tenant_id ?? '');
+      const billId = String(body.bill_id ?? '');
+      const catId = String(body.dre_category_id ?? '');
+      if (!tenantId || !billId || !catId) return fail('Dados incompletos para classificar.');
+      if (!(await ehGestor(admin, user.id, tenantId))) return fail('Sem acesso a essa loja.', 403);
+      const { data: cat } = await admin.from('fin_dre_categories').select('id, name, group_type')
+        .eq('id', catId).eq('tenant_id', tenantId).is('deleted_at', null).maybeSingle();
+      if (!cat || ['revenue', 'tax'].includes(String(cat.group_type))) return fail('Categoria inválida para despesa.');
+      // `is null`: se alguém classificou pela tela ou pela enquete nesse meio-tempo, não sobrescreve.
+      const { data: feito, error } = await admin.from('fin_accounts_payable').update({ dre_category_id: catId })
+        .eq('id', billId).eq('tenant_id', tenantId).is('dre_category_id', null).select('id');
+      if (error) return fail(error.message);
+      log('INFO', 'conta classificada na DRE pelo chat', { tenant: tenantId, bill: billId, cat: cat.name });
+      await syncPendenciaContagem(admin, tenantId, 'conta_sem_dre').catch(() => null);
+      return json({ success: true, data: { ok: true, ja: !feito?.length } });
+    }
+
+    // Pedido de pagamento do grupo que não virou pagamento (faltou dado): a mensagem que o gerou,
+    // na conversa do grupo no chat. O gatilho gravado pelo brain traz "solicitacao_grupo_id = N".
+    if (action === 'pedido_origem') {
+      const { data: pend } = await admin.from('pendencias').select('kind, ref, tenant_id').eq('id', String(body.id ?? '')).maybeSingle();
+      if (!pend || pend.kind !== 'pagamento_grupo') return fail('Pendência não encontrada.', 404);
+      const { data: rq } = await admin.from('asst_group_requests').select('id, group_jid').eq('id', Number(pend.ref)).maybeSingle();
+      if (!rq) return fail('Pedido do grupo não encontrado.', 404);
+      const { data: m } = await admin.from('asst_messages').select('id').eq('chat_id', chatKey).eq('role', 'user')
+        .eq('group_jid', rq.group_jid).like('content', `%solicitacao_grupo_id = ${rq.id}%`).order('id').limit(1).maybeSingle();
+      return json({ success: true, data: { group_jid: rq.group_jid, message_id: m?.id ?? null } });
     }
 
     return fail('Ação desconhecida.');

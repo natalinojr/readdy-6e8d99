@@ -3,13 +3,21 @@
 // quem resolve é o chat, com botão. Abre pelo botão ao lado das ações rápidas e ocupa o painel
 // inteiro, como elas (a faixa fixa no topo tomava espaço da conversa). Aqui aparecem as pendências de TODAS as lojas do dono
 // (a RLS de `pendencias` já filtra por user_tenants), com a ação certa em cada uma:
-//   pagamento pedido no grupo → Pagar (prepara de novo se venceu e já pede o PIN)
+//   pagamento pedido no grupo → Pagar (prepara de novo se venceu e já pede o PIN) ou Ver a mensagem
+//                                (quando faltou dado, a conversa do grupo abre na mensagem do pedido)
+//   conta sem DRE / itens     → Classificar aqui (um por um, no próprio cartão) ou Abrir na tela
+//   tarefas vencidas          → Ver tarefas (lista aqui; tocar abre a tarefa no módulo)
 //   o resto                   → Abrir (troca de loja se precisar e vai à tela que resolve)
 //   aviso informativo         → Ciente (check permanente)
 //   exige ação                → Não vou fazer (com motivo) — nunca some por tempo.
+// Resolver no celular sem abrir tabela grande foi o pedido do dono (2026-09-18); a tela continua
+// a um toque para quem está no computador.
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { kindConfig } from '@/contexts/PendenciasContext';
+import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
+
+type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
 
 export interface PendenciaChat {
   id: string; tenantId: string; loja: string; kind: string; titulo: string; detalhe: string | null;
@@ -43,6 +51,9 @@ const quando = (iso: string) => {
 };
 
 interface Props {
+  call: Call;
+  /** Usuário logado: "minhas" tarefas vencidas (criei ou sou o responsável), como no cron. */
+  meuId: string | null;
   onFechar: () => void;
   /** Muda quando algo lá fora pode ter fechado uma pendência (pagamento feito, cancelado). */
   versao: number;
@@ -51,9 +62,13 @@ interface Props {
   onPagar: (p: PendenciaChat) => Promise<void>;
   onAbrir: (p: PendenciaChat) => void;
   onPedir: (texto: string) => void;
+  onVerMensagem: (p: PendenciaChat) => Promise<void>;
+  onAbrirTarefa: (tenantId: string, taskId: string) => void;
 }
 
-export default function PendenciasChat({ onFechar, versao, onMudou, onPagar, onAbrir, onPedir }: Props) {
+export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou, onPagar, onAbrir, onPedir, onVerMensagem, onAbrirTarefa }: Props) {
+  // Cartão aberto para resolver ali mesmo (classificar, ver tarefas). Um por vez.
+  const [expandida, setExpandida] = useState<string | null>(null);
   const [lista, setLista] = useState<PendenciaChat[] | null>(null);
   const [ocupada, setOcupada] = useState<string | null>(null);
   const [erros, setErros] = useState<Record<string, string>>({});
@@ -82,6 +97,13 @@ export default function PendenciasChat({ onFechar, versao, onMudou, onPagar, onA
     setOcupada(p.id);
     setErros((e) => { const n = { ...e }; delete n[p.id]; return n; });
     try { await onPagar(p); await recarregar(); onMudou?.(); }
+    catch (e) { setErros((x) => ({ ...x, [p.id]: e instanceof Error ? e.message : String(e) })); }
+    finally { setOcupada(null); }
+  };
+
+  const verMensagem = async (p: PendenciaChat) => {
+    setOcupada(p.id);
+    try { await onVerMensagem(p); }
     catch (e) { setErros((x) => ({ ...x, [p.id]: e instanceof Error ? e.message : String(e) })); }
     finally { setOcupada(null); }
   };
@@ -153,13 +175,28 @@ export default function PendenciasChat({ onFechar, versao, onMudou, onPagar, onA
                   </form>
                 ) : (
                   <div className="flex flex-wrap gap-2 mt-2.5">
-                    {ehPagamento ? (
-                      <button onClick={() => pagar(p)} disabled={busy} className="flex-1 h-9 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold disabled:opacity-50 cursor-pointer">
-                        {busy ? 'Preparando…' : <><i className="ri-check-line" /> Pagar</>}
+                    {ehPagamento && (
+                      <>
+                        <button onClick={() => pagar(p)} disabled={busy} className="flex-1 h-9 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold disabled:opacity-50 cursor-pointer">
+                          {busy ? 'Preparando…' : <><i className="ri-check-line" /> Pagar</>}
+                        </button>
+                        <button onClick={() => verMensagem(p)} disabled={busy} className="px-3 h-9 rounded-xl border border-violet-200 text-violet-700 text-sm font-bold hover:bg-violet-50 disabled:opacity-50 cursor-pointer">
+                          <i className="ri-chat-quote-line" /> Ver a mensagem
+                        </button>
+                      </>
+                    )}
+                    {RESOLVE_AQUI[p.kind] && (
+                      <button onClick={() => setExpandida((x) => (x === p.id ? null : p.id))}
+                        className={`flex-1 h-9 rounded-xl text-sm font-bold cursor-pointer ${expandida === p.id ? 'bg-violet-100 text-violet-700' : 'bg-violet-600 hover:bg-violet-500 text-white'}`}>
+                        <i className={RESOLVE_AQUI[p.kind].icone} /> {expandida === p.id ? 'Fechar' : RESOLVE_AQUI[p.kind].label}
                       </button>
-                    ) : p.rota && (
-                      <button onClick={() => onAbrir(p)} className="flex-1 h-9 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold cursor-pointer">
-                        <i className="ri-arrow-right-up-line" /> Abrir
+                    )}
+                    {!ehPagamento && p.rota && (
+                      <button onClick={() => onAbrir(p)}
+                        className={RESOLVE_AQUI[p.kind]
+                          ? 'px-3 h-9 rounded-xl border border-violet-200 text-violet-700 text-sm font-bold hover:bg-violet-50 cursor-pointer'
+                          : 'flex-1 h-9 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold cursor-pointer'}>
+                        <i className="ri-arrow-right-up-line" /> {RESOLVE_AQUI[p.kind] ? 'Abrir na tela' : 'Abrir'}
                       </button>
                     )}
                     {!p.acaoRequerida ? (
@@ -173,11 +210,139 @@ export default function PendenciasChat({ onFechar, versao, onMudou, onPagar, onA
                     )}
                   </div>
                 )}
+
+                {expandida === p.id && p.kind === 'conta_sem_dre' && (
+                  <ContasDreInline call={call} tenantId={p.tenantId} onFeito={() => onMudou?.()} onTudo={() => { setExpandida(null); recarregar(); onMudou?.(); }} />
+                )}
+                {expandida === p.id && p.kind === 'item_sem_classe' && (
+                  <ItensClassificarCard call={call} tenantId={p.tenantId} abertoInicial onFeito={() => onMudou?.()} />
+                )}
+                {expandida === p.id && p.kind === 'tarefa_vencida' && (
+                  <TarefasInline tenantId={p.tenantId} meuId={meuId} onAbrir={(id) => onAbrirTarefa(p.tenantId, id)} />
+                )}
               </div>
             );
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// Tipos que dá para resolver no próprio cartão.
+const RESOLVE_AQUI: Record<string, { label: string; icone: string }> = {
+  conta_sem_dre: { label: 'Classificar aqui', icone: 'ri-pie-chart-line' },
+  item_sem_classe: { label: 'Classificar aqui', icone: 'ri-price-tag-3-line' },
+  tarefa_vencida: { label: 'Ver tarefas', icone: 'ri-task-line' },
+};
+
+const brl = (n: number) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const data = (d: string | null) => (d ? d.slice(0, 10).split('-').reverse().join('/') : '');
+
+interface ContaSemDre { id: string; description: string; amount: number; due_date: string | null; supplier: string | null; category: string | null }
+interface CategoriaDre { id: string; name: string; group_type: string }
+
+// Contas sem categoria na DRE: escolhe a categoria e grava, uma por uma (assistente-app › conta_dre,
+// mesma regra da enquete: só grava se a conta ainda estiver sem categoria).
+function ContasDreInline({ call, tenantId, onFeito, onTudo }: { call: Call; tenantId: string; onFeito: () => void; onTudo: () => void }) {
+  const [contas, setContas] = useState<ContaSemDre[] | null>(null);
+  const [cats, setCats] = useState<CategoriaDre[]>([]);
+  const [escolha, setEscolha] = useState<Record<string, string>>({});
+  const [gravando, setGravando] = useState<string | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    call<{ contas: ContaSemDre[]; categorias: CategoriaDre[] }>('contas_sem_dre', { tenant_id: tenantId })
+      .then((r) => { setContas(r.contas); setCats(r.categorias); })
+      .catch((e) => { setErro(e instanceof Error ? e.message : String(e)); setContas([]); });
+  }, [call, tenantId]);
+
+  const gravar = async (c: ContaSemDre) => {
+    const cat = escolha[c.id];
+    if (!cat) return;
+    setGravando(c.id); setErro(null);
+    try {
+      await call('conta_dre', { tenant_id: tenantId, bill_id: c.id, dre_category_id: cat });
+      const resto = (contas ?? []).filter((x) => x.id !== c.id);
+      setContas(resto);
+      onFeito();
+      if (!resto.length) onTudo();
+    } catch (e) { setErro(e instanceof Error ? e.message : String(e)); }
+    finally { setGravando(null); }
+  };
+
+  if (contas === null) return <p className="mt-2.5 text-xs text-zinc-500">Carregando contas…</p>;
+  const grupos = [...new Set(cats.map((c) => c.group_type))];
+  return (
+    <div className="mt-2.5 space-y-2">
+      {erro && <p className="text-xs text-red-600">{erro}</p>}
+      {!contas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> Nenhuma conta sem categoria.</p>}
+      {contas.map((c) => (
+        <div key={c.id} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5">
+          <p className="text-sm font-semibold text-zinc-800 leading-snug">{c.description}</p>
+          <p className="text-[11px] text-zinc-500">
+            {brl(c.amount)}{c.due_date ? ` · vence ${data(c.due_date)}` : ''}{c.supplier ? ` · ${c.supplier}` : ''}
+          </p>
+          <div className="flex gap-1.5 mt-2">
+            <select value={escolha[c.id] ?? ''} onChange={(e) => setEscolha((x) => ({ ...x, [c.id]: e.target.value }))}
+              className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-zinc-200 bg-white text-sm focus:outline-none focus:border-violet-400">
+              <option value="">Categoria da DRE…</option>
+              {grupos.map((g) => (
+                <optgroup key={g} label={GRUPO_DRE[g] ?? g}>
+                  {cats.filter((x) => x.group_type === g).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            <button onClick={() => gravar(c)} disabled={!escolha[c.id] || gravando === c.id}
+              className="px-3 h-9 rounded-lg bg-violet-600 text-white text-sm font-bold disabled:opacity-40 cursor-pointer">
+              {gravando === c.id ? '…' : 'OK'}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+const GRUPO_DRE: Record<string, string> = { cost: 'Custos', expense: 'Despesas' };
+
+interface TarefaVencida { id: string; title: string; due_date: string | null; assignee_name: string | null; list_name: string | null; completed_at: string | null; assignee_id: string | null; created_by: string | null }
+
+// Tarefas vencidas da loja (as minhas: criei ou sou o responsável — a mesma conta do cron). Tocar
+// abre a PRÓPRIA tarefa no módulo (/tarefas?task=), com ler, editar, comentar e mudar status.
+function TarefasInline({ tenantId, meuId, onAbrir }: { tenantId: string; meuId: string | null; onAbrir: (id: string) => void }) {
+  const [tarefas, setTarefas] = useState<TarefaVencida[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.rpc('fn_get_tasks', { p_tenant_id: tenantId }).then(({ data, error }) => {
+      if (error) { setErro(error.message); setTarefas([]); return; }
+      const agora = Date.now();
+      const vencidas = ((data ?? []) as TarefaVencida[])
+        .filter((t) => !t.completed_at && t.due_date && new Date(t.due_date).getTime() < agora)
+        .filter((t) => !meuId || t.assignee_id === meuId || t.created_by === meuId)
+        .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
+      setTarefas(vencidas);
+    });
+  }, [tenantId, meuId]);
+
+  if (tarefas === null) return <p className="mt-2.5 text-xs text-zinc-500">Carregando tarefas…</p>;
+  return (
+    <div className="mt-2.5 space-y-1.5">
+      {erro && <p className="text-xs text-red-600">{erro}</p>}
+      {!tarefas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> Nenhuma tarefa vencida.</p>}
+      {tarefas.map((t) => (
+        <button key={t.id} onClick={() => onAbrir(t.id)}
+          className="w-full flex items-center gap-2.5 rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-white px-3 py-2.5 text-left cursor-pointer">
+          <i className="ri-checkbox-blank-circle-line text-amber-500" />
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm font-semibold text-zinc-800 truncate">{t.title}</span>
+            <span className="block text-[11px] text-red-600">
+              venceu {data(t.due_date)}{t.assignee_name ? ` · ${t.assignee_name}` : ''}{t.list_name ? ` · ${t.list_name}` : ''}
+            </span>
+          </span>
+          <i className="ri-arrow-right-s-line text-zinc-400" />
+        </button>
+      ))}
     </div>
   );
 }

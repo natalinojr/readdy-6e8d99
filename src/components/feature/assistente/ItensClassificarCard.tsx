@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 // Classificar itens de fornecedor (CMV × despesa) DENTRO do chat do assistente (2026-09-16).
 // Aparece embaixo do aviso "Itens novos para classificar" do assistente-cron. Carrega os pendentes
@@ -94,22 +94,30 @@ function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Ca
   );
 }
 
-export default function ItensClassificarCard({ call }: { call: Call }) {
+// tenantId/abertoInicial: usado pela caixa de pendências do chat (2026-09-18) — só a loja da
+// pendência e já aberto. Na mensagem do aviso segue como antes (todas as lojas, atrás do botão).
+export default function ItensClassificarCard({ call, tenantId, abertoInicial = false, onFeito }: { call: Call; tenantId?: string; abertoInicial?: boolean; onFeito?: () => void }) {
   const [lojas, setLojas] = useState<Loja[] | null>(null);
-  const [aberto, setAberto] = useState(false);
+  const [aberto, setAberto] = useState(abertoInicial);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [feitos, setFeitos] = useState(0);
 
   const carregar = useCallback(async () => {
     setLoading(true); setErro(null);
-    try { setLojas((await call<{ tenants: Loja[] }>('items_pending')).tenants); }
+    try {
+      const todas = (await call<{ tenants: Loja[] }>('items_pending')).tenants;
+      setLojas(tenantId ? todas.filter((l) => l.id === tenantId) : todas);
+    }
     catch (e) { setErro(e instanceof Error ? e.message : 'Não foi possível carregar os itens'); }
     setLoading(false);
-  }, [call]);
+  }, [call, tenantId]);
+  // Aberto de saída (pendências): carrega já.
+  useEffect(() => { if (abertoInicial) carregar(); }, [abertoInicial, carregar]);
 
   const feito = (lojaId: string, itemId: string) => {
     setFeitos((n) => n + 1);
+    onFeito?.();
     setLojas((ls) => (ls ?? []).map((l) => (l.id === lojaId ? { ...l, items: l.items.filter((i) => i.id !== itemId) } : l)).filter((l) => l.items.length));
   };
 

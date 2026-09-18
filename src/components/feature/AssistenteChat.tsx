@@ -314,6 +314,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [pendAberta, setPendAberta] = useState(false);
   const [pendVersao, setPendVersao] = useState(0);
   const [pendNovas, setPendNovas] = useState(0);
+  // "Ver a mensagem" do pedido do grupo: a conversa do grupo abre NESSA mensagem (não no fim) e ela
+  // pisca destacada. focoMsg vale para a próxima carga da conversa; destaque some sozinho.
+  const focoMsg = useRef<number | null>(null);
+  const [destaque, setDestaque] = useState<number | null>(null);
 
   // "Compartilhar" do Android: quem recebe é o src/lib/shareIntake, no início do app (main.tsx) —
   // o app abre na última rota usada, às vezes sem chat nenhum na tela, e o conteúdo se perdia
@@ -530,11 +534,23 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if (!open || loaded || !isOwner || vista !== 'conversa') return;
     (async () => {
       try {
-        const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { ...filtroConversa(abaRef.current) });
+        const foco = focoMsg.current;
+        focoMsg.current = null;
+        // Com foco: a página termina na mensagem do pedido; o que veio depois chega pelo sincronizar.
+        const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { ...filtroConversa(abaRef.current), ...(foco ? { before_id: foco + 1 } : {}) });
         setMsgs(h.messages); setHasMore(h.has_more);
         lastId.current = h.messages.length ? h.messages[h.messages.length - 1].id : 0;
-        fimPendente.current = true; stick.current = true;
+        fimPendente.current = !foco; stick.current = !foco;
         setLoaded(true); setErro(null);
+        if (foco) {
+          setDestaque(foco);
+          // Depois do layout (que leva ao fim ao trocar de conversa): vai até a mensagem e solta o "fim".
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            scrollRef.current?.querySelector(`[data-msg-id="${foco}"]`)?.scrollIntoView({ block: 'center' });
+            stick.current = false;
+          }));
+          setTimeout(() => setDestaque((d) => (d === foco ? null : d)), 4000);
+        }
       } catch (e) { setErro(e instanceof Error ? e.message : String(e)); }
     })();
   }, [open, loaded, isOwner, vista, carregarPagamentos]); // isOwner: o login pode chegar depois do 1º render
@@ -734,6 +750,24 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     setPendAberta(false);
     if (pd.tenantId !== user?.tenantId) await selectTenant(pd.tenantId);
     navigate(pd.rota);
+    if (variant === 'floating') setModo('mini');
+  };
+
+  // Pedido do grupo que não virou pagamento: abre a conversa do grupo na mensagem que o gerou.
+  const verMensagemPendencia = async (pd: PendenciaChat) => {
+    const r = await call<{ group_jid: string; message_id: number | null }>('pedido_origem', { id: pd.id });
+    setPendAberta(false);
+    focoMsg.current = r.message_id;
+    if (abaRef.current === `${PREFIXO_GRUPO}${r.group_jid}`) { lastId.current = 0; setMsgs([]); setLoaded(false); }
+    abrirConversa(`${PREFIXO_GRUPO}${r.group_jid}`);
+    if (r.message_id) { fimPendente.current = false; stick.current = false; }
+  };
+
+  // Tarefa vencida: abre a PRÓPRIA tarefa no módulo (deep link ?task=), trocando de loja se precisar.
+  const abrirTarefaPendencia = async (tenantId: string, taskId: string) => {
+    setPendAberta(false);
+    if (tenantId !== user?.tenantId) await selectTenant(tenantId);
+    navigate(`/tarefas?task=${encodeURIComponent(taskId)}`);
     if (variant === 'floating') setModo('mini');
   };
 
@@ -1003,14 +1037,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             const sis = resumoSistema(m.content);
             if (sis) {
               return (
-                <p key={m.id} className="text-center text-[11px] text-zinc-500 px-6">
+                <p key={m.id} data-msg-id={m.id} className={`text-center text-[11px] text-zinc-500 px-6 py-1 transition-colors${destaque === m.id ? ' ring-2 ring-amber-400 bg-amber-50 rounded-xl' : ''}`}>
                   <i className="ri-inbox-archive-line" /> {sis} · {hora(m.created_at)}
                 </p>
               );
             }
             const u = limparUser(m.content);
             return (
-              <div key={m.id} className="flex justify-end">
+              <div key={m.id} data-msg-id={m.id} className={`flex justify-end${destaque === m.id ? ' ring-2 ring-amber-400 bg-amber-50 rounded-xl' : ''}`}>
                 <div
                   onContextMenu={(e) => { e.preventDefault(); abrirMenu(m, u.text); }}
                   onTouchStart={() => pressStart(m, u.text)}
@@ -1031,10 +1065,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           }
           const sistema = /^\[(Pagamento|PIN|Leitura)/.test(m.content);
           if (sistema) {
-            return <p key={m.id} className="text-center text-[11px] text-zinc-400 px-6">{m.content.replace(/^\[|\]\s*id\s+\S+$/g, '').replace(/\]$/, '')} · {hora(m.created_at)}</p>;
+            return <p key={m.id} data-msg-id={m.id} className="text-center text-[11px] text-zinc-400 px-6">{m.content.replace(/^\[|\]\s*id\s+\S+$/g, '').replace(/\]$/, '')} · {hora(m.created_at)}</p>;
           }
           return (
-            <div key={m.id} className="flex justify-start">
+            <div key={m.id} data-msg-id={m.id} className={`flex justify-start${destaque === m.id ? ' ring-2 ring-amber-400 bg-amber-50 rounded-xl' : ''}`}>
               <div className="max-w-[85%]">
                 {/* Sem texto sobrando (a resposta era só a ação), o balão não aparece: antes
                     ficava um balão vazio com a hora. O botão embaixo já diz tudo. */}
@@ -1163,6 +1197,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
       {pendAberta && (
         <PendenciasChat
+          call={call}
+          meuId={user?.id ?? null}
+          onVerMensagem={verMensagemPendencia}
+          onAbrirTarefa={abrirTarefaPendencia}
           onFechar={() => setPendAberta(false)}
           versao={pendVersao}
           onMudou={contarPendencias}
