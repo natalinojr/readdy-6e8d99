@@ -6,6 +6,10 @@
 // Mesmo caminho do módulo: leitura por fn_get_task_detail / fn_get_task_lists e escrita pela Edge
 // task-write com active_tenant_id = loja da pendência (ela confere se você é membro), então funciona
 // com outra loja selecionada no ERPOS.
+//
+// Sem tenantId (aba Tarefas da caixa, 2026-09-18): TODAS as minhas tarefas — vencidas e de hoje — de
+// qualquer loja. O módulo de tarefas é por pessoa (user_module_access), a loja é só onde a tarefa mora;
+// a RLS de tasks já entrega só o que eu criei ou sou responsável.
 import { useCallback, useEffect, useState } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { PRIORIDADES, type TaskDetail, type TaskList, type TaskStatus } from '@/pages/tarefas/hooks/useTarefas';
@@ -14,6 +18,23 @@ interface TarefaVencida {
   id: string; title: string; due_date: string | null; assignee_name: string | null; list_name: string | null;
   list_id: string; completed_at: string | null; assignee_id: string | null; created_by: string | null;
   status_category: TaskStatus['category'] | null;
+  tenant_id: string; // loja onde a tarefa mora (preenchido aqui; escrita/leitura vão por ela)
+}
+
+const fimDeHoje = () => {
+  const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+  return new Date(`${hoje}T23:59:59-03:00`).getTime();
+};
+
+// Minhas tarefas abertas que venceram ou vencem hoje, de qualquer loja (RLS: criei ou sou o responsável).
+export async function minhasTarefasPendentes(meuId: string | null): Promise<Array<{ id: string; tenant_id: string }>> {
+  if (!meuId) return [];
+  const { data, error } = await supabase.from('tasks').select('id, tenant_id')
+    .is('completed_at', null).eq('is_archived', false).not('due_date', 'is', null)
+    .lte('due_date', new Date(fimDeHoje()).toISOString())
+    .or(`created_by.eq.${meuId},assignee_id.eq.${meuId}`).limit(500);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Array<{ id: string; tenant_id: string }>;
 }
 
 // Tarefa compartilhada comigo mora numa lista de outra pessoa (não vem em fn_get_task_lists): aí o
@@ -33,25 +54,40 @@ async function escrever(tenantId: string, action: string, payload: Record<string
   if (error || !out?.success) throw new Error(out?.error || error?.message || 'Não foi possível salvar.');
 }
 
-export default function TarefasPendencia({ tenantId, meuId, onAbrir }: { tenantId: string; meuId: string | null; onAbrir: (id: string) => void }) {
+export default function TarefasPendencia({ tenantId, meuId, onAbrir, onMudou: avisar }: {
+  tenantId?: string; meuId: string | null; onAbrir: (tenantId: string, id: string) => void; onMudou?: () => void;
+}) {
   const [tarefas, setTarefas] = useState<TarefaVencida[] | null>(null);
   const [listas, setListas] = useState<TaskList[]>([]);
   const [aberta, setAberta] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
-    const [t, l] = await Promise.all([
-      supabase.rpc('fn_get_tasks', { p_tenant_id: tenantId }),
-      supabase.rpc('fn_get_task_lists', { p_tenant_id: tenantId }),
-    ]);
-    if (t.error) { setErro(t.error.message); setTarefas([]); return; }
-    setListas((l.data as TaskList[]) ?? []);
-    const agora = Date.now();
-    setTarefas(((t.data ?? []) as TarefaVencida[])
-      .filter((x) => !x.completed_at && x.due_date && new Date(x.due_date).getTime() < agora)
+    let lojas: string[] = tenantId ? [tenantId] : [];
+    if (!tenantId) {
+      try { lojas = [...new Set((await minhasTarefasPendentes(meuId)).map((x) => x.tenant_id))]; }
+      catch (e) { setErro(e instanceof Error ? e.message : String(e)); setTarefas([]); return; }
+    }
+    const res = await Promise.all(lojas.map(async (tid) => {
+      const [t, l] = await Promise.all([
+        supabase.rpc('fn_get_tasks', { p_tenant_id: tid }),
+        supabase.rpc('fn_get_task_lists', { p_tenant_id: tid }),
+      ]);
+      return { tid, t, l };
+    }));
+    const falha = res.find((r) => r.t.error);
+    if (falha && res.length === 1) { setErro(falha.t.error!.message); setTarefas([]); return; }
+    setErro(null);
+    setListas(res.flatMap((r) => (r.l.data as TaskList[]) ?? []));
+    // Com loja: só as vencidas (pendência "tarefas vencidas" daquela loja). Sem loja: vencidas e de hoje.
+    const limite = tenantId ? Date.now() : fimDeHoje();
+    setTarefas(res.flatMap((r) => ((r.t.data ?? []) as TarefaVencida[]).map((x) => ({ ...x, tenant_id: r.tid })))
+      .filter((x) => !x.completed_at && x.due_date && new Date(x.due_date).getTime() <= limite)
       .filter((x) => !meuId || x.assignee_id === meuId || x.created_by === meuId)
       .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date))));
   }, [tenantId, meuId]);
+
+  const mudou = useCallback(async () => { await carregar(); avisar?.(); }, [carregar, avisar]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -59,31 +95,34 @@ export default function TarefasPendencia({ tenantId, meuId, onAbrir }: { tenantI
   return (
     <div className="mt-2.5 space-y-1.5">
       {erro && <p className="text-xs text-red-600">{erro}</p>}
-      {!tarefas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> Nenhuma tarefa vencida.</p>}
-      {tarefas.map((t) => (
+      {!tarefas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> {tenantId ? 'Nenhuma tarefa vencida.' : 'Nenhuma tarefa vencida ou para hoje.'}</p>}
+      {tarefas.map((t) => {
+        const venceu = t.due_date ? new Date(t.due_date).getTime() < Date.now() : false;
+        return (
         <div key={t.id} className={`rounded-xl border bg-zinc-50 ${aberta === t.id ? 'border-violet-300 bg-white' : 'border-zinc-200'}`}>
           <button onClick={() => setAberta((x) => (x === t.id ? null : t.id))} className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left cursor-pointer" aria-expanded={aberta === t.id}>
             <i className="ri-checkbox-blank-circle-line text-amber-500 mt-0.5" />
             <span className="flex-1 min-w-0">
               {/* Título INTEIRO (pedido do dono): quebra linha, nunca corta. */}
               <span className="block text-sm font-semibold text-zinc-800 whitespace-normal break-words">{t.title}</span>
-              <span className="block text-[11px] text-red-600 mt-0.5">
-                venceu {data(t.due_date)}{t.assignee_name ? ` · ${t.assignee_name}` : ''}{t.list_name ? ` · ${t.list_name}` : ''}
+              <span className={`block text-[11px] mt-0.5 ${venceu ? 'text-red-600' : 'text-amber-700'}`}>
+                {venceu ? `venceu ${data(t.due_date)}` : 'vence hoje'}{t.assignee_name ? ` · ${t.assignee_name}` : ''}{t.list_name ? ` · ${t.list_name}` : ''}
               </span>
             </span>
             <i className={`ri-arrow-${aberta === t.id ? 'up' : 'down'}-s-line text-zinc-400 mt-0.5`} />
           </button>
           {aberta === t.id && (
             <DetalheTarefa
-              tenantId={tenantId}
+              tenantId={t.tenant_id}
               tarefa={t}
               statuses={listas.find((l) => l.id === t.list_id)?.statuses ?? null}
-              onAbrir={() => onAbrir(t.id)}
-              onMudou={carregar}
+              onAbrir={() => onAbrir(t.tenant_id, t.id)}
+              onMudou={mudou}
             />
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

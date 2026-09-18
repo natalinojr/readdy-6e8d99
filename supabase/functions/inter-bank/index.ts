@@ -702,11 +702,26 @@ async function executePayment(admin: Admin, tenantId: string, id: string) {
     const op = await openPay(admin, cfg, tenantId);
     client = op.client; creds = op.creds;
     let token = op.token;
+    // dataVencimento é OBRIGATÓRIO no POST /banking/v2/pagamento. Conta de consumo (convênio, código
+    // que começa com 8) não traz a data no código: o 1º boleto desses (Claro, 2026-09-18) voltou 400.
+    // Sem data no código: a da conta a pagar, a que a leitura da foto do grupo extraiu, ou hoje.
+    let vencimento: string | null = p.due_date ?? null;
+    if (p.kind === 'boleto' && !vencimento) {
+      const iso = (x: unknown) => (/^\d{4}-\d{2}-\d{2}/.test(String(x ?? '')) ? String(x).slice(0, 10) : null);
+      if (p.bill_id) {
+        const { data: b } = await admin.from('fin_accounts_payable').select('due_date').eq('id', p.bill_id).maybeSingle();
+        vencimento = iso(b?.due_date);
+      }
+      if (!vencimento && p.group_request_id) {
+        const { data: g } = await admin.from('asst_group_requests').select('data').eq('id', p.group_request_id).maybeSingle();
+        vencimento = iso(g?.data?.extraido?.pagamento?.vencimento);
+      }
+      vencimento = vencimento ?? todayBR();
+    }
     const send = async (tk: string) => {
       sentToInter = true;
       if (p.kind === 'boleto') {
-        const body: Record<string, unknown> = { codBarraLinhaDigitavel: p.digitavel || p.barcode, valorPagar: Number(p.amount), dataPagamento: todayBR() };
-        if (p.due_date) body.dataVencimento = p.due_date;
+        const body: Record<string, unknown> = { codBarraLinhaDigitavel: p.digitavel || p.barcode, valorPagar: Number(p.amount), dataPagamento: todayBR(), dataVencimento: vencimento };
         return await interFetch(creds, client!, '/banking/v2/pagamento', { method: 'POST', token: tk, headers: { 'Content-Type': 'application/json', 'x-id-idempotente': p.idempotency_key }, body: JSON.stringify(body) });
       }
       const body: Record<string, unknown> = { valor: Number(p.amount), destinatario: { tipo: 'CHAVE', chave: p.pix_key } };

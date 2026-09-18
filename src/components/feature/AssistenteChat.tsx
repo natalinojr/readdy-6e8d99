@@ -16,6 +16,7 @@ import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { ACOES, GRUPOS } from '@/components/feature/assistente/acoes';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 import PendenciasChat, { type PendenciaChat } from '@/components/feature/assistente/PendenciasChat';
+import { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -453,10 +454,16 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   // Número no botão de pendências (e bolinha do botão fechado): só as que ninguém tocou ainda.
   // Roda aberto ou fechado — na barra pequena o botão também aparece.
+  const meuIdRef = useRef<string | null>(null);
+  meuIdRef.current = user?.id ?? null;
   const contarPendencias = useCallback(async () => {
     try {
-      const { count } = await supabase.from('pendencias').select('id', { count: 'exact', head: true }).eq('status', 'aberta');
-      setPendNovas(count ?? 0);
+      // Tarefas contam pela aba própria (minhas, de qualquer loja), não pela linha por loja do cron.
+      const [{ count }, tarefas] = await Promise.all([
+        supabase.from('pendencias').select('id', { count: 'exact', head: true }).eq('status', 'aberta').neq('kind', 'tarefa_vencida'),
+        minhasTarefasPendentes(meuIdRef.current).catch(() => []),
+      ]);
+      setPendNovas((count ?? 0) + tarefas.length);
     } catch { /* contador é extra */ }
   }, []);
 
@@ -685,44 +692,73 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const BIO_SERVER = 'erpos-pay-pin';
   const [bioDisponivel, setBioDisponivel] = useState(false);
   const [guardarBio, setGuardarBio] = useState(true);
+  // Pagando pela digital: só um aviso "Enviando…", sem o modal do PIN (ele abria antes da digital,
+  // com o teclado, e ficava piscando "Enviando…" por cima — 2026-09-18).
+  const [bioEnviando, setBioEnviando] = useState<Payment | null>(null);
+  // Último pagamento enviado: o cartão dele fica fixo acima da caixa de texto, com a situação
+  // (aguardando aprovação no Inter, pago, recusado…). Pago pela pendência, o pedido é NOVO e o
+  // cartão não estava na conversa aberta: o dono dava OK e não via nada (2026-09-18).
+  const [pagFixo, setPagFixo] = useState<string | null>(null);
 
-  const pagarComPin = async (p: Payment, pinValue: string, daDigital: boolean) => {
+  const pagarComPin = async (p: Payment, pinValue: string, daDigital: boolean): Promise<boolean> => {
     setPaying(true); setPinErr(null);
     try {
       const out = await call<{ payment: Payment }>('pay', { id: p.id, op: 'ok', pin: pinValue });
-      setPays((prev) => prev.map((x) => (x.id === p.id ? out.payment : x)));
+      setPays((prev) => (prev.some((x) => x.id === p.id) ? prev.map((x) => (x.id === p.id ? out.payment : x)) : [out.payment, ...prev]));
+      setPagFixo(out.payment.id);
       setPinFor(null); setPin('');
       setPendVersao((v) => v + 1);
       if (!daDigital && bioDisponivel && guardarBio) {
         await bio()?.setCredentials({ username: 'pin', password: pinValue, server: BIO_SERVER, accessControl: 2, title: 'Usar a digital nos pagamentos' }).catch(() => {});
       }
       sincronizar();
+      return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // PIN guardado não confere mais (trocado pelo /pin no Telegram): esquece e pede digitado.
       if (daDigital && /PIN errado/i.test(msg)) await bio()?.deleteCredentials({ server: BIO_SERVER }).catch(() => {});
+      // Erro que não é de PIN (Inter recusou, limite, saldo…): digitar de novo não resolve — fecha o PIN
+      // e o cartão fixo mostra o que aconteceu, com o motivo.
+      if (!/PIN/i.test(msg)) {
+        setPays((prev) => {
+          const falho = { ...p, status: 'rejected', status_label: 'não foi enviado', error: msg } as Payment;
+          return prev.some((x) => x.id === p.id) ? prev.map((x) => (x.id === p.id ? falho : x)) : [falho, ...prev];
+        });
+        setPagFixo(p.id);
+        setPinFor(null); setPin('');
+        setPendVersao((v) => v + 1);
+        return true;
+      }
       setPinErr(daDigital && /PIN errado/i.test(msg) ? 'O PIN guardado mudou. Digite o PIN novo.' : msg);
       setPin('');
+      return false;
     } finally { setPaying(false); }
   };
 
   const acaoPagamento = async (p: Payment, op: 'ok' | 'no' | 'st') => {
     if (op === 'ok') {
-      setPin(''); setPinErr(null); setPinFor(p);
+      setPin(''); setPinErr(null);
+      // Digital primeiro; o modal do PIN só abre se não houver digital, se ela for cancelada ou se falhar.
       const b = bio();
-      if (!b) return;
-      try {
-        const disp = (await b.isAvailable({ useFallback: false })) as { isAvailable?: boolean };
-        setBioDisponivel(!!disp?.isAvailable);
-        if (!disp?.isAvailable) return;
-        const salvo = (await b.isCredentialsSaved({ server: BIO_SERVER })) as { isSaved?: boolean };
-        if (!salvo?.isSaved) return;
-        const cred = (await b.getSecureCredentials({
-          server: BIO_SERVER, title: 'Confirmar pagamento', negativeButtonText: 'Digitar PIN',
-          reason: `${p.kind === 'pix' ? 'Pix' : 'Boleto'} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}`,
-        })) as { password?: string };
-        if (cred?.password) await pagarComPin(p, cred.password, true);
-      } catch { /* cancelou a digital: fica o PIN digitado */ }
+      if (b) {
+        try {
+          const disp = (await b.isAvailable({ useFallback: false })) as { isAvailable?: boolean };
+          setBioDisponivel(!!disp?.isAvailable);
+          const salvo = disp?.isAvailable ? (await b.isCredentialsSaved({ server: BIO_SERVER })) as { isSaved?: boolean } : null;
+          if (salvo?.isSaved) {
+            const cred = (await b.getSecureCredentials({
+              server: BIO_SERVER, title: 'Confirmar pagamento', negativeButtonText: 'Digitar PIN',
+              reason: `${p.kind === 'pix' ? 'Pix' : 'Boleto'} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}`,
+            })) as { password?: string };
+            if (cred?.password) {
+              setBioEnviando(p);
+              const ok = await pagarComPin(p, cred.password, true).finally(() => setBioEnviando(null));
+              if (ok) return;
+            }
+          }
+        } catch { /* cancelou a digital: abre o PIN digitado */ }
+      }
+      setPinFor(p);
       return;
     }
     try {
@@ -858,8 +894,17 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         </button>
     </>
   );
+  const cartaoFixo = pagFixo ? pays.find((x) => x.id === pagFixo) : undefined;
   const entrada = (
     <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
+      {cartaoFixo && (
+        <div className="relative mb-2">
+          <PaymentCard p={cartaoFixo} onAction={acaoPagamento} />
+          <button onClick={() => setPagFixo(null)} className="absolute top-1.5 right-1.5 w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar situação do pagamento">
+            <i className="ri-close-line" />
+          </button>
+        </div>
+      )}
       {erro && <p className="text-xs text-red-600 px-1 pb-1.5">{erro}</p>}
       {citacao && (
         <div className="flex items-start gap-2 mb-2 px-2 py-1.5 rounded-xl bg-violet-50 border-l-2 border-violet-400">
@@ -1208,6 +1253,15 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           onAbrir={abrirPendencia}
           onPedir={pedirPendencia}
         />
+      )}
+
+      {bioEnviando && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30 p-3">
+          <div className="rounded-2xl bg-white px-5 py-4 flex items-center gap-3 shadow-lg">
+            <div className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm font-bold text-zinc-800">Enviando pagamento de {brl(bioEnviando.amount)}…</p>
+          </div>
+        </div>
       )}
 
       {/* PIN do pagamento — não passa pelo modelo nem fica no histórico */}

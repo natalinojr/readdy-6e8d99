@@ -6,7 +6,9 @@
 //   pagamento pedido no grupo → Pagar (prepara de novo se venceu e já pede o PIN) ou Ver a mensagem
 //                                (quando faltou dado, a conversa do grupo abre na mensagem do pedido)
 //   conta sem DRE / itens     → Classificar aqui (um por um, no próprio cartão) ou Abrir na tela
-//   tarefas vencidas          → Ver tarefas (lista aqui; tocar abre a tarefa no módulo)
+//   tarefas                   → aba própria "Tarefas" (2026-09-18): as MINHAS tarefas vencidas e de hoje,
+//                                de qualquer loja — o módulo é por pessoa, não por loja. A pendência
+//                                agregada "tarefas vencidas" por loja (cron) sai da lista para não dobrar.
 //   o resto                   → Abrir (troca de loja se precisar e vai à tela que resolve)
 //   aviso informativo         → OK (estoque crítico: sai da lista; volta se piorar)
 //   exige ação                → Não vou fazer (com motivo) — nunca some por tempo.
@@ -16,7 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
-import TarefasPendencia from '@/components/feature/assistente/TarefasPendencia';
+import TarefasPendencia, { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
 
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
 
@@ -46,6 +48,8 @@ export async function carregarPendenciasChat(): Promise<PendenciaChat[]> {
     // Aviso (estoque crítico…) com OK dado sai da lista; volta sozinho se piorar (assistente-cron).
     // O que exige ação continua listado mesmo visto: só sai resolvendo ou com "Não vou fazer".
     .filter((p) => p.acaoRequerida || p.status !== 'vista')
+    // Tarefas têm aba própria, por pessoa (a linha por loja do cron seria a mesma coisa duas vezes).
+    .filter((p) => p.kind !== 'tarefa_vencida')
     .sort((a, b) => (PESO[a.urgencia] - PESO[b.urgencia]) || (b.criadaEm < a.criadaEm ? -1 : 1));
 }
 
@@ -83,9 +87,11 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
   const [motivoDe, setMotivoDe] = useState<string | null>(null);
   const [motivo, setMotivo] = useState('');
 
+  const [nTarefas, setNTarefas] = useState(0);
   const recarregar = useCallback(async () => {
     try { setLista(await carregarPendenciasChat()); } catch { setLista((l) => l ?? []); }
-  }, []);
+    try { setNTarefas((await minhasTarefasPendentes(meuId)).length); } catch { /* aba some */ }
+  }, [meuId]);
 
   useEffect(() => {
     recarregar();
@@ -119,9 +125,17 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
   const todas = lista ?? [];
   const lojas = [...new Map(todas.map((p) => [p.tenantId, p.loja || 'Loja'])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
   // Loja escolhida que sumiu da lista (tudo resolvido lá): volta para Todas em vez de mostrar vazio.
+  const verTarefas = loja === ABA_TAREFAS && nTarefas > 0;
   const filtro = lojas.some(([id]) => id === loja) ? loja : '';
-  const itens = filtro ? todas.filter((p) => p.tenantId === filtro) : todas;
+  const itens = verTarefas ? [] : filtro ? todas.filter((p) => p.tenantId === filtro) : todas;
   const urgentes = itens.filter((p) => p.urgencia === 'alta').length;
+  const abas: Array<[string, string, number]> = [
+    ['', 'Todas', todas.length + nTarefas],
+    ...lojas.map(([id, nome]) => [id, nome, todas.filter((p) => p.tenantId === id).length] as [string, string, number]),
+    ...(nTarefas > 0 ? [[ABA_TAREFAS, 'Tarefas', nTarefas] as [string, string, number]] : []),
+  ];
+  const abaAtual = verTarefas ? ABA_TAREFAS : filtro;
+  const totalVisivel = itens.length + (filtro ? 0 : nTarefas);
 
   return (
     <div data-sem-arrasto className="absolute inset-0 z-10 flex flex-col bg-zinc-50">
@@ -132,7 +146,9 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         <div className="flex-1 min-w-0">
           <p className="text-sm font-black text-zinc-900 leading-tight">Pendências</p>
           <p className="text-[11px] text-zinc-400 leading-tight">
-            {lista === null ? 'carregando…' : itens.length === 1 ? '1 esperando você' : `${itens.length} esperando você`}
+            {lista === null ? 'carregando…' : verTarefas
+              ? `${nTarefas} ${nTarefas === 1 ? 'tarefa vencida ou para hoje' : 'tarefas vencidas ou para hoje'}`
+              : totalVisivel === 1 ? '1 esperando você' : `${totalVisivel} esperando você`}
             {urgentes > 0 ? ` · ${urgentes} urgente${urgentes > 1 ? 's' : ''}` : ''}
           </p>
         </div>
@@ -140,25 +156,38 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
           <i className="ri-close-line text-xl" />
         </button>
       </div>
-      {lojas.length > 1 && (
+      {abas.length > 2 && (
         <div className="flex gap-1.5 px-3 py-2 border-b border-zinc-100 bg-white overflow-x-auto flex-shrink-0">
-          {[['', 'Todas'] as [string, string], ...lojas].map(([id, nome]) => {
-            const n = id ? todas.filter((p) => p.tenantId === id).length : todas.length;
-            return (
-              <button key={id || 'todas'} onClick={() => escolherLoja(id)}
-                className={`flex-shrink-0 h-8 px-3 rounded-full text-xs font-bold whitespace-nowrap cursor-pointer ${filtro === id ? 'bg-violet-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-                {nome} · {n}
-              </button>
-            );
-          })}
+          {abas.map(([id, nome, n]) => (
+            <button key={id || 'todas'} onClick={() => escolherLoja(id)}
+              className={`flex-shrink-0 h-8 px-3 rounded-full text-xs font-bold whitespace-nowrap cursor-pointer ${abaAtual === id ? 'bg-violet-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
+              {id === ABA_TAREFAS && <i className="ri-task-line mr-1" />}{nome} · {n}
+            </button>
+          ))}
         </div>
       )}
-      {lista === null ? (
+      {verTarefas ? (
+        <div className="flex-1 overflow-y-auto px-3 pb-3">
+          <p className="text-[11px] text-zinc-500 pt-3">Suas tarefas (criadas por você ou com você de responsável), de qualquer loja. Toque para mudar status, prazo ou comentar.</p>
+          <TarefasPendencia meuId={meuId} onAbrir={onAbrirTarefa} onMudou={() => { recarregar(); onMudou?.(); }} />
+        </div>
+      ) : lista === null ? (
         <div className="mx-auto my-16 w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
-      ) : !itens.length ? (
+      ) : !totalVisivel ? (
         <p className="text-sm text-zinc-400 text-center py-16"><i className="ri-check-double-line text-2xl block mb-1 text-emerald-500" />Nada pendente.</p>
       ) : (
         <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+          {nTarefas > 0 && !filtro && (
+            <button onClick={() => escolherLoja(ABA_TAREFAS)}
+              className="w-full flex items-center gap-2.5 rounded-2xl border border-amber-200 bg-white px-3.5 py-3 text-left cursor-pointer hover:bg-amber-50/40">
+              <span className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-amber-100"><i className="ri-task-line text-amber-700" /></span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-bold text-zinc-900">{nTarefas} {nTarefas === 1 ? 'tarefa sua vencida ou para hoje' : 'tarefas suas vencidas ou para hoje'}</span>
+                <span className="block text-[11px] text-zinc-500">De qualquer loja · toque para ver</span>
+              </span>
+              <i className="ri-arrow-right-s-line text-zinc-400" />
+            </button>
+          )}
           {itens.map((p) => {
             const cfg = kindConfig(p.kind);
             const ehPagamento = p.kind === 'pagamento_grupo' || p.kind === 'pagamento_pendente';
@@ -241,7 +270,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                 )}
                 {expandida === p.id && p.kind === 'conta_atrasada' && <ContasAtrasadasInline tenantId={p.tenantId} />}
                 {expandida === p.id && p.kind === 'tarefa_vencida' && (
-                  <TarefasPendencia tenantId={p.tenantId} meuId={meuId} onAbrir={(id) => onAbrirTarefa(p.tenantId, id)} />
+                  <TarefasPendencia tenantId={p.tenantId} meuId={meuId} onAbrir={onAbrirTarefa} />
                 )}
               </div>
             );
@@ -253,6 +282,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
 }
 
 const FILTRO_KEY = 'erpos.pendencias.loja';
+const ABA_TAREFAS = '__tarefas';
 const BOTAO = 'h-10 px-2 flex items-center justify-center gap-1.5 rounded-xl text-sm font-bold whitespace-nowrap disabled:opacity-50 cursor-pointer';
 const PRINCIPAL = `${BOTAO} bg-violet-600 hover:bg-violet-500 text-white`;
 const SECUNDARIO = `${BOTAO} border border-violet-200 text-violet-700 hover:bg-violet-50`;
