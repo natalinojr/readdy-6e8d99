@@ -148,6 +148,13 @@ function resumoSistema(content: string): string | null {
 // vale para o histórico e para a prévia da barra pequena.
 const MARCADORES = /\n?\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado|Botão enviado|Botão:)[^\n]*\]/g;
 const semMarcadores = (t: string) => t.replace(MARCADORES, '').trim();
+// Linha de sistema "[Pagamento pix de R$ 100,00 para Fulano: ✅ pago] id <uuid>" → só a frase.
+// O id é para o modelo achar o pagamento; na tela (balão e prévia da lista) não diz nada — e no
+// celular a prévia chegou a mostrar SÓ o id (2026-09-18).
+const linhaSistema = (t: string): string | null => {
+  const m = t.match(/^\[((?:Pagamento|PIN|Leitura)[^\]]*)\]/);
+  return m ? m[1].trim() : null;
+};
 // O marcador de botão também É o botão (2026-09-16). Antes o botão só existia na resposta da hora
 // (vinha nas `actions` do send) e sumia ao recarregar; avisos que chegam sozinhos (contratação, cron)
 // nem passam pelo send — só pelo histórico. Lendo o marcador, o botão aparece em qualquer mensagem.
@@ -887,7 +894,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // (a bolinha roxa, como no WhatsApp/Telegram).
   const linhaConversa = (o: { chave: string; icone: string; cor: string; titulo: string; unread: number; last: TopicoResumo['last']; abrir: () => void }) => {
     const previa = o.last
-      ? (resumoSistema(o.last.content) ?? `${o.last.role === 'user' ? 'Você: ' : ''}${semMarcadores(o.last.content)}`)
+      ? (resumoSistema(o.last.content) ?? linhaSistema(o.last.content) ?? `${o.last.role === 'user' ? 'Você: ' : ''}${semMarcadores(o.last.content)}`)
       : 'Nada por aqui ainda';
     return (
       <button key={o.chave} onClick={o.abrir} className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left">
@@ -1099,8 +1106,17 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
           {menuAcoes && !acoesTelaCheia && menuAcoesPainel}
           <div className="flex items-center gap-2">
-            {botaoAcoes}
-            <button onClick={() => setMenuAcoes((v) => !v)} className="text-sm font-semibold text-violet-700 cursor-pointer">Ações rápidas</button>
+            <button onClick={() => setMenuAcoes((v) => !v)} className={`flex-1 h-10 flex items-center justify-center gap-1.5 rounded-xl text-sm font-semibold cursor-pointer ${menuAcoes ? 'bg-violet-100 text-violet-700' : 'text-violet-700 hover:bg-violet-50'}`}>
+              <i className="ri-flashlight-line text-lg" /> Ações rápidas
+            </button>
+            <button onClick={() => { setMenuAcoes(false); setPendAberta(true); }} className={`relative flex-1 h-10 flex items-center justify-center gap-1.5 rounded-xl text-sm font-semibold cursor-pointer ${pendAberta ? 'bg-indigo-100 text-indigo-700' : 'text-indigo-700 hover:bg-indigo-50'}`}>
+              <i className="ri-inbox-archive-line text-lg" /> Pendências
+              {pendNovas > 0 && (
+                <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-black">
+                  {pendNovas > 9 ? '9+' : pendNovas}
+                </span>
+              )}
+            </button>
           </div>
         </div>
       )}
