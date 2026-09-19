@@ -5,6 +5,8 @@ import CancelamentoModal from '@/components/feature/CancelamentoModal';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useKDS } from '../../../../contexts/KDSContext';
 import { useSessao } from '@/contexts/SessaoContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { useMotoboyStatus } from '@/hooks/useMotoboyStatus';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSPedidoStatus } from '@/types/kds';
 import { kdsStatusToPdvStatus, pdvStatusLabel, pdvStatusBadgeCls, formatOrderNumber } from '@/lib/statusMappers';
@@ -455,9 +457,10 @@ function ItemNomeSimples({ item, allEntregues, expanded, showArrow = true }: Ite
             </span>
           )}
         </div>
-        {item.opcoes.length > 0 && (
-          <p className="text-[9px] text-zinc-400 truncate" title={item.opcoes.join(' · ')}>{item.opcoes.join(' · ')}</p>
-        )}
+        {/* Complementos inteiros, um por linha, com o valor (dono, 2026-09-18: vinha cortado) */}
+        {item.opcoes.map((op, i) => (
+          <p key={i} className="text-[10px] text-violet-600 font-medium break-words leading-snug">+ {op}</p>
+        ))}
         {item.observacao && (
           <p className="text-[9px] text-amber-600 truncate" title={item.observacao}>
             <i className="ri-chat-1-line mr-0.5" />{item.observacao}
@@ -525,8 +528,10 @@ function kdsToRecente(p: KDSPedido): PedidoRecenteComParticipant {
       nome: item.nome,
       categoriaNome: item.categoriaNome,
       quantidade: item.quantidade,
+      // Delivery grava item_price SEM os complementos (convenção — PDVContext › itemPriceDoCanal);
+      // na tela o item mostra o valor cheio, senão a soma dos itens não bate com o pedido.
       preco: (item.item_price ?? 0) > 0
-        ? (item.item_price ?? 0)
+        ? (item.item_price ?? 0) + (p.origem === 'delivery' ? item.opcoes.reduce((acc, o) => acc + Number(o.additional_price ?? 0), 0) : 0)
         : (p.totalAmount > 0 ? p.totalAmount / p.itens.reduce((acc, i) => acc + i.quantidade, 0) : 0),
       estacao: item.estacao,
       // BUG 3.2 FIX: exibir preço adicional das opções quando > 0
@@ -1317,6 +1322,52 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
 
 // ── Card de pedido ────────────────────────────────────────────────────────────
 
+// Pedido de um caixa JÁ FECHADO no mesmo dia: só consulta (sem cobrar, editar, cancelar nem entregar).
+function PedidoCardAnterior({ pedido }: { pedido: PedidoRecente }) {
+  const [aberto, setAberto] = useState(false);
+  const nome = pedido.nomeCliente || pedido.participantName || (pedido.senha ? `Senha ${pedido.senha}` : pedido.mesaNumero ? `Mesa ${pedido.mesaNumero}` : '');
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-zinc-50/70 p-3">
+      <button type="button" onClick={() => setAberto((x) => !x)} className="w-full text-left cursor-pointer">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-base font-black text-zinc-700">#{formatOrderNumber(pedido.numeroStr ?? String(pedido.numero))}</p>
+            {nome && <p className="text-xs text-zinc-600 truncate">{nome}</p>}
+          </div>
+          <div className="text-right flex-shrink-0">
+            <p className="text-base font-black text-zinc-700">{formatPrice(pedido.total)}</p>
+            <p className="text-[10px] text-zinc-400">{pedido.criadoEm}</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-zinc-200 text-zinc-600">
+            <i className="ri-lock-line" /> Caixa anterior{pedido.session_number ? ` · ${pedido.session_number}` : ''}
+          </span>
+          {pedido.status === 'cancelado'
+            ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">Cancelado</span>
+            : pedido.pago
+              ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Pago</span>
+              : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Não pago</span>}
+          {pedido.status === 'entregue' && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-zinc-200 text-zinc-600">Entregue</span>}
+          {pedido.destino === 'delivery' && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-600">Delivery</span>}
+          <i className={`ri-arrow-${aberto ? 'up' : 'down'}-s-line text-zinc-400 ml-auto`} />
+        </div>
+      </button>
+      {aberto && (
+        <div className="mt-2 pt-2 border-t border-zinc-200 space-y-1.5">
+          {pedido.itensDetalhes.map((it) => (
+            <div key={it.id} className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1"><ItemNomeSimples item={it} allEntregues={false} expanded showArrow={false} /></div>
+              {it.preco > 0 && <span className="text-xs font-semibold text-zinc-600 flex-shrink-0">{formatPrice(it.preco * it.quantidade)}</span>}
+            </div>
+          ))}
+          <p className="text-[10px] text-zinc-400 pt-1">Pedido de um caixa já fechado — só consulta.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface PedidoCardProps {
   pedido: PedidoRecente;
   onEntregarRemote?: (itemId: string, orderId: string, unidadeNumero?: number) => Promise<void>;
@@ -1815,7 +1866,11 @@ type Filtro = 'todos' | 'aberto' | 'novo' | 'preparo' | 'pronto' | 'em_rota' | '
 
 // Um pedido pode aparecer em múltiplas abas quando tem itens em fases diferentes
 // Ex: pedido com 1 item pronto e 1 em preparo → aparece em "Preparo" E "Prontos"
-function pedidoMatchFiltro(p: PedidoRecente, filtro: Filtro): boolean {
+// Filtros de TRABALHO (cobrar, preparar, entregar): pedido de caixa já fechado não entra.
+const FILTROS_TRABALHO: Filtro[] = ['aberto', 'novo', 'preparo', 'pronto', 'em_rota'];
+function pedidoMatchFiltro(p: PedidoRecente, filtro: Filtro, sessaoAtualId?: string | null): boolean {
+  const caixaAnterior = !!sessaoAtualId && !!p.session_id && p.session_id !== sessaoAtualId;
+  if (caixaAnterior && FILTROS_TRABALHO.includes(filtro)) return false;
   if (filtro === 'todos') return true;
   const kdsStatus = (p as PedidoRecente & { kdsStatus?: KDSPedidoStatus }).kdsStatus;
   // Em rota: pedido de delivery que saiu para entrega (out_for_delivery → kds 'em_rota').
@@ -1882,15 +1937,30 @@ export default function PedidosRecentesPanel() {
   // p_only_active) — o 0001 da Vila, pago e entregue às 19:19, sumiu de "Pago". Aqui a sessão
   // inteira é buscada ao abrir e a cada 60 s, e só entra o que NÃO está na lista ao vivo (a ao
   // vivo é sempre a mais atual; o que sobra da sessão já está encerrado).
+  // Opção 2 do dono (2026-09-18): os pedidos do DIA inteiro, inclusive dos caixas já fechados no
+  // mesmo dia (sessões abertas na mesma data, horário de Brasília). Os do caixa anterior ficam só
+  // para consulta: aparecem em Pago/Entregues/Cancelados/Todos, com cartão sem ações.
+  const { user } = useAuth();
   const [sessaoCompleta, setSessaoCompleta] = useState<KDSPedido[]>([]);
   useEffect(() => {
     if (!sessao?.id) { setSessaoCompleta([]); return undefined; }
     let vivo = true;
-    const buscar = () => { fetchSessionOrdersFull(sessao.id).then((r) => { if (vivo) setSessaoCompleta(r); }); };
-    buscar();
-    const t = setInterval(() => { if (!document.hidden) buscar(); }, 60000);
+    const dia = (sessao.dataRef ?? new Date()).toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    const buscar = async () => {
+      let ids = [sessao.id];
+      if (user?.tenantId) {
+        const { data } = await supabase.from('sessions').select('id')
+          .eq('tenant_id', user.tenantId).neq('id', sessao.id)
+          .gte('opened_at', `${dia}T00:00:00-03:00`).lte('opened_at', `${dia}T23:59:59-03:00`);
+        ids = [sessao.id, ...(data ?? []).map((s) => String(s.id))];
+      }
+      const listas = await Promise.all(ids.map((id) => fetchSessionOrdersFull(id)));
+      if (vivo) setSessaoCompleta(listas.flat());
+    };
+    void buscar();
+    const t = setInterval(() => { if (!document.hidden) void buscar(); }, 60000);
     return () => { vivo = false; clearInterval(t); };
-  }, [sessao?.id, fetchSessionOrdersFull]);
+  }, [sessao?.id, sessao?.dataRef, user?.tenantId, fetchSessionOrdersFull]);
   const pedidosDoDia = useMemo(() => {
     const aoVivo = new Set(kdsPedidos.map((p) => p.id));
     return [...kdsPedidos, ...sessaoCompleta.filter((p) => !aoVivo.has(p.id))];
@@ -1974,7 +2044,7 @@ export default function PedidosRecentesPanel() {
   );
 
   const pedidos = useMemo(() => {
-    let filtered = allPedidos.filter((p) => pedidoMatchFiltro(p, filtro));
+    let filtered = allPedidos.filter((p) => pedidoMatchFiltro(p, filtro, sessao?.id));
     // Busca por nome do cliente, senha, mesa, nº do pedido ou senha do participante
     const q = busca.trim().toLowerCase();
     if (q) {
@@ -2007,14 +2077,14 @@ export default function PedidosRecentesPanel() {
   }, [allPedidos, filtro, busca]);
 
   // Contadores por fase — usam pedidoMatchFiltro para consistência total
-  const countAberto    = allPedidos.filter((p) => pedidoMatchFiltro(p, 'aberto')).length;
-  const countNovo      = allPedidos.filter((p) => pedidoMatchFiltro(p, 'novo')).length;
-  const countPreparo   = allPedidos.filter((p) => pedidoMatchFiltro(p, 'preparo')).length;
-  const countProntos   = allPedidos.filter((p) => pedidoMatchFiltro(p, 'pronto')).length;
-  const countEmRota    = allPedidos.filter((p) => pedidoMatchFiltro(p, 'em_rota')).length;
-  const countPago      = allPedidos.filter((p) => pedidoMatchFiltro(p, 'pago')).length;
-  const countEntregues = allPedidos.filter((p) => pedidoMatchFiltro(p, 'entregue')).length;
-  const countCancelados= allPedidos.filter((p) => pedidoMatchFiltro(p, 'cancelado')).length;
+  const countAberto    = allPedidos.filter((p) => pedidoMatchFiltro(p, 'aberto', sessao?.id)).length;
+  const countNovo      = allPedidos.filter((p) => pedidoMatchFiltro(p, 'novo', sessao?.id)).length;
+  const countPreparo   = allPedidos.filter((p) => pedidoMatchFiltro(p, 'preparo', sessao?.id)).length;
+  const countProntos   = allPedidos.filter((p) => pedidoMatchFiltro(p, 'pronto', sessao?.id)).length;
+  const countEmRota    = allPedidos.filter((p) => pedidoMatchFiltro(p, 'em_rota', sessao?.id)).length;
+  const countPago      = allPedidos.filter((p) => pedidoMatchFiltro(p, 'pago', sessao?.id)).length;
+  const countEntregues = allPedidos.filter((p) => pedidoMatchFiltro(p, 'entregue', sessao?.id)).length;
+  const countCancelados= allPedidos.filter((p) => pedidoMatchFiltro(p, 'cancelado', sessao?.id)).length;
 
   const filtros: { key: Filtro; label: string; badge?: number; activeCls?: string }[] = [
     { key: 'aberto',    label: 'Em Aberto', badge: countAberto,    activeCls: 'bg-orange-500 text-white' },
@@ -2096,7 +2166,9 @@ export default function PedidosRecentesPanel() {
           </div>
         )}
         {pedidos.map((p) => (
-          p.pedidoIds && p.pedidoIds.length > 1 ? (
+          sessao?.id && p.session_id && p.session_id !== sessao.id ? (
+            <PedidoCardAnterior key={p.id} pedido={p} />
+          ) : p.pedidoIds && p.pedidoIds.length > 1 ? (
             <PedidoCardAgrupado
               key={p.id}
               pedido={p}

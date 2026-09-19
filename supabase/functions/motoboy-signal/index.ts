@@ -288,7 +288,20 @@ serve(async (req) => {
       const { error: upErr } = await admin.from("orders").update(updates).eq("id", orderId);
       if (upErr) return json({ error: upErr.message }, 500);
       if (signal === "entregou") {
-        await admin.from("order_items").update({ status: "delivered" }).eq("order_id", orderId);
+        // Entregue ao cliente = TUDO entregue: item, unidades e partes (como o KDS/caixa fazem).
+        // Antes só o item mudava — as unidades ficavam "prontas" e a tela de Pedidos (que lê as
+        // unidades) mostrava o pedido 0001 da Vila (18/09) como "Pronto" depois de entregue.
+        await admin.from("order_items").update({ status: "delivered" }).eq("order_id", orderId).neq("status", "cancelled");
+        await admin.from("order_items").update({ delivered_at: nowIso }).eq("order_id", orderId).neq("status", "cancelled").is("delivered_at", null);
+        const { data: its } = await admin.from("order_items").select("id").eq("order_id", orderId).neq("status", "cancelled");
+        const itemIds = (its ?? []).map((i: { id: string }) => i.id);
+        if (itemIds.length) {
+          // (item_unit_status não tem 'cancelled': unidade cancelada some com o item, filtrado acima)
+          await admin.from("order_item_units").update({ status: "delivered", delivered_at: nowIso })
+            .in("order_item_id", itemIds).is("delivered_at", null);
+          await admin.from("order_item_parts").update({ status: "delivered", delivered_at: nowIso })
+            .in("order_item_id", itemIds).is("delivered_at", null).neq("status", "cancelled");
+        }
       }
       return json({ ok: true, motoboy_status: signal });
     }
