@@ -25,7 +25,7 @@ interface EntryRow {
 }
 interface RepasseRow {
   data_repasse: string; esperado: number; depositos: number; recebido_inter: number; linhas_inter: number;
-  detalhe: { ifood: { valor: number; metodo: string | null }[]; inter: { data: string; valor: number; descricao: string | null }[] };
+  detalhe: { ifood: { valor: number; metodo: string | null }[]; inter: { data: string; valor: number; descricao: string | null }[]; bruto?: number; antecipacao?: number };
 }
 
 const compLabel = (c: string) => {
@@ -64,7 +64,10 @@ export default function IfoodTab() {
   const [apiOn, setApiOn] = useState(false);
   const [homolog, setHomolog] = useState(false);
   const [nomes, setNomes] = useState<Record<string, string>>({});
-  const [editLoja, setEditLoja] = useState<{ id: string; curto: string; nome: string; salvando: boolean; erro: string | null } | null>(null);
+  const [editLoja, setEditLoja] = useState<{ id: string; curto: string; nome: string; pct: string; dias: string; salvando: boolean; erro: string | null } | null>(null);
+  // Repasse antecipado por loja iFood (fin_ifood_merchants.anticipation_pct/days): o relatório traz a data
+  // original e não traz a taxa; a edge aplica a data antecipada e a taxa (2026-09-19).
+  const [antecip, setAntecip] = useState<Record<string, { pct: number; dias: number }>>({});
   const [ondemand, setOndemand] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
 
   const loadImports = useCallback(async () => {
@@ -74,9 +77,11 @@ export default function IfoodTab() {
         .select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at, expected_lines, expected_orders, integrity_ok')
         .eq('tenant_id', user.tenantId).order('competence', { ascending: false }),
       invokeWithAuth<{ config?: { post_to_ledger?: boolean; authorized?: boolean; merchant_id?: string | null } | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user.tenantId } }),
-      supabase.from('fin_ifood_merchants').select('merchant_id, name').eq('tenant_id', user.tenantId),
+      supabase.from('fin_ifood_merchants').select('merchant_id, name, anticipation_pct, anticipation_days').eq('tenant_id', user.tenantId),
     ]);
-    setNomes(Object.fromEntries(((mer.data ?? []) as { merchant_id: string; name: string | null }[]).filter((m) => m.name).map((m) => [m.merchant_id, m.name as string])));
+    const merRows = (mer.data ?? []) as { merchant_id: string; name: string | null; anticipation_pct: number | null; anticipation_days: number | null }[];
+    setNomes(Object.fromEntries(merRows.filter((m) => m.name).map((m) => [m.merchant_id, m.name as string])));
+    setAntecip(Object.fromEntries(merRows.filter((m) => Number(m.anticipation_pct) > 0).map((m) => [m.merchant_id, { pct: Number(m.anticipation_pct), dias: Number(m.anticipation_days ?? 21) }])));
     if (err) { setError(err.message); setLoading(false); return; }
     const rows = (data ?? []) as ImportRow[];
     setImports(rows);
@@ -201,7 +206,8 @@ export default function IfoodTab() {
 
   const renomearLoja = (id: string) => {
     const curto = lojas.find(([lid]) => lid === id)?.[1] ?? id.slice(0, 8);
-    setEditLoja({ id, curto, nome: nomes[id] ?? '', salvando: false, erro: null });
+    const a = antecip[id];
+    setEditLoja({ id, curto, nome: nomes[id] ?? '', pct: a ? String(a.pct).replace('.', ',') : '', dias: String(a?.dias ?? 21), salvando: false, erro: null });
   };
 
   const salvarNomeLoja = async () => {
@@ -211,6 +217,16 @@ export default function IfoodTab() {
     const r = await invokeWithAuth<{ success?: boolean; error?: string }>('ifood-financial', { body: { action: 'set_merchant_name', tenant_id: user.tenantId, merchant_id: editLoja.id, name: nome } });
     if (r.data?.error || r.error) { setEditLoja({ ...editLoja, salvando: false, erro: r.data?.error ?? r.error?.message ?? 'Não foi possível salvar.' }); return; }
     setNomes((n) => { const x = { ...n }; if (nome) x[editLoja.id] = nome; else delete x[editLoja.id]; return x; });
+    // Antecipação: só chama se mudou (a edge reaplica datas e relança o financeiro da loja).
+    const pct = editLoja.pct.trim() ? Number(editLoja.pct.replace(',', '.')) : 0;
+    const dias = Number(editLoja.dias) || 21;
+    const antes = antecip[editLoja.id];
+    if ((antes?.pct ?? 0) !== pct || (pct > 0 && (antes?.dias ?? 21) !== dias)) {
+      const a = await invokeWithAuth<{ success?: boolean; error?: string }>('ifood-financial', { body: { action: 'set_anticipation', tenant_id: user.tenantId, merchant_id: editLoja.id, pct: pct > 0 ? pct : null, days: dias } });
+      if (a.data?.error || a.error) { setEditLoja({ ...editLoja, salvando: false, erro: a.data?.error ?? a.error?.message ?? 'Não foi possível salvar a antecipação.' }); return; }
+      await loadImports();
+      await loadCompetence();
+    }
     setEditLoja(null);
   };
   // Repasse da loja escolhida, por data (2026-09-19). A tabela compara com o Inter pelo TOTAL do dia
@@ -220,8 +236,11 @@ export default function IfoodTab() {
   const repasseDaLoja = useMemo(() => {
     const m = new Map<string, number>();
     for (const e of entries) if (e.impacto_repasse && e.data_repasse) m.set(e.data_repasse, (m.get(e.data_repasse) ?? 0) + e.valor);
+    // Loja com antecipação: mesmo "Valor" do portal (repasse − taxa de antecipação, arredondada como na RPC)
+    const a = loja ? antecip[loja] : undefined;
+    if (a) for (const [d, v] of m) m.set(d, v - Math.round(v * a.pct) / 100);
     return m;
-  }, [entries]);
+  }, [entries, loja, antecip]);
   const impsMes = imports.filter((i) => i.competence === competence && (!loja || i.merchant_id === loja));
 
   return (
@@ -396,6 +415,13 @@ export default function IfoodTab() {
                                   {r.detalhe.ifood.map((d, i) => (
                                     <div key={i} className="flex justify-between border-t border-zinc-100 py-0.5"><span>{d.metodo || '—'}</span><span className="font-mono">{formatCurrency(Number(d.valor))}</span></div>
                                   ))}
+                                  {Number(r.detalhe.antecipacao ?? 0) > 0 && (
+                                    <>
+                                      <div className="flex justify-between border-t border-zinc-200 py-0.5 mt-1"><span>Subtotal do repasse</span><span className="font-mono">{formatCurrency(Number(r.detalhe.bruto ?? 0))}</span></div>
+                                      <div className="flex justify-between border-t border-zinc-100 py-0.5 text-red-600"><span>Taxa de antecipação</span><span className="font-mono">-{formatCurrency(Number(r.detalhe.antecipacao))}</span></div>
+                                      <div className="flex justify-between border-t border-zinc-100 py-0.5 font-semibold"><span>Valor que cai no banco</span><span className="font-mono">{formatCurrency(r.esperado)}</span></div>
+                                    </>
+                                  )}
                                 </div>
                                 <div>
                                   <p className="font-semibold text-zinc-700 mb-1">Créditos iFood no Inter</p>
@@ -484,6 +510,32 @@ export default function IfoodTab() {
                   className="w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" />
                 <p className="text-[11px] text-zinc-400 mt-1.5">
                   Use o nome que aparece no topo do Portal do Parceiro ao escolher esta loja. Deixe em branco para voltar a mostrar só o código.
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Repasse antecipado</label>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <div className="flex items-center border border-zinc-200 rounded-lg px-3 focus-within:ring-2 focus-within:ring-red-400">
+                      <input type="text" inputMode="decimal" value={editLoja.pct} placeholder="Não antecipa"
+                        onChange={(e) => setEditLoja({ ...editLoja, pct: e.target.value.replace(/[^\d,.]/g, '') })}
+                        className="w-full py-2.5 text-sm focus:outline-none" />
+                      <span className="text-sm text-zinc-400">%</span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-1">Taxa de antecipação</p>
+                  </div>
+                  <div className="w-28">
+                    <div className="flex items-center border border-zinc-200 rounded-lg px-3 focus-within:ring-2 focus-within:ring-red-400">
+                      <input type="text" inputMode="numeric" value={editLoja.dias} disabled={!editLoja.pct.trim()}
+                        onChange={(e) => setEditLoja({ ...editLoja, dias: e.target.value.replace(/\D/g, '').slice(0, 2) })}
+                        className="w-full py-2.5 text-sm focus:outline-none disabled:bg-white disabled:text-zinc-300" />
+                      <span className="text-sm text-zinc-400">dias</span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-1">antes da data do relatório</p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-zinc-400 mt-1.5">
+                  Se no Portal › Financeiro os repasses têm "Taxa de antecipação", informe o % (ex.: 1,59). O relatório de conciliação traz a data original e não traz essa taxa: o ERPOS passa cada repasse para a data antecipada (padrão 21 dias antes, a quarta-feira depois da semana de vendas) e desconta a taxa, igual ao "Valor" do portal.
                 </p>
               </div>
               {editLoja.erro && (

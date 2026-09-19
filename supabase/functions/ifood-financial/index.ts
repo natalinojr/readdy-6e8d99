@@ -203,6 +203,8 @@ function toEntry(r: Row) {
     order_short: str(r['pedido_associado_ifood_curto']),
     order_created_at: tsOrNull(r['data_criacao_pedido_associado']),
     data_repasse: dateOnly(r['data_repasse_esperada']),
+    // Data do relatório. data_repasse vira a efetiva (antecipada) em saveCompetence quando a loja antecipa.
+    data_repasse_original: dateOnly(r['data_repasse_esperada']),
     valor_transacao: num(r['valor_transacao']),
     data_apuracao_inicio: dateOnly(r['data_apuracao_inicio']),
     data_apuracao_fim: dateOnly(r['data_apuracao_fim']),
@@ -256,23 +258,27 @@ function portalTotals(list: PortalEntry[]) {
 
 // Livro-razão de uma importação: apaga o que ela lançou e relança (se ligado), por dia de
 // repasse JÁ vencido — o que ainda vai cair entra quando a data chegar (rotina diária).
-async function postLedger(admin: Admin, tenantId: string, importId: string, on: boolean, entries: LedgerEntry[]) {
+// antecipacaoPct: taxa de antecipação da loja (fin_ifood_merchants), cobrada sobre o repasse do dia e que
+// não aparece no relatório — entra junto das taxas iFood do dia (2026-09-19).
+async function postLedger(admin: Admin, tenantId: string, importId: string, on: boolean, entries: LedgerEntry[], antecipacaoPct = 0) {
   const { error: cfErr } = await admin.from('fin_cash_flow').delete().eq('tenant_id', tenantId).eq('reference_id', importId).in('origin', ['ifood_sale', 'ifood_fee']);
   if (cfErr) throw new Error('Limpar lançamentos: ' + cfErr.message);
   if (!on) return { rows: 0, receita: 0, taxas: 0 };
   const today = todayBR();
-  const days = new Map<string, { rev: number; fee: number; n: Set<string> }>();
+  const days = new Map<string, { rev: number; fee: number; rep: number; n: Set<string> }>();
   for (const e of entries) {
     if (!e.data_repasse || e.data_repasse > today) continue;
-    const d = days.get(e.data_repasse) ?? { rev: 0, fee: 0, n: new Set<string>() };
+    const d = days.get(e.data_repasse) ?? { rev: 0, fee: 0, rep: 0, n: new Set<string>() };
     const t = portalTotals([e]);
-    d.rev += t.receita; d.fee += t.custo;
+    d.rev += t.receita; d.fee += t.custo; d.rep += t.repasse;
     if (e.order_id) d.n.add(e.order_id);
     days.set(e.data_repasse, d);
   }
   const cf: Record<string, unknown>[] = [];
   for (const [d, x] of days) {
     const dd = d.slice(8, 10) + '/' + d.slice(5, 7);
+    const antecip = antecipacaoPct > 0 && x.rep > 0 ? round2(round2(x.rep) * antecipacaoPct / 100) : 0;
+    if (antecip > 0) cf.push({ tenant_id: tenantId, reference_id: importId, date: d, type: 'expense', origin: 'ifood_fee', category: 'Taxas iFood', amount: antecip, description: `Taxa de antecipação iFood do repasse de ${dd} (${antecipacaoPct}%)` });
     if (Math.abs(x.rev) > 0.004) cf.push({ tenant_id: tenantId, reference_id: importId, date: d, type: x.rev > 0 ? 'income' : 'expense', origin: x.rev > 0 ? 'ifood_sale' : 'ifood_fee', category: x.rev > 0 ? 'Vendas' : 'Taxas iFood', amount: round2(Math.abs(x.rev)), description: `Vendas iFood do repasse de ${dd} (${x.n.size} pedido(s), valor antes das taxas)` });
     if (Math.abs(x.fee) > 0.004) cf.push({ tenant_id: tenantId, reference_id: importId, date: d, type: x.fee > 0 ? 'expense' : 'income', origin: x.fee > 0 ? 'ifood_fee' : 'ifood_sale', category: x.fee > 0 ? 'Taxas iFood' : 'Vendas', amount: round2(Math.abs(x.fee)), description: `Comissões e taxas iFood do repasse de ${dd}` });
   }
@@ -297,10 +303,20 @@ async function matchInter(admin: Admin, tenantId: string) {
   return Number(data ?? 0);
 }
 
+// Antecipação configurada por loja iFood: merchant_id → { pct, days } (só as que antecipam).
+async function antecipacoes(admin: Admin, tenantId: string) {
+  const { data } = await admin.from('fin_ifood_merchants').select('merchant_id, anticipation_pct, anticipation_days').eq('tenant_id', tenantId);
+  const m = new Map<string, { pct: number; days: number }>();
+  for (const r of data ?? []) if (Number(r.anticipation_pct) > 0) m.set(String(r.merchant_id), { pct: Number(r.anticipation_pct), days: Number(r.anticipation_days ?? 21) });
+  return m;
+}
+const menosDias = (iso: string, n: number) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
+
 // Relança o razão das importações já gravadas (ligar/desligar a opção, repasses que venceram).
 async function repostImports(admin: Admin, tenantId: string, on: boolean, minCompetence?: string) {
-  let q = admin.from('fin_ifood_imports').select('id, competence').eq('tenant_id', tenantId);
+  let q = admin.from('fin_ifood_imports').select('id, competence, merchant_id').eq('tenant_id', tenantId);
   if (minCompetence) q = q.gte('competence', minCompetence);
+  const pcts = await antecipacoes(admin, tenantId);
   const { data: imps, error } = await q;
   if (error) throw new Error('Ler importações: ' + error.message);
   const tot = { imports: 0, rows: 0, receita: 0, taxas: 0 };
@@ -309,7 +325,7 @@ async function repostImports(admin: Admin, tenantId: string, on: boolean, minCom
       .select('data_repasse, valor, tipo_lancamento, impacto_repasse, order_id, descricao, responsavel').eq('import_id', imp.id).limit(50000);
     if (eErr) throw new Error('Ler linhas: ' + eErr.message);
     const list = (ents ?? []).map((e: any) => ({ ...e, valor: Number(e.valor) }));
-    const l = await postLedger(admin, tenantId, imp.id, on, list);
+    const l = await postLedger(admin, tenantId, imp.id, on, list, pcts.get(imp.merchant_id)?.pct ?? 0);
     // Resumo da importação na mesma divisão do portal.
     const t = portalTotals(list);
     await admin.from('fin_ifood_imports').update({ gross: round2(t.receita), fees: round2(t.custo), net: round2(t.repasse) }).eq('id', imp.id);
@@ -326,6 +342,9 @@ async function sha256Hex(bytes: Uint8Array) {
 // Grava uma loja + competência (substitui a anterior da mesma loja), lança no razão e casa com o Inter.
 async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, competence: string, entries: Entry[], meta: { source: 'api' | 'file'; merchant_id: string; file_name?: string | null; sha256?: string | null; userId?: string | null; expected?: { lines: number | null; orders: number | null; read_lines: number; read_orders: number } }) {
   const valid = entries.filter((e) => e.data_repasse || e.valor);
+  // Loja com repasse antecipado: a data efetiva é a original menos N dias (a do relatório fica em data_repasse_original).
+  const ant = meta.merchant_id ? (await antecipacoes(admin, tenantId)).get(meta.merchant_id) : undefined;
+  if (ant) for (const e of valid) if (e.data_repasse_original) e.data_repasse = menosDias(e.data_repasse_original, ant.days);
   const tot = portalTotals(valid);
   const gross = round2(tot.receita);
   const fees = round2(tot.custo);
@@ -360,7 +379,7 @@ async function saveCompetence(admin: Admin, tenantId: string, cfg: any | null, c
   }
 
   // Modo homologação (loja de teste): nunca lança no financeiro da loja.
-  const ledger = await postLedger(admin, tenantId, imp.id, cfg?.post_to_ledger === true && cfg?.homologation_mode !== true, valid);
+  const ledger = await postLedger(admin, tenantId, imp.id, cfg?.post_to_ledger === true && cfg?.homologation_mode !== true, valid, ant?.pct ?? 0);
   const matched = await matchInter(admin, tenantId);
   return { competence, import_id: imp.id, lines: valid.length, orders, gross, fees, net: round2(gross - fees), ledger, matched_deposits: matched };
 }
@@ -761,6 +780,24 @@ Deno.serve(async (req) => {
       const { error } = await admin.from('fin_ifood_merchants').upsert({ tenant_id: tenantId, merchant_id: merchantId, name: name || null, updated_at: new Date().toISOString() }, { onConflict: 'tenant_id,merchant_id' });
       if (error) return errResp('Salvar: ' + error.message, 500);
       return json({ success: true });
+    }
+
+    // Repasse antecipado da loja iFood (2026-09-19): pct null/0 desliga. Reaplica a data efetiva nas linhas
+    // já importadas da loja, relança o razão (se ligado) e casa de novo com o banco.
+    if (action === 'set_anticipation') {
+      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      const merchantId = String(body.merchant_id ?? '').trim();
+      if (!merchantId) return errResp('Loja não informada.');
+      const pctIn = body.pct === null || body.pct === '' || body.pct === undefined ? null : Number(String(body.pct).replace(',', '.'));
+      if (pctIn !== null && (!Number.isFinite(pctIn) || pctIn < 0 || pctIn >= 20)) return errResp('Taxa de antecipação inválida (0 a 20%).');
+      const days = body.days === undefined || body.days === null || body.days === '' ? 21 : Math.round(Number(body.days));
+      if (!Number.isFinite(days) || days < 0 || days > 60) return errResp('Dias de antecipação inválidos (0 a 60).');
+      const { error } = await admin.from('fin_ifood_merchants').upsert({ tenant_id: tenantId, merchant_id: merchantId, anticipation_pct: pctIn && pctIn > 0 ? pctIn : null, anticipation_days: days, updated_at: new Date().toISOString() }, { onConflict: 'tenant_id,merchant_id' });
+      if (error) return errResp('Salvar: ' + error.message, 500);
+      const { data: n, error: aErr } = await admin.rpc('fn_ifood_apply_anticipation', { p_tenant: tenantId, p_merchant: merchantId });
+      if (aErr) return errResp('Aplicar nas importações: ' + aErr.message, 500);
+      const ledger = await repostImports(admin, tenantId, cfg?.post_to_ledger === true && cfg?.homologation_mode !== true);
+      return json({ success: true, linhas: Number(n ?? 0), ledger });
     }
 
     // ── Relatório de conciliação sob demanda (POST gera; GET consulta até ficar pronto) ──
