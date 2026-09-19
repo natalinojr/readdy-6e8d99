@@ -213,6 +213,15 @@ export default function IfoodTab() {
     setNomes((n) => { const x = { ...n }; if (nome) x[editLoja.id] = nome; else delete x[editLoja.id]; return x; });
     setEditLoja(null);
   };
+  // Repasse da loja escolhida, por data (2026-09-19). A tabela compara com o Inter pelo TOTAL do dia
+  // (o Inter recebe todas as lojas iFood na mesma conta), então "iFood informa" soma as lojas; esta
+  // coluna mostra a parte da loja para bater com o relatório (xlsx) dela.
+  const porLoja = !!loja && lojas.length > 1;
+  const repasseDaLoja = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of entries) if (e.impacto_repasse && e.data_repasse) m.set(e.data_repasse, (m.get(e.data_repasse) ?? 0) + e.valor);
+    return m;
+  }, [entries]);
   const impsMes = imports.filter((i) => i.competence === competence && (!loja || i.merchant_id === loja));
 
   return (
@@ -345,14 +354,15 @@ export default function IfoodTab() {
           <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
             <div className="px-4 py-3 border-b border-zinc-100">
               <p className="text-sm font-semibold text-zinc-800">Repasses</p>
-              <p className="text-xs text-zinc-500">O que o iFood diz que paga × créditos com "iFood" no extrato do Inter (na data e no dia seguinte). O cartão chega como "Crédito domicílio cartão", em valores próprios, então compare o total do dia. Soma <strong>todas as lojas iFood importadas</strong> (o Inter recebe as duas na mesma conta): importe o relatório de cada loja para o total bater.</p>
+              <p className="text-xs text-zinc-500">O que o iFood diz que paga × créditos com "iFood" no extrato do Inter (na data e no dia seguinte). O cartão chega como "Crédito domicílio cartão", em valores próprios, então compare o total do dia. Soma <strong>todas as lojas iFood importadas</strong> (o Inter recebe as duas na mesma conta): importe o relatório de cada loja para o total bater.{porLoja && <> A coluna <strong>Esta loja</strong> é o que o relatório desta loja informa (bate com o Excel dela).</>}</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-zinc-50 text-xs text-zinc-500">
                   <tr>
                     <th className="text-left px-4 py-2">Data</th>
-                    <th className="text-right px-4 py-2">iFood informa</th>
+                    {porLoja && <th className="text-right px-4 py-2">Esta loja</th>}
+                    <th className="text-right px-4 py-2">{porLoja ? 'iFood informa (todas as lojas)' : 'iFood informa'}</th>
                     <th className="text-right px-4 py-2">Caiu no Inter</th>
                     <th className="text-right px-4 py-2">Diferença</th>
                     <th className="text-left px-4 py-2">Situação</th>
@@ -371,6 +381,7 @@ export default function IfoodTab() {
                       <>
                         <tr key={r.data_repasse} onClick={() => setOpenRepasse(aberto ? null : r.data_repasse)} className="border-t border-zinc-100 hover:bg-zinc-50 cursor-pointer">
                           <td className="px-4 py-2 whitespace-nowrap"><i className={`${aberto ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-zinc-400 mr-1`} />{dataBR(r.data_repasse)}</td>
+                          {porLoja && <td className="px-4 py-2 text-right font-mono">{formatCurrency(repasseDaLoja.get(r.data_repasse) ?? 0)}</td>}
                           <td className="px-4 py-2 text-right font-mono">{formatCurrency(r.esperado)}</td>
                           <td className="px-4 py-2 text-right font-mono">{futuro && r.linhas_inter === 0 ? '—' : formatCurrency(r.recebido_inter)}</td>
                           <td className={`px-4 py-2 text-right font-mono ${futuro ? 'text-zinc-300' : Math.abs(diff) <= 0.05 ? 'text-zinc-400' : diff < 0 ? 'text-red-600' : 'text-amber-700'}`}>{futuro && r.linhas_inter === 0 ? '—' : formatCurrency(diff)}</td>
@@ -378,7 +389,7 @@ export default function IfoodTab() {
                         </tr>
                         {aberto && (
                           <tr key={r.data_repasse + '-d'} className="bg-zinc-50/60">
-                            <td colSpan={5} className="px-4 py-3">
+                            <td colSpan={porLoja ? 6 : 5} className="px-4 py-3">
                               <div className="grid md:grid-cols-2 gap-4 text-xs">
                                 <div>
                                   <p className="font-semibold text-zinc-700 mb-1">Depósitos no relatório do iFood</p>
@@ -401,7 +412,7 @@ export default function IfoodTab() {
                     );
                   })}
                   {repasses.length === 0 && (
-                    <tr><td colSpan={5} className="px-4 py-6 text-center text-xs text-zinc-400">Sem repasses neste mês.</td></tr>
+                    <tr><td colSpan={porLoja ? 6 : 5} className="px-4 py-6 text-center text-xs text-zinc-400">Sem repasses neste mês.</td></tr>
                   )}
                 </tbody>
               </table>
