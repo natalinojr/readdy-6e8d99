@@ -139,6 +139,14 @@ export async function waSendText(cfg: WaConfig, to: string, text: string, opts: 
 // Variável de modelo: sem quebra de linha/tab e sem 4+ espaços seguidos (regra da Meta).
 const tplParam = (s: unknown) => String(s ?? '').replace(/[\r\n\t]+/g, ' · ').replace(/ {4,}/g, ' ').trim().slice(0, 1000) || '-';
 
+/** Texto que o destinatário leu: o modelo com as variáveis preenchidas. Histórico e registro guardam
+ *  isto (antes era "[modelo nome] a | b | c", ilegível na tela). Modelo desconhecido cai no formato antigo. */
+export function renderTemplate(name: string, params: string[]): string {
+  const t = Object.values(TEMPLATES).find((x) => x.name === name);
+  if (!t) return `[modelo ${name}] ${params.map(tplParam).join(' | ')}`;
+  return t.text.replace(/\{\{(\d+)\}\}/g, (_m, n) => tplParam(params[Number(n) - 1]));
+}
+
 /** Modelo aprovado (só API oficial). */
 export async function waSendTemplate(cfg: WaConfig, to: string, name: string, params: string[], lang = 'pt_BR', origin: string | null = null): Promise<string | null> {
   if (cfg.transport !== 'cloud') throw new WaError('modelo só existe na API oficial', 400, null);
@@ -147,7 +155,7 @@ export async function waSendTemplate(cfg: WaConfig, to: string, name: string, pa
     template: { name, language: { code: lang }, ...(params.length ? { components: [{ type: 'body', parameters: params.map((t) => ({ type: 'text', text: tplParam(t) })) }] } : {}) },
   });
   const id = out?.messages?.[0]?.id ?? null;
-  await waLog({ phone: to, direction: 'out', origin, kind: 'template', text: `[modelo ${name}] ${params.map(tplParam).join(' | ')}`, wa_msg_id: id });
+  await waLog({ phone: to, direction: 'out', origin, kind: 'template', text: renderTemplate(name, params), wa_msg_id: id });
   return id;
 }
 

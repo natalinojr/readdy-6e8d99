@@ -8,6 +8,20 @@ import { supabase } from '@/lib/supabase';
 import { type Candidate, type Company, type Job, type JobScheduling, type Stage, companyName, faltasAgendamento, stageByKind } from '../shared';
 
 interface Hist { at: string; de: string; texto: string }
+
+// Modelos do WhatsApp (mesmo texto de supabase/functions/_shared/wa.ts › TEMPLATES). Registros antigos
+// guardavam só "[modelo nome] a | b | c"; aqui viram o texto que o candidato leu.
+const MODELOS: Record<string, string> = {
+  convite_entrevista: 'Olá, {{1}}! Aqui é da {{2}}. Recebemos seu currículo para a vaga de {{3}} e queremos marcar uma entrevista com você. Posso te mandar os horários disponíveis? Responda esta mensagem para continuar.',
+  lembrete_entrevista: 'Olá, {{1}}! Lembrete da sua entrevista na {{2}}: {{3}}. Local: {{4}}. Você confirma presença? Responda sim ou não.',
+  aviso_equipe_entrevista: 'Atualização do agendamento de entrevistas da vaga {{1}}: {{2}}. Responda por aqui se precisar.',
+};
+function textoModelo(t: string): string {
+  const m = t.match(/^\[modelo ([a-z_]+)\] ?(.*)$/s);
+  if (!m || !MODELOS[m[1]]) return t;
+  const params = m[2].split(' | ');
+  return MODELOS[m[1]].replace(/\{\{(\d+)\}\}/g, (_x, n) => params[Number(n) - 1] ?? '');
+}
 interface Sess {
   id: string; candidate_id: string; job_id: string; phone: string | null; status: string; code: string | null; error: string | null;
   created_at: string; updated_at: string; last_out_at: string | null; last_in_at: string | null; delivered_at: string | null; read_at: string | null;
@@ -310,7 +324,7 @@ export default function AgendamentosPainel({ candidates, jobs, companies, stages
                                     <p className="text-[9px] font-bold uppercase tracking-wider opacity-60 mb-0.5">
                                       {meu ? 'Assistente' : h.de === 'gestor' ? 'Entrevistador' : 'Candidato'} · {quando(h.at)}{tag ? ` · ${tag}` : ''}
                                     </p>
-                                    {h.texto}
+                                    {textoModelo(h.texto)}
                                   </div>
                                 </div>
                               );

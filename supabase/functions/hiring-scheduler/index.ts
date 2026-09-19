@@ -32,7 +32,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
-import { graph, isOutsideWindow, TEMPLATES, waConfig, waSendTemplate, waSendText } from '../_shared/wa.ts';
+import { graph, isOutsideWindow, renderTemplate, TEMPLATES, waConfig, waSendTemplate, waSendText } from '../_shared/wa.ts';
 
 const TZ = 'America/Sao_Paulo';
 const MODEL = 'claude-haiku-4-5';
@@ -211,7 +211,7 @@ async function destFor(phone: string, known?: unknown): Promise<string> {
 // tpl = modelo para quando a empresa fala primeiro (fora da janela de 24 h da API oficial).
 async function toCand(admin: SupabaseClient, c: Ctx, text: string, extra: Row = {}, tpl?: Tpl) {
   const r = await sendSmart(await destFor(c.sess.phone, c.sess.jid), text, tpl);
-  const hist = r.modelo && tpl ? `[modelo ${tpl.name}] ${tpl.params.join(' | ')}` : text;
+  const hist = r.modelo && tpl ? renderTemplate(tpl.name, tpl.params) : text;
   // Convite por modelo: os horários vão na 1ª resposta dele (ver 'aguardando_janela' em handleCandidate).
   const pend = r.modelo && tpl?.aguardaJanela ? { pending_request: { kind: 'aguardando_janela', at: new Date().toISOString() } } : {};
   await addHist(admin, c.sess.id, 'assistente', hist, { last_out_at: new Date().toISOString(), last_out_msg_id: r.id, delivered_at: null, read_at: null, ...extra, ...pend });
