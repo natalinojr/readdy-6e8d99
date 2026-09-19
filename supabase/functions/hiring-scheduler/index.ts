@@ -924,6 +924,16 @@ Deno.serve(async (req) => {
     if (body.action === 'inbound') return json({ ok: true, handled: await inbound(admin, body) });
     if (body.action === 'free_slots') return json({ ok: true, slots: await freeSlots(admin, String(body.job_id ?? ''), Number(body.limit ?? OFFER)) });
     if (body.action === 'new_cv') return json({ ok: true, ...(await newCv(admin, String(body.candidate_id ?? ''), String(body.job_id ?? ''))) });
+    // Reenviar a lista da agenda a um candidato (correção manual, aprovada pelo dono): limpa o pedido
+    // pendente e volta a negociar. Primeiro uso: Syria, 2026-09-19 (lista inventada pela IA).
+    if (body.action === 'reoffer') {
+      const { data: sess } = await admin.from('hiring_scheduling_sessions').select('*').eq('id', String(body.session_id ?? '')).maybeSingle();
+      if (!sess) return json({ error: 'sessão não encontrada' }, 404);
+      const c = await loadCtx(admin, sess as Row);
+      if (!c) return json({ error: 'sem contexto (vaga/candidato)' }, 400);
+      await offerAgain(admin, c, String(body.intro ?? 'Estes são os horários para a entrevista:').slice(0, 400));
+      return json({ ok: true });
+    }
     return json({ error: 'ação desconhecida' }, 400);
   } catch (e) {
     log('ERROR', 'falha', { action: body?.action, error: errMsg(e) });
