@@ -36,7 +36,7 @@ describe('Ação rápida — Previsão do tempo', () => {
       ],
       error: null,
     });
-    render(<Clima onFechar={() => {}} />);
+    render(<Clima onFechar={() => {}} irPara={() => {}} />);
     expect(await screen.findByText('Previsão de qual loja?')).toBeInTheDocument();
     const botoes = screen.getAllByRole('button').map((b) => b.textContent ?? '');
     expect(botoes.findIndex((t) => t.includes('Vila Leste'))).toBeLessThan(botoes.findIndex((t) => t.includes('Paranaguá')));
@@ -46,7 +46,7 @@ describe('Ação rápida — Previsão do tempo', () => {
 
   it('sem a lista do banco, usa a loja ativa', async () => {
     h.rpc.mockResolvedValue({ data: null, error: { message: 'falhou' } });
-    render(<Clima onFechar={() => {}} />);
+    render(<Clima onFechar={() => {}} irPara={() => {}} />);
     expect(await screen.findByText(/Vila Leste não tem localização/)).toBeInTheDocument();
   });
 });
