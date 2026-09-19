@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { isManagerRole } from '../_shared/tenant-auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -522,12 +523,17 @@ Deno.serve(async (req) => {
       // usuario autenticado podia escrever em qualquer tenant via service role)
       const { data: membership } = await supabase
         .from('user_tenants')
-        .select('tenant_id')
+        .select('tenant_id, role')
         .eq('user_id', user.id)
         .eq('tenant_id', tenant_id)
         .maybeSingle();
       if (!membership) {
         return new Response(JSON.stringify({ error: 'Usuario nao pertence ao tenant informado' }), { status: 403, headers: corsHeaders });
+      }
+      // Compras são só admin/gerente (2026-09-19): antes qualquer membro da loja (ex.: operador
+      // de caixa) criava/excluía compra e conta a pagar pela API. A chave interna (acima) segue igual.
+      if (!isManagerRole(membership.role)) {
+        return new Response(JSON.stringify({ error: 'Sem permissão: compras são só para administrador ou gerente da loja.' }), { status: 403, headers: corsHeaders });
       }
     }
 

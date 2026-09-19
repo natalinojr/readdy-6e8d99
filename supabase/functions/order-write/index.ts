@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { deductStockForOrderItem } from "../_shared/stock.ts";
+import { isManagerRole } from "../_shared/tenant-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -483,6 +484,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // Regras de promoção mexem no preço: só admin/gerente (2026-09-19; a tela /promocoes já exige
+    // cardapio_editar). Ações do PDV (caixa, sangria, pedidos) seguem liberadas a qualquer membro.
+    if (action === "create_promotion_rule" || action === "update_promotion_rule" || action === "delete_promotion_rule") {
+      const { data: roleRow, error: roleErr } = await admin.from("user_tenants").select("role").eq("user_id", jwtUserId).eq("tenant_id", tenantId).maybeSingle();
+      if (roleErr) { return new Response(JSON.stringify({ error: "Falha ao verificar o perfil do usuário" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      if (!isManagerRole(roleRow?.role)) { return new Response(JSON.stringify({ error: "Sem permissão: promoções são só para administrador ou gerente da loja." }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+    }
+
     if (action === "create_promotion_rule") {
       const { name, description, promo_type, target_item_id, target_category_id, free_item_id, discount_value, special_price, buy_quantity, get_quantity, min_order_amount, valid_from, valid_until, days_of_week, time_from, time_until, channels, max_uses_total, max_uses_per_customer, coupon_code, priority, is_stackable } = body;
       if (!name || !promo_type) return new Response(JSON.stringify({ error: "name and promo_type are required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -569,6 +578,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     }
 
     // "Esse dinheiro não saiu deste caixa": a prevista sai da fila e vira pendência para o dono (de onde saiu?).
+    // Freelancers da loja para a sangria "Freelancer" (2026-09-19). Pelo servidor: a sessão do PDV
+    // (operador/quiosque) nem sempre passa na leitura direta do hr_freelancers.
+    if (action === "list_freelancers") {
+      const { data, error } = await admin.from("hr_freelancers").select("id, name, daily_rate").eq("tenant_id", tenantId).eq("is_active", true).order("name");
+      if (error) throw error;
+      return new Response(JSON.stringify({ data: data ?? [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "sangria_prevista_nao_saiu") {
       const { previsao_id, motivo } = body;
       const { data: pv } = await admin.from("cash_sangrias_previstas").update({ status: "nao_saiu", resolved_at: new Date().toISOString(), resolved_by: effectiveUserId, notes: typeof motivo === "string" ? motivo.slice(0, 300) : null })

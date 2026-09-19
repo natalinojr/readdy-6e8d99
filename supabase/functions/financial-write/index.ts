@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { isManagerRole } from '../_shared/tenant-auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -38,11 +39,18 @@ Deno.serve(async (req) => {
     // Validate tenant membership
     const { data: tenantCheck } = await supabase
       .from('user_tenants')
-      .select('tenant_id')
+      .select('tenant_id, role')
       .eq('user_id', user.id)
       .eq('tenant_id', tenant_id)
       .maybeSingle();
     if (!tenantCheck) return new Response(JSON.stringify({ error: 'User does not belong to the requested tenant' }), { status: 403, headers: corsHeaders });
+    // Financeiro/RH é só admin/gerente (2026-09-19): antes bastava ser da loja, e um operador de
+    // caixa conseguia pay_bill/upsert_bill pela API. As telas que chamam esta edge (/financeiro,
+    // /estoque, chat do dono) já são restritas a admin/gerente; assistente-brain e
+    // conciliacao-pagamentos repassam o JWT do dono/usuário, que é admin.
+    if (!isManagerRole(tenantCheck.role)) {
+      return new Response(JSON.stringify({ error: 'Sem permissão: o Financeiro é só para administrador ou gerente da loja.' }), { status: 403, headers: corsHeaders });
+    }
 
     let result: { data?: unknown; error?: unknown } | null = null;
 

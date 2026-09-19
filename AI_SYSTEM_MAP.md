@@ -2701,3 +2701,11 @@ Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — prob
 - Na conversa: ferramenta `lancar_guia`. O PDF anexado que é guia recebe uma dica de sistema.
 - Pix copia e cola no Inter: `destinatario { tipo: 'PIX_COPIA_E_COLA', pixCopiaECola }` (campo confirmado no SDK oficial `inter-co/pj-sdk-*`; o nome do tipo não está documentado, então um 400 tenta uma vez `COPIA_E_COLA`). **Só de emissor permitido** (`PIX_COPIA_HOSTS` = `pix-qrcode.caixa.gov.br`): a regra "Pix só para quem está cadastrado" continua valendo para qualquer outro copia e cola. Colunas novas: migration `20260918230000`.
 - Pegadinha: o FGTS Digital vence **às 21:59:59** do dia (Pix `cobv`), não à meia-noite.
+
+### Cargo nas edges de escrita: Financeiro/Compras só admin/gerente (2026-09-19)
+- Antes, `financial-write`, `purchase-write` e `order-write` só validavam JWT + vínculo com a loja: um operador de caixa chamava `pay_bill`/`upsert_bill`/`create_purchase` pela API (a trava era só de tela).
+- Agora: **`financial-write` inteira** e **`purchase-write` inteira** exigem `user_tenants.role` admin/manager (`isManagerRole` de `_shared/tenant-auth.ts`), senão 403 em pt-BR. A chave interna do purchase-write (`x-internal-key`, fiscal-inbound automático) segue igual. No `order-write` só `create/update/delete_promotion_rule`; PDV (caixa, sangria, `list_freelancers`, pedidos) segue liberado a qualquer membro da loja.
+- Por que pode ser a edge inteira: as telas que chamam essas edges (/financeiro, /estoque, chat do dono) já exigem `relatorio_financeiro`/`estoque_movimentar`, que por padrão só admin/gerente têm; conferido em produção: nenhuma loja concede essas permissões a outro papel. `assistente-brain` usa o JWT do dono (admin nas 10 lojas); `conciliacao-pagamentos` e `fiscal-inbound` repassam o JWT do usuário da tela.
+- Se um dia uma loja liberar Financeiro/Estoque para outro papel na tela de permissões, a edge vai responder 403 — decidir então se a edge passa a respeitar a tabela `permissions`.
+- Em aberto (não mexido para não quebrar o PDV, que usa PIN do gerente na tela): no order-write, `register_partial_refund` grava o `authorized_by` mandado pelo front sem conferir, e `process_refund`/`cancel_order` não conferem cargo no servidor.
+- Teste: `qa.caixa`/`qa.garcom` → 403; `qa.admin` e gerente (qa.garcom promovido temporariamente) → passam.
