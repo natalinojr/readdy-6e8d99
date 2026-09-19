@@ -2591,6 +2591,17 @@ mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a co
 `''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
 de não lidas (`linhaConversa`).
 
+### Chat: a resposta fica onde a pergunta foi feita (2026-09-19)
+
+Assunto NÃO é escolhido por IA: são regras — as ferramentas que o assistente usou (brain,
+`porFerramentas`) e palavras-chave no gatilho `fn_asst_messages_topic` (BEFORE INSERT, só quando o
+topic chega 'geral'). O texto do app traz `[Pelo ERPOS · tela: …/contratacao]`, então o gatilho
+confundia a TELA com o assunto. Regra atual: assunto escolhido no app (inclusive 'geral') vale para
+pergunta e resposta (o brain desfaz o gatilho com um update); pergunta dentro da conversa de um grupo
+leva `group_jid` (front → assistente-app → brain); sem assunto (Telegram, "Todas") pergunta e
+resposta ficam no mesmo assunto. Depois de enviar, o front busca o novo só da conversa aberta
+(`filtroConversa`) — sem isso o que chegava em outras conversas aparecia na aberta.
+
 ### Chat: abrir a conversa na última mensagem (2026-09-18)
 
 Rolar para o fim uma vez ao abrir não basta: DEPOIS a área das mensagens ENCOLHE (os cartões de
