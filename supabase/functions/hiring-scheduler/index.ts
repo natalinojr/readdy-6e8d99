@@ -180,10 +180,11 @@ function mapa(c: Ctx): string {
   return q ? `\n📍 Como chegar: https://www.google.com/maps/search/?api=1&query=${q}` : '';
 }
 
-async function addHist(admin: SupabaseClient, sessId: string, de: string, texto: string, extra: Row = {}) {
+// tipo: marca a mensagem para decisões seguintes (hoje só 'agradecimento', ver handleCandidate).
+async function addHist(admin: SupabaseClient, sessId: string, de: string, texto: string, extra: Row = {}, tipo?: string) {
   const { data } = await admin.from('hiring_scheduling_sessions').select('history').eq('id', sessId).maybeSingle();
   const hist = Array.isArray(data?.history) ? data.history : [];
-  hist.push({ at: new Date().toISOString(), de, texto: texto.slice(0, 1000) });
+  hist.push({ at: new Date().toISOString(), de, texto: texto.slice(0, 1000), ...(tipo ? { tipo } : {}) });
   await admin.from('hiring_scheduling_sessions').update({ history: hist.slice(-80), updated_at: new Date().toISOString(), ...extra }).eq('id', sessId);
 }
 // Destino do candidato: o @lid guardado quando ele já respondeu; senão o telefone (1º convite).
@@ -209,12 +210,13 @@ async function destFor(phone: string, known?: unknown): Promise<string> {
   return phone;
 }
 // tpl = modelo para quando a empresa fala primeiro (fora da janela de 24 h da API oficial).
-async function toCand(admin: SupabaseClient, c: Ctx, text: string, extra: Row = {}, tpl?: Tpl) {
+async function toCand(admin: SupabaseClient, c: Ctx, text: string, extraIn: Row = {}, tpl?: Tpl) {
+  const { __tipo, ...extra } = extraIn;
   const r = await sendSmart(await destFor(c.sess.phone, c.sess.jid), text, tpl);
   const hist = r.modelo && tpl ? renderTemplate(tpl.name, tpl.params) : text;
   // Convite por modelo: os horários vão na 1ª resposta dele (ver 'aguardando_janela' em handleCandidate).
   const pend = r.modelo && tpl?.aguardaJanela ? { pending_request: { kind: 'aguardando_janela', at: new Date().toISOString() } } : {};
-  await addHist(admin, c.sess.id, 'assistente', hist, { last_out_at: new Date().toISOString(), last_out_msg_id: r.id, delivered_at: null, read_at: null, ...extra, ...pend });
+  await addHist(admin, c.sess.id, 'assistente', hist, { last_out_at: new Date().toISOString(), last_out_msg_id: r.id, delivered_at: null, read_at: null, ...extra, ...pend }, __tipo ? String(__tipo) : undefined);
 }
 // Dono no chat do assistente (2026-09-16). Até aqui TODO aviso de contratação ia só por WhatsApp aos
 // entrevistadores da vaga: confirmação de presença, entrevista marcada, cancelamento, desistência,
@@ -545,7 +547,12 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
   // marcar é só agradecimento (teste de 2026-09-14 confirmava presença por engano).
   if (intencao === 'confirmar' && sess.status === 'agendado' && sess.confirm_requested_at && !sess.confirmed_at) { await confirmPresence(admin, c); return; }
   if ((intencao === 'agradecer' || intencao === 'confirmar') && sess.status === 'agendado') {
-    await toCand(admin, c, String(r.resposta ?? '').trim().slice(0, 700) || `Nós que agradecemos! Te esperamos${c.sess.interview_at ? ` ${fmtSlot(c.sess.interview_at)}` : ''} 🙂`);
+    // Agradecimento em cima de agradecimento (Adriana, 2026-09-19: "Ok obrigado" → "Obrigado" recebeu a
+    // mesma despedida duas vezes): se a última fala nossa já foi a resposta a um obrigado, fica quieto.
+    const hist = Array.isArray(sess.history) ? (sess.history as Row[]) : [];
+    const ultimaNossa = [...hist].reverse().find((h) => h?.de === 'assistente');
+    if (ultimaNossa?.tipo === 'agradecimento') return;
+    await toCand(admin, c, String(r.resposta ?? '').trim().slice(0, 700) || `Nós que agradecemos! Te esperamos${c.sess.interview_at ? ` ${fmtSlot(c.sess.interview_at)}` : ''} 🙂`, { __tipo: 'agradecimento' });
     return;
   }
   const resp = String(r.resposta ?? '').trim();
