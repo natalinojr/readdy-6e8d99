@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
 import CategoriaCombobox from '../CategoriaCombobox';
+import ConfirmModal from '@/components/base/ConfirmModal';
 import { useCategoriasLancamento } from './LancarDoExtrato';
 import type { ReconciliationRule } from '@/hooks/useConciliacao';
 
@@ -36,6 +37,9 @@ function Regra({ rule, onDelete, onChanged }: { rule: ReconciliationRule; onDele
   const [compDe, setCompDe] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // Confirmações no visual do sistema (antes: window.confirm do navegador)
+  const [confirmarLanc, setConfirmarLanc] = useState(false);
+  const [confirmarExcluir, setConfirmarExcluir] = useState(false);
   const compra = rule.launch_kind === 'compra';
 
   const carregar = async () => {
@@ -54,12 +58,14 @@ function Regra({ rule, onDelete, onChanged }: { rule: ReconciliationRule; onDele
     setCompDe(Object.fromEntries(lista.map((c) => [c.statement_id, c.competencia])));
   };
 
+  const escolhidos = (cands ?? []).filter((c) => sel.has(c.statement_id) && !c.bloqueio);
+  const totalEscolhido = escolhidos.reduce((s, c) => s + c.amount, 0);
+
   const aplicar = async () => {
     if (!user?.tenantId || !cands) return;
-    const itens = cands.filter((c) => sel.has(c.statement_id) && !c.bloqueio).map((c) => ({ id: c.statement_id, competencia: compDe[c.statement_id] }));
+    const itens = escolhidos.map((c) => ({ id: c.statement_id, competencia: compDe[c.statement_id] }));
     if (itens.length === 0) return;
-    const total = cands.filter((c) => sel.has(c.statement_id)).reduce((s, c) => s + c.amount, 0);
-    if (!window.confirm(`Lançar ${itens.length} pagamento(s), ${formatCurrency(total)}, como ${compra ? 'compra' : 'despesa ' + (dreNome(rule.dre_category_id ?? '') ?? '')} já paga? Dá para desfazer em cada pagamento.`)) return;
+    setConfirmarLanc(false);
     setBusy(true); setMsg(null);
     const r = await invokeWithAuth<{ results?: Array<{ ok: boolean; msg: string }>; error?: string }>('conciliacao-pagamentos', {
       body: { action: 'launch_rule_apply', tenant_id: user.tenantId, rule_id: rule.id, items: itens },
@@ -111,7 +117,7 @@ function Regra({ rule, onDelete, onChanged }: { rule: ReconciliationRule; onDele
           <button onClick={() => setEditando((v) => !v)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-violet-100 cursor-pointer" title="Editar">
             <i className="ri-pencil-line text-violet-600 text-sm" />
           </button>
-          <button onClick={() => { if (window.confirm('Excluir a regra? O que já foi lançado continua lançado.')) onDelete(rule.id); }}
+          <button onClick={() => setConfirmarExcluir(true)}
             className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 cursor-pointer" title="Excluir">
             <i className="ri-delete-bin-line text-red-400 text-sm" />
           </button>
@@ -181,15 +187,65 @@ function Regra({ rule, onDelete, onChanged }: { rule: ReconciliationRule; onDele
             </tbody>
           </table>
           <div className="flex items-center gap-2 px-2 py-2 border-t border-zinc-100">
-            <button onClick={aplicar} disabled={busy || sel.size === 0}
+            <button onClick={() => setConfirmarLanc(true)} disabled={busy || escolhidos.length === 0}
               className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-xs font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
-              {busy ? 'Lançando…' : `Lançar ${sel.size} selecionado(s)`}
+              {busy ? 'Lançando…' : `Lançar ${escolhidos.length} selecionado(s)`}
             </button>
             <span className="text-[11px] text-zinc-400">Os com aviso vêm desmarcados: confira a competência antes.</span>
           </div>
         </div>
       )}
       {msg && <p className="text-xs text-zinc-700">{msg}</p>}
+
+      <ConfirmModal
+        isOpen={confirmarExcluir}
+        danger
+        icon="ri-delete-bin-line"
+        title="Excluir esta regra?"
+        message={`Os próximos pagamentos para ${rule.counterpart_label || fmtDoc(rule.counterpart_doc)} deixam de ser sugeridos. O que já foi lançado continua lançado.`}
+        confirmLabel="Excluir regra"
+        onCancel={() => setConfirmarExcluir(false)}
+        onConfirm={async () => { await onDelete(rule.id); setConfirmarExcluir(false); }}
+      />
+
+      {confirmarLanc && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setConfirmarLanc(false)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="px-6 pt-6 pb-4 text-center">
+              <div className="w-14 h-14 mx-auto mb-3 flex items-center justify-center rounded-full bg-violet-50">
+                <i className="ri-flashlight-line text-2xl text-violet-600" />
+              </div>
+              <h3 className="text-base font-bold text-zinc-800">Lançar {escolhidos.length} pagamento{escolhidos.length !== 1 ? 's' : ''}</h3>
+              <p className="text-sm text-zinc-500 mt-1">
+                Viram <b className="text-violet-700">{compra ? 'compra (CMV)' : 'despesa ' + (dreNome(rule.dre_category_id ?? '') ?? '')}</b> já paga, cada um na data em que saiu do banco.
+              </p>
+            </div>
+            <div className="mx-5 mb-4 border border-zinc-100 rounded-xl divide-y divide-zinc-100 max-h-56 overflow-y-auto">
+              {escolhidos.map((c) => (
+                <div key={c.statement_id} className="flex items-center justify-between px-3 py-2 text-sm">
+                  <span className="text-zinc-600">Pago em {dataBR(c.transaction_date)}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 font-semibold">competência {mesBR(compDe[c.statement_id] ?? c.competencia)}</span>
+                  <span className="font-semibold text-zinc-800">{formatCurrency(c.amount)}</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between px-3 py-2 text-sm bg-zinc-50">
+                <span className="font-semibold text-zinc-700">Total</span>
+                <span className="font-bold text-zinc-900">{formatCurrency(totalEscolhido)}</span>
+              </div>
+            </div>
+            <p className="px-6 pb-4 text-xs text-zinc-400 text-center">Dá para desfazer depois, em cada pagamento.</p>
+            <div className="flex items-center gap-2 px-5 py-4 bg-zinc-50 border-t border-zinc-100">
+              <button onClick={() => setConfirmarLanc(false)} className="flex-1 px-4 py-2.5 text-sm font-medium text-zinc-600 hover:bg-white hover:shadow-sm rounded-xl transition-all cursor-pointer">
+                Cancelar
+              </button>
+              <button onClick={aplicar} className="flex-1 px-4 py-2.5 text-sm font-semibold rounded-xl bg-violet-600 text-white hover:bg-violet-700 transition-all cursor-pointer">
+                Lançar {formatCurrency(totalEscolhido)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

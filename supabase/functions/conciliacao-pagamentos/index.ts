@@ -742,6 +742,9 @@ Deno.serve(async (req: Request) => {
       if (fe) log('WARN', 'rematch', 'fn_match_payroll falhou', { tenantId, error: fe.message });
       const { data: regras, error: re } = await admin.rpc('fn_match_launch_rules', { p_tenant: tenantId, p_from: from, p_to: to });
       if (re) log('WARN', 'rematch', 'fn_match_launch_rules falhou', { tenantId, error: re.message });
+      // Etiquetas por texto nas ENTRADAS já importadas (regra nova pega o histórico todo)
+      const { error: le } = await admin.rpc('fn_apply_label_rules', { p_tenant: tenantId, p_from: '2000-01-01', p_to: to });
+      if (le) log('WARN', 'rematch', 'fn_apply_label_rules falhou', { tenantId, error: le.message });
       return json({ success: true, ...(data as Row ?? {}), folha: folha ?? 0, regras_lancamento: regras ?? 0 });
     }
 

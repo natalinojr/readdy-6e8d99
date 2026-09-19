@@ -145,7 +145,8 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         },
       });
       const e = rr.data?.error ?? rr.error?.message;
-      if (e) window.alert('Lançado, mas a regra não foi salva: ' + e);
+      // Lançamento feito; só a regra falhou: mostra aqui em vez de fechar (antes: alerta do navegador)
+      if (e) { setBusy(false); setErro('Lançado, mas a regra não foi salva: ' + e); return; }
     }
     setBusy(false);
     onDone();

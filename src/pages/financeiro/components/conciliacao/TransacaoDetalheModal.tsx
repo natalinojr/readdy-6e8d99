@@ -4,6 +4,7 @@ import { useCostCenters } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
+import { CATEGORIAS_ENTRADA } from './categoriasEntrada';
 import LancarDoExtrato, { podeLancarDoExtrato, useCategoriasLancamento } from './LancarDoExtrato';
 import CategoriaCombobox, { type ComboOption } from '../CategoriaCombobox';
 import { situacaoRepasse, type RepasseStone } from './RepassesStoneModal';
@@ -165,8 +166,7 @@ export default function TransacaoDetalheModal({
       out.push({ id: k, label: k, sub });
     };
     if (transaction?.transaction_type === 'credit') {
-      for (const c of ['Repasse Stone', 'Repasse iFood', 'Repasse Tuna Pagamentos', 'Recebimento Stone Cartão',
-        'Transferência entre contas', 'Aporte de sócio', 'Estorno / devolução de fornecedor', 'Outras receitas']) add(c, 'Entrada');
+      for (const c of CATEGORIAS_ENTRADA) add(c, 'Entrada');
     } else {
       for (const o of dreOptions) add(o.label, o.sub ?? 'Despesa');
       for (const o of mercOptions) add(o.label, 'CMV');

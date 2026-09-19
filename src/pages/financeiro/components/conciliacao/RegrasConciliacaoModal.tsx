@@ -4,6 +4,7 @@ import { useCostCenters } from '@/hooks/useFinanceiro';
 import { supabase } from '@/lib/supabase';
 import type { ReconciliationRule } from '@/hooks/useConciliacao';
 import RegrasLancamentoLista from './RegrasLancamentoLista';
+import { CATEGORIAS_ENTRADA } from './categoriasEntrada';
 
 interface Props {
   rules: ReconciliationRule[];
@@ -45,7 +46,7 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
     match_type: 'contains' as ReconciliationRule['match_type'],
     category: '',
     cost_center_id: '',
-    transaction_type: 'both' as ReconciliationRule['transaction_type'],
+    transaction_type: 'credit' as ReconciliationRule['transaction_type'],
     description_template: '',
   });
 
@@ -64,7 +65,7 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
       match_type: 'contains',
       category: '',
       cost_center_id: '',
-      transaction_type: 'both',
+      transaction_type: 'credit',
       description_template: '',
     });
     setIsCreating(false);
@@ -72,7 +73,7 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
   };
 
   const handleSave = async () => {
-    if (!form.pattern.trim()) return;
+    if (!form.pattern.trim() || !form.category) return;
     setSaving(true);
     if (editing) {
       await onUpdate(editing.id, {
@@ -84,6 +85,7 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
         description_template: form.description_template || null,
       });
       resetForm();
+      onChanged?.();
     } else {
       await onCreate({
         pattern: form.pattern,
@@ -96,6 +98,7 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
         bank_account_id: undefined,
       });
       resetForm();
+      onChanged?.();
     }
     setSaving(false);
   };
@@ -113,11 +116,9 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
     setIsCreating(true);
   };
 
-  const dreCategories = [
-    'Receita', 'CMV', 'Folha de Pagamento', 'Aluguel', 'Energia',
-    'Água', 'Internet/Telefone', 'Marketing', 'Manutenção', 'Impostos',
-    'Taxas Bancárias', 'Transporte', 'Material de Escritório', 'Outros',
-  ];
+  // Etiqueta só para ENTRADAS (2026-09-19): numa saída não entra em cálculo nenhum — saída se resolve
+  // pela regra de lançamento. A categoria atual entra na lista mesmo se for antiga.
+  const dreCategories = [...CATEGORIAS_ENTRADA, ...(form.category && !CATEGORIAS_ENTRADA.includes(form.category) ? [form.category] : [])];
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -125,10 +126,9 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 flex-shrink-0">
           <div>
-            <h3 className="font-bold text-zinc-900 text-base">Regras de Auto-Classificação</h3>
+            <h3 className="font-bold text-zinc-900 text-base">Regras da conciliação</h3>
             <p className="text-xs text-zinc-500 mt-0.5">
-              {rules.length} regra{rules.length !== 1 ? 's' : ''} cadastrada{rules.length !== 1 ? 's' : ''}
-              {rules.length > 0 && ` · ${rules.reduce((s, r) => s + r.match_count, 0)} aplicações`}
+              {lancamento.length} de lançamento · {rules.length} etiqueta{rules.length !== 1 ? 's' : ''} de entrada
             </p>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
@@ -151,7 +151,7 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
             onClick={() => { resetForm(); setIsCreating(true); }}
             className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 cursor-pointer whitespace-nowrap transition-colors"
           >
-            <i className="ri-add-line" /> Nova Regra
+            <i className="ri-add-line" /> Nova etiqueta
           </button>
         </div>
 
@@ -159,7 +159,7 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
         {isCreating && (
           <div className="px-6 py-4 bg-amber-50/50 border-b border-amber-100 flex-shrink-0">
             <p className="text-xs font-semibold text-amber-700 mb-3">
-              {editing ? 'Editar Regra' : 'Nova Regra de Classificação'}
+              {editing ? 'Editar etiqueta' : 'Nova etiqueta de entrada'} <span className="font-normal text-amber-600/80">· marca as entradas cuja descrição tem o texto (vale também para as que já estão no extrato)</span>
             </p>
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
@@ -192,13 +192,13 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
                 </select>
               </div>
               <div>
-                <label className="text-xs font-medium text-zinc-600 mb-1 block">Categoria DRE</label>
+                <label className="text-xs font-medium text-zinc-600 mb-1 block">Etiqueta *</label>
                 <select
                   value={form.category}
                   onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
                   className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
                 >
-                  <option value="">Sem categoria</option>
+                  <option value="">Escolha a etiqueta…</option>
                   {dreCategories.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
@@ -227,7 +227,7 @@ export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate
             <div className="flex items-center gap-2 mt-4">
               <button
                 onClick={handleSave}
-                disabled={saving || !form.pattern.trim()}
+                disabled={saving || !form.pattern.trim() || !form.category}
                 className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 disabled:opacity-50 cursor-pointer whitespace-nowrap transition-colors"
               >
                 {saving ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <i className="ri-save-line" />}

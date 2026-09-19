@@ -1415,7 +1415,7 @@ export default function ConciliacaoTab() {
           onCreate={createRule}
           onUpdate={updateRule}
           onDelete={deleteRule}
-          onChanged={() => { refresh(); loadAlerts(); }}
+          onChanged={async () => { await invokeWithAuth('conciliacao-pagamentos', { body: { action: 'rematch', tenant_id: user?.tenantId } }); refresh(); loadAlerts(); }}
         />
       )}
 
