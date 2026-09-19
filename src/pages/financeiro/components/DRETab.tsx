@@ -4,6 +4,7 @@ import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
 import { fetchComprasDREDetalhado, fetchComprasPeriodo } from '@/lib/comprasDRE';
 import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
+import { fetchIfoodCompetencia, isIfoodAntecipacao } from '@/lib/ifoodVendas';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -533,14 +534,18 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
   // que não cobria cartão a prazo e podia divergir do razão.
   const { data: cardFeeRows } = await supabase
     .from('fin_cash_flow')
-    .select('amount')
+    .select('amount, origin, description')
     .eq('tenant_id', tenantId)
     .eq('type', 'expense')
     // ifood_fee: comissões e taxas do iFood (edge ifood-financial)
     .in('origin', ['auto_card_fee', 'ifood_fee'])
     .gte('date', startDate)
     .lte('date', endDate);
-  const taxasMaquininha = (cardFeeRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  // Competência: do iFood só a taxa de antecipação fica pela data do repasse; comissões e taxas
+  // entram pela data do pedido (somadas em fetchFn, junto das vendas — fetchIfoodCompetencia).
+  const taxasMaquininha = ((cardFeeRows ?? []) as Array<{ amount: number; origin?: string; description?: string | null }>)
+    .filter((r) => r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description))
+    .reduce((s, r) => s + Number(r.amount), 0);
   // Vendas em cartão liquidadas pela Stone (opção "lançar no financeiro" da integração)
   const { data: stoneSaleRows } = await supabase
     .from('fin_cash_flow')
@@ -803,7 +808,12 @@ export default function DRETab() {
           : fetchDREData(tenantId, start, end),
         loadRevenueExtras(tenantId, start, end),
       ]);
-      return applyRevenueSources(d, extras.sources, extras.pix, extras.ifood);
+      if (dreMode !== 'competencia') return applyRevenueSources(d, extras.sources, extras.pix, extras.ifood);
+      // Competência: iFood pela data do PEDIDO (caixa segue pela data do repasse)
+      const ifood = extras.sources.includes('ifood')
+        ? await fetchIfoodCompetencia(tenantId, start, end)
+        : { receita: 0, custo: 0 };
+      return applyRevenueSources({ ...d, taxasMaquininha: d.taxasMaquininha + ifood.custo }, extras.sources, extras.pix, ifood.receita);
     },
     [dreMode]
   );
@@ -1296,7 +1306,9 @@ export default function DRETab() {
                 )}
                 {(data.receitaIfood ?? 0) > 0 && (
                   <DRERow label="Vendas iFood" atual={data.receitaIfood ?? 0} anterior={prevData?.receitaIfood} receitaBruta={receitaBruta} depth={1}
-                    origin="Livro-razão: fin_cash_flow → ifood_sale (vendas do iFood por dia de repasse; comissões e taxas estão em Taxas de cartão, Pix e iFood)" />
+                    origin={dreMode === 'competencia'
+                      ? 'Relatório de conciliação do iFood (fin_ifood_entries): vendas pela DATA DO PEDIDO, sem o que a loja recebeu direto. Comissões e taxas, também pela data do pedido, estão em Taxas de cartão, Pix e iFood.'
+                      : 'Livro-razão: fin_cash_flow → ifood_sale (vendas do iFood pela DATA DO REPASSE, o que entrou no mês; comissões e taxas estão em Taxas de cartão, Pix e iFood)'} />
                 )}
                 {data.receitaManual > 0 && (
                   <DRERow label="Entradas manuais (fluxo de caixa)" atual={data.receitaManual} anterior={prevData?.receitaManual} receitaBruta={receitaBruta} depth={1}

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, Fragment, type ReactNode } from 'reac
 import { supabase } from '@/lib/supabase';
 import { fetchComprasDRE, fetchComprasPeriodo } from '@/lib/comprasDRE';
 import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
+import { fetchIfoodCompetencia, isIfoodAntecipacao } from '@/lib/ifoodVendas';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
@@ -173,7 +174,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
     supabase.from('fin_purchases').select('id, total_amount, payment_status').eq('tenant_id', tenantId).gte('purchase_date', startDate).lte('purchase_date', endDate),
     // Competência: folha pelo mês de referência, paga ou não (igual ao DRETab).
     supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('reference_month', monthStr),
-    supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'expense').in('origin', ['auto_card_fee', 'ifood_fee']).gte('date', startDate).lte('date', endDate),
+    supabase.from('fin_cash_flow').select('amount, origin, description').eq('tenant_id', tenantId).eq('type', 'expense').in('origin', ['auto_card_fee', 'ifood_fee']).gte('date', startDate).lte('date', endDate),
   ]);
 
   // Mesmo crivo do DRETab (competência): só payments com auto_sale correspondente no razão.
@@ -202,7 +203,10 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
     if (b.status === 'pending' || b.status === 'overdue' || b.status === 'partial') despesasAPagar += Number(b.amount);
   });
   const custoPessoal = (payrollRes.data ?? []).reduce((s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0);
-  const taxasMaquininha = (cardFeeRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  // iFood: só a taxa de antecipação fica pela data do repasse; comissões e taxas vão pela data do pedido (loadData)
+  const taxasMaquininha = ((cardFeeRes.data ?? []) as Array<{ amount: number; origin?: string; description?: string | null }>)
+    .filter((r) => r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description))
+    .reduce((s, r) => s + Number(r.amount), 0);
   const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
   const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
@@ -407,7 +411,11 @@ export default function DREComparativoTab() {
       loadRevenueExtras(user.tenantId, start, end),
     ]);
     setCaixaData(applyRevenueSources(caixa, extras.sources, extras.pix, extras.ifood));
-    setCompData(applyRevenueSources(comp, extras.sources, extras.pix, extras.ifood));
+    // Competência: iFood pela data do PEDIDO (vendas e comissões); caixa segue pela data do repasse
+    const ifoodComp = extras.sources.includes('ifood')
+      ? await fetchIfoodCompetencia(user.tenantId, start, end)
+      : { receita: 0, custo: 0 };
+    setCompData(applyRevenueSources({ ...comp, taxasMaquininha: comp.taxasMaquininha + ifoodComp.custo }, extras.sources, extras.pix, ifoodComp.receita));
     setDreCats(catsRes.data ?? []);
     setLoading(false);
   }, [user?.tenantId, mes]);

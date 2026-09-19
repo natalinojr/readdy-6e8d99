@@ -78,3 +78,45 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
   out.total = Math.round(out.total * 100) / 100;
   return out;
 }
+
+/** Taxa de antecipação do iFood lançada no razão (edge ifood-financial › postLedger): custo do dia do repasse. */
+export const isIfoodAntecipacao = (descricao: string | null | undefined) => /^Taxa de antecipação iFood/i.test(descricao ?? '');
+
+/**
+ * iFood no regime de COMPETÊNCIA: vendas e comissões/taxas pela data do PEDIDO (e as cobranças sem pedido,
+ * como a mensalidade, pelo fim do período de apuração). Mesma divisão do razão por repasse (postLedger):
+ * receita = vendas − recebido direto pela loja (esse entra por maquininha/Pix); custo = taxas + serviços − ajustes.
+ * A taxa de antecipação não está no relatório: continua no razão, pela data do repasse.
+ * Só vale com a fonte "Vendas iFood" ligada e "lançar no financeiro" ativo (igual ao regime de caixa).
+ */
+export async function fetchIfoodCompetencia(tenantId: string, startDate: string, endDate: string): Promise<{ receita: number; custo: number; error: string | null }> {
+  const { data: cfg } = await supabase.from('fin_ifood_config')
+    .select('post_to_ledger, homologation_mode').eq('tenant_id', tenantId).maybeSingle();
+  if (!cfg?.post_to_ledger || cfg.homologation_mode) return { receita: 0, custo: 0, error: null };
+
+  const cols = 'tipo_lancamento, descricao, valor, impacto_repasse';
+  const [comPedido, semPedido] = await Promise.all([
+    fetchAllRows<PortalEntry>((from, to) => supabase
+      .from('fin_ifood_entries').select(cols)
+      .eq('tenant_id', tenantId)
+      .gte('order_created_at', `${startDate}T00:00:00-03:00`)
+      .lte('order_created_at', `${endDate}T23:59:59.999-03:00`)
+      .order('id').range(from, to)),
+    fetchAllRows<PortalEntry>((from, to) => supabase
+      .from('fin_ifood_entries').select(cols)
+      .eq('tenant_id', tenantId)
+      .is('order_created_at', null)
+      .gte('data_apuracao_fim', startDate)
+      .lte('data_apuracao_fim', endDate)
+      .order('id').range(from, to)),
+  ]);
+  const error = comPedido.error?.message ?? semPedido.error?.message ?? null;
+  let receita = 0;
+  let custo = 0;
+  for (const r of [...(comPedido.rows ?? []), ...(semPedido.rows ?? [])]) {
+    const b = portalBucket({ ...r, valor: Number(r.valor) });
+    receita += b.vendas - b.loja;
+    custo += b.taxas + b.servicos - b.ajustes;
+  }
+  return { receita: Math.round(receita * 100) / 100, custo: Math.round(custo * 100) / 100, error };
+}
