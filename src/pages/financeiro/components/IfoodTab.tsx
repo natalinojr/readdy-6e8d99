@@ -25,7 +25,7 @@ interface EntryRow {
 }
 interface RepasseRow {
   data_repasse: string; esperado: number; depositos: number; recebido_inter: number; linhas_inter: number;
-  detalhe: { ifood: { valor: number; metodo: string | null }[]; inter: { data: string; valor: number; descricao: string | null }[]; bruto?: number; antecipacao?: number };
+  detalhe: { ifood: { valor: number; metodo: string | null }[]; inter: { data: string; valor: number; descricao: string | null }[]; bruto?: number; antecipacao?: number; sem_conta?: boolean };
 }
 
 const compLabel = (c: string) => {
@@ -373,7 +373,7 @@ export default function IfoodTab() {
           <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
             <div className="px-4 py-3 border-b border-zinc-100">
               <p className="text-sm font-semibold text-zinc-800">Repasses</p>
-              <p className="text-xs text-zinc-500">O que o iFood diz que paga × créditos com "iFood" no extrato do Inter (na data e no dia seguinte). O cartão chega como "Crédito domicílio cartão", em valores próprios, então compare o total do dia. Soma <strong>todas as lojas iFood importadas</strong> (o Inter recebe as duas na mesma conta): importe o relatório de cada loja para o total bater.{porLoja && <> A coluna <strong>Esta loja</strong> é o que o relatório desta loja informa (bate com o Excel dela).</>}</p>
+              <p className="text-xs text-zinc-500">O que o iFood diz que paga × créditos com "iFood" no extrato do banco (na data e no dia seguinte). O cartão chega como "Crédito domicílio cartão", em valores próprios, então compare o total do dia. Soma <strong>todas as lojas iFood importadas</strong> (o Inter recebe as duas na mesma conta): importe o relatório de cada loja para o total bater.{porLoja && <> A coluna <strong>Esta loja</strong> é o repasse desta loja (bate com o "Valor" dos Repasses no Portal).</>}{repasses.some((r) => r.detalhe.sem_conta) && <> Esta loja não tem conta de depósito do iFood em <strong>Conciliação › Como o dinheiro entra</strong>, então não há extrato para conferir.</>}</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -382,16 +382,19 @@ export default function IfoodTab() {
                     <th className="text-left px-4 py-2">Data</th>
                     {porLoja && <th className="text-right px-4 py-2">Esta loja</th>}
                     <th className="text-right px-4 py-2">{porLoja ? 'iFood informa (todas as lojas)' : 'iFood informa'}</th>
-                    <th className="text-right px-4 py-2">Caiu no Inter</th>
+                    <th className="text-right px-4 py-2">Caiu no banco</th>
                     <th className="text-right px-4 py-2">Diferença</th>
                     <th className="text-left px-4 py-2">Situação</th>
                   </tr>
                 </thead>
                 <tbody>
                   {repasses.map((r) => {
-                    const futuro = r.data_repasse > hoje;
+                    // Sem conta de depósito do iFood configurada (ex.: Vila Leste, Itaú sem API) não há extrato
+                    // para conferir: "não achado" em vermelho seria falso.
+                    const futuro = r.data_repasse > hoje || r.detalhe.sem_conta === true;
                     const diff = r.recebido_inter - r.esperado;
-                    const status = futuro ? { t: 'Previsto', c: 'bg-zinc-100 text-zinc-600' }
+                    const status = r.detalhe.sem_conta ? { t: 'Sem extrato do banco', c: 'bg-zinc-100 text-zinc-500' }
+                      : futuro ? { t: 'Previsto', c: 'bg-zinc-100 text-zinc-600' }
                       : r.linhas_inter === 0 ? { t: 'Não achado no Inter', c: 'bg-red-100 text-red-700' }
                       : Math.abs(diff) <= 0.05 ? { t: 'Conferido', c: 'bg-green-100 text-green-700' }
                       : { t: 'Caiu com diferença', c: 'bg-amber-100 text-amber-700' };
@@ -424,7 +427,7 @@ export default function IfoodTab() {
                                   )}
                                 </div>
                                 <div>
-                                  <p className="font-semibold text-zinc-700 mb-1">Créditos iFood no Inter</p>
+                                  <p className="font-semibold text-zinc-700 mb-1">Créditos iFood no banco</p>
                                   {r.detalhe.inter.length === 0 && <p className="text-zinc-400">Nenhum{futuro ? ' ainda (repasse futuro)' : ''}.</p>}
                                   {r.detalhe.inter.map((d, i) => (
                                     <div key={i} className="flex justify-between gap-2 border-t border-zinc-100 py-0.5"><span className="truncate">{dataBR(d.data)} · {d.descricao}</span><span className="font-mono">{formatCurrency(Number(d.valor))}</span></div>
