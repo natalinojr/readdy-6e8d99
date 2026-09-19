@@ -1057,7 +1057,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         .eq("order_id", o.id)
         .eq("tenant_id", tenant_id);
       // Adicionais/opcoes por item — o cliente ver o que compoe o valor de cada item.
-      // (item_price ja inclui os adicionais; aqui detalhamos so para exibicao.)
+      // (no delivery o item_price é o preço BASE; os adicionais vêm daqui — ver PDVContext › itemPriceDoCanal.)
       const itemIds = (itemRows ?? []).map((it: Record<string, unknown>) => it.id as string);
       const optsByItem = new Map<string, Array<Record<string, unknown>>>();
       if (itemIds.length > 0) {
