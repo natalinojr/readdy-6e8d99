@@ -21,11 +21,19 @@
 //   unlink_monthly         { document_id }       desfaz tudo (estorna as baixas, apaga a compra, nota volta a conferir)
 //   save_counterpart_rule  { counterpart_doc, counterpart_label?, category, cost_center_id?, transaction_type }
 //   create_from_statement  { ids, kind: 'despesa'|'compra', dre_category_id?, merchandise_category_id?, description?,
-//                            supplier?, cost_center_id?, allow_payroll? }   admin/gerente — pagamento SEM NOTA:
+//                            supplier?, cost_center_id?, allow_payroll?, competence_month?: 'YYYY-MM' }   admin/gerente — pagamento SEM NOTA:
 //                          despesa = conta a pagar (reference_type 'conciliacao_extrato') já baixada; compra = compra
 //                          (purchase-write) com 1 item, parcela baixada. Mesma data e conta do extrato. Pix para CPF de
 //                          funcionário é recusado (code 'folha') sem allow_payroll: a folha já entra na DRE. O undo apaga
 //                          o que foi criado e devolve a linha para pendente.
+//
+//   REGRA DE LANÇAMENTO (2026-09-18): por CNPJ/CPF/chave Pix, a saída vira despesa/compra (create_from_statement)
+//   com a competência da regra (mês do pagamento ou o anterior). fn_match_launch_rules grava a sugestão
+//   (match_kind 'rule'); confirm lança. Travas no SQL: CPF de funcionário, fornecedor que emite NF-e.
+//   launch_rule_save     { counterpart_doc, counterpart_label?, kind, dre_category_id?, merchandise_category_id?,
+//                          competence_rule: 'same'|'prev', supplier_name?, cost_center_id? }   admin/gerente
+//   launch_rule_preview  { rule_id }            pagamentos pendentes (qualquer data) que a regra pegaria
+//   launch_rule_apply    { rule_id, items: [{ id, competencia: 'YYYY-MM' }] }   admin/gerente: lança esses
 //
 // Reaproveita a lógica que já existe chamando as outras edges COM O JWT DO USUÁRIO:
 //   fiscal-inbound (import_purchase / import_bill) e financial-write (pay_bill / upsert_bill).
@@ -119,6 +127,7 @@ async function confirmOneClaimed(ctx: Ctx, rowId: string, row: Row): Promise<Res
   const { admin, tenantId } = ctx;
   const fail = (msg: string): Result => ({ id: rowId, ok: false, msg });
   if (row.transaction_type === 'debit' && row.match_kind === 'payroll') return confirmPayroll(ctx, row);
+  if (row.transaction_type === 'debit' && row.match_kind === 'rule') return confirmRule(ctx, row);
   if (row.transaction_type !== 'debit' || !['payable', 'inbound_doc'].includes(String(row.match_kind))) return fail('Este lançamento não tem vínculo sugerido');
 
   const det = (row.match_detail ?? {}) as Row;
@@ -269,6 +278,39 @@ interface CreateOpts {
   supplier: string | null;
   costCenterId: string | null;
   allowPayroll: boolean;
+  /** 'YYYY-MM': mês a que o gasto pertence (fin_accounts_payable.competence_month) */
+  competenceMonth?: string | null;
+}
+
+const competenciaOk = (v: unknown) => (typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? v : null);
+
+// Opções de lançamento a partir de uma regra (fin_reconciliation_rules action 'launch')
+function ruleOpts(rule: Row, competencia: unknown): CreateOpts {
+  return {
+    kind: rule.launch_kind === 'compra' ? 'compra' : 'despesa',
+    dreCategoryId: rule.dre_category_id ?? null,
+    mercCategoryId: rule.merchandise_category_id ?? null,
+    description: rule.supplier_name ?? rule.counterpart_label ?? null,
+    supplier: rule.supplier_name ?? null,
+    costCenterId: rule.cost_center_id ?? null,
+    allowPayroll: false,
+    competenceMonth: competenciaOk(competencia),
+  };
+}
+
+// Confirma a sugestão de uma regra: lança como o "Lançar" (a linha já está reservada).
+// prev_match_kind vai vazio: desfeito, a próxima rodada de sugestões refaz o vínculo com a regra.
+async function confirmRule(ctx: Ctx, row: Row, competencia?: unknown): Promise<Result> {
+  const { admin, tenantId } = ctx;
+  const { data: rule } = await admin.from('fin_reconciliation_rules').select('*')
+    .eq('id', String(row.match_ref_id ?? '')).eq('tenant_id', tenantId).eq('action', 'launch').maybeSingle();
+  if (!rule || !rule.is_active) return { id: String(row.id), ok: false, msg: 'A regra deste pagamento não existe mais: atualize a tela' };
+  const det = (row.match_detail ?? {}) as Row;
+  const r = await createOneClaimed(ctx, String(row.id), ruleOpts(rule, competencia ?? det.competencia), { ...row, match_kind: null, category: null });
+  if (r.ok) {
+    await admin.from('fin_reconciliation_rules').update({ match_count: Number(rule.match_count ?? 0) + 1, last_applied_at: new Date().toISOString() }).eq('id', rule.id);
+  }
+  return r;
 }
 
 async function createOne(ctx: Ctx, rowId: string, o: CreateOpts): Promise<Result> {
@@ -360,6 +402,12 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
       .eq('tenant_id', tenantId).eq('last_ref_id', purchaseId).is('classe', null);
   }
 
+  const competencia = competenciaOk(o.competenceMonth);
+  if (competencia) {
+    const { error: ce } = await admin.from('fin_accounts_payable').update({ competence_month: competencia + '-01' }).eq('id', billId).eq('tenant_id', tenantId);
+    if (ce) log('WARN', 'create', 'gravar competência falhou', { tenantId, billId, error: ce.message });
+  }
+
   const pay = await callEdge(ctx, 'financial-write', {
     action: 'pay_bill', tenant_id: tenantId,
     payload: { id: billId, paid_date: paidDate, paid_amount: valor, payment_method: metodo, bank_account_id: row.bank_account_id },
@@ -376,8 +424,9 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
     status: 'matched', reconciled: true, reconciled_at: now, reconciled_by: ctx.userId, matched_at: now, matched_by: ctx.userId,
     match_kind: 'payable', match_ref_id: billId, match_confidence: 'manual', category: categoria,
     match_detail: {
-      label: (o.kind === 'compra' ? 'Compra sem nota: ' : 'Despesa sem nota: ') + descricao, valor, created: o.kind,
-      prev_category: row.category ?? null, prev_match_kind: row.match_kind ?? null, confirmed,
+      label: (o.kind === 'compra' ? 'Compra sem nota: ' : 'Despesa sem nota: ') + descricao + (competencia ? ' · competência ' + competencia.slice(5, 7) + '/' + competencia.slice(0, 4) : ''),
+      valor, created: o.kind, competencia,
+      prev_category: row.category ?? null, prev_match_kind: row.match_kind === 'rule' ? null : row.match_kind ?? null, confirmed,
     },
   }).eq('id', row.id);
   if (upErr) log('ERROR', 'create', 'marcar extrato falhou', { tenantId, rowId, error: upErr.message });
@@ -691,7 +740,9 @@ Deno.serve(async (req: Request) => {
       if (error) return errResp('Sugerir vínculos: ' + error.message, 500);
       const { data: folha, error: fe } = await admin.rpc('fn_match_payroll', { p_tenant: tenantId, p_from: from, p_to: to });
       if (fe) log('WARN', 'rematch', 'fn_match_payroll falhou', { tenantId, error: fe.message });
-      return json({ success: true, ...(data as Row ?? {}), folha: folha ?? 0 });
+      const { data: regras, error: re } = await admin.rpc('fn_match_launch_rules', { p_tenant: tenantId, p_from: from, p_to: to });
+      if (re) log('WARN', 'rematch', 'fn_match_launch_rules falhou', { tenantId, error: re.message });
+      return json({ success: true, ...(data as Row ?? {}), folha: folha ?? 0, regras_lancamento: regras ?? 0 });
     }
 
     if (action === 'alerts') {
@@ -844,6 +895,7 @@ Deno.serve(async (req: Request) => {
         supplier: body.supplier ? String(body.supplier) : null,
         costCenterId: body.cost_center_id ? String(body.cost_center_id) : null,
         allowPayroll: body.allow_payroll === true,
+        competenceMonth: competenciaOk(body.competence_month),
       };
       const results: Result[] = [];
       for (const id of ids) {
@@ -887,7 +939,9 @@ Deno.serve(async (req: Request) => {
         tenant_id: tenantId, counterpart_doc: doc, counterpart_label: label, pattern: doc, match_type: 'contains',
         category, cost_center_id: body.cost_center_id || null, transaction_type: txType, is_active: true, updated_at: new Date().toISOString(),
       };
-      const { data: existing } = await admin.from('fin_reconciliation_rules').select('id').eq('tenant_id', tenantId).eq('counterpart_doc', doc).maybeSingle();
+      const { data: existing } = await admin.from('fin_reconciliation_rules').select('id, action').eq('tenant_id', tenantId).eq('counterpart_doc', doc).maybeSingle();
+      // Etiqueta não sobrescreve regra de LANÇAMENTO do mesmo CNPJ (uma regra por CNPJ/chave)
+      if (existing?.action === 'launch') return errResp('Este CNPJ/chave já tem regra de lançamento: edite em Regras');
       const { error } = existing
         ? await admin.from('fin_reconciliation_rules').update(fields).eq('id', existing.id)
         : await admin.from('fin_reconciliation_rules').insert({ ...fields, match_count: 0 });
@@ -896,7 +950,87 @@ Deno.serve(async (req: Request) => {
       const to = todayBR();
       await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: addDays(to, -120), p_to: to });
       await admin.rpc('fn_match_payroll', { p_tenant: tenantId, p_from: addDays(to, -120), p_to: to });
+      await admin.rpc('fn_match_launch_rules', { p_tenant: tenantId, p_from: addDays(to, -120), p_to: to });
       return json({ success: true, message: 'Regra salva: os próximos lançamentos de ' + label + ' entram como "' + category + '".' });
+    }
+
+    // ── Regra de lançamento ────────────────────────────────────────────────────
+    if (action === 'launch_rule_save') {
+      if (!isManager) return errResp('Apenas administradores e gerentes podem criar regras', 403);
+      const raw = String(body.counterpart_doc ?? '').trim();
+      const doc = /^[\d.\-/\s]+$/.test(raw) ? raw.replace(/\D/g, '') : raw.toLowerCase();
+      if (!doc) return errResp('Pagamento sem CPF/CNPJ ou chave Pix: não dá para criar regra');
+      const kind = body.kind === 'compra' ? 'compra' : 'despesa';
+      const dreId = body.dre_category_id ? String(body.dre_category_id) : null;
+      const mercId = body.merchandise_category_id ? String(body.merchandise_category_id) : null;
+      if (kind === 'despesa') {
+        if (!dreId) return errResp('Escolha a categoria da despesa');
+        const { data: cat } = await admin.from('fin_dre_categories').select('id, group_type').eq('id', dreId).eq('tenant_id', tenantId).maybeSingle();
+        if (!cat || ['revenue', 'tax', 'cost'].includes(String(cat.group_type))) return errResp('Categoria da DRE inválida para despesa');
+      }
+      if (doc.length === 11) {
+        const { data: emps } = await admin.from('hr_employees').select('name, cpf').eq('tenant_id', tenantId);
+        const func = ((emps ?? []) as Row[]).find((e) => soDigitos(e.cpf) === doc);
+        if (func) return errResp('O CPF é de ' + func.name + ', funcionário: salário entra pela folha, não por regra');
+      }
+      const label = String(body.counterpart_label ?? '').trim().slice(0, 120) || doc;
+      const fields = {
+        tenant_id: tenantId, counterpart_doc: doc, counterpart_label: label, pattern: doc, match_type: 'contains',
+        category: null, cost_center_id: body.cost_center_id || null, transaction_type: 'debit', is_active: true,
+        action: 'launch', launch_kind: kind, dre_category_id: kind === 'despesa' ? dreId : null, merchandise_category_id: kind === 'compra' ? mercId : null,
+        competence_rule: body.competence_rule === 'prev' ? 'prev' : 'same', mode: 'suggest',
+        supplier_name: String(body.supplier_name ?? '').trim().slice(0, 120) || label, updated_at: new Date().toISOString(),
+      };
+      const { data: existing } = await admin.from('fin_reconciliation_rules').select('id').eq('tenant_id', tenantId).eq('counterpart_doc', doc).maybeSingle();
+      const saved = existing
+        ? await admin.from('fin_reconciliation_rules').update(fields).eq('id', existing.id).select('id').single()
+        : await admin.from('fin_reconciliation_rules').insert({ ...fields, match_count: 0, created_by: userId }).select('id').single();
+      if (saved.error) return errResp('Salvar regra: ' + saved.error.message, 500);
+      const to = todayBR();
+      await admin.rpc('fn_match_launch_rules', { p_tenant: tenantId, p_from: addDays(to, -120), p_to: to });
+      const { data: cands } = await admin.rpc('fn_launch_rule_candidates', { p_tenant: tenantId, p_rule: saved.data.id, p_from: '2000-01-01', p_to: to });
+      const pendentes = ((cands ?? []) as Row[]).filter((c) => !c.bloqueio).length;
+      log('INFO', 'launch_rule_save', 'ok', { tenantId, userId, doc, kind, pendentes });
+      return json({ success: true, rule_id: saved.data.id, pendentes, message: 'Regra salva: os próximos pagamentos para ' + label + ' viram lançamento sugerido.' });
+    }
+
+    if (action === 'launch_rule_preview') {
+      const ruleId = String(body.rule_id ?? '');
+      const { data: rule } = await admin.from('fin_reconciliation_rules').select('id').eq('id', ruleId).eq('tenant_id', tenantId).eq('action', 'launch').maybeSingle();
+      if (!rule) return errResp('Regra não encontrada', 404);
+      const { data, error } = await admin.rpc('fn_launch_rule_candidates', { p_tenant: tenantId, p_rule: ruleId, p_from: '2000-01-01', p_to: todayBR() });
+      if (error) return errResp('Pagamentos da regra: ' + error.message, 500);
+      return json({ success: true, candidates: data ?? [] });
+    }
+
+    if (action === 'launch_rule_apply') {
+      if (!isManager) return errResp('Apenas administradores e gerentes podem lançar', 403);
+      const ruleId = String(body.rule_id ?? '');
+      const { data: rule } = await admin.from('fin_reconciliation_rules').select('*').eq('id', ruleId).eq('tenant_id', tenantId).eq('action', 'launch').maybeSingle();
+      if (!rule || !rule.is_active) return errResp('Regra não encontrada', 404);
+      const items = (Array.isArray(body.items) ? body.items : []).slice(0, MAX_BATCH) as Array<{ id?: unknown; competencia?: unknown }>;
+      if (items.length === 0) return errResp('Escolha os pagamentos');
+      // Só linhas que a regra pega de fato (mesmo CNPJ, pendentes, sem trava) — nunca um id qualquer
+      const { data: cands } = await admin.rpc('fn_launch_rule_candidates', { p_tenant: tenantId, p_rule: ruleId, p_from: '2000-01-01', p_to: todayBR() });
+      const validos = new Map(((cands ?? []) as Row[]).filter((c) => !c.bloqueio).map((c) => [String(c.statement_id), c]));
+      const results: Result[] = [];
+      for (const it of items) {
+        const id = String(it.id ?? '');
+        const c = validos.get(id);
+        if (!c) { results.push({ id, ok: false, msg: 'Este pagamento não é desta regra (ou já foi lançado)' }); continue; }
+        const comp = competenciaOk(it.competencia) ?? String(c.competencia).slice(0, 7);
+        try {
+          const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
+          if (!row || row.reconciled || row.status !== 'pending') { results.push({ id, ok: false, msg: 'Este pagamento já está conciliado' }); continue; }
+          results.push(await withRowClaim(ctx, id, () => createOneClaimed(ctx, id, ruleOpts(rule, comp), { ...row, match_kind: null, category: null })));
+        } catch (e) {
+          results.push({ id, ok: false, msg: String((e as Error)?.message ?? e) });
+        }
+      }
+      const ok = results.filter((r) => r.ok).length;
+      if (ok) await admin.from('fin_reconciliation_rules').update({ match_count: Number(rule.match_count ?? 0) + ok, last_applied_at: new Date().toISOString() }).eq('id', rule.id);
+      log('INFO', 'launch_rule_apply', 'ok', { tenantId, userId, rule: rule.id, total: results.length, ok });
+      return json({ success: true, results });
     }
 
     return errResp('Ação desconhecida: ' + action);

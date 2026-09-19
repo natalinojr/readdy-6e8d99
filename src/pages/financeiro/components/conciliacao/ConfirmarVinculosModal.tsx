@@ -74,7 +74,7 @@ export default function ConfirmarVinculosModal({ rows, confirming, onClose, onCo
           {qtdFortes > 0 && (
             <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer pb-2">
               <input type="checkbox" checked={incluirFortes} onChange={e => setIncluirFortes(e.target.checked)} />
-              Mostrar também os {qtdFortes} vínculo(s) forte(s) (mesmo valor e mesmo fornecedor, mas vencimento diferente)
+              Mostrar também os {qtdFortes} vínculo(s) forte(s) (mesmo valor e fornecedor com vencimento diferente, ou regra com aviso)
             </label>
           )}
         </div>
@@ -99,6 +99,9 @@ export default function ConfirmarVinculosModal({ rows, confirming, onClose, onCo
                   const d = (r.match_detail ?? {}) as Record<string, unknown>;
                   const j = Number(d.juros ?? 0);
                   const desc = Number(d.desconto ?? 0);
+                  // Regra de lançamento (match_kind 'rule'): não baixa conta — cria a despesa/compra já paga
+                  const regra = r.match_kind === 'rule';
+                  const comp = String(d.competencia ?? '');
                   return (
                     <tr key={r.id} className={sel.has(r.id) ? 'bg-emerald-50/40' : ''} onClick={() => toggle(r.id)}>
                       <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
@@ -107,7 +110,7 @@ export default function ConfirmarVinculosModal({ rows, confirming, onClose, onCo
                       <td className="px-3 py-2 text-xs whitespace-nowrap">{dataBR(r.transaction_date)}</td>
                       <td className="px-3 py-2 text-xs">
                         <p className="font-medium text-zinc-800">{r.counterpart_name || r.description}</p>
-                        <p className="text-zinc-400">{d.boleto ? 'Boleto' : 'Pix/TED'}{r.match_confidence === 'forte' ? ' · vínculo forte' : ''}</p>
+                        <p className="text-zinc-400">{d.boleto ? 'Boleto' : 'Pix/TED'}{r.match_confidence === 'forte' ? (regra ? ' · confira o aviso' : ' · vínculo forte') : ''}</p>
                       </td>
                       <td className="px-3 py-2 text-right font-semibold text-red-600 whitespace-nowrap">{formatCurrency(Number(r.amount))}</td>
                       <td className="px-3 py-2 text-xs">
@@ -120,7 +123,11 @@ export default function ConfirmarVinculosModal({ rows, confirming, onClose, onCo
                         {d.auto_import === true && (
                           <p className="text-blue-700"><i className="ri-magic-line mr-1" />Importa a nota como {Number(d.modelo) === 10 ? 'despesa' : 'compra'}</p>
                         )}
-                        <p className="text-zinc-600">Baixa a parcela</p>
+                        {regra ? (
+                          <p className="text-violet-700"><i className="ri-flashlight-line mr-1" />Lança {d.tipo === 'compra' ? 'compra' : 'despesa ' + String(d.categoria ?? '')} já paga{comp ? ' · competência ' + comp.slice(5, 7) + '/' + comp.slice(0, 4) : ''}</p>
+                        ) : (
+                          <p className="text-zinc-600">Baixa a parcela</p>
+                        )}
                         {j > 0 && <p className="text-amber-700">Lança juros/multa de {formatCurrency(j)}</p>}
                         {desc > 0 && d.boleto === true && <p className="text-amber-700">Registra desconto de {formatCurrency(desc)}</p>}
                       </td>

@@ -18,6 +18,16 @@ export interface ReconciliationRule {
   is_active: boolean;
   match_count: number;
   created_at: string;
+  /** 'label' = só etiqueta a linha do extrato; 'launch' = regra de lançamento (2026-09-18) */
+  action?: 'label' | 'launch';
+  counterpart_doc?: string | null;
+  counterpart_label?: string | null;
+  launch_kind?: 'despesa' | 'compra' | null;
+  dre_category_id?: string | null;
+  merchandise_category_id?: string | null;
+  competence_rule?: 'same' | 'prev';
+  supplier_name?: string | null;
+  last_applied_at?: string | null;
 }
 
 export interface StatementImport {

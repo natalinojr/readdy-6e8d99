@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useCostCenters } from '@/hooks/useFinanceiro';
 import { supabase } from '@/lib/supabase';
 import type { ReconciliationRule } from '@/hooks/useConciliacao';
+import RegrasLancamentoLista from './RegrasLancamentoLista';
 
 interface Props {
   rules: ReconciliationRule[];
@@ -10,6 +11,8 @@ interface Props {
   onCreate: (payload: Omit<ReconciliationRule, 'id' | 'tenant_id' | 'match_count' | 'created_at'>) => Promise<ReconciliationRule | null>;
   onUpdate: (id: string, updates: Partial<ReconciliationRule>) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
+  /** Depois de lançar/editar regra de lançamento (recarregar extrato e alertas) */
+  onChanged?: () => void;
 }
 
 const MATCH_TYPES = [
@@ -26,7 +29,10 @@ const TX_TYPES = [
   { value: 'debit' as const, label: 'Só Débito' },
 ];
 
-export default function RegrasConciliacaoModal({ rules, onClose, onCreate, onUpdate, onDelete }: Props) {
+export default function RegrasConciliacaoModal({ rules: todas, onClose, onCreate, onUpdate, onDelete, onChanged }: Props) {
+  // Regras de lançamento têm lista própria; o formulário abaixo é só das etiquetas (texto)
+  const lancamento = useMemo(() => todas.filter(r => r.action === 'launch'), [todas]);
+  const rules = useMemo(() => todas.filter(r => r.action !== 'launch'), [todas]);
   const { user } = useAuth();
   const { centers } = useCostCenters();
   const [editing, setEditing] = useState<ReconciliationRule | null>(null);
@@ -239,6 +245,8 @@ export default function RegrasConciliacaoModal({ rules, onClose, onCreate, onUpd
 
         {/* List */}
         <div className="flex-1 overflow-y-auto px-6 py-3">
+          <RegrasLancamentoLista rules={lancamento} onDelete={onDelete} onChanged={onChanged} />
+          {lancamento.length > 0 && <p className="text-xs font-semibold text-zinc-600 mb-2">Etiquetas do extrato <span className="font-normal text-zinc-400">— só marcam a linha (ex.: repasses); não lançam na DRE.</span></p>}
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
               <i className="ri-file-list-3-line text-3xl mb-2" />

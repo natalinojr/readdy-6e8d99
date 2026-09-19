@@ -273,6 +273,26 @@ export default function TransacaoDetalheModal({
               </div>
             );
           })()}
+          {transaction.match_kind === 'rule' && transaction.match_detail && !transaction.reconciled && (() => {
+            // Regra de lançamento (2026-09-18): confirmar cria a despesa/compra já paga, com a competência
+            const d = transaction.match_detail as Record<string, unknown>;
+            const comp = String(d.competencia ?? '');
+            return (
+              <div className="border border-violet-200 bg-violet-50 rounded-xl p-3 text-xs space-y-2">
+                <p className="font-semibold text-zinc-800"><i className="ri-flashlight-line mr-1" />Regra de lançamento</p>
+                <p className="text-zinc-700">
+                  Vira {d.tipo === 'compra' ? 'compra (CMV)' : 'despesa ' + String(d.categoria ?? '')} já paga nesta data
+                  {comp ? ', competência ' + comp.slice(5, 7) + '/' + comp.slice(0, 4) : ''}.
+                </p>
+                {!!d.conflito && <p className="text-amber-700"><i className="ri-error-warning-line mr-1" />{String(d.conflito)}</p>}
+                {d.fora_padrao === true && <p className="text-amber-700"><i className="ri-error-warning-line mr-1" />Valor fora do padrão deste fornecedor (média {formatCurrency(Number(d.media ?? 0))}).</p>}
+                {vinculoMsg && <p className="text-red-600">{vinculoMsg}</p>}
+                <button onClick={() => vinculoAction('confirm')} disabled={vinculoBusy} className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
+                  {vinculoBusy ? 'Lançando...' : 'Confirmar e lançar'}
+                </button>
+              </div>
+            );
+          })()}
           {(transaction.match_kind === 'payable' || transaction.match_kind === 'inbound_doc') && transaction.match_detail && (() => {
             const d = transaction.match_detail as Record<string, unknown>;
             const conf = d.confirmed as Record<string, unknown> | undefined;
@@ -435,7 +455,9 @@ export default function TransacaoDetalheModal({
                   Para mudar, edite em Financeiro › {transaction.classificacao.tipo === 'compra' ? 'Compras' : 'Contas a pagar'}.
                 </p>
               </div>
-            ) : (
+            ) : transaction.transaction_type === 'credit' ? (
+            // Só nas ENTRADAS (2026-09-18): numa saída a etiqueta não entra em cálculo nenhum e ainda
+            // tirava o pagamento do alerta. Saída se resolve pelo "Lançar", vínculo ou regra de lançamento.
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-zinc-600 mb-1 block">Categoria do extrato</label>
@@ -458,13 +480,8 @@ export default function TransacaoDetalheModal({
                   {centers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
-              {podeLancarDoExtrato(transaction) && (
-                <p className="col-span-2 text-xs text-zinc-500 -mt-1">
-                  Só marca esta linha do extrato: não lança despesa na DRE. Para lançar, use "Lançar" acima ou vincule a uma conta a pagar.
-                </p>
-              )}
             </div>
-            )}
+            ) : null}
             <div>
               <label className="text-xs font-medium text-zinc-600 mb-1 block">Observações internas</label>
               <textarea
@@ -477,8 +494,8 @@ export default function TransacaoDetalheModal({
           </div>
 
           {/* "Criar regra de classificação" saiu daqui (2026-09-18): só etiquetava o extrato por texto e
-              parecia lançar na DRE. Etiqueta por pessoa = "Lembrar a categoria" abaixo; regra por texto = tela Regras. */}
-          {transaction.counterpart_doc && transaction.match_kind !== 'internal_transfer' && !transaction.classificacao && (
+              parecia lançar na DRE. Etiqueta por pessoa (só entradas) = "Lembrar a categoria" abaixo; saídas = regra de lançamento. */}
+          {transaction.transaction_type === 'credit' && transaction.counterpart_doc && transaction.match_kind !== 'internal_transfer' && !transaction.classificacao && (
             <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer bg-zinc-50 border border-zinc-200 rounded-lg p-2.5">
               <input type="checkbox" checked={lembrarContraparte} onChange={e => setLembrarContraparte(e.target.checked)} className="mt-0.5" />
               <span>

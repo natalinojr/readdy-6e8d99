@@ -27,6 +27,8 @@ export interface LancarOpcoes {
   description?: string | null;
   supplier?: string | null;
   allow_payroll?: boolean;
+  /** 'YYYY-MM': mês a que o gasto pertence (competência). Vazio = só a data do pagamento. */
+  competence_month?: string | null;
 }
 
 // A edge aceita até 30 por chamada (e ignora o resto): manda em blocos.
@@ -80,7 +82,7 @@ interface Props {
 
 export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }: Props) {
   const { user } = useAuth();
-  const { dreOptions, mercOptions, dreNome } = useCategoriasLancamento();
+  const { dreOptions, mercOptions } = useCategoriasLancamento();
   const nomePadrao = transaction.counterpart_name || transaction.description || '';
   const [aberto, setAberto] = useState(false);
   useEffect(() => { onAbertoChange?.(aberto); }, [aberto, onAbertoChange]);
@@ -90,6 +92,12 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const [dreCat, setDreCat] = useState('');
   const [merc, setMerc] = useState('');
   const [lembrar, setLembrar] = useState(false);
+  // Competência (2026-09-18): mês do pagamento, o anterior (royalties, contas de consumo) ou outro
+  const mesPag = transaction.transaction_date.slice(0, 7);
+  const mesAnt = (() => { const [y, m] = mesPag.split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`; })();
+  const [compModo, setCompModo] = useState<'same' | 'prev' | 'outro'>('same');
+  const [compOutro, setCompOutro] = useState(mesPag);
+  const competencia = compModo === 'same' ? mesPag : compModo === 'prev' ? mesAnt : compOutro;
   const [avisoFolha, setAvisoFolha] = useState<string | null>(null);
   const [permitirFolha, setPermitirFolha] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -98,6 +106,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   useEffect(() => {
     setAberto(false); setTipo('despesa'); setDescricao(nomePadrao); setFornecedor(transaction.counterpart_name || '');
     setDreCat(''); setMerc(''); setLembrar(false); setAvisoFolha(null); setPermitirFolha(false); setErro(null);
+    setCompModo('same'); setCompOutro(transaction.transaction_date.slice(0, 7));
   }, [transaction.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doc = transaction.counterpart_doc ?? '';
@@ -114,6 +123,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       description: descricao.trim() || null,
       supplier: tipo === 'compra' ? fornecedor.trim() || null : null,
       allow_payroll: permitirFolha,
+      competence_month: /^\d{4}-\d{2}$/.test(competencia) ? competencia : null,
     });
     const r = results[0];
     if (error || !r) { setBusy(false); setErro(error ?? 'Não foi possível lançar.'); return; }
@@ -123,11 +133,19 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       setErro(r.msg);
       return;
     }
-    // Lembrar a categoria para os próximos pagamentos a este CPF/CNPJ (classificação do extrato)
-    if (lembrar && tipo === 'despesa' && doc) {
-      await invokeWithAuth('conciliacao-pagamentos', {
-        body: { action: 'save_counterpart_rule', tenant_id: user.tenantId, counterpart_doc: doc, counterpart_label: transaction.counterpart_name ?? transaction.description, category: dreNome(dreCat) ?? '', transaction_type: 'debit' },
+    // "Fazer sempre assim": regra de LANÇAMENTO para este CPF/CNPJ/chave (2026-09-18). Antes só
+    // etiquetava o extrato — não entrava na DRE e ainda escondia o pagamento do alerta.
+    if (lembrar && doc) {
+      const rr = await invokeWithAuth<{ success?: boolean; error?: string }>('conciliacao-pagamentos', {
+        body: {
+          action: 'launch_rule_save', tenant_id: user.tenantId, counterpart_doc: doc,
+          counterpart_label: transaction.counterpart_name ?? transaction.description,
+          kind: tipo, dre_category_id: tipo === 'despesa' ? dreCat : null, merchandise_category_id: tipo === 'compra' ? merc || null : null,
+          competence_rule: compModo === 'prev' ? 'prev' : 'same', supplier_name: tipo === 'compra' ? fornecedor.trim() || null : descricao.trim() || null,
+        },
       });
+      const e = rr.data?.error ?? rr.error?.message;
+      if (e) window.alert('Lançado, mas a regra não foi salva: ' + e);
     }
     setBusy(false);
     onDone();
@@ -193,10 +211,29 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         </div>
       </div>
 
-      {tipo === 'despesa' && doc && (
+      <div>
+        <label className="block text-xs font-medium text-zinc-600 mb-1">Competência (mês a que o gasto pertence)</label>
+        <div className="flex flex-wrap items-center gap-2">
+          {([['same', `Mês do pagamento (${mesPag.slice(5)}/${mesPag.slice(0, 4)})`], ['prev', `Mês anterior (${mesAnt.slice(5)}/${mesAnt.slice(0, 4)})`], ['outro', 'Outro']] as const).map(([k, label]) => (
+            <button key={k} type="button" onClick={() => setCompModo(k)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold border cursor-pointer ${compModo === k ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'}`}>
+              {label}
+            </button>
+          ))}
+          {compModo === 'outro' && (
+            <input type="month" value={compOutro} onChange={(e) => setCompOutro(e.target.value)}
+              className="px-2 py-1 border border-zinc-200 rounded-lg text-xs bg-white" />
+          )}
+        </div>
+      </div>
+
+      {doc && (
         <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
           <input type="checkbox" checked={lembrar} onChange={(e) => setLembrar(e.target.checked)} className="mt-0.5" />
-          <span>Lembrar esta categoria para os próximos pagamentos a {transaction.counterpart_name || doc}</span>
+          <span>
+            <b>Fazer sempre assim</b> para {transaction.counterpart_name || doc}: os próximos pagamentos viram {tipo === 'compra' ? 'compra' : 'esta despesa'}
+            {compModo === 'prev' ? ' com competência do mês anterior' : ' com competência do mês do pagamento'} (sugerido em "Confirmar vínculos").
+          </span>
         </label>
       )}
 
