@@ -76,7 +76,7 @@ export function revenueSourceInfo(flow?: Partial<MoneyFlowSettings> | null): Rec
       label: `Pix recebido (${l.bank})`,
       desc: `Todo Pix que entrou no ${l.bank}.` +
         (l.pixMode === 'transfer' ? ' Inclui o Pix da maquininha transferido da conta dela (e qualquer transferência de outra conta da empresa).' : ' Transferências entre contas da empresa ficam de fora.') +
-        ' Repasses do iFood e da maquininha já conciliados ficam de fora. Atenção: aporte de sócio por Pix também entra.',
+        ' Repasses do iFood e da maquininha já conciliados ficam de fora. Pix classificado na Conciliação como "Aporte de sócio" ou "Estorno / devolução de fornecedor" fica de fora.',
     },
     ifood: { label: 'Vendas iFood', desc: 'Vendas do iFood (antes das comissões e taxas), na data do repasse. Exige a integração iFood com "lançar no financeiro" ligado; as comissões entram como Taxas iFood.' },
     manual: { label: 'Lançamentos manuais', desc: 'Receitas lançadas à mão pelo botão "Nova Receita" (eventos, aluguel etc.).' },
