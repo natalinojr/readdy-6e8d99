@@ -17,7 +17,9 @@ export interface AcaoProps {
   irPara: (rota: string) => void;
 }
 
-export type Balao = { de: 'bot' | 'eu'; texto: string };
+// painel: resposta desenhada (números, barras, ranking) em vez de texto — o chat é do próprio sistema,
+// então dá para mostrar como dashboard (dono, 2026-09-18). Ocupa a largura toda, sem cara de balão.
+export type Balao = { de: 'bot' | 'eu'; texto: string; painel?: ReactNode };
 
 export function useRoteiro() {
   const [baloes, setBaloes] = useState<Balao[]>([]);
@@ -25,6 +27,7 @@ export function useRoteiro() {
     baloes,
     bot: (texto: string) => setBaloes((b) => [...b, { de: 'bot', texto }]),
     eu: (texto: string) => setBaloes((b) => [...b, { de: 'eu', texto }]),
+    painel: (node: ReactNode) => setBaloes((b) => [...b, { de: 'bot', texto: '', painel: node }]),
     limpar: () => setBaloes([]),
   };
 }
@@ -79,7 +82,7 @@ export function Roteiro({ titulo, subtitulo, icone, cor = 'bg-violet-50 text-vio
         </button>
       </div>
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-        {baloes.map((b, i) => (
+        {baloes.map((b, i) => b.painel ? <div key={i}>{b.painel}</div> : (
           <div key={i} className={`flex ${b.de === 'eu' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[88%] rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words ${b.de === 'eu' ? 'rounded-br-md bg-violet-600 text-white' : 'rounded-bl-md bg-white border border-zinc-200 text-zinc-800'}`}>
               {negrito(b.texto)}

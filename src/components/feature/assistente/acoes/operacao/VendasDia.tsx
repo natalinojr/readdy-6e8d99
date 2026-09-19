@@ -3,10 +3,13 @@
 // com o dia em Brasília (-03:00). A RPC já exclui treino, rascunho, pedido cancelado e item
 // cancelado (2026-07-09) e escala pagamento em grupo pela parte do pedido (2026-07-17).
 // Top itens: junta as unidades "(Un. N)" como a aba Produtos & Ranking (normalizarNomeItem).
+// Resposta em PAINEL (2026-09-18, pedido do dono): números em destaque, comparação com o mesmo dia
+// da semana passada, barras por pagamento/canal e ranking — em vez de texto corrido.
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Roteiro, useRoteiro, EscolhaData, Fim, brl, dataBR, type AcaoProps } from '../kit';
+import { Roteiro, useRoteiro, EscolhaData, Fim, brl, dataBR, somaDias, type AcaoProps } from '../kit';
+import { Painel, Kpis, Barras, Ranking, Variacao } from '../painel';
 
 interface Relatorio {
   total_revenue: number;
@@ -28,7 +31,7 @@ const normalizarNome = (nome: string) => nome.replace(/\s*\(Un\.\s*\d+\)\s*$/i, 
 
 export default function VendasDia({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
-  const { baloes, bot, eu } = useRoteiro();
+  const { baloes, bot, eu, painel } = useRoteiro();
   const [passo, setPasso] = useState<'dia' | 'carregando' | 'fim'>('dia');
   const iniciou = useRef(false);
 
@@ -41,37 +44,23 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
 
   const carregar = async (iso: string) => {
     if (!user?.tenantId) { bot('Nenhuma loja ativa.'); setPasso('fim'); return; }
+    const tenantId = user.tenantId;
     eu(dataBR(iso));
     setPasso('carregando');
-    const { data, error } = await supabase.rpc('fn_get_sales_report', {
-      p_tenant_id: user.tenantId,
-      p_date_from: `${iso}T00:00:00-03:00`,
-      p_date_to: `${iso}T23:59:59-03:00`,
+    const relatorio = (dia: string) => supabase.rpc('fn_get_sales_report', {
+      p_tenant_id: tenantId,
+      p_date_from: `${dia}T00:00:00-03:00`,
+      p_date_to: `${dia}T23:59:59-03:00`,
       p_session_id: null,
     });
+    // Mesmo dia da semana passada: a comparação que faz sentido num restaurante (sexta com sexta).
+    const semanaPassada = somaDias(iso, -7);
+    const [{ data, error }, anterior] = await Promise.all([relatorio(iso), relatorio(semanaPassada)]);
     if (error) { bot(`Não consegui ler as vendas: ${error.message}`); setPasso('fim'); return; }
     const r = (data ?? {}) as Relatorio;
+    const a = (anterior.error ? null : anterior.data) as Relatorio | null;
     const pedidos = Number(r.total_orders ?? 0);
     if (!pedidos) { bot(`Nenhuma venda paga em ${dataBR(iso)}.`); setPasso('fim'); return; }
-
-    const linhas: string[] = [
-      `*Vendas de ${dataBR(iso)}*`,
-      `Faturamento: ${brl(r.total_revenue)}`,
-      `Pedidos: ${pedidos}`,
-      `Ticket médio: ${brl(r.avg_ticket)}`,
-    ];
-
-    const pags = [...(r.by_payment ?? [])].sort((a, b) => Number(b.total) - Number(a.total));
-    if (pags.length) {
-      linhas.push('', '*Por forma de pagamento*');
-      pags.forEach((p) => linhas.push(`${p.payment_method}: ${brl(Number(p.total))}`));
-    }
-
-    const canais = [...(r.by_destination ?? [])].sort((a, b) => Number(b.revenue) - Number(a.revenue));
-    if (canais.length) {
-      linhas.push('', '*Por canal*');
-      canais.forEach((c) => linhas.push(`${CANAL[c.destination] ?? c.destination}: ${brl(Number(c.revenue))} · ${c.orders} ped.`));
-    }
 
     const mapa = new Map<string, { qtd: number; valor: number }>();
     for (const it of r.top_items ?? []) {
@@ -81,14 +70,27 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
       prev.valor += Number(it.total_revenue ?? 0);
       mapa.set(nome, prev);
     }
-    const top = [...mapa.entries()].sort((a, b) => b[1].qtd - a[1].qtd).slice(0, 5);
-    if (top.length) {
-      linhas.push('', '*Top 5 itens*');
-      top.forEach(([nome, v], i) => linhas.push(`${i + 1}. ${nome} · ${v.qtd} un · ${brl(v.valor)}`));
-    }
+    const top = [...mapa.entries()].sort((x, y) => y[1].qtd - x[1].qtd).slice(0, 5).map(([nome, v]) => ({ nome, ...v }));
+    const diaSemana = new Date(`${semanaPassada}T12:00:00-03:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+    const base = (n: number | undefined) => (a && Number(a.total_orders) > 0 ? Number(n ?? 0) : null);
 
-    linhas.push('', 'iFood fora do PDV não entra aqui.');
-    bot(linhas.join('\n'));
+    painel(
+      <Painel titulo={`Vendas de ${dataBR(iso)}`} subtitulo={user?.loja || 'Loja ativa'} rodape="iFood fora do PDV não entra aqui.">
+        <Kpis
+          principal={{ label: 'Faturamento', valor: brl(r.total_revenue), extra: <Variacao atual={Number(r.total_revenue)} base={base(a?.total_revenue)} rotulo={`vs ${diaSemana} passada`} /> }}
+          outros={[
+            { label: 'Pedidos', valor: String(pedidos), extra: <Variacao atual={pedidos} base={base(a?.total_orders)} rotulo="" /> },
+            { label: 'Ticket médio', valor: brl(r.avg_ticket), extra: <Variacao atual={Number(r.avg_ticket)} base={base(a?.avg_ticket)} rotulo="" /> },
+          ]}
+        />
+        <Barras titulo="Por forma de pagamento"
+          itens={[...(r.by_payment ?? [])].sort((x, y) => Number(y.total) - Number(x.total)).map((p) => ({ label: p.payment_method, valor: Number(p.total) }))} />
+        <Barras titulo="Por canal" cor="bg-sky-500"
+          itens={[...(r.by_destination ?? [])].sort((x, y) => Number(y.revenue) - Number(x.revenue))
+            .map((c) => ({ label: CANAL[c.destination] ?? c.destination, valor: Number(c.revenue), detalhe: `${c.orders} pedido${Number(c.orders) === 1 ? '' : 's'}` }))} />
+        <Ranking titulo="Mais vendidos" itens={top} />
+      </Painel>,
+    );
     setPasso('fim');
   };
 
