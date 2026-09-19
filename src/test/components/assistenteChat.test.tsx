@@ -760,6 +760,26 @@ describe('AssistenteChat — abre na última mensagem', () => {
   });
 });
 
+describe('AssistenteChat — cada conversa só com o que é dela', () => {
+  it('o que chega em outra conversa enquanto a resposta vem não aparece na conversa aberta', async () => {
+    // Dono (2026-09-19): "a conversa geral copia as msgs das outras conversas".
+    const user = userEvent.setup();
+    add('assistant', 'Oi, geral', 'geral');
+    h.invoke.mockImplementation(async (fn: string, o: { body: Body }) => {
+      if (o?.body?.action === 'send') add('assistant', 'Pix da Joziane pago', 'pagamentos'); // chegou no meio
+      return fakeServer(fn, o);
+    });
+    renderChat();
+    await entrarNaConversa(user, 'Geral');
+    await screen.findByText('Oi, geral');
+    await user.type(screen.getByPlaceholderText('Mensagem'), 'bom dia');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    await screen.findAllByText('Resposta para: bom dia');
+    await waitFor(() => expect(calls('history').some((b) => b.after_id && b.topic === 'geral')).toBe(true));
+    expect(screen.queryByText('Pix da Joziane pago')).toBeNull();
+  });
+});
+
 describe('AssistenteChat — divisão por dias', () => {
   it('separa as mensagens por dia (Ontem, Hoje) com um separador por dia', async () => {
     // Dono (2026-09-19): "nas conversas do chat ter uma certa divisão por dias".

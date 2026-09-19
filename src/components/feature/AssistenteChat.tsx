@@ -705,7 +705,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       // O assistente pode ter classificado itens pela conversa: a tela de Classificação, se aberta, recarrega
       window.dispatchEvent(new CustomEvent('itens-classificados', { detail: {} }));
       const antes = lastId.current;
-      const h = await call<{ messages: Msg[] }>('history', { after_id: antes });
+      // Só a conversa aberta: sem o filtro, o que chegou em OUTRAS conversas enquanto a resposta vinha
+      // (grupos, avisos, Financeiro) caía aqui dentro — a "replicação" que o dono via (2026-09-19).
+      const h = await call<{ messages: Msg[] }>('history', { after_id: antes, ...filtroConversa(abaRef.current) });
       merge(h.messages);
       const ultimaResp = [...h.messages].reverse().find((m) => m.role === 'assistant');
       const enquetes = out.actions.filter((a) => a.type === 'poll') as unknown as Poll[];
@@ -1093,18 +1095,6 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   const listaConversas = (
     <div className="flex-1 overflow-y-auto bg-white">
-      <button
-        onClick={() => abrirConversa('')}
-        className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left"
-      >
-        <span className="w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full bg-violet-50 text-violet-600 border border-violet-100">
-          <i className="ri-chat-3-line text-xl" />
-        </span>
-        <span className="flex-1 min-w-0">
-          <span className="block text-sm font-black text-zinc-900">Todas as mensagens</span>
-          <span className="block text-xs text-zinc-400 truncate">A conversa inteira, sem separar por assunto</span>
-        </span>
-      </button>
       {ASSUNTOS.map((a) => {
         const c = conversas.find((x) => x.topic === a.id);
         return linhaConversa({ chave: a.id, icone: a.icon, cor: a.cor, titulo: a.label, unread: c?.unread ?? 0, last: c?.last ?? null, abrir: () => abrirConversa(a.id) });
@@ -1117,6 +1107,20 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         chave: `${PREFIXO_GRUPO}${g.group_jid}`, icone: 'ri-whatsapp-line', cor: 'bg-emerald-50 text-emerald-600', titulo: g.name,
         unread: g.unread, last: g.last, abrir: () => abrirConversa(`${PREFIXO_GRUPO}${g.group_jid}`),
       }))}
+      {/* Por último (dono, 2026-09-19): é para acompanhar a sequência inteira de vez em quando,
+          não é a conversa do dia a dia. */}
+      <button
+        onClick={() => abrirConversa('')}
+        className="w-full flex items-center gap-3 px-4 py-3 border-t border-zinc-100 mt-2 hover:bg-zinc-50 cursor-pointer text-left"
+      >
+        <span className="w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full bg-violet-50 text-violet-600 border border-violet-100">
+          <i className="ri-chat-3-line text-xl" />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="block text-sm font-black text-zinc-900">Todas as mensagens</span>
+          <span className="block text-xs text-zinc-400 truncate">A conversa inteira, sem separar por assunto</span>
+        </span>
+      </button>
     </div>
   );
 
