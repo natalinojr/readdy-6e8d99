@@ -1874,6 +1874,17 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   fora (chat/enquete/Contas a pagar) ensina o item pendente. Migration
   `20260918150000_item_classificacao_servicos.sql`.
 
+### Recebimento pela foto da NF-e no grupo (2026-09-18)
+
+- **Fluxo da loja:** fornecedor emite a NF-e para transportar (chega sozinha em Notas de entrada);
+  ao chegar, a loja posta a FOTO da nota no grupo = confirmação de que chegou.
+- **Regra:** foto com chave de acesso (ou "DANFE nº" + "valor total da nota") de uma nota que já está
+  em `fiscal_inbound_documents` → `assistente-webhook` chama `assistente-brain { action:
+  'recebimento_nota' }`, que lança a compra pelo XML (fiscal-inbound import_purchase + vínculos
+  memorizados) e confirma o recebimento (purchase-write confirm_delivery), com o JWT do dono.
+  Nunca relançar a compra lendo a foto (caso B&P: 4 de 5 itens, preços trocados, sem frete/ST).
+- DACTE cujo tomador não é CNPJ de loja (`tenants.cnpj`) = frete pago pelo fornecedor: não vira pagamento.
+
 ### Conversão de unidade na compra + deploy de edges com verify_jwt diferente (2026-09-13)
 
 - `purchase-write` converte a unidade comprada para a do insumo quando o item não traz fator
