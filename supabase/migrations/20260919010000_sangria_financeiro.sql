@@ -3,7 +3,7 @@
 -- estoque) paga em dinheiro → fn_sangria_da_compra deixa uma SANGRIA PREVISTA para o caixa da loja →
 -- no PDV o operador só confirma. Caixa não fecha com sangria prevista sem confirmar.
 -- Sem foto: o operador faz a sangria "Fornecedor" à mão (vira pendência "sangria sem cupom"); quando
--- o cupom chega depois, a função acha a sangria de mesmo valor e LIGA a compra a ela (não cria outra).
+-- o cupom chega depois (sem limite de dias), a função acha a sangria de mesmo valor e LIGA a compra a ela (não cria outra).
 -- Anti-dupla contagem: a compra paga já lança fin_cash_flow 'auto_purchase'; a sangria ligada a ela não
 -- lança (ou tem o 'auto_sangria' apagado ao ser ligada).
 
@@ -37,7 +37,7 @@ create policy cash_sangrias_previstas_select on public.cash_sangrias_previstas f
 grant select on public.cash_sangrias_previstas to authenticated;
 grant all on public.cash_sangrias_previstas to service_role;
 
--- Compra paga em dinheiro → liga a uma sangria já feita (mesmo valor, até 4 dias) ou cria a prevista.
+-- Compra paga em dinheiro → liga a uma sangria já feita (mesmo valor, sem limite de dias) ou cria a prevista.
 create or replace function public.fn_sangria_da_compra(p_purchase uuid) returns jsonb
 language plpgsql security definer set search_path to 'public' as $$
 declare p record; m record; v_prev uuid;
@@ -55,7 +55,7 @@ begin
   select cm.id, cm.created_at, cm.reason into m from cash_movements cm
    where cm.tenant_id = p.tenant_id and cm.type = 'out' and cm.purchase_id is null
      and (cm.category = 'fornecedor' or (cm.category is null and cm.reason ilike 'Fornecedor%'))
-     and abs(cm.amount - p.total_amount) <= 0.01 and cm.created_at >= now() - interval '4 days'
+     and abs(cm.amount - p.total_amount) <= 0.01
    order by (case when p.supplier is not null and cm.reason ilike '%' || split_part(p.supplier, ' ', 1) || '%' then 0 else 1 end), cm.created_at desc
    limit 1;
   if m.id is not null then
@@ -145,3 +145,4 @@ BEGIN
   WHERE id = p_cash_register_id;
 END;
 $function$;
+-- 2026-09-19 (migração sangria_da_compra_sem_limite_dias, pelo MCP): o dono pediu sem limite de dias — já refletido acima.

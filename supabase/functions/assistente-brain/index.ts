@@ -537,7 +537,7 @@ TOOLS.push({
 // SANGRIA PREVISTA que o operador só confirma no PDV — ou é ligado à sangria que já foi feita sem cupom.
 TOOLS.push({
   name: 'sangria_da_compra',
-  description: 'Depois de lançar uma compra PAGA EM DINHEIRO (payment_status paid, payment_method Dinheiro) a partir de cupom/nota do grupo da loja: liga a compra ao caixa. Se já existe sangria de "Fornecedor" com o mesmo valor feita sem cupom, liga a ela; senão deixa uma sangria prevista para o operador confirmar no PDV (o caixa não fecha sem confirmar). Chame UMA vez por compra, logo após create_purchase.',
+  description: 'Depois de lançar uma compra PAGA EM DINHEIRO (payment_status paid, payment_method Dinheiro) a partir de cupom/nota do grupo da loja: liga a compra ao caixa. Se já existe sangria de "Fornecedor" com o mesmo valor feita sem cupom (qualquer data), liga a ela; senão deixa uma sangria prevista para o operador confirmar no PDV (o caixa não fecha sem confirmar). Chame UMA vez por compra, logo após create_purchase.',
   input_schema: { type: 'object', properties: { compra_id: { type: 'string', description: 'id da compra (fin_purchases.id) devolvido pelo create_purchase.' } }, required: ['compra_id'] },
 });
 TOOLS.push({

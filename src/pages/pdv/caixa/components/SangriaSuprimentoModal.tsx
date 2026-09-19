@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { invokeWithAuth, supabase } from '@/lib/supabase';
+import { invokeWithAuth } from '@/lib/supabase';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
@@ -65,8 +65,9 @@ export default function SangriaSuprimentoModal({
   const [telefoneFreela, setTelefoneFreela] = useState('');
   useEffect(() => {
     if (!user?.tenantId) return;
-    supabase.from('hr_freelancers').select('id, name, daily_rate').eq('tenant_id', user.tenantId).eq('is_active', true).order('name')
-      .then(({ data }) => setFreelas((data ?? []) as { id: string; name: string; daily_rate: number | null }[]));
+    // Pelo order-write: a leitura direta falhava na sessão do PDV (lista vazia em Paranaguá, 2026-09-19).
+    invokeWithAuth<{ data?: { id: string; name: string; daily_rate: number | null }[] }>('order-write', { body: { action: 'list_freelancers', tenant_id: user.tenantId } })
+      .then(({ data }) => setFreelas(data?.data ?? []));
   }, [user?.tenantId]);
   const [resolvendo, setResolvendo] = useState<string | null>(null);
 
