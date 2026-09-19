@@ -137,7 +137,7 @@ export default function PromocaoModal({ rule, onClose, onSaved }: Props) {
     };
 
     try {
-      const { error: fnErr } = await invokeWithAuth('menu-write', { body: payload });
+      const { error: fnErr } = await invokeWithAuth('order-write', { body: payload });
       if (fnErr) throw fnErr;
       onSaved();
     } catch (err) {

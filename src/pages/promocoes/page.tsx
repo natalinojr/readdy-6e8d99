@@ -81,7 +81,7 @@ export default function PromocoesPage() {
   async function toggleActive(rule: PromotionRule) {
     setTogglingId(rule.id);
     try {
-      await invokeWithAuth('menu-write', {
+      await invokeWithAuth('order-write', {
         body: {
           action: 'update_promotion_rule',
           promotion_id: rule.id,
@@ -106,7 +106,7 @@ export default function PromocoesPage() {
 
   async function deleteRule(rule: PromotionRule) {
     if (!window.confirm(`Excluir a promoção "${rule.name}"?`)) return;
-    await supabase.functions.invoke('menu-write', {
+    await invokeWithAuth('order-write', {
       body: { action: 'delete_promotion_rule', promotion_id: rule.id, active_tenant_id: user?.tenantId },
     });
     registrarEvento({
