@@ -301,6 +301,8 @@ Deno.serve(async (req) => {
       const { status, out } = await callEdge('assistente-brain', internalKey, {
         text: `${prefixo}${text}`.trim(), chat_id: chatKey, channel: 'app',
         ...(TOPICS.includes(String(body.topic)) ? { topic: String(body.topic) } : {}),
+        // Perguntou dentro da conversa de um grupo: pergunta e resposta ficam nesse grupo (2026-09-19).
+        ...(GRUPO_JID.test(String(body.group_jid ?? '')) ? { group_jid: String(body.group_jid) } : {}),
         ...(att ? { attachment: { base64: String(att.base64), media_type: String(att.media_type) } } : {}),
       });
       if (status >= 400 || !out?.reply) {

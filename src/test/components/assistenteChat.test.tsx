@@ -780,6 +780,33 @@ describe('AssistenteChat — cada conversa só com o que é dela', () => {
   });
 });
 
+describe('AssistenteChat — resposta onde a pergunta foi feita', () => {
+  it('na Geral manda topic geral; na conversa do grupo manda o group_jid', async () => {
+    // Dono (2026-09-19): "perguntei no geral e a resposta foi pra outro grupo".
+    const user = userEvent.setup();
+    add('assistant', 'Oi, geral', 'geral');
+    srv.msgs.push({ id: ++srv.seq, role: 'assistant', content: 'Pedido do grupo', channel: 'whatsapp', created_at: new Date().toISOString(), topic: 'pagamentos', group_jid: '120363@g.us' });
+    h.invoke.mockImplementation((fn: string, o: { body: Body }) => {
+      if (o?.body?.action === 'topics') return Promise.resolve(ok({ topics: [], groups: [{ group_jid: '120363@g.us', name: 'Financeiro Vila', unread: 0, last: null }] }));
+      return fakeServer(fn, o);
+    });
+    renderChat();
+    await entrarNaConversa(user, 'Geral');
+    await user.type(screen.getByPlaceholderText('Mensagem'), 'quanto vendi');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    await waitFor(() => expect(calls('send').at(-1)).toMatchObject({ text: 'quanto vendi', topic: 'geral' }));
+    expect(calls('send').at(-1)?.group_jid).toBeUndefined();
+
+    await user.click(screen.getByRole('button', { name: 'Voltar para as conversas' }));
+    await entrarNaConversa(user, 'Financeiro Vila');
+    await screen.findByText('Pedido do grupo');
+    await user.type(screen.getByPlaceholderText('Mensagem'), 'e esse?');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    await waitFor(() => expect(calls('send').at(-1)).toMatchObject({ text: 'e esse?', group_jid: '120363@g.us' }));
+    expect(calls('send').at(-1)?.topic).toBeUndefined();
+  });
+});
+
 describe('AssistenteChat — divisão por dias', () => {
   it('separa as mensagens por dia (Ontem, Hoje) com um separador por dia', async () => {
     // Dono (2026-09-19): "nas conversas do chat ter uma certa divisão por dias".

@@ -2301,14 +2301,21 @@ Deno.serve(async (req) => {
     // Assunto (abas do chat do ERPOS, 2026-09-15): o que a tela mandou; senão o do modo automático;
     // senão 'geral' e, no fim, as ferramentas usadas decidem (assuntoPorFerramentas).
     const TOPICS = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'];
-    const topicoPedido: string | null = TOPICS.includes(body.topic) && body.topic !== 'geral' ? body.topic
+    // A resposta fica ONDE a pergunta foi feita (dono, 2026-09-19): perguntou na Geral sobre vendas, a
+    // resposta ia para Financeiro. Então o assunto que a tela mandou vale também quando é 'geral'.
+    const topicoPedido: string | null = TOPICS.includes(body.topic) ? body.topic
       : body.modo === 'triagem_grupo' || body.modo === 'dias_freelancer' ? 'pagamentos' : body.modo === 'entrada_compra_grupo' ? 'compras' : null;
     // De qual grupo do WhatsApp veio o gatilho (triagem, entrada de compra, dias de freelancer): o chat do
     // ERPOS mostra cada grupo como uma conversa própria (2026-09-17).
     const grupoJid = /^[\w.-]+@g\.us$/.test(String(body.group_jid ?? '')) ? String(body.group_jid) : null;
     const { data: userRow } = await admin.from('asst_messages')
       .insert({ channel, chat_id: chatId, role: 'user', content: fileBlock ? `${fileBlock.type === 'image' ? '[Foto]' : '[PDF]'} ${text}` : text, topic: topicoPedido ?? 'geral', group_jid: grupoJid })
-      .select('id').maybeSingle();
+      .select('id, topic').maybeSingle();
+    // O gatilho do banco (fn_asst_messages_topic) reclassifica 'geral' pelo texto — e o texto do app traz
+    // o nome da tela ("/contratacao" virava Currículos). Assunto escolhido na tela não se mexe.
+    if (topicoPedido && userRow?.id && userRow.topic !== topicoPedido) {
+      await admin.from('asst_messages').update({ topic: topicoPedido }).eq('id', userRow.id);
+    }
 
     // ── Loop de ferramentas ──
     const client = new Anthropic({ apiKey });
@@ -2422,13 +2429,18 @@ Deno.serve(async (req) => {
     const funcoes = toolCalls.filter((t) => t.name === 'erpos_executar').map((t) => String((t.input as any)?.funcao ?? ''));
     // Abas por ÁREA (dono, 2026-09-16): Financeiro junta pagamento, conta, conciliação, extrato e
     // nota; Currículos junta tudo de contratação. O resto o gatilho do banco classifica pelo texto.
-    const topic = topicoPedido
-      ?? (['modo_curriculos', 'salvar_curriculo', 'inscrever_na_vaga'].some((x) => nomes.has(x)) || funcoes.some((f) => /hiring/i.test(f)) ? 'curriculos'
+    // Sem assunto escolhido (Telegram, "Todas as mensagens"): as ferramentas decidem; sem pista delas,
+    // vale o que o gatilho deu à pergunta (fora do app — no app o texto traz o nome da tela). Pergunta e
+    // resposta sempre no MESMO assunto.
+    const porFerramentas = (['modo_curriculos', 'salvar_curriculo', 'inscrever_na_vaga'].some((x) => nomes.has(x)) || funcoes.some((f) => /hiring/i.test(f)) ? 'curriculos'
         : ['preparar_pagamento', 'status_pagamento', 'contas_a_pagar', 'caixa_atual'].some((x) => nomes.has(x))
           || ctx.outbound.some((a) => a.type === 'payment')
           || funcoes.some((f) => /inter|concilia|fiscal|stone|ifood|payment|bill|financ/i.test(f)) ? 'pagamentos'
         : nomes.has('estoque_critico') || funcoes.some((f) => /purchase|stock|estoque|ingredient/i.test(f)) ? 'compras' : 'geral');
-    if (!topicoPedido && topic !== 'geral' && userRow?.id) await admin.from('asst_messages').update({ topic }).eq('id', userRow.id);
+    const topic = topicoPedido
+      ?? (porFerramentas !== 'geral' ? porFerramentas
+        : channel !== 'app' && TOPICS.includes(String(userRow?.topic)) ? String(userRow?.topic) : 'geral');
+    if (!topicoPedido && userRow?.id && userRow.topic !== topic) await admin.from('asst_messages').update({ topic }).eq('id', userRow.id);
     await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'assistant', content: historyContent, tool_calls: toolCalls, usage, topic, group_jid: grupoJid });
     log('INFO', 'reply', { chat: chatId, ms: Date.now() - started, tools: toolCalls.map((t) => t.name), actions: ctx.outbound.map((a) => a.type), usage });
     return json({ success: true, reply, actions: ctx.outbound, tool_calls: toolCalls, usage });

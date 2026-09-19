@@ -685,6 +685,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       const out = await call<{ reply: string; actions: Array<{ type: string } & Record<string, unknown>>; transcricao?: string | null }>('send', {
         text: `${prefixoCit}${t}`,
         topic: abaRef.current && !abaRef.current.startsWith(PREFIXO_GRUPO) ? abaRef.current : undefined,
+        group_jid: abaRef.current.startsWith(PREFIXO_GRUPO) ? abaRef.current.slice(PREFIXO_GRUPO.length) : undefined,
         ...(anexo ? { attachment: { base64: anexo.base64, media_type: anexo.media_type } } : {}),
         ...(audio ? { audio } : {}),
         // A tela vai junto em três níveis: a rota, o que a tela mostra (filtros, totais) e o
@@ -1099,19 +1100,11 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         const c = conversas.find((x) => x.topic === a.id);
         return linhaConversa({ chave: a.id, icone: a.icon, cor: a.cor, titulo: a.label, unread: c?.unread ?? 0, last: c?.last ?? null, abrir: () => abrirConversa(a.id) });
       })}
-      {/* Grupos do WhatsApp (2026-09-17): cada grupo é uma conversa, com tudo que veio dele. */}
-      {grupos.length > 0 && (
-        <p className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Grupos do WhatsApp</p>
-      )}
-      {grupos.map((g) => linhaConversa({
-        chave: `${PREFIXO_GRUPO}${g.group_jid}`, icone: 'ri-whatsapp-line', cor: 'bg-emerald-50 text-emerald-600', titulo: g.name,
-        unread: g.unread, last: g.last, abrir: () => abrirConversa(`${PREFIXO_GRUPO}${g.group_jid}`),
-      }))}
-      {/* Por último (dono, 2026-09-19): é para acompanhar a sequência inteira de vez em quando,
-          não é a conversa do dia a dia. */}
+      {/* Depois dos assuntos, antes dos grupos (dono, 2026-09-19): é para acompanhar a sequência
+          inteira de vez em quando, não é a conversa do dia a dia. */}
       <button
         onClick={() => abrirConversa('')}
-        className="w-full flex items-center gap-3 px-4 py-3 border-t border-zinc-100 mt-2 hover:bg-zinc-50 cursor-pointer text-left"
+        className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left"
       >
         <span className="w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full bg-violet-50 text-violet-600 border border-violet-100">
           <i className="ri-chat-3-line text-xl" />
@@ -1121,6 +1114,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           <span className="block text-xs text-zinc-400 truncate">A conversa inteira, sem separar por assunto</span>
         </span>
       </button>
+      {/* Grupos do WhatsApp (2026-09-17): cada grupo é uma conversa, com tudo que veio dele. */}
+      {grupos.length > 0 && (
+        <p className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Grupos do WhatsApp</p>
+      )}
+      {grupos.map((g) => linhaConversa({
+        chave: `${PREFIXO_GRUPO}${g.group_jid}`, icone: 'ri-whatsapp-line', cor: 'bg-emerald-50 text-emerald-600', titulo: g.name,
+        unread: g.unread, last: g.last, abrir: () => abrirConversa(`${PREFIXO_GRUPO}${g.group_jid}`),
+      }))}
     </div>
   );
 
