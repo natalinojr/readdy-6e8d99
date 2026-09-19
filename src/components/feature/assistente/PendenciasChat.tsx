@@ -292,6 +292,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
 interface InfoPagamento {
   para: string | null; valor: number | null; tipo: string | null;
   compra_lancada: boolean; recebido: boolean | null; recebido_em: string | null;
+  guia?: string | null; // DAS/DARF/FGTS: "Guia de imposto — não é compra · vence dd/mm"
 }
 
 // Para quem vai (em destaque) e se a mercadoria já chegou — o que se confere antes de pagar.
@@ -303,12 +304,18 @@ function LinhaPagamento({ info }: { info: InfoPagamento }) {
         {info.valor ? <> de <b>{brl(info.valor)}</b></> : null} para{' '}
         <b className="font-black text-violet-800">{info.para || 'destinatário não identificado'}</b>
       </p>
+      {info.guia ? (
+        <p className="text-xs font-semibold mt-0.5 text-zinc-600">
+          <i className="ri-government-line" /> {info.guia}
+        </p>
+      ) : (
       <p className={`text-xs font-semibold mt-0.5 ${info.recebido ? 'text-emerald-700' : info.recebido === false ? 'text-amber-700' : 'text-zinc-500'}`}>
         <i className={info.recebido ? 'ri-checkbox-circle-line' : info.recebido === false ? 'ri-truck-line' : 'ri-question-line'} />{' '}
         {info.recebido
           ? `Mercadoria recebida${info.recebido_em ? ` em ${new Date(info.recebido_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}` : ''}`
           : info.recebido === false ? 'Mercadoria ainda NÃO recebida' : 'Compra não lançada no ERPOS (recebimento não confirmado)'}
       </p>
+      )}
     </div>
   );
 }

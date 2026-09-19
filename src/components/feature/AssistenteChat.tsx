@@ -192,7 +192,18 @@ function centroFab(x: number, y: number) {
   return { x: Math.min(Math.max(x, min), w - min), y: Math.min(Math.max(y, min), h - min) };
 }
 
-function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: 'ok' | 'no' | 'st') => void }) {
+function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: 'ok' | 'no' | 'st') => void | Promise<void> }) {
+  // "Ver status" sem mudança parecia não fazer nada (dono, 2026-09-18): mostra que conferiu e quando.
+  const [conferindo, setConferindo] = useState(false);
+  const [conferido, setConferido] = useState<string | null>(null);
+  const verStatus = async () => {
+    if (conferindo) return;
+    setConferindo(true);
+    try {
+      await onAction(p, 'st');
+      setConferido(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+    } finally { setConferindo(false); }
+  };
   const aberto = ['draft', 'awaiting_pin'].includes(p.status);
   const andamento = ['sending', 'sent', 'pending_approval', 'approved', 'scheduled'].includes(p.status);
   const cor = p.status === 'paid' ? 'border-emerald-200 bg-emerald-50' : ['failed', 'rejected'].includes(p.status) ? 'border-red-200 bg-red-50' : ['cancelled', 'expired'].includes(p.status) ? 'border-zinc-200 bg-zinc-50 opacity-70' : 'border-violet-200 bg-white';
@@ -220,8 +231,16 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
             </p>
           )}
           {p.description && <p className="text-xs text-zinc-500 truncate">{p.description}</p>}
-          <p className="text-[11px] font-semibold text-zinc-500 mt-1">{p.status_label}{p.error ? ` — ${p.error}` : ''}</p>
-          {p.status === 'pending_approval' && <p className="text-[11px] text-amber-700">Abra o app do Inter › Aprovações para liberar.</p>}
+          {p.status === 'pending_approval' ? (
+            // Falta o último passo, e é FORA do ERPOS: em destaque para não passar batido.
+            <div className="mt-2 rounded-xl bg-amber-100 border border-amber-300 px-3 py-2">
+              <p className="text-sm font-black text-amber-900"><i className="ri-smartphone-line" /> Falta sua aprovação no app do Inter</p>
+              <p className="text-xs font-semibold text-amber-800">Abra o app do Inter › Aprovações e libere. Sem isso o pagamento não sai.</p>
+            </div>
+          ) : (
+            <p className="text-[11px] font-semibold text-zinc-500 mt-1">{p.status_label}{p.error ? ` — ${p.error}` : ''}</p>
+          )}
+          {conferido && <p className="text-[11px] text-zinc-500 mt-1"><i className="ri-check-line" /> Conferido no Inter às {conferido}: {p.status_label}.</p>}
         </div>
       </div>
       {(aberto || andamento) && (
@@ -232,8 +251,8 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
             </button>
           )}
           {andamento && (
-            <button onClick={() => onAction(p, 'st')} className="flex-1 h-9 rounded-xl border border-zinc-200 text-zinc-700 text-sm font-bold hover:bg-zinc-50 cursor-pointer">
-              <i className="ri-refresh-line" /> Ver status
+            <button onClick={verStatus} disabled={conferindo} className="flex-1 h-9 rounded-xl border border-zinc-200 text-zinc-700 text-sm font-bold hover:bg-zinc-50 cursor-pointer disabled:opacity-60">
+              <i className={`ri-refresh-line ${conferindo ? 'inline-block animate-spin' : ''}`} /> {conferindo ? 'Conferindo…' : 'Ver status'}
             </button>
           )}
           <button onClick={() => onAction(p, 'no')} className="px-3 h-9 rounded-xl border border-zinc-200 text-zinc-500 text-sm font-bold hover:bg-zinc-50 cursor-pointer">
@@ -585,10 +604,17 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     const t = setInterval(() => {
       if (document.hidden || sending) return;
       sincronizar();
-      carregarPagamentos();
     }, 8000);
     return () => clearInterval(t);
-  }, [open, loaded, sending, sincronizar, carregarPagamentos]);
+  }, [open, loaded, sending, sincronizar]);
+  // Cartões de pagamento (rodapé) com o chat aberto em QUALQUER tela — inclusive a lista de conversas.
+  // Antes só atualizavam dentro de uma conversa: o DARF pago às 22:23 seguiu "aguardando aprovação"
+  // na lista (dono, 2026-09-18). O pagamento concluído sai do rodapé (a lista só traz os em aberto).
+  useEffect(() => {
+    if (!open || !isOwner) return;
+    const t = setInterval(() => { if (!document.hidden) carregarPagamentos(); }, 8000);
+    return () => clearInterval(t);
+  }, [open, isOwner, carregarPagamentos]);
 
   const maisAntigas = async () => {
     const primeiro = msgs.find((m) => !m.temp);

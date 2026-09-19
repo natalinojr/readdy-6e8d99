@@ -35,6 +35,7 @@
 // Secrets: ASSISTENTE_INTERNAL_KEY (brain/telegram), FISCAL_INTERNAL_KEY (inter-bank), WHISPER_URL, WHISPER_API_KEY.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { lerGuia } from '../_shared/guias.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -623,8 +624,30 @@ Deno.serve(async (req) => {
           const { data } = await admin.from('fin_inter_payments').select('id, kind, amount, beneficiary_name, bill_id, description').in('id', payIds);
           pays = data ?? [];
         }
-        const para = pays.map((x) => x.beneficiary_name).filter(Boolean)[0] ?? ext.beneficiario ?? null;
         const valor = Number(pays[0]?.amount ?? ext.valor ?? 0) || null;
+        // Guia de imposto/encargo (DAS, DARF, FGTS — 2026-09-18): quem recebe é o órgão e não há compra.
+        // Lida do texto do pedido do grupo (mesma leitura do assistente) ou da conta lançada pela guia.
+        let guia: string | null = null;
+        let paraGuia: string | null = null;
+        const gTxt = pd.kind === 'pagamento_grupo'
+          ? (await admin.from('asst_group_requests').select('data').eq('id', Number(pd.ref)).maybeSingle()).data?.data?.extraido?.texto ?? ext.texto ?? ''
+          : '';
+        const g = gTxt ? lerGuia(String(gTxt), ext.linha_digitavel ?? null) : null;
+        if (g) {
+          const comp = g.competencia ? ` ${g.competencia.slice(5, 7)}/${g.competencia.slice(0, 4)}` : '';
+          paraGuia = `${g.fornecedor} — ${g.titulo}${comp}`;
+          guia = `${g.encargo_folha ? 'Encargo da folha' : 'Guia de imposto'} — não é compra${g.vencimento ? ` · vence ${g.vencimento.split('-').reverse().join('/')}` : ''}`;
+        } else {
+          const bid = pays.map((x) => x.bill_id).filter(Boolean)[0];
+          if (bid) {
+            const { data: b } = await admin.from('fin_accounts_payable').select('description, supplier, boleto_origem, reference_type').eq('id', bid).maybeSingle();
+            if (b?.boleto_origem === 'guia') {
+              paraGuia = `${b.supplier ?? ''} — ${String(b.description).replace(/ — competência/, '')}`;
+              guia = `${b.reference_type === 'hr_payroll' ? 'Encargo da folha' : 'Guia de imposto'} — não é compra`;
+            }
+          }
+        }
+        const para = paraGuia ?? pays.map((x) => x.beneficiary_name).filter(Boolean)[0] ?? ext.beneficiario ?? null;
         // Compra: pela conta do pagamento; senão por valor + fornecedor + data
         let compra: { id: string; delivery_confirmed_at: string | null; supplier: string | null } | null = null;
         const billId = pays.map((x) => x.bill_id).filter(Boolean)[0];
@@ -635,7 +658,7 @@ Deno.serve(async (req) => {
             compra = c ?? null;
           }
         }
-        if (!compra && valor) {
+        if (!compra && valor && !guia) {
           const base = new Date(pd.criada_em).getTime();
           const { data: cs } = await admin.from('fin_purchases').select('id, delivery_confirmed_at, supplier, purchase_date')
             .eq('tenant_id', tid).gte('total_amount', valor - 0.01).lte('total_amount', valor + 0.01)
@@ -647,7 +670,7 @@ Deno.serve(async (req) => {
         }
         info[pd.id] = {
           para, valor, tipo: pays[0]?.kind ?? ext.tipo ?? null,
-          compra_lancada: !!compra,
+          compra_lancada: !!compra, guia,
           recebido: compra ? !!compra.delivery_confirmed_at : null,
           recebido_em: compra?.delivery_confirmed_at ?? null,
         };
