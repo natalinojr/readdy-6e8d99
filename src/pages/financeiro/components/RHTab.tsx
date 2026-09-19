@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
 import { useEmployees, usePayroll } from '@/hooks/useRH';
 import ImportarFolhaDominioModal from './ImportarFolhaDominioModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -1268,6 +1269,29 @@ export default function RHTab() {
     refresh: refreshPayroll,
   } = usePayroll(selectedMonth);
 
+  // Folha é por COMPETÊNCIA: a de agosto só chega em setembro. Abrir sempre no mês corrente mostrava
+  // "Nenhum lançamento" com a folha de agosto já importada (dono, 2026-09-18). Agora: sem folha no mês
+  // corrente, abre na última competência lançada (uma vez por loja) e o vazio aponta para ela.
+  const [ultimaFolha, setUltimaFolha] = useState<string | null>(null);
+  const pulouPara = useRef<string | null>(null);
+  useEffect(() => {
+    const tid = user?.tenantId;
+    if (!tid) return;
+    let vivo = true;
+    supabase.from('hr_payroll').select('reference_month').eq('tenant_id', tid)
+      .order('reference_month', { ascending: false }).limit(1)
+      .then(({ data }) => {
+        if (!vivo) return;
+        const ult = (data?.[0]?.reference_month as string | undefined) ?? null;
+        setUltimaFolha(ult);
+        if (ult && ult < currentMonth && pulouPara.current !== tid) {
+          pulouPara.current = tid;
+          setSelectedMonth((m) => (m === currentMonth ? ult : m));
+        }
+      });
+    return () => { vivo = false; };
+  }, [user?.tenantId, entries.length]);
+
   const canGoNext = selectedMonth < currentMonth;
   const filteredEmployees = employees.filter(e => {
     const matchDept = deptFilter === 'Todos' || e.department === deptFilter;
@@ -1524,6 +1548,12 @@ export default function RHTab() {
                 </div>
                 <p className="text-sm font-semibold text-zinc-700">Nenhum lançamento em {monthLabel(selectedMonth)}</p>
                 <p className="text-xs text-zinc-400 mt-1 mb-4">Importe o extrato mensal do Domínio (PDF da contabilidade) ou lance manualmente</p>
+                {ultimaFolha && ultimaFolha !== selectedMonth && (
+                  <button onClick={() => setSelectedMonth(ultimaFolha)}
+                    className="mb-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold cursor-pointer hover:bg-amber-100">
+                    <i className="ri-history-line" /> Última folha lançada: {monthLabel(ultimaFolha)} — ver
+                  </button>
+                )}
                 <div className="flex items-center justify-center gap-3 flex-wrap">
                   <button onClick={() => setImportarDominio(true)}
                     className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap transition-colors">
