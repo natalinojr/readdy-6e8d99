@@ -748,6 +748,29 @@ describe('AssistenteChat — ações rápidas', () => {
     expect(screen.queryByRole('button', { name: 'Fechar ações rápidas' })).toBeNull();
   });
 
+  it('o voltar do Android dentro de uma ação fecha só a ação, não o chat', async () => {
+    // Bug visto no celular (2026-09-19): a ação aberta não era camada do voltar, e ele fechava o chat.
+    // jsdom não tem scrollIntoView (a casca da ação rola até o fim com ele).
+    Element.prototype.scrollIntoView ??= vi.fn();
+    const user = userEvent.setup();
+    renderChat('floating');
+    await user.click(await screen.findByRole('button', { name: 'Falar com o assistente' }));
+    await user.click(await screen.findByRole('button', { name: 'Ações rápidas' }));
+    await user.click(await screen.findByRole('button', { name: /Ir para uma tela/ }));
+    expect(await screen.findByText('Ação rápida · sem custo de IA')).toBeInTheDocument();
+    // A pilha de camadas do voltar é global do módulo: desmontagens dos testes anteriores podem deixar
+    // "voltar de limpeza" contados que no jsdom nunca chegam e engolem um voltar. Por isso aperta até
+    // a ação fechar (no máx. 3); o que importa é o chat CONTINUAR aberto — com o bug, o primeiro voltar
+    // efetivo fechava o chat inteiro.
+    for (let n = 0; n < 3 && screen.queryByText('Ação rápida · sem custo de IA'); n++) {
+      window.history.back();
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    expect(screen.queryByText('Ação rápida · sem custo de IA')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Falar com o assistente/ })).toBeNull();
+    expect(screen.getByPlaceholderText('Mensagem')).toBeInTheDocument();
+  });
+
   it('na barra pequena continua o cartão compacto (sem ocupar a tela)', async () => {
     const user = userEvent.setup();
     renderChat('floating');

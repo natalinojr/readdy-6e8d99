@@ -552,6 +552,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Ações rápidas em tela cheia são mais uma camada: o voltar fecha só elas.
   useVoltarFecha(open && menuAcoes && (modo === 'full' || variant === 'embedded'), () => setMenuAcoes(false), 'assistente-acoes');
   useVoltarFecha(open && pendAberta, () => setPendAberta(false), 'assistente-pendencias');
+  // Ação rápida aberta (Vendas do dia, Contas vencendo…) é mais uma camada: o voltar fecha só ela
+  // e volta ao chat. Sem isso o voltar do Android fechava o chat inteiro (dono, 2026-09-19).
+  useVoltarFecha(open && !!acao, () => setAcao(null), 'assistente-acao');
   useEffect(() => {
     if (!isOwner) return;
     contarPendencias();
