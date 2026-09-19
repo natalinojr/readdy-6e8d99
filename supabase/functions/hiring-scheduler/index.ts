@@ -447,6 +447,7 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
   if (sess.interview_id) {
     const { data: iv } = await admin.from('hiring_interviews').select('scheduled_at, status').eq('id', sess.interview_id).maybeSingle();
     if (iv?.status === 'agendada') c.sess.interview_at = iv.scheduled_at;
+    c.sess.interview_status = iv?.status ?? null;
   }
   await addHist(admin, sess.id, 'candidato', text, { last_in_at: new Date().toISOString() });
   const t = text.trim();
@@ -482,6 +483,28 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
     }
   }
   const offered: string[] = Array.isArray(sess.offered) ? sess.offered : [];
+  const histAnt = Array.isArray(sess.history) ? (sess.history as Row[]) : [];
+  const ultimaNossa = [...histAnt].reverse().find((h) => h?.de === 'assistente');
+
+  // Encerramento depois de marcada (conversas de 2026-09-15/19: "Ok" → "Muito obrigada" → "🙏" recebiam
+  // 3 despedidas, cada uma passando pela IA). Uma despedida fixa só; depois disso, silêncio. Emoji solto
+  // nunca é respondido.
+  const ENCERRA = /^(ok+|okay|t[aá]( bom)?|beleza|blz|combinado|perfeito|certo|show|joia|at[eé]( mais| logo| l[aá]| segunda| amanh[aã])?|((ok|t[aá] bom|beleza),? )?(muito )?obrigad[oa]s?|sim,? (muito )?obrigad[oa]|valeu|vlw|agrade[cç]o|grat[oa])[\s!.,]*$/i;
+  // Só emoji: exige um pictograma e nenhum dígito ("1" é Emoji_Component e é escolha de horário).
+  const soEmoji = /^(?=.*\p{Extended_Pictographic})[\p{Extended_Pictographic}\p{Emoji_Modifier}\u200d\ufe0f\s!.]+$/u.test(t);
+  if (sess.status === 'agendado' && (soEmoji || ENCERRA.test(t))) {
+    if (soEmoji || ultimaNossa?.tipo === 'agradecimento') return;
+    await toCand(admin, c, `Combinado! Te esperamos${c.sess.interview_at ? ` ${fmtSlot(c.sess.interview_at)}` : ''} 🙂`, { __tipo: 'agradecimento' });
+    return;
+  }
+  // "Pode sim" / "sim" logo depois da lista de horários (Adriana, 2026-09-19): a IA mandava a lista de
+  // novo. Aqui só pede a escolha, sem repetir a lista.
+  const SO_SIM = /^(sim|s|pode( sim| ser)?|podemos( sim)?|claro( que sim)?|ok+|quero|tenho interesse|bora|vamos|com certeza)[\s!.,]*$/i;
+  if (sess.status !== 'agendado' && offered.length && SO_SIM.test(t) && /\n1\) /.test(String(ultimaNossa?.texto ?? ''))) {
+    await toCand(admin, c, `Ótimo! 😊 Qual desses horários fica melhor pra você? ${COMO_RESPONDER}`);
+    return;
+  }
+
   const num = t.match(/^\s*(?:op[çc][aã]o\s*)?(\d{1,2})\s*[).]?\s*$/i);
   if (num && offered[Number(num[1]) - 1] && sess.status !== 'aguardando_gestor') { await book(admin, c, offered[Number(num[1]) - 1], false); return; }
 
@@ -549,13 +572,18 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
   if ((intencao === 'agradecer' || intencao === 'confirmar') && sess.status === 'agendado') {
     // Agradecimento em cima de agradecimento (Adriana, 2026-09-19: "Ok obrigado" → "Obrigado" recebeu a
     // mesma despedida duas vezes): se a última fala nossa já foi a resposta a um obrigado, fica quieto.
-    const hist = Array.isArray(sess.history) ? (sess.history as Row[]) : [];
-    const ultimaNossa = [...hist].reverse().find((h) => h?.de === 'assistente');
     if (ultimaNossa?.tipo === 'agradecimento') return;
     await toCand(admin, c, String(r.resposta ?? '').trim().slice(0, 700) || `Nós que agradecemos! Te esperamos${c.sess.interview_at ? ` ${fmtSlot(c.sess.interview_at)}` : ''} 🙂`, { __tipo: 'agradecimento' });
     return;
   }
   const resp = String(r.resposta ?? '').trim();
+  const jaFoi = sess.status === 'agendado' && (['realizada', 'faltou'].includes(String(c.sess.interview_status ?? ''))
+    || (c.sess.interview_at && Date.parse(c.sess.interview_at) < Date.now()));
+  if (jaFoi && (intencao === 'pergunta' || intencao === 'outro')) {
+    await toInterviewers(c, `💬 ${c.cand.full_name} (vaga ${c.job.title}) escreveu depois da entrevista: "${t.slice(0, 300)}"`);
+    await toCand(admin, c, 'Recebi sua mensagem e já passei para a equipe 🙂 Eles te respondem assim que possível.');
+    return;
+  }
   if (resp) { await toCand(admin, c, resp.slice(0, 700)); return; }
   if (sess.status !== 'agendado' && offered.length) await toCand(admin, c, `Pra marcar, me diga qual destes horários fica melhor pra você:\n${slotsText(offered)}\n\n${COMO_RESPONDER}`);
 }
