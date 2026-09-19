@@ -4,7 +4,8 @@ import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
 import { fetchComprasDREDetalhado, fetchComprasPeriodo } from '@/lib/comprasDRE';
 import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
-import { fetchIfoodCompetencia, isIfoodAntecipacao } from '@/lib/ifoodVendas';
+import { isIfoodAntecipacao } from '@/lib/ifoodVendas';
+import { fetchCartoesCompetencia, isStoneMdrLedger, isStoneVendasLedger } from '@/lib/cartoesCompetencia';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -541,21 +542,24 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     .in('origin', ['auto_card_fee', 'ifood_fee'])
     .gte('date', startDate)
     .lte('date', endDate);
-  // Competência: do iFood só a taxa de antecipação fica pela data do repasse; comissões e taxas
-  // entram pela data do pedido (somadas em fetchFn, junto das vendas — fetchIfoodCompetencia).
+  // Competência: iFood e Stone pela data da VENDA. Do razão (data do repasse) saem as comissões do iFood
+  // (fica só a antecipação) e o MDR da Stone (ficam antecipação, tarifas e chargebacks); fetchFn soma os
+  // valores por data da venda (fetchCartoesCompetencia → fn_dre_competencia_cartoes).
   const taxasMaquininha = ((cardFeeRows ?? []) as Array<{ amount: number; origin?: string; description?: string | null }>)
-    .filter((r) => r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description))
+    .filter((r) => (r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description)) && !isStoneMdrLedger(r.description))
     .reduce((s, r) => s + Number(r.amount), 0);
-  // Vendas em cartão liquidadas pela Stone (opção "lançar no financeiro" da integração)
+  // Stone: do razão ficam só os "créditos diversos"; as vendas entram pela data da venda em fetchFn
   const { data: stoneSaleRows } = await supabase
     .from('fin_cash_flow')
-    .select('amount')
+    .select('amount, description')
     .eq('tenant_id', tenantId)
     .eq('type', 'income')
     .eq('origin', 'stone_sale')
     .gte('date', startDate)
     .lte('date', endDate);
-  const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  const receitaStone = ((stoneSaleRows ?? []) as Array<{ amount: number; description?: string | null }>)
+    .filter((r) => !isStoneVendasLedger(r.description))
+    .reduce((s, r) => s + Number(r.amount), 0);
 
   const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime);
 
@@ -809,11 +813,14 @@ export default function DRETab() {
         loadRevenueExtras(tenantId, start, end),
       ]);
       if (dreMode !== 'competencia') return applyRevenueSources(d, extras.sources, extras.pix, extras.ifood);
-      // Competência: iFood pela data do PEDIDO (caixa segue pela data do repasse)
-      const ifood = extras.sources.includes('ifood')
-        ? await fetchIfoodCompetencia(tenantId, start, end)
-        : { receita: 0, custo: 0 };
-      return applyRevenueSources({ ...d, taxasMaquininha: d.taxasMaquininha + ifood.custo }, extras.sources, extras.pix, ifood.receita);
+      // Competência: iFood pela data do PEDIDO e Stone pela data da VENDA (caixa segue pela data do repasse)
+      const c = await fetchCartoesCompetencia(tenantId, start, end);
+      const ifoodOn = extras.sources.includes('ifood');
+      return applyRevenueSources({
+        ...d,
+        receitaStone: d.receitaStone + c.stone_bruto,
+        taxasMaquininha: d.taxasMaquininha + c.stone_mdr + (ifoodOn ? c.ifood_custo : 0),
+      }, extras.sources, extras.pix, c.ifood_receita);
     },
     [dreMode]
   );
@@ -1298,7 +1305,9 @@ export default function DRETab() {
                 )}
                 {(data.receitaStone ?? 0) > 0 && (
                   <DRERow label={`Vendas em cartão (${flowLabels.card})`} atual={data.receitaStone} anterior={prevData?.receitaStone} receitaBruta={receitaBruta} depth={1}
-                    origin="Livro-razão: fin_cash_flow → stone_sale (vendas em cartão liquidadas pela maquininha, valor bruto; as taxas estão em Taxas de Cartão)" />
+                    origin={dreMode === 'competencia'
+                      ? 'Vendas em cartão pela DATA DA VENDA (arquivo de conciliação da Stone), valor bruto. A taxa da venda (MDR) também pela data da venda; antecipação e tarifas pela data do repasse, em Taxas de cartão.'
+                      : 'Livro-razão: fin_cash_flow → stone_sale (vendas em cartão pela DATA DO REPASSE, valor bruto; as taxas estão em Taxas de cartão)'} />
                 )}
                 {(data.receitaPix ?? 0) > 0 && (
                   <DRERow label={`Pix recebido (${flowLabels.bank})`} atual={data.receitaPix ?? 0} anterior={prevData?.receitaPix} receitaBruta={receitaBruta} depth={1}

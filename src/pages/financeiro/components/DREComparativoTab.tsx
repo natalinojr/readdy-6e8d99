@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, Fragment, type ReactNode } from 'reac
 import { supabase } from '@/lib/supabase';
 import { fetchComprasDRE, fetchComprasPeriodo } from '@/lib/comprasDRE';
 import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
-import { fetchIfoodCompetencia, isIfoodAntecipacao } from '@/lib/ifoodVendas';
+import { isIfoodAntecipacao } from '@/lib/ifoodVendas';
+import { fetchCartoesCompetencia, isStoneMdrLedger, isStoneVendasLedger } from '@/lib/cartoesCompetencia';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
@@ -203,12 +204,15 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
     if (b.status === 'pending' || b.status === 'overdue' || b.status === 'partial') despesasAPagar += Number(b.amount);
   });
   const custoPessoal = (payrollRes.data ?? []).reduce((s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0);
-  // iFood: só a taxa de antecipação fica pela data do repasse; comissões e taxas vão pela data do pedido (loadData)
+  // iFood e Stone pela data da VENDA (loadData soma): do razão saem as comissões do iFood (fica a antecipação),
+  // o MDR e as vendas da Stone (ficam antecipação, tarifas e créditos diversos) — igual ao DRETab.
   const taxasMaquininha = ((cardFeeRes.data ?? []) as Array<{ amount: number; origin?: string; description?: string | null }>)
-    .filter((r) => r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description))
+    .filter((r) => (r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description)) && !isStoneMdrLedger(r.description))
     .reduce((s, r) => s + Number(r.amount), 0);
-  const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
-  const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount, description').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
+  const receitaStone = ((stoneSaleRows ?? []) as Array<{ amount: number; description?: string | null }>)
+    .filter((r) => !isStoneVendasLedger(r.description))
+    .reduce((s, r) => s + Number(r.amount), 0);
 
   return {
     receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone,
@@ -411,11 +415,13 @@ export default function DREComparativoTab() {
       loadRevenueExtras(user.tenantId, start, end),
     ]);
     setCaixaData(applyRevenueSources(caixa, extras.sources, extras.pix, extras.ifood));
-    // Competência: iFood pela data do PEDIDO (vendas e comissões); caixa segue pela data do repasse
-    const ifoodComp = extras.sources.includes('ifood')
-      ? await fetchIfoodCompetencia(user.tenantId, start, end)
-      : { receita: 0, custo: 0 };
-    setCompData(applyRevenueSources({ ...comp, taxasMaquininha: comp.taxasMaquininha + ifoodComp.custo }, extras.sources, extras.pix, ifoodComp.receita));
+    // Competência: iFood pela data do PEDIDO e Stone pela data da VENDA; caixa segue pela data do repasse
+    const c = await fetchCartoesCompetencia(user.tenantId, start, end);
+    setCompData(applyRevenueSources({
+      ...comp,
+      receitaStone: comp.receitaStone + c.stone_bruto,
+      taxasMaquininha: comp.taxasMaquininha + c.stone_mdr + (extras.sources.includes('ifood') ? c.ifood_custo : 0),
+    }, extras.sources, extras.pix, c.ifood_receita));
     setDreCats(catsRes.data ?? []);
     setLoading(false);
   }, [user?.tenantId, mes]);
