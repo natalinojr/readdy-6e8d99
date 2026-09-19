@@ -393,7 +393,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const lastId = useRef(0);
   const stick = useRef(true);
 
-  const toBottom = () => requestAnimationFrame(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; });
+  // Confere o "grudado no fim" DENTRO do quadro: se você começou a subir nesse meio-tempo, não puxa.
+  const toBottom = () => requestAnimationFrame(() => { const el = scrollRef.current; if (el && stick.current) el.scrollTop = el.scrollHeight; });
+  // Dedo na tela: nada rola sozinho enquanto você mexe (o "do nada me leva pra baixo" de 2026-09-19).
+  const tocando = useRef(false);
   // Abrir uma conversa SEMPRE mostra a última mensagem (pedido do dono, 2026-09-17). O toBottom() logo
   // depois de carregar rodava antes de a tela desenhar as mensagens (rolava o fim de uma lista vazia),
   // e botões/cartões que crescem depois empurravam o fim para baixo. Agora: 1) ao entrar, marca que
@@ -452,7 +455,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     const alvo = conteudoRef.current;
     const el = scrollRef.current;
     if (!alvo || !el || typeof ResizeObserver === 'undefined') return;
-    const aoFim = () => { if (stick.current) el.scrollTop = el.scrollHeight; };
+    const aoFim = () => { if (stick.current && !tocando.current) el.scrollTop = el.scrollHeight; };
     const ro = new ResizeObserver(aoFim);
     ro.observe(alvo);
     // A JANELA das mensagens também encolhe depois de abrir: os cartões de pagamento em aberto chegam
@@ -684,7 +687,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       setMsgs((p) => [...p, { id: -Date.now(), role: 'assistant', channel: 'app', created_at: new Date().toISOString(), content: out.reply, temp: true }]);
       // Barra pequena: a troca (pergunta + resposta). No áudio, a pergunta vira a transcrição.
       setTroca({ pergunta: out.transcricao || t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto'), resposta: semMarcadores(out.reply) });
-      stick.current = true; toBottom();
+      // A resposta demora: se você subiu para ler enquanto isso, fica onde está (como no WhatsApp).
+      toBottom();
       // O assistente pode ter classificado itens pela conversa: a tela de Classificação, se aberta, recarrega
       window.dispatchEvent(new CustomEvent('itens-classificados', { detail: {} }));
       const antes = lastId.current;
@@ -1141,7 +1145,12 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       {vista === 'lista' ? listaConversas : (
       <div
         ref={scrollRef}
-        onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
+        // "No fim" = a poucos pixels do fim. Com 80 px, quem subia uma ou duas linhas para ler ainda
+        // contava como no fim e era puxado de volta a cada cartão de pagamento que se atualizava.
+        onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 16; }}
+        onTouchStart={() => { tocando.current = true; }}
+        onTouchEnd={() => { tocando.current = false; }}
+        onTouchCancel={() => { tocando.current = false; }}
         className="flex-1 overflow-y-auto px-3 py-3 bg-zinc-50/60"
       >
         <div ref={conteudoRef} className="space-y-2">

@@ -2602,6 +2602,12 @@ encolhendo 250 px: sem observar a área faltavam 155 px; com, 0. Pegadinha de te
 embutido fica `hidden` (sem rAF, o ResizeObserver não dispara) — medir com
 `chrome.exe --headless=new --window-size=375,812 --virtual-time-budget=25000 --dump-dom`.
 
+O outro lado (2026-09-19, "subo a conversa pra ler e do nada me leva lá pra baixo"): só rola sozinho
+quem está NO fim (`stick` = a menos de 16 px; com 80 px, subir uma ou duas linhas ainda contava como fim
+e cada atualização dos cartões puxava de volta), nunca com o dedo na tela (`tocando`), e a resposta do
+assistente que chega depois NÃO força o fim — `toBottom()` confere `stick` dentro do quadro. Só o SEU
+envio leva ao fim.
+
 ### Repasse Stone creditado em duas datas (2026-09-16)
 
 O banco às vezes credita parte do repasse de um dia (ex.: uma venda de débito) em outra data. `fn_match_card_deposits` tem uma 2ª passada: mesma pilha, dia D que não fechou por falta + dia E entre D+1 e D+5 que não fechou por sobra, com o arquivo da Stone de E já importado; se juntos fecham na tolerância, concilia os dois com `match_group = 'stone:D+E:normal|antecipado'` (o match_group é só um rótulo — `group_detail` busca por igualdade). `fn_stone_repasses` marca os dois dias como `atrasado` e devolve `par_dia`. Sem o arquivo da Stone de E não há como saber a sobra de E, então o par só fecha no dia seguinte ao crédito atrasado.

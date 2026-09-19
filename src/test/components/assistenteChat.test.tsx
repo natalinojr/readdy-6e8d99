@@ -734,6 +734,30 @@ describe('AssistenteChat — abre na última mensagem', () => {
     const area = ultima.closest('.overflow-y-auto') as HTMLElement;
     await waitFor(() => expect(area.scrollTop).toBe(5000));
   });
+
+  it('subiu para ler enquanto a resposta chegava: fica onde está', async () => {
+    // Dono (2026-09-19): "se eu subo a conversa e fico ali lendo, do nada me leva lá pra baixo".
+    const user = userEvent.setup();
+    for (let i = 0; i < 30; i++) add('assistant', `Mensagem ${i}`);
+    let soltar: () => void = () => {};
+    const segura = new Promise<void>((r) => { soltar = r; });
+    h.invoke.mockImplementation(async (fn: string, o: { body: Body }) => {
+      if (o?.body?.action === 'send') await segura;
+      return fakeServer(fn, o);
+    });
+    renderChat();
+    await entrarNaConversa(user);
+    const area = (await screen.findByText('Mensagem 29')).closest('.overflow-y-auto') as HTMLElement;
+    await user.type(screen.getByPlaceholderText('Mensagem'), 'oi');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    await waitFor(() => expect(area.scrollTop).toBe(5000));
+    area.scrollTop = 1000; // subiu para ler
+    fireEvent.scroll(area);
+    soltar();
+    expect(await screen.findByText('Resposta para: oi')).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(area.scrollTop).toBe(1000);
+  });
 });
 
 describe('AssistenteChat — ações rápidas', () => {
