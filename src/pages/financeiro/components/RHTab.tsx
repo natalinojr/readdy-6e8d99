@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useEmployees, usePayroll } from '@/hooks/useRH';
 import ImportarFolhaDominioModal from './ImportarFolhaDominioModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -1294,6 +1294,41 @@ export default function RHTab() {
     return () => { vivo = false; };
   }, [user?.tenantId, entries.length]);
 
+  // Pix do extrato que bate com a folha (conciliação › fn_match_payroll, 2026-09-18): mostra na linha e
+  // confirma daqui mesmo — a mesma confirmação da Conciliação (folha paga na data do Pix, não hoje).
+  const [pixFolha, setPixFolha] = useState<Record<string, { id: string; data: string }>>({});
+  const [confirmandoPix, setConfirmandoPix] = useState<string | null>(null);
+  const [erroPix, setErroPix] = useState<{ id: string; msg: string } | null>(null);
+  const pendentesKey = entries.filter((e) => e.status === 'pending').map((e) => e.id).join(',');
+  useEffect(() => {
+    const tid = user?.tenantId;
+    const ids = pendentesKey ? pendentesKey.split(',') : [];
+    if (!tid || !ids.length) { setPixFolha({}); return; }
+    let vivo = true;
+    supabase.from('fin_bank_statement_imports').select('id, transaction_date, match_ref_id')
+      .eq('tenant_id', tid).eq('match_kind', 'payroll').eq('status', 'pending').in('match_ref_id', ids)
+      .then(({ data }) => {
+        if (!vivo) return;
+        const m: Record<string, { id: string; data: string }> = {};
+        for (const r of data ?? []) m[String(r.match_ref_id)] = { id: String(r.id), data: String(r.transaction_date) };
+        setPixFolha(m);
+      });
+    return () => { vivo = false; };
+  }, [user?.tenantId, pendentesKey]);
+  const confirmarPix = async (payrollId: string) => {
+    const pix = pixFolha[payrollId];
+    if (!pix || !user?.tenantId || confirmandoPix) return;
+    setConfirmandoPix(payrollId);
+    try {
+      const r = await invokeWithAuth<{ error?: string; results?: { ok: boolean; msg: string }[] }>('conciliacao-pagamentos',
+        { body: { action: 'confirm', tenant_id: user.tenantId, ids: [pix.id] } });
+      const res = r.data?.results?.[0];
+      const erro = r.data?.error ?? r.error?.message ?? (res && !res.ok ? res.msg : null);
+      setErroPix(erro ? { id: payrollId, msg: String(erro) } : null);
+      await refreshPayroll();
+    } finally { setConfirmandoPix(null); }
+  };
+
   const canGoNext = selectedMonth < currentMonth;
   const filteredEmployees = employees.filter(e => {
     const matchDept = deptFilter === 'Todos' || e.department === deptFilter;
@@ -1304,6 +1339,10 @@ export default function RHTab() {
   // Guias do mês: INSS = descontado dos empregados + INSS do pró-labore pago pela empresa; FGTS = da folha.
   const inssSocio = entries.reduce((s, e) => s + (e.rubricas ?? []).filter(r => r.categoria === 'inss_socio').reduce((a, r) => a + Number(r.valor || 0), 0), 0);
   const guiaINSS = totalINSS + inssSocio;
+  // INSS do sócio sem retirada (dono, 2026-09-18): é INSS recolhido no DARF, não salário. Na tela fica na
+  // coluna INSS e fora de Proventos/Líquido; no custo total continua (a DRE conta pelo bruto da folha).
+  const brutoSemSocio = totalBruto - inssSocio;
+  const liquidoSemSocio = totalLiquido - inssSocio;
   const temImportado = entries.some(isImportado);
   const departments = ['Todos', ...Array.from(new Set(employees.map(e => e.department)))];
 
@@ -1504,9 +1543,9 @@ export default function RHTab() {
               <h3 className="text-sm font-semibold text-zinc-800 mb-3 md:mb-4">Resumo — {monthLabel(selectedMonth)}</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 md:gap-4">
                 {[
-                  { label: 'Proventos (bruto)', value: totalBruto, color: 'text-zinc-800' },
+                  { label: 'Proventos (bruto)', value: brutoSemSocio, color: 'text-zinc-800' },
                   { label: 'Descontos', value: Math.max(0, totalBruto - totalLiquido), color: 'text-red-500' },
-                  { label: 'Líquido a pagar', value: totalLiquido, color: 'text-zinc-900' },
+                  { label: 'Líquido a pagar', value: liquidoSemSocio, color: 'text-zinc-900' },
                   { label: 'FGTS (empresa)', value: totalFGTS, color: 'text-amber-600' },
                   { label: 'Custo total', value: totalBruto + totalFGTS, color: 'text-orange-700' },
                   { label: 'Já pago', value: totalPago, color: 'text-green-600' },
@@ -1612,14 +1651,16 @@ export default function RHTab() {
                         </div>
                       </td>
                       <td className="px-4 py-3.5 text-sm text-right text-zinc-700 font-medium">
-                        {formatCurrency(entry.total_proventos ?? entry.gross_salary)}
-                        {isSoInss(entry) && <span className="block text-[10px] font-normal text-zinc-400">INSS do pró-labore (custo da empresa)</span>}
+                        {isSoInss(entry) ? <span className="text-zinc-400">—</span> : formatCurrency(entry.total_proventos ?? entry.gross_salary)}
                       </td>
-                      <td className="px-4 py-3.5 text-sm text-right text-orange-600">{formatCurrency(entry.inss)}</td>
+                      <td className="px-4 py-3.5 text-sm text-right text-orange-600">
+                        {formatCurrency(isSoInss(entry) ? Number(entry.gross_salary ?? 0) : entry.inss)}
+                        {isSoInss(entry) && <span className="block text-[10px] font-normal text-zinc-400">pago pela empresa no DARF</span>}
+                      </td>
                       <td className="px-4 py-3.5 text-sm text-right text-red-500">{formatCurrency(entry.irrf)}</td>
                       <td className="px-4 py-3.5 text-sm text-right text-red-600">{formatCurrency(entry.total_descontos ?? entry.deductions)}</td>
                       <td className="px-4 py-3.5 text-sm text-right text-amber-600">{formatCurrency(entry.fgts)}</td>
-                      <td className="px-4 py-3.5 text-sm text-right font-bold text-zinc-900">{formatCurrency(entry.net_salary)}</td>
+                      <td className="px-4 py-3.5 text-sm text-right font-bold text-zinc-900">{isSoInss(entry) ? <span className="text-zinc-400 font-normal">—</span> : formatCurrency(entry.net_salary)}</td>
                       <td className="px-4 py-3.5 text-center">
                         <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${PAYROLL_STATUS_COLORS[entry.status]}`}>
                           {PAYROLL_STATUS_LABELS[entry.status]}
@@ -1627,6 +1668,14 @@ export default function RHTab() {
                         {entry.paid_date && (
                           <p className="text-xs text-zinc-400 mt-0.5">{new Date(entry.paid_date + 'T12:00:00').toLocaleDateString('pt-BR')}</p>
                         )}
+                        {entry.status === 'pending' && pixFolha[entry.id] && (
+                          <button onClick={() => confirmarPix(entry.id)} disabled={confirmandoPix === entry.id}
+                            title="Pix com o valor exato do líquido, para o CPF do funcionário, encontrado no extrato do banco"
+                            className="block mx-auto mt-1 text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 cursor-pointer disabled:opacity-60 whitespace-nowrap">
+                            <i className="ri-bank-line" /> {confirmandoPix === entry.id ? 'Confirmando…' : `Pix de ${new Date(pixFolha[entry.id].data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} — confirmar pago`}
+                          </button>
+                        )}
+                        {erroPix?.id === entry.id && <p className="text-[10px] text-red-600 mt-0.5 max-w-[180px] mx-auto">{erroPix.msg}</p>}
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-1 justify-end">
@@ -1654,12 +1703,12 @@ export default function RHTab() {
                 <tfoot>
                   <tr className="bg-zinc-50 border-t-2 border-zinc-200">
                     <td colSpan={2} className="px-5 py-3 text-sm font-bold text-zinc-800">Total</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-zinc-800">{formatCurrency(totalBruto)}</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-orange-600">{formatCurrency(totalINSS)}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right text-zinc-800">{formatCurrency(brutoSemSocio)}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right text-orange-600">{formatCurrency(guiaINSS)}</td>
                     <td className="px-4 py-3 text-sm font-bold text-right text-red-500">{formatCurrency(totalIRRF)}</td>
                     <td className="px-4 py-3 text-sm font-bold text-right text-red-600">{formatCurrency(totalLiquido > 0 ? totalBruto - totalLiquido : 0)}</td>
                     <td className="px-4 py-3 text-sm font-bold text-right text-amber-600">{formatCurrency(totalFGTS)}</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-zinc-900">{formatCurrency(totalLiquido)}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right text-zinc-900">{formatCurrency(liquidoSemSocio)}</td>
                     <td colSpan={2} />
                   </tr>
                 </tfoot>
