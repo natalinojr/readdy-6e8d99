@@ -110,6 +110,16 @@ export default function ItensClassificacaoTab() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // Classificado pelo chat do assistente (caixa de pendências): recarrega sem precisar de F5
+  useEffect(() => {
+    const onClassificados = (e: Event) => {
+      const t = (e as CustomEvent<{ tenantId?: string }>).detail?.tenantId;
+      if (!t || t === tenantId) carregar();
+    };
+    window.addEventListener('itens-classificados', onClassificados);
+    return () => window.removeEventListener('itens-classificados', onClassificados);
+  }, [carregar, tenantId]);
+
   const catNome = useCallback((id: string | null) => {
     const c = cats.find((x) => x.id === id);
     if (!c) return null;

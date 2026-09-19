@@ -40,6 +40,8 @@ function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Ca
         merchandise_category_id: classe === 'cmv' && merc ? merc : undefined,
       });
       onFeito(item.id);
+      // A tela Financeiro › Classificação de Itens, se aberta atrás do chat, recarrega sem F5
+      window.dispatchEvent(new CustomEvent('itens-classificados', { detail: { tenantId: loja.id } }));
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Não foi possível classificar');
       setBusy(false);
