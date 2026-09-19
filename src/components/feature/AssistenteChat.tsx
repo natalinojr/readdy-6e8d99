@@ -679,6 +679,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       // Barra pequena: a troca (pergunta + resposta). No áudio, a pergunta vira a transcrição.
       setTroca({ pergunta: out.transcricao || t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto'), resposta: semMarcadores(out.reply) });
       stick.current = true; toBottom();
+      // O assistente pode ter classificado itens pela conversa: a tela de Classificação, se aberta, recarrega
+      window.dispatchEvent(new CustomEvent('itens-classificados', { detail: {} }));
       const antes = lastId.current;
       const h = await call<{ messages: Msg[] }>('history', { after_id: antes });
       merge(h.messages);
