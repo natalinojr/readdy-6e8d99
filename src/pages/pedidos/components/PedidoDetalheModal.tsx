@@ -6,6 +6,7 @@ import { PLATAFORMAS_DELIVERY } from '@/constants/delivery';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
 import { sendToPrinter } from '@/lib/printUtils';
 import { useToast } from '@/contexts/ToastContext';
+import { formatCurrency } from '@/lib/formatters';
 
 interface Props {
   pedido: PedidoRecente;
@@ -91,7 +92,7 @@ function DeliveryPlatformBadge({ platform, fee }: { platform?: string | null; fe
       {fee != null && fee > 0 && (
         <div className="text-right">
           <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Taxa entrega</p>
-          <p className="text-sm font-bold text-red-600">R$ {fee.toFixed(2)}</p>
+          <p className="text-sm font-bold text-red-600">{formatCurrency(fee)}</p>
         </div>
       )}
     </div>
@@ -514,7 +515,7 @@ function PagamentoDetalhado({ pedido, isConsolidated }: { pedido: PedidoRecente;
                   )}
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <p className="text-base font-black text-zinc-900">R$ {valorCobrado.toFixed(2)}</p>
+                  <p className="text-base font-black text-zinc-900">{formatCurrency(valorCobrado)}</p>
                   <p className="text-[10px] text-zinc-400">valor cobrado</p>
                 </div>
               </div>
@@ -523,7 +524,7 @@ function PagamentoDetalhado({ pedido, isConsolidated }: { pedido: PedidoRecente;
                 <div className="mt-3 pt-3 border-t border-zinc-200/60 flex items-start gap-1.5">
                   <i className="ri-links-line text-amber-500 text-xs mt-0.5" />
                   <span className="text-[11px] text-zinc-500 leading-snug">
-                    Pago em conjunto com outros pedidos — pagamento total de <strong className="text-zinc-700">R$ {pg.amount.toFixed(2)}</strong>. Valor acima é a parte deste pedido.
+                    Pago em conjunto com outros pedidos — pagamento total de <strong className="text-zinc-700">{formatCurrency(pg.amount)}</strong>. Valor acima é a parte deste pedido.
                   </span>
                 </div>
               )}
@@ -533,16 +534,16 @@ function PagamentoDetalhado({ pedido, isConsolidated }: { pedido: PedidoRecente;
                   {valorEntregue != null && (
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-zinc-500 flex items-center gap-1.5"><i className="ri-hand-coin-line text-zinc-400" />Valor entregue pelo cliente</span>
-                      <span className="font-bold text-zinc-700">R$ {valorEntregue.toFixed(2)}</span>
+                      <span className="font-bold text-zinc-700">{formatCurrency(valorEntregue)}</span>
                     </div>
                   )}
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-zinc-500 flex items-center gap-1.5"><i className="ri-subtract-line text-zinc-400" />Total cobrado</span>
-                    <span className="font-bold text-zinc-700">R$ {valorCobrado.toFixed(2)}</span>
+                    <span className="font-bold text-zinc-700">{formatCurrency(valorCobrado)}</span>
                   </div>
                   <div className="flex items-center justify-between pt-2 border-t border-emerald-200/60">
                     <span className="text-sm font-bold text-emerald-700 flex items-center gap-1.5"><i className="ri-coins-line" />Troco</span>
-                    <span className={`text-base font-black ${troco != null && troco > 0 ? 'text-emerald-700' : 'text-zinc-400'}`}>R$ {(trocoRaw ?? 0).toFixed(2)}</span>
+                    <span className={`text-base font-black ${troco != null && troco > 0 ? 'text-emerald-700' : 'text-zinc-400'}`}>{formatCurrency((trocoRaw ?? 0))}</span>
                   </div>
                 </div>
               )}
@@ -562,7 +563,7 @@ function PagamentoDetalhado({ pedido, isConsolidated }: { pedido: PedidoRecente;
       {pedido.pagamentos.length > 1 && (
         <div className="flex items-center justify-between p-3 bg-zinc-100 rounded-xl">
           <span className="text-xs font-semibold text-zinc-600">Total pago</span>
-          <span className="text-sm font-black text-zinc-900">R$ {totalPago.toFixed(2)}</span>
+          <span className="text-sm font-black text-zinc-900">{formatCurrency(totalPago)}</span>
         </div>
       )}
     </div>
@@ -645,7 +646,7 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
               Pedido #{pedido.numeroCodigo ?? String(pedido.numero).padStart(4, '0')}
               {index != null && <span className="text-zinc-400 font-normal ml-1">({index + 1})</span>}
             </p>
-            <p className="text-[10px] text-amber-600 mt-0.5">{pedido.itensDetalhes.length} item{pedido.itensDetalhes.length !== 1 ? 's' : ''} · R$ {pedido.total.toFixed(2)}</p>
+            <p className="text-[10px] text-amber-600 mt-0.5">{pedido.itensDetalhes.length} item{pedido.itensDetalhes.length !== 1 ? 's' : ''} · {formatCurrency(pedido.total)}</p>
           </div>
         </div>
       )}
@@ -673,7 +674,7 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
           {fase === 'cancelado' ? (
             <p className="text-sm font-bold text-red-400">Cancelado</p>
           ) : (
-            <p className="text-sm font-bold text-zinc-800">R$ {totalReal.toFixed(2)}</p>
+            <p className="text-sm font-bold text-zinc-800">{formatCurrency(totalReal)}</p>
           )}
         </div>
       </div>
@@ -775,14 +776,14 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
                           {totalAdicionais > 0 && (
                             <div className="flex items-center justify-between gap-2 max-w-[280px] text-[10px] text-zinc-400">
                               <span>Item base</span>
-                              <span className="tabular-nums">R$ {precoBase.toFixed(2)}</span>
+                              <span className="tabular-nums">{formatCurrency(precoBase)}</span>
                             </div>
                           )}
                           <div className="flex flex-wrap gap-1">
                             {detal.map((o, i) => (
                               <span key={i} className="inline-flex items-center gap-1 text-[10px] bg-white border border-zinc-200 text-zinc-600 px-2 py-0.5 rounded-full font-medium">
                                 {o.nome}
-                                {o.preco > 0 && <span className="text-emerald-600 font-semibold">+R$ {o.preco.toFixed(2)}</span>}
+                                {o.preco > 0 && <span className="text-emerald-600 font-semibold">+{formatCurrency(o.preco)}</span>}
                               </span>
                             ))}
                           </div>
@@ -806,8 +807,8 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
                   )}
                 </div>
                 <div className="text-right ml-3 flex-shrink-0">
-                  <p className={`text-sm font-bold ${item.cancelado ? 'text-red-400 line-through' : 'text-zinc-800'}`}>R$ {(item.preco * item.quantidade).toFixed(2)}</p>
-                  <p className="text-[10px] text-zinc-400">R$ {item.preco.toFixed(2)} /un.</p>
+                  <p className={`text-sm font-bold ${item.cancelado ? 'text-red-400 line-through' : 'text-zinc-800'}`}>{formatCurrency((item.preco * item.quantidade))}</p>
+                  <p className="text-[10px] text-zinc-400">{formatCurrency(item.preco)} /un.</p>
                   {item.estacao && <div className="flex items-center gap-1 justify-end mt-1"><i className="ri-map-pin-2-line text-zinc-400 text-xs" /><span className="text-[10px] text-zinc-400">{item.estacao}</span></div>}
                 </div>
               </div>
@@ -860,22 +861,23 @@ function PedidoConteudo({ pedido, isGrupo, index, showResumo = true }: PedidoCon
               {itensAtivos.map((item) => (
                 <div key={item.id} className="flex items-center justify-between text-xs">
                   <span className="text-zinc-600">{item.quantidade}x {item.nome}</span>
-                  <span className="text-zinc-800 font-semibold">R$ {(item.preco * item.quantidade).toFixed(2)}</span>
+                  <span className="text-zinc-800 font-semibold">{formatCurrency((item.preco * item.quantidade))}</span>
                 </div>
               ))}
               {itensCancelados.map((item) => (
                 <div key={item.id} className="flex items-center justify-between text-xs">
                   <span className="text-red-400 line-through flex items-center gap-1.5">{item.quantidade}x {item.nome}<span className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 no-underline"><i className="ri-close-circle-line text-[8px]" />Cancelado</span></span>
-                  <span className="text-red-400 line-through font-semibold">R$ {(item.preco * item.quantidade).toFixed(2)}</span>
+                  <span className="text-red-400 line-through font-semibold">{formatCurrency((item.preco * item.quantidade))}</span>
                 </div>
               ))}
-              {descontoReal > 0 &&<div className="flex items-center justify-between text-xs text-red-600"><span className="flex items-center gap-1"><i className="ri-price-tag-3-line" />Desconto</span><span className="font-semibold">- R$ {descontoReal.toFixed(2)}</span></div>}
-              {(descontoReal > 0 || serviceFeeReal > 0 || tipReal > 0) && <div className="flex items-center justify-between text-xs text-zinc-500 border-t border-zinc-200 pt-2"><span>Subtotal</span><span className="font-semibold">R$ {subtotalReal.toFixed(2)}</span></div>}
-              {serviceFeeReal > 0 && <div className="flex items-center justify-between text-xs text-zinc-600"><span className="flex items-center gap-1"><i className="ri-service-line" />Taxa de serviço</span><span className="font-semibold">+ R$ {serviceFeeReal.toFixed(2)}</span></div>}
-              {tipReal > 0 && <div className="flex items-center justify-between text-xs text-zinc-600"><span className="flex items-center gap-1"><i className="ri-hand-coin-line" />Gorjeta</span><span className="font-semibold">+ R$ {tipReal.toFixed(2)}</span></div>}
+              {descontoReal > 0 &&<div className="flex items-center justify-between text-xs text-red-600"><span className="flex items-center gap-1"><i className="ri-price-tag-3-line" />Desconto</span><span className="font-semibold">- {formatCurrency(descontoReal)}</span></div>}
+              {(descontoReal > 0 || serviceFeeReal > 0 || tipReal > 0 || (pedido.deliveryFee ?? 0) > 0) && <div className="flex items-center justify-between text-xs text-zinc-500 border-t border-zinc-200 pt-2"><span>Subtotal</span><span className="font-semibold">{formatCurrency(subtotalReal)}</span></div>}
+              {serviceFeeReal > 0 && <div className="flex items-center justify-between text-xs text-zinc-600"><span className="flex items-center gap-1"><i className="ri-service-line" />Taxa de serviço</span><span className="font-semibold">+ {formatCurrency(serviceFeeReal)}</span></div>}
+              {tipReal > 0 && <div className="flex items-center justify-between text-xs text-zinc-600"><span className="flex items-center gap-1"><i className="ri-hand-coin-line" />Gorjeta</span><span className="font-semibold">+ {formatCurrency(tipReal)}</span></div>}
+              {(pedido.deliveryFee ?? 0) > 0 && <div className="flex items-center justify-between text-xs text-zinc-600"><span className="flex items-center gap-1"><i className="ri-e-bike-2-line" />Taxa de entrega</span><span className="font-semibold">+ {formatCurrency(pedido.deliveryFee ?? 0)}</span></div>}
               <div className="pt-2 border-t border-zinc-200 flex items-center justify-between">
                 <span className="text-sm font-bold text-zinc-700">Total do pedido</span>
-                <span className="text-base font-black text-zinc-900">R$ {totalReal.toFixed(2)}</span>
+                <span className="text-base font-black text-zinc-900">{formatCurrency(totalReal)}</span>
               </div>
             </div>
           </div>
@@ -949,7 +951,7 @@ export default function PedidoDetalheModal({ pedido, onClose }: Props) {
                   {getStatusFase(pedido.status) === 'cancelado' ? (
                     <p className="text-sm font-bold text-red-400">Cancelado</p>
                   ) : (
-                    <p className="text-sm font-bold text-zinc-800">R$ {pedido.total.toFixed(2)}</p>
+                    <p className="text-sm font-bold text-zinc-800">{formatCurrency(pedido.total)}</p>
                   )}
                 </div>
               </div>
@@ -968,12 +970,12 @@ export default function PedidoDetalheModal({ pedido, onClose }: Props) {
                     {pedidosDoGrupo.map((p) => (
                       <div key={p.id} className="flex items-center justify-between text-xs">
                         <span className="text-zinc-600">Pedido #{p.numeroCodigo ?? String(p.numero).padStart(4, '0')}</span>
-                        <span className="text-zinc-800 font-semibold">R$ {p.total.toFixed(2)}</span>
+                        <span className="text-zinc-800 font-semibold">{formatCurrency(p.total)}</span>
                       </div>
                     ))}
                     <div className="pt-2 border-t border-zinc-200 flex items-center justify-between">
                       <span className="text-sm font-bold text-zinc-700">Total geral</span>
-                      <span className="text-base font-black text-zinc-900">R$ {pedido.total.toFixed(2)}</span>
+                      <span className="text-base font-black text-zinc-900">{formatCurrency(pedido.total)}</span>
                     </div>
                   </div>
                   <div className="border-t border-zinc-200" />

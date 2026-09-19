@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { precosEfetivos } from '@/lib/precoItemPedido';
 import { useSearchParams } from 'react-router-dom';
 import NotasFiscaisList from './components/NotasFiscaisList';
 import type { PedidoRecente, OrigemPedido } from '@/types/pdv';
@@ -161,6 +162,17 @@ function kdsParaRecente(p: KDSPedido): PedidoRecente {
 // ── Conversor DB → PedidoRecente ──────────────────────────────────────────────
 
 function dbParaRecente(o: DBOrder): PedidoRecente {
+  // No delivery o item_price não inclui os adicionais (combo nasce com 0): normaliza para a
+  // janela mostrar o valor real de cada item (ver src/lib/precoItemPedido.ts).
+  const precosItens = precosEfetivos(
+    o.itens.map((item) => ({
+      preco: Number(item.preco) || 0,
+      quantidade: Number(item.quantidade) || 1,
+      adicionais: (item.options ?? []).reduce((a, op) => a + Number(op.additional_price ?? 0), 0),
+    })),
+    typeof o.subtotal === 'number' ? o.subtotal : null,
+    o.origin,
+  );
   const origemMap: Record<string, OrigemPedido> = {
     cashier: 'caixa', waiter: 'garcom', table: 'mesa', self_service: 'autoatendimento',
     delivery: 'delivery',
@@ -320,7 +332,7 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
       paid_by_pdv: o.paid_by_pdv ?? null,
       payment_group_id: p.payment_group_id ?? null,
     })),
-    itensDetalhes: o.itens.map((item) => {
+    itensDetalhes: o.itens.map((item, itemIdx) => {
       const opcoes = item.options?.map((op) => op.option_name) ?? [];
       const opcoesDetalhadas = item.options?.map((op) => ({ nome: op.option_name, preco: Number(op.additional_price ?? 0) })) ?? [];
       const obs = item.notes ?? item.observations?.[0]?.text;
@@ -389,7 +401,7 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
         id: item.id,
         nome: item.nome,
         quantidade: item.quantidade,
-        preco: Number(item.preco) || 0,
+        preco: precosItens[itemIdx] ?? (Number(item.preco) || 0),
         estacao: item.station_name ?? '',
         opcoes,
         opcoesDetalhadas,
