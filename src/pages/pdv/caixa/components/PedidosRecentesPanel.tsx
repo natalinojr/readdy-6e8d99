@@ -11,6 +11,7 @@ import { useMotoboyStatus } from '@/hooks/useMotoboyStatus';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSPedidoStatus } from '@/types/kds';
 import { kdsStatusToPdvStatus, pdvStatusLabel, pdvStatusBadgeCls, formatOrderNumber } from '@/lib/statusMappers';
 import { formatOrderTime } from '@/lib/dateUtils';
+import { precosEfetivos } from '@/lib/precoItemPedido';
 import PagamentoRapidoModal from '@/components/feature/PagamentoRapidoModal';
 import EditarItemCaixaModal from './EditarItemCaixaModal';
 
@@ -499,7 +500,21 @@ function kdsToRecente(p: KDSPedido): PedidoRecenteComParticipant {
   // BUG 2.1 FIX: sempre usa America/Sao_Paulo via helper centralizado
   const hora = formatOrderTime(p.criadoEm);
 
-  const itensDetalhes: PedidoItemDetalhe[] = p.itens.map((item) => {
+  // Preço de cada item com os complementos pagos — mesma regra da tela de Pedidos e da NFC-e
+  // (src/lib/precoItemPedido.ts): decide pelo subtotal se o item_price já inclui os complementos
+  // (delivery grava o preço base; combo de delivery nasce com 0). O quadro não traz o subtotal:
+  // total − taxa de entrega é exato no delivery sem desconto; quando não bate, a regra decide pelo canal.
+  const precosItens = precosEfetivos(
+    p.itens.map((item) => ({
+      preco: Number(item.item_price ?? 0),
+      quantidade: item.quantidade || 1,
+      adicionais: item.opcoes.reduce((acc, o) => acc + Number(o.additional_price ?? 0), 0),
+    })),
+    p.totalAmount > 0 ? Math.round((p.totalAmount - (p.deliveryFee ?? 0)) * 100) / 100 : null,
+    p.origem,
+  );
+
+  const itensDetalhes: PedidoItemDetalhe[] = p.itens.map((item, idx) => {
     const unidades: UnidadeItem[] = item.unidades && item.unidades.length > 0
       ? item.unidades.map((u) => ({
           unidade: u.numero,
@@ -528,10 +543,8 @@ function kdsToRecente(p: KDSPedido): PedidoRecenteComParticipant {
       nome: item.nome,
       categoriaNome: item.categoriaNome,
       quantidade: item.quantidade,
-      // Delivery grava item_price SEM os complementos (convenção — PDVContext › itemPriceDoCanal);
-      // na tela o item mostra o valor cheio, senão a soma dos itens não bate com o pedido.
-      preco: (item.item_price ?? 0) > 0
-        ? (item.item_price ?? 0) + (p.origem === 'delivery' ? item.opcoes.reduce((acc, o) => acc + Number(o.additional_price ?? 0), 0) : 0)
+      preco: precosItens[idx] > 0
+        ? precosItens[idx]
         : (p.totalAmount > 0 ? p.totalAmount / p.itens.reduce((acc, i) => acc + i.quantidade, 0) : 0),
       estacao: item.estacao,
       // BUG 3.2 FIX: exibir preço adicional das opções quando > 0
