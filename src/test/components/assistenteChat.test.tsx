@@ -760,6 +760,26 @@ describe('AssistenteChat — abre na última mensagem', () => {
   });
 });
 
+describe('AssistenteChat — divisão por dias', () => {
+  it('separa as mensagens por dia (Ontem, Hoje) com um separador por dia', async () => {
+    // Dono (2026-09-19): "nas conversas do chat ter uma certa divisão por dias".
+    const ontem = new Date(Date.now() - 86400000); ontem.setHours(12, 0, 0, 0);
+    add('assistant', 'Msg de ontem 1'); srv.msgs[srv.msgs.length - 1].created_at = ontem.toISOString();
+    add('assistant', 'Msg de ontem 2'); srv.msgs[srv.msgs.length - 1].created_at = new Date(ontem.getTime() + 60000).toISOString();
+    add('assistant', 'Msg de hoje');
+    renderChat();
+    await entrarNaConversa(userEvent.setup());
+    await screen.findByText('Msg de hoje');
+    expect(screen.getAllByLabelText('Mensagens de Ontem')).toHaveLength(1);
+    expect(screen.getAllByLabelText('Mensagens de Hoje')).toHaveLength(1);
+    const ordem = [...document.querySelectorAll('[aria-label^="Mensagens de"], [data-msg-id]')].map((e) => e.getAttribute('aria-label') ?? e.textContent);
+    const iOntem = ordem.indexOf('Mensagens de Ontem'); const iHoje = ordem.indexOf('Mensagens de Hoje');
+    expect(iOntem).toBeLessThan(ordem.findIndex((t) => t?.includes('Msg de ontem 1')));
+    expect(iHoje).toBeGreaterThan(ordem.findIndex((t) => t?.includes('Msg de ontem 2')));
+    expect(iHoje).toBeLessThan(ordem.findIndex((t) => t?.includes('Msg de hoje')));
+  });
+});
+
 describe('AssistenteChat — ações rápidas', () => {
   it('com o chat na tela toda, o ⚡ abre as ações ocupando o painel e o X fecha', async () => {
     const user = userEvent.setup();

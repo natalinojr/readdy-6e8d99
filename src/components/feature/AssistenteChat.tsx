@@ -4,7 +4,7 @@
 //
 // variant 'floating': botão redondo no canto + painel (tela cheia no celular).
 // variant 'embedded': dentro da página Assistente › Conversa.
-import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -94,6 +94,19 @@ const hora = (iso: string) => {
   const d = new Date(iso);
   const hoje = new Date().toDateString() === d.toDateString();
   return d.toLocaleString('pt-BR', hoje ? { hour: '2-digit', minute: '2-digit' } : { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+// Dentro da conversa as mensagens vêm separadas por dia (dono, 2026-09-19): o balão mostra só a
+// hora e a data fica no separador — Hoje, Ontem, o dia da semana até 6 dias atrás, depois a data.
+const horaMsg = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const diaChave = (iso: string) => new Date(iso).toDateString();
+const rotuloDia = (iso: string, agora = new Date()) => {
+  const d = new Date(iso);
+  const meiaNoite = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dias = Math.round((meiaNoite(agora) - meiaNoite(d)) / 86400000);
+  if (dias === 0) return 'Hoje';
+  if (dias === 1) return 'Ontem';
+  if (dias > 1 && dias < 7) { const w = d.toLocaleDateString('pt-BR', { weekday: 'long' }); return w.charAt(0).toUpperCase() + w.slice(1); }
+  return d.toLocaleDateString('pt-BR', d.getFullYear() === agora.getFullYear() ? { day: 'numeric', month: 'long' } : { day: 'numeric', month: 'long', year: 'numeric' });
 };
 const CANAL: Record<string, string> = { telegram: 'Telegram', app: 'ERPOS', whatsapp: 'WhatsApp', cron: 'Automático' };
 
@@ -1159,7 +1172,13 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           <button onClick={maisAntigas} className="block mx-auto text-xs text-violet-600 font-semibold py-1 cursor-pointer">Carregar mensagens anteriores</button>
         )}
         {loaded && msgs.length === 0 && <p className="text-sm text-zinc-400 text-center py-10">Pode falar: texto, áudio, foto ou PDF.</p>}
-        {msgs.map((m) => {
+        {msgs.map((m, i) => {
+          const divisor = i === 0 || diaChave(msgs[i - 1].created_at) !== diaChave(m.created_at) ? (
+            <div className="flex justify-center py-1.5" aria-label={`Mensagens de ${rotuloDia(m.created_at)}`}>
+              <span className="text-[11px] font-semibold text-zinc-500 bg-white/95 border border-zinc-200 rounded-full px-3 py-0.5 shadow-sm">{rotuloDia(m.created_at)}</span>
+            </div>
+          ) : null;
+          const bolha = (() => {
           if (m.role === 'user') {
             // Gatilho do sistema (triagem de grupo, dias de freelancer, entrada de compra) é gravado
             // como mensagem "do dono" para o assistente ter contexto — mas não foi você que escreveu.
@@ -1168,7 +1187,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             if (sis) {
               return (
                 <p key={m.id} data-msg-id={m.id} className={`text-center text-[11px] text-zinc-500 px-6 py-1 transition-colors${destaque === m.id ? ' ring-2 ring-amber-400 bg-amber-50 rounded-xl' : ''}`}>
-                  <i className="ri-inbox-archive-line" /> {sis} · {hora(m.created_at)}
+                  <i className="ri-inbox-archive-line" /> {sis} · {horaMsg(m.created_at)}
                 </p>
               );
             }
@@ -1188,7 +1207,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                   {u.arquivo && <span className="flex items-center gap-1 text-violet-100 text-xs mb-0.5"><i className={u.arquivo === 'PDF' ? 'ri-file-pdf-2-line' : 'ri-image-line'} /> {u.arquivo}</span>}
                   {u.audio && <i className="ri-mic-line mr-1 text-violet-200" />}
                   {u.text}
-                  <div className="text-[10px] mt-1 text-violet-200 text-right">{hora(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</div>
+                  <div className="text-[10px] mt-1 text-violet-200 text-right">{horaMsg(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</div>
                 </div>
               </div>
             );
@@ -1218,7 +1237,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                       {pg[3] && <> para <b className="font-black">{pg[3].trim()}</b></>}
                     </p>
                     {motivo && <p className="text-[11px] text-zinc-500 mt-0.5 break-words">{motivo}</p>}
-                    <p className="text-[10px] text-zinc-400 mt-0.5">{hora(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</p>
+                    <p className="text-[10px] text-zinc-400 mt-0.5">{horaMsg(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</p>
                   </div>
                 </div>
               </div>
@@ -1226,7 +1245,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           }
           const sistema = /^\[(Pagamento|PIN|Leitura)/.test(m.content);
           if (sistema) {
-            return <p key={m.id} data-msg-id={m.id} className="text-center text-[11px] text-zinc-400 px-6">{m.content.replace(/^\[|\]\s*id\s+\S+$/g, '').replace(/\]$/, '')} · {hora(m.created_at)}</p>;
+            return <p key={m.id} data-msg-id={m.id} className="text-center text-[11px] text-zinc-400 px-6">{m.content.replace(/^\[|\]\s*id\s+\S+$/g, '').replace(/\]$/, '')} · {horaMsg(m.created_at)}</p>;
           }
           return (
             <div key={m.id} data-msg-id={m.id} className={`flex justify-start${destaque === m.id ? ' ring-2 ring-amber-400 bg-amber-50 rounded-xl' : ''}`}>
@@ -1242,7 +1261,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                     className="rounded-2xl rounded-bl-md px-3.5 py-2 text-sm whitespace-pre-wrap break-words bg-white border border-zinc-200 text-zinc-800 select-none"
                   >
                     {formatar(semMarcadores(m.content))}
-                    <div className="text-[10px] mt-1 text-zinc-400">{hora(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</div>
+                    <div className="text-[10px] mt-1 text-zinc-400">{horaMsg(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</div>
                   </div>
                 )}
                 {/* Botão que LEVA à tela: a resposta deixa de terminar em "vá em Financeiro › ..."
@@ -1276,6 +1295,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
               </div>
             </div>
           );
+          })();
+          return divisor ? <Fragment key={`dia-${m.id}`}>{divisor}{bolha}</Fragment> : bolha;
         })}
         {sending && (
           <div className="flex justify-start">
