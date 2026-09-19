@@ -6,7 +6,7 @@
 // loja sua, não só a ativa). Previsão: Open-Meteo (grátis, sem chave, CORS liberado).
 // Resposta em PAINEL (2026-09-18): resumo do dia + tabela por período (manhã/tarde/noite).
 import { useEffect, useState } from 'react';
-import { invokeWithAuth } from '@/lib/supabase';
+import { invokeWithAuth, supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Roteiro, useRoteiro, Opcao, Fim, hojeISO, somaDias, dataBR, type AcaoProps } from '../kit';
 import { Painel, Kpis, Linhas } from '../painel';
@@ -29,19 +29,34 @@ async function fetchJson(url: string) {
 }
 
 export default function Clima({ onFechar }: AcaoProps) {
-  const { user, availableTenants } = useAuth();
+  const { user } = useAuth();
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [local, setLocal] = useState<Local | null>(null);
+  const [lojas, setLojas] = useState<{ tenantId: string; tenantName: string }[]>([]);
 
-  // Loja ativa primeiro.
-  const lojas = [...(availableTenants ?? [])].sort((a, b) => (a.tenantId === user?.tenantId ? -1 : b.tenantId === user?.tenantId ? 1 : 0));
-
+  // As lojas vêm do banco (get_user_tenants, a mesma lista da tela Selecionar Loja). O
+  // availableTenants do AuthContext só é preenchido NA tela de escolher loja; depois de entrar fica
+  // vazio, e a ação dizia "Nenhuma loja disponível" (dono, 2026-09-19). Sem a lista, usa a loja ativa.
   useEffect(() => {
-    if (lojas.length > 1) { r.bot('Previsão de qual loja?'); setPasso('lojas'); return; }
-    if (lojas.length === 1) { escolherLoja(lojas[0].tenantId, lojas[0].tenantName, true); return; }
-    r.bot('Nenhuma loja disponível.');
-    setPasso('fim');
+    (async () => {
+      let lista: { tenantId: string; tenantName: string }[] = [];
+      try {
+        const uid = (await supabase.auth.getSession()).data.session?.user.id;
+        if (uid) {
+          const { data } = await supabase.rpc('get_user_tenants', { p_user_id: uid });
+          lista = ((data as Record<string, unknown>[] | null) ?? []).map((t) => ({ tenantId: String(t.tenant_id), tenantName: String(t.tenant_name ?? '') }));
+        }
+      } catch { /* cai na loja ativa */ }
+      if (!lista.length && user?.tenantId) lista = [{ tenantId: user.tenantId, tenantName: user.loja || 'Loja ativa' }];
+      // Loja ativa primeiro.
+      lista.sort((a, b) => (a.tenantId === user?.tenantId ? -1 : b.tenantId === user?.tenantId ? 1 : 0));
+      setLojas(lista);
+      if (lista.length > 1) { r.bot('Previsão de qual loja?'); setPasso('lojas'); return; }
+      if (lista.length === 1) { escolherLoja(lista[0].tenantId, lista[0].tenantName, true); return; }
+      r.bot('Nenhuma loja disponível.');
+      setPasso('fim');
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
