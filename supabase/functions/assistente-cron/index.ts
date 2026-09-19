@@ -800,7 +800,10 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     // Não chamar deliver() aqui: este deliver local esconde o de fora e chamava a si mesmo
     // ("Maximum call stack size exceeded" — nenhum aviso proativo saía até 2026-09-15).
     await (isTg(ownerChat) ? sendTelegram(ownerChat, text) : sendText(toNumber(ownerChat), text));
-    await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: text });
+    // Assunto pelo TIPO do aviso, não pelas palavras (2026-09-18: "Tarefas vencidas" com "API do iFood"
+    // caiu no Financeiro pelo gatilho de texto). Tipo sem assunto fixo segue o gatilho.
+    const topic = ({ tasks_overdue: 'avisos', closing: 'pagamentos', due_tomorrow: 'pagamentos', stock: 'compras' } as Record<string, string>)[kind];
+    await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: text, ...(topic ? { topic } : {}) });
   };
   const want = (k: string) => (only ? only === k : pro[k].enabled && !!ownerChat);
 
