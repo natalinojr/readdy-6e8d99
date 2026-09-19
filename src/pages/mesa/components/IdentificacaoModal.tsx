@@ -4,7 +4,11 @@ import { supabase } from '@/lib/supabase';
 
 const MSG_TEMPLATES = {
   primeiraVisita: 'Bem-vindo(a)! É a sua primeira vez com a gente — que alegria ter você aqui! Esperamos que aproveite muito!',
-  retorno: 'Que bom ver você de volta, {nome}! Esta é a sua {visitas}ª visita — estamos felizes em ter você com a gente novamente!',
+  // Sem contagem de visitas (2026-09-19): o contador do cliente passou a ser COMPRAS
+  // (trigger trg_orders_customer_counters), e o sistema não sabe quantas vezes alguém
+  // sentou na mesa. Dizer "sua 4ª visita" para quem comprou 3 vezes seria mentir para o
+  // cliente na cara dele.
+  retorno: 'Que bom ver você de volta, {nome}! Estamos felizes em ter você com a gente novamente!',
 };
 
 interface IdentificacaoModalProps {
@@ -58,7 +62,7 @@ export default function IdentificacaoModal({
 
       let query = supabase
         .from('customers')
-        .select('id, name, phone, visit_count')
+        .select('id, name, phone')
         .or(`phone.eq.${celularDigitos},phone.eq.${telefone}`);
 
       // Filtrar por tenant para não pegar clientes de outras lojas
@@ -71,10 +75,7 @@ export default function IdentificacaoModal({
       if (data) {
         // Usar o nome que o cliente digitou agora (não o do banco),
         // pois pode ser um familiar com o mesmo telefone ou o nome pode ter mudado
-        const visitas = ((data.visit_count as number) ?? 0) + 1;
-        const msg = MSG_TEMPLATES.retorno
-          .replace('{nome}', primeiroNomeDigitado)
-          .replace('{visitas}', String(visitas));
+        const msg = MSG_TEMPLATES.retorno.replace('{nome}', primeiroNomeDigitado);
         setMsgBoasVindas(msg);
         setIsPrimeiraVisita(false);
         setNomeConfirmado(primeiroNomeDigitado);

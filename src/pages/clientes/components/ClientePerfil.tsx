@@ -88,7 +88,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
     if (aba === 'vouchers' && !vouchersCarregados) loadVouchers();
   }, [aba, vouchersCarregados, loadVouchers]);
 
-  // Gráfico de frequência mensal de visitas
+  // Gráfico de frequência mensal de COMPRAS (montado a partir de cliente.pedidos)
   const frequenciaMensal = useMemo(() => {
     const map = new Map<string, { visitas: number; gasto: number }>();
     pedidos.forEach((p) => {
@@ -211,7 +211,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
           ))}
           {dias > 30 && !cliente.tags.includes('inativo') && (
             <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-red-50 text-red-600 border border-red-200">
-              {dias}d sem visitar
+              {dias}d sem comprar
             </span>
           )}
         </div>
@@ -219,7 +219,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
         {/* Métricas */}
         <div className="grid grid-cols-3 gap-3 px-6 pt-4">
           {[
-            { label: 'Visitas', value: String(cliente.totalVisitas), icon: 'ri-map-pin-line', color: 'text-amber-600' },
+            { label: 'Compras', value: String(cliente.totalVisitas), icon: 'ri-shopping-bag-line', color: 'text-amber-600' },
             { label: 'Total gasto', value: fmtMoeda(cliente.valorTotal), icon: 'ri-money-dollar-circle-line', color: 'text-green-600' },
             { label: 'Ticket médio', value: fmtMoeda(cliente.ticketMedio), icon: 'ri-receipt-line', color: 'text-sky-600' },
           ].map((m) => (
@@ -236,11 +236,11 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
         {/* Datas */}
         <div className="mx-6 mt-4 p-4 bg-zinc-50 rounded-xl space-y-2">
           <div className="flex justify-between text-xs">
-            <span className="text-zinc-500">Primeira visita</span>
+            <span className="text-zinc-500">Primeira compra</span>
             <span className="font-semibold text-zinc-700">{fmtData(cliente.primeiraVisita)}</span>
           </div>
           <div className="flex justify-between text-xs">
-            <span className="text-zinc-500">Última visita</span>
+            <span className="text-zinc-500">Última compra</span>
             <span className="font-semibold text-zinc-700">{fmtData(cliente.ultimaVisita)}</span>
           </div>
           {cliente.dataNascimento ? (
@@ -256,7 +256,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
             </div>
           ) : null}
           <div className="flex justify-between text-xs">
-            <span className="text-zinc-500">Dias desde última visita</span>
+            <span className="text-zinc-500">Dias desde a última compra</span>
             <span className={`font-semibold ${dias > 30 ? 'text-red-500' : dias > 14 ? 'text-amber-500' : 'text-green-600'}`}>
               {dias} dias
             </span>
@@ -391,7 +391,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
           {aba === 'frequencia' && (
             <div className="pb-6">
               <p className="text-xs font-bold text-zinc-700 uppercase tracking-wider mb-3">
-                Visitas por Mês (últimos 6 meses)
+                Compras por Mês (últimos 6 meses)
               </p>
 
               {loadingPedidos ? (
@@ -422,7 +422,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
                           allowDecimals={false}
                         />
                         <Tooltip
-                          formatter={(val: number) => [`${val} visita${val !== 1 ? 's' : ''}`, 'Frequência']}
+                          formatter={(val: number) => [`${val} compra${val !== 1 ? 's' : ''}`, 'Frequência']}
                           contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 11 }}
                         />
                         <Bar dataKey="visitas" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={32} />
@@ -443,7 +443,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
                       return (
                         <>
                           <div className="flex items-center justify-between bg-amber-50 rounded-xl px-3 py-2.5">
-                            <span className="text-xs text-amber-700 font-medium">Média de visitas/mês</span>
+                            <span className="text-xs text-amber-700 font-medium">Média de compras/mês</span>
                             <span className="text-sm font-bold text-amber-800">{mediaVisitas}</span>
                           </div>
                           {melhorMes && (

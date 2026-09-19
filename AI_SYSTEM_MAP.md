@@ -2646,3 +2646,47 @@ O que NÃO foi para a caixa, de propósito: `NotificacoesContext` (barramento do
 garçom, SLA, pedido pronto; some ao recarregar e está certo assim) e `AprovacoesContext` (desconto no
 PDV é um aperto de mão ao vivo, com callbacks em memória; pedido de 3 dias atrás não significa nada).
 Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — problema real, mas outro.
+
+### Clientes: contador de "compras" era escrito por três donos diferentes (2026-09-19)
+
+Dono: "na aba clientes o sistema confunde compras com visitas, veja a Eliane" — e depois "quando a
+compra da Marli vai atualizar?". Resposta: **nunca**. `customers.visit_count` é contador
+desnormalizado, escrito só no instante do evento, e não havia rotina que recalculasse (os 8 jobs do
+`cron.job` não tocam em cliente).
+
+O contador tinha **três escritores com significados diferentes**: `upsert_customer` somava +1 ao
+cliente se identificar (sem dinheiro), o bloco `crossedToPaid` do `order-write` somava +1 e o valor
+no pagamento, e o `delivery-write` criava o cliente com 0 e nunca somava. No delivery o `order-write`
+chamava DOIS deles — daí Eliane com 2 "compras" para 1 pedido e o dinheiro certo (R$ 145 = R$ 145,
+valor somado uma vez, visita duas). Quando o pagamento não passava por ali, ninguém somava — daí
+Marli com 0 compras tendo pago R$ 89,40. Medido antes: **19 de 93 clientes errados nos dois
+sentidos**, 5 com compra real aparecendo como "Sem compras", e "junior" com R$ 1.321 de gasto
+fantasma. Contaminava ticket médio, RFM, taxa de retorno, tag de inativo e quem recebia campanha.
+
+Correção (migration `20260919010000_clientes_contadores_de_pedidos`): **um escritor só**.
+`fn_sync_customer_counters(uuid)` **RECALCULA** a partir de `orders` (não cancelada, fora do treino)
+em vez de incrementar — idempotente por construção, então "contar duas vezes" deixa de existir como
+categoria de bug. Trigger `trg_orders_customer_counters` em `orders`
+(`after insert or delete or update of status, total_amount, customer_id, is_training`) chama a
+função; o backfill no fim da migration reaproveita a MESMA função, sem SQL de correção paralelo para
+sair de sincronia depois.
+
+Critérios que valem para o próximo contador desnormalizado:
+
+- **Recalcular, não incrementar.** Incremento exige que todo caminho de escrita esteja certo para
+  sempre; recálculo sobrevive a um caminho novo mal escrito.
+- **O filtro do que conta mora em UM lugar.** Era a repetição de `status <> 'cancelled' and
+  is_training = false` em cada escritor que deixava os números divergirem — por isso as telas seguem
+  lendo as colunas (agora confiáveis) em vez de cada uma refazer a conta.
+- **Trigger cobre reatribuição e delete**, senão mover um pedido de cliente deixa os dois lados
+  errados.
+- **Rótulo importa**: a mesma coluna aparecia como "Compras" na lista e "Visitas" no perfil. A
+  confusão do dono estava literalmente escrita na tela. Hoje é "Compras" em todo lugar, e a mensagem
+  de boas-vindas da mesa parou de prometer "sua Nª visita" — o sistema não sabe quantas vezes alguém
+  sentou na mesa, só quantas comprou.
+
+**Achado aberto (não corrigido de propósito):** `loyalty_transactions` tem **4 lançamentos** para
+**56 clientes com pontos**, e 54 saldos não batem com extrato nenhum — o insert do extrato no
+`order-write` é `non-blocking` e falha calado. Não há de onde reconstruir os saldos, então
+`loyalty_points`/`loyalty_tier` ficaram intocados: mexer em saldo de cliente como efeito colateral de
+um conserto de relatório seria pior que deixar quieto. Precisa de ciclo próprio.
