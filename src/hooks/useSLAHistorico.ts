@@ -86,7 +86,9 @@ export function useSLAHistorico(periodo: string) {
           orders!inner(created_at, status, tenant_id, is_training, is_draft)
         `)
         .eq('tenant_id', user.tenantId)
-        .eq('orders.status', 'delivered')
+        // Qualquer pedido não cancelado: o item com início+pronto já tem o tempo
+        // de cozinha, mesmo que o pedido ainda não tenha sido entregue.
+        .neq('orders.status', 'cancelled')
         .eq('orders.is_training', false)
         .eq('orders.is_draft', false)
         .not('started_preparing_at', 'is', null)
@@ -235,6 +237,13 @@ export function useSLAHistorico(periodo: string) {
   }, [user?.tenantId, periodo]);
 
   useEffect(() => { load(); }, [load]);
+
+  // "Hoje" muda durante o serviço: recarrega a cada minuto.
+  useEffect(() => {
+    if (periodo !== 'Hoje') return;
+    const id = setInterval(() => { load(); }, 60_000);
+    return () => clearInterval(id);
+  }, [load, periodo]);
 
   return { data, loading, reload: load };
 }

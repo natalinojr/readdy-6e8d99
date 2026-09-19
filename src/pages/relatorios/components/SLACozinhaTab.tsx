@@ -214,7 +214,9 @@ export default function SLACozinhaTab({ periodo = 'Hoje' }: Props) {
   const isHoje = periodo === 'Hoje';
   const temHistorico = historico.totalItens > 0;
 
-  const usandoHistorico = !isHoje && temHistorico;
+  // Desde 09-17 o KDS só carrega pedidos abertos + entregues nas últimas 2h,
+  // então "Hoje" também vem do banco; o KDS ao vivo fica só de reserva.
+  const usandoHistorico = temHistorico;
 
   const slaEstacao = usandoHistorico
     ? historico.porEstacao.map(e => ({
@@ -283,7 +285,11 @@ export default function SLACozinhaTab({ periodo = 'Hoje' }: Props) {
       {usandoHistorico ? (
         <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-100 rounded-xl text-xs text-emerald-700 font-medium flex-wrap">
           <i className="ri-database-2-line text-sm" />
-          <span>Dados históricos — período: <strong>{labelPeriodo(periodo)}</strong></span>
+          <span>
+            {isHoje
+              ? <>Dados de <strong>hoje</strong> — atualiza a cada minuto</>
+              : <>Dados históricos — período: <strong>{labelPeriodo(periodo)}</strong></>}
+          </span>
           <span className="ml-auto text-[10px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full border border-emerald-200">
             {historico.totalItens} itens analisados
           </span>
