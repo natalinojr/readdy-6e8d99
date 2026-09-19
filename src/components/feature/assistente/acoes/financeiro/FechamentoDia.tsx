@@ -3,11 +3,14 @@
 // ERPOS: RPC fn_get_sales_report (mesma do Relatórios › detalhe do dia), sem pedidos de treino.
 // Stone: stone-conciliation › get_config / get_history (fin_stone_imports: vendas brutas do arquivo do dia).
 // iFood: fetchIfoodVendas (relatório de conciliação importado, por data do pedido — igual Relatórios).
+// Resposta em PAINEL (2026-09-18): cada bloco (ERPOS, Stone, iFood) vira um cartão com números e
+// a diferença destacada; erro/"nada a comparar" continuam texto.
 import { useEffect, useState } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchIfoodVendas } from '@/lib/ifoodVendas';
 import { Roteiro, useRoteiro, EscolhaData, Fim, OpcaoNeutra, brl, dataBR, hojeISO, type AcaoProps } from '../kit';
+import { Painel, Kpis, Linhas, Chip, type Status } from '../painel';
 
 interface ByPayment { payment_method: string; payment_type: string; total: number; count: number }
 interface StoneDia { reference_date: string; status: string; sales_count?: number | null; sales_gross?: number | null; payments_total?: number | null; error_message?: string | null }
@@ -17,16 +20,16 @@ const CARTAO = ['credit_card', 'debit_card'];
 export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
-  const { baloes, bot, eu } = useRoteiro();
+  const { baloes, bot, eu, painel } = useRoteiro();
   const [passo, setPasso] = useState<'dia' | 'carregando' | 'fim'>('dia');
   useEffect(() => {
     bot(tenantId ? `Loja: *${user?.loja || 'loja ativa'}*\nFechamento de qual dia?` : 'Nenhuma loja ativa.');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const dif = (a: number, b: number) => {
+  const dif = (a: number, b: number): { texto: string; status: Status } => {
     const d = Math.round((a - b) * 100) / 100;
-    return Math.abs(d) < TOLERANCIA ? '✅ bate' : `⚠️ diferença ${d > 0 ? '+' : '−'}${brl(Math.abs(d))}`;
+    return Math.abs(d) < TOLERANCIA ? { texto: 'bate', status: 'ok' } : { texto: `diferença ${d > 0 ? '+' : '−'}${brl(Math.abs(d))}`, status: 'alerta' };
   };
 
   const fechar = async (dia: string) => {
@@ -54,13 +57,20 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
       cartaoErp = formas.filter((p) => CARTAO.includes(p.payment_type)).reduce((s, p) => s + Number(p.total ?? 0), 0);
       const ifoodForma = formas.filter((p) => /ifood/i.test(p.payment_method));
       if (ifoodForma.length) ifoodErp = ifoodForma.reduce((s, p) => s + Number(p.total ?? 0), 0);
-      bot(formas.length ? [
-        `*Vendas no ERPOS · ${dataBR(dia)}*`,
-        ...formas.map((p) => `${p.payment_method}: ${brl(Number(p.total))} (${p.count})`),
-        `Total recebido: ${brl(totalPag)}`,
-        `Pedidos pagos: ${Number(r.total_orders ?? 0)} · faturamento ${brl(Number(r.total_revenue ?? 0))}`,
-        Math.abs(totalPag - Number(r.total_revenue ?? 0)) >= TOLERANCIA ? `Pagamentos × faturamento: ${dif(totalPag, Number(r.total_revenue ?? 0))}` : '',
-      ].filter(Boolean).join('\n') : `*Vendas no ERPOS · ${dataBR(dia)}*\nNenhum pedido pago nesse dia.`);
+      if (!formas.length) {
+        bot(`*Vendas no ERPOS · ${dataBR(dia)}*\nNenhum pedido pago nesse dia.`);
+      } else {
+        const diffPagFat = Math.abs(totalPag - Number(r.total_revenue ?? 0)) >= TOLERANCIA ? dif(totalPag, Number(r.total_revenue ?? 0)) : null;
+        painel(
+          <Painel titulo="Vendas no ERPOS" subtitulo={dataBR(dia)}>
+            <Kpis
+              principal={{ label: 'Total recebido', valor: brl(totalPag), extra: diffPagFat ? <Chip texto={`vs faturamento: ${diffPagFat.texto}`} status={diffPagFat.status} /> : undefined }}
+              outros={[{ label: 'Pedidos pagos', valor: String(Number(r.total_orders ?? 0)) }, { label: 'Faturamento', valor: brl(Number(r.total_revenue ?? 0)) }]}
+            />
+            <Linhas titulo="Por forma de pagamento" itens={formas.map((p) => ({ label: p.payment_method, valor: `${brl(Number(p.total))} · ${p.count}` }))} />
+          </Painel>,
+        );
+      }
     }
 
     // ── Stone ──
@@ -79,14 +89,16 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
         bot(`*Cartão (ERPOS) × Stone*\nERPOS crédito+débito: ${brl(cartaoErp)}\nStone: importação do dia falhou${s.error_message ? ` (${s.error_message.slice(0, 160)})` : ''}.`);
       } else {
         const stone = Number(s.sales_gross ?? 0);
-        bot([
-          '*Cartão (ERPOS) × Stone*',
-          `ERPOS crédito+débito: ${brl(cartaoErp)}`,
-          `Stone vendas brutas: ${brl(stone)} (${Number(s.sales_count ?? 0)})`,
-          `Stone − ERPOS: ${dif(stone, cartaoErp)}`,
-          s.payments_total != null ? `Depósitos da Stone no dia: ${brl(Number(s.payments_total))}` : '',
-          'Obs.: a Stone pode incluir Pix/voucher passado na maquininha; o ERPOS inclui cartão online.',
-        ].filter(Boolean).join('\n'));
+        const d = dif(stone, cartaoErp);
+        painel(
+          <Painel titulo="Cartão (ERPOS) × Stone" subtitulo={dataBR(dia)} rodape="A Stone pode incluir Pix/voucher passado na maquininha; o ERPOS inclui cartão online.">
+            <Kpis
+              principal={{ label: 'Stone vendas brutas', valor: brl(stone), extra: <Chip texto={`Stone − ERPOS: ${d.texto}`} status={d.status} /> }}
+              outros={[{ label: 'ERPOS crédito+débito', valor: brl(cartaoErp) }, { label: 'Vendas Stone', valor: String(Number(s.sales_count ?? 0)) }]}
+            />
+            {s.payments_total != null && <Linhas itens={[{ label: 'Depósitos da Stone no dia', valor: brl(Number(s.payments_total)) }]} />}
+          </Painel>,
+        );
       }
     }
 
@@ -96,11 +108,15 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
     } else if (ifood.pedidos === 0 && Math.abs(ifood.total) < 0.005) {
       bot(`*iFood · ${dataBR(dia)}*\nSem vendas no relatório do iFood para o dia (o relatório pode chegar depois; ou a loja não usa iFood).${ifoodErp != null ? `\nERPOS (forma iFood): ${brl(ifoodErp)}` : ''}`);
     } else {
-      bot([
-        `*iFood · ${dataBR(dia)}*`,
-        `Vendas no iFood: ${brl(ifood.total)} (${ifood.pedidos} pedido(s))`,
-        ifoodErp != null ? `ERPOS (forma iFood): ${brl(ifoodErp)} · ${dif(ifood.total, ifoodErp)}` : 'Pedidos do iFood não passam pelo caixa do ERPOS: valor só informativo.',
-      ].join('\n'));
+      const d = ifoodErp != null ? dif(ifood.total, ifoodErp) : null;
+      painel(
+        <Painel titulo="iFood" subtitulo={dataBR(dia)} rodape={ifoodErp == null ? 'Pedidos do iFood não passam pelo caixa do ERPOS: valor só informativo.' : undefined}>
+          <Kpis
+            principal={{ label: 'Vendas no iFood', valor: brl(ifood.total), extra: d ? <Chip texto={`× ERPOS: ${d.texto}`} status={d.status} /> : undefined }}
+            outros={[{ label: 'Pedidos', valor: String(ifood.pedidos) }, ...(ifoodErp != null ? [{ label: 'ERPOS (forma iFood)', valor: brl(ifoodErp) }] : [])]}
+          />
+        </Painel>,
+      );
     }
     setPasso('fim');
   };

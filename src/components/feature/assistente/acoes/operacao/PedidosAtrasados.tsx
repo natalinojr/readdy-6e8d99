@@ -6,12 +6,14 @@
 //    pedidosAtrasados; GestorKanbanView › isAtrasado);
 //  - delivery do link (plataforma 'propria') com prazo da faixa (orders.delivery_sla_min /
 //    delivery_route_min): preparo atrasado e entrega atrasada (GestorKanbanView).
+// Resposta em PAINEL (2026-09-18): contagem em destaque + lista dos pedidos atrasados (motivo em vermelho).
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKDS } from '@/contexts/KDSContext';
 import type { KDSItem, KDSItemStatus, KDSPedido } from '@/types/kds';
 import { Roteiro, useRoteiro, Fim, horaBR, type AcaoProps } from '../kit';
+import { Painel, Kpis, Linhas } from '../painel';
 
 const LIMITE_MIN = 20;
 
@@ -50,7 +52,7 @@ function destino(p: KDSPedido): string {
 export default function PedidosAtrasados({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
   const { pedidos, loading, reloadOrders } = useKDS();
-  const { baloes, bot } = useRoteiro();
+  const { baloes, bot, painel } = useRoteiro();
   const [passo, setPasso] = useState<'carregando' | 'fim'>('carregando');
   const iniciou = useRef(false);
 
@@ -88,7 +90,7 @@ export default function PedidosAtrasados({ onFechar, irPara }: AcaoProps) {
         }
       }
 
-      const linhas: { min: number; texto: string }[] = [];
+      const linhas: { min: number; label: string; detalhe: string }[] = [];
       for (const { p, status, min } of abertos) {
         const motivos: string[] = [];
         if ((status === 'novo' || status === 'preparo') && min > LIMITE_MIN) motivos.push(`${min} min sem ficar pronto`);
@@ -103,7 +105,8 @@ export default function PedidosAtrasados({ onFechar, irPara }: AcaoProps) {
         const dest = destino(p);
         linhas.push({
           min,
-          texto: `#${p.numero} · ${ORIGEM[p.origem] ?? p.origem}${dest ? ` · ${dest}` : ''}\nentrou ${horaBR(new Date(p.criadoEm).toISOString())} · ${STATUS[status] ?? status} · ${motivos.join('; ')}`,
+          label: `#${p.numero} · ${ORIGEM[p.origem] ?? p.origem}${dest ? ` · ${dest}` : ''}`,
+          detalhe: `entrou ${horaBR(new Date(p.criadoEm).toISOString())} · ${STATUS[status] ?? status} · ${motivos.join('; ')}`,
         });
       }
 
@@ -114,13 +117,13 @@ export default function PedidosAtrasados({ onFechar, irPara }: AcaoProps) {
       } else {
         linhas.sort((a, b) => b.min - a.min);
         const mostra = linhas.slice(0, 15);
-        bot([
-          `*${linhas.length} pedido(s) atrasado(s)*`,
-          `(atraso = mais de ${LIMITE_MIN} min sem ficar pronto, ou prazo do delivery vencido)`,
-          '',
-          ...mostra.map((l) => l.texto),
-          ...(linhas.length > mostra.length ? ['', `+${linhas.length - mostra.length} no Gestor de Pedidos`] : []),
-        ].join('\n'));
+        painel(
+          <Painel titulo="Pedidos atrasados" subtitulo={`atraso = mais de ${LIMITE_MIN} min sem ficar pronto, ou prazo do delivery vencido`}
+            rodape={linhas.length > mostra.length ? `+${linhas.length - mostra.length} no Gestor de Pedidos` : undefined}>
+            <Kpis principal={{ label: 'Atrasados', valor: String(linhas.length) }} outros={[{ label: 'Em aberto agora', valor: String(abertos.length) }]} />
+            <Linhas itens={mostra.map((l) => ({ label: l.label, detalhe: l.detalhe, status: l.min > LIMITE_MIN * 2 ? ('perigo' as const) : ('alerta' as const) }))} />
+          </Painel>,
+        );
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

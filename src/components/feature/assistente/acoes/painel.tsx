@@ -43,15 +43,17 @@ export function Kpis({ principal, outros }: {
         <p className="text-2xl font-black text-zinc-900 leading-tight tabular-nums">{principal.valor}</p>
         {principal.extra && <div className="mt-1">{principal.extra}</div>}
       </div>
-      <div className={`grid gap-2 ${outros.length >= 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
-        {outros.map((k) => (
-          <div key={k.label} className="rounded-xl bg-zinc-50 px-3 py-2.5">
-            <p className="text-[11px] font-semibold text-zinc-500">{k.label}</p>
-            <p className="text-lg font-black text-zinc-900 leading-tight tabular-nums">{k.valor}</p>
-            {k.extra && <div className="mt-0.5">{k.extra}</div>}
-          </div>
-        ))}
-      </div>
+      {outros.length > 0 && (
+        <div className={`grid gap-2 ${outros.length >= 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          {outros.map((k) => (
+            <div key={k.label} className="rounded-xl bg-zinc-50 px-3 py-2.5">
+              <p className="text-[11px] font-semibold text-zinc-500">{k.label}</p>
+              <p className="text-lg font-black text-zinc-900 leading-tight tabular-nums">{k.valor}</p>
+              {k.extra && <div className="mt-0.5">{k.extra}</div>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -86,6 +88,44 @@ export function Barras({ titulo, itens, cor = 'bg-violet-500' }: {
       </div>
     </div>
   );
+}
+
+const STATUS_PONTO: Record<string, string> = { ok: 'bg-emerald-500', alerta: 'bg-amber-500', perigo: 'bg-red-500', neutro: 'bg-zinc-300' };
+const STATUS_TEXTO: Record<string, string> = { ok: 'text-emerald-700', alerta: 'text-amber-700', perigo: 'text-red-700', neutro: 'text-zinc-700' };
+const STATUS_CHIP: Record<string, string> = { ok: 'text-emerald-700 bg-emerald-50', alerta: 'text-amber-700 bg-amber-50', perigo: 'text-red-700 bg-red-50', neutro: 'text-zinc-600 bg-zinc-100' };
+export type Status = 'ok' | 'alerta' | 'perigo' | 'neutro';
+
+/** Lista de linhas rótulo (+ detalhe) à esquerda, valor à direita, com marcador de status (cor). */
+export function Linhas({ titulo, itens, vazio }: {
+  titulo?: string;
+  itens: Array<{ label: string; valor?: string; detalhe?: string; status?: Status }>;
+  vazio?: string;
+}) {
+  if (!itens.length) return vazio ? <p className="text-xs text-zinc-400">{vazio}</p> : null;
+  return (
+    <div>
+      {titulo && <p className="text-xs font-bold text-zinc-700 mb-2">{titulo}</p>}
+      <ul className="space-y-1.5">
+        {itens.map((i, n) => (
+          <li key={`${i.label}-${n}`} className="flex items-start gap-2">
+            <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_PONTO[i.status ?? 'neutro']}`} />
+            <div className="flex-1 min-w-0 flex items-baseline justify-between gap-2 text-xs">
+              <div className="min-w-0">
+                <p className={`font-semibold break-words ${i.status ? STATUS_TEXTO[i.status] : 'text-zinc-700'}`}>{i.label}</p>
+                {i.detalhe && <p className="text-[11px] text-zinc-400">{i.detalhe}</p>}
+              </div>
+              {i.valor && <span className="flex-shrink-0 tabular-nums font-bold text-zinc-900">{i.valor}</span>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Chip pequeno de status (ex.: "bate" / "diferença de R$"), para usar dentro de Kpis.extra. */
+export function Chip({ texto, status = 'neutro' }: { texto: string; status?: Status }) {
+  return <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[11px] font-bold ${STATUS_CHIP[status]}`}>{texto}</span>;
 }
 
 /** Ranking numerado com barra pela quantidade. */

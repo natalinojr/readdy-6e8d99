@@ -2,10 +2,13 @@
 // Leitura igual a Financeiro › Contas Vencidas (fin_accounts_payable, status overdue/pending/partial).
 // Baixa pela Edge financial-write › pay_bill, igual ao modal "Registrar pagamento" (com a classificação
 // DRE junto quando a conta não tem; compra e folha não precisam). NÃO paga nada no banco (Pix/boleto Inter).
+// Resumo (vencidas/hoje/próx. 7 dias) em PAINEL (2026-09-18); a lista de contas e o fluxo de baixa
+// continuam como botões/balões (é conversa, não relatório).
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Campo, EscolhaData, Fim, brl, dataBR, hojeISO, somaDias, lerNumero, type AcaoProps } from '../kit';
+import { Painel, Kpis } from '../painel';
 import { carregarOpcoesDre, dreParaPayBill, finWrite, FORMAS_PAGAMENTO, type DreEscolha, type DreGrupoOpcoes } from './comum';
 import EscolhaDre from './EscolhaDre';
 
@@ -23,7 +26,7 @@ const precisaDre = (c: Conta) => !c.dre_category_id && !['purchase', 'hr_payroll
 export default function ContasVencendo({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
-  const { baloes, bot, eu } = useRoteiro();
+  const { baloes, bot, eu, painel } = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [contas, setContas] = useState<Conta[]>([]);
   const [conta, setConta] = useState<Conta | null>(null);
@@ -56,13 +59,17 @@ export default function ContasVencendo({ onFechar, irPara }: AcaoProps) {
       setPasso('fim');
       return;
     }
-    bot([
-      primeira ? `Loja: *${user?.loja || 'loja ativa'}*` : '*Atualizado:*',
-      `Vencidas: ${venc.length} · ${soma(venc)}`,
-      `Hoje: ${hj.length} · ${soma(hj)}`,
-      `Próximos 7 dias: ${prox.length} · ${soma(prox)}`,
-      'Toque numa conta para ver ou dar baixa.',
-    ].join('\n'));
+    painel(
+      <Painel titulo="Contas vencendo" subtitulo={primeira ? (user?.loja || 'loja ativa') : 'Atualizado'} rodape="Toque numa conta na lista abaixo para ver ou dar baixa.">
+        <Kpis
+          principal={{ label: 'Vencidas', valor: soma(venc), extra: <span className="text-[11px] text-violet-700 font-semibold">{venc.length} conta(s)</span> }}
+          outros={[
+            { label: 'Hoje', valor: soma(hj), extra: <span className="text-[11px] text-zinc-500">{hj.length} conta(s)</span> },
+            { label: 'Próx. 7 dias', valor: soma(prox), extra: <span className="text-[11px] text-zinc-500">{prox.length} conta(s)</span> },
+          ]}
+        />
+      </Painel>,
+    );
     setPasso('lista');
   };
 

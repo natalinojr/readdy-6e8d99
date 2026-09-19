@@ -4,10 +4,12 @@
 // (delivery_city) geocodificada — ambas lidas pela Edge delivery-write › get_delivery_settings
 // (a mesma da tela Config. Delivery; checa se você é membro da loja, então funciona para qualquer
 // loja sua, não só a ativa). Previsão: Open-Meteo (grátis, sem chave, CORS liberado).
+// Resposta em PAINEL (2026-09-18): resumo do dia + tabela por período (manhã/tarde/noite).
 import { useEffect, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Roteiro, useRoteiro, Opcao, Fim, hojeISO, somaDias, dataBR, type AcaoProps } from '../kit';
+import { Painel, Kpis, Linhas } from '../painel';
 
 type Passo = 'lojas' | 'carregando' | 'dia' | 'buscando' | 'fim';
 type Local = { lat: number; lng: number; label: string };
@@ -81,12 +83,15 @@ export default function Clima({ onFechar }: AcaoProps) {
       const w = await fetchJson(url);
       const h = w?.hourly ?? {};
       const tempos: string[] = h.time ?? [];
-      const linhas: string[] = [`*${rotulo} (${dataBR(iso)}) · ${local.label}*`];
       const di = (w?.daily?.time ?? []).indexOf(iso);
-      if (di >= 0) {
-        const d = w.daily;
-        linhas.push(`${desc(d.weather_code[di])}, ${Math.round(d.temperature_2m_min[di])}° a ${Math.round(d.temperature_2m_max[di])}° · chuva ${d.precipitation_probability_max[di] ?? 0}%${d.precipitation_sum[di] > 0 ? ` (${d.precipitation_sum[di]} mm)` : ''}`);
-      }
+      const resumo = di >= 0 ? {
+        desc: desc(w.daily.weather_code[di]),
+        min: Math.round(w.daily.temperature_2m_min[di]),
+        max: Math.round(w.daily.temperature_2m_max[di]),
+        chuva: w.daily.precipitation_probability_max[di] ?? 0,
+        mm: w.daily.precipitation_sum[di],
+      } : null;
+      const periodos: Array<{ label: string; valor: string; detalhe: string }> = [];
       for (const p of PERIODOS) {
         const idx = tempos.map((t, i) => ({ t, i })).filter(({ t }) => t.slice(0, 10) === iso && Number(t.slice(11, 13)) >= p.de && Number(t.slice(11, 13)) <= p.ate).map(({ i }) => i);
         if (!idx.length) continue;
@@ -97,11 +102,25 @@ export default function Clima({ onFechar }: AcaoProps) {
         const pior = Math.max(...idx.map((i) => Number(h.weather_code[i])));
         const tMin = Math.round(Math.min(...temps));
         const tMax = Math.round(Math.max(...temps));
-        linhas.push(`${p.nome}: ${tMin === tMax ? `${tMin}°` : `${tMin}–${tMax}°`} · chuva ${chuva}%${mm > 0 ? ` (${mm.toFixed(1)} mm)` : ''} · vento até ${Math.round(vento)} km/h · ${desc(pior)}`);
+        periodos.push({
+          label: p.nome,
+          valor: tMin === tMax ? `${tMin}°` : `${tMin}–${tMax}°`,
+          detalhe: `chuva ${chuva}%${mm > 0 ? ` (${mm.toFixed(1)} mm)` : ''} · vento até ${Math.round(vento)} km/h · ${desc(pior)}`,
+        });
       }
-      if (linhas.length === 1) linhas.push('Sem dados para esse dia.');
-      linhas.push('Fonte: Open-Meteo');
-      r.bot(linhas.join('\n'));
+      if (!resumo && !periodos.length) {
+        r.bot(`*${rotulo} (${dataBR(iso)}) · ${local.label}*\nSem dados para esse dia.`);
+      } else {
+        r.painel(
+          <Painel titulo={`${rotulo} · ${local.label}`} subtitulo={dataBR(iso)} rodape="Fonte: Open-Meteo">
+            {resumo && (
+              <Kpis principal={{ label: resumo.desc, valor: `${resumo.min}° – ${resumo.max}°` }}
+                outros={[{ label: 'Chuva', valor: `${resumo.chuva}%${resumo.mm > 0 ? ` (${resumo.mm} mm)` : ''}` }]} />
+            )}
+            <Linhas titulo="Por período" itens={periodos} />
+          </Painel>,
+        );
+      }
     } catch (e) {
       r.bot(`Não consegui buscar a previsão: ${e instanceof Error ? e.message : 'erro'}`);
     }
