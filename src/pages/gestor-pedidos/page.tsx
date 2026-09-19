@@ -574,6 +574,12 @@ export default function GestorPedidosPage() {
     return ['todas', ...Array.from(set).sort()];
   }, [pedidosComStatus]);
 
+  // "Ativos" = em andamento: nem entregue nem cancelado (dono, 2026-09-18). O quadro também carrega
+  // os entregues das últimas 2 h (fn_get_kds_orders p_only_active) e eles apareciam em "Ativos" até
+  // sumirem sozinhos 2 h depois — o pedido 0001 da Vila "não estava nos ativos" e os seguintes estavam.
+  // Entregue fica só na aba "Entregues" (sessão inteira).
+  const ativos = useMemo(() => pedidosComStatus.filter((p) => !p.isCancelled && p.status !== 'entregue'), [pedidosComStatus]);
+
   const contadores = useMemo(() => ({
     novo:      pedidosComStatus.filter((p) => p.status === 'novo' && !p.isCancelled).length,
     preparo:   pedidosComStatus.filter((p) => p.status === 'preparo' && !p.isCancelled).length,
@@ -590,11 +596,11 @@ export default function GestorPedidosPage() {
       ? entreguesSessao.length
       : Math.max(pedidosComStatus.filter((p) => p.status === 'entregue' && !p.isCancelled).length, faturamentoPedidosCount),
     cancelado: pedidosComStatus.filter((p) => p.isCancelled).length,
-    total:     pedidosComStatus.filter((p) => !p.isCancelled).length,
-  }), [pedidosComStatus, entreguesCarregouUmaVez, entreguesSessao, faturamentoPedidosCount]);
+    total:     ativos.length,
+  }), [pedidosComStatus, ativos, entreguesCarregouUmaVez, entreguesSessao, faturamentoPedidosCount]);
 
   const contadoresOrigem = useMemo(() => {
-    const base = pedidosComStatus.filter((p) => !p.isCancelled);
+    const base = ativos;
     return {
       caixa:          base.filter((p) => p.origem === 'caixa').length,
       garcom:         base.filter((p) => p.origem === 'garcom').length,
@@ -602,7 +608,7 @@ export default function GestorPedidosPage() {
       autoatendimento: base.filter((p) => p.origem === 'autoatendimento').length,
       delivery:       base.filter((p) => p.origem === 'delivery').length,
     };
-  }, [pedidosComStatus]);
+  }, [ativos]);
 
   // Pedidos prontos aguardando entrega há +5min
   const prontosSemEntrega = useMemo(() => {
@@ -740,7 +746,7 @@ export default function GestorPedidosPage() {
     if (filtroStatus === 'cancelado') {
       result = pedidosComStatus.filter((p) => p.isCancelled);
     } else if (filtroStatus === 'todos') {
-      result = pedidosComStatus.filter((p) => !p.isCancelled);
+      result = ativos;
     } else if (filtroStatus === 'entregue') {
       // ECONOMIA 09-17: mostra a sessão inteira de entregues (busca sob demanda),
       // não só as últimas 2h de `pedidosComStatus`. Antes do primeiro fetch da
@@ -786,7 +792,7 @@ export default function GestorPedidosPage() {
     }
 
     return result;
-  }, [pedidosComStatus, filtroStatus, filtroOrigem, filtroEstacao, filtroPagamento, busca, entreguesSessao, entreguesCarregouUmaVez]);
+  }, [pedidosComStatus, ativos, filtroStatus, filtroOrigem, filtroEstacao, filtroPagamento, busca, entreguesSessao, entreguesCarregouUmaVez]);
 
   const FILTROS: { key: FiltroStatus; label: string; count?: number; urgent?: boolean; danger?: boolean }[] = [
     { key: 'todos',     label: 'Ativos',      count: contadores.total },
@@ -1223,7 +1229,7 @@ export default function GestorPedidosPage() {
             const isActive = filtroPagamento === o.key;
             const count = o.key === 'todos'
               ? contadores.total
-              : pedidosComStatus.filter((p) => !p.isCancelled && (o.key === 'pagos' ? p.isPaid : !p.isPaid)).length;
+              : ativos.filter((p) => (o.key === 'pagos' ? p.isPaid : !p.isPaid)).length;
             return (
               <button
                 key={o.key}
@@ -1451,8 +1457,8 @@ function MobileFiltrosBar({
   };
 
   // Contadores de pagamento
-  const pagosCount = pedidosComStatus.filter((p) => !p.isCancelled && p.isPaid).length;
-  const naoPagosCount = pedidosComStatus.filter((p) => !p.isCancelled && !p.isPaid).length;
+  const pagosCount = pedidosComStatus.filter((p) => !p.isCancelled && p.status !== 'entregue' && p.isPaid).length;
+  const naoPagosCount = pedidosComStatus.filter((p) => !p.isCancelled && p.status !== 'entregue' && !p.isPaid).length;
 
   return (
     <>
