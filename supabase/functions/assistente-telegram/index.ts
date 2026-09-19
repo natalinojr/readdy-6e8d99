@@ -564,7 +564,7 @@ async function sendGroupReceipt(admin: SupabaseClient, p: any): Promise<string |
 // Baixa da conta a pagar pela conciliação (brain › baixa_conciliada). Devolve a linha do cartão.
 // deno-lint-ignore no-explicit-any
 async function settleBill(p: any): Promise<string | null> {
-  if (p.status !== 'paid' || !p.bill_id || p.settled_at) return null;
+  if (p.status !== 'paid' || (!p.bill_id && !p.dre_category_id) || p.settled_at) return null;
   try {
     const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
@@ -609,9 +609,9 @@ async function payWatch() {
     await admin.from('asst_messages').insert({ channel: 'telegram', chat_id: p.chat_id, role: 'assistant', content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status} (atualizado automaticamente)] id ${p.id}` });
     log('INFO', 'pagamento mudou de status', { id: p.id, de: antes, para: p.status });
   }
-  // Pagos com conta a pagar e ainda sem baixa: o débito demora a aparecer no extrato do Inter.
+  // Pagos com conta a pagar (ou avulsos com categoria da DRE) e ainda sem baixa: o débito demora a aparecer no extrato do Inter.
   // Tenta a cada 10 min por até 2 dias (15 tentativas). Só pagamentos feitos pelo assistente.
-  const { data: semBaixa } = await admin.from('fin_inter_payments').select('*').eq('status', 'paid').not('bill_id', 'is', null)
+  const { data: semBaixa } = await admin.from('fin_inter_payments').select('*').eq('status', 'paid').or('bill_id.not.is.null,dre_category_id.not.is.null')
     .is('settled_at', null).lt('settle_attempts', 15).like('chat_id', 'tg:%')
     .gte('paid_at', new Date(Date.now() - 2 * 86400_000).toISOString()).limit(10);
   let settled = 0;

@@ -502,6 +502,8 @@ TOOLS.push({
       valor: { type: 'number', description: 'Reais. Boleto: só se diferente do valor do código (juros/desconto) ou se o código não traz valor. Pix: obrigatório.' },
       descricao: { type: 'string', description: 'Descrição curta (vai no Pix e no histórico).' },
       conta_a_pagar_id: { type: 'string', description: 'uuid da conta a pagar correspondente, se houver (busque com consultar_banco/buscar_nome).' },
+      categoria_dre: { type: 'string', description: 'OBRIGATÓRIA quando NÃO houver conta_a_pagar_id: nome (ou uuid) da categoria de despesa da DRE (ex.: "Internet", "Energia"). Quando o Inter confirmar, a despesa é lançada pelo extrato com ela e já sai conciliada. Sem conta e sem categoria, o pagamento não é preparado: pergunte ao Natalino a categoria.' },
+      freelancer: { type: 'boolean', description: 'true quando o pagamento é de freela/diária (a despesa sai pelo registrar_freelancer, dispensa categoria_dre).' },
       loja: { type: 'string', description: 'Loja pagadora. Padrão: a loja que tem o Banco Inter conectado.' },
       solicitacao_grupo_id: { type: 'number', description: 'id do pedido de pagamento vindo de grupo do WhatsApp (asst_group_requests.id), se souber. Sem isso, o pedido do grupo com o mesmo valor nas últimas 72 h é ligado sozinho. Pedido ligado = quando o pagamento for confirmado, o comprovante é postado no grupo automaticamente, respondendo à mensagem do pedido. MENSAGEM COM VÁRIOS PAGAMENTOS: chame preparar_pagamento uma vez para cada um, SEMPRE com o mesmo solicitacao_grupo_id — cada um ganha o próprio comprovante no grupo.' },
     },
@@ -1103,11 +1105,37 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
         }
         chave = unicos[0].chave;
       }
+      // Pagamento avulso (sem conta a pagar) precisa da categoria da DRE (2026-09-18): a fatura da
+      // Claro foi paga sem conta e ficou pendente na conciliação, sem despesa na DRE. Com a categoria,
+      // a baixa_conciliada lança a despesa pelo extrato (create_from_statement) quando o Inter confirma.
+      // Guia do governo (arrecadação segmento 5: DARF, DAS) sem conta = lancar_guia, nunca avulso: o DARF
+      // INSS de 18/09 saiu como boleto comum e ficou sem conta; com categoria "Impostos" contaria o encargo
+      // da folha duas vezes na DRE (a guia marca INSS/FGTS como hr_payroll).
+      if (!input.conta_a_pagar_id && input.tipo === 'boleto' && /^85/.test(String(input.linha_digitavel ?? '').replace(/\D/g, ''))) {
+        return JSON.stringify({ ok: false, guia_do_governo: true, instrucao: 'Isto é guia do governo (DARF/DAS): use lancar_guia (com a transcrição da guia se o arquivo não tiver texto), que cria a conta certa e prepara o pagamento. Não use preparar_pagamento avulso.' });
+      }
+      let dreCategoryId: string | null = null;
+      if (!input.conta_a_pagar_id && !input.freelancer) {
+        const q = String(input.categoria_dre ?? '').trim();
+        if (!q) return JSON.stringify({ ok: false, sem_categoria: true, instrucao: 'Pagamento sem conta a pagar: pergunte ao Natalino a categoria da DRE (ex.: Internet, Energia) e chame preparar_pagamento de novo com categoria_dre. Se for freela, use freelancer: true.' });
+        const { data: cats } = await ctx.admin.from('fin_dre_categories').select('id, name, group_type')
+          .eq('tenant_id', tenantId).eq('is_active', true).is('deleted_at', null);
+        const norm = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+        const lista = ((cats ?? []) as Array<{ id: string; name: string; group_type: string }>).filter((c) => !/receita|revenue/i.test(c.group_type ?? ''));
+        const exato = lista.filter((c) => c.id === q || norm(c.name) === norm(q));
+        const achados = exato.length ? exato : lista.filter((c) => norm(c.name).includes(norm(q)));
+        if (achados.length !== 1) {
+          return JSON.stringify({ ok: false, categoria_invalida: true, opcoes: (achados.length ? achados : lista).slice(0, 40).map((c) => c.name),
+            instrucao: achados.length ? 'Mais de uma categoria bate: pergunte qual.' : `Não achei a categoria "${q}" nesta loja: pergunte qual das opções.` });
+        }
+        dreCategoryId = achados[0].id;
+      }
       const out = await callInter('prepare_payment', {
         tenant_id: tenantId, tipo: input.tipo, linha: input.linha_digitavel, chave, copia_e_cola: input.copia_e_cola || undefined, valor: input.valor,
         descricao: input.descricao, bill_id: input.conta_a_pagar_id, requested_by: ctx.ownerId, channel: 'telegram', chat_id: ctx.chatId,
       });
       const p = out.payment;
+      if (dreCategoryId && !p.bill_id) await ctx.admin.from('fin_inter_payments').update({ dre_category_id: dreCategoryId }).eq('id', p.id);
       // Mesmo boleto pedido duas vezes (2026-09-18: fatura Claro virou 2 cartões): o inter-bank
       // devolve o rascunho que já existe (ja_existia) e aqui não sai um segundo cartão igual.
       if (!ctx.outbound.some((o) => o.type === 'payment' && o.id === String(p.id))) ctx.outbound.push({ type: 'payment', id: String(p.id) });
@@ -1967,8 +1995,48 @@ Deno.serve(async (req) => {
       if (!p) return json({ ok: false, erro: 'pagamento não encontrado' }, 404);
       if (p.settled_at) return json({ ok: true, ja: true });
       if (p.status !== 'paid') return json({ ok: false, pendente: 'o Inter ainda não confirmou o pagamento' });
-      if (!p.bill_id) return json({ ok: false, sem_conta: true });
+      if (!p.bill_id && !p.dre_category_id) return json({ ok: false, sem_conta: true });
       const agora = new Date().toISOString();
+      // Avulso (sem conta, com categoria da DRE): lança a despesa pelo extrato — o mesmo "Lançar pelo
+      // extrato" da Conciliação — e liga o pagamento à conta criada (2026-09-18, fatura Claro).
+      if (!p.bill_id) {
+        await admin.from('fin_inter_payments').update({ settle_attempts: Number(p.settle_attempts ?? 0) + 1, settle_last_try: agora }).eq('id', pid);
+        const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'owner_user_id').maybeSingle();
+        // deno-lint-ignore no-explicit-any
+        const ctx: any = { admin, ownerId: String(st?.value ?? '') };
+        try { await callInter('sync', { tenant_id: p.tenant_id, days: 3 }); } catch (e) { log('WARN', 'avulso: sync do extrato', { error: errMsg(e) }); }
+        const diaSP = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+        const desde = diaSP(String(p.sent_at ?? p.paid_at ?? p.created_at));
+        const ate = new Date(Date.parse(`${desde}T12:00:00-03:00`) + 6 * 86400_000).toISOString().slice(0, 10);
+        const { data: cands } = await admin.from('fin_bank_statement_imports').select('id, amount, raw, external_id')
+          .eq('tenant_id', p.tenant_id).eq('transaction_type', 'debit').eq('status', 'pending').eq('reconciled', false)
+          .gte('transaction_date', desde).lte('transaction_date', ate);
+        // deno-lint-ignore no-explicit-any
+        const mesmo = (cands ?? []).filter((r: any) => Math.abs(Math.abs(Number(r.amount)) - Number(p.amount)) < 0.01);
+        const e2e = String(p.response?.transacaoPix?.endToEnd ?? p.response?.endToEnd ?? '').trim();
+        const nsu = String(p.response?.nsu ?? '').trim();
+        // Qual débito: E2E do Pix; boleto → NSU do Inter no id do extrato; senão, o único de mesmo valor.
+        // deno-lint-ignore no-explicit-any
+        const row: any = (e2e && mesmo.find((r: any) => String(r.raw?.detalhes?.endToEndId ?? '').trim() === e2e))
+          // deno-lint-ignore no-explicit-any
+          || (nsu && mesmo.find((r: any) => { try { return atob(String(r.external_id ?? '').replace(/^inter_/, '')).endsWith(`_${nsu}`); } catch { return false; } }))
+          || (!e2e && mesmo.length === 1 ? mesmo[0] : null);
+        if (!row) return json({ ok: false, pendente: 'o débito ainda não apareceu no extrato do Inter' });
+        const cf = await callEdge(ctx, 'conciliacao-pagamentos', 'create_from_statement', {
+          ids: [row.id], kind: 'despesa', dre_category_id: p.dre_category_id,
+          description: p.description || p.beneficiary_name || undefined, supplier: p.beneficiary_name || undefined,
+        }, p.tenant_id).catch((e) => ({ status: 0, body: { error: errMsg(e) }, ms: 0 }));
+        const res = cf.body?.results?.[0];
+        if (!res?.ok) {
+          const erro = String(res?.msg ?? cf.body?.error ?? `HTTP ${cf.status}`).slice(0, 300);
+          await admin.from('fin_inter_payments').update({ settle_error: erro, updated_at: new Date().toISOString() }).eq('id', pid);
+          return json({ ok: false, erro });
+        }
+        const { data: feito } = await admin.from('fin_bank_statement_imports').select('match_ref_id').eq('id', row.id).maybeSingle();
+        await admin.from('fin_inter_payments').update({ bill_id: feito?.match_ref_id ?? null, settled_at: new Date().toISOString(), settle_error: null, updated_at: new Date().toISOString() }).eq('id', pid);
+        log('INFO', 'avulso lançado pelo extrato', { payment: pid, row: row.id, bill: feito?.match_ref_id });
+        return json({ ok: true, msg: String(res.msg ?? 'despesa lançada') });
+      }
       await admin.from('fin_inter_payments').update({ settle_attempts: Number(p.settle_attempts ?? 0) + 1, settle_last_try: agora }).eq('id', pid);
       const marcar = (extra: Record<string, unknown>) => admin.from('fin_inter_payments').update({ ...extra, updated_at: new Date().toISOString() }).eq('id', pid);
       const { data: bill } = await admin.from('fin_accounts_payable').select('id, status, description').eq('id', p.bill_id).maybeSingle();

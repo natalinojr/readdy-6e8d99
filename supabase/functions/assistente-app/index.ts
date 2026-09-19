@@ -480,7 +480,7 @@ Deno.serve(async (req) => {
       // assistente-cron › pay_watch cuida do resto): comprovante no grupo + baixa já agora.
       if (pago.status === 'paid') {
         await callEdge('assistente-telegram', internalKey, { action: 'send_receipt', payment_id: p.id }).catch(() => null);
-        if (pago.bill_id) await callEdge('assistente-brain', internalKey, { action: 'baixa_conciliada', payment_id: p.id }).catch(() => null);
+        if (pago.bill_id || pago.dre_category_id) await callEdge('assistente-brain', internalKey, { action: 'baixa_conciliada', payment_id: p.id }).catch(() => null);
       }
       await admin.from('asst_messages').insert({ channel: 'app', chat_id: chatKey, role: 'assistant', content: `[Pagamento ${pago.kind} de ${brl(pago.amount)}${pago.beneficiary_name ? ` para ${pago.beneficiary_name}` : ''}: ${PAY_STATUS[pago.status] ?? pago.status}${pago.error ? ` (${pago.error})` : ''} — pelo ERPOS] id ${p.id}` });
       log('INFO', 'pagamento pelo ERPOS', { id: p.id, status: pago.status });
