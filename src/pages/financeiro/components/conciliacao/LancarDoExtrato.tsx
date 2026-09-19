@@ -74,13 +74,16 @@ export function useCategoriasLancamento() {
 interface Props {
   transaction: StatementImport;
   onDone: () => void;
+  /** Avisa o modal quando o painel abre/fecha (o modal esconde o formulário antigo de categoria). */
+  onAbertoChange?: (aberto: boolean) => void;
 }
 
-export default function LancarDoExtrato({ transaction, onDone }: Props) {
+export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }: Props) {
   const { user } = useAuth();
   const { dreOptions, mercOptions, dreNome } = useCategoriasLancamento();
   const nomePadrao = transaction.counterpart_name || transaction.description || '';
   const [aberto, setAberto] = useState(false);
+  useEffect(() => { onAbertoChange?.(aberto); }, [aberto, onAbertoChange]);
   const [tipo, setTipo] = useState<LancarTipo>('despesa');
   const [descricao, setDescricao] = useState(nomePadrao);
   const [fornecedor, setFornecedor] = useState(transaction.counterpart_name || '');

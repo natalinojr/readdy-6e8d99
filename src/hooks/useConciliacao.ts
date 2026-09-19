@@ -190,7 +190,10 @@ export function useConciliacao(bankAccountId?: string, period?: { from?: string;
   };
 
   // Find bill matches
-  const findBillMatches = useCallback(async (amount: number, date: string, daysTolerance = 7): Promise<BillMatch[]> => {
+  // "Alta" só com valor exato E nome batendo (2026-09-18: a Claro de R$ 114,41 aparecia com a Toko Frios
+  // de R$ 115,96 como "Alta" — só pelo valor parecido). Valor exato sem nome = Média; valor próximo
+  // (até 2%) só entra se o nome bater; nome diferente e valor diferente não é sugestão.
+  const findBillMatches = useCallback(async (amount: number, date: string, nome = '', daysTolerance = 7): Promise<BillMatch[]> => {
     if (!user?.tenantId) return [];
     const fromDate = new Date(date);
     fromDate.setDate(fromDate.getDate() - daysTolerance);
@@ -205,15 +208,23 @@ export function useConciliacao(bankAccountId?: string, period?: { from?: string;
       .gte('due_date', fromDate.toISOString().split('T')[0])
       .lte('due_date', toDate.toISOString().split('T')[0]);
 
+    const GENERICAS = new Set(['ltda', 'eireli', 'pagamento', 'compra', 'recebido', 'enviado', 'boleto', 'fatura', 'conta', 'comercio', 'servicos', 'alimentos', 'brasil', 'distribuidora']);
+    const palavras = (t: string | null | undefined) => new Set(String(t ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+      .split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !GENERICAS.has(w) && !/^\d+$/.test(w)));
+    const doExtrato = palavras(nome);
+    const nomeBate = (b: { description: string | null; supplier: string | null }) => {
+      for (const w of palavras(`${b.supplier ?? ''} ${b.description ?? ''}`)) if (doExtrato.has(w)) return true;
+      return false;
+    };
+
     const candidates: BillMatch[] = [];
     (data ?? []).forEach(b => {
-      const diff = Math.abs(Number(b.amount) - amount);
-      const pctDiff = Number(b.amount) > 0 ? diff / Number(b.amount) : 1;
-      if (pctDiff <= 0.02) {
-        candidates.push({ ...b, confidence: 'high' as const, amount: Number(b.amount) });
-      } else if (pctDiff <= 0.1) {
-        candidates.push({ ...b, confidence: 'medium' as const, amount: Number(b.amount) });
-      }
+      const valor = Number(b.amount);
+      const exato = Math.abs(valor - amount) < 0.01;
+      const perto = valor > 0 && Math.abs(valor - amount) / valor <= 0.02;
+      const bate = nomeBate(b);
+      if (exato && bate) candidates.push({ ...b, confidence: 'high' as const, amount: valor });
+      else if (exato || (perto && bate)) candidates.push({ ...b, confidence: 'medium' as const, amount: valor });
     });
     return candidates.sort((a, b) => (a.confidence === 'high' ? 0 : 1) - (b.confidence === 'high' ? 0 : 1));
   }, [user?.tenantId]);

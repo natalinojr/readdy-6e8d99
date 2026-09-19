@@ -33,7 +33,7 @@ interface Props {
   onReconcile: (id: string) => Promise<boolean>;
   onUnreconcile: (id: string) => Promise<boolean>;
   onCreateRule: (pattern: string, category: string, costCenterId: string, txType: 'credit' | 'debit') => Promise<ReconciliationRule | null>;
-  findBillMatches: (amount: number, date: string) => Promise<BillMatch[]>;
+  findBillMatches: (amount: number, date: string, nome?: string) => Promise<BillMatch[]>;
   findReceivableMatches: (amount: number, date: string) => Promise<ReceivableMatch[]>;
   /** Chamado depois de confirmar/desfazer uma baixa (recarregar lista e alertas) */
   onChanged?: () => void;
@@ -55,6 +55,7 @@ export default function TransacaoDetalheModal({
   const { centers } = useCostCenters();
   const { labels: flowLabels } = useMoneyFlow();
   const [saving, setSaving] = useState(false);
+  const [lancarAberto, setLancarAberto] = useState(false);
   const [billMatches, setBillMatches] = useState<BillMatch[]>([]);
   const [receivableMatches, setReceivableMatches] = useState<ReceivableMatch[]>([]);
   const [loadingMatches, setLoadingMatches] = useState(false);
@@ -150,7 +151,7 @@ export default function TransacaoDetalheModal({
     if (!transaction) return;
     setLoadingMatches(true);
     const [bills, receivables] = await Promise.all([
-      transaction.transaction_type === 'debit' ? findBillMatches(Number(transaction.amount), transaction.transaction_date) : Promise.resolve([]),
+      transaction.transaction_type === 'debit' ? findBillMatches(Number(transaction.amount), transaction.transaction_date, [transaction.counterpart_name, transaction.description].filter(Boolean).join(' ')) : Promise.resolve([]),
       transaction.transaction_type === 'credit' ? findReceivableMatches(Number(transaction.amount), transaction.transaction_date) : Promise.resolve([]),
     ]);
     setBillMatches(bills);
@@ -342,7 +343,7 @@ export default function TransacaoDetalheModal({
             </div>
           )}
           {podeLancarDoExtrato(transaction) && (
-            <LancarDoExtrato transaction={transaction} onDone={() => { onChanged?.(); onClose(); }} />
+            <LancarDoExtrato transaction={transaction} onDone={() => { onChanged?.(); onClose(); }} onAbertoChange={setLancarAberto} />
           )}
           {repasse && (() => {
             const s = situacaoRepasse(repasse);
@@ -405,7 +406,9 @@ export default function TransacaoDetalheModal({
             );
           })()}
 
-          {/* Form */}
+          {/* Form (etiqueta da linha do extrato). Some com o painel "Lançar" aberto: eram duas
+              "Categoria DRE" na tela e só a do painel lança a despesa na DRE. */}
+          {!lancarAberto && (<>
           <div className="space-y-3">
             <div>
               <label className="text-xs font-medium text-zinc-600 mb-1 block">Descrição</label>
@@ -438,7 +441,7 @@ export default function TransacaoDetalheModal({
             ) : (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-zinc-600 mb-1 block">Categoria DRE</label>
+                <label className="text-xs font-medium text-zinc-600 mb-1 block">Categoria do extrato</label>
                 <CategoriaCombobox
                   value={form.category}
                   options={categoriaOptions}
@@ -458,6 +461,11 @@ export default function TransacaoDetalheModal({
                   {centers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
+              {podeLancarDoExtrato(transaction) && (
+                <p className="col-span-2 text-xs text-zinc-500 -mt-1">
+                  Só marca esta linha do extrato: não lança despesa na DRE. Para lançar, use "Lançar" acima ou vincule a uma conta a pagar.
+                </p>
+              )}
             </div>
             )}
             <div>
@@ -533,6 +541,7 @@ export default function TransacaoDetalheModal({
               </span>
             </label>
           )}
+          </>)}
 
           {/* Matches */}
           {transaction.transaction_type === 'debit' && (
