@@ -2722,3 +2722,10 @@ Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — prob
   faltavam 2 pedidos de 18/09 que já estavam no relatório e no subtotal dos repasses).
 - Loja sem conta de depósito do iFood ("Como o dinheiro entra"; ex.: Vila Leste, Itaú sem API): `fin_ifood_repasses` devolve `detalhe.sem_conta` e a aba mostra "Sem extrato do banco" em vez de "Não achado".
 - Pegadinha: loja só com arquivo (sem API) não relança o razão quando a data do repasse chega — `ifood-sync` só roda para quem tem refresh_token; entra ao reimportar ou salvar opção.
+
+### Permissões por aba: Financeiro e Relatórios (2026-09-19)
+- Configurações › Permissões ganhou uma linha por aba do Financeiro (`fin_*`) e dos Relatórios (`rel_*`). Lista única em `src/constants/permissoesAbas.ts` — aba nova nessas páginas tem que entrar lá, senão some para quem não é admin.
+- Financeiro continua só Admin/Gerente (página + edges): as abas servem para limitar o Gerente; nas colunas Caixa/Garçom/Cozinha a caixa fica travada (—). A trava por aba é só de tela: o gerente sem a aba DRE ainda consegue chamar financial-write pela API (a edge checa cargo, não aba).
+- Relatórios valem para qualquer papel (ex.: Caixa só com "Relatório de Caixa"). /relatorios e /financeiro abrem se o papel tiver ao menos uma aba; aba pedida na URL sem permissão cai na primeira liberada.
+- `relatorio_financeiro` agora só controla o Tráfego Pago (linha "Acessar Tráfego Pago", categoria Marketing). `relatorio_estoque` não controla nada no código.
+- Pegadinha corrigida: o papel usava SÓ as linhas salvas em `permissions` quando havia alguma — permissão nova sumia de quem já tinha salvo a matriz (e uma loja com 1 linha salva deixava o gerente só com ela). Agora é padrão do papel + linhas salvas por cima (`mesclarComPadrao`), no hook e na tela.

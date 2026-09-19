@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Shield } from 'lucide-react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { usePermissoes } from '@/hooks/usePermissoes';
+import { usePermissoes, mesclarComPadrao } from '@/hooks/usePermissoes';
+import { FIN_ABAS, FIN_KEYS, REL_ABAS, REL_KEYS } from '@/constants/permissoesAbas';
 import { useToast } from '@/contexts/ToastContext';
 
 type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha';
@@ -11,6 +12,8 @@ interface Permissao {
   id: string;
   categoria: string;
   descricao: string;
+  /** Financeiro: a página e as edges são só Admin/Gerente — nos outros papéis a caixa fica travada. */
+  somenteGerente?: boolean;
 }
 
 const papeis: { id: Papel; label: string; cor: string }[] = [
@@ -39,8 +42,10 @@ const permissoes: Permissao[] = [
   { id: 'kds_acessar', categoria: 'Cozinha', descricao: 'Acessar KDS (Display de Cozinha)' },
   { id: 'gestor_pedidos_acessar', categoria: 'Cozinha', descricao: 'Acessar Gestor de Pedidos' },
   { id: 'gestor_pedidos_entregar', categoria: 'Cozinha', descricao: 'Marcar pedidos como entregues no Gestor' },
-  { id: 'relatorio_financeiro', categoria: 'Relatórios', descricao: 'Ver relatórios financeiros' },
-  { id: 'relatorio_estoque', categoria: 'Relatórios', descricao: 'Ver relatórios de estoque' },
+  { id: 'relatorio_estoque', categoria: 'Estoque', descricao: 'Ver relatórios de estoque' },
+  ...FIN_ABAS.map((a) => ({ id: a.key, categoria: 'Financeiro', descricao: `Aba ${a.label}`, somenteGerente: true })),
+  ...REL_ABAS.map((a) => ({ id: a.key, categoria: 'Relatórios', descricao: `Aba ${a.label}` })),
+  { id: 'relatorio_financeiro', categoria: 'Marketing', descricao: 'Acessar Tráfego Pago' },
   { id: 'clientes_ver', categoria: 'Clientes', descricao: 'Ver base de clientes (CRM)' },
   { id: 'usuarios_gerenciar', categoria: 'Usuários', descricao: 'Gerenciar usuários' },
   { id: 'configuracoes_editar', categoria: 'Configurações', descricao: 'Editar configurações do sistema' },
@@ -56,6 +61,7 @@ const defaultPermissoes: Record<Papel, string[]> = {
     'estoque_movimentar', 'estoque_inventario',
     'kds_acessar', 'gestor_pedidos_acessar', 'gestor_pedidos_entregar',
     'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
+    ...FIN_KEYS, ...REL_KEYS,
   ],
   caixa: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_cancelar_item',
@@ -109,13 +115,15 @@ export default function PermissoesTab() {
 
       if (!error && data?.success && data.data && data.data.length > 0) {
         // Build matrix from DB data
-        const newMatrix: Record<Papel, string[]> = { admin: permissoes.map(p => p.id), gerente: [], caixa: [], garcom: [], cozinha: [] };
-        data.data.forEach((row) => {
-          const papel = dbRoleToPapel[row.role];
-          if (papel !== 'admin' && newMatrix[papel] !== undefined && row.allowed) {
-            newMatrix[papel].push(row.permission_key);
-          }
-        });
+        // Padrão do papel + o que foi salvo por cima: permissão nova (nunca salva) fica no padrão.
+        const linhas = (p: Papel) => data.data!.filter((row) => dbRoleToPapel[row.role] === p);
+        const newMatrix: Record<Papel, string[]> = {
+          admin: permissoes.map(p => p.id),
+          gerente: mesclarComPadrao(defaultPermissoes.gerente, linhas('gerente')),
+          caixa: mesclarComPadrao(defaultPermissoes.caixa, linhas('caixa')),
+          garcom: mesclarComPadrao(defaultPermissoes.garcom, linhas('garcom')),
+          cozinha: mesclarComPadrao(defaultPermissoes.cozinha, linhas('cozinha')),
+        };
         setMatrix(newMatrix);
       }
       // If no DB data, keep defaults
@@ -128,8 +136,12 @@ export default function PermissoesTab() {
 
   useEffect(() => { carregarPermissoes(); }, [carregarPermissoes]);
 
+  const travado = (papel: Papel, perm: Permissao) => !!perm.somenteGerente && papel !== 'admin' && papel !== 'gerente';
+
   const toggle = (papel: Papel, permId: string) => {
     if (papel === 'admin') return;
+    const perm = permissoes.find((p) => p.id === permId);
+    if (perm && travado(papel, perm)) return;
     setMatrix((prev) => {
       const atual = prev[papel];
       const nova = atual.includes(permId)
@@ -243,6 +255,9 @@ export default function PermissoesTab() {
             <div key={cat}>
               <div className="bg-zinc-50 px-5 py-2 border-b border-zinc-100">
                 <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{cat}</span>
+                {cat === 'Financeiro' && (
+                  <span className="ml-2 text-[11px] text-zinc-400 normal-case">— só Admin e Gerente acessam o Financeiro</span>
+                )}
               </div>
               {itens.map((perm, idx) => (
                 <div
@@ -256,6 +271,13 @@ export default function PermissoesTab() {
                   {papeis.map((papel) => {
                     const ativo = matrix[papel.id].includes(perm.id);
                     const isAdmin = papel.id === 'admin';
+                    if (travado(papel.id, perm)) {
+                      return (
+                        <div key={papel.id} className="flex items-center justify-center py-3" title="Financeiro é só para Admin e Gerente">
+                          <span className="text-zinc-300 text-sm">—</span>
+                        </div>
+                      );
+                    }
                     return (
                       <div key={papel.id} className="flex items-center justify-center py-3">
                         <button

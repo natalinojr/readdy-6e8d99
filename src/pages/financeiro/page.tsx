@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
+import { finKeyDaAba } from '@/constants/permissoesAbas';
 import VisaoGeralFinTab from './components/VisaoGeralFinTab';
 import FluxoCaixaTab from './components/FluxoCaixaTab';
 import ContasPagarTab from './components/ContasPagarTab';
@@ -48,14 +50,18 @@ const TABS = [
 export default function FinanceiroPage() {
   const { user } = useAuth();
   const location = useLocation();
+  // Abas liberadas para o papel (Configurações › Permissões; admin vê todas).
+  const { hasPermissao } = usePermissoes();
+  const podeAba = (t: string) => { const k = finKeyDaAba(t); return !!k && hasPermissao(k); };
+  const abas = TABS.filter((t) => podeAba(t.id));
   // Aba na URL (?tab=dre), como no Estoque e nas Configurações. Antes era só useState com
   // location.state: quem chegava por link — inclusive o botão "Abrir DRE" do assistente
   // (2026-09-16) — caía sempre na Visão Geral, e navegar já estando em /financeiro não fazia nada.
   const [searchParams, setSearchParams] = useSearchParams();
   const daUrl = searchParams.get('tab');
   const doState = (location.state as { activeTab?: string } | null)?.activeTab;
-  const valida = (t: string | null | undefined) => (t && (TABS.some((x) => x.id === t) || t === 'previsao') ? t : null);
-  const activeTab = valida(daUrl) ?? valida(doState) ?? 'visao';
+  const valida = (t: string | null | undefined) => (t && (TABS.some((x) => x.id === t) || t === 'previsao') && podeAba(t) ? t : null);
+  const activeTab = valida(daUrl) ?? valida(doState) ?? abas[0]?.id ?? 'visao';
   const setActiveTab = (t: string) => setSearchParams({ tab: t }, { replace: true });
   const [highlightPurchaseId, setHighlightPurchaseId] = useState<string | undefined>();
 
@@ -89,6 +95,20 @@ export default function FinanceiroPage() {
     );
   }
 
+  if (abas.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-zinc-50">
+        <div className="text-center">
+          <div className="w-16 h-16 flex items-center justify-center bg-red-100 rounded-full mx-auto mb-4">
+            <i className="ri-lock-line text-red-500 text-2xl" />
+          </div>
+          <h2 className="text-lg font-semibold text-zinc-800">Acesso Restrito</h2>
+          <p className="text-zinc-500 text-sm mt-1">Nenhuma aba do Financeiro está liberada para o seu perfil. Fale com o administrador.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -106,7 +126,7 @@ export default function FinanceiroPage() {
             (com a barra de rolagem escondida, as abas da direita ficavam
             inalcançáveis no desktop quando a janela era estreita) */}
         <div className="flex md:flex-wrap gap-0.5 overflow-x-auto md:overflow-visible scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
-          {TABS.map(tab => (
+          {abas.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}

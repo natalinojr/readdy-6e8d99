@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, createContext, useContext } from 'rea
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
+import { FIN_KEYS, REL_KEYS, type FinPermissaoKey, type RelPermissaoKey } from '@/constants/permissoesAbas';
 
 export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas';
 
@@ -29,7 +30,9 @@ export type PermissaoKey =
   | 'clientes_ver'
   | 'usuarios_gerenciar'
   | 'configuracoes_editar'
-  | 'auditoria_ver';
+  | 'auditoria_ver'
+  | FinPermissaoKey
+  | RelPermissaoKey;
 
 /** Papel do frontend (PT) → role no banco (enum user_role, em inglês).
  *  A tabela `permissions` grava o role em inglês (manager/cashier/waiter/kitchen),
@@ -53,6 +56,7 @@ const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
     'estoque_movimentar', 'estoque_inventario', 'kds_acessar', 'gestor_pedidos_acessar',
     'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver',
     'usuarios_gerenciar', 'configuracoes_editar', 'auditoria_ver',
+    ...FIN_KEYS, ...REL_KEYS,
   ],
   gerente: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_desconto',
@@ -60,6 +64,7 @@ const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
     'garcom_fechar_mesa', 'garcom_transferir_mesa', 'cardapio_editar',
     'estoque_movimentar', 'estoque_inventario', 'kds_acessar', 'gestor_pedidos_acessar',
     'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
+    ...FIN_KEYS, ...REL_KEYS,
   ],
   caixa: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_cancelar_item',
@@ -77,6 +82,16 @@ const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
   // resto do app fica bloqueado pelo hard-lock de rota (RotaProtegida).
   tarefas: [],
 };
+
+/** Padrão + linhas salvas (allowed true acrescenta, false tira). */
+export function mesclarComPadrao<K extends string>(padrao: readonly K[], linhas: { permission_key: string; allowed: boolean }[]): K[] {
+  const set = new Set<string>(padrao);
+  for (const r of linhas) {
+    if (r.allowed) set.add(r.permission_key);
+    else set.delete(r.permission_key);
+  }
+  return [...set] as K[];
+}
 
 export interface PermissoesContextValue {
   /** Verifica se o usuário atual tem a permissão */
@@ -153,15 +168,10 @@ export function usePermissoesState(): PermissoesContextValue {
         // qualquer tradução futura na edge function.
         const dbRole = PAPEL_TO_DB_ROLE[papel] ?? papel;
         const linhasDoPapel = data.data.filter((r) => r.role === papel || r.role === dbRole);
-        if (linhasDoPapel.length > 0) {
-          const minhas = linhasDoPapel
-            .filter((r) => r.allowed)
-            .map((r) => r.permission_key as PermissaoKey);
-          setPermissoes(minhas);
-        } else {
-          // Não há linhas salvas para este papel → usa defaults
-          setPermissoes(DEFAULT_PERMISSOES[papel] ?? []);
-        }
+        // Padrão do papel + o que foi salvo por cima. Chave que nunca foi salva (ex.: as abas
+        // do Financeiro/Relatórios, criadas em 2026-09-19) fica no padrão — antes, só as linhas
+        // salvas valiam e uma permissão nova sumia de quem já tinha salvo a matriz.
+        setPermissoes(mesclarComPadrao(DEFAULT_PERMISSOES[papel] ?? [], linhasDoPapel));
       } else {
         // Sem dados no banco → usa defaults
         setPermissoes(DEFAULT_PERMISSOES[papel] ?? []);

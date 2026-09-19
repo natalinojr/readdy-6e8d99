@@ -12,6 +12,7 @@ import { useAppMode } from '../../contexts/AppModeContext';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { usePermissoes, type PermissaoKey } from '@/hooks/usePermissoes';
+import { FIN_KEYS, REL_KEYS } from '@/constants/permissoesAbas';
 
 const ADMIN_MASTER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -19,7 +20,8 @@ interface NavItem {
   label: string;
   icon: React.ComponentType<{ size?: number; className?: string }>;
   path: string;
-  permissao?: PermissaoKey;
+  /** Uma chave, ou lista (basta ter uma). */
+  permissao?: PermissaoKey | readonly PermissaoKey[];
   pdvTerminal?: string;
   adminMasterOnly?: boolean;
   /** Módulo sem loja: aparece para quem foi liberado no Admin Master. */
@@ -59,11 +61,11 @@ const navSections: NavSection[] = [
     items: [
       { label: 'Pedidos',               icon: ClipboardList,   path: '/pedidos' },
       { label: 'Delivery',              icon: Truck,           path: '/config-delivery', permissao: 'configuracoes_editar' },
-      { label: 'Relatórios',            icon: BarChart3,       path: '/relatorios',    permissao: 'relatorio_financeiro' },
+      { label: 'Relatórios',            icon: BarChart3,       path: '/relatorios',    permissao: REL_KEYS },
       { label: 'Tráfego Pago',          icon: Megaphone,       path: '/trafego-pago',  permissao: 'relatorio_financeiro' },
       { label: 'Cardápio',              icon: UtensilsCrossed, path: '/cardapio',      permissao: 'cardapio_editar' },
       { label: 'Estoque',               icon: Package,         path: '/estoque',       permissao: 'estoque_movimentar' },
-      { label: 'Financeiro',            icon: DollarSign,      path: '/financeiro',    permissao: 'relatorio_financeiro' },
+      { label: 'Financeiro',            icon: DollarSign,      path: '/financeiro',    permissao: FIN_KEYS },
       { label: 'Usuários',              icon: Users,           path: '/usuarios',      permissao: 'usuarios_gerenciar' },
       { label: 'Mesas',                 icon: LayoutGrid,      path: '/mesas' },
       { label: 'Clientes',              icon: Heart,           path: '/clientes',      permissao: 'clientes_ver' },
@@ -128,7 +130,7 @@ export default function Sidebar({ gestaoMode = false, isOpen = false, onClose }:
       const filteredItems = section.items.filter((item) => {
         if (item.adminMasterOnly && user?.email !== ADMIN_MASTER_EMAIL) return false;
         if (item.modulo && !hasModule(item.modulo)) return false;
-        if (item.permissao && !hasPermissao(item.permissao)) return false;
+        if (item.permissao && !(typeof item.permissao === 'string' ? [item.permissao] : item.permissao).some((k) => hasPermissao(k))) return false;
         if (item.pdvTerminal) {
           const terminalAtivo = pdvConfig[item.pdvTerminal as keyof typeof pdvConfig] ?? true;
           if (!terminalAtivo) return false;

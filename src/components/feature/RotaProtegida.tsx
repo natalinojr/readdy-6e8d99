@@ -3,16 +3,18 @@ import type { ReactNode } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import type { PermissaoKey } from '@/hooks/usePermissoes';
+import { FIN_KEYS, REL_KEYS } from '@/constants/permissoesAbas';
 
 /**
  * Mapeamento de rota → permissão necessária.
  * Rotas não listadas aqui são acessíveis a todos os usuários autenticados.
+ * Lista = basta ter uma delas (Financeiro/Relatórios: permissão por aba).
  */
-const ROTA_PERMISSAO: Record<string, PermissaoKey> = {
+const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
   '/cardapio': 'cardapio_editar',
   '/estoque': 'estoque_movimentar',
-  '/relatorios': 'relatorio_financeiro',
-  '/financeiro': 'relatorio_financeiro',
+  '/relatorios': REL_KEYS,
+  '/financeiro': FIN_KEYS,
   '/usuarios': 'usuarios_gerenciar',
   '/configuracoes': 'configuracoes_editar',
   '/auditoria': 'auditoria_ver',
@@ -66,7 +68,8 @@ export default function RotaProtegida({ children }: Props) {
   if (!permissaoNecessaria) return <>{children}</>;
 
   // Verifica permissão
-  if (hasPermissao(permissaoNecessaria)) return <>{children}</>;
+  const lista = typeof permissaoNecessaria === 'string' ? [permissaoNecessaria] : permissaoNecessaria;
+  if (lista.some((k) => hasPermissao(k))) return <>{children}</>;
 
   // Sem permissão — redireciona para módulos com state de aviso
   return (

@@ -15,6 +15,8 @@ import DeliveryTab from './components/DeliveryTab';
 import SessaoSelector from '@/components/feature/SessaoSelector';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import type { SessionInfo } from '@/hooks/useSessions';
+import { usePermissoes } from '@/hooks/usePermissoes';
+import { relKeyDaAba } from '@/constants/permissoesAbas';
 
 type Tab = 'geral' | 'caixa' | 'produtos' | 'cmv' | 'sla' | 'origem' | 'delivery' | 'cancelamentos' | 'clientes' | 'calendario';
 
@@ -33,7 +35,11 @@ const tabs: { id: Tab; label: string; icon: string; shortLabel: string }[] = [
 
 export default function RelatoriosPage() {
   const [periodo, setPeriodo] = useState('Hoje');
-  const [tab, setTab] = useState<Tab>('geral');
+  const [tabEscolhida, setTab] = useState<Tab>('geral');
+  // Abas liberadas para o papel (Configurações › Permissões; admin vê todas).
+  const { hasPermissao } = usePermissoes();
+  const abas = tabs.filter((t) => { const k = relKeyDaAba(t.id); return !!k && hasPermissao(k); });
+  const tab: Tab | undefined = abas.some((t) => t.id === tabEscolhida) ? tabEscolhida : abas[0]?.id;
   const [refreshing, setRefreshing] = useState(false);
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
 
@@ -140,7 +146,7 @@ export default function RelatoriosPage() {
 
         {/* Tabs */}
         <div className="flex items-center gap-0 mt-3 md:mt-4 -mb-3 md:-mb-4 overflow-x-auto scrollbar-hide" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
-          {tabs.map((t) => (
+          {abas.map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
@@ -161,6 +167,9 @@ export default function RelatoriosPage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-3 md:p-6">
         <div className="max-w-7xl mx-auto">
+          {!tab && (
+            <p className="text-sm text-zinc-500 text-center py-16">Nenhuma aba dos Relatórios está liberada para o seu perfil. Fale com o administrador.</p>
+          )}
           {tab === 'geral'         && (
             <VisaoGeralTab
               periodo={periodoEfetivo}
