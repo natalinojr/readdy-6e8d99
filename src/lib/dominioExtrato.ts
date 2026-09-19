@@ -286,7 +286,7 @@ export const CATEGORIAS_FOLHA: Record<string, { label: string; tipo: TipoCategor
   ferias: { label: 'Férias e 1/3', tipo: 'provento' },
   salario_familia: { label: 'Salário-família', tipo: 'provento' },
   rescisao: { label: 'Outras verbas de rescisão', tipo: 'provento' },
-  inss_socio: { label: 'INSS do pró-labore (pago pela empresa)', tipo: 'provento' },
+  inss_socio: { label: 'INSS do pró-labore', tipo: 'provento' },
   outros_proventos: { label: 'Outros proventos', tipo: 'provento' },
   inss: { label: 'INSS descontado', tipo: 'desconto' },
   irrf: { label: 'IRRF', tipo: 'desconto' },

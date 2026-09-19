@@ -1336,9 +1336,20 @@ export default function RHTab() {
     return matchDept && matchSearch;
   });
   const pendingEntries = entries.filter(e => e.status === 'pending');
-  // Guias do mês: INSS = descontado dos empregados + INSS do pró-labore pago pela empresa; FGTS = da folha.
+  // Guias do mês: INSS = descontado dos empregados + INSS do pró-labore (DARF 1099); FGTS = da folha + consignado.
   const inssSocio = entries.reduce((s, e) => s + (e.rubricas ?? []).filter(r => r.categoria === 'inss_socio').reduce((a, r) => a + Number(r.valor || 0), 0), 0);
-  const guiaINSS = totalINSS + inssSocio;
+  // Somas por categoria de rubrica (folha do Domínio).
+  const somaCat = (cat: string) => entries.reduce((s, e) => s + (e.rubricas ?? []).filter(r => r.categoria === cat).reduce((a, r) => a + Number(r.valor || 0), 0), 0);
+  const inssColuna = totalINSS + inssSocio;
+  // Guias reais (conferido com as de 08/2026, dono 2026-09-18):
+  // INSS (DARF) = INSS descontado + INSS do sócio − salário-família (a empresa paga ao funcionário e abate da guia);
+  // FGTS Digital = FGTS da folha + consignado (Crédito do Trabalhador descontado em folha é recolhido na GFD);
+  // FGTS da rescisão vai em guia própria, fora da mensal.
+  const salarioFamilia = somaCat('salario_familia');
+  const consignado = somaCat('emprestimo');
+  const fgtsRescisao = entries.filter(e => isRescisao(e)).reduce((s, e) => s + Number(e.fgts || 0), 0);
+  const guiaINSS = Math.max(0, inssColuna - salarioFamilia);
+  const guiaFGTS = Math.max(0, totalFGTS - fgtsRescisao) + consignado;
   // INSS do sócio sem retirada (dono, 2026-09-18): é INSS recolhido no DARF, não salário. Na tela fica na
   // coluna INSS e fora de Proventos/Líquido; no custo total continua (a DRE conta pelo bruto da folha).
   const brutoSemSocio = totalBruto - inssSocio;
@@ -1558,8 +1569,14 @@ export default function RHTab() {
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500 border-t border-zinc-100 pt-3">
                 <span><i className="ri-bank-line text-zinc-400" /> Guias do mês:</span>
-                <span>INSS <strong className="text-zinc-800">{formatCurrency(guiaINSS)}</strong></span>
-                <span>FGTS <strong className="text-zinc-800">{formatCurrency(totalFGTS)}</strong></span>
+                <span title={`INSS descontado ${formatCurrency(totalINSS)}${inssSocio > 0 ? ` + INSS do sócio ${formatCurrency(inssSocio)}` : ''}${salarioFamilia > 0 ? ` − salário-família ${formatCurrency(salarioFamilia)}` : ''}`}>
+                  INSS (DARF) <strong className="text-zinc-800">{formatCurrency(guiaINSS)}</strong>
+                </span>
+                <span title={`FGTS ${formatCurrency(Math.max(0, totalFGTS - fgtsRescisao))}${consignado > 0 ? ` + consignado ${formatCurrency(consignado)}` : ''}`}>
+                  FGTS Digital <strong className="text-zinc-800">{formatCurrency(guiaFGTS)}</strong>
+                  {consignado > 0 && <span className="text-zinc-400"> (inclui consignado {formatCurrency(consignado)})</span>}
+                </span>
+                {fgtsRescisao > 0 && <span>FGTS da rescisão <strong className="text-zinc-800">{formatCurrency(fgtsRescisao)}</strong> <span className="text-zinc-400">(guia separada)</span></span>}
                 {totalIRRF > 0 && <span>IRRF <strong className="text-zinc-800">{formatCurrency(totalIRRF)}</strong></span>}
                 {temImportado && <span className="text-sky-700">· folha importada do Domínio</span>}
               </div>
@@ -1637,7 +1654,7 @@ export default function RHTab() {
                         <div className="flex gap-1 mt-0.5">
                           {isImportado(entry) && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">DOMÍNIO</span>}
                           {isRescisao(entry) && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-600">RESCISÃO</span>}
-                          {isSoInss(entry) && <span title="Não retira pró-labore: entra só o INSS de 11% que a empresa recolhe no DARF (código 1099)" className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700">SÓ INSS</span>}
+                          {isSoInss(entry) && <span title="Não retira pró-labore: entra só o INSS de 11% do DARF (código 1099)" className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700">SÓ INSS</span>}
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
@@ -1655,7 +1672,7 @@ export default function RHTab() {
                       </td>
                       <td className="px-4 py-3.5 text-sm text-right text-orange-600">
                         {formatCurrency(isSoInss(entry) ? Number(entry.gross_salary ?? 0) : entry.inss)}
-                        {isSoInss(entry) && <span className="block text-[10px] font-normal text-zinc-400">pago pela empresa no DARF</span>}
+                        {isSoInss(entry) && <span className="block text-[10px] font-normal text-zinc-400">DARF, código 1099</span>}
                       </td>
                       <td className="px-4 py-3.5 text-sm text-right text-red-500">{formatCurrency(entry.irrf)}</td>
                       <td className="px-4 py-3.5 text-sm text-right text-red-600">{formatCurrency(entry.total_descontos ?? entry.deductions)}</td>
@@ -1704,7 +1721,7 @@ export default function RHTab() {
                   <tr className="bg-zinc-50 border-t-2 border-zinc-200">
                     <td colSpan={2} className="px-5 py-3 text-sm font-bold text-zinc-800">Total</td>
                     <td className="px-4 py-3 text-sm font-bold text-right text-zinc-800">{formatCurrency(brutoSemSocio)}</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-orange-600">{formatCurrency(guiaINSS)}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right text-orange-600">{formatCurrency(inssColuna)}</td>
                     <td className="px-4 py-3 text-sm font-bold text-right text-red-500">{formatCurrency(totalIRRF)}</td>
                     <td className="px-4 py-3 text-sm font-bold text-right text-red-600">{formatCurrency(totalLiquido > 0 ? totalBruto - totalLiquido : 0)}</td>
                     <td className="px-4 py-3 text-sm font-bold text-right text-amber-600">{formatCurrency(totalFGTS)}</td>

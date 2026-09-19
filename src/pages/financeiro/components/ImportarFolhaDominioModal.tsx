@@ -43,7 +43,7 @@ function mapearFolha(f: FuncionarioExtrato, modo: ModoImport = 'completa') {
       desconto_faltas: 0, horas_faltantes: 0, dias_faltas: 0, other_deductions: 0,
       deductions: 0, total_proventos: v, total_descontos: 0, gross_salary: v, net_salary: v,
       custom_proventos: [], custom_descontos: [], dependentes: 0, status: 'pending', entry_type: 'regular',
-      rubricas: [{ codigo: '', descricao: 'INSS do pró-labore (pago pela empresa)', referencia: null, valor: v, tipo: 'P' as const, categoria: 'inss_socio' }],
+      rubricas: [{ codigo: '', descricao: 'INSS do pró-labore', referencia: null, valor: v, tipo: 'P' as const, categoria: 'inss_socio' }],
       notes: `Importado do Domínio — só o INSS${f.tipo === 'contribuinte' ? ' do pró-labore' : ''}: R$ ${reais(v)}. O valor de R$ ${reais(f.salario)} que aparece no extrato não foi pago.`,
     };
   }
