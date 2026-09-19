@@ -338,6 +338,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const abaRef = useRef('');
   // Ações rápidas (2026-09-16): roteiros fixos que rodam no sistema, sem o modelo (custo zero).
   const [menuAcoes, setMenuAcoes] = useState(false);
+  // Filtro das ações rápidas (dono, 2026-09-18): digitou, só ficam os botões que contêm o texto.
+  const [filtroAcoes, setFiltroAcoes] = useState('');
+  useEffect(() => { if (!menuAcoes) setFiltroAcoes(''); }, [menuAcoes]);
   const [acao, setAcao] = useState<string | null>(null);
   const abrirAcao = (id: string) => { setMenuAcoes(false); setAcao(id); setVista('conversa'); setModo('full'); };
   // Lista de conversas (2026-09-16): o painel abre na LISTA de assuntos, com cara de WhatsApp —
@@ -876,8 +879,27 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // de conversas (tela toda), onde a caixa não é mostrada (pedido do dono, 2026-09-16). O painel é
   // data-sem-arrasto: rolar a lista dele não conta como "puxar para abrir a conversa".
   // Lista de ações: compacta no cartão da barra pequena, grande quando o chat está na tela toda.
+  // Sem acento e sem maiúscula: "conciliacao" acha "Atualizar conciliação". Casa no nome e no grupo.
+  const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+  const termo = semAcento(filtroAcoes.trim());
+  const acoesFiltradas = termo ? ACOES.filter((a) => semAcento(`${a.label} ${a.grupo}`).includes(termo)) : ACOES;
+  const campoFiltroAcoes = (grande: boolean) => (
+    <div className={`relative ${grande ? 'pt-3' : 'px-1 pb-1'}`}>
+      <i className={`ri-search-line absolute ${grande ? 'left-3 top-[1.35rem]' : 'left-3.5 top-2'} text-zinc-400`} />
+      <input
+        type="text" value={filtroAcoes}
+        onChange={(e) => setFiltroAcoes(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && acoesFiltradas.length === 1) { e.preventDefault(); abrirAcao(acoesFiltradas[0].id); } }}
+        placeholder="Procurar ação…" aria-label="Procurar ação rápida" autoComplete="off" enterKeyHint="go"
+        className={`w-full ${grande ? 'h-11 pl-9 text-sm rounded-xl' : 'h-8 pl-8 text-[13px] rounded-lg'} pr-3 border border-zinc-200 bg-white focus:outline-none focus:border-violet-400`}
+      />
+    </div>
+  );
+  const semAcoes = (grande: boolean) => termo && !acoesFiltradas.length
+    ? <p className={`${grande ? 'py-10 text-sm' : 'px-2 py-3 text-xs'} text-center text-zinc-400`}>Nenhuma ação com “{filtroAcoes.trim()}”.</p>
+    : null;
   const listaAcoes = (grande: boolean) => GRUPOS.map((g) => {
-    const doGrupo = ACOES.filter((a) => a.grupo === g);
+    const doGrupo = acoesFiltradas.filter((a) => a.grupo === g);
     if (!doGrupo.length) return null;
     return (
       <div key={g} className={grande ? 'pt-3' : 'pt-1'}>
@@ -899,7 +921,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const menuAcoesPainel = (
         <div data-sem-arrasto className="mb-2 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-sm max-h-[50vh] overflow-y-auto">
           <p className="px-2 pt-1 pb-1 text-[11px] font-bold text-zinc-400 uppercase">Ações rápidas · sem custo de IA</p>
+          {campoFiltroAcoes(false)}
           {listaAcoes(false)}
+          {semAcoes(false)}
         </div>
   );
   // Tela toda (pedido do dono, 2026-09-17): as ações ocupam o painel inteiro, não um cartão sobre a caixa.
@@ -918,7 +942,11 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           <i className="ri-close-line text-xl" />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto px-3 pb-4">{listaAcoes(true)}</div>
+      <div className="flex-1 overflow-y-auto px-3 pb-4">
+        {campoFiltroAcoes(true)}
+        {listaAcoes(true)}
+        {semAcoes(true)}
+      </div>
     </div>
   );
   const botaoAcoes = (
