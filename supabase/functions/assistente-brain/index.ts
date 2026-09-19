@@ -1783,6 +1783,56 @@ Deno.serve(async (req) => {
       return json({ ok: true, msg: r.body?.message ?? 'desfeita' });
     }
 
+    // Recebimento pela foto da NOTA no grupo (dono, 2026-09-18). A NF-e do fornecedor já chega pela
+    // SEFAZ (Notas de entrada) quando ele fatura; a foto da loja só diz "chegou". Antes o modelo
+    // relançava a compra LENDO A FOTO — B&P: 4 itens em vez de 5, preços trocados, sem frete/ST,
+    // R$ 494,87 contra R$ 644,37 da nota. Agora: a compra sai do XML (fiscal-inbound import_purchase,
+    // com os vínculos de insumo memorizados) e o recebimento é confirmado — tudo com o JWT do dono.
+    if (body.action === 'recebimento_nota') {
+      const docId = String(body.document_id ?? '');
+      const origem = String(body.origem ?? 'foto da nota no grupo').slice(0, 120);
+      const { data: d } = await admin.from('fiscal_inbound_documents')
+        .select('id, tenant_id, numero, emitente_nome, valor_total, status, import_type, purchase_id, parcelas').eq('id', docId).maybeSingle();
+      if (!d) return json({ ok: false, erro: 'nota não encontrada' }, 404);
+      const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'owner_user_id').maybeSingle();
+      // deno-lint-ignore no-explicit-any
+      const ctx: any = { admin, ownerId: String(st?.value ?? '') };
+      const base = { numero: d.numero, fornecedor: d.emitente_nome, total: Number(d.valor_total ?? 0), parcelas: d.parcelas ?? [] };
+      if (d.status === 'ignored') return json({ ok: false, ...base, erro: 'a nota está marcada como ignorada em Notas de entrada' });
+      let purchaseId: string | null = d.purchase_id ? String(d.purchase_id) : null;
+      let lancou = false;
+      if (d.status !== 'imported') {
+        const lk = await callEdge(ctx, 'fiscal-inbound', 'item_links', { document_id: d.id }, d.tenant_id).catch(() => null);
+        // deno-lint-ignore no-explicit-any
+        const links = ((lk?.body?.links ?? []) as any[]).map((l, i) => (l?.ingredient_id ? { index: i, ingredient_id: l.ingredient_id, units_per_package: Number(l.units_per_package) || 1 } : null)).filter(Boolean);
+        const imp = await callEdge(ctx, 'fiscal-inbound', 'import_purchase', { document_id: d.id, links, notes: `Recebida: ${origem}` }, d.tenant_id);
+        if (imp.status >= 400 || imp.body?.success === false) return json({ ok: false, ...base, erro: `lançar a nota: ${String(imp.body?.error ?? imp.status).slice(0, 200)}` });
+        purchaseId = imp.body?.purchase_id ? String(imp.body.purchase_id) : null;
+        if (!purchaseId) {
+          const { data: d2 } = await admin.from('fiscal_inbound_documents').select('purchase_id').eq('id', d.id).maybeSingle();
+          purchaseId = d2?.purchase_id ? String(d2.purchase_id) : null;
+        }
+        lancou = true;
+      } else if (d.import_type === 'bill') {
+        return json({ ok: true, ...base, lancou: false, despesa: true });
+      }
+      if (!purchaseId) return json({ ok: false, ...base, erro: 'a compra da nota não foi encontrada' });
+      const { data: pu } = await admin.from('fin_purchases').select('id, delivery_confirmed_at, total_amount').eq('id', purchaseId).maybeSingle();
+      let confirmou = false; let erroReceb: string | null = null;
+      if (pu && !pu.delivery_confirmed_at) {
+        const cd = await callEdge(ctx, 'purchase-write', 'confirm_delivery', { purchase_id: purchaseId, delivery_notes: `Recebimento pela ${origem}` }, d.tenant_id);
+        confirmou = cd.status < 400 && cd.body?.success !== false;
+        if (!confirmou) erroReceb = String(cd.body?.error ?? cd.status).slice(0, 200);
+      }
+      const { data: its } = await admin.from('fin_purchase_items').select('ingredient_id, description').eq('purchase_id', purchaseId);
+      const semInsumo = (its ?? []).filter((i) => !i.ingredient_id && !/^Acréscimos da nota/i.test(String(i.description ?? ''))).map((i) => String(i.description));
+      log('INFO', 'recebimento pela nota', { doc: d.id, lancou, confirmou, semInsumo: semInsumo.length });
+      return json({
+        ok: true, ...base, purchase_id: purchaseId, lancou, confirmou, ja_recebida: !!pu?.delivery_confirmed_at,
+        erro_recebimento: erroReceb, itens: (its ?? []).length, sem_insumo: semInsumo,
+      });
+    }
+
     if (body.action === 'baixa_conciliada') {
       const pid = String(body.payment_id ?? '');
       const { data: p } = await admin.from('fin_inter_payments').select('*').eq('id', pid).maybeSingle();

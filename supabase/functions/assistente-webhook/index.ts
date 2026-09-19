@@ -390,6 +390,82 @@ async function abrirPendenciaPagamento(
   } catch (e) { log('WARN', 'abrir pendência de pagamento', { pedido: reqId, error: errMsg(e) }); }
 }
 
+// ── Recebimento pela foto da nota (2026-09-18) ─────────────────────────────
+// Fluxo da loja: o fornecedor emite a NF-e para transportar (ela chega sozinha em Notas de entrada)
+// e, quando a mercadoria chega, a loja tira foto da nota no grupo. A foto é a CONFIRMAÇÃO de que
+// chegou — o que chegou está no XML. Acha a nota: 1º pela chave de acesso lida na foto; senão pelo
+// número + valor total (nota dos últimos 60 dias).
+// deno-lint-ignore no-explicit-any
+async function notaDaFoto(admin: SupabaseClient, content: string, extracted: any): Promise<{ id: string; tenant_id: string } | null> {
+  const texto = `${content}\n${String(extracted?.texto ?? '')}`;
+  const chaves = [...texto.matchAll(/(?:\d[\s.]?){43}\d/g)].map((m) => m[0].replace(/\D/g, '')).filter((c) => c.length === 44);
+  for (const chave of [...new Set(chaves)]) {
+    const { data } = await admin.from('fiscal_inbound_documents').select('id, tenant_id').eq('chave', chave).maybeSingle();
+    if (data) return { id: String(data.id), tenant_id: String(data.tenant_id) };
+  }
+  if (!/DANFE|NF-?e|nota fiscal/i.test(texto)) return null;
+  const num = texto.match(/(?:DANFE|NF-?e)\s*(?:n[º°o.]*|n[úu]mero)?\s*:?\s*(\d{1,3}(?:\.\d{3})+|\d{3,9})/i)?.[1];
+  const numero = num ? Number(num.replace(/\D/g, '')) : NaN;
+  const vTxt = texto.match(/VALOR TOTAL DA NOTA\s*:?\s*(?:R\$\s*)?([\d.]+,\d{2})/i)?.[1];
+  const valor = vTxt ? Number(vTxt.replace(/\./g, '').replace(',', '.')) : Number(extracted?.pagamento?.valor ?? NaN);
+  if (!Number.isFinite(numero) || !(valor > 0)) return null;
+  const { data: cands } = await admin.from('fiscal_inbound_documents').select('id, tenant_id, valor_total')
+    .eq('numero', numero).gte('emitted_at', new Date(Date.now() - 60 * 86400_000).toISOString());
+  const hit = (cands ?? []).filter((c) => Math.abs(Number(c.valor_total) - valor) <= 0.02);
+  return hit.length === 1 ? { id: String(hit[0].id), tenant_id: String(hit[0].tenant_id) } : null;
+}
+
+// DACTE cujo tomador do serviço não é nenhuma das lojas → CNPJ do tomador; senão null.
+async function freteDeOutroTomador(admin: SupabaseClient, content: string): Promise<string | null> {
+  if (!/DACTE|Conhecimento de Transporte/i.test(content)) return null;
+  const m = content.match(/Tomador(?: do Servi[çc]o)?\s*:?\s*([\d./-]{14,20})/i);
+  const tomador = m ? m[1].replace(/\D/g, '') : '';
+  if (tomador.length !== 14) return null;
+  const { data: lojas } = await admin.from('tenants').select('cnpj');
+  const nossos = new Set((lojas ?? []).map((t) => String(t.cnpj ?? '').replace(/\D/g, '')).filter(Boolean));
+  return nossos.has(tomador) ? null : tomador.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+}
+
+// deno-lint-ignore no-explicit-any
+async function recebimentoPorNota(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string }, nota: { id: string; tenant_id: string }) {
+  const { data: req, error } = await admin.from('asst_group_requests').insert({
+    message_id: msg.messageId, group_jid: g.group_jid, group_name: g.name, sender_name: msg.sender,
+    kind: 'compra', status: 'novo', data: { texto: msg.content, extraido: msg.extracted, sent_at: msg.sentAt, nota_entrada_id: nota.id },
+  }).select('id').maybeSingle();
+  if (error || !req) { if (error && !/duplicate|unique/i.test(error.message)) log('WARN', 'gravar recebimento', { error: error.message }); return; }
+  // deno-lint-ignore no-explicit-any
+  let r: any = null;
+  try {
+    const resp = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({ action: 'recebimento_nota', document_id: nota.id, origem: `foto da nota no grupo ${g.name ?? ''}`.trim() }),
+    });
+    r = await resp.json().catch(() => null);
+  } catch (e) { r = { ok: false, erro: errMsg(e) }; }
+  const brlN = (n: unknown) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const venc = (Array.isArray(r?.parcelas) ? r.parcelas : []).map((p: { vencimento?: string; valor?: number }) => `${String(p.vencimento ?? '').split('-').reverse().join('/')} (${brlN(p.valor)})`).join(', ');
+  const cab = `📦 *Recebimento — ${r?.fornecedor ?? 'nota'}* (NF ${r?.numero ?? '?'}, ${brlN(r?.total)}) — ${msg.sender ?? 'loja'} no grupo ${g.name ?? ''}`;
+  const linhas: string[] = [cab];
+  if (!r?.ok) linhas.push(`⚠️ Não consegui lançar pela nota: ${r?.erro ?? 'erro'}. Lance em Notas de entrada.`);
+  else if (r.despesa) linhas.push('A nota já estava lançada como despesa.');
+  else {
+    linhas.push(r.lancou ? `Compra lançada pelo XML da nota (${r.itens} itens, com frete e impostos).` : 'A compra dessa nota já estava lançada.');
+    linhas.push(r.confirmou ? '✅ Recebimento confirmado: o estoque entrou.' : r.ja_recebida ? 'O recebimento já tinha sido confirmado.' : `⚠️ Recebimento não confirmado: ${r.erro_recebimento ?? 'erro'}.`);
+    if (r.sem_insumo?.length) linhas.push(`Sem insumo ligado (não entram no estoque): ${r.sem_insumo.slice(0, 6).join('; ')}${r.sem_insumo.length > 6 ? '…' : ''}`);
+    if (venc) linhas.push(`Boleto em Contas a pagar: ${venc}.`);
+  }
+  await admin.from('asst_group_requests').update({ status: r?.ok ? 'lancado' : 'erro', reply: linhas.join('\n').slice(0, 2000), updated_at: new Date().toISOString() }).eq('id', req.id);
+  const ownerChat = ownerChatOf(cfg);
+  if (ownerChat?.startsWith('tg:')) {
+    await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+      body: JSON.stringify({ action: 'deliver', chat_key: ownerChat, save: true, topic: 'compras', text: linhas.join('\n'),
+        actions: [{ type: 'abrir', label: 'Ver a compra', rota: '/financeiro?tab=compras' }] }),
+    }).catch((e) => log('WARN', 'aviso de recebimento', { error: errMsg(e) }));
+  }
+  log('INFO', 'recebimento pela nota', { group: g.name, doc: nota.id, ok: !!r?.ok, lancou: r?.lancou, confirmou: r?.confirmou });
+}
+
 // Triagem: mensagem de grupo que parece pedido de pagamento → brain (modo
 // 'triagem_grupo') → pagamento preparado + aviso ao dono. Uma linha por mensagem em
 // asst_group_requests (message_id único), então reenvio do webhook não prepara 2×.
@@ -935,6 +1011,29 @@ async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], 
 
   // Resposta com os dias de um freelancer que ficou pendente? Tratada, não é pedido novo.
   if (await triarDiasFreelancer(admin, cfg, g, { messageId, sender, content, sentAt })) return;
+
+  // Foto de NF-e que JÁ está em Notas de entrada = "a mercadoria chegou" (dono, 2026-09-18). A compra
+  // sai do XML (não da leitura da foto, que errou itens e preços da B&P) e o recebimento é confirmado.
+  // Só quando a legenda não pede pagamento — pedido explícito segue a triagem de sempre.
+  if (extracted && !PAY_HINT.test(baseText)) {
+    const nota = await notaDaFoto(admin, content, extracted).catch((e) => { log('WARN', 'procurar nota da foto', { error: errMsg(e) }); return null; });
+    if (nota) { await recebimentoPorNota(admin, cfg, g, { messageId, sender, content, extracted, sentAt }, nota); return; }
+  }
+  // Frete (DACTE) cobrado de OUTRO tomador — ex.: o fornecedor paga a transportadora (CIF). Não é
+  // pagamento nosso: a Expresso São Miguel da B&P virou pendência de R$ 75,59 (2026-09-18).
+  const freteDeOutro = await freteDeOutroTomador(admin, content).catch(() => null);
+  if (freteDeOutro) {
+    const ownerChat = ownerChatOf(cfg);
+    log('INFO', 'frete de outro tomador: não é pagamento nosso', { group: g.name, tomador: freteDeOutro });
+    if (ownerChat?.startsWith('tg:')) {
+      await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+        body: JSON.stringify({ action: 'deliver', chat_key: ownerChat, save: true, topic: 'compras',
+          text: `🚚 Conhecimento de frete postado no grupo *${g.name ?? ''}*: quem paga é o tomador do serviço (CNPJ ${freteDeOutro}), não a loja — não virou pagamento.` }),
+      }).catch((e) => log('WARN', 'aviso de frete de outro tomador', { error: errMsg(e) }));
+    }
+    return;
+  }
 
   // Pedido de pagamento? A leitura da mídia manda quando existe; senão, o texto.
   const pedido = extracted?.pagamento
