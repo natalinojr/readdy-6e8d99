@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { invokeWithAuth } from '@/lib/supabase';
+import { useCallback, useEffect, useState } from 'react';
+import { invokeWithAuth, supabase } from '@/lib/supabase';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
@@ -21,6 +21,17 @@ interface SangriaSuprimentoModalProps {
 }
 
 type MotivoRetirada = 'Sangria' | 'Fornecedor' | 'Freelancer' | 'Troco' | 'Outro';
+// Tipo que vai ao Financeiro (2026-09-19): "Sangria" é o dinheiro que o dono retira (retirada do sócio,
+// fora das despesas); Fornecedor pago em dinheiro liga à compra lançada pelo cupom.
+const CATEGORIA: Record<MotivoRetirada, string> = {
+  Sangria: 'retirada_socio', Fornecedor: 'fornecedor', Freelancer: 'freelancer', Troco: 'troco', Outro: 'outro',
+};
+const ROTULO: Record<MotivoRetirada, string> = {
+  Sangria: 'Sangria (dono)', Fornecedor: 'Fornecedor', Freelancer: 'Freelancer', Troco: 'Troco', Outro: 'Outro',
+};
+
+// Sangria prevista: compra paga em dinheiro que o assistente lançou pelo cupom do grupo.
+interface SangriaPrevista { id: string; amount: number; supplier: string | null; description: string | null; created_at: string }
 type MotivoAdicao = 'Troco' | 'Outros';
 
 const fmt = (v: number) =>
@@ -46,11 +57,61 @@ export default function SangriaSuprimentoModal({
   const [erro, setErro] = useState('');
   const [confirmado, setConfirmado] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [previstas, setPrevistas] = useState<SangriaPrevista[]>([]);
+  // Freelancer: escolhe do cadastro ou cadastra aqui mesmo (dono, 2026-09-19).
+  const [freelas, setFreelas] = useState<{ id: string; name: string; daily_rate: number | null }[]>([]);
+  const [freelaId, setFreelaId] = useState<string>('');
+  const [freelaNovo, setFreelaNovo] = useState(false);
+  const [telefoneFreela, setTelefoneFreela] = useState('');
+  useEffect(() => {
+    if (!user?.tenantId) return;
+    supabase.from('hr_freelancers').select('id, name, daily_rate').eq('tenant_id', user.tenantId).eq('is_active', true).order('name')
+      .then(({ data }) => setFreelas((data ?? []) as { id: string; name: string; daily_rate: number | null }[]));
+  }, [user?.tenantId]);
+  const [resolvendo, setResolvendo] = useState<string | null>(null);
+
+  const carregarPrevistas = useCallback(async () => {
+    if (!user?.tenantId) return;
+    const { data } = await invokeWithAuth<{ data?: SangriaPrevista[] }>('order-write', { body: { action: 'list_sangrias_previstas', tenant_id: user.tenantId } });
+    setPrevistas(data?.data ?? []);
+  }, [user?.tenantId]);
+  useEffect(() => { carregarPrevistas(); }, [carregarPrevistas]);
+
+  // Confirmar a prevista: o valor e a compra vêm do servidor, o operador só confirma que o dinheiro saiu.
+  const confirmarPrevista = async (pv: SangriaPrevista) => {
+    if (!caixa?.id || !user?.tenantId || resolvendo) return;
+    setResolvendo(pv.id); setErro('');
+    const { data, error } = await invokeWithAuth<{ data?: { reason: string }; error?: string }>('order-write', {
+      body: { action: 'add_cash_movement', cash_register_id: caixa.id, tenant_id: user.tenantId, type: 'out', previsao_id: pv.id, amount: pv.amount, reason: '' },
+    });
+    setResolvendo(null);
+    if (error || !data?.data) { setErro((data as { error?: string } | null)?.error ?? error?.message ?? 'Não consegui confirmar.'); return; }
+    const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const motivo = `Fornecedor: ${pv.supplier ?? 'compra'} (cupom)`;
+    registrarEvento({
+      tipo: 'sangria', severidade: pv.amount >= 200 ? 'aviso' : 'info', usuario: user?.nome ?? 'Operador', perfil: user?.perfil ?? 'operador',
+      descricao: `Sangria de ${fmt(pv.amount)} confirmada — ${motivo}`, entidade: 'Caixa', entidadeId: caixa.id,
+      detalhes: `Valor: ${fmt(pv.amount)} | Motivo: ${motivo} | Hora: ${hora}`, depois: { valor: pv.amount, motivo, tipo: 'sangria' },
+    });
+    onRegistrar({ tipo: 'sangria', valor: pv.amount, motivo, hora });
+    await carregarPrevistas();
+  };
+  const naoSaiu = async (pv: SangriaPrevista) => {
+    if (!user?.tenantId || resolvendo) return;
+    if (!window.confirm(`O dinheiro da compra ${pv.supplier ?? ''} (${fmt(pv.amount)}) NÃO saiu deste caixa? O gerente vai ser avisado para conferir.`)) return;
+    setResolvendo(pv.id);
+    await invokeWithAuth('order-write', { body: { action: 'sangria_prevista_nao_saiu', tenant_id: user.tenantId, previsao_id: pv.id, motivo: 'informado no PDV' } });
+    setResolvendo(null);
+    await carregarPrevistas();
+  };
 
   const motivoFinal = (): string => {
     if (tipo === 'suprimento') return motivoAdicao === 'Outros' ? motivoOutro : motivoAdicao;
     if (motivoRetirada === 'Fornecedor') return nomeFornecedor ? `Fornecedor: ${nomeFornecedor}` : '';
-    if (motivoRetirada === 'Freelancer') return nomeFreelancer ? `Freelancer: ${nomeFreelancer}` : '';
+    if (motivoRetirada === 'Freelancer') {
+      const nome = freelaNovo || !freelaId ? nomeFreelancer : (freelas.find((f) => f.id === freelaId)?.name ?? '');
+      return nome ? `Freelancer: ${nome}` : '';
+    }
     if (motivoRetirada === 'Outro') return motivoOutro;
     return motivoRetirada;
   };
@@ -61,7 +122,7 @@ export default function SangriaSuprimentoModal({
     const mf = motivoFinal();
     if (!mf.trim()) { setErro('Informe o motivo da movimentação.'); return; }
     if (motivoRetirada === 'Fornecedor' && !nomeFornecedor.trim()) { setErro('Informe o nome do fornecedor.'); return; }
-    if (motivoRetirada === 'Freelancer' && !nomeFreelancer.trim()) { setErro('Informe o nome do freelancer.'); return; }
+    if (motivoRetirada === 'Freelancer' && !(freelaId && !freelaNovo) && !nomeFreelancer.trim()) { setErro('Escolha o freelancer ou cadastre o nome.'); return; }
     if (tipo === 'suprimento' && motivoAdicao === 'Outros' && !motivoOutro.trim()) { setErro('Descreva o motivo da movimentação.'); return; }
 
     setSalvando(true);
@@ -77,6 +138,10 @@ export default function SangriaSuprimentoModal({
           type: tipo === 'sangria' ? 'out' : 'in',
           amount: v,
           reason: mf,
+          category: tipo === 'sangria' && motivoRetirada ? CATEGORIA[motivoRetirada] : undefined,
+          freelancer: tipo === 'sangria' && motivoRetirada === 'Freelancer'
+            ? (freelaId && !freelaNovo ? { id: freelaId } : { nome: nomeFreelancer.trim(), telefone: telefoneFreela.trim() || undefined })
+            : undefined,
         },
       });
 
@@ -155,6 +220,31 @@ export default function SangriaSuprimentoModal({
         </div>
 
         <div className="p-6 space-y-5">
+          {/* Sangrias previstas: compra paga em dinheiro lançada pelo cupom — é só confirmar. */}
+          {previstas.length > 0 && (
+            <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-3 space-y-2">
+              <p className="text-xs font-black text-amber-900"><i className="ri-receipt-line" /> Aguardando sua confirmação ({previstas.length})</p>
+              <p className="text-[11px] text-amber-800">Compras pagas em dinheiro do caixa (cupom já lançado). O caixa só fecha depois de confirmar.</p>
+              {previstas.map((pv) => (
+                <div key={pv.id} className="flex items-center gap-2 bg-white rounded-lg border border-amber-200 px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-zinc-900 truncate">{pv.supplier ?? 'Compra'}</p>
+                    <p className="text-[11px] text-zinc-500">{new Date(pv.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+                  </div>
+                  <span className="text-sm font-black text-red-600 whitespace-nowrap">-{fmt(pv.amount)}</span>
+                  <button onClick={() => confirmarPrevista(pv)} disabled={!!resolvendo}
+                    className="px-3 py-1.5 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg cursor-pointer disabled:opacity-50 whitespace-nowrap">
+                    {resolvendo === pv.id ? '...' : 'Confirmar'}
+                  </button>
+                  <button onClick={() => naoSaiu(pv)} disabled={!!resolvendo} title="O dinheiro não saiu deste caixa"
+                    className="px-2 py-1.5 text-[11px] font-semibold text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded-lg cursor-pointer disabled:opacity-50 whitespace-nowrap">
+                    Não saiu
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Tipo */}
           <div className="grid grid-cols-2 gap-2">
             <button
@@ -215,19 +305,52 @@ export default function SangriaSuprimentoModal({
                   {(['Sangria', 'Fornecedor', 'Freelancer', 'Troco', 'Outro'] as MotivoRetirada[]).map((m) => (
                     <button key={m} onClick={() => { setMotivoRetirada(m); setErro(''); }}
                       className={`py-2 px-2 text-xs font-medium rounded-lg cursor-pointer transition-colors text-center ${motivoRetirada === m ? 'bg-red-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-                      {m}
+                      {ROTULO[m]}
                     </button>
                   ))}
                 </div>
+                {motivoRetirada === 'Sangria' && (
+                  <p className="text-[11px] text-zinc-500 mb-2">Dinheiro retirado pelo dono — não entra como despesa da loja.</p>
+                )}
                 {motivoRetirada === 'Fornecedor' && (
-                  <input value={nomeFornecedor} onChange={(e) => setNomeFornecedor(e.target.value)}
-                    placeholder="Nome do fornecedor..."
-                    className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400" />
+                  <>
+                    <input value={nomeFornecedor} onChange={(e) => setNomeFornecedor(e.target.value)}
+                      placeholder="Nome do fornecedor..."
+                      className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400" />
+                    <p className="text-[11px] text-amber-700 mt-1.5"><i className="ri-camera-line" /> Sem cupom: mande a foto do cupom no grupo da loja — o assistente lança a compra e liga a esta retirada. Até lá fica pendente.</p>
+                  </>
                 )}
                 {motivoRetirada === 'Freelancer' && (
-                  <input value={nomeFreelancer} onChange={(e) => setNomeFreelancer(e.target.value)}
-                    placeholder="Nome do freelancer..."
-                    className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400" />
+                  <div className="space-y-2">
+                    {!freelaNovo && freelas.length > 0 && (
+                      <select value={freelaId} onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '__novo') { setFreelaNovo(true); setFreelaId(''); return; }
+                        setFreelaId(v);
+                        const f = freelas.find((x) => x.id === v);
+                        if (f?.daily_rate && !valor) setValor(String(f.daily_rate));
+                      }}
+                        className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 text-zinc-800 bg-white focus:outline-none focus:border-amber-400">
+                        <option value="">Escolha o freelancer...</option>
+                        {freelas.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                        <option value="__novo">+ Cadastrar novo</option>
+                      </select>
+                    )}
+                    {(freelaNovo || freelas.length === 0) && (
+                      <>
+                        <input value={nomeFreelancer} onChange={(e) => setNomeFreelancer(e.target.value)}
+                          placeholder="Nome completo do freelancer (novo cadastro)"
+                          className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400" />
+                        <input value={telefoneFreela} onChange={(e) => setTelefoneFreela(e.target.value)} inputMode="tel"
+                          placeholder="Telefone (opcional)"
+                          className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400" />
+                        {freelas.length > 0 && (
+                          <button type="button" onClick={() => { setFreelaNovo(false); setNomeFreelancer(''); }} className="text-[11px] text-zinc-500 underline cursor-pointer">Escolher da lista</button>
+                        )}
+                      </>
+                    )}
+                    <p className="text-[11px] text-zinc-500">Registra a diária de hoje paga em dinheiro (aparece em Financeiro › Freelancers).</p>
+                  </div>
                 )}
                 {motivoRetirada === 'Outro' && (
                   <input value={motivoOutro} onChange={(e) => setMotivoOutro(e.target.value)}

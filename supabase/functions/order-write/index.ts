@@ -529,6 +529,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!crCheck) { return new Response(JSON.stringify({ error: "cash_register_id invalido para este tenant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       // Já fechado (reenvio/duplo clique): devolve o fechamento existente sem sobrescrever.
       if (crCheck.status !== "open") { return new Response(JSON.stringify({ ok: true, already_closed: true, closing_expected: Number(crCheck.closing_value_expected ?? 0), closing_difference: Number(crCheck.closing_difference ?? 0) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      // Sangria prevista (compra paga em dinheiro lançada pelo cupom) sem confirmar: não fecha (dono, 2026-09-19).
+      const { count: previstas } = await admin.from("cash_sangrias_previstas").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId).eq("status", "pendente");
+      if ((previstas ?? 0) > 0) return new Response(JSON.stringify({ error: `Há ${previstas} sangria(s) aguardando confirmação. Abra Sangria e confirme antes de fechar o caixa.`, code: "sangria_prevista" }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       let closingExpected: number = Number(crCheck.opening_value ?? 0);
       try {
         const { data: movements } = await admin.from("cash_movements").select("type, amount").eq("cash_register_id", cash_register_id);
@@ -557,19 +560,97 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ ok: true, closing_expected: closingExpected, closing_difference: closingDiff }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // Sangrias previstas da loja (compra paga em dinheiro lançada pelo cupom): o PDV mostra para confirmar.
+    if (action === "list_sangrias_previstas") {
+      const { data, error } = await admin.from("cash_sangrias_previstas").select("id, amount, kind, supplier, description, purchase_id, created_at")
+        .eq("tenant_id", tenantId).eq("status", "pendente").order("created_at");
+      if (error) throw error;
+      return new Response(JSON.stringify({ data: data ?? [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // "Esse dinheiro não saiu deste caixa": a prevista sai da fila e vira pendência para o dono (de onde saiu?).
+    if (action === "sangria_prevista_nao_saiu") {
+      const { previsao_id, motivo } = body;
+      const { data: pv } = await admin.from("cash_sangrias_previstas").update({ status: "nao_saiu", resolved_at: new Date().toISOString(), resolved_by: effectiveUserId, notes: typeof motivo === "string" ? motivo.slice(0, 300) : null })
+        .eq("id", previsao_id).eq("tenant_id", tenantId).eq("status", "pendente").select("id, amount, supplier, purchase_id").maybeSingle();
+      if (!pv) return new Response(JSON.stringify({ error: "Sangria prevista não encontrada (ou já resolvida)." }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const brl = (n: number) => Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+      await admin.from("pendencias").upsert({
+        tenant_id: tenantId, kind: "sangria_nao_saiu", ref: String(pv.id), status: "aberta", urgencia: "normal", acao_requerida: true, origem: "pdv",
+        titulo: `Compra em dinheiro que não saiu do caixa — ${pv.supplier ?? "fornecedor"} ${brl(Number(pv.amount))}`,
+        detalhe: `O caixa informou que esse dinheiro não saiu da gaveta${motivo ? ` (${String(motivo).slice(0, 200)})` : ""}. Confira de onde saiu e ajuste a forma de pagamento da compra.`,
+        rota: "/financeiro?tab=compras", payload: { purchase_id: pv.purchase_id, previsao_id: pv.id },
+      }, { onConflict: "tenant_id,kind,ref" });
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "add_cash_movement") {
-      const { cash_register_id, type, amount, reason } = body;
+      const { cash_register_id, type, reason, previsao_id } = body;
+      let { amount } = body;
+      // Tipo da retirada (2026-09-19): retirada_socio | fornecedor | freelancer | troco | outro.
+      const CATS = ["retirada_socio", "fornecedor", "freelancer", "troco", "outro"];
+      let category: string | null = CATS.includes(String(body.category ?? "")) ? String(body.category) : null;
       if (cash_register_id) {
         const { data: crCheck2 } = await admin.from("cash_registers").select("id, tenant_id").eq("id", cash_register_id).eq("tenant_id", tenantId).maybeSingle();
         if (!crCheck2) { return new Response(JSON.stringify({ error: "cash_register_id invalido para este tenant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
       }
       if (effectiveUserId) await ensureUserExists(effectiveUserId);
-      const normalizedType = (type === "withdrawal" || type === "out") ? "out" : "in";
+      let normalizedType = (type === "withdrawal" || type === "out") ? "out" : "in";
+      // Confirmação de sangria prevista: valor e compra vêm da prevista (não do que foi digitado).
+      // deno-lint-ignore no-explicit-any
+      let prevista: any = null;
+      if (previsao_id) {
+        const { data: pv } = await admin.from("cash_sangrias_previstas").select("id, amount, supplier, purchase_id, status").eq("id", previsao_id).eq("tenant_id", tenantId).maybeSingle();
+        if (!pv || pv.status !== "pendente") return new Response(JSON.stringify({ error: "Essa sangria prevista já foi resolvida." }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        prevista = pv; amount = Number(pv.amount); normalizedType = "out"; category = "fornecedor";
+      }
       const isOutflow = normalizedType === "out";
-      const { data, error } = await admin.from("cash_movements").insert({ cash_register_id, tenant_id: tenantId, type: normalizedType, amount, reason, operator_id: effectiveUserId }).select("id, type, amount, reason, created_at").single();
+      const reasonFinal = prevista ? `Fornecedor: ${prevista.supplier ?? "compra"} (cupom lido pelo assistente)` : reason;
+      const semCupom = isOutflow && category === "fornecedor" && !prevista;
+      const { data, error } = await admin.from("cash_movements").insert({
+        cash_register_id, tenant_id: tenantId, type: normalizedType, amount, reason: reasonFinal, operator_id: effectiveUserId,
+        category: isOutflow ? category : null, purchase_id: prevista?.purchase_id ?? null, previsao_id: prevista?.id ?? null, needs_receipt: semCupom,
+      }).select("id, type, amount, reason, created_at").single();
       if (error) throw error;
-      try { await admin.from("fin_cash_flow").insert({ tenant_id: tenantId, type: isOutflow ? "expense" : "income", amount, description: reason || (isOutflow ? "Sangria" : "Suprimento"), category: isOutflow ? "Sangria" : "Suprimento", origin: isOutflow ? "auto_sangria" : "auto_suprimento", reference_id: data?.id, date: todayBrasiliaStr() }); } catch { /* non-blocking */ }
-      return new Response(JSON.stringify({ data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // Freelancer pago em dinheiro (2026-09-19): diária do dia + conta de RH já paga; cadastra se for novo.
+      // deno-lint-ignore no-explicit-any
+      let freela: any = null;
+      if (isOutflow && category === "freelancer" && body.freelancer && typeof body.freelancer === "object") {
+        const f = body.freelancer as { id?: string; nome?: string; telefone?: string };
+        const { data: fr, error: fe } = await admin.rpc("fn_freelancer_diaria_dinheiro", {
+          p_tenant: tenantId, p_freelancer: f.id || null, p_nome: f.nome ?? null, p_telefone: f.telefone ?? null, p_valor: Number(amount), p_cash_movement: data.id,
+        });
+        if (fe) console.warn(JSON.stringify({ fn: "order-write", msg: "diária do freelancer", error: fe.message }));
+        freela = fr ?? null;
+      }
+      if (prevista) {
+        await admin.from("cash_sangrias_previstas").update({ status: "confirmada", cash_movement_id: data.id, resolved_at: new Date().toISOString(), resolved_by: effectiveUserId }).eq("id", prevista.id).eq("status", "pendente");
+      }
+      // Fluxo de caixa: compra já lançou 'auto_purchase' → a sangria ligada a ela não lança de novo.
+      // Retirada do dono não é despesa da loja (fora do Top Despesas); o resto segue como antes.
+      if (!prevista) {
+        const socio = isOutflow && category === "retirada_socio";
+        try {
+          await admin.from("fin_cash_flow").insert({
+            tenant_id: tenantId, type: isOutflow ? "expense" : "income", amount, description: reasonFinal || (isOutflow ? "Sangria" : "Suprimento"),
+            category: socio ? "Retirada do sócio" : freela ? "Freelancer" : isOutflow ? "Sangria" : "Suprimento",
+            origin: socio ? "auto_retirada_socio" : isOutflow ? "auto_sangria" : "auto_suprimento", reference_id: data?.id, date: todayBrasiliaStr(),
+          });
+        } catch { /* non-blocking */ }
+      }
+      // Fornecedor pago em dinheiro SEM cupom: pendência até a foto chegar (o assistente liga a compra à sangria).
+      if (semCupom) {
+        const brl = (n: number) => Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+        try {
+          await admin.from("pendencias").upsert({
+            tenant_id: tenantId, kind: "sangria_sem_cupom", ref: String(data.id), status: "aberta", urgencia: "normal", acao_requerida: true, origem: "pdv",
+            titulo: `Sangria sem cupom — ${String(reasonFinal ?? "Fornecedor").replace(/^Fornecedor:\s*/i, "")} ${brl(Number(amount))}`,
+            detalhe: "Pagamento a fornecedor em dinheiro do caixa sem o cupom. Mande a foto do cupom no grupo da loja: o assistente lança a compra e liga a esta sangria.",
+            rota: null, payload: { cash_movement_id: data.id, valor: Number(amount), motivo: reasonFinal },
+          }, { onConflict: "tenant_id,kind,ref" });
+        } catch { /* non-blocking */ }
+      }
+      return new Response(JSON.stringify({ data, freelancer: freela }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "create_order") {

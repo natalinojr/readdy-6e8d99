@@ -75,7 +75,7 @@ const VIEWS = [
 // exportava o slug cru nessas linhas.
 const originLabel: Record<string, string> = {
   manual: 'Manual', auto_sale: 'Venda', auto_purchase: 'Compra',
-  auto_sangria: 'Sangria', auto_suprimento: 'Suprimento',
+  auto_sangria: 'Sangria', auto_suprimento: 'Suprimento', auto_retirada_socio: 'Retirada do sócio',
   auto_bill_payment: 'Conta paga', auto_card_fee: 'Taxa de cartão', stone_sale: 'Venda cartão (maquininha)',
   auto_payroll: 'Folha', auto_anticipation: 'Antecipação',
 };

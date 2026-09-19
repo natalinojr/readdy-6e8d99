@@ -618,7 +618,8 @@ export function useTopDespesas(monthsBack = 1) {
     };
 
     // Todas as saídas do fluxo de caixa (inclui auto_payroll, auto_purchase, auto_bill_payment, antecipações, manuais)
-    (data ?? []).forEach(c => addToMap(c.category || 'Outros', c.amount));
+    // Retirada do sócio (sangria "Sangria" do PDV, 2026-09-19) não é despesa da loja.
+    (data ?? []).filter(c => c.origin !== 'auto_retirada_socio').forEach(c => addToMap(c.category || 'Outros', c.amount));
 
     const total = Object.values(map).reduce((s, v) => s + v.total, 0);
 
