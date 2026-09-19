@@ -2709,3 +2709,16 @@ Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — prob
 - Se um dia uma loja liberar Financeiro/Estoque para outro papel na tela de permissões, a edge vai responder 403 — decidir então se a edge passa a respeitar a tabela `permissions`.
 - Em aberto (não mexido para não quebrar o PDV, que usa PIN do gerente na tela): no order-write, `register_partial_refund` grava o `authorized_by` mandado pelo front sem conferir, e `process_refund`/`cancel_order` não conferem cargo no servidor.
 - Teste: `qa.caixa`/`qa.garcom` → 403; `qa.admin` e gerente (qa.garcom promovido temporariamente) → passam.
+
+### iFood: repasse antecipado por loja (2026-09-19)
+- **iFood com repasse antecipado (2026-09-19):** o relatório de conciliação traz a data ORIGINAL
+  (`data_repasse_esperada`) e não traz a "Taxa de antecipação" do Portal. Vila Leste › Pontal (2882833)
+  antecipa 1,59%, pago 21 dias antes (quarta depois da semana de vendas); Paranaguá não antecipa.
+  Config por loja em `fin_ifood_merchants.anticipation_pct/days` (janela do lápis na aba iFood →
+  `ifood-financial` › `set_anticipation`). `fin_ifood_entries.data_repasse` = data efetiva;
+  `data_repasse_original` = a do relatório; `fn_ifood_apply_anticipation` reaplica. Taxa =
+  round(repasse da loja no dia × pct, 2), lançada como `ifood_fee` e descontada do `esperado` em
+  `fin_ifood_repasses` (detalhe.bruto/antecipacao). Portal: cartões de faturamento atrasam (em 19/09
+  faltavam 2 pedidos de 18/09 que já estavam no relatório e no subtotal dos repasses).
+- Loja sem conta de depósito do iFood ("Como o dinheiro entra"; ex.: Vila Leste, Itaú sem API): `fin_ifood_repasses` devolve `detalhe.sem_conta` e a aba mostra "Sem extrato do banco" em vez de "Não achado".
+- Pegadinha: loja só com arquivo (sem API) não relança o razão quando a data do repasse chega — `ifood-sync` só roda para quem tem refresh_token; entra ao reimportar ou salvar opção.
