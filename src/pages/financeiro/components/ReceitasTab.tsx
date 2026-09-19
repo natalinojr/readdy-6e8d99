@@ -5,6 +5,7 @@ import {
   SOURCE_LABELS_R, SOURCE_COLORS_R,
 } from '@/hooks/useReceitas';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
+import FormasPagamentoPanel from './FormasPagamentoPanel';
 import { revenueSourceInfo, moneyFlowLabels } from '@/lib/revenueSources';
 
 // Fonte da configuração da loja → fonte da linha exibida
@@ -496,6 +497,9 @@ export default function ReceitasTab() {
           sub="no período selecionado"
         />
       </div>
+
+      {/* ── Vendas por forma de pagamento (crédito, débito, voucher, Pix, dinheiro) ── */}
+      <FormasPagamentoPanel startDate={filters.startDate} endDate={filters.endDate} />
 
       {/* ── Controles ── */}
       <div className="flex flex-col gap-3">
