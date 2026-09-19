@@ -287,11 +287,11 @@ function ownerChatOf(cfg: Record<string, any>): string | null {
 // Entrega o aviso (texto + ações, inclusive o cartão de pagamento com botões).
 // No Telegram quem monta o cartão é o assistente-telegram (action 'deliver').
 // deno-lint-ignore no-explicit-any
-async function avisarDono(admin: SupabaseClient, ownerChat: string, reply: string, actions: any[]) {
+async function avisarDono(admin: SupabaseClient, ownerChat: string, reply: string, actions: any[], extra: Record<string, unknown> = {}) {
   if (ownerChat.startsWith('tg:')) {
     const r = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-      body: JSON.stringify({ action: 'deliver', chat_key: ownerChat, text: reply, actions }),
+      body: JSON.stringify({ action: 'deliver', chat_key: ownerChat, text: reply, actions, ...extra }),
     });
     if (!r.ok) throw new Error(`assistente-telegram ${r.status}: ${(await r.text()).slice(0, 200)}`);
     return;
@@ -488,6 +488,30 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
     kind: tipo, status: 'novo', data: { texto: msg.content, extraido: msg.extracted, sent_at: msg.sentAt },
   }).select('id').maybeSingle();
   if (error || !req) { if (error && !/duplicate|unique/i.test(error.message)) log('WARN', 'gravar solicitação', { error: error.message }); return; }
+
+  // Guia do mês (DAS / DARF INSS / FGTS Digital) lida e CONFERIDA (dígitos/CRC): lança sem modelo
+  // (2026-09-18). Antes as três guias chegaram juntas, o modelo errou dígitos, misturou uma na
+  // resposta da outra e o DAS que só vence dia 21 virou pendência. Vence depois = só guarda (sem
+  // pendência: o pagamento é preparado sozinho no dia); vence hoje = prepara e abre pendência.
+  if (tipo === 'pagamento' && msg.extracted?.guia?.completa) {
+    try {
+      const r = await brainCall({ action: 'guia', guia: msg.extracted.guia, origem: `grupo ${g.name ?? ''}`.trim(), chat_id: ownerChat, solicitacao_grupo_id: req.id });
+      const texto = `${String(r?.texto ?? 'Guia processada.')}\n_(${msg.sender ?? 'alguém'} no grupo ${g.name ?? ''})_${r?.payment_id ? '\n\n👉 *Ainda não foi pago:* toque em *Pagar* no cartão abaixo.' : ''}`;
+      await avisarDono(admin, ownerChat, texto, r?.payment_id ? [{ type: 'payment', id: String(r.payment_id) }] : [], { save: true, topic: 'pagamentos' });
+      await admin.from('asst_group_requests').update({
+        status: r?.payment_id ? 'preparado' : r?.ok ? 'guardado' : 'erro', payment_id: r?.payment_id ?? null,
+        reply: texto.slice(0, 2000), notified_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }).eq('id', req.id);
+      if (r?.payment_id || !r?.ok) {
+        await abrirPendenciaPagamento(admin, cfg, req.id, g, msg, r?.payment_id ? texto : `Não consegui preparar sozinho: ${texto}`, r?.payment_id ? [String(r.payment_id)] : []);
+      }
+      log('INFO', 'guia do grupo', { group: g.name, tipo: msg.extracted.guia.tipo, ok: !!r?.ok, pagamento: r?.payment_id ?? null });
+      return;
+    } catch (e) {
+      // Falhou o caminho da guia: segue a triagem de sempre (o modelo tem lancar_guia).
+      log('WARN', 'guia do grupo falhou; segue triagem', { group: g.name, error: errMsg(e) });
+    }
+  }
 
   // Conteúdo de terceiros vai DELIMITADO (e sem forjar a própria tag nem os atributos):
   // é dado, nunca ordem.

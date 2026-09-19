@@ -22,6 +22,8 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import postgres from 'npm:postgres@3.4.5';
+import { acharCopiaECola, acharLinhas, lerGuia, linhaValida, soDigitos, type Guia } from '../_shared/guias.ts';
+import { textoDoPdf } from '../_shared/pdf-texto.ts';
 
 // ── Leitor universal (só leitura) ──
 // Conexão direta ao Postgres (SUPABASE_DB_URL). Cada consulta roda em
@@ -494,6 +496,7 @@ TOOLS.push({
     properties: {
       tipo: { type: 'string', enum: ['boleto', 'pix'] },
       linha_digitavel: { type: 'string', description: 'Boleto: linha digitável (47 ou 48 números) ou código de barras (44). Copie exatamente, só os números.' },
+      copia_e_cola: { type: 'string', description: 'Pix copia e cola (BR Code) copiado do documento. Só é aceito de guia do governo (FGTS Digital); para as guias do mês prefira lancar_guia.' },
       chave_pix: { type: 'string', description: 'Pix: chave SÓ quando ela veio num documento (boleto, QR, copia e cola, nota do fornecedor). NUNCA peça, sugira ou aceite chave digitada na conversa — nem do Natalino. Para pagar uma pessoa ou fornecedor sem chave no documento, use favorecido.' },
       favorecido: { type: 'string', description: 'Pix para PESSOA ou fornecedor pelo NOME (ex.: "Eduardo Oriente" num reembolso). A chave sai do cadastro: Pix permitidos (tela Assistente) ou fornecedor com chave Pix. Se não estiver cadastrado, a ferramenta avisa — aí diga para cadastrar em Assistente › Pix permitidos.' },
       valor: { type: 'number', description: 'Reais. Boleto: só se diferente do valor do código (juros/desconto) ou se o código não traz valor. Pix: obrigatório.' },
@@ -524,6 +527,20 @@ TOOLS.push({
       conta_a_pagar_id: { type: 'string', description: 'Só quando a ferramenta devolveu várias contas possíveis e ele escolheu uma: o id dela.' },
     },
     required: ['linha_digitavel'],
+  },
+});
+// Guias do mês (2026-09-18, dono): DAS, DARF INSS e FGTS chegam todo mês e têm lugar certo. O código
+// lê os números (texto do PDF ou a transcrição) e confere os dígitos; o modelo só aciona.
+TOOLS.push({
+  name: 'lancar_guia',
+  description: 'Lança GUIA DE IMPOSTO/ENCARGO — DAS (Simples Nacional), DARF (INSS/previdência ou outro) ou FGTS Digital (GFD) — no lugar certo: loja pelo CNPJ da guia, conta a pagar com competência e vencimento, código de barras ou Pix copia e cola conferidos pelo sistema. Vence HOJE → prepara o pagamento (cartão Pagar); vence depois → só guarda e o pagamento é preparado sozinho no dia. Use SEMPRE para essas guias, em vez de guardar_boleto/preparar_pagamento. Com o PDF anexado nesta conversa o sistema lê o próprio arquivo; sem texto no arquivo, mande a transcrição.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      transcricao: { type: 'string', description: 'Texto da guia como está impresso (cabeçalho, CNPJ, período de apuração/competência, vencimento, número do documento, valor total, composição e a linha digitável com os espaços). Pode omitir se o PDF anexado tem texto.' },
+      linha_digitavel: { type: 'string', description: 'A linha digitável como você leu (48 números, começa com 8), se houver.' },
+      solicitacao_grupo_id: { type: 'number', description: 'id do pedido do grupo (triagem), se veio de grupo.' },
+    },
   },
 });
 TOOLS.push({
@@ -605,6 +622,109 @@ async function interTenant(ctx: Ctx, loja?: string): Promise<string> {
   if (!data?.length) throw new Error('Nenhuma loja tem o Banco Inter conectado.');
   return String(data[0].tenant_id);
 }
+// ── Guias do mês (DAS / DARF INSS / FGTS Digital), 2026-09-18 ──
+// Tudo decidido pelo CÓDIGO, igual todo mês:
+// - loja = a do CNPJ da guia (a GFD só traz a raiz de 8 dígitos);
+// - conta a pagar "<guia> — competência MM/AAAA" (uma por guia e competência; guia reemitida com
+//   multa atualiza a mesma conta);
+// - DAS e DARF comum → categoria DRE "Impostos". INSS descontado e FGTS → reference_type 'hr_payroll'
+//   (encargo da folha): a DRE já conta o custo pela folha (bruto + FGTS) — classificar de novo
+//   seria contar duas vezes;
+// - vence HOJE → prepara o pagamento; vence depois → só guarda (o assistente-cron prepara às 08h
+//   do dia); vencida → não prepara: guia vencida não é aceita, precisa ser gerada de novo.
+type ResultadoGuia = { ok: boolean; texto: string; conta_id?: string; payment_id?: string | null; guardado?: boolean; erro?: string };
+async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: string, g: Guia, origem: string, grupoReq: number | null): Promise<ResultadoGuia> {
+  const ddmm = (iso: string | null) => (iso ? iso.split('-').reverse().join('/') : '?');
+  const comp = g.competencia ? `${g.competencia.slice(5, 7)}/${g.competencia.slice(0, 4)}` : 'sem competência';
+  const cab = `🧾 *${g.titulo}* ${comp} — ${brl(g.valor)} · vence ${ddmm(g.vencimento)}`;
+  if (!g.completa) {
+    const falta = [!g.cnpj && 'CNPJ', !g.valor && 'valor', !g.vencimento && 'vencimento', g.tipo === 'FGTS' ? !g.copia_e_cola && 'Pix copia e cola' : !g.linha && 'linha digitável (os dígitos não conferem)'].filter(Boolean).join(', ');
+    return { ok: false, texto: `${cab}\n⚠️ Não consegui ler: ${falta}. Mande a guia de novo em PDF (o arquivo original, não foto).`, erro: `faltou ${falta}` };
+  }
+  const { data: lojas } = await admin.from('tenants').select('id, name, cnpj');
+  const cands = (lojas ?? []).filter((t) => { const c = soDigitos(t.cnpj); return !!c && (g.cnpj!.length === 14 ? c === g.cnpj : c.startsWith(g.cnpj!)); });
+  const loja = cands.length === 1 ? cands[0] : cands.find((t) => soDigitos(t.cnpj).slice(8, 12) === '0001') ?? null;
+  if (!loja) return { ok: false, texto: `${cab}\n⚠️ Nenhuma loja do ERPOS tem o CNPJ ${g.cnpj} da guia. Confira o cadastro da loja.`, erro: 'loja não encontrada' };
+  const tenantId = String(loja.id);
+  const descricao = `${g.titulo} — competência ${comp}`;
+  const hoje = todayIso();
+  const notas = [`${g.titulo} ${comp}`, g.numero ? `documento ${g.numero}` : '', g.composicao ?? '', g.encargo_folha ? 'Encargo da folha: o custo já entra na DRE pela folha (bruto + FGTS).' : '', `Lançada pela guia (${origem}).`].filter(Boolean).join(' · ').slice(0, 1000);
+  const campos: Record<string, unknown> = {
+    description: descricao, supplier: g.fornecedor, amount: g.valor, due_date: g.vencimento,
+    status: g.vencimento! < hoje ? 'overdue' : 'pending', notes: notas,
+    boleto_digitavel: g.linha, boleto_pix_copia: g.copia_e_cola, boleto_barcode: null, boleto_recebido_em: new Date().toISOString(), boleto_origem: 'guia',
+  };
+  if (g.encargo_folha) Object.assign(campos, { reference_type: 'hr_payroll', category: 'Encargos da folha', dre_category_id: null });
+  else {
+    let { data: cat } = await admin.from('fin_dre_categories').select('id').eq('tenant_id', tenantId).ilike('name', 'impostos').is('deleted_at', null).limit(1).maybeSingle();
+    if (!cat) {
+      const ins = await admin.from('fin_dre_categories').insert({ tenant_id: tenantId, group_type: 'expense', name: 'Impostos', sort_order: 0, is_active: true }).select('id').single();
+      if (ins.error) log('WARN', 'criar categoria Impostos', { error: ins.error.message });
+      cat = ins.data;
+    }
+    Object.assign(campos, { category: 'Impostos', dre_category_id: cat?.id ?? null });
+  }
+  // Mesma guia e competência já lançada (reenvio, ou guia reemitida com multa): atualiza a mesma conta.
+  const { data: ja } = await admin.from('fin_accounts_payable').select('id, status, amount, due_date, boleto_digitavel, boleto_pix_copia')
+    .eq('tenant_id', tenantId).eq('description', descricao).neq('status', 'cancelled').order('created_at', { ascending: false }).limit(1);
+  let contaId: string;
+  let acao: string;
+  if (ja?.[0]?.status === 'paid') return { ok: true, conta_id: String(ja[0].id), texto: `${cab}\n✅ Essa guia já está *paga* no ERPOS (${loja.name}). Não fiz nada.`, guardado: true };
+  if (ja?.[0]) {
+    const mudou = Number(ja[0].amount) !== g.valor || ja[0].due_date !== g.vencimento || (ja[0].boleto_digitavel ?? null) !== g.linha || (ja[0].boleto_pix_copia ?? null) !== g.copia_e_cola;
+    const { error } = await admin.from('fin_accounts_payable').update({ ...campos, updated_at: new Date().toISOString() }).eq('id', ja[0].id);
+    if (error) return { ok: false, texto: `${cab}\n⚠️ Não consegui atualizar a conta: ${error.message}`, erro: error.message };
+    contaId = String(ja[0].id); acao = mudou ? 'conta a pagar atualizada com a guia nova' : 'já estava lançada';
+  } else {
+    const { data: nova, error } = await admin.from('fin_accounts_payable').insert({ tenant_id: tenantId, ...campos }).select('id').single();
+    if (error || !nova) return { ok: false, texto: `${cab}\n⚠️ Não consegui lançar a conta: ${error?.message ?? 'sem retorno'}`, erro: error?.message ?? 'insert' };
+    contaId = String(nova.id); acao = 'lançada em Contas a pagar';
+  }
+  const linhas = [cab, `${loja.name} · ${acao}${g.encargo_folha ? ' (encargo da folha — não conta de novo na DRE)' : ' · DRE: Impostos'}.`];
+  if (g.linha_reparada) linhas.push('A leitura tinha um dígito errado no código de barras; corrigi conferindo com o número do documento.');
+  if (g.vencimento! > hoje) {
+    linhas.push(`📅 Guardada: o pagamento é preparado sozinho no dia ${ddmm(g.vencimento)} às 08h, para você aprovar.`);
+    return { ok: true, conta_id: contaId, payment_id: null, guardado: true, texto: linhas.join('\n') };
+  }
+  if (g.vencimento! < hoje) {
+    linhas.push(`⚠️ Venceu em ${ddmm(g.vencimento)}: guia vencida não é aceita. Gere de novo (${g.tipo === 'FGTS' ? 'no FGTS Digital' : 'no e-CAC/PGDAS/SicalcWeb'}, já com multa e juros) e mande aqui — atualizo a mesma conta.`);
+    return { ok: true, conta_id: contaId, payment_id: null, guardado: true, texto: linhas.join('\n') };
+  }
+  const { data: cfg } = await admin.from('fin_inter_config').select('is_active').eq('tenant_id', tenantId).maybeSingle();
+  if (!cfg?.is_active) {
+    linhas.push(`Vence hoje, mas ${loja.name} não tem o Banco Inter conectado: pague pelo banco.`);
+    return { ok: true, conta_id: contaId, payment_id: null, guardado: true, texto: linhas.join('\n') };
+  }
+  try {
+    const out = await callInter('prepare_payment', {
+      tenant_id: tenantId, tipo: g.linha ? 'boleto' : 'pix', linha: g.linha ?? undefined, copia_e_cola: g.linha ? undefined : g.copia_e_cola,
+      valor: g.valor, descricao, bill_id: contaId, requested_by: ownerId || undefined, channel: 'telegram', chat_id: chatId,
+    });
+    const pid = String(out.payment.id);
+    if (grupoReq) await ligarAoGrupo(admin, pid, grupoReq);
+    linhas.push('💸 Vence *hoje*: pagamento preparado.');
+    return { ok: true, conta_id: contaId, payment_id: pid, texto: linhas.join('\n') };
+  } catch (e) {
+    // Rascunho que já existia para o mesmo código (preparado antes, sem conta ligada): reaproveita.
+    const col = g.linha ? 'digitavel' : 'pix_copia_e_cola';
+    const { data: aberto } = await admin.from('fin_inter_payments').select('id, bill_id').eq('tenant_id', tenantId).in('status', ['draft', 'awaiting_pin'])
+      .eq(col, g.linha ?? g.copia_e_cola).gte('created_at', new Date(Date.now() - 30 * 60_000).toISOString()).limit(1);
+    if (aberto?.[0]) {
+      if (!aberto[0].bill_id) await admin.from('fin_inter_payments').update({ bill_id: contaId }).eq('id', aberto[0].id);
+      if (grupoReq) await ligarAoGrupo(admin, String(aberto[0].id), grupoReq);
+      linhas.push('💸 Vence *hoje*: o pagamento já estava preparado.');
+      return { ok: true, conta_id: contaId, payment_id: String(aberto[0].id), texto: linhas.join('\n') };
+    }
+    linhas.push(`⚠️ Vence hoje, mas não consegui preparar o pagamento: ${errMsg(e).slice(0, 200)}`);
+    return { ok: false, conta_id: contaId, payment_id: null, texto: linhas.join('\n'), erro: errMsg(e) };
+  }
+}
+// Pagamento ligado ao pedido do grupo: o comprovante volta sozinho ao grupo e a pendência fecha.
+async function ligarAoGrupo(admin: SupabaseClient, pid: string, grupoReq: number) {
+  await admin.from('fin_inter_payments').update({ group_request_id: grupoReq }).eq('id', pid).is('group_request_id', null);
+  await admin.from('asst_group_requests').update({ payment_id: pid, status: 'preparado', updated_at: new Date().toISOString() }).eq('id', grupoReq).is('payment_id', null);
+}
+
 // 'app' = chat dentro do ERPOS (assistente-app, 2026-09-15): botões e cartão de pagamento na tela.
 const CHAT_CHANNELS = new Set(['whatsapp', 'telegram', 'app']);
 // Regra do dono (2026-09-14): TUDO que um usuário faz no ERPOS pelo navegador o assistente também
@@ -984,7 +1104,7 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
         chave = unicos[0].chave;
       }
       const out = await callInter('prepare_payment', {
-        tenant_id: tenantId, tipo: input.tipo, linha: input.linha_digitavel, chave, valor: input.valor,
+        tenant_id: tenantId, tipo: input.tipo, linha: input.linha_digitavel, chave, copia_e_cola: input.copia_e_cola || undefined, valor: input.valor,
         descricao: input.descricao, bill_id: input.conta_a_pagar_id, requested_by: ctx.ownerId, channel: 'telegram', chat_id: ctx.chatId,
       });
       const p = out.payment;
@@ -1025,6 +1145,14 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
         pagamento: { id: p.id, tipo: p.kind, valor: Number(p.amount), valor_do_boleto: p.face_value, vencimento: p.due_date, beneficiario: p.beneficiary_name, saldo_inter: p.saldo_inter },
         instrucao: 'O resumo com os botões Pagar/Cancelar será enviado logo abaixo. Diga só uma frase curta (ex.: se o vencimento já passou ou o saldo não cobre). Não repita os dados e não peça PIN.',
       });
+    }
+    case 'lancar_guia': {
+      const texto = [ctx.attachment?.media_type === 'application/pdf' ? await textoDoPdf(ctx.attachment.base64) : '', String(input.transcricao ?? '')].filter(Boolean).join('\n');
+      const g = lerGuia(texto, input.linha_digitavel ? String(input.linha_digitavel) : null);
+      if (!g) return JSON.stringify({ ok: false, instrucao: 'Não reconheci DAS, DARF nem FGTS Digital nesse documento. Se for boleto comum, use guardar_boleto/preparar_pagamento.' });
+      const r = await processarGuia(ctx.admin, ctx.ownerId, ctx.chatId, g, 'conversa', input.solicitacao_grupo_id ? Number(input.solicitacao_grupo_id) : null);
+      if (r.payment_id && !ctx.outbound.some((o) => o.type === 'payment' && o.id === r.payment_id)) ctx.outbound.push({ type: 'payment', id: r.payment_id });
+      return JSON.stringify({ ...r, instrucao: 'Repita ao Natalino o "texto" acima quase igual (é o que foi feito). Não invente dados da guia.' });
     }
     case 'guardar_boleto': {
       const tenantId = await interTenant(ctx, input.loja);
@@ -1691,7 +1819,7 @@ Responda SÓ com um JSON válido, sem markdown e sem texto fora dele:
   "pagamento": null ou {
     "e_solicitacao": true (alguém está PEDINDO para pagar) ou false (comprovante do que já foi pago),
     "tipo": "boleto" ou "pix" ou "indefinido",
-    "linha_digitavel": "só os números, exatamente como impressos (47 ou 48 dígitos; 44 no código de barras)" ou null,
+    "linha_digitavel": "só os números, exatamente como impressos (boleto de banco: 47 dígitos; guia/conta de consumo que começa com 8: 48 dígitos = 4 blocos de 11 + 1; 44 no código de barras)" ou null,
     "chave_pix": "chave copiada do documento" ou null,
     "copia_e_cola": "Pix copia e cola (BR Code), se aparecer" ou null,
     "valor": número em reais (ponto decimal) ou null,
@@ -1899,6 +2027,17 @@ Deno.serve(async (req) => {
     // Leitura de mídia (foto/PDF) sem conversa — chamada pelo assistente-webhook
     // para guardar o CONTEÚDO da mídia que chega nos grupos. Sem ferramentas e sem
     // histórico; em asst_messages entra só a linha de custo (channel 'grupo').
+    // Guia do mês lida e conferida pelo assistente-webhook (grupo): lança sem modelo.
+    if (body.action === 'guia') {
+      const g = body.guia as Guia;
+      if (!g?.tipo) return json({ error: 'guia ausente' }, 400);
+      const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'owner_user_id').maybeSingle();
+      const r = await processarGuia(admin, String(st?.value ?? ''), String(body.chat_id ?? ''), g, String(body.origem ?? 'grupo').slice(0, 120),
+        body.solicitacao_grupo_id ? Number(body.solicitacao_grupo_id) : null);
+      log('INFO', 'guia', { tipo: g.tipo, comp: g.competencia, ok: r.ok, pagamento: r.payment_id ?? null, guardado: !!r.guardado });
+      return json({ success: true, ...r });
+    }
+
     if (body.action === 'ler_midia') {
       let block: Anthropic.ImageBlockParam | Anthropic.DocumentBlockParam;
       try { block = fileBlockOf(body.attachment); } catch (e) { return json({ error: errMsg(e) }, 400); }
@@ -1928,6 +2067,30 @@ Deno.serve(async (req) => {
       let lido: any = null;
       try { lido = JSON.parse(cru); } catch { lido = null; }
       if (!lido || typeof lido !== 'object') lido = { tipo_documento: 'outro', resumo: cru.slice(0, 400), texto: '', pagamento: null };
+      // Números EXATOS (2026-09-18): a leitura por IA perdeu um dígito do DAS e o último do DARF, e os
+      // dois viraram "dígito verificador não confere". O texto do próprio PDF (quando existe) e a
+      // conferência dos dígitos mandam; guia do mês (DAS/DARF/FGTS) ganha "guia" com tudo validado.
+      try {
+        const textoPdf = block.type === 'document' ? await textoDoPdf(String(body.attachment?.base64 ?? '')) : '';
+        const todo = [textoPdf, String(lido.texto ?? '')].filter(Boolean).join('\n');
+        const g = lerGuia(todo, lido.pagamento?.linha_digitavel ?? null);
+        if (g) {
+          lido.guia = g;
+          lido.pagamento = {
+            ...(lido.pagamento ?? {}), e_solicitacao: lido.pagamento?.e_solicitacao ?? true, tipo: g.linha ? 'boleto' : 'pix',
+            linha_digitavel: g.linha, copia_e_cola: g.copia_e_cola, valor: g.valor ?? lido.pagamento?.valor ?? null,
+            vencimento: g.vencimento ?? lido.pagamento?.vencimento ?? null, beneficiario: g.fornecedor, documento: null, chave_pix: null,
+          };
+        } else if (lido.pagamento) {
+          if (!linhaValida(lido.pagamento.linha_digitavel)) {
+            const achadas = acharLinhas(todo);
+            if (achadas.length === 1) lido.pagamento.linha_digitavel = achadas[0];
+            else if (lido.pagamento.linha_digitavel) lido.pagamento.linha_conferida = false; // os dígitos não conferem
+          }
+          const copia = acharCopiaECola(todo);
+          if (copia) lido.pagamento.copia_e_cola = copia;
+        }
+      } catch (e) { log('WARN', 'conferir números da mídia', { error: errMsg(e) }); }
       const usage = {
         input: r.usage?.input_tokens ?? 0, output: r.usage?.output_tokens ?? 0,
         cache_read: r.usage?.cache_read_input_tokens ?? 0, cache_write: r.usage?.cache_creation_input_tokens ?? 0, cache_write_1h: 0,
@@ -1948,6 +2111,11 @@ Deno.serve(async (req) => {
     if (att?.base64) {
       try { fileBlock = fileBlockOf(att); } catch (e) { return json({ error: errMsg(e) }, 400); }
       if (!text) text = fileBlock.type === 'image' ? '[Foto sem legenda]' : '[PDF sem legenda]';
+      // PDF de guia do mês (DAS/DARF/FGTS): avisa o modelo para usar lancar_guia (números lidos pelo código).
+      if (fileBlock.type === 'document') {
+        const g = lerGuia(await textoDoPdf(String(att.base64)));
+        if (g) text += `\n[Sistema: o PDF anexado é ${g.titulo}${g.competencia ? ` competência ${g.competencia.slice(5, 7)}/${g.competencia.slice(0, 4)}` : ''}${g.valor ? `, ${brl(g.valor)}` : ''}${g.vencimento ? `, vence ${g.vencimento.split('-').reverse().join('/')}` : ''}. Use lancar_guia — o sistema lê e confere os números do arquivo.]`;
+      }
     }
     if (!text) return json({ error: 'text é obrigatório' }, 400);
     const chatId = String(body.chat_id ?? 'owner');
@@ -1998,6 +2166,7 @@ Deno.serve(async (req) => {
 - É pedido e os dados bastam (boleto com linha digitável completa, ou Pix com chave no documento OU nome de quem recebe + valor — sem chave, use favorecido = nome) → chame preparar_pagamento e escreva no máximo 3 linhas: grupo, quem pediu, o que é, valor e vencimento. Não peça confirmação antes: preparar_pagamento só monta o rascunho; quem decide é ele, tocando em Pagar.
 - É pedido mas falta dado no que chegou (linha digitável ilegível, sem valor, sem nome de quem recebe, comprovante em vez de cobrança) → NÃO chame preparar_pagamento: avise em até 3 linhas o que foi pedido e o que falta. Se os dados estão lá, chame a ferramenta e conte o que ela respondeu — inclusive quando ela recusar a chave; nunca julgue antes se a chave é permitida.
 - Se o documento é CUPOM/NOTA DE COMPRA com itens, siga a regra CUPOM/NOTA DE COMPRA inteira (casar insumos, lançar a compra 'pending', preparar o pagamento com conta_a_pagar_id, confirmar recebimento se for cupom de balcão), com resumo em até 5 linhas. Pagamento ainda depende do botão e do PIN dele.
+- GUIA DO MÊS (DAS/Simples Nacional, DARF/INSS, FGTS Digital/GFD) que chegou aqui é porque a leitura automática não fechou: chame lancar_guia com a transcrição do documento (inclusive o número do documento) e a linha lida, e o solicitacao_grupo_id. Nunca preparar_pagamento para essas guias.
 - NÃO é pedido de pagamento → responda exatamente NO_REPLY (sem mais nada).
 - Antes de preparar, confira se já existe conta a pagar igual (mesmo fornecedor/valor/vencimento) e passe conta_a_pagar_id; se parecer duplicado de algo já pago, avise em vez de preparar.
 - Passe SEMPRE solicitacao_grupo_id (vem no cabeçalho da triagem) em preparar_pagamento. Mensagem com VÁRIOS pagamentos: um preparar_pagamento para cada, todos com o mesmo solicitacao_grupo_id.

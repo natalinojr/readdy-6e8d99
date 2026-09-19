@@ -439,7 +439,8 @@ async function callInter(action: string, body: Record<string, unknown>): Promise
 function payText(p: any, extra = ''): string {
   const lines = [p.kind === 'pix' ? '💸 *Pix pela conta do Inter*' : '💸 *Boleto pela conta do Inter*'];
   if (p.beneficiary_name) lines.push(`Para: ${p.beneficiary_name}`);
-  if (p.kind === 'pix') lines.push(`Chave: ${p.pix_key}`);
+  if (p.kind === 'pix') lines.push(p.pix_copia_e_cola ? 'Pix copia e cola da guia' : `Chave: ${p.pix_key}`);
+  if (p.kind === 'pix' && p.pix_copia_e_cola && p.due_date) lines.push(`Vencimento: ${fmtDate(p.due_date)}`);
   if (p.kind === 'boleto') {
     if (p.bank_code) lines.push(`Banco do boleto: ${p.bank_code}`);
     if (p.due_date) lines.push(`Vencimento: ${fmtDate(p.due_date)}`);

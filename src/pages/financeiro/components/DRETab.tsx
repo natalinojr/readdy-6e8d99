@@ -190,7 +190,8 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .in('status', ['paid', 'partial'])
       // P1: exclui contas geradas por compras — o custo delas já entra via CMV (fin_purchases).
       // Sem isso a compra é contada 2x (CMV + despesa). Mesmo critério da aba Despesas.
-      .or('reference_type.is.null,reference_type.neq.purchase')
+      // hr_payroll (2026-09-18): guia de encargo da folha (INSS descontado, FGTS) — já entra pela folha.
+      .or('reference_type.is.null,reference_type.not.in.(purchase,hr_payroll)')
       .gte('paid_date', startDate)
       .lte('paid_date', endDate),
 
@@ -439,7 +440,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       // competência inteira (nem pelo valor cheio, que é o que a competência reconhece).
       .in('status', ['pending', 'paid', 'overdue', 'partial'])
       // P1: exclui contas geradas por compras (custo já entra via CMV = fin_purchases).
-      .or('reference_type.is.null,reference_type.neq.purchase')
+      .or('reference_type.is.null,reference_type.not.in.(purchase,hr_payroll)')
       .gte('due_date', startDate)
       .lte('due_date', endDate),
 

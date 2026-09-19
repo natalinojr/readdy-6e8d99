@@ -397,10 +397,11 @@ async function anomalyTexts(tenants: Array<{ id: string; name: string }>, pro: a
 // conta já tem pagamento em aberto ou pago. Pagamento só sai com o PIN e a aprovação no app do Inter.
 async function dueTodayRun(tenants: Array<{ id: string; name: string }>, today: string, tgChat: string, ownerId: string) {
   const ids = tenants.map((t) => t.id);
-  const contas = await db()<Array<{ id: string; tenant_id: string; nome: string; aberto: number; parcial: boolean; linha: string | null }>>`
-    select a.id, a.tenant_id, coalesce(nullif(a.supplier, ''), a.description) nome,
+  // Guia com Pix copia e cola (FGTS Digital, 2026-09-18) entra junto: boleto_pix_copia.
+  const contas = await db()<Array<{ id: string; tenant_id: string; nome: string; aberto: number; parcial: boolean; linha: string | null; copia: string | null }>>`
+    select a.id, a.tenant_id, case when a.boleto_origem = 'guia' then a.description else coalesce(nullif(a.supplier, ''), a.description) end nome,
            (a.amount - coalesce(a.paid_amount, 0))::float aberto, coalesce(a.paid_amount, 0) > 0 parcial,
-           coalesce(a.boleto_digitavel, a.boleto_barcode) linha
+           coalesce(a.boleto_digitavel, a.boleto_barcode) linha, a.boleto_pix_copia copia
       from fin_accounts_payable a
      where a.tenant_id = any(${ids}::uuid[]) and a.status not in ('paid', 'cancelled') and a.due_date = ${today}::date
        and not exists (select 1 from fin_inter_payments p where p.bill_id = a.id and p.replaced_by is null
@@ -413,13 +414,14 @@ async function dueTodayRun(tenants: Array<{ id: string; name: string }>, today: 
   const comBoleto: string[] = [];
   const semBoleto: string[] = [];
   for (const c of contas) {
-    if (!c.linha) { semBoleto.push(`• ${c.nome} — ${brl(c.aberto)}${loja(c.tenant_id)}`); continue; }
+    if (!c.linha && !c.copia) { semBoleto.push(`• ${c.nome} — ${brl(c.aberto)}${loja(c.tenant_id)}`); continue; }
     // Já teve pagamento parcial: o boleto cobraria o valor cheio. Não prepara sozinho — confira.
     if (c.parcial) { semBoleto.push(`• ${c.nome} — ${brl(c.aberto)} em aberto${loja(c.tenant_id)} (já tem pagamento parcial: o boleto cobra o valor cheio, confira antes)`); continue; }
     try {
       const r = await fetch(`${supabaseUrl}/functions/v1/inter-bank`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
-        body: JSON.stringify({ action: 'prepare_payment', tenant_id: c.tenant_id, tipo: 'boleto', linha: c.linha, bill_id: c.id,
+        body: JSON.stringify({ action: 'prepare_payment', tenant_id: c.tenant_id, tipo: c.linha ? 'boleto' : 'pix', linha: c.linha ?? undefined,
+          copia_e_cola: c.linha ? undefined : c.copia, valor: c.linha ? undefined : c.aberto, bill_id: c.id,
           descricao: c.nome, requested_by: ownerId || undefined, channel: 'telegram', chat_id: tgChat }),
       });
       const out = await r.json().catch(() => ({}));

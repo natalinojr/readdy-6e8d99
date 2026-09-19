@@ -38,6 +38,7 @@
 // ("Soluções para sua empresa › Nova integração"). Extrato: máx. 90 dias por consulta.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { copiaValida, lerCopia } from '../_shared/guias.ts';
 
 type Admin = SupabaseClient;
 
@@ -386,6 +387,8 @@ const PAY_SCOPE = 'pagamento-boleto.read pagamento-boleto.write pagamento-pix.re
 const PAY_LIVE = ['sending', 'sent', 'pending_approval', 'approved', 'scheduled', 'paid'];
 const PAY_OPEN = ['draft', 'awaiting_pin'];
 const DRAFT_TTL_MS = 30 * 60_000;
+// Emissores de Pix copia e cola aceitos (location do QR dinâmico): guias do governo.
+const PIX_COPIA_HOSTS = new Set(['pix-qrcode.caixa.gov.br']);
 const onlyDigits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
 const brl = (n: unknown) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -585,6 +588,28 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
       amount: valor, face_value: dec.valor, barcode: dec.barcode, digitavel: dec.digitavel, due_date: dec.vencimento, bank_code: dec.banco, boleto_kind: dec.kind,
       beneficiary_name: bill?.supplier ?? null,
     });
+  } else if (tipo === 'pix' && body.copia_e_cola) {
+    // Pix COPIA E COLA (2026-09-18): só de guia do governo — hoje o FGTS Digital (QR dinâmico da
+    // Caixa). A regra "Pix só para quem está cadastrado" continua: copia e cola de qualquer outro
+    // emissor é recusado, porque o destinatário sairia do texto do documento, não do cadastro.
+    const copia = String(body.copia_e_cola).trim();
+    if (!copiaValida(copia)) throw new Error('Pix copia e cola inválido (o código de conferência não bate). Confira se veio inteiro.');
+    const info = lerCopia(copia);
+    const host = String(info.location ?? '').toLowerCase().split('/')[0];
+    if (!PIX_COPIA_HOSTS.has(host)) throw new Error(`Pix copia e cola só é aceito de guia do governo (FGTS Digital). Este é de "${info.nome ?? host ?? 'emissor desconhecido'}": pague pelo app do Inter.`);
+    const valor = round2(Number(body.valor ?? info.valor ?? 0));
+    if (!(valor > 0)) throw new Error('Informe o valor da guia.');
+    const { data: dup } = await admin.from('fin_inter_payments').select('id').eq('tenant_id', tenantId).eq('pix_copia_e_cola', copia).in('status', PAY_LIVE).limit(1);
+    if (dup?.length) throw new Error('Esse Pix copia e cola já foi enviado para pagamento pelo assistente.');
+    const { data: abertos } = await admin.from('fin_inter_payments').select('*').eq('tenant_id', tenantId).eq('pix_copia_e_cola', copia).in('status', PAY_OPEN);
+    for (const a of abertos ?? []) {
+      if (Date.now() - new Date(a.created_at).getTime() <= DRAFT_TTL_MS) return { ...a, ja_existia: true, saldo_inter: cfg.last_balance == null ? null : Number(cfg.last_balance) };
+      await admin.from('fin_inter_payments').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', a.id).in('status', PAY_OPEN);
+    }
+    Object.assign(row, {
+      amount: valor, pix_copia_e_cola: copia, beneficiary_name: bill?.supplier ?? info.nome ?? null,
+      due_date: bill?.due_date ?? null,
+    });
   } else if (tipo === 'pix') {
     const k = normPixKey(String(body.chave ?? ''));
     if (k.kind === 'desconhecida') throw new Error('Chave Pix não reconhecida (use CNPJ, CPF, e-mail, telefone com +55 ou chave aleatória).');
@@ -651,6 +676,7 @@ async function reparePayment(admin: Admin, tenantId: string, id: string) {
       tipo: velho.kind,
       linha: velho.digitavel ?? undefined,
       chave: velho.pix_key ?? undefined,
+      copia_e_cola: velho.pix_copia_e_cola ?? undefined,
       valor: velho.amount,
       descricao: velho.description ?? undefined,
       bill_id: velho.bill_id ?? undefined,
@@ -724,9 +750,18 @@ async function executePayment(admin: Admin, tenantId: string, id: string) {
         const body: Record<string, unknown> = { codBarraLinhaDigitavel: p.digitavel || p.barcode, valorPagar: Number(p.amount), dataPagamento: todayBR(), dataVencimento: vencimento };
         return await interFetch(creds, client!, '/banking/v2/pagamento', { method: 'POST', token: tk, headers: { 'Content-Type': 'application/json', 'x-id-idempotente': p.idempotency_key }, body: JSON.stringify(body) });
       }
-      const body: Record<string, unknown> = { valor: Number(p.amount), destinatario: { tipo: 'CHAVE', chave: p.pix_key } };
+      const destinatario = p.pix_copia_e_cola ? { tipo: 'PIX_COPIA_E_COLA', pixCopiaECola: p.pix_copia_e_cola } : { tipo: 'CHAVE', chave: p.pix_key };
+      const body: Record<string, unknown> = { valor: Number(p.amount), destinatario };
       if (p.description) body.descricao = String(p.description).slice(0, 140);
-      return await interFetch(creds, client!, '/banking/v2/pix', { method: 'POST', token: tk, headers: { 'Content-Type': 'application/json', 'x-id-idempotente': p.idempotency_key }, body: JSON.stringify(body) });
+      const pixPost = (b: Record<string, unknown>) => interFetch(creds, client!, '/banking/v2/pix', { method: 'POST', token: tk, headers: { 'Content-Type': 'application/json', 'x-id-idempotente': p.idempotency_key }, body: JSON.stringify(b) });
+      const r1 = await pixPost(body);
+      // O nome do tipo do copia e cola não está na documentação pública (o SDK do Inter deixa livre).
+      // 400 = recusado sem mover dinheiro: tenta uma vez a outra grafia antes de desistir.
+      if (p.pix_copia_e_cola && r1.status === 400) {
+        log('WARN', 'execute_payment', 'copia e cola 400, tentando COPIA_E_COLA', { id, data: r1.data });
+        return await pixPost({ ...body, destinatario: { tipo: 'COPIA_E_COLA', pixCopiaECola: p.pix_copia_e_cola } });
+      }
+      return r1;
     };
     let r = await send(token);
     if (r.status === 401) {

@@ -146,8 +146,8 @@ async function transcribe(b64: string, mime: string): Promise<string> {
 // Cartão do pagamento para a tela (chave mascarada: o cartão não precisa dela inteira).
 // deno-lint-ignore no-explicit-any
 function payCard(p: any) {
-  const key = String(p.pix_key ?? '');
-  const masked = key.length > 8 ? `${key.slice(0, 4)}…${key.slice(-4)}` : key;
+  const key = p.pix_copia_e_cola ? 'copia e cola da guia' : String(p.pix_key ?? '');
+  const masked = !p.pix_copia_e_cola && key.length > 8 ? `${key.slice(0, 4)}…${key.slice(-4)}` : key;
   const expired = p.status === 'draft' && Date.now() - new Date(p.created_at).getTime() > PAY_TTL_MS;
   const status = expired ? 'expired' : String(p.status);
   return {
