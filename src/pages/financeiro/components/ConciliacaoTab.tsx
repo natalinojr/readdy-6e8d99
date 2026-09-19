@@ -650,7 +650,7 @@ export default function ConciliacaoTab() {
   // Candidatos da pré-visualização: exatos (já marcados) e fortes (opcionais)
   const vinculosPendentes = useMemo(
     () => imports.filter(i => i.status === 'pending' && !i.reconciled
-      && (i.match_kind === 'payable' || i.match_kind === 'inbound_doc')
+      && (i.match_kind === 'payable' || i.match_kind === 'inbound_doc' || i.match_kind === 'payroll')
       && (i.match_confidence === 'exato' || i.match_confidence === 'forte')),
     [imports],
   );
@@ -1049,7 +1049,7 @@ export default function ConciliacaoTab() {
             <div className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
               <i className="ri-links-line text-emerald-600" />
               <p className="flex-1 min-w-0 text-sm text-zinc-800">
-                <span className="font-semibold">{vinculosPendentes.length} pagamento(s)</span> batem com notas ou contas a pagar
+                <span className="font-semibold">{vinculosPendentes.length} pagamento(s)</span> batem com notas, contas a pagar ou folha
                 <span className="text-zinc-400"> · {exatosPendentes.length} exato(s){vinculosPendentes.length > exatosPendentes.length ? `, ${vinculosPendentes.length - exatosPendentes.length} forte(s)` : ''}</span>
               </p>
               <button
@@ -1283,7 +1283,7 @@ export default function ConciliacaoTab() {
                         {s.notes && (
                           <p className="text-xs text-amber-500 mt-0.5 truncate"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>
                         )}
-                        {s.match_detail && (s.match_kind === 'payable' || s.match_kind === 'inbound_doc') && (
+                        {s.match_detail && (s.match_kind === 'payable' || s.match_kind === 'inbound_doc' || s.match_kind === 'payroll') && (
                           <p className={'text-xs mt-0.5 truncate ' + (s.reconciled ? 'text-emerald-600' : 'text-blue-600')}>
                             <i className="ri-links-line text-xs" /> {s.reconciled ? 'Pago: ' : 'Sugestão (' + (s.match_confidence ?? '') + '): '}{String(s.match_detail.label ?? '')}
                             {!s.reconciled && s.match_detail.auto_import ? ' · nota será importada' : ''}

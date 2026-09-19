@@ -276,6 +276,18 @@ export default function TransacaoDetalheModal({
             )}
           </div>
 
+          {transaction.match_kind === 'payroll' && transaction.match_detail && (() => {
+            // Salário pago por Pix × folha pendente (2026-09-18): confirmar marca a folha como paga.
+            const d = transaction.match_detail as Record<string, unknown>;
+            const pago = !!d.confirmed;
+            return (
+              <div className={'border rounded-xl p-3 text-xs space-y-1 ' + (pago ? 'border-emerald-200 bg-emerald-50' : 'border-blue-200 bg-blue-50')}>
+                <p className="font-semibold text-zinc-800"><i className="ri-team-line mr-1" />{pago ? 'Folha paga por este Pix' : 'Folha sugerida (valor exato do líquido)'}</p>
+                <p className="text-zinc-700">{String(d.label ?? '')}</p>
+                {!pago && <p className="text-zinc-500">Confirme em "Confirmar vínculos": a folha fica paga no RH na data deste Pix. Salário não vira despesa aqui — a DRE já conta pela folha.</p>}
+              </div>
+            );
+          })()}
           {(transaction.match_kind === 'payable' || transaction.match_kind === 'inbound_doc') && transaction.match_detail && (() => {
             const d = transaction.match_detail as Record<string, unknown>;
             const conf = d.confirmed as Record<string, unknown> | undefined;

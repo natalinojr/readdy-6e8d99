@@ -345,6 +345,9 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number;
       const { data: mp, error: mpErr } = await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: from < addDays(today, -120) ? from : addDays(today, -120), p_to: today });
       if (mpErr) log('WARN', action, 'fn_match_payments falhou', { tenantId, error: mpErr.message });
       else if (mp) log('INFO', action, 'pagamentos×notas', { tenantId, ...(mp as Record<string, unknown>) });
+      // Pix de salário × folha pendente (2026-09-18): também só sugere.
+      const { error: fpErr } = await admin.rpc('fn_match_payroll', { p_tenant: tenantId, p_from: from < addDays(today, -120) ? from : addDays(today, -120), p_to: today });
+      if (fpErr) log('WARN', action, 'fn_match_payroll falhou', { tenantId, error: fpErr.message });
     } catch (e) {
       log('WARN', action, 'fn_match_payments falhou', { tenantId, error: String(e) });
     }

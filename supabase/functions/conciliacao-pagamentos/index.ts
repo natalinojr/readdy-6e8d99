@@ -8,7 +8,9 @@
 //   • Pix para pessoa física: o usuário escolhe a categoria e pode "lembrar" o CPF/chave Pix.
 //
 // Ações (POST JSON { action, tenant_id, ... }):
-//   rematch                {}                    refaz as sugestões (fn_match_payments, últimos 120 dias)
+//   rematch                {}                    refaz as sugestões (fn_match_payments + fn_match_payroll, últimos 120 dias)
+//                          'payroll' (2026-09-18): Pix ao CPF do funcionário = líquido exato da folha pendente →
+//                          confirmar marca a folha como paga (financial-write pay_payroll) na data do Pix
 //   alerts                 {}                    fn_conciliacao_alertas
 //   confirm                { ids: string[] }     admin/gerente: importa a nota (se preciso), baixa a parcela, lança juros
 //   undo                   { id }                admin/gerente: estorna a baixa feita pela confirmação
@@ -116,6 +118,7 @@ async function confirmOne(ctx: Ctx, rowId: string): Promise<Result> {
 async function confirmOneClaimed(ctx: Ctx, rowId: string, row: Row): Promise<Result> {
   const { admin, tenantId } = ctx;
   const fail = (msg: string): Result => ({ id: rowId, ok: false, msg });
+  if (row.transaction_type === 'debit' && row.match_kind === 'payroll') return confirmPayroll(ctx, row);
   if (row.transaction_type !== 'debit' || !['payable', 'inbound_doc'].includes(String(row.match_kind))) return fail('Este lançamento não tem vínculo sugerido');
 
   const det = (row.match_detail ?? {}) as Row;
@@ -227,6 +230,30 @@ async function confirmOneClaimed(ctx: Ctx, rowId: string, row: Row): Promise<Res
   if (desconto > 0) partes.push('desconto R$ ' + brl(desconto));
   if (autoImported) partes.push('nota importada automaticamente');
   return { id: row.id, ok: true, msg: partes.join(' · '), auto_imported: autoImported };
+}
+
+// ── Folha paga pelo Pix (2026-09-18) ───────────────────────────────────────
+// A folha já entra na DRE pelo hr_payroll; aqui só se registra que ELA foi paga, na data e pelo valor
+// do extrato — o mesmo pay_payroll da tela RH (grava o fluxo de caixa 'auto_payroll').
+async function confirmPayroll(ctx: Ctx, row: Row): Promise<Result> {
+  const { admin, tenantId } = ctx;
+  const fail = (msg: string): Result => ({ id: String(row.id), ok: false, msg });
+  const det = (row.match_detail ?? {}) as Row;
+  const { data: p } = await admin.from('hr_payroll').select('id, employee_name, net_salary, status, reference_month')
+    .eq('id', String(row.match_ref_id ?? det.payroll_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+  if (!p) return fail('Folha não encontrada');
+  if (p.status === 'paid') return fail('Essa folha já está paga no RH');
+  if (Math.abs(Number(p.net_salary) - Number(row.amount)) > 0.005) return fail('O líquido da folha mudou: rode a conciliação de novo');
+  const paidDate = String(row.transaction_date);
+  const pay = await callEdge(ctx, 'financial-write', { action: 'pay_payroll', tenant_id: tenantId, payload: { id: p.id, paid_date: paidDate, payment_method: 'Pix' } });
+  if (!pay.ok) return fail('Marcar a folha como paga: ' + (pay.error ?? 'falhou'));
+  const now = new Date().toISOString();
+  const { error } = await admin.from('fin_bank_statement_imports').update({
+    status: 'matched', reconciled: true, reconciled_at: now, reconciled_by: ctx.userId, matched_at: now, matched_by: ctx.userId,
+    match_detail: { ...det, confirmed: { payroll_id: p.id, at: now, by: ctx.userId } },
+  }).eq('id', row.id);
+  if (error) log('ERROR', 'confirm', 'marcar extrato (folha) falhou', { tenantId, rowId: row.id, error: error.message });
+  return { id: String(row.id), ok: true, msg: 'Folha ' + String(p.reference_month) + ' de ' + String(p.employee_name) + ' marcada como paga em ' + br(paidDate) };
 }
 
 // ── Lançar a partir do extrato (pagamento sem nota) ─────────────────────────
@@ -576,6 +603,17 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
   if (!row) return { id: rowId, ok: false, msg: 'Lançamento não encontrado' };
   const det = (row.match_detail ?? {}) as Row;
   const c = det.confirmed as Row | undefined;
+  if (c?.payroll_id) {
+    // Folha confirmada pelo Pix: volta a pendente e sai o fluxo de caixa que o pay_payroll gravou.
+    await admin.from('hr_payroll').update({ status: 'pending', paid_date: null, payment_method: null, updated_at: new Date().toISOString() })
+      .eq('id', c.payroll_id).eq('tenant_id', tenantId);
+    await admin.from('fin_cash_flow').delete().eq('tenant_id', tenantId).eq('origin', 'auto_payroll').eq('reference_id', c.payroll_id);
+    const { confirmed: _c, ...resto } = det;
+    await admin.from('fin_bank_statement_imports').update({
+      status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null, match_detail: resto,
+    }).eq('id', row.id);
+    return { id: row.id, ok: true, msg: 'Pagamento da folha desfeito: a folha voltou a pendente.' };
+  }
   if (!c?.bill_id) return { id: rowId, ok: false, msg: 'Não há baixa feita pela conciliação neste lançamento' };
   if (c.monthly_doc_id) return { id: rowId, ok: false, msg: 'Este pagamento faz parte de uma nota do mês: desfaça pela nota em Notas de Entrada (desfaz todos os pagamentos juntos)' };
   const date = String(row.transaction_date);
@@ -651,7 +689,9 @@ Deno.serve(async (req: Request) => {
       const from = addDays(to, -120);
       const { data, error } = await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: from, p_to: to });
       if (error) return errResp('Sugerir vínculos: ' + error.message, 500);
-      return json({ success: true, ...(data as Row ?? {}) });
+      const { data: folha, error: fe } = await admin.rpc('fn_match_payroll', { p_tenant: tenantId, p_from: from, p_to: to });
+      if (fe) log('WARN', 'rematch', 'fn_match_payroll falhou', { tenantId, error: fe.message });
+      return json({ success: true, ...(data as Row ?? {}), folha: folha ?? 0 });
     }
 
     if (action === 'alerts') {
@@ -855,6 +895,7 @@ Deno.serve(async (req: Request) => {
       // Aplica já nos lançamentos pendentes dessa pessoa
       const to = todayBR();
       await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: addDays(to, -120), p_to: to });
+      await admin.rpc('fn_match_payroll', { p_tenant: tenantId, p_from: addDays(to, -120), p_to: to });
       return json({ success: true, message: 'Regra salva: os próximos lançamentos de ' + label + ' entram como "' + category + '".' });
     }
 

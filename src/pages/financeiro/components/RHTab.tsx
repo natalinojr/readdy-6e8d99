@@ -63,6 +63,8 @@ const ENTRY_TYPE_LABELS: Record<string, string> = {
 /** Lançamento vindo do Domínio: valores prontos da contabilidade, fora da calculadora do ERPOS. */
 const isImportado = (e: Partial<PayrollEntry>) => Array.isArray(e.rubricas) && e.rubricas.length > 0;
 const isRescisao = (e: Partial<PayrollEntry>) => isImportado(e) && /RESCIS[ÃA]O em/i.test(e.notes ?? '');
+/** Sócio sem retirada: entra só o INSS do pró-labore que a empresa paga (o pró-labore do extrato não é pago). */
+const isSoInss = (e: Partial<PayrollEntry>) => isImportado(e) && (e.rubricas ?? []).every((r) => r.categoria === 'inss_socio');
 
 const DEPARTMENTS = ['Cozinha', 'Salão', 'Caixa', 'Delivery', 'Gerência', 'Limpeza', 'Administrativo', 'Geral'];
 
@@ -1596,6 +1598,7 @@ export default function RHTab() {
                         <div className="flex gap-1 mt-0.5">
                           {isImportado(entry) && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">DOMÍNIO</span>}
                           {isRescisao(entry) && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-600">RESCISÃO</span>}
+                          {isSoInss(entry) && <span title="Não retira pró-labore: entra só o INSS de 11% que a empresa recolhe no DARF (código 1099)" className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700">SÓ INSS</span>}
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
@@ -1608,7 +1611,10 @@ export default function RHTab() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3.5 text-sm text-right text-zinc-700 font-medium">{formatCurrency(entry.total_proventos ?? entry.gross_salary)}</td>
+                      <td className="px-4 py-3.5 text-sm text-right text-zinc-700 font-medium">
+                        {formatCurrency(entry.total_proventos ?? entry.gross_salary)}
+                        {isSoInss(entry) && <span className="block text-[10px] font-normal text-zinc-400">INSS do pró-labore (custo da empresa)</span>}
+                      </td>
                       <td className="px-4 py-3.5 text-sm text-right text-orange-600">{formatCurrency(entry.inss)}</td>
                       <td className="px-4 py-3.5 text-sm text-right text-red-500">{formatCurrency(entry.irrf)}</td>
                       <td className="px-4 py-3.5 text-sm text-right text-red-600">{formatCurrency(entry.total_descontos ?? entry.deductions)}</td>
