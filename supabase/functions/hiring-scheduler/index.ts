@@ -181,10 +181,10 @@ function mapa(c: Ctx): string {
 }
 
 // tipo: marca a mensagem para decisões seguintes (hoje só 'agradecimento', ver handleCandidate).
-async function addHist(admin: SupabaseClient, sessId: string, de: string, texto: string, extra: Row = {}, tipo?: string) {
+async function addHist(admin: SupabaseClient, sessId: string, de: string, texto: string, extra: Row = {}, tipo?: string, id?: string) {
   const { data } = await admin.from('hiring_scheduling_sessions').select('history').eq('id', sessId).maybeSingle();
   const hist = Array.isArray(data?.history) ? data.history : [];
-  hist.push({ at: new Date().toISOString(), de, texto: texto.slice(0, 1000), ...(tipo ? { tipo } : {}) });
+  hist.push({ at: new Date().toISOString(), de, texto: texto.slice(0, 1000), ...(tipo ? { tipo } : {}), ...(id ? { id } : {}) });
   await admin.from('hiring_scheduling_sessions').update({ history: hist.slice(-80), updated_at: new Date().toISOString(), ...extra }).eq('id', sessId);
 }
 // Destino do candidato: o @lid guardado quando ele já respondeu; senão o telefone (1º convite).
@@ -407,7 +407,8 @@ Responda SÓ com JSON válido:
 - "cancelar"/"remarcar": sobre uma entrevista já marcada. "Não consigo ir", "não vou poder", um "não" respondendo se vem à entrevista, "remarcar", "outro dia" = "remarcar".
 - Nunca pergunte você mesmo se ele confirma presença (o sistema pede isso na hora certa). Em "resposta", só responda o que ele perguntou ou cumprimente.
 - "confirmar": confirma que VAI comparecer à entrevista marcada ("confirmo", "estarei lá", "vou sim").
-- "agradecer": só agradece ou encerra ("obrigado", "ok", "valeu", "beleza"). Não é confirmação de presença.`;
+- "agradecer": só agradece ou encerra ("obrigado", "ok", "valeu", "beleza"). Não é confirmação de presença.
+- NUNCA escreva dias ou horários em "resposta" (nem listas de horários): quem manda horários é o sistema, a partir da agenda.`;
   try {
     const r = await client.messages.create({ model: MODEL, max_tokens: 400, system, messages: [{ role: 'user', content: text.slice(0, 1500) }] });
     const out = r.content.filter((b) => b.type === 'text').map((b) => (b as { text: string }).text).join('').trim()
@@ -441,7 +442,7 @@ async function cancelInterview(admin: SupabaseClient, c: Ctx) {
   await admin.from('hiring_scheduling_sessions').update({ interview_id: null, status: 'negociando', confirmed_at: null, confirm_requested_at: null, updated_at: new Date().toISOString() }).eq('id', c.sess.id);
 }
 
-async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
+async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, jaNoHistorico = false) {
   const c = await loadCtx(admin, sess);
   if (!c) return;
   if (sess.interview_id) {
@@ -449,7 +450,7 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
     if (iv?.status === 'agendada') c.sess.interview_at = iv.scheduled_at;
     c.sess.interview_status = iv?.status ?? null;
   }
-  await addHist(admin, sess.id, 'candidato', text, { last_in_at: new Date().toISOString() });
+  if (!jaNoHistorico) await addHist(admin, sess.id, 'candidato', text, { last_in_at: new Date().toISOString() });
   const t = text.trim();
   const pend = (sess.pending_request ?? null) as Row | null;
 
@@ -584,6 +585,15 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string) {
     await toCand(admin, c, 'Recebi sua mensagem e já passei para a equipe 🙂 Eles te respondem assim que possível.');
     return;
   }
+  // A IA não escreve horário enquanto não está marcado: quem manda horário é a agenda (freeSlots).
+  // Syria, 2026-09-19: a IA viu a lista vazia (corrida de duas mensagens) e inventou 15:00–16:40,
+  // horários já ocupados. Resposta com hora vira a lista de verdade.
+  const citaHora = /\b\d{1,2}\s*(:|h)\s*\d{0,2}\b/i.test(resp);
+  if (resp && citaHora && sess.status !== 'agendado') {
+    if (offered.length) await toCand(admin, c, `Estes são os horários disponíveis:\n${slotsText(offered)}\n\n${COMO_RESPONDER}`);
+    else await offerAgain(admin, c, 'Estes são os horários para a entrevista:');
+    return;
+  }
   if (resp) { await toCand(admin, c, resp.slice(0, 700)); return; }
   if (sess.status !== 'agendado' && offered.length) await toCand(admin, c, `Pra marcar, me diga qual destes horários fica melhor pra você:\n${slotsText(offered)}\n\n${COMO_RESPONDER}`);
 }
@@ -646,6 +656,7 @@ async function decidirPedido(admin: SupabaseClient, sess: Row, op: Decisao, prop
   return { ok: true, msg: `Ok, avisei ${c.cand.full_name} e ofereci os horários da agenda.` };
 }
 
+const JUNTAR_MS = 3500; // janela para juntar mensagens seguidas do candidato
 async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
   const num = last11(body.number);
   const text = String(body.text ?? '').trim();
@@ -664,7 +675,22 @@ async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
       await admin.from('hiring_scheduling_sessions').update({ jid: replyTo }).eq('id', ss[0].id);
       ss[0].jid = replyTo;
     }
-    await handleCandidate(admin, ss[0], text);
+    // Mensagens seguidas ("Boa tarde" + "Pode mandar sim", 2 s de diferença — Syria, 2026-09-19) rodavam
+    // em paralelo: uma mandava a lista da agenda, a outra lia a sessão no meio (lista ainda vazia) e a IA
+    // inventava horários. Agora cada mensagem entra no histórico, espera um pouco e SÓ A ÚLTIMA responde,
+    // lendo as seguidas juntas.
+    const meu = crypto.randomUUID();
+    await addHist(admin, ss[0].id, 'candidato', text, { last_in_at: new Date().toISOString() }, undefined, meu);
+    await new Promise((r) => setTimeout(r, JUNTAR_MS));
+    const { data: fresco } = await admin.from('hiring_scheduling_sessions').select('*').eq('id', ss[0].id).maybeSingle();
+    if (!fresco) return true;
+    const hist = (Array.isArray(fresco.history) ? fresco.history : []) as Row[];
+    let ini = hist.length;
+    while (ini > 0 && hist[ini - 1]?.de === 'candidato' && Date.now() - Date.parse(String(hist[ini - 1].at)) < 60_000) ini--;
+    const seguidas = hist.slice(ini);
+    if (seguidas.at(-1)?.id !== meu) return true; // chegou outra depois: ela responde por todas
+    fresco.history = hist.slice(0, ini); // histórico "sem a atual", como o classify espera
+    await handleCandidate(admin, fresco, seguidas.map((h) => String(h.texto ?? '')).join('\n'), true);
     return true;
   }
   // 1b) Agendamento encerrado há pouco (desistiu, cancelado, sem resposta) e a pessoa pede para remarcar:
