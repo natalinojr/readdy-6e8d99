@@ -4,6 +4,7 @@ import ImprimirPedidoModal from './ImprimirPedidoModal';
 import CancelamentoModal from '@/components/feature/CancelamentoModal';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useKDS } from '../../../../contexts/KDSContext';
+import { useSessao } from '@/contexts/SessaoContext';
 import { useMotoboyStatus } from '@/hooks/useMotoboyStatus';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSPedidoStatus } from '@/types/kds';
 import { kdsStatusToPdvStatus, pdvStatusLabel, pdvStatusBadgeCls, formatOrderNumber } from '@/lib/statusMappers';
@@ -1872,12 +1873,32 @@ function pedidoMatchFiltro(p: PedidoRecente, filtro: Filtro): boolean {
 export default function PedidosRecentesPanel() {
   const [filtro, setFiltro] = useState<Filtro>('aberto');
   const [busca, setBusca] = useState('');
-  const { pedidos: kdsPedidos, updateItemStatusRemote, updateUnitStatusRemote, setPedidos, reloadOrders } = useKDS();
+  const { pedidos: kdsPedidos, updateItemStatusRemote, updateUnitStatusRemote, setPedidos, reloadOrders, fetchSessionOrdersFull } = useKDS();
   const motoboyMap = useMotoboyStatus(); // status da entrega (realtime), por order id
+  const { sessao } = useSessao();
+
+  // Pedidos do dia inteiro (dono, 2026-09-18: "no PDV não mostram todos os pedidos do dia").
+  // Desde 17/09 a lista ao vivo do KDS só traz os entregues das últimas 2 h (fn_get_kds_orders
+  // p_only_active) — o 0001 da Vila, pago e entregue às 19:19, sumiu de "Pago". Aqui a sessão
+  // inteira é buscada ao abrir e a cada 60 s, e só entra o que NÃO está na lista ao vivo (a ao
+  // vivo é sempre a mais atual; o que sobra da sessão já está encerrado).
+  const [sessaoCompleta, setSessaoCompleta] = useState<KDSPedido[]>([]);
+  useEffect(() => {
+    if (!sessao?.id) { setSessaoCompleta([]); return undefined; }
+    let vivo = true;
+    const buscar = () => { fetchSessionOrdersFull(sessao.id).then((r) => { if (vivo) setSessaoCompleta(r); }); };
+    buscar();
+    const t = setInterval(() => { if (!document.hidden) buscar(); }, 60000);
+    return () => { vivo = false; clearInterval(t); };
+  }, [sessao?.id, fetchSessionOrdersFull]);
+  const pedidosDoDia = useMemo(() => {
+    const aoVivo = new Set(kdsPedidos.map((p) => p.id));
+    return [...kdsPedidos, ...sessaoCompleta.filter((p) => !aoVivo.has(p.id))];
+  }, [kdsPedidos, sessaoCompleta]);
 
   const allPedidos = useMemo(
     () => {
-      const pedidos = [...kdsPedidos]
+      const pedidos = [...pedidosDoDia]
         // Cancelados vão pro final
         .sort((a, b) => {
           const aCancelled = a.isCancelled ? 1 : 0;
@@ -1896,7 +1917,7 @@ export default function PedidosRecentesPanel() {
       // Agrupar pedidos de mesa que compartilham o mesmo table_session_id
       return agruparPedidos(pedidos);
     },
-    [kdsPedidos, motoboyMap],
+    [pedidosDoDia, motoboyMap],
   );
 
   const handleEntregarRemote = useCallback(
