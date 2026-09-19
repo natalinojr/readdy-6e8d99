@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Roteiro, useRoteiro, EscolhaData, Fim, brl, dataBR, somaDias, type AcaoProps } from '../kit';
+import { Roteiro, useRoteiro, EscolhaData, Fim, brl, dataBR, somaDias, hojeISO, type AcaoProps } from '../kit';
 import { Painel, Kpis, Barras, Ranking, Variacao } from '../painel';
 
 interface Relatorio {
@@ -34,6 +34,9 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
   const { baloes, bot, eu, painel } = useRoteiro();
   const [passo, setPasso] = useState<'dia' | 'carregando' | 'fim'>('dia');
   const iniciou = useRef(false);
+  // Dia sem venda (ex.: "hoje" logo depois da meia-noite, com o turno de ontem recém-fechado):
+  // oferece o dia anterior num toque.
+  const [vazio, setVazio] = useState<string | null>(null);
 
   useEffect(() => {
     if (iniciou.current) return;
@@ -46,6 +49,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
     if (!user?.tenantId) { bot('Nenhuma loja ativa.'); setPasso('fim'); return; }
     const tenantId = user.tenantId;
     eu(dataBR(iso));
+    setVazio(null);
     setPasso('carregando');
     const relatorio = (dia: string) => supabase.rpc('fn_get_sales_report', {
       p_tenant_id: tenantId,
@@ -60,7 +64,12 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
     const r = (data ?? {}) as Relatorio;
     const a = (anterior.error ? null : anterior.data) as Relatorio | null;
     const pedidos = Number(r.total_orders ?? 0);
-    if (!pedidos) { bot(`Nenhuma venda paga em ${dataBR(iso)}.`); setPasso('fim'); return; }
+    if (!pedidos) {
+      bot(`Nenhuma venda paga em ${dataBR(iso)}${iso === hojeISO() ? ' (ainda)' : ''}.`);
+      setVazio(somaDias(iso, -1));
+      setPasso('fim');
+      return;
+    }
 
     const mapa = new Map<string, { qtd: number; valor: number }>();
     for (const it of r.top_items ?? []) {
@@ -100,6 +109,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
       {passo === 'dia' && <EscolhaData onEscolher={carregar} />}
       {passo === 'fim' && (
         <Fim onFechar={onFechar} acoes={[
+          ...(vazio ? [{ label: `Ver ${dataBR(vazio)}`, onClick: () => carregar(vazio) }] : []),
           { label: 'Outro dia', onClick: () => { bot('Qual dia?'); setPasso('dia'); } },
           { label: 'Abrir Relatórios', onClick: () => irPara('/relatorios') },
         ]} />
