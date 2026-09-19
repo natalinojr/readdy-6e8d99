@@ -46,7 +46,6 @@ export default function TransacaoDetalheModal({
   onUpdate,
   onReconcile,
   onUnreconcile,
-  onCreateRule,
   findBillMatches,
   findReceivableMatches,
   onChanged,
@@ -59,8 +58,6 @@ export default function TransacaoDetalheModal({
   const [billMatches, setBillMatches] = useState<BillMatch[]>([]);
   const [receivableMatches, setReceivableMatches] = useState<ReceivableMatch[]>([]);
   const [loadingMatches, setLoadingMatches] = useState(false);
-  const [showCreateRule, setShowCreateRule] = useState(false);
-  const [ruleForm, setRuleForm] = useState({ pattern: '', category: '', costCenterId: '' });
 
   const [form, setForm] = useState({
     description: '',
@@ -76,11 +73,6 @@ export default function TransacaoDetalheModal({
         category: transaction.category || '',
         cost_center_id: transaction.cost_center_id || '',
         notes: transaction.notes || '',
-      });
-      setRuleForm({
-        pattern: transaction.description?.split(' ')[0] ?? '',
-        category: transaction.category || '',
-        costCenterId: transaction.cost_center_id || '',
       });
       loadMatches();
     }
@@ -200,13 +192,6 @@ export default function TransacaoDetalheModal({
     setSaving(false);
   };
 
-  const handleCreateRule = async () => {
-    if (!ruleForm.pattern.trim()) return;
-    setSaving(true);
-    await onCreateRule(ruleForm.pattern, ruleForm.category, ruleForm.costCenterId, transaction.transaction_type);
-    setShowCreateRule(false);
-    setSaving(false);
-  };
 
 
   const matchedRule = rules.find(r => {
@@ -491,59 +476,8 @@ export default function TransacaoDetalheModal({
             </div>
           </div>
 
-          {/* Create rule from this */}
-          {!showCreateRule ? (
-            <button
-              onClick={() => setShowCreateRule(true)}
-              className="flex items-center gap-1.5 text-xs text-amber-600 hover:text-amber-700 font-medium cursor-pointer transition-colors"
-            >
-              <i className="ri-filter-3-line" />
-              Criar regra de classificação a partir desta transação
-            </button>
-          ) : (
-            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 space-y-2">
-              <p className="text-xs font-semibold text-amber-700">Criar regra automática</p>
-              <div className="grid grid-cols-3 gap-2">
-                <input
-                  value={ruleForm.pattern}
-                  onChange={e => setRuleForm(f => ({ ...f, pattern: e.target.value }))}
-                  placeholder="Padrão"
-                  className="px-2 py-1.5 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-                />
-                <CategoriaCombobox
-                  value={ruleForm.category}
-                  options={categoriaOptions}
-                  onChange={v => setRuleForm(f => ({ ...f, category: v }))}
-                  placeholder="Categoria"
-                  buttonClassName="w-full px-2 py-1.5 border border-amber-200 rounded-lg text-xs bg-white"
-                />
-                <select
-                  value={ruleForm.costCenterId}
-                  onChange={e => setRuleForm(f => ({ ...f, costCenterId: e.target.value }))}
-                  className="px-2 py-1.5 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-                >
-                  <option value="">Centro de Custo</option>
-                  {centers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleCreateRule}
-                  disabled={saving || !ruleForm.pattern.trim()}
-                  className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-semibold hover:bg-amber-600 disabled:opacity-50 cursor-pointer whitespace-nowrap transition-colors"
-                >
-                  {saving ? 'Salvando...' : 'Criar Regra'}
-                </button>
-                <button
-                  onClick={() => setShowCreateRule(false)}
-                  className="px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer whitespace-nowrap transition-colors"
-                >
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          )}
-
+          {/* "Criar regra de classificação" saiu daqui (2026-09-18): só etiquetava o extrato por texto e
+              parecia lançar na DRE. Etiqueta por pessoa = "Lembrar a categoria" abaixo; regra por texto = tela Regras. */}
           {transaction.counterpart_doc && transaction.match_kind !== 'internal_transfer' && !transaction.classificacao && (
             <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer bg-zinc-50 border border-zinc-200 rounded-lg p-2.5">
               <input type="checkbox" checked={lembrarContraparte} onChange={e => setLembrarContraparte(e.target.checked)} className="mt-0.5" />
