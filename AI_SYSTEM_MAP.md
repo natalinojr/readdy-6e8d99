@@ -2591,6 +2591,17 @@ mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a co
 `''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
 de não lidas (`linhaConversa`).
 
+### Vendas do dia × Fechamento: as duas contas do mesmo sábado (2026-09-20)
+
+`fn_get_sales_report` (3 e 4 argumentos) somava `by_payment` pelos pagamentos do período
+(`p.created_at`) e todo o resto pelos pedidos (`o.created_at`): pedido de 19/09 pago 00:08 de 20/09
+entrava no faturamento e sumia das formas de pagamento (R$ 845,30 × R$ 749,30). Agora tudo pela data
+do PEDIDO (migration `20260920030000_sales_report_pagamentos_pela_data_do_pedido`).
+No `closingText` (assistente-cron) a comparação da semana passada ia de `lwDay` até HOJE — a semana
+inteira (R$ 2.292,00, -67%) em vez do mesmo dia (R$ 594,00, +42%).
+Ainda em aberto: o fechamento roda às 23:00 e não vê o que for pago depois (o caixa fecha os pedidos
+de madrugada), então ele é sempre parcial nos dias de turno longo.
+
 ### Chat: a resposta fica onde a pergunta foi feita (2026-09-19)
 
 Assunto NÃO é escolhido por IA: são regras — as ferramentas que o assistente usou (brain,
