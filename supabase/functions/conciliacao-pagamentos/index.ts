@@ -34,6 +34,9 @@
 //                          competence_rule: 'same'|'prev', supplier_name?, cost_center_id? }   admin/gerente
 //   launch_rule_preview  { rule_id }            pagamentos pendentes (qualquer data) que a regra pegaria
 //   launch_rule_apply    { rule_id, items: [{ id, competencia: 'YYYY-MM' }] }   admin/gerente: lança esses
+//   auto_apply_rules     {}   regras com mode='auto': lança SOZINHO só o que não tem dúvida — sem
+//                        conflito de competência, valor dentro do padrão e fornecedor já conhecido
+//                        (3+ pagamentos). Chamada pelo cron (assistente-brain › regras_auto).
 //
 //   VÍNCULO MANUAL (2026-09-20): "este pagamento é desta nota/conta". O casamento automático usa
 //   CNPJ + valor + data; Pix ao gerente/dono ou razão social diferente da nota nunca casava.
@@ -996,7 +999,8 @@ Deno.serve(async (req: Request) => {
         tenant_id: tenantId, counterpart_doc: doc, counterpart_label: label, pattern: doc, match_type: 'contains',
         category: null, cost_center_id: body.cost_center_id || null, transaction_type: 'debit', is_active: true,
         action: 'launch', launch_kind: kind, dre_category_id: kind === 'despesa' ? dreId : null, merchandise_category_id: kind === 'compra' ? mercId : null,
-        competence_rule: body.competence_rule === 'prev' ? 'prev' : 'same', mode: 'suggest',
+        competence_rule: body.competence_rule === 'prev' ? 'prev' : 'same',
+        mode: body.mode === 'auto' ? 'auto' : 'suggest',
         supplier_name: String(body.supplier_name ?? '').trim().slice(0, 120) || label, updated_at: new Date().toISOString(),
       };
       const { data: existing } = await admin.from('fin_reconciliation_rules').select('id').eq('tenant_id', tenantId).eq('counterpart_doc', doc).maybeSingle();
@@ -1049,6 +1053,33 @@ Deno.serve(async (req: Request) => {
       if (ok) await admin.from('fin_reconciliation_rules').update({ match_count: Number(rule.match_count ?? 0) + ok, last_applied_at: new Date().toISOString() }).eq('id', rule.id);
       log('INFO', 'launch_rule_apply', 'ok', { tenantId, userId, rule: rule.id, total: results.length, ok });
       return json({ success: true, results });
+    }
+
+    if (action === 'auto_apply_rules') {
+      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      const to = todayBR();
+      const { data: regras } = await admin.from('fin_reconciliation_rules').select('*')
+        .eq('tenant_id', tenantId).eq('action', 'launch').eq('is_active', true).eq('mode', 'auto');
+      const feitos: Array<{ rule: string; id: string; ok: boolean; msg: string }> = [];
+      for (const rule of (regras ?? []) as Row[]) {
+        const { data: cands } = await admin.rpc('fn_launch_rule_candidates', { p_tenant: tenantId, p_rule: rule.id, p_from: '2000-01-01', p_to: to });
+        // Sozinho só o que não tem dúvida nenhuma: sem trava, sem conflito de competência, valor
+        // dentro do padrão e fornecedor já conhecido (a média só existe com 3+ pagamentos).
+        const limpos = ((cands ?? []) as Row[])
+          .filter((c) => !c.bloqueio && !c.conflito && c.fora_padrao !== true && Number(c.media ?? 0) > 0)
+          .slice(0, 20);
+        for (const c of limpos) {
+          const id = String(c.statement_id);
+          const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
+          if (!row || row.reconciled || row.status !== 'pending') continue;
+          const r = await withRowClaim(ctx, id, () => createOneClaimed(ctx, id, ruleOpts(rule, String(c.competencia).slice(0, 7)), { ...row, match_kind: null, category: null }));
+          feitos.push({ rule: String(rule.counterpart_label ?? rule.counterpart_doc), id, ok: r.ok, msg: r.msg });
+        }
+        const ok = feitos.filter((f) => f.ok).length;
+        if (ok) await admin.from('fin_reconciliation_rules').update({ match_count: Number(rule.match_count ?? 0) + ok, last_applied_at: new Date().toISOString() }).eq('id', rule.id);
+      }
+      if (feitos.length) log('INFO', 'auto_apply_rules', 'ok', { tenantId, total: feitos.length, ok: feitos.filter((f) => f.ok).length });
+      return json({ success: true, lancados: feitos.filter((f) => f.ok), falhas: feitos.filter((f) => !f.ok) });
     }
 
     // ── Vínculo manual: "este pagamento é de…" ────────────────────────────────

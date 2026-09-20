@@ -26,6 +26,8 @@ export interface ReconciliationRule {
   dre_category_id?: string | null;
   merchandise_category_id?: string | null;
   competence_rule?: 'same' | 'prev';
+  /** 'auto' = lança sozinho quando não há dúvida (cron diário); 'suggest' = espera confirmação */
+  mode?: 'suggest' | 'auto';
   supplier_name?: string | null;
   last_applied_at?: string | null;
 }

@@ -32,6 +32,7 @@ function Regra({ rule, onDelete, onChanged }: { rule: ReconciliationRule; onDele
   const [cat, setCat] = useState(rule.dre_category_id ?? '');
   const [merc, setMerc] = useState(rule.merchandise_category_id ?? '');
   const [comp, setComp] = useState<'same' | 'prev'>(rule.competence_rule === 'prev' ? 'prev' : 'same');
+  const [modo, setModo] = useState<'suggest' | 'auto'>(rule.mode === 'auto' ? 'auto' : 'suggest');
   const [cands, setCands] = useState<Candidato[] | null>(null);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [compDe, setCompDe] = useState<Record<string, string>>({});
@@ -88,7 +89,7 @@ function Regra({ rule, onDelete, onChanged }: { rule: ReconciliationRule; onDele
       body: {
         action: 'launch_rule_save', tenant_id: user.tenantId, counterpart_doc: rule.counterpart_doc, counterpart_label: rule.counterpart_label,
         kind: rule.launch_kind, dre_category_id: compra ? null : cat, merchandise_category_id: compra ? merc || null : null,
-        competence_rule: comp, supplier_name: rule.supplier_name, cost_center_id: rule.cost_center_id ?? null,
+        competence_rule: comp, mode: modo, supplier_name: rule.supplier_name, cost_center_id: rule.cost_center_id ?? null,
       },
     });
     setBusy(false);
@@ -110,6 +111,7 @@ function Regra({ rule, onDelete, onChanged }: { rule: ReconciliationRule; onDele
           <p className="text-sm font-semibold text-zinc-800 truncate">{rule.counterpart_label || rule.supplier_name || fmtDoc(rule.counterpart_doc)}</p>
           <p className="text-xs text-zinc-500">
             {fmtDoc(rule.counterpart_doc)} · vira <b className="text-violet-700">{categoria}</b> · competência {rule.competence_rule === 'prev' ? 'do mês anterior' : 'do mês do pagamento'}
+            {rule.mode === 'auto' && <span className="ml-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-semibold">sozinho</span>}
             <span className="text-zinc-400"> · {rule.match_count} uso{rule.match_count !== 1 ? 's' : ''}</span>
           </p>
         </div>
@@ -140,6 +142,14 @@ function Regra({ rule, onDelete, onChanged }: { rule: ReconciliationRule; onDele
             </select>
           </div>
           <div className="sm:col-span-2">
+            <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer mb-2">
+              <input type="checkbox" checked={modo === 'auto'} onChange={(e) => setModo(e.target.checked ? 'auto' : 'suggest')} className="mt-0.5" />
+              <span>
+                <b>Lançar sozinho quando não houver dúvida.</b> Entra sozinho (uma vez por dia) só o pagamento sem conflito de
+                competência, com valor dentro do padrão deste fornecedor e com histórico. Qualquer dúvida continua esperando você,
+                e o que entrar sozinho pode ser desfeito no próprio pagamento.
+              </span>
+            </label>
             <button onClick={salvar} disabled={busy} className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-xs font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
               {busy ? 'Salvando…' : 'Salvar regra'}
             </button>

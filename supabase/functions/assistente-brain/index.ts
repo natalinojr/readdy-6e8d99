@@ -2012,6 +2012,37 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Regras de lançamento no modo automático (2026-09-20): roda com a sessão do dono, uma vez por dia
+    // (cron fn_regras_auto_all). A edge só lança o que não tem dúvida; o resto continua sugerido.
+    if (body.action === 'regras_auto') {
+      const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'owner_user_id').maybeSingle();
+      // deno-lint-ignore no-explicit-any
+      const ctx: any = { admin, ownerId: String(st?.value ?? '').replace(/"/g, '') };
+      const { data: regras } = await admin.from('fin_reconciliation_rules')
+        .select('tenant_id').eq('action', 'launch').eq('is_active', true).eq('mode', 'auto');
+      const lojas = [...new Set(((regras ?? []) as Array<{ tenant_id: string }>).map((r) => r.tenant_id))];
+      const saida: Array<{ loja: string; lancados: number; falhas: number }> = [];
+      for (const tenantId of lojas) {
+        const r = await callEdge(ctx, 'conciliacao-pagamentos', 'auto_apply_rules', {}, tenantId).catch((e) => ({ status: 0, body: { error: errMsg(e) }, ms: 0 }));
+        // deno-lint-ignore no-explicit-any
+        const lanc = ((r.body?.lancados ?? []) as any[]);
+        // deno-lint-ignore no-explicit-any
+        const falhas = ((r.body?.falhas ?? []) as any[]);
+        saida.push({ loja: tenantId, lancados: lanc.length, falhas: falhas.length });
+        if (lanc.length) {
+          // Fica registrado na conversa Financeiro (sem notificar): é trabalho feito, não pergunta.
+          const { data: t } = await admin.from('tenants').select('name').eq('id', tenantId).maybeSingle();
+          const { data: ch } = await admin.from('asst_settings').select('value').eq('key', 'owner_chat').maybeSingle();
+          await admin.from('asst_messages').insert({
+            channel: 'cron', chat_id: String(ch?.value ?? 'cron').replace(/"/g, ''), role: 'assistant', topic: 'pagamentos',
+            content: `⚡ ${lanc.length} pagamento(s) lançado(s) pelas regras em ${t?.name ?? 'loja'}: ${lanc.slice(0, 3).map((x) => x.msg).join(' · ')}`,
+          }).then(({ error }) => { if (error) log('WARN', 'registro das regras automáticas', { error: error.message }); });
+        }
+      }
+      log('INFO', 'regras_auto', 'ok', { lojas: lojas.length, saida });
+      return json({ success: true, lojas: lojas.length, saida });
+    }
+
     if (body.action === 'baixa_conciliada') {
       const pid = String(body.payment_id ?? '');
       const { data: p } = await admin.from('fin_inter_payments').select('*').eq('id', pid).maybeSingle();
