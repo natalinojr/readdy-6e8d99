@@ -31,6 +31,7 @@ import FecharSessaoModal from './components/FecharSessaoModal';
 import AbrirMesaCaixaModal from './components/AbrirMesaCaixaModal';
 import OfflineStatusBar from '@/components/feature/OfflineStatusBar';
 import AlertaSessaoEsquecida from '@/components/feature/AlertaSessaoEsquecida';
+import AvisoInsumoZerado from '@/components/feature/AvisoInsumoZerado';
 import EstoqueZerarModal from './components/EstoqueZerarModal';
 import { useEstoqueAlertaPDV, type InsumoZerando } from '@/hooks/useEstoqueAlertaPDV';
 import { useDeliveryState } from '@/hooks/useDeliveryState';
@@ -828,6 +829,11 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
       {/* ── Alerta de sessão esquecida ── */}
       <div className="px-4 pt-2">
         <AlertaSessaoEsquecida />
+      </div>
+
+      {/* ── Insumo zerou: tira ou não os itens do cardápio? (também aparece no KDS) ── */}
+      <div className="px-4 pt-2">
+        <AvisoInsumoZerado origem="pdv" />
       </div>
 
       {/* ── DESKTOP LAYOUT: side-by-side ── */}

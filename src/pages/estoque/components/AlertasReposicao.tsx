@@ -33,9 +33,10 @@ export default function AlertasReposicao({ onEntradaRapida }: AlertasReposicaoPr
   const [compraGrupo, setCompraGrupo] = useState<GrupoFornecedor | null>(null);
 
   // Insumos que precisam de reposição (abaixo do mínimo OU esgotados)
+  // Insumo sem acompanhamento (rastrearEstoque=false) nunca entra: o dono não quer aviso dele.
   const insumosAlerta = useMemo(() =>
     insumos.filter((i) =>
-      (i.estoqueMinimo > 0 && i.estoqueAtual <= i.estoqueMinimo) || i.esgotado,
+      i.rastrearEstoque && ((i.estoqueMinimo > 0 && i.estoqueAtual <= i.estoqueMinimo) || i.esgotado),
     ),
     [insumos],
   );

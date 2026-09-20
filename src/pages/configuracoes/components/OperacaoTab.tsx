@@ -605,7 +605,7 @@ export default function OperacaoTab() {
           <div className="border-t border-zinc-50 pt-4 flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-zinc-700">Bloquear item sem insumo no cardápio</p>
-              <p className="text-xs text-zinc-400 max-w-sm">Esconde do cardápio (tablet, QR, delivery e caixa) itens cuja ficha técnica não tem insumo suficiente. Deixe desligado se o estoque ainda não está confiável.</p>
+              <p className="text-xs text-zinc-400 max-w-sm">Modo estrito: esconde do cardápio (tablet, QR, delivery e caixa) itens e adicionais cuja ficha técnica não tem insumo suficiente, sem perguntar. Desligado (recomendado), quando um insumo zera o PDV e o KDS perguntam se é para tirar os itens — e nada sai até alguém responder.</p>
             </div>
             <Toggle checked={cfg.bloquearItemSemInsumo} onChange={(v) => set('bloquearItemSemInsumo', v)} />
           </div>

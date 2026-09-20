@@ -61,7 +61,7 @@ function ThOrdenavel({
 }
 
 export default function InsumosTab() {
-  const { insumos, insumosEsgotados, marcarInsumoEsgotado, upsertInsumo, reloadInsumos, addMovimentacao, inventarioSessions } = useEstoque();
+  const { insumos, insumosEsgotados, marcarInsumoEsgotado, upsertInsumo, reloadInsumos, addMovimentacao, inventarioSessions, setRastrearEstoque } = useEstoque();
   const { recipes, batches, reload: reloadProducao } = useProducao();
   const { categories, names: categoriasDB, loading: loadingCategorias, addCategory, removeCategory, renameCategory } = useIngredientCategories();
   const { user } = useAuth();
@@ -197,9 +197,11 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
     return arr;
   }, [insumosFiltrados, sortKey, sortDir, resolveCategoria, insumosEsgotados]);
 
-  const alertas = insumos.filter((i) => i.estoqueAtual <= i.estoqueMinimo && i.estoqueMinimo > 0).length;
-  const qtdEsgotados = insumosEsgotados.length;
-  const criticosResumo = insumos.filter((i) => i.estoqueAtual <= i.estoqueMinimo * 0.5).length;
+  // Resumos são AVISO: insumo sem acompanhamento fica fora (dono, 2026-09-20).
+  const insumosComAviso = useMemo(() => insumos.filter((i) => i.rastrearEstoque), [insumos]);
+  const alertas = insumosComAviso.filter((i) => i.estoqueAtual <= i.estoqueMinimo && i.estoqueMinimo > 0).length;
+  const qtdEsgotados = insumosEsgotados.filter((id) => insumos.find((i) => i.id === id)?.rastrearEstoque !== false).length;
+  const criticosResumo = insumosComAviso.filter((i) => i.estoqueAtual <= i.estoqueMinimo * 0.5).length;
   const valorTotalEstoque = insumos.reduce((s, i) => s + i.estoqueAtual * i.precoUnitario, 0);
   const fmtValor = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
@@ -218,11 +220,11 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
     },
   }), [busca, categoriaFiltro, filtroStatus, insumos.length, insumosVisiveis, alertas, qtdEsgotados, criticosResumo, valorTotalEstoque]);
 
-  const insumosRuptura = useMemo(() => insumos
+  const insumosRuptura = useMemo(() => insumosComAviso
     .map((i) => ({ insumo: i, dias: diasParaRuptura(i) }))
     .filter((x) => x.dias !== null && x.dias <= 7)
     .sort((a, b) => (a.dias ?? 99) - (b.dias ?? 99))
-  , [insumos]);
+  , [insumosComAviso]);
 
   const handleSaveInsumo = async (data: Omit<Insumo, 'estoqueAtual' | 'ultimaEntrada' | 'fichaTecnica' | 'esgotado'> & { id?: string }) => {
     if (data.categoria && data.categoria !== 'Sem categoria' && !categoriasDB.includes(data.categoria)) {
@@ -497,6 +499,11 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                                     PRODUZIDO
                                   </span>
                                 )}
+                                {!insumo.rastrearEstoque && (
+                                  <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-full text-[9px] font-bold border border-zinc-200 whitespace-nowrap" title="O sistema não avisa nem bloqueia nada por causa deste insumo">
+                                    SEM AVISO
+                                  </span>
+                                )}
                               </div>
                               {ultimaProd && (
                                 <p className="text-[10px] text-amber-500 mt-0.5">
@@ -559,6 +566,13 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
                             <PerguntarAoAssistente foco={focoDoInsumo(insumo, esgotado)} texto="Sobre esse insumo: " />
+                            <button
+                              onClick={() => setRastrearEstoque(insumo.id, !insumo.rastrearEstoque)}
+                              title={insumo.rastrearEstoque ? 'Parar de acompanhar (sem avisos por este insumo)' : 'Voltar a acompanhar este insumo'}
+                              className={`w-7 h-7 flex items-center justify-center rounded-lg cursor-pointer transition-colors ${insumo.rastrearEstoque ? 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600' : 'text-zinc-300 hover:bg-amber-50 hover:text-amber-600'}`}
+                            >
+                              <i className={`text-sm ${insumo.rastrearEstoque ? 'ri-notification-3-line' : 'ri-notification-off-line'}`} />
+                            </button>
                             <button onClick={() => setHistoricoModal(insumo)} title="Histórico de compras" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors"><History size={12} /></button>
                             <button onClick={() => setEntradaRapida(insumo)} title="Entrada rápida" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-green-50 text-zinc-400 hover:text-green-600 cursor-pointer transition-colors"><i className="ri-add-circle-line text-sm" /></button>
                             {!esgotado && (
@@ -609,6 +623,11 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                             PRODUZIDO
                           </span>
                         )}
+                        {!insumo.rastrearEstoque && (
+                          <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-full text-[9px] font-bold border border-zinc-200 whitespace-nowrap">
+                            SEM AVISO
+                          </span>
+                        )}
                       </div>
                       {ultimaProd && (
                         <p className="text-[10px] text-amber-500 mt-0.5">
@@ -657,6 +676,13 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                     </button>
                     <button onClick={() => setHistoricoModal(insumo)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-zinc-100 text-zinc-500 cursor-pointer">
                       <History size={13} />
+                    </button>
+                    <button
+                      onClick={() => setRastrearEstoque(insumo.id, !insumo.rastrearEstoque)}
+                      title={insumo.rastrearEstoque ? 'Parar de acompanhar' : 'Voltar a acompanhar'}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-zinc-100 text-zinc-500 cursor-pointer"
+                    >
+                      <i className={`text-sm ${insumo.rastrearEstoque ? 'ri-notification-3-line' : 'ri-notification-off-line'}`} />
                     </button>
                     {!esgotado && (
                       <button onClick={() => setConfirmEsgotado(insumo)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-50 text-red-500 cursor-pointer">

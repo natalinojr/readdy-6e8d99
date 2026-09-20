@@ -21,6 +21,7 @@ import { useSessao } from '../../contexts/SessaoContext';
 import { useEstoque } from '../../contexts/EstoqueContext';
 import { useKDS } from '../../contexts/KDSContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
+import AvisoInsumoZerado from '@/components/feature/AvisoInsumoZerado';
 
 function deriveItemStatus(item: any): any {
   if (item.partes && item.partes.length > 0) {
@@ -816,6 +817,11 @@ export default function KDSPage() {
         }}
         onFecharEstacao={() => setShowFecharEstacao(true)}
       />
+
+      {/* ── Insumo zerou: a cozinha confirma se tira mesmo os itens do cardápio ── */}
+      <div className="px-3 pt-2 flex-shrink-0">
+        <AvisoInsumoZerado origem="kds" tamanho="grande" />
+      </div>
 
       {/* ── Barra fixa: pedidos sendo atualizados pelo PDV ── */}
       {pedidosSalvando.length > 0 && (

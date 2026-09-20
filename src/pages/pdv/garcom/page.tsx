@@ -20,6 +20,7 @@ import TransferirMesaModal from './components/TransferirMesaModal';
 import ChamadosPanel from './components/ChamadosPanel';
 import PedidosAtivosView from './components/PedidosAtivosView';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
+import AvisoInsumoZerado from '@/components/feature/AvisoInsumoZerado';
 
 type Tela = 'mesas' | 'identificacao' | 'transferir' | 'pedido' | 'avulso-identificacao' | 'avulso-pedido' | 'sucesso';
 type AbaMain = 'mesas' | 'pedidos';
@@ -1033,6 +1034,10 @@ export default function GarcomPage() {
 
       {(tela === 'mesas' || tela === 'identificacao' || tela === 'transferir' || tela === 'avulso-identificacao') && (
         <div className="relative z-10 flex-1 overflow-hidden flex flex-col">
+          {/* Insumo zerou: tira ou não os itens do cardápio? (mesmo aviso do caixa e do KDS) */}
+          <div className="px-3 pt-2 flex-shrink-0">
+            <AvisoInsumoZerado origem="pdv" />
+          </div>
           <div className="flex border-b border-zinc-200/80 px-3 flex-shrink-0 bg-white/40 backdrop-blur-sm">
             <button onClick={() => setAbaMain('mesas')} className={`flex-1 py-2 text-xs font-semibold border-b-2 cursor-pointer transition-colors whitespace-nowrap ${abaMain === 'mesas' ? 'border-amber-500 text-amber-600' : 'border-transparent text-zinc-400 hover:text-zinc-600'}`}>
               <i className="ri-layout-grid-line mr-1" />Mesas

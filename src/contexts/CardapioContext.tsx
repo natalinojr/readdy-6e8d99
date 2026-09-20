@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
-import { notifyReload } from '@/lib/reloadSignal';
+import { notifyReload, subscribeReload } from '@/lib/reloadSignal';
 import { promoAtivaHoje } from '@/lib/promoUtils';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import type { Categoria, Item, Combo, ObservacaoGlobal, GrupoOpcoes, OpcaoItem, PromocaoItem, Destaque } from '@/types/cardapio';
@@ -573,6 +573,9 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
   }, [effectiveTenantId, user?.tenantKind]);
 
   useEffect(() => { recarregar(); }, [recarregar]);
+
+  // Item tirado do cardápio por resposta ao aviso de insumo zerado (useAlertasInsumoZerado)
+  useEffect(() => subscribeReload('cardapio', () => { recarregar({ silent: true }); }), [recarregar]);
 
   // ── Category CRUD ─────────────────────────────────────────────────────────
 

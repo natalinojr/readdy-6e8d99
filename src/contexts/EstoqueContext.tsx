@@ -42,6 +42,7 @@ interface DBIngredient {
   deleted_at?: string | null;
   dre_category_id?: string | null;
   usage_type?: string | null;
+  track_stock?: boolean | null;
 }
 
 interface DBStockMovement {
@@ -97,6 +98,12 @@ export interface Insumo {
   dreCategoryId?: string | null;
   /** 'final' = usa direto no cardápio; 'production' = só usado em fichas de produção (produto produzido) */
   usageType: 'final' | 'production';
+  /**
+   * false = o sistema não avisa nem bloqueia nada por causa deste insumo (estoque mínimo,
+   * "acabou o insumo", aviso no fechamento do pedido, item sem insumo). Estoque, movimentações,
+   * inventário e CMV continuam normais. Padrão true.
+   */
+  rastrearEstoque: boolean;
 }
 
 export interface PerdaItem {
@@ -177,6 +184,7 @@ function dbToInsumo(row: DBIngredient): Insumo | null {
     supplierId: row.supplier_id ?? null,
     dreCategoryId: row.dre_category_id ?? null,
     usageType: (row.usage_type as 'final' | 'production') ?? 'final',
+    rastrearEstoque: row.track_stock ?? true,
   };
 }
 
@@ -224,6 +232,8 @@ interface EstoqueContextValue {
   registrarPerda: (itensPerda: PerdaItem[], motivo: string, operador: string) => Promise<void>;
   confirmarInventario: (itens: InventarioItemContado[], operador: string) => Promise<void>;
   marcarInsumoEsgotado: (insumoId: string, operador?: string) => Promise<void>;
+  /** Liga/desliga todos os avisos e bloqueios deste insumo (não mexe em estoque nem CMV). */
+  setRastrearEstoque: (insumoId: string, rastrear: boolean) => Promise<void>;
   upsertInsumo: (insumo: Partial<Insumo> & { nome: string }) => Promise<string | undefined>;
   setInsumos: React.Dispatch<React.SetStateAction<Insumo[]>>;
   reloadInsumos: () => Promise<void>;
@@ -281,7 +291,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       if (snapshot.size > 0) {
         for (const novo of loaded) {
           const estoqueAnterior = snapshot.get(novo.id);
-          if (estoqueAnterior !== undefined && estoqueAnterior > 0 && novo.estoqueAtual <= 0) {
+          if (estoqueAnterior !== undefined && estoqueAnterior > 0 && novo.estoqueAtual <= 0 && novo.rastrearEstoque) {
             dispararNotificacao({
               tipo: 'insumo_esgotado',
               titulo: `Insumo zerou: ${novo.nome}`,
@@ -329,6 +339,8 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       const novosAlertados: string[] = [...alertados];
 
       for (const insumo of loaded) {
+        // Insumo sem rastreio não gera aviso nenhum (decisão do dono, 2026-09-20)
+        if (!insumo.rastrearEstoque) continue;
         if (insumo.estoqueMinimo <= 0) continue;
 
         const abaixoMinimo = insumo.estoqueAtual <= insumo.estoqueMinimo && !insumo.esgotado;
@@ -646,6 +658,23 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     });
   }, [user, insumos, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes]);
 
+  const setRastrearEstoque = useCallback(async (insumoId: string, rastrear: boolean) => {
+    if (!user?.tenantId) return;
+    // otimista: a lista responde na hora, o reload confirma
+    setInsumos((prev) => prev.map((i) => (i.id === insumoId ? { ...i, rastrearEstoque: rastrear } : i)));
+    const { error } = await invokeWithAuth('stock-write', {
+      body: {
+        action: 'set_track_stock',
+        tenant_id: user.tenantId,
+        ingredient_id: insumoId,
+        track_stock: rastrear,
+      },
+    });
+    if (error) console.error('[EstoqueContext] setRastrearEstoque error:', error);
+    broadcastStockUpdate();
+    await loadInsumos();
+  }, [user?.tenantId, broadcastStockUpdate, loadInsumos]);
+
   const marcarInsumoEsgotado = useCallback(async (insumoId: string, _operador = 'Operador') => {
     if (!user?.tenantId) return;
     const { error } = await invokeWithAuth('stock-write', {
@@ -740,6 +769,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     if ('purchaseUnit' in insumo || isNew) body.purchase_unit = insumo.purchaseUnit ?? null;
     if (insumo.purchaseFactor !== undefined || isNew) body.purchase_factor = insumo.purchaseFactor ?? 1;
     if (insumo.usageType !== undefined || isNew) body.usage_type = insumo.usageType ?? 'final';
+    if (insumo.rastrearEstoque !== undefined || isNew) body.track_stock = insumo.rastrearEstoque ?? true;
     if ('dreCategoryId' in insumo) body.dre_category_id = insumo.dreCategoryId ?? null;
     if ('supplierId' in insumo) body.supplier_id = insumo.supplierId ?? null;
     if ('fornecedor' in insumo) body.supplier = insumo.fornecedor ?? '';
@@ -806,7 +836,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
   return (
     <EstoqueContext.Provider value={{
       insumos, movimentacoes, inventarioSessions,
-      insumosEsgotados, itensDesabilitadosIds, loading,
+      insumosEsgotados, itensDesabilitadosIds, loading, setRastrearEstoque,
       addMovimentacao, registrarPerda,
       confirmarInventario, marcarInsumoEsgotado, upsertInsumo,
       setInsumos, reloadInsumos: loadInsumos, reloadMovimentacoes: loadMovimentacoes,

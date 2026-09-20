@@ -8,6 +8,7 @@ import { invokeWithAuth, supabase } from '@/lib/supabase';
 import { useOrderSubmit } from '@/hooks/useOrderSubmit';
 import { PLATAFORMAS_DELIVERY } from '@/constants/delivery';
 import DeliveryItemGrid, { type DeliveryCarrinhoItem } from './components/DeliveryItemGrid';
+import AvisoInsumoZerado from '@/components/feature/AvisoInsumoZerado';
 import DeliveryCarrinho, { type ClienteDelivery } from './components/DeliveryCarrinho';
 import DeliveryClienteModal from './components/DeliveryClienteModal';
 import DeliveryPagamentoModal from './components/DeliveryPagamentoModal';
@@ -488,6 +489,10 @@ export default function PDVDeliveryPage() {
               {clock.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
+        </div>
+        {/* Insumo zerou: tira ou não os itens do cardápio? (mesmo aviso do caixa e do KDS) */}
+        <div className="px-3 pt-2">
+          <AvisoInsumoZerado origem="pdv" />
         </div>
         <DeliveryItemGrid onAdd={handleAdd} />
       </div>

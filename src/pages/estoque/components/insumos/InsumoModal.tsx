@@ -24,6 +24,7 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
   const [categoria, setCategoria] = useState(insumo?.categoria ?? '');
   const [usageType, setUsageType] = useState<'final' | 'production'>(insumo?.usageType ?? 'final');
   const [estoqueMinimo, setEstoqueMinimo] = useState(insumo?.estoqueMinimo?.toString() ?? '');
+  const [rastrearEstoque, setRastrearEstoque] = useState(insumo?.rastrearEstoque ?? true);
   const [purchaseUnit, setPurchaseUnit] = useState(insumo?.purchaseUnit ?? '');
   const [purchaseFactor, setPurchaseFactor] = useState(insumo?.purchaseFactor?.toString() ?? '1');
   const [purchaseUnitOpen, setPurchaseUnitOpen] = useState(false);
@@ -76,6 +77,7 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
         : (insumo?.precoUnitario ?? 0),
       priceSource: priceSource === 'manual' ? 'manual' : 'auto',
       estoqueMinimo: parseFloat(estoqueMinimo.replace(',', '.')) || 0,
+      rastrearEstoque,
       purchaseUnit: usePurchaseUnit ? purchaseUnit.trim() : null,
       purchaseFactor: usePurchaseUnit ? (parseFloat(purchaseFactor) || 1) : 1,
       dreCategoryId: insumo?.dreCategoryId ?? null,
@@ -326,9 +328,31 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
               step="0.1"
               value={estoqueMinimo}
               onChange={(e) => setEstoqueMinimo(e.target.value)}
-              className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 text-zinc-800 focus:outline-none focus:border-amber-400"
+              disabled={!rastrearEstoque}
+              className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 text-zinc-800 focus:outline-none focus:border-amber-400 disabled:bg-zinc-100 disabled:text-zinc-400"
               placeholder="0"
             />
+          </div>
+
+          {/* Acompanhar este insumo: liga/desliga TODO aviso e bloqueio dele */}
+          <div className="border-t border-zinc-100 pt-3">
+            <button
+              type="button"
+              onClick={() => setRastrearEstoque(!rastrearEstoque)}
+              className="w-full flex items-start justify-between gap-3 text-left cursor-pointer"
+            >
+              <div>
+                <p className="text-xs font-semibold text-zinc-700">Acompanhar o estoque deste insumo</p>
+                <p className="text-[10px] text-zinc-400 mt-0.5">
+                  {rastrearEstoque
+                    ? 'O sistema avisa quando estiver no mínimo ou acabar, e pergunta se tira os itens do cardápio.'
+                    : 'O sistema não avisa nem bloqueia nada por causa deste insumo. Entradas, saídas, inventário e CMV continuam normais.'}
+                </p>
+              </div>
+              <span className={`mt-0.5 w-9 h-5 rounded-full flex-shrink-0 transition-colors relative ${rastrearEstoque ? 'bg-amber-500' : 'bg-zinc-300'}`}>
+                <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${rastrearEstoque ? 'left-[18px]' : 'left-0.5'}`} />
+              </span>
+            </button>
           </div>
         </div>
         <div className="flex gap-2 mt-5">

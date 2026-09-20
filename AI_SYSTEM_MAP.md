@@ -2810,3 +2810,18 @@ Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — prob
   o **modo estrito**: ligado, item e adicional somem na hora sem perguntar. Desligado (padrão) vale o
   fluxo do aviso. `fn_get_opcoes_sem_estoque` passou a ler a mesma flag — antes ignorava, e o adicional
   sumia sozinho mesmo com o bloqueio desligado.
+
+### Rastrear estoque por insumo (2026-09-20)
+- `ingredients.track_stock` (default true). **false = o insumo para de gerar QUALQUER aviso ou bloqueio**:
+  estoque mínimo, "acabou o insumo" (PDV/KDS), aviso ao fechar o pedido e bloqueio de item sem insumo.
+  Estoque, entradas/saídas, inventário e **CMV continuam normais** — muda só o sistema opinar.
+- Funções que filtram por `track_stock`: `fn_get_items_sem_estoque`, `fn_get_opcoes_sem_estoque`,
+  `fn_check_stock_alert_for_items`, `fn_ingredient_stockout_trigger`, `fn_get_stockout_alerts`.
+  `fn_get_ingredients` devolve a coluna. Desligar o rastreio fecha o aviso pendente
+  (`trg_ingredient_track_stock_off`).
+- Front: `Insumo.rastrearEstoque` + `useEstoque().setRastrearEstoque(id, bool)` →
+  `stock-write` action `set_track_stock` (`upsert_ingredient` também aceita `track_stock`).
+  Onde mexe: Estoque › Insumos (sino na linha, selo **SEM AVISO**, cards do celular) e o modal do insumo
+  ("Acompanhar o estoque deste insumo", que desabilita o campo de estoque mínimo quando desligado).
+- Os resumos da tela de Estoque (esgotados, em alerta, críticos, ruptura em 7 dias) e os Alertas de
+  reposição ignoram insumo sem rastreio; a lista continua mostrando o insumo, só com o selo.

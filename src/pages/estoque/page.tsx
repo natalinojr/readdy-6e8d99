@@ -43,7 +43,11 @@ export default function EstoquePage() {
   const [showExportImport, setShowExportImport] = useState(false);
   const { insumos, insumosEsgotados, reloadInsumos } = useEstoque();
 
-  const alertas = insumos.filter((i) => i.estoqueAtual <= i.estoqueMinimo).length;
+  // Contadores do topo são AVISO: insumo sem acompanhamento não entra (dono, 2026-09-20).
+  const alertas = insumos.filter((i) => i.rastrearEstoque && i.estoqueAtual <= i.estoqueMinimo).length;
+  const esgotadosComAviso = insumosEsgotados.filter((id) =>
+    insumos.find((i) => i.id === id)?.rastrearEstoque !== false,
+  );
 
   return (
     <div className="flex flex-col h-full">
@@ -61,11 +65,11 @@ export default function EstoquePage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {insumosEsgotados.length > 0 && (
+            {esgotadosComAviso.length > 0 && (
               <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl">
                 <i className="ri-forbid-2-fill text-red-500 text-sm" />
                 <p className="text-xs font-semibold text-red-700">
-                  {insumosEsgotados.length} esgotado{insumosEsgotados.length > 1 ? 's' : ''}
+                  {esgotadosComAviso.length} esgotado{esgotadosComAviso.length > 1 ? 's' : ''}
                 </p>
               </div>
             )}

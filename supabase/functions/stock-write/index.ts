@@ -257,8 +257,29 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       });
     }
 
+    // Rastrear ou não o estoque deste insumo: liga/desliga TODO aviso e bloqueio dele
+    // (estoque mínimo, "acabou o insumo", aviso no fechamento do pedido, item sem insumo).
+    // Estoque, movimentações, inventário e CMV continuam iguais.
+    if (action === 'set_track_stock') {
+      const { ingredient_id, track_stock } = body;
+      if (!ingredient_id || typeof track_stock !== 'boolean') {
+        return new Response(JSON.stringify({ error: 'ingredient_id e track_stock (boolean) sao obrigatorios' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const { error } = await admin
+        .from('ingredients')
+        .update({ track_stock, updated_at: new Date().toISOString() })
+        .eq('id', ingredient_id)
+        .eq('tenant_id', tenantId);
+      if (error) throw new Error(extractErrorMessage(error));
+      return new Response(JSON.stringify({ ok: true, track_stock }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (action === 'upsert_ingredient') {
-      const { id, name, unit, unit_price, min_stock, current_stock, category, supplier, supplier_id, purchase_unit, purchase_factor, dre_category_id, usage_type, price_source } = body;
+      const { id, name, unit, unit_price, min_stock, current_stock, category, supplier, supplier_id, purchase_unit, purchase_factor, dre_category_id, usage_type, price_source, track_stock } = body;
 
       // Em edicao, campo AUSENTE no body preserva o valor atual do banco
       // (null explicito continua limpando). fn_upsert_ingredient sobrescreve
@@ -303,6 +324,20 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }
         throw new Error(extractErrorMessage(rpcErr));
       }
+
+      // fn_upsert_ingredient nao conhece track_stock — grava a coluna à parte.
+      if (typeof track_stock === 'boolean') {
+        const savedId = (rpcData as Record<string, unknown> | null)?.id ?? id;
+        if (savedId) {
+          const { error: trackErr } = await admin
+            .from('ingredients')
+            .update({ track_stock })
+            .eq('id', savedId)
+            .eq('tenant_id', tenantId);
+          if (trackErr) console.error('[stock-write] upsert_ingredient track_stock error:', extractErrorMessage(trackErr));
+        }
+      }
+
       return new Response(JSON.stringify({ data: rpcData }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -439,6 +474,48 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }
       }
       return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Insumo zerado: alguém no PDV ou no KDS respondeu se tira ou não os itens do cardápio.
+    // O primeiro que responder resolve; o segundo recebe ja_resolvido e a tela só fecha o aviso.
+    if (action === 'resolve_stockout_alert') {
+      const { alert_id, decision, source } = body;
+      if (!alert_id || !decision) {
+        return new Response(JSON.stringify({ error: 'alert_id e decision sao obrigatorios' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // o alerta tem que ser da loja do usuário — a RPC roda como service_role
+      const { data: alertRow, error: alertErr } = await admin
+        .from('ingredient_stockout_alerts')
+        .select('id, tenant_id')
+        .eq('id', alert_id)
+        .maybeSingle();
+      if (alertErr) throw new Error(extractErrorMessage(alertErr));
+      if (!alertRow || alertRow.tenant_id !== tenantId) {
+        return new Response(JSON.stringify({ error: 'Alerta nao encontrado nesta loja' }), {
+          status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const { data: rpcData, error: rpcErr } = await admin.rpc('fn_resolve_stockout_alert', {
+        p_alert_id: alert_id,
+        p_decision: decision,
+        p_source: source ?? 'pdv',
+        p_user: user.id,
+      });
+      if (rpcErr) throw new Error(extractErrorMessage(rpcErr));
+
+      const result = (rpcData ?? {}) as Record<string, unknown>;
+      if (result.ok !== true) {
+        return new Response(JSON.stringify({ error: (result.erro as string) ?? 'Falha ao resolver alerta' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify(result), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
