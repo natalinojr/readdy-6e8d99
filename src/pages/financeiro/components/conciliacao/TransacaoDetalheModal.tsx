@@ -335,6 +335,12 @@ export default function TransacaoDetalheModal({
                   {d.parcela ? ' · parcela ' + String(d.parcela) : ''}
                   {d.vencimento ? ' · vence ' + new Date(String(d.vencimento) + 'T00:00:00').toLocaleDateString('pt-BR') : ''}
                 </p>
+                {Number(d.iguais ?? 0) > 1 && !conf && (
+                  <p className="text-zinc-500">
+                    Este fornecedor tem {Number(d.iguais)} notas iguais em aberto (mesmo valor). Peguei a mais próxima
+                    desta data — dá no mesmo: as outras ficam para os próximos pagamentos.
+                  </p>
+                )}
                 {!criado && <div className="grid grid-cols-3 gap-2">
                   <div><p className="text-zinc-400">Parcela</p><p className="font-semibold text-zinc-800">{formatCurrency(Number(d.valor ?? 0))}</p></div>
                   <div><p className="text-zinc-400">Pago no banco</p><p className="font-semibold text-zinc-800">{formatCurrency(Number(transaction.amount))}</p></div>
