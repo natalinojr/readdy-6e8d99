@@ -154,7 +154,7 @@ function FichaConteudo({
       <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
         Ingredientes {quantidade > 1 ? `(× ${quantidade} porções)` : ''}
       </h3>
-      <div className="rounded-xl border border-zinc-100 overflow-hidden">
+      <div className="rounded-xl border border-zinc-100 overflow-hidden overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-zinc-50">
             <tr>

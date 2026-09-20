@@ -307,7 +307,7 @@ export default function AprovacoesPage() {
         </div>
 
         {/* Filter tabs */}
-        <div className="flex gap-1 bg-zinc-100 p-1 rounded-xl w-fit">
+        <div className="flex flex-wrap gap-1 bg-zinc-100 p-1 rounded-xl w-fit max-w-full">
           {([
             { key: 'pendente', label: 'Pendentes', color: 'text-amber-600' },
             { key: 'aprovado', label: 'Aprovados', color: 'text-green-600' },

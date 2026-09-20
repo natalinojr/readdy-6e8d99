@@ -973,9 +973,10 @@ export default function PedidosPage() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-4 md:px-6 py-4 flex-shrink-0" style={{ background: '#ffffff', borderBottom: '1px solid #f4f4f5' }}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
+        {/* No celular o cabeçalho quebra em linhas: antes "0 pedidos" e "Exportar CSV" saíam da tela. */}
+        <div className="flex flex-wrap items-center justify-between gap-y-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg flex-shrink-0">
               <i className={`${abaAtiva === 'notas' ? 'ri-file-shield-2-line' : 'ri-file-list-3-line'} text-zinc-600 text-base`} />
             </div>
             <div>
@@ -984,7 +985,7 @@ export default function PedidosPage() {
                 {abaAtiva === 'notas' ? 'NFC-e emitidas por venda: consulta, reimpressão, cancelamento e XMLs' : 'Todos os pedidos com informações completas'}
               </p>
             </div>
-            <div className="flex items-center bg-zinc-100 rounded-lg p-0.5 ml-2">
+            <div className="flex items-center bg-zinc-100 rounded-lg p-0.5 ml-0 sm:ml-2 flex-shrink-0">
               {([['pedidos', 'Pedidos'], ['notas', 'Notas Fiscais']] as const).map(([id, label]) => (
                 <button key={id} onClick={() => setAba(id)}
                   className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer whitespace-nowrap transition-colors ${abaAtiva === id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>

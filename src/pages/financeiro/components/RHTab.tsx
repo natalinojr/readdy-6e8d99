@@ -1022,7 +1022,7 @@ function FechamentoFolhaModal({
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">
               Ajuste de Faltas por Funcionário
             </p>
-            <div className="border border-zinc-200 rounded-xl overflow-hidden">
+            <div className="border border-zinc-200 rounded-xl overflow-hidden overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-zinc-50">
                   <tr>
@@ -1465,23 +1465,23 @@ export default function RHTab() {
 
       {/* Tabs */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between flex-wrap gap-3">
-        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
+        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-x-auto max-w-full">
           <button onClick={() => setActiveView('folha')}
-            className={`px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'folha' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-            <i className="ri-file-list-3-line" /> Folha de Pagamento
+            className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'folha' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            <i className="ri-file-list-3-line" /> <span className="sm:hidden">Folha</span><span className="hidden sm:inline">Folha de Pagamento</span>
           </button>
           <button onClick={() => setActiveView('funcionarios')}
-            className={`px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'funcionarios' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'funcionarios' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
             <i className="ri-team-line" /> Funcionários
           </button>
           <button onClick={() => setActiveView('relatorio')}
-            className={`px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'relatorio' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'relatorio' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
             <i className="ri-bar-chart-2-line" /> Relatórios
           </button>
         </div>
 
         {activeView === 'folha' && (
-          <div className="flex items-center gap-2 flex-wrap mt-1 sm:mt-0">
+          <div className="flex items-center gap-2 flex-wrap mt-1 sm:mt-0 w-full sm:w-auto">
             <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg overflow-hidden">
               <button onClick={() => setSelectedMonth(m => addMonths(m, -1))}
                 className="w-9 h-9 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 transition-colors">
@@ -1528,7 +1528,7 @@ export default function RHTab() {
         )}
 
         {activeView === 'funcionarios' && (
-          <div className="flex items-center gap-2 flex-wrap mt-1 sm:mt-0">
+          <div className="flex items-center gap-2 flex-wrap mt-1 sm:mt-0 w-full sm:w-auto">
             <div className="relative">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar funcionário..."

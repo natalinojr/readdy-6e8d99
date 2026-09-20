@@ -963,7 +963,7 @@ export default function MesasConfigTab() {
       </div>
 
       {/* ─── TABLE ─── */}
-      <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
+      <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-zinc-50 border-b border-zinc-100">
             <tr>

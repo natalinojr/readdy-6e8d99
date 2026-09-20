@@ -30,7 +30,8 @@ function MetricCard({ label, value, icon, color, sub, trend }: {
           <i className={`${icon} text-sm`} />
         </div>
       </div>
-      <p className="text-2xl font-bold text-zinc-900">{value}</p>
+      {/* No celular o cartão tem ~110px úteis: valor em milhares estourava a borda. */}
+      <p className="text-xl sm:text-2xl font-bold text-zinc-900 tabular-nums break-words">{value}</p>
       {sub && (
         <p className={`text-xs mt-1 flex items-center gap-1 ${trend !== undefined ? (trend >= 0 ? 'text-green-600' : 'text-red-500') : 'text-zinc-400'}`}>
           {trend !== undefined && <i className={trend >= 0 ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />}

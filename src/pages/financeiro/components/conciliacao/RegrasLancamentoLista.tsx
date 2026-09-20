@@ -164,7 +164,7 @@ function Regra({ rule, onDelete, onChanged }: { rule: ReconciliationRule; onDele
       ) : cands.length === 0 ? (
         <p className="text-xs text-zinc-500">Nenhum pagamento pendente para esta regra.</p>
       ) : (
-        <div className="bg-white border border-violet-100 rounded-lg overflow-hidden">
+        <div className="bg-white border border-violet-100 rounded-lg overflow-hidden overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-zinc-50">
               <tr>

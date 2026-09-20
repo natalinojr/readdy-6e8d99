@@ -75,12 +75,12 @@ export default function GestorEntregasPage() {
               className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 transition-colors cursor-pointer flex-shrink-0">
               <i className="ri-arrow-left-line text-base" />
             </button>
-            <div className="w-px h-5 bg-zinc-200 flex-shrink-0" />
+            <div className="hidden sm:block w-px h-5 bg-zinc-200 flex-shrink-0" />
             <div className="w-8 h-8 flex items-center justify-center bg-orange-100 rounded-lg flex-shrink-0">
               <i className="ri-e-bike-2-line text-orange-600 text-sm" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-base font-bold text-zinc-900 truncate">Gestor de Entregas</h1>
+              <h1 className="text-sm sm:text-base font-bold text-zinc-900 truncate">Gestor de Entregas</h1>
               <p className="text-xs text-zinc-400">{loading ? 'Carregando...' : `${emAndamento.length} em andamento`}</p>
             </div>
           </div>

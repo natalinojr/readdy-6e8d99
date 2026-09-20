@@ -196,8 +196,9 @@ export default function MesasPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Top bar */}
-      <div className="flex items-center justify-between px-6 py-3 flex-shrink-0" style={{ background: '#ffffff', borderBottom: '1px solid #f4f4f5' }}>
-        <div className="flex items-center gap-4">
+      {/* No celular a barra quebra em linhas: os contadores saíam da tela. */}
+      <div className="flex flex-wrap items-center justify-between gap-y-2 px-3 sm:px-6 py-3 flex-shrink-0" style={{ background: '#ffffff', borderBottom: '1px solid #f4f4f5' }}>
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           {/* Abas principais */}
           <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1">
             <button
@@ -225,7 +226,7 @@ export default function MesasPage() {
 
           {/* Stats — só na aba mesas */}
           {abaAtiva === 'mesas' && (
-            <div className="flex items-center gap-4 text-sm">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 sm:gap-4 text-sm">
               <div className="flex items-center gap-1.5">
                 <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
                 <span className="text-zinc-600">{stats.livre} livres</span>
@@ -317,7 +318,7 @@ export default function MesasPage() {
       {abaAtiva === 'mesas' && (
         <>
           {/* Filtro rápido por status */}
-          <div className="flex items-center gap-1 px-6 py-2 border-b flex-shrink-0">
+          <div className="flex items-center gap-1 px-3 sm:px-6 py-2 border-b flex-shrink-0 overflow-x-auto">
             {([
               { key: 'todas', label: 'Todas', count: mesas.length },
               { key: 'livre', label: 'Livres', count: stats.livre, dot: 'bg-green-400' },
@@ -327,7 +328,7 @@ export default function MesasPage() {
               <button
                 key={f.key}
                 onClick={() => setFiltroStatus(f.key)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex-shrink-0 ${
                   filtroStatus === f.key ? 'bg-amber-100 text-amber-700' : 'text-zinc-500 hover:bg-zinc-100'
                 }`}
               >

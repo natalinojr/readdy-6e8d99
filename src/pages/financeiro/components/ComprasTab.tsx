@@ -780,7 +780,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                   {expandedRows.has(p.id) && p.items && p.items.length > 0 && (
                     <tr key={`${p.id}-items`}>
                       <td colSpan={8} className="px-4 py-3 bg-zinc-50/50">
-                        <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                        <div className="rounded-xl border border-zinc-200 overflow-hidden overflow-x-auto">
                           <table className="w-full text-xs">
                             <thead className="bg-zinc-100">
                               <tr>

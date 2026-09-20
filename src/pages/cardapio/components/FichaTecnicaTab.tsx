@@ -343,7 +343,7 @@ export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: P
 
       {/* Tabela de ingredientes */}
       {fichas.length > 0 && (
-        <div className="border border-zinc-100 rounded-xl overflow-hidden">
+        <div className="border border-zinc-100 rounded-xl overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-zinc-50 text-xs text-zinc-500 uppercase">

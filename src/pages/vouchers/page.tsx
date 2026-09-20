@@ -110,9 +110,10 @@ export default function VouchersPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          {/* No celular os grupos de filtro quebram em linhas (antes saíam da tela). */}
+          <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
             {/* Filtro tipo */}
-            <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1">
+            <div className="flex items-center gap-1 flex-wrap bg-zinc-100 rounded-lg p-1 max-w-full">
               <button onClick={() => setFilterType('all')} className={`px-2.5 py-1.5 rounded-md text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors ${filterType === 'all' ? 'bg-white text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'}`}>Todos</button>
               {(Object.keys(TYPE_LABELS) as VoucherType[]).map((t) => (
                 <button key={t} onClick={() => setFilterType(t)} className={`px-2.5 py-1.5 rounded-md text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors ${filterType === t ? 'bg-white text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'}`}>
@@ -122,7 +123,7 @@ export default function VouchersPage() {
             </div>
 
             {/* Filtro status */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 flex-wrap max-w-full">
               {(['all', 'active', 'depleted', 'expired', 'cancelled'] as const).map((s) => {
                 const labels: Record<string, string> = { all: 'Todos', active: 'Ativos', depleted: 'Esgotados', expired: 'Expirados', cancelled: 'Cancelados' };
                 return (
@@ -133,14 +134,14 @@ export default function VouchersPage() {
               })}
             </div>
 
-            <div className="relative">
+            <div className="relative flex-1 min-w-[160px] sm:flex-none">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
               <input
                 type="text"
                 placeholder="Código ou cliente..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 pr-3 py-2 text-sm border border-zinc-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-rose-400 w-44"
+                className="pl-9 pr-3 py-2 text-sm border border-zinc-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-rose-400 w-full sm:w-44"
               />
             </div>
 
@@ -187,7 +188,70 @@ export default function VouchersPage() {
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-            <table className="w-full text-sm">
+            {/* Celular: um cartão por voucher — a tabela de 9 colunas não cabe em 375px. */}
+            <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+              {filtered.map((v) => {
+                const typeCfg = TYPE_LABELS[v.voucher_type];
+                const statusCfg = STATUS_CONFIG[v.status];
+                const isExpiringSoon = v.expires_at && v.status === 'active' &&
+                  Math.ceil((new Date(v.expires_at).getTime() - Date.now()) / 86400000) <= 7;
+                return (
+                  <li key={v.id} onClick={() => setDetalheVoucher(v)}
+                    className="rounded-xl border border-zinc-200 bg-white px-3 py-3 cursor-pointer">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-mono font-bold text-zinc-800 text-sm tracking-wider break-all">{v.code}</span>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap ${statusCfg.bg} ${statusCfg.text}`}>
+                        {statusCfg.label}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${typeCfg.color}`}>
+                        <i className={`${typeCfg.icon} text-[10px]`} />
+                        {typeCfg.label}
+                      </span>
+                      <span className="text-sm font-bold text-zinc-800">
+                        {v.voucher_type === 'discount' && v.discount_type === 'percent'
+                          ? `${v.discount_value}%`
+                          : formatCurrency(v.original_amount)}
+                      </span>
+                      {['gift_card', 'cashback'].includes(v.voucher_type) && (
+                        <span className={`text-xs font-semibold ${v.current_balance > 0 ? 'text-green-600' : 'text-zinc-400'}`}>
+                          saldo {formatCurrency(v.current_balance)}
+                        </span>
+                      )}
+                    </div>
+                    {v.customer_name && <p className="text-xs text-zinc-600 mt-1 break-words">{v.customer_name}</p>}
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                      emitido {formatDate(v.issued_at)} · {v.expires_at
+                        ? <span className={isExpiringSoon ? 'text-amber-600 font-semibold' : ''}>vence {formatDate(v.expires_at)}</span>
+                        : 'sem validade'}
+                    </p>
+                    {v.claim_token && (
+                      <p className={`text-[11px] mt-0.5 ${v.claimed_at ? 'text-emerald-600' : 'text-zinc-400'}`}>
+                        <i className={`${v.claimed_at ? 'ri-eye-line' : 'ri-eye-off-line'} mr-0.5`} />
+                        {v.claimed_at ? 'link aberto' : 'link não aberto'}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-1 mt-2" onClick={(e) => e.stopPropagation()}>
+                      {v.claim_token && (
+                        <button onClick={() => copiarLink(v)}
+                          className="h-9 px-3 flex items-center gap-1 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-600 cursor-pointer">
+                          <i className={`${linkCopiadoId === v.id ? 'ri-check-line text-emerald-500' : 'ri-link'} text-sm`} /> Copiar link
+                        </button>
+                      )}
+                      {v.status === 'active' && (
+                        <button onClick={() => cancelVoucher(v)}
+                          className="h-9 px-3 flex items-center gap-1 rounded-lg border border-zinc-200 text-xs font-semibold text-red-500 cursor-pointer">
+                          <i className="ri-close-circle-line text-sm" /> Cancelar
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <table className="hidden md:table w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-100 bg-zinc-50">
                   <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Código</th>

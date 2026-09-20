@@ -194,7 +194,7 @@ export default function PerfilPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">{info.label}</p>
-                <p className="text-sm font-semibold text-zinc-800 truncate">{info.value}</p>
+                <p className="text-sm font-semibold text-zinc-800 break-words">{info.value}</p>
               </div>
             </div>
           ))}
