@@ -6,8 +6,9 @@ import { formatCurrency } from '@/lib/formatters';
 import CategoriaCombobox from '../CategoriaCombobox';
 import type { StatementImport } from '@/hooks/useConciliacao';
 
-// Pagamento sem nota: lança uma DESPESA (conta a pagar já baixada, com categoria da DRE) ou uma
-// COMPRA (CMV, categoria de mercadoria) a partir da linha do extrato, na data e na conta do
+// Pagamento sem nota: lança uma DESPESA (conta a pagar já baixada, com categoria da DRE), uma
+// COMPRA (CMV, categoria de mercadoria) ou um pagamento de FREELANCER (despesa em RH que também
+// registra o freela e as diárias, 2026-09-20) a partir da linha do extrato, na data e na conta do
 // pagamento. Edge conciliacao-pagamentos › create_from_statement; "Desfazer" (undo) apaga o que
 // foi criado e devolve a linha para pendente.
 
@@ -18,7 +19,7 @@ export function podeLancarDoExtrato(s: StatementImport) {
   return s.transaction_type === 'debit' && s.status === 'pending' && !s.reconciled && !JA_TEM_DESTINO.includes(String(s.match_kind ?? ''));
 }
 
-export type LancarTipo = 'despesa' | 'compra';
+export type LancarTipo = 'despesa' | 'compra' | 'freelancer';
 export interface LancarResultado { id: string; ok: boolean; msg: string; code?: string }
 export interface LancarOpcoes {
   kind: LancarTipo;
@@ -27,6 +28,9 @@ export interface LancarOpcoes {
   description?: string | null;
   supplier?: string | null;
   allow_payroll?: boolean;
+  /** freelancer: dias trabalhados ('YYYY-MM-DD'). Vazio = a aba Freelancers pergunta depois. */
+  dias?: string[];
+  funcao?: string | null;
   /** 'YYYY-MM': mês a que o gasto pertence (competência). Vazio = só a data do pagamento. */
   competence_month?: string | null;
 }
@@ -92,6 +96,10 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const [dreCat, setDreCat] = useState('');
   const [merc, setMerc] = useState('');
   const [lembrar, setLembrar] = useState(false);
+  // Freelancer: dias trabalhados (um Pix pode cobrir vários dias; o valor é dividido entre eles)
+  const [dias, setDias] = useState<string[]>([]);
+  const [diaNovo, setDiaNovo] = useState(transaction.transaction_date);
+  const [funcao, setFuncao] = useState('');
   // Competência (2026-09-18): mês do pagamento, o anterior (royalties, contas de consumo) ou outro
   const mesPag = transaction.transaction_date.slice(0, 7);
   const mesAnt = (() => { const [y, m] = mesPag.split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`; })();
@@ -106,6 +114,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   useEffect(() => {
     setAberto(false); setTipo('despesa'); setDescricao(nomePadrao); setFornecedor(transaction.counterpart_name || '');
     setDreCat(''); setMerc(''); setLembrar(false); setAvisoFolha(null); setPermitirFolha(false); setErro(null);
+    setDias([]); setDiaNovo(transaction.transaction_date); setFuncao('');
     setCompModo('same'); setCompOutro(transaction.transaction_date.slice(0, 7));
   }, [transaction.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -122,6 +131,8 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       merchandise_category_id: tipo === 'compra' ? merc || null : null,
       description: descricao.trim() || null,
       supplier: tipo === 'compra' ? fornecedor.trim() || null : null,
+      dias: tipo === 'freelancer' ? dias : undefined,
+      funcao: tipo === 'freelancer' ? funcao.trim() || null : null,
       allow_payroll: permitirFolha,
       competence_month: /^\d{4}-\d{2}$/.test(competencia) ? competencia : null,
     });
@@ -135,7 +146,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     }
     // "Fazer sempre assim": regra de LANÇAMENTO para este CPF/CNPJ/chave (2026-09-18). Antes só
     // etiquetava o extrato — não entrava na DRE e ainda escondia o pagamento do alerta.
-    if (lembrar && doc) {
+    if (lembrar && doc && tipo !== 'freelancer') {
       const rr = await invokeWithAuth<{ success?: boolean; error?: string }>('conciliacao-pagamentos', {
         body: {
           action: 'launch_rule_save', tenant_id: user.tenantId, counterpart_doc: doc,
@@ -159,7 +170,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         <i className="ri-add-circle-line text-violet-600 text-lg" />
         <span className="flex-1">
           <span className="block text-sm font-semibold text-violet-800">Lançar a partir deste pagamento</span>
-          <span className="block text-xs text-violet-600">Pagamento sem nota? Vira despesa ou compra já paga nesta data e conta.</span>
+          <span className="block text-xs text-violet-600">Pagamento sem nota? Vira despesa, compra ou diária de freelancer já paga nesta data e conta.</span>
         </span>
       </button>
     );
@@ -172,8 +183,8 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         <button onClick={() => setAberto(false)} className="text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer">Cancelar</button>
       </div>
 
-      <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden w-fit">
-        {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line']] as const).map(([k, label, icon]) => (
+      <div className="flex flex-wrap bg-white border border-zinc-200 rounded-lg overflow-hidden w-fit max-w-full">
+        {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line'], ['freelancer', 'Freelancer', 'ri-user-star-line']] as const).map(([k, label, icon]) => (
           <button key={k} onClick={() => setTipo(k)}
             className={`px-3 py-1.5 text-xs font-semibold cursor-pointer flex items-center gap-1 ${tipo === k ? 'bg-violet-600 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
             <i className={icon} /> {label}
@@ -183,15 +194,20 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       <p className="text-[11px] text-zinc-500">
         {tipo === 'despesa'
           ? 'Vira uma conta a pagar já baixada nesta data, com a categoria da DRE (limpeza, manutenção, serviço, frete…).'
-          : 'Vira uma compra de mercadoria já paga nesta data: entra no CMV na categoria escolhida. Não mexe no estoque.'}
+          : tipo === 'compra'
+          ? 'Vira uma compra de mercadoria já paga nesta data: entra no CMV na categoria escolhida. Não mexe no estoque.'
+          : 'Vira despesa de RH já paga nesta data e registra a diária em Financeiro › Freelancers. Sem informar os dias, o freela fica com "dias a informar".'}
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div className="sm:col-span-2">
-          <label className="block text-xs font-medium text-zinc-600 mb-1">{tipo === 'compra' ? 'O que foi comprado' : 'Descrição'}</label>
+          <label className="block text-xs font-medium text-zinc-600 mb-1">{tipo === 'compra' ? 'O que foi comprado' : tipo === 'freelancer' ? 'Quem trabalhou' : 'Descrição'}</label>
           <input value={descricao} onChange={(e) => setDescricao(e.target.value)}
-            placeholder={tipo === 'compra' ? 'Ex.: Gelo, verduras da feira…' : 'Ex.: Diária de limpeza'}
+            placeholder={tipo === 'compra' ? 'Ex.: Gelo, verduras da feira…' : tipo === 'freelancer' ? 'Nome do freelancer' : 'Ex.: Diária de limpeza'}
             className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
+          {tipo === 'freelancer' && (
+            <p className="text-[11px] text-zinc-400 mt-1">O nome que veio do banco costuma ser o de quem recebeu o Pix. Ajuste se for outra pessoa.</p>
+          )}
         </div>
         {tipo === 'compra' && (
           <div>
@@ -200,6 +216,41 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
               className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
           </div>
         )}
+        {tipo === 'freelancer' && (
+          <div className="sm:col-span-2 space-y-2">
+            <div>
+              <label className="block text-xs font-medium text-zinc-600 mb-1">Função (opcional)</label>
+              <input value={funcao} onChange={(e) => setFuncao(e.target.value)} maxLength={60}
+                placeholder="Ex.: garçom, cozinha, entregador"
+                className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-zinc-600 mb-1">Dias trabalhados</label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {dias.map((d) => (
+                  <span key={d} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-100 text-violet-800 text-xs font-semibold">
+                    {new Date(d + 'T00:00:00').toLocaleDateString('pt-BR')}
+                    <button type="button" onClick={() => setDias((v) => v.filter((x) => x !== d))} className="cursor-pointer" aria-label={`Tirar ${d}`}>
+                      <i className="ri-close-line" />
+                    </button>
+                  </span>
+                ))}
+                <input type="date" value={diaNovo} onChange={(e) => setDiaNovo(e.target.value)}
+                  className="px-2 py-1 border border-zinc-200 rounded-lg text-xs bg-white" />
+                <button type="button" onClick={() => { if (diaNovo && !dias.includes(diaNovo)) setDias((v) => [...v, diaNovo].sort()); }}
+                  className="px-2 py-1 rounded-lg border border-violet-300 text-violet-700 text-xs font-semibold cursor-pointer hover:bg-violet-50">
+                  + Adicionar dia
+                </button>
+              </div>
+              <p className="text-[11px] text-zinc-400 mt-1">
+                {dias.length === 0
+                  ? 'Sem dias, a diária fica "aguardando dias" e você informa depois em Financeiro › Freelancers.'
+                  : `${formatCurrency(Number(transaction.amount) / dias.length)} por dia (${dias.length} dia${dias.length > 1 ? 's' : ''}).`}
+              </p>
+            </div>
+          </div>
+        )}
+        {tipo !== 'freelancer' && (
         <div>
           <label className="block text-xs font-medium text-zinc-600 mb-1">{tipo === 'despesa' ? 'Categoria da DRE *' : 'Categoria do CMV'}</label>
           {tipo === 'despesa' ? (
@@ -210,6 +261,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
               buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
           )}
         </div>
+        )}
       </div>
 
       <div>
@@ -228,7 +280,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         </div>
       </div>
 
-      {doc && (
+      {doc && tipo !== 'freelancer' && (
         <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
           <input type="checkbox" checked={lembrar} onChange={(e) => setLembrar(e.target.checked)} className="mt-0.5" />
           <span>
@@ -252,7 +304,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       <div className="flex items-center gap-2">
         <button onClick={lancar} disabled={busy || (!!avisoFolha && !permitirFolha)}
           className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
-          {busy ? 'Lançando...' : tipo === 'despesa' ? 'Lançar despesa paga' : 'Lançar compra paga'}
+          {busy ? 'Lançando...' : tipo === 'despesa' ? 'Lançar despesa paga' : tipo === 'compra' ? 'Lançar compra paga' : 'Lançar pagamento de freelancer'}
         </button>
         <span className="text-[11px] text-zinc-400">Dá para desfazer depois, no próprio pagamento.</span>
       </div>

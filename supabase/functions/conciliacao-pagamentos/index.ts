@@ -21,7 +21,7 @@
 //                          emissão com 1 parcela por pagamento, cada uma baixada; saldo que faltar fica a pagar
 //   unlink_monthly         { document_id }       desfaz tudo (estorna as baixas, apaga a compra, nota volta a conferir)
 //   save_counterpart_rule  { counterpart_doc, counterpart_label?, category, cost_center_id?, transaction_type }
-//   create_from_statement  { ids, kind: 'despesa'|'compra', dre_category_id?, merchandise_category_id?, description?,
+//   create_from_statement  { ids, kind: 'despesa'|'compra'|'freelancer' (dias?: 'YYYY-MM-DD'[], funcao?), dre_category_id?, merchandise_category_id?, description?,
 //                            supplier?, cost_center_id?, allow_payroll?, competence_month?: 'YYYY-MM' }   admin/gerente — pagamento SEM NOTA:
 //                          despesa = conta a pagar (reference_type 'conciliacao_extrato') já baixada; compra = compra
 //                          (purchase-write) com 1 item, parcela baixada. Mesma data e conta do extrato. Pix para CPF de
@@ -290,7 +290,11 @@ const JA_TEM_DESTINO = ['payable', 'inbound_doc', 'internal_transfer', 'stone_de
 const soDigitos = (s: unknown) => String(s ?? '').replace(/\D/g, '');
 
 interface CreateOpts {
-  kind: 'despesa' | 'compra';
+  /** 'freelancer' (2026-09-20) e uma despesa em RH que tambem registra o freela e as diarias */
+  kind: 'despesa' | 'compra' | 'freelancer';
+  /** freelancer: dias trabalhados ('YYYY-MM-DD'); vazio = a aba Freelancers pergunta depois */
+  dias?: string[];
+  funcao?: string | null;
   dreCategoryId: string | null;
   mercCategoryId: string | null;
   description: string | null;
@@ -370,9 +374,21 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
   let purchaseId: string | null = null;
   let categoria = 'Compras';
 
-  if (o.kind === 'despesa') {
-    if (!o.dreCategoryId) return fail('Escolha a categoria da despesa');
-    const { data: cat } = await admin.from('fin_dre_categories').select('id, name, group_type').eq('id', o.dreCategoryId).eq('tenant_id', tenantId).maybeSingle();
+  if (o.kind === 'despesa' || o.kind === 'freelancer') {
+    // Freelancer entra sempre em RH, a mesma categoria do Pix pago pelo ERPOS (fn_freelancer_registrar_pagamento)
+    let catId = o.dreCategoryId;
+    if (o.kind === 'freelancer') {
+      const { data: rh } = await admin.from('fin_dre_categories').select('id').eq('tenant_id', tenantId)
+        .eq('group_type', 'expense').is('parent_id', null).is('deleted_at', null).ilike('name', 'RH').maybeSingle();
+      catId = rh?.id ?? null;
+      if (!catId) {
+        const { data: nova } = await admin.from('fin_dre_categories').insert({ tenant_id: tenantId, name: 'RH', group_type: 'expense' }).select('id').maybeSingle();
+        catId = nova?.id ?? null;
+      }
+      if (!catId) return fail('Nao consegui achar nem criar a categoria RH da DRE');
+    }
+    if (!catId) return fail('Escolha a categoria da despesa');
+    const { data: cat } = await admin.from('fin_dre_categories').select('id, name, group_type').eq('id', catId).eq('tenant_id', tenantId).maybeSingle();
     if (!cat || ['revenue', 'tax', 'cost'].includes(String(cat.group_type))) return fail('Categoria da DRE inválida para despesa');
     categoria = String(cat.name);
     const nb = await callEdge(ctx, 'financial-write', {
@@ -437,19 +453,38 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
     return fail('Dar baixa: ' + (pay.error ?? 'falhou'));
   }
 
+  // Freelancer: cria/acha o cadastro e grava as diarias (sem dias, fica "aguardando dias" na aba Freelancers)
+  let freelaMsg = '';
+  if (o.kind === 'freelancer') {
+    const dias = (o.dias ?? []).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const { data: fr, error: fe } = await admin.rpc('fn_freelancer_do_extrato', {
+      p_bill_id: billId, p_nome: quem || descricao, p_dias: dias.length ? dias : null, p_funcao: o.funcao ?? null,
+    });
+    if (fe) {
+      // A despesa ja foi lancada e baixada: desfaz tudo para nao deixar meio caminho.
+      await reversePayment(ctx, billId!, valor, row.bank_account_id, paidDate);
+      await admin.from('fin_accounts_payable').delete().eq('id', billId).eq('tenant_id', tenantId);
+      return fail('Registrar o freelancer: ' + fe.message);
+    }
+    const f = (fr ?? {}) as Row;
+    freelaMsg = Number(f.dias_registrados ?? 0) > 0
+      ? ' (' + f.dias_registrados + ' diaria' + (Number(f.dias_registrados) > 1 ? 's' : '') + ')'
+      : ' (dias a informar em Financeiro > Freelancers)';
+  }
+
   const now = new Date().toISOString();
   const confirmed = { bill_id: billId, juros_bill_id: null, pay_amount: valor, juros: 0, desconto: 0, auto_imported: false, created: o.kind, purchase_id: purchaseId, at: now, by: ctx.userId };
   const { error: upErr } = await admin.from('fin_bank_statement_imports').update({
     status: 'matched', reconciled: true, reconciled_at: now, reconciled_by: ctx.userId, matched_at: now, matched_by: ctx.userId,
     match_kind: 'payable', match_ref_id: billId, match_confidence: 'manual', category: categoria,
     match_detail: {
-      label: (o.kind === 'compra' ? 'Compra sem nota: ' : 'Despesa sem nota: ') + descricao + (competencia ? ' · competência ' + competencia.slice(5, 7) + '/' + competencia.slice(0, 4) : ''),
+      label: (o.kind === 'compra' ? 'Compra sem nota: ' : o.kind === 'freelancer' ? 'Freelancer: ' : 'Despesa sem nota: ') + descricao + (competencia ? ' · competência ' + competencia.slice(5, 7) + '/' + competencia.slice(0, 4) : ''),
       valor, created: o.kind, competencia,
       prev_category: row.category ?? null, prev_match_kind: row.match_kind === 'rule' ? null : row.match_kind ?? null, confirmed,
     },
   }).eq('id', row.id);
   if (upErr) log('ERROR', 'create', 'marcar extrato falhou', { tenantId, rowId, error: upErr.message });
-  return { id: row.id, ok: true, msg: (o.kind === 'compra' ? 'Compra' : 'Despesa') + ' de R$ ' + brl(valor) + ' lançada: "' + descricao + '"' };
+  return { id: row.id, ok: true, msg: (o.kind === 'compra' ? 'Compra' : o.kind === 'freelancer' ? 'Pagamento de freelancer' : 'Despesa') + ' de R$ ' + brl(valor) + ' lançado: "' + descricao + '"' + freelaMsg };
 }
 
 // ── Nota do mês: 1 nota ↔ vários pagamentos ─────────────────────────────────
@@ -693,8 +728,12 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
   const b = await reversePayment(ctx, c.bill_id, round2(Number(c.pay_amount)), row.bank_account_id, date);
 
   // Lançado a partir do extrato: apaga o que foi criado e a linha volta a ser um pagamento sem destino
-  const criado = c.created === 'despesa' || c.created === 'compra' ? String(c.created) : null;
+  const criado = ['despesa', 'compra', 'freelancer'].includes(String(c.created)) ? String(c.created) : null;
   if (criado) {
+    if (criado === 'freelancer') {
+      // As diarias vivem pela conta criada aqui: somem junto com ela.
+      await admin.from('hr_freelancer_shifts').delete().eq('tenant_id', tenantId).eq('bill_id', c.bill_id);
+    }
     if (criado === 'compra' && c.purchase_id) {
       const del = await callEdge(ctx, 'purchase-write', { action: 'delete_purchase', tenant_id: tenantId, payload: { id: c.purchase_id } });
       if (!del.ok) log('WARN', 'undo', 'apagar compra falhou', { tenantId, rowId, purchaseId: c.purchase_id, error: del.error });
@@ -705,7 +744,7 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
       status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null,
       match_kind: det.prev_match_kind ?? null, match_ref_id: null, match_confidence: null, match_detail: null, category: det.prev_category ?? null,
     }).eq('id', row.id);
-    return { id: row.id, ok: true, msg: (criado === 'compra' ? 'Compra' : 'Despesa') + ' lançada pelo extrato foi desfeita: o pagamento voltou a pendente.' };
+    return { id: row.id, ok: true, msg: (criado === 'compra' ? 'Compra' : criado === 'freelancer' ? 'Pagamento de freelancer (e as diárias)' : 'Despesa') + ' lançado pelo extrato foi desfeito: o pagamento voltou a pendente.' };
   }
 
   if (b && Number(c.desconto) > 0) {
@@ -1019,8 +1058,8 @@ Deno.serve(async (req: Request) => {
       if (!isManager) return errResp('Apenas administradores e gerentes podem lançar pelo extrato', 403);
       const ids = Array.isArray(body.ids) ? [...new Set((body.ids as unknown[]).map(String))].slice(0, MAX_BATCH) : [];
       if (ids.length === 0) return errResp('Nenhum lançamento informado');
-      const kind = body.kind === 'compra' ? 'compra' : body.kind === 'despesa' ? 'despesa' : null;
-      if (!kind) return errResp('Escolha despesa ou compra');
+      const kind = body.kind === 'compra' ? 'compra' : body.kind === 'despesa' ? 'despesa' : body.kind === 'freelancer' ? 'freelancer' : null;
+      if (!kind) return errResp('Escolha despesa, compra ou freelancer');
       const opts: CreateOpts = {
         kind,
         dreCategoryId: body.dre_category_id ? String(body.dre_category_id) : null,
@@ -1030,6 +1069,8 @@ Deno.serve(async (req: Request) => {
         costCenterId: body.cost_center_id ? String(body.cost_center_id) : null,
         allowPayroll: body.allow_payroll === true,
         competenceMonth: competenciaOk(body.competence_month),
+        dias: Array.isArray(body.dias) ? (body.dias as unknown[]).map(String).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).slice(0, 31) : [],
+        funcao: body.funcao ? String(body.funcao).slice(0, 60) : null,
       };
       const results: Result[] = [];
       for (const id of ids) {
