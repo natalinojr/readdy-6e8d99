@@ -49,6 +49,22 @@ export async function lancarDoExtrato(tenantId: string, ids: string[], opts: Lan
   return { results, error: null as string | null };
 }
 
+/** Freelancers já cadastrados na loja, para escolher em vez de digitar o nome de novo. */
+export function useFreelancers() {
+  const { user } = useAuth();
+  const [lista, setLista] = useState<Array<{ id: string; name: string; role: string | null }>>([]);
+  useEffect(() => {
+    setLista([]);
+    if (!user?.tenantId) return;
+    let vivo = true;
+    supabase.from('hr_freelancers').select('id, name, role').eq('tenant_id', user.tenantId).eq('is_active', true).order('name')
+      .then(({ data }) => { if (vivo) setLista((data ?? []) as Array<{ id: string; name: string; role: string | null }>); });
+    return () => { vivo = false; };
+  }, [user?.tenantId]);
+  const options = useMemo(() => lista.map((f) => ({ id: f.id, label: f.name, sub: f.role ?? null })), [lista]);
+  return { freelancers: lista, freelaOptions: options };
+}
+
 /** Categorias de despesa (DRE) e de mercadoria (CMV) da loja, no formato do CategoriaCombobox. */
 export function useCategoriasLancamento() {
   const { user } = useAuth();
@@ -87,6 +103,7 @@ interface Props {
 export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }: Props) {
   const { user } = useAuth();
   const { dreOptions, mercOptions } = useCategoriasLancamento();
+  const { freelancers, freelaOptions } = useFreelancers();
   const nomePadrao = transaction.counterpart_name || transaction.description || '';
   const [aberto, setAberto] = useState(false);
   useEffect(() => { onAbertoChange?.(aberto); }, [aberto, onAbertoChange]);
@@ -100,6 +117,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const [dias, setDias] = useState<string[]>([]);
   const [diaNovo, setDiaNovo] = useState(transaction.transaction_date);
   const [funcao, setFuncao] = useState('');
+  const [freelaId, setFreelaId] = useState('');
   // Competência (2026-09-18): mês do pagamento, o anterior (royalties, contas de consumo) ou outro
   const mesPag = transaction.transaction_date.slice(0, 7);
   const mesAnt = (() => { const [y, m] = mesPag.split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`; })();
@@ -114,9 +132,16 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   useEffect(() => {
     setAberto(false); setTipo('despesa'); setDescricao(nomePadrao); setFornecedor(transaction.counterpart_name || '');
     setDreCat(''); setMerc(''); setLembrar(false); setAvisoFolha(null); setPermitirFolha(false); setErro(null);
-    setDias([]); setDiaNovo(transaction.transaction_date); setFuncao('');
+    setDias([]); setDiaNovo(transaction.transaction_date); setFuncao(''); setFreelaId('');
     setCompModo('same'); setCompOutro(transaction.transaction_date.slice(0, 7));
   }, [transaction.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Quem recebeu o Pix já está cadastrado? Então a opção certa vem marcada sozinha.
+  useEffect(() => {
+    if (tipo !== 'freelancer' || freelaId) return;
+    const igual = freelancers.find((f) => f.name.trim().toLowerCase() === (transaction.counterpart_name ?? '').trim().toLowerCase());
+    if (igual) { setFreelaId(igual.id); setDescricao(igual.name); }
+  }, [tipo, freelancers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doc = transaction.counterpart_doc ?? '';
 
@@ -146,7 +171,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     }
     // "Fazer sempre assim": regra de LANÇAMENTO para este CPF/CNPJ/chave (2026-09-18). Antes só
     // etiquetava o extrato — não entrava na DRE e ainda escondia o pagamento do alerta.
-    if (lembrar && doc && tipo !== 'freelancer') {
+    if (lembrar && doc) {
       const rr = await invokeWithAuth<{ success?: boolean; error?: string }>('conciliacao-pagamentos', {
         body: {
           action: 'launch_rule_save', tenant_id: user.tenantId, counterpart_doc: doc,
@@ -202,11 +227,26 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div className="sm:col-span-2">
           <label className="block text-xs font-medium text-zinc-600 mb-1">{tipo === 'compra' ? 'O que foi comprado' : tipo === 'freelancer' ? 'Quem trabalhou' : 'Descrição'}</label>
-          <input value={descricao} onChange={(e) => setDescricao(e.target.value)}
-            placeholder={tipo === 'compra' ? 'Ex.: Gelo, verduras da feira…' : tipo === 'freelancer' ? 'Nome do freelancer' : 'Ex.: Diária de limpeza'}
-            className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
-          {tipo === 'freelancer' && (
-            <p className="text-[11px] text-zinc-400 mt-1">O nome que veio do banco costuma ser o de quem recebeu o Pix. Ajuste se for outra pessoa.</p>
+          {tipo === 'freelancer' ? (
+            <>
+              <CategoriaCombobox
+                value={freelaId} options={freelaOptions} placeholder="Escolha o freelancer…"
+                onChange={(id) => { setFreelaId(id); const f = freelancers.find((x) => x.id === id); if (f) setDescricao(f.name); }}
+                onCreate={(texto) => { setFreelaId(''); setDescricao(texto || transaction.counterpart_name || ''); }}
+                createLabel={(texto) => (texto ? `Cadastrar “${texto}” como freelancer` : 'Cadastrar um freelancer novo')}
+                buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+              {!freelaId && (
+                <input value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Nome de quem trabalhou"
+                  className="w-full mt-1.5 px-3 py-2 border border-violet-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
+              )}
+              <p className="text-[11px] text-zinc-400 mt-1">
+                {freelaId ? 'Freelancer já cadastrado: a diária entra na ficha dele.' : 'Não está na lista? O nome acima vira um cadastro novo de freelancer.'}
+              </p>
+            </>
+          ) : (
+            <input value={descricao} onChange={(e) => setDescricao(e.target.value)}
+              placeholder={tipo === 'compra' ? 'Ex.: Gelo, verduras da feira…' : 'Ex.: Diária de limpeza'}
+              className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
           )}
         </div>
         {tipo === 'compra' && (
@@ -218,12 +258,14 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         )}
         {tipo === 'freelancer' && (
           <div className="sm:col-span-2 space-y-2">
+            {!freelaId && (
             <div>
               <label className="block text-xs font-medium text-zinc-600 mb-1">Função (opcional)</label>
               <input value={funcao} onChange={(e) => setFuncao(e.target.value)} maxLength={60}
                 placeholder="Ex.: garçom, cozinha, entregador"
                 className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
             </div>
+            )}
             <div>
               <label className="block text-xs font-medium text-zinc-600 mb-1">Dias trabalhados</label>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -280,12 +322,13 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         </div>
       </div>
 
-      {doc && tipo !== 'freelancer' && (
+      {doc && (
         <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
           <input type="checkbox" checked={lembrar} onChange={(e) => setLembrar(e.target.checked)} className="mt-0.5" />
           <span>
-            <b>Fazer sempre assim</b> para {transaction.counterpart_name || doc}: os próximos pagamentos viram {tipo === 'compra' ? 'compra' : 'esta despesa'}
-            {compModo === 'prev' ? ' com competência do mês anterior' : ' com competência do mês do pagamento'} (sugerido em "Confirmar vínculos").
+            <b>Fazer sempre assim</b> para {transaction.counterpart_name || doc}: os próximos pagamentos viram{' '}
+            {tipo === 'compra' ? 'compra' : tipo === 'freelancer' ? 'diária deste freelancer — os dias você informa depois, em Financeiro › Freelancers' : 'esta despesa'}
+            {tipo !== 'freelancer' && (compModo === 'prev' ? ' com competência do mês anterior' : ' com competência do mês do pagamento')} (sugerido em "Confirmar vínculos").
           </span>
         </label>
       )}
