@@ -55,9 +55,6 @@ entre clientes.
   restaurante", campo `experiencia_food_service`), exemplos "Ipanema, Pontal do Paraná" no `canal-publico`.
 - Front: `page.tsx` lê/grava `hiring_settings` com `id: 1`; rota `/contratacao` dentro do `AppLayout` do
   ERPOS (sidebar do PDV, selos "ABERTA", loja, relógio); acesso por `useModuleAccess`.
-- LGPD: **nada** no código (sem aviso de privacidade, sem prazo de guarda, sem exclusão a pedido).
-  Padrões sensíveis: pergunta de entrevista "Filhos", estado civil lido e oferecido como dado mínimo,
-  nascimento obrigatório por padrão e perguntado pelo WhatsApp. Já entraram candidatos de 17/18 anos.
 - Dependências frágeis: uma chave Anthropic para tudo (o crédito acabou em 2026-09-14 e parou o módulo);
   Whisper num servidor único do dono; **zero testes** no `hiring-scheduler`/`canal-publico` (os 3 erros
   da semana — 9 do telefone, "amanhã" virar hoje, "Não" virar desistência — eram lógica pura).
@@ -116,28 +113,14 @@ entre clientes.
   O Telegram do dono continua só para a org dele / alertas de operação.
 - "Modo teste do dono" (`ownerKeys`/`is_test`): virar "membro da org testando o próprio link".
 
-### Fase 3 — LGPD mínima e padrões sensíveis (validar com advogado antes do 1º cliente pago)
-
-- Aviso de privacidade na 1ª resposta do link (texto curto + link para a política), registrando data do
-  aceite/ciência no candidato.
-- Prazo de guarda por org (padrão sugerido: 12 meses) com rotina que apaga/anonimiza candidato, arquivo no
-  bucket, conversas e `wa_log`; exclusão a pedido (pela tela e por pedido no WhatsApp → `chamar_equipe`).
-- Exportar os dados de um candidato.
-- Tirar do **padrão** de organizações novas: pergunta "Filhos", estado civil, nascimento obrigatório
-  (a IA do match já não recebe idade/estado civil/filhos — manter). Cliente pode ligar por conta própria,
-  com aviso na tela. Regra para menor de 18 (aviso na ficha; não agendar sozinho sem o cliente marcar que
-  a vaga aceita aprendiz).
-- Termo de uso + contrato de tratamento de dados (operador × controlador): fora do código, listar como
-  pendência do dono. Registrar suboperadores: Anthropic, Meta, Supabase, servidor do Whisper.
-
-### Fase 4 — Medição de uso (sem cobrança)
+### Fase 3 — Medição de uso (sem cobrança)
 
 - Tabela `hiring_usage` (org_id, dia, tipo, quantidade, custo_estimado_usd): currículo lido por IA,
   análise de vaga, conversa da IA (tokens), mensagem de modelo paga, minutos de áudio transcrito.
   Gravar nas Edges no mesmo ponto onde hoje só há `log()`.
 - Tela simples "Uso do mês" por org (super-admin vê todas). Limites/planos/bloqueio: **não agora**.
 
-### Fase 5 — Produto separado
+### Fase 4 — Produto separado
 
 - Casca própria: rota/layout sem a sidebar e os selos do PDV (ABERTA, loja, relógio), marca do produto
   (nome **a decidir pelo dono**), login próprio reaproveitando o Supabase Auth; usuário do produto **não
@@ -152,7 +135,7 @@ entre clientes.
   ser critério fixo.
 - O módulo continua acessível de dentro do ERPOS para o dono (mesmos dados, org dele).
 
-### Fase 6 — Confiabilidade
+### Fase 5 — Confiabilidade
 
 - Testes (vitest) da lógica pura do `hiring-scheduler`/`canal-publico`: `foneKey`/`cloudTo`, datas
   ("amanhã", dia da semana, `casaPreferencia`), intenção "não" × desistência, trava do dia, `birthIso`,
@@ -166,9 +149,13 @@ Devolutiva automática ao candidato descartado; kanban por vaga; busca/paginaç�
 2.000 candidatos); relatórios de tempo até contratar/origem/falta; aprovado → admissão; número de
 WhatsApp por cliente (Tech Provider da Meta); cobrança (mensalidade + franquia + excedente).
 
+> **Fora desta spec por decisão do dono (2026-09-20):** LGPD (aviso de privacidade, prazo de guarda,
+> exclusão a pedido) e a revisão das perguntas sensíveis do padrão ("Filhos", estado civil, nascimento
+> obrigatório). Não implementar nem propor dentro desta execução.
+
 ## 4. Ordem e paralelismo
 
-Fase 1 é pré-requisito de todas. Depois: 2 → (3 e 4 em paralelo) → 5 → 6 (os testes da Fase 6 podem
+Fase 1 é pré-requisito de todas. Depois: 2 → 3 → 4 → 5 (os testes da Fase 5 podem
 começar em paralelo com a 1, porque não dependem de banco). Entregar e verificar fase a fase; **parar para
 o dono validar ao fim da Fase 1** (é a de maior risco) antes de seguir.
 
@@ -201,14 +188,12 @@ o dono validar ao fim da Fase 1** (é a de maior risco) antes de seguir.
 - Processo seletivo da org do dono segue funcionando igual durante e depois da migração (convite,
   agendamento, lembrete, registro de entrevista, histórico).
 - Nenhum e-mail de pessoa fixo em SQL/Edge/front.
-- Aviso de privacidade na 1ª resposta; exclusão de candidato apaga também arquivo, conversas e `wa_log`.
 - `hiring_usage` registra por org cada leitura, análise, conversa e modelo enviado.
 - tsc sem aumento; vitest verde (com os testes novos); `vite build` ok.
 
 ## 7. Pendências do dono (não bloqueiam a Fase 1)
 
-Nome/marca e domínio do produto; texto da política de privacidade, termo de uso e contrato de tratamento
-de dados (advogado); prazo de guarda padrão; nome de exibição neutro do número do WhatsApp; verificação
+Nome/marca e domínio do produto; nome de exibição neutro do número do WhatsApp; verificação
 da empresa na Meta (sai do limite de 250/dia); preços e franquia (quando sair do teste).
 
 ## 8. Por que o layout vem antes
@@ -218,4 +203,4 @@ da empresa na Meta (sai do limite de 250/dia); preços e franquia (quando sair d
   org, casca do produto). Fazendo o layout antes, esta encaixa a casca do produto já na navegação nova,
   em vez de reorganizar a tela duas vezes.
 - As duas mexem em `src/pages/contratacao/page.tsx`: **não rodar as duas ao mesmo tempo**. Exceção: os
-  testes da Fase 6 podem ir em paralelo com o layout (arquivos diferentes).
+  testes da Fase 5 podem ir em paralelo com o layout (arquivos diferentes).
