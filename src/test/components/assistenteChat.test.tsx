@@ -807,6 +807,26 @@ describe('AssistenteChat — resposta onde a pergunta foi feita', () => {
   });
 });
 
+describe('AssistenteChat — fechamento vira painel', () => {
+  it('mensagem com dados de painel mostra o painel e esconde o marcador', async () => {
+    // Dono (2026-09-20): "deixar bonito igual nos botões de ação rápida".
+    const dados = {
+      t: 'Fechamento do turno', s: 'VILA LESTE', r: 'Sessão #1 · 19/09 12:35 → 20/09 00:11',
+      kpi: { p: { l: 'Faturamento', v: 'R$ 845,30', var: { a: 845.3, b: 594, r: 'vs sáb passada' } }, o: [{ l: 'Pedidos', v: '9' }] },
+      b: [{ t: 'Por forma de pagamento', i: [{ l: 'PIX', v: 827.3 }, { l: 'Cartão de Débito', v: 18 }] }],
+      rk: { t: 'Mais vendidos', i: [{ n: 'Hamburguer de Bacon', q: 10 }] },
+    };
+    add('assistant', `🌙 *Fechamento do turno*\nR$ 845,30 em 9 pedidos\n[painel]${JSON.stringify(dados)}[/painel]`);
+    renderChat();
+    await entrarNaConversa(userEvent.setup());
+    expect(await screen.findByText('R$ 845,30')).toBeInTheDocument();
+    expect(screen.getByText('Por forma de pagamento')).toBeInTheDocument();
+    expect(screen.getByText('Hamburguer de Bacon')).toBeInTheDocument();
+    expect(screen.getByText('42%')).toBeInTheDocument(); // variação calculada contra o sábado passado
+    expect(screen.queryByText(/\[painel\]/)).toBeNull();
+  });
+});
+
 describe('AssistenteChat — divisão por dias', () => {
   it('separa as mensagens por dia (Ontem, Hoje) com um separador por dia', async () => {
     // Dono (2026-09-19): "nas conversas do chat ter uma certa divisão por dias".

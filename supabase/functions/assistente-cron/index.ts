@@ -351,7 +351,25 @@ async function caixaText(admin: SupabaseClient, cashRegisterId: string): Promise
   l.push(`Contado: ${brl(cr.closing_value_actual)}`);
   l.push(`Diferença: ${diffTexto(dif)}`);
   if (cr.closing_notes) l.push(`Obs.: ${String(cr.closing_notes).slice(0, 200)}`);
-  return l.join('\n');
+  const painel = {
+    t: 'Caixa fechado', s: String(loja?.name ?? ''),
+    r: `${op?.name ?? 'Operador'} · ${diaHora(cr.opened_at)} → ${diaHora(cr.closed_at)}`,
+    kpi: {
+      p: { l: 'Contado na gaveta', v: brl(cr.closing_value_actual) },
+      o: [{ l: 'Esperado', v: brl(cr.closing_value_expected) }, { l: 'Diferença', v: Math.abs(dif) < 0.01 ? 'bate' : brl(dif) }],
+    },
+    lin: [{
+      t: 'Movimento do caixa',
+      i: [
+        { l: 'Abertura', v: brl(cr.opening_value) },
+        ...(entrada ? [{ l: `Entradas (${entrada.n})`, v: brl(entrada.total), d: entrada.motivos?.slice(0, 80) ?? undefined, st: 'ok' as const }] : []),
+        ...(saida ? [{ l: `Saídas (${saida.n})`, v: brl(saida.total), d: saida.motivos?.slice(0, 80) ?? undefined, st: 'alerta' as const }] : []),
+        { l: 'Conferência', v: diffTexto(dif).replace(' ✅', '').replace(' ⚠️', ''), st: (Math.abs(dif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' },
+      ],
+    }],
+    ...(cr.closing_notes ? { al: [String(cr.closing_notes).slice(0, 200)] } : {}),
+  };
+  return `${l.join('\n')}\n[painel]${JSON.stringify(painel)}[/painel]`;
 }
 
 async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<string | null> {
@@ -419,7 +437,24 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<str
   if (x.cancelados) alertas.push(`${x.cancelados} cancelado(s) (${brl(x.cancelados_valor)})`);
   if (x.descontos > 0) alertas.push(`descontos ${brl(x.descontos)}`);
   if (alertas.length) { l.push(''); l.push(`⚠️ ${alertas.join(' · ')}`); }
-  return l.join('\n');
+  const painel = {
+    t: 'Fechamento do turno', s: String(loja?.name ?? ''),
+    r: `${s.number ? `Sessão #${s.number} · ` : ''}${diaHora(s.opened_at)} → ${diaHora(s.closed_at)}`,
+    kpi: {
+      p: { l: 'Faturamento', v: brl(rev), ...(lwRev > 0 ? { var: { a: rev, b: lwRev, r: `vs ${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][weekday(lwDay)]} passada` } } : {}) },
+      o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(r.avg_ticket) }],
+    },
+    b: [
+      // deno-lint-ignore no-explicit-any
+      ...(pagos.length ? [{ t: 'Por forma de pagamento', i: (pagos as any[]).map((p) => ({ l: String(p.payment_method), v: Number(p.total) })) }] : []),
+      // deno-lint-ignore no-explicit-any
+      ...(canais.length ? [{ t: 'Por canal', c: 'bg-sky-500', i: (canais as any[]).map((c) => ({ l: CANAL_NOME[String(c.destination)] ?? String(c.destination), v: Number(c.revenue), d: `${Number(c.orders)} pedido${Number(c.orders) === 1 ? '' : 's'}` })) }] : []),
+    ],
+    ...(top.length ? { rk: { t: 'Mais vendidos', i: top.map(([nome, qtd]) => ({ n: nome, q: qtd })) } } : {}),
+    ...(difs.length ? { lin: [{ t: 'Caixas', i: [{ l: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do turno`, v: diffTexto(somaDif).replace(' ✅', '').replace(' ⚠️', ''), st: (Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' }] }] } : {}),
+    ...(alertas.length ? { al: alertas } : {}),
+  };
+  return `${l.join('\n')}\n[painel]${JSON.stringify(painel)}[/painel]`;
 }
 
 // Fechamento do dia: números da mesma conta das telas (fn_get_sales_report) + cancelados,
@@ -1058,7 +1093,9 @@ Deno.serve(async (req) => {
       const texto = body.run === 'closing_cash' ? await caixaText(admin, id) : await sessaoText(admin, id);
       if (!texto) return json({ ok: true, skipped: 'sem conteúdo' });
       if (!ownerChat) return json({ ok: true, skipped: 'sem canal do dono' });
-      await (isTg(ownerChat) ? sendTelegram(ownerChat, texto) : sendText(toNumber(ownerChat), texto));
+      // WhatsApp/Telegram recebem só o texto; o marcador do painel é para o chat do ERPOS.
+      const soTexto = texto.replace(/\n?\[painel\][\s\S]*?\[\/painel\]/, '').trim();
+      await (isTg(ownerChat) ? sendTelegram(ownerChat, soTexto) : sendText(toNumber(ownerChat), soTexto));
       await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: texto, topic: 'pagamentos' });
       // O aviso das 23:00 não repete a loja que já recebeu o fechamento do turno.
       if (body.run === 'closing_session') {

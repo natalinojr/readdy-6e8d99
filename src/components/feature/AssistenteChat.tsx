@@ -15,6 +15,7 @@ import { useVoltarFecha } from '@/lib/voltarAndroid';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { ACOES, GRUPOS } from '@/components/feature/assistente/acoes';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
+import PainelMensagem, { painelDoTexto } from '@/components/feature/assistente/PainelMensagem';
 import PendenciasChat, { type PendenciaChat } from '@/components/feature/assistente/PendenciasChat';
 import { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
 
@@ -163,7 +164,10 @@ function resumoSistema(content: string): string | null {
 // O modelo às vezes IMITA o marcador na própria resposta (visto em 2026-09-16), então a limpeza
 // vale para o histórico e para a prévia da barra pequena.
 const MARCADORES = /\n?\[(Enquete enviada|Localização enviada|Contato enviado|Pedido de pagamento enviado|Botão enviado|Botão:)[^\n]*\]/g;
-const semMarcadores = (t: string) => t.replace(MARCADORES, '').trim();
+// Painel (fechamento de caixa e de turno, 2026-09-20): o servidor manda o texto — que é o que vai para
+// o WhatsApp/Telegram — e junto um marcador com os dados. No app o balão vira o painel das ações rápidas.
+const MARCADOR_PAINEL = /\n?\[painel\]\{[\s\S]*?\}\[\/painel\]/g;
+const semMarcadores = (t: string) => t.replace(MARCADORES, '').replace(MARCADOR_PAINEL, '').trim();
 // Linha de sistema "[Pagamento pix de R$ 100,00 para Fulano: ✅ pago] id <uuid>" → só a frase.
 // O id é para o modelo achar o pagamento; na tela (balão e prévia da lista) não diz nada — e no
 // celular a prévia chegou a mostrar SÓ o id (2026-09-18).
@@ -1244,6 +1248,19 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                     {motivo && <p className="text-[11px] text-zinc-500 mt-0.5 break-words">{motivo}</p>}
                     <p className="text-[10px] text-zinc-400 mt-0.5">{horaMsg(m.created_at)}{m.channel !== 'app' ? ` · ${CANAL[m.channel] ?? m.channel}` : ''}</p>
                   </div>
+                </div>
+              </div>
+            );
+          }
+          // Fechamento de caixa / de turno: o painel ocupa o lugar do balão (o texto continua no
+          // WhatsApp e na prévia da lista de conversas).
+          const pnl = painelDoTexto(m.content);
+          if (pnl) {
+            return (
+              <div key={m.id} data-msg-id={m.id} className="flex justify-start">
+                <div className="w-full max-w-[92%]">
+                  <PainelMensagem dados={pnl} />
+                  <p className="text-[10px] text-zinc-400 mt-1">{horaMsg(m.created_at)}</p>
                 </div>
               </div>
             );
