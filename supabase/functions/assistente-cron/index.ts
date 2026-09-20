@@ -324,7 +324,10 @@ async function closingText(admin: SupabaseClient, tenants: Array<{ id: string; n
   for (const t of tenants) {
     const [{ data: rep }, { data: lw }] = await Promise.all([
       admin.rpc('fn_get_sales_report', { p_tenant_id: t.id, p_date_from: from, p_date_to: to, p_session_id: null }),
-      admin.rpc('fn_get_sales_report', { p_tenant_id: t.id, p_date_from: `${lwDay}T00:00:00-03:00`, p_date_to: `${day}T00:00:00-03:00`, p_session_id: null }),
+      // Só o MESMO DIA da semana passada. Estava indo até o dia de hoje, ou seja, a SEMANA INTEIRA:
+      // 19/09 (R$ 749,30) aparecia como -67% "vs sáb passada (R$ 2.292,00)" — o sábado sozinho tinha
+      // sido bem menos (dono, 2026-09-20).
+      admin.rpc('fn_get_sales_report', { p_tenant_id: t.id, p_date_from: `${lwDay}T00:00:00-03:00`, p_date_to: `${addDays(lwDay, 1)}T00:00:00-03:00`, p_session_id: null }),
     ]);
     // deno-lint-ignore no-explicit-any
     const r = (rep ?? {}) as any, l = (lw ?? {}) as any;
