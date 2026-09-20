@@ -85,6 +85,16 @@ export default function TransacaoDetalheModal({
   const [vinculoMsg, setVinculoMsg] = useState<string | null>(null);
   const [lembrarContraparte, setLembrarContraparte] = useState(false);
   useEffect(() => { setVinculoMsg(null); setLembrarContraparte(false); }, [transaction?.id]);
+  // Carimbar: grava antes o que foi editado (a categoria escolhida se perdia) e só então concilia
+  const salvarEConciliar = async () => {
+    if (!transaction) return;
+    const mudou = form.description !== (transaction.description || '') || form.category !== (transaction.category || '')
+      || form.cost_center_id !== (transaction.cost_center_id || '') || form.notes !== (transaction.notes || '');
+    if (mudou || lembrarContraparte) await handleSave();
+    await onReconcile(transaction.id);
+    onClose();
+  };
+
   const vinculoAction = async (kind: 'confirm' | 'undo') => {
     if (!transaction) return;
     setVinculoBusy(true);
@@ -178,6 +188,9 @@ export default function TransacaoDetalheModal({
   }, [dreOptions, mercOptions, transaction?.transaction_type, transaction?.category]);
 
   if (!transaction) return null;
+
+  const editouAlgo = form.description !== (transaction.description || '') || form.category !== (transaction.category || '')
+    || form.cost_center_id !== (transaction.cost_center_id || '') || form.notes !== (transaction.notes || '') || lembrarContraparte;
 
   const handleSave = async () => {
     setSaving(true);
@@ -366,6 +379,20 @@ export default function TransacaoDetalheModal({
           {podeLancarDoExtrato(transaction) && (
             <LancarDoExtrato transaction={transaction} onDone={() => { onChanged?.(); onClose(); }} onAbertoChange={setLancarAberto} />
           )}
+          {!transaction.reconciled && transaction.status === 'pending' && !lancarAberto && (
+            <button onClick={salvarEConciliar} disabled={saving}
+              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-dashed border-emerald-300 bg-emerald-50/50 text-left hover:bg-emerald-50 disabled:opacity-50 cursor-pointer">
+              <i className="ri-checkbox-circle-line text-emerald-600 text-lg" />
+              <span className="flex-1">
+                <span className="block text-sm font-semibold text-emerald-800">Marcar como conciliado</span>
+                <span className="block text-xs text-emerald-600">
+                  {transaction.transaction_type === 'credit'
+                    ? 'Entrada já contada pela fonte de receita da loja: só sai dos pendentes.'
+                    : 'Nada a lançar aqui: só sai dos pendentes, sem criar despesa.'}
+                </span>
+              </span>
+            </button>
+          )}
           {repasse && (() => {
             const s = situacaoRepasse(repasse);
             const cls = s.tom === 'erro' ? 'bg-red-50 border-red-200' : s.tom === 'alerta' ? 'bg-amber-50 border-amber-200' : s.tom === 'ok' ? 'bg-emerald-50 border-emerald-200' : 'bg-zinc-50 border-zinc-200';
@@ -550,39 +577,31 @@ export default function TransacaoDetalheModal({
         {/* Footer */}
         <div className="flex items-center justify-between gap-2 flex-wrap px-4 sm:px-6 py-4 border-t border-zinc-100 flex-shrink-0 bg-zinc-50">
           <div className="flex items-center gap-2">
-            {transaction.reconciled ? (
+            {transaction.reconciled && (
               <button
                 onClick={async () => { await onUnreconcile(transaction.id); onClose(); }}
                 className="flex items-center gap-1.5 px-3 py-2 text-sm text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 cursor-pointer whitespace-nowrap transition-colors"
               >
-                <i className="ri-refresh-line" /> Desfazer Reconciliação
-              </button>
-            ) : (
-              <button
-                onClick={async () => {
-                  // Reconciliar gravava só o status: a categoria escolhida (ex.: Aporte de sócio) se perdia
-                  const mudou = form.description !== (transaction.description || '') || form.category !== (transaction.category || '')
-                    || form.cost_center_id !== (transaction.cost_center_id || '') || form.notes !== (transaction.notes || '');
-                  if (mudou || lembrarContraparte) await handleSave();
-                  await onReconcile(transaction.id);
-                  onClose();
-                }}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-semibold hover:bg-green-600 disabled:opacity-50 cursor-pointer whitespace-nowrap transition-colors"
-              >
-                <i className="ri-checkbox-circle-line" /> Reconciliar
+                <i className="ri-refresh-line" /> Reabrir
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 ml-auto">
+            <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-white hover:shadow-sm rounded-lg cursor-pointer whitespace-nowrap">
+              Fechar
+            </button>
+            {/* Com o painel "Lançar" aberto o rodapé sai de cena: quem conclui é o botão de lá */}
+            {!lancarAberto && (
             <button
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || !editouAlgo}
+              title={editouAlgo ? undefined : 'Nada foi alterado'}
               className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 disabled:opacity-50 cursor-pointer whitespace-nowrap transition-colors"
             >
               {saving ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <i className="ri-save-line" />}
-              Salvar Alterações
+              Salvar alterações
             </button>
+            )}
           </div>
         </div>
       </div>
