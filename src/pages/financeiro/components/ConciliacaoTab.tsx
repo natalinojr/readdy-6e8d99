@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
@@ -456,6 +457,7 @@ export default function ConciliacaoTab() {
   const [menuImportar, setMenuImportar] = useState(false);
   const [menuConfig, setMenuConfig] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const navigate = useNavigate();
   const [selectedTransaction, setSelectedTransaction] = useState<StatementImport | null>(null);
   const [showSaldoModal, setShowSaldoModal] = useState(false);
   const [showStoneConfig, setShowStoneConfig] = useState(false);
@@ -560,13 +562,36 @@ export default function ConciliacaoTab() {
   } = useConciliacao(selectedAccountId, periodoValido ? { from: periodFrom, to: periodTo } : undefined);
 
   // Alertas de confiabilidade (fn_conciliacao_alertas)
-  type AlertaBloco = { count: number; total: number; itens: Array<{ label: string; valor: number; data: string | null }> };
+  // Cada item do alerta carrega o registro (2026-09-20): a linha leva onde se resolve.
+  type AlertaItem = { label: string; valor: number; data: string | null; ref_kind?: 'statement' | 'bill' | 'doc' | null; ref_id?: string | null };
+  type AlertaBloco = { count: number; total: number; itens: AlertaItem[] };
   const [alertas, setAlertas] = useState<Record<string, AlertaBloco | undefined> | null>(null);
   const loadAlerts = useCallback(async () => {
     if (!user?.tenantId) return;
     const r = await invokeWithAuth<{ success?: boolean; alerts?: Record<string, AlertaBloco> }>('conciliacao-pagamentos', { body: { action: 'alerts', tenant_id: user.tenantId } });
     if (r.data?.alerts) setAlertas(r.data.alerts);
   }, [user?.tenantId]);
+
+  // Clique no item do alerta: pagamento abre o detalhe aqui (ajustando o período se for antigo);
+  // conta a pagar e nota abrem na aba delas, com a busca preenchida.
+  const [abrirDepois, setAbrirDepois] = useState<string | null>(null);
+  const abrirAlerta = (it: AlertaItem) => {
+    if (it.ref_kind === 'bill') { navigate(`/financeiro?tab=pagar&busca=${encodeURIComponent(it.label)}`); return; }
+    if (it.ref_kind === 'doc') { navigate(`/financeiro?tab=notas-entrada&busca=${encodeURIComponent(it.label.replace(/^NF\s*/, '').split(' — ')[0])}`); return; }
+    if (it.ref_kind !== 'statement' || !it.ref_id) return;
+    const achado = imports.find(i => i.id === it.ref_id);
+    if (achado) { setSelectedTransaction(achado); return; }
+    // fora do período que está na tela: amplia e abre assim que a lista chegar
+    const dia = String(it.data ?? '').slice(0, 10);
+    if (dia && dia < periodFrom) { setPeriodFrom(dia); setPage(1); }
+    if (dia && dia > periodTo) { setPeriodTo(dia); setPage(1); }
+    setAbrirDepois(it.ref_id);
+  };
+  useEffect(() => {
+    if (!abrirDepois) return;
+    const achado = imports.find(i => i.id === abrirDepois);
+    if (achado) { setSelectedTransaction(achado); setAbrirDepois(null); }
+  }, [imports, abrirDepois]);
 
   // Extratos dos bancos integrados (Inter, Stone e iFood): o cron diário das 07h já busca;
   // aqui buscamos de novo ao abrir a tela e pelo menu "Importar".
@@ -1088,12 +1113,20 @@ export default function ConciliacaoTab() {
                       {k === 'taxas_maquininha' ? 'Ver taxas cobradas × contratadas →' : 'Ver repasses dia a dia →'}
                     </button>
                   )}
-                  {a.itens.map((it, i) => (
-                    <div key={i} className="flex justify-between gap-2 text-xs text-zinc-600">
-                      <span className="truncate">{it.data ? new Date(String(it.data).slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR') + ' · ' : ''}{it.label}</span>
-                      <span className="whitespace-nowrap font-semibold">{fmtCur(Number(it.valor))}</span>
-                    </div>
-                  ))}
+                  {a.itens.map((it, i) => {
+                    const clicavel = !!it.ref_kind && !!it.ref_id;
+                    return (
+                      <button key={i} onClick={() => clicavel && abrirAlerta(it)} disabled={!clicavel}
+                        title={clicavel ? (it.ref_kind === 'bill' ? 'Abrir em Contas a Pagar' : it.ref_kind === 'doc' ? 'Abrir em Notas de Entrada' : 'Abrir o pagamento') : undefined}
+                        className={`w-full flex justify-between gap-2 text-xs text-zinc-600 text-left rounded px-1 py-0.5 ${clicavel ? 'hover:bg-amber-50 hover:text-zinc-900 cursor-pointer' : 'cursor-default'}`}>
+                        <span className="truncate">
+                          {it.data ? new Date(String(it.data).slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR') + ' · ' : ''}{it.label}
+                          {clicavel && <i className="ri-arrow-right-up-line ml-1 text-zinc-300" />}
+                        </span>
+                        <span className="whitespace-nowrap font-semibold">{fmtCur(Number(it.valor))}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </details>
             );

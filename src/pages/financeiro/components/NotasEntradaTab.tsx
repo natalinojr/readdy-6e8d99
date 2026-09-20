@@ -80,8 +80,10 @@ export default function NotasEntradaTab() {
 
   const [docs, setDocs] = useState<DocRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filtro, setFiltro] = useState<Filtro>('new');
-  const [busca, setBusca] = useState('');
+  // ?busca= vem do clique num alerta da Conciliação (2026-09-20): mostra todas, não só as novas
+  const daUrl = new URLSearchParams(window.location.search).get('busca') ?? '';
+  const [filtro, setFiltro] = useState<Filtro>(daUrl ? 'all' : 'new');
+  const [busca, setBusca] = useState(daUrl);
   const [tipoDoc, setTipoDoc] = useState<'all' | 'nfe' | 'nfse'>('all');
   const [sincronizando, setSincronizando] = useState(false);
   const [ultimaSync, setUltimaSync] = useState<{ at: string | null; erro: string | null; temToken: boolean }>({ at: null, erro: null, temToken: false });

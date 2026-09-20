@@ -215,7 +215,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   // Data em Brasília: toISOString é UTC e vira o dia seguinte depois das 21h
   const [payForm, setPayForm] = useState({ paid_date: todayBrasilia(), paid_amount: '', payment_method: 'Dinheiro' });
 
-  const [search, setSearch] = useState('');
+  // ?busca= vem do clique num alerta da Conciliação (2026-09-20)
+  const [search, setSearch] = useState(() => new URLSearchParams(window.location.search).get('busca') ?? '');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterDateFrom, setFilterDateFrom] = useState('');
