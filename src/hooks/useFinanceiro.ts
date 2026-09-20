@@ -3,6 +3,7 @@ import { supabase, SUPABASE_URL, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { translateSupabaseError } from '@/hooks/useQueryError';
 import { fetchRevenueSources, fetchStoneSales, fetchPixRecebidos, fetchIfoodSales } from '@/lib/revenueSources';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import type {
   CostCenter, BillPayable, CashFlowEntry, Purchase,
   Supplier, FinanceiroDashboard, Anticipation, ReceivableInstallment,
@@ -721,11 +722,16 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
         supabase.from('fin_cash_flow').select('amount, payment_method_id, payment_methods(name), date')
           .eq('tenant_id', user.tenantId).eq('type', 'income')
           .eq('origin', 'auto_sale').gte('date', thirtyDaysAgoDate),
-        // Apenas contagem de pedidos do mês para ticket médio
-        supabase.from('orders').select('id', { count: 'exact', head: true })
-          .eq('tenant_id', user.tenantId).gte('created_at', startOfMonthStr)
-          .eq('is_paid', true).not('status', 'in', '(cancelled,draft)')
-          .eq('is_training', false).eq('is_draft', false),
+        // Apenas contagem de pedidos do mês para ticket médio. Empresa sem PDV não
+        // tem pedido e não mostra ticket médio (spec modulo-financeiro-sem-pdv):
+        // nem dispara a query — mesmo padrão de useReceitas.ts quando 'orders' está
+        // fora das fontes de receita.
+        empresaTemPdv(user.tenantKind)
+          ? supabase.from('orders').select('id', { count: 'exact', head: true })
+              .eq('tenant_id', user.tenantId).gte('created_at', startOfMonthStr)
+              .eq('is_paid', true).not('status', 'in', '(cancelled,draft)')
+              .eq('is_training', false).eq('is_draft', false)
+          : Promise.resolve({ count: 0, data: null, error: null }),
         // Folha de pagamento pendente do mês atual
         supabase.from('hr_payroll').select('net_salary')
           .eq('tenant_id', user.tenantId)
@@ -765,7 +771,7 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       // Regra dos recebidos da loja (Financeiro › Receitas › Fontes): pedidos
       // (auto_sale), manuais, cartão da maquininha (stone_sale) e Pix do banco
       // principal (Conciliação › ⚙ › Como o dinheiro entra) entram só se ligados.
-      const { sources } = await fetchRevenueSources(user.tenantId);
+      const { sources } = await fetchRevenueSources(user.tenantId, user.tenantKind);
       const on = (s: string) => (sources as string[]).includes(s);
       const extraStart = prevMonthStartDate < thirtyDaysAgoDate ? prevMonthStartDate : thirtyDaysAgoDate;
       const [stoneRes, pixRes, ifoodRes] = await Promise.all([

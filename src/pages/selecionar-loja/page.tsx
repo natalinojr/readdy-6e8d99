@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ChefHat, LogOut, Store, ArrowRight } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import type { TenantOption } from '@/contexts/AuthContext';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 
 const perfilLabel: Record<string, string> = {
   admin: 'Administrador',
@@ -10,6 +11,7 @@ const perfilLabel: Record<string, string> = {
   caixa: 'Operador de Caixa',
   garcom: 'Garçom',
   cozinha: 'Operador de Cozinha',
+  financeiro: 'Financeiro',
 };
 
 interface StoreCardProps {
@@ -20,6 +22,7 @@ interface StoreCardProps {
 }
 
 function StoreCard({ tenant, onSelect, loading, isSelected }: StoreCardProps) {
+  const semPdv = !empresaTemPdv(tenant.kind);
   return (
     <button
       onClick={() => onSelect(tenant.tenantId)}
@@ -34,7 +37,14 @@ function StoreCard({ tenant, onSelect, loading, isSelected }: StoreCardProps) {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-base font-bold text-zinc-900 truncate">{tenant.tenantName}</p>
-        <p className="text-sm text-zinc-500 mt-0.5">{perfilLabel[tenant.role] ?? tenant.role}</p>
+        <p className="text-sm text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+          <span>{perfilLabel[tenant.role] ?? tenant.role}</span>
+          {semPdv && (
+            <span className="inline-flex items-center text-[10px] font-bold text-sky-700 bg-sky-100 px-2 py-0.5 rounded-full">
+              sem PDV
+            </span>
+          )}
+        </p>
         {tenant.trainingMode && (
           <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
             <i className="ri-graduation-cap-fill text-xs" />
@@ -59,6 +69,12 @@ export default function SelecionarLojaPage() {
   const { availableTenants, selectTenant, logout } = useAuth();
   const navigate = useNavigate();
   const [selecting, setSelecting] = useState<string | null>(null);
+
+  // Só troca "loja"/"lojas" por "empresa"/"empresas" quando NENHUMA das opções
+  // tem PDV — lista mista ou com pelo menos uma loja com PDV mantém o texto de sempre.
+  const todasSemPdv = availableTenants.length > 0 && availableTenants.every((t) => !empresaTemPdv(t.kind));
+  const rotuloSingular = todasSemPdv ? 'empresa' : 'loja';
+  const rotuloPlural = todasSemPdv ? 'empresas' : 'lojas';
 
   const handleSelect = async (tenantId: string) => {
     if (selecting) return;
@@ -92,9 +108,11 @@ export default function SelecionarLojaPage() {
           >
             <ChefHat size={32} className="text-white" />
           </div>
-          <h1 className="text-2xl font-black text-zinc-800">Selecionar Loja</h1>
+          <h1 className="text-2xl font-black text-zinc-800">
+            {todasSemPdv ? 'Selecionar Empresa' : 'Selecionar Loja'}
+          </h1>
           <p className="text-sm text-zinc-500 mt-1.5 text-center">
-            Escolha qual loja você deseja operar nesta sessão
+            Escolha qual {rotuloSingular} você deseja operar nesta sessão
           </p>
         </div>
 
@@ -125,8 +143,8 @@ export default function SelecionarLojaPage() {
             <i className="ri-information-line text-amber-600 text-sm flex-shrink-0 mt-0.5" />
             <p className="text-xs text-amber-800">
               Você tem acesso a{' '}
-              <strong>{availableTenants.length} lojas</strong> como administrador.
-              A loja selecionada ficará ativa até você trocar ou sair do sistema.
+              <strong>{availableTenants.length} {rotuloPlural}</strong> como administrador.
+              A {rotuloSingular} selecionada ficará ativa até você trocar ou sair do sistema.
             </p>
           </div>
         )}

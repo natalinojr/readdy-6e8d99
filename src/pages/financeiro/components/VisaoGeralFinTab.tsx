@@ -9,6 +9,7 @@ import { formatCurrency } from '@/lib/formatters';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchRevenueSources, fetchPixRecebidos } from '@/lib/revenueSources';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, CartesianGrid, ComposedChart, Line,
@@ -181,8 +182,11 @@ const RvDTooltip = ({ active, payload, label }: { active?: boolean; payload?: { 
 };
 
 export default function VisaoGeralFinTab() {
+  const { user } = useAuth();
+  const temPdv = empresaTemPdv(user?.tenantKind);
   const { modo } = useModoFaturamento();
-  const isSessao = modo === 'sessao';
+  // Empresa sem PDV não tem sessão de caixa — o Modo Sessão é exclusivo do PDV.
+  const isSessao = temPdv && modo === 'sessao';
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
 
   const { dashboard, loading, error: dashError } = useFinanceiroDashboard();
@@ -241,14 +245,18 @@ export default function VisaoGeralFinTab() {
         </p>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        {isSessao && (
-          <SessaoSelector
-            selectedId={selectedSession?.id ?? null}
-            onSelect={setSelectedSession}
-            size="sm"
-          />
+        {temPdv && (
+          <>
+            {isSessao && (
+              <SessaoSelector
+                selectedId={selectedSession?.id ?? null}
+                onSelect={setSelectedSession}
+                size="sm"
+              />
+            )}
+            <ModoFaturamentoToggle size="sm" showLabel={false} />
+          </>
         )}
-        <ModoFaturamentoToggle size="sm" showLabel={false} />
       </div>
     </div>
   );
@@ -550,12 +558,14 @@ export default function VisaoGeralFinTab() {
             sub={`${crescPos ? '+' : ''}${dashboard.crescimentoMes.toFixed(1)}% vs mês anterior`}
             trend={dashboard.crescimentoMes}
           />
-          <MetricCard
-            label="Ticket Médio"
-            value={formatCurrency(dashboard.ticketMedio)}
-            icon="ri-receipt-line"
-            color="bg-orange-100 text-orange-600"
-          />
+          {temPdv && (
+            <MetricCard
+              label="Ticket Médio"
+              value={formatCurrency(dashboard.ticketMedio)}
+              icon="ri-receipt-line"
+              color="bg-orange-100 text-orange-600"
+            />
+          )}
           <MetricCard
             label="Lucro Real"
             value={formatCurrency(dashboard.lucroEstimado)}

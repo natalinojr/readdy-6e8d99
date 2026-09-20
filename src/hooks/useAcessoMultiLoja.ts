@@ -12,6 +12,7 @@ const ROLE_MAP: Record<string, PerfilUsuario> = {
   delivery_manager: 'gestor_entregas',
   tasks_only: 'tarefas',
   tablet: 'totem',
+  financeiro: 'financeiro',
 };
 
 const ROLE_MAP_REVERSE: Record<PerfilUsuario, string> = {
@@ -23,6 +24,7 @@ const ROLE_MAP_REVERSE: Record<PerfilUsuario, string> = {
   gestor_entregas: 'delivery_manager',
   tarefas: 'tasks_only',
   totem: 'tablet',
+  financeiro: 'financeiro',
 };
 
 export interface LojaAdmin {

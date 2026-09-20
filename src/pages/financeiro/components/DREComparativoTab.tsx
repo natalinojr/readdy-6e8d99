@@ -6,6 +6,7 @@ import { isIfoodAntecipacao } from '@/lib/ifoodVendas';
 import { fetchCartoesCompetencia, isStoneMdrLedger, isStoneVendasLedger } from '@/lib/cartoesCompetencia';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { formatCurrency } from '@/lib/formatters';
 import { useDreGroups, STANDARD_GROUP_KEYS } from '@/hooks/useDreGroups';
 import { MonthNav, SectionHeader, NoteRow, mesExtenso } from './dreUi';
@@ -50,7 +51,9 @@ interface DRESnapshot {
 }
 
 // P2: CMV por consumo (Σ order_items.unit_cost × qtd) — igual nos dois regimes.
-async function fetchCmvConsumoComp(tenantId: string, startDate: string, endDateTime: string): Promise<number> {
+// Empresa sem PDV não tem order_items/ficha técnica — sai cedo, sem disparar a query.
+async function fetchCmvConsumoComp(tenantId: string, startDate: string, endDateTime: string, temPdv: boolean): Promise<number> {
+  if (!temPdv) return 0;
   const { data } = await supabase
     .from('order_items')
     .select('unit_cost, quantity, orders!inner(tenant_id, created_at, is_paid, status, is_training, is_draft)')
@@ -91,7 +94,7 @@ function addReceita(bucket: ReceitaBucket, destType: string, amount: number) {
 const destOf = (row: Record<string, unknown>) =>
   String((row.orders as Record<string, unknown>)?.destination_type ?? '');
 
-async function fetchCaixa(tenantId: string, startDate: string, endDate: string): Promise<DRESnapshot> {
+async function fetchCaixa(tenantId: string, startDate: string, endDate: string, temPdv: boolean): Promise<DRESnapshot> {
   const endDateTime = endDate + 'T23:59:59';
   const monthStr = startDate.slice(0, 7);
   const [autoSaleRes, paymentsRes, payMethodsRes, receivablesReceivedRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, cardFeeRes] = await Promise.all([
@@ -141,7 +144,7 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string):
   void purchasesRes;
   const compras = await fetchComprasDRE(tenantId, await fetchComprasPeriodo(tenantId, startDate, endDate, 'caixa'));
   const cmvCompras = compras.cmv;
-  const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime);
+  const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime, temPdv);
   const despesasPorCategoria: Record<string, number> = { ...compras.despesasPorCategoria };
   ((billsRes.data ?? []) as Array<Record<string, unknown>>).forEach(b => {
     const key = (b.dre_category_id as string) ?? '__sem__';
@@ -162,7 +165,7 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string):
   };
 }
 
-async function fetchCompetencia(tenantId: string, startDate: string, endDate: string): Promise<DRESnapshot> {
+async function fetchCompetencia(tenantId: string, startDate: string, endDate: string, temPdv: boolean): Promise<DRESnapshot> {
   const endDateTime = endDate + 'T23:59:59';
   const monthStr = startDate.slice(0, 7);
   const [autoSaleRes, paymentsRes, receivablesRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, cardFeeRes] = await Promise.all([
@@ -195,7 +198,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
   const compras = await fetchComprasDRE(tenantId, allPurchases);
   const cmvCompras = compras.cmv;
   const cmvComprasPendentes = allPurchases.filter(p => p.payment_status === 'pending').reduce((s, p) => s + Number(p.total_amount), 0);
-  const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime);
+  const cmvTeorico = await fetchCmvConsumoComp(tenantId, startDate, endDateTime, temPdv);
   const despesasPorCategoria: Record<string, number> = { ...compras.despesasPorCategoria };
   let despesasAPagar = 0;
   ((billsRes.data ?? []) as Array<Record<string, unknown>>).forEach(b => {
@@ -383,6 +386,7 @@ function CompareCard({
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function DREComparativoTab() {
   const { user } = useAuth();
+  const temPdv = empresaTemPdv(user?.tenantKind);
   const { customGroups: dreGroups } = useDreGroups();
   const today = new Date();
   const [mes, setMes] = useState(
@@ -403,8 +407,8 @@ export default function DREComparativoTab() {
     setLoading(true);
     const { start, end } = getMonthRange(mes);
     const [caixa, comp, catsRes, extras] = await Promise.all([
-      fetchCaixa(user.tenantId, start, end),
-      fetchCompetencia(user.tenantId, start, end),
+      fetchCaixa(user.tenantId, start, end, temPdv),
+      fetchCompetencia(user.tenantId, start, end, temPdv),
       supabase
         .from('fin_dre_categories')
         .select('id, name, group_type, parent_id, sort_order')
@@ -412,7 +416,7 @@ export default function DREComparativoTab() {
         .eq('is_active', true)
         .order('group_type').order('sort_order'),
       // Regra dos recebidos da loja (Financeiro › Receitas › Fontes) — igual à DRE
-      loadRevenueExtras(user.tenantId, start, end),
+      loadRevenueExtras(user.tenantId, start, end, user.tenantKind),
     ]);
     setCaixaData(applyRevenueSources(caixa, extras.sources, extras.pix, extras.ifood));
     // Competência: iFood pela data do PEDIDO e Stone pela data da VENDA; caixa segue pela data do repasse
@@ -424,7 +428,7 @@ export default function DREComparativoTab() {
     }, extras.sources, extras.pix, c.ifood_receita));
     setDreCats(catsRes.data ?? []);
     setLoading(false);
-  }, [user?.tenantId, mes]);
+  }, [user?.tenantId, user?.tenantKind, mes]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -598,10 +602,10 @@ export default function DREComparativoTab() {
               )}
               {/* Informativos: já fora da receita (cancelado não vira payment; o valor recebido
                   já é líquido de desconto). Subtrair aqui era dedução dupla. */}
-              {(caixaData.cancelamentos > 0 || compData.cancelamentos > 0) && (
+              {temPdv && (caixaData.cancelamentos > 0 || compData.cancelamentos > 0) && (
                 <CompRow label="Cancelamentos" caixaVal={caixaData.cancelamentos} compVal={compData.cancelamentos} {...rowBase} muted badge="Só conferência" />
               )}
-              {(caixaData.descontos > 0 || compData.descontos > 0) && (
+              {temPdv && (caixaData.descontos > 0 || compData.descontos > 0) && (
                 <CompRow label="Descontos concedidos" caixaVal={caixaData.descontos} compVal={compData.descontos} {...rowBase} muted badge="Só conferência" />
               )}
               <CompRow label="Receita líquida" caixaVal={caixa.receitaLiquida} compVal={comp.receitaLiquida} {...rowBase} isTotal />

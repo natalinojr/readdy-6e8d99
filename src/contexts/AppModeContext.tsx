@@ -12,7 +12,8 @@ export type AppMode =
   | 'tarefas'
   | 'contratacao'
   | 'nfse'
-  | 'assistente';
+  | 'assistente'
+  | 'financeiro';
 
 interface AppModeContextValue {
   mode: AppMode;

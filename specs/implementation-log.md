@@ -67,3 +67,29 @@ Registro cronológico de specs criadas e seu progresso no workflow SDD.
 
 ---
 
+
+## 2026-09-20 — modulo-financeiro-sem-pdv: Módulo Financeiro para empresa sem PDV (Fase 1) — CONCLUÍDA
+
+- **Spec:** `specs/2026-09-modulo-financeiro-sem-pdv/` · **Branch:** `claude/modulo-financeiro-sem-pdv` (base `main`)
+- **Entrada:** `BRIEFING-MODULO-FINANCEIRO.md` (§4 = escopo; §5 = fora de escopo)
+- **Resumo:** a empresa passa a ter tipo (`tenants.kind`). Empresa `financeiro` entra por card próprio em
+  `/modulos`, com um papel `financeiro` preso ao Financeiro na tela **e** no servidor, telas sem o que
+  depende de pedido/caixa, e nasce pronta (plano de contas + fontes de receita) pelo Admin Master.
+  Loja com PDV conferida no navegador: idêntica.
+- **Decisões:**
+  - Escrita do papel liberada só nas **6** Edges do Financeiro (decisão do dono: menor privilégio).
+    `config-write` foi **retirada** durante a execução — cria mesa/estação/forma de pagamento e grava
+    permissões (`upsert_permissions`): seria escalação de privilégio.
+  - `bulk_insert_ingredients` barrada ao papel (vem do modal de modelos, é ato de estoque).
+  - Estoque **como consequência de compra/nota** é permitido ao papel (decisão do dono): é a mesma
+    operação e é dela que o CMV vive.
+  - Contexts de PDV **montam sem buscar**, em vez de não montar — não montar quebraria 5 consumidores
+    fora do PDV, 4 deles dentro do próprio Financeiro.
+  - `fn_setup_tenant_bypass`, `get_user_tenants` e `get_user_profile_for_tenant` foram **versionadas**
+    (só existiam no banco).
+- **Desvios declarados a "nada muda para o PDV":** Contas Vencidas passa a dizer "sem receita no período"
+  em vez de "0,0%" quando não houve receita, e o percentual passa a usar vírgula (pt-BR, como o resto da
+  tela). Só texto; nenhum número muda.
+- **Gate:** `check.mjs --force` verde — tsc 287/292, vitest 500/500 (15 testes novos).
+
+---

@@ -9,6 +9,7 @@ import { Segmented } from '@/pages/financeiro/components/dreUi';
 import {
   ADMIN_MASTER_EMAIL, fmtDate, fmtCurrency,
   NewInviteModal, StoreActionConfirmModal, CreateUserModal, EditUserModal, UserActionModal, ResendCredentialsModal,
+  NewFinanceTenantModal,
   type StoreInvite, type TenantInfo, type StoreAction, type StoreActionModal, type UserAction, type AdminUser,
 } from './modals';
 import {
@@ -595,6 +596,7 @@ export default function AdminMasterPage() {
 
   const [showNewInvite, setShowNewInvite] = useState(false);
   const [showCreateUser, setShowCreateUser] = useState(false);
+  const [showNewFinance, setShowNewFinance] = useState(false);
   const [confirmDeleteInvite, setConfirmDeleteInvite] = useState<StoreInvite | null>(null);
   const [storeAction, setStoreAction] = useState<StoreActionModal | null>(null);
   const [accessUserId, setAccessUserId] = useState<string | null>(null);
@@ -675,6 +677,12 @@ export default function AdminMasterPage() {
                 <i className="ri-add-line text-sm" /> Novo código
               </button>
             )}
+            {tab === 'lojas' && (
+              <button onClick={() => setShowNewFinance(true)}
+                className="flex items-center gap-2 px-4 h-10 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap shadow-sm">
+                <i className="ri-building-line text-sm" /> Nova empresa financeira
+              </button>
+            )}
             {(tab === 'usuarios' || tab === 'lojas') && (
               <button onClick={() => setShowCreateUser(true)}
                 className="flex items-center gap-2 px-4 h-10 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap shadow-sm">
@@ -714,6 +722,13 @@ export default function AdminMasterPage() {
           onChanged={() => { loadUsers(); loadTenants(); }} />
       )}
       {showNewInvite && <NewInviteModal onClose={() => setShowNewInvite(false)} onCreated={loadInvites} />}
+      {showNewFinance && (
+        <NewFinanceTenantModal
+          users={users.filter((u) => u.is_active).map((u) => ({ id: u.id, name: u.name, email: u.email }))}
+          onClose={() => setShowNewFinance(false)}
+          onCreated={() => { loadTenants(); loadUsers(); }}
+        />
+      )}
       {showCreateUser && (
         <CreateUserModal invites={invites} onClose={() => setShowCreateUser(false)}
           onCreated={() => { loadInvites(); loadUsers(); }} />

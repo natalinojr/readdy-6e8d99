@@ -8,6 +8,7 @@ import { isIfoodAntecipacao } from '@/lib/ifoodVendas';
 import { fetchCartoesCompetencia, isStoneMdrLedger, isStoneVendasLedger } from '@/lib/cartoesCompetencia';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Cell, ReferenceLine,
 } from 'recharts';
@@ -80,7 +81,9 @@ interface DREData {
 }
 
 // P2: calcula CMV teórico (consumo) e cobertura de ficha técnica no período.
-async function fetchCmvConsumo(tenantId: string, startDate: string, endDateTime: string): Promise<{ cmvTeorico: number; fichaCobertura: number }> {
+// Empresa sem PDV não tem order_items/ficha técnica — sai cedo, sem disparar a query.
+async function fetchCmvConsumo(tenantId: string, startDate: string, endDateTime: string, temPdv: boolean): Promise<{ cmvTeorico: number; fichaCobertura: number }> {
+  if (!temPdv) return { cmvTeorico: 0, fichaCobertura: 0 };
   const { data } = await supabase
     .from('order_items')
     .select('unit_cost, quantity, orders!inner(tenant_id, created_at, is_paid, status, is_training, is_draft)')
@@ -120,7 +123,7 @@ type DREMode = 'caixa' | 'competencia';
 const STANDARD_GROUPS = STANDARD_GROUP_KEYS;
 
 // ─── Fetch — Regime de Caixa ──────────────────────────────────────────────────
-async function fetchDREData(tenantId: string, startDate: string, endDate: string): Promise<DREData> {
+async function fetchDREData(tenantId: string, startDate: string, endDate: string, temPdv: boolean): Promise<DREData> {
   const endDateTime = endDate + 'T23:59:59';
 
   // ═══ LIVRO-RAZÃO ÚNICO: fin_cash_flow é a fonte de verdade para receita ═══
@@ -353,7 +356,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
     .lte('date', endDate);
   const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
-  const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime);
+  const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime, temPdv);
 
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
@@ -368,7 +371,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
 }
 
 // ─── Fetch — Regime de Competência ───────────────────────────────────────────
-async function fetchDREDataCompetencia(tenantId: string, startDate: string, endDate: string): Promise<DREData> {
+async function fetchDREDataCompetencia(tenantId: string, startDate: string, endDate: string, temPdv: boolean): Promise<DREData> {
   const endDateTime = endDate + 'T23:59:59';
   const monthStr = startDate.slice(0, 7);
 
@@ -561,7 +564,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     .filter((r) => !isStoneVendasLedger(r.description))
     .reduce((s, r) => s + Number(r.amount), 0);
 
-  const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime);
+  const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime, temPdv);
 
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
@@ -759,6 +762,7 @@ const MODE_TOOLTIPS: Record<DREMode, string> = {
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function DRETab() {
   const { user } = useAuth();
+  const temPdv = empresaTemPdv(user?.tenantKind);
   const { getImpressoraParaEstacao } = useImpressoras();
   const today = new Date();
   const [mes, setMes] = useState(
@@ -808,9 +812,9 @@ export default function DRETab() {
     async (tenantId: string, start: string, end: string) => {
       const [d, extras] = await Promise.all([
         dreMode === 'competencia'
-          ? fetchDREDataCompetencia(tenantId, start, end)
-          : fetchDREData(tenantId, start, end),
-        loadRevenueExtras(tenantId, start, end),
+          ? fetchDREDataCompetencia(tenantId, start, end, temPdv)
+          : fetchDREData(tenantId, start, end, temPdv),
+        loadRevenueExtras(tenantId, start, end, user?.tenantKind),
       ]);
       if (dreMode !== 'competencia') return applyRevenueSources(d, extras.sources, extras.pix, extras.ifood);
       // Competência: iFood pela data do PEDIDO e Stone pela data da VENDA (caixa segue pela data do repasse)
@@ -822,7 +826,7 @@ export default function DRETab() {
         taxasMaquininha: d.taxasMaquininha + c.stone_mdr + (ifoodOn ? c.ifood_custo : 0),
       }, extras.sources, extras.pix, c.ifood_receita);
     },
-    [dreMode]
+    [dreMode, user?.tenantKind, temPdv]
   );
 
   const loadCats = useCallback(async () => {
@@ -1337,12 +1341,12 @@ export default function DRETab() {
                 {/* Cancelamentos e descontos são INFORMATIVOS: já estão fora da receita bruta
                     (pedido cancelado não gera payment/auto_sale e o payments.amount já vem
                     líquido de desconto). Subtraí-los outra vez era dedução dupla. */}
-                {(data.cancelamentos > 0 || (prevData?.cancelamentos ?? 0) > 0) && (
+                {temPdv && (data.cancelamentos > 0 || (prevData?.cancelamentos ?? 0) > 0) && (
                   <DRERow label="Cancelamentos" atual={data.cancelamentos} anterior={prevData?.cancelamentos} receitaBruta={receitaBruta} depth={1} muted
                     origin="Pedidos cancelados — não deduzido da receita (nunca entrou)" badge="Só conferência"
                     clickable={data.cancelamentos > 0} onClick={data.cancelamentos > 0 ? () => setDrillDown({ type: 'cancelamentos' }) : undefined} />
                 )}
-                {(data.descontos > 0 || (prevData?.descontos ?? 0) > 0) && (
+                {temPdv && (data.descontos > 0 || (prevData?.descontos ?? 0) > 0) && (
                   <DRERow label="Descontos concedidos" atual={data.descontos} anterior={prevData?.descontos} receitaBruta={receitaBruta} depth={1} muted
                     origin="Descontos aplicados nos pedidos — o valor recebido já é líquido" badge="Só conferência"
                     clickable={data.descontos > 0} onClick={data.descontos > 0 ? () => setDrillDown({ type: 'descontos' }) : undefined} />
@@ -1398,7 +1402,7 @@ export default function DRETab() {
                   {comprasComoDespesa > 0 && (
                     <>, dos quais <strong className="text-zinc-500">{formatCurrency(comprasComoDespesa)}</strong> foram classificados como despesa</>
                   )}.
-                  {typeof data.cmvTeorico === 'number' && data.cmvTeorico > 0 && (
+                  {temPdv && typeof data.cmvTeorico === 'number' && data.cmvTeorico > 0 && (
                     <>
                       {' '}CMV teórico pela ficha técnica (só comparativo): <strong className="text-zinc-500">{formatCurrency(data.cmvTeorico)}</strong>
                       {typeof data.fichaCobertura === 'number' && <> · cobertura {data.fichaCobertura.toFixed(0)}%</>}.

@@ -47,6 +47,11 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
         })
       }
+      // Escrita de configuração: SÓ admin ou gerente. O papel 'financeiro' NÃO entra aqui de
+      // propósito (spec modulo-financeiro-sem-pdv, 2026-09-20): esta Edge cria mesa, estação e
+      // forma de pagamento e grava permissões (upsert_permissions) — liberar o papel daria a ele
+      // o PDV e a chance de ampliar o próprio acesso. O Financeiro só usa a ação de leitura
+      // get_permissions, que já passa por CONFIG_READ_ACTIONS.
       if (!CONFIG_READ_ACTIONS.has(action) && !isManagerRole(role)) {
         return new Response(JSON.stringify({ success: false, error: 'Apenas administrador ou gerente da loja pode alterar configurações' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,

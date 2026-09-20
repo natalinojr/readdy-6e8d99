@@ -209,6 +209,125 @@ export function NewInviteModal({ onClose, onCreated }: NewInviteModalProps) {
   );
 }
 
+// ─── Nova Empresa Financeira Modal ────────────────────────────────────────────
+
+export interface FinanceUserOption {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface NewFinanceTenantModalProps {
+  users: FinanceUserOption[];
+  onClose: () => void;
+  onCreated: () => void;
+}
+
+export function NewFinanceTenantModal({ users, onClose, onCreated }: NewFinanceTenantModalProps) {
+  const [nome, setNome] = useState('');
+  const [cnpj, setCnpj] = useState('');
+  const [responsavelId, setResponsavelId] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const handleCreate = async () => {
+    if (!nome.trim()) { setErrorMsg('Nome é obrigatório'); return; }
+    if (!responsavelId) { setErrorMsg('Selecione a pessoa responsável'); return; }
+    setLoading(true);
+    setErrorMsg(null);
+    const { error } = await supabase.rpc('fn_admin_create_finance_tenant', {
+      p_name: nome.trim(),
+      p_cnpj: cnpj.trim() || null,
+      p_user_id: responsavelId,
+    });
+    setLoading(false);
+    if (error) { setErrorMsg(error.message); return; }
+    setDone(true);
+    onCreated();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 flex items-center justify-center bg-emerald-100 rounded-xl">
+              <i className="ri-building-line text-emerald-600 text-sm" />
+            </div>
+            <h2 className="text-sm font-black text-zinc-900">{done ? 'Empresa criada!' : 'Nova empresa financeira'}</h2>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer text-zinc-400">
+            <i className="ri-close-line text-base" />
+          </button>
+        </div>
+        <div className="px-5 py-5 space-y-4">
+
+          {!done ? (
+            <>
+              <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl">
+                <p className="text-xs text-emerald-800 leading-relaxed">
+                  Cria uma empresa sem PDV, só com o módulo Financeiro: plano de contas padrão e fontes de receita (manual, Pix) já configurados.
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nome da empresa</label>
+                <input type="text" value={nome} onChange={(e) => setNome(e.target.value)}
+                  placeholder="Ex: Empresa Financeira XYZ"
+                  className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-zinc-600 mb-1.5">CNPJ <span className="text-zinc-400 font-normal">(opcional)</span></label>
+                <input type="text" value={cnpj} onChange={(e) => setCnpj(e.target.value)}
+                  placeholder="00.000.000/0000-00"
+                  className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Pessoa responsável</label>
+                <select value={responsavelId} onChange={(e) => setResponsavelId(e.target.value)}
+                  className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-400 bg-white">
+                  <option value="">Selecione…</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>{u.name} — {u.email}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-zinc-400 mt-1">Essa pessoa recebe o papel Financeiro nesta empresa.</p>
+              </div>
+              {errorMsg && (
+                <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
+                  <i className="ri-error-warning-line text-red-500 text-sm flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-red-700">{errorMsg}</p>
+                </div>
+              )}
+              <div className="flex gap-2 pt-1">
+                <button onClick={onClose} className="flex-1 py-2.5 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-xl hover:bg-zinc-200 cursor-pointer whitespace-nowrap">Cancelar</button>
+                <button onClick={handleCreate} disabled={loading}
+                  className="flex-1 py-2.5 text-sm font-semibold text-white bg-emerald-500 rounded-xl hover:bg-emerald-600 disabled:opacity-50 cursor-pointer whitespace-nowrap flex items-center justify-center gap-2">
+                  {loading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <i className="ri-add-line" />}
+                  {loading ? 'Criando...' : 'Criar empresa'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 p-3 bg-emerald-50 rounded-xl border border-emerald-200">
+                <div className="w-8 h-8 flex items-center justify-center bg-emerald-100 rounded-lg flex-shrink-0">
+                  <i className="ri-checkbox-circle-fill text-emerald-600 text-base" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-emerald-800">{nome} criada com sucesso!</p>
+                  <p className="text-xs text-emerald-600">Já nasceu com plano de contas e fontes de receita configurados.</p>
+                </div>
+              </div>
+              <button onClick={onClose} className="w-full py-2.5 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-xl hover:bg-zinc-200 cursor-pointer whitespace-nowrap">Fechar</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Store Action Confirm Modal ───────────────────────────────────────────────
 
 const ACTION_CONFIG: Record<StoreAction, {

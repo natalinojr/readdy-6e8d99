@@ -22,6 +22,7 @@ const PERFIL_LABEL: Record<UserPerfil, string> = {
   gestor_entregas: 'Gestor de Entregas',
   tarefas: 'Tarefas',
   totem: 'Totem',
+  financeiro: 'Financeiro',
 };
 
 const PERFIL_ROTA: Record<UserPerfil, string> = {
@@ -33,6 +34,7 @@ const PERFIL_ROTA: Record<UserPerfil, string> = {
   gestor_entregas: '/gestor-entregas',
   tarefas: '/tarefas',
   totem: '/autoatendimento',
+  financeiro: '/financeiro',
 };
 
 const PERFIL_COLOR: Record<UserPerfil, string> = {
@@ -43,6 +45,7 @@ const PERFIL_COLOR: Record<UserPerfil, string> = {
   cozinha: 'text-sky-600 bg-sky-50',
   gestor_entregas: 'text-orange-600 bg-orange-50',
   tarefas: 'text-indigo-600 bg-indigo-50',
+  financeiro: 'text-teal-600 bg-teal-50',
   totem: 'text-orange-600 bg-orange-50',
 };
 

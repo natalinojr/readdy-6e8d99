@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef } f
 import type { ReactNode } from 'react';
 import { supabase, invokeWithAuth, ensureFreshSession } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import type { ProductionRecipe, ProductionBatch, ProductionRecipeItem, ProductionRecipeStep } from '@/types/estoque';
 
 const LS_RECIPES_KEY = 'erpos_producao_recipes';
@@ -226,6 +227,8 @@ export function ProducaoProvider({ children }: { children: ReactNode }) {
   const loadFromBackend = useCallback(async () => {
     const tenantId = tenantIdRef.current ?? user?.tenantId;
     if (!tenantId) return;
+    // Empresa financeira (sem PDV): não há produção para carregar.
+    if (!empresaTemPdv(user?.tenantKind)) { setLoading(false); return; }
 
     // Se sessao nao estiver ativa, nao tenta carregar do backend
     const freshSession = await ensureFreshSession();
@@ -291,13 +294,15 @@ export function ProducaoProvider({ children }: { children: ReactNode }) {
   // ── Initial load ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!user?.tenantId) return;
+    if (!empresaTemPdv(user.tenantKind)) return;
     loadFromBackend();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.tenantId]);
+  }, [user?.tenantId, user?.tenantKind]);
 
   // ── Realtime sync ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!user?.tenantId) return;
+    if (!empresaTemPdv(user.tenantKind)) return;
     const tenantId = user.tenantId;
 
     const channel = supabase

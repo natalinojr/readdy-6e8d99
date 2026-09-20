@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { useAuth } from '@/contexts/AuthContext';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 
 export type PaperStyle = '80mm' | '58mm';
 
@@ -164,6 +165,8 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (settingsLoading) return;
     if (!tenantId) return;
+    // Empresa financeira (sem PDV): não tem impressora — não sincroniza do banco.
+    if (!empresaTemPdv(user?.tenantKind)) return;
     // CRÍTICO: settings ainda pertencem a outra loja (troca de loja em andamento).
     // Sincronizar aqui copiaria a config de impressoras da loja anterior — e o
     // auto-save gravaria essa cópia no banco da loja atual.
@@ -218,7 +221,7 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
     });
 
     initializedRef.current = true;
-  }, [settings, settingsLoading, tenantId]);
+  }, [settings, settingsLoading, tenantId, user?.tenantKind]);
 
   const salvarImpressoras = useCallback(async () => {
     if (!tenantId) return;

@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import type { PermissaoKey } from '@/hooks/usePermissoes';
 import { FIN_KEYS, REL_KEYS } from '@/constants/permissoesAbas';
+import { rotaForcada } from '@/lib/acessoRota';
 
 /**
  * Mapeamento de rota → permissão necessária.
@@ -42,16 +43,10 @@ export default function RotaProtegida({ children }: Props) {
   const { hasPermissao, loading } = usePermissoes();
   const location = useLocation();
 
-  // Perfil restrito "Gestor de Entregas": só pode ficar no módulo de entregas.
-  // Qualquer outra rota interna devolve pro kanban (independe das permissões).
-  if (user?.perfil === 'gestor_entregas' && !location.pathname.startsWith('/gestor-entregas')) {
-    return <Navigate to="/gestor-entregas" replace />;
-  }
-
-  // Perfil restrito "Tarefas": só pode ficar no módulo de tarefas.
-  if (user?.perfil === 'tarefas' && !location.pathname.startsWith('/tarefas')) {
-    return <Navigate to="/tarefas" replace />;
-  }
+  // Papéis presos a uma única área (Gestor de Entregas, Tarefas, Financeiro):
+  // qualquer outra rota interna devolve pra área deles, independe das permissões.
+  const forcada = rotaForcada(user?.perfil, location.pathname);
+  if (forcada) return <Navigate to={forcada} replace />;
 
   // Enquanto carrega permissões, não bloqueia (evita flash de redirect)
   if (loading) return <>{children}</>;

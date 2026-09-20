@@ -3,7 +3,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { PerfilUsuario } from '@/constants/usuarios';
 
-const ROLE_MAP: Record<string, PerfilUsuario> = {
+export const ROLE_MAP: Record<string, PerfilUsuario> = {
   admin: 'admin',
   manager: 'gerente',
   cashier: 'caixa',
@@ -12,9 +12,10 @@ const ROLE_MAP: Record<string, PerfilUsuario> = {
   delivery_manager: 'gestor_entregas',
   tasks_only: 'tarefas',
   tablet: 'totem',
+  financeiro: 'financeiro',
 };
 
-const ROLE_MAP_REVERSE: Record<PerfilUsuario, string> = {
+export const ROLE_MAP_REVERSE: Record<PerfilUsuario, string> = {
   admin: 'admin',
   gerente: 'manager',
   caixa: 'cashier',
@@ -23,6 +24,7 @@ const ROLE_MAP_REVERSE: Record<PerfilUsuario, string> = {
   gestor_entregas: 'delivery_manager',
   tarefas: 'tasks_only',
   totem: 'tablet',
+  financeiro: 'financeiro',
 };
 
 export interface UsuarioReal {

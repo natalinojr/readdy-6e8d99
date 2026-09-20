@@ -4,6 +4,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotificacoes } from './NotificacoesContext';
 import { useAuditoria } from './AuditoriaContext';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { convertUnit } from '@/lib/unitConversion';
 import type { UnidadeEstoque, Movimentacao, InventarioSession, InventarioItemContado } from '../types/estoque';
 
@@ -449,6 +450,9 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user?.tenantId) { setLoading(false); return; }
+    // Empresa financeira (sem PDV): não busca estoque nem assina Realtime.
+    // reloadInsumos() continua funcionando sob demanda (ex.: aba Compras do Financeiro).
+    if (!empresaTemPdv(user.tenantKind)) { setLoading(false); return; }
 
     // Carga inicial
     loadInsumos();

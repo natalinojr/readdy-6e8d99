@@ -3,6 +3,8 @@ import { useBankAccounts, useIncomeRouting, useBankTransactions } from '@/hooks/
 import type { BankAccount, IncomeRouting, BankTransaction } from '@/hooks/useFinanceiro';
 import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 import { formatCurrency } from '@/lib/formatters';
+import { useAuth } from '@/contexts/AuthContext';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 
 const ACCOUNT_TYPE_LABEL: Record<string, string> = {
   checking: 'Conta Corrente',
@@ -22,6 +24,11 @@ const COLORS = [
   '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444',
   '#06b6d4', '#f97316', '#84cc16', '#ec4899', '#6366f1',
 ];
+
+// Todas estas origens dependem do PDV (pedido, mesa, kiosk). Empresa sem PDV
+// (`kind === 'financeiro'`) não tem nenhuma delas — filtrar na hora do uso,
+// nunca remover a constante (é o dado, o filtro é comportamento).
+const PDV_ORIGIN_IDS = new Set(['pdv', 'garcom', 'delivery', 'self_service', 'mesa']);
 
 const INCOME_SOURCES = [
   { type: 'origin', id: 'pdv', label: 'PDV (Caixa)' },
@@ -316,6 +323,11 @@ function TransactionRow({ tx }: { tx: BankTransaction }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function BancosContasTab() {
+  const { user } = useAuth();
+  const temPdv = empresaTemPdv(user?.tenantKind);
+  // Sem PDV, nenhuma das origens de venda existe — o roteamento por canal fica
+  // só com o que não depende de pedido/mesa/kiosk (hoje, nenhuma).
+  const incomeSources = temPdv ? INCOME_SOURCES : INCOME_SOURCES.filter(src => !PDV_ORIGIN_IDS.has(src.id));
   const { accounts, loading, upsert, remove, setDefault, totalBalance } = useBankAccounts();
   const [pendingDefaultName, setPendingDefaultName] = useState<string | null>(null);
   const { routings, upsert: upsertRouting } = useIncomeRouting();
@@ -434,7 +446,7 @@ export default function BancosContasTab() {
   const handleSaveRouting = async () => {
     setSavingRouting(true);
     const allSources = [
-      ...INCOME_SOURCES,
+      ...incomeSources,
       ...paymentMethods.map(pm => ({ type: 'payment_method', id: pm.id, label: pm.name })),
     ];
     for (const src of allSources) {
@@ -797,7 +809,7 @@ export default function BancosContasTab() {
                   <p className="text-xs text-zinc-400 mt-0.5">Roteamento adicional por origem do pedido (complementar)</p>
                 </div>
                 <div className="divide-y divide-zinc-50">
-                  {INCOME_SOURCES.map(src => {
+                  {incomeSources.map(src => {
                     const routedAccountId = getRoutingAccount(src.type, src.id);
                     const routedAccount = accounts.find(a => a.id === routedAccountId);
                     return (

@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
 import { FIN_KEYS, REL_KEYS, type FinPermissaoKey, type RelPermissaoKey } from '@/constants/permissoesAbas';
 
-export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas';
+export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'financeiro';
 
 export type PermissaoKey =
   | 'pdv_abrir_caixa'
@@ -37,7 +37,7 @@ export type PermissaoKey =
 /** Papel do frontend (PT) → role no banco (enum user_role, em inglês).
  *  A tabela `permissions` grava o role em inglês (manager/cashier/waiter/kitchen),
  *  então o filtro precisa traduzir antes de comparar. */
-const PAPEL_TO_DB_ROLE: Record<string, string> = {
+export const PAPEL_TO_DB_ROLE: Record<string, string> = {
   admin: 'admin',
   gerente: 'manager',
   caixa: 'cashier',
@@ -45,10 +45,11 @@ const PAPEL_TO_DB_ROLE: Record<string, string> = {
   cozinha: 'kitchen',
   gestor_entregas: 'delivery_manager',
   tarefas: 'tasks_only',
+  financeiro: 'financeiro',
 };
 
 /** Permissões padrão por papel (fallback quando não há dados no banco) */
-const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
+export const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
   admin: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_desconto',
     'pdv_cancelar_pedido', 'pdv_cancelar_item', 'pdv_editar_item_pos_kds', 'pdv_estornar_pagamento',
@@ -81,6 +82,9 @@ const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
   // Sem PermissaoKey nenhuma — o módulo de Tarefas não usa esse sistema, e o
   // resto do app fica bloqueado pelo hard-lock de rota (RotaProtegida).
   tarefas: [],
+  // Nasce com todas as abas do Financeiro e nada além — o papel é preso ao
+  // módulo pelo hard-lock de rota (RotaProtegida / acessoRota.ts).
+  financeiro: [...FIN_KEYS],
 };
 
 /** Padrão + linhas salvas (allowed true acrescenta, false tira). */

@@ -75,7 +75,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (!tenant_id) return errResp('tenant_id obrigatório');
         const callerRank = callerIsOwner ? 3 : roleRank(callerTenants.get(String(tenant_id)));
         if (callerRank < 2) return errResp('Apenas administrador ou gerente desta loja pode criar usuários');
-        const newRole = ({ admin: 'admin', gerente: 'manager' } as Record<string, string>)[String(perfil)] ?? 'staff';
+        const newRole = ({ admin: 'admin', gerente: 'manager', financeiro: 'financeiro' } as Record<string, string>)[String(perfil)] ?? 'staff';
         // Gerente só cria papéis abaixo do seu; admin cria qualquer um.
         if (callerRank < 3 && roleRank(newRole) >= callerRank) {
           return errResp('Sem permissão para criar usuário com este perfil');
@@ -110,7 +110,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const roleMap: Record<string, string> = {
         admin: 'admin', gerente: 'manager', caixa: 'cashier',
         garcom: 'waiter', cozinha: 'kitchen', gestor_entregas: 'delivery_manager',
-        tarefas: 'tasks_only', totem: 'tablet',
+        tarefas: 'tasks_only', totem: 'tablet', financeiro: 'financeiro',
       };
 
       const isTotem = perfil === 'totem';

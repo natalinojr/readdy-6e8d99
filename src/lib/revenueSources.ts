@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { fontesPadrao } from '@/lib/tipoEmpresa';
 
 // ─── Fontes dos "recebidos" por loja (fin_revenue_settings) ─────────────────
 // Uma única regra para Receitas, DRE, DRE Comparativo e Visão Geral: cada loja
@@ -90,21 +91,24 @@ export const REVENUE_SOURCE_INFO = revenueSourceInfo(null);
 
 const FLOW_COLUMNS = 'bank_provider, bank_account_id, card_provider, card_deposit_account_id, card_deposit_match, card_pix_mode, ifood_deposit_account_id, financeiro_inicio';
 
-export async function fetchRevenueSettings(tenantId: string): Promise<{ sources: RevenueSettingSource[]; flow: MoneyFlowSettings; error: string | null }> {
+// `kind` é opcional e retrocompatível: quem não passa continua caindo no
+// default de sempre (DEFAULT_REVENUE_SOURCES = loja com PDV).
+export async function fetchRevenueSettings(tenantId: string, kind?: string | null): Promise<{ sources: RevenueSettingSource[]; flow: MoneyFlowSettings; error: string | null }> {
+  const fallback = fontesPadrao(kind);
   const { data, error } = await supabase
     .from('fin_revenue_settings')
     .select(`sources, ${FLOW_COLUMNS}`)
     .eq('tenant_id', tenantId)
     .maybeSingle();
-  if (error) return { sources: DEFAULT_REVENUE_SOURCES, flow: EMPTY_MONEY_FLOW, error: error.message };
+  if (error) return { sources: fallback, flow: EMPTY_MONEY_FLOW, error: error.message };
   const row = (data ?? null) as (Partial<MoneyFlowSettings> & { sources?: RevenueSettingSource[] | null }) | null;
   const flow: MoneyFlowSettings = { ...EMPTY_MONEY_FLOW };
   if (row) (Object.keys(EMPTY_MONEY_FLOW) as (keyof MoneyFlowSettings)[]).forEach(k => { (flow as unknown as Record<string, unknown>)[k] = row[k] ?? null; });
-  return { sources: row?.sources ?? DEFAULT_REVENUE_SOURCES, flow, error: null };
+  return { sources: row?.sources ?? fallback, flow, error: null };
 }
 
-export async function fetchRevenueSources(tenantId: string): Promise<{ sources: RevenueSettingSource[]; error: string | null }> {
-  const { sources, error } = await fetchRevenueSettings(tenantId);
+export async function fetchRevenueSources(tenantId: string, kind?: string | null): Promise<{ sources: RevenueSettingSource[]; error: string | null }> {
+  const { sources, error } = await fetchRevenueSettings(tenantId, kind);
   return { sources, error };
 }
 
@@ -161,8 +165,8 @@ export async function fetchIfoodSales(tenantId: string, startDate: string, endDa
 export const sumAmount = (rows: { amount: number }[]) => rows.reduce((s, r) => s + Number(r.amount), 0);
 
 // Fontes da loja + totais de Pix e iFood do período (só busca o que estiver ligado).
-export async function loadRevenueExtras(tenantId: string, startDate: string, endDate: string) {
-  const { sources, flow } = await fetchRevenueSettings(tenantId);
+export async function loadRevenueExtras(tenantId: string, startDate: string, endDate: string, kind?: string | null) {
+  const { sources, flow } = await fetchRevenueSettings(tenantId, kind);
   const [pix, ifood] = await Promise.all([
     sources.includes('pix') ? fetchPixRecebidos(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
     sources.includes('ifood') ? fetchIfoodSales(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),

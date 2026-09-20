@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useBillsPayable } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
 import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
+import { rotuloImpactoMargem } from '@/lib/impactoMargem';
 
 interface ContaVencida {
   id: string;
@@ -332,7 +333,11 @@ export default function ContasVencidasPanel() {
               </div>
               <div className="bg-white border border-orange-100 rounded-xl p-3">
                 <p className="text-xs text-orange-600 font-semibold">Impacto na Margem</p>
-                <p className="text-lg font-black text-orange-700 mt-0.5">{impacto.impactoMargem.toFixed(1)}%</p>
+                {impacto.receitaBruta > 0 ? (
+                  <p className="text-lg font-black text-orange-700 mt-0.5">{rotuloImpactoMargem(totalGeral, impacto.receitaBruta)}</p>
+                ) : (
+                  <p className="text-sm font-semibold text-zinc-400 mt-1.5">{rotuloImpactoMargem(totalGeral, impacto.receitaBruta)}</p>
+                )}
                 <p className="text-xs text-orange-400">da receita bruta do mês</p>
               </div>
               <div className="bg-white border border-zinc-100 rounded-xl p-3">

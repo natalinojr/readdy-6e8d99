@@ -39,6 +39,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { copiaValida, lerCopia } from '../_shared/guias.ts';
+import { isFinanceiroRole } from '../_shared/tenant-auth.ts';
 
 type Admin = SupabaseClient;
 
@@ -989,7 +990,8 @@ Deno.serve(async (req: Request) => {
       tenantId = match.tenant_id;
       role = String(match.role ?? '');
     }
-    const isManager = internal || role === 'admin' || role === 'manager';
+    // Financeiro/RH é admin, gerente ou o papel financeiro (spec modulo-financeiro-sem-pdv, 2026-09-20).
+    const isManager = internal || isFinanceiroRole(role);
 
     // ── Pagamentos ──
     const PAY_INTERNAL_ONLY = ['prepare_payment', 'execute_payment', 'cancel_payment', 'decode_boleto'];

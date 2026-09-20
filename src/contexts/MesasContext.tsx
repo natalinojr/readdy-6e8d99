@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from './SessaoContext';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 
 interface DBTable {
   id: string;
@@ -95,6 +96,8 @@ export function MesasProvider({ children }: { children: ReactNode }) {
 
   const loadMesas = useCallback(async () => {
     if (!user?.tenantId) { setLoading(false); return; }
+    // Empresa financeira (sem PDV): não há mesa para carregar.
+    if (!empresaTemPdv(user.tenantKind)) { setLoading(false); return; }
     try {
       const { data, error } = await supabase.rpc('fn_get_tables', { p_tenant_id: user.tenantId });
       if (error) throw error;
@@ -105,10 +108,11 @@ export function MesasProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [user?.tenantId]);
+  }, [user?.tenantId, user?.tenantKind]);
 
   useEffect(() => {
     if (!user?.tenantId) { setLoading(false); return; }
+    if (!empresaTemPdv(user.tenantKind)) { setLoading(false); return; }
     loadMesas();
 
     const channel = supabase

@@ -6,6 +6,7 @@ import { useOrdersPing } from '@/hooks/useOrdersPing';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { createCoalescedRunner, syncBackoffMs } from '@/lib/coalescedRunner';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import type { KDSPedido, KDSItem, KDSItemStatus, KDSUnidade, KDSPagamento, KDSSubParte } from '../types/kds';
 import type { CarrinhoItem, DestinoInfo } from './PDVContext';
 
@@ -966,6 +967,8 @@ export function KDSProvider({ children }: { children: ReactNode }) {
 
   const fetchOrdersOnce = useCallback(async (currentStationMap?: StationMap) => {
     if (!user?.tenantId) { setLoading(false); return; }
+    // Empresa financeira (sem PDV): não há pedido de cozinha para carregar.
+    if (!empresaTemPdv(user.tenantKind)) { setLoading(false); return; }
     // Bloqueia se sessão ainda não foi resolvida pelo SessaoContext
     if (sessaoIdRef.current === undefined) { setLoading(false); return; }
     const seq = ++loadSeqRef.current;
@@ -1231,7 +1234,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [user?.tenantId]);
+  }, [user?.tenantId, user?.tenantKind]);
 
   // Coalesce: no máximo 1 recarga em voo + 1 pendente (rajada de eventos = 1 recarga extra).
   const fetchOrdersRef = useRef(fetchOrdersOnce);
@@ -1361,11 +1364,13 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   // Caminho principal de "pedido novo apareceu": não passa por RLS por linha
   // nem pela publicação — mesmo mecanismo que deixou a impressão instantânea.
   // O postgres_changes acima continua como camada de payload (lock de edição).
-  useOrdersPing(user?.tenantId, () => handleRealtimeChange());
+  useOrdersPing(empresaTemPdv(user?.tenantKind) ? user?.tenantId : undefined, () => handleRealtimeChange());
 
   // ── Efeito 1: carrega estações quando o tenant muda ───────────────────────
   useEffect(() => {
     if (!user?.tenantId) { setLoading(false); return; }
+    // Empresa financeira (sem PDV): não há cozinha/estações/pedidos para carregar.
+    if (!empresaTemPdv(user.tenantKind)) { setLoading(false); return; }
     const tenantId = user.tenantId;
 
     consecutiveErrorsRef.current = 0;
@@ -1582,6 +1587,7 @@ export function KDSProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user?.tenantId) return;
     if (loadingSession) return; // aguarda SessaoContext terminar
+    if (!empresaTemPdv(user.tenantKind)) { setLoading(false); return; }
 
     // Sessão resolvida — atualiza ref e carrega pedidos
     sessaoIdRef.current = sessao?.id ?? null;

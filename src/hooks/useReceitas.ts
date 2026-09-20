@@ -116,7 +116,7 @@ export function useReceitas(filters: ReceitasFilters) {
     const { startDate, endDate, categories, sources, search, minAmount, maxAmount } = filters;
 
     // Quais fontes contam como recebido nesta loja (configurável na própria aba).
-    const { sources: enabled, flow: cfgFlow, error: cfgErr } = await fetchRevenueSettings(user.tenantId);
+    const { sources: enabled, flow: cfgFlow, error: cfgErr } = await fetchRevenueSettings(user.tenantId, user.tenantKind);
     if (cfgErr) {
       console.error('[useReceitas] Falha ao ler fontes de receita:', cfgErr);
       setError(cfgErr);

@@ -2,16 +2,19 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import type { ReactNode } from 'react';
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, safeRefreshSession, safeSignOut, refreshSessionWithReason, isLogoutIntencional, clearLogoutIntencional } from '@/lib/supabase';
 import { ensureFreshSession } from '@/lib/supabase';
+import type { TipoEmpresa } from '@/lib/tipoEmpresa';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export type UserPerfil = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem';
+export type UserPerfil = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem' | 'financeiro';
 
 export interface TenantOption {
   tenantId: string;
   tenantName: string;
   role: UserPerfil;
   trainingMode: boolean;
+  /** 'loja' (padrão) usa PDV; 'financeiro' é empresa sem PDV. */
+  kind?: TipoEmpresa;
 }
 
 export interface AuthUser {
@@ -22,6 +25,8 @@ export interface AuthUser {
   loja: string;
   tenantId: string;
   modoTreino: boolean;
+  /** Tipo da empresa (tenants.kind). Ausente só em dado legado/inesperado; tratar como 'loja'. */
+  tenantKind?: TipoEmpresa;
 }
 
 /** Kept for backward compatibility with onboarding page */
@@ -70,6 +75,7 @@ const DB_TO_FRONTEND_ROLE: Record<string, UserPerfil> = {
   delivery_manager: 'gestor_entregas',
   tasks_only: 'tarefas',
   tablet: 'totem',
+  financeiro: 'financeiro',
 };
 
 // ─── Profile fetcher for specific tenant ─────────────────────────────────────
@@ -114,6 +120,7 @@ async function fetchProfileForTenant(
             loja: retry.data.tenant_name ?? '',
             tenantId: retry.data.tenant_id,
             modoTreino: retry.data.training_mode ?? false,
+            tenantKind: (retry.data.kind as TipoEmpresa) ?? 'loja',
           };
         }
       }
@@ -137,6 +144,7 @@ async function fetchProfileForTenant(
     loja: data.tenant_name ?? '',
     tenantId: data.tenant_id,
     modoTreino: data.training_mode ?? false,
+    tenantKind: (data.kind as TipoEmpresa) ?? 'loja',
   };
 }
 
@@ -200,6 +208,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   tenantName: t.tenant_name as string,
                   role: DB_TO_FRONTEND_ROLE[t.role as string] ?? 'caixa',
                   trainingMode: (t.training_mode as boolean) ?? false,
+                  kind: (t.kind as TipoEmpresa) ?? 'loja',
                 }),
               );
               handleTenantResolution(userId, tenantsRetry);
@@ -229,6 +238,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         tenantName: t.tenant_name as string,
         role: DB_TO_FRONTEND_ROLE[t.role as string] ?? 'caixa',
         trainingMode: (t.training_mode as boolean) ?? false,
+        kind: (t.kind as TipoEmpresa) ?? 'loja',
       }),
     );
 
@@ -634,6 +644,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             tenantName: t.tenant_name as string,
             role: DB_TO_FRONTEND_ROLE[t.role as string] ?? 'caixa',
             trainingMode: (t.training_mode as boolean) ?? false,
+            kind: (t.kind as TipoEmpresa) ?? 'loja',
           }));
           if (tenants.length === 0) {
             setNeedsTenantSelection(false);

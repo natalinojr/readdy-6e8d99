@@ -94,6 +94,7 @@ const perfilLabel: Record<string, string> = {
   caixa: 'Operador de Caixa',
   garcom: 'Garçom',
   cozinha: 'Operador de Cozinha',
+  financeiro: 'Financeiro',
 };
 
 interface SidebarProps {

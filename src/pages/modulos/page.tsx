@@ -8,6 +8,7 @@ import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useUsuarios } from '@/hooks/useUsuarios';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { ChefHat, LogOut, Monitor, Store } from 'lucide-react';
 import OnboardingShareModal from '@/pages/modulos/components/OnboardingShareModal';
 
@@ -162,6 +163,18 @@ const MODULOS: ModuloCard[] = [
     emails: ['natalinojr.engel@gmail.com'],
   },
   {
+    id: 'financeiro',
+    titulo: 'Financeiro',
+    descricao: 'Contas, bancos, conciliação, notas, folha e DRE',
+    icon: 'ri-money-dollar-circle-line',
+    rota: '/financeiro',
+    acento: '#16a34a',
+    acentoText: 'text-green-600',
+    acentoBg: 'bg-green-50',
+    acentoBorder: 'border-green-200/70',
+    tag: 'Admin',
+  },
+  {
     id: 'gestao',
     titulo: 'Gestão',
     descricao: 'Dashboard, cardápio, relatórios e configurações',
@@ -182,6 +195,7 @@ const perfilLabel: Record<string, string> = {
   caixa: 'Operador de Caixa',
   garcom: 'Garçom',
   cozinha: 'Operador de Cozinha',
+  financeiro: 'Financeiro',
 };
 
 // ─── Tela Sem Loja, com módulos liberados ─────────────────────────────────────
@@ -450,6 +464,14 @@ export default function ModulosPage() {
   const modulosVisiveis = MODULOS.filter((m) => {
     if (m.emails && !m.emails.includes(user?.email?.toLowerCase() ?? '')) return false;
     if (m.modulo && !hasModule(m.modulo)) return false;
+    if (m.id === 'financeiro') {
+      return user?.perfil === 'financeiro' || !empresaTemPdv(user?.tenantKind);
+    }
+    // Empresa sem PDV não mostra módulo de PDV/cozinha — nem para admin. O corte é pelo
+    // TIPO DA EMPRESA, não pelo papel: o dono da plataforma vira admin em toda empresa nova
+    // (trigger fn_platform_owner_membership) e, sem isto, veria cards que abrem tela vazia,
+    // porque os contexts de PDV não carregam nessa empresa. Loja com PDV não é afetada.
+    if (!empresaTemPdv(user?.tenantKind) && (m.tag === 'Terminal' || m.tag === 'Cozinha')) return false;
     const perfilOk = !m.perfis || !user?.perfil || m.perfis.includes(user.perfil);
     let cfgOk = true;
     if (!settingsLoading) {

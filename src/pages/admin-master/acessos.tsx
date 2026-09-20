@@ -13,6 +13,7 @@ export const ROLE_OPTIONS = [
   { value: 'kitchen', label: 'Cozinha' },
   { value: 'delivery_manager', label: 'Gestor de entregas' },
   { value: 'tasks_only', label: 'Só Tarefas' },
+  { value: 'financeiro', label: 'Financeiro' },
 ];
 
 export const ROLE_LABEL: Record<string, string> = {

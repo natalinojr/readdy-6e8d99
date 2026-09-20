@@ -26,6 +26,16 @@ export function isManagerRole(role: string | null | undefined): boolean {
   return roleRank(role) >= 2;
 }
 
+/**
+ * Quem pode ESCREVER no módulo Financeiro.
+ * Separado de isManagerRole de propósito: o papel 'financeiro' não tem rank e
+ * por isso continua barrado nas Edges de PDV (pedido, caixa, cardápio, estoque).
+ */
+export function isFinanceiroRole(role?: string | null): boolean {
+  if (isManagerRole(role)) return true;
+  return role === 'financeiro';
+}
+
 export function bearerToken(req: Request): string {
   const h = req.headers.get('Authorization') ?? '';
   return h.replace(/^Bearer\s+/i, '').trim();

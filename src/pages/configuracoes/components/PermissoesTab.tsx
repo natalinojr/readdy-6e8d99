@@ -6,7 +6,7 @@ import { usePermissoes, mesclarComPadrao } from '@/hooks/usePermissoes';
 import { FIN_ABAS, FIN_KEYS, REL_ABAS, REL_KEYS } from '@/constants/permissoesAbas';
 import { useToast } from '@/contexts/ToastContext';
 
-type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha';
+type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'financeiro';
 
 interface Permissao {
   id: string;
@@ -74,6 +74,7 @@ const defaultPermissoes: Record<Papel, string[]> = {
     'gestor_pedidos_acessar',
     'gestor_pedidos_entregar',
   ],
+  financeiro: [...FIN_KEYS],
 };
 
 const categorias = [...new Set(permissoes.map((p) => p.categoria))];
@@ -84,6 +85,7 @@ const papeisToDbRole: Record<Papel, string> = {
   caixa: 'cashier',
   garcom: 'waiter',
   cozinha: 'kitchen',
+  financeiro: 'financeiro',
 };
 
 const dbRoleToPapel: Record<string, Papel> = {
@@ -92,6 +94,7 @@ const dbRoleToPapel: Record<string, Papel> = {
   cashier: 'caixa',
   waiter: 'garcom',
   kitchen: 'cozinha',
+  financeiro: 'financeiro',
 };
 
 export default function PermissoesTab() {
@@ -123,6 +126,7 @@ export default function PermissoesTab() {
           caixa: mesclarComPadrao(defaultPermissoes.caixa, linhas('caixa')),
           garcom: mesclarComPadrao(defaultPermissoes.garcom, linhas('garcom')),
           cozinha: mesclarComPadrao(defaultPermissoes.cozinha, linhas('cozinha')),
+          financeiro: mesclarComPadrao(defaultPermissoes.financeiro, linhas('financeiro')),
         };
         setMatrix(newMatrix);
       }

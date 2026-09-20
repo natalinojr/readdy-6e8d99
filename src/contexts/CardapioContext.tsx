@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import { notifyReload } from '@/lib/reloadSignal';
 import { promoAtivaHoje } from '@/lib/promoUtils';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import type { Categoria, Item, Combo, ObservacaoGlobal, GrupoOpcoes, OpcaoItem, PromocaoItem, Destaque } from '@/types/cardapio';
 import type { ItemCardapioPublico } from '@/types/mesaCliente';
 import { saveMenuCache, getMenuCache } from '@/lib/offlineDB';
@@ -419,7 +420,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     // cheia. Usado após mutações (salvar/excluir/toggle) para não "piscar" a tela
     // inteira a cada microalteração — o estado `saving` já desabilita os botões.
     const silent = opts?.silent ?? false;
-    if (!effectiveTenantId) {
+    if (!effectiveTenantId || !empresaTemPdv(user?.tenantKind)) {
       setCategorias([]);
       setItens([]);
       setCombos([]);
@@ -569,7 +570,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     }
 
     setLoading(false);
-  }, [effectiveTenantId]);
+  }, [effectiveTenantId, user?.tenantKind]);
 
   useEffect(() => { recarregar(); }, [recarregar]);
 

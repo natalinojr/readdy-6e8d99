@@ -81,7 +81,7 @@ export default function FinanceiroPage() {
     setHighlightPurchaseId(undefined);
   };
 
-  if (!user || !['admin', 'gerente'].includes(user.perfil)) {
+  if (!user || !['admin', 'gerente', 'financeiro'].includes(user.perfil)) {
     return (
       <div className="flex-1 flex items-center justify-center bg-zinc-50">
         <div className="text-center">
