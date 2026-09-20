@@ -12,6 +12,7 @@
 //                          'payroll' (2026-09-18): Pix ao CPF do funcionário = líquido exato da folha pendente →
 //                          confirmar marca a folha como paga (financial-write pay_payroll) na data do Pix
 //   alerts                 {}                    fn_conciliacao_alertas
+//   trace                  { id }                rastreio: a que conta a pagar / compra / nota / folha este pagamento levou
 //   confirm                { ids: string[] }     admin/gerente: importa a nota (se preciso), baixa a parcela, lança juros
 //   undo                   { id }                admin/gerente: estorna a baixa feita pela confirmação
 //   monthly_candidates     { document_id }       pagamentos do extrato do fornecedor perto da emissão + combinação sugerida
@@ -723,6 +724,91 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
   return { id: row.id, ok: true, msg };
 }
 
+// ── Rastreio de um pagamento conciliado (2026-09-20) ─────────────────────────
+// "Onde foi parar este pagamento?": devolve a corrente inteira a partir da linha do extrato —
+// conta a pagar baixada, compra, nota fiscal de entrada, conta de juros e folha. Só leitura.
+async function traceRow(ctx: Ctx, rowId: string) {
+  const { admin, tenantId } = ctx;
+  const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', rowId).eq('tenant_id', tenantId).maybeSingle();
+  if (!row) return null;
+  const det = (row.match_detail ?? {}) as Row;
+  const conf = (det.confirmed ?? null) as Row | null;
+  const mk = String(row.match_kind ?? '');
+
+  const nome = async (id: unknown) => {
+    if (!id) return null;
+    const { data } = await admin.from('users').select('name').eq('id', String(id)).maybeSingle();
+    return data?.name ?? null;
+  };
+  const conta = async (id: unknown) => {
+    if (!id) return null;
+    const { data: b } = await admin.from('fin_accounts_payable')
+      .select('id, description, supplier, amount, paid_amount, paid_date, due_date, status, category, competence_month, installment_number, installments, reference_type, reference_id, payment_method, notes')
+      .eq('id', String(id)).eq('tenant_id', tenantId).maybeSingle();
+    return b ?? null;
+  };
+
+  const bill = await conta(conf?.bill_id ?? (mk === 'payable' ? row.match_ref_id : null));
+  const jurosBill = await conta(conf?.juros_bill_id);
+
+  // Compra: pela conta (reference_type 'purchase') ou pelo id guardado no lançamento sem nota
+  let compra: Row | null = null;
+  const purchaseId = String(bill?.reference_type) === 'purchase' ? bill?.reference_id : (conf?.purchase_id ?? null);
+  if (purchaseId) {
+    const { data: p } = await admin.from('fin_purchases')
+      .select('id, supplier, invoice_number, total_amount, purchase_date, payment_status, cost_center_id, notes')
+      .eq('id', String(purchaseId)).eq('tenant_id', tenantId).maybeSingle();
+    compra = p ?? null;
+  }
+
+  // Nota de entrada: a que gerou a conta (payable_ids), a da compra, a sugerida, ou a nota do mês
+  let nota: Row | null = null;
+  const selNota = 'id, numero, serie, modelo, chave, emitente_nome, emitente_cnpj, valor_total, emitted_at, status, purchase_id, auto_imported, settlement_statement_ids';
+  if (bill?.id) {
+    const { data: d } = await admin.from('fiscal_inbound_documents').select(selNota).eq('tenant_id', tenantId).contains('payable_ids', [bill.id]).limit(1);
+    nota = (d ?? [])[0] ?? null;
+  }
+  if (!nota && compra?.id) {
+    const { data: d } = await admin.from('fiscal_inbound_documents').select(selNota).eq('tenant_id', tenantId).eq('purchase_id', compra.id).limit(1);
+    nota = (d ?? [])[0] ?? null;
+  }
+  if (!nota && det.doc_id) {
+    const { data: d } = await admin.from('fiscal_inbound_documents').select(selNota).eq('tenant_id', tenantId).eq('id', String(det.doc_id)).maybeSingle();
+    nota = d ?? null;
+  }
+  if (!nota) {
+    // Nota do mês: uma nota cobre vários pagamentos (settlement_statement_ids)
+    const { data: d } = await admin.from('fiscal_inbound_documents').select(selNota).eq('tenant_id', tenantId).contains('settlement_statement_ids', [row.id]).limit(1);
+    nota = (d ?? [])[0] ?? null;
+    if (nota && !compra && nota.purchase_id) {
+      const { data: p } = await admin.from('fin_purchases').select('id, supplier, invoice_number, total_amount, purchase_date, payment_status, cost_center_id, notes')
+        .eq('id', String(nota.purchase_id)).eq('tenant_id', tenantId).maybeSingle();
+      compra = p ?? null;
+    }
+  }
+
+  // Folha (salário pago por Pix)
+  let folha: Row | null = null;
+  if (mk === 'payroll' || conf?.payroll_id) {
+    const { data: f } = await admin.from('hr_payroll').select('id, employee_name, reference_month, net_salary, status, paid_date')
+      .eq('id', String(conf?.payroll_id ?? row.match_ref_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+    folha = f ?? null;
+  }
+
+  return {
+    pagamento: {
+      id: row.id, data: row.transaction_date, valor: round2(Number(row.amount)), descricao: row.description,
+      quem: row.counterpart_name, doc: row.counterpart_doc, status: row.status, categoria: row.category,
+      tipo: String(row.raw?.tipoTransacao ?? '') === 'PAGAMENTO' ? 'Boleto' : String(row.raw?.tipoTransacao ?? '') === 'PIX' ? 'Pix' : null,
+      confirmado_em: row.reconciled_at ?? conf?.at ?? null,
+      confirmado_por: await nome(row.reconciled_by ?? conf?.by ?? null),
+      origem: conf?.created ? 'lancado_do_extrato' : mk === 'payroll' ? 'folha' : nota ? 'nota' : 'conta',
+    },
+    conta: bill, juros: jurosBill, compra, nota, folha,
+    nota_do_mes: !!(nota && Array.isArray(nota.settlement_statement_ids) && nota.settlement_statement_ids.includes(row.id)),
+  };
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -880,6 +966,12 @@ Deno.serve(async (req: Request) => {
       const { data, error } = await admin.rpc('fn_stone_repasses', { p_tenant: tenantId, p_from: from, p_to: to });
       if (error) return errResp('Repasses Stone: ' + error.message, 500);
       return json({ success: true, date_from: from, date_to: to, rows: data ?? [] });
+    }
+
+    if (action === 'trace') {
+      const t = await traceRow(ctx, String(body.id ?? ''));
+      if (!t) return errResp('Lançamento não encontrado', 404);
+      return json({ success: true, ...t });
     }
 
     if (action === 'confirm') {

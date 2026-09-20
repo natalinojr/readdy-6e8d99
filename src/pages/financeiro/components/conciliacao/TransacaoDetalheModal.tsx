@@ -8,6 +8,7 @@ import { CATEGORIAS_ENTRADA } from './categoriasEntrada';
 import VincularPagamento, { podeVincular } from './VincularPagamento';
 import LancarDoExtrato, { podeLancarDoExtrato, useCategoriasLancamento } from './LancarDoExtrato';
 import CategoriaCombobox, { type ComboOption } from '../CategoriaCombobox';
+import RastreioPagamento from './RastreioPagamento';
 import { situacaoRepasse, type RepasseStone } from './RepassesStoneModal';
 import type { StatementImport, BillMatch, ReceivableMatch, ReconciliationRule } from '@/hooks/useConciliacao';
 
@@ -363,6 +364,9 @@ export default function TransacaoDetalheModal({
               </div>
             );
           })()}
+          {(transaction.status === 'matched' || transaction.reconciled) && (
+            <RastreioPagamento transactionId={transaction.id} />
+          )}
           {transaction.match_kind === 'internal_transfer' && (
             <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 text-xs text-sky-800">
               <i className="ri-arrow-left-right-line mr-1" />
