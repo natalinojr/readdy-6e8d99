@@ -47,7 +47,7 @@ export default function ConfirmarVinculosModal({ rows, confirming, onClose, onCo
   // Um bloco por situação, do mais seguro para o que precisa de olho
   const GRUPOS = [
     { conf: 'exato', titulo: 'Ligação direta', desc: 'Mesmo valor e mesma data/vencimento, com um único candidato.', cor: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
-    { conf: 'forte', titulo: 'Provável — confira antes', desc: 'Mesmo valor e mesmo fornecedor, mas com vencimento diferente, ou regra com aviso.', cor: 'text-amber-700 bg-amber-50 border-amber-200' },
+    { conf: 'forte', titulo: 'Provável — confira antes', desc: 'Mesmo valor e mesmo fornecedor, mas com vencimento diferente, notas idênticas em aberto, ou regra com aviso.', cor: 'text-amber-700 bg-amber-50 border-amber-200' },
     { conf: 'provavel', titulo: 'Incerto — mais de um candidato', desc: 'O valor bate com mais de uma conta ou nota: confira qual é antes de confirmar.', cor: 'text-red-700 bg-red-50 border-red-200' },
   ] as const;
   const porGrupo = GRUPOS.map(g => ({ ...g, itens: visiveis.filter(r => String(r.match_confidence) === g.conf) })).filter(g => g.itens.length > 0);
@@ -80,6 +80,8 @@ export default function ConfirmarVinculosModal({ rows, confirming, onClose, onCo
     const desc = Number(d.desconto ?? 0);
     // Regra de lançamento (match_kind 'rule'): não baixa conta — cria a despesa/compra já paga
     const regra = r.match_kind === 'rule';
+    // Notas idênticas do mesmo fornecedor: a dúvida é só qual delas, o lançamento sai igual
+    const iguais = Number(d.iguais ?? 0);
     const comp = String(d.competencia ?? '');
     return (
       <tr key={r.id} className={sel.has(r.id) ? 'bg-emerald-50/40' : ''} onClick={() => toggle(r.id)}>
@@ -91,7 +93,9 @@ export default function ConfirmarVinculosModal({ rows, confirming, onClose, onCo
           <p className="font-medium text-zinc-800">{r.counterpart_name || r.description}</p>
           <p className="text-zinc-400">
           {d.boleto ? 'Boleto' : 'Pix/TED'}
-          {r.match_confidence === 'forte' ? (regra ? ' · confira o aviso da regra' : ' · vencimento diferente') : ''}
+          {iguais > 1
+            ? ' · ' + iguais + ' notas iguais deste fornecedor'
+            : r.match_confidence === 'forte' ? (regra ? ' · confira o aviso da regra' : ' · vencimento diferente') : ''}
           {r.match_confidence === 'provavel' ? ' · mais de um candidato com esse valor' : ''}
         </p>
         </td>
