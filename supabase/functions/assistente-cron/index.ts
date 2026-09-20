@@ -325,7 +325,8 @@ const hhmm = (ts: unknown) => (ts ? new Date(String(ts)).toLocaleTimeString('pt-
 const diaHora = (ts: unknown) => (ts ? `${dmy(new Date(String(ts)).toLocaleDateString('en-CA', { timeZone: TZ })).slice(0, 5)} ${hhmm(ts)}` : '—');
 const diffTexto = (d: number) => (Math.abs(d) < 0.01 ? 'bateu certinho ✅' : d > 0 ? `sobrou ${brl(d)} ⚠️` : `faltou ${brl(Math.abs(d))} ⚠️`);
 
-async function caixaText(admin: SupabaseClient, cashRegisterId: string): Promise<string | null> {
+type Aviso = { texto: string; resumo: string; painel: Record<string, unknown> };
+async function caixaText(admin: SupabaseClient, cashRegisterId: string): Promise<Aviso | null> {
   const { data: cr } = await admin.from('cash_registers')
     .select('id, tenant_id, session_id, opening_value, closing_value_expected, closing_value_actual, closing_difference, closing_notes, opened_at, closed_at, operator_id')
     .eq('id', cashRegisterId).maybeSingle();
@@ -369,10 +370,14 @@ async function caixaText(admin: SupabaseClient, cashRegisterId: string): Promise
     }],
     ...(cr.closing_notes ? { al: [String(cr.closing_notes).slice(0, 200)] } : {}),
   };
-  return `${l.join('\n')}\n[painel]${JSON.stringify(painel)}[/painel]`;
+  return {
+    texto: l.join('\n'),
+    resumo: `💵 Caixa fechado — ${String(loja?.name ?? '')}: contado ${brl(cr.closing_value_actual)}, ${diffTexto(dif)}`,
+    painel,
+  };
 }
 
-async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<string | null> {
+async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Aviso | null> {
   const { data: s } = await admin.from('sessions')
     .select('id, tenant_id, number, opened_at, closed_at, is_training').eq('id', sessionId).maybeSingle();
   if (!s || s.is_training) return null;
@@ -454,7 +459,11 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<str
     ...(difs.length ? { lin: [{ t: 'Caixas', i: [{ l: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do turno`, v: diffTexto(somaDif).replace(' ✅', '').replace(' ⚠️', ''), st: (Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' }] }] } : {}),
     ...(alertas.length ? { al: alertas } : {}),
   };
-  return `${l.join('\n')}\n[painel]${JSON.stringify(painel)}[/painel]`;
+  return {
+    texto: l.join('\n'),
+    resumo: `🌙 Fechamento do turno — ${String(loja?.name ?? '')}: ${brl(rev)} em ${n} pedido${n === 1 ? '' : 's'}`,
+    painel,
+  };
 }
 
 // Fechamento do dia: números da mesma conta das telas (fn_get_sales_report) + cancelados,
@@ -1090,13 +1099,17 @@ Deno.serve(async (req) => {
     try {
       const id = String(body.id ?? '');
       if (!id) return json({ error: 'id obrigatório' }, 400);
-      const texto = body.run === 'closing_cash' ? await caixaText(admin, id) : await sessaoText(admin, id);
-      if (!texto) return json({ ok: true, skipped: 'sem conteúdo' });
+      const aviso = body.run === 'closing_cash' ? await caixaText(admin, id) : await sessaoText(admin, id);
+      if (!aviso) return json({ ok: true, skipped: 'sem conteúdo' });
       if (!ownerChat) return json({ ok: true, skipped: 'sem canal do dono' });
-      // WhatsApp/Telegram recebem só o texto; o marcador do painel é para o chat do ERPOS.
-      const soTexto = texto.replace(/\n?\[painel\][\s\S]*?\[\/painel\]/, '').trim();
-      await (isTg(ownerChat) ? sendTelegram(ownerChat, soTexto) : sendText(toNumber(ownerChat), soTexto));
-      await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: texto, topic: 'pagamentos' });
+      // WhatsApp/Telegram não desenham painel: lá vai o texto inteiro. No chat do ERPOS vai UMA linha de
+      // resumo (para a lista de conversas e para o modelo) + os dados do painel — nada de texto repetido
+      // embaixo do painel (dono, 2026-09-20).
+      await (isTg(ownerChat) ? sendTelegram(ownerChat, aviso.texto) : sendText(toNumber(ownerChat), aviso.texto));
+      await admin.from('asst_messages').insert({
+        channel: 'cron', chat_id: ownerChat, role: 'assistant', topic: 'pagamentos',
+        content: `${aviso.resumo}\n[painel]${JSON.stringify(aviso.painel)}[/painel]`,
+      });
       // O aviso das 23:00 não repete a loja que já recebeu o fechamento do turno.
       if (body.run === 'closing_session') {
         const { data: s } = await admin.from('sessions').select('tenant_id, opened_at').eq('id', id).maybeSingle();
