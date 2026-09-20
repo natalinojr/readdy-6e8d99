@@ -375,7 +375,70 @@ export default function IfoodTab() {
               <p className="text-sm font-semibold text-zinc-800">Repasses</p>
               <p className="text-xs text-zinc-500">O que o iFood diz que paga × créditos com "iFood" no extrato do banco (na data e no dia seguinte). O cartão chega como "Crédito domicílio cartão", em valores próprios, então compare o total do dia. Soma <strong>todas as lojas iFood importadas</strong> (o Inter recebe as duas na mesma conta): importe o relatório de cada loja para o total bater.{porLoja && <> A coluna <strong>Esta loja</strong> é o repasse desta loja (bate com o "Valor" dos Repasses no Portal).</>}{repasses.some((r) => r.detalhe.sem_conta) && <> Esta loja não tem conta de depósito do iFood em <strong>Conciliação › Como o dinheiro entra</strong>, então não há extrato para conferir.</>}</p>
             </div>
-            <div className="overflow-x-auto">
+            {/* Celular: um cartão por repasse — a tabela de 6 colunas não cabe em 375px. */}
+            <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+              {repasses.length === 0 && <li className="text-center text-xs text-zinc-400 py-4">Sem repasses neste mês.</li>}
+              {repasses.map((r) => {
+                const futuro = r.data_repasse > hoje || r.detalhe.sem_conta === true;
+                const diff = r.recebido_inter - r.esperado;
+                const status = r.detalhe.sem_conta ? { t: 'Sem extrato do banco', c: 'bg-zinc-100 text-zinc-500' }
+                  : futuro ? { t: 'Previsto', c: 'bg-zinc-100 text-zinc-600' }
+                  : r.linhas_inter === 0 ? { t: 'Não achado no Inter', c: 'bg-red-100 text-red-700' }
+                  : Math.abs(diff) <= 0.05 ? { t: 'Conferido', c: 'bg-green-100 text-green-700' }
+                  : { t: 'Caiu com diferença', c: 'bg-amber-100 text-amber-700' };
+                const aberto = openRepasse === r.data_repasse;
+                return (
+                  <li key={r.data_repasse} onClick={() => setOpenRepasse(aberto ? null : r.data_repasse)}
+                    className="rounded-xl border border-zinc-200 bg-white px-3 py-3 cursor-pointer">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-sm font-semibold text-zinc-800">
+                        <i className={`${aberto ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-zinc-400 mr-1`} />{dataBR(r.data_repasse)}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${status.c}`}>{status.t}</span>
+                    </div>
+                    <dl className="mt-2 space-y-0.5 text-xs">
+                      {porLoja && (
+                        <div className="flex justify-between"><dt className="text-zinc-500">Esta loja</dt><dd className="font-mono">{formatCurrency(repasseDaLoja.get(r.data_repasse) ?? 0)}</dd></div>
+                      )}
+                      <div className="flex justify-between"><dt className="text-zinc-500">{porLoja ? 'iFood informa (todas)' : 'iFood informa'}</dt><dd className="font-mono">{formatCurrency(r.esperado)}</dd></div>
+                      <div className="flex justify-between"><dt className="text-zinc-500">Caiu no banco</dt><dd className="font-mono">{futuro && r.linhas_inter === 0 ? '—' : formatCurrency(r.recebido_inter)}</dd></div>
+                      <div className="flex justify-between">
+                        <dt className="text-zinc-500">Diferença</dt>
+                        <dd className={`font-mono ${futuro ? 'text-zinc-300' : Math.abs(diff) <= 0.05 ? 'text-zinc-400' : diff < 0 ? 'text-red-600' : 'text-amber-700'}`}>
+                          {futuro && r.linhas_inter === 0 ? '—' : formatCurrency(diff)}
+                        </dd>
+                      </div>
+                    </dl>
+                    {aberto && (
+                      <div className="mt-2 pt-2 border-t border-zinc-100 text-xs space-y-2">
+                        <div>
+                          <p className="font-semibold text-zinc-700 mb-1">Depósitos no relatório do iFood</p>
+                          {r.detalhe.ifood.map((d, i) => (
+                            <div key={i} className="flex justify-between border-t border-zinc-100 py-0.5"><span>{d.metodo || '—'}</span><span className="font-mono">{formatCurrency(Number(d.valor))}</span></div>
+                          ))}
+                          {Number(r.detalhe.antecipacao ?? 0) > 0 && (
+                            <>
+                              <div className="flex justify-between border-t border-zinc-200 py-0.5 mt-1"><span>Subtotal do repasse</span><span className="font-mono">{formatCurrency(Number(r.detalhe.bruto ?? 0))}</span></div>
+                              <div className="flex justify-between border-t border-zinc-100 py-0.5 text-red-600"><span>Taxa de antecipação</span><span className="font-mono">-{formatCurrency(Number(r.detalhe.antecipacao))}</span></div>
+                              <div className="flex justify-between border-t border-zinc-100 py-0.5 font-semibold"><span>Valor que cai no banco</span><span className="font-mono">{formatCurrency(r.esperado)}</span></div>
+                            </>
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-semibold text-zinc-700 mb-1">Créditos iFood no banco</p>
+                          {r.detalhe.inter.length === 0 && <p className="text-zinc-400">Nenhum{futuro ? ' ainda (repasse futuro)' : ''}.</p>}
+                          {r.detalhe.inter.map((d, i) => (
+                            <div key={i} className="flex justify-between gap-2 border-t border-zinc-100 py-0.5"><span className="break-words">{dataBR(d.data)} · {d.descricao}</span><span className="font-mono whitespace-nowrap">{formatCurrency(Number(d.valor))}</span></div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-zinc-50 text-xs text-zinc-500">
                   <tr>

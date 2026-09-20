@@ -783,6 +783,58 @@ export default function OrcamentosTab() {
   }).length;
   const convertidos = budgets.filter(b => b.status === 'convertido').length;
 
+  // As mesmas ações servem a tabela (computador) e aos cartões (celular).
+  const acoesDoOrcamento = (b: Budget) => (
+    <div className="flex items-center justify-center gap-1 flex-wrap">
+                  {b.status === 'rascunho' && (
+                    <>
+                      <button
+                        onClick={() => handleUpdateStatus(b.id, 'aprovado')}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-green-50 cursor-pointer"
+                        title="Aprovar"
+                      >
+                        <i className="ri-checkbox-circle-line text-green-600 text-sm" />
+                      </button>
+                      <button
+                        onClick={() => handleUpdateStatus(b.id, 'rejeitado')}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 cursor-pointer"
+                        title="Rejeitar"
+                      >
+                        <i className="ri-close-circle-line text-red-500 text-sm" />
+                      </button>
+                    </>
+                  )}
+                  {b.status === 'aprovado' && (
+                    <button
+                      onClick={() => openConvertModal(b)}
+                      className="flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-200 cursor-pointer whitespace-nowrap transition-colors"
+                      title="Converter em Compra"
+                    >
+                      <i className="ri-shopping-cart-line text-xs" /> Converter
+                    </button>
+                  )}
+                  {b.status === 'convertido' && b.converted_to_purchase_id && (
+                    <span className="flex items-center gap-1 px-2 py-1 bg-zinc-100 text-zinc-500 rounded-lg text-xs font-medium whitespace-nowrap">
+                      <i className="ri-check-line text-xs" /> Compra criada
+                    </span>
+                  )}
+                  <button
+                    onClick={() => handleDuplicate(b)}
+                    className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer"
+                    title="Duplicar orçamento"
+                  >
+                    <i className="ri-file-copy-line text-zinc-400 text-sm" />
+                  </button>
+                  <button
+                    onClick={() => openDetail(b).then(() => handlePrint({ ...b }))}
+                    className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer"
+                    title="Imprimir orçamento"
+                  >
+                    <i className="ri-printer-line text-zinc-400 text-sm" />
+                  </button>
+    </div>
+  );
+
   return (
     <div className="p-6 space-y-5">
       {/* Toast */}
@@ -794,7 +846,7 @@ export default function OrcamentosTab() {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
         {[
           { label: 'Total de Orçamentos', value: budgets.length, icon: 'ri-file-list-3-line', color: 'text-zinc-700', bg: 'bg-zinc-100' },
           { label: 'Aprovados', value: budgets.filter(b => b.status === 'aprovado').length, icon: 'ri-checkbox-circle-line', color: 'text-green-700', bg: 'bg-green-100' },
@@ -881,7 +933,47 @@ export default function OrcamentosTab() {
               <p className="text-xs mt-1">Crie um novo orçamento para começar</p>
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <>
+            {/* Celular: um cartão por orçamento — a tabela de 6 colunas não cabe em 375px. */}
+            <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+              {filtered.map(b => {
+                const days = daysUntil(b.validade);
+                const expired = isExpired(b.validade);
+                return (
+                  <li key={b.id} onClick={() => openDetail(b)}
+                    className="rounded-xl border border-zinc-200 bg-white px-3 py-3 cursor-pointer">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-medium text-zinc-900 break-words">{b.titulo}</p>
+                      <span className="text-base font-bold text-zinc-900 whitespace-nowrap">{formatCurrency(b.valor_total)}</span>
+                    </div>
+                    {b.fornecedor && <p className="text-xs text-zinc-500 mt-0.5 break-words">{b.fornecedor}</p>}
+                    {b.validade && (
+                      <p className={`text-[11px] mt-0.5 ${expired ? 'text-red-600' : days !== null && days <= 7 ? 'text-amber-600' : 'text-zinc-400'}`}>
+                        validade {new Date(b.validade + 'T00:00:00').toLocaleDateString('pt-BR')}
+                        {!expired && days !== null && days <= 7 ? ` · vence em ${days}d` : ''}
+                        {expired && b.status === 'rascunho' ? ' · expirado' : ''}
+                      </p>
+                    )}
+                    {b.status === 'convertido' && b.converted_at && (
+                      <p className="text-[11px] text-amber-600 mt-0.5">
+                        <i className="ri-shopping-cart-line" /> convertido em {new Date(b.converted_at).toLocaleDateString('pt-BR')}
+                      </p>
+                    )}
+                    <div className="mt-2 flex items-center gap-2 flex-wrap">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${STATUS_CONFIG[b.status].color}`}>
+                        <i className={STATUS_CONFIG[b.status].icon} />
+                        {STATUS_CONFIG[b.status].label}
+                      </span>
+                    </div>
+                    <div className="mt-2 [&_button]:h-9 [&_button]:min-w-9" onClick={e => e.stopPropagation()}>
+                      {acoesDoOrcamento(b)}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <table className="hidden md:table w-full text-sm">
               <thead className="bg-zinc-50 border-b border-zinc-200">
                 <tr>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Orçamento</th>
@@ -937,60 +1029,14 @@ export default function OrcamentosTab() {
                         </span>
                       </td>
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-1">
-                          {b.status === 'rascunho' && (
-                            <>
-                              <button
-                                onClick={() => handleUpdateStatus(b.id, 'aprovado')}
-                                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-green-50 cursor-pointer"
-                                title="Aprovar"
-                              >
-                                <i className="ri-checkbox-circle-line text-green-600 text-sm" />
-                              </button>
-                              <button
-                                onClick={() => handleUpdateStatus(b.id, 'rejeitado')}
-                                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 cursor-pointer"
-                                title="Rejeitar"
-                              >
-                                <i className="ri-close-circle-line text-red-500 text-sm" />
-                              </button>
-                            </>
-                          )}
-                          {b.status === 'aprovado' && (
-                            <button
-                              onClick={() => openConvertModal(b)}
-                              className="flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-200 cursor-pointer whitespace-nowrap transition-colors"
-                              title="Converter em Compra"
-                            >
-                              <i className="ri-shopping-cart-line text-xs" /> Converter
-                            </button>
-                          )}
-                          {b.status === 'convertido' && b.converted_to_purchase_id && (
-                            <span className="flex items-center gap-1 px-2 py-1 bg-zinc-100 text-zinc-500 rounded-lg text-xs font-medium whitespace-nowrap">
-                              <i className="ri-check-line text-xs" /> Compra criada
-                            </span>
-                          )}
-                          <button
-                            onClick={() => handleDuplicate(b)}
-                            className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer"
-                            title="Duplicar orçamento"
-                          >
-                            <i className="ri-file-copy-line text-zinc-400 text-sm" />
-                          </button>
-                          <button
-                            onClick={() => openDetail(b).then(() => handlePrint({ ...b }))}
-                            className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer"
-                            title="Imprimir orçamento"
-                          >
-                            <i className="ri-printer-line text-zinc-400 text-sm" />
-                          </button>
-                        </div>
+                        {acoesDoOrcamento(b)}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            </>
           )}
         </div>
 

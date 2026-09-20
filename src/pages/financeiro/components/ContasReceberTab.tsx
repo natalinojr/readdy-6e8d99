@@ -614,7 +614,66 @@ export default function ContasReceberTab() {
             </div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Celular: um cartão por parcela — a tabela de 6 colunas não cabe em 375px. */}
+          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+            {paginated.map((inst) => {
+              const daysUntil = inst.due_date
+                ? Math.ceil((new Date(inst.due_date).getTime() - new Date(today).getTime()) / 86400000)
+                : null;
+              const isAntecipado = inst.is_anticipated && inst.status !== 'received';
+              const isReceived = inst.status === 'received';
+              const isReceiving = receivingId === inst.id;
+              return (
+                <li key={inst.id} className={`rounded-xl border px-3 py-3 ${inst.isOverdue ? 'border-red-200 bg-red-50/40' : isAntecipado ? 'border-violet-200 bg-violet-50/30' : 'border-zinc-200 bg-white'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs font-bold text-zinc-800">
+                      {inst.isIfood ? <span className="text-red-600"><i className="ri-restaurant-2-line" /> iFood</span>
+                        : inst.order_number ? `#${inst.order_number}`
+                        : <span className="font-mono text-zinc-400">{inst.order_id?.slice(0, 8)}…</span>}
+                    </span>
+                    <span className="text-base font-bold text-zinc-900 whitespace-nowrap">{formatCurrency(inst.amount)}</span>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    vence {inst.due_date ? new Date(inst.due_date + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
+                    {daysUntil !== null && !isReceived && !isAntecipado && (
+                      <span className={daysUntil < 0 ? 'text-red-500' : daysUntil <= 3 ? 'text-amber-500' : 'text-zinc-400'}>
+                        {' · '}{daysUntil < 0 ? `${Math.abs(daysUntil)}d em atraso` : daysUntil === 0 ? 'vence hoje' : `em ${daysUntil}d`}
+                      </span>
+                    )}
+                  </p>
+                  <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${isReceived ? 'bg-green-100 text-green-700' : isAntecipado ? 'bg-violet-100 text-violet-700' : inst.isOverdue ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {isReceived ? 'Recebido' : isAntecipado ? 'Antecipado' : inst.isOverdue ? 'Vencido' : 'Pendente'}
+                    </span>
+                    {inst.payment_method_name && (
+                      <span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-medium">{inst.payment_method_name}</span>
+                    )}
+                  </div>
+                  <div className="mt-2">
+                    {inst.isIfood ? (
+                      <span className="text-[11px] text-zinc-400"><i className="ri-robot-2-line" /> Entra sozinho na data do repasse</span>
+                    ) : isReceived ? (
+                      <span className="text-[11px] text-zinc-400"><i className="ri-check-double-line" /> Concluído</span>
+                    ) : (
+                      <button
+                        onClick={() => handleReceive(inst.id)}
+                        disabled={isReceiving}
+                        className={`h-9 px-3 flex items-center gap-1 rounded-lg text-xs font-semibold cursor-pointer disabled:opacity-50 ${isAntecipado ? 'bg-violet-100 text-violet-700' : 'bg-green-100 text-green-700'}`}
+                      >
+                        {isReceiving
+                          ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                          : <i className="ri-check-line" />}
+                        {isAntecipado ? 'Confirmar liquidação' : 'Dar baixa'}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm min-w-[500px]">
             <thead className="bg-zinc-50 border-b border-zinc-200">
               <tr>
@@ -736,6 +795,7 @@ export default function ContasReceberTab() {
             </tbody>
           </table>
           </div>
+          </>
         )}
 
         {/* Pagination */}

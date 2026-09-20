@@ -174,6 +174,39 @@ export default function NotasFiscaisList() {
 
   const inputCls = 'text-sm border border-zinc-200 rounded-lg px-3 py-2 text-zinc-800 focus:outline-none focus:border-amber-400';
 
+  // As mesmas ações servem a tabela (computador) e os cartões (celular).
+  const acoesDaNota = (d: FiscalDocumentRow, isBusy: boolean, canRetry: boolean) => (
+    <div className="inline-flex items-center gap-1 flex-wrap">
+          {d.status === 'authorized' && (
+            <>
+              <button onClick={() => abrirPdf(d)} disabled={isBusy} title="Ver DANFE (PDF)" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-file-pdf-2-line" /></button>
+              <button onClick={() => imprimir(d)} disabled={isBusy} title="Reimprimir cupom" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-printer-line" /></button>
+              {podeCancelar && (() => {
+                const min = cancelMinutesLeft(d.emitted_at, agora);
+                const pode = min === null || min > 0;
+                return pode ? (
+                  <button onClick={() => { setCancelDoc(d); setJustificativa(''); }} disabled={isBusy}
+                    title={min === null ? 'Cancelar nota' : `Cancelável por mais ${min} min`}
+                    className={`inline-flex items-center gap-0.5 h-7 px-1.5 rounded-lg text-[10px] font-bold cursor-pointer disabled:opacity-40 ${min !== null && min <= 5 ? 'text-red-700 bg-red-50 animate-pulse' : 'text-red-500 hover:bg-red-50'}`}>
+                    <i className="ri-close-circle-line text-sm" />{min !== null && <span>{min}min</span>}
+                  </button>
+                ) : (
+                  <span className="w-7 h-7 flex items-center justify-center text-zinc-300" title={`Prazo de cancelamento expirado (${CANCEL_WINDOW_MIN} min após a autorização)`}><i className="ri-lock-line" /></span>
+                );
+              })()}
+            </>
+          )}
+          {(d.status === 'authorized' || d.status === 'cancelled') && (
+            <button onClick={() => baixarXml(d)} disabled={isBusy} title="Baixar XML" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-file-code-line" /></button>
+          )}
+          {canRetry && (
+            <button onClick={() => reemitir(d)} disabled={isBusy} title="Tentar emitir de novo" className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40 cursor-pointer whitespace-nowrap">
+              {isBusy ? '…' : 'Reemitir'}
+            </button>
+          )}
+    </div>
+  );
+
   return (
     <div className="p-4 md:p-6 space-y-4">
       {enabled === false && (
@@ -270,7 +303,41 @@ export default function NotasFiscaisList() {
         ) : filtrados.length === 0 ? (
           <div className="p-8 text-center text-sm text-zinc-400">Nenhuma nota neste período.</div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Celular: um cartão por nota — a tabela de 7 colunas não cabe em 375px. */}
+          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+            {filtrados.map(d => {
+              const isBusy = busy === d.id;
+              const canRetry = d.status === 'rejected' || d.status === 'error' || d.status === 'pending';
+              return (
+                <li key={d.id} className="rounded-xl border border-zinc-200 bg-white px-3 py-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] text-zinc-400 whitespace-nowrap">{fmtDateTime(d.emitted_at ?? d.created_at)}</span>
+                    <span className="text-base font-bold text-zinc-900 whitespace-nowrap">{formatBRL(d.total_amount)}</span>
+                  </div>
+                  <p className="text-sm text-zinc-800 mt-0.5">
+                    {d.source_type === 'table_session' ? 'mesa' : 'pedido'} {d.order_number ?? '—'}
+                    {d.numero ? <span className="font-mono text-zinc-500"> · NFC-e {d.numero}{d.serie ? `/${d.serie}` : ''}</span> : null}
+                  </p>
+                  {d.customer_cpf && <p className="text-[11px] text-zinc-500">CPF {formatCpfCnpj(d.customer_cpf)}</p>}
+                  <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                    <button onClick={() => setDetail(d)} className={`text-[11px] font-semibold px-2 py-1 rounded-full cursor-pointer ${STATUS_CLASS[d.status]}`}>
+                      {STATUS_LABEL[d.status]}
+                    </button>
+                    {d.environment === 2 && <span className="text-[10px] text-zinc-400">homologação</span>}
+                  </div>
+                  {(d.status === 'rejected' || d.status === 'error') && d.error_message && (
+                    <p className="text-[11px] text-red-500 break-words line-clamp-2 mt-1">{d.error_message}</p>
+                  )}
+                  <div className="mt-2 [&_button]:h-9 [&_button]:min-w-9 [&_button]:justify-center">
+                    {acoesDaNota(d, isBusy, canRetry)}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-[11px] uppercase text-zinc-400 border-b border-zinc-100">
@@ -309,35 +376,7 @@ export default function NotasFiscaisList() {
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1">
-                          {d.status === 'authorized' && (
-                            <>
-                              <button onClick={() => abrirPdf(d)} disabled={isBusy} title="Ver DANFE (PDF)" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-file-pdf-2-line" /></button>
-                              <button onClick={() => imprimir(d)} disabled={isBusy} title="Reimprimir cupom" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-printer-line" /></button>
-                              {podeCancelar && (() => {
-                                const min = cancelMinutesLeft(d.emitted_at, agora);
-                                const pode = min === null || min > 0;
-                                return pode ? (
-                                  <button onClick={() => { setCancelDoc(d); setJustificativa(''); }} disabled={isBusy}
-                                    title={min === null ? 'Cancelar nota' : `Cancelável por mais ${min} min`}
-                                    className={`inline-flex items-center gap-0.5 h-7 px-1.5 rounded-lg text-[10px] font-bold cursor-pointer disabled:opacity-40 ${min !== null && min <= 5 ? 'text-red-700 bg-red-50 animate-pulse' : 'text-red-500 hover:bg-red-50'}`}>
-                                    <i className="ri-close-circle-line text-sm" />{min !== null && <span>{min}min</span>}
-                                  </button>
-                                ) : (
-                                  <span className="w-7 h-7 flex items-center justify-center text-zinc-300" title={`Prazo de cancelamento expirado (${CANCEL_WINDOW_MIN} min após a autorização)`}><i className="ri-lock-line" /></span>
-                                );
-                              })()}
-                            </>
-                          )}
-                          {(d.status === 'authorized' || d.status === 'cancelled') && (
-                            <button onClick={() => baixarXml(d)} disabled={isBusy} title="Baixar XML" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-file-code-line" /></button>
-                          )}
-                          {canRetry && (
-                            <button onClick={() => reemitir(d)} disabled={isBusy} title="Tentar emitir de novo" className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40 cursor-pointer whitespace-nowrap">
-                              {isBusy ? '…' : 'Reemitir'}
-                            </button>
-                          )}
-                        </div>
+                        {acoesDaNota(d, isBusy, canRetry)}
                       </td>
                     </tr>
                   );
@@ -345,6 +384,7 @@ export default function NotasFiscaisList() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
 

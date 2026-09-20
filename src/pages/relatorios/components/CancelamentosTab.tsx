@@ -352,6 +352,7 @@ export default function CancelamentosTab({ periodo }: Props) {
               <p className="text-sm">Nenhum estorno no período</p>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-zinc-50 border-b border-zinc-100">
                 <tr>
@@ -374,6 +375,7 @@ export default function CancelamentosTab({ periodo }: Props) {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}
@@ -425,6 +427,7 @@ export default function CancelamentosTab({ periodo }: Props) {
           {gorjetas.length === 0 ? (
             <div className="py-12 text-center text-zinc-400 text-sm">Nenhuma gorjeta no período</div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-zinc-50 border-b border-zinc-100">
                 <tr>
@@ -454,6 +457,7 @@ export default function CancelamentosTab({ periodo }: Props) {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}

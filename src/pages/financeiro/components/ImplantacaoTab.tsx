@@ -142,7 +142,7 @@ export default function ImplantacaoTab() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
         {[
           { label: 'Investimento Total', value: formatCurrency(investimentoTotal), sub: `${costs.length} lançamentos`, icon: 'ri-money-dollar-circle-line', color: 'text-zinc-800', bg: 'bg-zinc-50' },
           { label: 'Inauguração', value: inaugDate ? new Date(inaugDate + 'T00:00:00').toLocaleDateString('pt-BR') : '—', sub: 'Data configurada', icon: 'ri-calendar-event-line', color: 'text-zinc-800', bg: 'bg-zinc-50' },

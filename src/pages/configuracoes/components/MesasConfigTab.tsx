@@ -930,7 +930,7 @@ export default function MesasConfigTab() {
       </div>
 
       {/* ─── FILTRO + CONTADORES ─── */}
-      <div className="grid grid-cols-6 gap-3">
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 sm:gap-3">
         <div
           className={`bg-white border rounded-xl p-3 cursor-pointer transition-all col-span-1 ${filtroSetor === 'Todos' ? 'border-amber-400' : 'border-zinc-100 hover:border-zinc-200'}`}
           onClick={() => setFiltroSetor('Todos')}
