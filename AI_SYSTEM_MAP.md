@@ -2601,6 +2601,10 @@ janela igual à de currículos: "compras" (ou "notas") abre 1 h (`asst_settings.
 vai para `recebimentoPorNota` (agora aceita grupo nulo: lança a compra pelo XML e confirma o
 recebimento); senão, cupom/nota com itens vai ao brain no modo `entrada_compra_grupo` com a instrução
 de usar a DATA DA NOTA. Sem itens, não lança nada e avisa.
+Antes de lançar (encaminhada E grupo) roda `compraDuplicada`: mesmo `invoice_number` com o mesmo valor,
+ou mesmo valor com `purchase_date` até 3 dias de distância, em `fin_purchases`. Achou → não lança, avisa
+e guarda a nota 1 h em `asst_settings.wa_compra_pendente`; o dono responde "lançar mesmo assim" e aí
+`lancarCompraPendente` segue. No grupo, duplicidade fecha o pedido como 'ignorado' e só avisa.
 
 ### Fechamento: uma mensagem do CAIXA e uma da SESSÃO (2026-09-20)
 
@@ -2786,3 +2790,23 @@ Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — prob
 - Relatórios valem para qualquer papel (ex.: Caixa só com "Relatório de Caixa"). /relatorios e /financeiro abrem se o papel tiver ao menos uma aba; aba pedida na URL sem permissão cai na primeira liberada.
 - `relatorio_financeiro` agora só controla o Tráfego Pago (linha "Acessar Tráfego Pago", categoria Marketing). `relatorio_estoque` não controla nada no código.
 - Pegadinha corrigida: o papel usava SÓ as linhas salvas em `permissions` quando havia alguma — permissão nova sumia de quem já tinha salvo a matriz (e uma loja com 1 linha salva deixava o gerente só com ela). Agora é padrão do papel + linhas salvas por cima (`mesclarComPadrao`), no hook e na tela.
+
+### Insumo zerado: pergunta antes de tirar do cardápio (2026-09-20)
+- **Decisão do dono:** quando um insumo zera, ninguém tira item do cardápio sozinho. O aviso aparece
+  ao mesmo tempo no PDV (caixa, garçom, delivery) e no KDS; **o primeiro que responder resolve** para
+  todos, e **enquanto ninguém responde o item continua vendável**.
+- Banco: `ingredient_stockout_alerts` (1 alerta `pending` por insumo, índice único parcial) +
+  trigger `trg_ingredient_stockout` em `ingredients` (só `current_stock` cruzando de >0 para <=0, e só
+  se algum item/opcional ativo usa o insumo). Repor o insumo fecha o alerta sozinho (`resolved_source='auto'`).
+- Leitura: `fn_get_stockout_alerts(tenant)` devolve o alerta com os itens e opcionais que cairiam.
+  Resposta: `fn_resolve_stockout_alert(alert, 'removed'|'kept', 'pdv'|'kds', user)` — service_role,
+  chamada por `stock-write` action `resolve_stockout_alert`. 'removed' desativa `menu_items.is_active`
+  e `options.is_active` e guarda os ids em `removed_item_ids`/`removed_option_ids` (para reverter depois).
+  Segunda resposta de outro terminal devolve `ja_resolvido` sem refazer nada.
+- Front: `useAlertasInsumoZerado(origem)` (realtime na tabela) + `AvisoInsumoZerado` montado em
+  PDV caixa/garçom/delivery (`origem="pdv"`) e KDS (`origem="kds"`, fonte maior). Ao tirar itens,
+  `notifyReload('cardapio')` → `CardapioContext` recarrega em silêncio.
+- `bloquear_item_sem_insumo` (Configurações › Operação & Integrações › Operação do PDV) continua sendo
+  o **modo estrito**: ligado, item e adicional somem na hora sem perguntar. Desligado (padrão) vale o
+  fluxo do aviso. `fn_get_opcoes_sem_estoque` passou a ler a mesma flag — antes ignorava, e o adicional
+  sumia sozinho mesmo com o bloqueio desligado.

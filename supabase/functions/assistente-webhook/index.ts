@@ -488,8 +488,51 @@ async function compraIntakeSet(admin: SupabaseClient, count: number) {
   });
 }
 
+// Conferência de duplicidade antes de lançar (dono, 2026-09-20): nota encaminhada pode já ter sido
+// lançada pelo grupo, pelo XML da SEFAZ ou na mão. Regra: mesmo número de documento, ou mesmo valor
+// com data até 3 dias de distância. Achou → NÃO lança; avisa e espera "lançar mesmo assim".
+const NUM_NOTA = /(?:n[º°o.]?\s*|n[úu]mero\s*:?\s*|NFC?-?e\s*n?[º°o.]?\s*|cupom\s*(?:fiscal)?\s*n?[º°o.]?\s*)(\d{3,9})/i;
+const DATA_BR = /(\d{2})\/(\d{2})\/(\d{4})/;
+
 // deno-lint-ignore no-explicit-any
-async function notaEncaminhada(admin: SupabaseClient, cfg: Record<string, any>, replyTo: string, msgKey: MsgKey | null, data: any, p: Parsed): Promise<boolean> {
+function dadosDaNota(content: string, extracted: any): { valor: number | null; dia: string | null; numero: string | null } {
+  const texto = `${content}\n${String(extracted?.texto ?? '')}`;
+  const somaItens = (Array.isArray(extracted?.itens) ? extracted.itens : [])
+    .reduce((a: number, i: { valor_total?: number }) => a + Number(i?.valor_total ?? 0), 0);
+  const totalTxt = texto.match(/(?:VALOR\s+TOTAL(?:\s+DA\s+NOTA)?|TOTAL\s+A?\s*PAGAR|VALOR\s+A\s+PAGAR|\bTOTAL\b)\s*:?\s*(?:R\$\s*)?([\d.]+,\d{2})/i)?.[1];
+  const valor = totalTxt ? Number(totalTxt.replace(/\./g, '').replace(',', '.'))
+    : Number(extracted?.pagamento?.valor ?? NaN) || (somaItens > 0 ? Number(somaItens.toFixed(2)) : NaN);
+  const d = texto.match(DATA_BR);
+  return {
+    valor: Number.isFinite(valor) && valor > 0 ? valor : null,
+    dia: d ? `${d[3]}-${d[2]}-${d[1]}` : null,
+    numero: texto.match(NUM_NOTA)?.[1] ?? null,
+  };
+}
+
+async function compraDuplicada(admin: SupabaseClient, d: { valor: number | null; dia: string | null; numero: string | null }) {
+  const fmt = (r: Record<string, unknown>) =>
+    `${String(r.supplier ?? 'fornecedor')} — ${Number(r.total_amount ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} em ${String(r.purchase_date ?? '').split('-').reverse().join('/')}${r.invoice_number ? ` (nota ${r.invoice_number})` : ''}`;
+  if (d.numero) {
+    // Número sozinho repete entre fornecedores ("nota 257"): com valor lido, ele também tem que bater.
+    let q = admin.from('fin_purchases').select('id, supplier, total_amount, purchase_date, invoice_number').eq('invoice_number', d.numero);
+    if (d.valor) q = q.gte('total_amount', d.valor - 0.02).lte('total_amount', d.valor + 0.02);
+    const { data } = await q.limit(1);
+    if (data?.length) return { texto: fmt(data[0]), por: d.valor ? 'mesmo número e valor' : 'número da nota' };
+  }
+  if (d.valor) {
+    const base = d.dia ?? new Date().toISOString().slice(0, 10);
+    const dias = (n: number) => new Date(Date.parse(`${base}T12:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
+    const { data } = await admin.from('fin_purchases').select('id, supplier, total_amount, purchase_date, invoice_number')
+      .gte('total_amount', d.valor - 0.02).lte('total_amount', d.valor + 0.02)
+      .gte('purchase_date', dias(-3)).lte('purchase_date', dias(3)).limit(1);
+    if (data?.length) return { texto: fmt(data[0]), por: 'mesmo valor e data próxima' };
+  }
+  return null;
+}
+
+// deno-lint-ignore no-explicit-any
+async function notaEncaminhada(admin: SupabaseClient, cfg: Record<string, any>, replyTo: string, msgKey: MsgKey | null, data: any, p: Parsed, forcar = false): Promise<boolean> {
   if (msgKey) react(msgKey, '👀');
   const mime = String(p.mime ?? (p.kind === 'image' ? 'image/jpeg' : '')).split(';')[0].toLowerCase();
   if (!DOC_READABLE(mime)) { await sendText(replyTo, 'Esse arquivo eu não consigo ler. Manda foto ou PDF da nota.').catch(() => {}); return true; }
@@ -520,6 +563,10 @@ async function notaEncaminhada(admin: SupabaseClient, cfg: Record<string, any>, 
     await sendText(replyTo, 'Isso não parece nota ou cupom de compra — não lancei nada. Se for pagamento, me fala o que é.').catch(() => {});
     return true;
   }
+  // Já lançada? Só lança depois do "lançar mesmo assim" (a nota fica guardada por 1 h).
+  const dados = dadosDaNota(content, extracted);
+  const dup = forcar ? null : await compraDuplicada(admin, dados).catch((e) => { log('WARN', 'conferir duplicidade', { error: errMsg(e) }); return null; });
+
   const prompt = [
     '[Sistema] Nota/cupom de compra que o DONO encaminhou no WhatsApp (compra ANTIGA, que não passou pelo grupo).',
     `<nota_encaminhada quando="${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}">`,
@@ -527,7 +574,27 @@ async function notaEncaminhada(admin: SupabaseClient, cfg: Record<string, any>, 
     '</nota_encaminhada>',
     `Leitura automática do arquivo: ${JSON.stringify(extracted).slice(0, 12000)}`,
     'Siga as regras de ENTRADA DE COMPRA PELO GRUPO. Use a DATA DA NOTA (não a de hoje).',
-  ].join('\n');
+    forcar ? 'O dono JÁ FOI AVISADO de que parecia repetida e confirmou: pode lançar.' : '',
+  ].filter(Boolean).join('\n');
+  if (dup) {
+    await admin.from('asst_settings').upsert({
+      key: 'wa_compra_pendente',
+      value: { prompt, resumo: `${dados.valor ? brlPend(dados.valor) : 'sem valor lido'}${dados.numero ? ` · nota ${dados.numero}` : ''}`, until: new Date(Date.now() + 60 * 60_000).toISOString() },
+      updated_at: new Date().toISOString(),
+    });
+    await sendText(replyTo, `⚠️ Essa compra parece JÁ LANÇADA (${dup.por}):\n${dup.texto}\n\nNão lancei. Se for outra compra mesmo, responda "lançar mesmo assim".`).catch(() => {});
+    if (msgKey) react(msgKey, '⚠️');
+    return true;
+  }
+  await lancarCompraPendente(admin, cfg, replyTo, msgKey, prompt);
+  return true;
+}
+
+// Manda a nota para o brain lançar (entrada de compra) e devolve a resposta no WhatsApp e no chat.
+// Usada logo depois de ler a nota e também no "lançar mesmo assim" (nota segurada pela duplicidade).
+// deno-lint-ignore no-explicit-any
+async function lancarCompraPendente(admin: SupabaseClient, cfg: Record<string, any>, replyTo: string, msgKey: MsgKey | null, prompt: string) {
+  const ownerChat = ownerChatOf(cfg);
   try {
     const out = await brainCall({ text: prompt, chat_id: ownerChat ?? '', channel: ownerChat?.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: 'entrada_compra_grupo' });
     const reply = String(out?.reply ?? '').trim();
@@ -540,7 +607,6 @@ async function notaEncaminhada(admin: SupabaseClient, cfg: Record<string, any>, 
     log('ERROR', 'lançar nota encaminhada', { error: errMsg(e) });
     await sendText(replyTo, 'Deu erro para lançar essa nota. Tenta de novo daqui a pouco.').catch(() => {});
   }
-  return true;
 }
 
 // Triagem: mensagem de grupo que parece pedido de pagamento → brain (modo
@@ -605,6 +671,20 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
     msg.extracted ? `Leitura automática do arquivo anexado: ${JSON.stringify(msg.extracted).slice(0, 12000)}` : '',
     tipo === 'compra' ? 'Siga as regras de ENTRADA DE COMPRA PELO GRUPO.' : 'Siga as regras de TRIAGEM AUTOMÁTICA DE GRUPO.',
   ].filter(Boolean).join('\n');
+
+  // Mesma conferência da nota encaminhada (dono, 2026-09-20): cupom do grupo que já virou compra
+  // (pelo XML da SEFAZ, por outro grupo ou na mão) não entra de novo — só avisa.
+  if (tipo === 'compra') {
+    const jaTem = await compraDuplicada(admin, dadosDaNota(msg.content, msg.extracted)).catch((e) => { log('WARN', 'conferir duplicidade do grupo', { error: errMsg(e) }); return null; });
+    if (jaTem) {
+      const aviso = `⚠️ Cupom/nota do grupo *${g.name ?? ''}* parece JÁ LANÇADO (${jaTem.por}):\n${jaTem.texto}\nNão lancei de novo.`;
+      await admin.from('asst_group_requests').update({ status: 'ignorado', reply: aviso.slice(0, 2000), updated_at: new Date().toISOString() }).eq('id', req.id);
+      await avisarDono(admin, ownerChat, aviso, [{ type: 'abrir', label: 'Ver compras', rota: '/financeiro?tab=compras' }], { save: true, topic: 'compras' })
+        .catch((e) => log('WARN', 'avisar duplicidade do grupo', { error: errMsg(e) }));
+      log('INFO', 'compra do grupo já lançada', { group: g.name });
+      return;
+    }
+  }
 
   try {
     const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: tipo === 'compra' ? 'entrada_compra_grupo' : 'triagem_grupo', group_jid: g.group_jid });
@@ -1473,6 +1553,19 @@ async function handle(payload: any) {
       await compraIntakeSet(admin, janelaCompra?.count ?? 0);
       await sendText(replyTo, 'Pode mandar as notas (foto ou PDF), uma de cada vez. Eu lanço a compra e confirmo o recebimento. Quando terminar, manda "pronto".').catch(() => {});
       if (msgKey) react(msgKey, '👍');
+      return;
+    }
+    // "lançar mesmo assim": solta a nota que ficou segurada pela conferência de duplicidade.
+    if (p0.kind === 'text' && /^(lan[çc]ar? mesmo assim|pode lan[çc]ar|lan[çc]a mesmo assim|confirmo|é outra( compra)?)\b/i.test(txt0)) {
+      const { data: pend } = await admin.from('asst_settings').select('value').eq('key', 'wa_compra_pendente').maybeSingle();
+      // deno-lint-ignore no-explicit-any
+      const v: any = pend?.value;
+      if (!v?.prompt || new Date(v.until ?? 0).getTime() < Date.now()) {
+        await sendText(replyTo, 'Não tenho nenhuma nota esperando confirmação. Manda a nota de novo.').catch(() => {});
+        return;
+      }
+      await admin.from('asst_settings').delete().eq('key', 'wa_compra_pendente');
+      await lancarCompraPendente(admin, cfg, replyTo, msgKey, String(v.prompt));
       return;
     }
     if (arquivo && (janelaCompra || COMPRA_LEGENDA.test(txt0))) {
