@@ -21,17 +21,18 @@
 //                          emissão com 1 parcela por pagamento, cada uma baixada; saldo que faltar fica a pagar
 //   unlink_monthly         { document_id }       desfaz tudo (estorna as baixas, apaga a compra, nota volta a conferir)
 //   save_counterpart_rule  { counterpart_doc, counterpart_label?, category, cost_center_id?, transaction_type }
-//   create_from_statement  { ids, kind: 'despesa'|'compra'|'freelancer' (dias?: 'YYYY-MM-DD'[], funcao?), dre_category_id?, merchandise_category_id?, description?,
+//   create_from_statement  { ids, kind: 'despesa'|'compra'|'freelancer' (dias?: 'YYYY-MM-DD'[], funcao?)|'fora_dre' (motivo: retirada_dono|transferencia|emprestimo|particular|investimento|outro), dre_category_id?, merchandise_category_id?, description?,
 //                            supplier?, cost_center_id?, allow_payroll?, competence_month?: 'YYYY-MM' }   admin/gerente — pagamento SEM NOTA:
 //                          despesa = conta a pagar (reference_type 'conciliacao_extrato') já baixada; compra = compra
 //                          (purchase-write) com 1 item, parcela baixada. Mesma data e conta do extrato. Pix para CPF de
 //                          funcionário é recusado (code 'folha') sem allow_payroll: a folha já entra na DRE. O undo apaga
-//                          o que foi criado e devolve a linha para pendente.
+//                          o que foi criado e devolve a linha para pendente. 'fora_dre' (2026-09-20) nao cria nada:
+//                          so conclui a conciliacao com o motivo (match_kind 'fora_dre'), para a saida nao entrar no DRE.
 //
 //   REGRA DE LANÇAMENTO (2026-09-18): por CNPJ/CPF/chave Pix, a saída vira despesa/compra (create_from_statement)
 //   com a competência da regra (mês do pagamento ou o anterior). fn_match_launch_rules grava a sugestão
 //   (match_kind 'rule'); confirm lança. Travas no SQL: CPF de funcionário, fornecedor que emite NF-e.
-//   launch_rule_save     { counterpart_doc, counterpart_label?, kind, dre_category_id?, merchandise_category_id?,
+//   launch_rule_save     { counterpart_doc, counterpart_label?, kind, allow_payroll? (CPF de ex-funcionário), dre_category_id?, merchandise_category_id?,
 //                          competence_rule: 'same'|'prev', supplier_name?, cost_center_id? }   admin/gerente
 //   launch_rule_preview  { rule_id }            pagamentos pendentes (qualquer data) que a regra pegaria
 //   launch_rule_apply    { rule_id, items: [{ id, competencia: 'YYYY-MM' }] }   admin/gerente: lança esses
@@ -289,9 +290,22 @@ async function confirmPayroll(ctx: Ctx, row: Row): Promise<Result> {
 const JA_TEM_DESTINO = ['payable', 'inbound_doc', 'internal_transfer', 'stone_deposit', 'stone_detail', 'ifood_deposit', 'card_deposit'];
 const soDigitos = (s: unknown) => String(s ?? '').replace(/\D/g, '');
 
+// Saída que NÃO é despesa da loja: só conclui a conciliação com o motivo, sem criar nada no DRE.
+const MOTIVOS_FORA_DRE: Record<string, string> = {
+  retirada_dono: 'Retirada do dono',
+  transferencia: 'Transferência entre contas',
+  emprestimo: 'Empréstimo',
+  particular: 'Gasto particular',
+  investimento: 'Investimento / compra de bem',
+  outro: 'Outro (não entra no DRE)',
+};
+
 interface CreateOpts {
-  /** 'freelancer' (2026-09-20) e uma despesa em RH que tambem registra o freela e as diarias */
-  kind: 'despesa' | 'compra' | 'freelancer';
+  /** 'freelancer' (2026-09-20) e uma despesa em RH que tambem registra o freela e as diarias;
+   *  'fora_dre' (2026-09-20) nao cria nada: marca a saida como fora do resultado, com motivo */
+  kind: 'despesa' | 'compra' | 'freelancer' | 'fora_dre';
+  /** fora_dre: chave de MOTIVOS_FORA_DRE */
+  motivo?: string | null;
   /** freelancer: dias trabalhados ('YYYY-MM-DD'); vazio = a aba Freelancers pergunta depois */
   dias?: string[];
   funcao?: string | null;
@@ -316,7 +330,7 @@ function ruleOpts(rule: Row, competencia: unknown): CreateOpts {
     description: rule.supplier_name ?? rule.counterpart_label ?? null,
     supplier: rule.supplier_name ?? null,
     costCenterId: rule.cost_center_id ?? null,
-    allowPayroll: false,
+    allowPayroll: rule.allow_payroll === true,
     competenceMonth: competenciaOk(competencia),
   };
 }
@@ -357,9 +371,34 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
   if (!(valor > 0)) return fail('Valor inválido');
   const doc = soDigitos(row.counterpart_doc);
 
-  // Pix para CPF de funcionário: o salário já entra na DRE pela folha (hr_payroll)
+  // "Não entra no DRE": saída que não é despesa da loja (retirada do dono, transferência para outra
+  // conta, empréstimo, gasto particular). Não cria conta a pagar nem compra — só conclui a conciliação
+  // com o motivo, para a linha sair das pendências sem mexer no resultado. O undo devolve a pendente.
+  if (o.kind === 'fora_dre') {
+    const motivo = MOTIVOS_FORA_DRE[String(o.motivo ?? '')] ? String(o.motivo) : null;
+    if (!motivo) return fail('Escolha o motivo de não entrar no DRE');
+    const rotulo = MOTIVOS_FORA_DRE[motivo];
+    const quemFora = String(row.counterpart_name ?? '').trim();
+    const detalhe = (o.description ?? '').trim().slice(0, 200);
+    const agora = new Date().toISOString();
+    const { error: foraErr } = await admin.from('fin_bank_statement_imports').update({
+      status: 'matched', reconciled: true, reconciled_at: agora, reconciled_by: ctx.userId, matched_at: agora, matched_by: ctx.userId,
+      match_kind: 'fora_dre', match_ref_id: null, match_confidence: 'manual', category: rotulo,
+      match_detail: {
+        label: rotulo + (detalhe ? ': ' + detalhe : quemFora ? ': ' + quemFora : ''),
+        valor, created: 'fora_dre', motivo, motivo_label: rotulo, observacao: detalhe || null,
+        prev_category: row.category ?? null, prev_match_kind: row.match_kind === 'rule' ? null : row.match_kind ?? null,
+        confirmed: { bill_id: null, pay_amount: valor, created: 'fora_dre', motivo, at: agora, by: ctx.userId },
+      },
+    }).eq('id', row.id).eq('tenant_id', tenantId);
+    if (foraErr) return fail('Marcar o pagamento: ' + foraErr.message);
+    return { id: row.id, ok: true, msg: 'R$ ' + brl(valor) + ' marcado como "' + rotulo + '": fora do DRE.' };
+  }
+
+  // Pix para CPF de funcionário: o salário já entra na DRE pela folha (hr_payroll).
+  // Quem saiu (status 'inactive') não trava: é o caso do ex-funcionário que hoje trabalha de freela.
   if (doc.length === 11 && !o.allowPayroll) {
-    const { data: emps } = await admin.from('hr_employees').select('name, cpf').eq('tenant_id', tenantId);
+    const { data: emps } = await admin.from('hr_employees').select('name, cpf, status').eq('tenant_id', tenantId).neq('status', 'inactive');
     const func = ((emps ?? []) as Row[]).find((e) => soDigitos(e.cpf) === doc);
     if (func) return fail('O CPF é de ' + func.name + ', funcionário cadastrado: salário já entra na DRE pela folha. Se não for salário, lance mesmo assim.', 'folha');
   }
@@ -458,7 +497,7 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
   if (o.kind === 'freelancer') {
     const dias = (o.dias ?? []).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
     const { data: fr, error: fe } = await admin.rpc('fn_freelancer_do_extrato', {
-      p_bill_id: billId, p_nome: quem || descricao, p_dias: dias.length ? dias : null, p_funcao: o.funcao ?? null,
+      p_bill_id: billId, p_nome: (o.description ?? '').trim() || quem, p_dias: dias.length ? dias : null, p_funcao: o.funcao ?? null,
     });
     if (fe) {
       // A despesa ja foi lancada e baixada: desfaz tudo para nao deixar meio caminho.
@@ -716,6 +755,14 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
       status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null, match_detail: resto,
     }).eq('id', row.id);
     return { id: row.id, ok: true, msg: 'Pagamento da folha desfeito: a folha voltou a pendente.' };
+  }
+  // "Não entra no DRE": nada foi criado, só devolve a linha para pendente
+  if (c?.created === 'fora_dre') {
+    await admin.from('fin_bank_statement_imports').update({
+      status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null,
+      match_kind: det.prev_match_kind ?? null, match_ref_id: null, match_confidence: null, match_detail: null, category: det.prev_category ?? null,
+    }).eq('id', row.id).eq('tenant_id', tenantId);
+    return { id: row.id, ok: true, msg: 'Desfeito: o pagamento voltou a pendente.' };
   }
   if (!c?.bill_id) return { id: rowId, ok: false, msg: 'Não há baixa feita pela conciliação neste lançamento' };
   if (c.monthly_doc_id) return { id: rowId, ok: false, msg: 'Este pagamento faz parte de uma nota do mês: desfaça pela nota em Notas de Entrada (desfaz todos os pagamentos juntos)' };
@@ -1058,10 +1105,12 @@ Deno.serve(async (req: Request) => {
       if (!isManager) return errResp('Apenas administradores e gerentes podem lançar pelo extrato', 403);
       const ids = Array.isArray(body.ids) ? [...new Set((body.ids as unknown[]).map(String))].slice(0, MAX_BATCH) : [];
       if (ids.length === 0) return errResp('Nenhum lançamento informado');
-      const kind = body.kind === 'compra' ? 'compra' : body.kind === 'despesa' ? 'despesa' : body.kind === 'freelancer' ? 'freelancer' : null;
-      if (!kind) return errResp('Escolha despesa, compra ou freelancer');
+      const KINDS = ['despesa', 'compra', 'freelancer', 'fora_dre'] as const;
+      const kind = KINDS.find((k) => k === body.kind) ?? null;
+      if (!kind) return errResp('Escolha despesa, compra, freelancer ou "não entra no DRE"');
       const opts: CreateOpts = {
         kind,
+        motivo: body.motivo ? String(body.motivo) : null,
         dreCategoryId: body.dre_category_id ? String(body.dre_category_id) : null,
         mercCategoryId: body.merchandise_category_id ? String(body.merchandise_category_id) : null,
         description: body.description ? String(body.description) : null,
@@ -1143,8 +1192,11 @@ Deno.serve(async (req: Request) => {
         const { data: cat } = await admin.from('fin_dre_categories').select('id, group_type').eq('id', dreId).eq('tenant_id', tenantId).maybeSingle();
         if (!cat || ['revenue', 'tax', 'cost'].includes(String(cat.group_type))) return errResp('Categoria da DRE inválida para despesa');
       }
-      if (doc.length === 11) {
-        const { data: emps } = await admin.from('hr_employees').select('name, cpf').eq('tenant_id', tenantId);
+      // allow_payroll: o dono já disse "não é salário" no lançamento (ex-funcionário que virou freela).
+      // Fica gravado na regra para o próximo pagamento não travar de novo.
+      const allowPayroll = body.allow_payroll === true;
+      if (doc.length === 11 && !allowPayroll) {
+        const { data: emps } = await admin.from('hr_employees').select('name, cpf, status').eq('tenant_id', tenantId).neq('status', 'inactive');
         const func = ((emps ?? []) as Row[]).find((e) => soDigitos(e.cpf) === doc);
         if (func) return errResp('O CPF é de ' + func.name + ', funcionário: salário entra pela folha, não por regra');
       }
@@ -1155,7 +1207,7 @@ Deno.serve(async (req: Request) => {
         action: 'launch', launch_kind: kind, dre_category_id: kind === 'despesa' ? dreId : null, merchandise_category_id: kind === 'compra' ? mercId : null,
         // freelancer: supplier_name guarda o nome de quem trabalha (a diária sai no nome dele)
         competence_rule: body.competence_rule === 'prev' ? 'prev' : 'same',
-        mode: body.mode === 'auto' ? 'auto' : 'suggest',
+        mode: body.mode === 'auto' ? 'auto' : 'suggest', allow_payroll: allowPayroll,
         supplier_name: String(body.supplier_name ?? '').trim().slice(0, 120) || label, updated_at: new Date().toISOString(),
       };
       const { data: existing } = await admin.from('fin_reconciliation_rules').select('id').eq('tenant_id', tenantId).eq('counterpart_doc', doc).maybeSingle();

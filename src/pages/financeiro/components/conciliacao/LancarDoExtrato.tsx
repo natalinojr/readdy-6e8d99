@@ -19,10 +19,22 @@ export function podeLancarDoExtrato(s: StatementImport) {
   return s.transaction_type === 'debit' && s.status === 'pending' && !s.reconciled && !JA_TEM_DESTINO.includes(String(s.match_kind ?? ''));
 }
 
-export type LancarTipo = 'despesa' | 'compra' | 'freelancer';
+export type LancarTipo = 'despesa' | 'compra' | 'freelancer' | 'fora_dre';
+
+/** Saída que não é despesa da loja: não vira conta nem compra, só sai das pendências com o motivo. */
+export const MOTIVOS_FORA_DRE = [
+  ['retirada_dono', 'Retirada do dono', 'Dinheiro que o dono tirou da empresa (pró-labore/lucro não entra como despesa).'],
+  ['transferencia', 'Transferência entre contas', 'Saiu daqui e entrou em outra conta sua: o dinheiro não saiu da empresa.'],
+  ['emprestimo', 'Empréstimo', 'Empréstimo concedido ou devolvido — não é despesa do mês.'],
+  ['particular', 'Gasto particular', 'Gasto pessoal pago pela conta da empresa.'],
+  ['investimento', 'Investimento / compra de bem', 'Compra de equipamento ou obra: vira patrimônio, não despesa do mês.'],
+  ['outro', 'Outro (não entra no DRE)', 'Qualquer outra saída que não deve afetar o resultado. Explique no campo acima.'],
+] as const;
 export interface LancarResultado { id: string; ok: boolean; msg: string; code?: string }
 export interface LancarOpcoes {
   kind: LancarTipo;
+  /** fora_dre: chave de MOTIVOS_FORA_DRE */
+  motivo?: string | null;
   dre_category_id?: string | null;
   merchandise_category_id?: string | null;
   description?: string | null;
@@ -121,9 +133,19 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   // Competência (2026-09-18): mês do pagamento, o anterior (royalties, contas de consumo) ou outro
   const mesPag = transaction.transaction_date.slice(0, 7);
   const mesAnt = (() => { const [y, m] = mesPag.split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`; })();
+  // Dia do pagamento e os seis anteriores: o freela quase sempre trabalhou num deles
+  const ultimosDias = useMemo(() => {
+    const base = new Date(transaction.transaction_date + 'T00:00:00');
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(base);
+      d.setDate(d.getDate() - i);
+      return d.toISOString().slice(0, 10);
+    }).reverse();
+  }, [transaction.transaction_date]);
   const [compModo, setCompModo] = useState<'same' | 'prev' | 'outro'>('same');
   const [compOutro, setCompOutro] = useState(mesPag);
   const competencia = compModo === 'same' ? mesPag : compModo === 'prev' ? mesAnt : compOutro;
+  const [motivo, setMotivo] = useState('');
   const [avisoFolha, setAvisoFolha] = useState<string | null>(null);
   const [permitirFolha, setPermitirFolha] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -132,7 +154,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   useEffect(() => {
     setAberto(false); setTipo('despesa'); setDescricao(nomePadrao); setFornecedor(transaction.counterpart_name || '');
     setDreCat(''); setMerc(''); setLembrar(false); setAvisoFolha(null); setPermitirFolha(false); setErro(null);
-    setDias([]); setDiaNovo(transaction.transaction_date); setFuncao(''); setFreelaId('');
+    setDias([]); setDiaNovo(transaction.transaction_date); setFuncao(''); setFreelaId(''); setMotivo('');
     setCompModo('same'); setCompOutro(transaction.transaction_date.slice(0, 7));
   }, [transaction.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -148,10 +170,12 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const lancar = async () => {
     if (!user?.tenantId) return;
     if (tipo === 'despesa' && !dreCat) { setErro('Escolha a categoria da despesa.'); return; }
+    if (tipo === 'fora_dre' && !motivo) { setErro('Escolha o motivo de não entrar no DRE.'); return; }
     setErro(null);
     setBusy(true);
     const { results, error } = await lancarDoExtrato(user.tenantId, [transaction.id], {
       kind: tipo,
+      motivo: tipo === 'fora_dre' ? motivo : null,
       dre_category_id: tipo === 'despesa' ? dreCat : null,
       merchandise_category_id: tipo === 'compra' ? merc || null : null,
       description: descricao.trim() || null,
@@ -178,6 +202,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
           counterpart_label: transaction.counterpart_name ?? transaction.description,
           kind: tipo, dre_category_id: tipo === 'despesa' ? dreCat : null, merchandise_category_id: tipo === 'compra' ? merc || null : null,
           competence_rule: compModo === 'prev' ? 'prev' : 'same', supplier_name: tipo === 'compra' ? fornecedor.trim() || null : descricao.trim() || null,
+          allow_payroll: permitirFolha,
         },
       });
       const e = rr.data?.error ?? rr.error?.message;
@@ -209,7 +234,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       </div>
 
       <div className="flex flex-wrap bg-white border border-zinc-200 rounded-lg overflow-hidden w-fit max-w-full">
-        {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line'], ['freelancer', 'Freelancer', 'ri-user-star-line']] as const).map(([k, label, icon]) => (
+        {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line'], ['freelancer', 'Freelancer', 'ri-user-star-line'], ['fora_dre', 'Não entra no DRE', 'ri-eye-off-line']] as const).map(([k, label, icon]) => (
           <button key={k} onClick={() => setTipo(k)}
             className={`px-3 py-1.5 text-xs font-semibold cursor-pointer flex items-center gap-1 ${tipo === k ? 'bg-violet-600 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
             <i className={icon} /> {label}
@@ -268,6 +293,19 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
             )}
             <div>
               <label className="block text-xs font-medium text-zinc-600 mb-1">Dias trabalhados</label>
+              {/* Um toque nos dias mais prováveis: o dia do pagamento e os seis anteriores. */}
+              <div className="flex flex-wrap items-center gap-1 mb-1.5">
+                {ultimosDias.map((d) => {
+                  const on = dias.includes(d);
+                  return (
+                    <button key={d} type="button"
+                      onClick={() => setDias((v) => (on ? v.filter((x) => x !== d) : [...v, d].sort()))}
+                      className={`px-2 py-1 rounded-lg text-xs font-semibold border cursor-pointer ${on ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'}`}>
+                      {new Date(d + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                    </button>
+                  );
+                })}
+              </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 {dias.map((d) => (
                   <span key={d} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-100 text-violet-800 text-xs font-semibold">
@@ -286,7 +324,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
               </div>
               <p className="text-[11px] text-zinc-400 mt-1">
                 {dias.length === 0
-                  ? 'Sem dias, a diária fica "aguardando dias" e você informa depois em Financeiro › Freelancers.'
+                  ? 'Toque nos dias acima (ou escolha outra data). Sem nenhum dia, a diária fica "aguardando dias" e você informa depois em Financeiro › Freelancers.'
                   : `${formatCurrency(Number(transaction.amount) / dias.length)} por dia (${dias.length} dia${dias.length > 1 ? 's' : ''}).`}
               </p>
             </div>
