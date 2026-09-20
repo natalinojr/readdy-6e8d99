@@ -35,6 +35,14 @@
 //   launch_rule_preview  { rule_id }            pagamentos pendentes (qualquer data) que a regra pegaria
 //   launch_rule_apply    { rule_id, items: [{ id, competencia: 'YYYY-MM' }] }   admin/gerente: lança esses
 //
+//   VÍNCULO MANUAL (2026-09-20): "este pagamento é desta nota/conta". O casamento automático usa
+//   CNPJ + valor + data; Pix ao gerente/dono ou razão social diferente da nota nunca casava.
+//   link_search  { id, q? }  contas a pagar em aberto + notas não lançadas, mais parecidas primeiro
+//   link_manual  { id, alvo: { kind: 'payable'|'inbound_doc', ref_id, parcela?, valor?, vencimento? },
+//                  lembrar?: boolean }   admin/gerente: liga e dá a baixa (mesmo caminho do confirm);
+//                  lembrar grava o apelido "quem recebe X = fornecedor Y" (fin_counterpart_aliases)
+//                  e refaz as sugestões — os próximos pagamentos a essa pessoa casam sozinhos.
+//
 //   INÍCIO DO FINANCEIRO (2026-09-19): a loja escolhe de que mês em diante o financeiro vale e fecha o
 //   que ficou para trás. Só mexe no que está PENDENTE (extrato, conta a pagar em aberto, nota da SEFAZ
 //   não lançada); baixa feita, nota lançada, classificação e vínculo continuam como estão. Reversível.
@@ -1041,6 +1049,137 @@ Deno.serve(async (req: Request) => {
       if (ok) await admin.from('fin_reconciliation_rules').update({ match_count: Number(rule.match_count ?? 0) + ok, last_applied_at: new Date().toISOString() }).eq('id', rule.id);
       log('INFO', 'launch_rule_apply', 'ok', { tenantId, userId, rule: rule.id, total: results.length, ok });
       return json({ success: true, results });
+    }
+
+    // ── Vínculo manual: "este pagamento é de…" ────────────────────────────────
+    if (action === 'link_search') {
+      const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', String(body.id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+      if (!row) return errResp('Lançamento não encontrado', 404);
+      const q = String(body.q ?? '').trim().toLowerCase();
+      const valor = round2(Number(row.amount));
+      const dia = String(row.transaction_date);
+      const bate = (txt: unknown) => !q || String(txt ?? '').toLowerCase().includes(q);
+
+      const { data: bills } = await admin.from('fin_accounts_payable')
+        .select('id, description, supplier, amount, paid_amount, due_date, status, installment_number')
+        .eq('tenant_id', tenantId).in('status', ['pending', 'overdue', 'partial'])
+        .gte('due_date', addDays(dia, -180)).lte('due_date', addDays(dia, 90)).limit(400);
+      const opcoesContas = ((bills ?? []) as Row[])
+        .map((b) => ({ ...b, falta: round2(Number(b.amount) - Number(b.paid_amount ?? 0)) }))
+        .filter((b) => b.falta > 0.005 && (bate(b.description) || bate(b.supplier)))
+        .map((b) => ({
+          kind: 'payable' as const, ref_id: b.id, parcela: b.installment_number ? String(b.installment_number) : null,
+          label: String(b.description ?? ''), fornecedor: b.supplier ?? null, valor: b.falta, vencimento: b.due_date,
+          diferenca: round2(b.falta - valor),
+        }));
+
+      const { data: docs } = await admin.from('fiscal_inbound_documents')
+        .select('id, numero, emitente_nome, emitente_cnpj, valor_total, emitted_at, parcelas, modelo, sefaz_status')
+        .eq('tenant_id', tenantId).eq('status', 'new')
+        .gte('emitted_at', addDays(dia, -180)).lte('emitted_at', addDays(dia, 30)).limit(300);
+      const opcoesNotas: Row[] = [];
+      for (const d of (docs ?? []) as Row[]) {
+        if (Number(d.sefaz_status) === 2) continue;
+        if (!bate(d.emitente_nome) && !bate('NF ' + d.numero)) continue;
+        const parcelas = Array.isArray(d.parcelas) && d.parcelas.length > 0
+          ? d.parcelas as Row[]
+          : [{ numero: '1', vencimento: null, valor: d.valor_total }];
+        for (const pc of parcelas) {
+          const v = round2(Number(pc.valor ?? 0));
+          if (!(v > 0)) continue;
+          opcoesNotas.push({
+            kind: 'inbound_doc', ref_id: d.id, parcela: String(pc.numero ?? '1'),
+            label: 'NF ' + String(d.numero ?? '?') + ' — ' + String(d.emitente_nome ?? ''),
+            fornecedor: d.emitente_nome ?? null, fornecedor_doc: soDigitos(d.emitente_cnpj) || null,
+            valor: v, vencimento: pc.vencimento ?? null, emissao: String(d.emitted_at ?? '').slice(0, 10),
+            diferenca: round2(v - valor), servico: Number(d.modelo) === 10,
+          });
+        }
+      }
+      // Mais parecidos primeiro: valor igual, depois diferença de valor e de data
+      const dist = (o: Row) => Math.abs(Number(o.diferenca ?? 0)) * 1000
+        + Math.abs(Date.parse(String(o.vencimento ?? o.emissao ?? dia) + 'T12:00:00Z') - Date.parse(dia + 'T12:00:00Z')) / 86400000;
+      const opcoes = [...opcoesContas, ...opcoesNotas].sort((a, b) => dist(a) - dist(b)).slice(0, 40);
+      return json({ success: true, pagamento: { valor, data: dia, quem: row.counterpart_name, doc: row.counterpart_doc }, opcoes });
+    }
+
+    if (action === 'link_manual') {
+      if (!isManager) return errResp('Apenas administradores e gerentes podem vincular pagamentos', 403);
+      const rowId = String(body.id ?? '');
+      const alvo = (body.alvo ?? {}) as Row;
+      const kind = alvo.kind === 'inbound_doc' ? 'inbound_doc' : alvo.kind === 'payable' ? 'payable' : null;
+      if (!kind || !alvo.ref_id) return errResp('Escolha a conta ou a nota');
+      const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', rowId).eq('tenant_id', tenantId).maybeSingle();
+      if (!row) return errResp('Lançamento não encontrado', 404);
+      if (row.transaction_type !== 'debit') return errResp('Só pagamentos (saídas) são ligados a nota ou conta');
+      if (row.reconciled || row.status !== 'pending') return errResp('Este pagamento já está conciliado');
+
+      // Confere o alvo e monta o vínculo no mesmo formato da sugestão automática
+      let det: Row;
+      let fornecedorDoc: string | null = null;
+      let fornecedorNome: string | null = null;
+      if (kind === 'payable') {
+        const { data: b } = await admin.from('fin_accounts_payable').select('*').eq('id', String(alvo.ref_id)).eq('tenant_id', tenantId).maybeSingle();
+        if (!b) return errResp('Conta a pagar não encontrada', 404);
+        if (b.status === 'paid' || b.status === 'cancelled') return errResp('Esta conta já está quitada ou cancelada');
+        const falta = round2(Number(b.amount) - Number(b.paid_amount ?? 0));
+        det = { parcela: b.installment_number ? String(b.installment_number) : null, vencimento: b.due_date, valor: falta,
+          label: String(b.description ?? ''), nome: b.supplier ?? null, manual: true,
+          boleto: String(row.raw?.tipoTransacao ?? '') === 'PAGAMENTO' };
+        fornecedorNome = b.supplier ?? null;
+        const { data: sup } = await admin.from('fin_suppliers').select('cnpj').eq('tenant_id', tenantId).ilike('name', String(b.supplier ?? '')).limit(1).maybeSingle();
+        fornecedorDoc = soDigitos(sup?.cnpj) || null;
+      } else {
+        const { data: d } = await admin.from('fiscal_inbound_documents').select('*').eq('id', String(alvo.ref_id)).eq('tenant_id', tenantId).maybeSingle();
+        if (!d) return errResp('Nota não encontrada', 404);
+        if (Number(d.sefaz_status) === 2) return errResp('A nota foi CANCELADA na SEFAZ — não lance');
+        const parcelas = Array.isArray(d.parcelas) && d.parcelas.length > 0 ? d.parcelas as Row[] : [{ numero: '1', vencimento: null, valor: d.valor_total }];
+        const pc = parcelas.find((x) => String(x.numero ?? '1') === String(alvo.parcela ?? '1')) ?? parcelas[0];
+        det = { doc_id: d.id, parcela: String(pc.numero ?? '1'), vencimento: pc.vencimento ?? null, valor: round2(Number(pc.valor ?? 0)),
+          label: 'NF ' + String(d.numero ?? '?') + ' — ' + String(d.emitente_nome ?? ''), nome: d.emitente_nome ?? null,
+          modelo: d.modelo, auto_import: d.status === 'new', manual: true,
+          boleto: String(row.raw?.tipoTransacao ?? '') === 'PAGAMENTO' };
+        fornecedorNome = d.emitente_nome ?? null;
+        fornecedorDoc = soDigitos(d.emitente_cnpj) || null;
+      }
+      const face = Number(row.face_value ?? row.amount);
+      det.face = face;
+      det.juros = Math.max(round2(Number(row.amount) - Number(det.valor)), 0);
+      det.desconto = Math.max(round2(Number(det.valor) - Number(row.amount)), 0);
+
+      const { error: upErr } = await admin.from('fin_bank_statement_imports')
+        .update({ match_kind: kind, match_ref_id: String(alvo.ref_id), match_confidence: 'manual', match_detail: det })
+        .eq('id', rowId).eq('tenant_id', tenantId);
+      if (upErr) return errResp('Gravar o vínculo: ' + upErr.message, 500);
+
+      const r = await confirmOne(ctx, rowId);
+      if (!r.ok) {
+        // volta ao estado anterior para a linha não ficar com um vínculo que não deu baixa
+        await admin.from('fin_bank_statement_imports')
+          .update({ match_kind: row.match_kind, match_ref_id: row.match_ref_id, match_confidence: row.match_confidence, match_detail: row.match_detail })
+          .eq('id', rowId).eq('tenant_id', tenantId);
+        return json({ success: true, results: [r] });
+      }
+
+      // "Lembrar": quem recebeu passa a valer como o fornecedor da nota nas próximas vezes
+      let lembrou: { n: number; nome: string | null } | null = null;
+      const quemDoc = soDigitos(row.counterpart_doc) || String(row.raw?.detalhes?.chavePixRecebedor ?? '').toLowerCase();
+      if (body.lembrar === true && quemDoc && (fornecedorDoc || fornecedorNome)) {
+        const { error: aliasErr } = await admin.from('fin_counterpart_aliases').upsert({
+          tenant_id: tenantId, counterpart_doc: quemDoc, supplier_doc: fornecedorDoc, supplier_name: fornecedorNome,
+          created_by: userId, updated_at: new Date().toISOString(),
+        }, { onConflict: 'tenant_id,counterpart_doc' });
+        if (aliasErr) log('WARN', 'link_manual', 'salvar apelido falhou', { tenantId, error: aliasErr.message });
+        else {
+          const to = todayBR();
+          await admin.rpc('fn_aplicar_apelidos', { p_tenant: tenantId, p_from: addDays(to, -365), p_to: to });
+          const { data: mp } = await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: addDays(to, -120), p_to: to });
+          const n = Number((mp as Row)?.exato ?? 0) + Number((mp as Row)?.forte ?? 0) + Number((mp as Row)?.provavel ?? 0);
+          lembrou = { n, nome: fornecedorNome };
+        }
+      }
+      log('INFO', 'link_manual', 'ok', { tenantId, userId, rowId, kind, lembrou: !!lembrou });
+      return json({ success: true, results: [r], lembrou });
     }
 
     // ── Início do financeiro ──────────────────────────────────────────────────

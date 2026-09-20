@@ -5,6 +5,7 @@ import { formatCurrency } from '@/lib/formatters';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { CATEGORIAS_ENTRADA } from './categoriasEntrada';
+import VincularPagamento, { podeVincular } from './VincularPagamento';
 import LancarDoExtrato, { podeLancarDoExtrato, useCategoriasLancamento } from './LancarDoExtrato';
 import CategoriaCombobox, { type ComboOption } from '../CategoriaCombobox';
 import { situacaoRepasse, type RepasseStone } from './RepassesStoneModal';
@@ -359,6 +360,9 @@ export default function TransacaoDetalheModal({
                   : 'Transferência de outra conta da própria empresa. Não entra como receita (Conciliação › ⚙ › Como o dinheiro entra).'}
             </div>
           )}
+          {podeVincular(transaction) && (
+            <VincularPagamento transaction={transaction} onDone={() => { onChanged?.(); onClose(); }} />
+          )}
           {podeLancarDoExtrato(transaction) && (
             <LancarDoExtrato transaction={transaction} onDone={() => { onChanged?.(); onClose(); }} onAbertoChange={setLancarAberto} />
           )}
@@ -506,40 +510,9 @@ export default function TransacaoDetalheModal({
           )}
           </>)}
 
-          {/* Matches */}
-          {transaction.transaction_type === 'debit' && (
-            <div>
-              <p className="text-xs font-semibold text-zinc-600 mb-2 flex items-center gap-1">
-                <i className="ri-bill-line" /> Contas a Pagar Relacionadas
-              </p>
-              {loadingMatches ? (
-                <div className="flex items-center gap-2 text-xs text-zinc-400 py-2">
-                  <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-                  Buscando...
-                </div>
-              ) : billMatches.length === 0 ? (
-                <p className="text-xs text-zinc-400 py-2">Nenhuma conta a pagar encontrada com valor próximo</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {billMatches.map(m => (
-                    <div key={m.id} className="flex items-center justify-between p-2.5 rounded-lg border border-zinc-200 hover:border-amber-300 bg-white cursor-pointer transition-colors">
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-zinc-800 truncate">{m.description}</p>
-                        <p className="text-xs text-zinc-400">{m.supplier} · Vence {new Date(m.due_date + 'T00:00:00').toLocaleDateString('pt-BR')}</p>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <span className={`text-xs px-1.5 py-0.5 rounded font-semibold ${m.confidence === 'high' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                          {m.confidence === 'high' ? 'Alta' : 'Média'}
-                        </span>
-                        <span className="text-xs font-bold text-zinc-800">{formatCurrency(m.amount)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
+          {/* A lista "Contas a Pagar Relacionadas" saiu daqui (2026-09-20): era só enfeite (não dava para
+              clicar) e sugeria pelo valor parecido. Quem liga pagamento a conta/nota agora é o
+              "Este pagamento é de…" acima, que também aprende quem recebe pelo fornecedor. */}
           {transaction.transaction_type === 'credit' && (
             <div>
               <p className="text-xs font-semibold text-zinc-600 mb-2 flex items-center gap-1">
