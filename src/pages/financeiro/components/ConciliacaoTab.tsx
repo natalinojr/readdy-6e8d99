@@ -927,11 +927,16 @@ export default function ConciliacaoTab() {
 
   const trocarFiltroStatus = (s: 'all' | Situacao) => { setFilterStatus(s); setPage(1); };
 
-  // ── Lançar vários pagamentos sem nota de uma vez ─────────────────────────
+  // ── Seleção em lote ───────────────────────────────────────────────────────
+  // Dá para marcar qualquer lançamento pendente (2026-09-20): a saída sem nota vira despesa/compra
+  // e QUALQUER pendente (inclusive entrada, ex.: repasses da Tuna) pode receber o "ok" de uma vez.
   useEffect(() => { setSelLanc(new Set()); }, [selectedAccountId, periodFrom, periodTo]);
-  const elegiveisPagina = paginated.filter(podeLancarDoExtrato);
+  const podeSelecionar = (s: StatementImport) => s.status === 'pending' && !s.reconciled;
+  const elegiveisPagina = paginated.filter(podeSelecionar);
   const todosSelLanc = elegiveisPagina.length > 0 && elegiveisPagina.every(s => selLanc.has(s.id));
   const totalSelLanc = imports.filter(i => selLanc.has(i.id)).reduce((s, i) => s + Number(i.amount), 0);
+  const [conciliandoLote, setConciliandoLote] = useState<{ feitos: number; total: number } | null>(null);
+  const [confirmarOkLote, setConfirmarOkLote] = useState(false);
   const toggleLanc = (id: string) => setSelLanc(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   // Competência do lote (2026-09-20): como no "Lançar" de um pagamento só — mês do pagamento ou o
   // anterior. Cada pagamento tem a sua data, então os ids vão em grupos, um por competência.
@@ -939,16 +944,41 @@ export default function ConciliacaoTab() {
   const [lancRegra, setLancRegra] = useState(false);
   const [confirmarLote, setConfirmarLote] = useState(false);
   const selecionados = imports.filter(i => selLanc.has(i.id));
+  // "Lançar" só vale para saída sem nota; entrada selecionada entra só no "dar ok"
+  const selSaidas = selecionados.filter(podeLancarDoExtrato);
+  const selEntradas = selecionados.filter(i => i.transaction_type === 'credit');
   // "Fazer sempre assim" só faz sentido se todos forem para o mesmo CNPJ/chave
   const docDoLote = (() => {
-    if (selecionados.length === 0 || !selecionados.every(i => i.counterpart_doc)) return null;
-    const docs = new Set(selecionados.map(i => String(i.counterpart_doc)));
+    if (selSaidas.length === 0 || !selSaidas.every(i => i.counterpart_doc)) return null;
+    const docs = new Set(selSaidas.map(i => String(i.counterpart_doc)));
     return docs.size === 1 ? [...docs][0] : null;
   })();
   const mesDe = (iso: string) => {
     const [y, m] = iso.slice(0, 7).split('-').map(Number);
     if (lancComp === 'same') return `${y}-${String(m).padStart(2, '0')}`;
     return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+  };
+
+  // "Dar ok" em lote: marca como conciliado sem criar lançamento nenhum — para entradas que já entram
+  // como receita pela fonte da loja (repasse de voucher, Pix) e para o que só falta carimbar.
+  const conciliarSelecionados = async () => {
+    if (selLanc.size === 0) return;
+    setConfirmarOkLote(false);
+    const ids = [...selLanc];
+    setConciliandoLote({ feitos: 0, total: ids.length });
+    let ok = 0; let erros = 0;
+    for (let i = 0; i < ids.length; i += 5) {
+      const bloco = ids.slice(i, i + 5);
+      const r = await Promise.all(bloco.map(id => reconcile(id)));
+      ok += r.filter(Boolean).length;
+      erros += r.filter(x => !x).length;
+      setConciliandoLote({ feitos: Math.min(i + 5, ids.length), total: ids.length });
+    }
+    setConciliandoLote(null);
+    setSelLanc(new Set());
+    showToast(`${ok} lançamento(s) conciliado(s)` + (erros ? ` · ${erros} não deu(ram) certo` : ''), erros ? 'error' : 'success');
+    refresh();
+    loadAlerts();
   };
 
   const lancarSelecionados = async () => {
@@ -959,7 +989,7 @@ export default function ConciliacaoTab() {
     setLancando(true);
     // um grupo por competência (a data de cada pagamento manda)
     const grupos = new Map<string, string[]>();
-    selecionados.forEach(i => {
+    selSaidas.forEach(i => {
       const mes = mesDe(i.transaction_date);
       grupos.set(mes, [...(grupos.get(mes) ?? []), i.id]);
     });
@@ -977,7 +1007,7 @@ export default function ConciliacaoTab() {
     }
     // "Fazer sempre assim": cria a regra de lançamento para o CNPJ do lote
     if (!erro && lancRegra && docDoLote) {
-      const quem = selecionados[0]?.counterpart_name ?? null;
+      const quem = selSaidas[0]?.counterpart_name ?? null;
       const rr = await invokeWithAuth<{ error?: string }>('conciliacao-pagamentos', {
         body: {
           action: 'launch_rule_save', tenant_id: user.tenantId, counterpart_doc: docDoLote, counterpart_label: quem,
@@ -1296,11 +1326,31 @@ export default function ConciliacaoTab() {
         <div className="sticky top-0 z-20 bg-white border border-violet-200 shadow-lg shadow-violet-100/50 rounded-2xl p-3 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm font-bold text-zinc-800">
-              <i className="ri-add-circle-line text-violet-600 mr-1" />
-              {selLanc.size} pagamento{selLanc.size > 1 ? 's' : ''} sem nota
+              <i className="ri-checkbox-multiple-line text-violet-600 mr-1" />
+              {selLanc.size} selecionado{selLanc.size > 1 ? 's' : ''}
               <span className="ml-1 text-violet-700">· {fmtCur(totalSelLanc)}</span>
+              {selEntradas.length > 0 && selSaidas.length > 0 && (
+                <span className="ml-1 font-normal text-zinc-500">({selEntradas.length} entrada{selEntradas.length > 1 ? 's' : ''}, {selSaidas.length} saída{selSaidas.length > 1 ? 's' : ''} sem nota)</span>
+              )}
             </p>
             <button onClick={() => setSelLanc(new Set())} className="text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer whitespace-nowrap">Limpar</button>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => setConfirmarOkLote(true)} disabled={!!conciliandoLote}
+              className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 cursor-pointer">
+              {conciliandoLote
+                ? `Conciliando… ${conciliandoLote.feitos}/${conciliandoLote.total}`
+                : `Marcar ${selLanc.size} como conciliado${selLanc.size > 1 ? 's' : ''}`}
+            </button>
+            <span className="text-[11px] text-zinc-400">Só carimba: não cria despesa nem receita. Dá para reabrir depois.</span>
+          </div>
+
+          {selSaidas.length > 0 && (<>
+          <div className="border-t border-zinc-100 pt-3">
+            <p className="text-[11px] font-medium text-zinc-500 mb-1.5">
+              Ou lançar {selSaidas.length === selLanc.size ? 'as' : `as ${selSaidas.length}`} saída{selSaidas.length > 1 ? 's' : ''} sem nota como despesa/compra:
+            </p>
           </div>
 
           <div className="flex bg-zinc-100 rounded-lg p-0.5 w-full sm:w-fit">
@@ -1342,19 +1392,30 @@ export default function ConciliacaoTab() {
           <div className="flex items-center gap-2 flex-wrap">
             <button disabled={lancando || (lancTipo === 'despesa' && !lancCat)} onClick={() => setConfirmarLote(true)}
               className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
-              {lancando ? 'Lançando…' : `Lançar ${selLanc.size} já pago${selLanc.size > 1 ? 's' : ''}`}
+              {lancando ? 'Lançando…' : `Lançar ${selSaidas.length} já pago${selSaidas.length > 1 ? 's' : ''}`}
             </button>
             <span className="text-[11px] text-zinc-400">Cada um entra na sua data. Dá para desfazer depois.</span>
           </div>
+          </>)}
 
           <ConfirmModal
             isOpen={confirmarLote}
             icon="ri-add-circle-line"
-            title={`Lançar ${selLanc.size} pagamento(s)?`}
-            message={`Viram ${lancTipo === 'compra' ? 'compra (CMV)' : 'despesa'} já paga, cada uma na data em que o dinheiro saiu, com competência do ${lancComp === 'prev' ? 'mês anterior ao pagamento' : 'mês do pagamento'}. A descrição de cada lançamento será o nome de quem recebeu. Total: ${fmtCur(totalSelLanc)}.`}
+            title={`Lançar ${selSaidas.length} pagamento(s)?`}
+            message={`Viram ${lancTipo === 'compra' ? 'compra (CMV)' : 'despesa'} já paga, cada uma na data em que o dinheiro saiu, com competência do ${lancComp === 'prev' ? 'mês anterior ao pagamento' : 'mês do pagamento'}. A descrição de cada lançamento será o nome de quem recebeu.`}
             confirmLabel="Lançar"
             onCancel={() => setConfirmarLote(false)}
             onConfirm={lancarSelecionados}
+          />
+
+          <ConfirmModal
+            isOpen={confirmarOkLote}
+            icon="ri-checkbox-circle-line"
+            title={`Marcar ${selLanc.size} como conciliado(s)?`}
+            message={'Eles saem da lista de pendentes e dos alertas. Nada é lançado: entrada continua contando pela fonte de receita da loja, e saída sem lançamento não entra na DRE. Cada um pode ser reaberto depois.'}
+            confirmLabel="Marcar como conciliado"
+            onCancel={() => setConfirmarOkLote(false)}
+            onConfirm={conciliarSelecionados}
           />
         </div>
       )}
@@ -1392,10 +1453,10 @@ export default function ConciliacaoTab() {
                   <div onClick={() => setSelectedTransaction(s)}
                     className={`rounded-xl border bg-white px-3 py-3 active:bg-zinc-50 cursor-pointer ${sit === 'ignored' ? 'opacity-50 border-zinc-100' : sit === 'pending' ? 'border-amber-200' : 'border-zinc-200'}`}>
                     <div className="flex items-start gap-2">
-                      {podeLancarDoExtrato(s) && (
+                      {podeSelecionar(s) && (
                         <input type="checkbox" checked={selLanc.has(s.id)} onClick={e => e.stopPropagation()}
                           onChange={() => toggleLanc(s.id)} className="mt-1 w-4 h-4 flex-shrink-0"
-                          title="Selecionar para lançar como despesa ou compra" />
+                          title="Selecionar para conciliar em lote (saída sem nota também pode virar lançamento)" />
                       )}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-baseline justify-between gap-2">
@@ -1457,7 +1518,7 @@ export default function ConciliacaoTab() {
                 <tr>
                   <th className="pl-4 pr-1 py-3 w-8">
                     <input type="checkbox" checked={todosSelLanc} disabled={elegiveisPagina.length === 0}
-                      title="Selecionar os pagamentos sem nota desta página (para lançar como despesa ou compra)"
+                      title="Selecionar todos os pendentes desta página"
                       onChange={() => setSelLanc(prev => {
                         const n = new Set(prev);
                         if (todosSelLanc) elegiveisPagina.forEach(s => n.delete(s.id)); else elegiveisPagina.forEach(s => n.add(s.id));
@@ -1483,8 +1544,8 @@ export default function ConciliacaoTab() {
                       onClick={() => setSelectedTransaction(s)}
                     >
                       <td className="pl-4 pr-1 py-3" onClick={e => e.stopPropagation()}>
-                        {podeLancarDoExtrato(s) && (
-                          <input type="checkbox" checked={selLanc.has(s.id)} onChange={() => toggleLanc(s.id)} title="Selecionar para lançar como despesa ou compra" />
+                        {podeSelecionar(s) && (
+                          <input type="checkbox" checked={selLanc.has(s.id)} onChange={() => toggleLanc(s.id)} title="Selecionar para conciliar em lote (saída sem nota também pode virar lançamento)" />
                         )}
                       </td>
                       <td className="px-4 py-3 text-zinc-700 font-medium whitespace-nowrap text-xs">
