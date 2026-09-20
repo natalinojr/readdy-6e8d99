@@ -237,7 +237,7 @@ export default function ValidadeTab() {
 
       {/* Tabela de alertas */}
       {viewMode === 'alerts' && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden overflow-x-auto">
+        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
           {filteredAlerts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-zinc-400">
               <i className="ri-checkbox-circle-line text-4xl mb-2 text-green-400" />
@@ -245,6 +245,39 @@ export default function ValidadeTab() {
               <p className="text-xs text-zinc-400 mt-1">Todos os ingredientes estão dentro do prazo</p>
             </div>
           ) : (
+          <>
+          {/* Celular: cartão por alerta (a tabela não cabe em 375px) */}
+          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+            {filteredAlerts.map((a) => {
+              const cfg = statusConfig(a.alert_level);
+              return (
+                <li key={a.id}>
+                  <div className="rounded-xl border bg-white px-3 py-3 border-zinc-200">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot}`} />
+                      <span className="text-sm font-medium text-zinc-800 break-words line-clamp-2 flex-1">{a.ingredient_name}</span>
+                    </div>
+                    <div className="flex items-baseline justify-between gap-2 mt-1.5">
+                      <span className="text-xs text-zinc-500">
+                        {formatQty(Number(a.quantity_remaining), a.unit)}{a.batch_code ? ` · ${a.batch_code}` : ''}
+                      </span>
+                      <span className="text-xs text-zinc-500 whitespace-nowrap">Vence {formatDate(a.expiry_date)}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${cfg.bg} ${cfg.text}`}>
+                        {cfg.label}
+                      </span>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${Number(a.days_until_expiry) < 0 ? 'bg-red-50 text-red-600' : Number(a.days_until_expiry) <= 3 ? 'bg-orange-50 text-orange-600' : Number(a.days_until_expiry) <= 7 ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'}`}>
+                        {Number(a.days_until_expiry) < 0 ? `${Math.abs(Number(a.days_until_expiry))}d atrás` : `${a.days_until_expiry}d`}
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm" style={{ minWidth: '500px' }}>
               <thead>
                 <tr className="border-b border-zinc-100 bg-zinc-50">
@@ -291,13 +324,15 @@ export default function ValidadeTab() {
                 })}
               </tbody>
             </table>
+          </div>
+          </>
           )}
         </div>
       )}
 
       {/* Tabela de todos os lotes */}
       {viewMode === 'all' && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden overflow-x-auto">
+        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
           {filteredBatches.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-zinc-400">
               <i className="ri-stack-line text-4xl mb-2" />
@@ -305,6 +340,78 @@ export default function ValidadeTab() {
               <p className="text-xs text-zinc-400 mt-1">Lotes são criados ao registrar entradas de estoque</p>
             </div>
           ) : (
+          <>
+          {/* Celular: cartão por lote (a tabela não cabe em 375px) */}
+          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+            {filteredBatches.map((b) => {
+              const isExpired = b.expiry_date ? new Date(b.expiry_date) < new Date() : false;
+              const daysLeft = b.expiry_date
+                ? Math.ceil((new Date(b.expiry_date).getTime() - Date.now()) / 86400000)
+                : null;
+              const isEditing = editingBatchId === b.id;
+              return (
+                <li key={b.id}>
+                  <div className={`rounded-xl border bg-white px-3 py-3 ${isExpired ? 'border-red-200 bg-red-50/50' : 'border-zinc-200'}`}>
+                    <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{b.ingredient_name}</p>
+                    <div className="flex items-baseline justify-between gap-2 mt-1.5">
+                      <span className="text-xs text-zinc-500">
+                        {formatQty(Number(b.quantity_remaining), b.unit)}{b.batch_code ? ` · ${b.batch_code}` : ''}
+                      </span>
+                      <span className="text-sm font-semibold text-zinc-700 whitespace-nowrap">
+                        {b.unit_cost != null ? Number(b.unit_cost).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—'}
+                      </span>
+                    </div>
+                    {isEditing ? (
+                      <div className="mt-2">
+                        <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Data de validade</label>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="date"
+                            value={editingExpiry}
+                            onChange={(e) => setEditingExpiry(e.target.value)}
+                            className="h-11 text-base flex-1 border border-amber-300 rounded-lg px-2 focus:outline-none focus:border-amber-500"
+                          />
+                          <button
+                            onClick={() => handleSaveExpiry(b.id)}
+                            disabled={savingExpiry || !editingExpiry}
+                            className="px-3 h-11 flex items-center bg-amber-500 text-white text-xs font-semibold rounded-lg active:bg-amber-600 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                          >
+                            {savingExpiry ? <i className="ri-loader-4-line animate-spin" /> : 'Salvar'}
+                          </button>
+                          <button
+                            onClick={() => { setEditingBatchId(null); setEditingExpiry(''); }}
+                            className="w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 active:bg-zinc-100 cursor-pointer"
+                          >
+                            <i className="ri-close-line" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                        {b.expiry_date ? (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${isExpired ? 'bg-red-50 text-red-600' : daysLeft != null && daysLeft <= 3 ? 'bg-orange-50 text-orange-600' : daysLeft != null && daysLeft <= 7 ? 'bg-amber-50 text-amber-600' : 'bg-zinc-100 text-zinc-600'}`}>
+                            {formatDate(b.expiry_date)}{daysLeft != null ? ` · ${isExpired ? `vencido há ${Math.abs(daysLeft)}d` : `${daysLeft}d restantes`}` : ''}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-zinc-300">Sem validade</span>
+                        )}
+                        <span className="flex-1" />
+                        <button
+                          onClick={() => { setEditingBatchId(b.id); setEditingExpiry(b.expiry_date ? b.expiry_date.split('T')[0] : ''); }}
+                          className="w-9 h-9 flex items-center justify-center rounded-lg bg-zinc-50 text-zinc-400 active:bg-zinc-100 cursor-pointer"
+                          title={b.expiry_date ? 'Editar validade' : 'Adicionar validade'}
+                        >
+                          <i className={`${b.expiry_date ? 'ri-pencil-line' : 'ri-calendar-check-line'} text-sm`} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm" style={{ minWidth: '560px' }}>
               <thead>
                 <tr className="border-b border-zinc-100 bg-zinc-50">
@@ -395,6 +502,8 @@ export default function ValidadeTab() {
                 })}
               </tbody>
             </table>
+          </div>
+          </>
           )}
         </div>
       )}

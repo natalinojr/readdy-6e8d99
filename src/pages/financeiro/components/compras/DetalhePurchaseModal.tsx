@@ -286,7 +286,33 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
               ) : installments.length === 0 ? (
                 <p className="text-xs text-zinc-400 py-3 text-center">Nenhuma parcela encontrada</p>
               ) : (
-                <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                <>
+                  {/* Celular: cartão por parcela (a tabela não cabe em 375px) */}
+                  <ul className="md:hidden space-y-2">
+                    {installments.map((inst) => (
+                      <li key={inst.id} className={`rounded-xl border px-3 py-3 ${inst.status === 'paid' ? 'border-green-200 bg-green-50/40' : inst.status === 'overdue' ? 'border-red-200 bg-red-50/40' : 'border-zinc-200 bg-white'}`}>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-xs font-bold text-zinc-700">{inst.installment_number}/{inst.installments}</span>
+                          <span className="text-sm font-bold text-zinc-900">{formatCurrency(inst.amount)}</span>
+                        </div>
+                        <p className="text-xs text-zinc-600 mt-0.5">
+                          {inst.due_date ? new Date(inst.due_date + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
+                          {inst.paid_date && ` · Pago em ${new Date(inst.paid_date + 'T00:00:00').toLocaleDateString('pt-BR')}`}
+                        </p>
+                        <span className={`inline-block mt-1.5 text-xs font-semibold px-2 py-0.5 rounded-full ${BILL_STATUS_BADGE[inst.status] ?? 'bg-zinc-100 text-zinc-600'}`}>
+                          {BILL_STATUS_LABEL[inst.status] ?? inst.status}
+                        </span>
+                      </li>
+                    ))}
+                    <li className="flex items-center justify-between px-1 pt-1">
+                      <span className="text-xs font-bold text-zinc-600">Total</span>
+                      <span className="text-sm font-bold text-zinc-900">
+                        {formatCurrency(installments.reduce((s, i) => s + Number(i.amount), 0))}
+                      </span>
+                    </li>
+                  </ul>
+
+                <div className="hidden md:block rounded-xl border border-zinc-200 overflow-hidden">
                   <table className="w-full text-sm">
                     <thead className="bg-zinc-50">
                       <tr>
@@ -332,6 +358,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                     </tfoot>
                   </table>
                 </div>
+                </>
               )}
             </div>
           )}
@@ -340,7 +367,25 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
           {purchase.items && purchase.items.length > 0 && (
             <div>
               <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Itens da Compra</p>
-              <div className="rounded-xl border border-zinc-200 overflow-hidden">
+
+              {/* Celular: cartão por item (a tabela não cabe em 375px) */}
+              <ul className="md:hidden space-y-2">
+                {purchase.items.map((item, idx) => (
+                  <li key={idx} className="rounded-xl border border-zinc-200 bg-white px-3 py-3">
+                    <p className="text-sm font-medium text-zinc-800 break-words">{item.description || '—'}</p>
+                    <div className="flex items-center justify-between gap-2 mt-1">
+                      <span className="text-xs text-zinc-500">{item.quantity} × {formatCurrency(item.unit_price ?? 0)}</span>
+                      <span className="text-sm font-semibold text-zinc-900 whitespace-nowrap">{formatCurrency(item.total_price ?? 0)}</span>
+                    </div>
+                  </li>
+                ))}
+                <li className="flex items-center justify-between px-1 pt-1">
+                  <span className="text-xs font-bold text-zinc-600">Total</span>
+                  <span className="text-base font-bold text-zinc-900">{formatCurrency(purchase.total_amount)}</span>
+                </li>
+              </ul>
+
+              <div className="hidden md:block rounded-xl border border-zinc-200 overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-zinc-50">
                     <tr>
@@ -418,9 +463,102 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                     Ajuste as quantidades recebidas e escolha o insumo de cada item. Os itens com insumo entram no estoque agora, pela quantidade recebida × o fator da embalagem, e o vínculo fica memorizado para as próximas notas deste fornecedor. O valor total será recalculado automaticamente e as contas a pagar serão ajustadas proporcionalmente.
                   </p>
 
+                  {/* Celular: cartão por item recebido (a tabela com select de insumo não cabe em 375px) */}
+                  {purchase.items && purchase.items.length > 0 && (
+                    <ul className="md:hidden space-y-2">
+                      {purchase.items.map((item) => {
+                        const received = receivedItems[item.id];
+                        const originalQty = Number(item.quantity ?? 0);
+                        const originalTotal = Number(item.total_price ?? 0);
+                        const receivedQty = received ? received.quantity : originalQty;
+                        const receivedTotal = received ? received.total : originalTotal;
+                        const isChanged = receivedQty !== originalQty;
+                        return (
+                          <li key={item.id} className={`rounded-xl border px-3 py-3 ${isChanged ? 'border-amber-300 bg-amber-50/50' : 'border-green-200 bg-white'}`}>
+                            <p className="text-xs font-medium text-zinc-800 break-words">{item.description || '—'}</p>
+                            {item.unit_label && <p className="text-[10px] text-zinc-400">{item.unit_label}</p>}
+                            {ctxLoaded && (
+                              <div className="mt-1.5 flex items-center gap-1 flex-wrap">
+                                <select
+                                  value={links[item.id]?.ingredient_id ?? ''}
+                                  onChange={(e) => setLink(item.id, { ingredient_id: e.target.value })}
+                                  disabled={stockApplied && !!item.ingredient_id}
+                                  title={stockApplied && item.ingredient_id ? 'Compra antiga: o estoque deste item já entrou na criação' : 'Insumo que recebe esta entrada no estoque'}
+                                  className={'text-xs border rounded px-1.5 py-1 max-w-[220px] bg-white ' + (links[item.id]?.ingredient_id ? 'border-green-300' : 'border-amber-300')}
+                                >
+                                  <option value="">Não entra no estoque</option>
+                                  {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + i.unit + ')' : ''}</option>)}
+                                </select>
+                                {links[item.id]?.ingredient_id && (
+                                  <>
+                                    <span className="text-[10px] text-zinc-500">1 {item.unit_label || 'un'} =</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.001"
+                                      value={links[item.id].units_per_package}
+                                      onChange={(e) => setLink(item.id, { units_per_package: Number(e.target.value) || 0 })}
+                                      disabled={stockApplied && !!item.ingredient_id}
+                                      className="w-16 text-xs border border-zinc-200 rounded px-1 py-1"
+                                    />
+                                    <span className="text-[10px] text-zinc-500">{unitOf(links[item.id].ingredient_id)}</span>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                            {ctxLoaded && links[item.id]?.source === 'memorizado' && (
+                              <p className="text-[10px] text-blue-600 mt-0.5">vínculo memorizado deste fornecedor</p>
+                            )}
+                            {ctxLoaded && links[item.id]?.source === 'historico' && (
+                              <p className="text-[10px] text-blue-600 mt-0.5">sugerido pela última compra deste item</p>
+                            )}
+                            <div className="flex items-center justify-between gap-2 mt-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-zinc-500">Pedido: {originalQty} · Recebido:</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.001"
+                                  value={receivedQty}
+                                  onChange={(e) => updateReceivedQuantity(item.id, Number(e.target.value) || 0)}
+                                  className={`w-16 text-center border rounded-lg px-1 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-green-400 ${
+                                    isChanged ? 'border-amber-300 bg-amber-50' : 'border-zinc-200'
+                                  }`}
+                                />
+                              </div>
+                              <div className="text-right">
+                                <span className={`text-sm font-semibold ${isChanged ? 'text-amber-700' : 'text-zinc-700'}`}>
+                                  {formatCurrency(receivedTotal)}
+                                </span>
+                                {isChanged && (
+                                  <p className="text-[10px] text-zinc-400 line-through">{formatCurrency(originalTotal)}</p>
+                                )}
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                      <li className="rounded-xl border border-green-200 bg-green-50/50 px-3 py-2 space-y-1">
+                        <div className="flex items-center justify-between text-xs font-bold text-zinc-600">
+                          <span>Total Original</span>
+                          <span className="line-through text-zinc-500">{formatCurrency(purchase.total_amount)}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm font-bold text-green-800">
+                          <span>Total Recebido</span>
+                          <span>{formatCurrency(newTotalAmount)}</span>
+                        </div>
+                        {hasChanges && (
+                          <p className="text-right text-[11px] font-semibold text-amber-600">
+                            {totalDiff > 0 ? 'Economia' : 'Acréscimo'} de {formatCurrency(Math.abs(totalDiff))}
+                          </p>
+                        )}
+                      </li>
+                    </ul>
+                  )}
+
                   {/* Tabela de itens com quantidade recebida */}
                   {purchase.items && purchase.items.length > 0 && (
-                    <div className="rounded-xl border border-green-200 overflow-hidden bg-white">
+                    <div className="hidden md:block rounded-xl border border-green-200 overflow-hidden bg-white">
                       <table className="w-full text-sm">
                         <thead className="bg-green-50">
                           <tr>

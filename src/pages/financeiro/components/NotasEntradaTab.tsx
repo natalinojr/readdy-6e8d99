@@ -176,6 +176,76 @@ export default function NotasEntradaTab() {
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
 
+  // Situação e ações da nota ficam em função própria: a tabela (computador) e os cartões
+  // (celular) mostram exatamente as mesmas opções, sem duplicar o JSX.
+  const situacaoDaNota = (d: DocRow, cancelada: boolean) => (
+    <>
+      {cancelada ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Cancelada na SEFAZ</span>
+                  : d.status === 'imported' ? <><span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{d.import_type === 'purchase' ? 'Lançada como compra' : d.import_type === 'bonus' ? 'Lançada como bonificação' : 'Lançada como despesa'}</span>{d.auto_imported && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700" title={d.auto_import_ref
+                    ? 'Importada automaticamente pela conciliação bancária ao confirmar o pagamento.'
+                    : 'Lançada automaticamente: este fornecedor já tinha nota lançada antes, e esta entrou do mesmo jeito. Se estiver errada, use "Desfazer".'}>automática</span>}{d.settlement === 'monthly' && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700" title="Nota do mês: quitada pelos pagamentos do extrato">paga no mês · {(d.settlement_statement_ids ?? []).length} pagto(s)</span>}</>
+                  : d.status === 'ignored' ? <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500" title={d.ignore_reason ?? ''}>Ignorada</span>
+                  : <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">A conferir</span>}
+    </>
+  );
+
+  const acoesDaNota = (d: DocRow, isBusy: boolean, cancelada: boolean) => (
+                <div className="inline-flex items-center gap-1">
+                  {d.xml_status === 'summary' && podeLancar && d.status === 'new' && (
+                    <button onClick={() => acao(d, { action: 'manifest', tipo: 2 }, 'Ciência registrada. O XML completo chega em alguns minutos.')} disabled={isBusy}
+                      title="Registra a ciência da operação na SEFAZ para liberar o XML com itens e boletos"
+                      className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-sky-200 text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-40 cursor-pointer">
+                      Pedir XML
+                    </button>
+                  )}
+                  {(d.xml_status === 'error' || d.xml_status === 'pending') && (
+                    <button onClick={() => acao(d, { action: 'refetch_xml' }, 'XML atualizado')} disabled={isBusy} title="Tentar baixar o XML de novo"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-refresh-line" /></button>
+                  )}
+                  <button onClick={() => abrirDanfe(d)} disabled={isBusy} title="Ver DANFE"
+                    className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-file-text-line" /></button>
+                  {d.status === 'new' && !cancelada && (
+                    <button onClick={() => setAberto(d)} disabled={isBusy}
+                      className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40 cursor-pointer">
+                      Conferir
+                    </button>
+                  )}
+                  {d.status === 'new' && (
+                    <button onClick={() => acao(d, { action: 'ignore', reason: cancelada ? 'Cancelada pelo fornecedor' : 'Ignorada na conferência' }, 'Nota ignorada')} disabled={isBusy} title="Ignorar (devolução, bonificação, remessa...)"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-eye-off-line" /></button>
+                  )}
+                  {d.status === 'ignored' && (
+                    <button onClick={() => acao(d, { action: 'unignore' }, 'Nota voltou para conferência')} disabled={isBusy}
+                      className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 cursor-pointer">Desfazer</button>
+                  )}
+                  {d.status === 'imported' && d.settlement === 'monthly' && podeLancar && (
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm('Desfazer o vínculo com os pagamentos do mês?\n\nAs baixas são estornadas, a compra (ou despesa) desta nota é excluída, os pagamentos voltam a pendentes na Conciliação e a nota volta para "A conferir".')) return;
+                        setBusy(d.id);
+                        const r = await callConc(tenantId, { action: 'unlink_monthly', document_id: d.id });
+                        setBusy(null);
+                        if (r.success) toastOk(r.message ?? 'Vínculo desfeito'); else toastErr('Não foi possível desfazer', r.error ?? '');
+                        await carregar();
+                      }}
+                      disabled={isBusy}
+                      title="Desfazer o vínculo com os pagamentos do mês"
+                      className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer">Desfazer</button>
+                  )}
+                  {d.status === 'imported' && d.auto_imported && !d.auto_import_ref && d.settlement !== 'monthly' && podeLancar && (
+                    <button
+                      onClick={() => {
+                        if (window.confirm('Desfazer o lançamento automático?\n\nA compra (ou a conta a pagar) desta nota é excluída e a nota volta para "A conferir". Ela não será relançada sozinha.')) {
+                          acao(d, { action: 'undo_auto_import' }, 'Lançamento desfeito: a nota voltou para conferência');
+                        }
+                      }}
+                      disabled={isBusy}
+                      title="Desfazer o lançamento automático"
+                      className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer">Desfazer</button>
+                  )}
+                </div>
+  );
+
   return (
     <div className="p-4 md:p-6 space-y-4">
       {/* Cabeçalho */}
@@ -251,7 +321,40 @@ export default function NotasEntradaTab() {
             {docs.length === 0 && <p className="text-xs text-zinc-400 mt-1">Clique em "Buscar notas agora". A SEFAZ guarda as notas dos últimos 90 dias.</p>}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Celular: cartão por nota (a tabela de 7 colunas não cabe em 375px) */}
+          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+            {filtrados.map((d) => {
+              const cancelada = d.sefaz_status === 2;
+              const proxima = (d.parcelas ?? []).find((p) => p.vencimento >= hoje()) ?? (d.parcelas ?? [])[0];
+              const isBusy = busy === d.id;
+              return (
+                <li key={d.id} className={`rounded-xl border bg-white px-3 py-3 ${cancelada ? 'border-red-200 bg-red-50/40' : d.status === 'new' ? 'border-amber-200' : 'border-zinc-200'}`}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] text-zinc-400 whitespace-nowrap">{dataBR(d.emitted_at)}</span>
+                    <span className="text-base font-bold text-zinc-900 whitespace-nowrap">{brl(d.valor_total)}</span>
+                  </div>
+                  <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{d.emitente_nome ?? '—'}</p>
+                  <p className="text-[11px] text-zinc-500">
+                    <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded mr-1 align-middle ${isServico(d) ? 'bg-sky-50 text-sky-700' : 'bg-zinc-100 text-zinc-600'}`}>{isServico(d) ? 'NFS-e' : 'NF-e'}</span>
+                    {d.numero ?? '—'}{d.serie ? `/${d.serie}` : ''} · {cnpjFmt(d.emitente_cnpj)}
+                  </p>
+                  {(d.parcelas ?? []).length > 0 && (
+                    <p className="text-[11px] text-zinc-500 mt-0.5">{(d.parcelas ?? []).length}× · próx. {dataBR(proxima?.vencimento)}</p>
+                  )}
+                  {d.error_message && d.status === 'new' && <p className="text-[11px] text-red-500 break-words line-clamp-2 mt-0.5">{d.error_message}</p>}
+                  <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                    {situacaoDaNota(d, cancelada)}
+                  </div>
+                  <div className="mt-2 flex items-center gap-1 flex-wrap [&_button]:h-9 [&_button]:min-w-9 [&_button]:justify-center">
+                    {acoesDaNota(d, isBusy, cancelada)}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-[11px] uppercase text-zinc-400 border-b border-zinc-100">
@@ -296,69 +399,11 @@ export default function NotasEntradaTab() {
                             </>}
                       </td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
-                        {cancelada ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Cancelada na SEFAZ</span>
-                          : d.status === 'imported' ? <><span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{d.import_type === 'purchase' ? 'Lançada como compra' : d.import_type === 'bonus' ? 'Lançada como bonificação' : 'Lançada como despesa'}</span>{d.auto_imported && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700" title={d.auto_import_ref
-                            ? 'Importada automaticamente pela conciliação bancária ao confirmar o pagamento.'
-                            : 'Lançada automaticamente: este fornecedor já tinha nota lançada antes, e esta entrou do mesmo jeito. Se estiver errada, use "Desfazer".'}>automática</span>}{d.settlement === 'monthly' && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700" title="Nota do mês: quitada pelos pagamentos do extrato">paga no mês · {(d.settlement_statement_ids ?? []).length} pagto(s)</span>}</>
-                          : d.status === 'ignored' ? <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500" title={d.ignore_reason ?? ''}>Ignorada</span>
-                          : <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">A conferir</span>}
+                        {situacaoDaNota(d, cancelada)}
                         {d.error_message && d.status === 'new' && <p className="text-[10px] text-red-500 truncate max-w-[200px]" title={d.error_message}>{d.error_message}</p>}
                       </td>
                       <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1">
-                          {d.xml_status === 'summary' && podeLancar && d.status === 'new' && (
-                            <button onClick={() => acao(d, { action: 'manifest', tipo: 2 }, 'Ciência registrada. O XML completo chega em alguns minutos.')} disabled={isBusy}
-                              title="Registra a ciência da operação na SEFAZ para liberar o XML com itens e boletos"
-                              className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-sky-200 text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-40 cursor-pointer">
-                              Pedir XML
-                            </button>
-                          )}
-                          {(d.xml_status === 'error' || d.xml_status === 'pending') && (
-                            <button onClick={() => acao(d, { action: 'refetch_xml' }, 'XML atualizado')} disabled={isBusy} title="Tentar baixar o XML de novo"
-                              className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-refresh-line" /></button>
-                          )}
-                          <button onClick={() => abrirDanfe(d)} disabled={isBusy} title="Ver DANFE"
-                            className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-file-text-line" /></button>
-                          {d.status === 'new' && !cancelada && (
-                            <button onClick={() => setAberto(d)} disabled={isBusy}
-                              className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40 cursor-pointer">
-                              Conferir
-                            </button>
-                          )}
-                          {d.status === 'new' && (
-                            <button onClick={() => acao(d, { action: 'ignore', reason: cancelada ? 'Cancelada pelo fornecedor' : 'Ignorada na conferência' }, 'Nota ignorada')} disabled={isBusy} title="Ignorar (devolução, bonificação, remessa...)"
-                              className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-eye-off-line" /></button>
-                          )}
-                          {d.status === 'ignored' && (
-                            <button onClick={() => acao(d, { action: 'unignore' }, 'Nota voltou para conferência')} disabled={isBusy}
-                              className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 cursor-pointer">Desfazer</button>
-                          )}
-                          {d.status === 'imported' && d.settlement === 'monthly' && podeLancar && (
-                            <button
-                              onClick={async () => {
-                                if (!window.confirm('Desfazer o vínculo com os pagamentos do mês?\n\nAs baixas são estornadas, a compra (ou despesa) desta nota é excluída, os pagamentos voltam a pendentes na Conciliação e a nota volta para "A conferir".')) return;
-                                setBusy(d.id);
-                                const r = await callConc(tenantId, { action: 'unlink_monthly', document_id: d.id });
-                                setBusy(null);
-                                if (r.success) toastOk(r.message ?? 'Vínculo desfeito'); else toastErr('Não foi possível desfazer', r.error ?? '');
-                                await carregar();
-                              }}
-                              disabled={isBusy}
-                              title="Desfazer o vínculo com os pagamentos do mês"
-                              className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer">Desfazer</button>
-                          )}
-                          {d.status === 'imported' && d.auto_imported && !d.auto_import_ref && d.settlement !== 'monthly' && podeLancar && (
-                            <button
-                              onClick={() => {
-                                if (window.confirm('Desfazer o lançamento automático?\n\nA compra (ou a conta a pagar) desta nota é excluída e a nota volta para "A conferir". Ela não será relançada sozinha.')) {
-                                  acao(d, { action: 'undo_auto_import' }, 'Lançamento desfeito: a nota voltou para conferência');
-                                }
-                              }}
-                              disabled={isBusy}
-                              title="Desfazer o lançamento automático"
-                              className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer">Desfazer</button>
-                          )}
-                        </div>
+                        {acoesDaNota(d, isBusy, cancelada)}
                       </td>
                     </tr>
                   );
@@ -366,6 +411,7 @@ export default function NotasEntradaTab() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
 

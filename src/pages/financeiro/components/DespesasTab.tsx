@@ -584,7 +584,50 @@ export default function DespesasTab() {
           VISUALIZAÇÃO: TABELA
          ═══════════════════════════════════════════════════════════════════════ */}
       {!loading && viewMode === 'tabela' && items.length > 0 && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+        <>
+          {/* Celular: cartão por lançamento (a tabela não cabe em 375px) */}
+          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+            {sortedItems.map(item => (
+              <li key={item.id}>
+                <div
+                  onClick={() => setDetalhesItem(item)}
+                  className="rounded-xl border border-zinc-200 bg-white px-3 py-3 active:bg-zinc-50 cursor-pointer"
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] text-zinc-400 whitespace-nowrap">
+                      {new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                    </span>
+                    <span className="text-base font-bold text-red-600 whitespace-nowrap">
+                      {formatCurrency(item.amount)}
+                    </span>
+                  </div>
+                  <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{item.description}</p>
+                  {item.supplier && <p className="text-xs text-zinc-400 break-words line-clamp-1">{item.supplier}</p>}
+                  {item.notes && <p className="text-xs text-zinc-400 mt-0.5 break-words line-clamp-1">{item.notes}</p>}
+                  <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                    <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-1 rounded-full font-medium">{item.category}</span>
+                    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${STATUS_COLORS[item.status]}`}>
+                      {STATUS_LABELS[item.status]}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: SOURCE_COLORS[item.source] }} />
+                      <span className="text-xs text-zinc-500">{SOURCE_LABELS[item.source]}</span>
+                    </div>
+                    <span className="flex-1" />
+                    <button
+                      onClick={e => { e.stopPropagation(); setDetalhesItem(item); }}
+                      title="Ver detalhes"
+                      className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors"
+                    >
+                      <i className="ri-eye-line text-sm" />
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+        <div className="hidden md:block bg-white rounded-xl border border-zinc-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -656,6 +699,7 @@ export default function DespesasTab() {
             </table>
           </div>
         </div>
+        </>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════

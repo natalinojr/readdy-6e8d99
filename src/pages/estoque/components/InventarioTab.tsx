@@ -84,7 +84,39 @@ function DetalheSession({ session, onVoltar }: { session: InventarioSession; onV
           <p className="text-xs font-bold text-zinc-700">Todos os Insumos Contados</p>
           <span className="text-[10px] text-zinc-400">{session.itens.length} insumos</span>
         </div>
-        <div className="overflow-x-auto">
+        {/* Celular: cartão por insumo (a tabela não cabe em 375px) */}
+        <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+          {session.itens.map((item) => (
+            <li key={item.insumoId}>
+              <div className={`rounded-xl border bg-white px-3 py-3 ${item.diferenca !== 0 ? 'border-amber-200 bg-amber-50/40' : 'border-zinc-200'}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{item.insumoNome}</p>
+                  {item.diferenca !== 0 && (
+                    <span className="text-[9px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
+                      divergência
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-baseline justify-between gap-2 mt-1.5">
+                  <span className="text-xs text-zinc-500">Teórico: {item.qtdTeorica} {item.unidade}</span>
+                  <span className="text-sm font-semibold text-zinc-800">Contado: {item.qtdContada} {item.unidade}</span>
+                </div>
+                {item.diferenca !== 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${item.diferenca > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
+                      {item.diferenca > 0 ? '+' : ''}{item.diferenca} {item.unidade}
+                    </span>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${item.diferenca * item.precoUnitario < 0 ? 'bg-red-50 text-red-500' : 'bg-emerald-50 text-emerald-600'}`}>
+                      {item.diferenca * item.precoUnitario >= 0 ? '+' : ''}{fmt(item.diferenca * item.precoUnitario)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs" style={{ minWidth: '420px' }}>
             <thead className="bg-zinc-50 border-b border-zinc-100">
               <tr>

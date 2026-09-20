@@ -78,7 +78,9 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const [editBlockedMessage, setEditBlockedMessage] = useState<string | null>(null);
   const [ingredients, setIngredients] = useState<{ id: string; name: string; unit: string; purchase_unit?: string | null; purchase_factor?: number | null }[]>([]);
   const [flashId, setFlashId] = useState<string | undefined>(highlightId);
-  const highlightRowRef = useRef<HTMLTableRowElement | null>(null);
+  // HTMLElement (não HTMLTableRowElement): o mesmo ref serve pro <tr> do
+  // desktop e pro <li> do cartão mobile.
+  const highlightRowRef = useRef<HTMLElement | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   // Quando recebe um highlightId, ativa o flash e rola até a linha
@@ -578,7 +580,93 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
 
           {/* Tabela */}
           <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-          <div className="overflow-x-auto">
+
+          {/* Celular: cartão por compra (a tabela não cabe em 375px) */}
+          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+            {loading ? (
+              <li className="text-center py-10 text-zinc-400 text-sm">Carregando...</li>
+            ) : paginated.length === 0 ? (
+              <li className="py-14 text-center">
+                <i className="ri-shopping-cart-2-line text-4xl text-zinc-200 block mb-2" />
+                <p className="text-zinc-400 text-sm">Nenhuma compra encontrada</p>
+                {(search || activeFiltersCount > 0) && (
+                  <button onClick={clearFilters} className="text-xs text-amber-600 mt-1 cursor-pointer hover:underline">Limpar filtros</button>
+                )}
+              </li>
+            ) : paginated.map((p) => (
+              <li key={p.id} ref={flashId === p.id ? (el) => { highlightRowRef.current = el; } : undefined}>
+                <div
+                  onClick={() => openDetail(p)}
+                  className={`rounded-xl border bg-white px-3 py-3 active:bg-zinc-50 cursor-pointer ${flashId === p.id ? 'animate-pulse bg-amber-50 ring-2 ring-inset ring-amber-400' : 'border-zinc-200'}`}
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] text-zinc-400 whitespace-nowrap">
+                      {new Date(p.purchase_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                    </span>
+                    <span className="text-base font-bold text-red-600 whitespace-nowrap">{formatCurrency(p.total_amount)}</span>
+                  </div>
+                  <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{p.supplier}</p>
+                  {p.notes && <p className="text-xs text-zinc-400 break-words line-clamp-1">{p.notes}</p>}
+                  <p className="text-xs text-zinc-400 mt-0.5">NF {p.invoice_number || '—'} · {p.payment_method}</p>
+
+                  <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${STATUS_BADGE[p.payment_status] ?? 'bg-zinc-100 text-zinc-600'}`}>
+                      {STATUS_LABEL[p.payment_status] ?? p.payment_status}
+                    </span>
+                    {p.delivery_confirmed_at ? (
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 flex items-center gap-1">
+                        <i className="ri-truck-line text-xs" /> Recebido
+                      </span>
+                    ) : (
+                      <span className="text-xs text-zinc-400 flex items-center gap-1">
+                        <i className="ri-time-line text-xs" /> Aguard. recebimento
+                      </span>
+                    )}
+                    <button
+                      onClick={e => { e.stopPropagation(); toggleExpandRow(p.id); }}
+                      className="text-xs bg-zinc-100 hover:bg-amber-50 text-zinc-600 hover:text-amber-700 px-2 py-0.5 rounded-full cursor-pointer transition-colors flex items-center gap-1"
+                    >
+                      {p.items?.length ?? 0} item{(p.items?.length ?? 0) !== 1 ? 's' : ''}
+                      <i className={expandedRows.has(p.id) ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+                    </button>
+                    <span className="flex-1" />
+                    <span onClick={e => e.stopPropagation()} className="flex items-center gap-1">
+                      <button
+                        onClick={() => openEdit(p)}
+                        disabled={checkingEdit === p.id}
+                        className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-amber-50 text-zinc-400 hover:text-amber-600 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-wait"
+                        title="Editar compra"
+                      >
+                        {checkingEdit === p.id
+                          ? <i className="ri-loader-4-line animate-spin text-sm" />
+                          : <i className="ri-pencil-line text-sm" />}
+                      </button>
+                      <button
+                        onClick={() => { setDetailPurchase(p); setDetailInstallments([]); }}
+                        className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer transition-colors"
+                        title="Excluir compra"
+                      >
+                        <i className="ri-delete-bin-line text-sm" />
+                      </button>
+                    </span>
+                  </div>
+
+                  {expandedRows.has(p.id) && p.items && p.items.length > 0 && (
+                    <div onClick={e => e.stopPropagation()} className="mt-2 pt-2 border-t border-zinc-100 space-y-1">
+                      {p.items.map((item, idx) => (
+                        <div key={idx} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-zinc-600 truncate">{item.description || '—'} <span className="text-zinc-400">({item.quantity} {item.unit_label})</span></span>
+                          <span className="font-semibold text-zinc-700 whitespace-nowrap">{formatCurrency(item.total_price ?? 0)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm min-w-[600px]">
               <thead className="bg-zinc-50 border-b border-zinc-200">
                 <tr>
@@ -625,7 +713,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                   <>
                   <tr
                     key={p.id}
-                    ref={flashId === p.id ? highlightRowRef : null}
+                    ref={flashId === p.id ? (el) => { highlightRowRef.current = el; } : undefined}
                     className={`hover:bg-zinc-50 transition-colors ${flashId === p.id ? 'animate-pulse bg-amber-50 ring-2 ring-inset ring-amber-400' : ''}`}
                   >
                     <td className="px-4 py-3 text-zinc-600 text-sm">

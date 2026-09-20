@@ -260,7 +260,70 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
       </div>
 
       {/* Tabela de contagem */}
-      <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
+      {/* Celular: cartão por insumo, com input grande para digitar andando pelo estoque */}
+      <ul className="md:hidden space-y-2">
+        {insumosFiltrados.map((insumo) => {
+          const rawVal = contagens[insumo.id] ?? '';
+          const contado = rawVal === '' ? NaN : parseFloat(rawVal);
+          const diff = isNaN(contado) ? 0 : parseFloat((contado - insumo.estoqueAtual).toFixed(4));
+          const temDiff = !isNaN(contado) && contado !== insumo.estoqueAtual;
+          const impacto = temDiff ? diff * insumo.precoUnitario : 0;
+
+          return (
+            <li key={insumo.id}>
+              <div className={`rounded-xl border bg-white px-3 py-3 ${temDiff ? 'border-amber-300 bg-amber-50/30' : 'border-zinc-200'}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{insumo.nome}</p>
+                    <p className="text-xs text-zinc-400">{insumo.fornecedor}</p>
+                  </div>
+                  <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-full text-[10px] font-medium whitespace-nowrap flex-shrink-0">
+                    {insumo.categoria}
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-500 mt-1.5">Sistema (teórico): <span className="font-semibold text-zinc-600">{insumo.estoqueAtual} {insumo.unidade}</span></p>
+                <div className="mt-2">
+                  <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Contagem real</label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="0.001"
+                      value={rawVal}
+                      onChange={(e) => handleChange(insumo.id, e.target.value)}
+                      className={`h-11 text-base w-full text-right border rounded-lg px-3 focus:outline-none transition-colors ${
+                        temDiff
+                          ? 'border-amber-400 bg-amber-50 text-zinc-800 focus:border-amber-500'
+                          : 'border-zinc-200 bg-white text-zinc-700 focus:border-amber-400'
+                      }`}
+                    />
+                    <span className="text-zinc-400 text-xs flex-shrink-0">{insumo.unidade}</span>
+                  </div>
+                </div>
+                {temDiff && (
+                  <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${diff > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
+                      {diff > 0 ? '+' : ''}{diff} {insumo.unidade}
+                    </span>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${impacto > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
+                      {impacto >= 0 ? '+' : ''}{fmt(impacto)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+        {insumosFiltrados.length === 0 && (
+          <div className="text-center py-8">
+            <i className="ri-search-line text-2xl text-zinc-300 block mb-1" />
+            <p className="text-xs text-zinc-400">Nenhum insumo neste filtro</p>
+          </div>
+        )}
+      </ul>
+
+      <div className="hidden md:block bg-white border border-zinc-100 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-zinc-50 border-b border-zinc-100">

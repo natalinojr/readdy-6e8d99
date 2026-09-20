@@ -449,8 +449,54 @@ export default function ContasVencidasPanel() {
             </span>
           </div>
 
+          {/* Celular: cartão por conta (a tabela com 7 colunas não cabe em 375px) */}
+          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+            {filtered.length === 0 ? (
+              <li className="text-center py-10 text-zinc-400 text-sm">Nenhuma conta encontrada com os filtros selecionados</li>
+            ) : filtered.map(c => {
+              const colors = ageColor(c.days_overdue);
+              return (
+                <li key={c.id} className={`rounded-xl border bg-white px-3 py-3 ${colors.border}`}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] text-zinc-400 whitespace-nowrap">
+                      {new Date(c.due_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                    </span>
+                    <span className="text-base font-bold text-red-600 whitespace-nowrap">{formatCurrency(c.amount)}</span>
+                  </div>
+                  <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{c.description}</p>
+                  {c.supplier && <p className="text-xs text-zinc-400 break-words line-clamp-1">{c.supplier}</p>}
+                  <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${colors.badge}`}>
+                      {c.days_overdue === 0 ? 'Hoje' : `${c.days_overdue}d`}
+                    </span>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.status === 'overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {c.status === 'overdue' ? 'Vencido' : 'Pendente'}
+                    </span>
+                    {c.dre_category_name ? (
+                      <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full break-words">{c.dre_category_name}</span>
+                    ) : (
+                      <span className="text-xs bg-amber-50 text-amber-500 px-2 py-0.5 rounded-full border border-amber-200">Sem categoria</span>
+                    )}
+                    <span className="flex-1" />
+                    <button
+                      onClick={() => {
+                        setPayModal(c);
+                        setPayError(null);
+                        setPayForm(f => ({ ...f, paid_amount: String(saldoDevedor(c)), paid_date: today }));
+                      }}
+                      disabled={payingId === c.id}
+                      className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-3 h-9 rounded-lg cursor-pointer active:bg-green-200 whitespace-nowrap font-semibold transition-colors disabled:opacity-50"
+                    >
+                      <i className="ri-check-line" /> Pagar
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
           {/* Tabela */}
-          <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="hidden md:block bg-white rounded-2xl border border-zinc-200 overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-zinc-950 text-white">
                 <tr>
