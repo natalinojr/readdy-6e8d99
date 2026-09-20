@@ -427,24 +427,25 @@ async function freteDeOutroTomador(admin: SupabaseClient, content: string): Prom
 }
 
 // deno-lint-ignore no-explicit-any
-async function recebimentoPorNota(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string }, nota: { id: string; tenant_id: string }) {
-  const { data: req, error } = await admin.from('asst_group_requests').insert({
+async function recebimentoPorNota(admin: SupabaseClient, cfg: Record<string, any>, g: any | null, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string }, nota: { id: string; tenant_id: string }) {
+  // Sem grupo (nota que o dono encaminhou no WhatsApp): não existe pedido de grupo para registrar.
+  const { data: req, error } = g ? await admin.from('asst_group_requests').insert({
     message_id: msg.messageId, group_jid: g.group_jid, group_name: g.name, sender_name: msg.sender,
     kind: 'compra', status: 'novo', data: { texto: msg.content, extraido: msg.extracted, sent_at: msg.sentAt, nota_entrada_id: nota.id },
-  }).select('id').maybeSingle();
-  if (error || !req) { if (error && !/duplicate|unique/i.test(error.message)) log('WARN', 'gravar recebimento', { error: error.message }); return; }
+  }).select('id').maybeSingle() : { data: null, error: null };
+  if (g && (error || !req)) { if (error && !/duplicate|unique/i.test(error.message)) log('WARN', 'gravar recebimento', { error: error.message }); return; }
   // deno-lint-ignore no-explicit-any
   let r: any = null;
   try {
     const resp = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-      body: JSON.stringify({ action: 'recebimento_nota', document_id: nota.id, origem: `foto da nota no grupo ${g.name ?? ''}`.trim() }),
+      body: JSON.stringify({ action: 'recebimento_nota', document_id: nota.id, origem: g ? `foto da nota no grupo ${g.name ?? ''}`.trim() : 'nota encaminhada pelo dono no WhatsApp' }),
     });
     r = await resp.json().catch(() => null);
   } catch (e) { r = { ok: false, erro: errMsg(e) }; }
   const brlN = (n: unknown) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const venc = (Array.isArray(r?.parcelas) ? r.parcelas : []).map((p: { vencimento?: string; valor?: number }) => `${String(p.vencimento ?? '').split('-').reverse().join('/')} (${brlN(p.valor)})`).join(', ');
-  const cab = `📦 *Recebimento — ${r?.fornecedor ?? 'nota'}* (NF ${r?.numero ?? '?'}, ${brlN(r?.total)}) — ${msg.sender ?? 'loja'} no grupo ${g.name ?? ''}`;
+  const cab = `📦 *Recebimento — ${r?.fornecedor ?? 'nota'}* (NF ${r?.numero ?? '?'}, ${brlN(r?.total)}) — ${g ? `${msg.sender ?? 'loja'} no grupo ${g.name ?? ''}` : 'nota que você encaminhou'}`;
   const linhas: string[] = [cab];
   if (!r?.ok) linhas.push(`⚠️ Não consegui lançar pela nota: ${r?.erro ?? 'erro'}. Lance em Notas de entrada.`);
   else if (r.despesa) linhas.push('A nota já estava lançada como despesa.');
@@ -454,7 +455,7 @@ async function recebimentoPorNota(admin: SupabaseClient, cfg: Record<string, any
     if (r.sem_insumo?.length) linhas.push(`Sem insumo ligado (não entram no estoque): ${r.sem_insumo.slice(0, 6).join('; ')}${r.sem_insumo.length > 6 ? '…' : ''}`);
     if (venc) linhas.push(`Boleto em Contas a pagar: ${venc}.`);
   }
-  await admin.from('asst_group_requests').update({ status: r?.ok ? 'lancado' : 'erro', reply: linhas.join('\n').slice(0, 2000), updated_at: new Date().toISOString() }).eq('id', req.id);
+  if (req) await admin.from('asst_group_requests').update({ status: r?.ok ? 'lancado' : 'erro', reply: linhas.join('\n').slice(0, 2000), updated_at: new Date().toISOString() }).eq('id', req.id);
   const ownerChat = ownerChatOf(cfg);
   if (ownerChat?.startsWith('tg:')) {
     await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
@@ -463,7 +464,83 @@ async function recebimentoPorNota(admin: SupabaseClient, cfg: Record<string, any
         actions: [{ type: 'abrir', label: 'Ver a compra', rota: '/financeiro?tab=compras' }] }),
     }).catch((e) => log('WARN', 'aviso de recebimento', { error: errMsg(e) }));
   }
-  log('INFO', 'recebimento pela nota', { group: g.name, doc: nota.id, ok: !!r?.ok, lancou: r?.lancou, confirmou: r?.confirmou });
+  log('INFO', 'recebimento pela nota', { group: g?.name ?? 'encaminhada', doc: nota.id, ok: !!r?.ok, lancou: r?.lancou, confirmou: r?.confirmou });
+}
+
+// ── Nota encaminhada pelo dono no WhatsApp (2026-09-20) ─────────────────────
+// O assistente só lê o grupo do financeiro desde que entrou nele: as notas anteriores ficaram de fora.
+// Agora o dono escreve "compras" (abre 1 h de recebimento, igual aos currículos) e vai encaminhando as
+// fotos/PDFs; cada arquivo entra pelo MESMO caminho do grupo — nota que já está em Notas de entrada vira
+// RECEBIMENTO (compra pelo XML, estoque), cupom/nota lida vira ENTRADA DE COMPRA. "pronto" encerra.
+const COMPRA_ABRE = /^(compras?|notas?( de compra| fiscais| fiscal)?|vou (te )?mandar (as )?(notas?|compras?|cupons?))[\s!.,]*$/i;
+const COMPRA_LEGENDA = /\b(compra|nota|cupom|nfe|nf-e)\b/i;
+
+async function compraIntake(admin: SupabaseClient): Promise<{ until: string; count: number } | null> {
+  const { data } = await admin.from('asst_settings').select('value').eq('key', 'wa_compra_intake').maybeSingle();
+  // deno-lint-ignore no-explicit-any
+  const v: any = data?.value;
+  return v?.until && new Date(v.until).getTime() > Date.now() ? { until: String(v.until), count: Number(v.count ?? 0) } : null;
+}
+async function compraIntakeSet(admin: SupabaseClient, count: number) {
+  await admin.from('asst_settings').upsert({
+    key: 'wa_compra_intake', value: { until: new Date(Date.now() + 60 * 60_000).toISOString(), count },
+    updated_at: new Date().toISOString(),
+  });
+}
+
+// deno-lint-ignore no-explicit-any
+async function notaEncaminhada(admin: SupabaseClient, cfg: Record<string, any>, replyTo: string, msgKey: MsgKey | null, data: any, p: Parsed): Promise<boolean> {
+  if (msgKey) react(msgKey, '👀');
+  const mime = String(p.mime ?? (p.kind === 'image' ? 'image/jpeg' : '')).split(';')[0].toLowerCase();
+  if (!DOC_READABLE(mime)) { await sendText(replyTo, 'Esse arquivo eu não consigo ler. Manda foto ou PDF da nota.').catch(() => {}); return true; }
+  const b64 = await mediaBase64(data).catch(() => null);
+  if (!b64) { await sendText(replyTo, 'Não consegui baixar o arquivo. Manda de novo?').catch(() => {}); return true; }
+  const legenda = String(p.text ?? '').trim();
+  // deno-lint-ignore no-explicit-any
+  let extracted: any = null;
+  try {
+    extracted = await lerMidia(b64, mime, legenda, 'Nota/cupom de compra que o DONO encaminhou no WhatsApp (compra antiga, fora do grupo).', 'dono:compras');
+  } catch (e) { log('WARN', 'ler nota encaminhada', { error: errMsg(e) }); }
+  if (!extracted) { await sendText(replyTo, 'Não consegui ler essa imagem. Tenta uma foto mais nítida ou o PDF.').catch(() => {}); return true; }
+  const content = [`[Nota encaminhada por você]${legenda ? ` ${legenda}` : ''}`, String(extracted.resumo ?? '').trim(), String(extracted.texto ?? '').trim()].filter(Boolean).join('\n');
+  const ownerChat = ownerChatOf(cfg);
+
+  // 1) Já está em Notas de entrada (XML da SEFAZ): recebimento + compra pelo XML, como a foto no grupo.
+  const nota = await notaDaFoto(admin, content, extracted).catch((e) => { log('WARN', 'procurar nota encaminhada', { error: errMsg(e) }); return null; });
+  if (nota) {
+    await recebimentoPorNota(admin, cfg, null, { messageId: msgKey?.id ?? null, sender: 'você', content, extracted, sentAt: new Date().toISOString() }, nota);
+    await sendText(replyTo, 'Achei essa nota nas Notas de entrada: lancei a compra pelo XML e confirmei o recebimento. O detalhe está no chat.').catch(() => {});
+    if (msgKey) react(msgKey, '✅');
+    return true;
+  }
+
+  // 2) Cupom/nota lida com itens: entrada de compra (mesmas regras do grupo).
+  const temItens = ['nota_fiscal', 'cupom', 'pedido'].includes(String(extracted.tipo_documento ?? '')) && Array.isArray(extracted.itens) && extracted.itens.length > 0;
+  if (!temItens) {
+    await sendText(replyTo, 'Isso não parece nota ou cupom de compra — não lancei nada. Se for pagamento, me fala o que é.').catch(() => {});
+    return true;
+  }
+  const prompt = [
+    '[Sistema] Nota/cupom de compra que o DONO encaminhou no WhatsApp (compra ANTIGA, que não passou pelo grupo).',
+    `<nota_encaminhada quando="${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}">`,
+    content.replace(/<\/?nota_encaminhada[^>]*>/gi, '').slice(0, 3000),
+    '</nota_encaminhada>',
+    `Leitura automática do arquivo: ${JSON.stringify(extracted).slice(0, 12000)}`,
+    'Siga as regras de ENTRADA DE COMPRA PELO GRUPO. Use a DATA DA NOTA (não a de hoje).',
+  ].join('\n');
+  try {
+    const out = await brainCall({ text: prompt, chat_id: ownerChat ?? '', channel: ownerChat?.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: 'entrada_compra_grupo' });
+    const reply = String(out?.reply ?? '').trim();
+    if (ownerChat && reply && reply !== 'NO_REPLY') {
+      await avisarDono(admin, ownerChat, reply, Array.isArray(out?.actions) ? out.actions : [], { save: true, topic: 'compras' }).catch((e) => log('WARN', 'avisar dono da nota encaminhada', { error: errMsg(e) }));
+    }
+    await sendText(replyTo, reply && reply !== 'NO_REPLY' ? reply.slice(0, 900) : 'Recebi a nota, mas não consegui lançar sozinho. Dá uma olhada em Compras.').catch(() => {});
+    if (msgKey) react(msgKey, '✅');
+  } catch (e) {
+    log('ERROR', 'lançar nota encaminhada', { error: errMsg(e) });
+    await sendText(replyTo, 'Deu erro para lançar essa nota. Tenta de novo daqui a pouco.').catch(() => {});
+  }
+  return true;
 }
 
 // Triagem: mensagem de grupo que parece pedido de pagamento → brain (modo
@@ -1382,6 +1459,25 @@ async function handle(payload: any) {
       const n = Number(janela.count ?? 0);
       await sendText(replyTo, n ? `Fechado: ${n} currículo${n > 1 ? 's' : ''} salvo${n > 1 ? 's' : ''} em Contratação.` : 'Fechado. Não chegou nenhum currículo.').catch(() => {});
       if (msgKey) react(msgKey, '👍');
+      return;
+    }
+    // Notas antigas que o dono encaminha ("compras" abre 1 h; "pronto" encerra) — 2026-09-20.
+    const janelaCompra = await compraIntake(admin);
+    if (p0.kind === 'text' && janelaCompra && /^(pronto|acabou|terminei|fim|encerrar|encerra|chega|s[oó] isso|era isso|finaliza[r]?)\b/i.test(txt0)) {
+      await admin.from('asst_settings').delete().eq('key', 'wa_compra_intake');
+      await sendText(replyTo, janelaCompra.count ? `Fechado: ${janelaCompra.count} nota${janelaCompra.count > 1 ? 's' : ''} lançada${janelaCompra.count > 1 ? 's' : ''}.` : 'Fechado. Não chegou nenhuma nota.').catch(() => {});
+      if (msgKey) react(msgKey, '👍');
+      return;
+    }
+    if (p0.kind === 'text' && COMPRA_ABRE.test(txt0)) {
+      await compraIntakeSet(admin, janelaCompra?.count ?? 0);
+      await sendText(replyTo, 'Pode mandar as notas (foto ou PDF), uma de cada vez. Eu lanço a compra e confirmo o recebimento. Quando terminar, manda "pronto".').catch(() => {});
+      if (msgKey) react(msgKey, '👍');
+      return;
+    }
+    if (arquivo && (janelaCompra || COMPRA_LEGENDA.test(txt0))) {
+      await notaEncaminhada(admin, cfg, replyTo, msgKey, data, p0);
+      if (janelaCompra) await compraIntakeSet(admin, janelaCompra.count + 1);
       return;
     }
     if (p0.kind === 'text' && falaDeCv && txt0.length < 250) {

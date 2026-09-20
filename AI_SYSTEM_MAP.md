@@ -2591,6 +2591,17 @@ mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a co
 `''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
 de não lidas (`linhaConversa`).
 
+### Nota antiga encaminhada pelo dono no WhatsApp (2026-09-20)
+
+O grupo do financeiro só é lido desde que o assistente entrou nele; notas anteriores ficavam de fora.
+Na DM do dono (com `channels.whatsapp_dm=false`, que repassa tudo para o Telegram) existe agora uma
+janela igual à de currículos: "compras" (ou "notas") abre 1 h (`asst_settings.wa_compra_intake`),
+"pronto" encerra, e legenda com compra/nota/cupom dispensa a janela. Cada foto/PDF passa por
+`notaEncaminhada` (assistente-webhook): `lerMidia` → se a chave/número bate com `fiscal_inbound_documents`
+vai para `recebimentoPorNota` (agora aceita grupo nulo: lança a compra pelo XML e confirma o
+recebimento); senão, cupom/nota com itens vai ao brain no modo `entrada_compra_grupo` com a instrução
+de usar a DATA DA NOTA. Sem itens, não lança nada e avisa.
+
 ### Fechamento: uma mensagem do CAIXA e uma da SESSÃO (2026-09-20)
 
 No chat do ERPOS essas duas mensagens aparecem como PAINEL: o `assistente-cron` grava o texto (que é o
