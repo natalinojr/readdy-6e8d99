@@ -16,6 +16,7 @@ import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 import InterConfigModal from './conciliacao/InterConfigModal';
 import InterSyncPanel from './conciliacao/InterSyncPanel';
 import InicioFinanceiroModal from './conciliacao/InicioFinanceiroModal';
+import ConfirmModal from '@/components/base/ConfirmModal';
 import ComoDinheiroEntraModal from './conciliacao/ComoDinheiroEntraModal';
 import RepassesStoneModal from './conciliacao/RepassesStoneModal';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
@@ -932,23 +933,67 @@ export default function ConciliacaoTab() {
   const todosSelLanc = elegiveisPagina.length > 0 && elegiveisPagina.every(s => selLanc.has(s.id));
   const totalSelLanc = imports.filter(i => selLanc.has(i.id)).reduce((s, i) => s + Number(i.amount), 0);
   const toggleLanc = (id: string) => setSelLanc(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  // Competência do lote (2026-09-20): como no "Lançar" de um pagamento só — mês do pagamento ou o
+  // anterior. Cada pagamento tem a sua data, então os ids vão em grupos, um por competência.
+  const [lancComp, setLancComp] = useState<'same' | 'prev'>('same');
+  const [lancRegra, setLancRegra] = useState(false);
+  const [confirmarLote, setConfirmarLote] = useState(false);
+  const selecionados = imports.filter(i => selLanc.has(i.id));
+  // "Fazer sempre assim" só faz sentido se todos forem para o mesmo CNPJ/chave
+  const docDoLote = (() => {
+    if (selecionados.length === 0 || !selecionados.every(i => i.counterpart_doc)) return null;
+    const docs = new Set(selecionados.map(i => String(i.counterpart_doc)));
+    return docs.size === 1 ? [...docs][0] : null;
+  })();
+  const mesDe = (iso: string) => {
+    const [y, m] = iso.slice(0, 7).split('-').map(Number);
+    if (lancComp === 'same') return `${y}-${String(m).padStart(2, '0')}`;
+    return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+  };
+
   const lancarSelecionados = async () => {
     if (!user?.tenantId || selLanc.size === 0) return;
     if (lancTipo === 'despesa' && !lancCat) { showToast('Escolha a categoria da despesa', 'error'); return; }
+    setConfirmarLote(false);
     const oque = lancTipo === 'compra' ? 'compra (CMV)' : 'despesa';
-    if (!window.confirm(`Lançar ${selLanc.size} pagamento(s) como ${oque} já paga, na data de cada um? A descrição de cada lançamento será o nome de quem recebeu.`)) return;
     setLancando(true);
-    const { results, error } = await lancarDoExtrato(user.tenantId, [...selLanc], {
-      kind: lancTipo,
-      dre_category_id: lancTipo === 'despesa' ? lancCat : null,
-      merchandise_category_id: lancTipo === 'compra' ? lancCat || null : null,
+    // um grupo por competência (a data de cada pagamento manda)
+    const grupos = new Map<string, string[]>();
+    selecionados.forEach(i => {
+      const mes = mesDe(i.transaction_date);
+      grupos.set(mes, [...(grupos.get(mes) ?? []), i.id]);
     });
+    let ok = 0; const falhas: Array<{ msg: string }> = []; let erro: string | null = null;
+    for (const [mes, ids] of grupos) {
+      const r = await lancarDoExtrato(user.tenantId, ids, {
+        kind: lancTipo,
+        dre_category_id: lancTipo === 'despesa' ? lancCat : null,
+        merchandise_category_id: lancTipo === 'compra' ? lancCat || null : null,
+        competence_month: mes,
+      });
+      ok += r.results.filter(x => x.ok).length;
+      falhas.push(...r.results.filter(x => !x.ok));
+      if (r.error) { erro = r.error; break; }
+    }
+    // "Fazer sempre assim": cria a regra de lançamento para o CNPJ do lote
+    if (!erro && lancRegra && docDoLote) {
+      const quem = selecionados[0]?.counterpart_name ?? null;
+      const rr = await invokeWithAuth<{ error?: string }>('conciliacao-pagamentos', {
+        body: {
+          action: 'launch_rule_save', tenant_id: user.tenantId, counterpart_doc: docDoLote, counterpart_label: quem,
+          kind: lancTipo, dre_category_id: lancTipo === 'despesa' ? lancCat : null,
+          merchandise_category_id: lancTipo === 'compra' ? lancCat || null : null,
+          competence_rule: lancComp, supplier_name: quem,
+        },
+      });
+      const e = rr.data?.error ?? rr.error?.message;
+      if (e) showToast('Lançado, mas a regra não foi salva: ' + e, 'error');
+    }
     setLancando(false);
-    const ok = results.filter(r => r.ok).length;
-    const falhas = results.filter(r => !r.ok);
-    if (error) showToast(ok > 0 ? `${ok} lançado(s) antes do erro: ${error}` : error, 'error');
+    if (erro) showToast(ok > 0 ? `${ok} lançado(s) antes do erro: ${erro}` : erro, 'error');
     else showToast(`${ok} pagamento(s) lançado(s) como ${oque}` + (falhas.length ? ` · ${falhas.length} não: ${falhas[0].msg}` : ''), falhas.length ? 'error' : 'success');
     setSelLanc(new Set());
+    setLancRegra(false);
     refresh();
     loadAlerts();
   };
@@ -977,12 +1022,12 @@ export default function ConciliacaoTab() {
             <p className="text-xs text-zinc-500 mt-0.5">Extrato do banco × lançamentos do sistema</p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
           {bankAccounts.length > 1 && (
             <select
               value={selectedAccountId}
               onChange={e => { setSelectedAccountId(e.target.value); setPage(1); }}
-              className="border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white max-w-[12rem]"
+              className="flex-1 sm:flex-none min-w-0 border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white sm:max-w-[12rem]"
             >
               {bankAccounts.map(a => (
                 <option key={a.id} value={a.id}>{a.name}</option>
@@ -994,7 +1039,7 @@ export default function ConciliacaoTab() {
             <button
               onClick={() => setShowRepassesStone('repasses')}
               title="Quanto a Stone liquidou × quanto entrou no banco, e as taxas cobradas × contratadas"
-              className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-700 rounded-lg text-sm font-semibold hover:bg-zinc-50 transition-colors cursor-pointer whitespace-nowrap"
+              className="flex-1 sm:flex-none justify-center flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-700 rounded-lg text-sm font-semibold hover:bg-zinc-50 transition-colors cursor-pointer whitespace-nowrap"
             >
               <i className="ri-bank-card-line text-amber-500" />
               Repasses Stone
@@ -1248,24 +1293,69 @@ export default function ConciliacaoTab() {
 
       {/* Lançar em lote os pagamentos sem nota selecionados */}
       {selLanc.size > 0 && (
-        <div className="sticky top-0 z-10 bg-zinc-900 text-white rounded-xl p-3 flex flex-wrap items-center gap-2 text-xs">
-          <span className="font-semibold">{selLanc.size} pagamento(s) sem nota · {fmtCur(totalSelLanc)}</span>
-          <div className="flex bg-zinc-800 rounded-lg overflow-hidden">
-            {([['despesa', 'Despesa'], ['compra', 'Compra (CMV)']] as const).map(([k, label]) => (
+        <div className="sticky top-0 z-20 bg-white border border-violet-200 shadow-lg shadow-violet-100/50 rounded-2xl p-3 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-bold text-zinc-800">
+              <i className="ri-add-circle-line text-violet-600 mr-1" />
+              {selLanc.size} pagamento{selLanc.size > 1 ? 's' : ''} sem nota
+              <span className="ml-1 text-violet-700">· {fmtCur(totalSelLanc)}</span>
+            </p>
+            <button onClick={() => setSelLanc(new Set())} className="text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer whitespace-nowrap">Limpar</button>
+          </div>
+
+          <div className="flex bg-zinc-100 rounded-lg p-0.5 w-full sm:w-fit">
+            {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line']] as const).map(([k, label, icon]) => (
               <button key={k} onClick={() => { setLancTipo(k); setLancCat(''); }}
-                className={`px-3 py-1.5 font-semibold cursor-pointer ${lancTipo === k ? 'bg-violet-500 text-white' : 'text-zinc-300 hover:text-white'}`}>
-                {label}
+                className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold cursor-pointer transition-colors ${lancTipo === k ? 'bg-violet-600 text-white' : 'text-zinc-600 hover:text-zinc-900'}`}>
+                <i className={icon} /> {label}
               </button>
             ))}
           </div>
-          <CategoriaCombobox value={lancCat} options={lancTipo === 'despesa' ? dreOptions : mercOptions} onChange={setLancCat}
-            placeholder={lancTipo === 'despesa' ? 'Categoria da despesa…' : 'Categoria do CMV…'}
-            buttonClassName="bg-white text-zinc-900 rounded-lg px-2 py-1.5 w-[220px] cursor-pointer" />
-          <button disabled={lancando || (lancTipo === 'despesa' && !lancCat)} onClick={lancarSelecionados}
-            className="px-3 py-1.5 rounded-lg bg-violet-500 font-semibold hover:bg-violet-600 disabled:opacity-50 cursor-pointer">
-            {lancando ? 'Lançando...' : 'Lançar já pago'}
-          </button>
-          <button onClick={() => setSelLanc(new Set())} className="ml-auto text-zinc-400 hover:text-white cursor-pointer">Limpar seleção</button>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-medium text-zinc-500 mb-1">{lancTipo === 'despesa' ? 'Categoria da DRE *' : 'Categoria do CMV'}</label>
+              <CategoriaCombobox value={lancCat} options={lancTipo === 'despesa' ? dreOptions : mercOptions} onChange={setLancCat}
+                placeholder={lancTipo === 'despesa' ? 'Escolha a categoria…' : 'Escolha a categoria…'}
+                buttonClassName="w-full bg-white border border-zinc-200 text-zinc-900 rounded-lg px-3 py-2 text-sm cursor-pointer" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-zinc-500 mb-1">Competência (mês do gasto)</label>
+              <div className="flex gap-1.5">
+                {([['same', 'Mês do pagamento'], ['prev', 'Mês anterior']] as const).map(([k, label]) => (
+                  <button key={k} onClick={() => setLancComp(k)}
+                    className={`flex-1 px-2.5 py-2 rounded-lg text-xs font-semibold border cursor-pointer ${lancComp === k ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {docDoLote && (
+            <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
+              <input type="checkbox" checked={lancRegra} onChange={e => setLancRegra(e.target.checked)} className="mt-0.5" />
+              <span><b>Fazer sempre assim</b> para {selecionados[0]?.counterpart_name ?? 'este CNPJ'}: os próximos pagamentos viram este lançamento sozinhos (sugeridos em "Confirmar vínculos").</span>
+            </label>
+          )}
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button disabled={lancando || (lancTipo === 'despesa' && !lancCat)} onClick={() => setConfirmarLote(true)}
+              className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
+              {lancando ? 'Lançando…' : `Lançar ${selLanc.size} já pago${selLanc.size > 1 ? 's' : ''}`}
+            </button>
+            <span className="text-[11px] text-zinc-400">Cada um entra na sua data. Dá para desfazer depois.</span>
+          </div>
+
+          <ConfirmModal
+            isOpen={confirmarLote}
+            icon="ri-add-circle-line"
+            title={`Lançar ${selLanc.size} pagamento(s)?`}
+            message={`Viram ${lancTipo === 'compra' ? 'compra (CMV)' : 'despesa'} já paga, cada uma na data em que o dinheiro saiu, com competência do ${lancComp === 'prev' ? 'mês anterior ao pagamento' : 'mês do pagamento'}. A descrição de cada lançamento será o nome de quem recebeu. Total: ${fmtCur(totalSelLanc)}.`}
+            confirmLabel="Lançar"
+            onCancel={() => setConfirmarLote(false)}
+            onConfirm={lancarSelecionados}
+          />
         </div>
       )}
 

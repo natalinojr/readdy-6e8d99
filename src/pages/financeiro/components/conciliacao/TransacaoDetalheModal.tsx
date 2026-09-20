@@ -214,27 +214,27 @@ export default function TransacaoDetalheModal({
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 flex-shrink-0">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-4 border-b border-zinc-100 flex-shrink-0">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className={`w-10 h-10 flex items-center justify-center rounded-xl ${
               transaction.transaction_type === 'credit' ? 'bg-green-100' : 'bg-red-100'
             }`}>
               <i className={`${transaction.transaction_type === 'credit' ? 'ri-arrow-down-circle-line text-green-600' : 'ri-arrow-up-circle-line text-red-600'} text-lg`} />
             </div>
-            <div>
+            <div className="min-w-0">
               <h3 className="font-bold text-zinc-900 text-base">Detalhe da Transação</h3>
-              <p className="text-xs text-zinc-500">
+              <p className="text-xs text-zinc-500 break-all line-clamp-2">
                 {new Date(transaction.transaction_date + 'T00:00:00').toLocaleDateString('pt-BR')}
                 {transaction.external_id && ` · ID: ${transaction.external_id}`}
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
-            <i className="ri-close-line text-zinc-500" />
+          <button onClick={onClose} aria-label="Fechar" className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
+            <i className="ri-close-line text-zinc-500 text-lg" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-5">
           {/* Valor */}
           <div className="flex items-center justify-between p-4 rounded-xl bg-zinc-50 border border-zinc-200">
             <span className="text-sm text-zinc-500">Valor</span>
@@ -548,7 +548,7 @@ export default function TransacaoDetalheModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-zinc-100 flex-shrink-0 bg-zinc-50">
+        <div className="flex items-center justify-between gap-2 flex-wrap px-4 sm:px-6 py-4 border-t border-zinc-100 flex-shrink-0 bg-zinc-50">
           <div className="flex items-center gap-2">
             {transaction.reconciled ? (
               <button
