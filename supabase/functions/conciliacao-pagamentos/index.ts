@@ -310,7 +310,7 @@ const competenciaOk = (v: unknown) => (typeof v === 'string' && /^\d{4}-(0[1-9]|
 // Opções de lançamento a partir de uma regra (fin_reconciliation_rules action 'launch')
 function ruleOpts(rule: Row, competencia: unknown): CreateOpts {
   return {
-    kind: rule.launch_kind === 'compra' ? 'compra' : 'despesa',
+    kind: rule.launch_kind === 'compra' ? 'compra' : rule.launch_kind === 'freelancer' ? 'freelancer' : 'despesa',
     dreCategoryId: rule.dre_category_id ?? null,
     mercCategoryId: rule.merchandise_category_id ?? null,
     description: rule.supplier_name ?? rule.counterpart_label ?? null,
@@ -1135,7 +1135,7 @@ Deno.serve(async (req: Request) => {
       const raw = String(body.counterpart_doc ?? '').trim();
       const doc = /^[\d.\-/\s]+$/.test(raw) ? raw.replace(/\D/g, '') : raw.toLowerCase();
       if (!doc) return errResp('Pagamento sem CPF/CNPJ ou chave Pix: não dá para criar regra');
-      const kind = body.kind === 'compra' ? 'compra' : 'despesa';
+      const kind = body.kind === 'compra' ? 'compra' : body.kind === 'freelancer' ? 'freelancer' : 'despesa';
       const dreId = body.dre_category_id ? String(body.dre_category_id) : null;
       const mercId = body.merchandise_category_id ? String(body.merchandise_category_id) : null;
       if (kind === 'despesa') {
@@ -1153,6 +1153,7 @@ Deno.serve(async (req: Request) => {
         tenant_id: tenantId, counterpart_doc: doc, counterpart_label: label, pattern: doc, match_type: 'contains',
         category: null, cost_center_id: body.cost_center_id || null, transaction_type: 'debit', is_active: true,
         action: 'launch', launch_kind: kind, dre_category_id: kind === 'despesa' ? dreId : null, merchandise_category_id: kind === 'compra' ? mercId : null,
+        // freelancer: supplier_name guarda o nome de quem trabalha (a diária sai no nome dele)
         competence_rule: body.competence_rule === 'prev' ? 'prev' : 'same',
         mode: body.mode === 'auto' ? 'auto' : 'suggest',
         supplier_name: String(body.supplier_name ?? '').trim().slice(0, 120) || label, updated_at: new Date().toISOString(),
@@ -1167,7 +1168,7 @@ Deno.serve(async (req: Request) => {
       const { data: cands } = await admin.rpc('fn_launch_rule_candidates', { p_tenant: tenantId, p_rule: saved.data.id, p_from: '2000-01-01', p_to: to });
       const pendentes = ((cands ?? []) as Row[]).filter((c) => !c.bloqueio).length;
       log('INFO', 'launch_rule_save', 'ok', { tenantId, userId, doc, kind, pendentes });
-      return json({ success: true, rule_id: saved.data.id, pendentes, message: 'Regra salva: os próximos pagamentos para ' + label + ' viram lançamento sugerido.' });
+      return json({ success: true, rule_id: saved.data.id, pendentes, message: 'Regra salva: os próximos pagamentos para ' + label + (kind === 'freelancer' ? ' viram diária de freelancer (dias a informar).' : ' viram lançamento sugerido.') });
     }
 
     if (action === 'launch_rule_preview') {
