@@ -2591,6 +2591,14 @@ mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a co
 `''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
 de não lidas (`linhaConversa`).
 
+### WhatsApp do dono: resposta no MESMO canal e citando a mensagem (2026-09-20)
+
+`relayToTelegram` (assistente-webhook) continua mandando a pergunta ao brain no chat do Telegram/ERPOS
+(mesmo histórico), mas a RESPOSTA agora sai no WhatsApp por `sendReply` — antes ela era entregue no
+Telegram e o dono ficava sem retorno onde perguntou. `sendReply` usa `quoted` da Evolution (mesma peça
+do `group_send`) para CITAR a mensagem: com várias notas seguidas, as respostas idênticas não diziam
+a qual nota se referiam. Sem `MsgKey` ou se a citação falhar, cai em `sendText` solto.
+
 ### Nota antiga encaminhada pelo dono no WhatsApp (2026-09-20)
 
 O grupo do financeiro só é lido desde que o assistente entrou nele; notas anteriores ficavam de fora.

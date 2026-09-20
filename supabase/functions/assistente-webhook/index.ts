@@ -55,6 +55,19 @@ async function evo(path: string, body: unknown) {
 
 // deno-lint-ignore no-explicit-any
 const sendText = (number: string, text: string): Promise<any> => evo(`/message/sendText/${evoInstance}`, { number, text });
+// Resposta CITANDO a mensagem do dono (2026-09-20): ele manda várias notas seguidas e as respostas
+// chegavam soltas — não dava para saber de qual nota o assistente estava falando. Sem a chave da
+// mensagem (ou se a citação falhar), manda solto como antes.
+// deno-lint-ignore no-explicit-any
+async function sendReply(number: string, text: string, key: MsgKey | null, trecho = ''): Promise<any> {
+  if (!key) return sendText(number, text);
+  try {
+    return await evo(`/message/sendText/${evoInstance}`, { number, text, quoted: { key, message: { conversation: trecho.slice(0, 200) } } });
+  } catch (e) {
+    log('WARN', 'citar mensagem falhou; mandando solto', { error: errMsg(e) });
+    return sendText(number, text);
+  }
+}
 
 // ── Recursos nativos do WhatsApp (feedback sem gastar tokens) ──
 type MsgKey = { remoteJid: string; fromMe: boolean; id: string };
@@ -535,24 +548,25 @@ async function compraDuplicada(admin: SupabaseClient, d: { valor: number | null;
 async function notaEncaminhada(admin: SupabaseClient, cfg: Record<string, any>, replyTo: string, msgKey: MsgKey | null, data: any, p: Parsed, forcar = false): Promise<boolean> {
   if (msgKey) react(msgKey, '👀');
   const mime = String(p.mime ?? (p.kind === 'image' ? 'image/jpeg' : '')).split(';')[0].toLowerCase();
-  if (!DOC_READABLE(mime)) { await sendText(replyTo, 'Esse arquivo eu não consigo ler. Manda foto ou PDF da nota.').catch(() => {}); return true; }
+  if (!DOC_READABLE(mime)) { await sendReply(replyTo, 'Esse arquivo eu não consigo ler. Manda foto ou PDF da nota.', msgKey, citacao).catch(() => {}); return true; }
   const b64 = await mediaBase64(data).catch(() => null);
-  if (!b64) { await sendText(replyTo, 'Não consegui baixar o arquivo. Manda de novo?').catch(() => {}); return true; }
+  if (!b64) { await sendReply(replyTo, 'Não consegui baixar o arquivo. Manda de novo?', msgKey, citacao).catch(() => {}); return true; }
   const legenda = String(p.text ?? '').trim();
   // deno-lint-ignore no-explicit-any
   let extracted: any = null;
   try {
     extracted = await lerMidia(b64, mime, legenda, 'Nota/cupom de compra que o DONO encaminhou no WhatsApp (compra antiga, fora do grupo).', 'dono:compras');
   } catch (e) { log('WARN', 'ler nota encaminhada', { error: errMsg(e) }); }
-  if (!extracted) { await sendText(replyTo, 'Não consegui ler essa imagem. Tenta uma foto mais nítida ou o PDF.').catch(() => {}); return true; }
+  if (!extracted) { await sendReply(replyTo, 'Não consegui ler essa imagem. Tenta uma foto mais nítida ou o PDF.', msgKey, citacao).catch(() => {}); return true; }
   const content = [`[Nota encaminhada por você]${legenda ? ` ${legenda}` : ''}`, String(extracted.resumo ?? '').trim(), String(extracted.texto ?? '').trim()].filter(Boolean).join('\n');
+  const citacao = String(extracted.resumo ?? legenda ?? '').trim(); // trecho que aparece na citação
   const ownerChat = ownerChatOf(cfg);
 
   // 1) Já está em Notas de entrada (XML da SEFAZ): recebimento + compra pelo XML, como a foto no grupo.
   const nota = await notaDaFoto(admin, content, extracted).catch((e) => { log('WARN', 'procurar nota encaminhada', { error: errMsg(e) }); return null; });
   if (nota) {
     await recebimentoPorNota(admin, cfg, null, { messageId: msgKey?.id ?? null, sender: 'você', content, extracted, sentAt: new Date().toISOString() }, nota);
-    await sendText(replyTo, 'Achei essa nota nas Notas de entrada: lancei a compra pelo XML e confirmei o recebimento. O detalhe está no chat.').catch(() => {});
+    await sendReply(replyTo, 'Achei essa nota nas Notas de entrada: lancei a compra pelo XML e confirmei o recebimento. O detalhe está no chat.', msgKey, citacao).catch(() => {});
     if (msgKey) react(msgKey, '✅');
     return true;
   }
@@ -560,7 +574,7 @@ async function notaEncaminhada(admin: SupabaseClient, cfg: Record<string, any>, 
   // 2) Cupom/nota lida com itens: entrada de compra (mesmas regras do grupo).
   const temItens = ['nota_fiscal', 'cupom', 'pedido'].includes(String(extracted.tipo_documento ?? '')) && Array.isArray(extracted.itens) && extracted.itens.length > 0;
   if (!temItens) {
-    await sendText(replyTo, 'Isso não parece nota ou cupom de compra — não lancei nada. Se for pagamento, me fala o que é.').catch(() => {});
+    await sendReply(replyTo, 'Isso não parece nota ou cupom de compra — não lancei nada. Se for pagamento, me fala o que é.', msgKey, citacao).catch(() => {});
     return true;
   }
   // Já lançada? Só lança depois do "lançar mesmo assim" (a nota fica guardada por 1 h).
@@ -582,18 +596,18 @@ async function notaEncaminhada(admin: SupabaseClient, cfg: Record<string, any>, 
       value: { prompt, resumo: `${dados.valor ? brlPend(dados.valor) : 'sem valor lido'}${dados.numero ? ` · nota ${dados.numero}` : ''}`, until: new Date(Date.now() + 60 * 60_000).toISOString() },
       updated_at: new Date().toISOString(),
     });
-    await sendText(replyTo, `⚠️ Essa compra parece JÁ LANÇADA (${dup.por}):\n${dup.texto}\n\nNão lancei. Se for outra compra mesmo, responda "lançar mesmo assim".`).catch(() => {});
+    await sendReply(replyTo, `⚠️ Essa compra parece JÁ LANÇADA (${dup.por}):\n${dup.texto}\n\nNão lancei. Se for outra compra mesmo, responda "lançar mesmo assim".`, msgKey, citacao).catch(() => {});
     if (msgKey) react(msgKey, '⚠️');
     return true;
   }
-  await lancarCompraPendente(admin, cfg, replyTo, msgKey, prompt);
+  await lancarCompraPendente(admin, cfg, replyTo, msgKey, prompt, citacao);
   return true;
 }
 
 // Manda a nota para o brain lançar (entrada de compra) e devolve a resposta no WhatsApp e no chat.
 // Usada logo depois de ler a nota e também no "lançar mesmo assim" (nota segurada pela duplicidade).
 // deno-lint-ignore no-explicit-any
-async function lancarCompraPendente(admin: SupabaseClient, cfg: Record<string, any>, replyTo: string, msgKey: MsgKey | null, prompt: string) {
+async function lancarCompraPendente(admin: SupabaseClient, cfg: Record<string, any>, replyTo: string, msgKey: MsgKey | null, prompt: string, citacao = '') {
   const ownerChat = ownerChatOf(cfg);
   try {
     const out = await brainCall({ text: prompt, chat_id: ownerChat ?? '', channel: ownerChat?.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: 'entrada_compra_grupo' });
@@ -601,11 +615,11 @@ async function lancarCompraPendente(admin: SupabaseClient, cfg: Record<string, a
     if (ownerChat && reply && reply !== 'NO_REPLY') {
       await avisarDono(admin, ownerChat, reply, Array.isArray(out?.actions) ? out.actions : [], { save: true, topic: 'compras' }).catch((e) => log('WARN', 'avisar dono da nota encaminhada', { error: errMsg(e) }));
     }
-    await sendText(replyTo, reply && reply !== 'NO_REPLY' ? reply.slice(0, 900) : 'Recebi a nota, mas não consegui lançar sozinho. Dá uma olhada em Compras.').catch(() => {});
+    await sendReply(replyTo, reply && reply !== 'NO_REPLY' ? reply.slice(0, 900) : 'Recebi a nota, mas não consegui lançar sozinho. Dá uma olhada em Compras.', msgKey, citacao).catch(() => {});
     if (msgKey) react(msgKey, '✅');
   } catch (e) {
     log('ERROR', 'lançar nota encaminhada', { error: errMsg(e) });
-    await sendText(replyTo, 'Deu erro para lançar essa nota. Tenta de novo daqui a pouco.').catch(() => {});
+    await sendReply(replyTo, 'Deu erro para lançar essa nota. Tenta de novo daqui a pouco.', msgKey, citacao).catch(() => {});
   }
 }
 
@@ -825,11 +839,10 @@ async function triarDiasFreelancer(admin: SupabaseClient, cfg: Record<string, an
   }
 }
 
-// Demandas pelo WhatsApp → assistente do Telegram (2026-09-14, pedido do dono: "recebo demanda pelo
-// whats, pelo menos ele pode ler tudo e mandar pro assistente do telegram"). Com a conversa do
-// WhatsApp desligada (channels.whatsapp_dm = false), o que o dono manda/encaminha para o número do
-// assistente vai para o brain NO CHAT DO TELEGRAM (mesmo histórico e ferramentas) e a resposta sai
-// lá. No WhatsApp ficam só as reações: 👀 recebi · ✅ repassei · ❌ falhou.
+// Demanda que chega pelo WhatsApp: vai para o brain NO CHAT DO TELEGRAM/ERPOS (mesmo histórico e
+// mesmas ferramentas) e a RESPOSTA VOLTA NO WHATSAPP, citando a mensagem (dono, 2026-09-20 — antes
+// a resposta saía no Telegram e ele ficava sem retorno onde tinha perguntado). Reações continuam:
+// 👀 recebi · ✅ respondi · ❌ falhou.
 async function relayToTelegram(
   // deno-lint-ignore no-explicit-any
   admin: SupabaseClient, cfg: Record<string, any>, waChatId: string, number: string, msgKey: MsgKey | null, data: any, p: Parsed,
@@ -875,19 +888,20 @@ async function relayToTelegram(
     if (!r.ok || !out?.reply) throw new Error(`brain ${r.status}: ${JSON.stringify(out).slice(0, 200)}`);
     const reply = String(out.reply);
     const actions = Array.isArray(out.actions) ? out.actions : [];
-    if (reply !== 'NO_REPLY' || actions.length) {
-      const d = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-        body: JSON.stringify({ action: 'deliver', chat_key: tg, text: reply === 'NO_REPLY' ? '' : `📲 ${reply}`, actions }),
-      });
-      if (!d.ok) throw new Error(`assistente-telegram ${d.status}: ${(await d.text()).slice(0, 200)}`);
+    // A resposta volta ONDE ele perguntou: no WhatsApp, citando a mensagem dele (dono, 2026-09-20:
+    // "falei com o assistente no whats e ele me respondeu no telegram"). A conversa continua sendo a
+    // mesma (o brain grava no chat do Telegram/ERPOS), só a entrega muda de canal.
+    if (reply !== 'NO_REPLY') {
+      await sendReply(number, reply, msgKey, text.slice(0, 200));
     }
+    // Enquete/localização/contato que o modelo pediu saem aqui mesmo, no WhatsApp.
+    if (actions.length) await runActions(admin, number, tg, actions).catch((e) => log('WARN', 'ações no WhatsApp', { error: errMsg(e) }));
     if (msgKey) react(msgKey, '✅');
-    log('INFO', 'demanda do WhatsApp repassada ao Telegram', { kind: p.kind, forwarded: p.forwarded });
+    log('INFO', 'demanda do WhatsApp respondida no WhatsApp', { kind: p.kind, forwarded: p.forwarded });
   } catch (e) {
-    log('ERROR', 'repasse ao Telegram falhou', { error: errMsg(e) });
+    log('ERROR', 'responder no WhatsApp falhou', { error: errMsg(e) });
     if (msgKey) react(msgKey, '❌');
-    await sendText(number, 'Não consegui repassar para o Telegram agora. Tenta de novo em instantes.').catch(() => {});
+    await sendReply(number, 'Não consegui responder agora. Tenta de novo em instantes.', msgKey).catch(() => {});
   }
 }
 
@@ -1545,13 +1559,13 @@ async function handle(payload: any) {
     const janelaCompra = await compraIntake(admin);
     if (p0.kind === 'text' && janelaCompra && /^(pronto|acabou|terminei|fim|encerrar|encerra|chega|s[oó] isso|era isso|finaliza[r]?)\b/i.test(txt0)) {
       await admin.from('asst_settings').delete().eq('key', 'wa_compra_intake');
-      await sendText(replyTo, janelaCompra.count ? `Fechado: ${janelaCompra.count} nota${janelaCompra.count > 1 ? 's' : ''} lançada${janelaCompra.count > 1 ? 's' : ''}.` : 'Fechado. Não chegou nenhuma nota.').catch(() => {});
+      await sendReply(replyTo, janelaCompra.count ? `Fechado: ${janelaCompra.count} nota${janelaCompra.count > 1 ? 's' : ''} lançada${janelaCompra.count > 1 ? 's' : ''}.` : 'Fechado. Não chegou nenhuma nota.', msgKey, txt0).catch(() => {});
       if (msgKey) react(msgKey, '👍');
       return;
     }
     if (p0.kind === 'text' && COMPRA_ABRE.test(txt0)) {
       await compraIntakeSet(admin, janelaCompra?.count ?? 0);
-      await sendText(replyTo, 'Pode mandar as notas (foto ou PDF), uma de cada vez. Eu lanço a compra e confirmo o recebimento. Quando terminar, manda "pronto".').catch(() => {});
+      await sendReply(replyTo, 'Pode mandar as notas (foto ou PDF), uma de cada vez. Eu lanço a compra e confirmo o recebimento. Quando terminar, manda "pronto".', msgKey, txt0).catch(() => {});
       if (msgKey) react(msgKey, '👍');
       return;
     }
@@ -1561,7 +1575,7 @@ async function handle(payload: any) {
       // deno-lint-ignore no-explicit-any
       const v: any = pend?.value;
       if (!v?.prompt || new Date(v.until ?? 0).getTime() < Date.now()) {
-        await sendText(replyTo, 'Não tenho nenhuma nota esperando confirmação. Manda a nota de novo.').catch(() => {});
+        await sendReply(replyTo, 'Não tenho nenhuma nota esperando confirmação. Manda a nota de novo.', msgKey, txt0).catch(() => {});
         return;
       }
       await admin.from('asst_settings').delete().eq('key', 'wa_compra_pendente');
