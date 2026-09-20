@@ -2591,6 +2591,16 @@ mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a co
 `''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
 de não lidas (`linhaConversa`).
 
+### "Não vou fazer" numa pendência de pagamento cancela o Pix (2026-09-20)
+
+`fn_pendencia_marcar` só fecha a linha em `pendencias`: os pagamentos preparados continuavam em
+`fin_inter_payments` com status aberto e o rodapé do chat seguia mostrando "aguardando você tocar em
+Pagar". `PendenciasChat.marcar('descartada')` agora chama `pendencia_recusar` (assistente-app), que
+cancela no Inter os pagamentos ligados — `pagamento_grupo` pelo `group_request_id`, `pagamento_pendente`
+pelo `ref` e pelos ids do payload (o preparado pela pendência nasce SEM `group_request_id`) — grava a
+linha "[Pagamento …: cancelado pelo ERPOS]" e marca o pedido do grupo como 'recusado'. `onMudou`
+recarrega os cartões na hora.
+
 ### WhatsApp do dono: resposta no MESMO canal e citando a mensagem (2026-09-20)
 
 `relayToTelegram` (assistente-webhook) continua mandando a pergunta ao brain no chat do Telegram/ERPOS

@@ -1407,7 +1407,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           onAbrirTarefa={abrirTarefaPendencia}
           onFechar={() => setPendAberta(false)}
           versao={pendVersao}
-          onMudou={contarPendencias}
+          onMudou={() => { contarPendencias(); carregarPagamentos(); }}
           onPagar={pagarPendencia}
           onAbrir={abrirPendencia}
           onPedir={pedirPendencia}
