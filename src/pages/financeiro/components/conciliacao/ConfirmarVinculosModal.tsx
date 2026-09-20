@@ -20,6 +20,18 @@ interface Props {
 const dataBR = (iso?: string | null) =>
   iso ? new Date(String(iso).slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 
+/**
+ * Como a nota vai entrar ao ser importada. O modelo (10 = serviço) é só o ponto de partida: quem
+ * decide é a Classificação de Itens — nota de serviço cujo item é CMV entra como compra, e NF-e
+ * cujo item é despesa entra como despesa (fiscal-inbound › importDocumentLocked).
+ */
+export function tipoDaNota(d: Record<string, unknown>): string {
+  const classe = String(d.classe ?? '');
+  if (classe === 'cmv') return 'compra (CMV)';
+  if (classe === 'despesa') return 'despesa';
+  return Number(d.modelo) === 10 ? 'despesa (serviço)' : 'compra (CMV)';
+}
+
 export default function ConfirmarVinculosModal({ rows, confirming, onClose, onConfirm }: Props) {
   const datas = rows.map(r => r.transaction_date).sort();
   const [de, setDe] = useState(datas[0] ?? '');
@@ -92,7 +104,7 @@ export default function ConfirmarVinculosModal({ rows, confirming, onClose, onCo
         </td>
         <td className="px-3 py-2 text-xs space-y-0.5">
           {d.auto_import === true && (
-            <p className="text-blue-700"><i className="ri-magic-line mr-1" />Importa a nota como {Number(d.modelo) === 10 ? 'despesa' : 'compra'}</p>
+            <p className="text-blue-700"><i className="ri-magic-line mr-1" />Importa a nota como {tipoDaNota(d)}</p>
           )}
           {regra ? (
             <p className="text-violet-700"><i className="ri-flashlight-line mr-1" />Lança {d.tipo === 'compra' ? 'compra' : 'despesa ' + String(d.categoria ?? '')} já paga{comp ? ' · competência ' + comp.slice(5, 7) + '/' + comp.slice(0, 4) : ''}</p>

@@ -748,8 +748,29 @@ async function traceRow(ctx: Ctx, rowId: string) {
     return b ?? null;
   };
 
-  const bill = await conta(conf?.bill_id ?? (mk === 'payable' ? row.match_ref_id : null));
+  let bill = await conta(conf?.bill_id ?? (mk === 'payable' ? row.match_ref_id : null));
   const jurosBill = await conta(conf?.juros_bill_id);
+
+  // Caminho antigo (inter-bank): a linha casou com um movimento do ERP, sem vínculo de nota/conta.
+  // O movimento de uma baixa aponta para a conta a pagar (reference_type 'bill_payment').
+  let movimento: Row | null = null;
+  if (row.matched_transaction_id) {
+    const { data: bt } = await admin.from('fin_bank_transactions')
+      .select('id, description, transaction_date, amount, type, reference_type, reference_id')
+      .eq('id', String(row.matched_transaction_id)).eq('tenant_id', tenantId).maybeSingle();
+    if (bt) {
+      movimento = { origem: 'bank_transaction', descricao: bt.description, data: bt.transaction_date, valor: bt.amount, tipo: bt.reference_type };
+      if (!bill && String(bt.reference_type).startsWith('bill_payment')) bill = await conta(bt.reference_id);
+    } else {
+      const { data: cf } = await admin.from('fin_cash_flow')
+        .select('id, description, date, amount, type, origin, reference_id, category')
+        .eq('id', String(row.matched_transaction_id)).eq('tenant_id', tenantId).maybeSingle();
+      if (cf) {
+        movimento = { origem: 'cash_flow', descricao: cf.description, data: cf.date, valor: cf.amount, tipo: cf.origin, categoria: cf.category };
+        if (!bill && String(cf.origin) === 'accounts_payable') bill = await conta(cf.reference_id);
+      }
+    }
+  }
 
   // Compra: pela conta (reference_type 'purchase') ou pelo id guardado no lançamento sem nota
   let compra: Row | null = null;
@@ -804,7 +825,7 @@ async function traceRow(ctx: Ctx, rowId: string) {
       confirmado_por: await nome(row.reconciled_by ?? conf?.by ?? null),
       origem: conf?.created ? 'lancado_do_extrato' : mk === 'payroll' ? 'folha' : nota ? 'nota' : 'conta',
     },
-    conta: bill, juros: jurosBill, compra, nota, folha,
+    conta: bill, juros: jurosBill, compra, nota, folha, movimento,
     nota_do_mes: !!(nota && Array.isArray(nota.settlement_statement_ids) && nota.settlement_statement_ids.includes(row.id)),
   };
 }

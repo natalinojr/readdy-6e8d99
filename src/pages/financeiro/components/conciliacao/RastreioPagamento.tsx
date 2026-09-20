@@ -32,6 +32,7 @@ interface Nota {
   status: string; auto_imported: boolean | null;
 }
 interface Folha { id: string; employee_name: string | null; reference_month: string | null; net_salary: number; status: string; paid_date: string | null }
+interface Movimento { origem: string; descricao: string | null; data: string | null; valor: number; tipo: string | null; categoria?: string | null }
 interface Trace {
   pagamento: { confirmado_em: string | null; confirmado_por: string | null; origem: string };
   conta: Conta | null;
@@ -39,6 +40,7 @@ interface Trace {
   compra: Compra | null;
   nota: Nota | null;
   folha: Folha | null;
+  movimento: Movimento | null;
   nota_do_mes: boolean;
 }
 
@@ -84,24 +86,28 @@ export default function RastreioPagamento({ transactionId }: { transactionId: st
   if (erro) return <div className="border border-zinc-200 rounded-xl p-3 text-xs text-zinc-500">{erro}</div>;
   if (!trace) return null;
 
-  const { conta, juros, compra, nota, folha } = trace;
-  if (!conta && !compra && !nota && !folha) return null;
+  const { conta, juros, compra, nota, folha, movimento } = trace;
+  if (!conta && !compra && !nota && !folha && !movimento) return null;
 
   const pago = Number(conta?.paid_amount ?? 0);
   const parcela = conta?.installment_number && Number(conta.installments ?? 0) > 1
     ? `parcela ${conta.installment_number}/${conta.installments}`
     : null;
-  const ir = (tab: string) => navigate('/financeiro?tab=' + tab);
+  // Cai no registro certo, não só na aba: Compras tem destaque por id (?foco=), Notas de Entrada e
+  // Contas a Pagar filtram pela busca da própria tela (?busca=).
+  const ir = (tab: string, param?: string, valor?: string | null) =>
+    navigate('/financeiro?tab=' + tab + (param && valor ? '&' + param + '=' + encodeURIComponent(valor) : ''));
 
-  const Linha = ({ icone, titulo, tab, botao, children }: {
-    icone: string; titulo: string; tab: string; botao: string; children: React.ReactNode;
+  const Linha = ({ icone, titulo, tab, botao, param, valor, children }: {
+    icone: string; titulo: string; tab: string; botao: string;
+    param?: string; valor?: string | null; children: React.ReactNode;
   }) => (
     <div className="flex items-start justify-between gap-3 py-2 border-t border-zinc-200 first:border-t-0 first:pt-0">
       <div className="min-w-0">
         <p className="font-semibold text-zinc-800"><i className={icone + ' mr-1 text-zinc-400'} />{titulo}</p>
         <div className="text-zinc-600 space-y-0.5">{children}</div>
       </div>
-      <button onClick={() => ir(tab)} className="shrink-0 px-2 py-1 bg-white border border-zinc-300 rounded-lg text-zinc-700 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
+      <button onClick={() => ir(tab, param, valor)} className="shrink-0 px-2 py-1 bg-white border border-zinc-300 rounded-lg text-zinc-700 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
         {botao} <i className="ri-arrow-right-up-line" />
       </button>
     </div>
@@ -112,7 +118,7 @@ export default function RastreioPagamento({ transactionId }: { transactionId: st
       <p className="font-semibold text-zinc-800 mb-2"><i className="ri-node-tree mr-1" />Rastreamento</p>
 
       {nota && (
-        <Linha icone="ri-file-text-line" titulo={`Nota fiscal ${Number(nota.modelo) === 10 ? 'de serviço' : 'de entrada'} nº ${nota.numero ?? '?'}${nota.serie ? '/' + nota.serie : ''}`} tab="notas-entrada" botao="Notas de entrada">
+        <Linha icone="ri-file-text-line" titulo={`Nota fiscal ${Number(nota.modelo) === 10 ? 'de serviço' : 'de entrada'} nº ${nota.numero ?? '?'}${nota.serie ? '/' + nota.serie : ''}`} tab="notas-entrada" botao="Notas de entrada" param="busca" valor={String(nota.numero ?? nota.emitente_nome ?? '')}>
           <p>{nota.emitente_nome ?? '—'}</p>
           <p>
             Emitida em {dia(nota.emitted_at)} · {formatCurrency(Number(nota.valor_total))}
@@ -125,14 +131,14 @@ export default function RastreioPagamento({ transactionId }: { transactionId: st
       )}
 
       {compra && (
-        <Linha icone="ri-shopping-cart-2-line" titulo="Compra" tab="compras" botao="Compras">
+        <Linha icone="ri-shopping-cart-2-line" titulo="Compra" tab="compras" botao="Compras" param="foco" valor={compra.id}>
           <p>{compra.supplier ?? '—'}{compra.invoice_number ? ' · NF ' + compra.invoice_number : ''}</p>
           <p>{dia(compra.purchase_date)} · {formatCurrency(Number(compra.total_amount))} · entra no CMV</p>
         </Linha>
       )}
 
       {conta && (
-        <Linha icone="ri-bill-line" titulo="Conta a pagar" tab="pagar" botao="Contas a pagar">
+        <Linha icone="ri-bill-line" titulo="Conta a pagar" tab="pagar" botao="Contas a pagar" param="busca" valor={conta.description}>
           <p>{conta.description ?? '—'}{parcela ? ' · ' + parcela : ''}</p>
           <p>
             Vence {dia(conta.due_date)} · {formatCurrency(Number(conta.amount))}
@@ -143,12 +149,13 @@ export default function RastreioPagamento({ transactionId }: { transactionId: st
             {conta.category ? 'Classificação: ' + conta.category : 'Sem classificação'}
             {competencia(conta.competence_month) ? ' · competência ' + competencia(conta.competence_month) : ''}
             {ORIGEM[String(conta.reference_type)] ? ' · ' + ORIGEM[String(conta.reference_type)] : ''}
+            {movimento ? ' · casada pelo movimento do ERP' : ''}
           </p>
         </Linha>
       )}
 
       {juros && (
-        <Linha icone="ri-error-warning-line" titulo="Juros/multa" tab="pagar" botao="Contas a pagar">
+        <Linha icone="ri-error-warning-line" titulo="Juros/multa" tab="pagar" botao="Contas a pagar" param="busca" valor={juros.description}>
           <p>{juros.description ?? '—'}</p>
           <p>{formatCurrency(Number(juros.amount))}{juros.paid_date ? ` · baixada em ${dia(juros.paid_date)}` : ''} · despesa "Juros e multas"</p>
         </Linha>
@@ -163,6 +170,18 @@ export default function RastreioPagamento({ transactionId }: { transactionId: st
             {' '}· a DRE conta pela folha, não como despesa deste pagamento
           </p>
         </Linha>
+      )}
+
+      {movimento && !conta && (
+        <div className="py-2 border-t border-zinc-200 first:border-t-0 first:pt-0">
+          <p className="font-semibold text-zinc-800"><i className="ri-links-line mr-1 text-zinc-400" />Movimento do ERP</p>
+          <p className="text-zinc-600">{movimento.descricao ?? '—'}</p>
+          <p className="text-zinc-500">
+            Casado automaticamente com este movimento do sistema
+            {movimento.data ? ' de ' + dia(movimento.data) : ''}
+            {movimento.categoria ? ' · ' + movimento.categoria : ''}. A conta de origem não pôde ser identificada.
+          </p>
+        </div>
       )}
 
       {(trace.pagamento.confirmado_em || trace.pagamento.confirmado_por) && (

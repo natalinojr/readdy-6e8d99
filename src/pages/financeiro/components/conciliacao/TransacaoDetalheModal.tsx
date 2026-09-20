@@ -9,6 +9,7 @@ import VincularPagamento, { podeVincular } from './VincularPagamento';
 import LancarDoExtrato, { podeLancarDoExtrato, useCategoriasLancamento } from './LancarDoExtrato';
 import CategoriaCombobox, { type ComboOption } from '../CategoriaCombobox';
 import RastreioPagamento from './RastreioPagamento';
+import { tipoDaNota } from './ConfirmarVinculosModal';
 import { situacaoRepasse, type RepasseStone } from './RepassesStoneModal';
 import type { StatementImport, BillMatch, ReceivableMatch, ReconciliationRule } from '@/hooks/useConciliacao';
 
@@ -85,13 +86,14 @@ export default function TransacaoDetalheModal({
   const [vinculoBusy, setVinculoBusy] = useState(false);
   const [vinculoMsg, setVinculoMsg] = useState<string | null>(null);
   const [lembrarContraparte, setLembrarContraparte] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
   useEffect(() => { setVinculoMsg(null); setLembrarContraparte(false); }, [transaction?.id]);
   // Carimbar: grava antes o que foi editado (a categoria escolhida se perdia) e só então concilia
   const salvarEConciliar = async () => {
     if (!transaction) return;
     const mudou = form.description !== (transaction.description || '') || form.category !== (transaction.category || '')
       || form.cost_center_id !== (transaction.cost_center_id || '') || form.notes !== (transaction.notes || '');
-    if (mudou || lembrarContraparte) await handleSave();
+    if (mudou || lembrarContraparte) await handleSave(false);
     await onReconcile(transaction.id);
     onClose();
   };
@@ -193,18 +195,25 @@ export default function TransacaoDetalheModal({
   const editouAlgo = form.description !== (transaction.description || '') || form.category !== (transaction.category || '')
     || form.cost_center_id !== (transaction.cost_center_id || '') || form.notes !== (transaction.notes || '') || lembrarContraparte;
 
-  const handleSave = async () => {
+  // Salvar fecha o modal (2026-09-20): antes gravava em silêncio — modal aberto, nada mudava na
+  // tela e o botão seguia habilitado, dando a impressão de que o clique não tinha funcionado.
+  const handleSave = async (fechar = true) => {
     setSaving(true);
+    setSaveMsg(null);
     if (lembrarContraparte && transaction.counterpart_doc && form.category) {
       await invokeWithAuth('conciliacao-pagamentos', { body: { action: 'save_counterpart_rule', tenant_id: user?.tenantId, counterpart_doc: transaction.counterpart_doc, counterpart_label: transaction.counterpart_name ?? transaction.description, category: form.category, cost_center_id: form.cost_center_id || null, transaction_type: transaction.transaction_type } });
     }
-    await onUpdate(transaction.id, {
+    const ok = await onUpdate(transaction.id, {
       description: form.description,
       category: form.category || null,
       cost_center_id: form.cost_center_id || null,
       notes: form.notes || null,
     });
     setSaving(false);
+    if (!ok) { setSaveMsg('Não foi possível salvar. Tente de novo.'); return false; }
+    setLembrarContraparte(false);
+    if (fechar) onClose();
+    return true;
   };
 
 
@@ -339,7 +348,7 @@ export default function TransacaoDetalheModal({
                   </p>
                 )}
                 {!conf && d.auto_import === true && (
-                  <p className="text-blue-700"><i className="ri-magic-line mr-1" />Esta nota ainda não foi lançada. Ao confirmar, ela é importada automaticamente como {Number(d.modelo) === 10 ? 'despesa (serviço)' : 'compra'} e a parcela recebe a baixa.</p>
+                  <p className="text-blue-700"><i className="ri-magic-line mr-1" />Esta nota ainda não foi lançada. Ao confirmar, ela é importada automaticamente como {tipoDaNota(d)} e a parcela recebe a baixa.</p>
                 )}
                 {conf?.auto_imported === true && (
                   <p className="text-emerald-700"><i className="ri-magic-line mr-1" />Nota importada automaticamente pela conciliação. Os itens não foram ligados ao estoque: confira em Notas de Entrada se precisar.</p>
@@ -595,9 +604,10 @@ export default function TransacaoDetalheModal({
               Fechar
             </button>
             {/* Com o painel "Lançar" aberto o rodapé sai de cena: quem conclui é o botão de lá */}
+            {saveMsg && <p className="text-xs text-red-600 self-center">{saveMsg}</p>}
             {!lancarAberto && (
             <button
-              onClick={handleSave}
+              onClick={() => handleSave()}
               disabled={saving || !editouAlgo}
               title={editouAlgo ? undefined : 'Nada foi alterado'}
               className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 disabled:opacity-50 cursor-pointer whitespace-nowrap transition-colors"

@@ -63,7 +63,11 @@ export default function FinanceiroPage() {
   const valida = (t: string | null | undefined) => (t && (TABS.some((x) => x.id === t) || t === 'previsao') && podeAba(t) ? t : null);
   const activeTab = valida(daUrl) ?? valida(doState) ?? abas[0]?.id ?? 'visao';
   const setActiveTab = (t: string) => setSearchParams({ tab: t }, { replace: true });
-  const [highlightPurchaseId, setHighlightPurchaseId] = useState<string | undefined>();
+  // ?foco=<id da compra> abre a aba Compras já piscando naquela linha — usado pelo Rastreamento
+  // da Conciliação (2026-09-20), para o botão cair na compra certa e não só na lista.
+  const [highlightPurchaseId, setHighlightPurchaseId] = useState<string | undefined>(
+    () => searchParams.get('foco') ?? undefined,
+  );
 
   // Chegou por location.state (telas antigas que navegam assim): passa para a URL uma vez, senão
   // trocar de aba depois voltaria para a do state.
@@ -71,6 +75,12 @@ export default function FinanceiroPage() {
     if (!daUrl && valida(doState)) setSearchParams({ tab: String(doState) }, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Link externo (?tab=compras&foco=...) chegando com a tela já montada
+  useEffect(() => {
+    const foco = searchParams.get('foco');
+    if (foco) setHighlightPurchaseId(foco);
+  }, [searchParams]);
 
   const handleNavigateToCompras = (purchaseId?: string) => {
     setHighlightPurchaseId(purchaseId);
