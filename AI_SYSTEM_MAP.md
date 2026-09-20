@@ -2593,6 +2593,11 @@ de não lidas (`linhaConversa`).
 
 ### Fechamento: uma mensagem do CAIXA e uma da SESSÃO (2026-09-20)
 
+No chat do ERPOS essas duas mensagens aparecem como PAINEL: o `assistente-cron` grava o texto (que é o
+que vai para WhatsApp/Telegram, sem o marcador) mais `[painel]{json}[/painel]`; `PainelMensagem.tsx`
+lê o marcador e desenha com as mesmas peças das ações rápidas (`acoes/painel.tsx`). `semMarcadores`
+tira o marcador da prévia da lista. Marcador inválido = balão de texto normal.
+
 `sessions` = turno da loja; `cash_registers` = gaveta dentro do turno (`session_id`). Gatilhos
 `trg_cash_register_fechou` → `closing_cash` (dinheiro daquele caixa: abertura, entradas/saídas com o
 motivo, esperado × contado, diferença, observação) e `trg_session_fechou` → `closing_session` (turno:
