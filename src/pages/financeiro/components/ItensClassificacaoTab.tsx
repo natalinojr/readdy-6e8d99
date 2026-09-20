@@ -324,6 +324,54 @@ export default function ItensClassificacaoTab() {
     );
   };
 
+  // A coluna "Classificação" é a mesma na tabela (computador) e no cartão (celular).
+  const classificacaoDoItem = (r: Row) => {
+    const sugCat = r.suggested_dre_category_id ? catNome(r.suggested_dre_category_id) : null;
+    const catCmv = cmvCat(r);
+    return (
+      <>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {r.ingredient_id ? (
+            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700" title="Produto ligado a insumo do estoque: sempre CMV, na categoria do insumo (Estoque › Insumos)">
+              CMV · {catCmv ?? 'insumo sem categoria'}
+            </span>
+          ) : podeClassificar ? (
+            <>
+              {r.is_service && (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700" title="Veio de nota de serviço (NFS-e). Despesa: serviço de verdade. CMV: fornecedor de produto que emite nota de serviço — as notas dele entram como compra.">NFS-e</span>
+              )}
+              <CategoriaCombobox value={r.classe === 'cmv' ? r.merchandise_category_id ?? '' : ''} disabled={busy}
+                options={mercOptions} placeholder={r.classe === 'cmv' ? 'CMV · sem categoria' : 'CMV…'}
+                onChange={(id) => { if (id) aplicar([r.id], 'cmv', null, id); }}
+                buttonClassName={`text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[170px] cursor-pointer ${r.classe === 'cmv' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600'}`} />
+              <CategoriaCombobox value={r.classe === 'despesa' ? r.dre_category_id ?? '' : ''} disabled={busy}
+                options={catOptions} placeholder="Despesa…"
+                onChange={(id) => { if (id) aplicar([r.id], 'despesa', id); }}
+                buttonClassName={`text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[190px] cursor-pointer ${r.classe === 'despesa' ? 'bg-violet-500 text-white' : 'bg-zinc-100 text-zinc-600'}`} />
+            </>
+          ) : (
+            <span className="text-xs text-zinc-600">{r.is_service ? 'NFS-e · ' : ''}{r.classe === 'cmv' ? `CMV${catCmv ? ` · ${catCmv}` : ''}` : r.classe === 'despesa' ? catNome(r.dre_category_id) ?? 'Despesa' : 'Pendente'}</span>
+          )}
+          {r.auto_classified && !r.ingredient_id && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700" title={r.suggestion_reason ?? ''}>automático</span>
+          )}
+        </div>
+        {!r.classe && r.suggested_classe && (
+          <p className="text-[10px] text-amber-700 mt-1">
+            Sugestão: {r.suggested_classe === 'cmv' ? 'CMV' : `despesa${sugCat ? ` · ${sugCat}` : ''}`}
+            {r.suggestion_reason ? ` (${r.suggestion_reason})` : ''}
+            {podeClassificar && (r.suggested_classe === 'cmv' || r.suggested_dre_category_id) && (
+              <button disabled={busy} onClick={() => aceitarSugestoes([r])} className="ml-1.5 font-bold underline cursor-pointer disabled:opacity-50">aceitar</button>
+            )}
+          </p>
+        )}
+        {r.auto_classified && !r.ingredient_id && r.suggestion_reason && (
+          <p className="text-[10px] text-sky-600 mt-1">{r.suggestion_reason}</p>
+        )}
+      </>
+    );
+  };
+
   return (
     <div className="p-4 md:p-6 space-y-4">
       <div>
@@ -401,7 +449,31 @@ export default function ItensClassificacaoTab() {
             <p className="text-sm text-zinc-500 mt-2">{rows.length === 0 ? 'Nenhum item ainda: eles aparecem quando chegam notas de entrada ou compras.' : filtro === 'pendentes' ? 'Nenhum item pendente. Tudo classificado.' : filtro === 'cmv_sem' ? 'Todo item de CMV já tem categoria.' : 'Nada neste filtro.'}</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Celular: um cartão por item — a tabela de 6 colunas não cabe em 375px. */}
+          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+            {filtrados.map((r) => (
+              <li key={r.id} className={`rounded-xl border px-3 py-3 ${sel.has(r.id) ? 'border-amber-300 bg-amber-50/60' : 'border-zinc-200 bg-white'}`}>
+                <div className="flex items-start gap-2">
+                  {podeClassificar && (
+                    <input type="checkbox" className="mt-1" checked={sel.has(r.id)} onChange={() => toggle(r.id)} />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-zinc-800 break-words">{r.description || '—'}</p>
+                    <p className="text-[11px] text-zinc-500 break-words">{r.supplier_name ?? '—'}</p>
+                    <p className="text-[10px] text-zinc-400">
+                      {r.supplier_code ? `cód. ${r.supplier_code}` : 'sem código'}{r.unit_label ? ` · ${r.unit_label}` : ''} · {dataBR(r.last_seen_at)}
+                      {r.last_unit_price != null ? ` · ${brl(r.last_unit_price)}` : ''}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-xs text-zinc-600 mt-1.5">{celulaInsumo(r)}</div>
+                <div className="mt-1.5">{classificacaoDoItem(r)}</div>
+              </li>
+            ))}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-[11px] uppercase text-zinc-400 border-b border-zinc-100">
@@ -445,44 +517,7 @@ export default function ItensClassificacaoTab() {
                         <p className="text-zinc-400">{r.last_unit_price != null ? brl(r.last_unit_price) : ''}</p>
                       </td>
                       <td className="px-3 py-2.5 min-w-[380px]">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {r.ingredient_id ? (
-                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700" title="Produto ligado a insumo do estoque: sempre CMV, na categoria do insumo (Estoque › Insumos)">
-                              CMV · {catCmv ?? 'insumo sem categoria'}
-                            </span>
-                          ) : podeClassificar ? (
-                            <>
-                              {r.is_service && (
-                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700" title="Veio de nota de serviço (NFS-e). Despesa: serviço de verdade. CMV: fornecedor de produto que emite nota de serviço — as notas dele entram como compra.">NFS-e</span>
-                              )}
-                              <CategoriaCombobox value={r.classe === 'cmv' ? r.merchandise_category_id ?? '' : ''} disabled={busy}
-                                options={mercOptions} placeholder={r.classe === 'cmv' ? 'CMV · sem categoria' : 'CMV…'}
-                                onChange={(id) => { if (id) aplicar([r.id], 'cmv', null, id); }}
-                                buttonClassName={`text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[170px] cursor-pointer ${r.classe === 'cmv' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600'}`} />
-                              <CategoriaCombobox value={r.classe === 'despesa' ? r.dre_category_id ?? '' : ''} disabled={busy}
-                                options={catOptions} placeholder="Despesa…"
-                                onChange={(id) => { if (id) aplicar([r.id], 'despesa', id); }}
-                                buttonClassName={`text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[190px] cursor-pointer ${r.classe === 'despesa' ? 'bg-violet-500 text-white' : 'bg-zinc-100 text-zinc-600'}`} />
-                            </>
-                          ) : (
-                            <span className="text-xs text-zinc-600">{r.is_service ? 'NFS-e · ' : ''}{r.classe === 'cmv' ? `CMV${catCmv ? ` · ${catCmv}` : ''}` : r.classe === 'despesa' ? catNome(r.dre_category_id) ?? 'Despesa' : 'Pendente'}</span>
-                          )}
-                          {r.auto_classified && !r.ingredient_id && (
-                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700" title={r.suggestion_reason ?? ''}>automático</span>
-                          )}
-                        </div>
-                        {!r.classe && r.suggested_classe && (
-                          <p className="text-[10px] text-amber-700 mt-1">
-                            Sugestão: {r.suggested_classe === 'cmv' ? 'CMV' : `despesa${sugCat ? ` · ${sugCat}` : ''}`}
-                            {r.suggestion_reason ? ` (${r.suggestion_reason})` : ''}
-                            {podeClassificar && (r.suggested_classe === 'cmv' || r.suggested_dre_category_id) && (
-                              <button disabled={busy} onClick={() => aceitarSugestoes([r])} className="ml-1.5 font-bold underline cursor-pointer disabled:opacity-50">aceitar</button>
-                            )}
-                          </p>
-                        )}
-                        {r.auto_classified && !r.ingredient_id && r.suggestion_reason && (
-                          <p className="text-[10px] text-sky-600 mt-1">{r.suggestion_reason}</p>
-                        )}
+                        {classificacaoDoItem(r)}
                       </td>
                     </tr>
                   );
@@ -490,6 +525,7 @@ export default function ItensClassificacaoTab() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
       {filtrados.length > 0 && <p className="text-[11px] text-zinc-400">{filtrados.length} de {rows.length} itens</p>}

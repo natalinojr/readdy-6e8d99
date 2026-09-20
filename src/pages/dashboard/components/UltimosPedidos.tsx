@@ -229,7 +229,34 @@ const UltimosPedidos = memo(function UltimosPedidos({ pedidos }: Props) {
             <p className="text-xs mt-0.5">Os pedidos aparecerão aqui em tempo real</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Celular: um cartão por pedido — a tabela de 6 colunas fica apertada em 375px. */}
+          <ul className="md:hidden space-y-2">
+            {pedidos.map((p) => {
+              const st = STATUS_CLS[p.status] ?? STATUS_CLS.new;
+              const stLabel = STATUS_LABEL[p.status] ?? p.status;
+              const hora = new Date(p.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+              const formaPag = (p.pagamentos ?? []).filter((pg) => !pg.is_refunded)[0]?.payment_method_name;
+              return (
+                <li key={p.id} onClick={() => setSel(p)}
+                  className="rounded-xl border border-zinc-100 bg-white px-3 py-2.5 cursor-pointer">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-sm font-bold text-zinc-700">#{String(p.numero).padStart(4, '0')}</span>
+                    <span className="text-sm font-bold text-zinc-900 whitespace-nowrap">{fmt(Number(p.total) || 0)}</span>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-0.5 break-words">
+                    {getDestino(p)} · {ORIGIN_LABEL[p.origin] ?? p.origin} · {hora}
+                  </p>
+                  <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${st}`}>{stLabel}</span>
+                    {formaPag && <span className="text-[10px] text-zinc-400">{formaPag}</span>}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-zinc-100">
@@ -274,6 +301,7 @@ const UltimosPedidos = memo(function UltimosPedidos({ pedidos }: Props) {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
       {sel && <DetalheModal pedido={sel} onClose={() => setSel(null)} />}

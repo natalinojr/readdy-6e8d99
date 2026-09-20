@@ -328,7 +328,7 @@ export default function RHRelatorioTab() {
       {reportTab === 'evolucao' && (
         <div className="space-y-6">
           {!loading && (
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
               <div className="bg-white rounded-xl border border-zinc-200 p-4">
                 <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Total no Período</p>
                 <p className="text-xl font-bold text-zinc-900">{formatCurrency(totalPeriod)}</p>
