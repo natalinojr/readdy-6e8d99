@@ -119,8 +119,9 @@ export default function VincularPagamento({ transaction, onDone }: { transaction
           const sel = escolha?.ref_id === o.ref_id && escolha?.parcela === o.parcela;
           return (
             <button key={o.kind + o.ref_id + (o.parcela ?? '')} onClick={() => setEscolha(o)}
-              className={`w-full text-left px-3 py-2 flex items-center gap-2 cursor-pointer ${sel ? 'bg-sky-50' : 'hover:bg-zinc-50'}`}>
-              <i className={`${o.kind === 'inbound_doc' ? 'ri-file-text-line' : 'ri-bill-line'} ${sel ? 'text-sky-600' : 'text-zinc-400'}`} />
+              className={`w-full text-left px-3 py-2 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 cursor-pointer ${sel ? 'bg-sky-50' : 'hover:bg-zinc-50'}`}>
+              <span className="flex items-center gap-2 min-w-0 w-full sm:w-auto sm:flex-1">
+              <i className={`${o.kind === 'inbound_doc' ? 'ri-file-text-line' : 'ri-bill-line'} flex-shrink-0 ${sel ? 'text-sky-600' : 'text-zinc-400'}`} />
               <span className="flex-1 min-w-0">
                 <span className="block text-xs font-medium text-zinc-800 truncate">{o.label}</span>
                 <span className="block text-[11px] text-zinc-500">
@@ -129,7 +130,8 @@ export default function VincularPagamento({ transaction, onDone }: { transaction
                   {o.vencimento ? ` · vence ${dataBR(o.vencimento)}` : o.emissao ? ` · emitida ${dataBR(o.emissao)}` : ''}
                 </span>
               </span>
-              <span className="text-right flex-shrink-0">
+              </span>
+              <span className="flex sm:block items-baseline justify-between gap-2 w-full sm:w-auto sm:text-right flex-shrink-0 pl-6 sm:pl-0">
                 <span className="block text-xs font-bold text-zinc-800">{formatCurrency(o.valor)}</span>
                 {Math.abs(o.diferenca) > 0.005 && (
                   <span className={`block text-[11px] ${o.diferenca < 0 ? 'text-amber-600' : 'text-zinc-400'}`}>

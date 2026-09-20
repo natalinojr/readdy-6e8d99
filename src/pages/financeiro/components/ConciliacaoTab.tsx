@@ -1181,15 +1181,15 @@ export default function ConciliacaoTab() {
 
       {/* Filtros */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1.5" title="Período: vale para a tabela, os números e a busca nos bancos">
+        <div className="w-full sm:w-auto flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1.5" title="Período: vale para a tabela, os números e a busca nos bancos">
           <i className="ri-calendar-line text-zinc-400 text-sm" />
           <input type="date" value={periodFrom} max={periodTo || undefined}
             onChange={e => { setPeriodFrom(e.target.value); setPage(1); }}
-            className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
+            className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent flex-1 sm:flex-none sm:w-28 min-w-0" />
           <span className="text-zinc-300 text-xs">até</span>
           <input type="date" value={periodTo} min={periodFrom || undefined} max={hojeBR()}
             onChange={e => { setPeriodTo(e.target.value); setPage(1); }}
-            className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
+            className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent flex-1 sm:flex-none sm:w-28 min-w-0" />
         </div>
 
         {inicioFin && (
@@ -1199,7 +1199,7 @@ export default function ConciliacaoTab() {
           </span>
         )}
 
-        <div className="relative flex-1 min-w-[12rem]">
+        <div className="relative w-full sm:flex-1 sm:min-w-[12rem]">
           <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
           <input
             value={search}
@@ -1209,12 +1209,12 @@ export default function ConciliacaoTab() {
           />
         </div>
 
-        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
+        <div className="flex w-full sm:w-auto bg-white border border-zinc-200 rounded-lg overflow-x-auto">
           {(['all', 'pending', 'conciliado', 'ignored'] as const).map(s => (
             <button
               key={s}
               onClick={() => trocarFiltroStatus(s)}
-              className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${filterStatus === s ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
+              className={`flex-1 sm:flex-none px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${filterStatus === s ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
             >
               {s === 'all' ? 'Todos' : s === 'pending' ? 'Pendentes' : s === 'conciliado' ? 'Conciliados' : 'Ignorados'}
               <span className={`ml-1 ${filterStatus === s ? 'text-white/80' : 'text-zinc-400'}`}>
@@ -1227,7 +1227,7 @@ export default function ConciliacaoTab() {
         <select
           value={filterType}
           onChange={e => { setFilterType(e.target.value as typeof filterType); setPage(1); }}
-          className="border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+          className="flex-1 sm:flex-none border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
         >
           <option value="all">Entradas e saídas</option>
           <option value="credit">Só entradas</option>
@@ -1238,7 +1238,7 @@ export default function ConciliacaoTab() {
           <select
             value={filterCategory}
             onChange={e => { setFilterCategory(e.target.value); setPage(1); }}
-            className="border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white max-w-[12rem]"
+            className="flex-1 sm:flex-none border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white sm:max-w-[12rem]"
           >
             <option value="all">Todas categorias</option>
             {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1289,7 +1289,79 @@ export default function ConciliacaoTab() {
             )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Celular: cartão por lançamento (a tabela não cabe em 375px) */}
+          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+            {paginated.map(s => {
+              const sit = situacao(s);
+              const cfg = SITUACAO_CONFIG[sit];
+              const det = s.match_detail as Record<string, unknown> | null;
+              const temVinculo = det && ['payable', 'inbound_doc', 'payroll', 'rule'].includes(String(s.match_kind));
+              return (
+                <li key={s.id}>
+                  <div onClick={() => setSelectedTransaction(s)}
+                    className={`rounded-xl border bg-white px-3 py-3 active:bg-zinc-50 cursor-pointer ${sit === 'ignored' ? 'opacity-50 border-zinc-100' : sit === 'pending' ? 'border-amber-200' : 'border-zinc-200'}`}>
+                    <div className="flex items-start gap-2">
+                      {podeLancarDoExtrato(s) && (
+                        <input type="checkbox" checked={selLanc.has(s.id)} onClick={e => e.stopPropagation()}
+                          onChange={() => toggleLanc(s.id)} className="mt-1 w-4 h-4 flex-shrink-0"
+                          title="Selecionar para lançar como despesa ou compra" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-[11px] text-zinc-400 whitespace-nowrap">
+                            {new Date(s.transaction_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                          </span>
+                          <span className={`text-base font-bold whitespace-nowrap ${s.transaction_type === 'credit' ? 'text-green-700' : 'text-red-600'}`}>
+                            {s.transaction_type === 'debit' ? '−' : '+'}{fmtCur(Number(s.amount))}
+                          </span>
+                        </div>
+                        <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{s.description || '—'}</p>
+                        {temVinculo && (
+                          <p className={'text-xs mt-0.5 break-words line-clamp-2 ' + (s.reconciled ? 'text-emerald-600' : 'text-blue-600')}>
+                            <i className="ri-links-line text-xs" /> {s.reconciled ? 'Pago: ' : 'Sugestão: '}{String(det?.label ?? '')}
+                          </p>
+                        )}
+                        {s.notes && <p className="text-xs text-amber-500 mt-0.5 break-words line-clamp-1"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>}
+                        <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${cfg.color}`}>
+                            <i className={`${cfg.icon} text-xs`} />{cfg.label}
+                          </span>
+                          {(s.classificacao?.categoria || s.category) && (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${s.classificacao?.categoria ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                              {s.classificacao?.categoria ?? s.category}
+                            </span>
+                          )}
+                          <span className="flex-1" />
+                          <span onClick={e => e.stopPropagation()} className="flex items-center gap-1">
+                            {sit === 'pending' ? (
+                              <>
+                                <button onClick={() => handleConciliar(s.id)} title="Marcar como conciliado"
+                                  className="w-9 h-9 flex items-center justify-center rounded-lg bg-green-50 text-green-700 active:bg-green-100 cursor-pointer">
+                                  <i className="ri-check-line" />
+                                </button>
+                                <button onClick={() => handleIgnorar(s.id)} title="Ignorar"
+                                  className="w-9 h-9 flex items-center justify-center rounded-lg bg-zinc-50 active:bg-zinc-100 cursor-pointer">
+                                  <i className="ri-eye-off-line text-zinc-400" />
+                                </button>
+                              </>
+                            ) : (
+                              <button onClick={() => handleReabrir(s.id)}
+                                className="px-3 h-9 flex items-center rounded-lg bg-zinc-50 text-xs font-semibold text-zinc-500 active:bg-zinc-100 cursor-pointer">
+                                Reabrir
+                              </button>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 border-b border-zinc-200">
                 <tr>
@@ -1400,6 +1472,7 @@ export default function ConciliacaoTab() {
               </tbody>
             </table>
           </div>
+          </>
         )}
 
         {/* Pagination */}
