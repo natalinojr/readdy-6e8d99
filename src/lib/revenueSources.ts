@@ -50,11 +50,13 @@ export interface MoneyFlowSettings {
   card_deposit_match: string | null;
   card_pix_mode: CardPixMode | null;
   ifood_deposit_account_id: string | null;
+  /** 'YYYY-MM-DD' (dia 1): o financeiro da loja vale deste mês em diante; antes está fechado */
+  financeiro_inicio: string | null;
 }
 
 export const EMPTY_MONEY_FLOW: MoneyFlowSettings = {
   bank_provider: null, bank_account_id: null, card_provider: null, card_deposit_account_id: null,
-  card_deposit_match: null, card_pix_mode: null, ifood_deposit_account_id: null,
+  card_deposit_match: null, card_pix_mode: null, ifood_deposit_account_id: null, financeiro_inicio: null,
 };
 
 /** Nomes para as telas (DRE, Receitas...) a partir da configuração. */
@@ -86,7 +88,7 @@ export function revenueSourceInfo(flow?: Partial<MoneyFlowSettings> | null): Rec
 /** Rótulos genéricos (sem a configuração da loja). */
 export const REVENUE_SOURCE_INFO = revenueSourceInfo(null);
 
-const FLOW_COLUMNS = 'bank_provider, bank_account_id, card_provider, card_deposit_account_id, card_deposit_match, card_pix_mode, ifood_deposit_account_id';
+const FLOW_COLUMNS = 'bank_provider, bank_account_id, card_provider, card_deposit_account_id, card_deposit_match, card_pix_mode, ifood_deposit_account_id, financeiro_inicio';
 
 export async function fetchRevenueSettings(tenantId: string): Promise<{ sources: RevenueSettingSource[]; flow: MoneyFlowSettings; error: string | null }> {
   const { data, error } = await supabase

@@ -35,6 +35,13 @@
 //   launch_rule_preview  { rule_id }            pagamentos pendentes (qualquer data) que a regra pegaria
 //   launch_rule_apply    { rule_id, items: [{ id, competencia: 'YYYY-MM' }] }   admin/gerente: lança esses
 //
+//   INÍCIO DO FINANCEIRO (2026-09-19): a loja escolhe de que mês em diante o financeiro vale e fecha o
+//   que ficou para trás. Só mexe no que está PENDENTE (extrato, conta a pagar em aberto, nota da SEFAZ
+//   não lançada); baixa feita, nota lançada, classificação e vínculo continuam como estão. Reversível.
+//   periodo_preview  { inicio: 'YYYY-MM' }   o que seria fechado
+//   periodo_fechar   { inicio: 'YYYY-MM' }   admin/gerente
+//   periodo_reabrir  {}                      admin/gerente: desfaz o corte
+//
 // Reaproveita a lógica que já existe chamando as outras edges COM O JWT DO USUÁRIO:
 //   fiscal-inbound (import_purchase / import_bill) e financial-write (pay_bill / upsert_bill).
 // O estorno (undo) é feito aqui, com service role, porque não existe "despagar" no financial-write.
@@ -1034,6 +1041,31 @@ Deno.serve(async (req: Request) => {
       if (ok) await admin.from('fin_reconciliation_rules').update({ match_count: Number(rule.match_count ?? 0) + ok, last_applied_at: new Date().toISOString() }).eq('id', rule.id);
       log('INFO', 'launch_rule_apply', 'ok', { tenantId, userId, rule: rule.id, total: results.length, ok });
       return json({ success: true, results });
+    }
+
+    // ── Início do financeiro ──────────────────────────────────────────────────
+    if (action === 'periodo_preview' || action === 'periodo_fechar') {
+      const mes = String(body.inicio ?? '');
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mes)) return errResp("Escolha o mês de início (formato 'AAAA-MM')");
+      const inicio = mes + '-01';
+      if (action === 'periodo_preview') {
+        const { data, error } = await admin.rpc('fn_periodo_anterior_preview', { p_tenant: tenantId, p_inicio: inicio });
+        if (error) return errResp('Pré-visualizar: ' + error.message, 500);
+        return json({ success: true, preview: data });
+      }
+      if (!isManager) return errResp('Apenas administradores e gerentes podem fechar o período', 403);
+      const { data, error } = await admin.rpc('fn_fechar_periodo_anterior', { p_tenant: tenantId, p_inicio: inicio, p_user: userId });
+      if (error) return errResp('Fechar o período: ' + error.message, 500);
+      log('INFO', 'periodo_fechar', 'ok', { tenantId, userId, inicio, ...(data as Row ?? {}) });
+      return json({ success: true, ...(data as Row ?? {}) });
+    }
+
+    if (action === 'periodo_reabrir') {
+      if (!isManager) return errResp('Apenas administradores e gerentes podem reabrir o período', 403);
+      const { data, error } = await admin.rpc('fn_reabrir_periodo_anterior', { p_tenant: tenantId });
+      if (error) return errResp('Reabrir: ' + error.message, 500);
+      log('INFO', 'periodo_reabrir', 'ok', { tenantId, userId, ...(data as Row ?? {}) });
+      return json({ success: true, ...(data as Row ?? {}) });
     }
 
     return errResp('Ação desconhecida: ' + action);

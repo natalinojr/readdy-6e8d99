@@ -14,6 +14,7 @@ import StoneImportPanel from './conciliacao/StoneImportPanel';
 import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 import InterConfigModal from './conciliacao/InterConfigModal';
 import InterSyncPanel from './conciliacao/InterSyncPanel';
+import InicioFinanceiroModal from './conciliacao/InicioFinanceiroModal';
 import ComoDinheiroEntraModal from './conciliacao/ComoDinheiroEntraModal';
 import RepassesStoneModal from './conciliacao/RepassesStoneModal';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
@@ -460,10 +461,14 @@ export default function ConciliacaoTab() {
   const [showStoneConfig, setShowStoneConfig] = useState(false);
   const [showIfoodConfig, setShowIfoodConfig] = useState(false);
   const [showInterConfig, setShowInterConfig] = useState(false);
+  const [showInicioFin, setShowInicioFin] = useState(false);
   const [showIntegracoes, setShowIntegracoes] = useState(false);
   const [showComoEntra, setShowComoEntra] = useState(false);
   const [showRepassesStone, setShowRepassesStone] = useState<false | 'repasses' | 'taxas'>(false);
-  const { flow: moneyFlow } = useMoneyFlow();
+  const { flow: moneyFlow, reload: reloadMoneyFlow } = useMoneyFlow();
+  // Início do financeiro da loja (fin_revenue_settings.financeiro_inicio): o que é anterior está fechado
+  const inicioFin = moneyFlow.financeiro_inicio ?? null;
+  const mesBRFin = (iso: string) => iso.slice(5, 7) + '/' + iso.slice(0, 4);
   const usaStone = moneyFlow.card_provider === 'stone';
   // Pagamentos sem nota selecionados para lançar de uma vez (despesa/compra)
   const [selLanc, setSelLanc] = useState<Set<string>>(new Set());
@@ -514,7 +519,9 @@ export default function ConciliacaoTab() {
         body: { action: 'get_reconciliation_period', tenant_id: user.tenantId, payload: { bank_account_id: selectedAccountId } },
       });
       if (cancel) return;
-      const from = r.data?.data?.date_from || shiftISO(hojeBR(), -30);
+      let from = r.data?.data?.date_from || shiftISO(hojeBR(), -30);
+      // Loja com período fechado abre a partir do início do financeiro (o anterior está encerrado)
+      if (inicioFin && from < inicioFin) from = inicioFin;
       periodFromSalvo.current = { accountId: selectedAccountId, from };
       setPeriodFrom(from);
       setPage(1);
@@ -1032,6 +1039,9 @@ export default function ConciliacaoTab() {
             <MenuItem icon="ri-git-merge-line" label="Como o dinheiro entra" hint="Banco principal, maquininha e iFood" onClick={() => { setMenuConfig(false); setShowComoEntra(true); }} />
             <MenuItem icon="ri-filter-3-line" label={`Regras de classificação (${rules.length})`} onClick={() => { setMenuConfig(false); setShowRules(true); }} />
             <MenuItem icon="ri-scales-3-line" label="Reconciliar saldo" disabled={!selectedAccount} onClick={() => { setMenuConfig(false); setShowSaldoModal(true); }} />
+            <MenuItem icon="ri-calendar-check-line" label="Meu financeiro começa em…"
+              hint={inicioFin ? `Hoje: ${mesBRFin(inicioFin)}` : 'Fecha os meses anteriores de uma vez'}
+              onClick={() => { setMenuConfig(false); setShowInicioFin(true); }} />
             <div className="border-t border-zinc-100 my-1" />
             <p className="px-3 pt-1 pb-0.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wide">Integrações</p>
             <MenuItem icon="ri-pulse-line" label="Status e histórico" hint="Última busca, erros, dias da Stone" onClick={() => { setMenuConfig(false); setShowIntegracoes(true); }} />
@@ -1148,6 +1158,13 @@ export default function ConciliacaoTab() {
             onChange={e => { setPeriodTo(e.target.value); setPage(1); }}
             className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent w-28" />
         </div>
+
+        {inicioFin && (
+          <span title="O que é anterior a esse mês foi fechado em Conciliação › ⚙ › Meu financeiro começa em…"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-violet-50 border border-violet-200 text-xs font-semibold text-violet-700 whitespace-nowrap">
+            <i className="ri-calendar-check-line" /> Financeiro a partir de {mesBRFin(inicioFin)}
+          </span>
+        )}
 
         <div className="relative flex-1 min-w-[12rem]">
           <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
@@ -1408,6 +1425,14 @@ export default function ConciliacaoTab() {
       )}
 
       {/* Rules Modal */}
+      {showInicioFin && (
+        <InicioFinanceiroModal
+          atual={inicioFin}
+          onClose={() => setShowInicioFin(false)}
+          onSaved={() => { reloadMoneyFlow(); refresh(); loadAlerts(); }}
+        />
+      )}
+
       {showRules && (
         <RegrasConciliacaoModal
           rules={rules}
