@@ -318,6 +318,110 @@ async function getTenants(admin: SupabaseClient, cfg: Record<string, any>): Prom
   return ((data ?? []) as any[]).map((r) => ({ id: String(r.tenant_id), name: String(r.tenants?.name ?? r.tenant_id) }));
 }
 
+// ── Fechamento de CAIXA e de SESSÃO (dono, 2026-09-20) ──────────────────────
+// Duas mensagens diferentes: o caixa fala de DINHEIRO (gaveta daquele operador) e a sessão fala do
+// TURNO inteiro da loja (vendas, canais, pagamentos, itens). Layout em blocos, como os outros avisos.
+const hhmm = (ts: unknown) => (ts ? new Date(String(ts)).toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }) : '—');
+const diaHora = (ts: unknown) => (ts ? `${dmy(new Date(String(ts)).toLocaleDateString('en-CA', { timeZone: TZ })).slice(0, 5)} ${hhmm(ts)}` : '—');
+const diffTexto = (d: number) => (Math.abs(d) < 0.01 ? 'bateu certinho ✅' : d > 0 ? `sobrou ${brl(d)} ⚠️` : `faltou ${brl(Math.abs(d))} ⚠️`);
+
+async function caixaText(admin: SupabaseClient, cashRegisterId: string): Promise<string | null> {
+  const { data: cr } = await admin.from('cash_registers')
+    .select('id, tenant_id, session_id, opening_value, closing_value_expected, closing_value_actual, closing_difference, closing_notes, opened_at, closed_at, operator_id')
+    .eq('id', cashRegisterId).maybeSingle();
+  if (!cr) return null;
+  const [{ data: loja }, { data: op }] = await Promise.all([
+    admin.from('tenants').select('name').eq('id', cr.tenant_id).maybeSingle(),
+    cr.operator_id ? admin.from('users').select('name').eq('id', cr.operator_id).maybeSingle() : Promise.resolve({ data: null }),
+  ]);
+  const mov = await db()<Array<{ type: string; total: number; n: number; motivos: string | null }>>`
+    select type, coalesce(sum(amount),0)::float as total, count(*)::int as n,
+           string_agg(distinct nullif(trim(reason), ''), ', ') as motivos
+    from cash_movements where cash_register_id = ${cashRegisterId} group by type`;
+  const entrada = mov.find((m) => m.type === 'in'), saida = mov.find((m) => m.type === 'out');
+  const dif = Number(cr.closing_difference ?? 0);
+  const l: string[] = [];
+  l.push(`💵 *Caixa fechado — ${String(loja?.name ?? '')}*`);
+  l.push(`${op?.name ?? 'Operador'} · ${diaHora(cr.opened_at)} → ${diaHora(cr.closed_at)}`);
+  l.push('');
+  l.push(`Abertura: ${brl(cr.opening_value)}`);
+  if (entrada) l.push(`Entradas: ${brl(entrada.total)} (${entrada.n})${entrada.motivos ? ` — ${entrada.motivos.slice(0, 120)}` : ''}`);
+  if (saida) l.push(`Saídas: ${brl(saida.total)} (${saida.n})${saida.motivos ? ` — ${saida.motivos.slice(0, 120)}` : ''}`);
+  l.push(`Esperado na gaveta: ${brl(cr.closing_value_expected)}`);
+  l.push(`Contado: ${brl(cr.closing_value_actual)}`);
+  l.push(`Diferença: ${diffTexto(dif)}`);
+  if (cr.closing_notes) l.push(`Obs.: ${String(cr.closing_notes).slice(0, 200)}`);
+  return l.join('\n');
+}
+
+async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<string | null> {
+  const { data: s } = await admin.from('sessions')
+    .select('id, tenant_id, number, opened_at, closed_at, is_training').eq('id', sessionId).maybeSingle();
+  if (!s || s.is_training) return null;
+  const { data: loja } = await admin.from('tenants').select('name').eq('id', s.tenant_id).maybeSingle();
+  const dia = new Date(String(s.opened_at)).toLocaleDateString('en-CA', { timeZone: TZ });
+  const lwDay = addDays(dia, -7);
+  const [{ data: rep }, { data: lw }, { data: caixas }] = await Promise.all([
+    admin.rpc('fn_get_sales_report', { p_tenant_id: s.tenant_id, p_date_from: `${dia}T00:00:00-03:00`, p_date_to: `${addDays(dia, 1)}T00:00:00-03:00`, p_session_id: sessionId }),
+    admin.rpc('fn_get_sales_report', { p_tenant_id: s.tenant_id, p_date_from: `${lwDay}T00:00:00-03:00`, p_date_to: `${addDays(lwDay, 1)}T00:00:00-03:00`, p_session_id: null }),
+    admin.from('cash_registers').select('closing_difference').eq('session_id', sessionId),
+  ]);
+  // deno-lint-ignore no-explicit-any
+  const r = (rep ?? {}) as any, prev = (lw ?? {}) as any;
+  const rev = Number(r.total_revenue ?? 0), n = Number(r.total_orders ?? 0);
+  const extra = await db()<[{ cancelados: number; cancelados_valor: number; descontos: number }]>`
+    select
+      (select count(*)::int from orders where session_id = ${sessionId} and not is_training and status = 'cancelled') as cancelados,
+      (select coalesce(sum(total_amount),0)::float from orders where session_id = ${sessionId} and not is_training and status = 'cancelled') as cancelados_valor,
+      (select coalesce(sum(discount_amount),0)::float from orders where session_id = ${sessionId} and not is_training and status <> 'cancelled') as descontos`;
+  const x = extra[0];
+  if (!n && !x.cancelados) return null; // turno sem venda: não enche o chat
+  const lwRev = Number(prev.total_revenue ?? 0);
+  const CANAL_NOME: Record<string, string> = { delivery: 'Delivery', table: 'Mesa', qr_universal: 'QR Code', cashier: 'Caixa', immediate: 'Balcão', name: 'Senha', password: 'Senha', self_service: 'Autoatendimento', waiter: 'Garçom' };
+  const l: string[] = [];
+  l.push(`🌙 *Fechamento do turno — ${String(loja?.name ?? '')}*`);
+  l.push(`${s.number ? `Sessão #${s.number} · ` : ''}${diaHora(s.opened_at)} → ${diaHora(s.closed_at)}`);
+  l.push('');
+  l.push(`*${brl(rev)}* em ${n} pedido${n === 1 ? '' : 's'} · ticket ${brl(r.avg_ticket)}`);
+  if (lwRev > 0) l.push(`${pct(rev, lwRev) >= 0 ? '📈 +' : '📉 '}${pct(rev, lwRev)}% vs ${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][weekday(lwDay)]} passada (${brl(lwRev)})`);
+  // deno-lint-ignore no-explicit-any
+  const canais = (Array.isArray(r.by_destination) ? r.by_destination : []).sort((a: any, b: any) => Number(b.revenue) - Number(a.revenue));
+  if (canais.length) {
+    l.push('');
+    l.push('*Por canal*');
+    // deno-lint-ignore no-explicit-any
+    for (const c of canais as any[]) l.push(`· ${CANAL_NOME[String(c.destination)] ?? c.destination}: ${brl(c.revenue)} (${Number(c.orders)})`);
+  }
+  // deno-lint-ignore no-explicit-any
+  const pagos = (Array.isArray(r.by_payment) ? r.by_payment : []).sort((a: any, b: any) => Number(b.total) - Number(a.total));
+  if (pagos.length) {
+    l.push('');
+    l.push('*Pagamentos*');
+    // deno-lint-ignore no-explicit-any
+    for (const p of pagos as any[]) l.push(`· ${p.payment_method}: ${brl(p.total)}`);
+  }
+  const somaItens = new Map<string, number>();
+  // deno-lint-ignore no-explicit-any
+  for (const i of (Array.isArray(r.top_items) ? r.top_items : []) as any[]) {
+    const nome = String(i.item_name ?? '').replace(/\s*\(Un\.\s*\d+\)\s*$/i, '').trim();
+    somaItens.set(nome, (somaItens.get(nome) ?? 0) + Number(i.total_qty ?? 0));
+  }
+  const top = [...somaItens.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  if (top.length) {
+    l.push('');
+    l.push('*Mais vendidos*');
+    top.forEach(([nome, qtd], i) => l.push(`${i + 1}. ${nome} — ${qtd}`));
+  }
+  const difs = (caixas ?? []) as Array<{ closing_difference: number | null }>;
+  const somaDif = difs.reduce((a, c) => a + Number(c.closing_difference ?? 0), 0);
+  if (difs.length) { l.push(''); l.push(`*Caixas*: ${difs.length} · dinheiro ${diffTexto(somaDif)}`); }
+  const alertas: string[] = [];
+  if (x.cancelados) alertas.push(`${x.cancelados} cancelado(s) (${brl(x.cancelados_valor)})`);
+  if (x.descontos > 0) alertas.push(`descontos ${brl(x.descontos)}`);
+  if (alertas.length) { l.push(''); l.push(`⚠️ ${alertas.join(' · ')}`); }
+  return l.join('\n');
+}
+
 // Fechamento do dia: números da mesma conta das telas (fn_get_sales_report) + cancelados,
 // descontos e quebra de caixa; compara com o mesmo dia da semana passada.
 async function closingText(admin: SupabaseClient, tenants: Array<{ id: string; name: string }>, day: string): Promise<string | null> {
@@ -824,9 +928,9 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
 
   if (want('closing') && (dry || (inWindow(pro.closing.time, now) && state.closing_date !== today))) {
     if (!dry) { state.closing_date = today; await saveState(); }
-    // Quem abriu caixa hoje já recebeu (ou vai receber) o fechamento ao fechar o caixa: aqui ficam só
-    // as lojas sem caixa nenhum no dia, senão o dono receberia a mesma loja duas vezes.
-    const { data: comCaixa } = await admin.from('cash_registers').select('tenant_id')
+    // Quem abriu turno hoje já recebeu (ou vai receber) o fechamento ao fechar a sessão: aqui ficam só
+    // as lojas sem sessão nenhuma no dia, senão o dono receberia a mesma loja duas vezes.
+    const { data: comCaixa } = await admin.from('sessions').select('tenant_id')
       .gte('opened_at', `${today}T00:00:00-03:00`).lt('opened_at', `${addDays(today, 1)}T00:00:00-03:00`);
     const abriram = new Set(((comCaixa ?? []) as Array<{ tenant_id: string }>).map((r) => String(r.tenant_id)));
     const jaFoi = (state.closing_sent ?? {}) as Record<string, string>;
@@ -945,8 +1049,31 @@ Deno.serve(async (req) => {
     try { return json({ ok: true, preview: await proactive(admin, cfg, ownerChat, body.preview) }); }
     catch (e) { return json({ error: errMsg(e) }, 500); }
   }
-  // Caixa fechado numa loja (gatilho trg_cash_register_fechou → pg_net): manda o fechamento DESSA loja,
-  // com o dia do turno (o do opened_at) já completo. Uma mensagem por loja (dono, 2026-09-20).
+  // Gatilhos do PDV (2026-09-20): caixa fechado → mensagem do DINHEIRO daquele caixa; sessão fechada →
+  // fechamento do turno da loja. Uma mensagem por caixa e uma por sessão.
+  if (body.run === 'closing_cash' || body.run === 'closing_session') {
+    try {
+      const id = String(body.id ?? '');
+      if (!id) return json({ error: 'id obrigatório' }, 400);
+      const texto = body.run === 'closing_cash' ? await caixaText(admin, id) : await sessaoText(admin, id);
+      if (!texto) return json({ ok: true, skipped: 'sem conteúdo' });
+      if (!ownerChat) return json({ ok: true, skipped: 'sem canal do dono' });
+      await (isTg(ownerChat) ? sendTelegram(ownerChat, texto) : sendText(toNumber(ownerChat), texto));
+      await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: texto, topic: 'pagamentos' });
+      // O aviso das 23:00 não repete a loja que já recebeu o fechamento do turno.
+      if (body.run === 'closing_session') {
+        const { data: s } = await admin.from('sessions').select('tenant_id, opened_at').eq('id', id).maybeSingle();
+        if (s) {
+          const st = (cfg.proactive_state ?? {}) as Record<string, unknown>;
+          const dia = new Date(String(s.opened_at)).toLocaleDateString('en-CA', { timeZone: TZ });
+          const enviados = { ...((st.closing_sent ?? {}) as Record<string, string>), [String(s.tenant_id)]: dia };
+          await admin.from('asst_settings').upsert({ key: 'proactive_state', value: { ...st, closing_sent: enviados }, updated_at: new Date().toISOString() });
+        }
+      }
+      return json({ ok: true, sent: true });
+    } catch (e) { return json({ error: errMsg(e) }, 500); }
+  }
+  // Fechamento do dia inteiro de uma loja (uso manual; o normal é pelo fechamento da sessão).
   if (body.run === 'closing_tenant') {
     try {
       const tenantId = String(body.tenant_id ?? '');

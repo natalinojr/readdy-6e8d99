@@ -2591,6 +2591,16 @@ mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a co
 `''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
 de não lidas (`linhaConversa`).
 
+### Fechamento: uma mensagem do CAIXA e uma da SESSÃO (2026-09-20)
+
+`sessions` = turno da loja; `cash_registers` = gaveta dentro do turno (`session_id`). Gatilhos
+`trg_cash_register_fechou` → `closing_cash` (dinheiro daquele caixa: abertura, entradas/saídas com o
+motivo, esperado × contado, diferença, observação) e `trg_session_fechou` → `closing_session` (turno:
+`fn_get_sales_report` com `p_session_id`, canais, pagamentos, mais vendidos já juntando " (Un. N)",
+nº de caixas e a soma das diferenças, cancelados/descontos da sessão). Ambos em `assistente-cron`
+(`caixaText`/`sessaoText`), chamados por `fn_pdv_avisa_assistente` (pg_net + vault). Turno sem venda
+não manda nada. Migration `20260920050000_fechamento_caixa_e_sessao`.
+
 ### Fechamento sai ao fechar o caixa, uma mensagem por loja (2026-09-20)
 
 Gatilho `trg_cash_register_fechou` (migration `20260920040000_fechamento_ao_fechar_o_caixa`) chama
