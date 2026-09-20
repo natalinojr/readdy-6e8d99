@@ -263,7 +263,11 @@ async function keepWarm(admin: SupabaseClient, cfg: Record<string, any>) {
 // entra em asst_messages (channel 'cron') para o brain saber o que já foi dito.
 // deno-lint-ignore no-explicit-any
 const PRO_DEFAULTS: Record<string, any> = {
-  closing: { enabled: true, time: '23:00' },            // fechamento do dia por loja
+  // Fechamento: o normal é sair QUANDO A LOJA FECHA O CAIXA (gatilho em cash_registers →
+  // run 'closing_tenant'), uma mensagem por loja, com o dia já completo (dono, 2026-09-20: às 23:00
+  // faltavam os pedidos pagos depois da meia-noite). O horário abaixo é só a rede de segurança:
+  // loja que teve movimento no dia e não abriu caixa nenhum.
+  closing: { enabled: true, time: '23:00' },
   due_tomorrow: { enabled: true, time: '17:00' },       // contas que vencem amanhã (+ fim de semana na sexta)
   // Contas que vencem HOJE (dono, 2026-09-18): com boleto guardado → pagamento preparado para
   // aprovar na conversa Financeiro; sem boleto → avisa que falta o boleto.
@@ -352,7 +356,15 @@ async function closingText(admin: SupabaseClient, tenants: Array<{ id: string; n
     const pay = (Array.isArray(r.by_payment) ? r.by_payment : []).sort((a: any, b: any) => Number(b.total) - Number(a.total)).slice(0, 4).map((p: any) => `${p.payment_method} ${brl(p.total)}`);
     if (pay.length) lines.push(`Pagamentos: ${pay.join(' · ')}`);
     // deno-lint-ignore no-explicit-any
-    const top = (Array.isArray(r.top_items) ? r.top_items : []).slice(0, 5).map((i: any) => `${i.item_name} (${Number(i.total_qty)})`);
+    // Junta as unidades do KDS (" (Un. N)") como a aba Produtos e a ação rápida Vendas do dia, senão o
+    // mesmo lanche aparece duas vezes com quantidades diferentes (dono, 2026-09-20).
+    const somaItens = new Map<string, number>();
+    // deno-lint-ignore no-explicit-any
+    for (const i of (Array.isArray(r.top_items) ? r.top_items : []) as any[]) {
+      const nome = String(i.item_name ?? '').replace(/\s*\(Un\.\s*\d+\)\s*$/i, '').trim();
+      somaItens.set(nome, (somaItens.get(nome) ?? 0) + Number(i.total_qty ?? 0));
+    }
+    const top = [...somaItens.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([nome, qtd]) => `${nome} (${qtd})`);
     if (top.length) lines.push(`Mais vendidos: ${top.join(', ')}`);
     const alerts: string[] = [];
     if (x.cancelados) alerts.push(`${x.cancelados} cancelado(s) (${brl(x.cancelados_valor)})`);
@@ -812,8 +824,15 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
 
   if (want('closing') && (dry || (inWindow(pro.closing.time, now) && state.closing_date !== today))) {
     if (!dry) { state.closing_date = today; await saveState(); }
-    const t = await closingText(admin, tenants, today);
-    if (t) await deliver('closing', t); else res.closing = 'sem movimento';
+    // Quem abriu caixa hoje já recebeu (ou vai receber) o fechamento ao fechar o caixa: aqui ficam só
+    // as lojas sem caixa nenhum no dia, senão o dono receberia a mesma loja duas vezes.
+    const { data: comCaixa } = await admin.from('cash_registers').select('tenant_id')
+      .gte('opened_at', `${today}T00:00:00-03:00`).lt('opened_at', `${addDays(today, 1)}T00:00:00-03:00`);
+    const abriram = new Set(((comCaixa ?? []) as Array<{ tenant_id: string }>).map((r) => String(r.tenant_id)));
+    const jaFoi = (state.closing_sent ?? {}) as Record<string, string>;
+    const faltam = dry ? tenants : tenants.filter((t) => !abriram.has(t.id) && jaFoi[t.id] !== today);
+    const t = faltam.length ? await closingText(admin, faltam, today) : null;
+    if (t) await deliver('closing', t); else res.closing = faltam.length ? 'sem movimento' : 'cada loja já recebeu ao fechar o caixa';
   }
   if (want('anomaly')) {
     const lastCheck = state.anomaly_checked_at ? Date.parse(state.anomaly_checked_at) : 0;
@@ -925,6 +944,32 @@ Deno.serve(async (req) => {
   if (typeof body.preview === 'string') {
     try { return json({ ok: true, preview: await proactive(admin, cfg, ownerChat, body.preview) }); }
     catch (e) { return json({ error: errMsg(e) }, 500); }
+  }
+  // Caixa fechado numa loja (gatilho trg_cash_register_fechou → pg_net): manda o fechamento DESSA loja,
+  // com o dia do turno (o do opened_at) já completo. Uma mensagem por loja (dono, 2026-09-20).
+  if (body.run === 'closing_tenant') {
+    try {
+      const tenantId = String(body.tenant_id ?? '');
+      if (!tenantId) return json({ error: 'tenant_id obrigatório' }, 400);
+      const day = /^\d{4}-\d{2}-\d{2}$/.test(String(body.day ?? '')) ? String(body.day) : localDate();
+      const { data: t } = await admin.from('tenants').select('id, name').eq('id', tenantId).maybeSingle();
+      if (!t) return json({ error: 'loja não encontrada' }, 404);
+      // Outro caixa ainda aberto na loja: o fechamento sai quando o último fechar.
+      const { count } = await admin.from('cash_registers').select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId).neq('status', 'closed')
+        .gte('opened_at', `${day}T00:00:00-03:00`).lt('opened_at', `${addDays(day, 1)}T00:00:00-03:00`);
+      if (count) return json({ ok: true, skipped: 'ainda tem caixa aberto' });
+      const texto = await closingText(admin, [{ id: String(t.id), name: String(t.name) }], day);
+      if (!texto) return json({ ok: true, skipped: 'sem movimento' });
+      if (!ownerChat) return json({ ok: true, skipped: 'sem canal do dono' });
+      await (isTg(ownerChat) ? sendTelegram(ownerChat, texto) : sendText(toNumber(ownerChat), texto));
+      await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: texto, topic: 'pagamentos' });
+      // Marca para o aviso das 23:00 não repetir a mesma loja.
+      const st = (cfg.proactive_state ?? {}) as Record<string, unknown>;
+      const enviados = { ...((st.closing_sent ?? {}) as Record<string, string>), [tenantId]: day };
+      await admin.from('asst_settings').upsert({ key: 'proactive_state', value: { ...st, closing_sent: enviados }, updated_at: new Date().toISOString() });
+      return json({ ok: true, sent: true });
+    } catch (e) { return json({ error: errMsg(e) }, 500); }
   }
   // Chamado pelo webhook logo depois que o dono responde: manda a próxima pergunta DRE já.
   if (body.run === 'dre_classify') {

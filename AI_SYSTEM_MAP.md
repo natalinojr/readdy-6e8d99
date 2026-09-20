@@ -2591,6 +2591,15 @@ mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a co
 `''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
 de não lidas (`linhaConversa`).
 
+### Fechamento sai ao fechar o caixa, uma mensagem por loja (2026-09-20)
+
+Gatilho `trg_cash_register_fechou` (migration `20260920040000_fechamento_ao_fechar_o_caixa`) chama
+`assistente-cron` com `run: 'closing_tenant'` (pg_net + `vault.decrypted_secrets.assistente_internal_key`),
+passando a loja e o dia do TURNO (data do `opened_at`). A Edge só manda se não sobrou caixa aberto na
+loja naquele dia e grava `proactive_state.closing_sent[tenant] = dia`. O aviso das 23:00 virou rede de
+segurança: pula as lojas que abriram caixa no dia (essas recebem ao fechar) e as já marcadas.
+Os "mais vendidos" do fechamento agora juntam " (Un. N)" como a aba Produtos e a ação Vendas do dia.
+
 ### Vendas do dia × Fechamento: as duas contas do mesmo sábado (2026-09-20)
 
 `fn_get_sales_report` (3 e 4 argumentos) somava `by_payment` pelos pagamentos do período
