@@ -684,7 +684,7 @@ export default function ConciliacaoTab() {
   const vinculosPendentes = useMemo(
     () => imports.filter(i => i.status === 'pending' && !i.reconciled
       && (i.match_kind === 'payable' || i.match_kind === 'inbound_doc' || i.match_kind === 'payroll' || i.match_kind === 'rule')
-      && (i.match_confidence === 'exato' || i.match_confidence === 'forte')),
+      && (i.match_confidence === 'exato' || i.match_confidence === 'forte' || i.match_confidence === 'provavel')),
     [imports],
   );
   const [showConfirmarVinculos, setShowConfirmarVinculos] = useState(false);
