@@ -2948,3 +2948,18 @@ autoatendimento" era um `useEffect` **dentro da tela de Módulos**, e o login vo
 o `AppLayout` guardou (`location.state.from`) — qualquer rota que o aparelho tivesse aberto antes
 pulava a tela de Módulos e, com ela, a regra. Agora é guarda do `AppLayout`: `user.perfil === 'totem'`
 em rota protegida → `Navigate to="/autoatendimento"`.
+### KDS e Gestor de Pedidos: quem vê é a permissão, não o papel (2026-09-21)
+
+Sequência do item anterior. O Caixa da Paranaguá tinha `kds_acessar` e
+`gestor_pedidos_acessar` marcados em `permissions` (`allowed: true`, role `cashier`)
+e mesmo assim não via o card em `/modulos`: os cards `kds` e `gestor_pedidos` tinham
+`perfis: ['admin','gerente','cozinha']`, uma lista fixa avaliada ANTES da permissão —
+`perfilOk && cfgOk`. Marcar na matriz não adiantava.
+
+Os dois cards perderam o `perfis`; sobra a checagem de permissão que já existia logo
+abaixo. `/kds` e `/gestor-pedidos` entraram no `ROTA_PERMISSAO` do `RotaProtegida`,
+para a rota fechar junto com o card.
+
+**Critério:** card de módulo com lista fixa de papéis + checagem de permissão no mesmo
+filtro é bug esperando acontecer — a lista sempre ganha e a matriz vira enfeite. Quando
+a tela tem chave de permissão, ela manda sozinha.

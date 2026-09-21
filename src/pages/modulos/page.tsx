@@ -83,7 +83,8 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-emerald-50',
     acentoBorder: 'border-emerald-200/70',
     tag: 'Cozinha',
-    perfis: ['admin', 'gerente', 'cozinha'],
+    // Sem `perfis`: quem vê é quem tem 'kds_acessar' (checado abaixo). A lista fixa
+    // deixava o Caixa de fora mesmo com a permissão marcada na matriz.
   },
   {
     id: 'gestor_pedidos',
@@ -96,7 +97,7 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-violet-50',
     acentoBorder: 'border-violet-200/70',
     tag: 'Cozinha',
-    perfis: ['admin', 'gerente', 'cozinha'],
+    // Sem `perfis`: quem vê é quem tem 'gestor_pedidos_acessar' (checado abaixo).
   },
   {
     id: 'gestor_delivery',
