@@ -223,6 +223,28 @@ Deno.serve(async (req: Request) => {
       return STAGE_ORDER.map((s) => porEstagio.get(s)!);
     }
 
+    // Cortes do funil. Espelham os defaults das colunas de crm_stage_criteria:
+    // a loja que nunca configurou continua com o comportamento de sempre.
+    const CRITERIOS_PADRAO = {
+      carrinho_horas: 72,
+      perdido_dias: 90,
+      risco_multiplicador: 1.5,
+      risco_min_dias: 21,
+      ciclo_padrao_dias: 30,
+      fiel_min_pedidos: 6,
+      vip_min_pedidos: 6,
+      vip_percentil: 0.9,
+      vip_min_gasto: 0,
+    };
+
+    async function carregarCriterios() {
+      const { data: row } = await admin
+        .from("crm_stage_criteria").select("*").eq("tenant_id", tenantId).maybeSingle();
+      // Sem linha: devolve os padroes (nao cria nada — loja que nunca mexeu
+      // continua acompanhando qualquer mudanca futura de default).
+      return row ?? { tenant_id: tenantId, ...CRITERIOS_PADRAO };
+    }
+
     async function carregarSettings() {
       const { data: row } = await admin.from("crm_settings").select("*").eq("tenant_id", tenantId).maybeSingle();
       if (row) return row;
@@ -314,6 +336,8 @@ Deno.serve(async (req: Request) => {
         })),
         rules: regras,
         settings,
+        criteria: await carregarCriterios(),
+        criteria_padrao: CRITERIOS_PADRAO,
       });
     }
 
@@ -407,11 +431,12 @@ Deno.serve(async (req: Request) => {
       return ok({ clientes, rule: regra, settings });
     }
 
-    // ── Salvar regras / limites ───────────────────────────────────────────────
+    // ── Salvar regras / limites / criterios ───────────────────────────────────
     if (action === "save_rules") {
-      const { rules, settings } = body as {
+      const { rules, settings, criteria } = body as {
         rules?: Array<Record<string, unknown>>;
         settings?: Record<string, unknown>;
+        criteria?: Record<string, unknown>;
       };
       await carregarRegras(); // garante que as linhas existem
 
@@ -449,7 +474,49 @@ Deno.serve(async (req: Request) => {
         if (setErr) throw setErr;
       }
 
-      return ok({ rules: await carregarRegras(), settings: await carregarSettings() });
+      // Cortes do funil. Os limites repetem os CHECKs da tabela de proposito:
+      // valor fora da faixa vira o mais proximo valido em vez de estourar 500.
+      if (criteria) {
+        const num = (v: unknown, def: number) => {
+          const n = Number(v);
+          return Number.isFinite(n) ? n : def;
+        };
+        const faixa = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+        const perdidoDias = faixa(Math.round(num(criteria.perdido_dias, 90)), 30, 365);
+        let riscoMinDias = faixa(Math.round(num(criteria.risco_min_dias, 21)), 3, 180);
+        // "Perdido" tem que vir depois de "em risco" (constraint crm_criteria_ordem):
+        // se o dono apertar os dois, o piso do risco cede.
+        if (riscoMinDias >= perdidoDias) riscoMinDias = perdidoDias - 1;
+
+        const linha = {
+          tenant_id: tenantId,
+          carrinho_horas: faixa(Math.round(num(criteria.carrinho_horas, 72)), 1, 720),
+          perdido_dias: perdidoDias,
+          risco_multiplicador: Number(faixa(num(criteria.risco_multiplicador, 1.5), 1, 5).toFixed(2)),
+          risco_min_dias: riscoMinDias,
+          ciclo_padrao_dias: faixa(Math.round(num(criteria.ciclo_padrao_dias, 30)), 1, 120),
+          fiel_min_pedidos: faixa(Math.round(num(criteria.fiel_min_pedidos, 6)), 2, 50),
+          vip_min_pedidos: faixa(Math.round(num(criteria.vip_min_pedidos, 6)), 1, 50),
+          vip_percentil: Number(faixa(num(criteria.vip_percentil, 0.9), 0.5, 0.999).toFixed(3)),
+          vip_min_gasto: Math.max(0, num(criteria.vip_min_gasto, 0)),
+          updated_at: new Date().toISOString(),
+        };
+        const { error: critErr } = await admin
+          .from("crm_stage_criteria").upsert(linha, { onConflict: "tenant_id" });
+        if (critErr) throw critErr;
+
+        // Mudou o corte, muda quem esta em cada estagio: recalcula na hora para
+        // a tela ja mostrar o efeito.
+        const { error: recErr } = await admin.rpc("fn_crm_recompute_stages", { p_tenant_id: tenantId });
+        if (recErr) throw recErr;
+      }
+
+      return ok({
+        rules: await carregarRegras(),
+        settings: await carregarSettings(),
+        criteria: await carregarCriterios(),
+      });
     }
 
     // ── Registrar que abordou alguém (o envio em si é o clique na tela) ───────

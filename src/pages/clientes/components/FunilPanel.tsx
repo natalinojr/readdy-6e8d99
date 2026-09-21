@@ -40,6 +40,18 @@ export interface CrmRule {
   cooldown_days: number;
 }
 
+export interface CrmCriteria {
+  carrinho_horas: number;
+  perdido_dias: number;
+  risco_multiplicador: number;
+  risco_min_dias: number;
+  ciclo_padrao_dias: number;
+  fiel_min_pedidos: number;
+  vip_min_pedidos: number;
+  vip_percentil: number;
+  vip_min_gasto: number;
+}
+
 interface CrmSettings {
   max_msgs_por_semana: number;
   hora_inicio: number;
@@ -104,12 +116,14 @@ function montarMensagem(modelo: string, dados: { nome: string; loja: string; cup
 
 export default function FunilPanel(props: Props) {
   const { user } = useAuth();
-  const [aba, setAba] = useState<'funil' | 'regras'>('funil');
+  const [aba, setAba] = useState<'funil' | 'regras' | 'criterios'>('funil');
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState('');
   const [stages, setStages] = useState<StageResumo[]>([]);
   const [rules, setRules] = useState<CrmRule[]>([]);
   const [settings, setSettings] = useState<CrmSettings | null>(null);
+  const [criteria, setCriteria] = useState<CrmCriteria | null>(null);
+  const [criteriaPadrao, setCriteriaPadrao] = useState<CrmCriteria | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [msgSalvo, setMsgSalvo] = useState('');
 
@@ -120,11 +134,16 @@ export default function FunilPanel(props: Props) {
 
   const tenantId = user?.tenantId;
 
-  const carregarOverview = useCallback(function () {
+  // `silencioso`: recarrega sem trocar a tela por "Calculando o funil…". Usado
+  // depois de salvar, senão o formulário que o dono acabou de mexer some.
+  const carregarOverview = useCallback(function (silencioso?: boolean) {
     if (!tenantId) return;
-    setCarregando(true);
+    if (!silencioso) setCarregando(true);
     setErro('');
-    invokeWithAuth<{ stages?: StageResumo[]; rules?: CrmRule[]; settings?: CrmSettings; error?: string; message?: string }>(
+    invokeWithAuth<{
+      stages?: StageResumo[]; rules?: CrmRule[]; settings?: CrmSettings;
+      criteria?: CrmCriteria; criteria_padrao?: CrmCriteria; error?: string; message?: string;
+    }>(
       'crm-funnel', { body: { action: 'overview', tenant_id: tenantId } },
     ).then(function (res) {
       setCarregando(false);
@@ -134,6 +153,8 @@ export default function FunilPanel(props: Props) {
       setStages(d.stages ?? []);
       setRules(d.rules ?? []);
       setSettings(d.settings ?? null);
+      setCriteria(d.criteria ?? null);
+      setCriteriaPadrao(d.criteria_padrao ?? null);
     });
   }, [tenantId]);
 
@@ -244,8 +265,8 @@ export default function FunilPanel(props: Props) {
     if (!tenantId) return;
     setSalvando(true);
     setMsgSalvo('');
-    invokeWithAuth<{ rules?: CrmRule[]; settings?: CrmSettings; error?: string; message?: string }>(
-      'crm-funnel', { body: { action: 'save_rules', tenant_id: tenantId, rules, settings } },
+    invokeWithAuth<{ rules?: CrmRule[]; settings?: CrmSettings; criteria?: CrmCriteria; error?: string; message?: string }>(
+      'crm-funnel', { body: { action: 'save_rules', tenant_id: tenantId, rules, settings, criteria } },
     ).then(function (res) {
       setSalvando(false);
       const d = res.data;
@@ -255,7 +276,13 @@ export default function FunilPanel(props: Props) {
       }
       setRules(d.rules ?? rules);
       setSettings(d.settings ?? settings);
-      setMsgSalvo('Regras salvas.');
+      // O servidor devolve o que REALMENTE gravou (valores fora da faixa são
+      // ajustados lá) — a tela tem que mostrar isso, não o que foi digitado.
+      if (d.criteria) setCriteria(d.criteria);
+      setMsgSalvo('Salvo.');
+      // Mudou um corte, mudou quem está em cada estágio: recarrega as contagens.
+      carregarOverview(true);
+      if (stageAberto) abrirStage(stageAberto);
     });
   }
 
@@ -277,7 +304,7 @@ export default function FunilPanel(props: Props) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {([['funil', 'Funil'], ['regras', 'Regras']] as const).map(function ([key, label]) {
+            {([['funil', 'Funil'], ['regras', 'Ofertas'], ['criterios', 'Critérios']] as const).map(function ([key, label]) {
               return (
                 <button
                   key={key}
@@ -419,8 +446,8 @@ export default function FunilPanel(props: Props) {
                 <p className="text-xs text-zinc-400 text-center py-6">Clique num estágio para ver quem está lá.</p>
               )}
             </>
-          ) : (
-            /* ── Aba Regras ── */
+          ) : aba === 'regras' ? (
+            /* ── Aba Ofertas (o que o ERPOS sugere em cada estágio) ── */
             <div className="space-y-3">
               <div className="flex items-start gap-2 px-3 py-2.5 bg-blue-50 border border-blue-100 rounded-lg">
                 <i className="ri-information-line text-blue-500 text-sm mt-0.5" />
@@ -430,45 +457,6 @@ export default function FunilPanel(props: Props) {
                   <code>{'{nome}'}</code>, <code>{'{loja}'}</code>, <code>{'{cupom}'}</code>, <code>{'{link}'}</code>.
                 </p>
               </div>
-
-              {settings && (
-                <div className="border border-zinc-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-zinc-600 mb-1.5">Máx. mensagens por semana</label>
-                    <input
-                      type="number" min={1} max={7} value={settings.max_msgs_por_semana}
-                      onChange={function (e) { setSettings({ ...settings, max_msgs_por_semana: Number(e.target.value) }); }}
-                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    />
-                    <p className="text-[10px] text-zinc-400 mt-1">Por cliente, somando todos os estágios.</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-zinc-600 mb-1.5">Desconto máximo (%)</label>
-                    <input
-                      type="number" min={0} max={90} value={settings.desconto_max_percent}
-                      onChange={function (e) { setSettings({ ...settings, desconto_max_percent: Number(e.target.value) }); }}
-                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    />
-                    <p className="text-[10px] text-zinc-400 mt-1">Teto de margem: nenhuma regra passa disso.</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-zinc-600 mb-1.5">Horário para abordar</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number" min={0} max={23} value={settings.hora_inicio}
-                        onChange={function (e) { setSettings({ ...settings, hora_inicio: Number(e.target.value) }); }}
-                        className="w-16 px-2 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                      />
-                      <span className="text-xs text-zinc-400">às</span>
-                      <input
-                        type="number" min={0} max={23} value={settings.hora_fim}
-                        onChange={function (e) { setSettings({ ...settings, hora_fim: Number(e.target.value) }); }}
-                        className="w-16 px-2 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {rules.map(function (r) {
                 const resumo = stages.find(function (s) { return s.stage === r.stage; });
@@ -553,8 +541,192 @@ export default function FunilPanel(props: Props) {
                   disabled={salvando}
                   className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-xl cursor-pointer disabled:opacity-50"
                 >
-                  {salvando ? 'Salvando…' : 'Salvar regras'}
+                  {salvando ? 'Salvando…' : 'Salvar ofertas'}
                 </button>
+              </div>
+            </div>
+          ) : (
+            /* ── Aba Critérios (quem entra em cada estágio) + travas ── */
+            <div className="space-y-3">
+              <div className="flex items-start gap-2 px-3 py-2.5 bg-blue-50 border border-blue-100 rounded-lg">
+                <i className="ri-information-line text-blue-500 text-sm mt-0.5" />
+                <p className="text-[11px] text-blue-700">
+                  Aqui você define <strong>quem cai em cada estágio</strong>. Cada operação tem um ritmo — um mês sem
+                  pedir pode ser normal numa casa de almoço e péssimo sinal numa hamburgueria. Ao salvar, o funil é
+                  recalculado na hora e as contagens da aba Funil já mudam.
+                </p>
+              </div>
+
+              {criteria && (
+                <>
+                  <div className="border border-zinc-200 rounded-xl p-4 space-y-3">
+                    <h4 className="text-sm font-bold text-zinc-800">Quando o cliente sumiu</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">Perdido depois de (dias)</label>
+                        <input
+                          type="number" min={30} max={365} value={criteria.perdido_dias}
+                          onChange={function (e) { setCriteria({ ...criteria, perdido_dias: Number(e.target.value) }); }}
+                          className="w-full px-2.5 py-1.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <p className="text-[10px] text-zinc-400 mt-1">Sem pedir por esse tempo = perdido.</p>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">Em risco: ritmo ×</label>
+                        <input
+                          type="number" min={1} max={5} step={0.1} value={criteria.risco_multiplicador}
+                          onChange={function (e) { setCriteria({ ...criteria, risco_multiplicador: Number(e.target.value) }); }}
+                          className="w-full px-2.5 py-1.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <p className="text-[10px] text-zinc-400 mt-1">Vezes o intervalo médio do próprio cliente.</p>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">Em risco: nunca antes de (dias)</label>
+                        <input
+                          type="number" min={3} max={180} value={criteria.risco_min_dias}
+                          onChange={function (e) { setCriteria({ ...criteria, risco_min_dias: Number(e.target.value) }); }}
+                          className="w-full px-2.5 py-1.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <p className="text-[10px] text-zinc-400 mt-1">Piso: evita cobrar quem pede todo dia.</p>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2">
+                      Exemplo: quem costuma pedir a cada <strong>10 dias</strong> entra em risco com{' '}
+                      <strong>{Math.max(Number(criteria.risco_min_dias), Math.round(10 * Number(criteria.risco_multiplicador)))} dias</strong>{' '}
+                      sem pedir, e vira perdido com <strong>{criteria.perdido_dias}</strong>.
+                    </p>
+                  </div>
+
+                  <div className="border border-zinc-200 rounded-xl p-4 space-y-3">
+                    <h4 className="text-sm font-bold text-zinc-800">Fiel e VIP</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">Fiel a partir de (pedidos)</label>
+                        <input
+                          type="number" min={2} max={50} value={criteria.fiel_min_pedidos}
+                          onChange={function (e) { setCriteria({ ...criteria, fiel_min_pedidos: Number(e.target.value) }); }}
+                          className="w-full px-2.5 py-1.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <p className="text-[10px] text-zinc-400 mt-1">De 2 até aí, é recorrente.</p>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">VIP: mínimo de pedidos</label>
+                        <input
+                          type="number" min={1} max={50} value={criteria.vip_min_pedidos}
+                          onChange={function (e) { setCriteria({ ...criteria, vip_min_pedidos: Number(e.target.value) }); }}
+                          className="w-full px-2.5 py-1.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">VIP: top % que mais gasta</label>
+                        <input
+                          type="number" min={1} max={50}
+                          value={Math.round((1 - Number(criteria.vip_percentil)) * 100)}
+                          onChange={function (e) {
+                            const topPercent = Math.min(50, Math.max(1, Number(e.target.value) || 10));
+                            setCriteria({ ...criteria, vip_percentil: Number((1 - topPercent / 100).toFixed(3)) });
+                          }}
+                          className="w-full px-2.5 py-1.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <p className="text-[10px] text-zinc-400 mt-1">10 = os 10% maiores da loja.</p>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">VIP: gasto mínimo (R$)</label>
+                        <input
+                          type="number" min={0} value={criteria.vip_min_gasto}
+                          onChange={function (e) { setCriteria({ ...criteria, vip_min_gasto: Number(e.target.value) }); }}
+                          className="w-full px-2.5 py-1.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <p className="text-[10px] text-zinc-400 mt-1">0 = sem piso, só o top %.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border border-zinc-200 rounded-xl p-4 space-y-3">
+                    <h4 className="text-sm font-bold text-zinc-800">Carrinho e histórico curto</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">Carrinho parado conta por (horas)</label>
+                        <input
+                          type="number" min={1} max={720} value={criteria.carrinho_horas}
+                          onChange={function (e) { setCriteria({ ...criteria, carrinho_horas: Number(e.target.value) }); }}
+                          className="w-full px-2.5 py-1.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <p className="text-[10px] text-zinc-400 mt-1">Depois disso o cliente volta ao estágio normal dele.</p>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">Ritmo assumido sem histórico (dias)</label>
+                        <input
+                          type="number" min={1} max={120} value={criteria.ciclo_padrao_dias}
+                          onChange={function (e) { setCriteria({ ...criteria, ciclo_padrao_dias: Number(e.target.value) }); }}
+                          className="w-full px-2.5 py-1.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <p className="text-[10px] text-zinc-400 mt-1">Usado para quem só tem 1 pedido.</p>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Travas: valem para todos os estágios */}
+              <h4 className="text-sm font-bold text-zinc-800 pt-1">Travas de segurança</h4>
+              {settings && (
+                <div className="border border-zinc-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-600 mb-1.5">Máx. mensagens por semana</label>
+                    <input
+                      type="number" min={1} max={7} value={settings.max_msgs_por_semana}
+                      onChange={function (e) { setSettings({ ...settings, max_msgs_por_semana: Number(e.target.value) }); }}
+                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                    <p className="text-[10px] text-zinc-400 mt-1">Por cliente, somando todos os estágios.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-600 mb-1.5">Desconto máximo (%)</label>
+                    <input
+                      type="number" min={0} max={90} value={settings.desconto_max_percent}
+                      onChange={function (e) { setSettings({ ...settings, desconto_max_percent: Number(e.target.value) }); }}
+                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                    <p className="text-[10px] text-zinc-400 mt-1">Teto de margem: nenhuma regra passa disso.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-600 mb-1.5">Horário para abordar</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number" min={0} max={23} value={settings.hora_inicio}
+                        onChange={function (e) { setSettings({ ...settings, hora_inicio: Number(e.target.value) }); }}
+                        className="w-16 px-2 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                      <span className="text-xs text-zinc-400">às</span>
+                      <input
+                        type="number" min={0} max={23} value={settings.hora_fim}
+                        onChange={function (e) { setSettings({ ...settings, hora_fim: Number(e.target.value) }); }}
+                        className="w-16 px-2 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <button
+                  onClick={function () { if (criteriaPadrao) setCriteria({ ...criteriaPadrao }); }}
+                  disabled={!criteriaPadrao}
+                  className="px-3 py-2 text-xs font-semibold text-zinc-500 hover:text-zinc-700 cursor-pointer disabled:opacity-40"
+                >
+                  Restaurar critérios padrão
+                </button>
+                <div className="flex items-center gap-3">
+                  {msgSalvo && <span className="text-xs text-zinc-500">{msgSalvo}</span>}
+                  <button
+                    onClick={salvarRegras}
+                    disabled={salvando}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-xl cursor-pointer disabled:opacity-50"
+                  >
+                    {salvando ? 'Salvando…' : 'Salvar e recalcular'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
