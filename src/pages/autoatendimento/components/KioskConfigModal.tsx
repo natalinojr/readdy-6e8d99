@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
 import { validarPinGerente, MAX_TENTATIVAS_PIN_GERENTE } from '@/lib/kioskManagerPin';
+import { haVersaoNova, recarregarApp } from '@/lib/versaoApp';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -39,6 +40,9 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
   const matriculaUsuario = (user as { matricula?: string } | null)?.matricula;
 
   const [step, setStep] = useState<'pin' | 'info'>('pin');
+  // Buscar a versão nova é o motivo nº 1 de alguém abrir esta tela: o totem fica dias
+  // ligado e segue no build antigo até recarregar.
+  const [temVersaoNova, setTemVersaoNova] = useState(false);
   const [pin, setPin] = useState('');
   const [pinErro, setPinErro] = useState('');
   const [loading, setLoading] = useState(false);
@@ -49,6 +53,13 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
   const [matricula, setMatricula] = useState('');
   const [tentativas, setTentativas] = useState(0);
   const bloqueado = tentativas >= MAX_TENTATIVAS_PIN_GERENTE;
+
+  useEffect(() => {
+    if (step !== 'info') return;
+    let vivo = true;
+    void haVersaoNova().then((tem) => { if (vivo) setTemVersaoNova(tem); });
+    return () => { vivo = false; };
+  }, [step]);
 
   const tenantId = kioskSession?.tenantId ?? user?.tenantId;
   const sessionId = sessao?.id ?? kioskSession?.sessionId;
@@ -371,7 +382,18 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
         )}
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-zinc-800">
+        <div className="px-6 py-4 border-t border-zinc-800 space-y-2">
+          {step === 'info' && (
+            <button
+              onClick={() => recarregarApp()}
+              className={`w-full py-3 font-semibold rounded-2xl cursor-pointer transition-colors whitespace-nowrap ${
+                temVersaoNova ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+              }`}
+            >
+              <i className="ri-refresh-line mr-2" />
+              {temVersaoNova ? 'Atualizar agora (versão nova disponível)' : 'Atualizar o totem'}
+            </button>
+          )}
           <button
             onClick={onClose}
             className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold rounded-2xl cursor-pointer transition-colors whitespace-nowrap"
