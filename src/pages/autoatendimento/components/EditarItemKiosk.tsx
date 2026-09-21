@@ -3,6 +3,7 @@ import { X, Check, Minus, Plus } from 'lucide-react';
 import type { ItemPedidoCliente, ItemCardapioPublico } from '@/types/mesaCliente';
 import ItemImage from '@/components/base/ItemImage';
 import { toggleOpcaoGrupo, primeiroGrupoFaltando, mensagemGrupoFaltando, mensagemMaximoAtingido } from '@/lib/optionGroupSelection';
+import { comQuebraAposVirgula } from '../../../lib/quebraTexto';
 
 interface Props {
   itemCarrinho: ItemPedidoCliente;
@@ -311,16 +312,18 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
                   return (
                     <button key={opcao.nome}
                       onClick={() => toggleOpcao(grupo, opTrack)}
-                      className={`flex items-center justify-between px-5 py-6 rounded-2xl border-2 transition-all cursor-pointer ${sel ? 'border-amber-500 bg-amber-500/10' : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'}`}
+                      className={`flex items-center justify-between gap-2 px-5 py-6 rounded-2xl border-2 transition-all cursor-pointer text-left ${sel ? 'border-amber-500 bg-amber-500/10' : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'}`}
                     >
-                      <div className="flex items-center gap-3">
+                      {/* min-w-0 + break-words: nome comprido quebra em linhas em vez de
+                          empurrar o preço para fora do quadro. */}
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
                         <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${sel ? 'border-amber-500 bg-amber-500' : 'border-zinc-600'}`}>
                           {sel && <Check size={16} className="text-white" />}
                         </div>
-                        <span className="text-lg font-semibold text-white">{opcao.nome}</span>
+                        <span className="text-lg font-semibold text-white min-w-0 break-words">{comQuebraAposVirgula(opcao.nome)}</span>
                       </div>
                       {opcao.precoAdicional > 0 && (
-                        <span className="text-lg font-bold text-amber-400">+{fmt(opcao.precoAdicional)}</span>
+                        <span className="text-lg font-bold text-amber-400 flex-shrink-0 whitespace-nowrap">+{fmt(opcao.precoAdicional)}</span>
                       )}
                     </button>
                   );

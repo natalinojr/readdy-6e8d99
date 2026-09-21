@@ -6,6 +6,7 @@ import { useEstoque } from '../../../contexts/EstoqueContext';
 import ItemImage from '../../../components/base/ItemImage';
 import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
 import { toggleOpcaoGrupo, primeiroGrupoFaltando, mensagemGrupoFaltando, mensagemMaximoAtingido } from '@/lib/optionGroupSelection';
+import { comQuebraAposVirgula } from '../../../lib/quebraTexto';
 
 // ── Teclado virtual para observações ──────────────────────────────────────────
 const LETRAS_KB = [
@@ -225,15 +226,17 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
                     const opTrack: OpcaoTrackKiosk = { id: opcao.id, nome: opcao.nome, precoAdicional: opcao.precoAdicional, grupoNome: grupo.grupo, obrigatorio: grupo.obrigatorio };
                     return (
                       <button key={opcao.nome} onClick={() => toggleOpcao(grupo, opTrack)}
-                        className={`flex items-center justify-between px-4 py-4 rounded-xl border-2 transition-all cursor-pointer ${sel ? 'border-amber-500 bg-amber-500/10' : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'}`}
+                        className={`flex items-center justify-between gap-2 px-4 py-4 rounded-xl border-2 transition-all cursor-pointer text-left ${sel ? 'border-amber-500 bg-amber-500/10' : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'}`}
                       >
-                        <div className="flex items-center gap-3">
+                        {/* min-w-0 + break-words: nome comprido (ex.: "Barbacoa,arroz,feijao,alface,tomate")
+                            quebra em linhas em vez de empurrar o preço para fora do quadro. */}
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
                           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${sel ? 'border-amber-500 bg-amber-500' : 'border-zinc-600'}`}>
                             {sel && <Check size={14} className="text-white" />}
                           </div>
-                          <span className="text-base font-semibold text-white">{opcao.nome}</span>
+                          <span className="text-base font-semibold text-white min-w-0 break-words">{comQuebraAposVirgula(opcao.nome)}</span>
                         </div>
-                        {opcao.precoAdicional > 0 && <span className="text-base font-bold text-amber-400">+{fmt(opcao.precoAdicional)}</span>}
+                        {opcao.precoAdicional > 0 && <span className="text-base font-bold text-amber-400 flex-shrink-0 whitespace-nowrap">+{fmt(opcao.precoAdicional)}</span>}
                       </button>
                     );
                   })}
