@@ -31,7 +31,8 @@ const ROTULO: Record<MotivoRetirada, string> = {
 };
 
 // Sangria prevista: compra paga em dinheiro que o assistente lançou pelo cupom do grupo.
-interface SangriaPrevista { id: string; amount: number; supplier: string | null; description: string | null; created_at: string }
+interface ItemPrevisto { description: string | null; quantity: number | null; unit_label: string | null; unit_price: number | null; total_price: number | null }
+interface SangriaPrevista { id: string; amount: number; supplier: string | null; description: string | null; created_at: string; itens?: ItemPrevisto[] }
 type MotivoAdicao = 'Troco' | 'Outros';
 
 const fmt = (v: number) =>
@@ -70,6 +71,12 @@ export default function SangriaSuprimentoModal({
       .then(({ data }) => setFreelas(data?.data ?? []));
   }, [user?.tenantId]);
   const [resolvendo, setResolvendo] = useState<string | null>(null);
+  // Conferência da prevista (dono, 2026-09-21): ver os itens do cupom e corrigir o valor que saiu.
+  // Corrigir aqui muda SÓ a sangria — a compra fica como está e o financeiro é avisado da diferença.
+  const [itensAbertos, setItensAbertos] = useState<Record<string, boolean>>({});
+  const [editando, setEditando] = useState<string | null>(null);
+  const [rascunhoValor, setRascunhoValor] = useState('');
+  const [valorSaiu, setValorSaiu] = useState<Record<string, number>>({});
 
   const carregarPrevistas = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -81,20 +88,23 @@ export default function SangriaSuprimentoModal({
   // Confirmar a prevista: o valor e a compra vêm do servidor, o operador só confirma que o dinheiro saiu.
   const confirmarPrevista = async (pv: SangriaPrevista) => {
     if (!caixa?.id || !user?.tenantId || resolvendo) return;
+    const saiu = valorSaiu[pv.id] ?? pv.amount;
+    const corrigido = Math.abs(saiu - pv.amount) > 0.001;
     setResolvendo(pv.id); setErro('');
     const { data, error } = await invokeWithAuth<{ data?: { reason: string }; error?: string }>('order-write', {
-      body: { action: 'add_cash_movement', cash_register_id: caixa.id, tenant_id: user.tenantId, type: 'out', previsao_id: pv.id, amount: pv.amount, reason: '' },
+      body: { action: 'add_cash_movement', cash_register_id: caixa.id, tenant_id: user.tenantId, type: 'out', previsao_id: pv.id, amount: saiu, reason: '' },
     });
     setResolvendo(null);
     if (error || !data?.data) { setErro((data as { error?: string } | null)?.error ?? error?.message ?? 'Não consegui confirmar.'); return; }
     const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    const motivo = `Fornecedor: ${pv.supplier ?? 'compra'} (cupom)`;
+    const motivo = `Fornecedor: ${pv.supplier ?? 'compra'} (cupom)${corrigido ? ` — nota ${fmt(pv.amount)}` : ''}`;
     registrarEvento({
-      tipo: 'sangria', severidade: pv.amount >= 200 ? 'aviso' : 'info', usuario: user?.nome ?? 'Operador', perfil: user?.perfil ?? 'operador',
-      descricao: `Sangria de ${fmt(pv.amount)} confirmada — ${motivo}`, entidade: 'Caixa', entidadeId: caixa.id,
-      detalhes: `Valor: ${fmt(pv.amount)} | Motivo: ${motivo} | Hora: ${hora}`, depois: { valor: pv.amount, motivo, tipo: 'sangria' },
+      tipo: 'sangria', severidade: corrigido || saiu >= 200 ? 'aviso' : 'info', usuario: user?.nome ?? 'Operador', perfil: user?.perfil ?? 'operador',
+      descricao: `Sangria de ${fmt(saiu)} confirmada — ${motivo}`, entidade: 'Caixa', entidadeId: caixa.id,
+      detalhes: `Valor: ${fmt(saiu)} | Motivo: ${motivo} | Hora: ${hora}`, depois: { valor: saiu, motivo, tipo: 'sangria' },
     });
-    onRegistrar({ tipo: 'sangria', valor: pv.amount, motivo, hora });
+    onRegistrar({ tipo: 'sangria', valor: saiu, motivo, hora });
+    setEditando(null);
     await carregarPrevistas();
   };
   const naoSaiu = async (pv: SangriaPrevista) => {
@@ -211,38 +221,105 @@ export default function SangriaSuprimentoModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden">
+      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
+        <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-zinc-100">
           <h2 className="text-sm font-bold text-zinc-900">Movimentação de Caixa</h2>
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer text-zinc-400">
             <i className="ri-close-line text-base" />
           </button>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-5">
           {/* Sangrias previstas: compra paga em dinheiro lançada pelo cupom — é só confirmar. */}
           {previstas.length > 0 && (
             <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-3 space-y-2">
               <p className="text-xs font-black text-amber-900"><i className="ri-receipt-line" /> Aguardando sua confirmação ({previstas.length})</p>
               <p className="text-[11px] text-amber-800">Compras pagas em dinheiro do caixa (cupom já lançado). O caixa só fecha depois de confirmar.</p>
-              {previstas.map((pv) => (
-                <div key={pv.id} className="flex items-center gap-2 bg-white rounded-lg border border-amber-200 px-3 py-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-zinc-900 truncate">{pv.supplier ?? 'Compra'}</p>
-                    <p className="text-[11px] text-zinc-500">{new Date(pv.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+              {previstas.map((pv) => {
+                const saiu = valorSaiu[pv.id] ?? pv.amount;
+                const corrigido = Math.abs(saiu - pv.amount) > 0.001;
+                const itens = pv.itens ?? [];
+                const aberto = !!itensAbertos[pv.id];
+                return (
+                  <div key={pv.id} className="bg-white rounded-lg border border-amber-200 px-3 py-2 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-zinc-900 truncate">{pv.supplier ?? 'Compra'}</p>
+                        <p className="text-[11px] text-zinc-500">
+                          {new Date(pv.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          {itens.length > 0 && (
+                            <button onClick={() => setItensAbertos((a) => ({ ...a, [pv.id]: !a[pv.id] }))}
+                              className="ml-1.5 text-amber-700 font-semibold underline cursor-pointer">
+                              {itens.length} {itens.length === 1 ? 'item' : 'itens'} <i className={aberto ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+                            </button>
+                          )}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-black text-red-600 whitespace-nowrap">-{fmt(saiu)}</span>
+                        {corrigido && <p className="text-[10px] text-zinc-400 line-through leading-tight">{fmt(pv.amount)}</p>}
+                      </div>
+                      <button onClick={() => { setEditando(editando === pv.id ? null : pv.id); setRascunhoValor(saiu.toFixed(2)); }}
+                        title="Corrigir o valor que saiu do caixa" disabled={!!resolvendo}
+                        className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 cursor-pointer disabled:opacity-50">
+                        <i className="ri-pencil-line text-sm" />
+                      </button>
+                    </div>
+
+                    {/* Conferência linha a linha: o operador tem o cupom na mão. */}
+                    {aberto && itens.length > 0 && (
+                      <div className="border-t border-amber-100 pt-1.5 space-y-1">
+                        {itens.map((it, i) => (
+                          <div key={i} className="flex items-baseline justify-between gap-2 text-[11px]">
+                            <span className="text-zinc-600 truncate">
+                              <span className="text-zinc-400">{Number(it.quantity ?? 0)}{it.unit_label ? ` ${it.unit_label}` : ''}</span> {it.description ?? '-'}
+                            </span>
+                            <span className="text-zinc-500 whitespace-nowrap">{fmt(Number(it.total_price ?? 0))}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Corrigir o valor mexe SÓ na sangria; a compra fica como o cupom lançou. */}
+                    {editando === pv.id && (
+                      <div className="border-t border-amber-100 pt-2 space-y-1.5">
+                        <label className="block text-[11px] font-semibold text-zinc-600">Quanto saiu mesmo do caixa?</label>
+                        <div className="flex gap-1.5">
+                          <input type="number" min="0.01" step="0.01" value={rascunhoValor} autoFocus
+                            onChange={(e) => setRascunhoValor(e.target.value)}
+                            className="flex-1 min-w-0 text-sm border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-800 focus:outline-none focus:border-amber-400" />
+                          <button onClick={() => {
+                            const v = Math.round(Number(rascunhoValor.replace(',', '.')) * 100) / 100;
+                            if (!Number.isFinite(v) || v <= 0) { setErro('Valor inválido.'); return; }
+                            setValorSaiu((m) => ({ ...m, [pv.id]: v })); setEditando(null); setErro('');
+                          }} className="px-3 py-1.5 text-xs font-bold text-white bg-zinc-700 hover:bg-zinc-800 rounded-lg cursor-pointer whitespace-nowrap">
+                            Usar
+                          </button>
+                          {corrigido && (
+                            <button onClick={() => { setValorSaiu((m) => { const copia = { ...m }; delete copia[pv.id]; return copia; }); setEditando(null); }}
+                              className="px-2.5 py-1.5 text-[11px] font-semibold text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded-lg cursor-pointer whitespace-nowrap">
+                              Voltar ao da nota
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-zinc-500">A compra continua valendo {fmt(pv.amount)} — aqui muda só o que sai do caixa. O financeiro é avisado da diferença.</p>
+                      </div>
+                    )}
+
+                    <div className="flex gap-1.5">
+                      <button onClick={() => confirmarPrevista(pv)} disabled={!!resolvendo}
+                        className="flex-1 px-3 py-1.5 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg cursor-pointer disabled:opacity-50 whitespace-nowrap">
+                        {resolvendo === pv.id ? '...' : `Confirmar ${fmt(saiu)}`}
+                      </button>
+                      <button onClick={() => naoSaiu(pv)} disabled={!!resolvendo} title="O dinheiro não saiu deste caixa"
+                        className="px-2.5 py-1.5 text-[11px] font-semibold text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded-lg cursor-pointer disabled:opacity-50 whitespace-nowrap">
+                        Não saiu
+                      </button>
+                    </div>
                   </div>
-                  <span className="text-sm font-black text-red-600 whitespace-nowrap">-{fmt(pv.amount)}</span>
-                  <button onClick={() => confirmarPrevista(pv)} disabled={!!resolvendo}
-                    className="px-3 py-1.5 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg cursor-pointer disabled:opacity-50 whitespace-nowrap">
-                    {resolvendo === pv.id ? '...' : 'Confirmar'}
-                  </button>
-                  <button onClick={() => naoSaiu(pv)} disabled={!!resolvendo} title="O dinheiro não saiu deste caixa"
-                    className="px-2 py-1.5 text-[11px] font-semibold text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded-lg cursor-pointer disabled:opacity-50 whitespace-nowrap">
-                    Não saiu
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -302,14 +379,13 @@ export default function SangriaSuprimentoModal({
 
             {tipo === 'sangria' ? (
               <>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 mb-3">
+                <select value={motivoRetirada} onChange={(e) => { setMotivoRetirada(e.target.value as MotivoRetirada | ''); setErro(''); }}
+                  className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 mb-3 text-zinc-800 bg-white cursor-pointer focus:outline-none focus:border-amber-400">
+                  <option value="">Escolha o motivo...</option>
                   {(['Sangria', 'Fornecedor', 'Freelancer', 'Troco', 'Outro'] as MotivoRetirada[]).map((m) => (
-                    <button key={m} onClick={() => { setMotivoRetirada(m); setErro(''); }}
-                      className={`py-2 px-2 text-xs font-medium rounded-lg cursor-pointer transition-colors text-center ${motivoRetirada === m ? 'bg-red-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-                      {ROTULO[m]}
-                    </button>
+                    <option key={m} value={m}>{ROTULO[m]}</option>
                   ))}
-                </div>
+                </select>
                 {motivoRetirada === 'Sangria' && (
                   <p className="text-[11px] text-zinc-500 mb-2">Dinheiro retirado pelo dono — não entra como despesa da loja.</p>
                 )}
@@ -361,14 +437,11 @@ export default function SangriaSuprimentoModal({
               </>
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {(['Troco', 'Outros'] as MotivoAdicao[]).map((m) => (
-                    <button key={m} onClick={() => { setMotivoAdicao(m); setErro(''); }}
-                      className={`py-2.5 px-3 text-xs font-medium rounded-lg cursor-pointer transition-colors text-center ${motivoAdicao === m ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-                      {m}
-                    </button>
-                  ))}
-                </div>
+                <select value={motivoAdicao} onChange={(e) => { setMotivoAdicao(e.target.value as MotivoAdicao | ''); setErro(''); }}
+                  className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 text-zinc-800 bg-white cursor-pointer focus:outline-none focus:border-amber-400">
+                  <option value="">Escolha o motivo...</option>
+                  {(['Troco', 'Outros'] as MotivoAdicao[]).map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
                 {motivoAdicao === 'Outros' && (
                   <input value={motivoOutro} onChange={(e) => setMotivoOutro(e.target.value)}
                     placeholder="Descreva o motivo..."
@@ -408,7 +481,7 @@ export default function SangriaSuprimentoModal({
           )}
         </div>
 
-        <div className="px-6 pb-6 flex gap-2">
+        <div className="shrink-0 px-6 py-4 border-t border-zinc-100 bg-white flex gap-2">
           <button onClick={onClose} className="flex-1 py-2.5 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-xl hover:bg-zinc-200 cursor-pointer whitespace-nowrap">
             Cancelar
           </button>

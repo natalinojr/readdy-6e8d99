@@ -574,7 +574,19 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const { data, error } = await admin.from("cash_sangrias_previstas").select("id, amount, kind, supplier, description, purchase_id, created_at")
         .eq("tenant_id", tenantId).eq("status", "pendente").order("created_at");
       if (error) throw error;
-      return new Response(JSON.stringify({ data: data ?? [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // Itens da compra (2026-09-21, dono): o operador tem o cupom na mão e confere linha por linha
+      // antes de confirmar que o dinheiro saiu.
+      const purchaseIds = (data ?? []).map((p) => p.purchase_id).filter(Boolean) as string[];
+      // deno-lint-ignore no-explicit-any
+      const porCompra: Record<string, any[]> = {};
+      if (purchaseIds.length) {
+        const { data: itens } = await admin.from("fin_purchase_items")
+          .select("purchase_id, description, quantity, unit_label, unit_price, total_price")
+          .in("purchase_id", purchaseIds).eq("tenant_id", tenantId);
+        for (const it of itens ?? []) (porCompra[it.purchase_id] ??= []).push(it);
+      }
+      const comItens = (data ?? []).map((p) => ({ ...p, itens: p.purchase_id ? (porCompra[p.purchase_id] ?? []) : [] }));
+      return new Response(JSON.stringify({ data: comItens }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // "Esse dinheiro não saiu deste caixa": a prevista sai da fila e vira pendência para o dono (de onde saiu?).
@@ -619,7 +631,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (previsao_id) {
         const { data: pv } = await admin.from("cash_sangrias_previstas").select("id, amount, supplier, purchase_id, status").eq("id", previsao_id).eq("tenant_id", tenantId).maybeSingle();
         if (!pv || pv.status !== "pendente") return new Response(JSON.stringify({ error: "Essa sangria prevista já foi resolvida." }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-        prevista = pv; amount = Number(pv.amount); normalizedType = "out"; category = "fornecedor";
+        prevista = pv; normalizedType = "out"; category = "fornecedor";
+        const digitado = Number(body.amount);
+        amount = Number.isFinite(digitado) && digitado > 0 ? Math.round(digitado * 100) / 100 : Number(pv.amount);
       }
       const isOutflow = normalizedType === "out";
       const reasonFinal = prevista ? `Fornecedor: ${prevista.supplier ?? "compra"} (cupom lido pelo assistente)` : reason;
@@ -641,7 +655,24 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         freela = fr ?? null;
       }
       if (prevista) {
-        await admin.from("cash_sangrias_previstas").update({ status: "confirmada", cash_movement_id: data.id, resolved_at: new Date().toISOString(), resolved_by: effectiveUserId }).eq("id", prevista.id).eq("status", "pendente");
+        const diferenca = Math.round((Number(amount) - Number(prevista.amount)) * 100) / 100;
+        await admin.from("cash_sangrias_previstas").update({
+          status: "confirmada", cash_movement_id: data.id, resolved_at: new Date().toISOString(), resolved_by: effectiveUserId,
+          ...(diferenca !== 0 ? { notes: `Saiu ${amount} do caixa; a nota é ${prevista.amount}. Valor corrigido pelo operador no PDV.` } : {}),
+        }).eq("id", prevista.id).eq("status", "pendente");
+        // O dinheiro que saiu não bate com a nota: a compra fica como está (não mexemos em CMV nem
+        // em estoque daqui) e o financeiro confere de onde veio o resto.
+        if (diferenca !== 0) {
+          const brl = (n: number) => Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+          try {
+            await admin.from("pendencias").upsert({
+              tenant_id: tenantId, kind: "sangria_valor_diferente", ref: String(data.id), status: "aberta", urgencia: "normal", acao_requerida: true, origem: "pdv",
+              titulo: `Sangria diferente da nota — ${prevista.supplier ?? "fornecedor"}: saiu ${brl(Number(amount))}, nota ${brl(Number(prevista.amount))}`,
+              detalhe: `O operador confirmou ${brl(Number(amount))} saindo do caixa, mas a compra lançada pelo cupom é de ${brl(Number(prevista.amount))} (diferença de ${brl(Math.abs(diferenca))}). A compra NÃO foi alterada. Confira se o cupom foi lido errado ou se o resto foi pago de outro jeito.`,
+              rota: "/financeiro?tab=compras", payload: { purchase_id: prevista.purchase_id, previsao_id: prevista.id, cash_movement_id: data.id, valor_saiu: Number(amount), valor_nota: Number(prevista.amount) },
+            }, { onConflict: "tenant_id,kind,ref" });
+          } catch { /* non-blocking */ }
+        }
       }
       // Fluxo de caixa: compra já lançou 'auto_purchase' → a sangria ligada a ela não lança de novo.
       // Retirada do dono não é despesa da loja (fora do Top Despesas); o resto segue como antes.
