@@ -68,4 +68,8 @@ export default {
   'cliente.escolhaCozinha': "Your choice goes on the order to the kitchen",
   'cliente.outraObservacao': "ANOTHER NOTE",
   'cliente.exObservacao': "e.g. no onion, sauce on the side...",
+  'cliente.formaDinheiro': "Cash",
+  'cliente.formaPix': "PIX",
+  'cliente.formaCartao': "Card",
+  'cliente.formaVale': "Meal voucher",
 };
