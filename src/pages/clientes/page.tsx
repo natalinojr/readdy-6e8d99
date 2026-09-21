@@ -4,6 +4,7 @@ import ClientePerfil from './components/ClientePerfil';
 import EnviarVoucherModal from './components/EnviarVoucherModal';
 import EditarClienteModal from './components/EditarClienteModal';
 import BirthdayVoucherModal from './components/BirthdayVoucherModal';
+import NaoPediramPanel from './components/NaoPediramPanel';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
@@ -284,6 +285,8 @@ export default function ClientesPage() {
   const [showRFM, setShowRFM] = useState(false);
   const [showCampanha, setShowCampanha] = useState(false);
   const [showBirthday, setShowBirthday] = useState(false);
+  // Quem entrou no cardapio do delivery e saiu sem pedir (menu_visits).
+  const [showNaoPediram, setShowNaoPediram] = useState(false);
 
   // Detecção de possíveis duplicados: mesmo celular (dígitos) ou mesmo nome normalizado.
   const duplicados = useMemo(() => {
@@ -472,6 +475,13 @@ export default function ClientesPage() {
               title="Enviar mensagem para todos os clientes filtrados"
             >
               <i className="ri-whatsapp-line" /> WhatsApp em massa
+            </button>
+            <button
+              onClick={() => setShowNaoPediram(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors border border-sky-200 bg-sky-50 hover:bg-sky-100 text-sky-700"
+              title="Quem entrou no cardápio do delivery e saiu sem pedir"
+            >
+              <i className="ri-shopping-cart-2-line" /> Não pediram
             </button>
             <button
               onClick={() => setShowRFM(v => !v)}
@@ -978,6 +988,13 @@ export default function ClientesPage() {
           cliente={editarCliente}
           onClose={() => setEditarCliente(null)}
           onSave={(patch) => atualizarCliente(editarCliente.id, patch)}
+        />
+      )}
+
+      {showNaoPediram && (
+        <NaoPediramPanel
+          onClose={() => setShowNaoPediram(false)}
+          onEnviarVoucher={(c) => { setShowNaoPediram(false); setVoucherCliente(c); }}
         />
       )}
 

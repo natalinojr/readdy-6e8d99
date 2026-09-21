@@ -56,6 +56,41 @@ function loadSavedStep(slug?: string): ResumableStep | null {
   } catch { return null; }
 }
 
+// ── Visita ao cardápio (carrinho abandonado) ─────────────────────────────────
+// Um id por aparelho/loja, guardado em localStorage: a mesma pessoa voltando no
+// mesmo dia continua a MESMA visita (senão viraria um "abandono" por reload).
+// É um id anônimo — quem identifica de verdade é o telefone, quando digitado.
+function visitStorageKey(slug?: string): string {
+  return 'delivery_visit_' + (slug || 'default');
+}
+
+/** Id da visita atual. Renova depois de 12h paradas — aí já é outra intenção de pedido. */
+function getVisitKey(slug?: string): string {
+  const key = visitStorageKey(slug);
+  const agora = Date.now();
+  const MAX_IDLE_MS = 12 * 60 * 60 * 1000;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { id?: string; at?: number };
+      if (parsed && parsed.id && typeof parsed.at === 'number' && (agora - parsed.at) < MAX_IDLE_MS) {
+        localStorage.setItem(key, JSON.stringify({ id: parsed.id, at: agora }));
+        return parsed.id;
+      }
+    }
+  } catch { /* sem storage: gera um id volátil */ }
+  const novo = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+    ? crypto.randomUUID()
+    : 'v-' + agora.toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  try { localStorage.setItem(key, JSON.stringify({ id: novo, at: agora })); } catch { /* noop */ }
+  return novo;
+}
+
+/** Encerra a visita (pedido feito): o próximo acesso começa uma visita nova. */
+function clearVisitKey(slug?: string): void {
+  try { localStorage.removeItem(visitStorageKey(slug)); } catch { /* noop */ }
+}
+
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 type TenantInfo = {
@@ -625,6 +660,49 @@ export function useDeliveryData(storeSlug?: string) {
       }
     } catch { /* noop */ }
   }, [step, storeSlug]);
+
+  // Registra a visita ao cardápio (para ver quem entrou/montou carrinho e não
+  // pediu). Debounce de 2s e só reenvia quando algo muda de verdade — o carrinho
+  // muda a cada clique e não pode virar uma chamada por clique.
+  const trackUltimoRef = useRef<string>('');
+  useEffect(function () {
+    if (!tenant) return;
+    if (step === 'loading' || step === 'erro_config') return;
+    // 'confirmacao' = pedido feito: o próprio create_delivery_order encerra a visita.
+    if (step === 'confirmacao') return;
+
+    const itens = cart.map(function (c) {
+      return { nome: c.name, qtd: c.quantidade, total: Number((c.precoTotal * c.quantidade).toFixed(2)) };
+    });
+    const totalCarrinho = Number(cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0).toFixed(2));
+    const totalItens = cart.reduce(function (s, i) { return s + i.quantidade; }, 0);
+    const cleanPhone = phone.replace(/\D/g, '');
+
+    const assinatura = [step, cleanPhone, String(totalItens), String(totalCarrinho)].join('|');
+    if (assinatura === trackUltimoRef.current) return;
+
+    const timer = setTimeout(function () {
+      trackUltimoRef.current = assinatura;
+      fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'track_visit',
+          tenant_id: tenant.id,
+          visit_key: getVisitKey(storeSlug),
+          step: step,
+          phone: cleanPhone || null,
+          customer_name: customerName || null,
+          items_count: totalItens,
+          cart_total: totalCarrinho,
+          cart_items: itens,
+        }),
+      }).catch(function () { /* tracking nunca atrapalha o pedido */ });
+    }, 2000);
+
+    return function () { clearTimeout(timer); };
+  }, [tenant, step, cart, phone, customerName, storeSlug]);
+
   const [editingItem, setEditingItem] = useState<CartItem | null>(null);
   const [showCart, setShowCart] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -1538,6 +1616,8 @@ export function useDeliveryData(storeSlug?: string) {
         order_type: modoEntrega,
         client_request_id: clientRequestId,
         order_source: getOrderSource(),
+        // Fecha a visita: este carrinho não foi abandonado.
+        visit_key: getVisitKey(storeSlug),
       }),
     })
       .then(function (res) {
@@ -1561,6 +1641,8 @@ export function useDeliveryData(storeSlug?: string) {
           return false;
         }
         clearRequestId();
+        // Pedido feito: a próxima entrada no cardápio é uma visita nova.
+        clearVisitKey(storeSlug);
         const totalConfirmado = data.data?.total || total;
         setNumeroPedido(data.data?.number || '');
         setOrderTotal(totalConfirmado);
