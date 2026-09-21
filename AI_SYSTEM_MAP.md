@@ -2992,3 +2992,52 @@ a aguardar a confirmação em vez de liberar outra forma de pagamento.
 Na mesma passada: `config.payment_method.default_installments = 1` na Order do Point
 (só com `default_type = credit_card`) — sem isso a maquininha para e pergunta "à vista ou
 parcelado". Se o cartão não aceitar 1x, o terminal volta a mostrar a tela de parcelas.
+
+### 2026-09-21 — Cardapio em outros idiomas (EN/ES) nas telas do cliente
+
+Modulo novo: `menu_translations` + `tenant_locales`, Edge `menu-translate`, aba
+**Cardapio › Traducoes**, seletor de idioma no delivery, no mesa-qr e no totem.
+
+**CRITERIO QUE NAO PODE SER QUEBRADO — o pedido sai em portugues.** A traducao e
+camada SOBREPOSTA: chega em campos novos (`name_i18n`, `description_i18n`,
+`text_i18n`) e o portugues fica intacto em `name`/`description`/`text`. Motivo
+concreto: `order-write` grava `item_name` a partir do que o CLIENTE manda e,
+quando o id nao vem, procura o item por `ilike(name, item_name)`. Se o cardapio
+traduzido sobrescrevesse `name`, o pedido chegaria em ingles no KDS e na
+impressora da cozinha e a busca por nome quebraria. Com campo separado, qualquer
+tela que ainda nao conheca idioma continua em portugues — o padrao seguro.
+Helpers: `supabase/functions/_shared/menu-i18n.ts` (backend) e
+`src/lib/idiomaCardapio.ts` + `src/hooks/useIdiomaCardapio.ts` (front).
+
+**Trocar de idioma nao recarrega o cardapio.** Recarregar zeraria etapa, endereco
+e carrinho do delivery. A acao `get_menu_translations` (em `delivery-write` e
+`mesa-write`) devolve so as traducoes e o front as sobrepoe em memoria.
+
+**Deduplicar por texto antes de chamar a IA.** Na Paranagua eram 933 entidades
+para apenas 290 textos distintos (o mesmo prato e item e tambem opcao em varios
+grupos). Alem de cortar custo e tempo, garante que o prato saia escrito igual em
+todo lugar. A Edge traduz um pedaco por chamada (tempo de parede limitado) e
+devolve `remaining`; a tela repete ate zerar.
+
+**Nome de prato nao se traduz.** O prompt trava Burrito/Quesadilla/Taco/Al Pastor
+/Barbacoa/Pico de Gallo etc. e marcas; so o portugues em volta muda ("Dupla
+Quesadilla Pollo" -> "Double Quesadilla Pollo"). Traducao corrigida a mao vira
+`source='manual'` e a IA nunca mais sobrescreve. `source_text_hash` guarda o hash
+do texto PT de origem: mudou o portugues, a linha aparece como "desatualizada"
+em vez de envelhecer calada.
+
+**Pegadinha do i18next com `supportedLngs`:** declarado o `supportedLngs`, o
+i18next resolve `pt-BR` descendo para a base `pt`. Como so existia o recurso
+`pt-BR`, o portugues caia no vazio e a tela mostrava a CHAVE crua
+("cliente.buscar"); ingles e espanhol, por serem codigos de 2 letras,
+funcionavam. Solucao em `src/i18n/local/index.ts`: registrar `pt` como apelido de
+`pt-BR`. Quem adicionar idioma com regiao (`fr-CA`) precisa do mesmo apelido.
+
+**Bug corrigido junto:** o cardapio publico buscava `options` sem filtrar
+`deleted_at` (itens, categorias e grupos ja filtravam), entao 41 opcoes apagadas
+seguiam a venda para o cliente na Paranagua. As buscas por id continuam sem o
+filtro de proposito — pedido antigo precisa resolver o nome de opcao apagada.
+
+**Pendente:** o totem so recebeu o seletor (barra fixa no topo da janela); a
+traducao dos nomes no `CardapioKiosk.tsx` ficou de fora do commit porque o
+arquivo tinha trabalho nao commitado de outra sessao na mesma linha.
