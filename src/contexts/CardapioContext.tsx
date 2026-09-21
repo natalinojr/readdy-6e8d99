@@ -72,6 +72,7 @@ interface DBPromocao {
 }
 
 interface DBPresetObs {
+  id?: string;
   text: string;
 }
 
@@ -241,6 +242,7 @@ function mapItem(i: DBItem, ingredientNameMap?: Map<string, string>): Item {
     gruposOpcoes: (i.option_groups ?? []).map((g) => mapGrupoOpcoes(g, ingredientNameMap)),
     promocoes: (i.promotions ?? []).map(mapPromocao),
     observacoesPadrao: (i.preset_observations ?? []).map((o) => o.text),
+    observacoesPadraoIds: (i.preset_observations ?? []).map((o) => String(o.id ?? '')),
     fichaTecnica: [],
     subproducao: (i.production_parts ?? []).map((p: Record<string, unknown>) => ({
       id: String(p.id ?? `sp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
@@ -1035,6 +1037,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
 
         // Verifica se o item tem observações configuradas (pré-definidas do próprio item)
         const observacoesPadrao = item.observacoesPadrao;
+        const observacoesPadraoIds = item.observacoesPadraoIds;
 
         const cat = categorias.find(c => c.id === item.categoriaId);
         return {
@@ -1051,9 +1054,10 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
           semPreparo: item.semPreparo ?? false,
           isCombo: false,
           observacoesPadrao,
+          observacoesPadraoIds,
           stationId: cat?.estacaoId ?? null,
           opcoes: item.gruposOpcoes.map(g => ({
-            grupo: g.nome, obrigatorio: g.obrigatorio, minSelecao: g.minSelecao, maxSelecao: g.maxSelecao,
+            grupo: g.nome, grupoId: g.id, obrigatorio: g.obrigatorio, minSelecao: g.minSelecao, maxSelecao: g.maxSelecao,
             itens: g.opcoes.filter(o => o.ativo).map(o => ({ id: o.id, nome: o.nome, precoAdicional: o.precoAdicional })),
           })),
         };

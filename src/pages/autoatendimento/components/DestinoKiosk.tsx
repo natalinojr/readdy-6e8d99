@@ -1,9 +1,11 @@
+import { useTranslation } from 'react-i18next';
 interface DestinoKioskProps {
   onSelecionar: (destino: 'aqui' | 'viagem') => void;
   onVoltar: () => void;
 }
 
 export default function DestinoKiosk({ onSelecionar, onVoltar }: DestinoKioskProps) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center h-full bg-zinc-950 p-10">
       {/* Back */}
@@ -12,15 +14,15 @@ export default function DestinoKiosk({ onSelecionar, onVoltar }: DestinoKioskPro
         className="absolute top-24 left-8 flex items-center gap-2 text-zinc-500 hover:text-zinc-300 text-sm font-semibold cursor-pointer transition-colors"
       >
         <i className="ri-arrow-left-line" />
-        Voltar
+        {t('cliente.voltar')}
       </button>
 
       <div className="text-center mb-14">
         <h2 className="text-7xl font-black text-white mb-3">
-          Vai comer aqui ou<br />
-          <span className="text-amber-400">para levar?</span>
+          {t('cliente.comerAquiOuLevar1')}<br />
+          <span className="text-amber-400">{t('cliente.comerAquiOuLevar2')}</span>
         </h2>
-        <p className="text-zinc-400 text-3xl">Escolha como prefere receber seu pedido</p>
+        <p className="text-zinc-400 text-3xl">{t('cliente.escolhaComoReceber')}</p>
       </div>
 
       <div className="grid grid-cols-2 gap-8 w-full max-w-3xl">
@@ -33,9 +35,9 @@ export default function DestinoKiosk({ onSelecionar, onVoltar }: DestinoKioskPro
             <i className="ri-store-2-line text-7xl text-zinc-400 group-hover:text-amber-400 transition-colors" />
           </div>
           <div className="text-center">
-            <p className="text-4xl font-black mb-2">Comer aqui</p>
+            <p className="text-4xl font-black mb-2">{t('cliente.comerAqui')}</p>
             <p className="text-zinc-500 text-lg group-hover:text-zinc-400 transition-colors">
-              Retire no balcão e aproveite no salão
+              {t('cliente.comerAquiDesc')}
             </p>
           </div>
         </button>
@@ -49,16 +51,16 @@ export default function DestinoKiosk({ onSelecionar, onVoltar }: DestinoKioskPro
             <i className="ri-shopping-bag-3-line text-7xl" />
           </div>
           <div className="text-center">
-            <p className="text-4xl font-black mb-2">Para viagem</p>
+            <p className="text-4xl font-black mb-2">{t('cliente.paraViagem')}</p>
             <p className="text-zinc-950/60 text-lg">
-              Embalagem especial para você levar
+              {t('cliente.paraViagemDesc')}
             </p>
           </div>
         </button>
       </div>
 
       <p className="mt-12 text-zinc-600 text-lg">
-        Sua escolha será indicada no pedido para a cozinha
+        {t('cliente.escolhaCozinha')}
       </p>
     </div>
   );

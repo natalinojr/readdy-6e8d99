@@ -21,10 +21,16 @@ export interface ItemCardapioPublico {
   isCombo?: boolean;
   /** Observações pré-configuradas específicas deste item (cadastradas no cardápio) */
   observacoesPadrao?: string[];
+  /** As mesmas observações com o id, para traduzir o RÓTULO sem mexer no texto
+   *  em português que vai para a cozinha. Alinhado com observacoesPadrao. */
+  observacoesPadraoIds?: string[];
   /** ID da estação de cozinha vinculada a este item (via categoria) */
   stationId?: string | null;
   opcoes?: {
     grupo: string;
+    /** id do option_group — só para traduzir o título; a chave do grupo
+     *  continua sendo o nome em português. */
+    grupoId?: string;
     obrigatorio: boolean;
     /** min_selections do grupo (padrão 0) */
     minSelecao?: number;

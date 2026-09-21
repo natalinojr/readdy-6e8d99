@@ -1018,6 +1018,19 @@ function AutoatendimentoPageInner() {
   if (etapa === 'welcome') {
     return (
       <>
+        {/* O seletor precisa estar na PRIMEIRA tela: e nela que o cliente
+            estrangeiro decide se consegue usar o totem. Fixo no topo, como no
+            resto do fluxo. */}
+        {idiomaCardapio.temSeletor ? (
+          <div className="fixed top-0 left-0 right-0 z-[90]">
+            <SeletorIdioma
+              variante="fixo"
+              disponiveis={idiomaCardapio.disponiveis}
+              idioma={idiomaCardapio.idioma}
+              onTrocar={idiomaCardapio.trocarIdioma}
+            />
+          </div>
+        ) : null}
         <WelcomeScreen onIniciar={handleIniciar} />
         {showConfigModal && <KioskConfigModal onClose={() => setShowConfigModal(false)} />}
         {/* Botão de configuração — canto superior direito */}

@@ -7,6 +7,7 @@ import ItemImage from '../../../components/base/ItemImage';
 import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
 import { toggleOpcaoGrupo, primeiroGrupoFaltando, mensagemGrupoFaltando, mensagemMaximoAtingido } from '@/lib/optionGroupSelection';
 import { comQuebraAposVirgula } from '../../../lib/quebraTexto';
+import { useTranslation } from 'react-i18next';
 
 // ── Teclado virtual para observações ──────────────────────────────────────────
 const LETRAS_KB = [
@@ -19,9 +20,11 @@ const NUMEROS_KB = ['1','2','3','4','5','6','7','8','9','0'];
 interface TecladoVirtualProps {
   value: string;
   onChange: (v: string) => void;
+  /** Texto de exemplo, ja no idioma escolhido. */
+  placeholder: string;
 }
 
-function TecladoVirtual({ value, onChange }: TecladoVirtualProps) {
+function TecladoVirtual({ value, onChange, placeholder }: TecladoVirtualProps) {
   const [modo, setModo] = useState<'letras' | 'numeros'>('letras');
 
   return (
@@ -29,7 +32,7 @@ function TecladoVirtual({ value, onChange }: TecladoVirtualProps) {
       {/* Display */}
       <div className="flex items-center justify-between mb-3">
         <div className={`flex-1 min-h-[3rem] bg-zinc-800 text-white text-base font-semibold rounded-xl px-4 py-2.5 border-2 transition-colors mr-3 ${value ? 'border-amber-500/40' : 'border-transparent'}`}>
-          {value || <span className="text-zinc-600 font-normal text-sm">Ex: sem cebola, molho à parte...</span>}
+          {value || <span className="text-zinc-600 font-normal text-sm">{placeholder}</span>}
         </div>
         <div className="flex items-center gap-1 bg-zinc-800 rounded-xl p-1 flex-shrink-0">
           <button onClick={() => setModo('letras')}
@@ -136,6 +139,7 @@ interface OpcaoTrackKiosk {
 }
 
 function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
+  const { t } = useTranslation();
   const [qtd, setQtd] = useState(1);
   const [selecionadas, setSelecionadas] = useState<Record<string, OpcaoTrackKiosk[]>>({});
   const [obsLivre, setObsLivre] = useState('');
@@ -219,8 +223,8 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
             {item.opcoes?.map((grupo) => (
               <div key={grupo.grupo}>
                 <div className="flex items-center gap-2 mb-2">
-                  <h3 className="text-lg font-bold text-white">{grupo.grupo}</h3>
-                  {grupo.obrigatorio && <span className="text-sm font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full">Obrigatório</span>}
+                  <h3 className="text-lg font-bold text-white">{tr('option_group', grupo.grupoId) ?? grupo.grupo}</h3>
+                  {grupo.obrigatorio && <span className="text-sm font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full">{t('cliente.obrigatorio')}</span>}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   {grupo.itens.map((opcao) => {
@@ -248,9 +252,9 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
 
             {item.observacoesPadrao && item.observacoesPadrao.length > 0 && (
               <div>
-                <h3 className="text-lg font-bold text-white mb-2">Observações</h3>
+                <h3 className="text-lg font-bold text-white mb-2">{t('cliente.observacoes')}</h3>
                 <div className="flex flex-wrap gap-2">
-                  {item.observacoesPadrao.map((obsPadrao) => {
+                  {item.observacoesPadrao.map((obsPadrao, idxObs) => {
                     const ativa = obsTags.includes(obsPadrao);
                     return (
                       <button
@@ -270,7 +274,7 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
                         }`}
                       >
                         {ativa && <i className="ri-check-line mr-1" />}
-                        {obsPadrao}
+                        {tr('preset_obs', item.observacoesPadraoIds?.[idxObs]) ?? obsPadrao}
                       </button>
                     );
                   })}
@@ -280,15 +284,15 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
 
             {item.observacoesPadrao && item.observacoesPadrao.length > 0 && (
               <div className="border-t border-zinc-800 pt-4">
-                <h3 className="text-base font-bold text-zinc-500 mb-3 uppercase tracking-wider">Outra observação</h3>
-                <TecladoVirtual value={obsLivre} onChange={setObsLivre} />
+                <h3 className="text-base font-bold text-zinc-500 mb-3 uppercase tracking-wider">{t('cliente.outraObservacao')}</h3>
+                <TecladoVirtual value={obsLivre} onChange={setObsLivre} placeholder={t('cliente.exObservacao')} />
               </div>
             )}
 
             {(!item.observacoesPadrao || item.observacoesPadrao.length === 0) && (
               <div>
-                <h3 className="text-lg font-bold text-white mb-2">Observações (opcional)</h3>
-                <TecladoVirtual value={obsLivre} onChange={setObsLivre} />
+                <h3 className="text-lg font-bold text-white mb-2">{t('cliente.observacoes')}</h3>
+                <TecladoVirtual value={obsLivre} onChange={setObsLivre} placeholder={t('cliente.exObservacao')} />
               </div>
             )}
 
@@ -318,7 +322,7 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
             </div>
             <button onClick={handleAdicionar}
               className="flex-1 flex items-center justify-between bg-amber-500 hover:bg-amber-400 text-zinc-950 px-6 py-4 rounded-2xl font-black text-xl cursor-pointer active:scale-95 transition-all whitespace-nowrap">
-              <span>Adicionar</span>
+              <span>{t('cliente.adicionar')}</span>
               <span>{fmt(total)}</span>
             </button>
           </div>
