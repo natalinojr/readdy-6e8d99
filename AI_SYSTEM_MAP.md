@@ -3087,12 +3087,16 @@ arquivo tinha trabalho nao commitado de outra sessao na mesma linha.
   `canceled` em poucos segundos — o valor sai do visor sozinho. Sem o header, era recusado em
   silêncio e só dava pra cancelar apertando no próprio terminal (aparece como
   `status_detail: cancel_by_terminal`).
-- **Crédito à vista precisa de DOIS campos.** `config.payment_method.default_installments: 1`
-  sozinho o MP aceita e ecoa — **e o terminal ignora**, continua perguntando "à vista ou
-  parcelado". Só pula a tela junto com `installments_cost`. Usamos `'buyer'` (testado, também
-  pula): se um cartão não aceitar 1x e a tela voltar, os juros são do cliente, não da loja.
-  Cuidado com o nome: `default_installments_cost` (o que a tabela de migração da doc mostra)
-  é **recusado** com `unsupported_properties`.
+- **Crédito à vista NÃO se resolve pela API.** `config.payment_method.default_installments: 1`
+  o MP aceita e ecoa, mas o terminal **continua perguntando "à vista ou parcelado"** — e
+  `installments_cost` não muda isso ('buyer' e 'seller', os dois testados a R$ 44,00). Tirar a
+  tela é configuração de parcelamento da CONTA do Mercado Pago, não campo da order.
+  `installments_cost` ficou FORA do código de propósito: ele decide quem paga os juros, e isso
+  é decisão do dono, não efeito colateral. Nome errado que a doc induz:
+  `default_installments_cost` é recusado com `unsupported_properties`.
+- **Armadilha do teste:** medir isso com cobrança de R$ 1,00 dá falso positivo — nesse valor a
+  maquininha não oferece parcelamento de jeito nenhum e parece que o campo funcionou. Testar
+  sempre com valor de venda real.
 - **Como testar sem publicar nada:** a extensão `http` do Postgres já está instalada — dá pra
   criar/cancelar uma order de R$ 1,00 na maquininha direto por SQL, com o token saindo de
   `fin_payment_provider_config` sem passar pelo chat.

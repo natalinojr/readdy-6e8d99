@@ -422,14 +422,15 @@ async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: numb
         point: { terminal_id: cfg.terminal_id, print_on_terminal: 'no_ticket' },
         payment_method: {
           default_type: method === 'debit_card' ? 'debit_card' : 'credit_card',
-          // Crédito é SEMPRE à vista: sem isto a maquininha para e pergunta "à vista ou
-          // parcelado". Medido na Point Smart da loja em 2026-09-21: `default_installments: 1`
-          // SOZINHO não basta (o MP aceita e o terminal ignora) — só pula a tela junto com
-          // `installments_cost`. Vai 'buyer' de propósito: se algum cartão não aceitar 1x e o
-          // terminal voltar a mostrar as parcelas, os juros são do cliente, nunca da loja.
-          // (`default_installments_cost`, o nome da tabela de migração da doc, o MP recusa:
-          // "additionalProperties not allowed".)
-          ...(method === 'debit_card' ? {} : { default_installments: 1, installments_cost: 'buyer' }),
+          // `default_installments: 1` deixa 1x pré-selecionada. MEDIDO na Point Smart da loja
+          // (2026-09-21, R$ 44,00): o terminal mostra a tela "à vista ou parcelado" do mesmo
+          // jeito — nem com `installments_cost` ('buyer' e 'seller', os dois testados) ele
+          // pula. Tirar essa tela é configuração de parcelamento da CONTA do Mercado Pago,
+          // não campo da order. Por isso `installments_cost` NÃO vai aqui: ele decide quem
+          // paga os juros, e essa escolha é do dono, não um efeito colateral nosso.
+          // (`default_installments_cost`, nome que a tabela de migração da doc usa, o MP
+          // recusa com "additionalProperties not allowed".)
+          ...(method === 'debit_card' ? {} : { default_installments: 1 }),
         },
       },
     }),
