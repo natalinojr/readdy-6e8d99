@@ -156,12 +156,12 @@ type ProviderCfg = {
   client_id: string | null; client_secret: string | null; cert_pem: string | null; key_pem: string | null;
   pix_key: string | null; environment: string | null; conta_corrente: string | null;
   cert_expires_at: string | null; last_test_at: string | null; updated_at: string; token_expires_at: string | null;
-  terminal_id: string | null; pdv_terminal_id?: string | null;
+  terminal_id: string | null; pdv_terminal_id?: string | null; pdv_pix_terminal?: boolean | null;
   webhook_secret?: string | null; tablet_terminals?: Record<string, string> | null;
 };
 async function loadProviderCfgs(admin: Admin, tenantId: string) {
   const { data } = await admin.from('fin_payment_provider_config')
-    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at, terminal_id, pdv_terminal_id, webhook_secret, tablet_terminals')
+    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at, terminal_id, pdv_terminal_id, pdv_pix_terminal, webhook_secret, tablet_terminals')
     .eq('tenant_id', tenantId).in('provider', PROVIDERS);
   const rows = (data ?? []) as ProviderCfg[];
   return {
@@ -413,15 +413,16 @@ const pointErr = (b: any) => {
 // `externalRef` é o que aparece em EXTERNAL_REFERENCE no Relatório de Liberações e na busca de
 // pagamentos: com o número do pedido ali, a conciliação casa venda × pedido sem adivinhar valor.
 async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: number, method: string, desc: string, externalRef?: string) {
-  const r = await mpFetch(String(cfg.access_token), '/v1/orders', {
-    method: 'POST', headers: { 'X-Idempotency-Key': chargeId },
-    body: JSON.stringify({
+  // `default_type` é OPCIONAL na order do Point. Com Pix, se o Mercado Pago recusar a forma,
+  // mandamos a order SEM forma definida e a própria maquininha mostra o menu ao cliente.
+  const tipo = method === 'debit_card' ? 'debit_card' : method === 'pix' ? 'pix' : 'credit_card';
+  const montar = (defaultType: string | null) => JSON.stringify({
       type: 'point', external_reference: (externalRef ?? chargeId).slice(0, 60), expiration_time: POINT_EXPIRATION, description: desc.slice(0, 150),
       transactions: { payments: [{ amount: amount.toFixed(2) }] },
       config: {
         point: { terminal_id: cfg.terminal_id, print_on_terminal: 'no_ticket' },
-        payment_method: {
-          default_type: method === 'debit_card' ? 'debit_card' : 'credit_card',
+        ...(defaultType === null ? {} : { payment_method: {
+          default_type: defaultType,
           // `default_installments: 1` deixa 1x pré-selecionada. MEDIDO na Point Smart da loja
           // (2026-09-21, R$ 44,00): o terminal mostra a tela "à vista ou parcelado" do mesmo
           // jeito — nem com `installments_cost` ('buyer' e 'seller', os dois testados) ele
@@ -430,11 +431,20 @@ async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: numb
           // paga os juros, e essa escolha é do dono, não um efeito colateral nosso.
           // (`default_installments_cost`, nome que a tabela de migração da doc usa, o MP
           // recusa com "additionalProperties not allowed".)
-          ...(method === 'debit_card' ? {} : { default_installments: 1 }),
-        },
+          // Pix não tem parcela; débito também não.
+          ...(defaultType === 'credit_card' ? { default_installments: 1 } : {}),
+        } }),
       },
-    }),
+    });
+  let r = await mpFetch(String(cfg.access_token), '/v1/orders', {
+    method: 'POST', headers: { 'X-Idempotency-Key': chargeId }, body: montar(tipo),
   });
+  if (!r.ok && tipo === 'pix') {
+    log('WARN', 'create_point_order', 'pix recusado como default_type; reenviando sem forma definida', { chargeId, status: r.status, body: r.body });
+    r = await mpFetch(String(cfg.access_token), '/v1/orders', {
+      method: 'POST', headers: { 'X-Idempotency-Key': `${chargeId}-open` }, body: montar(null),
+    });
+  }
   if (!r.ok || !r.body?.id) {
     log('WARN', 'create_point_order', 'recusado', { chargeId, status: r.status, body: r.body });
     throw new Error(`Mercado Pago Point ${r.status}: ${pointErr(r.body)}`);
@@ -483,7 +493,11 @@ async function reconcileRow(admin: Admin, row: PixRow): Promise<string> {
     failed = st === 'failed';
     gone = ['canceled', 'expired', 'refunded'].includes(st);
     got = round2(Number(r.body.total_paid_amount ?? pay.paid_amount ?? pay.amount ?? 0));
-    cardMethod = pay.payment_method?.type === 'debit_card' ? 'debit_card' : 'credit_card';
+    // vale o que a maquininha respondeu; Pix vem como bank_transfer
+    const tipoPago = String(pay.payment_method?.type ?? '');
+    cardMethod = tipoPago === 'debit_card' ? 'debit_card'
+      : (tipoPago === 'bank_transfer' || tipoPago === 'pix' || String(pay.payment_method?.id ?? '') === 'pix') ? 'pix'
+      : 'credit_card';
     detail = String(pay.status_detail ?? r.body.status_detail ?? '');
     raw = { id: r.body.id, status: st, status_detail: detail, payment: { id: pay.id ?? null, method: pay.payment_method ?? null, reference: pay.reference ?? null } };
     log('INFO', 'reconcile', 'point', { id: row.id, st, detail });
@@ -828,14 +842,18 @@ Deno.serve(async (req: Request) => {
       return json({
         point: pointReady(point), sandbox: point?.environment === 'sandbox',
         pdv: pointReady(point) && Boolean(point!.pdv_terminal_id),
+        // Pix do caixa na maquininha é interruptor à parte: a loja pode querer cartão na
+        // máquina e Pix na mão. No tablet nada muda — lá o QR fica na tela do próprio tablet.
+        pdv_pix: pointReady(point) && Boolean(point!.pdv_terminal_id) && point!.pdv_pix_terminal === true,
       });
     }
 
     if (action === 'create_card_charge') {
       const tenantId = String(body.tenant_id ?? '');
       const amount = round2(Number(body.amount));
-      const method = body.method === 'debit_card' ? 'debit_card' : 'credit_card';
       const station = body.station === 'pdv' ? 'pdv' : 'kiosk';
+      const pediuPix = body.method === 'pix';
+      const method = body.method === 'debit_card' ? 'debit_card' : pediuPix ? 'pix' : 'credit_card';
       const orderId = typeof body.order_id === 'string' && body.order_id ? body.order_id : null;
       const orderNumber = typeof body.order_number === 'string' && body.order_number ? String(body.order_number).slice(0, 40) : null;
       if (!tenantId || !(amount >= 0.01)) return json({ error: 'tenant_id e amount são obrigatórios' }, 400);
@@ -843,6 +861,10 @@ Deno.serve(async (req: Request) => {
       if (auth.error) return auth.error;
       const { point } = await loadProviderCfgs(supabase, tenantId);
       if (!pointReady(point)) return json({ error: 'A maquininha não está configurada nesta loja.', code: 'no_point' }, 422);
+      // Pix na maquininha só existe no caixa e só com a opção ligada (o tablet usa a tela dele).
+      if (method === 'pix' && !(station === 'pdv' && point!.pdv_pix_terminal === true)) {
+        return json({ error: 'Pix na maquininha não está ligado nesta loja.', code: 'no_pix_terminal' }, 422);
+      }
       // Orders API recusa amount < 1.00 ("Must be greater than or equal to 1.00").
       if (amount < 1) return json({ error: 'Cartão na maquininha só a partir de R$ 1,00. Escolha outra forma ou pague no balcão.', code: 'min_amount' }, 422);
 
@@ -908,7 +930,7 @@ Deno.serve(async (req: Request) => {
       return json({
         configured: Boolean(point?.access_token), is_active: Boolean(point?.is_active),
         environment: point?.environment === 'sandbox' ? 'sandbox' : 'production', terminal_id: point?.terminal_id ?? null,
-        pdv_terminal_id: point?.pdv_terminal_id ?? null,
+        pdv_terminal_id: point?.pdv_terminal_id ?? null, pdv_pix_terminal: point?.pdv_pix_terminal === true,
         token_hint: point?.access_token ? `…${point.access_token.slice(-6)}` : null, last_test_at: point?.last_test_at ?? null,
         has_webhook_secret: Boolean(point?.webhook_secret),
         webhook_url: `${Deno.env.get('SUPABASE_URL') ?? ''}/functions/v1/pix-payment?webhook=point&tenant_id=${tenantId}`,
@@ -1000,15 +1022,18 @@ Deno.serve(async (req: Request) => {
       const pdvTerminal = typeof body.pdv_terminal_id === 'string'
         ? (body.pdv_terminal_id.trim() || null)
         : (point?.pdv_terminal_id ?? null);
+      const pdvPix = typeof body.pdv_pix_terminal === 'boolean'
+        ? body.pdv_pix_terminal
+        : (point?.pdv_pix_terminal === true);
       const { error } = await supabase.from('fin_payment_provider_config').upsert({
         tenant_id: tenantId, provider: 'mp_point', access_token: token, terminal_id: terminalId,
-        pdv_terminal_id: pdvTerminal, environment, is_active: isActive,
+        pdv_terminal_id: pdvTerminal, pdv_pix_terminal: pdvPix && Boolean(pdvTerminal), environment, is_active: isActive,
         account_label: environment === 'sandbox' ? 'Mercado Pago Point · TESTE' : 'Mercado Pago Point', last_test_at: now, updated_at: now,
         // Chave secreta do webhook: em branco mantém a atual.
         ...(typeof body.webhook_secret === 'string' && body.webhook_secret.trim() ? { webhook_secret: body.webhook_secret.trim() } : {}),
       }, { onConflict: 'tenant_id,provider' });
       if (error) throw error;
-      log('INFO', 'save_point_config', 'ok', { tenantId, environment, terminalId, pdvTerminal, isActive, by: auth.userId });
+      log('INFO', 'save_point_config', 'ok', { tenantId, environment, terminalId, pdvTerminal, pdvPix, isActive, by: auth.userId });
       return json({ ok: true, is_active: isActive });
     }
 

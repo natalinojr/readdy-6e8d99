@@ -289,6 +289,14 @@ Pedido do dono: Paranaguá passa a usar a maquininha do Mercado Pago; "vamos ter
   impede cobrar duas vezes se a confirmação for repetida, e sobrevive a remover/reordenar
   pagamentos (índice não serve). O `handleFinalizar` é chamado por um **efeito**, não dentro do
   callback: ele lê `pagamentos` do estado e o callback ainda veria a lista antes da troca de forma.
+- **Pix do caixa na maquininha (opcional, `fin_payment_provider_config.pdv_pix_terminal`):** ligado,
+  escolher PIX no caixa manda o valor para a Point e o cliente lê o QR na tela dela — o caixa deixa
+  de marcar "recebido" na mão. **O tablet não muda**: lá o QR continua na tela do autoatendimento.
+  É interruptor à parte do cartão de propósito (a loja pode querer cartão na máquina e Pix na mão).
+  `default_type` é **opcional** na order do Point, então `createPointOrder` pede `pix` e, se o MP
+  recusar a forma, **reenvia sem forma definida** (a maquininha mostra o próprio menu) — o
+  `reconcileRow` já grava o que o cliente escolheu de fato (`payment_method.type`, Pix vem como
+  `bank_transfer`).
 - **Regras:** o pagamento **só entra na lista quando o provedor aprova** — não existe confirmar na mão; o auto-add do `handleFinalizar` do `PagamentoRapidoModal` também foi desviado para a maquininha (senão furaria a regra); se o cliente passar débito onde o operador escolheu crédito, **vale o que a maquininha respondeu** (a forma é trocada e o operador é avisado); venda do carrinho vincula a cobrança ao pedido depois, via `attach_order`.
 
 **Ligado em produção (Paranaguá) no mesmo dia.** Conta MP, `card_provider = mercadopago`, `post_to_ledger` e `release_report` ligados. Primeira importação: a venda de teste de R$ 1,00 (débito, taxa R$ 0,01) e o estorno entraram certos, e as 2 vendas do Mercado Livre entraram no extrato **fora da receita** — sem a trava teriam virado R$ 377,82 de venda no cartão do restaurante.

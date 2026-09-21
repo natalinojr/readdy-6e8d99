@@ -92,7 +92,9 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   // o valor para a maquininha em vez de so empilhar o valor digitado: o operador nao erra a
   // forma e o pagamento so entra quando o provedor aprova.
   const [pointPdv, setPointPdv] = useState(false);
-  const [cobranca, setCobranca] = useState<{ idx: number; valor: number; method: 'credit_card' | 'debit_card' } | null>(null);
+  // Pix na maquininha é opcional e separado do cartão (Configurações › Maquininha Point)
+  const [pointPdvPix, setPointPdvPix] = useState(false);
+  const [cobranca, setCobranca] = useState<{ idx: number; valor: number; method: 'credit_card' | 'debit_card' | 'pix' } | null>(null);
   // depois que a maquininha aprova, o efeito abaixo segue a fila (ou fecha o pedido)
   const [seguirAposCobranca, setSeguirAposCobranca] = useState(false);
   // cobrancas aprovadas nesta venda: depois de criar o pedido, viram vinculo pix_payment -> pedido
@@ -305,9 +307,13 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   useEffect(() => {
     if (!user?.tenantId) return;
     let cancelled = false;
-    invokeWithAuth<{ point?: boolean; pdv?: boolean }>('pix-payment', {
+    invokeWithAuth<{ point?: boolean; pdv?: boolean; pdv_pix?: boolean }>('pix-payment', {
       body: { action: 'kiosk_card_provider', tenant_id: user.tenantId },
-    }).then(({ data }) => { if (!cancelled) setPointPdv(Boolean(data?.point && data?.pdv)); });
+    }).then(({ data }) => {
+      if (cancelled) return;
+      setPointPdv(Boolean(data?.point && data?.pdv));
+      setPointPdvPix(Boolean(data?.point && data?.pdv_pix));
+    });
     return () => { cancelled = true; };
   }, [user?.tenantId]);
 
@@ -439,9 +445,13 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   );
   const cobrancasPendentes = useMemo(() => pagamentos
     .map((p, idx) => ({ p, idx }))
-    .filter(({ p }) => !p.cobrancaId && (tipoDaForma(p.formaId) === 'credit_card' || tipoDaForma(p.formaId) === 'debit_card'))
-    .map(({ p, idx }) => ({ idx, valor: p.valor, method: tipoDaForma(p.formaId) as 'credit_card' | 'debit_card' })),
-  [pagamentos, tipoDaForma]);
+    .filter(({ p }) => {
+      const t = tipoDaForma(p.formaId);
+      if (p.cobrancaId) return false;
+      return t === 'credit_card' || t === 'debit_card' || (t === 'pix' && pointPdvPix);
+    })
+    .map(({ p, idx }) => ({ idx, valor: p.valor, method: tipoDaForma(p.formaId) as 'credit_card' | 'debit_card' | 'pix' })),
+  [pagamentos, tipoDaForma, pointPdvPix]);
   const precisaCobrar = pointPdv && cobrancasPendentes.length > 0;
   const totalACobrar = cobrancasPendentes.reduce((acc, c) => acc + c.valor, 0);
 
@@ -1523,7 +1533,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
               // errada, vale o que a maquininha respondeu.
               const formaReal = formasPagamento.find((f) => f.tipo === method);
               if (formaReal && formaReal.id !== p.formaId) {
-                toastWarning('Forma ajustada', `O cliente pagou em ${method === 'debit_card' ? 'débito' : 'crédito'}: lançado como ${formaReal.nome}.`);
+                toastWarning('Forma ajustada', `O cliente pagou em ${method === 'debit_card' ? 'débito' : method === 'pix' ? 'Pix' : 'crédito'}: lançado como ${formaReal.nome}.`);
                 return { ...p, formaId: formaReal.id, formaNome: formaReal.nome, cobrancaId: pixPaymentId };
               }
               return { ...p, cobrancaId: pixPaymentId };
