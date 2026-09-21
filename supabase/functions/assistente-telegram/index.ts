@@ -422,6 +422,15 @@ async function getSetting(admin: SupabaseClient, key: string): Promise<any> {
   const { data } = await admin.from('asst_settings').select('value').eq('key', key).maybeSingle();
   return data?.value ?? null;
 }
+// Saída pelo Telegram (dono, 2026-09-21: "não é mais pra avisar pelo telegram, agora é só pelo chat").
+// channels.telegram_out = false → o aviso NÃO sai no Telegram; continua gravado na conversa
+// (asst_messages = o chat do ERPOS) e disparando o push do app. A conversa segue sendo 'tg:<id>',
+// então o histórico não muda de lugar.
+let tgOutCache: boolean | null = null;
+async function tgOut(admin: SupabaseClient): Promise<boolean> {
+  if (tgOutCache === null) tgOutCache = (await getSetting(admin, 'channels'))?.telegram_out !== false;
+  return tgOutCache;
+}
 async function setSetting(admin: SupabaseClient, key: string, value: unknown) {
   await admin.from('asst_settings').upsert({ key, value, updated_at: nowIso() });
 }
@@ -580,12 +589,15 @@ async function settleBill(p: any): Promise<string | null> {
 }
 // Cartão atualizado + comprovante + baixa quando pago. Usado no "Ver status", depois do PIN e no pay_watch.
 // deno-lint-ignore no-explicit-any
-async function afterPayStatus(admin: SupabaseClient, chatId: number, mid: number | null, p: any) {
+async function afterPayStatus(admin: SupabaseClient, chatId: number, mid: number | null, p: any): Promise<string> {
   const extras = [await sendGroupReceipt(admin, p), await settleBill(p)].filter(Boolean);
   // Acabou mal (expirou, falhou, o Inter recusou): oferece remontar em vez de deixar o cartão
   // mudo. Cancelado não entra — cancelar foi decisão do dono.
   const kb = !PAY_DONE.includes(p.status) ? statusKb(p.id) : (PAY_RETRY.includes(p.status) ? reKb(p.id) : undefined);
-  await editPay(chatId, mid, p, statusLine(p) + (extras.length ? `\n${extras.join('\n')}` : ''), kb);
+  // Só mexe no Telegram se a saída estiver ligada E já existir o cartão de lá (mid). Pagamento feito
+  // pelo chat do ERPOS não tem cartão no Telegram e não vira mensagem nova lá (2026-09-21).
+  if (mid && await tgOut(admin)) await editPay(chatId, mid, p, statusLine(p) + (extras.length ? `\n${extras.join('\n')}` : ''), kb);
+  return extras.join('\n');
 }
 async function payWatch() {
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
@@ -604,9 +616,23 @@ async function payWatch() {
     } catch (e) { log('WARN', 'acompanhar pagamento', { id: p.id, error: errMsg(e) }); }
     if (p.status === antes) { await admin.from('fin_inter_payments').update({ updated_at: nowIso() }).eq('id', p.id).eq('status', antes); continue; }
     changed++;
-    await afterPayStatus(admin, Number(String(p.chat_id).slice(3)), Number(p.tg_message_id) || null, p);
-    await pushDono(admin, `${p.kind === 'pix' ? 'Pix' : 'Boleto'} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status}`, 'assistente-pagamento');
-    await admin.from('asst_messages').insert({ channel: 'telegram', chat_id: p.chat_id, role: 'assistant', content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status} (atualizado automaticamente)] id ${p.id}` });
+    // A CONVERSA vem primeiro: um erro no Telegram ou no push derrubava o resto e a mudança nunca
+    // chegava ao chat (boleto da Receita, 21/09). Cada parte é isolada.
+    let extras = '';
+    try { extras = await afterPayStatus(admin, Number(String(p.chat_id).slice(3)), Number(p.tg_message_id) || null, p); }
+    catch (e) { log('WARN', 'atualizar cartão/comprovante', { id: p.id, error: errMsg(e) }); }
+    const { error: erroMsg } = await admin.from('asst_messages').insert({
+      channel: p.tg_message_id ? 'telegram' : 'app', chat_id: p.chat_id, role: 'assistant', topic: 'pagamentos',
+      content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status} (atualizado automaticamente)] id ${p.id}`,
+    });
+    if (erroMsg) log('WARN', 'gravar status no chat', { id: p.id, error: erroMsg.message });
+    // Baixa e comprovante viram uma linha própria (o cartão do chat lê só o marcador acima).
+    if (extras) {
+      await admin.from('asst_messages').insert({ channel: 'cron', chat_id: p.chat_id, role: 'assistant', topic: 'pagamentos', content: extras })
+        .then(({ error }) => { if (error) log('WARN', 'gravar baixa no chat', { error: error.message }); });
+    }
+    try { await pushDono(admin, `${p.kind === 'pix' ? 'Pix' : 'Boleto'} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: ${PAY_STATUS[p.status] ?? p.status}`, 'assistente-pagamento'); }
+    catch (e) { log('WARN', 'push do pagamento', { id: p.id, error: errMsg(e) }); }
     log('INFO', 'pagamento mudou de status', { id: p.id, de: antes, para: p.status });
   }
   // Pagos com conta a pagar (ou avulsos com categoria da DRE) e ainda sem baixa: o débito demora a aparecer no extrato do Inter.
@@ -620,7 +646,11 @@ async function payWatch() {
     const linha = await settleBill(p);
     if (linha?.startsWith('🧾 Baixa feita')) {
       settled++;
-      await editPay(Number(String(p.chat_id).slice(3)), Number(p.tg_message_id) || null, p, `${statusLine(p)}\n${linha}`);
+      await admin.from('asst_messages').insert({ channel: 'cron', chat_id: p.chat_id, role: 'assistant', topic: 'pagamentos', content: linha })
+        .then(({ error }) => { if (error) log('WARN', 'gravar baixa no chat', { error: error.message }); });
+      if (p.tg_message_id && await tgOut(admin)) {
+        await editPay(Number(String(p.chat_id).slice(3)), Number(p.tg_message_id), p, `${statusLine(p)}\n${linha}`);
+      }
     }
   }
   return { checked, changed, settled };
@@ -1032,8 +1062,9 @@ async function deliver(body: any) {
   const chatId = Number(chatKey.slice(3));
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const text = String(body.text ?? '').trim();
-  if (text && text !== 'NO_REPLY') await sendText(chatId, text);
-  await runActions(admin, chatId, chatKey, body.actions);
+  const paraTg = await tgOut(admin);
+  if (paraTg && text && text !== 'NO_REPLY') await sendText(chatId, text);
+  if (paraTg) await runActions(admin, chatId, chatKey, body.actions);
   // `save`: avisos que NÃO vieram do brain (canal público, currículo pelo WhatsApp) não entravam em
   // asst_messages e por isso não apareciam no chat do ERPOS — a aba Currículos ficava vazia
   // (2026-09-16). Quem vem do brain já é gravado lá e não passa por aqui.

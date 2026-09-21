@@ -52,7 +52,21 @@ const isTg = (s: string) => /^tg:-?\d+$/.test(s);
 // Telegram (canal principal desde 2026-09-12): chat_id "tg:<id>". HTML com *negrito* convertido.
 const tgToken = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? '';
 // deno-lint-ignore no-explicit-any
+// Saída pelo Telegram desligada (asst_settings.channels.telegram_out = false, dono 2026-09-21: "agora
+// é só pelo chat"): o aviso não sai no Telegram, mas continua indo para a conversa (quem chama grava
+// em asst_messages) e para o push do app.
+let tgOutCache: boolean | null = null;
+async function tgLigado(): Promise<boolean> {
+  if (tgOutCache === null) {
+    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const { data } = await admin.from('asst_settings').select('value').eq('key', 'channels').maybeSingle();
+    // deno-lint-ignore no-explicit-any
+    tgOutCache = ((data?.value ?? {}) as any).telegram_out !== false;
+  }
+  return tgOutCache;
+}
 async function sendTelegram(chatKey: string, text: string, extra: Record<string, unknown> = {}): Promise<any> {
+  if (!await tgLigado()) { await pushDono(text); return null; }
   if (!tgToken) throw new Error('TELEGRAM_BOT_TOKEN não configurado');
   const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const html = esc(text).replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, '$1<b>$2</b>');
