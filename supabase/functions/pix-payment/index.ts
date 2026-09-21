@@ -378,9 +378,14 @@ async function cancelAtProvider(p: { inter: ProviderCfg | null; mp: ProviderCfg 
     } else if (row.provider === 'mercadopago' && p.mp?.access_token) {
       await mpFetch(p.mp.access_token, `/v1/payments/${row.provider_payment_id}`, { method: 'PUT', body: JSON.stringify({ status: 'cancelled' }) });
     } else if (row.provider === 'mp_point' && p.point?.access_token) {
-      // Só cancela se ainda não foi capturada pela maquininha; depois disso o MP recusa (e o
-      // cliente pode cancelar no próprio terminal).
-      const r = await mpFetch(p.point.access_token, `/v1/orders/${row.provider_payment_id}/cancel`, { method: 'POST', headers: { 'X-Idempotency-Key': crypto.randomUUID() } });
+      // `x-allow-cancelable-status: at_terminal` é obrigatório para cancelar uma order que o
+      // terminal JÁ pegou (é o caso normal: a maquininha busca a cobrança em segundos). Sem
+      // esse header o MP só cancela orders em `created` — era por isso que o valor continuava
+      // no visor depois do cliente desistir no totem (2026-09-21).
+      const r = await mpFetch(p.point.access_token, `/v1/orders/${row.provider_payment_id}/cancel`, {
+        method: 'POST',
+        headers: { 'X-Idempotency-Key': crypto.randomUUID(), 'x-allow-cancelable-status': 'at_terminal' },
+      });
       if (!r.ok) {
         log('WARN', 'cancel', 'MP recusou cancelar a order Point', { id: row.id, status: r.status, body: r.body });
         return false;
