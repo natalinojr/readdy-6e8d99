@@ -24,12 +24,9 @@ const ORIGIN_MAP: Record<string, string> = {
 const STATUS_TO_DB: Record<string, string> = { novo: "new", preparo: "preparing", pronto: "ready", entregue: "delivered" };
 const STATUS_RANK: Record<string, number> = { new: 0, preparing: 1, ready: 2, delivered: 3 };
 
-function calcLoyaltyTier(points: number): string {
-  if (points >= 2000) return "vip";
-  if (points >= 800) return "ouro";
-  if (points >= 200) return "prata";
-  return "bronze";
-}
+// A régua de nível da fidelidade saiu daqui em 2026-09-21: agora é a função SQL
+// public.fn_loyalty_tier, chamada pelo trigger que recalcula os pontos. Uma cópia aqui
+// seria uma segunda definição da mesma regra, livre para divergir da do banco.
 
 function deriveOrderStatus(items: { status: string; skip_kds: boolean }[]): string {
   if (items.length === 0) return "new";
@@ -901,11 +898,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (becamePaid && order_id) { try { const { data: oFis } = await admin.from("orders").select("table_session_id, is_training").eq("id", order_id).maybeSingle(); if (oFis && !oFis.is_training) await triggerFiscalEmit(admin, supabaseUrl, serviceRoleKey, paymentTenantId, order_id, payment_group_id ? { id: String(payment_group_id), size: Number(group_size ?? 0) || 0 } : null); } catch { /* non-blocking */ } }
       // Modo Treino: só a linha em payments (para o pedido fechar). Sem fidelidade, promoção, caixa/DRE, crédito bancário, taxa ou recebível.
       if (orderIsTraining) { log("INFO", "record_payment", "Pedido de treino — efeitos financeiros e fidelidade pulados", { order_id, payment_id: paymentId }); return new Response(JSON.stringify({ data: { id: paymentId }, training: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
-      // Só FIDELIDADE aqui (2026-09-19). Antes este bloco também somava visit_count/total_spent/
-      // average_ticket no cliente — e a linha ~606 já tinha chamado upsert_customer, que somava outra
-      // visita: uma compra virava 2 na tela (caso Eliane). Contador de compra agora é do trigger
-      // trg_orders_customer_counters, que RECALCULA a partir de orders. Não voltar a somar aqui.
-      if (crossedToPaid) try { const { data: orderData } = await admin.from("orders").select("customer_id, total_amount, number").eq("id", order_id).maybeSingle(); if (orderData?.customer_id) { const customerId = orderData.customer_id as string; const orderAmount = Number(orderData.total_amount ?? 0); const { data: customerData } = await admin.from("customers").select("loyalty_points").eq("id", customerId).maybeSingle(); const prevPoints = Number(customerData?.loyalty_points ?? 0); const pointsEarned = Math.floor(orderAmount); const newPoints = prevPoints + pointsEarned; const newTier = calcLoyaltyTier(newPoints); await admin.from("customers").update({ loyalty_points: newPoints, loyalty_tier: newTier }).eq("id", customerId); if (pointsEarned > 0) { const loyRow = { tenant_id: paymentTenantId, customer_id: customerId, transaction_type: "earned", points: pointsEarned, balance_after: newPoints, order_id, notes: `Compra #${orderData.number ?? order_id.slice(0, 8)}`, created_by: effectiveUserId }; let { error: loyErr } = await admin.from("loyalty_transactions").insert(loyRow); if (loyErr?.code === "23503") ({ error: loyErr } = await admin.from("loyalty_transactions").insert({ ...loyRow, created_by: null })); if (loyErr) log("WARN", "record_payment", "Extrato de pontos nao gravado", { order_id, customer_id: customerId, error: loyErr.message }); } } } catch { /* non-blocking */ }
+      // Cliente (compras, gasto, pontos, nível e extrato de fidelidade) NÃO se atualiza
+      // aqui desde 2026-09-21 — quem cuida disso é o trigger trg_orders_customer_counters,
+      // que RECALCULA tudo a partir de orders (fn_sync_customer_counters + fn_sync_customer_loyalty).
+      //
+      // Este bloco somava contador e pontos direto na coluna, e gravava o extrato num
+      // insert `non-blocking` que engolia o erro: o saldo subia e o lançamento não existia.
+      // Resultado medido antes da correção: 5 lançamentos para ~131 compras, e 12 de 94
+      // clientes com pontos sem lastro. Somar aqui de novo recria exatamente esse buraco.
       try { const { data: orderDiscounts } = await admin.from("order_discounts").select("promotion_id").eq("order_id", order_id).not("promotion_id", "is", null); if (orderDiscounts && orderDiscounts.length > 0) { const seen = new Set<string>(); for (const d of orderDiscounts) { const promoId = d.promotion_id as string; if (!seen.has(promoId)) { seen.add(promoId); const { error: promoErr } = await admin.rpc("fn_increment_promotion_uses", { p_promotion_id: promoId, p_order_id: order_id }); if (promoErr) log("WARN", "record_payment", "fn_increment_promotion_uses falhou", { order_id, promotion_id: promoId, error: promoErr.message }); } } } } catch { /* non-blocking */ }
       // Declarado FORA do try: o fallback do catch usa o valor (antes dava ReferenceError engolido e a receita sumia).
       const paymentAmount = (amount != null && amount > 0) ? amount : (orderTotalAmount > 0 ? orderTotalAmount : 0);

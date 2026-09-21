@@ -2685,8 +2685,30 @@ Critérios que valem para o próximo contador desnormalizado:
   de boas-vindas da mesa parou de prometer "sua Nª visita" — o sistema não sabe quantas vezes alguém
   sentou na mesa, só quantas comprou.
 
-**Achado aberto (não corrigido de propósito):** `loyalty_transactions` tem **4 lançamentos** para
-**56 clientes com pontos**, e 54 saldos não batem com extrato nenhum — o insert do extrato no
-`order-write` é `non-blocking` e falha calado. Não há de onde reconstruir os saldos, então
-`loyalty_points`/`loyalty_tier` ficaram intocados: mexer em saldo de cliente como efeito colateral de
-um conserto de relatório seria pior que deixar quieto. Precisa de ciclo próprio.
+**Fidelidade — resolvida dois dias depois** (migration `20260921010000_fidelidade_derivada_de_pedidos`).
+A precaução inicial ("não mexer em saldo de cliente") não se sustentou depois de investigar: o extrato
+só tinha lançamentos `earned` — **nunca houve um resgate** — e **não existe tela de fidelidade** (o
+único arquivo em `src/` que cita `loyalty_points` é a página de debug). Ninguém gastou pontos e
+ninguém os vê, então recalcular não tirava nada de ninguém. A lição: *"é arriscado" é uma hipótese a
+verificar, não uma conclusão* — bastava olhar se havia resgate e se havia tela.
+
+Mesma cura: `fn_sync_customer_loyalty(uuid)` reconstrói o extrato a partir de `orders` (1 ponto por
+R$ 1 inteiro) e o saldo do cliente passa a ser **a soma do extrato**, não uma conta paralela. O mesmo
+trigger de `orders` chama as duas funções. Detalhes que valem para o próximo caso:
+
+- **Lançamento manual sobrevive.** O trigger é dono só das linhas com `order_id`; linha sem pedido
+  (seed, ajuste à mão) é preservada e continua contando — recálculo automático não apaga decisão
+  humana. Foi assim que o seed de staging de 850 pontos ficou de pé.
+- **A data do lançamento é a da COMPRA**, não a do recálculo, senão o extrato vira ficção.
+- **Resgate já é aceito**: o saldo soma `case when transaction_type='redeemed' then -abs(points)`,
+  então quando o resgate for implementado funciona com pontos positivos ou negativos, e o recálculo
+  não apaga as linhas de resgate.
+- O `order-write` parou de escrever fidelidade, e `calcLoyaltyTier` saiu de lá: a régua agora é só
+  `fn_loyalty_tier` no banco. Duas cópias da mesma regra é drift esperando acontecer.
+
+Antes: 5 lançamentos para ~131 compras, 12 de 94 clientes com pontos sem lastro. Depois: 134
+lançamentos, 0 saldos fora do extrato, 0 níveis fora da régua.
+
+**O que continua aberto:** a fidelidade é um módulo **dormente** — acumula pontos que nenhuma tela
+mostra e que ninguém pode resgatar. Os números agora estão certos; falta decidir se o recurso vai
+existir de fato ou se sai do caminho.
