@@ -2621,6 +2621,17 @@ pelo `ref` e pelos ids do payload (o preparado pela pendência nasce SEM `group_
 linha "[Pagamento …: cancelado pelo ERPOS]" e marca o pedido do grupo como 'recusado'. `onMudou`
 recarrega os cartões na hora.
 
+### Aviso só no chat: Telegram vira canal desligável (2026-09-21)
+
+`asst_settings.channels.telegram_out = false` (ligado por padrão) desliga a SAÍDA pelo Telegram sem
+mudar a conversa: `assistente-telegram.deliver` e `assistente-cron.sendTelegram` param de mandar lá,
+mas continuam gravando em `asst_messages` (o chat) e disparando o push do app.
+No `payWatch`, a mudança de status grava NA CONVERSA primeiro e cada efeito (cartão do Telegram,
+comprovante no grupo, baixa, push) é isolado em try/catch — antes, um erro no push derrubava o resto e
+o "✅ pago" nunca chegava ao chat (boleto da Receita, 21/09). Pagamento nascido no chat do ERPOS
+(`tg_message_id` nulo) não vira mensagem nova no Telegram; a baixa e o comprovante viram uma linha
+própria, porque o cartão do chat lê só o marcador `[Pagamento …] id <uuid>`.
+
 ### WhatsApp do dono: resposta no MESMO canal e citando a mensagem (2026-09-20)
 
 `relayToTelegram` (assistente-webhook) continua mandando a pergunta ao brain no chat do Telegram/ERPOS
