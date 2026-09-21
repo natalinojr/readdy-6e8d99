@@ -3084,9 +3084,10 @@ arquivo tinha trabalho nao commitado de outra sessao na mesma linha.
 - **Cancelar cobrança que o terminal já pegou exige header.** `POST /v1/orders/{id}/cancel`
   só cancela orders em `created`; a Point pega a cobrança em segundos. Com
   `x-allow-cancelable-status: at_terminal` o MP responde **202** (assíncrono) e a order vira
-  `canceled` em poucos segundos — o valor sai do visor sozinho. Sem o header, era recusado em
-  silêncio e só dava pra cancelar apertando no próprio terminal (aparece como
-  `status_detail: cancel_by_terminal`).
+  `canceled` em poucos segundos — **confirmado na loja: o valor sai do visor sozinho**. Sem o
+  header, era recusado em silêncio e só dava pra cancelar apertando no próprio terminal. Quem
+  cancelou fica gravado no pagamento: `canceled_by_api` (nós) × `cancel_by_terminal` (a
+  máquina) — é o jeito de diagnosticar depois sem depender de memória.
 - **Crédito à vista NÃO se resolve pela API.** `config.payment_method.default_installments: 1`
   o MP aceita e ecoa, mas o terminal **continua perguntando "à vista ou parcelado"** — e
   `installments_cost` não muda isso ('buyer' e 'seller', os dois testados a R$ 44,00). Tirar a
