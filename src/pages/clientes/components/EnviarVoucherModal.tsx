@@ -11,7 +11,15 @@ import type { Voucher } from '@/types/vouchers';
 interface Props {
   cliente: ClienteCRM;
   onClose: () => void;
-  onSent?: () => void;
+  /** Chamado quando o voucher foi criado (o funil usa para registrar a abordagem). */
+  onSent?: (voucher?: Voucher, mensagem?: string) => void;
+  /** Oferta sugerida pela regra do funil: pre-preenche tipo, valor e validade.
+   *  O TEXTO continua sendo o do modal, porque so ele conhece o link de ativacao. */
+  oferta?: {
+    tipo: TipoOferta;
+    valor: number;
+    validadeDias: number;
+  };
 }
 
 type TipoOferta = 'discount_percent' | 'discount_fixed' | 'gift_card';
@@ -38,14 +46,14 @@ function fmtDataBR(isoDate: string) {
   return `${day}/${m}/${y}`;
 }
 
-export default function EnviarVoucherModal({ cliente, onClose, onSent }: Props) {
+export default function EnviarVoucherModal({ cliente, onClose, onSent, oferta }: Props) {
   const { user } = useAuth();
   const { registrarEvento } = useAuditoria();
 
-  const [tipo, setTipo] = useState<TipoOferta>('discount_percent');
-  const [valor, setValor] = useState<string>('');
+  const [tipo, setTipo] = useState<TipoOferta>(oferta?.tipo ?? 'discount_percent');
+  const [valor, setValor] = useState<string>(oferta?.valor ? String(oferta.valor) : '');
   const [inicio, setInicio] = useState<string>(hoje());
-  const [fim, setFim] = useState<string>(maisDias(7));
+  const [fim, setFim] = useState<string>(maisDias(oferta?.validadeDias ?? 7));
   const [maxUsos, setMaxUsos] = useState<string>('1');
   const [pedidoMinimo, setPedidoMinimo] = useState<string>('');
   const [obs, setObs] = useState<string>('');
@@ -130,7 +138,7 @@ export default function EnviarVoucherModal({ cliente, onClose, onSent }: Props) 
         entidadeId: created.code,
         detalhes: obs || undefined,
       });
-      onSent?.();
+      onSent?.(created, mensagemFinal);
     } catch (err) {
       const msg = err instanceof Error ? err.message
         : (typeof err === 'object' && err !== null && 'message' in err) ? String((err as { message: unknown }).message)

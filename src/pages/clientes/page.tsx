@@ -5,6 +5,8 @@ import EnviarVoucherModal from './components/EnviarVoucherModal';
 import EditarClienteModal from './components/EditarClienteModal';
 import BirthdayVoucherModal from './components/BirthdayVoucherModal';
 import NaoPediramPanel from './components/NaoPediramPanel';
+import FunilPanel from './components/FunilPanel';
+import type { Voucher } from '@/types/vouchers';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
@@ -287,6 +289,13 @@ export default function ClientesPage() {
   const [showBirthday, setShowBirthday] = useState(false);
   // Quem entrou no cardapio do delivery e saiu sem pedir (menu_visits).
   const [showNaoPediram, setShowNaoPediram] = useState(false);
+  // Funil de CRM (crm-funnel): estagio de cada cliente + oferta da regra.
+  const [showFunil, setShowFunil] = useState(false);
+  // Oferta sugerida pela regra do funil + o que fazer depois do envio.
+  const [voucherOferta, setVoucherOferta] = useState<
+    { tipo: 'discount_percent' | 'discount_fixed' | 'gift_card'; valor: number; validadeDias: number } | null
+  >(null);
+  const [voucherAoEnviar, setVoucherAoEnviar] = useState<((v?: Voucher, m?: string) => void) | null>(null);
 
   // Detecção de possíveis duplicados: mesmo celular (dígitos) ou mesmo nome normalizado.
   const duplicados = useMemo(() => {
@@ -475,6 +484,13 @@ export default function ClientesPage() {
               title="Enviar mensagem para todos os clientes filtrados"
             >
               <i className="ri-whatsapp-line" /> WhatsApp em massa
+            </button>
+            <button
+              onClick={() => setShowFunil(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700"
+              title="Estágio de cada cliente e a oferta certa pra cada momento"
+            >
+              <i className="ri-filter-3-line" /> Funil
             </button>
             <button
               onClick={() => setShowNaoPediram(true)}
@@ -972,7 +988,12 @@ export default function ClientesPage() {
       )}
 
       {voucherCliente && (
-        <EnviarVoucherModal cliente={voucherCliente} onClose={() => setVoucherCliente(null)} />
+        <EnviarVoucherModal
+          cliente={voucherCliente}
+          oferta={voucherOferta ?? undefined}
+          onSent={(v, m) => { voucherAoEnviar?.(v, m); }}
+          onClose={() => { setVoucherCliente(null); setVoucherOferta(null); setVoucherAoEnviar(null); }}
+        />
       )}
 
       {showCampanha && (
@@ -988,6 +1009,18 @@ export default function ClientesPage() {
           cliente={editarCliente}
           onClose={() => setEditarCliente(null)}
           onSave={(patch) => atualizarCliente(editarCliente.id, patch)}
+        />
+      )}
+
+      {showFunil && (
+        <FunilPanel
+          onClose={() => setShowFunil(false)}
+          onEnviarVoucher={(c, oferta, aoEnviar) => {
+            setVoucherOferta(oferta);
+            // Guarda a callback sem que o setState a interprete como updater.
+            setVoucherAoEnviar(() => aoEnviar);
+            setVoucherCliente(c);
+          }}
         />
       )}
 
