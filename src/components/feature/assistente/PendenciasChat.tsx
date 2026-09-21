@@ -110,7 +110,19 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     setOcupada(p.id);
     const { error } = await supabase.rpc('fn_pendencia_marcar', { p_id: p.id, p_acao: acao, p_motivo: m ?? null });
     if (error) setErros((e) => ({ ...e, [p.id]: error.message }));
-    else { setMotivoDe(null); setMotivo(''); await recarregar(); onMudou?.(); }
+    else {
+      // "Não vou fazer" num pedido de pagamento = não vou pagar: os Pix já preparados também saem
+      // (senão os cartões seguiam no rodapé do chat esperando "Pagar" — dono, 2026-09-20).
+      if (acao === 'descartada' && ['pagamento_grupo', 'pagamento_pendente'].includes(p.kind)) {
+        try {
+          const r = await call<{ cancelados: number; erros?: string[] }>('pendencia_recusar', { id: p.id });
+          if (r.erros?.length) setErros((e) => ({ ...e, [p.id]: `Pendência fechada, mas não consegui cancelar: ${r.erros?.join(' · ')}` }));
+        } catch (e) {
+          setErros((x) => ({ ...x, [p.id]: `Pendência fechada, mas o pagamento continua preparado: ${e instanceof Error ? e.message : String(e)}` }));
+        }
+      }
+      setMotivoDe(null); setMotivo(''); await recarregar(); onMudou?.();
+    }
     setOcupada(null);
   };
 

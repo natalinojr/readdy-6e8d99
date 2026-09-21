@@ -23,6 +23,7 @@
 //   history/topics aceitam group_jid: conversa de um GRUPO do WhatsApp (asst_messages.group_jid)
 //   Caixa de pendências no chat (2026-09-18):
 //   pendencia_pagar { id }                         → prepara de novo o pedido do grupo (ou o pagamento parado) e devolve os cartões
+//   pendencia_recusar { id }                       → "não vou pagar": cancela os Pix preparados e recusa o pedido
 //   contas_sem_dre { tenant_id }                   → contas sem categoria DRE + categorias da loja
 //   pendencias_pagamento_info { ids }              → por pendência de pagamento: para quem vai e se a mercadoria já chegou
 //   conta_dre     { tenant_id, bill_id, dre_category_id } → classifica a conta (só se ainda estiver sem)
@@ -493,6 +494,39 @@ Deno.serve(async (req) => {
     // A caixa de pendências mora no chat: o botão Pagar da pendência cai aqui. Rascunho vencido
     // (30 min) ou falhado vira pedido NOVO pelo inter-bank › reprepare_payment (revalida tudo);
     // rascunho ainda válido e pagamento em andamento voltam como estão.
+    // "Não vou pagar" na caixa de pendências (dono, 2026-09-20): fechar a pendência não bastava —
+    // os Pix já preparados continuavam no rodapé do chat esperando o toque em Pagar. Aqui os
+    // pagamentos ligados à pendência são CANCELADOS no Inter e o pedido do grupo vira 'recusado'.
+    if (action === 'pendencia_recusar') {
+      const { data: pend } = await admin.from('pendencias').select('id, tenant_id, kind, ref, payload').eq('id', String(body.id ?? '')).maybeSingle();
+      if (!pend) return fail('Pendência não encontrada.', 404);
+      if (!(await ehGestor(admin, user.id, String(pend.tenant_id)))) return fail('Sem acesso a essa loja.', 403);
+      if (!['pagamento_grupo', 'pagamento_pendente'].includes(pend.kind)) return json({ success: true, data: { cancelados: 0 } });
+      // deno-lint-ignore no-explicit-any
+      const pl = (pend.payload ?? {}) as any;
+      let q = admin.from('fin_inter_payments').select('*').eq('tenant_id', pend.tenant_id).in('status', PAY_OPEN);
+      q = pend.kind === 'pagamento_grupo' ? q.eq('group_request_id', Number(pend.ref))
+        : q.in('id', [String(pend.ref), ...(Array.isArray(pl.pagamentos) ? pl.pagamentos.map(String) : [])]);
+      const { data: abertos } = await q;
+      const erros: string[] = [];
+      let cancelados = 0;
+      for (const p of abertos ?? []) {
+        try {
+          await callInter('cancel_payment', { tenant_id: p.tenant_id, payment_id: p.id });
+          await admin.from('asst_messages').insert({
+            channel: 'app', chat_id: chatKey, role: 'assistant', topic: 'pagamentos',
+            content: `[Pagamento ${p.kind} de ${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: cancelado pelo ERPOS] id ${p.id}`,
+          });
+          cancelados++;
+        } catch (e) { erros.push(`${brl(p.amount)}: ${e instanceof Error ? e.message : String(e)}`.slice(0, 160)); }
+      }
+      if (pend.kind === 'pagamento_grupo') {
+        await admin.from('asst_group_requests').update({ status: 'recusado', updated_at: new Date().toISOString() }).eq('id', Number(pend.ref));
+      }
+      log('INFO', 'pendência recusada', { pendencia: pend.id, cancelados, erros: erros.length });
+      return json({ success: true, data: { cancelados, erros } });
+    }
+
     if (action === 'pendencia_pagar') {
       const { data: pend } = await admin.from('pendencias').select('id, tenant_id, kind, ref, status').eq('id', String(body.id ?? '')).maybeSingle();
       if (!pend || !['pagamento_grupo', 'pagamento_pendente'].includes(pend.kind)) return fail('Pendência de pagamento não encontrada.', 404);

@@ -3119,3 +3119,29 @@ arquivo tinha trabalho nao commitado de outra sessao na mesma linha.
 - **Como testar sem publicar nada:** a extensão `http` do Postgres já está instalada — dá pra
   criar/cancelar uma order de R$ 1,00 na maquininha direto por SQL, com o token saindo de
   `fin_payment_provider_config` sem passar pelo chat.
+
+### Configurações: aba por aba para qualquer papel, e a maquininha com chave própria (2026-09-21)
+
+Três travas se somavam quando o dono tentou dar Configurações ao Caixa:
+
+1. **A matriz não deixava marcar.** `configuracoes_editar` e as abas `cfg_*` eram
+   `somenteGerente` — a célula do Caixa vinha travada com "—". Agora qualquer papel pode
+   receber; só `cfg_permissoes` continua `somenteAdmin` (quem tem a matriz se promove).
+2. **A edge recusava a escrita.** `config-write` exigia `isManagerRole`: a tela abria e
+   todo salvamento voltava 403. Passa a aceitar papel não-gerente com
+   `configuracoes_editar = true` em `permissions` — a mesma porta que o front usa para
+   abrir a tela. Só `upsert_permissions` segue de admin/gerente.
+3. **A maquininha vinha junto com tudo.** Ela morava dentro de Estações & Pagamentos
+   (formas de pagamento, taxas, Stone, Inter, Pix). Ganhou chave própria
+   `cfg_maquininha_mp` (`CFG_MAQUININHA_KEY`, fora de `CFG_ABAS`): quem tem só ela entra
+   em `/configuracoes` e vê apenas a aba **Maquininha (Point)** —
+   [`MaquininhaTab.tsx`](src/pages/configuracoes/components/MaquininhaTab.tsx). Quem tem
+   Estações continua configurando lá dentro, onde sempre esteve. Na edge `pix-payment`,
+   `podeMaquininha()` aceita essa chave nas ações de escrita da Point
+   (`save_point_config`, `set_point_mode`, `list_point_terminals`, tablets).
+
+**Limite conhecido:** a aba **Fiscal (NFC-e)** usa `fiscal-write`, que continua exigindo
+admin/gerente — liberar a aba para outro papel mostra a tela, mas salvar dá 403.
+Outro: `config-write` autoriza pela chave da tela (`configuracoes_editar`), não por aba —
+`upsert_system_settings` serve Operação, Impressoras e Mesas ao mesmo tempo, então não dá
+para amarrar ação → aba sem quebrar as três.

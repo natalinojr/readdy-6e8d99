@@ -4,6 +4,15 @@ import { authenticate, isManagerRole, tenantRole } from '../_shared/tenant-auth.
 // Ações só de leitura: qualquer membro da loja pode chamar.
 const CONFIG_READ_ACTIONS = new Set(['list_ingredient_categories', 'get_kitchen_stations', 'get_permissions'])
 
+/** Papel não-gerente com 'configuracoes_editar' marcado na matriz da loja. */
+async function podeConfigurar(admin: ReturnType<typeof createClient>, tenantId: string, role: string) {
+  if (!role || !tenantId) return false
+  const { data } = await admin.from('permissions').select('allowed')
+    .eq('tenant_id', tenantId).eq('role', role).eq('permission_key', 'configuracoes_editar')
+    .limit(1).maybeSingle()
+  return data?.allowed === true
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -47,15 +56,22 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
         })
       }
-      // Escrita de configuração: SÓ admin ou gerente. O papel 'financeiro' NÃO entra aqui de
-      // propósito (spec modulo-financeiro-sem-pdv, 2026-09-20): esta Edge cria mesa, estação e
-      // forma de pagamento e grava permissões (upsert_permissions) — liberar o papel daria a ele
-      // o PDV e a chance de ampliar o próprio acesso. O Financeiro só usa a ação de leitura
-      // get_permissions, que já passa por CONFIG_READ_ACTIONS.
+      // Escrita de configuração: admin/gerente, ou o papel que o dono liberou em
+      // Configurações › Permissões ('configuracoes_editar'). É a MESMA porta que o front
+      // usa para abrir a tela — sem isso, marcar a permissão para o Caixa deixava a tela
+      // visível mas todo salvamento voltava 403 (2026-09-21).
+      // Uma exceção continua de admin/gerente: a matriz de permissões — quem grava
+      // upsert_permissions amplia o próprio acesso.
+      // O papel 'financeiro' não ganha nada aqui: ele não recebe 'configuracoes_editar'
+      // (spec modulo-financeiro-sem-pdv, 2026-09-20) e só usa get_permissions, de leitura.
+      const SO_GERENTE = new Set(['upsert_permissions'])
       if (!CONFIG_READ_ACTIONS.has(action) && !isManagerRole(role)) {
-        return new Response(JSON.stringify({ success: false, error: 'Apenas administrador ou gerente da loja pode alterar configurações' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
-        })
+        const liberado = !SO_GERENTE.has(action) && await podeConfigurar(supabaseAdmin, String(tId), role)
+        if (!liberado) {
+          return new Response(JSON.stringify({ success: false, error: 'Seu perfil não pode alterar estas configurações' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
+          })
+        }
       }
     }
 

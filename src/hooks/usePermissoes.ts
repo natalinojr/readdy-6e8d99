@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, createContext, useContext } from 'rea
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
-import { FIN_KEYS, REL_KEYS, type FinPermissaoKey, type RelPermissaoKey } from '@/constants/permissoesAbas';
+import { FIN_KEYS, REL_KEYS, CFG_KEYS, CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY, type FinPermissaoKey, type RelPermissaoKey, type CfgPermissaoKey, type CfgMaquininhaKey } from '@/constants/permissoesAbas';
 import { GESTAO_KEYS, type GestaoPermissaoKey } from '@/constants/permissoesGestao';
 
 export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'financeiro';
@@ -34,6 +34,8 @@ export type PermissaoKey =
   | 'auditoria_ver'
   | FinPermissaoKey
   | RelPermissaoKey
+  | CfgPermissaoKey
+  | CfgMaquininhaKey
   | GestaoPermissaoKey;
 
 /** Papel do frontend (PT) → role no banco (enum user_role, em inglês).
@@ -59,7 +61,7 @@ export const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
     'estoque_movimentar', 'estoque_inventario', 'kds_acessar', 'gestor_pedidos_acessar',
     'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver',
     'usuarios_gerenciar', 'configuracoes_editar', 'auditoria_ver',
-    ...FIN_KEYS, ...REL_KEYS, ...GESTAO_KEYS,
+    ...FIN_KEYS, ...REL_KEYS, ...CFG_KEYS, CFG_MAQUININHA_KEY, ...GESTAO_KEYS,
   ],
   gerente: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_desconto',
@@ -67,7 +69,9 @@ export const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
     'garcom_fechar_mesa', 'garcom_transferir_mesa', 'cardapio_editar',
     'estoque_movimentar', 'estoque_inventario', 'kds_acessar', 'gestor_pedidos_acessar',
     'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
-    ...FIN_KEYS, ...REL_KEYS, ...GESTAO_KEYS,
+    // As abas de Configurações só entram em cena se o dono ligar
+    // `configuracoes_editar` para o Gerente — a tela inteira depende dela.
+    ...FIN_KEYS, ...REL_KEYS, ...CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY, ...GESTAO_KEYS,
   ],
   caixa: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_cancelar_item',

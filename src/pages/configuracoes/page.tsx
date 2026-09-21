@@ -1,4 +1,4 @@
-import { Settings, Store, ChefHat, Sliders, Shield, LayoutGrid, Printer, FileText, FileCheck2 } from 'lucide-react';
+import { Settings, Store, ChefHat, Sliders, Shield, LayoutGrid, Printer, FileText, FileCheck2, CreditCard } from 'lucide-react';
 import FiscalTab from './components/FiscalTab';
 import { useSearchParams } from 'react-router-dom';
 import LojaTab from './components/LojaTab';
@@ -8,16 +8,20 @@ import PermissoesTab from './components/PermissoesTab';
 import MesasConfigTab from './components/MesasConfigTab';
 import ImpressorasTab from './components/ImpressorasTab';
 import ModelosImpressaoTab from './components/ModelosImpressaoTab';
+import { usePermissoes } from '@/hooks/usePermissoes';
+import { cfgKeyDaAba, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
+import MaquininhaTab from './components/MaquininhaTab';
 
-type Tab = 'loja' | 'fiscal' | 'mesas' | 'estacoes' | 'impressoras' | 'modelos-impressao' | 'operacao' | 'permissoes';
+type Tab = 'loja' | 'fiscal' | 'mesas' | 'estacoes' | 'maquininha' | 'impressoras' | 'modelos-impressao' | 'operacao' | 'permissoes';
 
-const VALID_TABS: Tab[] = ['loja', 'fiscal', 'mesas', 'estacoes', 'impressoras', 'modelos-impressao', 'operacao', 'permissoes'];
+const VALID_TABS: Tab[] = ['loja', 'fiscal', 'mesas', 'estacoes', 'maquininha', 'impressoras', 'modelos-impressao', 'operacao', 'permissoes'];
 
 const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'loja', label: 'Dados da Loja', icon: <Store size={14} /> },
   { id: 'fiscal', label: 'Fiscal (NFC-e)', icon: <FileCheck2 size={14} /> },
   { id: 'mesas', label: 'Mesas & QR Codes', icon: <LayoutGrid size={14} /> },
   { id: 'estacoes', label: 'Estações & Pagamentos', icon: <ChefHat size={14} /> },
+  { id: 'maquininha', label: 'Maquininha (Point)', icon: <CreditCard size={14} /> },
   { id: 'impressoras', label: 'Impressoras', icon: <Printer size={14} /> },
   { id: 'modelos-impressao', label: 'Modelos de Impressão', icon: <FileText size={14} /> },
   { id: 'operacao', label: 'Operação & Integrações', icon: <Sliders size={14} /> },
@@ -26,10 +30,44 @@ const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
 
 export default function ConfiguracoesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  // Abas liberadas para o papel (Configurações › Permissões, 2026-09-21).
+  // Mesmo padrão do Financeiro e dos Relatórios: a tela continua exigindo
+  // `configuracoes_editar`, e aqui filtramos aba a aba.
+  const { hasPermissao, loading: carregandoPermissoes } = usePermissoes();
+  // A Maquininha tem chave própria (`cfg_maquininha_mp`) e não é uma aba de verdade:
+  // ela só aparece sozinha para quem NÃO tem Estações & Pagamentos — quem tem a aba
+  // inteira continua configurando a máquina lá dentro, onde ela sempre esteve.
+  const podeAba = (t: string) => {
+    if (t === 'maquininha') return hasPermissao(CFG_MAQUININHA_KEY) && !hasPermissao('cfg_estacoes');
+    const k = cfgKeyDaAba(t);
+    return !!k && hasPermissao(k);
+  };
+  const abasLiberadas = tabs.filter((t) => podeAba(t.id));
+
   const rawTab = searchParams.get('tab') as Tab | null;
-  const tab: Tab = rawTab && VALID_TABS.includes(rawTab) ? rawTab : 'loja';
+  const daUrl = rawTab && VALID_TABS.includes(rawTab) && podeAba(rawTab) ? rawTab : null;
+  // Link para uma aba que o papel não tem (ou aba inválida) cai na primeira
+  // liberada, em vez de abrir a tela vazia.
+  const tab: Tab = daUrl ?? (abasLiberadas[0]?.id ?? 'loja');
 
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: true });
+
+  // Enquanto as permissões carregam, `hasPermissao` ainda não é confiável —
+  // mostrar "sem acesso" aqui faria a tela piscar o aviso a cada entrada.
+  if (!carregandoPermissoes && abasLiberadas.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center px-6">
+        <div className="w-10 h-10 flex items-center justify-center bg-zinc-100 rounded-xl mb-3">
+          <Settings size={18} className="text-zinc-400" />
+        </div>
+        <h1 className="text-sm font-bold text-zinc-800">Configurações</h1>
+        <p className="text-xs text-zinc-400 mt-1 max-w-sm">
+          Seu perfil não tem nenhuma aba de Configurações liberada. Peça ao administrador em
+          Configurações › Permissões.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -44,7 +82,7 @@ export default function ConfiguracoesPage() {
           </div>
         </div>
         <div className="flex items-center gap-1 -mb-4 overflow-x-auto" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
-          {tabs.map((t) => (
+          {abasLiberadas.map((t) => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${
                 tab === t.id ? 'border-amber-500 text-amber-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
@@ -56,14 +94,15 @@ export default function ConfiguracoesPage() {
         </div>
       </div>
       <div className="flex-1 overflow-y-auto p-6">
-        {tab === 'loja' && <LojaTab />}
-        {tab === 'fiscal' && <FiscalTab />}
-        {tab === 'mesas' && <MesasConfigTab />}
-        {tab === 'estacoes' && <EstacoesPagamentosTab />}
-        {tab === 'impressoras' && <ImpressorasTab />}
-        {tab === 'modelos-impressao' && <ModelosImpressaoTab />}
-        {tab === 'operacao' && <OperacaoTab />}
-        {tab === 'permissoes' && <PermissoesTab />}
+        {tab === 'loja' && podeAba('loja') && <LojaTab />}
+        {tab === 'fiscal' && podeAba('fiscal') && <FiscalTab />}
+        {tab === 'mesas' && podeAba('mesas') && <MesasConfigTab />}
+        {tab === 'estacoes' && podeAba('estacoes') && <EstacoesPagamentosTab />}
+        {tab === 'maquininha' && podeAba('maquininha') && <MaquininhaTab />}
+        {tab === 'impressoras' && podeAba('impressoras') && <ImpressorasTab />}
+        {tab === 'modelos-impressao' && podeAba('modelos-impressao') && <ModelosImpressaoTab />}
+        {tab === 'operacao' && podeAba('operacao') && <OperacaoTab />}
+        {tab === 'permissoes' && podeAba('permissoes') && <PermissoesTab />}
       </div>
     </div>
   );
