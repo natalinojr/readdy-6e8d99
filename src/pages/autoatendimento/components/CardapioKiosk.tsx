@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Plus, X, Check, ChevronRight, Minus } from 'lucide-react';
 import type { ItemCardapioPublico, ItemPedidoCliente } from '@/types/mesaCliente';
 import { useCardapio } from '../../../contexts/CardapioContext';
@@ -123,6 +123,8 @@ interface OpcoesKioskProps {
   item: ItemCardapioPublico;
   onAdicionar: (pedido: Omit<ItemPedidoCliente, 'enviadoKds'>) => void;
   onClose: () => void;
+  /** Ver CardapioKioskProps.traduzir — so muda o que aparece na tela. */
+  tr: (tipo: 'item' | 'category' | 'option_group' | 'option' | 'preset_obs', id: string | null | undefined, campo?: 'n' | 'd') => string | null;
 }
 
 interface OpcaoTrackKiosk {
@@ -133,7 +135,7 @@ interface OpcaoTrackKiosk {
   obrigatorio?: boolean;
 }
 
-function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
+function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
   const [qtd, setQtd] = useState(1);
   const [selecionadas, setSelecionadas] = useState<Record<string, OpcaoTrackKiosk[]>>({});
   const [obsLivre, setObsLivre] = useState('');
@@ -193,14 +195,14 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
         `}</style>
 
           <div className="relative h-56 [@media(max-height:820px)]:h-32 flex-shrink-0">
-            <ItemImage src={item.foto} alt={item.nome} className="w-full h-full" imgClassName="object-contain" />
+            <ItemImage src={item.foto} alt={tr('item', item.id) ?? item.nome} className="w-full h-full" imgClassName="object-contain" />
             <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/40 to-transparent" />
             <button onClick={onClose} className="absolute top-3 right-3 w-12 h-12 flex items-center justify-center bg-zinc-800/90 rounded-xl cursor-pointer hover:bg-zinc-700 transition-colors">
               <X size={22} className="text-white" />
             </button>
             <div className="absolute bottom-3 left-5">
-              <h2 className="text-2xl font-black text-white">{item.nome}</h2>
-              <p className="text-zinc-400 text-base">{item.descricao}</p>
+              <h2 className="text-2xl font-black text-white">{tr('item', item.id) ?? item.nome}</h2>
+              <p className="text-zinc-400 text-base">{tr('item', item.id, 'd') ?? item.descricao}</p>
               {item.temPromocao && item.precoOriginal != null ? (
                 <p className="text-zinc-500 text-sm mt-1">
                   <span className="line-through text-zinc-600">{fmt(item.precoOriginal)}</span>
@@ -234,7 +236,7 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
                           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${sel ? 'border-amber-500 bg-amber-500' : 'border-zinc-600'}`}>
                             {sel && <Check size={14} className="text-white" />}
                           </div>
-                          <span className="text-base font-semibold text-white min-w-0 break-words">{comQuebraAposVirgula(opcao.nome)}</span>
+                          <span className="text-base font-semibold text-white min-w-0 break-words">{comQuebraAposVirgula(tr('option', opcao.id) ?? opcao.nome)}</span>
                         </div>
                         {opcao.precoAdicional > 0 && <span className="text-base font-bold text-amber-400 flex-shrink-0 whitespace-nowrap">+{fmt(opcao.precoAdicional)}</span>}
                       </button>
@@ -325,15 +327,28 @@ function OpcoesKiosk({ item, onAdicionar, onClose }: OpcoesKioskProps) {
   );
 }
 
+type Traduzir = (tipo: 'item' | 'category' | 'option_group' | 'option' | 'preset_obs', id: string | null | undefined, campo?: 'n' | 'd') => string | null;
+
 interface CardapioKioskProps {
   carrinho: ItemPedidoCliente[];
   onAdicionar: (item: Omit<ItemPedidoCliente, 'enviadoKds'>) => void;
   onDiminuir: (itemId: string) => void;
   onVerCarrinho: () => void;
+  /** Traducao do cardapio para o idioma escolhido no totem. So de vitrine: o
+   *  item enviado ao pedido continua com o nome em portugues. */
+  traduzir?: Traduzir;
 }
 
-export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVerCarrinho }: CardapioKioskProps) {
+export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVerCarrinho, traduzir }: CardapioKioskProps) {
   const { itensPublicos, categorias: categoriasCtx, loading, erroCarregamento, recarregar } = useCardapio();
+  // Sem tradutor (loja so em portugues) a funcao devolve o proprio texto.
+  const tr: Traduzir = traduzir ?? (() => null);
+  // A categoria e identificada pelo NOME em portugues (filtro e estado da tela),
+  // entao traduzimos so o rotulo e mantemos a chave original.
+  const rotuloCategoria = useCallback((nomePt: string) => {
+    const cat = categoriasCtx.find((c) => c.nome === nomePt);
+    return (cat ? tr('category', cat.id) : null) ?? nomePt;
+  }, [categoriasCtx, tr]);
   const { itensDesabilitadosIds } = useEstoque();
   const { mapaItens: itensSemEstoque } = useItensSemEstoque();
 
@@ -481,7 +496,7 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
             {categorias.map((cat) => (
               <button key={cat} onClick={() => setCategoriaAtiva(cat)}
                 className={`mx-2 px-4 py-6 rounded-2xl text-lg font-bold transition-all cursor-pointer text-left ${categoriaEfetiva === cat ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}>
-                {cat}
+                {rotuloCategoria(cat)}
               </button>
             ))}
           </div>
@@ -596,8 +611,8 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
 
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <p className={`font-bold text-xl leading-tight ${esgotado ? 'text-zinc-500' : 'text-white'}`}>{item.nome}</p>
-                      <p className="text-zinc-500 text-base mt-1 line-clamp-2">{item.descricao}</p>
+                      <p className={`font-bold text-xl leading-tight ${esgotado ? 'text-zinc-500' : 'text-white'}`}>{tr('item', item.id) ?? item.nome}</p>
+                      <p className="text-zinc-500 text-base mt-1 line-clamp-2">{tr('item', item.id, 'd') ?? item.descricao}</p>
                       {item.temPromocao && item.precoOriginal != null ? (
                         <div className="flex items-baseline gap-2 mt-1.5">
                           <span className="text-sm text-zinc-500 line-through">{fmt(item.precoOriginal)}</span>
@@ -660,7 +675,7 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
         </div>
       )}
 
-      {itemModal && <OpcoesKiosk item={itemModal} onAdicionar={onAdicionar} onClose={() => setItemModal(null)} />}
+      {itemModal && <OpcoesKiosk item={itemModal} onAdicionar={onAdicionar} onClose={() => setItemModal(null)} tr={tr} />}
     </div>
   );
 }
