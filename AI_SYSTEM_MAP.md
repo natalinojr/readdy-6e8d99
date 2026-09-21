@@ -2630,6 +2630,16 @@ pelo `ref` e pelos ids do payload (o preparado pela pendência nasce SEM `group_
 linha "[Pagamento …: cancelado pelo ERPOS]" e marca o pedido do grupo como 'recusado'. `onMudou`
 recarrega os cartões na hora.
 
+### Comprovante no grupo quando o pagamento não nasceu do pedido (2026-09-21)
+
+O DAS de R$ 2.818,72 foi pedido no grupo em 18/09, mas o pedido ficou 'guardado' (DV da linha não
+batia); a conta veio da guia e quem preparou o pagamento foi o cron "vence hoje" — sem
+`group_request_id`, então o comprovante nunca voltou ao grupo. `sendGroupReceipt` ganhou um último
+recurso: pedido do grupo ainda em aberto, mesmo VALOR (±R$ 0,02), últimos 45 dias e **candidato único**
+(dois iguais não linkam, para não responder a mensagem errada). Ação interna
+`{ action: 'send_receipt', payment_id, group_request_id? }` reenvia o comprovante de um pagamento e
+serve para consertar casos antigos — idade da mensagem não importa, o comprovante responde a ela.
+
 ### Aviso só no chat: Telegram vira canal desligável (2026-09-21)
 
 `asst_settings.channels.telegram_out = false` (ligado por padrão) desliga a SAÍDA pelo Telegram sem
