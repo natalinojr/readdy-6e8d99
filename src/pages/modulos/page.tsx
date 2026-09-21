@@ -5,10 +5,11 @@ import { useAppMode, type AppMode } from '@/contexts/AppModeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModoTreino } from '@/contexts/ModoTreinoContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
-import { usePermissoes } from '@/hooks/usePermissoes';
+import { usePermissoes, type PermissaoKey } from '@/hooks/usePermissoes';
 import { useUsuarios } from '@/hooks/useUsuarios';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
+import { GESTAO_ENTRADA_KEYS, primeiraRotaGestao } from '@/constants/permissoesGestao';
 import { ChefHat, LogOut, Monitor, Store } from 'lucide-react';
 import OnboardingShareModal from '@/pages/modulos/components/OnboardingShareModal';
 
@@ -185,7 +186,9 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-slate-50',
     acentoBorder: 'border-slate-200/70',
     tag: 'Admin',
-    perfis: ['admin', 'gerente'],
+    // Sem `perfis`: quem vê o módulo Gestão é quem tem ao menos uma permissão de
+    // tela de Gestão (Configurações › Permissões). Antes era fixo em Admin/Gerente,
+    // então não havia como dar uma tela de Gestão ao Caixa.
   },
 ];
 
@@ -431,7 +434,9 @@ export default function ModulosPage() {
 
   const handleModulo = (m: ModuloCard) => {
     setMode(m.id);
-    navigate(m.rota);
+    // Gestão abre na primeira tela que o papel pode ver — o card aponta para
+    // /dashboard, que pode não estar liberado para quem só ganhou Pedidos, p.ex.
+    navigate(m.id === 'gestao' ? primeiraRotaGestao((k) => hasPermissao(k as PermissaoKey)) : m.rota);
   };
 
   const handleLogout = () => {
@@ -454,11 +459,11 @@ export default function ModulosPage() {
   const pdvCfg = settings.pdv_config;
   const kitchenView = settings.kitchen_view ?? 'ambos';
 
+  // KDS e Gestor de Pedidos NÃO entram aqui: quem liga/desliga cada um é a
+  // "Visão da Cozinha" (kitchen_view). O terminal 'kds' derrubava os dois juntos.
   const PDV_MODULE_KEY: Partial<Record<AppMode, keyof typeof pdvCfg>> = {
     pdv_garcom: 'garcom',
     pdv_delivery: 'delivery',
-    kds: 'kds',
-    gestor_pedidos: 'kds',
   };
 
   const modulosVisiveis = MODULOS.filter((m) => {
@@ -482,6 +487,7 @@ export default function ModulosPage() {
     if (m.id === 'gestor_pedidos' && kitchenView !== 'gestor' && kitchenView !== 'ambos') cfgOk = false;
     if (m.id === 'kds' && !hasPermissao('kds_acessar')) cfgOk = false;
     if (m.id === 'gestor_pedidos' && !hasPermissao('gestor_pedidos_acessar')) cfgOk = false;
+    if (m.id === 'gestao' && !GESTAO_ENTRADA_KEYS.some((k) => hasPermissao(k as PermissaoKey))) cfgOk = false;
     const visible = perfilOk && cfgOk;
     console.log('[Modulos]', m.id, '| perfil:', user?.perfil, '| perfilOk:', perfilOk, '| cfgOk:', cfgOk, '| pdvCfg:', JSON.stringify(pdvCfg), '| visible:', visible);
     return visible;
