@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import CpfCnpjInput from '@/components/base/CpfCnpjInput';
 import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 import { invokeWithAuth, supabase, type EdgeHttpError } from '@/lib/supabase';
@@ -55,7 +55,9 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   // Mesma regra do PagamentoModal do caixa: escolher credito/debito manda o valor para a
   // maquininha e o pagamento so entra na lista quando o provedor aprovar.
   const [pointPdv, setPointPdv] = useState(false);
-  const [cobranca, setCobranca] = useState<{ idx: number; valor: number; method: 'credit_card' | 'debit_card' } | null>(null);
+  // Pix na maquininha é opcional e separado do cartão (Configurações › Maquininha Point)
+  const [pointPdvPix, setPointPdvPix] = useState(false);
+  const [cobranca, setCobranca] = useState<{ idx: number; valor: number; method: 'credit_card' | 'debit_card' | 'pix' } | null>(null);
   const [seguirAposCobranca, setSeguirAposCobranca] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [sucesso, setSucesso] = useState(false);
@@ -337,9 +339,13 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   useEffect(() => {
     if (!user?.tenantId) return;
     let cancelled = false;
-    invokeWithAuth<{ point?: boolean; pdv?: boolean }>('pix-payment', {
+    invokeWithAuth<{ point?: boolean; pdv?: boolean; pdv_pix?: boolean }>('pix-payment', {
       body: { action: 'kiosk_card_provider', tenant_id: user.tenantId },
-    }).then(({ data }) => { if (!cancelled) setPointPdv(Boolean(data?.point && data?.pdv)); });
+    }).then(({ data }) => {
+      if (cancelled) return;
+      setPointPdv(Boolean(data?.point && data?.pdv));
+      setPointPdvPix(Boolean(data?.point && data?.pdv_pix));
+    });
     return () => { cancelled = true; };
   }, [user?.tenantId]);
 
@@ -366,17 +372,17 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   // ── Cartão na maquininha: cobra no BOTÃO FINAL ─────────────────────────────
   // Cobrar ao montar a lista deixava a maquininha carregada com esta tela ainda editável
   // atrás. Agora a maquininha só entra no Confirmar, e o pedido fecha quando ela aprova.
-  const cobrancasPendentes = useMemo(() => pagamentos
-    .map((p, idx) => ({ p, idx }))
-    .filter(({ p }) => {
-      const tipo = formasAtivas.find((f) => f.id === p.formaId)?.tipo;
-      return !p.cobrancaId && (tipo === 'credito' || tipo === 'debito');
-    })
-    .map(({ p, idx }) => ({
+  // Uma função só, usada no botão e no Confirmar: duplicar a regra é como se perde uma
+  // forma de pagamento quando a lista de tipos muda.
+  const pendentesDe = useCallback((lista: { formaId: string; valor: number; cobrancaId?: string }[]) => lista
+    .map((p, idx) => ({ p, idx, tipo: formasAtivas.find((f) => f.id === p.formaId)?.tipo }))
+    .filter(({ p, tipo }) => !p.cobrancaId && (tipo === 'credito' || tipo === 'debito' || (tipo === 'pix' && pointPdvPix)))
+    .map(({ p, idx, tipo }) => ({
       idx, valor: p.valor,
-      method: (formasAtivas.find((f) => f.id === p.formaId)?.tipo === 'debito' ? 'debit_card' : 'credit_card') as 'credit_card' | 'debit_card',
+      method: (tipo === 'debito' ? 'debit_card' : tipo === 'pix' ? 'pix' : 'credit_card') as 'credit_card' | 'debit_card' | 'pix',
     })),
-  [pagamentos, formasAtivas]);
+  [formasAtivas, pointPdvPix]);
+  const cobrancasPendentes = useMemo(() => pendentesDe(pagamentos), [pagamentos, pendentesDe]);
   const precisaCobrar = pointPdv && cobrancasPendentes.length > 0;
   const totalACobrar = cobrancasPendentes.reduce((acc, c) => acc + c.valor, 0);
 
@@ -398,16 +404,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     if (confirmando) return;
     const lista = materializarPagamentos();
     if (!pointPdv || lista.length === 0) { handleFinalizar(); return; }
-    const pend = lista
-      .map((p, idx) => ({ p, idx }))
-      .filter(({ p }) => {
-        const tipo = formasAtivas.find((f) => f.id === p.formaId)?.tipo;
-        return !p.cobrancaId && (tipo === 'credito' || tipo === 'debito');
-      })
-      .map(({ p, idx }) => ({
-        idx, valor: p.valor,
-        method: (formasAtivas.find((f) => f.id === p.formaId)?.tipo === 'debito' ? 'debit_card' : 'credit_card') as 'credit_card' | 'debit_card',
-      }));
+    const pend = pendentesDe(lista);
     if (pend.length === 0) { handleFinalizar(); return; }
     if (lista !== pagamentos) setPagamentos(lista);
     setCobranca(pend[0]);
@@ -1371,7 +1368,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             const c = cobranca;
             setCobranca(null);
             if (!c) return;
-            const tipoReal = method === 'debit_card' ? 'debito' : 'credito';
+            const tipoReal = method === 'debit_card' ? 'debito' : method === 'pix' ? 'pix' : 'credito';
             setPagamentos((prev) => prev.map((p, i) => {
               if (i !== c.idx) return p;
               // vale o que a maquininha respondeu (crédito × débito)

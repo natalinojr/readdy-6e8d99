@@ -17,6 +17,7 @@ interface ConfigInfo {
   environment: 'production' | 'sandbox';
   terminal_id: string | null;
   pdv_terminal_id?: string | null;
+  pdv_pix_terminal?: boolean;
   token_hint: string | null;
   last_test_at: string | null;
   has_webhook_secret?: boolean;
@@ -63,6 +64,8 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
   const [terminalId, setTerminalId] = useState('');
   // maquininha do balcao: vazio = usa a mesma do tablet
   const [pdvTerminalId, setPdvTerminalId] = useState('');
+  // Pix do caixa na maquininha (o tablet segue com o QR na tela dele)
+  const [pdvPix, setPdvPix] = useState(false);
   const [terminais, setTerminais] = useState<Terminal[] | null>(null);
   const [buscando, setBuscando] = useState(false);
   const [trocandoModo, setTrocandoModo] = useState(false);
@@ -81,6 +84,7 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
         setAmbiente(data.environment ?? 'production');
         setTerminalId(data.terminal_id ?? '');
         setPdvTerminalId(data.pdv_terminal_id ?? '');
+        setPdvPix(data.pdv_pix_terminal === true);
         setAtivo(data.configured ? Boolean(data.is_active) : true);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -116,7 +120,7 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
     if (!tenantId) return;
     setSaving(true);
     setErro('');
-    const body: Record<string, unknown> = { action: 'save_point_config', tenant_id: tenantId, environment: ambiente, terminal_id: terminalId.trim(), pdv_terminal_id: pdvTerminalId.trim(), is_active: ativo };
+    const body: Record<string, unknown> = { action: 'save_point_config', tenant_id: tenantId, environment: ambiente, terminal_id: terminalId.trim(), pdv_terminal_id: pdvTerminalId.trim(), pdv_pix_terminal: pdvPix, is_active: ativo };
     if (token.trim()) body.access_token = token.trim();
     if (webhookSecret.trim()) body.webhook_secret = webhookSecret.trim();
     const { data, error } = await invokeWithAuth<{ ok?: boolean; is_active: boolean }>('pix-payment', { body });
@@ -126,7 +130,7 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
     setToken('');
     const salvouSecret = Boolean(webhookSecret.trim());
     setWebhookSecret('');
-    setInfo(prev => prev ? { ...prev, configured: true, is_active: data.is_active, environment: ambiente, terminal_id: terminalId.trim(), pdv_terminal_id: pdvTerminalId.trim() || null, has_webhook_secret: prev.has_webhook_secret || salvouSecret } : prev);
+    setInfo(prev => prev ? { ...prev, configured: true, is_active: data.is_active, environment: ambiente, terminal_id: terminalId.trim(), pdv_terminal_id: pdvTerminalId.trim() || null, pdv_pix_terminal: pdvPix, has_webhook_secret: prev.has_webhook_secret || salvouSecret } : prev);
     onSaved?.({ is_active: data.is_active });
   };
 
@@ -238,6 +242,15 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
                 ) : (
                   <input value={pdvTerminalId} onChange={e => setPdvTerminalId(e.target.value)} placeholder="Vazio = o caixa lança o cartão à mão"
                     className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 mt-1 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                )}
+                {pdvTerminalId && (
+                  <label className="flex items-start gap-2 mt-2 text-[11px] text-zinc-700 cursor-pointer">
+                    <input type="checkbox" checked={pdvPix} onChange={e => setPdvPix(e.target.checked)} className="rounded mt-0.5" />
+                    <span>
+                      Cobrar também o <strong>Pix do caixa</strong> nessa maquininha (o cliente lê o QR na tela dela).
+                      <span className="block text-zinc-400 mt-0.5">Sem isso, o Pix continua sendo lançado à mão no caixa. No tablet do autoatendimento nada muda: lá o QR segue na tela do próprio tablet.</span>
+                    </span>
+                  </label>
                 )}
                 <p className="text-[11px] text-zinc-500 mt-1">
                   É a maquininha que fica no balcão. <strong>Só depois de escolher uma aqui</strong> o caixa passa a mandar o valor do cartão para a maquininha — até lá, nada muda no caixa. Escolha uma máquina que seja só do caixa (não a do tablet) e ligue o <strong>modo PDV</strong> nela.

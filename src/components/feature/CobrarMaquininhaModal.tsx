@@ -28,11 +28,11 @@ const MOTIVO: Record<string, string> = {
 interface Props {
   tenantId: string;
   amount: number;
-  method: 'credit_card' | 'debit_card';
+  method: 'credit_card' | 'debit_card' | 'pix';
   /** Pedido já existente (mesa/vínculo). Venda nova do carrinho ainda não tem id. */
   orderId?: string | null;
   orderNumber?: string | null;
-  onAprovado: (info: { pixPaymentId: string; method: 'credit_card' | 'debit_card' }) => void;
+  onAprovado: (info: { pixPaymentId: string; method: 'credit_card' | 'debit_card' | 'pix' }) => void;
   onCancelar: () => void;
 }
 
@@ -46,7 +46,7 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
   const [msg, setMsg] = useState<string | null>(null);
   const [segundos, setSegundos] = useState(0);
   const [cancelando, setCancelando] = useState(false);
-  const [metodoFinal, setMetodoFinal] = useState<'credit_card' | 'debit_card'>(method);
+  const [metodoFinal, setMetodoFinal] = useState<'credit_card' | 'debit_card' | 'pix'>(method);
   // o callback de aprovado pode chegar de dentro do cancelamento: guarda a referência atual
   const onAprovadoRef = useRef(onAprovado);
   onAprovadoRef.current = onAprovado;
@@ -99,7 +99,7 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
       const st = data?.status;
       if (st === 'confirmed') {
         vivaRef.current = null;
-        const m = data?.method === 'debit_card' ? 'debit_card' : data?.method === 'credit_card' ? 'credit_card' : method;
+        const m = data?.method === 'debit_card' ? 'debit_card' : data?.method === 'credit_card' ? 'credit_card' : data?.method === 'pix' ? 'pix' : method;
         setMetodoFinal(m);
         setFase('aprovado');
         setTimeout(() => onAprovadoRef.current({ pixPaymentId: chargeId, method: m }), 900);
@@ -129,7 +129,7 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
     // O Mercado Pago recusa cancelar o que já foi capturado no terminal: nesse caso o
     // pagamento vale e não pode ser descartado.
     if (data?.code === 'at_terminal' || data?.status === 'pending') {
-      setMsg('O cliente já passou o cartão na maquininha — aguarde a confirmação.');
+      setMsg(ehPix ? 'O cliente já leu o QR na maquininha — aguarde a confirmação.' : 'O cliente já passou o cartão na maquininha — aguarde a confirmação.');
       return;
     }
     if (data?.status === 'confirmed') { vivaRef.current = null; onAprovadoRef.current({ pixPaymentId: chargeId, method: metodoFinal }); return; }
@@ -142,13 +142,14 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
     await invokeWithAuth('pix-payment', { body: { action: 'simulate_card', pix_payment_id: chargeId, tenant_id: tenantId, outcome } });
   };
 
-  const rotulo = method === 'debit_card' ? 'débito' : 'crédito';
+  const ehPix = method === 'pix';
+  const rotulo = ehPix ? 'Pix' : method === 'debit_card' ? 'débito' : 'crédito';
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden">
         <div className="px-6 py-5 text-center border-b border-zinc-100">
-          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Cartão de {rotulo}</p>
+          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">{ehPix ? 'Pix na maquininha' : `Cartão de ${rotulo}`}</p>
           <p className="text-3xl font-bold text-zinc-900 mt-1">{formatCurrency(amount)}</p>
           {orderNumber && <p className="text-xs text-zinc-400 mt-1">Pedido {orderNumber}</p>}
         </div>
@@ -164,9 +165,11 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
           {fase === 'aguardando' && (
             <>
               <div className="w-16 h-16 mx-auto flex items-center justify-center rounded-2xl bg-sky-100">
-                <i className="ri-contactless-payment-line text-sky-600 text-3xl" />
+                <i className={`${ehPix ? 'ri-qr-code-line' : 'ri-contactless-payment-line'} text-sky-600 text-3xl`} />
               </div>
-              <p className="mt-4 text-base font-bold text-zinc-900">Peça para o cliente passar o cartão</p>
+              <p className="mt-4 text-base font-bold text-zinc-900">
+                {ehPix ? 'Peça para o cliente ler o QR na maquininha' : 'Peça para o cliente passar o cartão'}
+              </p>
               <p className="mt-1 text-sm text-zinc-500">O valor já está na maquininha. Não digite nada nela.</p>
               <p className="mt-3 text-xs text-zinc-400">Aguardando há {segundos}s · a cobrança expira em 15 min</p>
               {sandbox && (
@@ -189,7 +192,7 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
               </div>
               <p className="mt-4 text-base font-bold text-green-700">Pagamento aprovado</p>
               <p className="mt-1 text-sm text-zinc-500">
-                {metodoFinal === 'debit_card' ? 'Débito' : 'Crédito'} · lançando no caixa…
+                {metodoFinal === 'debit_card' ? 'Débito' : metodoFinal === 'pix' ? 'Pix' : 'Crédito'} · lançando no caixa…
               </p>
             </>
           )}
@@ -200,7 +203,7 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
                 <i className={`${fase === 'recusado' ? 'ri-close-circle-fill text-red-600' : 'ri-time-line text-zinc-500'} text-3xl`} />
               </div>
               <p className="mt-4 text-base font-bold text-zinc-900">
-                {fase === 'recusado' ? 'Cartão recusado' : fase === 'erro' ? 'Não deu para cobrar' : 'Cobrança encerrada'}
+                {fase === 'recusado' ? (ehPix ? 'Pix não concluído' : 'Cartão recusado') : fase === 'erro' ? 'Não deu para cobrar' : 'Cobrança encerrada'}
               </p>
               {msg && <p className="mt-1 text-sm text-zinc-600">{msg}</p>}
             </>
