@@ -79,6 +79,19 @@ const DB_TO_FRONTEND_ROLE: Record<string, UserPerfil> = {
   financeiro: 'financeiro',
 };
 
+// ─── Login: distinguir "senha errada" de "aparelho sem internet" ─────────────
+
+const MSG_SEM_CONEXAO =
+  'Sem conexão com o servidor. Verifique a internet deste aparelho e tente de novo.';
+
+/** Erro do Auth que é rede/servidor, não credencial (aí a senha não tem culpa). */
+function ehFalhaDeRede(error: { name?: string; status?: number; message?: string }): boolean {
+  if (error.name === 'AuthRetryableFetchError') return true;
+  if (typeof error.status === 'number' && (error.status === 0 || error.status >= 500)) return true;
+  const msg = (error.message ?? '').toLowerCase();
+  return msg.includes('failed to fetch') || msg.includes('load failed') || msg.includes('network');
+}
+
 // ─── Profile fetcher for specific tenant ─────────────────────────────────────
 
 async function fetchProfileForTenant(
@@ -566,6 +579,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
           console.error('[Auth] login-pin error:', errBody.error);
           if (res.status === 429) onError?.(errBody.error ?? 'Muitas tentativas. Aguarde 15 minutos.');
+          // 401 é credencial errada (a tela já diz isso). 403/500 o servidor explica —
+          // "usuário inativo", "sem acesso a esta loja" — e não pode virar "senha errada".
+          else if (res.status !== 401) onError?.(errBody.error ?? `Falha no servidor (HTTP ${res.status}).`);
           return false;
         }
 
@@ -586,7 +602,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return true;
       } catch (e) {
+        // O pedido nem saiu do aparelho (sem internet, Wi-Fi sem saída, DNS bloqueado).
+        // Dizer "credenciais inválidas" aqui manda a loja caçar senha errada quando o
+        // problema é a rede — aconteceu no segundo tablet da Paranaguá (2026-09-21).
         console.error('[Auth] login-pin fetch error:', e);
+        onError?.(MSG_SEM_CONEXAO);
         return false;
       }
     }
@@ -595,6 +615,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email: trimmedId,
       password: trimmedSenha,
     });
+    if (error && ehFalhaDeRede(error)) {
+      console.error('[Auth] signInWithPassword sem rede:', error.message);
+      onError?.(MSG_SEM_CONEXAO);
+    }
     return !error;
   };
 
