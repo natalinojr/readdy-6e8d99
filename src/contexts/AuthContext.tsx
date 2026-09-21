@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import type { ReactNode } from 'react';
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, safeRefreshSession, safeSignOut, refreshSessionWithReason, isLogoutIntencional, clearLogoutIntencional } from '@/lib/supabase';
 import { ensureFreshSession } from '@/lib/supabase';
+import { reportError } from '@/lib/errorReporter';
 import type { TipoEmpresa } from '@/lib/tipoEmpresa';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -301,8 +302,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);
         return;
       }
-      await resolveSession(userId);
-      setLoading(false);
+      // Watchdog (tablet Android, 2026-09-21): se resolveSession não terminar — uma
+      // chamada de sessão pendurada, rede que não responde e não erra — o loading
+      // ficava true para sempre e o AppLayout não renderizava nada: a tela morria em
+      // "Carregando sessão..." depois de um login que o servidor já tinha aceitado.
+      // Agora a UI é liberada de qualquer jeito e o caso fica registrado.
+      let terminou = false;
+      const lento = setTimeout(() => {
+        if (terminou) return;
+        reportError('resolveSession não respondeu em 15s — liberando a tela', {
+          fn: 'AuthContext.handleSession',
+          severity: 'warning',
+          context: { temLockManager: typeof navigator.locks?.request === 'function' },
+        });
+        setLoading(false);
+      }, 15_000);
+      try {
+        await resolveSession(userId);
+      } finally {
+        terminou = true;
+        clearTimeout(lento);
+        setLoading(false);
+      }
     },
     [resolveSession],
   );

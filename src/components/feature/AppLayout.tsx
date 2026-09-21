@@ -30,7 +30,7 @@ const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas',
 const NO_TENANT_ROUTES = ['/contratacao', '/notas-servico'];
 
 export default function AppLayout() {
-  const { isAuthenticated, needsTenantSelection, loading, hasNoTenants, logout } = useAuth();
+  const { isAuthenticated, needsTenantSelection, loading, hasNoTenants, logout, user } = useAuth();
   const location = useLocation();
   const { isModoTreino } = useModoTreino();
   const { mode, setMode } = useAppMode();
@@ -66,6 +66,14 @@ export default function AppLayout() {
   // 3. Protecao de autenticacao
   if (!isAuthenticated) {
     return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  }
+
+  // 3b. Usuário de tablet só existe para o autoatendimento — qualquer outra rota
+  // protegida devolve ele para lá. Antes a regra morava só num efeito da tela de
+  // Módulos, então bastava o login voltar para a última rota usada no aparelho
+  // (ex.: /tarefas) para o tablet abrir um módulo que não é dele.
+  if (user?.perfil === 'totem') {
+    return <Navigate to="/autoatendimento" replace />;
   }
 
   // 4. Selecao de loja obrigatoria — bloqueia TUDO ate escolher

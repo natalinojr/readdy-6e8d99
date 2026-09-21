@@ -1,5 +1,5 @@
 import { reportEdgeFailure } from './errorReporter';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, navigatorLock } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_PUBLIC_SUPABASE_URL as string;
@@ -73,11 +73,71 @@ const fetchComLoja: typeof fetch = (input, init) => {
   return fetch(input, init);
 };
 
+/**
+ * Trava do supabase-js com rede de segurança (tablet Android, 2026-09-21).
+ *
+ * Toda operação de sessão do supabase-js (getSession, refreshSession, verifyOtp…)
+ * roda dentro de um lock do Navigator LockManager, com espera INFINITA. Se o
+ * LockManager não responde — o que acontece em WebView/navegador embutido de app,
+ * onde a API existe mas não segue a spec — a promise nunca resolve: no tablet da
+ * loja o login por matrícula funcionava (o servidor emitia o token), mas a tela
+ * ficava para sempre em "Carregando sessão...", sem nenhuma chamada seguinte.
+ *
+ * Aqui o lock continua sendo o do navegador (protege as abas do PC entre si), mas
+ * se ele não for concedido em LOCK_TIMEOUT_MS a operação segue SEM o lock, que é
+ * exatamente o que o supabase-js faz em ambientes sem LockManager. A função nunca
+ * roda duas vezes: quem chega atrasado devolve o sentinela e é descartado.
+ */
+const LOCK_TIMEOUT_MS = 5000;
+const LOCK_IGNORADO = Symbol('lock-ignorado');
+
+async function lockResiliente<R>(name: string, acquireTimeout: number, fn: () => Promise<R>): Promise<R> {
+  const temLockManager = typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function';
+  // Sem LockManager (ou na variante "pega agora ou falha", que nunca trava) usa o
+  // caminho normal do supabase-js.
+  if (!temLockManager) return await fn();
+  if (acquireTimeout === 0) return await navigatorLock(name, acquireTimeout, fn);
+
+  let ignorado = false;
+  let comecou = false;
+
+  return await new Promise<R>((resolve, reject) => {
+    let resolvido = false;
+    const timer = setTimeout(() => {
+      if (comecou || resolvido) return; // o lock já foi concedido: deixa terminar
+      ignorado = true;
+      resolvido = true;
+      console.warn(`[supabase] LockManager não concedeu "${name}" em ${LOCK_TIMEOUT_MS}ms — seguindo sem a trava`);
+      fn().then(resolve, reject);
+    }, LOCK_TIMEOUT_MS);
+
+    navigatorLock(name, acquireTimeout, async () => {
+      if (ignorado) return LOCK_IGNORADO as unknown as R; // já rodou fora do lock
+      comecou = true;
+      return await fn();
+    }).then(
+      (r) => {
+        clearTimeout(timer);
+        if (resolvido || (r as unknown) === LOCK_IGNORADO) return;
+        resolvido = true;
+        resolve(r);
+      },
+      (e) => {
+        clearTimeout(timer);
+        if (resolvido) return;
+        resolvido = true;
+        reject(e);
+      },
+    );
+  });
+}
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: false,
     detectSessionInUrl: true,
+    lock: lockResiliente,
   },
   global: { fetch: fetchComLoja },
 });
