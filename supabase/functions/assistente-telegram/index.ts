@@ -514,6 +514,23 @@ async function sendGroupReceipt(admin: SupabaseClient, p: any): Promise<string |
       await admin.from('fin_inter_payments').update({ group_request_id: reqId }).eq('id', p.id).is('group_request_id', null);
     }
   }
+  // Nem sempre o pagamento nasce do pedido do grupo: o DAS de 21/09 veio do cron "vence hoje", pela
+  // conta a pagar, e o pedido do grupo (3 dias antes) ficou sem comprovante. Último recurso: pedido
+  // do grupo ainda em aberto, do mesmo VALOR, nos últimos 45 dias — e só quando é um só, para não
+  // responder a mensagem errada (dono, 2026-09-21).
+  if (!reqId) {
+    const { data: candidatos } = await admin.from('asst_group_requests')
+      .select('id, data, status, created_at').eq('kind', 'pagamento')
+      .not('status', 'in', '(pago,recusado,ignorado)')
+      .gte('created_at', new Date(Date.now() - 45 * 86400_000).toISOString());
+    // deno-lint-ignore no-explicit-any
+    const mesmoValor = (candidatos ?? []).filter((c: any) => Math.abs(Number(c.data?.extraido?.valor ?? NaN) - Number(p.amount)) < 0.02);
+    if (mesmoValor.length === 1) {
+      reqId = mesmoValor[0].id;
+      await admin.from('fin_inter_payments').update({ group_request_id: reqId }).eq('id', p.id).is('group_request_id', null);
+      log('INFO', 'comprovante: pedido do grupo achado pelo valor', { payment: p.id, request: reqId });
+    }
+  }
   if (!reqId) return null;
   const { data: preso } = await admin.from('fin_inter_payments').update({ group_receipt_sent_at: nowIso(), group_receipt_error: null })
     .eq('id', p.id).eq('group_request_id', reqId).is('group_receipt_sent_at', null).select('id');
@@ -1098,6 +1115,25 @@ Deno.serve(async (req) => {
   try { update = await req.json(); } catch { return json({ error: 'JSON inválido' }, 400); }
   // deno-lint-ignore no-explicit-any
   const acao = String((update as any)?.action ?? '');
+  // Comprovante de um pagamento específico no grupo que pediu (retentativa manual, 2026-09-21).
+  if (acao === 'send_receipt') {
+    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    // deno-lint-ignore no-explicit-any
+    const id = String((update as any)?.payment_id ?? '');
+    const { data: p } = await admin.from('fin_inter_payments').select('*').eq('id', id).maybeSingle();
+    if (!p) return json({ error: 'pagamento não encontrado' }, 404);
+    // deno-lint-ignore no-explicit-any
+    if ((update as any)?.group_request_id) {
+      await admin.from('fin_inter_payments')
+        // deno-lint-ignore no-explicit-any
+        .update({ group_request_id: Number((update as any).group_request_id), group_receipt_sent_at: null }).eq('id', p.id);
+      // deno-lint-ignore no-explicit-any
+      p.group_request_id = Number((update as any).group_request_id);
+      p.group_receipt_sent_at = null;
+    }
+    try { return json({ ok: true, enviado: await sendGroupReceipt(admin, p) }); }
+    catch (e) { return json({ error: errMsg(e) }, 500); }
+  }
   if (acao === 'deliver') {
     try { await deliver(update); return json({ ok: true }); }
     catch (e) { log('ERROR', 'entrega interna falhou', { error: errMsg(e) }); return json({ error: errMsg(e) }, 500); }
