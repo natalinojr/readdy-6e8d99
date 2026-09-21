@@ -272,7 +272,7 @@ function mergeHighlightsIntoCardapio(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getDeliveryWriteUrl(): string {
+export function getDeliveryWriteUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
   return base + '/functions/v1/delivery-write';
 }
@@ -410,6 +410,7 @@ async function fetchDeliveryConfig(
     setStoreWhatsapp: (v: string) => void;
     setStoreLocation: (v: StoreLocation | null) => void;
     setTiers: (v: FaixaEntrega[]) => void;
+    setLocales: (v: string[]) => void;
     productionPartsRef: MutableRefObject<ProductionPartsMap | undefined>;
   },
 ) {
@@ -512,6 +513,7 @@ async function fetchDeliveryConfig(
 
     setters.setCategories(finalCategories);
     setters.setItems(finalItems);
+    setters.setLocales(Array.isArray(data.locales) ? data.locales : []);
 
     setters.setOptionGroups(data.option_groups || []);
     setters.setOptions(data.options || []);
@@ -743,6 +745,9 @@ export function useDeliveryData(storeSlug?: string) {
   // Entrega por distância (pin do cliente + faixas configuradas pela loja)
   const [storeLocation, setStoreLocation] = useState<StoreLocation | null>(null);
   const [tiers, setTiers] = useState<FaixaEntrega[]>([]);
+  // Idiomas que ESTA loja oferece ao cliente (fora o portugues, que e implicito).
+  // Vazio = seletor de idioma nem aparece.
+  const [locales, setLocales] = useState<string[]>([]);
   const [addressLat, setAddressLat] = useState<number | null>(null);
   const [addressLng, setAddressLng] = useState<number | null>(null);
 
@@ -846,6 +851,7 @@ export function useDeliveryData(storeSlug?: string) {
           setStoreWhatsapp,
           setStoreLocation,
           setTiers,
+          setLocales,
           productionPartsRef,
         });
 
@@ -2089,6 +2095,7 @@ export function useDeliveryData(storeSlug?: string) {
     distanceMode,
     storeLocation,
     tiers,
+    locales,
     addressLat,
     addressLng,
     setAddressPin,

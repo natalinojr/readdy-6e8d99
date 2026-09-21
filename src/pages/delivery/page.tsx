@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { formatCurrency } from '@/lib/formatters';
 import CpfCnpjInput from '@/components/base/CpfCnpjInput';
 import { isValidCpfCnpj } from '@/lib/cpfCnpj';
-import { useDeliveryData, getOrderSource } from './useDeliveryData';
+import { useDeliveryData, getOrderSource, getDeliveryWriteUrl } from './useDeliveryData';
 import IdentificacaoDelivery from './components/IdentificacaoDelivery';
 import EnderecoDelivery from './components/EnderecoDelivery';
 import EnderecoPinDelivery from './components/EnderecoPinDelivery';
@@ -15,6 +15,9 @@ import EditarItemMesaQRModal from '../mesa-qr/components/EditarItemMesaQRModal';
 import ModoEntregaDelivery from './components/ModoEntregaDelivery';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
+import { useIdiomaCardapio } from '@/hooks/useIdiomaCardapio';
+import { tx } from '@/lib/idiomaCardapio';
+import SeletorIdioma from '@/components/SeletorIdioma';
 
 // ── Helpers de ícones de tipo de endereço ─────────────────────────────────────
 
@@ -84,11 +87,17 @@ export default function DeliveryPage() {
   const selectedAddressId = data.selectedAddressId;
   const enderecoAtual = data.enderecoAtual;
   const displayAddresses = data.displayAddresses;
-  const categories = data.categories;
-  const items = data.items;
-  const optionGroups = data.optionGroups;
-  const options = data.options;
-  const observations = data.observations;
+  // Idioma do cliente. `decorar` acrescenta `*_i18n` sem tocar no texto em
+  // portugues: o carrinho e o pedido continuam saindo em PT, que e o que a
+  // cozinha le. Ver src/lib/idiomaCardapio.ts.
+  const idiomaCardapio = useIdiomaCardapio(getDeliveryWriteUrl(), data.tenantId ?? null, data.locales);
+  const { decorar } = idiomaCardapio;
+
+  const categories = useMemo(function () { return decorar(data.categories, 'category'); }, [data.categories, decorar]);
+  const items = useMemo(function () { return decorar(data.items, 'item'); }, [data.items, decorar]);
+  const optionGroups = useMemo(function () { return decorar(data.optionGroups, 'option_group'); }, [data.optionGroups, decorar]);
+  const options = useMemo(function () { return decorar(data.options, 'option'); }, [data.options, decorar]);
+  const observations = useMemo(function () { return decorar(data.observations, 'preset_obs', 'text', 'text_desc'); }, [data.observations, decorar]);
   const categoriaAtiva = data.categoriaAtiva;
   const outOfStockIds = data.outOfStockIds;
   const cart = data.cart;
@@ -545,6 +554,13 @@ export default function DeliveryPage() {
                     <span className="truncate">Cardápio · peça em minutos</span>
                   </p>
                 </div>
+                {idiomaCardapio.temSeletor ? (
+                  <SeletorIdioma
+                    disponiveis={data.locales}
+                    idioma={idiomaCardapio.idioma}
+                    onTrocar={idiomaCardapio.trocarIdioma}
+                  />
+                ) : null}
                 <button
                   type="button"
                   onClick={function () { data.setStep('identificacao'); }}
@@ -573,7 +589,7 @@ export default function DeliveryPage() {
                         : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/60')
                     }
                   >
-                    {cat.name}
+                    {tx(cat)}
                   </button>
                 );
               })}
@@ -714,6 +730,14 @@ export default function DeliveryPage() {
                   <span className="truncate">Olá, {(customerName || '').split(' ')[0]} 👋</span>
                 </p>
               </div>
+
+              {idiomaCardapio.temSeletor ? (
+                <SeletorIdioma
+                  disponiveis={data.locales}
+                  idioma={idiomaCardapio.idioma}
+                  onTrocar={idiomaCardapio.trocarIdioma}
+                />
+              ) : null}
 
               {/* Meus pedidos (badge = pedidos em andamento) */}
               {customerId ? (
@@ -978,7 +1002,7 @@ export default function DeliveryPage() {
                       : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/60')
                   }
                 >
-                  {cat.name}
+                  {tx(cat)}
                 </button>
               );
             })}

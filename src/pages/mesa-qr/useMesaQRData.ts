@@ -721,6 +721,7 @@ export function useMesaQRData() {
 
   return {
     step: step,
+    tenantId: tenantId,
     table: table,
     participant: participant,
     error: errorMsg,
