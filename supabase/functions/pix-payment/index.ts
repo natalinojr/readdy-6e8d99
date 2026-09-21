@@ -136,7 +136,10 @@ async function kioskTokenIdOf(admin: Admin, userId: string): Promise<string | nu
 // Maquininha de quem está cobrando. Os tablets entram com usuário próprio (perfil 'tablet',
 // criado em Usuários): mapa fin_payment_provider_config.tablet_terminals { user_id: terminal }.
 // Depois o kiosk_tokens.point_terminal_id (acesso por token) e, sem vínculo, a padrão da loja.
-async function terminalForCaller(admin: Admin, tenantId: string, userId: string, point: ProviderCfg) {
+// station='pdv' (cobrança nascida no Caixa) usa a maquininha do caixa: o operador do caixa é
+// um usuário comum e cairia na máquina de um tablet se seguisse o caminho de cima.
+async function terminalForCaller(admin: Admin, tenantId: string, userId: string, point: ProviderCfg, station?: string) {
+  if (station === 'pdv') return point.pdv_terminal_id ?? point.terminal_id;
   const porUsuario = point.tablet_terminals?.[userId];
   if (porUsuario) return porUsuario;
   const tokenId = await kioskTokenIdOf(admin, userId);
@@ -153,11 +156,12 @@ type ProviderCfg = {
   client_id: string | null; client_secret: string | null; cert_pem: string | null; key_pem: string | null;
   pix_key: string | null; environment: string | null; conta_corrente: string | null;
   cert_expires_at: string | null; last_test_at: string | null; updated_at: string; token_expires_at: string | null;
-  terminal_id: string | null; webhook_secret?: string | null; tablet_terminals?: Record<string, string> | null;
+  terminal_id: string | null; pdv_terminal_id?: string | null;
+  webhook_secret?: string | null; tablet_terminals?: Record<string, string> | null;
 };
 async function loadProviderCfgs(admin: Admin, tenantId: string) {
   const { data } = await admin.from('fin_payment_provider_config')
-    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at, terminal_id, webhook_secret, tablet_terminals')
+    .select('id, provider, is_active, access_token, account_label, client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at, last_test_at, updated_at, token_expires_at, terminal_id, pdv_terminal_id, webhook_secret, tablet_terminals')
     .eq('tenant_id', tenantId).in('provider', PROVIDERS);
   const rows = (data ?? []) as ProviderCfg[];
   return {
@@ -401,11 +405,13 @@ const pointErr = (b: any) => {
   return String(e?.message ?? b?.message ?? JSON.stringify(b ?? {}).slice(0, 200)) + det;
 };
 
-async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: number, method: string, desc: string) {
+// `externalRef` é o que aparece em EXTERNAL_REFERENCE no Relatório de Liberações e na busca de
+// pagamentos: com o número do pedido ali, a conciliação casa venda × pedido sem adivinhar valor.
+async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: number, method: string, desc: string, externalRef?: string) {
   const r = await mpFetch(String(cfg.access_token), '/v1/orders', {
     method: 'POST', headers: { 'X-Idempotency-Key': chargeId },
     body: JSON.stringify({
-      type: 'point', external_reference: chargeId, expiration_time: POINT_EXPIRATION, description: desc.slice(0, 150),
+      type: 'point', external_reference: (externalRef ?? chargeId).slice(0, 60), expiration_time: POINT_EXPIRATION, description: desc.slice(0, 150),
       transactions: { payments: [{ amount: amount.toFixed(2) }] },
       config: {
         point: { terminal_id: cfg.terminal_id, print_on_terminal: 'no_ticket' },
@@ -798,13 +804,22 @@ Deno.serve(async (req: Request) => {
       const auth = await requireMember(req, supabase, tenantId);
       if (auth.error) return auth.error;
       const { point } = await loadProviderCfgs(supabase, tenantId);
-      return json({ point: pointReady(point), sandbox: point?.environment === 'sandbox' });
+      // `pdv` diz se o CAIXA tem maquininha (própria ou a padrão da loja): é o que o PDV usa
+      // para decidir se mostra "Cobrar na maquininha".
+      return json({
+        point: pointReady(point), sandbox: point?.environment === 'sandbox',
+        pdv: pointReady(point) && Boolean(point!.pdv_terminal_id ?? point!.terminal_id),
+        pdv_own_terminal: Boolean(point?.pdv_terminal_id),
+      });
     }
 
     if (action === 'create_card_charge') {
       const tenantId = String(body.tenant_id ?? '');
       const amount = round2(Number(body.amount));
       const method = body.method === 'debit_card' ? 'debit_card' : 'credit_card';
+      const station = body.station === 'pdv' ? 'pdv' : 'kiosk';
+      const orderId = typeof body.order_id === 'string' && body.order_id ? body.order_id : null;
+      const orderNumber = typeof body.order_number === 'string' && body.order_number ? String(body.order_number).slice(0, 40) : null;
       if (!tenantId || !(amount >= 0.01)) return json({ error: 'tenant_id e amount são obrigatórios' }, 400);
       const auth = await requireMember(req, supabase, tenantId);
       if (auth.error) return auth.error;
@@ -816,16 +831,22 @@ Deno.serve(async (req: Request) => {
       const chargeId = crypto.randomUUID();
       const { data: tenant } = await supabase.from('tenants').select('name').eq('id', tenantId).maybeSingle();
       let created: { providerPaymentId: string; raw: unknown };
-      const terminalId = await terminalForCaller(supabase, tenantId, auth.userId, point!);
+      const terminalId = await terminalForCaller(supabase, tenantId, auth.userId, point!, station);
+      if (!terminalId) {
+        return json({ error: 'Nenhuma maquininha vinculada a este caixa. Configure em Configurações › Formas de pagamento › Maquininha Mercado Pago Point.', code: 'no_terminal' }, 422);
+      }
+      const desc = station === 'pdv'
+        ? `${tenant?.name ?? 'Restaurante'} - Caixa${orderNumber ? ` · pedido ${orderNumber}` : ''}`
+        : `${tenant?.name ?? 'Restaurante'} - Autoatendimento`;
       try {
-        created = await createPointOrder({ ...point!, terminal_id: terminalId }, chargeId, amount, method, `${tenant?.name ?? 'Restaurante'} - Autoatendimento`);
+        created = await createPointOrder({ ...point!, terminal_id: terminalId }, chargeId, amount, method, desc, orderNumber ?? undefined);
       } catch (e) {
         const detail = String((e as Error)?.message ?? e);
         log('ERROR', 'create_card_charge', 'Mercado Pago recusou', { tenantId, detail });
         return json({ error: 'Não foi possível enviar a cobrança para a maquininha. Tente de novo ou pague no balcão.', code: 'provider_error', detail }, 502);
       }
       const { data: row, error: insErr } = await supabase.from('fin_pix_payments').insert({
-        id: chargeId, tenant_id: tenantId, order_id: null, txid: chargeId.replace(/-/g, ''), amount, method,
+        id: chargeId, tenant_id: tenantId, order_id: orderId, txid: chargeId.replace(/-/g, ''), amount, method,
         pix_key: 'mp_point', pix_key_type: 'provider', beneficiary_name: 'Mercado Pago Point', city: '-', emv_payload: null,
         status: 'pending', expires_at: new Date(Date.now() + POINT_EXPIRATION_MS).toISOString(),
         provider: 'mp_point', provider_payment_id: created.providerPaymentId, raw_provider: created.raw,
@@ -835,8 +856,8 @@ Deno.serve(async (req: Request) => {
         await cancelAtProvider(await loadProviderCfgs(supabase, tenantId), { id: chargeId, provider: 'mp_point', provider_payment_id: created.providerPaymentId } as PixRow);
         throw insErr ?? new Error('insert fin_pix_payments falhou');
       }
-      log('INFO', 'create_card_charge', 'criado', { chargeId, mpOrder: created.providerPaymentId, amount, method, terminalId, sandbox: point!.environment === 'sandbox' });
-      return json({ pix_payment_id: row.id, expires_at: row.expires_at, provider: 'mp_point', sandbox: point!.environment === 'sandbox' });
+      log('INFO', 'create_card_charge', 'criado', { chargeId, mpOrder: created.providerPaymentId, amount, method, terminalId, station, orderNumber, sandbox: point!.environment === 'sandbox' });
+      return json({ pix_payment_id: row.id, expires_at: row.expires_at, provider: 'mp_point', station, sandbox: point!.environment === 'sandbox' });
     }
 
     // Só no modo TESTE (terminal virtual): força o resultado da cobrança no Mercado Pago,
@@ -869,6 +890,7 @@ Deno.serve(async (req: Request) => {
       return json({
         configured: Boolean(point?.access_token), is_active: Boolean(point?.is_active),
         environment: point?.environment === 'sandbox' ? 'sandbox' : 'production', terminal_id: point?.terminal_id ?? null,
+        pdv_terminal_id: point?.pdv_terminal_id ?? null,
         token_hint: point?.access_token ? `…${point.access_token.slice(-6)}` : null, last_test_at: point?.last_test_at ?? null,
         has_webhook_secret: Boolean(point?.webhook_secret),
         webhook_url: `${Deno.env.get('SUPABASE_URL') ?? ''}/functions/v1/pix-payment?webhook=point&tenant_id=${tenantId}`,
@@ -956,14 +978,19 @@ Deno.serve(async (req: Request) => {
       if (!test.ok) return json({ error: `Token recusado pelo Mercado Pago (${test.status}): ${pointErr(test.body)}` }, 422);
       const now = new Date().toISOString();
       const isActive = typeof body.is_active === 'boolean' ? body.is_active : (point?.is_active ?? true);
+      // Maquininha do caixa: string vazia desvincula (o caixa volta a usar a padrão da loja).
+      const pdvTerminal = typeof body.pdv_terminal_id === 'string'
+        ? (body.pdv_terminal_id.trim() || null)
+        : (point?.pdv_terminal_id ?? null);
       const { error } = await supabase.from('fin_payment_provider_config').upsert({
-        tenant_id: tenantId, provider: 'mp_point', access_token: token, terminal_id: terminalId, environment, is_active: isActive,
+        tenant_id: tenantId, provider: 'mp_point', access_token: token, terminal_id: terminalId,
+        pdv_terminal_id: pdvTerminal, environment, is_active: isActive,
         account_label: environment === 'sandbox' ? 'Mercado Pago Point · TESTE' : 'Mercado Pago Point', last_test_at: now, updated_at: now,
         // Chave secreta do webhook: em branco mantém a atual.
         ...(typeof body.webhook_secret === 'string' && body.webhook_secret.trim() ? { webhook_secret: body.webhook_secret.trim() } : {}),
       }, { onConflict: 'tenant_id,provider' });
       if (error) throw error;
-      log('INFO', 'save_point_config', 'ok', { tenantId, environment, terminalId, isActive, by: auth.userId });
+      log('INFO', 'save_point_config', 'ok', { tenantId, environment, terminalId, pdvTerminal, isActive, by: auth.userId });
       return json({ ok: true, is_active: isActive });
     }
 

@@ -7,8 +7,10 @@ import { fontesPadrao } from '@/lib/tipoEmpresa';
 // comportamento antigo (pedidos do sistema + manuais).
 //
 // A chave 'stone' é nome histórico: significa "vendas no cartão da maquininha
-// configurada" (hoje o único conector de maquininha é o da Stone). Não renomear no
-// banco: o front publicado e a edge ifood-financial gravam/leem essas chaves.
+// configurada" — desde 2026-09-21 há dois conectores (Stone e Mercado Pago), e os dois
+// gravam na mesma origin `stone_sale`, justamente para que DRE, Receitas e Visão Geral não
+// precisem saber qual maquininha a loja usa. Não renomear no banco: o front publicado e a
+// edge ifood-financial gravam/leem essas chaves.
 export type RevenueSettingSource = 'orders' | 'stone' | 'pix' | 'ifood' | 'manual';
 
 export const DEFAULT_REVENUE_SOURCES: RevenueSettingSource[] = ['orders', 'manual'];
@@ -26,7 +28,7 @@ export type CardPixMode = 'transfer' | 'direct' | 'none';
 
 export const CARD_PROVIDERS: Record<CardProvider, { label: string; conector: boolean; depositMatch: string; hint: string }> = {
   stone: { label: 'Stone', conector: true, depositMatch: 'stone', hint: 'Vendas, taxas e repasses entram sozinhos pela API de Conciliação da Stone.' },
-  mercadopago: { label: 'Mercado Pago', conector: false, depositMatch: 'mercado pago', hint: 'O conector do Mercado Pago ainda não foi feito: até lá as vendas no cartão não entram sozinhas.' },
+  mercadopago: { label: 'Mercado Pago', conector: true, depositMatch: 'mercado pago', hint: 'Vendas com a taxa real de cada uma, estornos e saques entram sozinhos pela API do Mercado Pago (mesma conta da maquininha).' },
   outra: { label: 'Outra maquininha', conector: false, depositMatch: '', hint: 'Sem integração: as vendas no cartão só entram por pedidos do sistema ou lançamento manual.' },
   nenhuma: { label: 'Não uso maquininha', conector: false, depositMatch: '', hint: '' },
 };
