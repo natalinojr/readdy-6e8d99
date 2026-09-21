@@ -41,8 +41,7 @@ i18n
     // escrito no código, que é português. Agora o padrão é português de fato e
     // o cliente estrangeiro troca pelo seletor do cardápio.
     fallbackLng: IDIOMA_PADRAO,
-    supportedLngs: IDIOMAS_SUPORTADOS as unknown as string[],
-    nonExplicitSupportedLngs: true,
+    supportedLngs: [...IDIOMAS_SUPORTADOS, 'pt'] as unknown as string[],
     debug: false,
     resources: messages,
     detection: {
