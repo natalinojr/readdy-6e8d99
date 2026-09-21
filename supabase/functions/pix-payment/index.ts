@@ -429,7 +429,9 @@ async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: numb
     log('WARN', 'create_point_order', 'recusado', { chargeId, status: r.status, body: r.body });
     throw new Error(`Mercado Pago Point ${r.status}: ${pointErr(r.body)}`);
   }
-  return { providerPaymentId: String(r.body.id), raw: { id: r.body.id, status: r.body.status } };
+  // Guarda o `config` que o MP devolveu: é a única forma de conferir depois se ele aceitou
+  // o `default_installments` (crédito à vista) ou se o terminal ignorou a preferência.
+  return { providerPaymentId: String(r.body.id), raw: { id: r.body.id, status: r.body.status, config: r.body.config ?? null } };
 }
 
 // ── Reconciliação: pergunta ao provedor e aplica na nossa linha ──────────────
