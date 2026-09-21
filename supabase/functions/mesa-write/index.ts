@@ -1,6 +1,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/stock.ts";
+import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -308,6 +309,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return json({ data: { id: orderId, number: orderNumber, subtotal: serverSubtotal, total_amount: serverSubtotal } });
     }
 
+    // Troca de idioma sem recarregar o cardapio (ver delivery-write).
+    if (action === "get_menu_translations") {
+      const t = String(body.tenant_id ?? "").trim();
+      if (!t) return new Response(JSON.stringify({ error: "tenant_id is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const payload = await translationsPayload(admin, t, body.locale);
+      return new Response(JSON.stringify(payload), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "get_cardapio") {
       const { tenant_id } = body;
       if (!tenant_id) return new Response(JSON.stringify({ error: "tenant_id is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -316,7 +325,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         admin.from("menu_categories").select("id, name, station_id").eq("tenant_id", tenant_id).eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true }),
         admin.from("menu_items").select("id, name, description, price, photo_url, category_id, sla_minutes, is_active, skip_kds").eq("tenant_id", tenant_id).eq("is_active", true).is("deleted_at", null),
         admin.from("option_groups").select("id, name, item_id, is_required, min_selections, max_selections").eq("tenant_id", tenant_id).is("deleted_at", null),
-        admin.from("options").select("id, group_id, name, additional_price, is_active").eq("tenant_id", tenant_id).eq("is_active", true).order("sort_order", { ascending: true }),
+        // deleted_at: opcao apagada NAO pode aparecer pro cliente (mesma correcao
+        // feita em delivery-write). A busca por id la em cima fica sem o filtro
+        // de proposito: pedido antigo precisa resolver o nome da opcao apagada.
+        admin.from("options").select("id, group_id, name, additional_price, is_active").eq("tenant_id", tenant_id).eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true }),
         admin.from("item_preset_observations").select("id, item_id, text").eq("tenant_id", tenant_id).is("deleted_at", null),
         admin.rpc("fn_get_items_sem_estoque", { p_tenant_id: tenant_id }),
         admin.rpc("fn_get_opcoes_sem_estoque", { p_tenant_id: tenant_id }),
@@ -403,17 +415,25 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         is_active: p.is_active,
       }));
 
+      // Idioma do cliente: acrescenta `*_i18n` sem tocar no texto em portugues.
+      // O pedido segue saindo em PT (ver comentario em _shared/menu-i18n.ts).
+      const mesaLocales = await activeLocales(admin, tenant_id);
+      const mesaLocale = normalizeLocale(body.locale, mesaLocales);
+      const mesaTrans = mesaLocale ? await loadTranslations(admin, tenant_id, mesaLocale) : new Map();
+
       return new Response(JSON.stringify({
-        categories: catResult.data ?? [],
-        items: itemsWithStation,
-        option_groups: ogResult.data ?? [],
-        options,
-        observations: obsResult.data ?? [],
+        categories: decorate(catResult.data ?? [], "category", mesaTrans),
+        items: decorate(itemsWithStation, "item", mesaTrans),
+        option_groups: decorate(ogResult.data ?? [], "option_group", mesaTrans),
+        options: decorate(options, "option", mesaTrans),
+        observations: decorate(obsResult.data ?? [], "preset_obs", mesaTrans, "text", "text_desc"),
         out_of_stock_ids: outOfStockIds,
         opcoes_indisponiveis_ids: opcoesIndisponiveisIds,
         production_parts: Object.fromEntries(productionPartsMap),
-        highlights,
+        highlights: decorateHighlights(highlights, mesaTrans),
         promotions,
+        locales: mesaLocales,
+        locale: mesaLocale ?? "pt-BR",
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 

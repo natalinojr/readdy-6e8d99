@@ -1,6 +1,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/stock.ts";
+import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -472,6 +473,16 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     const startTime = Date.now();
     if (!action) return jsonErr("action is required", 400);
 
+    // Troca de idioma no meio da navegacao: devolve SO as traducoes, o front
+    // mescla no cardapio que ja esta na tela. Recarregar o cardapio inteiro
+    // zeraria carrinho e etapa do checkout.
+    if (action === "get_menu_translations") {
+      const t = String(body.tenant_id ?? "").trim();
+      if (!t) return jsonErr("tenant_id e obrigatorio.");
+      const payload = await translationsPayload(admin, t, body.locale);
+      return new Response(JSON.stringify(payload), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "get_delivery_config") {
       const store_slug = body.store_slug;
       const paramTenantId = body.tenant_id;
@@ -494,7 +505,12 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         admin.from("menu_categories").select("id, name, station_id").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true }),
         admin.from("menu_items").select("id, name, description, price, photo_url, category_id, sla_minutes, is_active, skip_kds, delivery_config").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null),
         admin.from("option_groups").select("id, name, item_id, is_required, min_selections, max_selections").eq("tenant_id", tenantId).is("deleted_at", null),
-        admin.from("options").select("id, group_id, name, additional_price, is_active").eq("tenant_id", tenantId).eq("is_active", true).order("sort_order", { ascending: true }),
+        // deleted_at: opcao apagada NAO pode aparecer pro cliente. Faltava esse
+        // filtro (itens, categorias e grupos ja tinham) e 41 opcoes apagadas
+        // seguiam pedidas no cardapio da Paranagua. As buscas por id logo abaixo
+        // continuam sem o filtro de proposito: pedido antigo precisa resolver o
+        // nome de uma opcao que ja foi apagada.
+        admin.from("options").select("id, group_id, name, additional_price, is_active").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true }),
         admin.from("item_preset_observations").select("id, item_id, text").eq("tenant_id", tenantId).is("deleted_at", null),
         admin.rpc("fn_get_items_sem_estoque", { p_tenant_id: tenantId }),
         admin.rpc("fn_get_opcoes_sem_estoque", { p_tenant_id: tenantId }),
@@ -560,7 +576,13 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const { data: openSessForCfg } = await admin.from("sessions").select("id").eq("tenant_id", tenantId).eq("status", "open").limit(1).maybeSingle();
       const deliveryStateCfg = computeDeliveryOpen(settingsData.delivery_config as Record<string, any> | null, !!openSessForCfg, new Date());
 
-      return new Response(JSON.stringify({ _v: "v14", tenant: tenantResult.data, city: settingsData.delivery_city, delivery_config: settingsData.delivery_config ?? {}, delivery_open_now: deliveryStateCfg.open, delivery_closed_reason: deliveryStateCfg.open ? null : deliveryStateCfg.reason, neighborhoods, categories: catResult.data ?? [], items, option_groups: ogResult.data ?? [], options, observations: obsResult.data ?? [], out_of_stock_ids: outOfStockIds, opcoes_indisponiveis_ids: opcoesIndisponiveisIds, production_parts: Object.fromEntries(productionPartsMap), highlights, promotions }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // Idioma do cliente: acrescenta `*_i18n` sem tocar no texto em portugues.
+      // O pedido segue saindo em PT (ver comentario em _shared/menu-i18n.ts).
+      const dlvLocales = await activeLocales(admin, tenantId);
+      const dlvLocale = normalizeLocale(body.locale, dlvLocales);
+      const dlvTrans = dlvLocale ? await loadTranslations(admin, tenantId, dlvLocale) : new Map();
+
+      return new Response(JSON.stringify({ _v: "v15", tenant: tenantResult.data, city: settingsData.delivery_city, delivery_config: settingsData.delivery_config ?? {}, delivery_open_now: deliveryStateCfg.open, delivery_closed_reason: deliveryStateCfg.open ? null : deliveryStateCfg.reason, neighborhoods, categories: decorate(catResult.data ?? [], "category", dlvTrans), items: decorate(items, "item", dlvTrans), option_groups: decorate(ogResult.data ?? [], "option_group", dlvTrans), options: decorate(options, "option", dlvTrans), observations: decorate(obsResult.data ?? [], "preset_obs", dlvTrans, "text", "text_desc"), out_of_stock_ids: outOfStockIds, opcoes_indisponiveis_ids: opcoesIndisponiveisIds, production_parts: Object.fromEntries(productionPartsMap), highlights: decorateHighlights(highlights, dlvTrans), promotions, locales: dlvLocales, locale: dlvLocale ?? "pt-BR" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "lookup_customer") {

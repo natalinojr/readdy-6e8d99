@@ -6,10 +6,15 @@ import ConfirmacaoMesaQR from './components/ConfirmacaoMesaQR';
 import MeusPedidosModalQR from './components/MeusPedidosModalQR';
 import PagarContaModalQR from './components/PagarContaModalQR';
 import EditarItemMesaQRModal from './components/EditarItemMesaQRModal';
-import { useRef } from 'react';
+import { useRef, useMemo } from 'react';
 import { formatCurrency } from '@/lib/formatters';
+import { useIdiomaCardapio } from '@/hooks/useIdiomaCardapio';
+import { tx, edgeUrl } from '@/lib/idiomaCardapio';
+import SeletorIdioma from '@/components/SeletorIdioma';
+import { useTranslation } from 'react-i18next';
 
 export default function MesaQRPage() {
+  const { t } = useTranslation();
   const data = useMesaQRData();
 
   // Controle de clique vs scroll para evitar conflito
@@ -40,11 +45,16 @@ export default function MesaQRPage() {
   const participant = data.participant;
   const error = data.error;
   const tenantName = data.tenantName;
-  const categories = data.categories;
-  const items = data.items;
-  const optionGroups = data.optionGroups;
-  const options = data.options;
-  const observations = data.observations;
+  // Idioma do cliente no QR da mesa. `decorar` so acrescenta `*_i18n`: o item
+  // que vai pro pedido continua em portugues, que e o que a cozinha le.
+  const idiomaCardapio = useIdiomaCardapio(edgeUrl('mesa-write'), data.tenantId || null);
+  const { decorar } = idiomaCardapio;
+
+  const categories = useMemo(function () { return decorar(data.categories, 'category'); }, [data.categories, decorar]);
+  const items = useMemo(function () { return decorar(data.items, 'item'); }, [data.items, decorar]);
+  const optionGroups = useMemo(function () { return decorar(data.optionGroups, 'option_group'); }, [data.optionGroups, decorar]);
+  const options = useMemo(function () { return decorar(data.options, 'option'); }, [data.options, decorar]);
+  const observations = useMemo(function () { return decorar(data.observations, 'preset_obs', 'text', 'text_desc'); }, [data.observations, decorar]);
   const categoriaAtiva = data.categoriaAtiva;
   const outOfStockIds = data.outOfStockIds;
   const cart = data.cart;
@@ -181,7 +191,7 @@ export default function MesaQRPage() {
                 <i className="ri-restaurant-2-line text-white text-sm" />
               </div>
               <div>
-                <h1 className="text-white text-lg font-black leading-tight">Cardápio</h1>
+                <h1 className="text-white text-lg font-black leading-tight">{t('cliente.cardapio')}</h1>
                 {participant && (
                   <p className="text-white/80 text-xs">
                     Olá, <strong className="text-white">{participant.name}</strong>
@@ -189,6 +199,13 @@ export default function MesaQRPage() {
                 )}
               </div>
             </div>
+            {idiomaCardapio.temSeletor ? (
+              <SeletorIdioma
+                disponiveis={idiomaCardapio.disponiveis}
+                idioma={idiomaCardapio.idioma}
+                onTrocar={idiomaCardapio.trocarIdioma}
+              />
+            ) : null}
             <div className="text-right">
               <p className="text-white/70 text-[10px] uppercase tracking-wider font-bold">{tenantName || 'Estabelecimento'}</p>
             </div>
@@ -236,7 +253,7 @@ export default function MesaQRPage() {
                       : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/60')
                   }
                 >
-                  {cat.name}
+                  {tx(cat)}
                 </button>
               );
             })}

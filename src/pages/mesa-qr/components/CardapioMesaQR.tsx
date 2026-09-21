@@ -3,6 +3,8 @@ import { formatCurrency } from '@/lib/formatters';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
+import { tx, txBusca } from '@/lib/idiomaCardapio';
+import { useTranslation } from 'react-i18next';
 
 interface CartItem {
   cartId: string;
@@ -23,6 +25,10 @@ interface CardapioItem {
   id: string;
   name: string;
   description: string | null;
+  // Traducao vinda do backend. O portugues acima NUNCA e sobrescrito: e ele que
+  // vai pro carrinho e pra cozinha. Ver src/lib/idiomaCardapio.ts.
+  name_i18n?: string | null;
+  description_i18n?: string | null;
   price: number;
   photo_url: string | null;
   category_id: string | null;
@@ -35,6 +41,7 @@ interface CardapioItem {
 interface CardapioCategory {
   id: string;
   name: string;
+  name_i18n?: string | null;
   order_index: number | null;
   station_id: string | null;
 }
@@ -42,6 +49,7 @@ interface CardapioCategory {
 interface OptionGroup {
   id: string;
   name: string;
+  name_i18n?: string | null;
   item_id: string;
   is_required: boolean;
   min_selections: number | null;
@@ -51,6 +59,7 @@ interface OptionGroup {
 interface OptionItem {
   id: string;
   name: string;
+  name_i18n?: string | null;
   option_group_id: string;
   additional_price: number;
   is_active: boolean;
@@ -60,6 +69,7 @@ interface PresetObservation {
   id: string;
   item_id: string;
   text: string;
+  text_i18n?: string | null;
 }
 
 interface UnidadeConfig {
@@ -92,6 +102,7 @@ interface Props {
 }
 
 export default function CardapioMesaQR(props: Props) {
+  const { t } = useTranslation();
   const categoriaAtiva = props.categoriaAtiva;
   const categories = props.categories;
   const items = props.items;
@@ -146,8 +157,10 @@ export default function CardapioMesaQR(props: Props) {
     if (!buscaNorm) return [];
     return todosItensDisponiveis.filter(function (i) {
       if ((i.category_id || '').startsWith('__')) return false;
-      const nome = i.name.toLowerCase();
-      const desc = (i.description || '').toLowerCase();
+      // Busca nos DOIS idiomas: quem digita "chicken" e quem digita "frango"
+      // acham o mesmo prato.
+      const nome = txBusca(i, 'name');
+      const desc = txBusca(i, 'description');
       return nome.includes(buscaNorm) || desc.includes(buscaNorm);
     });
   }, [buscaNorm, todosItensDisponiveis]);
@@ -552,7 +565,7 @@ export default function CardapioMesaQR(props: Props) {
           <div className="absolute top-2 right-2 z-10 flex items-center gap-0.5 bg-white border border-amber-200 rounded-full shadow-sm px-0.5 py-0.5">
             <button
               type="button"
-              aria-label={'Tirar 1 ' + item.name}
+              aria-label={'Tirar 1 ' + tx(item)}
               onClick={function (e) {
                 e.stopPropagation();
                 const linha = ultimaLinhaDoItem(item.id);
@@ -565,7 +578,7 @@ export default function CardapioMesaQR(props: Props) {
             <span className="min-w-[16px] text-center text-xs font-black text-zinc-800">{qtyInCart}</span>
             <button
               type="button"
-              aria-label={'Adicionar mais 1 ' + item.name}
+              aria-label={'Adicionar mais 1 ' + tx(item)}
               onClick={function (e) {
                 e.stopPropagation();
                 const linha = ultimaLinhaDoItem(item.id);
@@ -590,7 +603,7 @@ export default function CardapioMesaQR(props: Props) {
           {(item.photo_url && !imgErros.has(item.id)) ? (
             <img
               src={item.photo_url}
-              alt={item.name}
+              alt={tx(item)}
               loading="lazy"
               decoding="async"
               className="w-full h-full object-cover object-top group-hover:scale-105 transition-transform duration-300"
@@ -604,10 +617,10 @@ export default function CardapioMesaQR(props: Props) {
         </div>
         <div className="flex-1 min-w-0 flex flex-col justify-between">
           <div>
-            <h3 className="text-sm font-bold text-zinc-800 break-words">{item.name}</h3>
-            {item.description ? (
+            <h3 className="text-sm font-bold text-zinc-800 break-words">{tx(item)}</h3>
+            {tx(item, 'description') ? (
               <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed break-words">
-                {item.description}
+                {tx(item, 'description')}
               </p>
             ) : null}
           </div>
@@ -643,7 +656,7 @@ export default function CardapioMesaQR(props: Props) {
           type="text"
           value={busca}
           onChange={function (e) { setBusca(e.target.value); }}
-          placeholder="Buscar no cardápio..."
+          placeholder={t('cliente.buscar')}
           className="w-full pl-10 pr-9 py-2.5 text-sm border border-zinc-200 rounded-xl bg-white text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400"
         />
         {busca ? (
@@ -687,7 +700,7 @@ export default function CardapioMesaQR(props: Props) {
             <section key={cat.id} id={'scroll-cat-' + cat.id} className="scroll-mt-14">
               {/* Cabeçalho da categoria */}
               <div className="flex items-center gap-3 mb-4">
-                <h3 className="text-base font-black text-zinc-800">{cat.name}</h3>
+                <h3 className="text-base font-black text-zinc-800">{tx(cat)}</h3>
                 <div className="h-px flex-1 bg-zinc-100" />
                 <span className="text-[10px] font-bold text-zinc-400">{catItems.length} ite{catItems.length > 1 ? 'ns' : 'm'}</span>
               </div>
@@ -730,7 +743,7 @@ export default function CardapioMesaQR(props: Props) {
           >
             <div className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-zinc-100 px-5 py-3 flex items-center justify-between z-10">
               <div className="min-w-0">
-                <h3 className="text-base font-bold text-zinc-800 break-words">{itemSelecionado.name}</h3>
+                <h3 className="text-base font-bold text-zinc-800 break-words">{tx(itemSelecionado)}</h3>
                 {getPrecoEfetivo(itemSelecionado) < itemSelecionado.price ? (
                   <p className="text-xs text-zinc-500 mt-0.5">
                     <span className="line-through text-zinc-300">{formatCurrency(itemSelecionado.price)}</span>
@@ -763,7 +776,7 @@ export default function CardapioMesaQR(props: Props) {
                   />
                   <img
                     src={itemSelecionado.photo_url}
-                    alt={itemSelecionado.name}
+                    alt={tx(itemSelecionado)}
                     className="relative w-full h-full object-contain"
                     onError={function () { handleImgError(itemSelecionado.id); }}
                   />
@@ -773,12 +786,12 @@ export default function CardapioMesaQR(props: Props) {
 
             <div className="px-5 py-4 space-y-5">
               {itemSelecionado.description ? (
-                <p className="text-sm text-zinc-600 leading-relaxed">{itemSelecionado.description}</p>
+                <p className="text-sm text-zinc-600 leading-relaxed">{tx(itemSelecionado, 'description')}</p>
               ) : null}
 
               {/* Quantidade */}
               <div className="flex items-center justify-between bg-zinc-50 rounded-xl px-4 py-3">
-                <span className="text-sm font-bold text-zinc-800">Quantidade</span>
+                <span className="text-sm font-bold text-zinc-800">{t('cliente.quantidade')}</span>
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
@@ -846,13 +859,13 @@ export default function CardapioMesaQR(props: Props) {
                     return (
                       <div key={grupo.id}>
                         <div className="flex items-center gap-2 mb-3">
-                          <span className="text-sm font-bold text-zinc-800">{grupo.name}</span>
+                          <span className="text-sm font-bold text-zinc-800">{tx(grupo)}</span>
                           {grupo.is_required ? (
                             <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-md border ' +
                               (faltando
                                 ? 'text-white bg-red-600 border-red-600'
                                 : 'text-red-600 bg-red-50 border-red-100')}>
-                              Obrigatório
+                              {t('cliente.obrigatorio')}
                             </span>
                           ) : null}
                           {(grupo.max_selections && grupo.max_selections > 1) ? (
@@ -889,10 +902,10 @@ export default function CardapioMesaQR(props: Props) {
                                     className="w-5 h-5 accent-amber-500 rounded disabled:cursor-not-allowed"
                                   />
                                 </div>
-                                <span className={'flex-1 text-sm ' + (esgotada ? 'text-zinc-400 line-through' : 'text-zinc-700')}>{op.name}</span>
+                                <span className={'flex-1 text-sm ' + (esgotada ? 'text-zinc-400 line-through' : 'text-zinc-700')}>{tx(op)}</span>
                                 {esgotada ? (
                                   <span className="text-[10px] font-bold text-red-500 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                                    Esgotado
+                                    {t('cliente.esgotado')}
                                   </span>
                                 ) : op.additional_price > 0 ? (
                                   <span className="text-xs font-bold text-amber-600">
@@ -912,7 +925,7 @@ export default function CardapioMesaQR(props: Props) {
               {/* Observações predefinidas */}
               {hasObservations ? (
                 <div>
-                  <span className="text-sm font-bold text-zinc-800 block mb-3">Observações</span>
+                  <span className="text-sm font-bold text-zinc-800 block mb-3">{t('cliente.observacoes')}</span>
                   <div className="flex flex-wrap gap-2">
                     {obsDoItem(itemSelecionado.id).map(function (obs) {
                       const checked = cfgAtual.obsSelecionadas.includes(obs.text);
@@ -927,7 +940,7 @@ export default function CardapioMesaQR(props: Props) {
                               : 'bg-zinc-100 text-zinc-600 border-zinc-100 hover:bg-zinc-200')
                           }
                         >
-                          {obs.text}
+                          {tx(obs, 'text')}
                         </button>
                       );
                     })}
@@ -964,7 +977,7 @@ export default function CardapioMesaQR(props: Props) {
                   <span className="text-sm font-bold">{
                     editingCartIds.length > 0
                       ? (qtd > 1 ? 'Atualizar ' + qtd + ' unidades' : 'Atualizar item')
-                      : (qtd > 1 ? 'Adicionar ' + qtd + ' unidades' : 'Adicionar ao pedido')
+                      : (qtd > 1 ? t('cliente.adicionar') + ' ' + qtd : t('cliente.adicionarAoCarrinho'))
                   }</span>
                 </div>
                 <span className="text-sm font-bold">
