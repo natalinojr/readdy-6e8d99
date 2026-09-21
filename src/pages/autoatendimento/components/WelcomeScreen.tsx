@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useCallback, useState } from 'react';
 import { ChevronRight, Maximize2, Minimize2 } from 'lucide-react';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
@@ -44,6 +45,7 @@ function useFullscreen() {
 }
 
 export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
+  const { t } = useTranslation();
   const { settings } = useSystemSettings();
   const { user } = useAuth();
   const { kioskSession } = useKioskAuth();
@@ -82,10 +84,13 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
     : [];
 
   const nomeLoja = user?.loja || 'Nosso Restaurante';
-  const mensagemPrincipal = settings.welcome_message_new || 'Bem-vindo! Faça seu pedido e aproveite!';
+  // A mensagem de boas-vindas e CONFIGURAVEL pela loja (welcome_message_new) e
+  // vem escrita em portugues. So o texto padrao tem traducao; a mensagem
+  // personalizada aparece como o dono escreveu, em qualquer idioma.
+  const mensagemPrincipal = settings.welcome_message_new || t('cliente.bemVindoPedido');
 
   const linhas = mensagemPrincipal.split('\n').filter(Boolean);
-  const titulo = linhas.length > 1 ? linhas[0] : 'Faça seu pedido aqui';
+  const titulo = linhas.length > 1 ? linhas[0] : t('cliente.facaPedidoAqui');
   const subtitulo = linhas.length > 1 ? linhas.slice(1).join(' ') : mensagemPrincipal;
 
   const handleIniciar = () => {
@@ -107,7 +112,7 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
           <span className="text-7xl [@media(max-height:820px)]:text-5xl">🍔</span>
         </div>
         <p className="text-white font-black text-4xl [@media(max-height:820px)]:text-3xl tracking-wide text-center">{nomeLoja}</p>
-        <p className="text-white/40 text-lg [@media(max-height:820px)]:text-base font-semibold tracking-widest uppercase">Terminal de Autoatendimento</p>
+        <p className="text-white/40 text-lg [@media(max-height:820px)]:text-base font-semibold tracking-widest uppercase">{t('cliente.terminalAuto')}</p>
       </div>
 
       {/* Central */}
@@ -129,7 +134,7 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
           onClick={handleIniciar}
           className="group flex items-center gap-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 px-16 py-8 [@media(max-height:820px)]:px-12 [@media(max-height:820px)]:py-5 rounded-3xl transition-all active:scale-95 cursor-pointer"
         >
-          <span className="text-4xl [@media(max-height:820px)]:text-3xl font-black">Toque para começar</span>
+          <span className="text-4xl [@media(max-height:820px)]:text-3xl font-black">{t('cliente.toqueComecar')}</span>
           <div className="w-14 h-14 flex items-center justify-center bg-zinc-950/10 rounded-2xl group-hover:bg-zinc-950/20 transition-colors">
             <ChevronRight size={30} />
           </div>
@@ -139,7 +144,7 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
       {/* Footer */}
       <div className="flex flex-col items-center gap-2 [@media(max-height:820px)]:gap-1 mt-4 relative z-10 px-20">
         <p className="min-h-[1.75rem] text-center text-zinc-600 text-lg [@media(max-height:820px)]:text-base font-medium">
-          {formasAceitas.length > 0 && <>Aceito: {formasAceitas.join(' • ')}</>}
+          {formasAceitas.length > 0 && <>{t('cliente.aceito')}: {formasAceitas.join(' • ')}</>}
         </p>
         <p className="text-zinc-700 text-base [@media(max-height:820px)]:text-sm">ERPOS</p>
       </div>

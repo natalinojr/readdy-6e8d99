@@ -113,6 +113,9 @@ export interface Item {
   gruposOpcoes: GrupoOpcoes[];
   promocoes: PromocaoItem[];
   observacoesPadrao: string[];
+  /** Ids das mesmas observacoes, alinhados por indice. Servem so para traduzir o
+   *  ROTULO nas telas do cliente; o texto gravado no pedido continua o de cima. */
+  observacoesPadraoIds?: string[];
   fichaTecnica: FichaTecnicaItem[];
   subproducao?: SubproducaoItem[];
   delivery?: ConfiguracaoDelivery;
