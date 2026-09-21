@@ -2901,3 +2901,30 @@ Gestão, e o Gestor de Pedidos não podia ser ligado sem o KDS.
 
 Pegadinha: chave de permissão nova nunca salva fica no padrão do papel (`mesclarComPadrao`) —
 por isso dá para acrescentar linha na matriz sem quebrar quem já salvou.
+
+### Tablet: lock do supabase-js e a regra do usuário de tablet (2026-09-21)
+
+No tablet da Paranaguá o login por matrícula era aceito (o servidor emitia o token: `login-pin`
+gravava `last_access_at` e `auth/v1/verify` voltava 200), mas a tela ficava para sempre em
+"Carregando sessão..." — e, nos logs do Supabase, depois do `verify` **nenhuma** chamada saía do
+aparelho (só o ping de rede de 30s do `useNetworkStatus`).
+
+Causa: toda operação de sessão do supabase-js (`getSession`, `refreshSession`, `verifyOtp`) roda
+dentro de um lock do Navigator LockManager com espera **infinita** (`_acquireLock(-1, …)`). No
+WebView do app Android o lock pode não ser concedido; o `handleSession` disparado pelo `SIGNED_IN`
+travava em `ensureFreshSession()` antes de qualquer rede, com `loading = true`, e o `AppLayout`
+não renderiza nada nesse estado. O caminho do F5 não sofria porque o `getSession()` do boot já
+tinha guarda de 3s — só o caminho do login não tinha.
+
+- `lockResiliente` em `src/lib/supabase.ts` (passado em `auth.lock`): se o LockManager não conceder
+  em 5s, a operação segue **sem** a trava — o mesmo que o supabase-js faz onde a API não existe.
+  Quem chega atrasado devolve um sentinela e é descartado, então `fn` nunca roda duas vezes
+  (refresh duplicado rotacionaria o refresh token e derrubaria a sessão).
+- Watchdog em `AuthContext.handleSession`: 15s sem resposta libera a UI e registra em
+  `dev_error_events` (`fn = AuthContext.handleSession`).
+
+Segundo bug do mesmo dia: o usuário de tablet caía em `/tarefas`. A regra "tablet só usa o
+autoatendimento" era um `useEffect` **dentro da tela de Módulos**, e o login volta para a rota que
+o `AppLayout` guardou (`location.state.from`) — qualquer rota que o aparelho tivesse aberto antes
+pulava a tela de Módulos e, com ela, a regra. Agora é guarda do `AppLayout`: `user.perfil === 'totem'`
+em rota protegida → `Navigate to="/autoatendimento"`.
