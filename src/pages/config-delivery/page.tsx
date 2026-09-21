@@ -104,6 +104,17 @@ export default function ConfigDeliveryPage() {
 
   const [formasPagamento, setFormasPagamento] = useState<Record<string, boolean>>({});
 
+  // ── Recuperar carrinho abandonado ──
+  // Quem entrou no cardápio e não pediu aparece na aba Clientes. Este bloco liga
+  // a OFERTA de voucher para essa gente. Desligado = a lista continua visível,
+  // o ERPOS só não sugere nem prepara cupom. Nada é enviado sozinho.
+  const [recupAtivo, setRecupAtivo] = useState(false);
+  const [recupEsperaMin, setRecupEsperaMin] = useState('30');
+  const [recupTipo, setRecupTipo] = useState<'percentual' | 'valor'>('percentual');
+  const [recupValor, setRecupValor] = useState('10');
+  const [recupValidadeDias, setRecupValidadeDias] = useState('7');
+  const [recupMensagem, setRecupMensagem] = useState('');
+
   // ── Horário de funcionamento do delivery (agendamento por dia da semana) ──
   // 0=Domingo .. 6=Sábado (alinhado ao Date.getDay() / fuso America/Sao_Paulo no backend).
   const [horarioAtivo, setHorarioAtivo] = useState(false);
@@ -206,6 +217,16 @@ export default function ConfigDeliveryPage() {
                 tempo_max_min: Number(t.tempo_max_min) || 0,
               };
             }));
+          }
+          // Recuperação de carrinho abandonado (desligada até a loja habilitar)
+          const cr = dc.cart_recovery;
+          if (cr && typeof cr === 'object') {
+            setRecupAtivo(cr.enabled === true);
+            if (cr.delay_min != null) setRecupEsperaMin(String(cr.delay_min));
+            if (cr.voucher_type === 'valor' || cr.voucher_type === 'percentual') setRecupTipo(cr.voucher_type);
+            if (cr.voucher_value != null) setRecupValor(String(cr.voucher_value));
+            if (cr.validade_dias != null) setRecupValidadeDias(String(cr.validade_dias));
+            if (typeof cr.mensagem === 'string') setRecupMensagem(cr.mensagem);
           }
           const ma = dc.motoboy_alertas;
           if (ma && typeof ma === 'object') {
@@ -310,6 +331,14 @@ export default function ConfigDeliveryPage() {
         }, {} as Record<string, { enabled: boolean; open: string; close: string }>),
       },
       motoboy_alertas: { categorias: alertCategorias, itens: alertItens },
+      cart_recovery: {
+        enabled: recupAtivo,
+        delay_min: Math.min(1440, Math.max(5, parseInt(recupEsperaMin, 10) || 30)),
+        voucher_type: recupTipo,
+        voucher_value: Math.max(0, parseFloat(recupValor.replace(',', '.')) || 0),
+        validade_dias: Math.min(90, Math.max(1, parseInt(recupValidadeDias, 10) || 7)),
+        mensagem: recupMensagem.trim(),
+      },
       whatsapp_msgs: (function () {
         const out: Record<string, string[]> = {};
         for (const k of Object.keys(whatsappMsgs)) {
@@ -915,6 +944,113 @@ export default function ConfigDeliveryPage() {
                 <span className="text-xs text-zinc-400">Apenas a opção de delivery (entrega) ficará disponível para o cliente</span>
               </div>
             )}
+          </div>
+
+          {/* Recuperar carrinho abandonado */}
+          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
+                <i className="ri-shopping-cart-2-line text-zinc-600 text-sm" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-800">Recuperar carrinho abandonado</h3>
+                <p className="text-xs text-zinc-500">Voucher para quem entrou no cardápio, montou o carrinho e não finalizou</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={function () { setRecupAtivo(function (v) { return !v; }); }}
+                className={'relative w-12 h-7 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
+                  (recupAtivo ? 'bg-green-500' : 'bg-zinc-200')
+                }
+              >
+                <div className={'absolute top-0.5 w-6 h-6 bg-white rounded-full transition-transform shadow ' +
+                  (recupAtivo ? 'translate-x-[22px]' : 'translate-x-0.5')
+                } />
+              </button>
+              <span className={'text-sm font-semibold ' + (recupAtivo ? 'text-green-700' : 'text-zinc-400')}>
+                {recupAtivo ? 'Oferta de voucher ativada' : 'Desativado'}
+              </span>
+            </div>
+
+            <div className="flex items-start gap-2 px-3 py-2.5 bg-blue-50 rounded-lg border border-blue-100">
+              <i className="ri-information-line text-blue-500 text-sm mt-0.5" />
+              <p className="text-[11px] text-blue-700">
+                A lista de quem entrou e não pediu aparece em <strong>Clientes › Não pediram</strong> mesmo com isto
+                desligado. Ligar aqui faz o ERPOS <strong>sugerir o voucher</strong> já preenchido nessa lista — o envio
+                continua sendo um clique seu, nada é mandado automaticamente para o cliente.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-zinc-600 mb-1.5">Esperar antes de considerar abandono</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={5}
+                    max={1440}
+                    value={recupEsperaMin}
+                    onChange={function (e) { setRecupEsperaMin(e.target.value); }}
+                    className="w-24 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <span className="text-xs text-zinc-500">minutos sem atividade</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-600 mb-1.5">Validade do voucher</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={90}
+                    value={recupValidadeDias}
+                    onChange={function (e) { setRecupValidadeDias(e.target.value); }}
+                    className="w-24 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <span className="text-xs text-zinc-500">dias</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-600 mb-1.5">Tipo de desconto</label>
+                <select
+                  value={recupTipo}
+                  onChange={function (e) { setRecupTipo(e.target.value === 'valor' ? 'valor' : 'percentual'); }}
+                  className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                >
+                  <option value="percentual">Percentual (%)</option>
+                  <option value="valor">Valor fixo (R$)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-600 mb-1.5">
+                  {recupTipo === 'percentual' ? 'Desconto (%)' : 'Desconto (R$)'}
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={recupValor}
+                  onChange={function (e) { setRecupValor(e.target.value); }}
+                  className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-zinc-600 mb-1.5">Mensagem sugerida (WhatsApp)</label>
+              <textarea
+                rows={2}
+                value={recupMensagem}
+                onChange={function (e) { setRecupMensagem(e.target.value); }}
+                placeholder="Vi que você montou um pedido e não finalizou! Separei um cupom pra você 😊"
+                className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+              />
+            </div>
           </div>
 
           {/* Horário de funcionamento do delivery */}

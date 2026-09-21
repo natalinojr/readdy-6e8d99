@@ -576,9 +576,159 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         const { data: custRow } = await admin.from("customers").select("birth_date, gender").eq("tenant_id", tenant_id).eq("phone", cleanPhone).limit(1).maybeSingle();
         if (custRow) { customer.birth_date = custRow.birth_date ?? null; customer.gender = custRow.gender ?? null; }
       }
+      // "Entrou no cardapio": marca a visita no cadastro. NAO mexe em last_used_at
+      // (esse e o ultimo uso em PEDIDO e ordena a busca do caixa).
+      if (customer) {
+        await admin.from("delivery_customers").update({ last_seen_at: new Date().toISOString() }).eq("id", customer.id).eq("tenant_id", tenant_id);
+      }
       let addresses: Array<Record<string, unknown>> = [];
       if (customer) { const { data: addrRows } = await admin.from("delivery_customer_addresses").select("id, label, neighborhood_id, street, number, complement, reference_point, is_default, lat, lng, bairro").eq("customer_id", customer.id).eq("tenant_id", tenant_id).order("is_default", { ascending: false }); if (addrRows) addresses = addrRows.map((a: Record<string, unknown>) => ({ id: a.id, label: a.label, neighborhood_id: a.neighborhood_id, street: a.street, number: a.number, complement: a.complement, reference_point: a.reference_point, is_default: a.is_default, lat: a.lat, lng: a.lng, bairro: a.bairro, neighborhood_name: null, neighborhood_delivery_fee: 0, neighborhood_is_active: true })); }
       return new Response(JSON.stringify({ _v: "v14", customer, addresses }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── Visita ao cardapio (carrinho abandonado) ───────────────────────────────
+    // Publica (a pessoa nao esta logada). Uma linha por sessao no aparelho
+    // (`visit_key`), atualizada conforme ela avanca. Vira "abandono" quando
+    // `converted_at` fica null e ninguem mexe mais.
+    if (action === "track_visit") {
+      // Sem customer_id de proposito: o cardapio conhece o id de `delivery_customers`,
+      // que NAO e o id de `customers`. O telefone e a chave; a tela resolve o cadastro.
+      const { tenant_id, visit_key, step, phone, customer_name, items_count, cart_total, cart_items } = body;
+      if (!tenant_id || !visit_key) return jsonErr("tenant_id e visit_key sao obrigatorios", 400);
+      const vKey = String(visit_key).slice(0, 64);
+      const cleanPhone = String(phone ?? "").replace(/\D/g, "") || null;
+      const nowIso = new Date().toISOString();
+
+      // So guarda o resumo do carrinho (nome/qtd/total). Nada de payload cru do cliente.
+      const resumo = Array.isArray(cart_items)
+        ? cart_items.slice(0, 30).map((ci: Record<string, unknown>) => ({
+          nome: String(ci?.nome ?? "").slice(0, 120),
+          qtd: Number(ci?.qtd ?? 0) || 0,
+          total: Number(ci?.total ?? 0) || 0,
+        }))
+        : null;
+
+      const row: Record<string, unknown> = {
+        tenant_id,
+        visit_key: vKey,
+        last_seen_at: nowIso,
+        last_step: typeof step === "string" ? step.slice(0, 32) : null,
+        items_count: Number(items_count ?? 0) || 0,
+        cart_total: Number(cart_total ?? 0) || 0,
+        cart_items: resumo,
+      };
+      if (cleanPhone) row.phone = cleanPhone;
+      if (typeof customer_name === "string" && customer_name.trim()) row.customer_name = customer_name.trim().slice(0, 120);
+
+      const { error: visitErr } = await admin.from("menu_visits").upsert(row, { onConflict: "tenant_id,visit_key" });
+      // Tracking nunca pode quebrar o cardapio: loga e responde ok.
+      if (visitErr) console.warn("[delivery-write] track_visit falhou", String(visitErr.message ?? visitErr));
+      return new Response(JSON.stringify({ _v: "v14", ok: !visitErr }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── Carrinhos abandonados / visitas sem pedido (tela Clientes) ─────────────
+    // Autenticado: membro da loja. Le direto com service_role porque menu_visits
+    // fica sem policy de leitura (telefone de visitante).
+    if (action === "list_abandoned_carts") {
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) return jsonErr("Não autenticado", 401);
+      const { data: userData, error: userErr } = await admin.auth.getUser(token);
+      if (userErr || !userData?.user) return jsonErr("Sessão inválida", 401);
+      const { tenant_id, days } = body;
+      if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
+      const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
+      if (!membership) return jsonErr("Sem acesso a esta loja.", 403);
+
+      const janelaDias = Math.min(90, Math.max(1, Number(days ?? 7) || 7));
+      const desde = new Date(Date.now() - janelaDias * 24 * 60 * 60 * 1000).toISOString();
+
+      // "Ainda navegando" nao e abandono: ignora o que teve atividade nos ultimos
+      // 30 min. A config da loja pode esticar essa espera (cart_recovery.delay_min).
+      const { data: ssRow } = await admin.from("system_settings").select("delivery_config").eq("tenant_id", tenant_id).maybeSingle();
+      const cfg = ((ssRow?.delivery_config as Record<string, unknown> | null) ?? {}).cart_recovery as Record<string, unknown> | undefined;
+      const esperaMin = Math.min(1440, Math.max(5, Number(cfg?.delay_min ?? 30) || 30));
+      const ate = new Date(Date.now() - esperaMin * 60 * 1000).toISOString();
+
+      const { data: rows, error: listErr } = await admin
+        .from("menu_visits")
+        .select("id, visit_key, phone, customer_id, customer_name, started_at, last_seen_at, last_step, items_count, cart_total, cart_items")
+        .eq("tenant_id", tenant_id)
+        .is("converted_at", null)
+        .gte("last_seen_at", desde)
+        .lte("last_seen_at", ate)
+        .order("last_seen_at", { ascending: false })
+        .limit(200);
+      if (listErr) throw listErr;
+
+      const visitas = rows ?? [];
+      // O telefone e a chave da visita (orders nao guarda telefone: so customer_id).
+      // Resolve telefone -> cadastro em `customers` para saber o nome real e
+      // poder abrir o voucher pela tela.
+      const phones = Array.from(new Set(visitas.map((v) => String(v.phone ?? "")).filter(Boolean)));
+      const custPorTelefone = new Map<string, { id: string; name: string | null }>();
+      if (phones.length > 0) {
+        const { data: custRows } = await admin
+          .from("customers")
+          .select("id, name, phone")
+          .eq("tenant_id", tenant_id)
+          .in("phone", phones);
+        for (const c of custRows ?? []) {
+          custPorTelefone.set(String((c as Record<string, unknown>).phone ?? ""), {
+            id: String((c as Record<string, unknown>).id),
+            name: ((c as Record<string, unknown>).name as string | null) ?? null,
+          });
+        }
+      }
+
+      // Quem voltou depois e pediu nao e abandono: derruba quem tem pedido
+      // (nao cancelado, fora do treinamento) DEPOIS do inicio da visita.
+      const custIds = Array.from(new Set(Array.from(custPorTelefone.values()).map((c) => c.id)));
+      const pedidoDepois = new Map<string, string>();
+      if (custIds.length > 0) {
+        const { data: ordRows } = await admin
+          .from("orders")
+          .select("customer_id, created_at")
+          .eq("tenant_id", tenant_id)
+          .in("customer_id", custIds)
+          .neq("status", "cancelled")
+          .eq("is_training", false)
+          .gte("created_at", desde);
+        for (const o of ordRows ?? []) {
+          const cid = String((o as Record<string, unknown>).customer_id ?? "");
+          const at = String((o as Record<string, unknown>).created_at ?? "");
+          const atual = pedidoDepois.get(cid);
+          if (!atual || at > atual) pedidoDepois.set(cid, at);
+        }
+      }
+
+      const abandonos = visitas.filter((v) => {
+        const cad = custPorTelefone.get(String(v.phone ?? ""));
+        if (!cad) return true;
+        const ultimoPedido = pedidoDepois.get(cad.id);
+        return !ultimoPedido || ultimoPedido < String(v.started_at ?? v.last_seen_at);
+      }).map((v) => ({
+        id: v.id,
+        phone: v.phone ?? null,
+        phone_fmt: v.phone ? fmtPhone(String(v.phone)) : null,
+        customer_id: custPorTelefone.get(String(v.phone ?? ""))?.id ?? null,
+        customer_name: custPorTelefone.get(String(v.phone ?? ""))?.name ?? v.customer_name ?? null,
+        started_at: v.started_at,
+        last_seen_at: v.last_seen_at,
+        last_step: v.last_step ?? null,
+        items_count: v.items_count ?? 0,
+        cart_total: Number(v.cart_total ?? 0),
+        cart_items: v.cart_items ?? null,
+        // Com itens no carrinho = abandono de carrinho; sem itens = so espiou.
+        tipo: Number(v.items_count ?? 0) > 0 ? "carrinho" : "visita",
+      }));
+
+      return new Response(JSON.stringify({
+        _v: "v14",
+        abandonos,
+        // A tela mostra o aviso de "recuperacao desligada" com base nisso.
+        cart_recovery: cfg ?? { enabled: false },
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "save_customer") {
@@ -1407,6 +1557,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         voucher_code,
         client_request_id,
         order_source,
+        visit_key,
       } = body;
 
       // CPF/CNPJ da nota: valida o digito verificador e guarda so os digitos (documento
@@ -1909,6 +2060,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           await cancelarPedidoCriado("voucher " + vCode + " indisponivel no resgate");
           return jsonErr("O cupom " + vCode + " não está mais disponível. Remova o cupom e envie o pedido novamente.", 409);
         }
+      }
+
+      // Visita virou pedido: sai da fila de carrinho abandonado.
+      if (visit_key) {
+        const { error: convErr } = await admin.from("menu_visits")
+          .update({ converted_at: new Date().toISOString(), order_id: orderId })
+          .eq("tenant_id", tenant_id).eq("visit_key", String(visit_key).slice(0, 64));
+        if (convErr) console.warn("[delivery-write] marcar visita convertida falhou", String(convErr.message ?? convErr));
       }
 
       const outputCtx: DeliveryOutputCtx = {
