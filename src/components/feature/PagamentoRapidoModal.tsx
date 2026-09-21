@@ -50,12 +50,13 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
 
   const [formaId, setFormaId] = useState('');
   const [valorInput, setValorInput] = useState(valorInicial != null ? valorInicial.toFixed(2) : '');
-  const [pagamentos, setPagamentos] = useState<{ formaId: string; formaNome: string; valor: number; troco?: number }[]>([]);
+  const [pagamentos, setPagamentos] = useState<{ formaId: string; formaNome: string; valor: number; troco?: number; cobrancaId?: string }[]>([]);
   // ── Cartao cobrado na maquininha (Mercado Pago Point em modo PDV) ─────────
   // Mesma regra do PagamentoModal do caixa: escolher credito/debito manda o valor para a
   // maquininha e o pagamento so entra na lista quando o provedor aprovar.
   const [pointPdv, setPointPdv] = useState(false);
-  const [cobranca, setCobranca] = useState<{ formaId: string; formaNome: string; valor: number; method: 'credit_card' | 'debit_card' } | null>(null);
+  const [cobranca, setCobranca] = useState<{ idx: number; valor: number; method: 'credit_card' | 'debit_card' } | null>(null);
+  const [seguirAposCobranca, setSeguirAposCobranca] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [sucesso, setSucesso] = useState(false);
   const [etapa, setEtapa] = useState<'pagar' | 'selecionar'>('pagar');
@@ -342,22 +343,11 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     return () => { cancelled = true; };
   }, [user?.tenantId]);
 
-  /** Cartao com maquininha ligada: devolve true e abre a cobranca em vez de empilhar o valor. */
-  const cobrarNaMaquininha = (forma: { id: string; nome: string; tipo: string }, valor: number) => {
-    if (!pointPdv || (forma.tipo !== 'credito' && forma.tipo !== 'debito')) return false;
-    setCobranca({
-      formaId: forma.id, formaNome: forma.nome, valor,
-      method: forma.tipo === 'debito' ? 'debit_card' : 'credit_card',
-    });
-    return true;
-  };
-
   const handleAddPagamento = () => {
     const v = parseFloat(valorInput.replace(',', '.'));
     if (isNaN(v) || v <= 0) return;
     const forma = formasAtivas.find((f) => f.id === formaId);
     if (!forma) return;
-    if (cobrarNaMaquininha(forma, v)) return;
     if (forma.exigeTroco && v > restante) {
       const trocoCalc = v - restante;
       setPagamentos((prev) => [
@@ -373,15 +363,62 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     setValorInput('');
   };
 
+  // ── Cartão na maquininha: cobra no BOTÃO FINAL ─────────────────────────────
+  // Cobrar ao montar a lista deixava a maquininha carregada com esta tela ainda editável
+  // atrás. Agora a maquininha só entra no Confirmar, e o pedido fecha quando ela aprova.
+  const cobrancasPendentes = useMemo(() => pagamentos
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ p }) => {
+      const tipo = formasAtivas.find((f) => f.id === p.formaId)?.tipo;
+      return !p.cobrancaId && (tipo === 'credito' || tipo === 'debito');
+    })
+    .map(({ p, idx }) => ({
+      idx, valor: p.valor,
+      method: (formasAtivas.find((f) => f.id === p.formaId)?.tipo === 'debito' ? 'debit_card' : 'credit_card') as 'credit_card' | 'debit_card',
+    })),
+  [pagamentos, formasAtivas]);
+  const precisaCobrar = pointPdv && cobrancasPendentes.length > 0;
+  const totalACobrar = cobrancasPendentes.reduce((acc, c) => acc + c.valor, 0);
+
+  /** O auto-add do Confirmar precisa virar lista ANTES de cobrar, senão não há o que cobrar. */
+  const materializarPagamentos = () => {
+    if (pagamentos.length > 0 || !formaId) return pagamentos;
+    const v = parseFloat(valorInput.replace(',', '.'));
+    const forma = formasAtivas.find((f) => f.id === formaId);
+    if (!forma) return pagamentos;
+    if (!isNaN(v) && v >= totalAPagar) {
+      const trocoCalc = forma.exigeTroco && v > totalAPagar ? v - totalAPagar : undefined;
+      return [{ formaId: forma.id, formaNome: forma.nome, valor: totalAPagar, troco: trocoCalc }];
+    }
+    if (restante <= 0.01) return [{ formaId: forma.id, formaNome: forma.nome, valor: totalAPagar }];
+    return pagamentos;
+  };
+
+  const handleConfirmar = () => {
+    if (confirmando) return;
+    const lista = materializarPagamentos();
+    if (!pointPdv || lista.length === 0) { handleFinalizar(); return; }
+    const pend = lista
+      .map((p, idx) => ({ p, idx }))
+      .filter(({ p }) => {
+        const tipo = formasAtivas.find((f) => f.id === p.formaId)?.tipo;
+        return !p.cobrancaId && (tipo === 'credito' || tipo === 'debito');
+      })
+      .map(({ p, idx }) => ({
+        idx, valor: p.valor,
+        method: (formasAtivas.find((f) => f.id === p.formaId)?.tipo === 'debito' ? 'debit_card' : 'credit_card') as 'credit_card' | 'debit_card',
+      }));
+    if (pend.length === 0) { handleFinalizar(); return; }
+    if (lista !== pagamentos) setPagamentos(lista);
+    setCobranca(pend[0]);
+  };
+
   const handleFinalizar = async () => {
     // Auto-adicionar pagamento se o valor está preenchido mas não foi clicado no '+'
     let pagamentosFinais = pagamentos;
     if (pagamentos.length === 0 && formaId) {
       const v = parseFloat(valorInput.replace(',', '.'));
       const forma = formasAtivas.find((f) => f.id === formaId);
-      // Sem passar pela maquininha o pagamento nao pode ser dado como recebido: abre a
-      // cobranca e sai; quando o provedor aprovar, o pagamento entra e o operador confirma.
-      if (forma && cobrarNaMaquininha(forma, !isNaN(v) && v > 0 ? Math.min(v, totalAPagar) : totalAPagar)) return;
       if (forma && !isNaN(v) && v >= totalAPagar) {
         const trocoCalc = forma.exigeTroco && v > totalAPagar ? v - totalAPagar : undefined;
         pagamentosFinais = [{ formaId: forma.id, formaNome: forma.nome, valor: totalAPagar, troco: trocoCalc }];
@@ -585,6 +622,14 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   // ── Lança o(s) pedido(s) como cortesia (R$ 0,00) ──
   // Zera o pedido existente (e os vinculados selecionados) via RPC SECURITY DEFINER.
   // Liberação de gerente/admin já validada antes deste ponto.
+  // Maquininha aprovou: próximo cartão da fila, ou fecha o pedido sozinho.
+  useEffect(() => {
+    if (!seguirAposCobranca) return;
+    setSeguirAposCobranca(false);
+    if (cobrancasPendentes.length > 0) { setCobranca(cobrancasPendentes[0]); return; }
+    handleFinalizar();
+  }, [seguirAposCobranca]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleConfirmarCortesia = async (destinatario: string, motivo: string) => {
     if (confirmando) return;
     setConfirmando(true);
@@ -1238,7 +1283,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             Lançar como Cortesia (R$ 0,00)
           </button>
           <button
-            onClick={handleFinalizar}
+            onClick={handleConfirmar}
             disabled={confirmando || (
               pagamentos.length === 0
                 ? (() => {
@@ -1247,7 +1292,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                   })()
                 : restante > 0.01
             )}
-            className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2 text-sm"
+            className={`w-full py-3.5 ${precisaCobrar ? 'bg-sky-600 hover:bg-sky-700' : 'bg-emerald-500 hover:bg-emerald-600'} disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2 text-sm`}
           >
             {confirmando ? (
               <>
@@ -1255,10 +1300,17 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                 Registrando...
               </>
             ) : (
+              precisaCobrar ? (
+              <>
+                <i className="ri-bank-card-line" />
+                Cobrar na maquininha · {fmt(totalACobrar)}
+              </>
+              ) : (
               <>
                 <i className="ri-check-double-line" />
                 Confirmar Pagamento · {fmt(totalAPagar)}
               </>
+              )
             )}
           </button>
         </div>
@@ -1315,19 +1367,22 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
           method={cobranca.method}
           orderId={orderId}
           orderNumber={numeroDisplay ? String(numeroDisplay) : null}
-          onAprovado={({ method }) => {
+          onAprovado={({ pixPaymentId, method }) => {
             const c = cobranca;
             setCobranca(null);
             if (!c) return;
-            // vale o que a maquininha respondeu (crédito × débito)
             const tipoReal = method === 'debit_card' ? 'debito' : 'credito';
-            const formaReal = formasAtivas.find((f) => f.tipo === tipoReal) ?? formasAtivas.find((f) => f.id === c.formaId);
-            if (!formaReal) return;
-            if (formaReal.id !== c.formaId) {
-              toastWarning('Forma ajustada', `O cliente pagou em ${tipoReal}: lançado como ${formaReal.nome}.`);
-            }
-            setPagamentos((prev) => [...prev, { formaId: formaReal.id, formaNome: formaReal.nome, valor: c.valor, troco: undefined }]);
-            setValorInput('');
+            setPagamentos((prev) => prev.map((p, i) => {
+              if (i !== c.idx) return p;
+              // vale o que a maquininha respondeu (crédito × débito)
+              const formaReal = formasAtivas.find((f) => f.tipo === tipoReal);
+              if (formaReal && formaReal.id !== p.formaId) {
+                toastWarning('Forma ajustada', `O cliente pagou em ${tipoReal}: lançado como ${formaReal.nome}.`);
+                return { ...p, formaId: formaReal.id, formaNome: formaReal.nome, cobrancaId: pixPaymentId };
+              }
+              return { ...p, cobrancaId: pixPaymentId };
+            }));
+            setSeguirAposCobranca(true);
           }}
           onCancelar={() => setCobranca(null)}
         />

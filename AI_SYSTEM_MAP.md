@@ -279,6 +279,16 @@ Pedido do dono: Paranaguá passa a usar a maquininha do Mercado Pago; "vamos ter
 
 **Fase 2 — cobrar cartão na maquininha pelo Caixa.** Migration `mp_point_pdv_terminal`: `fin_payment_provider_config.pdv_terminal_id` (a maquininha do balcão). Sem ela o caixa cairia no `terminal_id` padrão, que é a máquina ao lado de um tablet. `pix-payment`: `terminalForCaller` ganhou `station` (`'pdv'` → `pdv_terminal_id ?? terminal_id`). **`kiosk_card_provider.pdv` só é `true` com `pdv_terminal_id` escolhido** — de propósito NÃO cai no `terminal_id` da loja: em Paranaguá a `mp_point` já estava ativa e o caixa passaria a cobrar na máquina do tablet no primeiro deploy. Enquanto a loja não escolher a maquininha do balcão, o caixa continua exatamente como hoje, `create_card_charge` aceita `station`/`order_id`/`order_number` e manda o **número do pedido como `external_reference`** (é o que deixa a conciliação exata), `kiosk_card_provider` devolve `pdv`, `get/save_point_config` tratam `pdv_terminal_id`.
 - Front: `components/feature/CobrarMaquininhaModal.tsx` (cria a cobrança, faz polling do `check_status` a cada 2 s, trata recusa/expiração, cancela no provedor ao desistir — e **respeita o `code: 'at_terminal'`**, que significa "o cliente já passou o cartão"), plugado no `PagamentoModal` do caixa e no `PagamentoRapidoModal` (mesa, conta, divisão, delivery no caixa).
+- **Correção do fluxo no mesmo dia (dono testou com a maquininha real):** cobrar no botão "+"
+  (ao montar a lista de pagamentos) estava errado — a maquininha já ficava carregada com a tela
+  de pagamento **editável atrás**, dava para mexer ou cancelar com o cliente passando o cartão, e
+  ainda sobrava um segundo clique para fechar o pedido. Agora a maquininha entra **só no botão
+  final**: ele vira **"Cobrar na maquininha · R$ X"** (azul) quando há cartão a cobrar, cobra um
+  cartão por vez (fila, para conta dividida em dois cartões) e **fecha o pedido sozinho** quando o
+  último aprova. `PagamentoItem.cobrancaId` guarda a cobrança que pagou cada linha — é o que
+  impede cobrar duas vezes se a confirmação for repetida, e sobrevive a remover/reordenar
+  pagamentos (índice não serve). O `handleFinalizar` é chamado por um **efeito**, não dentro do
+  callback: ele lê `pagamentos` do estado e o callback ainda veria a lista antes da troca de forma.
 - **Regras:** o pagamento **só entra na lista quando o provedor aprova** — não existe confirmar na mão; o auto-add do `handleFinalizar` do `PagamentoRapidoModal` também foi desviado para a maquininha (senão furaria a regra); se o cliente passar débito onde o operador escolheu crédito, **vale o que a maquininha respondeu** (a forma é trocada e o operador é avisado); venda do carrinho vincula a cobrança ao pedido depois, via `attach_order`.
 
 **Ligado em produção (Paranaguá) no mesmo dia.** Conta MP, `card_provider = mercadopago`, `post_to_ledger` e `release_report` ligados. Primeira importação: a venda de teste de R$ 1,00 (débito, taxa R$ 0,01) e o estorno entraram certos, e as 2 vendas do Mercado Livre entraram no extrato **fora da receita** — sem a trava teriam virado R$ 377,82 de venda no cartão do restaurante.
