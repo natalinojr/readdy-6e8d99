@@ -22,4 +22,11 @@ Object.keys(modules).forEach((path) => {
   }
 });
 
+// Alias 'pt' -> 'pt-BR'. O i18next resolve 'pt-BR' descendo para a base 'pt'
+// quando ha `supportedLngs`; sem esta linha o portugues caia no fallback e a
+// tela mostrava a CHAVE crua ("cliente.buscar") em vez do texto.
+if (messages['pt-BR'] && !messages['pt']) {
+  messages['pt'] = messages['pt-BR'];
+}
+
 export default messages; 
