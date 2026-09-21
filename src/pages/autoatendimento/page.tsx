@@ -23,6 +23,10 @@ import KioskConfigModal from './components/KioskConfigModal';
 import PINGate, { isPINAtivo } from './components/PINGate';
 import { validarPinGerente, MAX_TENTATIVAS_PIN_GERENTE } from '../../lib/kioskManagerPin';
 import { type ItemPedidoCliente } from '../../types/mesaCliente';
+import { useIdiomaCardapio } from '../../hooks/useIdiomaCardapio';
+import { edgeUrl } from '../../lib/idiomaCardapio';
+import SeletorIdioma from '../../components/SeletorIdioma';
+import { haVersaoNova, recarregarApp } from '../../lib/versaoApp';
 import type { DestinoInfo } from '../../contexts/PDVContext';
 
 // ── ErrorBoundary local para a página de autoatendimento ────────────────────
@@ -106,6 +110,9 @@ function AutoatendimentoPageInner() {
   const { settings } = useSystemSettings();
   const { kioskSession } = useKioskAuth();
   const { recarregar: recarregarCardapio } = useCardapio();
+  // Idioma do cardapio no totem. A traducao e so de vitrine: o pedido continua
+  // sendo montado com o nome em portugues, que e o que a cozinha le.
+  const idiomaCardapio = useIdiomaCardapio(edgeUrl('mesa-write'), kioskSession?.tenantId ?? user?.tenantId ?? null);
   const navigate = useNavigate();
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen();
 
@@ -188,6 +195,24 @@ function AutoatendimentoPageInner() {
   useEffect(() => {
     if (etapa === 'welcome') recarregarCardapio({ silent: true });
   }, [etapa, recarregarCardapio]);
+
+  // ── Versão nova publicada ──────────────────────────────────────────────────
+  // O totem fica ligado dias seguidos: sem isto ele continuava rodando o build de
+  // antes do deploy até alguém lembrar de recarregar (foi o que segurou a correção
+  // do "Cancelar" da maquininha em 2026-09-21). Confere de 5 em 5 min e se atualiza
+  // SOZINHO na tela inicial, com o carrinho vazio — nunca no meio de um pedido.
+  const [versaoNova, setVersaoNova] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    const conferir = () => { void haVersaoNova().then((tem) => { if (vivo && tem) setVersaoNova(true); }); };
+    conferir();
+    const interval = setInterval(conferir, 5 * 60 * 1000);
+    return () => { vivo = false; clearInterval(interval); };
+  }, []);
+  const ocioso = etapa === 'welcome' && carrinho.length === 0;
+  useEffect(() => {
+    if (versaoNova && ocioso) recarregarApp();
+  }, [versaoNova, ocioso]);
 
   useEffect(() => {
     const interval = setInterval(() => recarregarCardapio({ silent: true }), 3 * 60 * 1000);
@@ -1072,6 +1097,16 @@ function AutoatendimentoPageInner() {
 
   return (
     <div className="fixed inset-0 bg-zinc-950 flex flex-col overflow-hidden">
+      {/* Seletor de idioma preso no topo da janela: no tablet a pessoa chega e
+          precisa VER na hora que da pra trocar, sem procurar menu. */}
+      {idiomaCardapio.temSeletor ? (
+        <SeletorIdioma
+          variante="fixo"
+          disponiveis={idiomaCardapio.disponiveis}
+          idioma={idiomaCardapio.idioma}
+          onTrocar={idiomaCardapio.trocarIdioma}
+        />
+      ) : null}
       {etapa !== 'welcome' && etapa !== 'destino' && (
         <div className="flex items-center justify-between gap-3 px-4 lg:px-6 py-3 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
           <div className="flex items-center gap-3 min-w-0">
@@ -1191,6 +1226,7 @@ function AutoatendimentoPageInner() {
             onAdicionar={handleAdicionar}
             onDiminuir={handleDiminuir}
             onVerCarrinho={() => setEtapa('carrinho')}
+            traduzir={idiomaCardapio.traduzir}
           />
         )}
         {etapa === 'carrinho' && (
