@@ -39,12 +39,38 @@ export const REL_ABAS = [
   { aba: 'clientes', key: 'rel_clientes', label: 'Clientes / CRM' },
 ] as const;
 
+// Abas de Configurações (2026-09-21). Antes, `configuracoes_editar` era tudo ou
+// nada: quem entrava na tela via as oito abas, inclusive Fiscal e a própria
+// matriz de Permissões. Agora a tela é liberada aba a aba.
+// Regra: as abas de Configurações só valem para Admin/Gerente (a tela inteira
+// ainda exige `configuracoes_editar`), e a aba Permissões é só do Admin — quem
+// a tem pode se dar qualquer outra permissão.
+export const CFG_ABAS = [
+  { aba: 'loja', key: 'cfg_loja', label: 'Dados da Loja' },
+  { aba: 'fiscal', key: 'cfg_fiscal', label: 'Fiscal (NFC-e)' },
+  { aba: 'mesas', key: 'cfg_mesas', label: 'Mesas & QR Codes' },
+  { aba: 'estacoes', key: 'cfg_estacoes', label: 'Estações & Pagamentos' },
+  { aba: 'impressoras', key: 'cfg_impressoras', label: 'Impressoras' },
+  { aba: 'modelos-impressao', key: 'cfg_modelos_impressao', label: 'Modelos de Impressão' },
+  { aba: 'operacao', key: 'cfg_operacao', label: 'Operação & Integrações' },
+  { aba: 'permissoes', key: 'cfg_permissoes', label: 'Permissões' },
+] as const;
+
+export type CfgPermissaoKey = (typeof CFG_ABAS)[number]['key'];
+
 export type FinPermissaoKey = (typeof FIN_ABAS)[number]['key'];
 export type RelPermissaoKey = (typeof REL_ABAS)[number]['key'];
+
+export const CFG_KEYS: CfgPermissaoKey[] = CFG_ABAS.map((a) => a.key);
+
+/** Abas de Configurações que um Gerente pode ter: tudo menos a matriz de
+ *  Permissões (senão ele se promove sozinho). */
+export const CFG_KEYS_GERENTE: CfgPermissaoKey[] = CFG_KEYS.filter((k) => k !== 'cfg_permissoes');
 
 export const FIN_KEYS: FinPermissaoKey[] = FIN_ABAS.map((a) => a.key);
 export const REL_KEYS: RelPermissaoKey[] = REL_ABAS.map((a) => a.key);
 
+const CFG_POR_ABA: Record<string, CfgPermissaoKey> = Object.fromEntries(CFG_ABAS.map((a) => [a.aba, a.key]));
 const FIN_POR_ABA: Record<string, FinPermissaoKey> = Object.fromEntries(FIN_ABAS.map((a) => [a.aba, a.key]));
 const REL_POR_ABA: Record<string, RelPermissaoKey> = Object.fromEntries(REL_ABAS.map((a) => [a.aba, a.key]));
 
@@ -55,4 +81,8 @@ export function finKeyDaAba(aba: string): FinPermissaoKey | undefined {
 
 export function relKeyDaAba(aba: string): RelPermissaoKey | undefined {
   return REL_POR_ABA[aba];
+}
+
+export function cfgKeyDaAba(aba: string): CfgPermissaoKey | undefined {
+  return CFG_POR_ABA[aba];
 }
