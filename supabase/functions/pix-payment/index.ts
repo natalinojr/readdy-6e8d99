@@ -121,6 +121,19 @@ async function requireMember(req: Request, admin: Admin, tenantId: string) {
 }
 const isManager = (role: string) => role === 'admin' || role === 'manager';
 
+// Configurar a maquininha do balcão: admin/gerente, ou o papel que o dono liberou
+// em Configurações › Permissões ("Maquininha do balcão"). É a única config que a
+// loja mexe sozinha — trocou de máquina, aponta a nova. Vale só para a maquininha:
+// as outras ações de escrita continuam de admin/gerente.
+async function podeMaquininha(admin: Admin, tenantId: string, role: string) {
+  if (isManager(role)) return true;
+  if (!role) return false;
+  const { data } = await admin.from('permissions').select('allowed')
+    .eq('tenant_id', tenantId).eq('role', role).eq('permission_key', 'cfg_maquininha_mp')
+    .limit(1).maybeSingle();
+  return data?.allowed === true;
+}
+
 // Tablet do autoatendimento que está chamando: o kiosk-auth cria um usuário por token
 // (user_metadata.kiosk_token_id; e-mail kiosk-<token_id>@kiosk.erpos.internal).
 async function kioskTokenIdOf(admin: Admin, userId: string): Promise<string | null> {
@@ -942,7 +955,7 @@ Deno.serve(async (req: Request) => {
       const tenantId = String(body.tenant_id ?? '');
       const auth = await requireMember(req, supabase, tenantId);
       if (auth.error) return auth.error;
-      if (!isManager(auth.role)) return json({ error: 'Somente administrador ou gerente' }, 403);
+      if (!await podeMaquininha(supabase, tenantId, auth.role)) return json({ error: 'Sem permissão para configurar a maquininha' }, 403);
       const { point } = await loadProviderCfgs(supabase, tenantId);
       if (action === 'set_tablet_terminal') {
         const tabletUserId = String(body.tablet_user_id ?? '');
@@ -978,7 +991,7 @@ Deno.serve(async (req: Request) => {
       const tenantId = String(body.tenant_id ?? '');
       const auth = await requireMember(req, supabase, tenantId);
       if (auth.error) return auth.error;
-      if (!isManager(auth.role)) return json({ error: 'Somente administrador ou gerente' }, 403);
+      if (!await podeMaquininha(supabase, tenantId, auth.role)) return json({ error: 'Sem permissão para configurar a maquininha' }, 403);
       const { point } = await loadProviderCfgs(supabase, tenantId);
       const token = String(body.access_token ?? '').trim() || String(point?.access_token ?? '');
       if (!token) return json({ error: 'Informe o Access Token da aplicação Point' }, 422);

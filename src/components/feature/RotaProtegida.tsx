@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import type { PermissaoKey } from '@/hooks/usePermissoes';
-import { FIN_KEYS, REL_KEYS } from '@/constants/permissoesAbas';
+import { FIN_KEYS, REL_KEYS, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
 import { rotaForcada } from '@/lib/acessoRota';
 
 /**
@@ -17,7 +17,9 @@ const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
   '/relatorios': REL_KEYS,
   '/financeiro': FIN_KEYS,
   '/usuarios': 'usuarios_gerenciar',
-  '/configuracoes': 'configuracoes_editar',
+  // A maquininha é a exceção: quem tem só ela entra em Configurações e vê
+  // apenas a aba Maquininha.
+  '/configuracoes': ['configuracoes_editar', CFG_MAQUININHA_KEY],
   '/auditoria': 'auditoria_ver',
   '/clientes': 'clientes_ver',
   '/aprovacoes': 'gestao_aprovacoes',

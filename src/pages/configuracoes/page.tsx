@@ -1,4 +1,4 @@
-import { Settings, Store, ChefHat, Sliders, Shield, LayoutGrid, Printer, FileText, FileCheck2 } from 'lucide-react';
+import { Settings, Store, ChefHat, Sliders, Shield, LayoutGrid, Printer, FileText, FileCheck2, CreditCard } from 'lucide-react';
 import FiscalTab from './components/FiscalTab';
 import { useSearchParams } from 'react-router-dom';
 import LojaTab from './components/LojaTab';
@@ -9,17 +9,19 @@ import MesasConfigTab from './components/MesasConfigTab';
 import ImpressorasTab from './components/ImpressorasTab';
 import ModelosImpressaoTab from './components/ModelosImpressaoTab';
 import { usePermissoes } from '@/hooks/usePermissoes';
-import { cfgKeyDaAba } from '@/constants/permissoesAbas';
+import { cfgKeyDaAba, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
+import MaquininhaTab from './components/MaquininhaTab';
 
-type Tab = 'loja' | 'fiscal' | 'mesas' | 'estacoes' | 'impressoras' | 'modelos-impressao' | 'operacao' | 'permissoes';
+type Tab = 'loja' | 'fiscal' | 'mesas' | 'estacoes' | 'maquininha' | 'impressoras' | 'modelos-impressao' | 'operacao' | 'permissoes';
 
-const VALID_TABS: Tab[] = ['loja', 'fiscal', 'mesas', 'estacoes', 'impressoras', 'modelos-impressao', 'operacao', 'permissoes'];
+const VALID_TABS: Tab[] = ['loja', 'fiscal', 'mesas', 'estacoes', 'maquininha', 'impressoras', 'modelos-impressao', 'operacao', 'permissoes'];
 
 const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'loja', label: 'Dados da Loja', icon: <Store size={14} /> },
   { id: 'fiscal', label: 'Fiscal (NFC-e)', icon: <FileCheck2 size={14} /> },
   { id: 'mesas', label: 'Mesas & QR Codes', icon: <LayoutGrid size={14} /> },
   { id: 'estacoes', label: 'Estações & Pagamentos', icon: <ChefHat size={14} /> },
+  { id: 'maquininha', label: 'Maquininha (Point)', icon: <CreditCard size={14} /> },
   { id: 'impressoras', label: 'Impressoras', icon: <Printer size={14} /> },
   { id: 'modelos-impressao', label: 'Modelos de Impressão', icon: <FileText size={14} /> },
   { id: 'operacao', label: 'Operação & Integrações', icon: <Sliders size={14} /> },
@@ -32,7 +34,14 @@ export default function ConfiguracoesPage() {
   // Mesmo padrão do Financeiro e dos Relatórios: a tela continua exigindo
   // `configuracoes_editar`, e aqui filtramos aba a aba.
   const { hasPermissao, loading: carregandoPermissoes } = usePermissoes();
-  const podeAba = (t: string) => { const k = cfgKeyDaAba(t); return !!k && hasPermissao(k); };
+  // A Maquininha tem chave própria (`cfg_maquininha_mp`) e não é uma aba de verdade:
+  // ela só aparece sozinha para quem NÃO tem Estações & Pagamentos — quem tem a aba
+  // inteira continua configurando a máquina lá dentro, onde ela sempre esteve.
+  const podeAba = (t: string) => {
+    if (t === 'maquininha') return hasPermissao(CFG_MAQUININHA_KEY) && !hasPermissao('cfg_estacoes');
+    const k = cfgKeyDaAba(t);
+    return !!k && hasPermissao(k);
+  };
   const abasLiberadas = tabs.filter((t) => podeAba(t.id));
 
   const rawTab = searchParams.get('tab') as Tab | null;
@@ -89,6 +98,7 @@ export default function ConfiguracoesPage() {
         {tab === 'fiscal' && podeAba('fiscal') && <FiscalTab />}
         {tab === 'mesas' && podeAba('mesas') && <MesasConfigTab />}
         {tab === 'estacoes' && podeAba('estacoes') && <EstacoesPagamentosTab />}
+        {tab === 'maquininha' && podeAba('maquininha') && <MaquininhaTab />}
         {tab === 'impressoras' && podeAba('impressoras') && <ImpressorasTab />}
         {tab === 'modelos-impressao' && podeAba('modelos-impressao') && <ModelosImpressaoTab />}
         {tab === 'operacao' && podeAba('operacao') && <OperacaoTab />}

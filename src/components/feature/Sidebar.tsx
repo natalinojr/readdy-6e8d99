@@ -12,7 +12,7 @@ import { useAppMode } from '../../contexts/AppModeContext';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { usePermissoes, type PermissaoKey } from '@/hooks/usePermissoes';
-import { FIN_KEYS, REL_KEYS } from '@/constants/permissoesAbas';
+import { FIN_KEYS, REL_KEYS, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
 
 const ADMIN_MASTER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -75,7 +75,7 @@ const navSections: NavSection[] = [
       { label: 'Vouchers & Gift Cards', icon: Gift,            path: '/vouchers',      permissao: 'gestao_vouchers' },
       { label: 'Auditoria',             icon: Shield,          path: '/auditoria',     permissao: 'auditoria_ver' },
       { label: 'Aprovações',            icon: Bell,            path: '/aprovacoes',    permissao: 'gestao_aprovacoes' },
-      { label: 'Configurações',         icon: Settings,        path: '/configuracoes', permissao: 'configuracoes_editar' },
+      { label: 'Configurações',         icon: Settings,        path: '/configuracoes', permissao: ['configuracoes_editar', CFG_MAQUININHA_KEY] },
       { label: 'Ajuda & Tutorial',      icon: HelpCircle,      path: '/ajuda' },
     ],
   },

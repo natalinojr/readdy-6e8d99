@@ -58,6 +58,13 @@ export const CFG_ABAS = [
 
 export type CfgPermissaoKey = (typeof CFG_ABAS)[number]['key'];
 
+// A maquininha (Mercado Pago Point) tem chave PRÓPRIA, fora das abas: quem só tem
+// ela chega na configuração da máquina sem receber o resto de Estações & Pagamentos
+// (formas de pagamento, taxas, Stone, Inter, Pix) e sem precisar ser Admin/Gerente —
+// é a configuração que a loja mexe sozinha quando troca a máquina do balcão.
+export const CFG_MAQUININHA_KEY = 'cfg_maquininha_mp';
+export type CfgMaquininhaKey = typeof CFG_MAQUININHA_KEY;
+
 export type FinPermissaoKey = (typeof FIN_ABAS)[number]['key'];
 export type RelPermissaoKey = (typeof REL_ABAS)[number]['key'];
 

@@ -3,7 +3,7 @@ import { Shield } from 'lucide-react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes, mesclarComPadrao } from '@/hooks/usePermissoes';
-import { FIN_ABAS, FIN_KEYS, REL_ABAS, REL_KEYS, CFG_ABAS, CFG_KEYS_GERENTE } from '@/constants/permissoesAbas';
+import { FIN_ABAS, FIN_KEYS, REL_ABAS, REL_KEYS, CFG_ABAS, CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
 import { GESTAO_TELAS, GESTAO_KEYS } from '@/constants/permissoesGestao';
 import { useToast } from '@/contexts/ToastContext';
 
@@ -52,15 +52,19 @@ const permissoes: Permissao[] = [
   { id: 'relatorio_financeiro', categoria: 'Marketing', descricao: 'Acessar Tráfego Pago' },
   { id: 'clientes_ver', categoria: 'Clientes', descricao: 'Ver base de clientes (CRM)' },
   { id: 'usuarios_gerenciar', categoria: 'Usuários', descricao: 'Gerenciar usuários' },
-  { id: 'configuracoes_editar', categoria: 'Configurações', descricao: 'Abrir a tela de Configurações', somenteGerente: true },
+  { id: 'configuracoes_editar', categoria: 'Configurações', descricao: 'Abrir a tela de Configurações' },
   // Aba a aba: sem `configuracoes_editar` nada disso aparece (a tela nem abre).
+  // Qualquer papel pode receber (pedido do dono, 2026-09-21) — só a matriz de
+  // Permissões continua sendo do Admin: quem a tem se dá qualquer outra permissão.
   ...CFG_ABAS.map((a) => ({
     id: a.key,
     categoria: 'Configurações',
     descricao: `Aba ${a.label}`,
-    somenteGerente: true,
     somenteAdmin: a.key === 'cfg_permissoes',
   })),
+  // Fora das abas e sem trava de papel: dá acesso direto à configuração da
+  // maquininha, sem abrir o resto de Estações & Pagamentos.
+  { id: CFG_MAQUININHA_KEY, categoria: 'Configurações', descricao: 'Maquininha do balcão (Mercado Pago Point)' },
   { id: 'auditoria_ver', categoria: 'Auditoria', descricao: 'Ver log de auditoria' },
 ];
 
@@ -74,7 +78,7 @@ const defaultPermissoes: Record<Papel, string[]> = {
     'kds_acessar', 'gestor_pedidos_acessar', 'gestor_pedidos_entregar',
     'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
     // Sem `configuracoes_editar`: as abas só valem se o dono abrir a tela para o Gerente.
-    ...FIN_KEYS, ...REL_KEYS, ...CFG_KEYS_GERENTE, ...GESTAO_KEYS,
+    ...FIN_KEYS, ...REL_KEYS, ...CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY, ...GESTAO_KEYS,
   ],
   caixa: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_cancelar_item',
