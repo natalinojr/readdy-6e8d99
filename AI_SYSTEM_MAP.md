@@ -2967,3 +2967,23 @@ para a rota fechar junto com o card.
 **Critério:** card de módulo com lista fixa de papéis + checagem de permissão no mesmo
 filtro é bug esperando acontecer — a lista sempre ganha e a matriz vira enfeite. Quando
 a tela tem chave de permissão, ela manda sozinha.
+
+### 2026-09-21 — Cobrança na maquininha continuava viva depois do "Cancelar" (Point)
+
+O cliente ia até "Pague na maquininha ao lado" e desistia pelo botão **Cancelar do topo do
+totem**: o `PagamentoKiosk`/`TelaCartaoKiosk` era desmontado e ninguém avisava o Mercado
+Pago — o valor ficava no visor da Point até expirar (15 min), pronto para alguém pagar um
+pedido que não existe mais. O `handleVoltar` ("Escolher outra forma") cancelava, mas
+soltava a tela na hora e **ignorava a recusa** (`code: 'at_terminal'`), deixando o cliente
+escolher Pix com a cobrança do cartão ainda ativa → risco de pagar duas vezes.
+
+**Critérios adotados:** (1) cobrança de provedor viva é **estado externo** — quem cria
+cancela também no `useEffect` de unmount, não só no botão de voltar (vale pro Pix do
+totem e pro `CobrarMaquininhaModal` do caixa); (2) desistir **durante a criação** também
+cancela: a flag fica num ref e a cobrança é cancelada assim que o id chega; (3) sair da
+tela de cartão **espera** a resposta do cancelamento — se o provedor recusar, a tela volta
+a aguardar a confirmação em vez de liberar outra forma de pagamento.
+
+Na mesma passada: `config.payment_method.default_installments = 1` na Order do Point
+(só com `default_type = credit_card`) — sem isso a maquininha para e pergunta "à vista ou
+parcelado". Se o cartão não aceitar 1x, o terminal volta a mostrar a tela de parcelas.
