@@ -571,26 +571,41 @@ async function requestReport(token: string, dateFrom: string, dateTo: string) {
 /** Programa o relatório no painel do MP (assim o `release_fetch` só precisa baixar). */
 // As colunas vão explícitas de propósito: são exatamente as que o parser lê, e assim o
 // relatório não muda de forma quando o MP troca o conjunto padrão.
+// Conjunto exato aceito pela API em 2026-09-21 (a conta recusa `columns` ausente com
+// `invalid_columns`). DATE_SHORT/ORDER_ID/PURCHASE_ID ficaram de fora porque não foram
+// validados; o parser trata a ausência deles.
 const REPORT_COLUMNS = [
-  'DATE', 'DATE_SHORT', 'SOURCE_ID', 'EXTERNAL_REFERENCE', 'ORDER_ID', 'PURCHASE_ID',
+  'DATE', 'SOURCE_ID', 'EXTERNAL_REFERENCE',
   'RECORD_TYPE', 'DESCRIPTION', 'GROSS_AMOUNT', 'NET_CREDIT_AMOUNT', 'NET_DEBIT_AMOUNT',
   'MP_FEE_AMOUNT', 'FINANCING_FEE_AMOUNT', 'SHIPPING_FEE_AMOUNT', 'COUPON_AMOUNT', 'BALANCE_AMOUNT',
 ].map((key) => ({ key }));
 
 async function scheduleReport(token: string, prefix: string, frequency: 'daily' | 'weekly' | 'monthly') {
-  const body = {
+  // Três coisas que a API exige e a doc não deixa claro (descobertas na conta real, 2026-09-21):
+  //   • `execute_after_withdrawal` é OBRIGATÓRIO (sem ele: `invalid_execute_after_withdrawal`);
+  //   • em `daily` o `frequency.value` NÃO pode ir (com ele: `invalid_frequency`) — nos outros vai;
+  //   • `columns` é obrigatório (sem ele: `invalid_columns`).
+  const freq: Record<string, unknown> = { hour: 6, type: frequency };
+  if (frequency !== 'daily') freq.value = 1;
+  const body = JSON.stringify({
     file_name_prefix: prefix,
-    frequency: { hour: 6, type: frequency, value: 1 },
+    frequency: freq,
     display_timezone: 'GMT-03',
     include_withdrawal_at_end: true,
+    execute_after_withdrawal: false,
     separator: ',',
     columns: REPORT_COLUMNS,
-  };
+  });
   // a configuração pode não existir ainda: tenta criar e, se já existir, atualiza
-  let r = await mpFetch(token, '/v1/account/release_report/config', { method: 'POST', body: JSON.stringify(body) });
-  if (!r.ok) r = await mpFetch(token, '/v1/account/release_report/config', { method: 'PUT', body: JSON.stringify(body) });
+  let r = await mpFetch(token, '/v1/account/release_report/config', { method: 'POST', body });
+  if (!r.ok) r = await mpFetch(token, '/v1/account/release_report/config', { method: 'PUT', body });
   if (!r.ok) return { error: mpError(r) };
-  return { scheduled: true, config: r.body };
+
+  // Salvar a configuração NÃO liga o agendamento — ela volta com `scheduled: false` até aqui.
+  // Este POST é que agenda o relatório e já deixa o primeiro arquivo na fila.
+  const s = await mpFetch(token, '/v1/account/release_report/schedule', { method: 'POST', body: '{}' });
+  if (!s.ok) return { scheduled: false, config: r.body, error: `Configuração salva, mas o agendamento falhou: ${mpError(s)}` };
+  return { scheduled: true, config: r.body, next: s.body };
 }
 
 // ── Sync de uma loja ─────────────────────────────────────────────────────────

@@ -281,7 +281,16 @@ Pedido do dono: Paranaguá passa a usar a maquininha do Mercado Pago; "vamos ter
 - Front: `components/feature/CobrarMaquininhaModal.tsx` (cria a cobrança, faz polling do `check_status` a cada 2 s, trata recusa/expiração, cancela no provedor ao desistir — e **respeita o `code: 'at_terminal'`**, que significa "o cliente já passou o cartão"), plugado no `PagamentoModal` do caixa e no `PagamentoRapidoModal` (mesa, conta, divisão, delivery no caixa).
 - **Regras:** o pagamento **só entra na lista quando o provedor aprova** — não existe confirmar na mão; o auto-add do `handleFinalizar` do `PagamentoRapidoModal` também foi desviado para a maquininha (senão furaria a regra); se o cliente passar débito onde o operador escolheu crédito, **vale o que a maquininha respondeu** (a forma é trocada e o operador é avisado); venda do carrinho vincula a cobrança ao pedido depois, via `attach_order`.
 
-**Não verificado ainda** (precisa da loja): cobrança real na maquininha pelo caixa; `POST /v1/account/release_report/config` (programar o relatório) e o parse de um CSV real — a conta não tinha nenhum relatório gerado (`list` devolveu `[]`). Se o `config` falhar, o modal avisa e o botão "Pedir relatório do período" continua funcionando.
+**Ligado em produção (Paranaguá) no mesmo dia.** Conta MP, `card_provider = mercadopago`, `post_to_ledger` e `release_report` ligados. Primeira importação: a venda de teste de R$ 1,00 (débito, taxa R$ 0,01) e o estorno entraram certos, e as 2 vendas do Mercado Livre entraram no extrato **fora da receita** — sem a trava teriam virado R$ 377,82 de venda no cartão do restaurante.
+
+**Programar o Relatório de Liberações — 3 exigências que a doc não diz** (descobertas na conta real; o `POST /config` voltava 400 e o modal avisava):
+1. `execute_after_withdrawal` é **obrigatório** (sem ele: `invalid_execute_after_withdrawal`);
+2. em `frequency.type = 'daily'` o **`value` não pode ir** (com ele: `invalid_frequency`); nos outros tipos vai;
+3. `columns` é **obrigatório** (sem ele: `invalid_columns`).
+
+E, principalmente: **salvar a configuração NÃO liga o agendamento** — ela volta com `scheduled: false`. Quem agenda é um segundo passo, `POST /v1/account/release_report/schedule` (201, já enfileira o primeiro arquivo). Só depois o `GET /config` mostra `scheduled: true`.
+
+**Não verificado ainda** (precisa da loja): cobrança real na maquininha pelo caixa (`pdv_terminal_id` ainda não escolhido) e o parse de um CSV real — o primeiro arquivo do relatório só é gerado pelo MP no dia seguinte.
 
 ### 2026-09-16 — Tráfego Pago › Agente: gestor de tráfego pago com IA (regras de mercado + Claude + escrita na Meta)
 
