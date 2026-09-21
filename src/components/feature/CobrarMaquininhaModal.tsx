@@ -50,6 +50,9 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
   // o callback de aprovado pode chegar de dentro do cancelamento: guarda a referência atual
   const onAprovadoRef = useRef(onAprovado);
   onAprovadoRef.current = onAprovado;
+  // Enquanto viva, a cobrança fica no visor da maquininha. Se o modal sair do ar por fora
+  // (tela fechada, troca de pedido), cancela mesmo assim — senão o valor continua lá.
+  const vivaRef = useRef<string | null>(null);
 
   const criar = useCallback(async () => {
     setFase('criando');
@@ -67,11 +70,21 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
       return;
     }
     setChargeId(data.pix_payment_id);
+    vivaRef.current = data.pix_payment_id;
     setSandbox(Boolean(data.sandbox));
     setFase('aguardando');
   }, [tenantId, amount, method, orderId, orderNumber]);
 
   useEffect(() => { criar(); }, [criar]);
+
+  // Modal desmontado com cobrança viva: solta a maquininha em segundo plano.
+  useEffect(() => () => {
+    const id = vivaRef.current;
+    if (!id) return;
+    vivaRef.current = null;
+    invokeWithAuth('pix-payment', { body: { action: 'cancel', pix_payment_id: id, tenant_id: tenantId } })
+      .catch(() => { /* a cobrança expira sozinha em 15 min */ });
+  }, [tenantId]);
 
   // Polling: o tablet fixo usa o mesmo padrão. O caixa fica com a tela aberta na frente do
   // operador, então não precisa de Realtime nem de recheck por visibilidade.
@@ -85,14 +98,17 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
       if (!alive) return;
       const st = data?.status;
       if (st === 'confirmed') {
+        vivaRef.current = null;
         const m = data?.method === 'debit_card' ? 'debit_card' : data?.method === 'credit_card' ? 'credit_card' : method;
         setMetodoFinal(m);
         setFase('aprovado');
         setTimeout(() => onAprovadoRef.current({ pixPaymentId: chargeId, method: m }), 900);
       } else if (st === 'failed') {
+        vivaRef.current = null;
         setFase('recusado');
         setMsg(MOTIVO[String(data?.error ?? '')] ?? (data?.error ? `Recusado pela maquininha (${data.error}).` : 'Recusado pela maquininha.'));
       } else if (st === 'expired' || st === 'cancelled') {
+        vivaRef.current = null;
         setFase('encerrado');
         setMsg(st === 'expired' ? 'A cobrança expirou na maquininha.' : 'Cobrança cancelada.');
       }
@@ -116,7 +132,8 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
       setMsg('O cliente já passou o cartão na maquininha — aguarde a confirmação.');
       return;
     }
-    if (data?.status === 'confirmed') { onAprovadoRef.current({ pixPaymentId: chargeId, method: metodoFinal }); return; }
+    if (data?.status === 'confirmed') { vivaRef.current = null; onAprovadoRef.current({ pixPaymentId: chargeId, method: metodoFinal }); return; }
+    vivaRef.current = null;
     onCancelar();
   };
 

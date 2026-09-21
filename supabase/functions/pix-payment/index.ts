@@ -415,7 +415,13 @@ async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: numb
       transactions: { payments: [{ amount: amount.toFixed(2) }] },
       config: {
         point: { terminal_id: cfg.terminal_id, print_on_terminal: 'no_ticket' },
-        payment_method: { default_type: method === 'debit_card' ? 'debit_card' : 'credit_card' },
+        payment_method: {
+          default_type: method === 'debit_card' ? 'debit_card' : 'credit_card',
+          // Crédito é SEMPRE à vista: sem isto a maquininha para e pergunta "à vista ou
+          // parcelado" ao cliente. `default_installments` só vale com default_type = credit_card
+          // (se o cartão não aceitar 1x, o terminal volta a mostrar a tela de parcelas).
+          ...(method === 'debit_card' ? {} : { default_installments: 1 }),
+        },
       },
     }),
   });
