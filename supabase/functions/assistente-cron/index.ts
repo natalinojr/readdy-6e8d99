@@ -779,6 +779,42 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
         });
       }
 
+      // Nota de entrada que chegou da SEFAZ com boleto e ainda não foi lançada (2026-09-21).
+      // Sem isto ela é invisível: não tem linha em fin_accounts_payable, então não cai em
+      // 'conta_atrasada' nem em lugar nenhum — o fornecedor cobra e o sistema nunca avisou.
+      // Caso real do dia: 18 parcelas vencidas na Vila Leste, R$ 8.236,50, a mais velha de
+      // 20/06. Só entram as que já venceram ou vencem em até 3 dias: nota recente com boleto
+      // para o mês que vem é rotina de conferência, não pendência.
+      const [notas] = await db()<Array<{ n: number; total: number; venc: string | null }>>`
+        with p as (
+          select d.id, (x->>'vencimento')::date venc, (x->>'valor')::numeric valor
+            from fiscal_inbound_documents d,
+                 lateral jsonb_array_elements(coalesce(d.parcelas, '[]'::jsonb)) x
+           where d.tenant_id = ${t.id} and d.status = 'new'
+             and d.sefaz_status is distinct from 2
+             and (x->>'vencimento') ~ '^\\d{4}-\\d{2}-\\d{2}$'
+             and (x->>'valor')::numeric > 0
+        )
+        select count(distinct id)::int n, coalesce(sum(valor), 0)::float total,
+               to_char(min(venc), 'DD/MM') venc
+          from p
+         where venc <= (now() at time zone 'America/Sao_Paulo')::date + 3`;
+      if (notas.n > 0) {
+        await admin.rpc('fn_pendencia_upsert', {
+          p_tenant: t.id, p_kind: 'nota_nao_lancada', p_ref: 'pendentes',
+          // O valor é o das PARCELAS na janela, não o da nota inteira — uma nota pode ter
+          // parcela vencida hoje e outra só no mês que vem.
+          p_titulo: `${notas.n} ${notas.n === 1 ? 'nota de entrada não lançada' : 'notas de entrada não lançadas'} — ${brl(notas.total)} vencendo`,
+          p_detalhe: `Têm boleto vencido ou a vencer (o mais antigo em ${notas.venc}) e ainda não viraram compra nem despesa. Enquanto isso, não existem no Contas a Pagar.`,
+          p_payload: { total: notas.n, valor: notas.total }, p_rota: '/financeiro?tab=notas-entrada',
+          p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'cron', p_reabrir: true,
+        });
+      } else {
+        await admin.rpc('fn_pendencia_resolver_ref', {
+          p_tenant: t.id, p_kind: 'nota_nao_lancada', p_ref: 'pendentes', p_motivo: 'notas conferidas',
+        });
+      }
+
       if (ownerId) {
         const [tar] = await db()<Array<{ n: number }>>`
           select count(*)::int n from tasks

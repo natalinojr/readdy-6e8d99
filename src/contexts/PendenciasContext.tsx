@@ -45,6 +45,9 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
   conta_atrasada: { label: 'Conta atrasada', icone: 'ri-alarm-warning-line', corBg: 'bg-red-100', corTexto: 'text-red-700' },
   item_sem_classe: { label: 'Classificar item', icone: 'ri-price-tag-3-line', corBg: 'bg-violet-100', corTexto: 'text-violet-700' },
   conta_sem_dre: { label: 'Categoria DRE', icone: 'ri-pie-chart-line', corBg: 'bg-sky-100', corTexto: 'text-sky-700' },
+  // Nota de entrada com boleto vencendo que ninguém lançou (2026-09-21): até ser
+  // conferida ela não existe no Contas a Pagar, então nenhum outro aviso a pega.
+  nota_nao_lancada: { label: 'Nota não lançada', icone: 'ri-file-warning-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
   tarefa_vencida: { label: 'Tarefa', icone: 'ri-task-line', corBg: 'bg-amber-100', corTexto: 'text-amber-700' },
   estoque_critico: { label: 'Estoque', icone: 'ri-archive-line', corBg: 'bg-orange-100', corTexto: 'text-orange-700' },
   aprovacao: { label: 'Aprovação', icone: 'ri-shield-keyhole-line', corBg: 'bg-rose-100', corTexto: 'text-rose-700' },
