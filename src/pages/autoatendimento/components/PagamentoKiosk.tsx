@@ -218,8 +218,15 @@ function TelaPix({
   // Gera o PIX ao montar
   useEffect(() => {
     generatePix();
+    // Saiu do ar sem pagar (botão "Cancelar" do topo, inatividade): cancela a cobrança no
+    // provedor. Sem isto o QR continuava válido depois que o pedido já tinha sido descartado.
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
+      const id = pixDataRef.current?.pix_payment_id;
+      if (!id || avisouPagoRef.current) return;
+      pixDataRef.current = null;
+      invokeWithAuth('pix-payment', { body: { action: 'cancel', pix_payment_id: id } })
+        .catch(() => { /* a cobrança vence sozinha em 10 min */ });
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -304,6 +311,7 @@ function TelaPix({
   const handleVoltar = () => {
     if (pollingRef.current) clearInterval(pollingRef.current);
     const id = pixDataRef.current?.pix_payment_id;
+    pixDataRef.current = null; // já cancelado aqui: o unmount não precisa cancelar de novo
     onVoltar();
     if (!id) return;
     invokeWithAuth<{ status?: string }>('pix-payment', { body: { action: 'cancel', pix_payment_id: id } })

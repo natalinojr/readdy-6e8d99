@@ -10,7 +10,7 @@ import { invokeWithAuth } from '@/lib/supabase';
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
-type Estado = 'criando' | 'aguardando' | 'aprovado' | 'recusado' | 'expirado' | 'erro';
+type Estado = 'criando' | 'aguardando' | 'cancelando' | 'aprovado' | 'recusado' | 'expirado' | 'erro';
 
 const MOTIVO: Record<string, string> = {
   insufficient_amount: 'Saldo ou limite insuficiente.',
@@ -37,18 +37,63 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
   const [erro, setErro] = useState('');
   const [sandbox, setSandbox] = useState(false);
   const [simulando, setSimulando] = useState(false);
+  const [aviso, setAviso] = useState('');
   const chargeRef = useRef<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onPagoRef = useRef(onPago);
   onPagoRef.current = onPago;
   const avisouPagoRef = useRef(false);
+  // A cobrança fica VIVA na maquininha enquanto ninguém cancelar. Estes dois dizem se ainda
+  // há algo a cancelar quando a tela sai do ar (inclusive pelo botão "Cancelar" do topo do
+  // totem, que desmonta esta tela sem passar por handleVoltar).
+  const vivaRef = useRef(false);
+  const desistiuRef = useRef(false);
 
   const pararPolling = () => { if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; } };
 
+  // Fica perguntando ao Mercado Pago o que aconteceu com a cobrança (quem confirma é ele).
+  const retomarPolling = (id: string) => {
+    pararPolling();
+    pollingRef.current = setInterval(async () => {
+      try {
+        const { data: st } = await invokeWithAuth<{ status?: string; method?: string; error?: string | null }>('pix-payment', {
+          body: { action: 'check_status', pix_payment_id: id },
+        });
+        if (st?.status === 'confirmed') {
+          pararPolling();
+          vivaRef.current = false;
+          if (avisouPagoRef.current) return; // consulta paralela que também voltou "confirmed"
+          avisouPagoRef.current = true;
+          setEstado('aprovado');
+          const tipo = st.method === 'debit_card' ? 'debit_card' : 'credit_card';
+          setTimeout(() => onPagoRef.current(id, tipo), 3500);
+        } else if (st?.status === 'failed') {
+          pararPolling();
+          vivaRef.current = false;
+          setErro(MOTIVO[st.error ?? ''] ?? 'O pagamento não foi aprovado.');
+          setEstado('recusado');
+        } else if (st?.status === 'expired' || st?.status === 'cancelled') {
+          pararPolling();
+          vivaRef.current = false;
+          setEstado('expirado');
+        }
+      } catch { /* tenta de novo no próximo ciclo */ }
+    }, 2000);
+  };
+
+  // Cancela no Mercado Pago. Fire-and-forget: usado no unmount, onde não dá pra esperar.
+  const cancelarNoProvedor = (id: string) =>
+    invokeWithAuth<{ success?: boolean; status?: string; code?: string; method?: string }>('pix-payment', {
+      body: { action: 'cancel', pix_payment_id: id },
+    });
+
   const criar = async () => {
     pararPolling();
+    desistiuRef.current = false;
+    vivaRef.current = false;
     setEstado('criando');
     setErro('');
+    setAviso('');
     const { data, error } = await invokeWithAuth<{ pix_payment_id?: string; sandbox?: boolean }>('pix-payment', {
       body: { action: 'create_card_charge', tenant_id: tenantId, amount: total, method },
     });
@@ -58,49 +103,78 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
       return;
     }
     chargeRef.current = data.pix_payment_id;
+    vivaRef.current = true;
+    const id = data.pix_payment_id;
+    // Cliente desistiu enquanto a cobrança estava sendo criada: ela já nasceu na maquininha,
+    // então tem que ser cancelada agora — senão o valor fica lá esperando alguém pagar.
+    if (desistiuRef.current) {
+      vivaRef.current = false;
+      cancelarNoProvedor(id).catch(() => { /* vence sozinha em 15 min */ });
+      return;
+    }
     setSandbox(Boolean(data.sandbox));
     setEstado('aguardando');
-    const id = data.pix_payment_id;
-    pollingRef.current = setInterval(async () => {
-      try {
-        const { data: st } = await invokeWithAuth<{ status?: string; method?: string; error?: string | null }>('pix-payment', {
-          body: { action: 'check_status', pix_payment_id: id },
-        });
-        if (st?.status === 'confirmed') {
-          pararPolling();
-          if (avisouPagoRef.current) return; // consulta paralela que também voltou "confirmed"
-          avisouPagoRef.current = true;
-          setEstado('aprovado');
-          const tipo = st.method === 'debit_card' ? 'debit_card' : 'credit_card';
-          setTimeout(() => onPagoRef.current(id, tipo), 3500);
-        } else if (st?.status === 'failed') {
-          pararPolling();
-          setErro(MOTIVO[st.error ?? ''] ?? 'O pagamento não foi aprovado.');
-          setEstado('recusado');
-        } else if (st?.status === 'expired' || st?.status === 'cancelled') {
-          pararPolling();
-          setEstado('expirado');
-        }
-      } catch { /* tenta de novo no próximo ciclo */ }
-    }, 2000);
+    retomarPolling(id);
   };
 
   useEffect(() => {
     criar();
-    return () => pararPolling();
+    // Saiu do ar sem pagar (botão "Cancelar" do topo, inatividade, troca de tela): cancela a
+    // cobrança no Mercado Pago. Sem isto o valor continuava no visor da maquininha e alguém
+    // podia pagar um pedido que não existe mais.
+    return () => {
+      pararPolling();
+      desistiuRef.current = true;
+      const id = chargeRef.current;
+      if (!vivaRef.current || !id) return;
+      vivaRef.current = false;
+      cancelarNoProvedor(id).catch(() => { /* vence sozinha em 15 min */ });
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sair: volta na hora e cancela em segundo plano. Se o servidor descobrir que já foi
-  // aprovado, o pedido segue pelo fluxo de pagamento aprovado.
-  const handleVoltar = () => {
-    pararPolling();
+  // Sair: só libera a tela DEPOIS que a maquininha soltar o valor. Antes o totem voltava na
+  // hora e a cobrança continuava no visor — o cliente escolhia outra forma e corria o risco de
+  // pagar duas vezes. Se o Mercado Pago recusar o cancelamento (cartão já passado no
+  // terminal), a tela continua esperando a confirmação.
+  const handleVoltar = async () => {
     const id = chargeRef.current;
-    onVoltar();
-    if (!id || estado === 'recusado' || estado === 'expirado') return;
-    invokeWithAuth<{ status?: string; method?: string }>('pix-payment', { body: { action: 'cancel', pix_payment_id: id } })
-      .then(({ data }) => { if (data?.status === 'confirmed') onPagoRef.current(id, data.method === 'debit_card' ? 'debit_card' : 'credit_card'); })
-      .catch(() => { /* a cobrança vence sozinha na maquininha */ });
+    if (!id || estado === 'recusado' || estado === 'expirado' || estado === 'erro') {
+      desistiuRef.current = true;
+      onVoltar();
+      return;
+    }
+    pararPolling();
+    desistiuRef.current = true;
+    setEstado('cancelando');
+    setAviso('');
+    try {
+      const { data, error } = await cancelarNoProvedor(id);
+      if (error || !data) throw error ?? new Error('sem resposta');
+      if (data?.status === 'confirmed') {
+        vivaRef.current = false;
+        avisouPagoRef.current = true;
+        setEstado('aprovado');
+        setTimeout(() => onPagoRef.current(id, data.method === 'debit_card' ? 'debit_card' : 'credit_card'), 3500);
+        return;
+      }
+      if (data?.code === 'at_terminal' || (data?.success === false && data?.status === 'pending')) {
+        // O cartão já foi passado: não dá pra desistir, o pagamento vale.
+        desistiuRef.current = false;
+        setAviso('O cartão já está sendo processado na maquininha. Aguarde a confirmação.');
+        setEstado('aguardando');
+        retomarPolling(id);
+        return;
+      }
+      vivaRef.current = false;
+      onVoltar();
+    } catch {
+      // Sem resposta do servidor: não solta a tela às cegas (a cobrança pode estar viva).
+      desistiuRef.current = false;
+      setAviso('Não foi possível falar com a maquininha. Se o valor sumir do visor, escolha outra forma.');
+      setEstado('aguardando');
+      retomarPolling(id);
+    }
   };
 
   const simular = async (outcome: 'approved_credit' | 'approved_debit' | 'declined') => {
@@ -170,12 +244,21 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
       </div>
       <div>
         <h2 className="text-2xl md:text-5xl font-black text-white">
-          {estado === 'criando' ? 'Enviando para a maquininha…' : 'Pague na maquininha ao lado'}
+          {estado === 'criando' ? 'Enviando para a maquininha…'
+            : estado === 'cancelando' ? 'Cancelando na maquininha…'
+            : 'Pague na maquininha ao lado'}
         </h2>
         <p className="text-zinc-400 text-base md:text-2xl mt-2">
-          {estado === 'criando' ? 'Só um instante' : `Aproxime ou insira o cartão de ${rotulo}`}
+          {estado === 'criando' ? 'Só um instante'
+            : estado === 'cancelando' ? 'Aguarde o valor sair do visor'
+            : `Aproxime ou insira o cartão de ${rotulo}`}
         </p>
       </div>
+      {aviso && (
+        <p className="max-w-md text-amber-400 text-sm md:text-lg bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3">
+          {aviso}
+        </p>
+      )}
       <p className="text-zinc-400 text-sm md:text-2xl">Total: <span className="text-amber-400 font-black">{fmt(total)}</span></p>
       <div className="flex justify-center gap-2">
         {[0, 1, 2].map((i) => (
@@ -195,8 +278,9 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
         </div>
       )}
 
-      <button onClick={handleVoltar} className="px-8 md:px-12 py-3 md:py-4 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 font-semibold text-sm md:text-xl rounded-xl cursor-pointer whitespace-nowrap">
-        Escolher outra forma
+      <button onClick={handleVoltar} disabled={estado === 'cancelando'}
+        className="px-8 md:px-12 py-3 md:py-4 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 font-semibold text-sm md:text-xl rounded-xl cursor-pointer whitespace-nowrap disabled:opacity-50">
+        {estado === 'cancelando' ? 'Cancelando…' : 'Escolher outra forma'}
       </button>
     </div>
   );
