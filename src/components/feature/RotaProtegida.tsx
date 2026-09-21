@@ -27,6 +27,8 @@ const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
   '/mesas': 'gestao_mesas',
   '/config-delivery': 'gestao_delivery',
   '/dashboard': 'gestao_dashboard',
+  '/kds': 'kds_acessar',
+  '/gestor-pedidos': 'gestor_pedidos_acessar',
 };
 
 /**

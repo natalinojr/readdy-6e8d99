@@ -2942,3 +2942,19 @@ Gestão, e o Gestor de Pedidos não podia ser ligado sem o KDS.
 
 Pegadinha: chave de permissão nova nunca salva fica no padrão do papel (`mesclarComPadrao`) —
 por isso dá para acrescentar linha na matriz sem quebrar quem já salvou.
+
+### KDS e Gestor de Pedidos: quem vê é a permissão, não o papel (2026-09-21)
+
+Sequência do item anterior. O Caixa da Paranaguá tinha `kds_acessar` e
+`gestor_pedidos_acessar` marcados em `permissions` (`allowed: true`, role `cashier`)
+e mesmo assim não via o card em `/modulos`: os cards `kds` e `gestor_pedidos` tinham
+`perfis: ['admin','gerente','cozinha']`, uma lista fixa avaliada ANTES da permissão —
+`perfilOk && cfgOk`. Marcar na matriz não adiantava.
+
+Os dois cards perderam o `perfis`; sobra a checagem de permissão que já existia logo
+abaixo. `/kds` e `/gestor-pedidos` entraram no `ROTA_PERMISSAO` do `RotaProtegida`,
+para a rota fechar junto com o card.
+
+**Critério:** card de módulo com lista fixa de papéis + checagem de permissão no mesmo
+filtro é bug esperando acontecer — a lista sempre ganha e a matriz vira enfeite. Quando
+a tela tem chave de permissão, ela manda sozinha.
