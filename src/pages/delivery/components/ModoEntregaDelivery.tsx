@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 
 interface Props {
@@ -12,9 +14,12 @@ interface Props {
   /** Cliente já cadastrado? Se NÃO, pedimos o nome aqui (vale p/ delivery e retirada). */
   isExistingCustomer: boolean;
   onNomeChange: (v: string) => void;
+  /** Seletor de idioma no cabecalho (ver IdentificacaoDelivery). */
+  seletorIdioma?: ReactNode;
 }
 
 export default function ModoEntregaDelivery(props: Props) {
+  const { t } = useTranslation();
   const customerName = props.customerName;
   const phone = props.phone;
   const tenantName = props.tenantName;
@@ -65,16 +70,17 @@ export default function ModoEntregaDelivery(props: Props) {
               <span className="text-orange-600 font-black text-sm">{iniciais}</span>
             )}
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h1 className="text-white text-sm font-black leading-tight truncate">{tenantName || 'Delivery'}</h1>
             <p className="text-white/80 text-[11px]">{phone}</p>
           </div>
+          {props.seletorIdioma}
         </div>
         <div className="relative text-center mt-5">
           <h2 className="text-white text-xl font-black">
-            {isExistingCustomer && primeiroNome ? 'Olá, ' + primeiroNome + '! 👋' : 'Bem-vindo! 👋'}
+            {isExistingCustomer && primeiroNome ? t('cliente.ola', { nome: primeiroNome }) : t('cliente.bemVindo')}
           </h2>
-          <p className="text-white/85 text-xs mt-1">Como você quer receber seu pedido?</p>
+          <p className="text-white/85 text-xs mt-1">{t('cliente.comoReceber')}</p>
         </div>
       </div>
 
@@ -87,20 +93,20 @@ export default function ModoEntregaDelivery(props: Props) {
           {precisaNome ? (
             <div className="mb-4">
               <label className="block text-xs font-bold text-zinc-600 mb-1.5">
-                Seu nome <span className="text-red-500">*</span>{' '}
-                <span className="font-semibold text-zinc-400">(só no primeiro pedido)</span>
+                {t('cliente.seuNome')} <span className="text-red-500">*</span>{' '}
+                <span className="font-semibold text-zinc-400">{t('cliente.soPrimeiroPedido')}</span>
               </label>
               <input
                 type="text"
                 value={customerName}
                 onChange={function (e) { onNomeChange(e.target.value); if (nomeErro && e.target.value.trim()) setNomeErro(false); }}
-                placeholder="Ex: João Silva"
+                placeholder={t('cliente.exemploNome')}
                 maxLength={60}
                 className={'w-full px-3.5 py-2.5 text-sm border-[1.5px] rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
                   (nomeErro ? 'border-red-300 bg-red-50/40' : 'border-zinc-200')}
               />
               {nomeErro ? (
-                <p className="text-[11px] text-red-500 font-medium mt-1.5">Digite seu nome para continuar.</p>
+                <p className="text-[11px] text-red-500 font-medium mt-1.5">{t('cliente.digiteNome')}</p>
               ) : null}
             </div>
           ) : null}
@@ -127,8 +133,8 @@ export default function ModoEntregaDelivery(props: Props) {
               >
                 <i className="ri-e-bike-2-line text-white text-[26px]" />
               </div>
-              <h3 className="text-sm font-black text-zinc-900">Delivery</h3>
-              <p className="text-[10.5px] text-zinc-500 mt-0.5 leading-snug">O motoboy leva até você</p>
+              <h3 className="text-sm font-black text-zinc-900">{t('cliente.delivery')}</h3>
+              <p className="text-[10.5px] text-zinc-500 mt-0.5 leading-snug">{t('cliente.motoboyLeva')}</p>
               <span className="inline-flex items-center gap-1 mt-2 px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-bold rounded-full">
                 <i className="ri-truck-line text-[10px]" />
                 Taxa de entrega
@@ -155,8 +161,8 @@ export default function ModoEntregaDelivery(props: Props) {
               >
                 <i className="ri-store-2-line text-white text-[26px]" />
               </div>
-              <h3 className="text-sm font-black text-zinc-900">Retirada</h3>
-              <p className="text-[10.5px] text-zinc-500 mt-0.5 leading-snug">Você busca na loja</p>
+              <h3 className="text-sm font-black text-zinc-900">{t('cliente.retirada')}</h3>
+              <p className="text-[10.5px] text-zinc-500 mt-0.5 leading-snug">{t('cliente.voceBusca')}</p>
               <span className="inline-flex items-center gap-1 mt-2 px-2 py-1 bg-green-50 text-green-700 text-[10px] font-bold rounded-full">
                 <i className="ri-check-line text-[10px]" />
                 Sem taxa
@@ -179,7 +185,7 @@ export default function ModoEntregaDelivery(props: Props) {
               </>
             ) : (
               <>
-                Continuar
+                {t('cliente.continuar')}
                 <i className="ri-arrow-right-line" />
               </>
             )}
@@ -194,7 +200,7 @@ export default function ModoEntregaDelivery(props: Props) {
               className="mt-3.5 w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-green-50 border border-green-200 text-green-700 text-xs font-bold hover:bg-green-100 transition-colors"
             >
               <i className="ri-whatsapp-line text-[15px]" />
-              Dúvidas? Falar com a gente no WhatsApp
+              {t('cliente.duvidasWhats')}
             </a>
           ) : null}
 

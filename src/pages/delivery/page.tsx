@@ -93,6 +93,16 @@ export default function DeliveryPage() {
   const idiomaCardapio = useIdiomaCardapio(getDeliveryWriteUrl(), data.tenantId ?? null, data.locales);
   const { decorar } = idiomaCardapio;
 
+  // Mesmo seletor em TODAS as etapas: quem nao le portugues precisa achar a
+  // troca de idioma na PRIMEIRA tela, nao depois de ja ter se identificado.
+  const seletorIdioma = idiomaCardapio.temSeletor ? (
+    <SeletorIdioma
+      disponiveis={data.locales}
+      idioma={idiomaCardapio.idioma}
+      onTrocar={idiomaCardapio.trocarIdioma}
+    />
+  ) : null;
+
   const categories = useMemo(function () { return decorar(data.categories, 'category'); }, [data.categories, decorar]);
   const items = useMemo(function () { return decorar(data.items, 'item'); }, [data.items, decorar]);
   const optionGroups = useMemo(function () { return decorar(data.optionGroups, 'option_group'); }, [data.optionGroups, decorar]);
@@ -352,6 +362,7 @@ export default function DeliveryPage() {
         tenantName={tenant?.name}
         logoUrl={lojaLogo}
         onVoltar={function () { data.setStep('preview'); }}
+        seletorIdioma={seletorIdioma}
       />
     );
   }
@@ -368,6 +379,7 @@ export default function DeliveryPage() {
         waUrl={lojaWaUrl}
         isExistingCustomer={!!customer}
         onNomeChange={data.setCustomerName}
+        seletorIdioma={seletorIdioma}
       />
     );
   }
@@ -554,13 +566,7 @@ export default function DeliveryPage() {
                     <span className="truncate">Cardápio · peça em minutos</span>
                   </p>
                 </div>
-                {idiomaCardapio.temSeletor ? (
-                  <SeletorIdioma
-                    disponiveis={data.locales}
-                    idioma={idiomaCardapio.idioma}
-                    onTrocar={idiomaCardapio.trocarIdioma}
-                  />
-                ) : null}
+                {seletorIdioma}
                 <button
                   type="button"
                   onClick={function () { data.setStep('identificacao'); }}
@@ -731,13 +737,7 @@ export default function DeliveryPage() {
                 </p>
               </div>
 
-              {idiomaCardapio.temSeletor ? (
-                <SeletorIdioma
-                  disponiveis={data.locales}
-                  idioma={idiomaCardapio.idioma}
-                  onTrocar={idiomaCardapio.trocarIdioma}
-                />
-              ) : null}
+              {seletorIdioma}
 
               {/* Meus pedidos (badge = pedidos em andamento) */}
               {customerId ? (

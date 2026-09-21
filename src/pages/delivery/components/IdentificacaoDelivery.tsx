@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 interface Props {
   phone: string;
   onPhoneChange: (v: string) => void;
@@ -10,9 +12,13 @@ interface Props {
   logoUrl?: string | null;
   /** Volta para a vitrine/cardápio (quando o cliente chegou pela tela de preview). */
   onVoltar?: () => void;
+  /** Seletor de idioma — precisa estar aqui tambem, esta e a PRIMEIRA tela de
+   *  quem ja tem cadastro. Botao que so aparece depois nao serve pro estrangeiro. */
+  seletorIdioma?: ReactNode;
 }
 
 export default function IdentificacaoDelivery(props: Props) {
+  const { t } = useTranslation();
   const phone = props.phone;
   const onPhoneChange = props.onPhoneChange;
   const onBuscar = props.onBuscar;
@@ -65,7 +71,7 @@ export default function IdentificacaoDelivery(props: Props) {
             className="relative z-10 inline-flex items-center gap-0.5 text-white/90 hover:text-white text-xs font-bold cursor-pointer transition-colors mb-3 max-w-lg mx-auto w-full"
           >
             <i className="ri-arrow-left-s-line text-base" />
-            Voltar ao cardápio
+            {t('cliente.voltarCardapio')}
           </button>
         ) : null}
 
@@ -77,15 +83,16 @@ export default function IdentificacaoDelivery(props: Props) {
               <span className="text-orange-600 font-black text-sm">{iniciais}</span>
             )}
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h1 className="text-white text-sm font-black leading-tight truncate">{tenantName || 'Delivery'}</h1>
-            <p className="text-white/80 text-[11px]">Peça online</p>
+            <p className="text-white/80 text-[11px]">{t('cliente.pecaOnline')}</p>
           </div>
+          {props.seletorIdioma}
         </div>
         <div className="relative text-center mt-5">
-          <h2 className="text-white text-xl font-black">Qual o seu celular?</h2>
+          <h2 className="text-white text-xl font-black">{t('cliente.qualCelular')}</h2>
           <p className="text-white/85 text-xs mt-1">
-            {city ? 'Para receber seu pedido em ' + city : 'Digite seu número para começar'}
+            {city ? t('cliente.receberEm', { cidade: city }) : t('cliente.digiteNumero')}
           </p>
         </div>
       </div>
@@ -97,7 +104,7 @@ export default function IdentificacaoDelivery(props: Props) {
         <div className="max-w-lg mx-auto w-full">
           <div className="mb-4">
             <label className="block text-xs font-bold text-zinc-600 mb-1.5">
-              Seu WhatsApp / Celular <span className="text-red-500">*</span>
+              {t('cliente.seuWhats')} <span className="text-red-500">*</span>
             </label>
             <input
               type="tel"
@@ -111,7 +118,7 @@ export default function IdentificacaoDelivery(props: Props) {
               className="w-full px-3.5 py-2.5 text-sm border-[1.5px] border-zinc-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
             />
             <p className="text-[11px] text-zinc-400 mt-1.5">
-              Se já pediu antes, seus dados são carregados automaticamente.
+              {t('cliente.jaPediuAntes')}
             </p>
           </div>
 
@@ -132,11 +139,11 @@ export default function IdentificacaoDelivery(props: Props) {
             {enviando ? (
               <>
                 <i className="ri-loader-4-line animate-spin" />
-                Buscando...
+                {t('cliente.buscando')}
               </>
             ) : (
               <>
-                Continuar
+                {t('cliente.continuar')}
                 <i className="ri-arrow-right-line" />
               </>
             )}
@@ -144,7 +151,7 @@ export default function IdentificacaoDelivery(props: Props) {
 
           <p className="text-center text-[10.5px] text-zinc-400 mt-3">
             <i className="ri-lock-line mr-0.5" />
-            Seus dados ficam salvos para agilizar o próximo pedido.
+            {t('cliente.dadosSalvos')}
           </p>
         </div>
       </div>
