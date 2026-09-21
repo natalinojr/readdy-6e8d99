@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
@@ -12,7 +13,10 @@ import {
 interface DayDetail {
   // 'auto_entrada' = entrada de caixa com origin automático (auto_sale, auto_suprimento…),
   // que antes era rotulada erradamente como "Entrada Manual".
-  tipo: 'recebivel' | 'auto_entrada' | 'conta_pagar' | 'folha' | 'manual_entrada' | 'manual_saida';
+  // 'nota_provisionada' = duplicata (boleto) de NF-e de entrada que chegou da SEFAZ e
+  // AINDA NÃO foi lançada em Contas a Pagar. Ver o bloco de provisionamento no
+  // buildProjection.
+  tipo: 'recebivel' | 'auto_entrada' | 'conta_pagar' | 'folha' | 'manual_entrada' | 'manual_saida' | 'nota_provisionada';
   descricao: string;
   valor: number;
 }
@@ -27,6 +31,7 @@ interface DayPoint {
   saidasFolha: number;       // folha (vermelho claro)
   saidasContas: number;      // contas a pagar (vermelho escuro)
   saidasManuais: number;     // saídas manuais (laranja)
+  saidasProvisionadas: number; // boleto de nota de entrada ainda não lançada (âmbar)
   // Totais calculados
   totalEntradas: number;
   totalSaidas: number;
@@ -52,6 +57,14 @@ interface Payable {
   description: string;
 }
 
+/** Nota de entrada (SEFAZ) que ainda não virou compra/despesa — ver bloco de provisionamento. */
+interface NotaPendente {
+  id: string;
+  numero: number | null;
+  emitente_nome: string | null;
+  parcelas: Array<{ numero?: string; vencimento: string; valor: number }> | null;
+}
+
 interface PayrollEntry {
   net_salary: number;
   status: string;
@@ -73,13 +86,14 @@ const HORIZON_OPTIONS = [
   { label: '90 dias', days: 90 },
 ];
 
-// Paleta de cores das 5 séries
+// Paleta de cores das 6 séries
 const SERIES_COLORS = {
   entradasAuto: '#4ade80',    // verde claro
   entradasManuais: '#16a34a', // verde escuro
   saidasFolha: '#fca5a5',     // vermelho claro
   saidasContas: '#dc2626',    // vermelho escuro
   saidasManuais: '#f97316',   // laranja
+  saidasProvisionadas: '#a16207', // âmbar escuro (boleto de nota não lançada)
   saldoAcumulado: '#f59e0b',  // âmbar (linha de saldo)
 };
 
@@ -90,6 +104,7 @@ const TIPO_CONFIG: Record<DayDetail['tipo'], { label: string; color: string; ico
   conta_pagar:    { label: 'Conta a Pagar',   color: SERIES_COLORS.saidasContas,    icon: 'ri-bill-line',       sinal: '-', textColor: 'text-red-700' },
   folha:          { label: 'Folha de Pagto',  color: SERIES_COLORS.saidasFolha,     icon: 'ri-team-line',       sinal: '-', textColor: 'text-red-400' },
   manual_saida:   { label: 'Saída Manual',    color: SERIES_COLORS.saidasManuais,   icon: 'ri-subtract-line',   sinal: '-', textColor: 'text-orange-600' },
+  nota_provisionada: { label: 'Nota não lançada', color: SERIES_COLORS.saidasProvisionadas, icon: 'ri-file-warning-line', sinal: '-', textColor: 'text-amber-700' },
 };
 
 // Tipos de detalhe que somam ENTRADA de caixa. Centralizado porque agora são
@@ -294,6 +309,7 @@ function DayDetailPanel({
 
 export default function PrevisaoCaixaTab() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [horizon, setHorizon] = useState(30);
   const [loading, setLoading] = useState(true);
   const [projection, setProjection] = useState<DayPoint[]>([]);
@@ -307,6 +323,8 @@ export default function PrevisaoCaixaTab() {
   // Compromissos já VENCIDOS e em aberto, empilhados no dia de hoje.
   const [totalVencidas, setTotalVencidas] = useState(0);
   const [countVencidas, setCountVencidas] = useState(0);
+  const [totalProvisionado, setTotalProvisionado] = useState(0);
+  const [countNotasProvisionadas, setCountNotasProvisionadas] = useState(0);
   const [pendingReceivables, setPendingReceivables] = useState<Receivable[]>([]);
   const [viewMode, setViewMode] = useState<'area' | 'bar'>('area');
   const [showDetail, setShowDetail] = useState(false);
@@ -344,7 +362,7 @@ export default function PrevisaoCaixaTab() {
     const payrollMinMonth = monthKey(new Date(today.getFullYear(), today.getMonth() - 6, 1));
     const payrollMaxMonth = monthKey(endDate);
 
-    const [payablesRes, cashFlowsRes, pastFlowsRes, receivablesRes, payrollRes, bankAccountsRes] = await Promise.all([
+    const [payablesRes, cashFlowsRes, pastFlowsRes, receivablesRes, payrollRes, bankAccountsRes, notasRes] = await Promise.all([
       // Contas a pagar: 'partial' TAMBÉM é dívida em aberto (invariante §8:
       // saldo devedor = amount − paid_amount). Filtrar só por 'pending' fazia a
       // conta paga pela metade sumir INTEIRA da previsão.
@@ -411,6 +429,23 @@ export default function PrevisaoCaixaTab() {
         .select('current_balance, synced_balance, synced_balance_at, synced_provider')
         .eq('tenant_id', user.tenantId)
         .eq('is_active', true),
+
+      // Nota de entrada que chegou da SEFAZ e AINDA NÃO foi lançada (status 'new').
+      // O boleto dela existe e vai ser cobrado, mas enquanto ninguém confere a nota
+      // não há linha em fin_accounts_payable — e a previsão mostrava saldo otimista.
+      // Caso real (2026-09-21): 18 parcelas vencidas, R$ 8.236,50, invisíveis aqui.
+      // Só entram as com duplicata (`cobr/dup` do XML); nota à vista/cartão não tem
+      // boleto e não é compromisso futuro. 'ignored' e 'imported' ficam de fora — esta
+      // última já virou conta a pagar e seria contada duas vezes.
+      supabase
+        .from('fiscal_inbound_documents')
+        .select('id, numero, emitente_nome, parcelas')
+        .eq('tenant_id', user.tenantId)
+        .eq('status', 'new')
+        // `sefaz_status` é NULL enquanto a nota não é consultada, e `NULL != 2` em SQL
+        // é NULL — um `.neq()` sozinho descartaria justamente as notas mais novas.
+        .or('sefaz_status.is.null,sefaz_status.neq.2')
+        .not('parcelas', 'is', null),
     ]);
 
     // P5: saldo inicial da projeção.
@@ -438,6 +473,7 @@ export default function PrevisaoCaixaTab() {
       saidasFolha: number;
       saidasContas: number;
       saidasManuais: number;
+      saidasProvisionadas: number;
       detalhes: DayDetail[];
     }> = {};
 
@@ -449,6 +485,7 @@ export default function PrevisaoCaixaTab() {
         saidasFolha: 0,
         saidasContas: 0,
         saidasManuais: 0,
+        saidasProvisionadas: 0,
         detalhes: [],
       };
     }
@@ -481,6 +518,40 @@ export default function PrevisaoCaixaTab() {
     });
     setTotalVencidas(totalVencidas);
     setCountVencidas(countVencidas);
+
+    // Boleto de nota de entrada ainda NÃO lançada → saída provisionada (âmbar).
+    // Não é conta a pagar: ninguém conferiu a nota ainda, e ela pode virar compra,
+    // despesa ou ser ignorada. Mas o fornecedor vai cobrar do mesmo jeito, então o
+    // compromisso pressiona o caixa aqui — separado, para o dono ver que falta
+    // confirmar. Some daqui no instante em que a nota é lançada (vira 'imported' e
+    // ganha linha em fin_accounts_payable) ou ignorada.
+    // Vencida cai em HOJE, mesmo tratamento das contas a pagar e da folha.
+    let totalProv = 0;
+    const notasProv = new Set<string>();
+    ((notasRes.data ?? []) as NotaPendente[]).forEach((n) => {
+      (n.parcelas ?? []).forEach((p) => {
+        const valor = Number(p.valor ?? 0);
+        const venc = String(p.vencimento ?? '').slice(0, 10);
+        if (!(valor > 0.005) || !/^\d{4}-\d{2}-\d{2}$/.test(venc)) return;
+        const venceu = venc < todayStr;
+        const k = venceu ? todayStr : venc;
+        if (!dayMap[k]) return;
+        totalProv += valor;
+        notasProv.add(n.id);
+        dayMap[k].saidasProvisionadas += valor;
+        const fornecedor = (n.emitente_nome ?? 'Fornecedor').slice(0, 40);
+        const atraso = venceu
+          ? ` — VENCIDA em ${new Date(venc + 'T12:00:00').toLocaleDateString('pt-BR')}`
+          : '';
+        dayMap[k].detalhes.push({
+          tipo: 'nota_provisionada',
+          descricao: `${fornecedor}${n.numero ? ` · NF ${n.numero}` : ''} — nota ainda não lançada${atraso}`,
+          valor,
+        });
+      });
+    });
+    setTotalProvisionado(totalProv);
+    setCountNotasProvisionadas(notasProv.size);
 
     // Fluxo de caixa → classificado por `origin` (§1 do FINANCEIRO_MAP), tanto
     // nas SAÍDAS quanto nas ENTRADAS. Antes só as saídas olhavam o `origin`:
@@ -590,7 +661,7 @@ export default function PrevisaoCaixaTab() {
       .forEach(([dateStr, vals]) => {
         const d = new Date(dateStr + 'T00:00:00');
         const totalEnt = vals.entradasAuto + vals.entradasManuais;
-        const totalSai = vals.saidasContas + vals.saidasFolha + vals.saidasManuais;
+        const totalSai = vals.saidasContas + vals.saidasFolha + vals.saidasManuais + vals.saidasProvisionadas;
         accumulated += totalEnt - totalSai;
         sumSaidas += totalSai;
         sumEntradas += vals.entradasManuais;
@@ -603,6 +674,7 @@ export default function PrevisaoCaixaTab() {
           saidasFolha: vals.saidasFolha,
           saidasContas: vals.saidasContas,
           saidasManuais: vals.saidasManuais,
+          saidasProvisionadas: vals.saidasProvisionadas,
           totalEntradas: totalEnt,
           totalSaidas: totalSai,
           saldo: totalEnt - totalSai,
@@ -680,6 +752,7 @@ export default function PrevisaoCaixaTab() {
     saidasFolha: 'Folha de Pagto',
     saidasContas: 'Contas a Pagar',
     saidasManuais: 'Saídas Manuais',
+    saidasProvisionadas: 'Notas não lançadas',
     saldoAcumulado: 'Saldo Acumulado',
   };
 
@@ -690,8 +763,8 @@ export default function PrevisaoCaixaTab() {
         <div>
           <h2 className="text-base font-bold text-zinc-900">Fluxo de Caixa Projetado</h2>
           <p className="text-xs text-zinc-500 mt-0.5">
-            Saldo de hoje + o que já vendeu a receber (cartão D+N) − contas a pagar, vencidas e folha.
-            Só compromissos já lançados; vendas futuras não entram.
+            Saldo de hoje + o que já vendeu a receber (cartão D+N) − contas a pagar, vencidas, folha
+            e boletos de notas de entrada ainda não lançadas. Vendas futuras não entram.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -749,6 +822,10 @@ export default function PrevisaoCaixaTab() {
             <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: SERIES_COLORS.saidasManuais }} />
             <span className="text-xs text-zinc-600">Saídas Manuais <span className="text-zinc-400">(laranja)</span></span>
           </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: SERIES_COLORS.saidasProvisionadas }} />
+            <span className="text-xs text-zinc-600">Notas não lançadas <span className="text-zinc-400">(boleto de NF-e que ainda não virou conta — âmbar escuro)</span></span>
+          </div>
           {/* Saldo */}
           <div className="flex items-center gap-1.5">
             <div className="w-6 h-0.5 flex-shrink-0" style={{ background: SERIES_COLORS.saldoAcumulado }} />
@@ -791,8 +868,10 @@ export default function PrevisaoCaixaTab() {
             color: 'text-red-700',
             bg: 'bg-red-50',
             sub: countVencidas > 0
-              ? `Inclui ${countVencidas} vencida(s): ${formatCurrency(totalVencidas)}`
-              : 'Contas a pagar + folha no período',
+              ? `Inclui ${countVencidas} vencida(s): ${formatCurrency(totalVencidas)}${totalProvisionado > 0 ? ` · ${formatCurrency(totalProvisionado)} em notas não lançadas` : ''}`
+              : totalProvisionado > 0
+                ? `Contas a pagar + folha · inclui ${formatCurrency(totalProvisionado)} em notas não lançadas`
+                : 'Contas a pagar + folha no período',
           },
           {
             label: `Saldo em ${horizon}d`,
@@ -817,6 +896,34 @@ export default function PrevisaoCaixaTab() {
           </div>
         ))}
       </div>
+
+      {/* Notas de entrada que ainda não viraram conta a pagar (2026-09-21).
+          Fica ACIMA do alerta de saldo porque é a explicação de por que o número
+          mudou: esse dinheiro já pressiona a projeção, mas ninguém conferiu a nota. */}
+      {countNotasProvisionadas > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+          <div className="w-8 h-8 flex items-center justify-center bg-amber-100 rounded-lg flex-shrink-0">
+            <i className="ri-file-warning-line text-amber-700" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-amber-900">
+              {formatCurrency(totalProvisionado)} em boletos de {countNotasProvisionadas}{' '}
+              {countNotasProvisionadas === 1 ? 'nota não lançada' : 'notas não lançadas'}
+            </p>
+            <p className="text-xs text-amber-800 mt-0.5">
+              Chegaram da SEFAZ com boleto, mas ainda não viraram compra nem despesa. Estão na
+              projeção como provisionado (âmbar escuro) — confira em Notas de entrada para que
+              entrem de verdade no Contas a Pagar.
+            </p>
+            <button
+              onClick={() => navigate('/financeiro?tab=notas-entrada')}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-amber-900 hover:underline mt-1.5 cursor-pointer"
+            >
+              Abrir Notas de entrada <i className="ri-arrow-right-line" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Alerta saldo negativo */}
       {criticalDays.length > 0 ? (
@@ -981,6 +1088,19 @@ export default function PrevisaoCaixaTab() {
                   dot={false}
                   activeDot={{ r: 4 }}
                 />
+                {/* Boleto de nota não lançada — âmbar escuro, pontilhado: ainda não é
+                    compromisso confirmado, mas já pesa na projeção. */}
+                <Area
+                  type="monotone"
+                  dataKey="saidasProvisionadas"
+                  name="saidasProvisionadas"
+                  stroke={SERIES_COLORS.saidasProvisionadas}
+                  strokeWidth={1.5}
+                  fill="none"
+                  strokeDasharray="2 3"
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
@@ -1003,7 +1123,8 @@ export default function PrevisaoCaixaTab() {
                 <Bar dataKey="entradasManuais" name="entradasManuais" fill={SERIES_COLORS.entradasManuais} radius={[2, 2, 0, 0]} stackId="entradas" />
                 <Bar dataKey="saidasFolha" name="saidasFolha" fill={SERIES_COLORS.saidasFolha} radius={[0, 0, 0, 0]} stackId="saidas" />
                 <Bar dataKey="saidasContas" name="saidasContas" fill={SERIES_COLORS.saidasContas} radius={[0, 0, 0, 0]} stackId="saidas" />
-                <Bar dataKey="saidasManuais" name="saidasManuais" fill={SERIES_COLORS.saidasManuais} radius={[2, 2, 0, 0]} stackId="saidas" />
+                <Bar dataKey="saidasManuais" name="saidasManuais" fill={SERIES_COLORS.saidasManuais} radius={[0, 0, 0, 0]} stackId="saidas" />
+                <Bar dataKey="saidasProvisionadas" name="saidasProvisionadas" fill={SERIES_COLORS.saidasProvisionadas} radius={[2, 2, 0, 0]} stackId="saidas" />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -1129,13 +1250,17 @@ export default function PrevisaoCaixaTab() {
                 <span className="w-2 h-2 rounded-full inline-block" style={{ background: SERIES_COLORS.saidasManuais }} />
                 Saídas Manuais
               </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full inline-block" style={{ background: SERIES_COLORS.saidasProvisionadas }} />
+                Notas não lançadas
+              </span>
             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-zinc-50">
                 <tr>
-                  {['Data', 'Entradas Automáticas', 'Entradas Manuais', 'Contas a Pagar', 'Folha', 'Saldo do Dia', 'Saldo Acumulado'].map((h) => (
+                  {['Data', 'Entradas Automáticas', 'Entradas Manuais', 'Contas a Pagar', 'Folha', 'Notas não lançadas', 'Saldo do Dia', 'Saldo Acumulado'].map((h) => (
                     <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-zinc-500 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -1171,6 +1296,9 @@ export default function PrevisaoCaixaTab() {
                       <td className="px-4 py-2.5 whitespace-nowrap" style={{ color: SERIES_COLORS.saidasFolha }}>
                         {p.saidasFolha > 0 ? <span className="font-medium">{formatCurrency(p.saidasFolha)}</span> : <span className="text-zinc-300">—</span>}
                       </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap" style={{ color: SERIES_COLORS.saidasProvisionadas }}>
+                        {p.saidasProvisionadas > 0 ? <span className="font-medium">{formatCurrency(p.saidasProvisionadas)}</span> : <span className="text-zinc-300">—</span>}
+                      </td>
                       <td className={`px-4 py-2.5 font-semibold whitespace-nowrap ${p.saldo >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                         {formatCurrency(p.saldo)}
                       </td>
@@ -1180,7 +1308,7 @@ export default function PrevisaoCaixaTab() {
                     </tr>
                     {expandedDays.has(p.date) && p.detalhes.length > 0 && (
                       <tr key={`${p.date}-detail`} className="bg-zinc-50/60">
-                        <td colSpan={7} className="px-6 py-2 pb-3">
+                        <td colSpan={8} className="px-6 py-2 pb-3">
                           <div className="space-y-1">
                             {p.detalhes.map((d, idx) => {
                               const cfg = TIPO_CONFIG[d.tipo];
