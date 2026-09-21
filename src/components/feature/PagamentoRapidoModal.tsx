@@ -11,6 +11,7 @@ import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
 import { indicesPagamentosFaltantes } from '@/lib/pagamentosPendentes';
 import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
 import CortesiaDetalhesModal from '@/pages/pdv/caixa/components/CortesiaDetalhesModal';
+import CobrarMaquininhaModal from '@/components/feature/CobrarMaquininhaModal';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -42,7 +43,7 @@ interface ItemPedido {
 export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, destinoDisplay, destino, onClose, onSuccess, paidByPdv = 'cashier', valorInicial, tituloContexto, autoLinkOrderIds }: Props) {
   const { formasAtivas, loading: loadingFormas } = usePaymentMethods();
   const { user } = useAuth();
-  const { success: toastSuccess, error: toastError } = useToast();
+  const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
   const { setPedidos, pedidos: kdsPedidos } = useKDS();
 
   const { pedidosRelacionados, todosPedidosAbertos } = usePedidosAgrupados(destino ?? null, [], 0);
@@ -50,6 +51,11 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   const [formaId, setFormaId] = useState('');
   const [valorInput, setValorInput] = useState(valorInicial != null ? valorInicial.toFixed(2) : '');
   const [pagamentos, setPagamentos] = useState<{ formaId: string; formaNome: string; valor: number; troco?: number }[]>([]);
+  // ── Cartao cobrado na maquininha (Mercado Pago Point em modo PDV) ─────────
+  // Mesma regra do PagamentoModal do caixa: escolher credito/debito manda o valor para a
+  // maquininha e o pagamento so entra na lista quando o provedor aprovar.
+  const [pointPdv, setPointPdv] = useState(false);
+  const [cobranca, setCobranca] = useState<{ formaId: string; formaNome: string; valor: number; method: 'credit_card' | 'debit_card' } | null>(null);
   const [confirmando, setConfirmando] = useState(false);
   const [sucesso, setSucesso] = useState(false);
   const [etapa, setEtapa] = useState<'pagar' | 'selecionar'>('pagar');
@@ -327,11 +333,31 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     setPagamentos([]);
   }
 
+  useEffect(() => {
+    if (!user?.tenantId) return;
+    let cancelled = false;
+    invokeWithAuth<{ point?: boolean; pdv?: boolean }>('pix-payment', {
+      body: { action: 'kiosk_card_provider', tenant_id: user.tenantId },
+    }).then(({ data }) => { if (!cancelled) setPointPdv(Boolean(data?.point && data?.pdv)); });
+    return () => { cancelled = true; };
+  }, [user?.tenantId]);
+
+  /** Cartao com maquininha ligada: devolve true e abre a cobranca em vez de empilhar o valor. */
+  const cobrarNaMaquininha = (forma: { id: string; nome: string; tipo: string }, valor: number) => {
+    if (!pointPdv || (forma.tipo !== 'credito' && forma.tipo !== 'debito')) return false;
+    setCobranca({
+      formaId: forma.id, formaNome: forma.nome, valor,
+      method: forma.tipo === 'debito' ? 'debit_card' : 'credit_card',
+    });
+    return true;
+  };
+
   const handleAddPagamento = () => {
     const v = parseFloat(valorInput.replace(',', '.'));
     if (isNaN(v) || v <= 0) return;
     const forma = formasAtivas.find((f) => f.id === formaId);
     if (!forma) return;
+    if (cobrarNaMaquininha(forma, v)) return;
     if (forma.exigeTroco && v > restante) {
       const trocoCalc = v - restante;
       setPagamentos((prev) => [
@@ -353,6 +379,9 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     if (pagamentos.length === 0 && formaId) {
       const v = parseFloat(valorInput.replace(',', '.'));
       const forma = formasAtivas.find((f) => f.id === formaId);
+      // Sem passar pela maquininha o pagamento nao pode ser dado como recebido: abre a
+      // cobranca e sai; quando o provedor aprovar, o pagamento entra e o operador confirma.
+      if (forma && cobrarNaMaquininha(forma, !isNaN(v) && v > 0 ? Math.min(v, totalAPagar) : totalAPagar)) return;
       if (forma && !isNaN(v) && v >= totalAPagar) {
         const trocoCalc = forma.exigeTroco && v > totalAPagar ? v - totalAPagar : undefined;
         pagamentosFinais = [{ formaId: forma.id, formaNome: forma.nome, valor: totalAPagar, troco: trocoCalc }];
@@ -1275,6 +1304,32 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             toastSuccess('Desconto autorizado', `${fmt(descontoPendente)} por ${autorizadoPor}`);
           }}
           onCancelar={() => setShowDescontoAuth(false)}
+        />
+      )}
+
+      {/* Cartão na maquininha: o pagamento só entra quando o provedor aprovar */}
+      {cobranca && user?.tenantId && (
+        <CobrarMaquininhaModal
+          tenantId={user.tenantId}
+          amount={cobranca.valor}
+          method={cobranca.method}
+          orderId={orderId}
+          orderNumber={numeroDisplay ? String(numeroDisplay) : null}
+          onAprovado={({ method }) => {
+            const c = cobranca;
+            setCobranca(null);
+            if (!c) return;
+            // vale o que a maquininha respondeu (crédito × débito)
+            const tipoReal = method === 'debit_card' ? 'debito' : 'credito';
+            const formaReal = formasAtivas.find((f) => f.tipo === tipoReal) ?? formasAtivas.find((f) => f.id === c.formaId);
+            if (!formaReal) return;
+            if (formaReal.id !== c.formaId) {
+              toastWarning('Forma ajustada', `O cliente pagou em ${tipoReal}: lançado como ${formaReal.nome}.`);
+            }
+            setPagamentos((prev) => [...prev, { formaId: formaReal.id, formaNome: formaReal.nome, valor: c.valor, troco: undefined }]);
+            setValorInput('');
+          }}
+          onCancelar={() => setCobranca(null)}
         />
       )}
     </div>

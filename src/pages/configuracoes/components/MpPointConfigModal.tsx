@@ -16,6 +16,7 @@ interface ConfigInfo {
   is_active: boolean;
   environment: 'production' | 'sandbox';
   terminal_id: string | null;
+  pdv_terminal_id?: string | null;
   token_hint: string | null;
   last_test_at: string | null;
   has_webhook_secret?: boolean;
@@ -60,6 +61,8 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
   };
   const [ambiente, setAmbiente] = useState<'production' | 'sandbox'>('production');
   const [terminalId, setTerminalId] = useState('');
+  // maquininha do balcao: vazio = usa a mesma do tablet
+  const [pdvTerminalId, setPdvTerminalId] = useState('');
   const [terminais, setTerminais] = useState<Terminal[] | null>(null);
   const [buscando, setBuscando] = useState(false);
   const [trocandoModo, setTrocandoModo] = useState(false);
@@ -77,6 +80,7 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
         setInfo(data);
         setAmbiente(data.environment ?? 'production');
         setTerminalId(data.terminal_id ?? '');
+        setPdvTerminalId(data.pdv_terminal_id ?? '');
         setAtivo(data.configured ? Boolean(data.is_active) : true);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -112,7 +116,7 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
     if (!tenantId) return;
     setSaving(true);
     setErro('');
-    const body: Record<string, unknown> = { action: 'save_point_config', tenant_id: tenantId, environment: ambiente, terminal_id: terminalId.trim(), is_active: ativo };
+    const body: Record<string, unknown> = { action: 'save_point_config', tenant_id: tenantId, environment: ambiente, terminal_id: terminalId.trim(), pdv_terminal_id: pdvTerminalId.trim(), is_active: ativo };
     if (token.trim()) body.access_token = token.trim();
     if (webhookSecret.trim()) body.webhook_secret = webhookSecret.trim();
     const { data, error } = await invokeWithAuth<{ ok?: boolean; is_active: boolean }>('pix-payment', { body });
@@ -122,7 +126,7 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
     setToken('');
     const salvouSecret = Boolean(webhookSecret.trim());
     setWebhookSecret('');
-    setInfo(prev => prev ? { ...prev, configured: true, is_active: data.is_active, environment: ambiente, terminal_id: terminalId.trim(), has_webhook_secret: prev.has_webhook_secret || salvouSecret } : prev);
+    setInfo(prev => prev ? { ...prev, configured: true, is_active: data.is_active, environment: ambiente, terminal_id: terminalId.trim(), pdv_terminal_id: pdvTerminalId.trim() || null, has_webhook_secret: prev.has_webhook_secret || salvouSecret } : prev);
     onSaved?.({ is_active: data.is_active });
   };
 
@@ -137,8 +141,8 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
               <i className="ri-bank-card-line text-white text-lg" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-zinc-900">Maquininha do autoatendimento</h2>
-              <p className="text-[11px] text-zinc-400">Mercado Pago Point · a cobrança do tablet aparece na maquininha</p>
+              <h2 className="text-base font-bold text-zinc-900">Maquininha Mercado Pago Point</h2>
+              <p className="text-[11px] text-zinc-400">O valor sai do sistema (tablet ou caixa) e aparece na maquininha</p>
             </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-500 cursor-pointer">
@@ -217,6 +221,27 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
                   </div>
                 )}
                 {modoAtual && <p className="text-[10px] text-zinc-500 mt-1">Modo atual: <strong>{modoAtual}</strong></p>}
+              </div>
+
+              {/* Maquininha do CAIXA: sem isso, a cobrança do PDV cairia na máquina de um tablet. */}
+              <div>
+                <label className="text-xs font-semibold text-zinc-700">Maquininha do caixa (PDV)</label>
+                {terminais && terminais.length > 0 ? (
+                  <select value={pdvTerminalId} onChange={e => setPdvTerminalId(e.target.value)}
+                    className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 mt-1 focus:outline-none focus:ring-2 focus:ring-amber-400">
+                    <option value="">A mesma do tablet (acima)</option>
+                    {terminais.map(t => <option key={t.id} value={t.id}>{t.id} · {t.operating_mode}</option>)}
+                    {pdvTerminalId && !terminais.some(t => t.id === pdvTerminalId) && (
+                      <option value={pdvTerminalId}>{pdvTerminalId}</option>
+                    )}
+                  </select>
+                ) : (
+                  <input value={pdvTerminalId} onChange={e => setPdvTerminalId(e.target.value)} placeholder="Vazio = a mesma do tablet"
+                    className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 mt-1 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                )}
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  É a maquininha que fica no balcão. Enquanto ficar vazio, cobrar cartão pelo caixa manda a cobrança para a maquininha do tablet — escolha uma máquina só do caixa e ligue o <strong>modo PDV</strong> nela.
+                </p>
               </div>
 
               {tablets.length > 0 && (

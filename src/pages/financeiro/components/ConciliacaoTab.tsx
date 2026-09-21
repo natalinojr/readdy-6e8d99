@@ -12,6 +12,8 @@ import ConfirmarVinculosModal from './conciliacao/ConfirmarVinculosModal';
 import ReconciliacaoSaldoModal from './conciliacao/ReconciliacaoSaldoModal';
 import StoneConfigModal from './conciliacao/StoneConfigModal';
 import StoneImportPanel from './conciliacao/StoneImportPanel';
+import MpConfigModal from './conciliacao/MpConfigModal';
+import MpImportPanel from './conciliacao/MpImportPanel';
 import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 import InterConfigModal from './conciliacao/InterConfigModal';
 import InterSyncPanel from './conciliacao/InterSyncPanel';
@@ -462,6 +464,7 @@ export default function ConciliacaoTab() {
   const [selectedTransaction, setSelectedTransaction] = useState<StatementImport | null>(null);
   const [showSaldoModal, setShowSaldoModal] = useState(false);
   const [showStoneConfig, setShowStoneConfig] = useState(false);
+  const [showMpConfig, setShowMpConfig] = useState(false);
   const [showIfoodConfig, setShowIfoodConfig] = useState(false);
   const [showInterConfig, setShowInterConfig] = useState(false);
   const [showInicioFin, setShowInicioFin] = useState(false);
@@ -473,6 +476,7 @@ export default function ConciliacaoTab() {
   const inicioFin = moneyFlow.financeiro_inicio ?? null;
   const mesBRFin = (iso: string) => iso.slice(5, 7) + '/' + iso.slice(0, 4);
   const usaStone = moneyFlow.card_provider === 'stone';
+  const usaMp = moneyFlow.card_provider === 'mercadopago';
   // Pagamentos sem nota selecionados para lançar de uma vez (despesa/compra)
   const [selLanc, setSelLanc] = useState<Set<string>>(new Set());
   const [lancTipo, setLancTipo] = useState<LancarTipo>('despesa');
@@ -636,6 +640,23 @@ export default function ConciliacaoTab() {
       return out;
     })();
 
+    // Mercado Pago: a busca de pagamentos aceita o dia de HOJE e no máximo 31 dias por chamada.
+    const mpRange = async (): Promise<Resp> => {
+      let inserted = 0; let lastErr: string | undefined; let ok = false; let notConf = false;
+      for (let ini = range!.from; ini <= range!.to; ini = shiftISO(ini, 31)) {
+        const blocoFim = shiftISO(ini, 30) > range!.to ? range!.to : shiftISO(ini, 30);
+        const r = await invokeWithAuth<SyncResp & { results?: Array<{ inserted?: number }> }>('mp-conciliation', {
+          body: { action: 'import_range', tenant_id: user.tenantId, date_from: ini, date_to: blocoFim },
+        });
+        if (r.data?.not_configured) { notConf = true; break; }
+        const err = r.data?.error ?? r.error?.message;
+        if (err || !r.data?.success) lastErr = err || 'falhou'; else ok = true;
+        inserted += (r.data?.results ?? []).reduce((s, x) => s + Number(x.inserted ?? 0), 0);
+      }
+      if (notConf) return { data: { not_configured: true }, error: null };
+      return { data: { success: ok || !lastErr, inserted, error: ok ? undefined : lastErr }, error: null };
+    };
+
     const [inter, stone] = await Promise.all([
       invokeWithAuth<SyncResp>('inter-bank', {
         body: { action: 'sync', tenant_id: user.tenantId, ...(range ? { date_from: range.from, date_to: range.to } : {}) },
@@ -644,10 +665,16 @@ export default function ConciliacaoTab() {
         ? stoneRange()
         : invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
     ]);
-    // Depois do Inter: os depósitos do iFood casam com o extrato que acabou de chegar.
-    const ifood = await invokeWithAuth<SyncResp>('ifood-financial', {
-      body: { action: 'sync', tenant_id: user.tenantId, ...(competencias ? { competences: competencias } : {}) },
-    });
+    // Depois do Inter: os saques do Mercado Pago e os depósitos do iFood casam com o extrato
+    // que acabou de chegar (a mesma razão pela qual o cron roda o Inter primeiro).
+    const [mp, ifood] = await Promise.all([
+      range
+        ? mpRange()
+        : invokeWithAuth<SyncResp>('mp-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
+      invokeWithAuth<SyncResp>('ifood-financial', {
+        body: { action: 'sync', tenant_id: user.tenantId, ...(competencias ? { competences: competencias } : {}) },
+      }),
+    ]);
     const parts: string[] = [];
     let hasError = false;
     const read = (label: string, r: { data: SyncResp | null; error: Error | null }) => {
@@ -660,6 +687,7 @@ export default function ConciliacaoTab() {
     };
     read('Inter', inter);
     read('Stone', stone);
+    read('Mercado Pago', mp);
     read('iFood', ifood);
     const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const periodo = range ? ` (${fmtDataBR(range.from)} a ${fmtDataBR(range.to)})` : '';
@@ -1750,7 +1778,12 @@ export default function ConciliacaoTab() {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowIntegracoes(false)}>
           <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 flex-shrink-0">
-              <h3 className="font-bold text-zinc-900">Integrações bancárias</h3>
+              <div>
+                <h3 className="font-bold text-zinc-900">Integrações bancárias</h3>
+                {(usaStone || usaMp) && (
+                  <p className="text-xs text-zinc-500">Maquininha da loja: <strong>{usaMp ? 'Mercado Pago' : 'Stone'}</strong> (Conciliação › ⚙ › Como o dinheiro entra)</p>
+                )}
+              </div>
               <button onClick={() => setShowIntegracoes(false)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
                 <i className="ri-close-line text-zinc-500" />
               </button>
@@ -1764,6 +1797,10 @@ export default function ConciliacaoTab() {
               <StoneImportPanel
                 onImportDone={() => { refresh(); }}
                 onConfigureClick={() => setShowStoneConfig(true)}
+              />
+              <MpImportPanel
+                onImportDone={() => { refresh(); }}
+                onConfigureClick={() => setShowMpConfig(true)}
               />
             </div>
           </div>
@@ -1800,6 +1837,14 @@ export default function ConciliacaoTab() {
         <StoneConfigModal
           onClose={() => setShowStoneConfig(false)}
           onSaved={() => { setShowStoneConfig(false); }}
+        />
+      )}
+
+      {/* Mercado Pago Config Modal */}
+      {showMpConfig && (
+        <MpConfigModal
+          onClose={() => setShowMpConfig(false)}
+          onSaved={() => { setShowMpConfig(false); refresh(); loadAlerts(); }}
         />
       )}
 

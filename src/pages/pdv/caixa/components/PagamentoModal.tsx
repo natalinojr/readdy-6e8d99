@@ -40,6 +40,7 @@ const ICON_MAP: Record<string, string> = {
   other: 'ri-more-line',
 };
 import ComprovantePrint from './ComprovantePrint';
+import CobrarMaquininhaModal from '@/components/feature/CobrarMaquininhaModal';
 import { printSimpleReceipt } from './CozinhaTicketPrint';
 import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
 import type { PrintResult } from '@/lib/printUtils';
@@ -86,6 +87,14 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const [pagamentos, setPagamentos] = useState<PagamentoItem[]>([]);
   const [formaAtiva, setFormaAtiva] = useState('');
   const [valorInput, setValorInput] = useState('');
+  // ── Cartao cobrado na maquininha (Mercado Pago Point em modo PDV) ─────────
+  // Quando a loja tem maquininha ligada ao sistema, escolher credito/debito no caixa manda
+  // o valor para a maquininha em vez de so empilhar o valor digitado: o operador nao erra a
+  // forma e o pagamento so entra quando o provedor aprova.
+  const [pointPdv, setPointPdv] = useState(false);
+  const [cobranca, setCobranca] = useState<{ forma: FormaPagamento; valor: number; method: 'credit_card' | 'debit_card' } | null>(null);
+  // cobrancas aprovadas nesta venda: depois de criar o pedido, viram vinculo pix_payment -> pedido
+  const cobrancasRef = useRef<string[]>([]);
   const [sucesso, setSucesso] = useState(false);
   const [pagamentosFinal, setPagamentosFinal] = useState<PagamentoItem[]>([]);
   const [showComprovante, setShowComprovante] = useState(false);
@@ -220,6 +229,26 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     return pedidosRelacionados;
   }, [modoVincularManual, todosPedidosAbertos, pedidosRelacionados]);
 
+  // Venda do carrinho: o pedido nasce DEPOIS da cobrança, então o vínculo cobrança → pedido
+  // é feito aqui (fin_pix_payments.order_id). É o que liga a venda no Mercado Pago ao pedido
+  // na hora de conferir a conciliação.
+  const vincularCobrancas = useCallback(async (orderId: string) => {
+    const ids = cobrancasRef.current;
+    if (ids.length === 0 || !orderId) return;
+    cobrancasRef.current = [];
+    await Promise.all(ids.map((id) =>
+      invokeWithAuth('pix-payment', { body: { action: 'attach_order', pix_payment_id: id, order_id: orderId, tenant_id: user?.tenantId } })
+        .catch(() => undefined)));
+  }, [user?.tenantId]);
+
+  // Pedido único sendo pago: só aí dá para mandar o número do pedido para a maquininha
+  // (external_reference no Mercado Pago = casamento exato na conciliação depois).
+  const pedidoUnicoParaCobranca = useMemo(() => {
+    const existentes = pedidosExistentesSelecionados.filter((p) => !p.isCarrinho);
+    const temCarrinho = pedidosExistentesSelecionados.some((p) => p.isCarrinho);
+    return existentes.length === 1 && !temCarrinho ? existentes[0] : null;
+  }, [pedidosExistentesSelecionados]);
+
   // Helper para identificação do pedido
   const getPedidoIdentificacao = (pedido: PedidoAgrupado) => {
     if (pedido.isCarrinho) return '';
@@ -268,6 +297,16 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         if (active.length > 0) setFormaAtiva(active[0].id);
       }
     });
+  }, [user?.tenantId]);
+
+  // A maquininha do caixa esta pronta? (terminal proprio do PDV ou o padrao da loja)
+  useEffect(() => {
+    if (!user?.tenantId) return;
+    let cancelled = false;
+    invokeWithAuth<{ point?: boolean; pdv?: boolean }>('pix-payment', {
+      body: { action: 'kiosk_card_provider', tenant_id: user.tenantId },
+    }).then(({ data }) => { if (!cancelled) setPointPdv(Boolean(data?.point && data?.pdv)); });
+    return () => { cancelled = true; };
   }, [user?.tenantId]);
 
   // ── Voucher handlers ───────────────────────────────────────────────────────
@@ -321,6 +360,12 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     if (isNaN(v) || v <= 0) return;
     const forma = formasPagamento.find((f) => f.id === formaAtiva);
     if (!forma) return;
+    // Cartao com maquininha ligada: o valor vai para a maquininha e o pagamento so e
+    // empilhado quando o Mercado Pago aprovar (empilhar antes seria dizer que recebeu).
+    if (pointPdv && (forma.tipo === 'credit_card' || forma.tipo === 'debit_card')) {
+      setCobranca({ forma, valor: v, method: forma.tipo });
+      return;
+    }
     const isCash = forma.tipo === 'cash';
     if (isCash && v > restante) {
       // Dinheiro com troco: amount = restante, troco = v - restante, valorRecebido = v
@@ -531,6 +576,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         orderIdLocal = result.orderId;
         setNumeroPedidoFinal(seq);
         setOrderIdSucesso(result.orderId);
+        void vincularCobrancas(result.orderId);
         marcarComoPago(seq);
       }
 
@@ -644,6 +690,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       const seq = parseInt(result.number.replace(/\D/g, '').slice(-4)) || 1;
       setNumeroPedidoFinal(seq);
       setOrderIdSucesso(result.orderId);
+      void vincularCobrancas(result.orderId);
       marcarComoPago(seq);
       setCarrinhoParaReimpressao(carrinhoSnapshot);
       setDestinoParaReimpressao(destinoSnapshot);
@@ -1419,6 +1466,32 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             toastSuccess('Desconto autorizado', `${formatPrice(descontoPendente)} por ${autorizadoPor}`);
           }}
           onCancelar={() => setShowDescontoAuth(false)}
+        />
+      )}
+
+      {/* Cartão na maquininha: o pagamento só entra na lista quando o provedor aprovar */}
+      {cobranca && user?.tenantId && (
+        <CobrarMaquininhaModal
+          tenantId={user.tenantId}
+          amount={cobranca.valor}
+          method={cobranca.method}
+          orderId={pedidoUnicoParaCobranca?.id ?? null}
+          orderNumber={pedidoUnicoParaCobranca?.numeroStr ?? null}
+          onAprovado={({ pixPaymentId, method }) => {
+            const c = cobranca;
+            setCobranca(null);
+            if (!c) return;
+            cobrancasRef.current = [...cobrancasRef.current, pixPaymentId];
+            // A maquininha diz se foi crédito ou débito: se o operador escolheu a forma errada,
+            // vale o que a maquininha respondeu.
+            const formaReal = formasPagamento.find((f) => f.tipo === method) ?? c.forma;
+            if (formaReal.id !== c.forma.id) {
+              toastWarning('Forma ajustada', `O cliente pagou em ${method === 'debit_card' ? 'débito' : 'crédito'}: lançado como ${formaReal.nome}.`);
+            }
+            setPagamentos((prev) => [...prev, { formaId: formaReal.id, formaNome: formaReal.nome, valor: c.valor, troco: undefined }]);
+            setValorInput('');
+          }}
+          onCancelar={() => setCobranca(null)}
         />
       )}
     </div>
