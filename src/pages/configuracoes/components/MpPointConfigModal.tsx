@@ -229,18 +229,18 @@ export default function MpPointConfigModal({ onClose, onSaved }: Props) {
                 {terminais && terminais.length > 0 ? (
                   <select value={pdvTerminalId} onChange={e => setPdvTerminalId(e.target.value)}
                     className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 mt-1 focus:outline-none focus:ring-2 focus:ring-amber-400">
-                    <option value="">A mesma do tablet (acima)</option>
+                    <option value="">Nenhuma — o caixa lança o cartão à mão</option>
                     {terminais.map(t => <option key={t.id} value={t.id}>{t.id} · {t.operating_mode}</option>)}
                     {pdvTerminalId && !terminais.some(t => t.id === pdvTerminalId) && (
                       <option value={pdvTerminalId}>{pdvTerminalId}</option>
                     )}
                   </select>
                 ) : (
-                  <input value={pdvTerminalId} onChange={e => setPdvTerminalId(e.target.value)} placeholder="Vazio = a mesma do tablet"
+                  <input value={pdvTerminalId} onChange={e => setPdvTerminalId(e.target.value)} placeholder="Vazio = o caixa lança o cartão à mão"
                     className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 mt-1 focus:outline-none focus:ring-2 focus:ring-amber-400" />
                 )}
                 <p className="text-[11px] text-zinc-500 mt-1">
-                  É a maquininha que fica no balcão. Enquanto ficar vazio, cobrar cartão pelo caixa manda a cobrança para a maquininha do tablet — escolha uma máquina só do caixa e ligue o <strong>modo PDV</strong> nela.
+                  É a maquininha que fica no balcão. <strong>Só depois de escolher uma aqui</strong> o caixa passa a mandar o valor do cartão para a maquininha — até lá, nada muda no caixa. Escolha uma máquina que seja só do caixa (não a do tablet) e ligue o <strong>modo PDV</strong> nela.
                 </p>
               </div>
 

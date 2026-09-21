@@ -804,12 +804,12 @@ Deno.serve(async (req: Request) => {
       const auth = await requireMember(req, supabase, tenantId);
       if (auth.error) return auth.error;
       const { point } = await loadProviderCfgs(supabase, tenantId);
-      // `pdv` diz se o CAIXA tem maquininha (própria ou a padrão da loja): é o que o PDV usa
-      // para decidir se mostra "Cobrar na maquininha".
+      // `pdv` só é true com uma maquininha ESCOLHIDA para o caixa. De propósito não cai no
+      // terminal_id da loja: esse é o do tablet, e o caixa cobraria na máquina errada — a loja
+      // precisa dizer qual é a do balcão antes de o caixa parar de lançar o cartão à mão.
       return json({
         point: pointReady(point), sandbox: point?.environment === 'sandbox',
-        pdv: pointReady(point) && Boolean(point!.pdv_terminal_id ?? point!.terminal_id),
-        pdv_own_terminal: Boolean(point?.pdv_terminal_id),
+        pdv: pointReady(point) && Boolean(point!.pdv_terminal_id),
       });
     }
 
