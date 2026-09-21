@@ -2886,3 +2886,28 @@ Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — prob
 - Salvar critérios **recalcula o funil na hora** (a edge chama a RPC logo após o upsert) e a tela recarrega as contagens em modo **silencioso** (`carregarOverview(true)`): usar o `carregando` normal trocava o formulário que o dono acabou de editar por "Calculando o funil…".
 - A tela devolve o que o SERVIDOR gravou, não o que foi digitado — é assim que o clamp fica visível. Percentil é exibido invertido ("top % que mais gasta" = `(1 - vip_percentil) * 100`), que é como o dono pensa.
 - Abas do painel: **Funil** (quem está onde) · **Ofertas** (o que sugerir, ex-"Regras") · **Critérios** (quem entra em cada estágio + as travas de teto semanal, horário e desconto máximo, que saíram da aba de ofertas).
+
+### Telas do módulo Gestão viram permissão; cozinha tem uma chave só (2026-09-21)
+
+Dois problemas que pareciam um: o Caixa não tinha como receber nenhuma tela do módulo
+Gestão, e o Gestor de Pedidos não podia ser ligado sem o KDS.
+
+- **Gestão por permissão.** O card "Gestão" em `/modulos` era fixo em `perfis: ['admin','gerente']`,
+  e as telas Dashboard, Pedidos, Mesas, Aprovações, Promoções, Vouchers e Delivery não tinham
+  chave nenhuma (quem entrava via todas). Agora existem `gestao_*` em
+  [`src/constants/permissoesGestao.ts`](src/constants/permissoesGestao.ts), listadas na categoria
+  **Gestão** de Configurações › Permissões. Ter **qualquer** uma delas (ou de Cardápio, Estoque,
+  Relatórios, Clientes…) já faz o card aparecer — `GESTAO_ENTRADA_KEYS` — e o módulo abre na
+  primeira tela liberada (`primeiraRotaGestao`), porque `/dashboard` pode não estar.
+  Promoções saiu de `cardapio_editar`, Vouchers de `pdv_desconto` e Aprovações de
+  `usuarios_gerenciar`: a tela agora tem chave própria. Padrão: admin e gerente com tudo.
+- **KDS × Gestor de Pedidos.** Havia DUAS configurações para a mesma coisa: o terminal `kds` em
+  `pdv_config` e a "Visão da Cozinha" (`kitchen_view`). O terminal derrubava as duas telas juntas
+  — era por isso que só dava para ter o Gestor com o KDS ligado. O terminal saiu da tela de
+  Terminais PDV; `kitchen_view` ganhou o valor `'nenhum'` e é a única chave. Quem já tinha o
+  terminal desligado continua com a cozinha desligada: `kitchenViewDe()` em
+  `SystemSettingsContext` traduz `pdv_config.kds === false` para `'nenhum'`, e o save mantém
+  `pdv_config.kds` em sincronia (compatibilidade, ninguém mais lê para decidir visibilidade).
+
+Pegadinha: chave de permissão nova nunca salva fica no padrão do papel (`mesclarComPadrao`) —
+por isso dá para acrescentar linha na matriz sem quebrar quem já salvou.

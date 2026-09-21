@@ -20,9 +20,13 @@ const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
   '/configuracoes': 'configuracoes_editar',
   '/auditoria': 'auditoria_ver',
   '/clientes': 'clientes_ver',
-  '/aprovacoes': 'usuarios_gerenciar',
-  '/promocoes': 'cardapio_editar',
-  '/vouchers': 'pdv_desconto',
+  '/aprovacoes': 'gestao_aprovacoes',
+  '/promocoes': 'gestao_promocoes',
+  '/vouchers': 'gestao_vouchers',
+  '/pedidos': 'gestao_pedidos',
+  '/mesas': 'gestao_mesas',
+  '/config-delivery': 'gestao_delivery',
+  '/dashboard': 'gestao_dashboard',
 };
 
 /**

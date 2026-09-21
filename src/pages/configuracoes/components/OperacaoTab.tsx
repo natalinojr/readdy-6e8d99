@@ -230,6 +230,9 @@ export default function OperacaoTab() {
         // Mantém valores do banco como base e aplica as seleções da tela
         ...(settings.pdv_config ?? {}),
         ...Object.fromEntries(pdvTerminais.map(p => [p.id, p.obrigatorio ? true : p.ativo])),
+        // O terminal 'kds' saiu da tela: só acompanha a Visão da Cozinha para não
+        // voltar a esconder o Gestor de Pedidos junto com o KDS.
+        kds: cfg.visaoCozinha !== 'nenhum',
       } as Record<string, boolean>,
     });
     setSalvando(false);
@@ -265,12 +268,13 @@ export default function OperacaoTab() {
       )}
 
       {/* Visão da Cozinha */}
-      <SectionCard title="Visão da Cozinha" subtitle="Escolha quais módulos de cozinha estarão disponíveis" icon={<ChefHat size={16} />}>
+      <SectionCard title="Visão da Cozinha" subtitle="Escolha quais módulos de cozinha estarão disponíveis — KDS e Gestor de Pedidos são independentes" icon={<ChefHat size={16} />}>
         <div className="space-y-2">
           {([
             ['kds',    'KDS — Kitchen Display System',   'Display completo com estações, operadores e SLA por item'],
             ['gestor', 'Gestor de Pedidos',               'Visão simplificada em kanban ou lista com ações rápidas'],
             ['ambos',  'KDS + Gestor de Pedidos (ambos)', 'Ambos os módulos disponíveis simultaneamente'],
+            ['nenhum', 'Nenhum — cozinha desligada',      'Esconde KDS e Gestor de Pedidos do menu e dos módulos'],
           ] as [VisaoCozinha, string, string][]).map(([v, label, sub]) => (
             <button key={v} onClick={() => set('visaoCozinha', v)}
               className={`w-full flex items-start gap-3 px-4 py-3 rounded-xl border cursor-pointer text-left transition-all ${cfg.visaoCozinha === v ? 'border-amber-400 bg-amber-50' : 'border-zinc-100 bg-zinc-50 hover:border-zinc-200'}`}>
@@ -289,7 +293,7 @@ export default function OperacaoTab() {
       {/* Terminais PDV */}
       <SectionCard title="Terminais PDV" subtitle="Quais terminais estarão ativos na operação" icon={<Monitor size={16} />}>
         <div className="space-y-2.5">
-          {pdvTerminais.filter(p => p.id !== 'autoatendimento').map((pdv) => (
+          {pdvTerminais.filter(p => p.id !== 'autoatendimento' && p.id !== 'kds').map((pdv) => (
             <div key={pdv.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${pdv.ativo ? 'border-amber-200 bg-amber-50/40' : 'border-zinc-100 bg-zinc-50'}`}>
               <div className={`w-8 h-8 flex items-center justify-center rounded-lg flex-shrink-0 ${pdv.ativo ? 'bg-amber-500' : 'bg-zinc-200'}`}>
                 <i className={`${pdv.icon} text-sm ${pdv.ativo ? 'text-white' : 'text-zinc-400'}`} />

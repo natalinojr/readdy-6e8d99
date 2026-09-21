@@ -1,4 +1,4 @@
-export type VisaoCozinha = 'kds' | 'gestor' | 'ambos';
+export type VisaoCozinha = 'kds' | 'gestor' | 'ambos' | 'nenhum';
 
 export interface ConfigOperacao {
   taxaServico: number;

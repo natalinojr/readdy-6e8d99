@@ -86,7 +86,7 @@ export interface SystemSettings {
   stone_client_secret: string;
   timer_verde_max: number;
   timer_ambar_max: number;
-  kitchen_view: 'kds' | 'gestor' | 'ambos';
+  kitchen_view: 'kds' | 'gestor' | 'ambos' | 'nenhum';
   cancel_mode: 'livre' | 'senha_gerente' | 'proibido';
   discount_profile: 'gerente' | 'admin';
   default_prep_time: number;
@@ -231,7 +231,10 @@ function parseRow(data: Record<string, unknown>): SystemSettings {
     stone_client_secret: (data.stone_client_secret as string) ?? '',
     timer_verde_max: Number(data.timer_verde_max ?? DEFAULT_SETTINGS.timer_verde_max),
     timer_ambar_max: Number(data.timer_ambar_max ?? DEFAULT_SETTINGS.timer_ambar_max),
-    kitchen_view: (data.kitchen_view as SystemSettings['kitchen_view']) ?? DEFAULT_SETTINGS.kitchen_view,
+    // A cozinha tem UMA chave só: kitchen_view. O terminal 'kds' do pdv_config
+    // fazia o mesmo papel e derrubava KDS e Gestor de Pedidos juntos — quem já
+    // tinha esse terminal desligado continua com a cozinha desligada ('nenhum').
+    kitchen_view: kitchenViewDe(data),
     cancel_mode: (data.cancel_mode as SystemSettings['cancel_mode']) ?? DEFAULT_SETTINGS.cancel_mode,
     discount_profile: (data.discount_profile as SystemSettings['discount_profile']) ?? DEFAULT_SETTINGS.discount_profile,
     default_prep_time: Number(data.default_prep_time ?? DEFAULT_SETTINGS.default_prep_time),
@@ -250,6 +253,12 @@ function parseRow(data: Record<string, unknown>): SystemSettings {
       : DEFAULT_PDV_CONFIG,
     updated_at: data.updated_at as string | undefined,
   };
+}
+
+function kitchenViewDe(data: Record<string, unknown>): SystemSettings['kitchen_view'] {
+  const pdv = (data.pdv_config ?? {}) as Partial<PdvConfig>;
+  if (pdv.kds === false) return 'nenhum';
+  return (data.kitchen_view as SystemSettings['kitchen_view']) ?? DEFAULT_SETTINGS.kitchen_view;
 }
 
 export function SystemSettingsProvider({ children }: { children: ReactNode }) {

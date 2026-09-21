@@ -36,7 +36,7 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    items: [{ label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' }],
+    items: [{ label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', permissao: 'gestao_dashboard' }],
   },
   {
     title: 'Terminais PDV',
@@ -52,27 +52,29 @@ const navSections: NavSection[] = [
     title: 'Cozinha',
     ocultarGestao: true,
     items: [
-      { label: 'KDS',               icon: Monitor,  path: '/kds',            permissao: 'kds_acessar',            pdvTerminal: 'kds' },
-      { label: 'Gestor de Pedidos', icon: ChefHat,  path: '/gestor-pedidos', permissao: 'gestor_pedidos_acessar', pdvTerminal: 'kds' },
+      // Sem pdvTerminal: quem liga/desliga cada tela é a "Visão da Cozinha"
+      // (kitchen_view) — o terminal 'kds' escondia as duas de uma vez.
+      { label: 'KDS',               icon: Monitor,  path: '/kds',            permissao: 'kds_acessar' },
+      { label: 'Gestor de Pedidos', icon: ChefHat,  path: '/gestor-pedidos', permissao: 'gestor_pedidos_acessar' },
     ],
   },
   {
     title: 'Gestão',
     items: [
-      { label: 'Pedidos',               icon: ClipboardList,   path: '/pedidos' },
-      { label: 'Delivery',              icon: Truck,           path: '/config-delivery', permissao: 'configuracoes_editar' },
+      { label: 'Pedidos',               icon: ClipboardList,   path: '/pedidos',       permissao: 'gestao_pedidos' },
+      { label: 'Delivery',              icon: Truck,           path: '/config-delivery', permissao: 'gestao_delivery' },
       { label: 'Relatórios',            icon: BarChart3,       path: '/relatorios',    permissao: REL_KEYS },
       { label: 'Tráfego Pago',          icon: Megaphone,       path: '/trafego-pago',  permissao: 'relatorio_financeiro' },
       { label: 'Cardápio',              icon: UtensilsCrossed, path: '/cardapio',      permissao: 'cardapio_editar' },
       { label: 'Estoque',               icon: Package,         path: '/estoque',       permissao: 'estoque_movimentar' },
       { label: 'Financeiro',            icon: DollarSign,      path: '/financeiro',    permissao: FIN_KEYS },
       { label: 'Usuários',              icon: Users,           path: '/usuarios',      permissao: 'usuarios_gerenciar' },
-      { label: 'Mesas',                 icon: LayoutGrid,      path: '/mesas' },
+      { label: 'Mesas',                 icon: LayoutGrid,      path: '/mesas',         permissao: 'gestao_mesas' },
       { label: 'Clientes',              icon: Heart,           path: '/clientes',      permissao: 'clientes_ver' },
-      { label: 'Promoções',             icon: Tag,             path: '/promocoes',     permissao: 'cardapio_editar' },
-      { label: 'Vouchers & Gift Cards', icon: Gift,            path: '/vouchers',      permissao: 'pdv_desconto' },
+      { label: 'Promoções',             icon: Tag,             path: '/promocoes',     permissao: 'gestao_promocoes' },
+      { label: 'Vouchers & Gift Cards', icon: Gift,            path: '/vouchers',      permissao: 'gestao_vouchers' },
       { label: 'Auditoria',             icon: Shield,          path: '/auditoria',     permissao: 'auditoria_ver' },
-      { label: 'Aprovações',            icon: Bell,            path: '/aprovacoes' },
+      { label: 'Aprovações',            icon: Bell,            path: '/aprovacoes',    permissao: 'gestao_aprovacoes' },
       { label: 'Configurações',         icon: Settings,        path: '/configuracoes', permissao: 'configuracoes_editar' },
       { label: 'Ajuda & Tutorial',      icon: HelpCircle,      path: '/ajuda' },
     ],

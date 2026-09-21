@@ -4,6 +4,7 @@ import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes, mesclarComPadrao } from '@/hooks/usePermissoes';
 import { FIN_ABAS, FIN_KEYS, REL_ABAS, REL_KEYS } from '@/constants/permissoesAbas';
+import { GESTAO_TELAS, GESTAO_KEYS } from '@/constants/permissoesGestao';
 import { useToast } from '@/contexts/ToastContext';
 
 type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'financeiro';
@@ -43,6 +44,7 @@ const permissoes: Permissao[] = [
   { id: 'gestor_pedidos_acessar', categoria: 'Cozinha', descricao: 'Acessar Gestor de Pedidos' },
   { id: 'gestor_pedidos_entregar', categoria: 'Cozinha', descricao: 'Marcar pedidos como entregues no Gestor' },
   { id: 'relatorio_estoque', categoria: 'Estoque', descricao: 'Ver relatórios de estoque' },
+  ...GESTAO_TELAS.map((t) => ({ id: t.key, categoria: 'Gestão', descricao: `Tela ${t.label}` })),
   ...FIN_ABAS.map((a) => ({ id: a.key, categoria: 'Financeiro', descricao: `Aba ${a.label}`, somenteGerente: true })),
   ...REL_ABAS.map((a) => ({ id: a.key, categoria: 'Relatórios', descricao: `Aba ${a.label}` })),
   { id: 'relatorio_financeiro', categoria: 'Marketing', descricao: 'Acessar Tráfego Pago' },
@@ -61,7 +63,7 @@ const defaultPermissoes: Record<Papel, string[]> = {
     'estoque_movimentar', 'estoque_inventario',
     'kds_acessar', 'gestor_pedidos_acessar', 'gestor_pedidos_entregar',
     'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
-    ...FIN_KEYS, ...REL_KEYS,
+    ...FIN_KEYS, ...REL_KEYS, ...GESTAO_KEYS,
   ],
   caixa: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_cancelar_item',
@@ -261,6 +263,9 @@ export default function PermissoesTab() {
                 <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{cat}</span>
                 {cat === 'Financeiro' && (
                   <span className="ml-2 text-[11px] text-zinc-400 normal-case">— só Admin e Gerente acessam o Financeiro</span>
+                )}
+                {cat === 'Gestão' && (
+                  <span className="ml-2 text-[11px] text-zinc-400 normal-case">— liberar qualquer uma já faz o módulo Gestão aparecer para o papel</span>
                 )}
               </div>
               {itens.map((perm, idx) => (
