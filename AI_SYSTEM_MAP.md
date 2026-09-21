@@ -3072,3 +3072,27 @@ filtro de proposito — pedido antigo precisa resolver o nome de opcao apagada.
 **Pendente:** o totem so recebeu o seletor (barra fixa no topo da janela); a
 traducao dos nomes no `CardapioKiosk.tsx` ficou de fora do commit porque o
 arquivo tinha trabalho nao commitado de outra sessao na mesma linha.
+
+### Configurações liberada aba a aba (2026-09-21)
+- `configuracoes_editar` era tudo ou nada: quem abria a tela via as oito abas, incluindo Fiscal (NFC-e) e a própria matriz de Permissões. Agora existem as chaves `cfg_*` (`CFG_ABAS` em `src/constants/permissoesAbas.ts`), no mesmo padrão de `FIN_ABAS`/`REL_ABAS`: a tela continua exigindo `configuracoes_editar` e cada aba tem a sua chave.
+- **Compatibilidade sem migração de dados:** `mesclarComPadrao` (usePermissoes) faz chave nunca salva cair no padrão do papel — por isso admin recebe `...CFG_KEYS` e gerente `...CFG_KEYS_GERENTE` em `DEFAULT_PERMISSOES`, e ninguém perde acesso ao entrar a novidade. Quem já salvou a matriz antes de hoje continua igual até salvar de novo.
+- **`cfg_permissoes` é só do Admin** (`somenteAdmin` na PermissoesTab, campo novo ao lado de `somenteGerente`): quem tem a aba Permissões pode se dar qualquer outra permissão, então ela não é oferecida nem para o Gerente — daí `CFG_KEYS_GERENTE` excluir essa chave. As demais `cfg_*` são `somenteGerente` (travadas para caixa/garçom/cozinha), como as abas do Financeiro.
+- `ConfiguracoesPage` filtra as abas por `cfgKeyDaAba` + `hasPermissao`, cai na primeira liberada quando o `?tab=` aponta para uma que o papel não tem, e cada aba também é checada na renderização (não basta esconder o botão). Sem nenhuma aba liberada, mostra um aviso em vez de tela vazia — e esse aviso só aparece depois que `usePermissoes` termina de carregar, senão piscaria a cada entrada.
+- Lembrete: os defaults por papel existem em duas cópias (o `DEFAULT_PERMISSOES` do hook e o `defaultPermissoes` local da PermissoesTab). Permissão nova precisa entrar nas duas — ver [[project_perfis_usuario]].
+
+**Medido na maquininha da loja (2026-09-21), não reaprender:**
+- **Cancelar cobrança que o terminal já pegou exige header.** `POST /v1/orders/{id}/cancel`
+  só cancela orders em `created`; a Point pega a cobrança em segundos. Com
+  `x-allow-cancelable-status: at_terminal` o MP responde **202** (assíncrono) e a order vira
+  `canceled` em poucos segundos — o valor sai do visor sozinho. Sem o header, era recusado em
+  silêncio e só dava pra cancelar apertando no próprio terminal (aparece como
+  `status_detail: cancel_by_terminal`).
+- **Crédito à vista precisa de DOIS campos.** `config.payment_method.default_installments: 1`
+  sozinho o MP aceita e ecoa — **e o terminal ignora**, continua perguntando "à vista ou
+  parcelado". Só pula a tela junto com `installments_cost`. Usamos `'buyer'` (testado, também
+  pula): se um cartão não aceitar 1x e a tela voltar, os juros são do cliente, não da loja.
+  Cuidado com o nome: `default_installments_cost` (o que a tabela de migração da doc mostra)
+  é **recusado** com `unsupported_properties`.
+- **Como testar sem publicar nada:** a extensão `http` do Postgres já está instalada — dá pra
+  criar/cancelar uma order de R$ 1,00 na maquininha direto por SQL, com o token saindo de
+  `fin_payment_provider_config` sem passar pelo chat.

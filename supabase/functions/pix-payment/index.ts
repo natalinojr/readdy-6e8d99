@@ -423,9 +423,13 @@ async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: numb
         payment_method: {
           default_type: method === 'debit_card' ? 'debit_card' : 'credit_card',
           // Crédito é SEMPRE à vista: sem isto a maquininha para e pergunta "à vista ou
-          // parcelado" ao cliente. `default_installments` só vale com default_type = credit_card
-          // (se o cartão não aceitar 1x, o terminal volta a mostrar a tela de parcelas).
-          ...(method === 'debit_card' ? {} : { default_installments: 1 }),
+          // parcelado". Medido na Point Smart da loja em 2026-09-21: `default_installments: 1`
+          // SOZINHO não basta (o MP aceita e o terminal ignora) — só pula a tela junto com
+          // `installments_cost`. Vai 'buyer' de propósito: se algum cartão não aceitar 1x e o
+          // terminal voltar a mostrar as parcelas, os juros são do cliente, nunca da loja.
+          // (`default_installments_cost`, o nome da tabela de migração da doc, o MP recusa:
+          // "additionalProperties not allowed".)
+          ...(method === 'debit_card' ? {} : { default_installments: 1, installments_cost: 'buyer' }),
         },
       },
     }),
