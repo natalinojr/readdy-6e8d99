@@ -116,6 +116,9 @@ export interface PagamentoItem {
   valor: number;
   troco?: number;
   valorRecebido?: number;
+  /** Cobrança na maquininha que pagou esta linha (fin_pix_payments.id). Presente = já cobrado:
+   *  é o que impede cobrar duas vezes se a confirmação for repetida. */
+  cobrancaId?: string;
 }
 
 export interface FinalizarResult {

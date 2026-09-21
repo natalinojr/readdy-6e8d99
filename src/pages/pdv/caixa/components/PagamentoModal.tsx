@@ -92,7 +92,9 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   // o valor para a maquininha em vez de so empilhar o valor digitado: o operador nao erra a
   // forma e o pagamento so entra quando o provedor aprova.
   const [pointPdv, setPointPdv] = useState(false);
-  const [cobranca, setCobranca] = useState<{ forma: FormaPagamento; valor: number; method: 'credit_card' | 'debit_card' } | null>(null);
+  const [cobranca, setCobranca] = useState<{ idx: number; valor: number; method: 'credit_card' | 'debit_card' } | null>(null);
+  // depois que a maquininha aprova, o efeito abaixo segue a fila (ou fecha o pedido)
+  const [seguirAposCobranca, setSeguirAposCobranca] = useState(false);
   // cobrancas aprovadas nesta venda: depois de criar o pedido, viram vinculo pix_payment -> pedido
   const cobrancasRef = useRef<string[]>([]);
   const [sucesso, setSucesso] = useState(false);
@@ -360,12 +362,6 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     if (isNaN(v) || v <= 0) return;
     const forma = formasPagamento.find((f) => f.id === formaAtiva);
     if (!forma) return;
-    // Cartao com maquininha ligada: o valor vai para a maquininha e o pagamento so e
-    // empilhado quando o Mercado Pago aprovar (empilhar antes seria dizer que recebeu).
-    if (pointPdv && (forma.tipo === 'credit_card' || forma.tipo === 'debit_card')) {
-      setCobranca({ forma, valor: v, method: forma.tipo });
-      return;
-    }
     const isCash = forma.tipo === 'cash';
     if (isCash && v > restante) {
       // Dinheiro com troco: amount = restante, troco = v - restante, valorRecebido = v
@@ -433,6 +429,28 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     }
     return paymentRegistered;
   }, [caixa?.id, user?.tenantId, user?.nome]);
+
+  // ── Cartão na maquininha: cobra no BOTÃO FINAL, nunca ao montar a lista ────
+  // Cobrar no "+" deixava a maquininha carregada com a tela de pagamento ainda editável
+  // atrás — dava para mexer ou cancelar com o cliente já passando o cartão.
+  const tipoDaForma = useCallback(
+    (formaId: string) => formasPagamento.find((f) => f.id === formaId)?.tipo ?? '',
+    [formasPagamento],
+  );
+  const cobrancasPendentes = useMemo(() => pagamentos
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ p }) => !p.cobrancaId && (tipoDaForma(p.formaId) === 'credit_card' || tipoDaForma(p.formaId) === 'debit_card'))
+    .map(({ p, idx }) => ({ idx, valor: p.valor, method: tipoDaForma(p.formaId) as 'credit_card' | 'debit_card' })),
+  [pagamentos, tipoDaForma]);
+  const precisaCobrar = pointPdv && cobrancasPendentes.length > 0;
+  const totalACobrar = cobrancasPendentes.reduce((acc, c) => acc + c.valor, 0);
+
+  const handleConfirmar = () => {
+    if (restante > 0.01 || confirmando) return;
+    // com mais de um cartão, cobra um de cada vez; o efeito abaixo puxa o próximo
+    if (precisaCobrar) { setCobranca(cobrancasPendentes[0]); return; }
+    handleFinalizar();
+  };
 
   const handleFinalizar = async () => {
     if (restante > 0.01) return;
@@ -710,6 +728,16 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       setConfirmando(false);
     }
   };
+
+  // Maquininha aprovou: ou puxa o próximo cartão da fila, ou fecha o pedido sozinho.
+  // Passa por um efeito de propósito — handleFinalizar lê `pagamentos` do estado, e chamar
+  // direto no callback usaria a lista de antes da troca de forma (crédito × débito).
+  useEffect(() => {
+    if (!seguirAposCobranca) return;
+    setSeguirAposCobranca(false);
+    if (cobrancasPendentes.length > 0) { setCobranca(cobrancasPendentes[0]); return; }
+    handleFinalizar();
+  }, [seguirAposCobranca]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDismissAlertaParcial = useCallback(() => setAlertaParcial(null), []);
 
@@ -1388,9 +1416,9 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             </button>
           )}
           <button
-            onClick={handleFinalizar}
+            onClick={handleConfirmar}
             disabled={restante > 0.01 || confirmando}
-            className="w-full py-3 bg-green-500 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap text-base flex items-center justify-center gap-2"
+            className={`w-full py-3 ${precisaCobrar ? 'bg-sky-600 hover:bg-sky-700' : 'bg-green-500 hover:bg-green-600'} disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap text-base flex items-center justify-center gap-2`}
           >
             {confirmando ? (
               <>
@@ -1401,10 +1429,17 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                 Confirmando pedido...
               </>
             ) : (
+              precisaCobrar ? (
+              <>
+                <i className="ri-bank-card-line" />
+                Cobrar na maquininha · {formatPrice(totalACobrar)}
+              </>
+              ) : (
               <>
                 <i className="ri-check-double-line" />
                 Confirmar Pagamento · {formatPrice(totalComDesconto)}
               </>
+              )
             )}
           </button>
         </div>
@@ -1482,14 +1517,18 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             setCobranca(null);
             if (!c) return;
             cobrancasRef.current = [...cobrancasRef.current, pixPaymentId];
-            // A maquininha diz se foi crédito ou débito: se o operador escolheu a forma errada,
-            // vale o que a maquininha respondeu.
-            const formaReal = formasPagamento.find((f) => f.tipo === method) ?? c.forma;
-            if (formaReal.id !== c.forma.id) {
-              toastWarning('Forma ajustada', `O cliente pagou em ${method === 'debit_card' ? 'débito' : 'crédito'}: lançado como ${formaReal.nome}.`);
-            }
-            setPagamentos((prev) => [...prev, { formaId: formaReal.id, formaNome: formaReal.nome, valor: c.valor, troco: undefined }]);
-            setValorInput('');
+            setPagamentos((prev) => prev.map((p, i) => {
+              if (i !== c.idx) return p;
+              // A maquininha diz se foi crédito ou débito: se o operador escolheu a forma
+              // errada, vale o que a maquininha respondeu.
+              const formaReal = formasPagamento.find((f) => f.tipo === method);
+              if (formaReal && formaReal.id !== p.formaId) {
+                toastWarning('Forma ajustada', `O cliente pagou em ${method === 'debit_card' ? 'débito' : 'crédito'}: lançado como ${formaReal.nome}.`);
+                return { ...p, formaId: formaReal.id, formaNome: formaReal.nome, cobrancaId: pixPaymentId };
+              }
+              return { ...p, cobrancaId: pixPaymentId };
+            }));
+            setSeguirAposCobranca(true);
           }}
           onCancelar={() => setCobranca(null)}
         />
