@@ -6,6 +6,7 @@ import {
   type Candidate, type Company, type Criterion, type Settings, type Stage, COLORS, NATIVE_LABEL, DEFAULT_SETTINGS, colorOf, slug, geocodeText,
   type RequiredField, type CustomField, REQUIRED_FIELDS, DEFAULT_REQUIRED, faltasFicha,
 } from '../shared';
+import type { SecaoConfig } from '../navegacao';
 
 // Leaflet só carrega quando alguém abre o mapa de uma loja.
 const MapaPin = lazy(() => import('@/components/feature/MapaPin'));
@@ -20,15 +21,27 @@ interface Props {
   onSettingsSaved: (s: Settings) => void;
   /** Loja ganhou/mudou o pin: recalcula a distância de todos os candidatos até ela. */
   onRecalcCompany: (companyId: string) => Promise<void>;
+  /** undefined = comportamento antigo, empilha os 4 cards (compatibilidade). */
+  secao?: SecaoConfig;
 }
 
-export default function ConfiguracoesContratacao({ companies, stages, settings, candidates, onReload, onSettingsSaved, onRecalcCompany }: Props) {
+export default function ConfiguracoesContratacao({ companies, stages, settings, candidates, onReload, onSettingsSaved, onRecalcCompany, secao }: Props) {
+  if (!secao) {
+    return (
+      <div className="space-y-5 max-w-3xl">
+        <Empresas companies={companies} candidates={candidates} onReload={onReload} onRecalcCompany={onRecalcCompany} />
+        <Fases stages={stages} candidates={candidates} onReload={onReload} />
+        <DadosMinimos settings={settings} candidates={candidates} stages={stages} onSaved={onSettingsSaved} />
+        <FichaEConvite settings={settings} onSaved={onSettingsSaved} />
+      </div>
+    );
+  }
   return (
-    <div className="space-y-5 max-w-3xl">
-      <Empresas companies={companies} candidates={candidates} onReload={onReload} onRecalcCompany={onRecalcCompany} />
-      <Fases stages={stages} candidates={candidates} onReload={onReload} />
-      <DadosMinimos settings={settings} candidates={candidates} stages={stages} onSaved={onSettingsSaved} />
-      <FichaEConvite settings={settings} onSaved={onSettingsSaved} />
+    <div className="max-w-3xl">
+      {secao === 'empresas' && <Empresas companies={companies} candidates={candidates} onReload={onReload} onRecalcCompany={onRecalcCompany} />}
+      {secao === 'fases' && <Fases stages={stages} candidates={candidates} onReload={onReload} />}
+      {secao === 'dados-minimos' && <DadosMinimos settings={settings} candidates={candidates} stages={stages} onSaved={onSettingsSaved} />}
+      {secao === 'entrevista' && <FichaEConvite settings={settings} onSaved={onSettingsSaved} />}
     </div>
   );
 }

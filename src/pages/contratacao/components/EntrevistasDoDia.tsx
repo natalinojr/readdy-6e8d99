@@ -11,6 +11,7 @@ import {
 } from '../shared';
 import type { CandidatePatch } from './EntrevistaModal';
 import { avisar, confirmar } from '../dialog';
+import { diaKeyBR, formatarDiaCurto, proximoDiaComEntrevistas } from '../hoje';
 
 interface Props {
   interviews: Interview[];
@@ -46,7 +47,9 @@ const rotuloDia = (key: string) => {
 };
 
 export default function EntrevistasDoDia({ interviews, candidates, companies, stages, settings, applications, jobs, onSaved, onOpenCandidate, onNewInterview, focoId, onFocoUsado }: Props) {
-  const hoje = dayKey(new Date());
+  // Brasília, não a máquina (mesmo relógio de hoje.ts) — senão o agrupamento de porDia (ISO →
+  // diaKeyBR) e "hoje" (dayKey local) discordam perto da virada do dia (P1, revisão Fase 5).
+  const hoje = diaKeyBR(new Date().toISOString());
   // Volta onde estava (dia e pessoa) se saiu há menos de 12 h.
   const pos = lsLer<{ dia: string; sel: string | null; at: number }>(LS_POS);
   const posValida = pos && Date.now() - pos.at < 12 * 3600_000 ? pos : null;
@@ -57,13 +60,18 @@ export default function EntrevistasDoDia({ interviews, candidates, companies, st
   const porDia = useMemo(() => {
     const m = new Map<string, Interview[]>();
     for (const iv of interviews) {
-      const k = dayKey(new Date(iv.scheduled_at));
+      // diaKeyBR (Brasília), mesmo corte de proximoDiaComEntrevistas/contagensHoje em hoje.ts —
+      // dayKey (fuso da máquina) fazia a lista discordar do atalho "Ir para a próxima" (P1).
+      const k = diaKeyBR(iv.scheduled_at);
       m.set(k, [...(m.get(k) ?? []), iv]);
     }
     for (const l of m.values()) l.sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
     return m;
   }, [interviews]);
   const doDia = porDia.get(dia) ?? [];
+  // RF-05 (última linha): em dia vazio, atalho para o próximo dia com entrevista. Mesma função de
+  // hoje.ts (T13) usada no hint dos 3 números da tela Hoje — cálculo só num lugar, chamado nos dois.
+  const atalhoProxima = useMemo(() => (doDia.length === 0 ? proximoDiaComEntrevistas(interviews, new Date()) : null), [doDia.length, interviews]);
   const candOf = (id: string) => candidates.find((c) => c.id === id) ?? null;
 
   // Presença confirmada pelo WhatsApp (2026-09-16, pedido do dono): o assistente pede a confirmação
@@ -101,7 +109,7 @@ export default function EntrevistasDoDia({ interviews, candidates, companies, st
     const iv = interviews.find((x) => x.id === focoId);
     if (!iv) return;
     focoAplicado.current = iv.id;
-    setDia(dayKey(new Date(iv.scheduled_at)));
+    setDia(diaKeyBR(iv.scheduled_at));
     setSelId(iv.id);
     onFocoUsado?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -160,7 +168,15 @@ export default function EntrevistasDoDia({ interviews, candidates, companies, st
         {/* Lista do dia */}
         <div className={`rounded-2xl border border-zinc-200 bg-white overflow-hidden ${sel ? 'hidden lg:block' : ''}`}>
           {doDia.length === 0 ? (
-            <p className="p-6 text-center text-sm text-zinc-400">Ninguém agendado neste dia.</p>
+            <div className="p-6 text-center">
+              <p className="text-sm text-zinc-400">Ninguém agendado neste dia.</p>
+              {atalhoProxima && (
+                <button onClick={() => setDia(atalhoProxima.diaKey)}
+                  className="mt-3 px-3 h-9 rounded-lg border border-zinc-200 text-xs font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer">
+                  Ir para a próxima: {formatarDiaCurto(atalhoProxima.diaKey)} · {atalhoProxima.quantidade} entrevista{atalhoProxima.quantidade === 1 ? '' : 's'}
+                </button>
+              )}
+            </div>
           ) : (
             <ul className="divide-y divide-zinc-100">
               {doDia.map((iv) => {

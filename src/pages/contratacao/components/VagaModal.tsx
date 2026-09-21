@@ -1,9 +1,15 @@
 // Criar/editar vaga. Os campos alimentam a análise da IA (currículo × vaga × loja).
 import { useState } from 'react';
 import { type Company, type Job, type JobStatus, CONTRACT_TYPES, JOB_STATUS } from '../shared';
-import AgendamentoVaga from './AgendamentoVaga';
 
 export type JobDraft = Omit<Job, 'id' | 'created_at' | 'opened_at' | 'closed_at'> & { id?: string };
+
+export interface VagaFormularioProps {
+  d: JobDraft;
+  set: <K extends keyof JobDraft>(k: K, v: JobDraft[K]) => void;
+  companies: Company[];
+  job: Job | null; // null = ainda não existe (modal "Nova vaga"); com id = edição inline ("Dados da vaga")
+}
 
 interface Props {
   job: Job | null;
@@ -41,72 +47,9 @@ export default function VagaModal({ job, companies, presetCompanyId, onClose, on
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-500 cursor-pointer"><i className="ri-close-line text-lg" /></button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <Field label="Cargo" className="sm:col-span-2">
-              <input value={d.title} onChange={(e) => set('title', e.target.value)} placeholder="Ex.: Atendente de salão" className={inputCls} autoFocus />
-            </Field>
-            <Field label="Empresa / loja">
-              <select value={d.company_id ?? ''} onChange={(e) => set('company_id', e.target.value || null)} className={inputCls}>
-                <option value="">Sem empresa</option>
-                {companies.filter((c) => c.is_active || c.id === d.company_id).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </Field>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <Field label="Contrato">
-              <select value={d.contract_type ?? ''} onChange={(e) => set('contract_type', e.target.value || null)} className={inputCls}>
-                <option value="">—</option>
-                {CONTRACT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </Field>
-            <Field label="Nº de vagas">
-              <input type="number" min={1} value={d.openings} onChange={(e) => set('openings', Math.max(1, Number(e.target.value) || 1))} className={inputCls} />
-            </Field>
-            <Field label="Salário">
-              <input value={d.salary ?? ''} onChange={(e) => set('salary', e.target.value)} placeholder="Ex.: R$ 1.900 + gorjeta" className={inputCls} />
-            </Field>
-            <Field label="Situação">
-              <select value={d.status} onChange={(e) => set('status', e.target.value as JobStatus)} className={inputCls}>
-                {JOB_STATUS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-              </select>
-            </Field>
-          </div>
-          <Field label="Horário / escala">
-            <input value={d.schedule ?? ''} onChange={(e) => set('schedule', e.target.value)} placeholder="Ex.: 6x1, das 17h às 23h, folga durante a semana" className={inputCls} />
-          </Field>
-          <Field label="Atividades da função">
-            <textarea value={d.description ?? ''} onChange={(e) => set('description', e.target.value)} rows={3}
-              placeholder="O que a pessoa vai fazer no dia a dia" className={areaCls} />
-          </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <Field label="Requisitos obrigatórios">
-              <textarea value={d.requirements ?? ''} onChange={(e) => set('requirements', e.target.value)} rows={3}
-                placeholder="Ex.: experiência com atendimento, disponibilidade à noite e fins de semana" className={areaCls} />
-            </Field>
-            <Field label="Desejável (diferenciais)">
-              <textarea value={d.desirable ?? ''} onChange={(e) => set('desirable', e.target.value)} rows={3}
-                placeholder="Ex.: já ter trabalhado em restaurante, curso de manipulação de alimentos" className={areaCls} />
-            </Field>
-          </div>
-          <Field label="Benefícios">
-            <input value={d.benefits ?? ''} onChange={(e) => set('benefits', e.target.value)} placeholder="Ex.: VT, refeição no local, bônus por meta" className={inputCls} />
-          </Field>
-          <Field label="Observações internas (não vão para a IA)">
-            <textarea value={d.notes ?? ''} onChange={(e) => set('notes', e.target.value)} rows={2} className={areaCls} />
-          </Field>
-          <p className="text-[11px] text-zinc-400">
-            A IA compara cada currículo com estes dados e com o endereço e a descrição da loja (Configurações › Empresas).
-            Idade, estado civil e filhos nunca entram na comparação.
-          </p>
-          {job?.id ? (
-            <AgendamentoVaga jobId={job.id} defaultLocation={companies.find((c) => c.id === d.company_id)?.address ?? null} />
-          ) : (
-            <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg px-2 py-1.5">
-              <i className="ri-robot-2-line" /> Depois de abrir a vaga, edite-a para configurar as entrevistas pelo assistente (dias, horários e entrevistadores).
-            </p>
-          )}
-          {erro && <p className="text-xs text-red-600">{erro}</p>}
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          <VagaFormulario d={d} set={set} companies={companies} job={job} />
+          {erro && <p className="text-xs text-red-600 mt-2">{erro}</p>}
         </div>
 
         <div className="flex items-center gap-2 px-5 py-3 border-t border-zinc-100">
@@ -117,6 +60,75 @@ export default function VagaModal({ job, companies, presetCompanyId, onClose, on
         </div>
       </div>
     </>
+  );
+}
+
+export function VagaFormulario({ d, set, companies, job }: VagaFormularioProps) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <Field label="Cargo" className="sm:col-span-2">
+          <input value={d.title} onChange={(e) => set('title', e.target.value)} placeholder="Ex.: Atendente de salão" className={inputCls} autoFocus />
+        </Field>
+        <Field label="Empresa / loja">
+          <select value={d.company_id ?? ''} onChange={(e) => set('company_id', e.target.value || null)} className={inputCls}>
+            <option value="">Sem empresa</option>
+            {companies.filter((c) => c.is_active || c.id === d.company_id).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <Field label="Contrato">
+          <select value={d.contract_type ?? ''} onChange={(e) => set('contract_type', e.target.value || null)} className={inputCls}>
+            <option value="">—</option>
+            {CONTRACT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </Field>
+        <Field label="Nº de vagas">
+          <input type="number" min={1} value={d.openings} onChange={(e) => set('openings', Math.max(1, Number(e.target.value) || 1))} className={inputCls} />
+        </Field>
+        <Field label="Salário">
+          <input value={d.salary ?? ''} onChange={(e) => set('salary', e.target.value)} placeholder="Ex.: R$ 1.900 + gorjeta" className={inputCls} />
+        </Field>
+        <Field label="Situação">
+          <select value={d.status} onChange={(e) => set('status', e.target.value as JobStatus)} className={inputCls}>
+            {JOB_STATUS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field label="Horário / escala">
+        <input value={d.schedule ?? ''} onChange={(e) => set('schedule', e.target.value)} placeholder="Ex.: 6x1, das 17h às 23h, folga durante a semana" className={inputCls} />
+      </Field>
+      <Field label="Atividades da função">
+        <textarea value={d.description ?? ''} onChange={(e) => set('description', e.target.value)} rows={3}
+          placeholder="O que a pessoa vai fazer no dia a dia" className={areaCls} />
+      </Field>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <Field label="Requisitos obrigatórios">
+          <textarea value={d.requirements ?? ''} onChange={(e) => set('requirements', e.target.value)} rows={3}
+            placeholder="Ex.: experiência com atendimento, disponibilidade à noite e fins de semana" className={areaCls} />
+        </Field>
+        <Field label="Desejável (diferenciais)">
+          <textarea value={d.desirable ?? ''} onChange={(e) => set('desirable', e.target.value)} rows={3}
+            placeholder="Ex.: já ter trabalhado em restaurante, curso de manipulação de alimentos" className={areaCls} />
+        </Field>
+      </div>
+      <Field label="Benefícios">
+        <input value={d.benefits ?? ''} onChange={(e) => set('benefits', e.target.value)} placeholder="Ex.: VT, refeição no local, bônus por meta" className={inputCls} />
+      </Field>
+      <Field label="Observações internas (não vão para a IA)">
+        <textarea value={d.notes ?? ''} onChange={(e) => set('notes', e.target.value)} rows={2} className={areaCls} />
+      </Field>
+      <p className="text-[11px] text-zinc-400">
+        A IA compara cada currículo com estes dados e com o endereço e a descrição da loja (Configurações › Empresas).
+        Idade, estado civil e filhos nunca entram na comparação.
+      </p>
+      {!job && (
+        <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg px-2 py-1.5">
+          <i className="ri-robot-2-line" /> Depois de abrir a vaga, edite-a para configurar as entrevistas pelo assistente (dias, horários e entrevistadores).
+        </p>
+      )}
+    </div>
   );
 }
 

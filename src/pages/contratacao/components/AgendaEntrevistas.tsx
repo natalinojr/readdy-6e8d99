@@ -1,8 +1,9 @@
 // Calendário mensal das entrevistas + listas "próximas" e "aguardando registro".
 import { useMemo, useState } from 'react';
 import {
-  type Candidate, type Company, type Interview, interviewStatusInfo, fmtTime, fmtDateTime, dayKey, companyName, firstName,
+  type Candidate, type Company, type Interview, interviewStatusInfo, fmtTime, fmtDateTime, companyName, firstName,
 } from '../shared';
+import { diaKeyBR } from '../hoje';
 
 interface Props {
   interviews: Interview[];
@@ -18,7 +19,7 @@ const WEEK = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 export default function AgendaEntrevistas({ interviews, candidates, companies, mostrarEmpresa, onOpenInterview, onNew }: Props) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   // Celular: tocar no dia mostra a lista dele embaixo (no desktop o clique já abre "agendar").
-  const [diaSel, setDiaSel] = useState<string>(() => dayKey(new Date()));
+  const [diaSel, setDiaSel] = useState<string>(() => diaKeyBR(new Date().toISOString()));
   const isDesktop = () => typeof window !== 'undefined' && window.matchMedia('(min-width: 640px)').matches;
   const byId = useMemo(() => new Map(candidates.map((c) => [c.id, c])), [candidates]);
   const nome = (iv: Interview) => byId.get(iv.candidate_id)?.full_name ?? 'Candidato removido';
@@ -26,7 +27,9 @@ export default function AgendaEntrevistas({ interviews, candidates, companies, m
   const byDay = useMemo(() => {
     const m = new Map<string, Interview[]>();
     for (const iv of interviews) {
-      const k = dayKey(new Date(iv.scheduled_at));
+      // diaKeyBR (Brasília), não dayKey (fuso da máquina) — mesmo corte de EntrevistasDoDia.tsx,
+      // senão o Calendário e a lista "Do dia" discordam do dia perto da virada.
+      const k = diaKeyBR(iv.scheduled_at);
       m.set(k, [...(m.get(k) ?? []), iv]);
     }
     for (const list of m.values()) list.sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
@@ -40,7 +43,7 @@ export default function AgendaEntrevistas({ interviews, candidates, companies, m
   }, [cursor]);
 
   const now = new Date();
-  const hoje = dayKey(now);
+  const hoje = diaKeyBR(now.toISOString());
   const proximas = interviews.filter((iv) => iv.status === 'agendada' && new Date(iv.scheduled_at) >= now)
     .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)).slice(0, 8);
   const pendentes = interviews.filter((iv) => iv.status === 'agendada' && new Date(iv.scheduled_at) < now)
@@ -66,7 +69,10 @@ export default function AgendaEntrevistas({ interviews, candidates, companies, m
         </div>
         <div className="grid grid-cols-7">
           {cells.map((d) => {
-            const k = dayKey(d);
+            // Célula do mês: `d` já é o dia certo (aritmética local em cima de y/m/d, sem instante
+            // real anexado) — a chave é só formatar os mesmos y/m/d, nunca diaKeyBR(d.toISOString()),
+            // que passaria pelo fuso da máquina e podia empurrar a célula para o dia vizinho.
+            const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
             const list = byDay.get(k) ?? [];
             const fora = d.getMonth() !== cursor.getMonth();
             return (
