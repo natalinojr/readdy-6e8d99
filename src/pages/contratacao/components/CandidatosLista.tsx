@@ -3,10 +3,22 @@ import { useMemo, useState } from 'react';
 import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
 import {
   type Candidate, type Company, type Interview, type Stage, colorOf, stageOf, fmtMonths, fmtDate, fmtDateTime, companyName, avgScore,
-  ageOf, decisionOf, withEmpresa, DECISIONS, type Distance, fmtKm, distCls,
+  ageOf, decisionOf, withEmpresa, DECISIONS, type Distance, fmtKm, distCls, FIT,
 } from '../shared';
+import type { Aderencia } from '../aderencia';
 
 type SortKey = 'nome' | 'empresa' | 'vaga' | 'idade' | 'local' | 'dist' | 'exp' | 'fase' | 'decisao' | 'nota' | 'entrevista' | 'recebido';
+
+// Rótulos e cores do estado da conversa de agendamento pela IA. Cópia de SESS_LABEL
+// (CandidatoDrawer.tsx:584-589) e das classes de status de AgendamentosPainel.tsx:116-123
+// (violeta = agendado, âmbar = aguardando_gestor, céu = negociando/"Respondeu",
+// azul = convidado/"Enviada") — se um dos dois mudar o texto/cor, o outro tem que acompanhar.
+const AGENDAMENTO_IA: Record<string, { label: string; cls: string }> = {
+  convidado: { label: 'Convite enviado — aguardando resposta', cls: 'bg-blue-50 text-blue-700 border-blue-200' },
+  negociando: { label: 'Conversando sobre o horário', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
+  aguardando_gestor: { label: 'Esperando o entrevistador aceitar um horário pedido', cls: 'bg-amber-50 text-amber-800 border-amber-200' },
+  agendado: { label: 'Entrevista marcada pela IA', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
+};
 
 function DecisionBadge({ c, companies }: { c: Candidate; companies: Company[] }) {
   const d = decisionOf(c.decision);
@@ -26,17 +38,23 @@ interface Props {
   distancia: (c: Candidate) => Distance | null;
   /** Títulos das vagas em que o candidato está inscrito (coluna Vaga da tabela). */
   vagasDe: (c: Candidate) => string[];
+  aderenciaDe: (c: Candidate) => Aderencia | null;
+  faltasDe: (c: Candidate) => number;
   onOpen: (id: string) => void;
+  selecionados: Set<string>;
+  onToggleSelecao: (id: string) => void;
 }
 
 export default function CandidatosLista(props: Props) {
-  const { view, items, companies, stages, mostrarEmpresa, proximaEntrevista, distancia, onOpen } = props;
+  const { view, items, companies, stages, mostrarEmpresa, proximaEntrevista, distancia, aderenciaDe, faltasDe, onOpen, selecionados, onToggleSelecao } = props;
   if (view === 'cards') {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {items.map((c) => (
           <CandidateCard key={c.id} c={c} companies={companies} stage={stageOf(stages, c.stage_id)} empresa={mostrarEmpresa ? companyName(companies, c.company_id) : null}
-            entrevista={proximaEntrevista.get(c.id) ?? null} dist={distancia(c)} onOpen={() => onOpen(c.id)} />
+            entrevista={proximaEntrevista.get(c.id) ?? null} dist={distancia(c)} onOpen={() => onOpen(c.id)}
+            aderencia={aderenciaDe(c)} faltas={faltasDe(c)}
+            selecionado={selecionados.has(c.id)} onToggleSelecao={() => onToggleSelecao(c.id)} />
         ))}
       </div>
     );
@@ -44,7 +62,7 @@ export default function CandidatosLista(props: Props) {
   return <Tabela {...props} />;
 }
 
-function Tabela({ items, companies, stages, proximaEntrevista, ultimaAvaliacao, distancia, vagasDe, onOpen }: Props) {
+function Tabela({ items, companies, stages, proximaEntrevista, ultimaAvaliacao, distancia, vagasDe, onOpen, selecionados, onToggleSelecao }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'recebido', dir: -1 });
 
   const rows = useMemo(() => {
@@ -82,6 +100,7 @@ function Tabela({ items, companies, stages, proximaEntrevista, ultimaAvaliacao, 
       <table className="w-full text-sm">
         <thead className="bg-zinc-50 border-b border-zinc-200">
           <tr>
+            <th className="px-3 py-2" aria-label="Selecionar" />
             <Th k="nome">Nome</Th>
             <Th k="empresa">Loja</Th>
             <Th k="vaga">Vaga</Th>
@@ -91,7 +110,7 @@ function Tabela({ items, companies, stages, proximaEntrevista, ultimaAvaliacao, 
             <Th k="exp">Experiência</Th>
             <Th k="fase">Fase</Th>
             <Th k="decisao">Decisão</Th>
-            <Th k="nota">Nota</Th>
+            <Th k="nota"><span title="Nota da entrevista (1 a 5) — não é a aderência do currículo">Nota</span></Th>
             <Th k="entrevista">Entrevista</Th>
             <Th k="recebido">Recebido</Th>
             <th className="px-3 py-2" aria-label="Assistente" />
@@ -104,6 +123,9 @@ function Tabela({ items, companies, stages, proximaEntrevista, ultimaAvaliacao, 
             const media = avgScore(ultimaAvaliacao.get(c.id)?.scores);
             return (
               <tr key={c.id} onClick={() => onOpen(c.id)} className="hover:bg-rose-50/40 cursor-pointer">
+                <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" checked={selecionados.has(c.id)} onChange={() => onToggleSelecao(c.id)} className="accent-rose-600 w-4 h-4" />
+                </td>
                 <td className="px-3 py-2">
                   <p className="font-semibold text-zinc-900 whitespace-nowrap">{c.full_name}</p>
                   {!c.ai_processed && <p className="text-[10px] text-sky-600">leitura simples</p>}
@@ -164,13 +186,14 @@ function Tabela({ items, companies, stages, proximaEntrevista, ultimaAvaliacao, 
   );
 }
 
-export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen, compact = false, dist = null }: {
+export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen, compact = false, dist = null, aderencia = null, faltas = 0, agendamentoIA = null, selecionado = false, onToggleSelecao }: {
   c: Candidate; companies: Company[]; stage: Stage | null; empresa: string | null; entrevista: Interview | null; onOpen: () => void; compact?: boolean;
-  dist?: Distance | null;
+  dist?: Distance | null; aderencia?: Aderencia | null; faltas?: number; agendamentoIA?: string | null;
+  selecionado?: boolean; onToggleSelecao?: () => void;
 }) {
   const idade = ageOf(c);
   const ultima = c.experiences[0];
-  return (
+  const card = (
     <button onClick={onOpen} className={`w-full text-left ${compact ? 'p-3' : 'p-4'} rounded-2xl border border-zinc-200 bg-white hover:border-rose-300 hover:shadow-sm transition-all cursor-pointer`}>
       <div className="flex items-start gap-3">
         {!compact && (
@@ -197,6 +220,21 @@ export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen
       </div>
       <div className="flex flex-wrap gap-1.5 mt-2">
         {empresa && <Chip cls="bg-zinc-50 text-zinc-600 border-zinc-200"><i className="ri-building-line" /> {empresa}</Chip>}
+        {aderencia && (
+          <Chip cls={FIT[aderencia.fit].cls}>
+            <i className="ri-percent-line" /> Aderência: {aderencia.score.toFixed(1).replace('.', ',')} · {aderencia.jobTitle}
+          </Chip>
+        )}
+        {faltas > 0 && (
+          <Chip cls="bg-amber-50 text-amber-700 border-amber-200">
+            <i className="ri-error-warning-line" /> {faltas === 1 ? 'falta 1 dado' : `faltam ${faltas} dados`}
+          </Chip>
+        )}
+        {agendamentoIA && AGENDAMENTO_IA[agendamentoIA] && (
+          <Chip cls={AGENDAMENTO_IA[agendamentoIA].cls}>
+            <i className="ri-robot-2-line" /> {AGENDAMENTO_IA[agendamentoIA].label}
+          </Chip>
+        )}
         {dist && (
           <Chip cls={distCls(dist.km)}>
             <i className="ri-car-line" /> {fmtKm(dist.km)}{dist.minutes != null ? ` · ${dist.minutes} min` : ''}{dist.precision === 'bairro' || dist.precision === 'cidade' ? ' (aprox.)' : ''}
@@ -209,6 +247,16 @@ export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen
         {!compact && <span className="ml-auto text-[10px] text-zinc-400 self-center">{fmtDate(c.created_at)}</span>}
       </div>
     </button>
+  );
+  if (!onToggleSelecao) return card;
+  return (
+    <div className="relative">
+      <input type="checkbox" checked={selecionado}
+        onClick={(e) => e.stopPropagation()}
+        onChange={() => onToggleSelecao()}
+        className="absolute top-3 right-3 z-10 accent-rose-600 w-4 h-4" />
+      {card}
+    </div>
   );
 }
 

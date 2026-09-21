@@ -60,13 +60,16 @@ const NUM_KEY = 'contratacao_wa_number';
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* sem storage */ } };
 
+export type EscopoWhatsApp = { tipo: 'vaga'; jobId: string; companyId: string | null } | { tipo: 'sem-vaga' };
+
 interface Props {
   companies: Company[];
   jobs: Job[];
   onOpenCandidate: (id: string) => void;
+  escopo: EscopoWhatsApp;
 }
 
-export default function LinksWhatsApp({ companies, jobs, onOpenCandidate }: Props) {
+export default function LinksWhatsApp({ companies, jobs, onOpenCandidate, escopo }: Props) {
   const [channels, setChannels] = useState<BotChannel[]>([]);
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -109,6 +112,11 @@ export default function LinksWhatsApp({ companies, jobs, onOpenCandidate }: Prop
     }
     return m;
   }, [convs]);
+
+  const channelsDoEscopo = useMemo(
+    () => channels.filter((ch) => (escopo.tipo === 'vaga' ? ch.job_id === escopo.jobId : !ch.job_id)),
+    [channels, escopo],
+  );
 
   const copiar = async (ch: BotChannel) => {
     if (!number) { avisar('Informe o número do WhatsApp do assistente primeiro.'); return; }
@@ -171,7 +179,7 @@ export default function LinksWhatsApp({ companies, jobs, onOpenCandidate }: Prop
         <div className="py-16 flex justify-center"><div className="w-7 h-7 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" /></div>
       ) : erro ? (
         <p className="py-10 text-center text-sm text-red-600">Erro ao carregar: {erro}</p>
-      ) : channels.length === 0 ? (
+      ) : channelsDoEscopo.length === 0 ? (
         <div className="py-16 text-center text-zinc-400">
           <i className="ri-links-line text-4xl" />
           <p className="text-sm font-semibold mt-2">Nenhum link criado</p>
@@ -179,7 +187,7 @@ export default function LinksWhatsApp({ companies, jobs, onOpenCandidate }: Prop
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {channels.map((ch) => {
+          {channelsDoEscopo.map((ch) => {
             const s = stats.get(ch.id) ?? { conversas: 0, curriculos: 0, pendentes: 0 };
             const destino = [nomeEmpresa(ch.company_id), tituloVaga(ch.job_id)].filter(Boolean).join(' › ') || 'Banco de currículos (sem vaga)';
             return (
@@ -221,7 +229,7 @@ export default function LinksWhatsApp({ companies, jobs, onOpenCandidate }: Prop
         Para testar do seu próprio celular, abra o link e mande a mensagem: o assistente entra em <b>modo teste</b> e responde como o candidato veria. Mande <b>#sair</b> para voltar ao assistente.
       </p>
 
-      {editing && <CanalModal ch={editing.ch} companies={companies} jobs={jobs} onClose={() => setEditing(null)} onSave={salvar} />}
+      {editing && <CanalModal ch={editing.ch} companies={companies} jobs={jobs} escopo={escopo} onClose={() => setEditing(null)} onSave={salvar} />}
       {qr && <QrModal ch={qr} number={number} onClose={() => setQr(null)} />}
       {convsOf && <ConversasDrawer ch={convsOf} convs={convs.filter((c) => c.channel_id === convsOf.id)} onClose={() => setConvsOf(null)}
         onOpenCandidate={(id) => { setConvsOf(null); onOpenCandidate(id); }}
@@ -249,12 +257,14 @@ function Btn({ icon, children, onClick, danger }: { icon: string; children?: Rea
 }
 
 // ── Criar/editar link ──
-function CanalModal({ ch, companies, jobs, onClose, onSave }: {
-  ch: BotChannel | null; companies: Company[]; jobs: Job[]; onClose: () => void; onSave: (d: Partial<BotChannel>) => Promise<boolean>;
+function CanalModal({ ch, companies, jobs, escopo, onClose, onSave }: {
+  ch: BotChannel | null; companies: Company[]; jobs: Job[]; escopo: EscopoWhatsApp; onClose: () => void; onSave: (d: Partial<BotChannel>) => Promise<boolean>;
 }) {
   const [d, setD] = useState<Partial<BotChannel>>(() => ch ? { ...ch } : {
-    purpose: 'curriculos', name: '', code: newCode(), start_text: '', welcome: '', company_id: companies.find((c) => c.is_active)?.id ?? null,
-    job_id: null, share_fields: DEFAULT_SHARE, extra_info: '', forbidden: '', notify_owner: true, is_active: true, is_default: false,
+    purpose: 'curriculos', name: '', code: newCode(), start_text: '', welcome: '',
+    company_id: escopo.tipo === 'vaga' ? escopo.companyId : (companies.find((c) => c.is_active)?.id ?? null),
+    job_id: escopo.tipo === 'vaga' ? escopo.jobId : null,
+    share_fields: DEFAULT_SHARE, extra_info: '', forbidden: '', notify_owner: true, is_active: true, is_default: false,
   });
   const [startEdited, setStartEdited] = useState(!!ch);
   const [saving, setSaving] = useState(false);
@@ -293,23 +303,18 @@ function CanalModal({ ch, companies, jobs, onClose, onSave }: {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {escopo.tipo === 'vaga' ? (
+            <p className="text-xs text-zinc-600 bg-zinc-50 rounded-lg px-3 py-2">
+              <i className="ri-briefcase-4-line" /> Vaga: <b>{job?.title}</b>{company ? ` — ${company.name}` : ''}
+            </p>
+          ) : (
             <Field label="Empresa / loja">
-              <select value={d.company_id ?? ''} onChange={(e) => { set('company_id', e.target.value || null); set('job_id', null); }} className={inputCls}>
+              <select value={d.company_id ?? ''} onChange={(e) => set('company_id', e.target.value || null)} className={inputCls}>
                 <option value="">Sem empresa</option>
                 {companies.filter((c) => c.is_active || c.id === d.company_id).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </Field>
-            <Field label="Vaga">
-              <select value={d.job_id ?? ''} onChange={(e) => set('job_id', e.target.value || null)} className={inputCls}>
-                <option value="">Nenhuma (só banco de currículos)</option>
-                {vagas.map((j) => <option key={j.id} value={j.id}>{j.title}{j.status !== 'aberta' ? ` (${j.status})` : ''}</option>)}
-              </select>
-              {!d.job_id && d.company_id && vagas.some((j) => j.status === 'aberta') && (
-                <p className="text-[11px] text-amber-600 mt-1">Esta loja tem vaga aberta — sem escolher, o currículo entra só no banco, sem vaga.</p>
-              )}
-            </Field>
-          </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <Field label="Nome do link (interno)" className="sm:col-span-2">
               <input value={d.name ?? ''} onChange={(e) => set('name', e.target.value)} placeholder={job ? `Vaga ${job.title}` : 'Ex.: Instagram — cozinha'} className={inputCls} />
@@ -356,7 +361,9 @@ function CanalModal({ ch, companies, jobs, onClose, onSave }: {
           </Field>
           <div className="space-y-2 pt-1">
             <Toggle on={!!d.notify_owner} onChange={(v) => set('notify_owner', v)} label="Me avisar no Telegram a cada currículo recebido" />
-            <Toggle on={!!d.is_default} onChange={(v) => set('is_default', v)} label="Link padrão: atender também quem escrever no número SEM código" />
+            {escopo.tipo !== 'vaga' && (
+              <Toggle on={!!d.is_default} onChange={(v) => set('is_default', v)} label="Link padrão: atender também quem escrever no número SEM código" />
+            )}
             <Toggle on={d.is_active !== false} onChange={(v) => set('is_active', v)} label="Ativo" />
           </div>
           <p className="text-[11px] text-zinc-400">

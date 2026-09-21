@@ -9,48 +9,44 @@ import { Navigate, useSearchParams } from 'react-router-dom';
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
-import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { supabase } from '@/lib/supabase';
 import { readCurriculoPdf } from '@/lib/curriculoLocal';
 import {
   type Application, type Candidate, type Company, type Interview, type Job, type Settings, type Stage, matchWithAi,
   type Distance, calcDistancesAi, distancesForCompany,
-  BUCKET, DECISIONS, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind, faltasFicha,
+  BUCKET, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind, faltasFicha,
 } from './shared';
 import type { CandidatePatch } from './components/EntrevistaModal';
+import { type Aderencia, melhorAderencia } from './aderencia';
 import { DialogHost, confirmar, avisar } from './dialog';
 import Vagas, { appKey } from './components/Vagas';
 import VagaModal, { type JobDraft } from './components/VagaModal';
 import AdicionarCandidatosModal from './components/AdicionarCandidatosModal';
-import CandidatosLista from './components/CandidatosLista';
+import { candidatosTravadosNoLote } from './components/AcoesEmLote';
+import UploadCurriculosModal from './components/UploadCurriculosModal';
+import BarraInferior from './components/BarraInferior';
 import CandidatoDrawer from './components/CandidatoDrawer';
 import EntrevistaModal from './components/EntrevistaModal';
-import AgendaEntrevistas from './components/AgendaEntrevistas';
-import EntrevistasDoDia from './components/EntrevistasDoDia';
 import RelatoriosContratacao from './components/RelatoriosContratacao';
-import Kanban from './components/Kanban';
-import ConfiguracoesContratacao from './components/ConfiguracoesContratacao';
-import LinksWhatsApp from './components/LinksWhatsApp';
-import AgendamentosPainel from './components/AgendamentosPainel';
+import AreaHoje from './areas/AreaHoje';
+import AreaConfiguracoes from './areas/AreaConfiguracoes';
+import AreaEntrevistas from './areas/AreaEntrevistas';
+import AreaCandidatos from './areas/AreaCandidatos';
+import { type Area, type Destino, type SubAbaEntrevistas, type ModoCandidatos, type SecaoConfig, AREAS, AREA_CONFIG, destinoDeAbaAntiga } from './navegacao';
 
-interface QueueItem { key: string; name: string; state: 'lendo' | 'ok' | 'erro'; msg?: string }
-type Aba = 'entrevistas' | 'candidatos' | 'vagas' | 'kanban' | 'agenda' | 'agendamentos' | 'relatorios' | 'links' | 'config';
+export interface QueueItem { key: string; name: string; state: 'lendo' | 'ok' | 'erro'; msg?: string }
 type ModalState = { interview: Interview | null; candidateId?: string | null; date?: string | null } | null;
 
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* sem storage */ } };
 
-const ABAS: { id: Aba; label: string; icon: string }[] = [
-  { id: 'entrevistas', label: 'Entrevistas', icon: 'ri-chat-voice-line' },
-  { id: 'candidatos', label: 'Candidatos', icon: 'ri-group-line' },
-  { id: 'vagas', label: 'Vagas', icon: 'ri-briefcase-4-line' },
-  { id: 'kanban', label: 'Kanban', icon: 'ri-layout-column-line' },
-  { id: 'agenda', label: 'Agenda', icon: 'ri-calendar-2-line' },
-  { id: 'agendamentos', label: 'Agendamentos', icon: 'ri-chat-check-line' },
-  { id: 'relatorios', label: 'Relatórios', icon: 'ri-bar-chart-2-line' },
-  { id: 'links', label: 'Links WhatsApp', icon: 'ri-whatsapp-line' },
-  { id: 'config', label: 'Configurações', icon: 'ri-settings-3-line' },
-];
+function estadoInicialDeNavegacao(): { area: Area; view: ModoCandidatos } {
+  const dest = destinoDeAbaAntiga(lsGet('contratacao_aba'));
+  return {
+    area: dest.area, // 'hoje' já existe (T14) — é o default real a partir daqui (RF-01)
+    view: dest.modoCandidatos ?? (lsGet('contratacao_view') === 'tabela' ? 'tabela' : lsGet('contratacao_view') === 'kanban' ? 'kanban' : 'cards'),
+  };
+}
 
 export default function ContratacaoPage() {
   const { user } = useAuth();
@@ -64,19 +60,26 @@ export default function ContratacaoPage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
+  interface AgendamentoIASessao {
+    id: string; candidate_id: string; job_id: string; status: string; updated_at: string;
+    error: string | null; confirmed_at: string | null; confirm_requested_at: string | null; interview_id: string | null;
+    pending_request: { kind?: string; starts_at?: string | null; texto?: string } | null;
+  }
+  const [schedSessions, setSchedSessions] = useState<AgendamentoIASessao[]>([]);
   const [distances, setDistances] = useState<Distance[]>([]);
   const [analyzing, setAnalyzing] = useState<Set<string>>(new Set());
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [jobModal, setJobModal] = useState<{ job: Job | null } | null>(null);
   const [addToJob, setAddToJob] = useState<Job | null>(null);
   const [vagaUpload, setVagaUpload] = useState<string>('');
-  const pendingJobRef = useRef<string | null>(null);
   const [settings, setSettings] = useState<Settings>(mergeSettings(null));
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [aba, setAba] = useState<Aba>(() => (ABAS.some((a) => a.id === lsGet('contratacao_aba')) ? lsGet('contratacao_aba') as Aba : 'entrevistas'));
-  const [view, setView] = useState<'cards' | 'tabela'>(() => (lsGet('contratacao_view') === 'tabela' ? 'tabela' : 'cards'));
+  const [area, setArea] = useState<Area>(() => estadoInicialDeNavegacao().area);
+  const [view, setView] = useState<ModoCandidatos>(() => estadoInicialDeNavegacao().view);
+  const [focoSubabaEntrevistas, setFocoSubabaEntrevistas] = useState<SubAbaEntrevistas | null>(null);
+  const [focoSecaoConfig, setFocoSecaoConfig] = useState<SecaoConfig | null>(null);
   const [busca, setBusca] = useState('');
   const [faseFiltro, setFaseFiltro] = useState<string>('todas');
   const [decisaoFiltro, setDecisaoFiltro] = useState<string>('todas');
@@ -85,6 +88,7 @@ export default function ContratacaoPage() {
   const [selId, setSelId] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Link que abre um lugar certo (2026-09-16): botão "Abrir entrevista de Fulana" do chat do assistente
@@ -97,19 +101,26 @@ export default function ContratacaoPage() {
     const ent = searchParams.get('entrevista');
     const cand = searchParams.get('candidato');
     if (!a && !ent && !cand) return;
-    if (a && ABAS.some((x) => x.id === a)) setAba(a as Aba);
+    const dest: Destino | null = a ? destinoDeAbaAntiga(a) : null;
+    if (dest) {
+      setArea(dest.area); // 'hoje' já existe (T14) — RF-01
+      if (dest.subabaEntrevistas) setFocoSubabaEntrevistas(dest.subabaEntrevistas);
+      if (dest.modoCandidatos) setView(dest.modoCandidatos);
+      if (dest.secaoConfig) setFocoSecaoConfig(dest.secaoConfig);
+    }
     if (ent) {
       setFocoEntrevista(ent);
       // Com filtro de outra empresa a entrevista não apareceria na lista.
       setEmpresaFiltro('todas');
     }
-    // Em Agendamentos o candidato só dá contexto; abrir a ficha por cima esconderia o pedido.
-    if (cand && a !== 'agendamentos') setSelId(cand);
+    // Em Conversas da IA (sub-aba de Entrevistas, antes aba própria "agendamentos") o
+    // candidato só dá contexto; abrir a ficha por cima esconderia o pedido.
+    if (cand && dest?.subabaEntrevistas !== 'conversas') setSelId(cand);
     setSearchParams({}, { replace: true });
   }, [searchParams, setSearchParams]);
 
   useEffect(() => { lsSet('contratacao_view', view); }, [view]);
-  useEffect(() => { lsSet('contratacao_aba', aba); }, [aba]);
+  useEffect(() => { lsSet('contratacao_aba', area); }, [area]);
   useEffect(() => { lsSet('contratacao_empresa', empresaFiltro); }, [empresaFiltro]);
 
   const ativas = useMemo(() => companies.filter((c) => c.is_active), [companies]);
@@ -134,15 +145,18 @@ export default function ContratacaoPage() {
   // silencioso = atualização automática (sem spinner; erro não troca a tela).
   const carregar = useCallback(async (silencioso = false) => {
     if (!silencioso) setLoading(true);
-    const [cand, ivs, jb, ap, dst, cfgErr] = await Promise.all([
+    const [cand, ivs, jb, ap, dst, sess, cfgErr] = await Promise.all([
       supabase.from('hiring_candidates').select('*').order('created_at', { ascending: false }).limit(2000),
       supabase.from('hiring_interviews').select('*').order('scheduled_at', { ascending: true }).limit(2000),
       supabase.from('hiring_jobs').select('*').order('created_at', { ascending: false }).limit(500),
       supabase.from('hiring_applications').select('*').limit(5000),
       supabase.from('hiring_distances').select('*').limit(20000),
+      supabase.from('hiring_scheduling_sessions')
+        .select('id, candidate_id, job_id, status, updated_at, error, confirmed_at, confirm_requested_at, interview_id, pending_request')
+        .order('updated_at', { ascending: false }).limit(500),
       carregarConfig(),
     ]);
-    const err = cand.error ?? ivs.error ?? jb.error ?? ap.error ?? dst.error ?? cfgErr;
+    const err = cand.error ?? ivs.error ?? jb.error ?? ap.error ?? dst.error ?? sess.error ?? cfgErr;
     if (err) { if (!silencioso) setLoadError(err.message); }
     else {
       setItems((cand.data ?? []) as Candidate[]);
@@ -150,6 +164,7 @@ export default function ContratacaoPage() {
       setJobs((jb.data ?? []) as Job[]);
       setApplications((ap.data ?? []) as Application[]);
       setDistances((dst.data ?? []) as Distance[]);
+      setSchedSessions((sess.data ?? []) as AgendamentoIASessao[]);
       setLoadError(null);
     }
     setLoading(false);
@@ -412,11 +427,25 @@ export default function ContratacaoPage() {
     return true;
   }, [jobs]);
 
+  // Candidato pode ter chegado por uma conversa do WhatsApp (bot_conversations) antes do realtime
+  // trazê-lo para `items` — busca uma vez antes de abrir a ficha. Recriado aqui porque o branch
+  // aba === 'links' que tinha essa lógica foi removido em T09 (Fase 3); agora dois lugares
+  // precisam dela: VagaDivulgacao (T11) e ConfigWhatsApp (T12).
+  const abrirCandidatoDoBot = useCallback(async (id: string) => {
+    if (!items.some((c) => c.id === id)) {
+      const { data } = await supabase.from('hiring_candidates').select('*').eq('id', id).maybeSingle();
+      if (data) setItems((prev) => [data as Candidate, ...prev]);
+    }
+    setSelId(id);
+  }, [items]);
+
   const deleteJob = useCallback(async (job: Job) => {
     const n = applications.filter((a) => a.job_id === job.id).length;
     const ok = await confirmar({
       titulo: `Excluir a vaga ${job.title}?`,
-      mensagem: n ? `As ${n} inscrições e análises desta vaga serão apagadas. Os currículos continuam no banco.` : 'A vaga será apagada.',
+      mensagem: n
+        ? `As ${n} inscrições e análises desta vaga serão apagadas. O agendamento pela IA desta vaga também será apagado e os links de WhatsApp criados para ela deixam de estar ligados a uma vaga (continuam existindo, sem vaga). Os currículos continuam no banco.`
+        : 'A vaga será apagada. O agendamento pela IA desta vaga também será apagado e os links de WhatsApp criados para ela deixam de estar ligados a uma vaga (continuam existindo, sem vaga).',
       confirmarLabel: 'Excluir', perigo: true,
     });
     if (!ok) return;
@@ -503,6 +532,73 @@ export default function ContratacaoPage() {
     return m;
   }, [applications, jobs]);
   const vagasDe = useCallback((c: Candidate) => vagasPorCandidato.get(c.id) ?? [], [vagasPorCandidato]);
+  const applicationsPorCandidato = useMemo(() => {
+    const m = new Map<string, Application[]>();
+    for (const a of applications) m.set(a.candidate_id, [...(m.get(a.candidate_id) ?? []), a]);
+    return m;
+  }, [applications]);
+  // job_id de cada candidato (Fase 6, correção de revisão): filtro de vaga compara por id, não por
+  // título — duas vagas de empresas diferentes com o mesmo título não podem virar uma etiqueta só.
+  const vagaIdsDe = useCallback((c: Candidate) => applicationsPorCandidato.get(c.id)?.map((a) => a.job_id) ?? [], [applicationsPorCandidato]);
+  const aderenciaPorCandidato = useMemo(() => {
+    const m = new Map<string, Aderencia | null>();
+    for (const c of items) m.set(c.id, melhorAderencia(applicationsPorCandidato.get(c.id) ?? [], jobs));
+    return m;
+  }, [items, applicationsPorCandidato, jobs]);
+  const aderenciaDe = useCallback((c: Candidate) => aderenciaPorCandidato.get(c.id) ?? null, [aderenciaPorCandidato]);
+  const faltasPorCandidato = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of items) m.set(c.id, faltasFicha(c, settings).length);
+    return m;
+  }, [items, settings]);
+  const faltasDe = useCallback((c: Candidate) => faltasPorCandidato.get(c.id) ?? 0, [faltasPorCandidato]);
+
+  // Ação em lote (T17): mesma trava de dados mínimos de updateCandidate, mas com UMA pergunta só
+  // para o lote inteiro, em vez de N janelas em sequência. updateCandidate (caminho de 1
+  // candidato — drag do Kanban, ficha) não é tocado por esta função.
+  const moveLote = useCallback(async (ids: string[], stageId: string) => {
+    const alvo = items.filter((c) => ids.includes(c.id) && c.stage_id !== stageId);
+    if (!alvo.length) return;
+    const travados = candidatosTravadosNoLote(alvo, stageId, stages, faltasDe);
+    let waiveIds = new Set<string>();
+    if (travados.length) {
+      const ok = await confirmar({
+        titulo: 'Ficha incompleta',
+        mensagem: `${travados.length} de ${alvo.length} candidato${alvo.length > 1 ? 's têm' : ' tem'} ficha incompleta: `
+          + `${travados.map((c) => c.full_name.split(' ')[0]).join(', ')}. Quer mover mesmo assim?`,
+        confirmarLabel: 'Mover mesmo assim',
+      });
+      if (!ok) return; // Decisão 2: um "não" cancela o lote inteiro, nada é gravado.
+      waiveIds = new Set(travados.map((c) => c.id));
+    }
+    const agora = new Date().toISOString();
+    setItems((prev) => prev.map((c) => {
+      if (!alvo.some((a) => a.id === c.id)) return c;
+      return waiveIds.has(c.id) ? { ...c, stage_id: stageId, required_waived_at: agora } : { ...c, stage_id: stageId };
+    }));
+    const semTrava = alvo.filter((c) => !waiveIds.has(c.id)).map((c) => c.id);
+    const comTrava = alvo.filter((c) => waiveIds.has(c.id)).map((c) => c.id);
+    const erros: string[] = [];
+    if (semTrava.length) {
+      const { error } = await supabase.from('hiring_candidates').update({ stage_id: stageId, updated_at: agora }).in('id', semTrava);
+      if (error) erros.push(error.message);
+    }
+    if (comTrava.length) {
+      const { error } = await supabase.from('hiring_candidates')
+        .update({ stage_id: stageId, updated_at: agora, required_waived_at: agora }).in('id', comTrava);
+      if (error) erros.push(error.message);
+    }
+    if (erros.length) {
+      avisar(`Não foi possível mover ${erros.length === 1 ? '1 grupo' : `${erros.length} grupos`}: ${erros.join('; ')}`);
+      carregar();
+    }
+  }, [items, stages, faltasDe, carregar]);
+  const agendamentoIAPorCandidato = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of schedSessions) if (!m.has(s.candidate_id)) m.set(s.candidate_id, s.status);
+    return m;
+  }, [schedSessions]);
+  const agendamentoIADe = useCallback((c: Candidate) => agendamentoIAPorCandidato.get(c.id) ?? null, [agendamentoIAPorCandidato]);
 
   const sel = items.find((c) => c.id === selId) ?? null;
   const mostrarEmpresa = empresaFiltro === 'todas' && companies.length > 1;
@@ -524,7 +620,7 @@ export default function ContratacaoPage() {
   const semEmpresas = !loading && companies.length === 0;
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-6xl mx-auto pb-20 sm:pb-0">
       {/* Cabeçalho */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-rose-50 border border-rose-200">
@@ -534,10 +630,7 @@ export default function ContratacaoPage() {
           <h1 className="text-xl font-black text-zinc-900">Contratação</h1>
           <p className="text-xs text-zinc-400">Currículos, kanban, entrevistas e relatórios por empresa</p>
         </div>
-        {/* Entrevistador que é usuário do ERPOS recebe os avisos da vaga como notificação: sem
-            aparelho inscrito não chega nada. Some quando já está ativo. */}
-        <BotaoAvisos tenantId={user?.tenantId} titulo="Receber no celular os avisos de entrevista (agendada, confirmada, cancelada…)" />
-        {aba !== 'config' && aba !== 'links' && companies.length > 0 && (
+        {area !== 'config' && companies.length > 1 && (
           <select value={empresaFiltro} onChange={(e) => setEmpresaFiltro(e.target.value)}
             className="w-full sm:w-auto h-10 px-3 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 cursor-pointer">
             <option value="todas">Todas as empresas</option>
@@ -545,37 +638,42 @@ export default function ContratacaoPage() {
             <option value="sem">Sem empresa</option>
           </select>
         )}
-        {aba !== 'config' && (
-          <button onClick={() => { pendingJobRef.current = aba === 'vagas' ? selectedJobId : null; fileRef.current?.click(); }}
+        {(area === 'candidatos' || (area === 'vagas' && jobs.some((j) => j.id === selectedJobId))) && (
+          <button onClick={() => {
+            const job = area === 'vagas' ? jobs.find((j) => j.id === selectedJobId) : null;
+            setEmpresaUpload(job ? (job.company_id ?? '') : '');
+            setVagaUpload(job ? job.id : '');
+            setUploadOpen(true);
+          }}
             className="flex flex-1 sm:flex-none items-center justify-center gap-2 px-4 h-10 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-sm font-bold cursor-pointer whitespace-nowrap">
             <i className="ri-upload-2-line" /> Adicionar currículos
           </button>
         )}
         <input ref={fileRef} type="file" multiple accept="application/pdf,image/*" className="hidden"
-          onChange={(e) => {
-            const jid = pendingJobRef.current;
-            pendingJobRef.current = null;
-            if (e.target.files) addFiles(e.target.files, jid);
-            e.target.value = '';
-          }} />
+          onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ''; }} />
       </div>
 
-      {/* Abas */}
+      {/* Áreas */}
       <div className="flex gap-1 mb-4 border-b border-zinc-200 overflow-x-auto">
-        {ABAS.map((t) => (
-          <button key={t.id} onClick={() => setAba(t.id)}
+        {AREAS.map((t) => (
+          <button key={t.id} onClick={() => setArea(t.id)}
             className={`flex items-center gap-1.5 px-3 sm:px-4 h-10 text-[13px] sm:text-sm font-bold border-b-2 -mb-px cursor-pointer whitespace-nowrap flex-shrink-0 ${
-              aba === t.id ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
+              area === t.id ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
             <i className={t.icon} /> {t.label}
           </button>
         ))}
+        <button onClick={() => setArea('config')} title={AREA_CONFIG.label}
+          className={`flex items-center justify-center w-10 h-10 -mb-px border-b-2 cursor-pointer ml-auto flex-shrink-0 ${
+            area === 'config' ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
+          <i className={AREA_CONFIG.icon} />
+        </button>
       </div>
 
-      {semEmpresas && aba !== 'config' && (
+      {semEmpresas && area !== 'config' && (
         <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex items-center gap-3">
           <i className="ri-building-line text-lg" />
           <span className="flex-1">Cadastre as empresas ou lojas para separar os currículos.</span>
-          <button onClick={() => setAba('config')} className="px-3 h-8 rounded-lg bg-amber-500 text-white text-xs font-bold cursor-pointer">Ir para Configurações</button>
+          <button onClick={() => setArea('config')} className="px-3 h-8 rounded-lg bg-amber-500 text-white text-xs font-bold cursor-pointer">Ir para Configurações</button>
         </div>
       )}
 
@@ -583,160 +681,59 @@ export default function ContratacaoPage() {
         <div className="py-16 flex justify-center"><div className="w-7 h-7 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" /></div>
       ) : loadError ? (
         <p className="py-10 text-center text-sm text-red-600">Erro ao carregar: {loadError}</p>
-      ) : aba === 'config' ? (
-        <ConfiguracoesContratacao companies={companies} stages={stages} settings={settings} candidates={items}
+      ) : area === 'hoje' ? (
+        <AreaHoje interviews={ivsDaEmpresa} candidates={items} jobs={jobsDaEmpresa} applications={applications} companies={companies}
+          mostrarEmpresa={mostrarEmpresa} schedSessions={schedSessions} tenantId={user?.tenantId}
+          onOpenCandidate={setSelId} onAbrirConversas={() => { setArea('entrevistas'); setFocoSubabaEntrevistas('conversas'); }}
+          onAbrirVaga={(jobId) => { setArea('vagas'); setSelectedJobId(jobId); }}
+          onNewInterview={(date) => setModal({ interview: null, date })}
+          onSessaoAtualizada={() => carregar(true)} />
+      ) : area === 'config' ? (
+        <AreaConfiguracoes companies={companies} stages={stages} settings={settings} candidates={items}
           onReload={async () => { await carregarConfig(); const { data } = await supabase.from('hiring_candidates').select('*').order('created_at', { ascending: false }).limit(2000); if (data) setItems(data as Candidate[]); }}
-          onSettingsSaved={setSettings} onRecalcCompany={recalcCompany} />
-      ) : aba === 'vagas' ? (
+          onSettingsSaved={setSettings} onRecalcCompany={recalcCompany}
+          jobs={jobs} onOpenCandidate={abrirCandidatoDoBot}
+          secaoInicial={focoSecaoConfig} onSecaoInicialUsada={() => setFocoSecaoConfig(null)} />
+      ) : area === 'vagas' ? (
         <Vagas
           jobs={jobsDaEmpresa} companies={companies} candidates={items} applications={applications} stages={stages}
           mostrarEmpresa={mostrarEmpresa} analyzing={analyzing} distancia={distancia}
           selectedJobId={selectedJobId} onSelectJob={setSelectedJobId}
           onNewJob={() => setJobModal({ job: null })}
-          onEditJob={(job) => setJobModal({ job })}
           onDeleteJob={deleteJob}
           onAddFromBank={setAddToJob}
-          onUploadToJob={(job) => { pendingJobRef.current = job.id; fileRef.current?.click(); }}
+          onUploadToJob={(job) => { setEmpresaUpload(job.company_id ?? ''); setVagaUpload(job.id); setUploadOpen(true); }}
           onReanalyze={(a) => analyze(a.job_id, a.candidate_id)}
           onRemoveApplication={removeApplication}
-          onOpenCandidate={setSelId}
+          onOpenCandidate={abrirCandidatoDoBot}
+          onSaveJob={saveJob}
         />
-      ) : aba === 'links' ? (
-        <LinksWhatsApp companies={companies} jobs={jobs} onOpenCandidate={async (id) => {
-          // Currículo que chegou pelo link depois do carregamento: busca antes de abrir a ficha.
-          if (!items.some((c) => c.id === id)) {
-            const { data } = await supabase.from('hiring_candidates').select('*').eq('id', id).maybeSingle();
-            if (data) setItems((prev) => [data as Candidate, ...prev]);
-          }
-          setSelId(id);
-        }} />
-      ) : aba === 'entrevistas' ? (
-        <EntrevistasDoDia interviews={ivsDaEmpresa} candidates={items} companies={companies} stages={stages} settings={settings}
-          applications={applications} jobs={jobs} onSaved={onInterviewSaved} onOpenCandidate={setSelId}
+      ) : area === 'entrevistas' ? (
+        <AreaEntrevistas interviews={ivsDaEmpresa} candidates={items} companies={companies} stages={stages} settings={settings}
+          applications={applications} jobs={jobs} mostrarEmpresa={mostrarEmpresa}
+          onSaved={onInterviewSaved} onOpenCandidate={setSelId}
+          onOpenInterview={(iv) => setModal({ interview: iv })}
           onNewInterview={(date) => setModal({ interview: null, date })}
-          focoId={focoEntrevista} onFocoUsado={() => setFocoEntrevista(null)} />
-      ) : aba === 'agenda' ? (
-        <AgendaEntrevistas interviews={ivsDaEmpresa} candidates={items} companies={companies} mostrarEmpresa={mostrarEmpresa}
-          onOpenInterview={(iv) => setModal({ interview: iv })} onNew={(date) => setModal({ interview: null, date })} />
-      ) : aba === 'agendamentos' ? (
-        <AgendamentosPainel candidates={items} jobs={jobs} companies={companies} stages={stages} mostrarEmpresa={mostrarEmpresa} onOpenCandidate={setSelId} />
-      ) : aba === 'relatorios' ? (
+          focoId={focoEntrevista} onFocoUsado={() => setFocoEntrevista(null)}
+          subabaInicial={focoSubabaEntrevistas} onSubabaInicialUsada={() => setFocoSubabaEntrevistas(null)} />
+      ) : area === 'relatorios' ? (
         <RelatoriosContratacao candidates={daEmpresa} interviews={interviews} companies={companies} stages={stages} settings={settings}
           mostrarEmpresa={mostrarEmpresa} onOpen={setSelId} />
       ) : (
-        <>
-          {/* Área de soltar */}
-          <div
-            onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragOver(true); } }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); } }}
-            className={`mb-4 rounded-2xl border-2 border-dashed px-4 py-3 flex flex-wrap items-center justify-center gap-3 transition-colors ${
-              dragOver ? 'border-rose-400 bg-rose-50' : 'border-zinc-200 bg-zinc-50/60'}`}
-          >
-            <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 text-left cursor-pointer">
-              <i className="ri-file-user-line text-2xl text-rose-400" />
-              <span>
-                <span className="hidden sm:block text-sm font-semibold text-zinc-700">Arraste PDFs ou fotos de currículos aqui</span>
-                <span className="sm:hidden block text-sm font-semibold text-zinc-700">Toque para escolher PDF ou tirar foto</span>
-                <span className="block text-xs text-zinc-400">Vários de uma vez. PDF com texto é lido de graça; foto vai para a IA.</span>
-              </span>
-            </button>
-            {ativas.length > 0 && (
-              <label className="flex items-center gap-2 text-xs font-semibold text-zinc-600">
-                Salvar em
-                <select value={empresaUpload} onChange={(e) => { setEmpresaUpload(e.target.value); setVagaUpload(''); }}
-                  className="h-8 px-2 rounded-lg border border-zinc-200 text-xs bg-white cursor-pointer">
-                  {ativas.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  <option value="">Sem empresa</option>
-                </select>
-              </label>
-            )}
-            {vagasUpload.length > 0 && (
-              <label className="flex items-center gap-2 text-xs font-semibold text-zinc-600">
-                Vaga
-                <select value={vagaUpload} onChange={(e) => setVagaUpload(e.target.value)}
-                  className="h-8 px-2 rounded-lg border border-zinc-200 text-xs bg-white cursor-pointer max-w-[200px]">
-                  <option value="">Só no banco</option>
-                  {vagasUpload.map((j) => <option key={j.id} value={j.id}>{j.title}</option>)}
-                </select>
-              </label>
-            )}
-          </div>
-
-          {/* Fila de leitura */}
-          {queue.length > 0 && (
-            <div className="mb-4 rounded-2xl border border-zinc-200 bg-white overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-100">
-                <p className="text-xs font-bold text-zinc-600">{lendo > 0 ? `Lendo ${lendo} currículo${lendo > 1 ? 's' : ''}…` : 'Leitura concluída'}</p>
-                {lendo === 0 && <button onClick={() => setQueue([])} className="text-xs text-zinc-400 hover:text-zinc-700 cursor-pointer">Limpar</button>}
-              </div>
-              <ul className="max-h-48 overflow-y-auto divide-y divide-zinc-50">
-                {queue.map((q) => (
-                  <li key={q.key} className="flex items-center gap-3 px-4 py-2 text-xs">
-                    {q.state === 'lendo' && <div className="w-3.5 h-3.5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />}
-                    {q.state === 'ok' && <i className="ri-checkbox-circle-fill text-emerald-500 text-sm" />}
-                    {q.state === 'erro' && <i className="ri-error-warning-fill text-red-500 text-sm" />}
-                    <span className="font-medium text-zinc-700 truncate max-w-[40%]">{q.name}</span>
-                    {q.msg && <span className={`truncate ${q.state === 'erro' ? 'text-red-600' : 'text-zinc-500'}`}>{q.msg}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Busca (+ fases e modo de visualização na aba Candidatos) */}
-          <div className="flex flex-wrap items-center gap-2 mb-3">
-            <div className="relative w-full sm:w-auto sm:flex-1 sm:min-w-[200px]">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
-              <input value={busca} onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar por nome, cargo, cidade, empresa, palavra do currículo…"
-                className="w-full h-10 pl-9 pr-3 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-rose-300" />
-            </div>
-            <select value={decisaoFiltro} onChange={(e) => setDecisaoFiltro(e.target.value)} title="Tomada de decisão"
-              className="flex-1 sm:flex-none min-w-0 h-10 px-3 rounded-xl border border-zinc-200 text-sm text-zinc-700 cursor-pointer">
-              <option value="todas">Toda decisão</option>
-              {DECISIONS.map((d) => <option key={d.id} value={d.id}>{d.sigla} — {d.label.replace(' à {empresa}', '')}</option>)}
-              <option value="sem">Sem decisão</option>
-            </select>
-            {aba === 'candidatos' && (
-              <div className="flex rounded-xl border border-zinc-200 overflow-hidden">
-                {([['cards', 'ri-layout-grid-line', 'Cards'], ['tabela', 'ri-table-line', 'Tabela']] as const).map(([v, icon, label]) => (
-                  <button key={v} onClick={() => setView(v)} title={label}
-                    className={`px-3 h-10 text-sm cursor-pointer ${view === v ? 'bg-zinc-900 text-white' : 'bg-white text-zinc-500 hover:text-zinc-800'}`}>
-                    <i className={icon} />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {aba === 'kanban' ? (
-            <Kanban items={buscados} stages={stages} companies={companies} mostrarEmpresa={mostrarEmpresa}
-              proximaEntrevista={proximaEntrevista} onOpen={setSelId}
-              onMove={(id, stageId) => { const c = items.find((x) => x.id === id); if (c && c.stage_id !== stageId) updateCandidate(id, { stage_id: stageId }); }} />
-          ) : (
-            <>
-              <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1">
-                {[{ id: 'todas', name: 'Todas' }, ...stages].map((s) => (
-                  <button key={s.id} onClick={() => setFaseFiltro(s.id)}
-                    className={`px-3 h-8 rounded-full text-xs font-bold whitespace-nowrap border cursor-pointer transition-colors ${
-                      faseFiltro === s.id ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-300'}`}>
-                    {s.name} <span className="opacity-60">{counts[s.id] ?? 0}</span>
-                  </button>
-                ))}
-              </div>
-              {filtrados.length === 0 ? (
-                <div className="py-16 text-center text-zinc-400">
-                  <i className="ri-inbox-line text-4xl" />
-                  <p className="text-sm font-semibold mt-2">{daEmpresa.length ? 'Nenhum candidato com esses filtros' : 'Nenhum currículo ainda'}</p>
-                </div>
-              ) : (
-                <CandidatosLista view={view} items={filtrados} companies={companies} stages={stages} mostrarEmpresa={mostrarEmpresa} distancia={distanciaLista} vagasDe={vagasDe}
-                  proximaEntrevista={proximaEntrevista} ultimaAvaliacao={ultimaAvaliacao} onOpen={setSelId} />
-              )}
-            </>
-          )}
-        </>
+        <AreaCandidatos
+          busca={busca} onBuscaChange={setBusca}
+          decisaoFiltro={decisaoFiltro} onDecisaoFiltroChange={setDecisaoFiltro}
+          view={view} onViewChange={setView}
+          items={items} buscados={buscados} filtrados={filtrados} daEmpresa={daEmpresa}
+          stages={stages} companies={companies} mostrarEmpresa={mostrarEmpresa}
+          faseFiltro={faseFiltro} onFaseFiltroChange={setFaseFiltro} counts={counts}
+          proximaEntrevista={proximaEntrevista} ultimaAvaliacao={ultimaAvaliacao}
+          distanciaLista={distanciaLista} vagasDe={vagasDe} vagaIdsDe={vagaIdsDe} jobs={jobs}
+          aderenciaDe={aderenciaDe} faltasDe={faltasDe} agendamentoIADe={agendamentoIADe}
+          onOpen={setSelId}
+          onMove={(id, stageId) => { const c = items.find((x) => x.id === id); if (c && c.stage_id !== stageId) updateCandidate(id, { stage_id: stageId }); }}
+          onMoverLote={moveLote}
+        />
       )}
 
       {sel && (
@@ -751,7 +748,7 @@ export default function ContratacaoPage() {
           applications={applications.filter((a) => a.candidate_id === sel.id)}
           analyzing={analyzing}
           onApply={(jobId) => applyToJob(jobId, [sel.id])}
-          onOpenJob={(jobId) => { setSelId(null); setSelectedJobId(jobId); setAba('vagas'); }}
+          onOpenJob={(jobId) => { setSelId(null); setSelectedJobId(jobId); setArea('vagas'); }}
           distances={distances.filter((d) => d.candidate_id === sel.id)}
           onCalcDistances={() => calcDistances(sel.id)}
           onClose={() => setSelId(null)}
@@ -791,6 +788,16 @@ export default function ContratacaoPage() {
           onAdd={(ids) => applyToJob(addToJob.id, ids)} />
       )}
 
+      <UploadCurriculosModal
+        open={uploadOpen} onClose={() => setUploadOpen(false)}
+        empresas={ativas} empresaId={empresaUpload} onEmpresaChange={(id) => { setEmpresaUpload(id); setVagaUpload(''); }}
+        vagas={vagasUpload} vagaId={vagaUpload} onVagaChange={setVagaUpload}
+        dragOver={dragOver} onDragOver={setDragOver}
+        onPickFiles={() => fileRef.current?.click()} onDropFiles={(files) => addFiles(files)}
+        queue={queue} onClearQueue={() => setQueue([])} lendo={lendo}
+      />
+
+      <BarraInferior area={area} onArea={setArea} />
       <DialogHost />
     </div>
   );

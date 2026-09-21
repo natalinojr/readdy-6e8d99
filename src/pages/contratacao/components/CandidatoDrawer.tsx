@@ -1,15 +1,21 @@
-// Ficha do candidato: fase, estrelas, empresa, entrevistas, dados lidos do currículo e anotações.
-import { useCallback, useEffect, useRef, useState } from 'react';
+// Ficha do candidato: cabeçalho fixo, barra de ações e 5 abas (Resumo, Currículo, Entrevistas,
+// Conversa, Histórico). O corpo de cada aba mora em ficha/* (T05) e ConversaWhatsApp (T04) —
+// este shell só monta a árvore e mantém o estado que é do drawer inteiro (distância, upload).
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
-  type Application, type Candidate, type Company, type Decision, type Interview, type Job, type Stage, BUCKET, DECISIONS, FIT, fitOf,
-  type Distance, fmtKm, distCls, PRECISION_LABEL,
-  fmtPhone, whatsLink, fmtMonths, fmtDateTime, interviewStatusInfo, avgScore, FORMATS, stageOf, decisionOf, withEmpresa, ageOf, companyName,
-  type FichaCfg, fieldsOf, faltasFicha, onlyDigits,
-  type JobScheduling, faltasAgendamento, stageByKind, type CandidateEvent, type Settings,
+  type Application, type Candidate, type Company, type Interview, type Job, type Stage,
+  type Distance, type FichaCfg, type Settings,
+  BUCKET, fmtKm, whatsLink, stageOf, decisionOf, withEmpresa, ageOf, companyName,
 } from '../shared';
+import { melhorAderencia } from '../aderencia';
 import { avisar } from '../dialog';
 import EditarCandidatoModal from './EditarCandidatoModal';
+import FichaResumo from './ficha/FichaResumo';
+import FichaCurriculo from './ficha/FichaCurriculo';
+import FichaEntrevistas from './ficha/FichaEntrevistas';
+import FichaConversa from './ficha/FichaConversa';
+import FichaHistorico from './ficha/FichaHistorico';
 
 interface Props {
   c: Candidate;
@@ -32,6 +38,8 @@ interface Props {
   onAgendar: () => void;
   onOpenInterview: (iv: Interview) => void;
 }
+
+type Aba = 'resumo' | 'curriculo' | 'entrevistas' | 'conversa' | 'historico';
 
 export default function CandidatoDrawer({
   c, companies, stages, ficha, settings, interviews, jobs, applications, analyzing, onApply, onOpenJob, distances, onCalcDistances,
@@ -58,22 +66,16 @@ export default function CandidatoDrawer({
     calcular();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [c.id, c.company_id]);
-  const vagasAbertas = jobs.filter((j) => j.status !== 'fechada' && !applications.some((a) => a.job_id === j.id));
-  const [notes, setNotes] = useState(c.notes ?? '');
-  const [iaBusy, setIaBusy] = useState(false);
-  const [iaErro, setIaErro] = useState<string | null>(null);
-  const [verTexto, setVerTexto] = useState(false);
-  useEffect(() => { setNotes(c.notes ?? ''); }, [c.id, c.notes]);
-  useEffect(() => { setIaErro(null); setVerTexto(false); }, [c.id]);
+
   // WhatsApp de quem mandou pelo link primeiro (o telefone do currículo pode ser outro número).
   const wa = whatsLink(c.whatsapp || c.phone);
   const [editarDados, setEditarDados] = useState(false);
   useEffect(() => { setEditarDados(false); }, [c.id]);
+  const [menuAberto, setMenuAberto] = useState(false);
+  useEffect(() => { setMenuAberto(false); }, [c.id]);
 
-  const organizar = async () => {
-    setIaBusy(true); setIaErro(null);
-    try { await onOrganizar(); } catch (e) { setIaErro((e as Error).message); } finally { setIaBusy(false); }
-  };
+  const [aba, setAba] = useState<Aba>('resumo');
+  useEffect(() => setAba('resumo'), [c.id]);
 
   const abrirArquivo = async () => {
     if (!c.file_path) return;
@@ -82,628 +84,124 @@ export default function CandidatoDrawer({
     window.open(data.signedUrl, '_blank', 'noopener');
   };
 
-  const minhas = [...interviews].sort((a, b) => b.scheduled_at.localeCompare(a.scheduled_at));
   const empresa = c.company_id ? companyName(companies, c.company_id) : '';
   const idade = ageOf(c);
   const dec = decisionOf(c.decision);
-  const faltam = faltasFicha(c, ficha);
-  const extras = (ficha.custom_fields ?? []).filter((f) => String(c.extra_fields?.[f.id] ?? '').trim());
-  const [editando, setEditando] = useState(false);
-  useEffect(() => { setEditando(false); }, [c.id]);
+  const aderencia = melhorAderencia(applications, jobs);
+
+  const ABAS: { id: Aba; label: string; icon: string }[] = [
+    { id: 'resumo', label: 'Resumo', icon: 'ri-file-user-line' },
+    { id: 'curriculo', label: 'Currículo', icon: 'ri-file-text-line' },
+    { id: 'entrevistas', label: 'Entrevistas', icon: 'ri-calendar-event-line' },
+    { id: 'conversa', label: 'Conversa', icon: 'ri-whatsapp-line' },
+    { id: 'historico', label: 'Histórico', icon: 'ri-history-line' },
+  ];
 
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
       <aside className="fixed inset-y-0 right-0 z-50 w-full max-w-xl bg-white shadow-2xl flex flex-col">
+        {/* Cabeçalho fixo: nome, idade, bairro, distância, melhor nota/vaga, decisão */}
         <div className="flex items-start gap-3 px-5 py-4 border-b border-zinc-100">
           <div className="flex-1 min-w-0">
             <h2 className="text-lg font-black text-zinc-900">{c.full_name}</h2>
-            <p className="text-xs text-zinc-500">{[c.desired_role, idade != null ? `${idade} anos` : null, c.marital_status].filter(Boolean).join(' · ')}</p>
+            <p className="text-xs text-zinc-500">
+              {[
+                c.desired_role,
+                idade != null ? `${idade} anos` : null,
+                c.marital_status,
+                c.neighborhood,
+                dist ? fmtKm(dist.km) : null,
+                aderencia ? `Aderência ${aderencia.score.toFixed(1).replace('.', ',')} · ${aderencia.jobTitle}` : null,
+              ].filter(Boolean).join(' · ')}
+            </p>
           </div>
           {dec && <span className={`text-xs font-black px-2.5 py-1 rounded-lg border ${dec.cls}`} title={withEmpresa(dec.label, empresa)}>{dec.sigla}</span>}
-          <button onClick={() => setEditarDados(true)} title="Editar dados do candidato"
-            className="flex items-center gap-1 px-2.5 h-8 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-xs font-bold text-zinc-700 cursor-pointer">
-            <i className="ri-pencil-line" /> <span className="hidden sm:inline">Editar dados</span>
-          </button>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-500 cursor-pointer">
             <i className="ri-close-line text-lg" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          {/* Fase, nota e empresa */}
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={stageOf(stages, c.stage_id)?.id ?? ''} onChange={(e) => onUpdate({ stage_id: e.target.value })}
-              className="h-9 px-3 rounded-lg border border-zinc-200 text-sm font-semibold cursor-pointer">
-              {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-            <div className="flex items-center">
-              {[1, 2, 3, 4, 5].map((n) => (
-                <button key={n} onClick={() => onUpdate({ rating: c.rating === n ? null : n })}
-                  className={`text-xl px-0.5 cursor-pointer ${c.rating && n <= c.rating ? 'text-amber-500' : 'text-zinc-300 hover:text-amber-300'}`}
-                  title={`${n} estrela${n > 1 ? 's' : ''}`}>★</button>
-              ))}
-            </div>
-            <select value={c.company_id ?? ''} onChange={(e) => onUpdate({ company_id: e.target.value || null })}
-              className="w-full sm:w-auto sm:ml-auto sm:max-w-[190px] h-9 px-3 rounded-lg border border-zinc-200 text-sm cursor-pointer" title="Empresa da vaga">
-              <option value="">Sem empresa</option>
-              {companies.filter((x) => x.is_active || x.id === c.company_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-            </select>
-          </div>
+        {/* Barra de ações: fase, WhatsApp, agendar pela IA, currículo original, editar dados, ⋯ */}
+        <div className="flex flex-wrap items-center gap-2 px-5 py-2.5 border-b border-zinc-100">
+          <select value={stageOf(stages, c.stage_id)?.id ?? ''} onChange={(e) => onUpdate({ stage_id: e.target.value })}
+            className="h-9 px-3 rounded-lg border border-zinc-200 text-sm font-semibold cursor-pointer">
+            {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
 
-          {/* Dados mínimos: aviso do que falta + edição */}
-          {(faltam.length > 0 || editando) ? (
-            <div className={`rounded-xl border p-3 ${faltam.length ? 'border-amber-200 bg-amber-50' : 'border-zinc-200 bg-zinc-50'}`}>
-              {faltam.length > 0 ? (
-                <p className="text-xs text-amber-900">
-                  <b><i className="ri-error-warning-line" /> Ficha incompleta.</b> Faltam: {faltam.map((f) => f.label.toLowerCase()).join(', ')}.
-                  {' '}Sem esses dados o candidato não sai de "{stages.find((s) => s.native_kind === 'novo')?.name ?? 'Novo'}".
-                  {c.source?.startsWith('whatsapp_link') && ' O atendente do WhatsApp está perguntando ao candidato.'}
-                </p>
-              ) : <p className="text-xs font-bold text-zinc-600">Dados mínimos</p>}
-              <DadosMinimosForm key={c.id} c={c} campos={editando ? fieldsOf(ficha).filter((f) => ficha.required_fields.includes(f.id)) : faltam}
-                onSave={(patch) => { onUpdate(patch); setEditando(false); }} onCancel={editando ? () => setEditando(false) : undefined} />
-            </div>
-          ) : ficha.required_fields.length > 0 && (
-            <button onClick={() => setEditando(true)} className="text-xs font-semibold text-emerald-700 cursor-pointer">
-              <i className="ri-checkbox-circle-line" /> Dados mínimos completos · editar
+          {wa && (
+            <a href={wa} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1 px-2.5 h-8 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-xs font-bold text-zinc-700 cursor-pointer">
+              <i className="ri-whatsapp-line" /> <span className="hidden sm:inline">WhatsApp</span>
+            </a>
+          )}
+
+          <button onClick={() => setAba('resumo')}
+            className="flex items-center gap-1 px-2.5 h-8 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-xs font-bold text-zinc-700 cursor-pointer">
+            <i className="ri-robot-2-line" /> <span className="hidden sm:inline">Agendamento pela IA</span>
+          </button>
+
+          {c.file_path && (
+            <button onClick={abrirArquivo}
+              className="flex items-center gap-1 px-2.5 h-8 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-xs font-bold text-zinc-700 cursor-pointer">
+              <i className="ri-file-text-line" /> <span className="hidden sm:inline">Ver currículo original</span>
             </button>
           )}
 
-          {/* Tomada de decisão */}
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">Tomada de decisão</p>
-            <div className="grid grid-cols-4 gap-1.5">
-              {DECISIONS.map((d) => (
-                <button key={d.id} title={withEmpresa(d.label, empresa)}
-                  onClick={() => onUpdate({ decision: c.decision === d.id ? null : (d.id as Decision) })}
-                  className={`h-9 rounded-lg border text-xs font-black cursor-pointer ${c.decision === d.id ? d.cls : 'bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300'}`}>
-                  {d.sigla}
-                </button>
-              ))}
-            </div>
-            {dec && <p className="text-[11px] text-zinc-500 mt-1">{withEmpresa(dec.label, empresa)}</p>}
-          </div>
+          <button onClick={() => setEditarDados(true)} title="Editar dados do candidato"
+            className="flex items-center gap-1 px-2.5 h-8 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-xs font-bold text-zinc-700 cursor-pointer">
+            <i className="ri-pencil-line" /> <span className="hidden sm:inline">Editar dados</span>
+          </button>
 
-          {!c.ai_processed && (
-            <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
-              <p className="text-xs text-sky-900">
-                <b>Leitura simples (grátis):</b> só contato, cidade e o texto completo, com os campos adivinhados por regra.
-                Para ver experiências, resumo e pontos fortes e de atenção, organize com IA (alguns centavos).
-              </p>
-              <button onClick={organizar} disabled={iaBusy}
-                className="mt-2 flex items-center gap-1.5 px-3 h-8 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white text-xs font-bold cursor-pointer">
-                {iaBusy ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <i className="ri-sparkling-line" />}
-                {iaBusy ? 'Organizando…' : 'Organizar com IA'}
-              </button>
-              {iaErro && <p className="text-xs text-red-600 mt-1.5">{iaErro}</p>}
-            </div>
-          )}
-
-          {/* Vagas em que está inscrito (com a aderência calculada pela IA) */}
-          <Section title="Vagas">
-            {applications.length > 0 && (
-              <ul className="space-y-1.5 mb-2">
-                {applications.map((a) => {
-                  const job = jobs.find((j) => j.id === a.job_id);
-                  const fit = a.fit ?? fitOf(a.score);
-                  const loading = analyzing.has(`${a.job_id}:${a.candidate_id}`);
-                  return (
-                    <li key={a.id}>
-                      <button onClick={() => onOpenJob(a.job_id)} className="w-full text-left rounded-xl border border-zinc-200 hover:border-rose-300 p-2.5 cursor-pointer">
-                        <div className="flex items-center gap-2">
-                          <i className="ri-briefcase-4-line text-zinc-400" />
-                          <span className="flex-1 text-sm font-semibold text-zinc-800 truncate">{job?.title ?? 'Vaga removida'}</span>
-                          {loading ? <span className="text-[10px] text-zinc-400">analisando…</span>
-                            : a.score != null ? <b className="text-sm text-zinc-900">{a.score}<span className="text-[10px] text-zinc-400">/100</span></b> : null}
-                          {fit && !loading && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${FIT[fit].cls}`}>{FIT[fit].label}</span>}
-                        </div>
-                        {a.analysis?.resumo && <p className="text-xs text-zinc-500 mt-1 line-clamp-2">{a.analysis.resumo}</p>}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            {vagasAbertas.length > 0 ? (
-              <select value="" onChange={(e) => { if (e.target.value) onApply(e.target.value); }}
-                className="h-8 px-2 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 cursor-pointer">
-                <option value="">+ Inscrever em uma vaga…</option>
-                {vagasAbertas.map((j) => <option key={j.id} value={j.id}>{j.title}{j.company_id ? ` — ${companyName(companies, j.company_id)}` : ''}</option>)}
-              </select>
-            ) : applications.length === 0 && <p className="text-xs text-zinc-400">Nenhuma vaga aberta. Abra na aba Vagas.</p>}
-          </Section>
-
-          {/* Agendamento pela IA (só com vaga que tem o agendamento ligado e completo) */}
-          <AgendamentoIA c={c} stages={stages} applications={applications} jobs={jobs}
-            onSend={(stageId) => onUpdate({ stage_id: stageId })} />
-
-          {/* Entrevistas */}
-          <Section title="Entrevistas">
-            {minhas.length > 0 && (
-              <ul className="space-y-1.5 mb-2">
-                {minhas.map((iv) => {
-                  const st = interviewStatusInfo(iv.status);
-                  const media = avgScore(iv.scores);
-                  const rec = decisionOf(iv.recommendation);
-                  return (
-                    <li key={iv.id}>
-                      <button onClick={() => onOpenInterview(iv)} className="w-full text-left rounded-xl border border-zinc-200 hover:border-violet-300 p-2.5 cursor-pointer">
-                        <div className="flex items-center gap-2">
-                          <i className={`${FORMATS.find((f) => f.id === iv.format)?.icon} text-zinc-400`} />
-                          <span className="text-sm font-semibold text-zinc-800">{fmtDateTime(iv.scheduled_at)}</span>
-                          <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border ${st.cls}`}>{st.label}</span>
-                        </div>
-                        {(media != null || rec || iv.notes) && (
-                          <p className="text-xs text-zinc-500 mt-1 line-clamp-2">
-                            {media != null && <b className="text-zinc-700">Nota {media.toFixed(1)} · </b>}
-                            {rec && <b className="text-zinc-700">{rec.sigla} · </b>}
-                            {iv.notes}
-                          </p>
-                        )}
-                      </button>
-                      <RegistroEntrevista iv={iv} settings={settings} empresa={empresa} />
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            <button onClick={onAgendar} className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold cursor-pointer">
-              <i className="ri-calendar-event-line" /> Agendar entrevista
+          <div className="relative">
+            <button onClick={() => setMenuAberto((v) => !v)} title="Mais ações"
+              className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 hover:bg-zinc-50 text-zinc-600 cursor-pointer">
+              <i className="ri-more-2-fill" />
             </button>
-          </Section>
-
-          {/* Histórico: tudo o que aconteceu com o candidato (gatilhos no banco) + anotações */}
-          <HistoricoCandidato c={c}
-            refreshKey={[c.stage_id, c.decision, c.rating, c.company_id, applications.length,
-              ...interviews.map((iv) => `${iv.status}|${iv.scheduled_at}|${iv.recommendation}|${Object.keys(iv.answers ?? {}).length}`)].join('~')} />
-
-          {/* Contato */}
-          <Section title="Contato">
-            <div className="space-y-1.5 text-sm">
-              {c.phone && (
-                <p className="flex items-center gap-2">
-                  <i className="ri-phone-line text-zinc-400" /> {fmtPhone(c.phone)}
-                  {wa && !c.whatsapp && <a href={wa} target="_blank" rel="noopener noreferrer" className="text-emerald-600 font-semibold text-xs ml-1"><i className="ri-whatsapp-line" /> WhatsApp</a>}
-                </p>
-              )}
-              {c.whatsapp && (
-                <p className="flex items-center gap-2">
-                  <i className="ri-whatsapp-line text-emerald-500" /> {fmtPhone(onlyDigits(c.whatsapp).replace(/^55(?=\d{10,11}$)/, ''))}
-                  <span className="text-[11px] text-zinc-400">{onlyDigits(c.whatsapp).slice(-8) === onlyDigits(c.phone).slice(-8) ? 'WhatsApp' : 'WhatsApp (diferente do currículo)'}</span>
-                  {wa && <a href={wa} target="_blank" rel="noopener noreferrer" className="text-emerald-600 font-semibold text-xs ml-1">abrir conversa</a>}
-                </p>
-              )}
-              {c.email && <p className="flex items-center gap-2"><i className="ri-mail-line text-zinc-400" /> <a href={`mailto:${c.email}`} className="text-sky-700">{c.email}</a></p>}
-              {(c.address || c.city || c.neighborhood) && (
-                <p className="flex items-start gap-2"><i className="ri-map-pin-line text-zinc-400 mt-0.5" /> {[c.address, c.neighborhood, c.city].filter(Boolean).join(', ')}</p>
-              )}
-              {c.birth_date && (
-                <p className="flex items-center gap-2"><i className="ri-cake-2-line text-zinc-400" /> {c.birth_date.split('-').reverse().join('/')}
-                  {idade != null && <span className="text-zinc-500">({idade} anos)</span>}</p>
-              )}
-              {c.marital_status && <p className="flex items-center gap-2"><i className="ri-user-heart-line text-zinc-400" /> {c.marital_status}</p>}
-              {!c.phone && !c.email && !c.city && <p className="text-zinc-400 text-xs">Sem dados de contato no currículo.</p>}
-            </div>
-          </Section>
-
-          <Section title={loja ? `Distância até ${loja.name}` : 'Distância até a loja'}>
-            {!loja ? (
-              <p className="text-xs text-zinc-400">Escolha a loja da ficha (no topo) para calcular a distância.</p>
-            ) : !lojaTemPin ? (
-              <p className="text-xs text-zinc-400">Marque a localização de {loja.name} em Configurações › Empresas (ícone de mapa) para calcular.</p>
-            ) : !temEndereco ? (
-              <p className="text-xs text-zinc-400">O currículo não tem endereço, bairro nem cidade.</p>
-            ) : (
+            {menuAberto && (
               <>
-                {c.geo_precision === 'nao_encontrado' && !dist && (
-                  <p className="text-xs text-orange-700 mb-1.5">Não achei o endereço deste currículo no mapa.</p>
-                )}
-                {dist && (
-                  <div className="flex items-center gap-2 mb-1">
-                    <i className="ri-car-line text-zinc-400" />
-                    <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full border ${distCls(dist.km)}`}>{fmtKm(dist.km)}</span>
-                    {dist.minutes != null && <span className="text-sm text-zinc-600">~{dist.minutes} min de carro</span>}
-                  </div>
-                )}
-                {dist?.precision && (
-                  <p className="text-[11px] text-zinc-400">
-                    {dist.method === 'rota' ? 'Pela rota' : 'Estimativa em linha reta'} · endereço {PRECISION_LABEL[dist.precision]}
-                    {c.geo_label ? ` (${c.geo_label})` : ''}
-                  </p>
-                )}
-                <button onClick={calcular} disabled={distBusy} className="mt-1 text-xs font-semibold text-sky-700 disabled:opacity-50 cursor-pointer">
-                  {distBusy ? 'Calculando…' : dist ? 'Recalcular' : 'Calcular distância'}
-                </button>
-                {distErro && <p className="text-xs text-red-600 mt-1">{distErro}</p>}
+                <div className="fixed inset-0 z-10" onClick={() => setMenuAberto(false)} />
+                <div className="absolute right-0 mt-1 z-20 rounded-lg border border-zinc-200 bg-white shadow-2xl overflow-hidden">
+                  <button onClick={() => { setMenuAberto(false); onDelete(); }}
+                    className="flex items-center gap-1.5 px-3 h-9 w-full text-left text-sm font-semibold text-red-600 hover:bg-red-50 cursor-pointer whitespace-nowrap">
+                    <i className="ri-delete-bin-line" /> Excluir
+                  </button>
+                </div>
               </>
             )}
-          </Section>
-
-          {c.summary && <Section title="Resumo"><p className="text-sm text-zinc-700 leading-relaxed">{c.summary}</p></Section>}
-
-          {(c.strengths.length > 0 || c.concerns.length > 0) && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {c.strengths.length > 0 && (
-                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 mb-1.5">Pontos fortes</p>
-                  <ul className="space-y-1 text-xs text-emerald-900">{c.strengths.map((s, i) => <li key={i}>• {s}</li>)}</ul>
-                </div>
-              )}
-              {c.concerns.length > 0 && (
-                <div className="rounded-xl bg-orange-50 border border-orange-100 p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-orange-700 mb-1.5">Pontos de atenção</p>
-                  <ul className="space-y-1 text-xs text-orange-900">{c.concerns.map((s, i) => <li key={i}>• {s}</li>)}</ul>
-                </div>
-              )}
-            </div>
-          )}
-
-          {c.ai_processed && (
-            <Section title={`Experiência${c.total_experience_months != null ? ` · ${fmtMonths(c.total_experience_months)}` : ''}`}>
-              {c.experiences.length === 0 ? <p className="text-xs text-zinc-400">Nenhuma experiência informada.</p> : (
-                <ol className="space-y-3 border-l-2 border-zinc-100 pl-4">
-                  {c.experiences.map((e, i) => (
-                    <li key={i} className="relative">
-                      <span className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-rose-400" />
-                      <p className="text-sm font-bold text-zinc-800">{e.cargo || 'Cargo não informado'}</p>
-                      <p className="text-xs text-zinc-500">
-                        {[e.empresa, [e.inicio, e.atual ? 'atual' : e.fim].filter(Boolean).join(' – ')].filter(Boolean).join(' · ')}
-                      </p>
-                      {e.descricao && <p className="text-xs text-zinc-600 mt-1 leading-relaxed">{e.descricao}</p>}
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </Section>
-          )}
-
-          {c.education.length > 0 && (
-            <Section title="Formação">
-              <ul className="space-y-1.5 text-sm">
-                {c.education.map((e, i) => (
-                  <li key={i}>
-                    <span className="font-semibold text-zinc-800">{[e.nivel, e.curso].filter(Boolean).join(' — ') || 'Formação'}</span>
-                    <span className="text-xs text-zinc-500"> {[e.instituicao, e.situacao].filter(Boolean).join(' · ')}</span>
-                  </li>
-                ))}
-              </ul>
-            </Section>
-          )}
-
-          {c.courses.length > 0 && (
-            <Section title="Outros cursos">
-              <ul className="space-y-1 text-sm text-zinc-700">{c.courses.map((s, i) => <li key={i}>• {s}</li>)}</ul>
-            </Section>
-          )}
-
-          {(c.skills.length > 0 || c.languages.length > 0) && (
-            <Section title="Habilidades e idiomas">
-              <div className="flex flex-wrap gap-1.5">
-                {[...c.skills, ...c.languages].map((s, i) => (
-                  <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-700">{s}</span>
-                ))}
-              </div>
-            </Section>
-          )}
-
-          {(c.availability || c.salary_expectation || c.driver_license || extras.length > 0) && (
-            <Section title="Outras informações">
-              <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-sm">
-                {c.availability && <><dt className="text-zinc-400">Disponibilidade</dt><dd>{c.availability}</dd></>}
-                {c.salary_expectation && <><dt className="text-zinc-400">Pretensão</dt><dd>{c.salary_expectation}</dd></>}
-                {c.driver_license && <><dt className="text-zinc-400">CNH</dt><dd>{c.driver_license}</dd></>}
-                {extras.flatMap((f) => [
-                  <dt key={`${f.id}-t`} className="text-zinc-400">{f.label}</dt>,
-                  <dd key={`${f.id}-v`}>{c.extra_fields?.[f.id]}</dd>,
-                ])}
-              </dl>
-            </Section>
-          )}
-
-          {c.raw_text && (
-            <Section title="Texto do currículo">
-              <button onClick={() => setVerTexto((v) => !v)} className="text-xs font-semibold text-sky-700 cursor-pointer">
-                {verTexto ? 'Esconder texto' : 'Mostrar texto completo'}
-              </button>
-              {verTexto && (
-                <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-zinc-50 border border-zinc-100 p-3 text-xs text-zinc-700 font-sans">{c.raw_text}</pre>
-              )}
-            </Section>
-          )}
-
-          <Section title="Minhas anotações">
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)}
-              onBlur={() => { if (notes !== (c.notes ?? '')) onUpdate({ notes: notes || null }); }}
-              rows={4} placeholder="Referências, observações gerais, próximo passo…"
-              className="w-full rounded-xl border border-zinc-200 p-3 text-sm focus:outline-none focus:border-rose-300" />
-          </Section>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 px-5 py-3 border-t border-zinc-100">
-          {c.file_path && (
-            <button onClick={abrirArquivo} className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-sm font-semibold text-zinc-700 cursor-pointer">
-              <i className="ri-file-text-line" /> Ver currículo original
+        {/* Abas */}
+        <div className="flex gap-1 px-5 border-b border-zinc-200 overflow-x-auto">
+          {ABAS.map((t) => (
+            <button key={t.id} onClick={() => setAba(t.id)}
+              className={`flex items-center gap-1.5 px-3 sm:px-4 h-10 text-[13px] sm:text-sm font-bold border-b-2 -mb-px cursor-pointer whitespace-nowrap flex-shrink-0 ${
+                aba === t.id ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
+              <i className={t.icon} /> {t.label}
             </button>
-          )}
-          <button onClick={onDelete} className="ml-auto flex items-center gap-1.5 px-3 h-9 rounded-lg text-sm font-semibold text-red-600 hover:bg-red-50 cursor-pointer">
-            <i className="ri-delete-bin-line" /> Excluir
-          </button>
+          ))}
+        </div>
+
+        <div className={aba === 'resumo' ? 'flex-1 overflow-y-auto px-5 py-4 space-y-5' : 'hidden'}>
+          <FichaResumo c={c} companies={companies} stages={stages} ficha={ficha} jobs={jobs} applications={applications}
+            analyzing={analyzing} empresa={empresa} onApply={onApply} onOpenJob={onOpenJob} onUpdate={onUpdate} onOrganizar={onOrganizar} />
+        </div>
+        <div className={aba === 'curriculo' ? 'flex-1 overflow-y-auto px-5 py-4 space-y-5' : 'hidden'}>
+          <FichaCurriculo c={c} ficha={ficha} idade={idade} wa={wa} loja={loja} lojaTemPin={!!lojaTemPin} temEndereco={temEndereco}
+            dist={dist} distBusy={distBusy} distErro={distErro} onCalcular={calcular} />
+        </div>
+        <div className={aba === 'entrevistas' ? 'flex-1 overflow-y-auto px-5 py-4 space-y-5' : 'hidden'}>
+          <FichaEntrevistas interviews={interviews} settings={settings} empresa={empresa} onOpenInterview={onOpenInterview} onAgendar={onAgendar} />
+        </div>
+        <div className={aba === 'conversa' ? 'flex-1 overflow-y-auto px-5 py-4 space-y-5' : 'hidden'}>
+          <FichaConversa c={c} ativa={aba === 'conversa'} />
+        </div>
+        <div className={aba === 'historico' ? 'flex-1 overflow-y-auto px-5 py-4 space-y-5' : 'hidden'}>
+          <FichaHistorico c={c} applications={applications} interviews={interviews} />
         </div>
       </aside>
       {editarDados && <EditarCandidatoModal c={c} onClose={() => setEditarDados(false)} onSave={(patch) => onUpdate(patch)} />}
     </>
-  );
-}
-
-// Registro da entrevista (o que foi escrito no questionário), dentro do card da entrevista na ficha.
-function RegistroEntrevista({ iv, settings, empresa }: { iv: Interview; settings: Settings; empresa: string }) {
-  const [aberto, setAberto] = useState(false);
-  const answers = (iv.answers ?? {}) as Record<string, string>;
-  const respondidas = Object.keys(answers).filter((k) => String(answers[k] ?? '').trim());
-  const notas = Object.entries(iv.scores ?? {}).filter(([, v]) => typeof v === 'number' && v > 0);
-  const dec = decisionOf(iv.recommendation);
-  if (!respondidas.length && !iv.notes && !dec && !notas.length) return null;
-  // Ordem das perguntas das Configurações; respostas de perguntas apagadas vão no fim.
-  const ordem = [...settings.questions.map((q) => q.id).filter((id) => respondidas.includes(id)), ...respondidas.filter((k) => !settings.questions.some((q) => q.id === k))];
-  const labelQ = (id: string) => withEmpresa(settings.questions.find((q) => q.id === id)?.label ?? 'Pergunta removida das Configurações', empresa);
-  const labelC = (id: string) => settings.criteria.find((q) => q.id === id)?.label ?? id;
-  return (
-    <div className="mt-1 rounded-xl bg-zinc-50 border border-zinc-100">
-      <button onClick={() => setAberto((a) => !a)} className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold text-zinc-600 cursor-pointer">
-        <i className={aberto ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} /> Registro da entrevista
-        <span className="font-normal text-zinc-400">
-          {[respondidas.length ? `${respondidas.length} resposta${respondidas.length > 1 ? 's' : ''}` : null, dec?.sigla].filter(Boolean).join(' · ')}
-        </span>
-      </button>
-      {aberto && (
-        <div className="px-3 pb-3 space-y-2.5">
-          {ordem.map((id) => (
-            <div key={id}>
-              <p className="text-[11px] font-semibold text-zinc-500">{labelQ(id)}</p>
-              <p className="text-sm text-zinc-800 whitespace-pre-wrap">{answers[id]}</p>
-            </div>
-          ))}
-          {notas.length > 0 && (
-            <div>
-              <p className="text-[11px] font-semibold text-zinc-500">Avaliação</p>
-              <div className="flex flex-wrap gap-1.5 mt-0.5">
-                {notas.map(([k, v]) => <span key={k} className="text-xs px-2 py-0.5 rounded-full bg-white border border-zinc-200">{labelC(k)}: <b>{v}</b>/5</span>)}
-              </div>
-            </div>
-          )}
-          {iv.notes && (
-            <div>
-              <p className="text-[11px] font-semibold text-zinc-500">Considerações adicionais</p>
-              <p className="text-sm text-zinc-800 whitespace-pre-wrap">{iv.notes}</p>
-            </div>
-          )}
-          {dec && (
-            <p className="text-xs text-zinc-700 flex items-center gap-2">
-              <span className={`font-black px-2 py-0.5 rounded border ${dec.cls}`}>{dec.sigla}</span> {withEmpresa(dec.label, empresa)}
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Histórico do candidato: linha do tempo de hiring_candidate_events + anotação manual.
-const EV_STYLE: Record<string, { icon: string; cls: string }> = {
-  criado: { icon: 'ri-file-user-line', cls: 'bg-sky-100 text-sky-700' },
-  fase: { icon: 'ri-git-commit-line', cls: 'bg-indigo-100 text-indigo-700' },
-  decisao: { icon: 'ri-scales-3-line', cls: 'bg-emerald-100 text-emerald-700' },
-  loja: { icon: 'ri-store-2-line', cls: 'bg-zinc-100 text-zinc-600' },
-  avaliacao: { icon: 'ri-star-line', cls: 'bg-amber-100 text-amber-700' },
-  ficha: { icon: 'ri-checkbox-circle-line', cls: 'bg-teal-100 text-teal-700' },
-  ia: { icon: 'ri-robot-2-line', cls: 'bg-violet-100 text-violet-700' },
-  vaga: { icon: 'ri-briefcase-4-line', cls: 'bg-rose-100 text-rose-700' },
-  entrevista: { icon: 'ri-calendar-event-line', cls: 'bg-violet-100 text-violet-700' },
-  registro: { icon: 'ri-file-list-3-line', cls: 'bg-emerald-100 text-emerald-700' },
-  anotacao: { icon: 'ri-sticky-note-line', cls: 'bg-yellow-100 text-yellow-800' },
-};
-const quemFez = (a: string | null) => (!a || a === 'sistema' ? 'sistema' : a === 'assistente' ? 'assistente (WhatsApp/IA)' : a.split('@')[0]);
-const quando = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-
-function HistoricoCandidato({ c, refreshKey }: { c: Candidate; refreshKey: string }) {
-  const [evs, setEvs] = useState<CandidateEvent[] | null>(null);
-  const [todos, setTodos] = useState(false);
-  const [nota, setNota] = useState('');
-  const [salvando, setSalvando] = useState(false);
-  const carregar = useCallback(async () => {
-    const { data } = await supabase.from('hiring_candidate_events').select('*').eq('candidate_id', c.id)
-      .order('at', { ascending: false }).order('id', { ascending: false }).limit(300);
-    setEvs((data ?? []) as CandidateEvent[]);
-  }, [c.id]);
-  useEffect(() => { setTodos(false); setNota(''); }, [c.id]);
-  // Gatilhos gravam logo depois de cada mudança: recarrega quando a ficha muda.
-  useEffect(() => { const t = setTimeout(carregar, 400); return () => clearTimeout(t); }, [carregar, refreshKey]);
-
-  const registrar = async () => {
-    const t = nota.trim();
-    if (!t) return;
-    setSalvando(true);
-    const { data: u } = await supabase.auth.getUser();
-    const { error } = await supabase.from('hiring_candidate_events').insert({ candidate_id: c.id, kind: 'anotacao', title: 'Anotação', detail: t, actor: u.user?.email ?? null });
-    setSalvando(false);
-    if (error) { avisar(`Não foi possível registrar: ${error.message}`); return; }
-    setNota('');
-    carregar();
-  };
-  const apagar = async (ev: CandidateEvent) => {
-    const { error } = await supabase.from('hiring_candidate_events').delete().eq('id', ev.id);
-    if (error) { avisar(`Não foi possível apagar: ${error.message}`); return; }
-    carregar();
-  };
-
-  const lista = todos ? evs ?? [] : (evs ?? []).slice(0, 8);
-  return (
-    <Section title={`Histórico do candidato${evs?.length ? ` · ${evs.length}` : ''}`}>
-      <div className="flex gap-2 mb-3">
-        <input value={nota} onChange={(e) => setNota(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && registrar()}
-          placeholder="Registrar algo no histórico (ligação, referência, recado…)"
-          className="flex-1 min-w-0 h-9 px-3 rounded-lg border border-zinc-200 text-sm focus:outline-none focus:border-rose-300" />
-        <button onClick={registrar} disabled={salvando || !nota.trim()}
-          className="px-3 h-9 rounded-lg bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-white text-xs font-bold cursor-pointer whitespace-nowrap">
-          {salvando ? 'Salvando…' : 'Registrar'}
-        </button>
-      </div>
-      {evs === null ? <p className="text-xs text-zinc-400">Carregando…</p> : evs.length === 0 ? <p className="text-xs text-zinc-400">Nada registrado ainda.</p> : (
-        <ol className="relative border-l-2 border-zinc-100 ml-3 space-y-3">
-          {lista.map((ev) => {
-            const st = EV_STYLE[ev.kind] ?? EV_STYLE.loja;
-            return (
-              <li key={ev.id} className="relative pl-5 group">
-                <span className={`absolute -left-[13px] top-0 w-6 h-6 rounded-full flex items-center justify-center text-xs ${st.cls}`}><i className={st.icon} /></span>
-                <div className="flex items-start gap-2">
-                  <p className="flex-1 text-sm font-semibold text-zinc-800">{ev.title}</p>
-                  {ev.kind === 'anotacao' && (
-                    <button onClick={() => apagar(ev)} title="Apagar anotação" className="opacity-0 group-hover:opacity-100 text-zinc-400 hover:text-red-500 cursor-pointer"><i className="ri-close-line" /></button>
-                  )}
-                </div>
-                {ev.detail && <p className={`text-xs mt-0.5 whitespace-pre-wrap ${ev.kind === 'anotacao' ? 'text-zinc-800' : 'text-zinc-500'}`}>{ev.detail}</p>}
-                <p className="text-[10px] text-zinc-400 mt-0.5">{quando(ev.at)} · {quemFez(ev.actor)}</p>
-              </li>
-            );
-          })}
-        </ol>
-      )}
-      {(evs?.length ?? 0) > 8 && (
-        <button onClick={() => setTodos((v) => !v)} className="mt-2 text-xs font-semibold text-sky-700 cursor-pointer">
-          {todos ? 'Mostrar só os últimos' : `Ver tudo (${evs!.length})`}
-        </button>
-      )}
-    </Section>
-  );
-}
-
-// Atalho para o agendamento pela IA: move o candidato para a fase "Chamar p/ entrevista" (native_kind
-// 'agendar'); o hiring-scheduler convida no próximo ciclo (8h–20h, até 4 por hora). Com convite já
-// enviado, mostra em que pé está a conversa.
-const SESS_LABEL: Record<string, string> = {
-  convidado: 'Convite enviado — aguardando resposta',
-  negociando: 'Conversando sobre o horário',
-  aguardando_gestor: 'Esperando o entrevistador aceitar um horário pedido',
-  agendado: 'Entrevista marcada pela IA',
-};
-function AgendamentoIA({ c, stages, applications, jobs, onSend }: {
-  c: Candidate; stages: Stage[]; applications: Application[]; jobs: Job[]; onSend: (stageId: string) => void;
-}) {
-  const [cfgs, setCfgs] = useState<JobScheduling[] | null>(null);
-  const [sess, setSess] = useState<{ status: string; job_id: string }[]>([]);
-  const jobIds = applications.map((a) => a.job_id);
-  const chave = jobIds.join(',');
-  useEffect(() => {
-    let vivo = true;
-    (async () => {
-      if (!jobIds.length) { if (vivo) setCfgs([]); return; }
-      const [{ data: s }, { data: ss }] = await Promise.all([
-        supabase.from('hiring_job_scheduling').select('*').in('job_id', jobIds),
-        supabase.from('hiring_scheduling_sessions').select('status, job_id').eq('candidate_id', c.id).order('updated_at', { ascending: false }),
-      ]);
-      if (!vivo) return;
-      setCfgs((s ?? []) as JobScheduling[]);
-      setSess((ss ?? []) as { status: string; job_id: string }[]);
-    })();
-    return () => { vivo = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [c.id, c.stage_id, chave]);
-
-  const prontas = (cfgs ?? []).filter((x) => x.enabled && faltasAgendamento(x).length === 0);
-  const agendar = stageByKind(stages, 'agendar');
-  if (!cfgs || !prontas.length || !agendar) return null;
-  const ativa = sess.find((s) => SESS_LABEL[s.status]);
-  const naFila = !ativa && c.stage_id === agendar.id;
-  const vagas = prontas.map((p) => jobs.find((j) => j.id === p.job_id)?.title).filter(Boolean).join(', ');
-
-  return (
-    <Section title="Agendamento pela IA">
-      {ativa ? (
-        <p className="flex items-center gap-2 text-sm text-violet-800"><i className="ri-robot-2-line" /> {SESS_LABEL[ativa.status]}</p>
-      ) : naFila ? (
-        <p className="text-xs text-zinc-500"><i className="ri-time-line" /> Na fila: o convite sai no próximo ciclo do assistente (das 8h às 20h, até 4 por hora).</p>
-      ) : (
-        <>
-          <button onClick={() => onSend(agendar.id)}
-            className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-violet-300 bg-violet-50 hover:bg-violet-100 text-violet-800 text-xs font-bold cursor-pointer">
-            <i className="ri-robot-2-line" /> Enviar para o agendamento da IA
-          </button>
-          <p className="text-[11px] text-zinc-400 mt-1">O assistente chama {firstNameOf(c.full_name)} no WhatsApp com os horários livres{vagas ? ` da vaga ${vagas}` : ''} e marca a entrevista sozinho.</p>
-        </>
-      )}
-    </Section>
-  );
-}
-const firstNameOf = (s: string) => s.trim().split(/\s+/)[0] ?? s;
-
-// Campos dos dados mínimos. Escolaridade e experiências viram um item de texto livre (não apaga
-// os itens lidos do currículo: quando já existem, só mostra quantos são).
-function DadosMinimosForm({ c, campos, onSave, onCancel }: {
-  c: Candidate; campos: { id: string; label: string; custom?: boolean }[];
-  onSave: (patch: Partial<Candidate>) => void; onCancel?: () => void;
-}) {
-  const atual = (f: { id: string; custom?: boolean }): unknown =>
-    (f.custom ? c.extra_fields?.[f.id] : (c as unknown as Record<string, unknown>)[f.id]) ?? null;
-  const inicial = (f: { id: string; custom?: boolean }) => (f.id === 'education' || f.id === 'experiences' ? '' : String(atual(f) ?? ''));
-  const [v, setV] = useState<Record<string, string>>(() => Object.fromEntries(campos.map((f) => [f.id, inicial(f)])));
-  if (!campos.length) return null;
-  const set = (k: string, x: string) => setV((o) => ({ ...o, [k]: x }));
-  const salvar = () => {
-    const patch: Record<string, unknown> = {};
-    const extra: Record<string, string> = { ...(c.extra_fields ?? {}) };
-    let extraMudou = false;
-    for (const f of campos) {
-      const x = (v[f.id] ?? '').trim();
-      if (f.custom) { if (x !== (extra[f.id] ?? '')) { if (x) extra[f.id] = x; else delete extra[f.id]; extraMudou = true; } continue; }
-      if (f.id === 'education') { if (x) patch.education = [...(c.education ?? []), { instituicao: null, curso: null, nivel: x, situacao: null }]; continue; }
-      if (f.id === 'experiences') { if (x) patch.experiences = [...(c.experiences ?? []), { empresa: null, cargo: null, inicio: null, fim: null, atual: false, descricao: x }]; continue; }
-      const val = f.id === 'phone' ? onlyDigits(x) || null : x || null;
-      if (val !== atual(f)) patch[f.id] = f.id === 'full_name' ? (val ?? c.full_name) : val;
-    }
-    if (extraMudou) patch.extra_fields = extra;
-    // Endereço mudou: a localização antiga deixa de valer (o "Recalcular" refaz).
-    if (['address', 'neighborhood', 'city'].some((k) => k in patch)) Object.assign(patch, { lat: null, lng: null, geo_label: null, geo_precision: null });
-    onSave(patch as Partial<Candidate>);
-  };
-  const inputCls = 'w-full h-9 px-3 rounded-lg border border-zinc-200 bg-white text-sm mt-0.5';
-  return (
-    <div className="mt-2 space-y-2">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {campos.map((f) => {
-          const lista = f.id === 'education' ? c.education : f.id === 'experiences' ? c.experiences : null;
-          const longo = lista != null;
-          return (
-            <label key={f.id} className={`block ${longo ? 'sm:col-span-2' : ''}`}>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{f.label}</span>
-              {longo ? (
-                <>
-                  {lista!.length > 0 && <span className="block text-[10px] text-zinc-400">{lista!.length} já na ficha — escreva só para acrescentar</span>}
-                  <textarea value={v[f.id] ?? ''} onChange={(e) => set(f.id, e.target.value)} rows={2}
-                    placeholder={f.id === 'education' ? 'Ex.: Ensino médio completo' : 'Ex.: Atendente no Burger X, 1 ano (ou "sem experiência anterior")'}
-                    className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white text-sm mt-0.5" />
-                </>
-              ) : (
-                <input type={f.id === 'birth_date' ? 'date' : f.id === 'email' ? 'email' : 'text'} value={v[f.id] ?? ''}
-                  onChange={(e) => set(f.id, e.target.value)} className={inputCls} />
-              )}
-            </label>
-          );
-        })}
-      </div>
-      <div className="flex justify-end gap-2">
-        {onCancel && <button onClick={onCancel} className="px-3 h-8 rounded-lg text-xs font-semibold text-zinc-500 hover:bg-zinc-100 cursor-pointer">Cancelar</button>}
-        <button onClick={salvar} className="px-4 h-8 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold cursor-pointer">Salvar dados</button>
-      </div>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section>
-      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-2">{title}</p>
-      {children}
-    </section>
   );
 }

@@ -3,6 +3,7 @@
 // colunas ocupam quase a tela inteira com rolagem que "encaixa" em cada coluna.
 import { useState } from 'react';
 import { type Candidate, type Company, type Interview, type Stage, colorOf, companyName } from '../shared';
+import type { Aderencia } from '../aderencia';
 import { CandidateCard } from './CandidatosLista';
 
 interface Props {
@@ -12,10 +13,15 @@ interface Props {
   mostrarEmpresa: boolean;
   proximaEntrevista: Map<string, Interview>;
   onOpen: (id: string) => void;
+  aderenciaDe: (c: Candidate) => Aderencia | null;
+  faltasDe: (c: Candidate) => number;
+  agendamentoIADe: (c: Candidate) => string | null;
   onMove: (candidateId: string, stageId: string) => void;
+  selecionados: Set<string>;
+  onToggleSelecao: (id: string) => void;
 }
 
-export default function Kanban({ items, stages, companies, mostrarEmpresa, proximaEntrevista, onOpen, onMove }: Props) {
+export default function Kanban({ items, stages, companies, mostrarEmpresa, proximaEntrevista, onOpen, aderenciaDe, faltasDe, agendamentoIADe, onMove, selecionados, onToggleSelecao }: Props) {
   const [over, setOver] = useState<string | null>(null);
   const novoId = stages.find((s) => s.native_kind === 'novo')?.id ?? null;
   // Candidato sem fase (ou numa fase apagada) aparece em "Novo".
@@ -50,7 +56,9 @@ export default function Kanban({ items, stages, companies, mostrarEmpresa, proxi
               {list.map((c) => (
                 <div key={c.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', c.id); e.dataTransfer.effectAllowed = 'move'; }}>
                   <CandidateCard compact c={c} companies={companies} stage={s} empresa={mostrarEmpresa ? companyName(companies, c.company_id) : null}
-                    entrevista={proximaEntrevista.get(c.id) ?? null} onOpen={() => onOpen(c.id)} />
+                    entrevista={proximaEntrevista.get(c.id) ?? null} onOpen={() => onOpen(c.id)}
+                    aderencia={aderenciaDe(c)} faltas={faltasDe(c)} agendamentoIA={agendamentoIADe(c)}
+                    selecionado={selecionados.has(c.id)} onToggleSelecao={() => onToggleSelecao(c.id)} />
                   {(prev || next) && (
                     <div className="lg:hidden flex gap-1 mt-1">
                       {prev && (

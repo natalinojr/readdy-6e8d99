@@ -93,3 +93,33 @@ Registro cronológico de specs criadas e seu progresso no workflow SDD.
 - **Gate:** `check.mjs --force` verde — tsc 287/292, vitest 500/500 (15 testes novos).
 
 ---
+
+---
+
+## 2026-09-20 — contratacao-reorganizacao-layout: Contratação — reorganização de layout (5 áreas + engrenagem) — CONCLUÍDA
+
+- **Spec:** `specs/2026-09-contratacao-reorganizacao-layout/` · **Branch:** N/A (working tree compartilhado)
+- **Entrada:** Briefing `specs/briefing-contratacao-reorganizacao-layout.md` (7 critérios de aceite, restrição visual "regra nº 1")
+- **Resumo:** As 9 abas monolíticas (Entrevistas, Candidatos, Vagas, Kanban, Agenda, Agendamentos, Relatórios, Links, Config) reorganizadas em **5 áreas principais + engrenagem**: Hoje, Entrevistas, Candidatos, Vagas, Conversa + Config › WhatsApp. Ficha do candidato em **5 abas** (Resumo, Currículo, Contato, Conversa, Anotações) em vez de rolo único de ~20 blocos. Filtros em etiquetas (vaga por `job_id`, ficha incompleta, ordenar por aderência). Seleção múltipla e ações em lote. Barra inferior no celular.
+- **Decisões (dono ausente, todas registradas em `executions.md`):**
+  - Filtro de vaga usa `job_id` (não título) para evitar ambiguidade de duas vagas com nomes iguais em empresas diferentes.
+  - Default de navegação passa de `entrevistas` para `hoje` (consequência de "Hoje" virar tela inicial).
+  - **Regra nº 1 (inegociável):** zero mudança de visual — cores, ícones Remix, componentes, classes reutilizadas verbatim.
+  - Lógica pura (aderência, navegação, contagens "Precisa de você") em módulos separados com teste unitário próprio.
+- **Desvios:** Nenhum — spec executada conforme briefing §3 (To Be).
+- **Pendências não-código:**
+  - Verificação visual ao vivo — não realizada (requer login `is_hiring_admin()`). 6 de 7 critérios de aceite confirmados por leitura de código + gate automatizado.
+  - `hiring_scheduling_sessions` fora do Realtime — chip de estado do agendamento pela IA não atualiza em tempo real. Requer mudança de banco, fora do escopo.
+  - `fmtTime`/`fmtDateTime` no fuso da máquina — dívida pré-existente, tarefa separada (não regressão).
+  - `moveLote` duplica lógica de trava (refatoração rejeitada por escopo).
+  - Tabela de candidatos não ordena por aderência (exigiria novo `SortKey`, fora do "Onde").
+- **Gate:** `node scripts/check.mjs --force --build` verde — tsc 287/292 erros (baseline 292, sem regressão), vitest 560/560 passando (0 falhas), `npx vite build` OK.
+- **19 tasks em 6 fases (todas executadas):**
+  - Fase 1: T01–T03, T18 (aderência, cards/Kanban, modal upload, chip agendamento IA)
+  - Fase 2: T04–T06 (conversa WhatsApp, ficha em blocos, shell + 5 abas)
+  - Fase 3: T07–T10 (navegação, áreas extraídas, compatibilidade, configurações)
+  - Fase 4: T11–T12 (vaga por dentro, WhatsApp)
+  - Fase 5: T13–T15, T19 (contagens "Hoje", área Hoje, barra celular, atalho)
+  - Fase 6: T16–T17 (filtros + ações em lote)
+- **Próximas etapas:** Commit + push em `main` (permite deploy automático Vercel).
+

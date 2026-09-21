@@ -2833,3 +2833,20 @@ Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — prob
   ("Acompanhar o estoque deste insumo", que desabilita o campo de estoque mínimo quando desligado).
 - Os resumos da tela de Estoque (esgotados, em alerta, críticos, ruptura em 7 dias) e os Alertas de
   reposição ignoram insumo sem rastreio; a lista continua mostrando o insumo, só com o selo.
+
+### `noUnusedLocals: false` mascara código órfão em refactor entre arquivos (2026-09-20)
+- `tsconfig.app.json:20` tem `"noUnusedLocals": false` (herdado do código do Readdy, cheio de sobra) — o `tsc` não acusa variável não usada, então um refactor que move código entre arquivos e esquece de apagar/levar algo não vira erro de compilação. Na extração de `CandidatoDrawer.tsx` em `components/ficha/*` (`FichaResumo.tsx` etc.), a revisão do plano pegou ~271 linhas que ficariam órfãs por falta de um passo que mandasse apagá-las, e uma variável (`vagasAbertas`) que precisava ir para `FichaResumo.tsx` e não estava prevista — nada disso teria dado erro de build.
+- Regra: em refactor que move código entre arquivos neste projeto, conferir manualmente (grep pelas declarações/variáveis movidas nos dois arquivos) em vez de confiar no `tsc` para pegar sobra.
+
+### Dois relógios do dia: fuso da máquina vs. Brasília (2026-09-20)
+- `dayKey` (`src/pages/contratacao/shared.ts:429`) monta a chave AAAA-MM-DD com `getFullYear/getMonth/getDate` — fuso da MÁQUINA que roda o código. `diaKeyBR` (`src/pages/contratacao/hoje.ts:10`) usa `Intl.DateTimeFormat` com `timeZone: 'America/Sao_Paulo'` fixo, corte sempre em Brasília. Regra do módulo: `AGENTS.md` linha 75 ("Datas em horário de Brasília... em toda exibição e regra de negócio com corte por dia").
+- `EntrevistasDoDia.tsx` e `AgendaEntrevistas.tsx` (sub-aba Calendário de Entrevistas) usavam `dayKey` para agrupar entrevistas por dia e decidir "hoje"; nesta spec os dois passaram a usar `diaKeyBR`, porque a lista "Do dia" e o calendário podiam discordar sobre qual é o dia perto da virada, numa máquina fora de Brasília. `dayKey` em si não foi alterado (outros módulos dependem dele). Testes de regressão forçam `TZ=UTC`: `src/test/components/entrevistasDoDiaFusoBR.test.tsx` e `src/test/components/agendaEntrevistasFusoBR.test.tsx`.
+- Dívida aberta, não corrigida nesta spec: `fmtTime`/`fmtDateTime` continuam no fuso do navegador, não em Brasília.
+
+### Ação em lote precisa repetir a trava da ação individual (2026-09-20)
+- `updateCandidate` (`src/pages/contratacao/page.tsx:332`) e `moveLote` (`page.tsx:559`, usado pelas ações em lote) implementam, cada um por conta própria, a mesma trava: ficha incompleta não sai de "Novo" (exceto indo para "Descartado"). `moveLote` usa o helper `candidatosTravadosNoLote` (`components/AcoesEmLote.tsx:8`). Duplicar em vez de extrair uma função comum foi decisão registrada (evitar acoplar o caminho de N candidatos ao de 1), não esquecimento — mas quem criar uma ação em lote nova precisa replicar a trava, não presumir que existe reaproveitamento.
+- Descartar em lote (`AreaCandidatos.tsx`, `onDescartar`) tem confirmação própria ("Descartar candidatos?") e não passa pela trava de ficha incompleta — ela nunca trava o destino "Descartado", só a saída de "Novo" para outras fases.
+
+### Filtro por entidade compara id, não título (2026-09-20)
+- `FiltrosCandidatos.tsx` filtra vaga por `job_id`, não pelo título: duas vagas com o mesmo título em empresas diferentes comparariam por string e misturariam candidatos de vagas diferentes. `VagaEtiqueta` (`FiltrosCandidatos.tsx:35`) guarda `id` (fonte do filtro) e `label` (só exibição). Teste: `src/test/lib/contratacaoFiltrosCandidatos.test.ts` ("duas vagas com o mesmo título em empresas diferentes não se misturam").
+- Regra: filtro de entidade (vaga, empresa, etc.) sempre compara por id; título/nome é só rótulo de exibição.
