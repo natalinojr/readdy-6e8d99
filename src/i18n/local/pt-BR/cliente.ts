@@ -71,4 +71,8 @@ export default {
   'cliente.escolhaCozinha': "Sua escolha será indicada no pedido para a cozinha",
   'cliente.outraObservacao': "OUTRA OBSERVAÇÃO",
   'cliente.exObservacao': "Ex: sem cebola, molho à parte...",
+  'cliente.formaDinheiro': "Dinheiro",
+  'cliente.formaPix': "PIX",
+  'cliente.formaCartao': "Cartão",
+  'cliente.formaVale': "Vale-refeição",
 };

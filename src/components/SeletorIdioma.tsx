@@ -54,7 +54,7 @@ export default function SeletorIdioma({ disponiveis, idioma, onTrocar, variante 
   // app — que é o que `fixed` faria.
   if (variante === 'fixo') {
     return (
-      <div className="w-full shrink-0 z-50 flex items-center justify-end gap-2 bg-zinc-900/95 px-4 py-2 backdrop-blur">
+      <div className="w-full shrink-0 z-50 flex items-center justify-center gap-2 bg-zinc-900/95 px-4 py-2 backdrop-blur">
         {opcoes.map((op) => {
           const ativo = op === idioma;
           return (

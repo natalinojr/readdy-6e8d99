@@ -44,8 +44,19 @@ function useFullscreen() {
   return { isFullscreen, toggle, enter };
 }
 
+// Rotulos de forma de pagamento vem fixos de kioskFormasAceitas.ts, em
+// portugues. Mapa pelo proprio rotulo: se algum mudar la, cai no texto
+// original em vez de sumir.
+const CHAVE_FORMA: Record<string, string> = {
+  'Dinheiro': 'cliente.formaDinheiro',
+  'PIX': 'cliente.formaPix',
+  'Cartão': 'cliente.formaCartao',
+  'Vale-refeição': 'cliente.formaVale',
+};
+
 export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const traduzForma = (rotulo: string) => (CHAVE_FORMA[rotulo] ? t(CHAVE_FORMA[rotulo]) : rotulo);
   const { settings } = useSystemSettings();
   const { user } = useAuth();
   const { kioskSession } = useKioskAuth();
@@ -85,9 +96,13 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
 
   const nomeLoja = user?.loja || 'Nosso Restaurante';
   // A mensagem de boas-vindas e CONFIGURAVEL pela loja (welcome_message_new) e
-  // vem escrita em portugues. So o texto padrao tem traducao; a mensagem
-  // personalizada aparece como o dono escreveu, em qualquer idioma.
-  const mensagemPrincipal = settings.welcome_message_new || t('cliente.bemVindoPedido');
+  // esta escrita em portugues. Num totem em ingles ela nao serve: quem trocou o
+  // idioma nao le portugues. Entao a mensagem da loja vale no portugues e, nos
+  // outros idiomas, usamos o texto padrao traduzido.
+  const emPortugues = String(i18n.language || 'pt-BR').toLowerCase().startsWith('pt');
+  const mensagemPrincipal = (emPortugues && settings.welcome_message_new)
+    ? settings.welcome_message_new
+    : t('cliente.bemVindoPedido');
 
   const linhas = mensagemPrincipal.split('\n').filter(Boolean);
   const titulo = linhas.length > 1 ? linhas[0] : t('cliente.facaPedidoAqui');
@@ -144,7 +159,7 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
       {/* Footer */}
       <div className="flex flex-col items-center gap-2 [@media(max-height:820px)]:gap-1 mt-4 relative z-10 px-20">
         <p className="min-h-[1.75rem] text-center text-zinc-600 text-lg [@media(max-height:820px)]:text-base font-medium">
-          {formasAceitas.length > 0 && <>{t('cliente.aceito')}: {formasAceitas.join(' • ')}</>}
+          {formasAceitas.length > 0 && <>{t('cliente.aceito')}: {formasAceitas.map(traduzForma).join(' • ')}</>}
         </p>
         <p className="text-zinc-700 text-base [@media(max-height:820px)]:text-sm">ERPOS</p>
       </div>

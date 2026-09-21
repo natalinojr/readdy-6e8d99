@@ -68,4 +68,8 @@ export default {
   'cliente.escolhaCozinha': "Tu elección va en el pedido para la cocina",
   'cliente.outraObservacao': "OTRA OBSERVACIÓN",
   'cliente.exObservacao': "Ej: sin cebolla, salsa aparte...",
+  'cliente.formaDinheiro': "Efectivo",
+  'cliente.formaPix': "PIX",
+  'cliente.formaCartao': "Tarjeta",
+  'cliente.formaVale': "Vale de comida",
 };
