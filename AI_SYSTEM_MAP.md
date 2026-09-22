@@ -300,6 +300,18 @@ Pedido do dono: Paranaguá passa a usar a maquininha do Mercado Pago; "vamos ter
   mostra o próprio menu (foi o que aconteceu no 1º teste, com `'pix'`). Nos dois caminhos o
   `reconcileRow` grava o que o cliente escolheu de fato (`payment_method.type`; Pix vem como
   `bank_transfer`). `voucher_card` abre a porta para o Vale Refeição na maquininha, ainda não feito.
+- **Como desligar / saída de emergência.** Desligar de vez: limpar `pdv_terminal_id`
+  (Configurações › Maquininha Point) — o caixa volta a lançar à mão na hora, sem deploy. No meio
+  do atendimento, com o aparelho travado, isso não serve (o operador não vai a Configurações com
+  o cliente na frente), e havia um beco sem saída: cancelar a cobrança FECHAVA o modal, o
+  operador voltava à tela de pagamento e confirmar chamava a maquininha de novo. Agora cancelar
+  **não fecha** — mostra as saídas, e uma delas é **"Cobrar por fora e lançar à mão"**
+  (`cobrancaId = 'manual'`, a linha sai da fila e o valor entra como entrava antes da
+  integração). Ela só aparece quando **não há cobrança viva** (recusado/encerrado/erro): oferecer
+  isso com o cliente passando o cartão cobraria duas vezes.
+  **Atenção operacional:** a Point em modo PDV não aceita cobrança digitada nela; para usar
+  avulsa é preciso "Voltar ao modo normal" (STANDALONE), que também passa pela API — ou seja,
+  depende do ERPOS no ar. Ter uma maquininha fora do modo PDV como reserva é o plano B de verdade.
 - **Regras:** o pagamento **só entra na lista quando o provedor aprova** — não existe confirmar na mão; o auto-add do `handleFinalizar` do `PagamentoRapidoModal` também foi desviado para a maquininha (senão furaria a regra); se o cliente passar débito onde o operador escolheu crédito, **vale o que a maquininha respondeu** (a forma é trocada e o operador é avisado); venda do carrinho vincula a cobrança ao pedido depois, via `attach_order`.
 
 **Ligado em produção (Paranaguá) no mesmo dia.** Conta MP, `card_provider = mercadopago`, `post_to_ledger` e `release_report` ligados. Primeira importação: a venda de teste de R$ 1,00 (débito, taxa R$ 0,01) e o estorno entraram certos, e as 2 vendas do Mercado Livre entraram no extrato **fora da receita** — sem a trava teriam virado R$ 377,82 de venda no cartão do restaurante.

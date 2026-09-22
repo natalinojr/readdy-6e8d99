@@ -47,6 +47,9 @@ import type { PrintResult } from '@/lib/printUtils';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+/** Marca de pagamento cobrado FORA do sistema (maquininha avulsa), para não voltar à fila. */
+const MANUAL = 'manual';
+
 interface Props {
   onClose: () => void;
   onSuccess: () => void;
@@ -237,7 +240,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   // é feito aqui (fin_pix_payments.order_id). É o que liga a venda no Mercado Pago ao pedido
   // na hora de conferir a conciliação.
   const vincularCobrancas = useCallback(async (orderId: string) => {
-    const ids = cobrancasRef.current;
+    const ids = cobrancasRef.current.filter((id) => id !== MANUAL);
     if (ids.length === 0 || !orderId) return;
     cobrancasRef.current = [];
     await Promise.all(ids.map((id) =>
@@ -1541,6 +1544,16 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             setSeguirAposCobranca(true);
           }}
           onCancelar={() => setCobranca(null)}
+          onForaDaMaquininha={() => {
+            const c = cobranca;
+            setCobranca(null);
+            if (!c) return;
+            // MANUAL = cobrado fora do sistema (maquininha avulsa). Marca a linha para ela não
+            // voltar para a fila; o valor entra como entrava antes da integração.
+            setPagamentos((prev) => prev.map((p, i) => (i === c.idx ? { ...p, cobrancaId: MANUAL } : p)));
+            toastWarning('Lançado à mão', 'Confira na maquininha avulsa se o pagamento foi aprovado antes de fechar o pedido.');
+            setSeguirAposCobranca(true);
+          }}
         />
       )}
     </div>

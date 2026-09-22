@@ -34,12 +34,15 @@ interface Props {
   orderNumber?: string | null;
   onAprovado: (info: { pixPaymentId: string; method: 'credit_card' | 'debit_card' | 'pix' }) => void;
   onCancelar: () => void;
+  /** Saída de emergência: maquininha travada/sem rede no meio do atendimento. Lança o
+   *  pagamento à mão, como era antes da integração, sem precisar ir em Configurações. */
+  onForaDaMaquininha: () => void;
 }
 
 type CreateResp = { pix_payment_id?: string; expires_at?: string; sandbox?: boolean; error?: string; code?: string; detail?: string };
 type StatusResp = { status?: string; error?: string; method?: string; code?: string };
 
-export default function CobrarMaquininhaModal({ tenantId, amount, method, orderId, orderNumber, onAprovado, onCancelar }: Props) {
+export default function CobrarMaquininhaModal({ tenantId, amount, method, orderId, orderNumber, onAprovado, onCancelar, onForaDaMaquininha }: Props) {
   const [fase, setFase] = useState<'criando' | 'aguardando' | 'aprovado' | 'recusado' | 'encerrado' | 'erro'>('criando');
   const [chargeId, setChargeId] = useState<string | null>(null);
   const [sandbox, setSandbox] = useState(false);
@@ -134,7 +137,10 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
     }
     if (data?.status === 'confirmed') { vivaRef.current = null; onAprovadoRef.current({ pixPaymentId: chargeId, method: metodoFinal }); return; }
     vivaRef.current = null;
-    onCancelar();
+    // Não fecha: fechar devolvia o operador para a tela de pagamento, onde confirmar
+    // chamava a maquininha de novo — sem saída se o aparelho estivesse travado.
+    setFase('encerrado');
+    setMsg('Cobrança cancelada na maquininha.');
   };
 
   const simular = async (outcome: 'approved_credit' | 'approved_debit' | 'declined') => {
@@ -231,6 +237,18 @@ export default function CobrarMaquininhaModal({ tenantId, amount, method, orderI
             </button>
           )}
         </div>
+
+        {/* Maquininha travada ou sem rede: cobra na máquina avulsa e lança o valor aqui.
+            Só aparece quando NÃO há cobrança viva — com o cliente passando o cartão, lançar
+            à mão junto cobraria duas vezes. */}
+        {(fase === 'recusado' || fase === 'encerrado' || fase === 'erro') && (
+          <button
+            onClick={onForaDaMaquininha}
+            className="w-full px-6 py-3 border-t border-zinc-100 text-xs font-semibold text-zinc-500 hover:bg-zinc-50 cursor-pointer whitespace-nowrap"
+          >
+            <i className="ri-hand-coin-line" /> Cobrar por fora e lançar à mão
+          </button>
+        )}
       </div>
     </div>
   );

@@ -1382,6 +1382,15 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             setSeguirAposCobranca(true);
           }}
           onCancelar={() => setCobranca(null)}
+          onForaDaMaquininha={() => {
+            const c = cobranca;
+            setCobranca(null);
+            if (!c) return;
+            // cobrado na maquininha avulsa: lança como era antes da integração
+            setPagamentos((prev) => prev.map((p, i) => (i === c.idx ? { ...p, cobrancaId: 'manual' } : p)));
+            toastWarning('Lançado à mão', 'Confira na maquininha avulsa se o pagamento foi aprovado antes de fechar.');
+            setSeguirAposCobranca(true);
+          }}
         />
       )}
     </div>
