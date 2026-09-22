@@ -43,6 +43,7 @@ interface DBIngredient {
   dre_category_id?: string | null;
   usage_type?: string | null;
   track_stock?: boolean | null;
+  count_inventory?: boolean | null;
 }
 
 interface DBStockMovement {
@@ -104,6 +105,11 @@ export interface Insumo {
    * inventário e CMV continuam normais. Padrão true.
    */
   rastrearEstoque: boolean;
+  /**
+   * false = o insumo fica fora da contagem de inventário (tela e contagem rápida do assistente).
+   * Compra, entrada, saída, ficha técnica e CMV continuam normais. Padrão true.
+   */
+  contaInventario: boolean;
 }
 
 export interface PerdaItem {
@@ -185,6 +191,7 @@ function dbToInsumo(row: DBIngredient): Insumo | null {
     dreCategoryId: row.dre_category_id ?? null,
     usageType: (row.usage_type as 'final' | 'production') ?? 'final',
     rastrearEstoque: row.track_stock ?? true,
+    contaInventario: row.count_inventory ?? true,
   };
 }
 
@@ -234,6 +241,8 @@ interface EstoqueContextValue {
   marcarInsumoEsgotado: (insumoId: string, operador?: string) => Promise<void>;
   /** Liga/desliga todos os avisos e bloqueios deste insumo (não mexe em estoque nem CMV). */
   setRastrearEstoque: (insumoId: string, rastrear: boolean) => Promise<void>;
+  /** Tira/põe o insumo na contagem de inventário (não mexe em estoque nem CMV). */
+  setContaInventario: (insumoId: string, conta: boolean) => Promise<void>;
   upsertInsumo: (insumo: Partial<Insumo> & { nome: string }) => Promise<string | undefined>;
   setInsumos: React.Dispatch<React.SetStateAction<Insumo[]>>;
   reloadInsumos: () => Promise<void>;
@@ -675,6 +684,22 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     await loadInsumos();
   }, [user?.tenantId, broadcastStockUpdate, loadInsumos]);
 
+  const setContaInventario = useCallback(async (insumoId: string, conta: boolean) => {
+    if (!user?.tenantId) return;
+    setInsumos((prev) => prev.map((i) => (i.id === insumoId ? { ...i, contaInventario: conta } : i)));
+    const { error } = await invokeWithAuth('stock-write', {
+      body: {
+        action: 'set_count_inventory',
+        tenant_id: user.tenantId,
+        ingredient_id: insumoId,
+        count_inventory: conta,
+      },
+    });
+    if (error) console.error('[EstoqueContext] setContaInventario error:', error);
+    broadcastStockUpdate();
+    await loadInsumos();
+  }, [user?.tenantId, broadcastStockUpdate, loadInsumos]);
+
   const marcarInsumoEsgotado = useCallback(async (insumoId: string, _operador = 'Operador') => {
     if (!user?.tenantId) return;
     const { error } = await invokeWithAuth('stock-write', {
@@ -770,6 +795,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     if (insumo.purchaseFactor !== undefined || isNew) body.purchase_factor = insumo.purchaseFactor ?? 1;
     if (insumo.usageType !== undefined || isNew) body.usage_type = insumo.usageType ?? 'final';
     if (insumo.rastrearEstoque !== undefined || isNew) body.track_stock = insumo.rastrearEstoque ?? true;
+    if (insumo.contaInventario !== undefined || isNew) body.count_inventory = insumo.contaInventario ?? true;
     if ('dreCategoryId' in insumo) body.dre_category_id = insumo.dreCategoryId ?? null;
     if ('supplierId' in insumo) body.supplier_id = insumo.supplierId ?? null;
     if ('fornecedor' in insumo) body.supplier = insumo.fornecedor ?? '';
@@ -836,7 +862,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
   return (
     <EstoqueContext.Provider value={{
       insumos, movimentacoes, inventarioSessions,
-      insumosEsgotados, itensDesabilitadosIds, loading, setRastrearEstoque,
+      insumosEsgotados, itensDesabilitadosIds, loading, setRastrearEstoque, setContaInventario,
       addMovimentacao, registrarPerda,
       confirmarInventario, marcarInsumoEsgotado, upsertInsumo,
       setInsumos, reloadInsumos: loadInsumos, reloadMovimentacoes: loadMovimentacoes,

@@ -15,6 +15,8 @@ export interface InsumoLido {
   preco: number;
   esgotado: boolean;
   categoria: string;
+  /** false = fora da contagem de inventário (ingredients.count_inventory). */
+  contaInventario: boolean;
 }
 
 /** Unidade do banco → rótulo curto. */
@@ -38,6 +40,7 @@ export async function lerInsumos(tenantId: string): Promise<{ insumos: InsumoLid
       preco: Number(r.unit_price ?? 0),
       esgotado: Boolean(r.is_depleted ?? false),
       categoria: String(r.category ?? ''),
+      contaInventario: r.count_inventory !== false,
     }))
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
   return { insumos, erro: null };

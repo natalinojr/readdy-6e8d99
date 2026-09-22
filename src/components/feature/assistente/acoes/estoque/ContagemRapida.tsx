@@ -35,8 +35,10 @@ export default function ContagemRapida({ onFechar, irPara }: AcaoProps) {
       if (!user?.tenantId) { r.bot('Nenhuma loja ativa.'); setPasso('fim'); return; }
       const { insumos: lista, erro } = await lerInsumos(user.tenantId);
       if (erro) { r.bot(`Não consegui ler os insumos: ${erro}`); setPasso('fim'); return; }
-      if (!lista.length) { r.bot('Esta loja não tem insumos cadastrados.'); setPasso('fim'); return; }
-      setInsumos(lista);
+      // Insumo marcado como "fora do inventário" não entra na contagem.
+      const contaveis = lista.filter((i) => i.contaInventario);
+      if (!contaveis.length) { r.bot(lista.length ? 'Nenhum insumo desta loja está marcado para contar no inventário.' : 'Esta loja não tem insumos cadastrados.'); setPasso('fim'); return; }
+      setInsumos(contaveis);
       r.bot(`*${user.loja}*\nContar qual categoria?`);
       setPasso('categoria');
     })();

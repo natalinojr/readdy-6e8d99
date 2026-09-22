@@ -61,7 +61,7 @@ function ThOrdenavel({
 }
 
 export default function InsumosTab() {
-  const { insumos, insumosEsgotados, marcarInsumoEsgotado, upsertInsumo, reloadInsumos, addMovimentacao, inventarioSessions, setRastrearEstoque } = useEstoque();
+  const { insumos, insumosEsgotados, marcarInsumoEsgotado, upsertInsumo, reloadInsumos, addMovimentacao, inventarioSessions, setRastrearEstoque, setContaInventario } = useEstoque();
   const { recipes, batches, reload: reloadProducao } = useProducao();
   const { categories, names: categoriasDB, loading: loadingCategorias, addCategory, removeCategory, renameCategory } = useIngredientCategories();
   const { user } = useAuth();
@@ -504,6 +504,11 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                                     SEM AVISO
                                   </span>
                                 )}
+                                {!insumo.contaInventario && (
+                                  <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-full text-[9px] font-bold border border-zinc-200 whitespace-nowrap" title="Não aparece na contagem de inventário">
+                                    FORA DO INVENTÁRIO
+                                  </span>
+                                )}
                               </div>
                               {ultimaProd && (
                                 <p className="text-[10px] text-amber-500 mt-0.5">
@@ -573,6 +578,13 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                             >
                               <i className={`text-sm ${insumo.rastrearEstoque ? 'ri-notification-3-line' : 'ri-notification-off-line'}`} />
                             </button>
+                            <button
+                              onClick={() => setContaInventario(insumo.id, !insumo.contaInventario)}
+                              title={insumo.contaInventario ? 'Tirar da contagem de inventário' : 'Voltar a contar no inventário'}
+                              className={`w-7 h-7 flex items-center justify-center rounded-lg cursor-pointer transition-colors ${insumo.contaInventario ? 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600' : 'text-zinc-300 hover:bg-amber-50 hover:text-amber-600'}`}
+                            >
+                              <i className={`text-sm ${insumo.contaInventario ? 'ri-checkbox-line' : 'ri-checkbox-blank-line'}`} />
+                            </button>
                             <button onClick={() => setHistoricoModal(insumo)} title="Histórico de compras" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors"><History size={12} /></button>
                             <button onClick={() => setEntradaRapida(insumo)} title="Entrada rápida" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-green-50 text-zinc-400 hover:text-green-600 cursor-pointer transition-colors"><i className="ri-add-circle-line text-sm" /></button>
                             {!esgotado && (
@@ -626,6 +638,11 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                         {!insumo.rastrearEstoque && (
                           <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-full text-[9px] font-bold border border-zinc-200 whitespace-nowrap">
                             SEM AVISO
+                          </span>
+                        )}
+                        {!insumo.contaInventario && (
+                          <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-full text-[9px] font-bold border border-zinc-200 whitespace-nowrap">
+                            FORA DO INVENTÁRIO
                           </span>
                         )}
                       </div>
@@ -683,6 +700,13 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                       className="w-8 h-8 flex items-center justify-center rounded-lg bg-zinc-100 text-zinc-500 cursor-pointer"
                     >
                       <i className={`text-sm ${insumo.rastrearEstoque ? 'ri-notification-3-line' : 'ri-notification-off-line'}`} />
+                    </button>
+                    <button
+                      onClick={() => setContaInventario(insumo.id, !insumo.contaInventario)}
+                      title={insumo.contaInventario ? 'Tirar da contagem de inventário' : 'Voltar a contar no inventário'}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-zinc-100 text-zinc-500 cursor-pointer"
+                    >
+                      <i className={`text-sm ${insumo.contaInventario ? 'ri-checkbox-line' : 'ri-checkbox-blank-line'}`} />
                     </button>
                     {!esgotado && (
                       <button onClick={() => setConfirmEsgotado(insumo)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-50 text-red-500 cursor-pointer">

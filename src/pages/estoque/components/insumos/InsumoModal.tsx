@@ -25,6 +25,7 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
   const [usageType, setUsageType] = useState<'final' | 'production'>(insumo?.usageType ?? 'final');
   const [estoqueMinimo, setEstoqueMinimo] = useState(insumo?.estoqueMinimo?.toString() ?? '');
   const [rastrearEstoque, setRastrearEstoque] = useState(insumo?.rastrearEstoque ?? true);
+  const [contaInventario, setContaInventario] = useState(insumo?.contaInventario ?? true);
   const [purchaseUnit, setPurchaseUnit] = useState(insumo?.purchaseUnit ?? '');
   const [purchaseFactor, setPurchaseFactor] = useState(insumo?.purchaseFactor?.toString() ?? '1');
   const [purchaseUnitOpen, setPurchaseUnitOpen] = useState(false);
@@ -78,6 +79,7 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
       priceSource: priceSource === 'manual' ? 'manual' : 'auto',
       estoqueMinimo: parseFloat(estoqueMinimo.replace(',', '.')) || 0,
       rastrearEstoque,
+      contaInventario,
       purchaseUnit: usePurchaseUnit ? purchaseUnit.trim() : null,
       purchaseFactor: usePurchaseUnit ? (parseFloat(purchaseFactor) || 1) : 1,
       dreCategoryId: insumo?.dreCategoryId ?? null,
@@ -351,6 +353,27 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
               </div>
               <span className={`mt-0.5 w-9 h-5 rounded-full flex-shrink-0 transition-colors relative ${rastrearEstoque ? 'bg-amber-500' : 'bg-zinc-300'}`}>
                 <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${rastrearEstoque ? 'left-[18px]' : 'left-0.5'}`} />
+              </span>
+            </button>
+          </div>
+
+          {/* Entra na contagem de inventário? O insumo segue existindo para lançamentos. */}
+          <div className="border-t border-zinc-100 pt-3">
+            <button
+              type="button"
+              onClick={() => setContaInventario(!contaInventario)}
+              className="w-full flex items-start justify-between gap-3 text-left cursor-pointer"
+            >
+              <div>
+                <p className="text-xs font-semibold text-zinc-700">Contar no inventário</p>
+                <p className="text-[10px] text-zinc-400 mt-0.5">
+                  {contaInventario
+                    ? 'Aparece na contagem de inventário.'
+                    : 'Fica fora da contagem de inventário. Compras, entradas, saídas, ficha técnica e CMV continuam normais.'}
+                </p>
+              </div>
+              <span className={`mt-0.5 w-9 h-5 rounded-full flex-shrink-0 transition-colors relative ${contaInventario ? 'bg-amber-500' : 'bg-zinc-300'}`}>
+                <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${contaInventario ? 'left-[18px]' : 'left-0.5'}`} />
               </span>
             </button>
           </div>

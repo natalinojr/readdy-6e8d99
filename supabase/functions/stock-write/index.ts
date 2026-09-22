@@ -278,8 +278,28 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       });
     }
 
+    // Insumo entra ou não na contagem de inventário (tela e assistente). Ele continua existindo
+    // para compra, entrada, saída, ficha técnica e CMV; só deixa de ser contado.
+    if (action === 'set_count_inventory') {
+      const { ingredient_id, count_inventory } = body;
+      if (!ingredient_id || typeof count_inventory !== 'boolean') {
+        return new Response(JSON.stringify({ error: 'ingredient_id e count_inventory (boolean) sao obrigatorios' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const { error } = await admin
+        .from('ingredients')
+        .update({ count_inventory, updated_at: new Date().toISOString() })
+        .eq('id', ingredient_id)
+        .eq('tenant_id', tenantId);
+      if (error) throw new Error(extractErrorMessage(error));
+      return new Response(JSON.stringify({ ok: true, count_inventory }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (action === 'upsert_ingredient') {
-      const { id, name, unit, unit_price, min_stock, current_stock, category, supplier, supplier_id, purchase_unit, purchase_factor, dre_category_id, usage_type, price_source, track_stock } = body;
+      const { id, name, unit, unit_price, min_stock, current_stock, category, supplier, supplier_id, purchase_unit, purchase_factor, dre_category_id, usage_type, price_source, track_stock, count_inventory } = body;
 
       // Em edicao, campo AUSENTE no body preserva o valor atual do banco
       // (null explicito continua limpando). fn_upsert_ingredient sobrescreve
@@ -325,16 +345,19 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         throw new Error(extractErrorMessage(rpcErr));
       }
 
-      // fn_upsert_ingredient nao conhece track_stock — grava a coluna à parte.
-      if (typeof track_stock === 'boolean') {
+      // fn_upsert_ingredient nao conhece track_stock/count_inventory — grava as colunas à parte.
+      const extras: Record<string, boolean> = {};
+      if (typeof track_stock === 'boolean') extras.track_stock = track_stock;
+      if (typeof count_inventory === 'boolean') extras.count_inventory = count_inventory;
+      if (Object.keys(extras).length > 0) {
         const savedId = (rpcData as Record<string, unknown> | null)?.id ?? id;
         if (savedId) {
           const { error: trackErr } = await admin
             .from('ingredients')
-            .update({ track_stock })
+            .update(extras)
             .eq('id', savedId)
             .eq('tenant_id', tenantId);
-          if (trackErr) console.error('[stock-write] upsert_ingredient track_stock error:', extractErrorMessage(trackErr));
+          if (trackErr) console.error('[stock-write] upsert_ingredient track_stock/count_inventory error:', extractErrorMessage(trackErr));
         }
       }
 

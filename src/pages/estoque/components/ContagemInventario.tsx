@@ -21,7 +21,9 @@ const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 export default function ContagemInventario({ operador, onConcluido, onCancelar, startFresh }: Props) {
-  const { insumos } = useEstoque();
+  const { insumos: todosInsumos } = useEstoque();
+  // Insumo marcado como "fora do inventário" existe para lançamentos, mas não é contado.
+  const insumos = useMemo(() => todosInsumos.filter((i) => i.contaInventario), [todosInsumos]);
   const { confirmarInventario } = useEstoque();
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
